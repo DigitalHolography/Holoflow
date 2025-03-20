@@ -1,6 +1,7 @@
 add_library(holoflow STATIC
   tensor.cc
   task.cc
+  accumulator.cc
 )
 
 set_common_target_properties(holoflow)

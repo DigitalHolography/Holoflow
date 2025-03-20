@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdlib>
-#include <glog/logging.h>
 #include <iostream>
 #include <memory>
 #include <numeric>

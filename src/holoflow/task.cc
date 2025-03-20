@@ -1,5 +1,7 @@
 #include "holoflow/task.hh"
 
+#include <glog/logging.h>
+
 namespace dh {
 
 // ==========================================================================
@@ -10,10 +12,14 @@ TaskMeta::TaskMeta(const TensorMeta &imeta, const TensorMeta &ometa,
                    bool inlined)
     : imeta_(imeta), ometa_(ometa), inlined_(inlined) {
   if (inlined_) {
-    CHECK(imeta_.data_type() == ometa_.data_type());
-    CHECK(imeta_.memory_location() == ometa_.memory_location());
-    CHECK(imeta_.shape() == ometa_.shape());
-    CHECK(imeta_.strides() == ometa_.strides());
+    CHECK(imeta_.data_type() == ometa_.data_type())
+        << "Inlined tasks must have equal input and output tensors";
+    CHECK(imeta_.memory_location() == ometa_.memory_location())
+        << "Inlined tasks must have equal input and output tensors";
+    CHECK(imeta_.shape() == ometa_.shape())
+        << "Inlined tasks must have equal input and output tensors";
+    CHECK(imeta_.strides() == ometa_.strides())
+        << "Inlined tasks must have equal input and output tensors";
   }
 }
 

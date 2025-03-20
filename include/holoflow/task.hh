@@ -64,8 +64,9 @@ std::ostream &operator<<(std::ostream &os, const TaskMeta &meta);
 class Task {
 public:
   /**
-   * @brief Constructs a task with the given metadata.
+   * @brief Constructs a task with the given metadata and stream.
    * @param meta The task metadata.
+   * @param stream The stream.
    */
   Task(const TaskMeta &meta, cudaStream_t stream);
 
