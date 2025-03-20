@@ -1,10 +1,16 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <span>
 #include <string>
+#include <unordered_map>
 #include <vector>
+
+#include "holoflow/accumulator.hh"
+#include "holoflow/error.hh"
+#include "holoflow/task.hh"
 
 using json = nlohmann::json;
 
@@ -37,94 +43,63 @@ public:
 
   /**
    * @brief Gets the mutable name of the node.
-   *
    * @return Reference to the node's name.
    */
   std::string &name();
 
   /**
    * @brief Gets the immutable name of the node.
-   *
    * @return Constant reference to the node's name.
    */
   const std::string &name() const;
 
   /**
    * @brief Gets the mutable kind of the node.
-   *
    * @return Reference to the node's kind.
    */
   std::string &kind();
 
   /**
    * @brief Gets the immutable kind of the node.
-   *
    * @return Constant reference to the node's kind.
    */
   const std::string &kind() const;
 
   /**
    * @brief Gets the mutable parameters of the node.
-   *
    * @return Reference to the JSON object representing node parameters.
    */
   json &params();
 
   /**
    * @brief Gets the immutable parameters of the node.
-   *
    * @return Constant reference to the JSON object representing node parameters.
    */
   const json &params() const;
 
   /**
    * @brief Adds a child node.
-   *
-   * Transfers ownership of the given node to this parent node.
-   *
-   * @param child Unique pointer to the child node.
+   * @param child Reference to the child node.
    */
-  void add_child(std::unique_ptr<ModelDescriptorNode> child);
-
-  /**
-   * @brief Removes a child node by pointer.
-   *
-   * @param child Pointer to the child node to remove.
-   * @return True if the node was found and removed, false otherwise.
-   */
-  bool remove_child(const ModelDescriptorNode *child);
-
-  /**
-   * @brief Removes a child node by index.
-   *
-   * @param index The index of the child node to remove.
-   * @return True if the node was successfully removed, false otherwise.
-   */
-  bool remove_child(size_t index);
+  void add_child(ModelDescriptorNode &child);
 
   /**
    * @brief Returns a modifiable view of child nodes.
-   *
-   * Allows modification of children but does not allow adding/removing them.
-   *
-   * @return A span of raw pointers to child nodes.
+   * @return A span of reference wrappers to child nodes.
    */
-  std::span<ModelDescriptorNode *> children();
+  std::span<std::reference_wrapper<ModelDescriptorNode>> children();
 
   /**
    * @brief Returns a read-only view of child nodes.
-   *
-   * Provides access to child nodes without allowing modification.
-   *
-   * @return A span of constant raw pointers to child nodes.
+   * @return A span of constant reference wrappers to child nodes.
    */
-  std::span<const ModelDescriptorNode *> children() const;
+  std::span<const std::reference_wrapper<ModelDescriptorNode>> children() const;
 
 private:
   std::string name_; ///< The name of the node.
   std::string kind_; ///< The kind/type of the node.
   json params_;      ///< JSON object storing the node parameters.
-  std::vector<std::unique_ptr<ModelDescriptorNode>>
+  std::vector<std::reference_wrapper<ModelDescriptorNode>>
       children_; ///< List of child nodes.
 };
 
@@ -137,7 +112,6 @@ class TaskDescriptorNode : public ModelDescriptorNode {
 public:
   /**
    * @brief Accepts a visitor for the Visitor pattern.
-   *
    * @param visitor The visitor to process this node.
    */
   void accept(ModelDescriptorVisitor &visitor) override;
@@ -152,7 +126,6 @@ class AccumulatorDescriptorNode : public ModelDescriptorNode {
 public:
   /**
    * @brief Accepts a visitor for the Visitor pattern.
-   *
    * @param visitor The visitor to process this node.
    */
   void accept(ModelDescriptorVisitor &visitor) override;
@@ -172,17 +145,136 @@ public:
 
   /**
    * @brief Visits a TaskDescriptorNode.
-   *
    * @param node The task node being visited.
    */
   virtual void visit(TaskDescriptorNode &node) = 0;
 
   /**
    * @brief Visits an AccumulatorDescriptorNode.
-   *
    * @param node The accumulator node being visited.
    */
   virtual void visit(AccumulatorDescriptorNode &node) = 0;
+};
+
+/**
+ * @brief Represents a model descriptor containing tasks, accumulators, and
+ * their relationships.
+ */
+class ModelDescriptor {
+public:
+  /**
+   * @brief Map from kind to task factory.
+   */
+  using TaskFactoryMap =
+      std::unordered_map<std::string, std::reference_wrapper<TaskFactory>>;
+
+  /**
+   * @brief Map from kind to accumulator factory.
+   */
+  using AccumulatorFactoryMap =
+      std::unordered_map<std::string,
+                         std::reference_wrapper<AccumulatorFactory>>;
+
+  /**
+   * @brief Map from name to (kind, params).
+   */
+  using TaskMap = std::unordered_map<std::string, std::pair<std::string, json>>;
+
+  /**
+   * @brief Map from name to (kind, params).
+   */
+  using AccumulatorMap =
+      std::unordered_map<std::string, std::pair<std::string, json>>;
+
+  /**
+   * @brief Adds a task factory.
+   * @param kind The kind of the task.
+   * @param factory Unique pointer to the task factory.
+   * @return Error code indicating success or failure.
+   */
+  Error add_task_factory(const std::string &kind,
+                         std::unique_ptr<TaskFactory> factory);
+
+  /**
+   * @brief Adds an accumulator factory.
+   * @param kind The kind of the accumulator.
+   * @param factory Unique pointer to the accumulator factory.
+   * @return Error code indicating success or failure.
+   */
+  Error add_accumulator_factory(const std::string &kind,
+                                std::unique_ptr<AccumulatorFactory> factory);
+
+  /**
+   * @brief Adds a task to the model.
+   * @param kind The kind of the task.
+   * @param name The name of the task.
+   * @param params The parameters of the task.
+   * @return Error code indicating success or failure.
+   */
+  Error add_task(const std::string &kind, const std::string &name,
+                 const json &params);
+
+  /**
+   * @brief Adds an accumulator to the model.
+   * @param kind The kind of the accumulator.
+   * @param name The name of the accumulator.
+   * @param params The parameters of the accumulator.
+   * @return Error code indicating success or failure.
+   */
+  Error add_accumulator(const std::string &kind, const std::string &name,
+                        const json &params);
+
+  /**
+   * @brief Sets the root accumulator of the model.
+   * @param name The name of the root accumulator.
+   * @return Error code indicating success or failure.
+   */
+  Error set_root_accumulator(const std::string &name);
+
+  /**
+   * @brief Adds a child relationship between nodes.
+   * @param parent_name The name of the parent node.
+   * @param child_name The name of the child node.
+   * @return Error code indicating success or failure.
+   */
+  Error add_child(const std::string &parent_name,
+                  const std::string &child_name);
+
+  /**
+   * @brief Retrieves the task factories.
+   * @return A reference to the task factory map.
+   */
+  const TaskFactoryMap &task_factories() const;
+
+  /**
+   * @brief Retrieves the accumulator factories.
+   * @return A reference to the accumulator factory map.
+   */
+  const AccumulatorFactoryMap &accumulator_factories() const;
+
+  /**
+   * @brief Retrieves the root node.
+   * @return Pointer to the root node.
+   */
+  ModelDescriptorNode *root() const;
+
+private:
+  TaskFactoryMap task_factories_map_; ///< Maps task kinds to factories.
+  AccumulatorFactoryMap
+      accumulator_factories_map_; ///< Maps accumulator kinds to factories.
+
+  TaskMap tasks_;               ///< Maps task names to (kind, params).
+  AccumulatorMap accumulators_; ///< Maps accumulator names to (kind, params).
+
+  ModelDescriptorNode *root_ = nullptr; ///< Root node (non-owning).
+
+  std::vector<std::unique_ptr<TaskFactory>>
+      task_factories_; ///< Stores task factories.
+  std::vector<std::unique_ptr<AccumulatorFactory>>
+      accumulator_factories_; ///< Stores accumulator factories.
+
+  std::vector<std::unique_ptr<ModelDescriptorNode>>
+      nodes_; ///< Stores model nodes.
 };
 
 } // namespace dh

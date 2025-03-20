@@ -1,5 +1,7 @@
 #include "holoflow/model_descriptor.hh"
 
+#include <glog/logging.h>
+
 namespace dh {
 
 // ==========================================================================
@@ -18,48 +20,18 @@ json &ModelDescriptorNode::params() { return params_; }
 
 const json &ModelDescriptorNode::params() const { return params_; }
 
-void ModelDescriptorNode::add_child(
-    std::unique_ptr<ModelDescriptorNode> child) {
-  children_.push_back(std::move(child));
+void ModelDescriptorNode::add_child(ModelDescriptorNode &child) {
+  children_.push_back(child);
 }
 
-bool ModelDescriptorNode::remove_child(const ModelDescriptorNode *child) {
-  auto it =
-      std::remove_if(children_.begin(), children_.end(),
-                     [child](const std::unique_ptr<ModelDescriptorNode> &ptr) {
-                       return ptr.get() == child;
-                     });
-
-  if (it != children_.end()) {
-    children_.erase(it, children_.end());
-    return true;
-  }
-  return false;
+std::span<std::reference_wrapper<ModelDescriptorNode>>
+ModelDescriptorNode::children() {
+  return std::span(children_);
 }
 
-bool ModelDescriptorNode::remove_child(size_t index) {
-  if (index >= children_.size())
-    return false;
-  children_.erase(children_.begin() + index);
-  return true;
-}
-
-std::span<ModelDescriptorNode *> ModelDescriptorNode::children() {
-  static thread_local std::vector<ModelDescriptorNode *> ptrs;
-  ptrs.clear();
-  for (auto &child : children_) {
-    ptrs.push_back(child.get());
-  }
-  return ptrs;
-}
-
-std::span<const ModelDescriptorNode *> ModelDescriptorNode::children() const {
-  static thread_local std::vector<const ModelDescriptorNode *> ptrs;
-  ptrs.clear();
-  for (const auto &child : children_) {
-    ptrs.push_back(child.get());
-  }
-  return ptrs;
+std::span<const std::reference_wrapper<ModelDescriptorNode>>
+ModelDescriptorNode::children() const {
+  return std::span(children_);
 }
 
 // ==========================================================================
@@ -76,6 +48,89 @@ void TaskDescriptorNode::accept(ModelDescriptorVisitor &visitor) {
 
 void AccumulatorDescriptorNode::accept(ModelDescriptorVisitor &visitor) {
   visitor.visit(*this);
+}
+
+// ==========================================================================
+//                     ModelDescriptor Implementation
+// ==========================================================================
+
+Error ModelDescriptor::add_task_factory(const std::string &kind,
+                                        std::unique_ptr<TaskFactory> factory) {
+  bool in_task_factories =
+      task_factories_map_.find(kind) != task_factories_map_.end();
+
+  bool in_accumulator_factories =
+      accumulator_factories_map_.find(kind) != accumulator_factories_map_.end();
+
+  if (in_task_factories || in_accumulator_factories) {
+    LOG(WARNING) << "Factory " << kind << " was already registered";
+    return Error::INTERNAL_ERROR;
+  }
+
+  task_factories_map_.emplace(kind, std::ref(*factory));
+  task_factories_.push_back(std::move(factory));
+  return Error::SUCCESS;
+}
+
+Error ModelDescriptor::add_accumulator_factory(
+    const std::string &kind, std::unique_ptr<AccumulatorFactory> factory) {
+  bool in_task_factories =
+      task_factories_map_.find(kind) != task_factories_map_.end();
+
+  bool in_accumulator_factories =
+      accumulator_factories_map_.find(kind) != accumulator_factories_map_.end();
+
+  if (in_task_factories || in_accumulator_factories) {
+    LOG(WARNING) << "Factory " << kind << " was already registered";
+    return Error::INTERNAL_ERROR;
+  }
+
+  accumulator_factories_map_.emplace(kind, std::ref(*factory));
+  accumulator_factories_.push_back(std::move(factory));
+  return Error::SUCCESS;
+}
+
+Error ModelDescriptor::add_task(const std::string &kind,
+                                const std::string &name, const json &params) {
+  bool in_task_factories =
+      task_factories_map_.find(kind) != task_factories_map_.end();
+
+  bool in_declared_tasks = tasks_.find(name) != tasks_.end();
+
+  if (!in_task_factories) {
+    LOG(WARNING) << "Factory " << kind << " is not registered";
+    return Error::INTERNAL_ERROR;
+  }
+
+  if (in_declared_tasks) {
+    LOG(WARNING) << "Task " << name << " is already declared";
+    return Error::INTERNAL_ERROR;
+  }
+
+  tasks_.emplace(name, std::make_pair(kind, params));
+  return Error::SUCCESS;
+}
+
+Error ModelDescriptor::add_accumulator(const std::string &kind,
+                                       const std::string &name,
+                                       const json &params) {
+  bool in_accumulator_factories =
+      accumulator_factories_map_.find(kind) != accumulator_factories_map_.end();
+
+  bool in_declared_accumulators = tasks_.find(name) != tasks_.end();
+
+  if (!in_accumulator_factories) {
+    LOG(WARNING) << "Factory " << kind << " is not registered";
+    return Error::INTERNAL_ERROR;
+  }
+
+  if (in_declared_accumulators) {
+    LOG(WARNING) << "Accumulator " << name << " is already declared";
+    return Error::INTERNAL_ERROR;
+  }
+
+  accumulators_.emplace(name, std::make_pair(kind, params));
+  return Error::SUCCESS;
 }
 
 } // namespace dh
