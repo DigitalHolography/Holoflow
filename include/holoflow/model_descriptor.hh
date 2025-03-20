@@ -30,6 +30,15 @@ class ModelDescriptorVisitor;
 class ModelDescriptorNode {
 public:
   /**
+   * @brief Construct a new ModelDescriptorNode.
+   * @param kind The kind of node.
+   * @param name The name of the node.
+   * @param params The params associated with the node.
+   */
+  ModelDescriptorNode(const std::string &kind, const std::string &name,
+                      const json &params);
+
+  /**
    * @brief Virtual destructor for polymorphic destruction.
    */
   virtual ~ModelDescriptorNode() = default;
@@ -111,6 +120,15 @@ private:
 class TaskDescriptorNode : public ModelDescriptorNode {
 public:
   /**
+   * @brief Construct a new TaskDescriptorNode.
+   * @param kind The kind of node.
+   * @param name The name of the node.
+   * @param params The params associated with the node.
+   */
+  TaskDescriptorNode(const std::string &kind, const std::string &name,
+                     const json &params);
+
+  /**
    * @brief Accepts a visitor for the Visitor pattern.
    * @param visitor The visitor to process this node.
    */
@@ -124,6 +142,15 @@ public:
  */
 class AccumulatorDescriptorNode : public ModelDescriptorNode {
 public:
+  /**
+   * @brief Construct a new AccumulatorDescriptorNode.
+   * @param kind The kind of node.
+   * @param name The name of the node.
+   * @param params The params associated with the node.
+   */
+  AccumulatorDescriptorNode(const std::string &kind, const std::string &name,
+                            const json &params);
+
   /**
    * @brief Accepts a visitor for the Visitor pattern.
    * @param visitor The visitor to process this node.
