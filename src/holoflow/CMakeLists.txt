@@ -2,6 +2,7 @@ add_library(holoflow STATIC
   tensor.cc
   task.cc
   accumulator.cc
+  model_descriptor.cc
 )
 
 set_common_target_properties(holoflow)
