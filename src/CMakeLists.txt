@@ -1,0 +1,2 @@
+add_subdirectory(holovibes)
+add_subdirectory(holoflow)
