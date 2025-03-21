@@ -3,6 +3,7 @@
 #include <cuda_runtime.h>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <tl/expected.hpp>
 
 #include "holoflow/error.hh"
@@ -90,7 +91,7 @@ public:
    * `commit_write` has been called. Not calling this function is the same as
    * discarding the write operation.
    */
-  virtual tl::expected<TensorView *, Error> write_tensor() = 0;
+  virtual tl::expected<std::optional<TensorView>, Error> write_tensor() = 0;
 
   /**
    * @brief Commit the write operation.
@@ -115,7 +116,7 @@ public:
    * `commit_read` has been called. Not calling this function is the same as
    * discarding the read operation.
    */
-  virtual tl::expected<TensorView *, Error> read_tensor() = 0;
+  virtual tl::expected<std::optional<TensorView>, Error> read_tensor() = 0;
 
   /**
    * @brief Commit the read operation.
@@ -144,7 +145,7 @@ public:
    */
   const TensorMeta &ometa() const;
 
-private:
+protected:
   AccumulatorMeta meta_; ///< Metadata defining input/output tensors.
   cudaStream_t stream_;  ///< CUDA stream associated with the accumulator.
 };

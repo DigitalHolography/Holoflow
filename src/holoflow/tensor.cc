@@ -84,6 +84,10 @@ TensorMeta::TensorMeta(DataType data_type, MemoryLocation memory_location,
   })) << "Tensor strides cannot be zero";
 }
 
+size_t TensorMeta::size() const {
+  return std::accumulate(shape_.begin(), shape_.end(), 1ULL, std::multiplies());
+}
+
 size_t TensorMeta::size_in_bytes() const {
   if (shape_.empty() || strides_.empty()) {
     return 0;
@@ -119,7 +123,7 @@ std::ostream &operator<<(std::ostream &os, const TensorMeta &meta) {
 // ==========================================================================
 
 TensorView::TensorView(void *data, const TensorMeta &meta)
-    : data_(data), meta_(meta) {
+    : data_(data), meta_(std::ref(meta)) {
   CHECK(data_ != nullptr) << "TensorView received a null data pointer";
   if (reinterpret_cast<uintptr_t>(data_) % alignof(std::max_align_t) != 0) {
     LOG(WARNING) << "TensorView data pointer is not properly aligned";
@@ -130,23 +134,25 @@ void *TensorView::data() { return data_; }
 
 const void *TensorView::data() const { return data_; }
 
-const std::vector<size_t> &TensorView::shape() const { return meta_.shape(); }
-
-const std::vector<size_t> &TensorView::strides() const {
-  return meta_.strides();
+const std::vector<size_t> &TensorView::shape() const {
+  return meta_.get().shape();
 }
 
-DataType TensorView::data_type() const { return meta_.data_type(); }
+const std::vector<size_t> &TensorView::strides() const {
+  return meta_.get().strides();
+}
+
+DataType TensorView::data_type() const { return meta_.get().data_type(); }
 
 MemoryLocation TensorView::memory_location() const {
-  return meta_.memory_location();
+  return meta_.get().memory_location();
 }
 
 const TensorMeta &TensorView::meta() const { return meta_; }
 
-size_t TensorView::size() const { return meta_.size(); }
+size_t TensorView::size() const { return meta_.get().size(); }
 
-size_t TensorView::size_in_bytes() const { return meta_.size_in_bytes(); }
+size_t TensorView::size_in_bytes() const { return meta_.get().size_in_bytes(); }
 
 std::ostream &operator<<(std::ostream &os, const TensorView &view) {
   os << "TensorView(data=" << view.data() << ", metadata=" << view.meta()

@@ -1,5 +1,6 @@
 qt_add_executable(holovibes
   main.cc
+  accumulators/batched_spsc_accumulator.cc
 )
 
 set_common_target_properties(holovibes)

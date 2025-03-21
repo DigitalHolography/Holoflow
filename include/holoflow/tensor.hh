@@ -193,8 +193,9 @@ public:
   friend std::ostream &operator<<(std::ostream &os, const TensorView &view);
 
 private:
-  void *data_;             ///< Pointer to the tensor's data (CPU or GPU).
-  const TensorMeta &meta_; ///< Metadata describing the tensor.
+  void *data_; ///< Pointer to the tensor's data (CPU or GPU).
+  std::reference_wrapper<const TensorMeta>
+      meta_; ///< Metadata describing the tensor.
 };
 
 } // namespace dh
