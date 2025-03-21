@@ -71,6 +71,8 @@ void AccumulatorDescriptorNode::accept(ModelDescriptorVisitor &visitor) {
 
 Error ModelDescriptor::add_task_factory(const std::string &kind,
                                         std::unique_ptr<TaskFactory> factory) {
+  VLOG(2) << "Adding task factory: " << kind;
+
   bool in_task_factories =
       task_factories_map_.find(kind) != task_factories_map_.end();
 
@@ -89,6 +91,8 @@ Error ModelDescriptor::add_task_factory(const std::string &kind,
 
 Error ModelDescriptor::add_accumulator_factory(
     const std::string &kind, std::unique_ptr<AccumulatorFactory> factory) {
+  VLOG(2) << "Adding accumulator factory: " << kind;
+
   bool in_task_factories =
       task_factories_map_.find(kind) != task_factories_map_.end();
 
@@ -107,6 +111,8 @@ Error ModelDescriptor::add_accumulator_factory(
 
 Error ModelDescriptor::add_task(const std::string &kind,
                                 const std::string &name, const json &params) {
+  VLOG(2) << "Adding task: " << kind;
+
   bool in_task_factories =
       task_factories_map_.find(kind) != task_factories_map_.end();
 
@@ -129,6 +135,8 @@ Error ModelDescriptor::add_task(const std::string &kind,
 Error ModelDescriptor::add_accumulator(const std::string &kind,
                                        const std::string &name,
                                        const json &params) {
+  VLOG(2) << "Adding accumulator: " << kind;
+
   bool in_accumulator_factories =
       accumulator_factories_map_.find(kind) != accumulator_factories_map_.end();
 
@@ -150,6 +158,8 @@ Error ModelDescriptor::add_accumulator(const std::string &kind,
 }
 
 Error ModelDescriptor::set_root_accumulator(const std::string &name) {
+  VLOG(2) << "Setting root accumulator: " << name;
+
   if (root_) {
     LOG(WARNING) << "Root accumulator is already set";
     return Error::INTERNAL_ERROR;
@@ -219,6 +229,8 @@ private:
 
 Error ModelDescriptor::add_child(const std::string &parent_name,
                                  const std::string &child_name) {
+  VLOG(2) << "Adding child: " << child_name << " to parent: " << parent_name;
+
   FindByName find_by_name(child_name);
   root_->accept(find_by_name);
   if (find_by_name.result()) {

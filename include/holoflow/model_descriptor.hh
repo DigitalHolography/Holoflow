@@ -29,6 +29,8 @@ class ModelDescriptorVisitor;
  */
 class ModelDescriptorNode {
 public:
+  using Child = std::reference_wrapper<ModelDescriptorNode>;
+
   /**
    * @brief Construct a new ModelDescriptorNode.
    * @param kind The kind of node.
@@ -96,20 +98,19 @@ public:
    * @brief Returns a modifiable view of child nodes.
    * @return A span of reference wrappers to child nodes.
    */
-  std::span<std::reference_wrapper<ModelDescriptorNode>> children();
+  std::span<Child> children();
 
   /**
    * @brief Returns a read-only view of child nodes.
    * @return A span of constant reference wrappers to child nodes.
    */
-  std::span<const std::reference_wrapper<ModelDescriptorNode>> children() const;
+  std::span<const Child> children() const;
 
 private:
-  std::string name_; ///< The name of the node.
-  std::string kind_; ///< The kind/type of the node.
-  json params_;      ///< JSON object storing the node parameters.
-  std::vector<std::reference_wrapper<ModelDescriptorNode>>
-      children_; ///< List of child nodes.
+  std::string name_;            ///< The name of the node.
+  std::string kind_;            ///< The kind/type of the node.
+  json params_;                 ///< JSON object storing the node parameters.
+  std::vector<Child> children_; ///< List of child nodes.
 };
 
 /**
@@ -286,22 +287,29 @@ public:
   ModelDescriptorNode *root() const;
 
 private:
-  TaskFactoryMap task_factories_map_; ///< Maps task kinds to factories.
-  AccumulatorFactoryMap
-      accumulator_factories_map_; ///< Maps accumulator kinds to factories.
+  /// Maps task kinds to factories.
+  TaskFactoryMap task_factories_map_;
 
-  TaskMap tasks_;               ///< Maps task names to (kind, params).
-  AccumulatorMap accumulators_; ///< Maps accumulator names to (kind, params).
+  /// Maps accumulator kinds to factories.
+  AccumulatorFactoryMap accumulator_factories_map_;
 
-  ModelDescriptorNode *root_ = nullptr; ///< Root node (non-owning).
+  /// Maps task names to (kind, params).
+  TaskMap tasks_;
 
-  std::vector<std::unique_ptr<TaskFactory>>
-      task_factories_; ///< Stores task factories.
-  std::vector<std::unique_ptr<AccumulatorFactory>>
-      accumulator_factories_; ///< Stores accumulator factories.
+  /// Maps accumulator names to (kind, params).
+  AccumulatorMap accumulators_;
 
-  std::vector<std::unique_ptr<ModelDescriptorNode>>
-      nodes_; ///< Stores model nodes.
+  /// Root node (non-owning).
+  ModelDescriptorNode *root_ = nullptr;
+
+  /// Stores task factories.
+  std::vector<std::unique_ptr<TaskFactory>> task_factories_;
+
+  /// Stores accumulator factories.
+  std::vector<std::unique_ptr<AccumulatorFactory>> accumulator_factories_;
+
+  /// Stores model nodes.
+  std::vector<std::unique_ptr<ModelDescriptorNode>> nodes_;
 };
 
 } // namespace dh

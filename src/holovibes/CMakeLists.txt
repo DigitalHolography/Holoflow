@@ -16,4 +16,5 @@ target_link_libraries(holovibes PRIVATE
     Qt6::Core
     Qt6::Widgets
     Qt6::Gui
+    holoflow
 )
