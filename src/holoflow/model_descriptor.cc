@@ -168,8 +168,8 @@ Error ModelDescriptor::set_root_accumulator(const std::string &name) {
   bool in_declared_accumulators =
       accumulators_.find(name) != accumulators_.end();
 
-  if (in_declared_accumulators) {
-    LOG(WARNING) << "Accumulator " << name << " is already declared";
+  if (!in_declared_accumulators) {
+    LOG(WARNING) << "Accumulator " << name << " is not declared";
     return Error::INTERNAL_ERROR;
   }
 

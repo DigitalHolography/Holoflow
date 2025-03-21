@@ -151,7 +151,7 @@ public:
 
 private:
   std::unique_ptr<Accumulator> accumulator_;
-  AccumulatorMeta &accumulator_meta_;
+  AccumulatorMeta accumulator_meta_;
 };
 
 class ModelVisitor {
@@ -181,8 +181,8 @@ public:
     STOPPED,
   };
 
-  static tl::expected<Model, Error>
-  from_descriptor(const ModelDescriptor &descriptor);
+  static tl::expected<std::unique_ptr<Model>, Error>
+  from_descriptor(const ModelDescriptor &descriptor, const TensorMeta &imeta);
 
   Model(std::vector<std::unique_ptr<ModelNode>> nodes,
         std::unordered_map<int, TensorSlot> tensors,

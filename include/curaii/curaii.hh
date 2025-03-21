@@ -33,8 +33,6 @@
 
 namespace dh {
 
-namespace {
-
 struct HostDeleter {
   void operator()(void *ptr) const {
     if (ptr) {
@@ -58,8 +56,6 @@ struct DeviceDeleter {
     }
   }
 };
-
-} // namespace
 
 template <typename T> using unique_host_ptr = std::unique_ptr<T, HostDeleter>;
 

@@ -822,8 +822,9 @@ private:
 
 } // namespace
 
-Model ModelBuilder::build(const ModelDescriptor &descriptor,
-                          const TensorMeta &imeta) {
+tl::expected<std::unique_ptr<Model>, Error>
+ModelBuilder::build(const ModelDescriptor &descriptor,
+                    const TensorMeta &imeta) {
   LOG(INFO) << "Building model";
   CHECK(descriptor.root());
 
@@ -916,8 +917,9 @@ Model ModelBuilder::build(const ModelDescriptor &descriptor,
   model_root.get().accept(get_pes);
   auto pes = get_pes.result();
 
-  return Model(std::move(model_nodes), std::move(tensor_slots), std::move(pes),
-               model_root);
+  return std::make_unique<Model>(std::move(model_nodes),
+                                 std::move(tensor_slots), std::move(pes),
+                                 model_root);
 }
 
 } // namespace dh
