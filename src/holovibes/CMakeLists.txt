@@ -1,6 +1,7 @@
 qt_add_executable(holovibes
   main.cc
   accumulators/batched_spsc_accumulator.cc
+  sources/holofile_source.cc
 )
 
 set_common_target_properties(holovibes)
@@ -18,4 +19,5 @@ target_link_libraries(holovibes PRIVATE
     Qt6::Widgets
     Qt6::Gui
     holoflow
+    holofile
 )
