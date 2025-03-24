@@ -50,7 +50,7 @@ QtDisplaySinkFactory::type_check(const TensorMeta &imeta, const json &) {
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
-  if (imeta.strides().at(0) != imeta.shape().at(2)) {
+  if (imeta.strides().at(0) != imeta.shape().at(2) * imeta.shape().at(1)) {
     LOG(WARNING) << "Invalid stride: " << imeta.strides().at(0);
     return tl::unexpected(Error::INTERNAL_ERROR);
   }

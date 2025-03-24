@@ -89,13 +89,8 @@ HolofileSourceFactory::type_check(const json &jparams) {
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
-  if (params.start_frame <= 0) {
+  if (params.start_frame < 0) {
     LOG(WARNING) << "Invalid start_frame: " << params.start_frame;
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  if (params.end_frame <= 0) {
-    LOG(WARNING) << "Invalid end_frame: " << params.end_frame;
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
@@ -123,7 +118,7 @@ HolofileSourceFactory::type_check(const json &jparams) {
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
-  if (params.end_frame <= (int)header.frame_count) {
+  if (params.end_frame > (int)header.frame_count) {
     LOG(WARNING) << "end_frame is greater than file frames count";
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
