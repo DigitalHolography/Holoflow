@@ -217,9 +217,9 @@ HolofileSourceFactory::create(const json &jparams, cudaStream_t stream) {
       LOG(WARNING) << "Failed to read frames: " << result.error().message();
       return tl::unexpected(Error::INTERNAL_ERROR);
     }
+
     auto error = cudaMemcpyAsync(internal_buffer, tmp_buffer.get(), size,
                                  cudaMemcpyHostToDevice, stream);
-
     if (error != cudaSuccess) {
       LOG(WARNING) << "CUDA call failed with error: "
                    << cudaGetErrorString(error);
