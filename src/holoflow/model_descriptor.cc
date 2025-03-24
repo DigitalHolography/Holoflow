@@ -66,6 +66,32 @@ void AccumulatorDescriptorNode::accept(ModelDescriptorVisitor &visitor) {
 }
 
 // ==========================================================================
+//                     SourceDescriptorNode Implementation
+// ==========================================================================
+
+SourceDescriptorNode::SourceDescriptorNode(const std::string &kind,
+                                           const std::string &name,
+                                           const json &params)
+    : ModelDescriptorNode(kind, name, params) {}
+
+void SourceDescriptorNode::accept(ModelDescriptorVisitor &visitor) {
+  visitor.visit(*this);
+}
+
+// ==========================================================================
+//                     SinkDescriptorNode Implementation
+// ==========================================================================
+
+SinkDescriptorNode::SinkDescriptorNode(const std::string &kind,
+                                       const std::string &name,
+                                       const json &params)
+    : ModelDescriptorNode(kind, name, params) {}
+
+void SinkDescriptorNode::accept(ModelDescriptorVisitor &visitor) {
+  visitor.visit(*this);
+}
+
+// ==========================================================================
 //                     ModelDescriptor Implementation
 // ==========================================================================
 
@@ -73,13 +99,7 @@ Error ModelDescriptor::add_task_factory(const std::string &kind,
                                         std::unique_ptr<TaskFactory> factory) {
   VLOG(2) << "Adding task factory: " << kind;
 
-  bool in_task_factories =
-      task_factories_map_.find(kind) != task_factories_map_.end();
-
-  bool in_accumulator_factories =
-      accumulator_factories_map_.find(kind) != accumulator_factories_map_.end();
-
-  if (in_task_factories || in_accumulator_factories) {
+  if (in_factories(kind)) {
     LOG(WARNING) << "Factory " << kind << " was already registered";
     return Error::INTERNAL_ERROR;
   }
@@ -93,13 +113,7 @@ Error ModelDescriptor::add_accumulator_factory(
     const std::string &kind, std::unique_ptr<AccumulatorFactory> factory) {
   VLOG(2) << "Adding accumulator factory: " << kind;
 
-  bool in_task_factories =
-      task_factories_map_.find(kind) != task_factories_map_.end();
-
-  bool in_accumulator_factories =
-      accumulator_factories_map_.find(kind) != accumulator_factories_map_.end();
-
-  if (in_task_factories || in_accumulator_factories) {
+  if (in_factories(kind)) {
     LOG(WARNING) << "Factory " << kind << " was already registered";
     return Error::INTERNAL_ERROR;
   }
@@ -109,21 +123,44 @@ Error ModelDescriptor::add_accumulator_factory(
   return Error::SUCCESS;
 }
 
+Error ModelDescriptor::add_source_factory(
+    const std::string &kind, std::unique_ptr<SourceFactory> factory) {
+  VLOG(2) << "Adding source factory: " << kind;
+
+  if (in_factories(kind)) {
+    LOG(WARNING) << "Factory " << kind << " was already registered";
+    return Error::INTERNAL_ERROR;
+  }
+
+  source_factories_map_.emplace(kind, std::ref(*factory));
+  source_factories_.push_back(std::move(factory));
+  return Error::SUCCESS;
+}
+
+Error ModelDescriptor::add_sink_factory(const std::string &kind,
+                                        std::unique_ptr<SinkFactory> factory) {
+  VLOG(2) << "Adding sink factory: " << kind;
+
+  if (in_factories(kind)) {
+    LOG(WARNING) << "Factory " << kind << " was already registered";
+    return Error::INTERNAL_ERROR;
+  }
+
+  sink_factories_map_.emplace(kind, std::ref(*factory));
+  sink_factories_.push_back(std::move(factory));
+  return Error::SUCCESS;
+}
+
 Error ModelDescriptor::add_task(const std::string &kind,
                                 const std::string &name, const json &params) {
   VLOG(2) << "Adding task: " << kind;
 
-  bool in_task_factories =
-      task_factories_map_.find(kind) != task_factories_map_.end();
-
-  bool in_declared_tasks = tasks_.find(name) != tasks_.end();
-
-  if (!in_task_factories) {
+  if (!task_factories_map_.contains(kind)) {
     LOG(WARNING) << "Factory " << kind << " is not registered";
     return Error::INTERNAL_ERROR;
   }
 
-  if (in_declared_tasks) {
+  if (in_nodes(name)) {
     LOG(WARNING) << "Task " << name << " is already declared";
     return Error::INTERNAL_ERROR;
   }
@@ -137,18 +174,12 @@ Error ModelDescriptor::add_accumulator(const std::string &kind,
                                        const json &params) {
   VLOG(2) << "Adding accumulator: " << kind;
 
-  bool in_accumulator_factories =
-      accumulator_factories_map_.find(kind) != accumulator_factories_map_.end();
-
-  bool in_declared_accumulators =
-      accumulators_.find(name) != accumulators_.end();
-
-  if (!in_accumulator_factories) {
+  if (!accumulator_factories_map_.contains(kind)) {
     LOG(WARNING) << "Factory " << kind << " is not registered";
     return Error::INTERNAL_ERROR;
   }
 
-  if (in_declared_accumulators) {
+  if (in_nodes(name)) {
     LOG(WARNING) << "Accumulator " << name << " is already declared";
     return Error::INTERNAL_ERROR;
   }
@@ -157,26 +188,60 @@ Error ModelDescriptor::add_accumulator(const std::string &kind,
   return Error::SUCCESS;
 }
 
-Error ModelDescriptor::set_root_accumulator(const std::string &name) {
-  VLOG(2) << "Setting root accumulator: " << name;
+Error ModelDescriptor::add_source(const std::string &kind,
+                                  const std::string &name, const json &params) {
+  VLOG(2) << "Adding source: " << kind;
+
+  if (!source_factories_map_.contains(kind)) {
+    LOG(WARNING) << "Factory " << kind << " is not registered";
+    return Error::INTERNAL_ERROR;
+  }
+
+  if (in_nodes(name)) {
+    LOG(WARNING) << "Source " << name << " is already declared";
+    return Error::INTERNAL_ERROR;
+  }
+
+  sources_.emplace(name, std::make_pair(kind, params));
+  return Error::SUCCESS;
+}
+
+Error ModelDescriptor::add_sink(const std::string &kind,
+                                const std::string &name, const json &params) {
+  VLOG(2) << "Adding sink: " << kind;
+
+  if (!sink_factories_map_.contains(kind)) {
+    LOG(WARNING) << "Factory " << kind << " is not registered";
+    return Error::INTERNAL_ERROR;
+  }
+
+  if (in_nodes(name)) {
+    LOG(WARNING) << "Sink " << name << " is already declared";
+    return Error::INTERNAL_ERROR;
+  }
+
+  sinks_.emplace(name, std::make_pair(kind, params));
+  return Error::SUCCESS;
+}
+
+Error ModelDescriptor::set_source(const std::string &name) {
+  VLOG(2) << "Setting source: " << name;
 
   if (root_) {
-    LOG(WARNING) << "Root accumulator is already set";
+    // TODO support reassigning source
+    LOG(WARNING) << "Source is already set";
     return Error::INTERNAL_ERROR;
   }
 
-  bool in_declared_accumulators =
-      accumulators_.find(name) != accumulators_.end();
-
-  if (!in_declared_accumulators) {
-    LOG(WARNING) << "Accumulator " << name << " is not declared";
+  if (!sources_.contains(name)) {
+    LOG(WARNING) << "Source " << name << " is not declared";
     return Error::INTERNAL_ERROR;
   }
 
-  auto [kind, params] = accumulators_.at(name);
-  auto accu = std::make_unique<AccumulatorDescriptorNode>(kind, name, params);
-  root_ = accu.get();
-  nodes_.push_back(std::move(accu));
+  auto [kind, params] = sources_.at(name);
+  auto source = std::make_unique<SourceDescriptorNode>(kind, name, params);
+  root_ = source.get();
+  nodes_.push_back(std::move(source));
   return Error::SUCCESS;
 }
 
@@ -203,6 +268,38 @@ public:
   }
 
   void visit(AccumulatorDescriptorNode &node) override {
+    VLOG(2) << "visiting: " << node.name();
+
+    if (node.name() == name_) {
+      result_ = &node;
+      return;
+    }
+
+    for (auto &child : node.children()) {
+      child.get().accept(*this);
+      if (result_) {
+        return;
+      }
+    }
+  }
+
+  void visit(SourceDescriptorNode &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    if (node.name() == name_) {
+      result_ = &node;
+      return;
+    }
+
+    for (auto &child : node.children()) {
+      child.get().accept(*this);
+      if (result_) {
+        return;
+      }
+    }
+  }
+
+  void visit(SinkDescriptorNode &node) {
     VLOG(2) << "visiting: " << node.name();
 
     if (node.name() == name_) {
@@ -246,15 +343,18 @@ Error ModelDescriptor::add_child(const std::string &parent_name,
   }
 
   std::unique_ptr<ModelDescriptorNode> child_node;
-  bool in_tasks = tasks_.find(child_name) != tasks_.end();
-  bool in_accus = accumulators_.find(child_name) != accumulators_.end();
-
-  if (in_tasks) {
+  if (tasks_.contains(child_name)) {
     auto [kind, params] = tasks_.at(child_name);
     child_node.reset(new TaskDescriptorNode(kind, child_name, params));
-  } else if (in_accus) {
+  } else if (accumulators_.contains(child_name)) {
     auto [kind, params] = accumulators_.at(child_name);
     child_node.reset(new AccumulatorDescriptorNode(kind, child_name, params));
+  } else if (sources_.contains(child_name)) {
+    auto [kind, params] = sources_.at(child_name);
+    child_node.reset(new SourceDescriptorNode(kind, child_name, params));
+  } else if (sinks_.contains(child_name)) {
+    auto [kind, params] = sinks_.at(child_name);
+    child_node.reset(new SinkDescriptorNode(kind, child_name, params));
   } else {
     LOG(WARNING) << "Node " << child_name << " was not declared";
     return Error::INTERNAL_ERROR;
@@ -275,6 +375,27 @@ ModelDescriptor::accumulator_factories() const {
   return accumulator_factories_map_;
 }
 
+const ModelDescriptor::SourceFactoryMap &
+ModelDescriptor::source_factories() const {
+  return source_factories_map_;
+}
+
+const ModelDescriptor::SinkFactoryMap &ModelDescriptor::sink_factories() const {
+  return sink_factories_map_;
+}
+
 ModelDescriptorNode *ModelDescriptor::root() const { return root_; }
+
+bool ModelDescriptor::in_factories(const std::string &kind) {
+  return task_factories_map_.contains(kind) ||
+         accumulator_factories_map_.contains(kind) ||
+         source_factories_map_.contains(kind) ||
+         sink_factories_map_.contains(kind);
+}
+
+bool ModelDescriptor::in_nodes(const std::string &name) {
+  return tasks_.contains(name) || accumulators_.contains(name) ||
+         sources_.contains(name) || sinks_.contains(name);
+}
 
 } // namespace dh

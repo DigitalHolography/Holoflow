@@ -215,6 +215,16 @@ public:
     nodes_.push_back(std::move(builder_node));
   }
 
+  void visit(SourceDescriptorNode &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkDescriptorNode &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
   std::pair<std::reference_wrapper<ModelNodeBuilder>,
             std::vector<std::unique_ptr<ModelNodeBuilder>>>
   result() {

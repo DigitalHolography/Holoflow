@@ -6,6 +6,8 @@
 #include "holoflow/model_descriptor.hh"
 #include "holoflow/tensor.hh"
 #include "holovibes/accumulators/batched_spsc_accumulator.hh"
+#include "holovibes/sinks/qt_display_sink.hh"
+#include "holovibes/sources/holofile_source.hh"
 #include "holovibes/ui/tensor_display_widget.hh"
 
 int main(int argc, char **argv) {
@@ -32,34 +34,44 @@ int main(int argc, char **argv) {
 
   dh::ModelDescriptor descriptor;
 
-  descriptor.add_accumulator_factory(
-      "BatchedSPSCAccumulator",
-      std::make_unique<dh::BatchedSPSCAccumulatorFactory>());
+  descriptor.add_source_factory("HolofileSourceFactory",
+                                std::make_unique<dh::HolofileSourceFactory>());
+
+  descriptor.add_sink_factory(
+      "QtDisplaySinkFactory",
+      std::make_unique<dh::QtDisplaySinkFactory>(*processed_window));
 
   // ==========================================================================
   //                     Add nodes
   // ==========================================================================
 
-  descriptor.add_accumulator("BatchedSPSCAccumulator", "input_accumulator",
-                             R"({
-    "nb_slots": 1024,
-    "dequeue_batch_size": 32
+  descriptor.add_source("HolofileSourceFactory", "holofile_source",
+                        R"({
+    "path": "D:\\BatchTesting\\250220_GUJ0206_L.holo",
+    "start_frame": 0,
+    "end_frame": 64000,
+    "batch_size": 32,
+    "load_kind": "LOAD_IN_CPU"
   })"_json);
+
+  descriptor.add_sink("QtDisplaySinkFactory", "processed_widget", R"({})"_json);
 
   // ==========================================================================
   //                     Link nodes
   // ==========================================================================
 
-  descriptor.set_root_accumulator("input_accumulator");
+  descriptor.set_source("holofile_source");
+
+  descriptor.add_child("holofile_source", "processed_widget");
 
   // ==========================================================================
   //                     Build model
   // ==========================================================================
 
-  dh::TensorMeta meta(dh::DataType::U8, dh::MemoryLocation::DEVICE,
-                      {32, 340, 512});
+  // dh::TensorMeta meta(dh::DataType::U8, dh::MemoryLocation::DEVICE,
+  //                     {32, 340, 512});
 
-  auto model = dh::Model::from_descriptor(descriptor, meta).value();
+  // auto model = dh::Model::from_descriptor(descriptor, meta).value();
 
   // ==========================================================================
   //                     Run model

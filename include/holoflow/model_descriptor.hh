@@ -10,6 +10,8 @@
 
 #include "holoflow/accumulator.hh"
 #include "holoflow/error.hh"
+#include "holoflow/sink.hh"
+#include "holoflow/source.hh"
 #include "holoflow/task.hh"
 
 using json = nlohmann::json;
@@ -160,6 +162,52 @@ public:
 };
 
 /**
+ * @brief Represents a source node in the model descriptor tree.
+ *
+ * This node type is used for producing data to feed the model.
+ */
+class SourceDescriptorNode : public ModelDescriptorNode {
+public:
+  /**
+   * @brief Construct a new SourceDescriptorNode.
+   * @param kind The kind of node.
+   * @param name The name of the node.
+   * @param params The params associated with the node.
+   */
+  SourceDescriptorNode(const std::string &kind, const std::string &name,
+                       const json &params);
+
+  /**
+   * @brief Accepts a visitor for the Visitor pattern.
+   * @param visitor The visitor to process this node.
+   */
+  void accept(ModelDescriptorVisitor &visitor) override;
+};
+
+/**
+ * @brief Represents a sink node in the model descriptor tree.
+ *
+ * This node type is used for consuming data produced by the model.
+ */
+class SinkDescriptorNode : public ModelDescriptorNode {
+public:
+  /**
+   * @brief Construct a new SinkDescriptorNode.
+   * @param kind The kind of node.
+   * @param name The name of the node.
+   * @param params The params associated with the node.
+   */
+  SinkDescriptorNode(const std::string &kind, const std::string &name,
+                     const json &params);
+
+  /**
+   * @brief Accepts a visitor for the Visitor pattern.
+   * @param visitor The visitor to process this node.
+   */
+  void accept(ModelDescriptorVisitor &visitor) override;
+};
+
+/**
  * @brief Visitor interface for traversing model descriptor nodes.
  *
  * Implements the Visitor pattern to allow operations on different node types.
@@ -182,6 +230,18 @@ public:
    * @param node The accumulator node being visited.
    */
   virtual void visit(AccumulatorDescriptorNode &node) = 0;
+
+  /**
+   * @brief Visits an SourceDescriptorNode.
+   * @param node The source node being visited.
+   */
+  virtual void visit(SourceDescriptorNode &node) = 0;
+
+  /**
+   * @brief Visits a SinkDescriptorNode.
+   * @param node The sink node being visited.
+   */
+  virtual void visit(SinkDescriptorNode &node) = 0;
 };
 
 /**
@@ -204,6 +264,18 @@ public:
                          std::reference_wrapper<AccumulatorFactory>>;
 
   /**
+   * @brief Map from kind to source factory.
+   */
+  using SourceFactoryMap =
+      std::unordered_map<std::string, std::reference_wrapper<SourceFactory>>;
+
+  /**
+   * @brief Map from kind to sink factory.
+   */
+  using SinkFactoryMap =
+      std::unordered_map<std::string, std::reference_wrapper<SinkFactory>>;
+
+  /**
    * @brief Map from name to (kind, params).
    */
   using TaskMap = std::unordered_map<std::string, std::pair<std::string, json>>;
@@ -213,6 +285,17 @@ public:
    */
   using AccumulatorMap =
       std::unordered_map<std::string, std::pair<std::string, json>>;
+
+  /**
+   * @brief Map from name to (kind, params).
+   */
+  using SourceMap =
+      std::unordered_map<std::string, std::pair<std::string, json>>;
+
+  /**
+   * @brief Map from name to (kind, params).
+   */
+  using SinkMap = std::unordered_map<std::string, std::pair<std::string, json>>;
 
   /**
    * @brief Adds a task factory.
@@ -231,6 +314,24 @@ public:
    */
   Error add_accumulator_factory(const std::string &kind,
                                 std::unique_ptr<AccumulatorFactory> factory);
+
+  /**
+   * @brief Adds a source factory.
+   * @param kind The kind of the source.
+   * @param factory Unique pointer to the source factory.
+   * @return Error code indicating success or failure.
+   */
+  Error add_source_factory(const std::string &kind,
+                           std::unique_ptr<SourceFactory> factory);
+
+  /**
+   * @brief Adds a sink factory.
+   * @param kind The kind of the sink.
+   * @param factory Unique pointer to the sink factory.
+   * @return Error code indicating success or failure.
+   */
+  Error add_sink_factory(const std::string &kind,
+                         std::unique_ptr<SinkFactory> factory);
 
   /**
    * @brief Adds a task to the model.
@@ -253,11 +354,31 @@ public:
                         const json &params);
 
   /**
-   * @brief Sets the root accumulator of the model.
-   * @param name The name of the root accumulator.
+   * @brief Adds a source to the model.
+   * @param kind The kind of the source.
+   * @param name The name of the source.
+   * @param params The parameters of the source.
    * @return Error code indicating success or failure.
    */
-  Error set_root_accumulator(const std::string &name);
+  Error add_source(const std::string &kind, const std::string &name,
+                   const json &params);
+
+  /**
+   * @brief Adds a sink to the model.
+   * @param kind The kind of the sink.
+   * @param name The name of the sink.
+   * @param params The parameters of the sink.
+   * @return Error code indicating success or failure.
+   */
+  Error add_sink(const std::string &kind, const std::string &name,
+                 const json &params);
+
+  /**
+   * @brief Sets the source of the model.
+   * @param name The name of the source.
+   * @return Error code indicating success or failure.
+   */
+  Error set_source(const std::string &name);
 
   /**
    * @brief Adds a child relationship between nodes.
@@ -281,23 +402,51 @@ public:
   const AccumulatorFactoryMap &accumulator_factories() const;
 
   /**
+   * @brief Retrieves the source factories.
+   * @return A reference to the source factory map.
+   */
+  const SourceFactoryMap &source_factories() const;
+
+  /**
+   * @brief Retrieves the sink factories.
+   * @return A reference to the sink factory map.
+   */
+  const SinkFactoryMap &sink_factories() const;
+
+  /**
    * @brief Retrieves the root node.
    * @return Pointer to the root node.
    */
   ModelDescriptorNode *root() const;
 
 private:
+  bool in_factories(const std::string &kind);
+
+  bool in_nodes(const std::string &name);
+
   /// Maps task kinds to factories.
   TaskFactoryMap task_factories_map_;
 
   /// Maps accumulator kinds to factories.
   AccumulatorFactoryMap accumulator_factories_map_;
 
+  /// Maps task kinds to factories.
+  SourceFactoryMap source_factories_map_;
+
+  /// Maps task kinds to factories.
+  SinkFactoryMap sink_factories_map_;
+
   /// Maps task names to (kind, params).
   TaskMap tasks_;
 
   /// Maps accumulator names to (kind, params).
   AccumulatorMap accumulators_;
+
+  /// Maps source names to (kind, params).
+  SourceMap sources_;
+
+  /// Maps sink names to (kind, params).
+  SinkMap sinks_;
 
   /// Root node (non-owning).
   ModelDescriptorNode *root_ = nullptr;
@@ -307,6 +456,12 @@ private:
 
   /// Stores accumulator factories.
   std::vector<std::unique_ptr<AccumulatorFactory>> accumulator_factories_;
+
+  /// Stores source factories.
+  std::vector<std::unique_ptr<SourceFactory>> source_factories_;
+
+  /// Stores sink factories.
+  std::vector<std::unique_ptr<SinkFactory>> sink_factories_;
 
   /// Stores model nodes.
   std::vector<std::unique_ptr<ModelDescriptorNode>> nodes_;
