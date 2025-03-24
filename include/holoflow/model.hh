@@ -249,11 +249,12 @@ public:
   };
 
   static tl::expected<std::unique_ptr<Model>, Error>
-  from_descriptor(const ModelDescriptor &descriptor, const TensorMeta &imeta);
+  from_descriptor(const ModelDescriptor &descriptor);
 
   Model(std::vector<std::unique_ptr<ModelNode>> nodes,
         std::unordered_map<int, TensorSlot> tensors,
-        std::vector<std::reference_wrapper<ModelNode>> pes, ModelNode &root);
+        std::vector<std::reference_wrapper<ModelNode>> pes,
+        std::vector<unique_cuda_stream> streams, ModelNode &root);
 
   Accumulator *input(const std::string &name);
   const Accumulator *input(const std::string &name) const;
@@ -269,6 +270,7 @@ private:
   std::vector<std::unique_ptr<ModelNode>> nodes_;
   std::unordered_map<int, TensorSlot> tensors_;
   std::vector<std::reference_wrapper<ModelNode>> pes_;
+  std::vector<unique_cuda_stream> streams_;
 
   State state_;
   std::atomic_bool stop_flag_;

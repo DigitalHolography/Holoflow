@@ -311,14 +311,34 @@ public:
     nodes_.push_back(std::move(builder_node));
   }
 
-  void visit(SourceDescriptorNode &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SourceDescriptorNode &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    auto builder_node = std::make_unique<SourceNodeBuilder>();
+    builder_node->set_kind(node.kind());
+    builder_node->set_name(node.name());
+    builder_node->set_params(node.params());
+
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+      builder_node->add_child(*root_);
+    }
+
+    root_ = &*builder_node;
+    nodes_.push_back(std::move(builder_node));
   }
 
-  void visit(SinkDescriptorNode &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SinkDescriptorNode &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    auto builder_node = std::make_unique<SinkNodeBuilder>();
+    builder_node->set_kind(node.kind());
+    builder_node->set_name(node.name());
+    builder_node->set_params(node.params());
+
+    root_ = &*builder_node;
+    nodes_.push_back(std::move(builder_node));
+    CHECK(node.children().empty());
   }
 
   std::pair<std::reference_wrapper<ModelNodeBuilder>,
@@ -347,7 +367,7 @@ class AssignStreams : public ModelBuilderVisitor {
   void visit(AccumulatorNodeBuilder &node) {
     VLOG(2) << "visiting: " << node.name();
 
-    unique_cuda_stream stream;
+    auto stream = make_unique_cuda_stream();
     node.set_stream(stream.get());
     streams_stack_.push(stream.get());
     streams_.push_back(std::move(stream));
@@ -359,14 +379,27 @@ class AssignStreams : public ModelBuilderVisitor {
     streams_stack_.pop();
   }
 
-  void visit(SourceNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SourceNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    auto stream = make_unique_cuda_stream();
+    node.set_stream(stream.get());
+    streams_stack_.push(stream.get());
+    streams_.push_back(std::move(stream));
+
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
+
+    streams_stack_.pop();
   }
 
-  void visit(SinkNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SinkNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(!streams_stack_.empty());
+    node.set_stream(streams_stack_.top());
+    CHECK(node.children().empty());
   }
 
 public:
@@ -392,18 +425,32 @@ public:
       std::unordered_map<std::string,
                          std::reference_wrapper<AccumulatorFactory>>;
 
+  /**
+   * @brief Map from kind to source factory.
+   */
+  using SourceFactoryMap =
+      std::unordered_map<std::string, std::reference_wrapper<SourceFactory>>;
+
+  /**
+   * @brief Map from kind to sink factory.
+   */
+  using SinkFactoryMap =
+      std::unordered_map<std::string, std::reference_wrapper<SinkFactory>>;
+
   TypeCheck(const TaskFactoryMap &task_factories_map,
             const AccumulatorFactoryMap &accumulator_factories_map,
-            const TensorMeta &imeta)
+            const SourceFactoryMap &source_factories_map,
+            const SinkFactoryMap &sink_factories_map)
       : task_factories_map_(task_factories_map),
         accumulator_factories_map_(accumulator_factories_map),
-        imetas_stack_({imeta}), result_(true) {}
+        source_factories_map_(source_factories_map),
+        sink_factories_map_(sink_factories_map), result_(true) {}
 
   void visit(TaskNodeBuilder &node) {
     VLOG(2) << "visiting: " << node.name();
 
     CHECK(!imetas_stack_.empty());
-    CHECK(task_factories_map_.find(node.kind()) != task_factories_map_.end());
+    CHECK(task_factories_map_.contains(node.kind()));
 
     auto &factory = task_factories_map_.at(node.kind());
     auto result = factory.get().type_check(imetas_stack_.top(), node.params());
@@ -425,8 +472,7 @@ public:
     VLOG(2) << "visiting: " << node.name();
 
     CHECK(!imetas_stack_.empty());
-    CHECK(accumulator_factories_map_.find(node.kind()) !=
-          accumulator_factories_map_.end());
+    CHECK(accumulator_factories_map_.contains(node.kind()));
 
     auto &factory = accumulator_factories_map_.at(node.kind());
     auto result = factory.get().type_check(imetas_stack_.top(), node.params());
@@ -444,14 +490,44 @@ public:
     imetas_stack_.pop();
   }
 
-  void visit(SourceNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SourceNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(imetas_stack_.empty());
+    CHECK(source_factories_map_.contains(node.kind()));
+
+    auto &factory = source_factories_map_.at(node.kind());
+    auto result = factory.get().type_check(node.params());
+    if (!result) {
+      LOG(WARNING) << "Type checking failed at node: " << node.name();
+      result_ = false;
+      return;
+    }
+
+    node.set_source_meta(result.value());
+    imetas_stack_.push(result.value().ometa());
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
+    imetas_stack_.pop();
   }
 
-  void visit(SinkNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SinkNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(!imetas_stack_.empty());
+    CHECK(sink_factories_map_.contains(node.kind()));
+
+    auto &factory = sink_factories_map_.at(node.kind());
+    auto result = factory.get().type_check(imetas_stack_.top(), node.params());
+    if (!result) {
+      LOG(WARNING) << "Type checking failed at node: " << node.name();
+      result_ = false;
+      return;
+    }
+
+    node.set_sink_meta(result.value());
+    CHECK(node.children().empty());
   }
 
   bool result() { return result_; }
@@ -462,6 +538,12 @@ private:
 
   /// Maps accumulator kinds to factories.
   const AccumulatorFactoryMap &accumulator_factories_map_;
+
+  /// Maps source kinds to factories.
+  const SourceFactoryMap &source_factories_map_;
+
+  /// Maps sink kinds to factories.
+  const SinkFactoryMap &sink_factories_map_;
 
   bool result_;
 
@@ -514,14 +596,27 @@ public:
     }
   }
 
-  void visit(SourceNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SourceNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    size_t nb_inlined_children = std::count_if(
+        node.children().begin(), node.children().end(), is_inlined);
+
+    if (nb_inlined_children > 1) {
+      LOG(WARNING) << "Single inlined check failed at node: " << node.name();
+      result_ = false;
+      return;
+    }
+
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
   }
 
-  void visit(SinkNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SinkNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(node.children().empty());
   }
 
   bool result() { return result_; }
@@ -554,13 +649,12 @@ public:
   void visit(AccumulatorNodeBuilder &node) {
     VLOG(2) << "visiting: " << node.name();
 
-    if (!seen_non_inlined_stack_.empty()) {
-      if (!seen_non_inlined_stack_.top()) {
-        LOG(WARNING) << "Non inlined task check failed at node: "
-                     << node.name();
-        result_ = false;
-        return;
-      }
+    CHECK(!seen_non_inlined_stack_.empty());
+
+    if (!seen_non_inlined_stack_.top()) {
+      LOG(WARNING) << "Non inlined task check failed at node: " << node.name();
+      result_ = false;
+      return;
     }
 
     seen_non_inlined_stack_.push(false);
@@ -570,14 +664,22 @@ public:
     seen_non_inlined_stack_.pop();
   }
 
-  void visit(SourceNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SourceNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(seen_non_inlined_stack_.empty());
+
+    seen_non_inlined_stack_.push(true);
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
+    seen_non_inlined_stack_.pop();
   }
 
-  void visit(SinkNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SinkNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(node.children().empty());
   }
 
   bool result() { return result_; }
@@ -594,6 +696,8 @@ public:
   void visit(TaskNodeBuilder &node) {
     VLOG(2) << "visiting: " << node.name();
 
+    CHECK(!parents_stack_.empty());
+
     parents_stack_.push(std::ref(node));
     for (auto child : node.children()) {
       child.get().accept(*this);
@@ -604,6 +708,8 @@ public:
   void visit(AccumulatorNodeBuilder &node) {
     VLOG(2) << "visiting: " << node.name();
 
+    CHECK(!parents_stack_.empty());
+
     // Set current
     node.set_itens_id(next_id_++);
     node.set_otens_id(next_id_++);
@@ -611,14 +717,20 @@ public:
             << ", otens_id: " << node.otens_id();
 
     // Set parent
-    if (!parents_stack_.empty()) {
-      auto parent = parents_stack_.top();
-      if (auto *task = dynamic_cast<TaskNodeBuilder *>(&parent.get())) {
-        task->set_otens_id(node.itens_id());
-        VLOG(1) << task->name() << " <= otens_id: " << task->otens_id();
-      } else {
-        LOG(FATAL) << "Expected parent to be TaskBuilderNode";
-      }
+    auto parent = parents_stack_.top();
+    if (auto *task = dynamic_cast<TaskNodeBuilder *>(&parent.get())) {
+      task->set_otens_id(node.itens_id());
+      VLOG(1) << task->name() << " <= otens_id: " << task->otens_id();
+    }
+
+    else if (auto *source = dynamic_cast<SourceNodeBuilder *>(&parent.get())) {
+      source->set_otens_id(node.itens_id());
+      VLOG(1) << source->name() << " <= otens_id: " << source->otens_id();
+    }
+
+    else {
+      LOG(FATAL)
+          << "Expected parent to be TaskBuilderNode or SourceBuilderNode";
     }
 
     // Set children
@@ -626,8 +738,15 @@ public:
       if (auto *task = dynamic_cast<TaskNodeBuilder *>(&child.get())) {
         task->set_itens_id(node.otens_id());
         VLOG(1) << task->name() << " <= itens_id: " << task->itens_id();
-      } else {
-        LOG(FATAL) << "Expected child to be TaskBuilderNode";
+      }
+
+      else if (auto *sink = dynamic_cast<SinkNodeBuilder *>(&child.get())) {
+        sink->set_itens_id(node.otens_id());
+        VLOG(1) << sink->name() << " <= itens_id: " << sink->itens_id();
+      }
+
+      else {
+        LOG(FATAL) << "Expected child to be TaskBuilderNode or SinkBuilderNode";
       }
     }
 
@@ -638,14 +757,28 @@ public:
     parents_stack_.pop();
   }
 
-  void visit(SourceNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SourceNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(parents_stack_.empty());
+
+    parents_stack_.push(std::ref(node));
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
+    parents_stack_.pop();
   }
 
-  void visit(SinkNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SinkNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(!parents_stack_.empty());
+
+    parents_stack_.push(std::ref(node));
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
+    parents_stack_.pop();
   }
 
 private:
@@ -659,6 +792,8 @@ public:
 
   void visit(TaskNodeBuilder &node) {
     VLOG(2) << "visiting: " << node.name();
+
+    CHECK(!parents_stack_.empty());
 
     // Forward propagation (otens_id <= itens_id)
     if (node.task_meta().inlined() && node.get_itens_id() &&
@@ -674,8 +809,16 @@ public:
         if (auto *task = dynamic_cast<TaskNodeBuilder *>(&child.get())) {
           task->set_itens_id(node.otens_id());
           VLOG(1) << task->name() << " <= itens_id: " << task->itens_id();
-        } else {
-          LOG(FATAL) << "Expected child to be TaskBuilderNode";
+        }
+
+        else if (auto *sink = dynamic_cast<SinkNodeBuilder *>(&child.get())) {
+          sink->set_itens_id(node.otens_id());
+          VLOG(1) << sink->name() << " <= itens_id: " << sink->itens_id();
+        }
+
+        else {
+          LOG(FATAL)
+              << "Expected child to be TaskBuilderNode or SinkBuilderNode";
         }
       }
     }
@@ -701,8 +844,17 @@ public:
       if (auto *task = dynamic_cast<TaskNodeBuilder *>(&parent.get())) {
         task->set_otens_id(node.itens_id());
         VLOG(1) << task->name() << " <= otens_id: " << task->otens_id();
-      } else {
-        LOG(FATAL) << "Expected parent to be TaskBuilderNode";
+      }
+
+      else if (auto *source =
+                   dynamic_cast<SourceNodeBuilder *>(&parent.get())) {
+        source->set_otens_id(node.itens_id());
+        VLOG(1) << source->name() << " <= otens_id: " << source->otens_id();
+      }
+
+      else {
+        LOG(FATAL)
+            << "Expected parent to be TaskBuilderNode or SourceBuilderNode";
       }
     }
   }
@@ -717,14 +869,24 @@ public:
     parents_stack_.pop();
   }
 
-  void visit(SourceNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SourceNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    parents_stack_.push(std::ref(node));
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
+    parents_stack_.pop();
   }
 
-  void visit(SinkNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SinkNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    parents_stack_.push(std::ref(node));
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
+    parents_stack_.pop();
   }
 
 private:
@@ -749,8 +911,16 @@ public:
         if (auto *task = dynamic_cast<TaskNodeBuilder *>(&child.get())) {
           task->set_itens_id(node.otens_id());
           VLOG(1) << task->name() << " <= itens_id: " << task->itens_id();
-        } else {
-          LOG(FATAL) << "Expected child to be TaskBuilderNode";
+        }
+
+        else if (auto *sink = dynamic_cast<SinkNodeBuilder *>(&child.get())) {
+          sink->set_itens_id(node.otens_id());
+          VLOG(1) << sink->name() << " <= itens_id: " << sink->itens_id();
+        }
+
+        else {
+          LOG(FATAL)
+              << "Expected child to be TaskBuilderNode or SinkBuilderNode";
         }
       }
     }
@@ -772,14 +942,44 @@ public:
     parents_stack_.pop();
   }
 
-  void visit(SourceNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SourceNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    if (!node.get_otens_id()) {
+      // Set current
+      node.set_otens_id(next_id_++);
+      VLOG(1) << node.name() << " <= otens_id: " << node.otens_id();
+
+      // Set children
+      for (auto child : node.children()) {
+        if (auto *task = dynamic_cast<TaskNodeBuilder *>(&child.get())) {
+          task->set_itens_id(node.otens_id());
+          VLOG(1) << task->name() << " <= itens_id: " << task->itens_id();
+        }
+
+        else if (auto *sink = dynamic_cast<SinkNodeBuilder *>(&child.get())) {
+          sink->set_itens_id(node.otens_id());
+          VLOG(1) << sink->name() << " <= itens_id: " << sink->itens_id();
+        }
+
+        else {
+          LOG(FATAL)
+              << "Expected child to be TaskBuilderNode or SinkBuilderNode";
+        }
+      }
+    }
+
+    parents_stack_.push(std::ref(node));
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
+    parents_stack_.pop();
   }
 
-  void visit(SinkNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SinkNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(node.children().empty());
   }
 
 private:
@@ -802,15 +1002,31 @@ public:
       std::unordered_map<std::string,
                          std::reference_wrapper<AccumulatorFactory>>;
 
+  /**
+   * @brief Map from kind to source factory.
+   */
+  using SourceFactoryMap =
+      std::unordered_map<std::string, std::reference_wrapper<SourceFactory>>;
+
+  /**
+   * @brief Map from kind to sink factory.
+   */
+  using SinkFactoryMap =
+      std::unordered_map<std::string, std::reference_wrapper<SinkFactory>>;
+
   CallFactories(const TaskFactoryMap &task_factories_map,
-                const AccumulatorFactoryMap &accumulator_factories_map)
+                const AccumulatorFactoryMap &accumulator_factories_map,
+                const SourceFactoryMap &source_factories_map,
+                const SinkFactoryMap &sink_factories_map)
       : task_factories_map_(task_factories_map),
-        accumulator_factories_map_(accumulator_factories_map), result_(true) {}
+        accumulator_factories_map_(accumulator_factories_map),
+        source_factories_map_(source_factories_map),
+        sink_factories_map_(sink_factories_map), result_(true) {}
 
   void visit(TaskNodeBuilder &node) {
     VLOG(2) << "visiting: " << node.name();
 
-    CHECK(task_factories_map_.find(node.kind()) != task_factories_map_.end());
+    CHECK(task_factories_map_.contains(node.kind()));
 
     auto &factory = task_factories_map_.at(node.kind());
     auto result = factory.get().create(node.task_meta().imeta(), node.params(),
@@ -831,8 +1047,7 @@ public:
   void visit(AccumulatorNodeBuilder &node) {
     VLOG(2) << "visiting: " << node.name();
 
-    CHECK(accumulator_factories_map_.find(node.kind()) !=
-          accumulator_factories_map_.end());
+    CHECK(accumulator_factories_map_.contains(node.kind()));
 
     auto &factory = accumulator_factories_map_.at(node.kind());
     auto result = factory.get().create(node.accumulator_meta().imeta(),
@@ -850,14 +1065,43 @@ public:
     }
   }
 
-  void visit(SourceNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SourceNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(source_factories_map_.contains(node.kind()));
+
+    auto &factory = source_factories_map_.at(node.kind());
+    auto result = factory.get().create(node.params(), node.stream());
+    if (!result) {
+      LOG(WARNING) << "Factory call failed at node: " << node.name();
+      result_ = false;
+      return;
+    }
+
+    node.set_source(std::move(result.value()));
+
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
   }
 
-  void visit(SinkNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SinkNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(sink_factories_map_.contains(node.kind()));
+
+    auto &factory = sink_factories_map_.at(node.kind());
+    auto result = factory.get().create(node.sink_meta().imeta(), node.params(),
+                                       node.stream());
+    if (!result) {
+      LOG(WARNING) << "Factory call failed at node: " << node.name();
+      result_ = false;
+      return;
+    }
+
+    node.set_sink(std::move(result.value()));
+
+    CHECK(node.children().empty());
   }
 
   bool result() { return result_; }
@@ -868,6 +1112,12 @@ private:
 
   /// Maps accumulator kinds to factories.
   const AccumulatorFactoryMap &accumulator_factories_map_;
+
+  /// Maps source kinds to factories.
+  const SourceFactoryMap &source_factories_map_;
+
+  /// Maps sink kinds to factories.
+  const SinkFactoryMap &sink_factories_map_;
 
   bool result_;
 };
@@ -902,20 +1152,35 @@ public:
     nodes_.push_back(std::move(model_node));
   }
 
+  void visit(SourceNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    auto model_node = node.build();
+
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+      model_node->add_child(*root_);
+    }
+
+    root_ = &*model_node;
+    nodes_.push_back(std::move(model_node));
+  }
+
+  void visit(SinkNodeBuilder &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    auto model_node = node.build();
+
+    CHECK(node.children().empty());
+
+    root_ = &*model_node;
+    nodes_.push_back(std::move(model_node));
+  }
+
   std::pair<std::reference_wrapper<ModelNode>,
             std::vector<std::unique_ptr<ModelNode>>>
   result() {
     return std::make_pair(std::ref(*root_), std::move(nodes_));
-  }
-
-  void visit(SourceNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
-  }
-
-  void visit(SinkNodeBuilder &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
   }
 
 private:
@@ -961,14 +1226,28 @@ public:
     }
   }
 
-  void visit(SourceNode &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SourceNode &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    if (!tensors_map_.contains(node.otens_id())) {
+      tensors_map_.emplace(node.otens_id(),
+                           Model::TensorSlot(node.source_meta().ometa()));
+    }
+
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
   }
 
-  void visit(SinkNode &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SinkNode &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    if (!tensors_map_.contains(node.itens_id())) {
+      tensors_map_.emplace(node.itens_id(),
+                           Model::TensorSlot(node.sink_meta().imeta()));
+    }
+
+    CHECK(node.children().empty());
   }
 
   std::unordered_map<int, Model::TensorSlot> result() {
@@ -1004,14 +1283,18 @@ public:
     }
   }
 
-  void visit(SourceNode &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SourceNode &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
   }
 
-  void visit(SinkNode &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SinkNode &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(node.children().empty());
   }
 
   bool result() { return result_; }
@@ -1034,23 +1317,27 @@ public:
   void visit(AccumulatorNode &node) override {
     VLOG(2) << "visiting: " << node.name();
 
-    if (!node.children().empty()) {
-      pes_.push_back(std::ref(node));
-    }
+    pes_.push_back(std::ref(node));
 
     for (auto child : node.children()) {
       child.get().accept(*this);
     }
   }
 
-  void visit(SourceNode &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SourceNode &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    pes_.push_back(std::ref(node));
+
+    for (auto child : node.children()) {
+      child.get().accept(*this);
+    }
   }
 
-  void visit(SinkNode &) {
-    // TODO
-    LOG(FATAL) << "NOT IMPLEMENTED!";
+  void visit(SinkNode &node) {
+    VLOG(2) << "visiting: " << node.name();
+
+    CHECK(node.children().empty());
   }
 
   std::vector<std::reference_wrapper<ModelNode>> result() {
@@ -1064,8 +1351,7 @@ private:
 } // namespace
 
 tl::expected<std::unique_ptr<Model>, Error>
-ModelBuilder::build(const ModelDescriptor &descriptor,
-                    const TensorMeta &imeta) {
+ModelBuilder::build(const ModelDescriptor &descriptor) {
   LOG(INFO) << "Building model";
   CHECK(descriptor.root());
 
@@ -1080,8 +1366,9 @@ ModelBuilder::build(const ModelDescriptor &descriptor,
   auto streams = assign_streams.result();
 
   LOG(INFO) << "Performing type check";
-  TypeCheck type_check(descriptor.task_factories(),
-                       descriptor.accumulator_factories(), imeta);
+  TypeCheck type_check(
+      descriptor.task_factories(), descriptor.accumulator_factories(),
+      descriptor.source_factories(), descriptor.sink_factories());
   builder_root.get().accept(type_check);
   CHECK(type_check.result());
 
@@ -1114,8 +1401,9 @@ ModelBuilder::build(const ModelDescriptor &descriptor,
   builder_root.get().accept(assign_inlined_tasks_tensors2);
 
   LOG(INFO) << "Calling factories";
-  CallFactories call_factories(descriptor.task_factories(),
-                               descriptor.accumulator_factories());
+  CallFactories call_factories(
+      descriptor.task_factories(), descriptor.accumulator_factories(),
+      descriptor.source_factories(), descriptor.sink_factories());
   builder_root.get().accept(call_factories);
   CHECK(call_factories.result());
 
@@ -1158,9 +1446,10 @@ ModelBuilder::build(const ModelDescriptor &descriptor,
   model_root.get().accept(get_pes);
   auto pes = get_pes.result();
 
+  // TODO: Add the cuda streams to the model
   return std::make_unique<Model>(std::move(model_nodes),
                                  std::move(tensor_slots), std::move(pes),
-                                 model_root);
+                                 std::move(streams), model_root);
 }
 
 } // namespace dh

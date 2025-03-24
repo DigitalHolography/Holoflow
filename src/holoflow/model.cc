@@ -168,16 +168,15 @@ const int &SinkNode::itens_id() const { return itens_id_; }
 Model::Model(std::vector<std::unique_ptr<ModelNode>> nodes,
              std::unordered_map<int, TensorSlot> tensors,
              std::vector<std::reference_wrapper<ModelNode>> pes,
-             ModelNode &root)
+             std::vector<unique_cuda_stream> streams, ModelNode &root)
     : nodes_(std::move(nodes)), tensors_(std::move(tensors)),
-      pes_(std::move(pes)), root_(root) {}
+      pes_(std::move(pes)), streams_(std::move(streams)), root_(root) {}
 
 tl::expected<std::unique_ptr<Model>, Error>
-Model::from_descriptor(const ModelDescriptor &descriptor,
-                       const TensorMeta &imeta) {
+Model::from_descriptor(const ModelDescriptor &descriptor) {
 
   ModelBuilder builder;
-  return builder.build(descriptor, imeta);
+  return builder.build(descriptor);
 }
 
 } // namespace dh

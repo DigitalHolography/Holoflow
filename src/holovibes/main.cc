@@ -49,8 +49,8 @@ int main(int argc, char **argv) {
                         R"({
     "path": "D:\\BatchTesting\\250220_GUJ0206_L.holo",
     "start_frame": 0,
-    "end_frame": 64000,
-    "batch_size": 32,
+    "end_frame": 16000,
+    "batch_size": 1,
     "load_kind": "LOAD_IN_CPU"
   })"_json);
 
@@ -68,10 +68,7 @@ int main(int argc, char **argv) {
   //                     Build model
   // ==========================================================================
 
-  // dh::TensorMeta meta(dh::DataType::U8, dh::MemoryLocation::DEVICE,
-  //                     {32, 340, 512});
-
-  // auto model = dh::Model::from_descriptor(descriptor, meta).value();
+  auto model = dh::Model::from_descriptor(descriptor).value();
 
   // ==========================================================================
   //                     Run model

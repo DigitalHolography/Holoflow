@@ -192,7 +192,7 @@ public:
 class ModelBuilder {
 public:
   tl::expected<std::unique_ptr<Model>, Error>
-  build(const ModelDescriptor &descriptor, const TensorMeta &imeta);
+  build(const ModelDescriptor &descriptor);
 };
 
 } // namespace dh

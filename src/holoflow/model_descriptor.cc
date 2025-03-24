@@ -307,12 +307,7 @@ public:
       return;
     }
 
-    for (auto &child : node.children()) {
-      child.get().accept(*this);
-      if (result_) {
-        return;
-      }
-    }
+    CHECK(node.children().empty());
   }
 
   ModelDescriptorNode *result() { return result_; }
