@@ -6,6 +6,7 @@ add_library(holoflow STATIC
   model.cc
   model_builder.cc
   source.cc
+  sink.cc
 )
 
 set_common_target_properties(holoflow)
