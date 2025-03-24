@@ -1,9 +1,12 @@
 #include <glog/logging.h>
 
+#include <QApplication>
+
 #include "holoflow/model.hh"
 #include "holoflow/model_descriptor.hh"
 #include "holoflow/tensor.hh"
 #include "holovibes/accumulators/batched_spsc_accumulator.hh"
+#include "holovibes/ui/tensor_display_widget.hh"
 
 int main(int argc, char **argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
@@ -14,11 +17,20 @@ int main(int argc, char **argv) {
 
   LOG(INFO) << "Welcome to Holovibes!";
 
-  dh::ModelDescriptor descriptor;
+  // ==========================================================================
+  //                     Create display windows
+  // ==========================================================================
+
+  QApplication app(argc, argv);
+
+  auto *processed_window = new dh::TensorDisplayWidget(800, 800);
+  processed_window->show();
 
   // ==========================================================================
   //                     Add factories
   // ==========================================================================
+
+  dh::ModelDescriptor descriptor;
 
   descriptor.add_accumulator_factory(
       "BatchedSPSCAccumulator",
@@ -52,4 +64,6 @@ int main(int argc, char **argv) {
   // ==========================================================================
   //                     Run model
   // ==========================================================================
+
+  return app.exec();
 }
