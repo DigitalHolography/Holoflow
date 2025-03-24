@@ -11,6 +11,8 @@
 #include "holoflow/accumulator.hh"
 #include "holoflow/error.hh"
 #include "holoflow/model_descriptor.hh"
+#include "holoflow/sink.hh"
+#include "holoflow/source.hh"
 #include "holoflow/task.hh"
 #include "holoflow/tensor.hh"
 
@@ -25,8 +27,7 @@ public:
   using Child = std::reference_wrapper<ModelNode>;
 
   ModelNode(const std::string &kind, const std::string &name,
-            const json &params, int itens_id, int otens_id,
-            cudaStream_t stream);
+            const json &params, cudaStream_t stream);
 
   virtual ~ModelNode() = default;
 
@@ -73,14 +74,6 @@ public:
    */
   const json &params() const;
 
-  int &itens_id();
-
-  const int &itens_id() const;
-
-  int &otens_id();
-
-  const int &otens_id() const;
-
   /**
    * @brief Adds a child node.
    * @param child Reference to the child node.
@@ -104,8 +97,6 @@ private:
   std::string kind_; ///< The kind/type of the node.
   json params_;      ///< JSON object storing the node parameters.
 
-  int itens_id_;        ///< Id of input tensor.
-  int otens_id_;        ///< Id of output tensor.
   cudaStream_t stream_; ///< Cuda stream used by the node.
 
   std::vector<Child> children_; ///< List of child nodes.
@@ -127,9 +118,19 @@ public:
 
   const TaskMeta &task_meta() const;
 
+  int &itens_id();
+
+  const int &itens_id() const;
+
+  int &otens_id();
+
+  const int &otens_id() const;
+
 private:
   std::unique_ptr<Task> task_;
   TaskMeta task_meta_;
+  int itens_id_; ///< Id of input tensor.
+  int otens_id_; ///< Id of output tensor.
 };
 
 class AccumulatorNode : public ModelNode {
@@ -149,9 +150,71 @@ public:
 
   const AccumulatorMeta &accumulator_meta() const;
 
+  int &itens_id();
+
+  const int &itens_id() const;
+
+  int &otens_id();
+
+  const int &otens_id() const;
+
 private:
   std::unique_ptr<Accumulator> accumulator_;
   AccumulatorMeta accumulator_meta_;
+  int itens_id_; ///< Id of input tensor.
+  int otens_id_; ///< Id of output tensor.
+};
+
+class SourceNode : public ModelNode {
+public:
+  SourceNode(const std::string &kind, const std::string &name,
+             const json &params, int otens_id, cudaStream_t stream,
+             std::unique_ptr<Source> source, const SourceMeta &source_meta);
+
+  void accept(ModelVisitor &visitor) override;
+
+  Source &source();
+
+  const Source &source() const;
+
+  SourceMeta &source_meta();
+
+  const SourceMeta &source_meta() const;
+
+  int &otens_id();
+
+  const int &otens_id() const;
+
+private:
+  std::unique_ptr<Source> source_;
+  SourceMeta source_meta_;
+  int otens_id_; ///< Id of output tensor.
+};
+
+class SinkNode : public ModelNode {
+public:
+  SinkNode(const std::string &kind, const std::string &name, const json &params,
+           int itens_id, cudaStream_t stream, std::unique_ptr<Sink> sink,
+           const SinkMeta &sink_meta);
+
+  void accept(ModelVisitor &visitor) override;
+
+  Sink &sink();
+
+  const Sink &sink() const;
+
+  SinkMeta &sink_meta();
+
+  const SinkMeta &sink_meta() const;
+
+  int &itens_id();
+
+  const int &itens_id() const;
+
+private:
+  std::unique_ptr<Sink> sink_;
+  SinkMeta sink_meta_;
+  int itens_id_; ///< Id of input tensor.
 };
 
 class ModelVisitor {
@@ -161,6 +224,10 @@ public:
   virtual void visit(TaskNode &node) = 0;
 
   virtual void visit(AccumulatorNode &node) = 0;
+
+  virtual void visit(SourceNode &node) = 0;
+
+  virtual void visit(SinkNode &node) = 0;
 };
 
 class Model {

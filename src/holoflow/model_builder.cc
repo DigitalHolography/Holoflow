@@ -23,16 +23,6 @@ const json &ModelNodeBuilder::params() const {
   return *params_;
 }
 
-int ModelNodeBuilder::itens_id() const {
-  CHECK(itens_id_);
-  return *itens_id_;
-}
-
-int ModelNodeBuilder::otens_id() const {
-  CHECK(otens_id_);
-  return *otens_id_;
-}
-
 cudaStream_t ModelNodeBuilder::stream() const {
   CHECK(stream_);
   return *stream_;
@@ -46,48 +36,31 @@ std::span<const ModelNodeBuilder::Child> ModelNodeBuilder::children() const {
   return children_;
 }
 
-std::optional<int> ModelNodeBuilder::get_itens_id() const { return itens_id_; }
+void ModelNodeBuilder::set_name(const std::string &name) { name_ = name; }
 
-std::optional<int> ModelNodeBuilder::get_otens_id() const { return itens_id_; }
+void ModelNodeBuilder::set_kind(const std::string &kind) { kind_ = kind; }
 
-ModelNodeBuilder &ModelNodeBuilder::set_name(const std::string &name) {
-  name_ = name;
-  return *this;
-}
+void ModelNodeBuilder::set_params(const json &params) { params_ = params; }
 
-ModelNodeBuilder &ModelNodeBuilder::set_kind(const std::string &kind) {
-  kind_ = kind;
-  return *this;
-}
+void ModelNodeBuilder::set_stream(cudaStream_t stream) { stream_ = stream; }
 
-ModelNodeBuilder &ModelNodeBuilder::set_params(const json &params) {
-  params_ = params;
-  return *this;
-}
-
-ModelNodeBuilder &ModelNodeBuilder::set_itens_id(int id) {
-  itens_id_ = id;
-  return *this;
-}
-
-ModelNodeBuilder &ModelNodeBuilder::set_otens_id(int id) {
-  otens_id_ = id;
-  return *this;
-}
-
-ModelNodeBuilder &ModelNodeBuilder::set_stream(cudaStream_t stream) {
-  stream_ = stream;
-  return *this;
-}
-
-ModelNodeBuilder &ModelNodeBuilder::add_child(ModelNodeBuilder &child) {
+void ModelNodeBuilder::add_child(ModelNodeBuilder &child) {
   children_.push_back(child);
-  return *this;
 }
 
 // ==========================================================================
 //                     TaskNodeBuilder Implementation
 // ==========================================================================
+
+int TaskNodeBuilder::itens_id() const {
+  CHECK(itens_id_);
+  return *itens_id_;
+}
+
+int TaskNodeBuilder::otens_id() const {
+  CHECK(otens_id_);
+  return *otens_id_;
+}
 
 Task &TaskNodeBuilder::task() const {
   CHECK(task_);
@@ -99,15 +72,21 @@ const TaskMeta &TaskNodeBuilder::task_meta() const {
   return *task_meta_;
 }
 
-TaskNodeBuilder &TaskNodeBuilder::set_task(std::unique_ptr<Task> task) {
+std::optional<int> TaskNodeBuilder::get_itens_id() const { return itens_id_; }
+
+std::optional<int> TaskNodeBuilder::get_otens_id() const { return otens_id_; }
+
+void TaskNodeBuilder::set_task(std::unique_ptr<Task> task) {
   task_ = std::move(task);
-  return *this;
 }
 
-TaskNodeBuilder &TaskNodeBuilder::set_task_meta(const TaskMeta &task_meta) {
+void TaskNodeBuilder::set_task_meta(const TaskMeta &task_meta) {
   task_meta_ = task_meta;
-  return *this;
 }
+
+void TaskNodeBuilder::set_itens_id(int id) { itens_id_ = id; }
+
+void TaskNodeBuilder::set_otens_id(int id) { otens_id_ = id; }
 
 std::unique_ptr<ModelNode> TaskNodeBuilder::build() {
   CHECK(name_);
@@ -132,6 +111,16 @@ void TaskNodeBuilder::accept(ModelBuilderVisitor &visitor) {
 //                     AccumulatorNodeBuilder Implementation
 // ==========================================================================
 
+int AccumulatorNodeBuilder::itens_id() const {
+  CHECK(itens_id_);
+  return *itens_id_;
+}
+
+int AccumulatorNodeBuilder::otens_id() const {
+  CHECK(otens_id_);
+  return *otens_id_;
+}
+
 Accumulator &AccumulatorNodeBuilder::accumulator() const {
   CHECK(accumulator_);
   return *accumulator_;
@@ -142,17 +131,27 @@ const AccumulatorMeta &AccumulatorNodeBuilder::accumulator_meta() const {
   return *accumulator_meta_;
 }
 
-AccumulatorNodeBuilder &AccumulatorNodeBuilder::set_accumulator(
-    std::unique_ptr<Accumulator> accumulator) {
-  accumulator_ = std::move(accumulator);
-  return *this;
+std::optional<int> AccumulatorNodeBuilder::get_itens_id() const {
+  return itens_id_;
 }
 
-AccumulatorNodeBuilder &AccumulatorNodeBuilder::set_accumulator_meta(
+std::optional<int> AccumulatorNodeBuilder::get_otens_id() const {
+  return otens_id_;
+}
+
+void AccumulatorNodeBuilder::set_accumulator(
+    std::unique_ptr<Accumulator> accumulator) {
+  accumulator_ = std::move(accumulator);
+}
+
+void AccumulatorNodeBuilder::set_accumulator_meta(
     const AccumulatorMeta &accumulator_meta) {
   accumulator_meta_ = accumulator_meta;
-  return *this;
 }
+
+void AccumulatorNodeBuilder::set_itens_id(int id) { itens_id_ = id; }
+
+void AccumulatorNodeBuilder::set_otens_id(int id) { otens_id_ = id; }
 
 std::unique_ptr<ModelNode> AccumulatorNodeBuilder::build() {
   CHECK(name_);
@@ -170,6 +169,103 @@ std::unique_ptr<ModelNode> AccumulatorNodeBuilder::build() {
 }
 
 void AccumulatorNodeBuilder::accept(ModelBuilderVisitor &visitor) {
+  visitor.visit(*this);
+}
+
+// ==========================================================================
+//                     SourceNodeBuilder Implementation
+// ==========================================================================
+
+int SourceNodeBuilder::otens_id() const {
+  CHECK(otens_id_);
+  return *otens_id_;
+}
+
+Source &SourceNodeBuilder::source() const {
+  CHECK(source_);
+  return *source_;
+}
+
+const SourceMeta &SourceNodeBuilder::source_meta() const {
+  CHECK(source_meta_);
+  return *source_meta_;
+}
+
+std::optional<int> SourceNodeBuilder::get_otens_id() const { return otens_id_; }
+
+void SourceNodeBuilder::set_source(std::unique_ptr<Source> source) {
+  source_ = std::move(source);
+}
+
+void SourceNodeBuilder::set_source_meta(const SourceMeta &source_meta) {
+  source_meta_ = source_meta;
+}
+
+void SourceNodeBuilder::set_otens_id(int id) { otens_id_ = id; }
+
+std::unique_ptr<ModelNode> SourceNodeBuilder::build() {
+  CHECK(name_);
+  CHECK(kind_);
+  CHECK(params_);
+  CHECK(otens_id_);
+  CHECK(stream_);
+  CHECK(source_);
+  CHECK(source_meta_);
+
+  return std::make_unique<SourceNode>(*kind_, *name_, *params_, *otens_id_,
+                                      *stream_, std::move(source_),
+                                      *source_meta_);
+}
+
+void SourceNodeBuilder::accept(ModelBuilderVisitor &visitor) {
+  visitor.visit(*this);
+}
+
+// ==========================================================================
+//                     SinkNodeBuilder Implementation
+// ==========================================================================
+
+int SinkNodeBuilder::itens_id() const {
+  CHECK(itens_id_);
+  return *itens_id_;
+}
+
+Sink &SinkNodeBuilder::sink() const {
+  CHECK(sink_);
+  return *sink_;
+}
+
+const SinkMeta &SinkNodeBuilder::sink_meta() const {
+  CHECK(sink_meta_);
+  return *sink_meta_;
+}
+
+std::optional<int> SinkNodeBuilder::get_itens_id() const { return itens_id_; }
+
+void SinkNodeBuilder::set_sink(std::unique_ptr<Sink> sink) {
+  sink_ = std::move(sink);
+}
+
+void SinkNodeBuilder::set_sink_meta(const SinkMeta &sink_meta) {
+  sink_meta_ = sink_meta;
+}
+
+void SinkNodeBuilder::set_itens_id(int id) { itens_id_ = id; }
+
+std::unique_ptr<ModelNode> SinkNodeBuilder::build() {
+  CHECK(name_);
+  CHECK(kind_);
+  CHECK(params_);
+  CHECK(itens_id_);
+  CHECK(stream_);
+  CHECK(sink_);
+  CHECK(sink_meta_);
+
+  return std::make_unique<SinkNode>(*kind_, *name_, *params_, *itens_id_,
+                                    *stream_, std::move(sink_), *sink_meta_);
+}
+
+void SinkNodeBuilder::accept(ModelBuilderVisitor &visitor) {
   visitor.visit(*this);
 }
 
@@ -263,6 +359,16 @@ class AssignStreams : public ModelBuilderVisitor {
     streams_stack_.pop();
   }
 
+  void visit(SourceNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
 public:
   std::vector<unique_cuda_stream> result() { return std::move(streams_); }
 
@@ -338,6 +444,16 @@ public:
     imetas_stack_.pop();
   }
 
+  void visit(SourceNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
   bool result() { return result_; }
 
 private:
@@ -398,6 +514,16 @@ public:
     }
   }
 
+  void visit(SourceNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
   bool result() { return result_; }
 
 private:
@@ -444,6 +570,16 @@ public:
     seen_non_inlined_stack_.pop();
   }
 
+  void visit(SourceNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
   bool result() { return result_; }
 
 private:
@@ -477,16 +613,22 @@ public:
     // Set parent
     if (!parents_stack_.empty()) {
       auto parent = parents_stack_.top();
-      parent.get().set_otens_id(node.itens_id());
-      VLOG(1) << parent.get().name()
-              << " <= otens_id: " << parent.get().otens_id();
+      if (auto *task = dynamic_cast<TaskNodeBuilder *>(&parent.get())) {
+        task->set_otens_id(node.itens_id());
+        VLOG(1) << task->name() << " <= otens_id: " << task->otens_id();
+      } else {
+        LOG(FATAL) << "Expected parent to be TaskBuilderNode";
+      }
     }
 
     // Set children
     for (auto child : node.children()) {
-      child.get().set_itens_id(node.otens_id());
-      VLOG(1) << child.get().name()
-              << " <= itens_id: " << child.get().itens_id();
+      if (auto *task = dynamic_cast<TaskNodeBuilder *>(&child.get())) {
+        task->set_itens_id(node.otens_id());
+        VLOG(1) << task->name() << " <= itens_id: " << task->itens_id();
+      } else {
+        LOG(FATAL) << "Expected child to be TaskBuilderNode";
+      }
     }
 
     parents_stack_.push(std::ref(node));
@@ -494,6 +636,16 @@ public:
       child.get().accept(*this);
     }
     parents_stack_.pop();
+  }
+
+  void visit(SourceNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
   }
 
 private:
@@ -519,9 +671,12 @@ public:
 
       // Set children
       for (auto child : node.children()) {
-        child.get().set_itens_id(node.otens_id());
-        VLOG(1) << child.get().name()
-                << " <= itens_id: " << child.get().itens_id();
+        if (auto *task = dynamic_cast<TaskNodeBuilder *>(&child.get())) {
+          task->set_itens_id(node.otens_id());
+          VLOG(1) << task->name() << " <= itens_id: " << task->itens_id();
+        } else {
+          LOG(FATAL) << "Expected child to be TaskBuilderNode";
+        }
       }
     }
 
@@ -543,9 +698,12 @@ public:
       // Set parent
       CHECK(!parents_stack_.empty());
       auto parent = parents_stack_.top();
-      parent.get().set_otens_id(node.itens_id());
-      VLOG(1) << parent.get().name()
-              << " <= otens_id: " << parent.get().otens_id();
+      if (auto *task = dynamic_cast<TaskNodeBuilder *>(&parent.get())) {
+        task->set_otens_id(node.itens_id());
+        VLOG(1) << task->name() << " <= otens_id: " << task->otens_id();
+      } else {
+        LOG(FATAL) << "Expected parent to be TaskBuilderNode";
+      }
     }
   }
 
@@ -557,6 +715,16 @@ public:
       child.get().accept(*this);
     }
     parents_stack_.pop();
+  }
+
+  void visit(SourceNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
   }
 
 private:
@@ -578,9 +746,12 @@ public:
 
       // Set children
       for (auto child : node.children()) {
-        child.get().set_itens_id(node.otens_id());
-        VLOG(1) << child.get().name()
-                << " <= itens_id: " << child.get().itens_id();
+        if (auto *task = dynamic_cast<TaskNodeBuilder *>(&child.get())) {
+          task->set_itens_id(node.otens_id());
+          VLOG(1) << task->name() << " <= itens_id: " << task->itens_id();
+        } else {
+          LOG(FATAL) << "Expected child to be TaskBuilderNode";
+        }
       }
     }
 
@@ -599,6 +770,16 @@ public:
       child.get().accept(*this);
     }
     parents_stack_.pop();
+  }
+
+  void visit(SourceNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
   }
 
 private:
@@ -669,6 +850,16 @@ public:
     }
   }
 
+  void visit(SourceNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
   bool result() { return result_; }
 
 private:
@@ -717,6 +908,16 @@ public:
     return std::make_pair(std::ref(*root_), std::move(nodes_));
   }
 
+  void visit(SourceNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkNodeBuilder &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
 private:
   ModelNode *root_;
   std::vector<std::unique_ptr<ModelNode>> nodes_;
@@ -760,6 +961,16 @@ public:
     }
   }
 
+  void visit(SourceNode &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkNode &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
   std::unordered_map<int, Model::TensorSlot> result() {
     return std::move(tensors_map_);
   }
@@ -793,6 +1004,16 @@ public:
     }
   }
 
+  void visit(SourceNode &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkNode &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
   bool result() { return result_; }
 
 private:
@@ -820,6 +1041,16 @@ public:
     for (auto child : node.children()) {
       child.get().accept(*this);
     }
+  }
+
+  void visit(SourceNode &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
+  }
+
+  void visit(SinkNode &) {
+    // TODO
+    LOG(FATAL) << "NOT IMPLEMENTED!";
   }
 
   std::vector<std::reference_wrapper<ModelNode>> result() {
