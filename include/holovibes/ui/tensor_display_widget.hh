@@ -1,13 +1,14 @@
 #pragma once
 
 #include <QLabel>
+#include <QMainWindow>
 #include <QWidget>
 
 #include "holoflow/tensor.hh"
 
 namespace dh {
 
-class TensorDisplayWidget : public QWidget {
+class TensorDisplayWidget : public QMainWindow {
   Q_OBJECT
 
 public:

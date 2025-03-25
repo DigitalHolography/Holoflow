@@ -74,6 +74,8 @@ public:
    */
   const json &params() const;
 
+  cudaStream_t stream() const;
+
   /**
    * @brief Adds a child node.
    * @param child Reference to the child node.
@@ -241,6 +243,7 @@ public:
     TensorMeta meta;                        ///< Metadata for the tensor.
     unique_host_ptr<uint8_t> host_data;     ///< Owned host memory (if used).
     unique_device_ptr<uint8_t> device_data; ///< Owned device memory (if used).
+    uint8_t *data;
   };
 
   enum class State {
@@ -266,6 +269,8 @@ public:
   void stop();
 
 private:
+  void run();
+
   ModelNode &root_;
   std::vector<std::unique_ptr<ModelNode>> nodes_;
   std::unordered_map<int, TensorSlot> tensors_;
@@ -274,6 +279,7 @@ private:
 
   State state_;
   std::atomic_bool stop_flag_;
+  std::thread model_thread_;
 };
 
 } // namespace dh

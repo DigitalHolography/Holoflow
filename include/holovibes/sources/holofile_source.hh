@@ -47,7 +47,6 @@ private:
   uint8_t *internal_buffer_;
   unique_host_ptr<uint8_t> host_buffer_;
   unique_device_ptr<uint8_t> device_buffer_;
-  cudaStream_t stream_;
 };
 
 class HolofileSourceFactory : public SourceFactory {

@@ -2,6 +2,8 @@
 
 #include <glog/logging.h>
 
+#include "curaii/curaii.hh"
+
 namespace dh {
 
 // ==========================================================================
@@ -12,7 +14,16 @@ QtDisplaySink::QtDisplaySink(const SinkMeta &meta, cudaStream_t stream)
     : Sink(meta, stream) {}
 
 tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
-  emit frame_ready(itens);
+  auto host = make_unique_host_ptr<uint8_t>(itens.size_in_bytes());
+  CHECK(cudaMemcpyAsync(host.get(), itens.data(), itens.size_in_bytes(),
+                        cudaMemcpyDeviceToHost, stream_) == cudaSuccess);
+
+  CHECK(cudaStreamSynchronize(stream_) == cudaSuccess);
+  TensorMeta host_meta(itens.data_type(), MemoryLocation::HOST,
+                       {itens.shape().at(1), itens.shape().at(2)});
+  TensorView host_view(host.get(), host_meta);
+  emit frame_ready(host_view);
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
   return {};
 }
 

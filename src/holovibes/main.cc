@@ -48,10 +48,10 @@ int main(int argc, char **argv) {
   descriptor.add_source("HolofileSourceFactory", "holofile_source",
                         R"({
     "path": "D:\\BatchTesting\\250220_GUJ0206_L.holo",
-    "start_frame": 0,
-    "end_frame": 16000,
+    "start_frame": 5000,
+    "end_frame": 10000,
     "batch_size": 1,
-    "load_kind": "LOAD_IN_CPU"
+    "load_kind": "READ_LIVE"
   })"_json);
 
   descriptor.add_sink("QtDisplaySinkFactory", "processed_widget", R"({})"_json);
@@ -74,5 +74,9 @@ int main(int argc, char **argv) {
   //                     Run model
   // ==========================================================================
 
-  return app.exec();
+  model->start();
+  int result = app.exec();
+  model->stop();
+
+  return result;
 }

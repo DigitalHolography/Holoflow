@@ -61,6 +61,7 @@ tl::expected<void, Error> HolofileSource::run(TensorView otens) {
                             cudaMemcpyHostToDevice, stream_);
     break;
   case LoadKind::LOAD_IN_GPU:
+    LOG(INFO) << otens.data();
     error = cudaMemcpyAsync(otens.data(),
                             internal_buffer_ + frame_index_ * frame_size, size,
                             cudaMemcpyDeviceToDevice, stream_);

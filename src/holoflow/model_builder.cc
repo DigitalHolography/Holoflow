@@ -1431,12 +1431,14 @@ ModelBuilder::build(const ModelDescriptor &descriptor) {
       VLOG(1) << "allocation tens_id: " << id << " on host";
       slot.host_data = make_unique_host_ptr<uint8_t>(slot.meta.size_in_bytes());
       slot.device_data.reset();
+      slot.data = slot.host_data.get();
       break;
     case MemoryLocation::DEVICE:
       VLOG(1) << "allocation tens_id: " << id << " on device";
       slot.device_data =
           make_unique_device_ptr<uint8_t>(slot.meta.size_in_bytes());
       slot.host_data.reset();
+      slot.data = slot.device_data.get();
       break;
     }
   }
