@@ -1,6 +1,11 @@
 #include "holoflow/model_descriptor.hh"
 
-#include <glog/logging.h>
+#include <cassert>
+#include <cstdlib>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
+
+#include "holoflow/holoflow.hh"
 
 namespace dh {
 
@@ -97,10 +102,10 @@ void SinkDescriptorNode::accept(ModelDescriptorVisitor &visitor) {
 
 Error ModelDescriptor::add_task_factory(const std::string &kind,
                                         std::unique_ptr<TaskFactory> factory) {
-  VLOG(2) << "Adding task factory: " << kind;
+  holoflow_logger()->trace("Adding task factory: {}", kind);
 
   if (in_factories(kind)) {
-    LOG(WARNING) << "Factory " << kind << " was already registered";
+    holoflow_logger()->warn("Factory {} was already registered", kind);
     return Error::INTERNAL_ERROR;
   }
 
@@ -111,10 +116,10 @@ Error ModelDescriptor::add_task_factory(const std::string &kind,
 
 Error ModelDescriptor::add_accumulator_factory(
     const std::string &kind, std::unique_ptr<AccumulatorFactory> factory) {
-  VLOG(2) << "Adding accumulator factory: " << kind;
+  holoflow_logger()->trace("Adding accumulator factory: {}", kind);
 
   if (in_factories(kind)) {
-    LOG(WARNING) << "Factory " << kind << " was already registered";
+    holoflow_logger()->warn("Factory {} was already registered", kind);
     return Error::INTERNAL_ERROR;
   }
 
@@ -125,10 +130,10 @@ Error ModelDescriptor::add_accumulator_factory(
 
 Error ModelDescriptor::add_source_factory(
     const std::string &kind, std::unique_ptr<SourceFactory> factory) {
-  VLOG(2) << "Adding source factory: " << kind;
+  holoflow_logger()->trace("Adding source factory: {}", kind);
 
   if (in_factories(kind)) {
-    LOG(WARNING) << "Factory " << kind << " was already registered";
+    holoflow_logger()->warn("Factory {} was already registered", kind);
     return Error::INTERNAL_ERROR;
   }
 
@@ -139,10 +144,10 @@ Error ModelDescriptor::add_source_factory(
 
 Error ModelDescriptor::add_sink_factory(const std::string &kind,
                                         std::unique_ptr<SinkFactory> factory) {
-  VLOG(2) << "Adding sink factory: " << kind;
+  holoflow_logger()->trace("Adding sink factory: {}", kind);
 
   if (in_factories(kind)) {
-    LOG(WARNING) << "Factory " << kind << " was already registered";
+    holoflow_logger()->warn("Factory {} was already registered", kind);
     return Error::INTERNAL_ERROR;
   }
 
@@ -153,15 +158,15 @@ Error ModelDescriptor::add_sink_factory(const std::string &kind,
 
 Error ModelDescriptor::add_task(const std::string &kind,
                                 const std::string &name, const json &params) {
-  VLOG(2) << "Adding task: " << kind;
+  holoflow_logger()->trace("Adding task: {}", kind);
 
   if (!task_factories_map_.contains(kind)) {
-    LOG(WARNING) << "Factory " << kind << " is not registered";
+    holoflow_logger()->warn("Factory {} is not registered", kind);
     return Error::INTERNAL_ERROR;
   }
 
   if (in_nodes(name)) {
-    LOG(WARNING) << "Task " << name << " is already declared";
+    holoflow_logger()->warn("Task {} is already declared", name);
     return Error::INTERNAL_ERROR;
   }
 
@@ -172,15 +177,15 @@ Error ModelDescriptor::add_task(const std::string &kind,
 Error ModelDescriptor::add_accumulator(const std::string &kind,
                                        const std::string &name,
                                        const json &params) {
-  VLOG(2) << "Adding accumulator: " << kind;
+  holoflow_logger()->trace("Adding accumulator: {}", kind);
 
   if (!accumulator_factories_map_.contains(kind)) {
-    LOG(WARNING) << "Factory " << kind << " is not registered";
+    holoflow_logger()->warn("Factory {} is not registered", kind);
     return Error::INTERNAL_ERROR;
   }
 
   if (in_nodes(name)) {
-    LOG(WARNING) << "Accumulator " << name << " is already declared";
+    holoflow_logger()->warn("Accumulator {} is already declared", name);
     return Error::INTERNAL_ERROR;
   }
 
@@ -190,15 +195,15 @@ Error ModelDescriptor::add_accumulator(const std::string &kind,
 
 Error ModelDescriptor::add_source(const std::string &kind,
                                   const std::string &name, const json &params) {
-  VLOG(2) << "Adding source: " << kind;
+  holoflow_logger()->trace("Adding source: {}", kind);
 
   if (!source_factories_map_.contains(kind)) {
-    LOG(WARNING) << "Factory " << kind << " is not registered";
+    holoflow_logger()->warn("Factory {} is not registered", kind);
     return Error::INTERNAL_ERROR;
   }
 
   if (in_nodes(name)) {
-    LOG(WARNING) << "Source " << name << " is already declared";
+    holoflow_logger()->warn("Source {} is already declared", name);
     return Error::INTERNAL_ERROR;
   }
 
@@ -208,15 +213,15 @@ Error ModelDescriptor::add_source(const std::string &kind,
 
 Error ModelDescriptor::add_sink(const std::string &kind,
                                 const std::string &name, const json &params) {
-  VLOG(2) << "Adding sink: " << kind;
+  holoflow_logger()->trace("Adding sink: {}", kind);
 
   if (!sink_factories_map_.contains(kind)) {
-    LOG(WARNING) << "Factory " << kind << " is not registered";
+    holoflow_logger()->warn("Factory {} is not registered", kind);
     return Error::INTERNAL_ERROR;
   }
 
   if (in_nodes(name)) {
-    LOG(WARNING) << "Sink " << name << " is already declared";
+    holoflow_logger()->warn("Sink {} is already declared", name);
     return Error::INTERNAL_ERROR;
   }
 
@@ -225,16 +230,16 @@ Error ModelDescriptor::add_sink(const std::string &kind,
 }
 
 Error ModelDescriptor::set_source(const std::string &name) {
-  VLOG(2) << "Setting source: " << name;
+  holoflow_logger()->trace("Setting source: {}", name);
 
   if (root_) {
     // TODO support reassigning source
-    LOG(WARNING) << "Source is already set";
+    holoflow_logger()->warn("Source is already set");
     return Error::INTERNAL_ERROR;
   }
 
   if (!sources_.contains(name)) {
-    LOG(WARNING) << "Source " << name << " is not declared";
+    holoflow_logger()->warn("Source {} is not declared", name);
     return Error::INTERNAL_ERROR;
   }
 
@@ -252,7 +257,7 @@ public:
   FindByName(const std::string &name) : name_(name), result_(nullptr) {}
 
   void visit(TaskDescriptorNode &node) override {
-    VLOG(2) << "visiting: " << node.name();
+    holoflow_logger()->trace("[FindByName] visiting: {}", node.name());
 
     if (node.name() == name_) {
       result_ = &node;
@@ -268,7 +273,7 @@ public:
   }
 
   void visit(AccumulatorDescriptorNode &node) override {
-    VLOG(2) << "visiting: " << node.name();
+    holoflow_logger()->trace("[FindByName] visiting: {}", node.name());
 
     if (node.name() == name_) {
       result_ = &node;
@@ -284,7 +289,7 @@ public:
   }
 
   void visit(SourceDescriptorNode &node) {
-    VLOG(2) << "visiting: " << node.name();
+    holoflow_logger()->trace("[FindByName] visiting: {}", node.name());
 
     if (node.name() == name_) {
       result_ = &node;
@@ -300,14 +305,15 @@ public:
   }
 
   void visit(SinkDescriptorNode &node) {
-    VLOG(2) << "visiting: " << node.name();
+    holoflow_logger()->trace("[FindByName] visiting: {}", node.name());
 
     if (node.name() == name_) {
       result_ = &node;
       return;
     }
 
-    CHECK(node.children().empty());
+    // Sink nodes should have no children.
+    assert(node.children().empty());
   }
 
   ModelDescriptorNode *result() { return result_; }
@@ -321,19 +327,20 @@ private:
 
 Error ModelDescriptor::add_child(const std::string &parent_name,
                                  const std::string &child_name) {
-  VLOG(2) << "Adding child: " << child_name << " to parent: " << parent_name;
+  holoflow_logger()->trace("Adding child: {} to parent: {}", child_name,
+                           parent_name);
 
   FindByName find_by_name(child_name);
   root_->accept(find_by_name);
   if (find_by_name.result()) {
-    LOG(WARNING) << "Node " << child_name << " was already added as a child";
+    holoflow_logger()->warn("Node {} was already added as a child", child_name);
     return Error::INTERNAL_ERROR;
   }
 
   find_by_name = FindByName(parent_name);
   root_->accept(find_by_name);
   if (!find_by_name.result()) {
-    LOG(WARNING) << "Node " << parent_name << " was not added in the tree";
+    holoflow_logger()->warn("Node {} was not added in the tree", parent_name);
     return Error::INTERNAL_ERROR;
   }
 
@@ -351,7 +358,7 @@ Error ModelDescriptor::add_child(const std::string &parent_name,
     auto [kind, params] = sinks_.at(child_name);
     child_node.reset(new SinkDescriptorNode(kind, child_name, params));
   } else {
-    LOG(WARNING) << "Node " << child_name << " was not declared";
+    holoflow_logger()->warn("Node {} was not declared", child_name);
     return Error::INTERNAL_ERROR;
   }
 

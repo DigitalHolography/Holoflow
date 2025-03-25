@@ -1,6 +1,9 @@
 #include "holoflow/sink.hh"
 
-#include <glog/logging.h>
+#include <fmt/ranges.h>
+#include <spdlog/spdlog.h>
+
+#include "holoflow/holoflow.hh"
 
 namespace dh {
 
@@ -8,7 +11,10 @@ namespace dh {
 //                     SinkMeta Implementation
 // ==========================================================================
 
-SinkMeta::SinkMeta(const TensorMeta &imeta) : imeta_(imeta) {}
+SinkMeta::SinkMeta(const TensorMeta &imeta) : imeta_(imeta) {
+  dh::holoflow_logger()->trace("Initializing SinkMeta with input shape [{}]",
+                               fmt::join(imeta_.shape(), ", "));
+}
 
 const TensorMeta &SinkMeta::imeta() const { return imeta_; }
 

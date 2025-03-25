@@ -1,9 +1,15 @@
 #include "holoflow/tensor.hh"
 
 #include <algorithm>
-#include <glog/logging.h>
+#include <cassert>
+#include <cstdlib>
+#include <fmt/ranges.h>
+#include <iostream>
 #include <numeric>
+#include <spdlog/spdlog.h>
 #include <vector>
+
+#include "holoflow/holoflow.hh"
 
 namespace dh {
 
@@ -30,7 +36,7 @@ size_t size_of(DataType data_type) {
   case DataType::CF32:
     return 8;
   default:
-    LOG(FATAL) << "Unknown DataType";
+    holoflow_logger()->critical("Unknown DataType");
     std::exit(EXIT_FAILURE);
   }
 }
@@ -46,7 +52,7 @@ std::ostream &operator<<(std::ostream &os, DataType dt) {
   case DataType::CF32:
     return os << "CF32";
   default:
-    LOG(FATAL) << "Unknown DataType";
+    holoflow_logger()->critical("Unknown DataType");
     std::exit(EXIT_FAILURE);
   }
 }
@@ -59,10 +65,16 @@ TensorMeta::TensorMeta(DataType data_type, MemoryLocation memory_location,
                        std::vector<size_t> shape)
     : data_type_(data_type), memory_location_(memory_location),
       shape_(std::move(shape)) {
-  CHECK(!shape_.empty()) << "Tensor shape cannot be empty";
-  CHECK(std::all_of(shape_.begin(), shape_.end(), [](size_t val) {
-    return val > 0;
-  })) << "Tensor shape cannot contain zero";
+
+  holoflow_logger()->trace("Initializing TensorMeta with input shape [{}], "
+                           "data type [{}], memory location [{}]",
+                           fmt::join(shape_, ", "), (int)data_type_,
+                           (int)memory_location_);
+
+  assert(!shape_.empty() && "Tensor shape cannot be empty");
+  assert(std::all_of(shape_.begin(), shape_.end(),
+                     [](size_t val) { return val > 0; }) &&
+         "Tensor shape cannot contain zero");
 
   strides_.resize(shape_.size());
   size_t stride = 1;
@@ -76,16 +88,22 @@ TensorMeta::TensorMeta(DataType data_type, MemoryLocation memory_location,
                        std::vector<size_t> shape, std::vector<size_t> strides)
     : data_type_(data_type), memory_location_(memory_location),
       shape_(std::move(shape)), strides_(std::move(strides)) {
-  CHECK(!shape_.empty()) << "Tensor shape cannot be empty";
-  CHECK(shape_.size() == strides_.size())
-      << "Shape and strides must match in size";
-  CHECK(std::all_of(strides_.begin(), strides_.end(), [](size_t val) {
-    return val > 0;
-  })) << "Tensor strides cannot be zero";
+  holoflow_logger()->trace(
+      "Initializing TensorMeta with input shape [{}], strides [{}],"
+      "data type [{}], memory location [{}]",
+      fmt::join(shape_, ", "), fmt::join(strides_, ", "), (int)data_type_,
+      (int)memory_location_);
+  assert(!shape_.empty() && "Tensor shape cannot be empty");
+  assert(shape_.size() == strides_.size() &&
+         "Shape and strides must match in size");
+  assert(std::all_of(strides_.begin(), strides_.end(),
+                     [](size_t val) { return val > 0; }) &&
+         "Tensor strides cannot be zero");
 }
 
 size_t TensorMeta::size() const {
-  return std::accumulate(shape_.begin(), shape_.end(), 1ULL, std::multiplies());
+  return std::accumulate(shape_.begin(), shape_.end(), 1ULL,
+                         std::multiplies<>());
 }
 
 size_t TensorMeta::size_in_bytes() const {
@@ -124,9 +142,11 @@ std::ostream &operator<<(std::ostream &os, const TensorMeta &meta) {
 
 TensorView::TensorView(void *data, const TensorMeta &meta)
     : data_(data), meta_(std::ref(meta)) {
-  CHECK(data_ != nullptr) << "TensorView received a null data pointer";
+  holoflow_logger()->trace("Constructing TensorView with data pointer: {}",
+                           data);
+  assert(data_ != nullptr && "TensorView received a null data pointer");
   if (reinterpret_cast<uintptr_t>(data_) % alignof(std::max_align_t) != 0) {
-    LOG(WARNING) << "TensorView data pointer is not properly aligned";
+    holoflow_logger()->warn("TensorView data pointer is not properly aligned");
   }
 }
 

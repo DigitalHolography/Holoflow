@@ -1,22 +1,45 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include <glog/logging.h>
 #include <memory>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 #include <tl/expected.hpp>
+
+namespace dh {
+
+inline std::shared_ptr<spdlog::logger> &cuda_logger() {
+  static std::shared_ptr<spdlog::logger> logger = [] {
+    auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+    sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [thread %t] [%^%l%$] %v");
+
+    auto log = std::make_shared<spdlog::logger>("cuda", sink);
+    log->set_level(spdlog::default_logger()->level());
+    log->flush_on(spdlog::level::warn);
+
+    spdlog::register_logger(log);
+
+    return log;
+  }();
+  return logger;
+}
 
 #define CUDA_CHECK_LOG(severity, call)                                         \
   do {                                                                         \
     cudaError_t status = call;                                                 \
-    LOG_IF(severity, status != cudaSuccess)                                    \
-        << "CUDA call failed with error: " << cudaGetErrorString(status)       \
-        << " at " << __FILE__ << ":" << __LINE__;                              \
+    if (status != cudaSuccess) {                                               \
+      dh::cuda_logger()->log(spdlog::level::severity,                          \
+                             "CUDA call failed with error: {} at {}:{}",       \
+                             cudaGetErrorString(status), __FILE__, __LINE__);  \
+    }                                                                          \
   } while (0)
 
 #define CUDA_TRY_EXPECTED(call)                                                \
   do {                                                                         \
     cudaError_t status = call;                                                 \
     if (status != cudaSuccess) {                                               \
+      dh::cuda_logger()->trace("CUDA call failed (expected): {}",              \
+                               cudaGetErrorString(status));                    \
       return tl::unexpected(status);                                           \
     }                                                                          \
   } while (0)
@@ -25,18 +48,18 @@
   ([&]() -> auto {                                                             \
     auto _result = std::move(expr);                                            \
     if (!_result) {                                                            \
-      LOG(FATAL) << "CUDA error: " << cudaGetErrorString(_result.error())      \
-                 << " at " << __FILE__ << ":" << __LINE__;                     \
+      dh::cuda_logger()->critical("CUDA error: {} at {}:{}",                   \
+                                  cudaGetErrorString(_result.error()),         \
+                                  __FILE__, __LINE__);                         \
+      std::abort();                                                            \
     }                                                                          \
     return std::move(_result.value());                                         \
   }())
 
-namespace dh {
-
 struct HostDeleter {
   void operator()(void *ptr) const {
     if (ptr) {
-      CUDA_CHECK_LOG(ERROR, cudaFreeHost(ptr));
+      CUDA_CHECK_LOG(err, cudaFreeHost(ptr));
     }
   }
 };
@@ -49,9 +72,9 @@ struct DeviceDeleter {
   void operator()(void *ptr) const {
     if (ptr) {
       if (stream) {
-        CUDA_CHECK_LOG(ERROR, cudaFreeAsync(ptr, stream));
+        CUDA_CHECK_LOG(err, cudaFreeAsync(ptr, stream));
       } else {
-        CUDA_CHECK_LOG(ERROR, cudaFree(ptr));
+        CUDA_CHECK_LOG(err, cudaFree(ptr));
       }
     }
   }
@@ -63,6 +86,7 @@ template <typename T>
 tl::expected<unique_host_ptr<T>, cudaError_t>
 try_make_unique_host_ptr(std::size_t count) {
   T *raw_ptr = nullptr;
+  dh::cuda_logger()->trace("Allocating {} bytes (host)", count * sizeof(T));
   CUDA_TRY_EXPECTED(cudaMallocHost(&raw_ptr, count * sizeof(T)));
   return unique_host_ptr<T>(raw_ptr);
 }
@@ -80,6 +104,8 @@ template <typename T>
 tl::expected<unique_device_ptr<T>, cudaError_t>
 try_make_unique_device_ptr(std::size_t count, cudaStream_t stream = 0) {
   T *raw_ptr = nullptr;
+  dh::cuda_logger()->trace("Allocating {} bytes (device, stream={})",
+                           count * sizeof(T), (void *)stream);
   CUDA_TRY_EXPECTED(cudaMallocAsync(&raw_ptr, count * sizeof(T), stream));
   return unique_device_ptr<T>(raw_ptr, DeviceDeleter(stream));
 }
@@ -114,7 +140,7 @@ public:
 
   ~unique_cuda_stream() {
     if (stream_) {
-      CUDA_CHECK_LOG(ERROR, cudaStreamDestroy(stream_));
+      CUDA_CHECK_LOG(err, cudaStreamDestroy(stream_));
     }
   }
 
@@ -129,7 +155,7 @@ public:
       return;
     }
 
-    CUDA_CHECK_LOG(ERROR, cudaStreamDestroy(stream_));
+    CUDA_CHECK_LOG(err, cudaStreamDestroy(stream_));
     stream_ = s;
   }
 
@@ -148,6 +174,7 @@ private:
 inline tl::expected<unique_cuda_stream, cudaError_t>
 try_make_unique_cuda_stream(unsigned int flags = cudaStreamDefault) {
   cudaStream_t s = 0;
+  dh::cuda_logger()->trace("Creating CUDA stream with flags: 0x{:x}", flags);
   CUDA_TRY_EXPECTED(cudaStreamCreateWithFlags(&s, flags));
   return unique_cuda_stream(s);
 }

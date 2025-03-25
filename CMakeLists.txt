@@ -7,15 +7,13 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(CommonCMakeFunctions)
 
 find_package(GTest CONFIG REQUIRED)
-find_package(glog CONFIG REQUIRED)
 find_package(benchmark CONFIG REQUIRED)
 find_package(Threads REQUIRED)
 find_package(Doxygen REQUIRED)
 find_package(tl-expected CONFIG REQUIRED)
-find_package(glog CONFIG REQUIRED)
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui)
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(gflags CONFIG REQUIRED)
+find_package(spdlog REQUIRED)
 
 qt_standard_project_setup()
 

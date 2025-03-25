@@ -1,6 +1,10 @@
 #include "holoflow/task.hh"
 
-#include <glog/logging.h>
+#include <cassert>
+#include <fmt/ranges.h>
+#include <spdlog/spdlog.h>
+
+#include "holoflow/holoflow.hh"
 
 namespace dh {
 
@@ -11,15 +15,20 @@ namespace dh {
 TaskMeta::TaskMeta(const TensorMeta &imeta, const TensorMeta &ometa,
                    bool inlined)
     : imeta_(imeta), ometa_(ometa), inlined_(inlined) {
+  dh::holoflow_logger()->trace("Initializing TaskMeta with input shape [{}], "
+                               "output shape [{}], inlined []",
+                               fmt::join(imeta_.shape(), ", "),
+                               fmt::join(ometa_.shape(), ", "), inlined);
+
   if (inlined_) {
-    CHECK(imeta_.data_type() == ometa_.data_type())
-        << "Inlined tasks must have equal input and output tensors";
-    CHECK(imeta_.memory_location() == ometa_.memory_location())
-        << "Inlined tasks must have equal input and output tensors";
-    CHECK(imeta_.shape() == ometa_.shape())
-        << "Inlined tasks must have equal input and output tensors";
-    CHECK(imeta_.strides() == ometa_.strides())
-        << "Inlined tasks must have equal input and output tensors";
+    assert((imeta_.data_type() == ometa_.data_type()) &&
+           "Inlined tasks must have equal input and output tensors");
+    assert((imeta_.memory_location() == ometa_.memory_location()) &&
+           "Inlined tasks must have equal input and output tensors");
+    assert((imeta_.shape() == ometa_.shape()) &&
+           "Inlined tasks must have equal input and output tensors");
+    assert((imeta_.strides() == ometa_.strides()) &&
+           "Inlined tasks must have equal input and output tensors");
   }
 }
 

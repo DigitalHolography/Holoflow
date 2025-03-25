@@ -19,8 +19,7 @@ target_include_directories(holovibes PRIVATE
 
 target_link_libraries(holovibes PRIVATE
     tl::expected
-    glog::glog
-    gflags::gflags
+    spdlog::spdlog
     Qt6::Core
     Qt6::Widgets
     Qt6::Gui

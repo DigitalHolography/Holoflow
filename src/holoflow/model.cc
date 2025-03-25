@@ -1,11 +1,17 @@
 #include "holoflow/model.hh"
 
-#include <glog/logging.h>
+#include <atomic>
+#include <cassert>
+#include <cstdlib>
 #include <nvtx3/nvToolsExt.h>
 #include <optional>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 #include <stack>
+#include <thread>
+#include <vector>
 
-#include "curaii/curaii.hh"
+#include "holoflow/holoflow.hh"
 #include "holoflow/model_builder.hh"
 
 namespace dh {
@@ -182,6 +188,7 @@ const int &SinkNode::itens_id() const { return itens_id_; }
 
 namespace {
 
+// Visitor: AllocatePES
 class AllocatePES : public ModelVisitor {
 public:
   AllocatePES(std::unordered_map<int, Model::TensorSlot> &tensors,
@@ -189,87 +196,80 @@ public:
       : tensors_(tensors), root_(root), stop_(stop) {}
 
   void visit(TaskNode &node) override {
-    VLOG(2) << "visiting: " << node.name();
-
+    holoflow_logger()->trace("[AllocatePES] visiting: {}", node.name());
     for (auto child : node.children()) {
       child.get().accept(*this);
     }
 
     auto &itens = tensors_.at(node.itens_id());
-    CHECK_NOTNULL(itens.data);
+    assert(itens.data != nullptr);
 
-    auto &otens = tensors_.at(node.itens_id());
-    CHECK_NOTNULL(otens.data);
+    auto &otens = tensors_.at(node.otens_id());
+    assert(otens.data != nullptr);
   }
 
   void visit(AccumulatorNode &node) override {
-    VLOG(2) << "visiting: " << node.name();
-
+    holoflow_logger()->trace("[AllocatePES] visiting: {}", node.name());
     if (&node == &root_) {
       auto &otens = tensors_.at(node.otens_id());
 
       auto result = node.accumulator().read_tensor();
-      CHECK(result);
+      assert(result);
       auto view = result.value();
 
       while (!view && !stop_) {
         result = node.accumulator().read_tensor();
-        CHECK(result);
+        assert(result);
         view = result.value();
       }
 
       if (stop_) {
-        LOG(INFO) << "Stop signal received.";
+        holoflow_logger()->info("Stop signal received.");
         return;
       }
 
-      otens.data = (uint8_t *)view.value().data();
+      otens.data = reinterpret_cast<uint8_t *>(view.value().data());
 
       for (auto child : node.children()) {
         child.get().accept(*this);
       }
-    }
-
-    else {
+    } else {
       auto &itens = tensors_.at(node.itens_id());
 
       auto result = node.accumulator().write_tensor();
-      CHECK(result);
+      assert(result);
       auto view = result.value();
 
       while (!view && !stop_) {
         result = node.accumulator().write_tensor();
-        CHECK(result);
+        assert(result);
         view = result.value();
       }
 
       if (stop_) {
-        LOG(INFO) << "Stop signal received.";
+        holoflow_logger()->info("Stop signal received.");
         return;
       }
 
-      itens.data = (uint8_t *)view.value().data();
+      itens.data = reinterpret_cast<uint8_t *>(view.value().data());
     }
   }
 
   void visit(SourceNode &node) override {
-    VLOG(2) << "visiting: " << node.name();
-
+    holoflow_logger()->trace("[AllocatePES] visiting: {}", node.name());
     for (auto child : node.children()) {
       child.get().accept(*this);
     }
 
     auto &otens = tensors_.at(node.otens_id());
-    CHECK_NOTNULL(otens.data);
+    assert(otens.data != nullptr);
   }
 
   void visit(SinkNode &node) override {
-    VLOG(2) << "visiting: " << node.name();
-
-    CHECK(node.children().empty());
-
+    holoflow_logger()->trace("[AllocatePES] visiting: {}", node.name());
+    assert(node.children().empty());
     auto &itens = tensors_.at(node.itens_id());
-    CHECK_NOTNULL(itens.data);
+    assert(itens.data != nullptr);
   }
 
 private:
@@ -278,6 +278,7 @@ private:
   std::atomic<bool> &stop_;
 };
 
+// Visitor: FreePES
 class FreePES : public ModelVisitor {
 public:
   FreePES(std::unordered_map<int, Model::TensorSlot> &tensors, ModelNode &root,
@@ -285,39 +286,35 @@ public:
       : tensors_(tensors), root_(root), stop_(stop) {}
 
   void visit(TaskNode &node) override {
-    VLOG(2) << "visiting: " << node.name();
-
+    holoflow_logger()->trace("[FreePES] visiting: {}", node.name());
     for (auto child : node.children()) {
       child.get().accept(*this);
     }
   }
 
   void visit(AccumulatorNode &node) override {
-    VLOG(2) << "visiting: " << node.name();
-
+    holoflow_logger()->trace("[FreePES] visiting: {}", node.name());
     if (&node == &root_) {
       auto result = node.accumulator().commit_read();
-      CHECK(result);
-
+      assert(result);
       for (auto child : node.children()) {
         child.get().accept(*this);
       }
     } else {
       auto result = node.accumulator().commit_write();
-      CHECK(result);
+      assert(result);
     }
   }
 
   void visit(SourceNode &node) override {
-    VLOG(2) << "visiting: " << node.name();
-
+    holoflow_logger()->trace("[FreePES] visiting: {}", node.name());
     for (auto child : node.children()) {
       child.get().accept(*this);
     }
   }
 
   void visit(SinkNode &node) override {
-    VLOG(2) << "visiting: " << node.name();
+    holoflow_logger()->trace("[FreePES] visiting: {}", node.name());
   }
 
 private:
@@ -326,6 +323,7 @@ private:
   std::atomic<bool> &stop_;
 };
 
+// Visitor: ExecPES
 class ExecPES : public ModelVisitor {
 public:
   ExecPES(std::unordered_map<int, Model::TensorSlot> &tensors, ModelNode &root,
@@ -334,26 +332,24 @@ public:
 
   void visit(TaskNode &node) override {
     if (stop_) {
-      LOG(INFO) << "Stop signal received.";
+      holoflow_logger()->info("Stop signal received.");
       return;
     }
-
     auto itens = tensors_.at(node.itens_id()).view();
     auto otens = tensors_.at(node.otens_id()).view();
-    CHECK_NOTNULL(itens.data());
-    CHECK_NOTNULL(otens.data());
-    VLOG(3) << "Running " << node.name();
-    CHECK(node.task().run(itens, otens));
+    assert(itens.data() != nullptr);
+    assert(otens.data() != nullptr);
+    holoflow_logger()->trace("[ExecPES] Running {}", node.name());
+    assert(node.task().run(itens, otens));
 
-    // Do non-inlined children.
+    // Process non-inlined children first.
     for (auto child : node.children()) {
       auto *task = dynamic_cast<TaskNode *>(&child.get());
       if (!task || !task->task_meta().inlined()) {
         child.get().accept(*this);
       }
     }
-
-    // Do inlined child next.
+    // Then process inlined children.
     for (auto &child : node.children()) {
       auto *task = dynamic_cast<TaskNode *>(&child.get());
       if (task && task->task_meta().inlined()) {
@@ -364,55 +360,49 @@ public:
 
   void visit(AccumulatorNode &node) override {
     if (stop_) {
-      LOG(INFO) << "Stop signal received.";
+      holoflow_logger()->info("Stop signal received.");
       return;
     }
-
     if (&node == &root_) {
       nvtxRangePushA("PES");
-      // Do non-inlined children first.
+      // Process non-inlined children first.
       for (auto child : node.children()) {
         auto *task = dynamic_cast<TaskNode *>(&child.get());
         if (!task || !task->task_meta().inlined()) {
           child.get().accept(*this);
         }
       }
-
-      // Do inlined child next.
+      // Then process inlined children.
       for (auto &child : node.children()) {
         auto *task = dynamic_cast<TaskNode *>(&child.get());
         if (task && task->task_meta().inlined()) {
           child.get().accept(*this);
         }
       }
-
-      CHECK(cudaStreamSynchronize(node.stream()) == cudaSuccess);
+      assert(cudaStreamSynchronize(node.stream()) == cudaSuccess);
       nvtxRangePop();
     }
   }
 
   void visit(SourceNode &node) override {
-    VLOG(2) << "visiting: " << node.name();
-
+    holoflow_logger()->trace("[ExecPES] visiting: {}", node.name());
     if (stop_) {
-      LOG(INFO) << "Stop signal received.";
+      holoflow_logger()->info("Stop signal received.");
       return;
     }
-
     auto otens = tensors_.at(node.otens_id()).view();
-    CHECK_NOTNULL(otens.data());
-    VLOG(3) << "Running " << node.name();
-    CHECK(node.source().run(otens));
+    assert(otens.data() != nullptr);
+    holoflow_logger()->trace("[ExecPES] Running {}", node.name());
+    assert(node.source().run(otens));
 
-    // Do non-inlined children.
+    // Process non-inlined children first.
     for (auto child : node.children()) {
       auto *task = dynamic_cast<TaskNode *>(&child.get());
       if (!task || !task->task_meta().inlined()) {
         child.get().accept(*this);
       }
     }
-
-    // Do inlined child next.
+    // Then process inlined children.
     for (auto &child : node.children()) {
       auto *task = dynamic_cast<TaskNode *>(&child.get());
       if (task && task->task_meta().inlined()) {
@@ -422,17 +412,15 @@ public:
   }
 
   void visit(SinkNode &node) override {
-    VLOG(2) << "visiting: " << node.name();
-
+    holoflow_logger()->trace("[ExecPES] visiting: {}", node.name());
     if (stop_) {
-      LOG(INFO) << "Stop signal received.";
+      holoflow_logger()->info("Stop signal received.");
       return;
     }
-
     auto itens = tensors_.at(node.itens_id()).view();
-    CHECK_NOTNULL(itens.data());
-    VLOG(3) << "Running " << node.name();
-    CHECK(node.sink().run(itens));
+    assert(itens.data() != nullptr);
+    holoflow_logger()->trace("[ExecPES] Running {}", node.name());
+    assert(node.sink().run(itens));
   }
 
 private:
@@ -480,7 +468,7 @@ void Model::run() {
 }
 
 void Model::start() {
-  CHECK(state_ == State::STOPPED);
+  assert(state_ == State::STOPPED);
   state_ = State::RUNNING;
   stop_flag_ = false;
 
@@ -488,7 +476,7 @@ void Model::start() {
 }
 
 void Model::stop() {
-  CHECK(state_ == State::STOPPED);
+  assert(state_ == State::RUNNING);
   stop_flag_ = true;
 
   model_thread_.join();

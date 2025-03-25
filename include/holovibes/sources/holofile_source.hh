@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cuda_runtime.h>
-#include <glog/logging.h>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <tl/expected.hpp>

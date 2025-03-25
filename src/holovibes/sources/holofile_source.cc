@@ -1,5 +1,11 @@
 #include "holovibes/sources/holofile_source.hh"
 
+#include <cassert>
+#include <cstdlib>
+#include <spdlog/spdlog.h>
+
+#include "holovibes/holovibes.hh"
+
 namespace dh {
 
 // ==========================================================================
@@ -31,12 +37,11 @@ tl::expected<void, Error> HolofileSource::run(TensorView otens) {
     if (load_kind_ == LoadKind::READ_LIVE) {
       auto result = reader_.seek(start_frame_);
       if (!result) {
-        LOG(WARNING) << "Failed to seek to start_frame: "
-                     << result.error().message();
+        holovibes_logger()->warn("Failed to seek to start_frame: {}",
+                                 result.error().message());
         return tl::unexpected(Error::INTERNAL_ERROR);
       }
     }
-
     frame_index_ = start_frame_;
   }
 
@@ -44,7 +49,8 @@ tl::expected<void, Error> HolofileSource::run(TensorView otens) {
   if (load_kind_ == LoadKind::READ_LIVE) {
     auto result = reader_.read_frames(internal_buffer_, batch_size_);
     if (!result) {
-      LOG(WARNING) << "Failed to read frames: " << result.error().message();
+      holovibes_logger()->warn("Failed to read frames: {}",
+                               result.error().message());
       return tl::unexpected(Error::INTERNAL_ERROR);
     }
   }
@@ -61,7 +67,7 @@ tl::expected<void, Error> HolofileSource::run(TensorView otens) {
                             cudaMemcpyHostToDevice, stream_);
     break;
   case LoadKind::LOAD_IN_GPU:
-    LOG(INFO) << otens.data();
+    holovibes_logger()->info("otens.data() = {}", otens.data());
     error = cudaMemcpyAsync(otens.data(),
                             internal_buffer_ + frame_index_ * frame_size, size,
                             cudaMemcpyDeviceToDevice, stream_);
@@ -69,8 +75,8 @@ tl::expected<void, Error> HolofileSource::run(TensorView otens) {
   }
 
   if (error != cudaSuccess) {
-    LOG(WARNING) << "CUDA call failed with error: "
-                 << cudaGetErrorString(error);
+    holovibes_logger()->warn("CUDA call failed with error: {}",
+                             cudaGetErrorString(error));
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
@@ -86,41 +92,43 @@ HolofileSourceFactory::type_check(const json &jparams) {
   auto params = jparams.get<Params>();
 
   if (params.batch_size <= 0) {
-    LOG(WARNING) << "Invalid batch_size: " << params.batch_size;
+    holovibes_logger()->warn("Invalid batch_size: {}", params.batch_size);
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   if (params.start_frame < 0) {
-    LOG(WARNING) << "Invalid start_frame: " << params.start_frame;
+    holovibes_logger()->warn("Invalid start_frame: {}", params.start_frame);
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   if (params.start_frame + params.batch_size > params.end_frame) {
-    LOG(WARNING) << "batch size does not fit in [start_frame, end_frame[";
+    holovibes_logger()->warn(
+        "batch size does not fit in [start_frame, end_frame[");
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   if (params.load_kind != "READ_LIVE" && params.load_kind != "LOAD_IN_CPU" &&
       params.load_kind != "LOAD_IN_GPU") {
-    LOG(WARNING) << "Invalid load_kind: " << params.load_kind;
+    holovibes_logger()->warn("Invalid load_kind: {}", params.load_kind);
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   auto result = HolofileReader::open(params.path);
   if (!result) {
-    LOG(WARNING) << "Failed to open Holofile: " << result.error().message();
+    holovibes_logger()->warn("Failed to open Holofile: {}",
+                             result.error().message());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
   auto reader = std::move(result.value());
   auto header = reader.header();
 
   if (header.bits_per_pixel != 8) {
-    LOG(WARNING) << "Only 8-bit frames are supported.";
+    holovibes_logger()->warn("Only 8-bit frames are supported.");
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
-  if (params.end_frame > (int)header.frame_count) {
-    LOG(WARNING) << "end_frame is greater than file frames count";
+  if (params.end_frame > static_cast<int>(header.frame_count)) {
+    holovibes_logger()->warn("end_frame is greater than file frames count");
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
@@ -135,7 +143,7 @@ tl::expected<std::unique_ptr<Source>, Error>
 HolofileSourceFactory::create(const json &jparams, cudaStream_t stream) {
   auto meta_result = type_check(jparams);
   if (!meta_result) {
-    LOG(WARNING) << "type check failed";
+    holovibes_logger()->warn("type check failed");
     return tl::unexpected(meta_result.error());
   }
 
@@ -150,13 +158,14 @@ HolofileSourceFactory::create(const json &jparams, cudaStream_t stream) {
   } else if (params.load_kind == "LOAD_IN_GPU") {
     load_kind = HolofileSource::LoadKind::LOAD_IN_GPU;
   } else {
-    LOG(FATAL) << "UNREACHABLE!";
+    holovibes_logger()->critical("UNREACHABLE!");
     std::exit(EXIT_FAILURE);
   }
 
   auto result = HolofileReader::open(params.path);
   if (!result) {
-    LOG(WARNING) << "Failed to open Holofile: " << result.error().message();
+    holovibes_logger()->warn("Failed to open Holofile: {}",
+                             result.error().message());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
   auto reader = std::move(result.value());
@@ -164,8 +173,8 @@ HolofileSourceFactory::create(const json &jparams, cudaStream_t stream) {
 
   auto seek_result = reader.seek(params.start_frame);
   if (!seek_result) {
-    LOG(WARNING) << "Failed to seek to start_frame: "
-                 << seek_result.error().message();
+    holovibes_logger()->warn("Failed to seek to start_frame: {}",
+                             seek_result.error().message());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
@@ -201,24 +210,24 @@ HolofileSourceFactory::create(const json &jparams, cudaStream_t stream) {
   if (load_kind == HolofileSource::LoadKind::LOAD_IN_CPU) {
     auto result = reader.read_frames(internal_buffer, nb_frames);
     if (!result) {
-      LOG(WARNING) << "Failed to read frames: " << result.error().message();
+      holovibes_logger()->warn("Failed to read frames: {}",
+                               result.error().message());
       return tl::unexpected(Error::INTERNAL_ERROR);
     }
-  }
-
-  else if (load_kind == HolofileSource::LoadKind::LOAD_IN_GPU) {
+  } else if (load_kind == HolofileSource::LoadKind::LOAD_IN_GPU) {
     auto tmp_buffer = make_unique_host_ptr<uint8_t>(size);
     auto result = reader.read_frames(tmp_buffer.get(), nb_frames);
     if (!result) {
-      LOG(WARNING) << "Failed to read frames: " << result.error().message();
+      holovibes_logger()->warn("Failed to read frames: {}",
+                               result.error().message());
       return tl::unexpected(Error::INTERNAL_ERROR);
     }
 
     auto error = cudaMemcpyAsync(internal_buffer, tmp_buffer.get(), size,
                                  cudaMemcpyHostToDevice, stream);
     if (error != cudaSuccess) {
-      LOG(WARNING) << "CUDA call failed with error: "
-                   << cudaGetErrorString(error);
+      holovibes_logger()->warn("CUDA call failed with error: {}",
+                               cudaGetErrorString(error));
       return tl::unexpected(Error::INTERNAL_ERROR);
     }
   }

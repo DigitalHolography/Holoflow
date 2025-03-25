@@ -1,11 +1,10 @@
 {
   "dependencies": [
     "benchmark",
-    "gflags",
-    "glog",
     "gtest",
     "nlohmann-json",
     "pybind11",
-    "tl-expected"
+    "tl-expected",
+    "spdlog"
   ]
 }

@@ -1,5 +1,13 @@
 #include "holovibes/accumulators/batched_spsc_accumulator.hh"
 
+#include <cassert>
+#include <cstdlib>
+#include <numeric>
+#include <spdlog/spdlog.h>
+#include <vector>
+
+#include "holovibes/holovibes.hh"
+
 namespace dh {
 
 // ==========================================================================
@@ -27,6 +35,11 @@ BatchedSPSCAccumulator::BatchedSPSCAccumulator(
   device_buffer_ = std::move(device_buffer);
   write_idx_ = 0;
   read_idx_ = 0;
+
+  holovibes_logger()->trace(
+      "Constructed BatchedSPSCAccumulator: nb_slots={}, enqueue_batch_size={}, "
+      "dequeue_batch_size={}, element_size={}",
+      nb_slots_, enqueue_batch_size_, dequeue_batch_size_, element_size_);
 }
 
 tl::expected<std::optional<TensorView>, Error>
@@ -75,7 +88,6 @@ tl::expected<size_t, Error> BatchedSPSCAccumulator::size() {
   size_t read_idx = read_idx_.load(std::memory_order_acquire);
 
   size_t diff = write_idx - read_idx;
-
   if (write_idx < read_idx)
     diff += nb_slots_;
 
@@ -99,7 +111,6 @@ size_t BatchedSPSCAccumulator::writer_size() {
   size_t read_idx = read_idx_.load(std::memory_order_acquire);
 
   size_t diff = write_idx - read_idx;
-
   if (write_idx < read_idx)
     diff += nb_slots_;
 
@@ -111,7 +122,6 @@ size_t BatchedSPSCAccumulator::reader_size() {
   size_t read_idx = read_idx_.load(std::memory_order_relaxed);
 
   size_t diff = write_idx - read_idx;
-
   if (write_idx < read_idx)
     diff += nb_slots_;
 
@@ -128,29 +138,33 @@ BatchedSPSCAccumulatorFactory::type_check(const TensorMeta &imeta,
   auto params = jparams.get<Params>();
 
   if (params.nb_slots <= 0) {
-    LOG(WARNING) << "Invalid nb_slots: " << params.nb_slots;
+    holovibes_logger()->warn("Invalid nb_slots: {}", params.nb_slots);
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   if (params.dequeue_batch_size <= 0) {
-    LOG(WARNING) << "Invalid dequeue_batch_size: " << params.dequeue_batch_size;
+    holovibes_logger()->warn("Invalid dequeue_batch_size: {}",
+                             params.dequeue_batch_size);
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   if (imeta.shape().size() < 2) {
-    LOG(WARNING) << "imeta.shape().size() < 2: " << imeta.shape().size();
+    holovibes_logger()->warn("imeta.shape().size() < 2: {}",
+                             imeta.shape().size());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   if (params.nb_slots % imeta.shape().at(0) != 0) {
-    LOG(WARNING) << "params.nb_slots %% imeta.shape.at(0) != 0: "
-                 << params.nb_slots << " " << imeta.shape().at(0);
+    holovibes_logger()->warn(
+        "params.nb_slots % imeta.shape().at(0) != 0: {} {}", params.nb_slots,
+        imeta.shape().at(0));
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   if (params.nb_slots % params.dequeue_batch_size != 0) {
-    LOG(WARNING) << "params.nb_slots %% params.dequeue_batch_size != 0: "
-                 << params.nb_slots << " " << params.dequeue_batch_size;
+    holovibes_logger()->warn(
+        "params.nb_slots % params.dequeue_batch_size != 0: {} {}",
+        params.nb_slots, params.dequeue_batch_size);
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
@@ -169,7 +183,7 @@ BatchedSPSCAccumulatorFactory::create(const TensorMeta &imeta,
 
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {
-    LOG(WARNING) << "type check failed";
+    holovibes_logger()->warn("type check failed");
     return tl::unexpected(meta_result.error());
   }
 

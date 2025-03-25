@@ -1,6 +1,8 @@
-#include <glog/logging.h>
-
 #include <QApplication>
+#include <spdlog/async.h>
+#include <spdlog/sinks/basic_file_sink.h>
+#include <spdlog/sinks/stdout_color_sinks.h>
+#include <spdlog/spdlog.h>
 
 #include "holoflow/model.hh"
 #include "holoflow/model_descriptor.hh"
@@ -10,14 +12,29 @@
 #include "holovibes/sources/holofile_source.hh"
 #include "holovibes/ui/tensor_display_widget.hh"
 
-int main(int argc, char **argv) {
-  gflags::ParseCommandLineFlags(&argc, &argv, true);
-  FLAGS_logtostderr = 1;
-  FLAGS_v = 0;
-  FLAGS_colorlogtostderr = true;
-  google::InitGoogleLogging(argv[0]);
+void setup_global_logger() {
+  constexpr std::size_t queue_size = 8192;
+  constexpr std::size_t num_threads = 1;
+  spdlog::init_thread_pool(queue_size, num_threads);
 
-  LOG(INFO) << "Welcome to Holovibes!";
+  auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+  std::vector<spdlog::sink_ptr> sinks{console_sink};
+
+  auto global_logger = std::make_shared<spdlog::logger>(
+      "global_logger", sinks.begin(), sinks.end());
+
+  spdlog::set_default_logger(global_logger);
+  spdlog::set_level(spdlog::level::trace);
+  spdlog::flush_on(spdlog::level::warn);
+  spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%n] [%^%l%$] %v");
+}
+
+int main(int argc, char **argv) {
+  setup_global_logger();
+
+  spdlog::info("Hello, {}!", "world");
+  spdlog::warn("This is a warning!");
+  spdlog::error("An error occurred: {}", 404);
 
   // ==========================================================================
   //                     Create display windows

@@ -1,6 +1,9 @@
 #include "holoflow/source.hh"
 
-#include <glog/logging.h>
+#include <fmt/ranges.h>
+#include <spdlog/spdlog.h>
+
+#include "holoflow/holoflow.hh"
 
 namespace dh {
 
@@ -8,7 +11,10 @@ namespace dh {
 //                     SourceMeta Implementation
 // ==========================================================================
 
-SourceMeta::SourceMeta(const TensorMeta &ometa) : ometa_(ometa) {}
+SourceMeta::SourceMeta(const TensorMeta &ometa) : ometa_(ometa) {
+  dh::holoflow_logger()->trace("Initializing SourceMeta with output shape [{}]",
+                               fmt::join(ometa_.shape(), ", "));
+}
 
 const TensorMeta &SourceMeta::ometa() const { return ometa_; }
 

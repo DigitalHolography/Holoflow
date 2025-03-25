@@ -1,6 +1,12 @@
+#pragma once
+
 #include "holoflow/accumulator.hh"
 
-#include <glog/logging.h>
+#include <cassert>
+#include <fmt/ranges.h>
+#include <spdlog/spdlog.h>
+
+#include "holoflow/holoflow.hh"
 
 namespace dh {
 
@@ -11,23 +17,28 @@ namespace dh {
 AccumulatorMeta::AccumulatorMeta(const TensorMeta &imeta,
                                  const TensorMeta &ometa)
     : imeta_(imeta), ometa_(ometa) {
-  CHECK(imeta_.memory_location() == ometa_.memory_location())
-      << "Input and output tensors must have the same memory location";
-  CHECK(imeta_.data_type() == ometa_.data_type())
-      << "Input and output tensors must have the same data type";
-  CHECK(imeta_.shape().size() >= 2 && ometa_.shape().size() >= 2)
-      << "Input and output tensors must have at least rank 2";
-  CHECK(imeta_.shape().size() == ometa_.shape().size())
-      << "Input and output tensors must have the same rank";
-  CHECK(imeta_.strides().size() == ometa_.strides().size())
-      << "Input and output tensors must have the same number of strides";
+  dh::holoflow_logger()->trace(
+      "Initializing AccumulatorMeta with input shape [{}], output shape [{}]",
+      fmt::join(imeta_.shape(), ", "), fmt::join(ometa_.shape(), ", "));
+
+  assert(imeta_.memory_location() == ometa_.memory_location() &&
+         "Input and output tensors must have the same memory location");
+  assert(imeta_.data_type() == ometa_.data_type() &&
+         "Input and output tensors must have the same data type");
+  assert(imeta_.shape().size() >= 2 && ometa_.shape().size() >= 2 &&
+         "Input and output tensors must have at least rank 2");
+  assert(imeta_.shape().size() == ometa_.shape().size() &&
+         "Input and output tensors must have the same rank");
+  assert(imeta_.strides().size() == ometa_.strides().size() &&
+         "Input and output tensors must have the same number of strides");
+
   for (size_t i = 1; i < imeta_.shape().size(); ++i) {
-    CHECK(imeta_.shape()[i] == ometa_.shape()[i])
-        << "Input and output tensor shapes must match except for the first "
-           "dimension";
-    CHECK(imeta_.strides()[i] == ometa_.strides()[i])
-        << "Input and output tensor strides must match except for the first "
-           "dimension";
+    assert(imeta_.shape()[i] == ometa_.shape()[i] &&
+           "Input and output tensor shapes must match except for the first "
+           "dimension");
+    assert(imeta_.strides()[i] == ometa_.strides()[i] &&
+           "Input and output tensor strides must match except for the first "
+           "dimension");
   }
 }
 
@@ -45,7 +56,11 @@ std::ostream &operator<<(std::ostream &os, const AccumulatorMeta &meta) {
 // ==========================================================================
 
 Accumulator::Accumulator(const AccumulatorMeta &meta, cudaStream_t stream)
-    : meta_(meta), stream_(stream) {}
+    : meta_(meta), stream_(stream) {
+  dh::holoflow_logger()->trace(
+      "Created Accumulator with stream={} and shape [{}]",
+      reinterpret_cast<void *>(stream), fmt::join(meta.imeta().shape(), ", "));
+}
 
 const AccumulatorMeta &Accumulator::meta() const { return meta_; }
 const TensorMeta &Accumulator::imeta() const { return meta_.imeta(); }

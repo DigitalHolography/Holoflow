@@ -22,8 +22,8 @@ target_link_directories(holoflow PUBLIC
 )
 
 target_link_libraries(holoflow PUBLIC
-    glog::glog
     nlohmann_json::nlohmann_json
     cudart
     tl::expected
+    spdlog::spdlog
 )

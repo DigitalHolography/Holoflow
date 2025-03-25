@@ -1,8 +1,11 @@
 #include "holovibes/sinks/qt_display_sink.hh"
 
-#include <glog/logging.h>
+#include <cassert>
+#include <cstdlib>
+#include <spdlog/spdlog.h>
 
 #include "curaii/curaii.hh"
+#include "holovibes/holovibes.hh"
 
 namespace dh {
 
@@ -14,14 +17,14 @@ QtDisplaySink::QtDisplaySink(const SinkMeta &meta, cudaStream_t stream)
     : Sink(meta, stream), frame_displayed_(true) {}
 
 tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
-  LOG(INFO) << "running qt display sink";
+  holovibes_logger()->info("running qt display sink");
   frame_displayed_.store(false, std::memory_order_release);
 
   auto host = make_unique_host_ptr<uint8_t>(itens.size_in_bytes());
-  CHECK(cudaMemcpyAsync(host.get(), itens.data(), itens.size_in_bytes(),
-                        cudaMemcpyDeviceToHost, stream_) == cudaSuccess);
+  assert(cudaMemcpyAsync(host.get(), itens.data(), itens.size_in_bytes(),
+                         cudaMemcpyDeviceToHost, stream_) == cudaSuccess);
 
-  CHECK(cudaStreamSynchronize(stream_) == cudaSuccess);
+  assert(cudaStreamSynchronize(stream_) == cudaSuccess);
   TensorMeta host_meta(itens.data_type(), MemoryLocation::HOST,
                        {itens.shape().at(1), itens.shape().at(2)});
   TensorView host_view(host.get(), host_meta);
@@ -31,8 +34,7 @@ tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
   while (!frame_displayed_) {
     std::this_thread::yield();
   }
-  // std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  LOG(INFO) << "FINISHED";
+  holovibes_logger()->info("FINISHED");
   return {};
 }
 
@@ -48,32 +50,32 @@ QtDisplaySinkFactory::QtDisplaySinkFactory(TensorDisplayWidget &widget)
 tl::expected<SinkMeta, Error>
 QtDisplaySinkFactory::type_check(const TensorMeta &imeta, const json &) {
   if (imeta.shape().size() != 3) {
-    LOG(WARNING) << "Invalid rank: " << imeta.shape().size();
+    holovibes_logger()->warn("Invalid rank: {}", imeta.shape().size());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   if (imeta.shape().at(0) != 1) {
-    LOG(WARNING) << "Invalid batch size: " << imeta.shape().at(0);
+    holovibes_logger()->warn("Invalid batch size: {}", imeta.shape().at(0));
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   if (imeta.data_type() != DataType::U8) {
-    LOG(WARNING) << "Invalid data type: " << imeta.data_type();
+    holovibes_logger()->warn("Invalid data type: {}", (int)imeta.data_type());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   if (imeta.strides().at(2) != 1) {
-    LOG(WARNING) << "Invalid stride: " << imeta.strides().at(2);
+    holovibes_logger()->warn("Invalid stride: {}", imeta.strides().at(2));
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   if (imeta.strides().at(1) != imeta.shape().at(2)) {
-    LOG(WARNING) << "Invalid stride: " << imeta.strides().at(1);
+    holovibes_logger()->warn("Invalid stride: {}", imeta.strides().at(1));
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
   if (imeta.strides().at(0) != imeta.shape().at(2) * imeta.shape().at(1)) {
-    LOG(WARNING) << "Invalid stride: " << imeta.strides().at(0);
+    holovibes_logger()->warn("Invalid stride: {}", imeta.strides().at(0));
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
@@ -85,7 +87,7 @@ QtDisplaySinkFactory::create(const TensorMeta &imeta, const json &jparams,
                              cudaStream_t stream) {
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {
-    LOG(WARNING) << "type check failed";
+    holovibes_logger()->warn("type check failed");
     return tl::unexpected(meta_result.error());
   }
   auto meta = meta_result.value();
