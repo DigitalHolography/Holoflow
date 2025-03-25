@@ -15,8 +15,14 @@ public:
   explicit TensorDisplayWidget(int width, int height,
                                QWidget *parent = nullptr);
 
+protected:
+  void paintEvent(QPaintEvent *event) override;
+
 public slots:
   void show_tensor(TensorView tens);
+
+signals:
+  void frame_displayed();
 
 private:
   int width_;

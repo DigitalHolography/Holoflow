@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QObject>
+#include <atomic>
 #include <cuda_runtime.h>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -30,6 +31,10 @@ signals:
 
 private:
   QtDisplaySink(const SinkMeta &meta, cudaStream_t stream);
+
+  void on_frame_displayed();
+
+  std::atomic<bool> frame_displayed_;
 };
 
 class QtDisplaySinkFactory : public SinkFactory {

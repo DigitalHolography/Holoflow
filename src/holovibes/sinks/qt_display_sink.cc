@@ -11,9 +11,12 @@ namespace dh {
 // ==========================================================================
 
 QtDisplaySink::QtDisplaySink(const SinkMeta &meta, cudaStream_t stream)
-    : Sink(meta, stream) {}
+    : Sink(meta, stream), frame_displayed_(true) {}
 
 tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
+  LOG(INFO) << "running qt display sink";
+  frame_displayed_.store(false, std::memory_order_release);
+
   auto host = make_unique_host_ptr<uint8_t>(itens.size_in_bytes());
   CHECK(cudaMemcpyAsync(host.get(), itens.data(), itens.size_in_bytes(),
                         cudaMemcpyDeviceToHost, stream_) == cudaSuccess);
@@ -23,9 +26,17 @@ tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
                        {itens.shape().at(1), itens.shape().at(2)});
   TensorView host_view(host.get(), host_meta);
   emit frame_ready(host_view);
-  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+  // Wait for frame to be displayed.
+  while (!frame_displayed_) {
+    std::this_thread::yield();
+  }
+  // std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  LOG(INFO) << "FINISHED";
   return {};
 }
+
+void QtDisplaySink::on_frame_displayed() { frame_displayed_ = true; }
 
 // ==========================================================================
 //                     QtDisplaySinkFactory Implementation
@@ -83,6 +94,10 @@ QtDisplaySinkFactory::create(const TensorMeta &imeta, const json &jparams,
 
   QObject::connect(sink, &QtDisplaySink::frame_ready, &widget_,
                    &TensorDisplayWidget::show_tensor, Qt::QueuedConnection);
+
+  QObject::connect(
+      &widget_, &TensorDisplayWidget::frame_displayed, sink,
+      [sink]() { sink->on_frame_displayed(); }, Qt::QueuedConnection);
 
   return std::unique_ptr<QtDisplaySink>(sink);
 }

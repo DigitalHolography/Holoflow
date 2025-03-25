@@ -224,6 +224,10 @@ public:
       }
 
       otens.data = (uint8_t *)view.value().data();
+
+      for (auto child : node.children()) {
+        child.get().accept(*this);
+      }
     }
 
     else {
@@ -245,10 +249,6 @@ public:
       }
 
       itens.data = (uint8_t *)view.value().data();
-    }
-
-    for (auto child : node.children()) {
-      child.get().accept(*this);
     }
   }
 
@@ -298,13 +298,13 @@ public:
     if (&node == &root_) {
       auto result = node.accumulator().commit_read();
       CHECK(result);
+
+      for (auto child : node.children()) {
+        child.get().accept(*this);
+      }
     } else {
       auto result = node.accumulator().commit_write();
       CHECK(result);
-    }
-
-    for (auto child : node.children()) {
-      child.get().accept(*this);
     }
   }
 

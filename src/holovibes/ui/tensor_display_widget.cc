@@ -40,11 +40,12 @@ void TensorDisplayWidget::show_tensor(TensorView tens) {
       pixmap.scaled((int)width_, (int)height_, Qt::IgnoreAspectRatio,
                     Qt::SmoothTransformation);
   image_->setPixmap(scaledPixmap);
+}
 
-  // image_->setPixmap(QPixmap::fromImage(image).scaled(
-  //     image_->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
-
-  VLOG(2) << "finished showing tensor";
+void TensorDisplayWidget::paintEvent(QPaintEvent *event) {
+  QMainWindow::paintEvent(event);
+  VLOG(2) << "frame displayed";
+  emit frame_displayed();
 }
 
 } // namespace dh

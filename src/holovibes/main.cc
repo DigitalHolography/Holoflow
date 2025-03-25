@@ -13,7 +13,7 @@
 int main(int argc, char **argv) {
   gflags::ParseCommandLineFlags(&argc, &argv, true);
   FLAGS_logtostderr = 1;
-  FLAGS_v = 2;
+  FLAGS_v = 0;
   FLAGS_colorlogtostderr = true;
   google::InitGoogleLogging(argv[0]);
 
@@ -41,6 +41,10 @@ int main(int argc, char **argv) {
       "QtDisplaySinkFactory",
       std::make_unique<dh::QtDisplaySinkFactory>(*processed_window));
 
+  descriptor.add_accumulator_factory(
+      "BatchedSPSCAccumulatorFactory",
+      std::make_unique<dh::BatchedSPSCAccumulatorFactory>());
+
   // ==========================================================================
   //                     Add nodes
   // ==========================================================================
@@ -48,13 +52,20 @@ int main(int argc, char **argv) {
   descriptor.add_source("HolofileSourceFactory", "holofile_source",
                         R"({
     "path": "D:\\BatchTesting\\250220_GUJ0206_L.holo",
-    "start_frame": 5000,
+    "start_frame": 0,
     "end_frame": 10000,
-    "batch_size": 1,
-    "load_kind": "READ_LIVE"
+    "batch_size": 32,
+    "load_kind": "LOAD_IN_CPU"
   })"_json);
 
   descriptor.add_sink("QtDisplaySinkFactory", "processed_widget", R"({})"_json);
+
+  descriptor.add_accumulator("BatchedSPSCAccumulatorFactory",
+                             "input_accumulator",
+                             R"({
+      "nb_slots": 1024,
+      "dequeue_batch_size": 1
+    })"_json);
 
   // ==========================================================================
   //                     Link nodes
@@ -62,7 +73,9 @@ int main(int argc, char **argv) {
 
   descriptor.set_source("holofile_source");
 
-  descriptor.add_child("holofile_source", "processed_widget");
+  descriptor.add_child("holofile_source", "input_accumulator");
+
+  descriptor.add_child("input_accumulator", "processed_widget");
 
   // ==========================================================================
   //                     Build model
