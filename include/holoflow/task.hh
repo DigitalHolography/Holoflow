@@ -87,8 +87,7 @@ public:
    * @param otens The output tensor view.
    * @return A tl::expected indicating success or an error.
    */
-  virtual tl::expected<void, Error> run(const TensorView itens,
-                                        TensorView otens) = 0;
+  virtual tl::expected<void, Error> run(TensorView itens, TensorView otens) = 0;
 
   /**
    * @brief Returns the metadata associated with the task.
@@ -114,7 +113,7 @@ public:
    */
   bool inlined() const;
 
-private:
+protected:
   TaskMeta meta_; ///< Metadata defining input/output tensors and inlining.
   cudaStream_t stream_; ///< CUDA stream associated with the task execution.
 };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <cufftXt.h>
 #include <memory>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
@@ -183,6 +184,118 @@ inline unique_cuda_stream
 make_unique_cuda_stream(unsigned int flags = cudaStreamDefault) {
   auto result = try_make_unique_cuda_stream(flags);
   return std::move(CUDA_UNWRAP_EXPECTED(result));
+}
+
+inline const char *cufftGetErrorString(cufftResult error) {
+  switch (error) {
+  case CUFFT_SUCCESS:
+    return "CUFFT_SUCCESS";
+  case CUFFT_INVALID_PLAN:
+    return "CUFFT_INVALID_PLAN";
+  case CUFFT_ALLOC_FAILED:
+    return "CUFFT_ALLOC_FAILED";
+  case CUFFT_INVALID_TYPE:
+    return "CUFFT_INVALID_TYPE";
+  case CUFFT_INVALID_VALUE:
+    return "CUFFT_INVALID_VALUE";
+  case CUFFT_INTERNAL_ERROR:
+    return "CUFFT_INTERNAL_ERROR";
+  case CUFFT_EXEC_FAILED:
+    return "CUFFT_EXEC_FAILED";
+  case CUFFT_SETUP_FAILED:
+    return "CUFFT_SETUP_FAILED";
+  case CUFFT_INVALID_SIZE:
+    return "CUFFT_INVALID_SIZE";
+  case CUFFT_UNALIGNED_DATA:
+    return "CUFFT_UNALIGNED_DATA";
+  default:
+    return "Unknown CUFFT error";
+  }
+}
+
+class unique_cufft_handle {
+public:
+  // Default constructor creates an "empty" handle.
+  unique_cufft_handle() noexcept : handle_(0) {}
+
+  // Construct from an existing cufftHandle.
+  explicit unique_cufft_handle(cufftHandle h) noexcept : handle_(h) {}
+
+  // Move constructor.
+  unique_cufft_handle(unique_cufft_handle &&other) noexcept
+      : handle_(other.handle_) {
+    other.handle_ = 0;
+  }
+
+  // Move assignment operator.
+  unique_cufft_handle &operator=(unique_cufft_handle &&other) noexcept {
+    if (this != &other) {
+      reset();
+      handle_ = other.handle_;
+      other.handle_ = 0;
+    }
+    return *this;
+  }
+
+  // Copying is disabled.
+  unique_cufft_handle(const unique_cufft_handle &) = delete;
+  unique_cufft_handle &operator=(const unique_cufft_handle &) = delete;
+
+  // Destructor automatically destroys the CUFFT handle.
+  ~unique_cufft_handle() { reset(); }
+
+  // Returns the underlying cufftHandle.
+  cufftHandle get() const noexcept { return handle_; }
+
+  // Releases ownership of the handle.
+  cufftHandle release() noexcept {
+    cufftHandle tmp = handle_;
+    handle_ = 0;
+    return tmp;
+  }
+
+  // Resets the managed handle, destroying the current one if necessary.
+  void reset(cufftHandle newHandle = 0) noexcept {
+    if (handle_ != 0) {
+      cufftResult result = cufftDestroy(handle_);
+      if (result != CUFFT_SUCCESS) {
+        dh::cuda_logger()->error("CUFFT destruction failed with error: {}",
+                                 cufftGetErrorString(result));
+      }
+    }
+    handle_ = newHandle;
+  }
+
+  // Boolean conversion to check if a valid handle is managed.
+  explicit operator bool() const noexcept { return handle_ != 0; }
+
+private:
+  cufftHandle handle_;
+};
+
+// Helper functions to create a CUFFT handle.
+
+inline tl::expected<unique_cufft_handle, cufftResult>
+try_make_unique_cufft_handle() {
+  cufftHandle h = 0;
+  dh::cuda_logger()->trace("Creating CUFFT handle");
+  cufftResult result = cufftCreate(&h);
+  if (result != CUFFT_SUCCESS) {
+    return tl::unexpected(result);
+  }
+  return std::move(unique_cufft_handle(h));
+}
+
+inline unique_cufft_handle make_unique_cufft_handle() {
+  auto result = try_make_unique_cufft_handle();
+  // Here, you might want to handle errors differently as CUFFT errors are not
+  // CUDA errors.
+  if (!result) {
+    dh::cuda_logger()->critical("Failed to create CUFFT handle: {}",
+                                cufftGetErrorString(result.error()));
+    std::abort();
+  }
+  return std::move(result.value());
 }
 
 } // namespace dh

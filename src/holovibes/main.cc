@@ -4,12 +4,16 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include "curaii/cufft.hh"
 #include "holoflow/model.hh"
 #include "holoflow/model_descriptor.hh"
 #include "holoflow/tensor.hh"
 #include "holovibes/accumulators/batched_spsc_accumulator.hh"
 #include "holovibes/sinks/qt_display_sink.hh"
 #include "holovibes/sources/holofile_source.hh"
+#include "holovibes/tasks/convert_task.hh"
+#include "holovibes/tasks/fresnel_diffraction_task.hh"
+#include "holovibes/tasks/identity_task.hh"
 #include "holovibes/ui/tensor_display_widget.hh"
 
 void setup_global_logger() {
@@ -24,17 +28,13 @@ void setup_global_logger() {
       "global_logger", sinks.begin(), sinks.end());
 
   spdlog::set_default_logger(global_logger);
-  spdlog::set_level(spdlog::level::trace);
+  spdlog::set_level(spdlog::level::debug);
   spdlog::flush_on(spdlog::level::warn);
   spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%n] [%^%l%$] %v");
 }
 
 int main(int argc, char **argv) {
   setup_global_logger();
-
-  spdlog::info("Hello, {}!", "world");
-  spdlog::warn("This is a warning!");
-  spdlog::error("An error occurred: {}", 404);
 
   // ==========================================================================
   //                     Create display windows
@@ -62,6 +62,16 @@ int main(int argc, char **argv) {
       "BatchedSPSCAccumulatorFactory",
       std::make_unique<dh::BatchedSPSCAccumulatorFactory>());
 
+  descriptor.add_task_factory("ConvertTaskFactory",
+                              std::make_unique<dh::ConvertTaskFactory>());
+
+  descriptor.add_task_factory("IdentityTaskFactory",
+                              std::make_unique<dh::IdentityTaskFactory>());
+
+  descriptor.add_task_factory(
+      "FresnelDiffractionTaskFactory",
+      std::make_unique<dh::FresnelDiffractionTaskFactory>());
+
   // ==========================================================================
   //                     Add nodes
   // ==========================================================================
@@ -84,15 +94,40 @@ int main(int argc, char **argv) {
       "dequeue_batch_size": 1
     })"_json);
 
+  descriptor.add_task("ConvertTaskFactory", "convert_input",
+                      R"({
+      "conversion": "U8_CF32_REAL"
+    })"_json);
+
+  descriptor.add_task("ConvertTaskFactory", "convert_postprocess",
+                      R"({
+      "conversion": "CF32_F32_MODU"
+    })"_json);
+
+  descriptor.add_task("ConvertTaskFactory", "convert_output",
+                      R"({
+      "conversion": "F32_U8_SCALED"
+    })"_json);
+
+  descriptor.add_task("FresnelDiffractionTaskFactory", "fresnel_diffraction",
+                      R"({
+      "lambda": 852e-9,
+      "z": 380e-3,
+      "pixel_size": 20e-6,
+      "skip_phase_shift": true
+    })"_json);
+
   // ==========================================================================
   //                     Link nodes
   // ==========================================================================
 
   descriptor.set_source("holofile_source");
-
   descriptor.add_child("holofile_source", "input_accumulator");
-
-  descriptor.add_child("input_accumulator", "processed_widget");
+  descriptor.add_child("input_accumulator", "convert_input");
+  descriptor.add_child("convert_input", "fresnel_diffraction");
+  descriptor.add_child("fresnel_diffraction", "convert_postprocess");
+  descriptor.add_child("convert_postprocess", "convert_output");
+  descriptor.add_child("convert_output", "processed_widget");
 
   // ==========================================================================
   //                     Build model

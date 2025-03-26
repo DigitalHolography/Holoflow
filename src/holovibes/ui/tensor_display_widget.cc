@@ -27,11 +27,37 @@ TensorDisplayWidget::TensorDisplayWidget(int width, int height, QWidget *parent)
 
 void TensorDisplayWidget::show_tensor(TensorView tens) {
   holovibes_logger()->trace("showing tensor");
-  assert(tens.data_type() == DataType::U8);
-  assert(tens.memory_location() == MemoryLocation::HOST);
-  assert(tens.shape().size() == 2);
-  assert(tens.strides().at(1) == 1);
-  assert(tens.strides().at(0) == tens.shape().at(1));
+
+  if (tens.data_type() != DataType::U8) {
+    holovibes_logger()->warn("Tensor data type is not U8.");
+    emit frame_displayed();
+    return;
+  }
+
+  if (tens.memory_location() != MemoryLocation::HOST) {
+    holovibes_logger()->warn("Tensor memory location is not HOST.");
+    emit frame_displayed();
+    return;
+  }
+
+  if (tens.shape().size() != 2) {
+    holovibes_logger()->warn("Tensor shape size is not 2.");
+    emit frame_displayed();
+    return;
+  }
+
+  if (tens.strides().at(1) != 1) {
+    holovibes_logger()->warn("Tensor stride at index 1 is not 1.");
+    emit frame_displayed();
+    return;
+  }
+
+  if (tens.strides().at(0) != tens.shape().at(1)) {
+    holovibes_logger()->warn(
+        "Tensor stride at index 0 does not match tensor shape at index 1.");
+    emit frame_displayed();
+    return;
+  }
 
   uint8_t *tens_data = static_cast<uint8_t *>(tens.data());
   int tens_width = static_cast<int>(tens.shape().at(1));

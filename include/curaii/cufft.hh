@@ -1,0 +1,88 @@
+#pragma once
+
+#include <cuda_runtime.h>
+#include <cufftXt.h>
+#include <fmt/base.h>
+#include <tl/expected.hpp>
+
+namespace dh {
+
+class CufftType {
+public:
+  explicit CufftType(cufftType type) noexcept;
+
+  cufftType type() const noexcept;
+
+private:
+  cufftType type_;
+};
+
+class CufftResult {
+public:
+  explicit CufftResult(cufftResult res) noexcept;
+
+  const char *message() const noexcept;
+
+  cufftResult result() const noexcept;
+
+private:
+  cufftResult result_;
+};
+
+class CufftDirection {
+public:
+  explicit CufftDirection(int direction) noexcept;
+
+  int direction() const noexcept;
+
+private:
+  int direction_;
+};
+
+class CufftHandle {
+public:
+  CufftHandle(const CufftHandle &) = delete;
+  CufftHandle &operator=(const CufftHandle &) = delete;
+
+  CufftHandle(CufftHandle &&other) noexcept;
+  CufftHandle &operator=(CufftHandle &&other) noexcept;
+
+  ~CufftHandle();
+
+  static tl::expected<CufftHandle, CufftResult>
+  try_plan_many(int rank, int *n, int *inembed, int istride, int idist,
+                int *onembed, int ostride, int odist, CufftType type,
+                int batch) noexcept;
+
+  tl::expected<void, CufftResult> try_set_stream(cudaStream_t stream) noexcept;
+
+  tl::expected<void, CufftResult>
+  try_xt_exec(void *input, void *output, CufftDirection direction) noexcept;
+
+  cufftHandle handle() noexcept;
+
+private:
+  CufftHandle(cufftHandle handle) noexcept;
+
+  cufftHandle handle_;
+};
+
+} // namespace dh
+
+template <> struct fmt::formatter<dh::CufftType> : formatter<string_view> {
+
+  auto format(dh::CufftType type, format_context &ctx) const
+      -> format_context::iterator;
+};
+
+template <> struct fmt::formatter<dh::CufftResult> : formatter<string_view> {
+
+  auto format(dh::CufftResult result, format_context &ctx) const
+      -> format_context::iterator;
+};
+
+template <> struct fmt::formatter<dh::CufftDirection> : formatter<string_view> {
+
+  auto format(dh::CufftDirection direction, format_context &ctx) const
+      -> format_context::iterator;
+};

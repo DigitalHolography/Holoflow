@@ -17,10 +17,8 @@ endfunction()
 function(set_common_compile_options target)
     target_compile_options(${target} PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>:
-            $<$<CXX_COMPILER_ID:MSVC>:/W4 /permissive- /WX /wd4456 /wd4505 /wd5046 /wd4702 /utf-8>
+            $<$<CXX_COMPILER_ID:MSVC>:/W4;/permissive-;/WX;/wd4456;/wd4505;/wd5046;/wd4702;/utf-8>
         >
-        $<$<COMPILE_LANGUAGE:CUDA>:
-            --extended-lambda
-        >
+        $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>
     )
 endfunction()

@@ -5,6 +5,7 @@
 #include <spdlog/spdlog.h>
 
 #include "holovibes/holovibes.hh"
+using namespace std::chrono_literals;
 
 namespace dh {
 
@@ -79,6 +80,8 @@ tl::expected<void, Error> HolofileSource::run(TensorView otens) {
                              cudaGetErrorString(error));
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
+
+  // std::this_thread::sleep_for(2000ms);
 
   return {};
 }

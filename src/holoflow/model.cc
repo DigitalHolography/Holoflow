@@ -335,6 +335,7 @@ public:
       holoflow_logger()->info("Stop signal received.");
       return;
     }
+
     auto itens = tensors_.at(node.itens_id()).view();
     auto otens = tensors_.at(node.otens_id()).view();
     assert(itens.data() != nullptr);
@@ -455,9 +456,11 @@ void Model::run() {
       FreePES free_pes(tensors_, pes, stop_flag_);
 
       while (!stop_flag_) {
+        holoflow_logger()->info("PES START");
         pes.get().accept(allocate_pes);
         pes.get().accept(exec_pes);
         pes.get().accept(free_pes);
+        holoflow_logger()->info("PES STOP");
       }
     });
   }
