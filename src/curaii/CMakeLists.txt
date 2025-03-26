@@ -1,7 +1,11 @@
 
 add_library(curaii STATIC
   logger.cc
+  library_types.cc
+  cuda_runtime.cc
   cufft.cc
+  cublas.cc
+  cusolver_dn.cc
 )
 
 set_common_target_properties(curaii)
@@ -19,6 +23,8 @@ target_link_directories(curaii PUBLIC
 target_link_libraries(curaii PUBLIC
     cudart
     cufft
+    cublas
+    cusolver
     tl::expected
     spdlog::spdlog
 )

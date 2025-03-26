@@ -49,13 +49,16 @@ public:
 
   ~CufftHandle();
 
+  [[nodiscard]]
   static tl::expected<CufftHandle, CufftResult>
   try_plan_many(int rank, int *n, int *inembed, int istride, int idist,
                 int *onembed, int ostride, int odist, CufftType type,
                 int batch) noexcept;
 
+  [[nodiscard]]
   tl::expected<void, CufftResult> try_set_stream(cudaStream_t stream) noexcept;
 
+  [[nodiscard]]
   tl::expected<void, CufftResult>
   try_xt_exec(void *input, void *output, CufftDirection direction) noexcept;
 
