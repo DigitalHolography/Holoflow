@@ -11,6 +11,7 @@
 #include "holovibes/accumulators/batched_spsc_accumulator.hh"
 #include "holovibes/sinks/qt_display_sink.hh"
 #include "holovibes/sources/holofile_source.hh"
+#include "holovibes/tasks/average_task.hh"
 #include "holovibes/tasks/convert_task.hh"
 #include "holovibes/tasks/fresnel_diffraction_task.hh"
 #include "holovibes/tasks/identity_task.hh"
@@ -76,6 +77,9 @@ int main(int argc, char **argv) {
   descriptor.add_task_factory("PCATaskFactory",
                               std::make_unique<dh::PCATaskFactory>());
 
+  descriptor.add_task_factory("AverageTaskFactory",
+                              std::make_unique<dh::AverageTaskFactory>());
+
   // ==========================================================================
   //                     Add nodes
   // ==========================================================================
@@ -95,7 +99,28 @@ int main(int argc, char **argv) {
                              "input_accumulator",
                              R"({
       "nb_slots": 1024,
+      "dequeue_batch_size": 64
+    })"_json);
+
+  descriptor.add_accumulator("BatchedSPSCAccumulatorFactory",
+                             "time_accumulator",
+                             R"({
+      "nb_slots": 512,
+      "dequeue_batch_size": 32
+    })"_json);
+
+  descriptor.add_accumulator("BatchedSPSCAccumulatorFactory",
+                             "output_accumulator",
+                             R"({
+      "nb_slots": 512,
       "dequeue_batch_size": 1
+    })"_json);
+
+  descriptor.add_accumulator("BatchedSPSCAccumulatorFactory",
+                             "accumulation_accumulator",
+                             R"({
+      "nb_slots": 512,
+      "dequeue_batch_size": 16
     })"_json);
 
   descriptor.add_task("ConvertTaskFactory", "convert_input",
@@ -123,6 +148,16 @@ int main(int argc, char **argv) {
 
   descriptor.add_task("PCATaskFactory", "pca", R"({})"_json);
 
+  descriptor.add_task("AverageTaskFactory", "time_average", R"({
+      "begin": 0,
+      "end": 16
+    })"_json);
+
+  descriptor.add_task("AverageTaskFactory", "output_average", R"({
+      "begin": 0,
+      "end": 16
+    })"_json);
+
   // ==========================================================================
   //                     Link nodes
   // ==========================================================================
@@ -131,10 +166,15 @@ int main(int argc, char **argv) {
   descriptor.add_child("holofile_source", "input_accumulator");
   descriptor.add_child("input_accumulator", "convert_input");
   descriptor.add_child("convert_input", "fresnel_diffraction");
-  descriptor.add_child("fresnel_diffraction", "pca");
-  descriptor.add_child("pca", "convert_postprocess");
-  descriptor.add_child("convert_postprocess", "convert_output");
-  descriptor.add_child("convert_output", "processed_widget");
+  descriptor.add_child("fresnel_diffraction", "time_accumulator");
+  descriptor.add_child("time_accumulator", "pca");
+  descriptor.add_child("pca", "time_average");
+  descriptor.add_child("time_average", "convert_postprocess");
+  descriptor.add_child("convert_postprocess", "accumulation_accumulator");
+  descriptor.add_child("accumulation_accumulator", "output_average");
+  descriptor.add_child("output_average", "convert_output");
+  descriptor.add_child("convert_output", "output_accumulator");
+  descriptor.add_child("output_accumulator", "processed_widget");
 
   // ==========================================================================
   //                     Build model

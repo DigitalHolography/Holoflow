@@ -456,11 +456,11 @@ void Model::run() {
       FreePES free_pes(tensors_, pes, stop_flag_);
 
       while (!stop_flag_) {
-        holoflow_logger()->info("PES START");
+        holoflow_logger()->trace("PES START");
         pes.get().accept(allocate_pes);
         pes.get().accept(exec_pes);
         pes.get().accept(free_pes);
-        holoflow_logger()->info("PES STOP");
+        holoflow_logger()->trace("PES STOP");
       }
     });
   }

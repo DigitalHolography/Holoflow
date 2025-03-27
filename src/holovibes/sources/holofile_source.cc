@@ -81,7 +81,7 @@ tl::expected<void, Error> HolofileSource::run(TensorView otens) {
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
-  // std::this_thread::sleep_for(2000ms);
+  frame_index_ += batch_size_;
 
   return {};
 }

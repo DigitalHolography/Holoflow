@@ -17,7 +17,7 @@ QtDisplaySink::QtDisplaySink(const SinkMeta &meta, cudaStream_t stream)
     : Sink(meta, stream), frame_displayed_(true) {}
 
 tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
-  holovibes_logger()->debug("running qt display sink");
+  holovibes_logger()->trace("running qt display sink");
   frame_displayed_.store(false, std::memory_order_release);
 
   auto host = make_unique_host_ptr<uint8_t>(itens.size_in_bytes());
@@ -34,7 +34,7 @@ tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
   while (!frame_displayed_) {
     std::this_thread::yield();
   }
-  holovibes_logger()->debug("FINISHED");
+  holovibes_logger()->trace("FINISHED");
   return {};
 }
 
