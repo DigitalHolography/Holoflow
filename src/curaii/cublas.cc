@@ -38,10 +38,44 @@ auto fmt::formatter<dh::CublasOperation>::format(dh::CublasOperation operation,
     name = "CUBLAS_OP_T";
     break;
   case CUBLAS_OP_C:
-    name = "CUBLAS_OP_C";
+    name = "CUBLAS_OP_C || CUBLAS_OP_HERMITAN";
+    break;
+  case CUBLAS_OP_CONJG:
+    name = "CUBLAS_OP_CONJG";
     break;
   default:
     UNREACHABLE("Invalid cublas operation");
+  }
+  return formatter<string_view>::format(name, ctx);
+}
+
+// ==========================================================================
+//                     CublasFillMode Implementation
+// ==========================================================================
+
+dh::CublasFillMode::CublasFillMode(cublasFillMode_t fill_mode) noexcept
+    : fill_mode_(fill_mode) {}
+
+cublasFillMode_t dh::CublasFillMode::fill_mode() const noexcept {
+  return fill_mode_;
+}
+
+auto fmt::formatter<dh::CublasFillMode>::format(dh::CublasFillMode fill_mode,
+                                                format_context &ctx) const
+    -> format_context::iterator {
+  string_view name;
+  switch (fill_mode.fill_mode()) {
+  case CUBLAS_FILL_MODE_LOWER:
+    name = "CUBLAS_FILL_MODE_LOWER";
+    break;
+  case CUBLAS_FILL_MODE_UPPER:
+    name = "CUBLAS_FILL_MODE_UPPER";
+    break;
+  case CUBLAS_FILL_MODE_FULL:
+    name = "CUBLAS_FILL_MODE_FULL";
+    break;
+  default:
+    UNREACHABLE("Invalid cublas fill mode");
   }
   return formatter<string_view>::format(name, ctx);
 }
@@ -189,8 +223,8 @@ dh::CublasHandle::try_create() noexcept {
 }
 
 tl::expected<void, dh::CublasStatus>
-dh::CublasHandle::try_set_stream(cudaStream_t stream) noexcept {
-  if (auto result = cublasSetStream(handle_, stream);
+dh::CublasHandle::try_set_stream(CudaStreamRef stream) noexcept {
+  if (auto result = cublasSetStream(handle_, stream.stream());
       result != CUBLAS_STATUS_SUCCESS) {
     curaii_logger()->warn(
         "[CublasHandle::try_set_stream] failed with error: \"{}\"",

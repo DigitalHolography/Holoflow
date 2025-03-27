@@ -14,6 +14,7 @@
 #include "holovibes/tasks/convert_task.hh"
 #include "holovibes/tasks/fresnel_diffraction_task.hh"
 #include "holovibes/tasks/identity_task.hh"
+#include "holovibes/tasks/pca_task.hh"
 #include "holovibes/ui/tensor_display_widget.hh"
 
 void setup_global_logger() {
@@ -72,6 +73,9 @@ int main(int argc, char **argv) {
       "FresnelDiffractionTaskFactory",
       std::make_unique<dh::FresnelDiffractionTaskFactory>());
 
+  descriptor.add_task_factory("PCATaskFactory",
+                              std::make_unique<dh::PCATaskFactory>());
+
   // ==========================================================================
   //                     Add nodes
   // ==========================================================================
@@ -117,6 +121,8 @@ int main(int argc, char **argv) {
       "skip_phase_shift": true
     })"_json);
 
+  descriptor.add_task("PCATaskFactory", "pca", R"({})"_json);
+
   // ==========================================================================
   //                     Link nodes
   // ==========================================================================
@@ -125,7 +131,8 @@ int main(int argc, char **argv) {
   descriptor.add_child("holofile_source", "input_accumulator");
   descriptor.add_child("input_accumulator", "convert_input");
   descriptor.add_child("convert_input", "fresnel_diffraction");
-  descriptor.add_child("fresnel_diffraction", "convert_postprocess");
+  descriptor.add_child("fresnel_diffraction", "pca");
+  descriptor.add_child("pca", "convert_postprocess");
   descriptor.add_child("convert_postprocess", "convert_output");
   descriptor.add_child("convert_output", "processed_widget");
 

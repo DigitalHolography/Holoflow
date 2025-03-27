@@ -8,7 +8,7 @@ namespace dh {
 
 class CudaDataType {
 public:
-  CudaDataType(cudaDataType_t data_type) noexcept;
+  explicit CudaDataType(cudaDataType_t data_type) noexcept;
 
   cudaDataType_t data_type() const noexcept;
 
