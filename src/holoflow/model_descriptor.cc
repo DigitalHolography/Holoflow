@@ -5,6 +5,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include "bug_buster/bug_buster.hh"
 #include "holoflow/holoflow.hh"
 
 namespace dh {
@@ -313,7 +314,7 @@ public:
     }
 
     // Sink nodes should have no children.
-    assert(node.children().empty());
+    DH_CHECK(node.children().empty());
   }
 
   ModelDescriptorNode *result() { return result_; }

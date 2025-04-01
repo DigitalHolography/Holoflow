@@ -6,6 +6,7 @@
 #include <fmt/ranges.h>
 #include <spdlog/spdlog.h>
 
+#include "bug_buster/bug_buster.hh"
 #include "holoflow/holoflow.hh"
 
 namespace dh {
@@ -21,24 +22,24 @@ AccumulatorMeta::AccumulatorMeta(const TensorMeta &imeta,
       "Initializing AccumulatorMeta with input shape [{}], output shape [{}]",
       fmt::join(imeta_.shape(), ", "), fmt::join(ometa_.shape(), ", "));
 
-  assert(imeta_.memory_location() == ometa_.memory_location() &&
-         "Input and output tensors must have the same memory location");
-  assert(imeta_.data_type() == ometa_.data_type() &&
-         "Input and output tensors must have the same data type");
-  assert(imeta_.shape().size() >= 2 && ometa_.shape().size() >= 2 &&
-         "Input and output tensors must have at least rank 2");
-  assert(imeta_.shape().size() == ometa_.shape().size() &&
-         "Input and output tensors must have the same rank");
-  assert(imeta_.strides().size() == ometa_.strides().size() &&
-         "Input and output tensors must have the same number of strides");
+  DH_CHECK(imeta_.memory_location() == ometa_.memory_location() &&
+           "Input and output tensors must have the same memory location");
+  DH_CHECK(imeta_.data_type() == ometa_.data_type() &&
+           "Input and output tensors must have the same data type");
+  DH_CHECK(imeta_.shape().size() >= 2 && ometa_.shape().size() >= 2 &&
+           "Input and output tensors must have at least rank 2");
+  DH_CHECK(imeta_.shape().size() == ometa_.shape().size() &&
+           "Input and output tensors must have the same rank");
+  DH_CHECK(imeta_.strides().size() == ometa_.strides().size() &&
+           "Input and output tensors must have the same number of strides");
 
   for (size_t i = 1; i < imeta_.shape().size(); ++i) {
-    assert(imeta_.shape()[i] == ometa_.shape()[i] &&
-           "Input and output tensor shapes must match except for the first "
-           "dimension");
-    assert(imeta_.strides()[i] == ometa_.strides()[i] &&
-           "Input and output tensor strides must match except for the first "
-           "dimension");
+    DH_CHECK(imeta_.shape()[i] == ometa_.shape()[i] &&
+             "Input and output tensor shapes must match except for the first "
+             "dimension");
+    DH_CHECK(imeta_.strides()[i] == ometa_.strides()[i] &&
+             "Input and output tensor strides must match except for the first "
+             "dimension");
   }
 }
 

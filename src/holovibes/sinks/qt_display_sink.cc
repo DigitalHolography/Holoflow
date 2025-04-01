@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <spdlog/spdlog.h>
 
+#include "bug_buster/bug_buster.hh"
 #include "curaii/curaii.hh"
 #include "holovibes/holovibes.hh"
 
@@ -31,10 +32,10 @@ tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
   frame_displayed_.store(false, std::memory_order_release);
 
   auto host = make_unique_host_ptr<uint8_t>(itens.size_in_bytes());
-  assert(cudaMemcpyAsync(host.get(), itens.data(), itens.size_in_bytes(),
-                         cudaMemcpyDeviceToHost, stream_) == cudaSuccess);
+  DH_CHECK(cudaMemcpyAsync(host.get(), itens.data(), itens.size_in_bytes(),
+                           cudaMemcpyDeviceToHost, stream_) == cudaSuccess);
 
-  assert(cudaStreamSynchronize(stream_) == cudaSuccess);
+  DH_CHECK(cudaStreamSynchronize(stream_) == cudaSuccess);
   TensorMeta host_meta(itens.data_type(), MemoryLocation::HOST,
                        {itens.shape().at(1), itens.shape().at(2)});
   TensorView host_view(host.get(), host_meta);

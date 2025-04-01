@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 #include <vector>
 
+#include "bug_buster/bug_buster.hh"
 #include "holoflow/holoflow.hh"
 
 namespace dh {
@@ -71,10 +72,10 @@ TensorMeta::TensorMeta(DataType data_type, MemoryLocation memory_location,
                            fmt::join(shape_, ", "), (int)data_type_,
                            (int)memory_location_);
 
-  assert(!shape_.empty() && "Tensor shape cannot be empty");
-  assert(std::all_of(shape_.begin(), shape_.end(),
-                     [](size_t val) { return val > 0; }) &&
-         "Tensor shape cannot contain zero");
+  DH_CHECK(!shape_.empty() && "Tensor shape cannot be empty");
+  DH_CHECK(std::all_of(shape_.begin(), shape_.end(),
+                       [](size_t val) { return val > 0; }) &&
+           "Tensor shape cannot contain zero");
 
   strides_.resize(shape_.size());
   size_t stride = 1;
@@ -93,12 +94,12 @@ TensorMeta::TensorMeta(DataType data_type, MemoryLocation memory_location,
       "data type [{}], memory location [{}]",
       fmt::join(shape_, ", "), fmt::join(strides_, ", "), (int)data_type_,
       (int)memory_location_);
-  assert(!shape_.empty() && "Tensor shape cannot be empty");
-  assert(shape_.size() == strides_.size() &&
-         "Shape and strides must match in size");
-  assert(std::all_of(strides_.begin(), strides_.end(),
-                     [](size_t val) { return val > 0; }) &&
-         "Tensor strides cannot be zero");
+  DH_CHECK(!shape_.empty() && "Tensor shape cannot be empty");
+  DH_CHECK(shape_.size() == strides_.size() &&
+           "Shape and strides must match in size");
+  DH_CHECK(std::all_of(strides_.begin(), strides_.end(),
+                       [](size_t val) { return val > 0; }) &&
+           "Tensor strides cannot be zero");
 }
 
 size_t TensorMeta::size() const {
@@ -144,7 +145,7 @@ TensorView::TensorView(void *data, const TensorMeta &meta)
     : data_(data), meta_(std::ref(meta)) {
   holoflow_logger()->trace("Constructing TensorView with data pointer: {}",
                            data);
-  assert(data_ != nullptr && "TensorView received a null data pointer");
+  DH_CHECK(data_ != nullptr && "TensorView received a null data pointer");
   if (reinterpret_cast<uintptr_t>(data_) % alignof(std::max_align_t) != 0) {
     holoflow_logger()->warn("TensorView data pointer is not properly aligned");
   }

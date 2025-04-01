@@ -10,6 +10,7 @@ qt_add_executable(holovibes
   tasks/pca_task.cc
   tasks/average_task.cu
   tasks/percentile_clip_task.cu
+  tasks/fft_shift_task.cu
 
   # Must add header files with Q_OBJECT for qt AUTMOC to run on them
   ${PROJECT_SOURCE_DIR}/include/holovibes/sinks/qt_display_sink.hh

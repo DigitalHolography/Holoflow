@@ -11,6 +11,7 @@
 #include <thread>
 #include <vector>
 
+#include "bug_buster/bug_buster.hh"
 #include "holoflow/holoflow.hh"
 #include "holoflow/model_builder.hh"
 
@@ -201,11 +202,8 @@ public:
       child.get().accept(*this);
     }
 
-    auto &itens = tensors_.at(node.itens_id());
-    assert(itens.data != nullptr);
-
-    auto &otens = tensors_.at(node.otens_id());
-    assert(otens.data != nullptr);
+    DH_CHECK(tensors_.at(node.itens_id()).data != nullptr);
+    DH_CHECK(tensors_.at(node.otens_id()).data != nullptr);
   }
 
   void visit(AccumulatorNode &node) override {
@@ -214,12 +212,12 @@ public:
       auto &otens = tensors_.at(node.otens_id());
 
       auto result = node.accumulator().read_tensor();
-      assert(result);
+      DH_CHECK(result);
       auto view = result.value();
 
       while (!view && !stop_) {
         result = node.accumulator().read_tensor();
-        assert(result);
+        DH_CHECK(result);
         view = result.value();
       }
 
@@ -237,12 +235,12 @@ public:
       auto &itens = tensors_.at(node.itens_id());
 
       auto result = node.accumulator().write_tensor();
-      assert(result);
+      DH_CHECK(result);
       auto view = result.value();
 
       while (!view && !stop_) {
         result = node.accumulator().write_tensor();
-        assert(result);
+        DH_CHECK(result);
         view = result.value();
       }
 
@@ -261,15 +259,13 @@ public:
       child.get().accept(*this);
     }
 
-    auto &otens = tensors_.at(node.otens_id());
-    assert(otens.data != nullptr);
+    DH_CHECK(tensors_.at(node.otens_id()).data != nullptr);
   }
 
   void visit(SinkNode &node) override {
     holoflow_logger()->trace("[AllocatePES] visiting: {}", node.name());
-    assert(node.children().empty());
-    auto &itens = tensors_.at(node.itens_id());
-    assert(itens.data != nullptr);
+    DH_CHECK(node.children().empty());
+    DH_CHECK(tensors_.at(node.itens_id()).data != nullptr);
   }
 
 private:
@@ -296,13 +292,13 @@ public:
     holoflow_logger()->trace("[FreePES] visiting: {}", node.name());
     if (&node == &root_) {
       auto result = node.accumulator().commit_read();
-      assert(result);
+      DH_CHECK(result);
       for (auto child : node.children()) {
         child.get().accept(*this);
       }
     } else {
       auto result = node.accumulator().commit_write();
-      assert(result);
+      DH_CHECK(result);
     }
   }
 
@@ -338,10 +334,10 @@ public:
 
     auto itens = tensors_.at(node.itens_id()).view();
     auto otens = tensors_.at(node.otens_id()).view();
-    assert(itens.data() != nullptr);
-    assert(otens.data() != nullptr);
+    DH_CHECK(itens.data() != nullptr);
+    DH_CHECK(otens.data() != nullptr);
     holoflow_logger()->trace("[ExecPES] Running {}", node.name());
-    assert(node.task().run(itens, otens));
+    DH_CHECK(node.task().run(itens, otens));
 
     // Process non-inlined children first.
     for (auto child : node.children()) {
@@ -380,7 +376,7 @@ public:
           child.get().accept(*this);
         }
       }
-      assert(cudaStreamSynchronize(node.stream()) == cudaSuccess);
+      DH_CHECK(cudaStreamSynchronize(node.stream()) == cudaSuccess);
       nvtxRangePop();
     }
   }
@@ -392,9 +388,9 @@ public:
       return;
     }
     auto otens = tensors_.at(node.otens_id()).view();
-    assert(otens.data() != nullptr);
+    DH_CHECK(otens.data() != nullptr);
     holoflow_logger()->trace("[ExecPES] Running {}", node.name());
-    assert(node.source().run(otens));
+    DH_CHECK(node.source().run(otens));
 
     // Process non-inlined children first.
     for (auto child : node.children()) {
@@ -419,9 +415,9 @@ public:
       return;
     }
     auto itens = tensors_.at(node.itens_id()).view();
-    assert(itens.data() != nullptr);
+    DH_CHECK(itens.data() != nullptr);
     holoflow_logger()->trace("[ExecPES] Running {}", node.name());
-    assert(node.sink().run(itens));
+    DH_CHECK(node.sink().run(itens));
   }
 
 private:
@@ -471,7 +467,7 @@ void Model::run() {
 }
 
 void Model::start() {
-  assert(state_ == State::STOPPED);
+  DH_CHECK(state_ == State::STOPPED);
   state_ = State::RUNNING;
   stop_flag_ = false;
 
@@ -479,7 +475,7 @@ void Model::start() {
 }
 
 void Model::stop() {
-  assert(state_ == State::RUNNING);
+  DH_CHECK(state_ == State::RUNNING);
   stop_flag_ = true;
 
   model_thread_.join();

@@ -55,28 +55,10 @@ tl::expected<void, Error> PercentileClipTask::run(TensorView input,
   int lower_idx = static_cast<int>(count * (0.02f / 100.0f));
   int upper_idx = static_cast<int>(count * (99.98f / 100.0f));
 
-  holovibes_logger()->info("lower_idx: {}, upper_idx: {}, count: {}", lower_idx,
-                           upper_idx, count);
-
   cudaMemcpyAsync(lower_threshold_.get(), odata + lower_idx, sizeof(float),
                   cudaMemcpyDeviceToDevice, stream_);
   cudaMemcpyAsync(upper_threshold_.get(), odata + upper_idx, sizeof(float),
                   cudaMemcpyDeviceToDevice, stream_);
-
-  // Copy lower_threshold and upper_threshold from device to host
-  float lower_host = 0.0f;
-  float upper_host = 0.0f;
-  cudaMemcpyAsync(&lower_host, lower_threshold_.get(), sizeof(float),
-                  cudaMemcpyDeviceToHost, stream_);
-  cudaMemcpyAsync(&upper_host, upper_threshold_.get(), sizeof(float),
-                  cudaMemcpyDeviceToHost, stream_);
-
-  // Synchronize to ensure the copies are complete before printing
-  cudaStreamSynchronize(stream_);
-
-  // Print the values
-  holovibes_logger()->info("lower_threshold: {}, upper_threshold: {}",
-                           lower_host, upper_host);
 
   int block_size = 256;
   int grid_size = (count + block_size - 1) / block_size;

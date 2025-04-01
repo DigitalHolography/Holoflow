@@ -10,6 +10,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "bug_buster/bug_buster.hh"
 #include "holoflow/holoflow.hh"
 
 namespace dh {
@@ -19,22 +20,22 @@ namespace dh {
 // ==========================================================================
 
 const std::string &ModelNodeBuilder::name() const {
-  assert(name_);
+  DH_CHECK(name_);
   return *name_;
 }
 
 const std::string &ModelNodeBuilder::kind() const {
-  assert(kind_);
+  DH_CHECK(kind_);
   return *kind_;
 }
 
 const json &ModelNodeBuilder::params() const {
-  assert(params_);
+  DH_CHECK(params_);
   return *params_;
 }
 
 cudaStream_t ModelNodeBuilder::stream() const {
-  assert(stream_);
+  DH_CHECK(stream_);
   return *stream_;
 }
 
@@ -63,22 +64,22 @@ void ModelNodeBuilder::add_child(ModelNodeBuilder &child) {
 // ==========================================================================
 
 int TaskNodeBuilder::itens_id() const {
-  assert(itens_id_);
+  DH_CHECK(itens_id_);
   return *itens_id_;
 }
 
 int TaskNodeBuilder::otens_id() const {
-  assert(otens_id_);
+  DH_CHECK(otens_id_);
   return *otens_id_;
 }
 
 Task &TaskNodeBuilder::task() const {
-  assert(task_);
+  DH_CHECK(task_);
   return *task_;
 }
 
 const TaskMeta &TaskNodeBuilder::task_meta() const {
-  assert(task_meta_);
+  DH_CHECK(task_meta_);
   return *task_meta_;
 }
 
@@ -99,14 +100,14 @@ void TaskNodeBuilder::set_itens_id(int id) { itens_id_ = id; }
 void TaskNodeBuilder::set_otens_id(int id) { otens_id_ = id; }
 
 std::unique_ptr<ModelNode> TaskNodeBuilder::build() {
-  assert(name_);
-  assert(kind_);
-  assert(params_);
-  assert(itens_id_);
-  assert(otens_id_);
-  assert(stream_);
-  assert(task_);
-  assert(task_meta_);
+  DH_CHECK(name_);
+  DH_CHECK(kind_);
+  DH_CHECK(params_);
+  DH_CHECK(itens_id_);
+  DH_CHECK(otens_id_);
+  DH_CHECK(stream_);
+  DH_CHECK(task_);
+  DH_CHECK(task_meta_);
 
   return std::make_unique<TaskNode>(*kind_, *name_, *params_, *itens_id_,
                                     *otens_id_, *stream_, std::move(task_),
@@ -122,22 +123,22 @@ void TaskNodeBuilder::accept(ModelBuilderVisitor &visitor) {
 // ==========================================================================
 
 int AccumulatorNodeBuilder::itens_id() const {
-  assert(itens_id_);
+  DH_CHECK(itens_id_);
   return *itens_id_;
 }
 
 int AccumulatorNodeBuilder::otens_id() const {
-  assert(otens_id_);
+  DH_CHECK(otens_id_);
   return *otens_id_;
 }
 
 Accumulator &AccumulatorNodeBuilder::accumulator() const {
-  assert(accumulator_);
+  DH_CHECK(accumulator_);
   return *accumulator_;
 }
 
 const AccumulatorMeta &AccumulatorNodeBuilder::accumulator_meta() const {
-  assert(accumulator_meta_);
+  DH_CHECK(accumulator_meta_);
   return *accumulator_meta_;
 }
 
@@ -164,14 +165,14 @@ void AccumulatorNodeBuilder::set_itens_id(int id) { itens_id_ = id; }
 void AccumulatorNodeBuilder::set_otens_id(int id) { otens_id_ = id; }
 
 std::unique_ptr<ModelNode> AccumulatorNodeBuilder::build() {
-  assert(name_);
-  assert(kind_);
-  assert(params_);
-  assert(itens_id_);
-  assert(otens_id_);
-  assert(stream_);
-  assert(accumulator_);
-  assert(accumulator_meta_);
+  DH_CHECK(name_);
+  DH_CHECK(kind_);
+  DH_CHECK(params_);
+  DH_CHECK(itens_id_);
+  DH_CHECK(otens_id_);
+  DH_CHECK(stream_);
+  DH_CHECK(accumulator_);
+  DH_CHECK(accumulator_meta_);
 
   return std::make_unique<AccumulatorNode>(
       *kind_, *name_, *params_, *itens_id_, *otens_id_, *stream_,
@@ -187,17 +188,17 @@ void AccumulatorNodeBuilder::accept(ModelBuilderVisitor &visitor) {
 // ==========================================================================
 
 int SourceNodeBuilder::otens_id() const {
-  assert(otens_id_);
+  DH_CHECK(otens_id_);
   return *otens_id_;
 }
 
 Source &SourceNodeBuilder::source() const {
-  assert(source_);
+  DH_CHECK(source_);
   return *source_;
 }
 
 const SourceMeta &SourceNodeBuilder::source_meta() const {
-  assert(source_meta_);
+  DH_CHECK(source_meta_);
   return *source_meta_;
 }
 
@@ -214,13 +215,13 @@ void SourceNodeBuilder::set_source_meta(const SourceMeta &source_meta) {
 void SourceNodeBuilder::set_otens_id(int id) { otens_id_ = id; }
 
 std::unique_ptr<ModelNode> SourceNodeBuilder::build() {
-  assert(name_);
-  assert(kind_);
-  assert(params_);
-  assert(otens_id_);
-  assert(stream_);
-  assert(source_);
-  assert(source_meta_);
+  DH_CHECK(name_);
+  DH_CHECK(kind_);
+  DH_CHECK(params_);
+  DH_CHECK(otens_id_);
+  DH_CHECK(stream_);
+  DH_CHECK(source_);
+  DH_CHECK(source_meta_);
 
   return std::make_unique<SourceNode>(*kind_, *name_, *params_, *otens_id_,
                                       *stream_, std::move(source_),
@@ -236,17 +237,17 @@ void SourceNodeBuilder::accept(ModelBuilderVisitor &visitor) {
 // ==========================================================================
 
 int SinkNodeBuilder::itens_id() const {
-  assert(itens_id_);
+  DH_CHECK(itens_id_);
   return *itens_id_;
 }
 
 Sink &SinkNodeBuilder::sink() const {
-  assert(sink_);
+  DH_CHECK(sink_);
   return *sink_;
 }
 
 const SinkMeta &SinkNodeBuilder::sink_meta() const {
-  assert(sink_meta_);
+  DH_CHECK(sink_meta_);
   return *sink_meta_;
 }
 
@@ -263,13 +264,13 @@ void SinkNodeBuilder::set_sink_meta(const SinkMeta &sink_meta) {
 void SinkNodeBuilder::set_itens_id(int id) { itens_id_ = id; }
 
 std::unique_ptr<ModelNode> SinkNodeBuilder::build() {
-  assert(name_);
-  assert(kind_);
-  assert(params_);
-  assert(itens_id_);
-  assert(stream_);
-  assert(sink_);
-  assert(sink_meta_);
+  DH_CHECK(name_);
+  DH_CHECK(kind_);
+  DH_CHECK(params_);
+  DH_CHECK(itens_id_);
+  DH_CHECK(stream_);
+  DH_CHECK(sink_);
+  DH_CHECK(sink_meta_);
 
   return std::make_unique<SinkNode>(*kind_, *name_, *params_, *itens_id_,
                                     *stream_, std::move(sink_), *sink_meta_);
@@ -348,7 +349,7 @@ public:
 
     root_ = &*builder_node;
     nodes_.push_back(std::move(builder_node));
-    assert(node.children().empty());
+    DH_CHECK(node.children().empty());
   }
 
   std::pair<std::reference_wrapper<ModelNodeBuilder>,
@@ -366,7 +367,7 @@ class AssignStreams : public ModelBuilderVisitor {
   void visit(TaskNodeBuilder &node) {
     holoflow_logger()->trace("[AssignStreams] visiting: {}", node.name());
 
-    assert(!streams_stack_.empty());
+    DH_CHECK(!streams_stack_.empty());
     node.set_stream(streams_stack_.top());
 
     for (auto child : node.children()) {
@@ -407,9 +408,9 @@ class AssignStreams : public ModelBuilderVisitor {
   void visit(SinkNodeBuilder &node) {
     holoflow_logger()->trace("[AssignStreams] visiting: {}", node.name());
 
-    assert(!streams_stack_.empty());
+    DH_CHECK(!streams_stack_.empty());
     node.set_stream(streams_stack_.top());
-    assert(node.children().empty());
+    DH_CHECK(node.children().empty());
   }
 
 public:
@@ -459,8 +460,8 @@ public:
   void visit(TaskNodeBuilder &node) {
     holoflow_logger()->trace("[TypeCheck] visiting: {}", node.name());
 
-    assert(!imetas_stack_.empty());
-    assert(task_factories_map_.contains(node.kind()));
+    DH_CHECK(!imetas_stack_.empty());
+    DH_CHECK(task_factories_map_.contains(node.kind()));
 
     auto &factory = task_factories_map_.at(node.kind());
     auto result = factory.get().type_check(imetas_stack_.top(), node.params());
@@ -481,8 +482,8 @@ public:
   void visit(AccumulatorNodeBuilder &node) {
     holoflow_logger()->trace("[TypeCheck] visiting: {}", node.name());
 
-    assert(!imetas_stack_.empty());
-    assert(accumulator_factories_map_.contains(node.kind()));
+    DH_CHECK(!imetas_stack_.empty());
+    DH_CHECK(accumulator_factories_map_.contains(node.kind()));
 
     auto &factory = accumulator_factories_map_.at(node.kind());
     auto result = factory.get().type_check(imetas_stack_.top(), node.params());
@@ -503,8 +504,8 @@ public:
   void visit(SourceNodeBuilder &node) {
     holoflow_logger()->trace("[TypeCheck] visiting: {}", node.name());
 
-    assert(imetas_stack_.empty());
-    assert(source_factories_map_.contains(node.kind()));
+    DH_CHECK(imetas_stack_.empty());
+    DH_CHECK(source_factories_map_.contains(node.kind()));
 
     auto &factory = source_factories_map_.at(node.kind());
     auto result = factory.get().type_check(node.params());
@@ -525,8 +526,8 @@ public:
   void visit(SinkNodeBuilder &node) {
     holoflow_logger()->trace("[TypeCheck] visiting: {}", node.name());
 
-    assert(!imetas_stack_.empty());
-    assert(sink_factories_map_.contains(node.kind()));
+    DH_CHECK(!imetas_stack_.empty());
+    DH_CHECK(sink_factories_map_.contains(node.kind()));
 
     auto &factory = sink_factories_map_.at(node.kind());
     auto result = factory.get().type_check(imetas_stack_.top(), node.params());
@@ -537,7 +538,7 @@ public:
     }
 
     node.set_sink_meta(result.value());
-    assert(node.children().empty());
+    DH_CHECK(node.children().empty());
   }
 
   bool result() { return result_; }
@@ -625,7 +626,7 @@ public:
     holoflow_logger()->trace("[SingleInlinedChildCheck] visiting: {}",
                              node.name());
 
-    assert(node.children().empty());
+    DH_CHECK(node.children().empty());
   }
 
   bool result() { return result_; }
@@ -641,7 +642,7 @@ public:
   void visit(TaskNodeBuilder &node) {
     holoflow_logger()->trace("[NonInlinedTaskCheck] visiting: {}", node.name());
 
-    assert(!seen_non_inlined_stack_.empty());
+    DH_CHECK(!seen_non_inlined_stack_.empty());
 
     if (!is_inlined(node)) {
       seen_non_inlined_stack_.push(true);
@@ -658,7 +659,7 @@ public:
   void visit(AccumulatorNodeBuilder &node) {
     holoflow_logger()->trace("[NonInlinedTaskCheck] visiting: {}", node.name());
 
-    assert(!seen_non_inlined_stack_.empty());
+    DH_CHECK(!seen_non_inlined_stack_.empty());
 
     if (!seen_non_inlined_stack_.top()) {
       holoflow_logger()->warn("Non inlined task check failed at node: {}",
@@ -677,7 +678,7 @@ public:
   void visit(SourceNodeBuilder &node) {
     holoflow_logger()->trace("[NonInlinedTaskCheck] visiting: {}", node.name());
 
-    assert(seen_non_inlined_stack_.empty());
+    DH_CHECK(seen_non_inlined_stack_.empty());
 
     seen_non_inlined_stack_.push(true);
     for (auto child : node.children()) {
@@ -689,7 +690,7 @@ public:
   void visit(SinkNodeBuilder &node) {
     holoflow_logger()->trace("[NonInlinedTaskCheck] visiting: {}", node.name());
 
-    assert(node.children().empty());
+    DH_CHECK(node.children().empty());
   }
 
   bool result() { return result_; }
@@ -707,7 +708,7 @@ public:
     holoflow_logger()->trace("[AssignAccumulatorsTensors] visiting: {}",
                              node.name());
 
-    assert(!parents_stack_.empty());
+    DH_CHECK(!parents_stack_.empty());
 
     parents_stack_.push(std::ref(node));
     for (auto child : node.children()) {
@@ -720,7 +721,7 @@ public:
     holoflow_logger()->trace("[AssignAccumulatorsTensors] visiting: {}",
                              node.name());
 
-    assert(!parents_stack_.empty());
+    DH_CHECK(!parents_stack_.empty());
 
     // Set current
     node.set_itens_id(next_id_++);
@@ -773,7 +774,7 @@ public:
     holoflow_logger()->trace("[AssignAccumulatorsTensors] visiting: {}",
                              node.name());
 
-    assert(parents_stack_.empty());
+    DH_CHECK(parents_stack_.empty());
 
     parents_stack_.push(std::ref(node));
     for (auto child : node.children()) {
@@ -786,7 +787,7 @@ public:
     holoflow_logger()->trace("[AssignAccumulatorsTensors] visiting: {}",
                              node.name());
 
-    assert(!parents_stack_.empty());
+    DH_CHECK(!parents_stack_.empty());
 
     parents_stack_.push(std::ref(node));
     for (auto child : node.children()) {
@@ -808,14 +809,14 @@ public:
     holoflow_logger()->trace("[AssignInlinedTaskTensors] visiting: {}",
                              node.name());
 
-    assert(!parents_stack_.empty());
+    DH_CHECK(!parents_stack_.empty());
 
     // Forward propagation (otens_id <= itens_id)
     if (node.task_meta().inlined() && node.get_itens_id() &&
         node.get_otens_id() != node.get_itens_id()) {
 
       // Set current
-      assert(!node.get_otens_id());
+      DH_CHECK(!node.get_otens_id());
       node.set_otens_id(node.itens_id());
       holoflow_logger()->info("{} <= otens_id: {}", node.name(),
                               node.otens_id());
@@ -849,13 +850,13 @@ public:
         node.get_itens_id() != node.get_otens_id()) {
 
       // Set current
-      assert(!node.get_itens_id());
+      DH_CHECK(!node.get_itens_id());
       node.set_itens_id(node.otens_id());
       holoflow_logger()->info("{} <= itens_id: {}", node.name(),
                               node.itens_id());
 
       // Set parent
-      assert(!parents_stack_.empty());
+      DH_CHECK(!parents_stack_.empty());
       auto parent = parents_stack_.top();
       if (auto *task = dynamic_cast<TaskNodeBuilder *>(&parent.get())) {
         task->set_otens_id(node.itens_id());
@@ -1001,7 +1002,7 @@ public:
     holoflow_logger()->trace("[AssignNonInlinedTaskTensors] visiting: {}",
                              node.name());
 
-    assert(node.children().empty());
+    DH_CHECK(node.children().empty());
   }
 
 private:
@@ -1048,7 +1049,7 @@ public:
   void visit(TaskNodeBuilder &node) {
     holoflow_logger()->trace("[CallFactories] visiting: {}", node.name());
 
-    assert(task_factories_map_.contains(node.kind()));
+    DH_CHECK(task_factories_map_.contains(node.kind()));
 
     auto &factory = task_factories_map_.at(node.kind());
     auto result = factory.get().create(node.task_meta().imeta(), node.params(),
@@ -1069,7 +1070,7 @@ public:
   void visit(AccumulatorNodeBuilder &node) {
     holoflow_logger()->trace("[CallFactories] visiting: {}", node.name());
 
-    assert(accumulator_factories_map_.contains(node.kind()));
+    DH_CHECK(accumulator_factories_map_.contains(node.kind()));
 
     auto &factory = accumulator_factories_map_.at(node.kind());
     auto result = factory.get().create(node.accumulator_meta().imeta(),
@@ -1090,7 +1091,7 @@ public:
   void visit(SourceNodeBuilder &node) {
     holoflow_logger()->trace("[CallFactories] visiting: {}", node.name());
 
-    assert(source_factories_map_.contains(node.kind()));
+    DH_CHECK(source_factories_map_.contains(node.kind()));
 
     auto &factory = source_factories_map_.at(node.kind());
     auto result = factory.get().create(node.params(), node.stream());
@@ -1110,7 +1111,7 @@ public:
   void visit(SinkNodeBuilder &node) {
     holoflow_logger()->trace("[CallFactories] visiting: {}", node.name());
 
-    assert(sink_factories_map_.contains(node.kind()));
+    DH_CHECK(sink_factories_map_.contains(node.kind()));
 
     auto &factory = sink_factories_map_.at(node.kind());
     auto result = factory.get().create(node.sink_meta().imeta(), node.params(),
@@ -1123,7 +1124,7 @@ public:
 
     node.set_sink(std::move(result.value()));
 
-    assert(node.children().empty());
+    DH_CHECK(node.children().empty());
   }
 
   bool result() { return result_; }
@@ -1186,7 +1187,7 @@ public:
 
     auto model_node = node.build();
 
-    assert(node.children().empty());
+    DH_CHECK(node.children().empty());
 
     root_ = &*model_node;
     nodes_.push_back(std::move(model_node));
@@ -1262,7 +1263,7 @@ public:
                            Model::TensorSlot(node.sink_meta().imeta()));
     }
 
-    assert(node.children().empty());
+    DH_CHECK(node.children().empty());
   }
 
   std::unordered_map<int, Model::TensorSlot> result() {
@@ -1309,7 +1310,7 @@ public:
   void visit(SinkNode &node) {
     holoflow_logger()->trace("[IsAccumulatorTensor] visiting: {}", node.name());
 
-    assert(node.children().empty());
+    DH_CHECK(node.children().empty());
   }
 
   bool result() { return result_; }
@@ -1352,7 +1353,7 @@ public:
   void visit(SinkNode &node) {
     holoflow_logger()->trace("[GetPES] visiting: {}", node.name());
 
-    assert(node.children().empty());
+    DH_CHECK(node.children().empty());
   }
 
   std::vector<std::reference_wrapper<ModelNode>> result() {
@@ -1368,7 +1369,7 @@ private:
 tl::expected<std::unique_ptr<Model>, Error>
 ModelBuilder::build(const ModelDescriptor &descriptor) {
   holoflow_logger()->info("Building model");
-  assert(descriptor.root());
+  DH_CHECK(descriptor.root());
 
   holoflow_logger()->info("Creating builder nodes");
   CreateBuilderNodes create_builder_nodes;
@@ -1385,17 +1386,17 @@ ModelBuilder::build(const ModelDescriptor &descriptor) {
       descriptor.task_factories(), descriptor.accumulator_factories(),
       descriptor.source_factories(), descriptor.sink_factories());
   builder_root.get().accept(type_check);
-  assert(type_check.result());
+  DH_CHECK(type_check.result());
 
   holoflow_logger()->info("Performing single inlined child check");
   SingleInlinedChildCheck single_inlined_child_check;
   builder_root.get().accept(single_inlined_child_check);
-  assert(single_inlined_child_check.result());
+  DH_CHECK(single_inlined_child_check.result());
 
   holoflow_logger()->info("Performing non inlined child check");
   NonInlinedTaskCheck non_inlined_child_check;
   builder_root.get().accept(non_inlined_child_check);
-  assert(non_inlined_child_check.result());
+  DH_CHECK(non_inlined_child_check.result());
 
   int next_tens_id = 0;
 
@@ -1420,7 +1421,7 @@ ModelBuilder::build(const ModelDescriptor &descriptor) {
       descriptor.task_factories(), descriptor.accumulator_factories(),
       descriptor.source_factories(), descriptor.sink_factories());
   builder_root.get().accept(call_factories);
-  assert(call_factories.result());
+  DH_CHECK(call_factories.result());
 
   holoflow_logger()->info("Building model nodes");
   BuildModelNodes build_model_nodes;

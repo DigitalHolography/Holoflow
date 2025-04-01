@@ -4,6 +4,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
+#include "bug_buster/bug_buster.hh"
 #include "curaii/cufft.hh"
 #include "holoflow/model.hh"
 #include "holoflow/model_descriptor.hh"
@@ -13,6 +14,7 @@
 #include "holovibes/sources/holofile_source.hh"
 #include "holovibes/tasks/average_task.hh"
 #include "holovibes/tasks/convert_task.hh"
+#include "holovibes/tasks/fft_shift_task.hh"
 #include "holovibes/tasks/fresnel_diffraction_task.hh"
 #include "holovibes/tasks/identity_task.hh"
 #include "holovibes/tasks/pca_task.hh"
@@ -31,7 +33,7 @@ void setup_global_logger() {
       "global_logger", sinks.begin(), sinks.end());
 
   spdlog::set_default_logger(global_logger);
-  spdlog::set_level(spdlog::level::trace);
+  spdlog::set_level(spdlog::level::info);
   spdlog::flush_on(spdlog::level::warn);
   spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%n] [%^%l%$] %v");
 }
@@ -45,7 +47,7 @@ int main(int argc, char **argv) {
 
   QApplication app(argc, argv);
 
-  auto *processed_window = new dh::TensorDisplayWidget(512, 512);
+  auto *processed_window = new dh::TensorDisplayWidget(800, 800);
   processed_window->show();
 
   // ==========================================================================
@@ -84,6 +86,9 @@ int main(int argc, char **argv) {
   descriptor.add_task_factory(
       "PercentileClipTaskFactory",
       std::make_unique<dh::PercentileClipTaskFactory>());
+
+  descriptor.add_task_factory("FFTShiftTaskFactory",
+                              std::make_unique<dh::FFTShiftTaskFactory>());
 
   // ==========================================================================
   //                     Add nodes
@@ -128,33 +133,6 @@ int main(int argc, char **argv) {
       "dequeue_batch_size": 128
     })"_json);
 
-  descriptor.add_task("FresnelDiffractionTaskFactory", "fresnel_diffraction",
-                      R"({
-      "lambda": 852e-9,
-      "z": 380e-3,
-      "pixel_size": 20e-6,
-      "skip_phase_shift": true
-    })"_json);
-
-  descriptor.add_task("PCATaskFactory", "pca", R"({})"_json);
-
-  descriptor.add_task("AverageTaskFactory", "output_average", R"({
-      "begin": 0,
-      "end": 128
-    })"_json);
-
-  descriptor.add_task("PercentileClipTaskFactory", "percentile_clip",
-                      R"({})"_json);
-
-  descriptor.add_source("HolofileSourceFactory", "pca_source",
-                        R"({
-    "path": "D:\\DataHolovibesEpita\\2023_4_6_16_57_51.036.holo",
-    "start_frame": 0,
-    "end_frame": 10240,
-    "batch_size": 32,
-    "load_kind": "READ_LIVE"
-  })"_json);
-
   descriptor.add_task("ConvertTaskFactory", "u8_to_cf32",
                       R"({
       "conversion": "U8_CF32_REAL"
@@ -175,10 +153,30 @@ int main(int argc, char **argv) {
       "conversion": "F32_U8_SCALED"
     })"_json);
 
+  descriptor.add_task("FresnelDiffractionTaskFactory", "fresnel_diffraction",
+                      R"({
+      "lambda": 852e-9,
+      "z": 380e-3,
+      "pixel_size": 20e-6,
+      "skip_phase_shift": true
+    })"_json);
+
+  descriptor.add_task("PCATaskFactory", "pca", R"({})"_json);
+
+  descriptor.add_task("AverageTaskFactory", "output_average", R"({
+      "begin": 0,
+      "end": 128
+    })"_json);
+
+  descriptor.add_task("PercentileClipTaskFactory", "percentile_clip",
+                      R"({})"_json);
+
   descriptor.add_task("AverageTaskFactory", "p_frame_avg", R"({
       "begin": 0,
       "end": 16
     })"_json);
+
+  descriptor.add_task("FFTShiftTaskFactory", "fft_shift", R"({})"_json);
 
   // ==========================================================================
   //                     Link nodes
@@ -192,68 +190,13 @@ int main(int argc, char **argv) {
   descriptor.add_child("time_accumulator", "pca");
   descriptor.add_child("pca", "cf32_to_f32");
   descriptor.add_child("cf32_to_f32", "p_frame_avg");
-  descriptor.add_child("p_frame_avg", "accumulation_accumulator");
+  descriptor.add_child("p_frame_avg", "fft_shift");
+  descriptor.add_child("fft_shift", "accumulation_accumulator");
   descriptor.add_child("accumulation_accumulator", "output_average");
   descriptor.add_child("output_average", "percentile_clip");
   descriptor.add_child("percentile_clip", "f32_to_u8");
   descriptor.add_child("f32_to_u8", "output_accumulator");
   descriptor.add_child("output_accumulator", "processed_widget");
-
-  // descriptor.set_source("pca_source");
-  // descriptor.add_child("pca_source", "u16_to_cf32");
-  // descriptor.add_child("u16_to_cf32", "cf32_to_f32");
-  // descriptor.add_child("cf32_to_f32", "percentile_clip");
-  // descriptor.add_child("percentile_clip", "f32_to_u8");
-  // descriptor.add_child("f32_to_u8", "output_accumulator");
-  // descriptor.add_child("output_accumulator", "processed_widget");
-
-  // descriptor.set_source("pca_source");
-  // descriptor.add_child("pca_source", "u16_to_cf32");
-  // descriptor.add_child("u16_to_cf32", "pca");
-  // descriptor.add_child("pca", "cf32_to_f32");
-  // descriptor.add_child("cf32_to_f32", "p_frame_avg");
-  // descriptor.add_child("p_frame_avg", "percentile_clip");
-  // descriptor.add_child("percentile_clip", "f32_to_u8");
-  // descriptor.add_child("f32_to_u8", "output_accumulator");
-  // descriptor.add_child("output_accumulator", "processed_widget");
-
-  // descriptor.set_source("holofile_source");
-  // descriptor.add_child("holofile_source", "processed_widget");
-
-  // descriptor.set_source("holofile_source");
-  // descriptor.add_child("holofile_source", "convert_input");
-  // descriptor.add_child("convert_input", "fresnel_diffraction");
-  // descriptor.add_child("fresnel_diffraction", "convert_postprocess");
-  // descriptor.add_child("convert_postprocess", "percentile_clip");
-  // descriptor.add_child("percentile_clip", "convert_output");
-  // descriptor.add_child("convert_output", "processed_widget");
-
-  // descriptor.set_source("holofile_source");
-  // descriptor.add_child("holofile_source", "input_accumulator");
-  // descriptor.add_child("input_accumulator", "convert_input");
-  // descriptor.add_child("convert_input", "fresnel_diffraction");
-  // descriptor.add_child("fresnel_diffraction", "time_accumulator");
-  // descriptor.add_child("time_accumulator", "pca");
-  // descriptor.add_child("pca", "time_average");
-  // descriptor.add_child("time_average", "convert_postprocess");
-  // descriptor.add_child("convert_postprocess", "accumulation_accumulator");
-  // descriptor.add_child("accumulation_accumulator", "output_average");
-  // descriptor.add_child("output_average", "percentile_clip");
-  // descriptor.add_child("percentile_clip", "convert_output");
-  // descriptor.add_child("convert_output", "output_accumulator");
-  // descriptor.add_child("output_accumulator", "processed_widget");
-
-  // descriptor.set_source("holofile_source");
-  // descriptor.add_child("holofile_source", "input_accumulator");
-  // descriptor.add_child("input_accumulator", "convert_input");
-  // descriptor.add_child("convert_input", "fresnel_diffraction");
-  // descriptor.add_child("fresnel_diffraction", "convert_postprocess");
-  // descriptor.add_child("convert_postprocess", "accumulation_accumulator");
-  // descriptor.add_child("accumulation_accumulator", "output_average");
-  // descriptor.add_child("output_average", "percentile_clip");
-  // descriptor.add_child("percentile_clip", "convert_output");
-  // descriptor.add_child("convert_output", "output_accumulator");
-  // descriptor.add_child("output_accumulator", "processed_widget");
 
   // ==========================================================================
   //                     Build model

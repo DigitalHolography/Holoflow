@@ -4,6 +4,7 @@
 #include <fmt/ranges.h>
 #include <spdlog/spdlog.h>
 
+#include "bug_buster/bug_buster.hh"
 #include "holoflow/holoflow.hh"
 
 namespace dh {
@@ -21,14 +22,14 @@ TaskMeta::TaskMeta(const TensorMeta &imeta, const TensorMeta &ometa,
                                fmt::join(ometa_.shape(), ", "), inlined);
 
   if (inlined_) {
-    assert((imeta_.data_type() == ometa_.data_type()) &&
-           "Inlined tasks must have equal input and output tensors");
-    assert((imeta_.memory_location() == ometa_.memory_location()) &&
-           "Inlined tasks must have equal input and output tensors");
-    assert((imeta_.shape() == ometa_.shape()) &&
-           "Inlined tasks must have equal input and output tensors");
-    assert((imeta_.strides() == ometa_.strides()) &&
-           "Inlined tasks must have equal input and output tensors");
+    DH_CHECK((imeta_.data_type() == ometa_.data_type()) &&
+             "Inlined tasks must have equal input and output tensors");
+    DH_CHECK((imeta_.memory_location() == ometa_.memory_location()) &&
+             "Inlined tasks must have equal input and output tensors");
+    DH_CHECK((imeta_.shape() == ometa_.shape()) &&
+             "Inlined tasks must have equal input and output tensors");
+    DH_CHECK((imeta_.strides() == ometa_.strides()) &&
+             "Inlined tasks must have equal input and output tensors");
   }
 }
 
