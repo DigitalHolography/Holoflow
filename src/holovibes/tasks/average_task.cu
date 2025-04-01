@@ -193,7 +193,7 @@ AverageTaskFactory::create(const TensorMeta &imeta, const json &jparams,
                            cudaStream_t stream) {
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {
-    holovibes_logger()->warn("[PCATaskFactory::create] type check failed");
+    holovibes_logger()->warn("[AverageTaskFactory::create] type check failed");
     return tl::unexpected(meta_result.error());
   }
   auto meta = meta_result.value();

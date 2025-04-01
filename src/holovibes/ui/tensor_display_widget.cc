@@ -68,10 +68,7 @@ void TensorDisplayWidget::show_tensor(TensorView tens) {
   QPixmap scaledPixmap = pixmap.scaled(width_, height_, Qt::IgnoreAspectRatio,
                                        Qt::SmoothTransformation);
   image_->setPixmap(scaledPixmap);
-}
 
-void TensorDisplayWidget::paintEvent(QPaintEvent *event) {
-  QMainWindow::paintEvent(event);
   holovibes_logger()->trace("frame displayed");
   emit frame_displayed();
 }

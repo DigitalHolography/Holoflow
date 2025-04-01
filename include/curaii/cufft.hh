@@ -5,6 +5,8 @@
 #include <fmt/base.h>
 #include <tl/expected.hpp>
 
+#include "curaii/library_types.hh"
+
 namespace dh {
 
 class CufftType {
@@ -54,6 +56,13 @@ public:
   try_plan_many(int rank, int *n, int *inembed, int istride, int idist,
                 int *onembed, int ostride, int odist, CufftType type,
                 int batch) noexcept;
+
+  [[nodiscard]]
+  static tl::expected<CufftHandle, CufftResult> try_xt_make_plan_many(
+      int rank, long long int *n, long long int *inembed, long long int istride,
+      long long int idist, CudaDataType inputtype, long long int *onembed,
+      long long int ostride, long long int odist, CudaDataType outputtype,
+      long long int batch, CudaDataType executiontype);
 
   [[nodiscard]]
   tl::expected<void, CufftResult> try_set_stream(cudaStream_t stream) noexcept;

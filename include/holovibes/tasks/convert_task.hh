@@ -17,9 +17,11 @@ class ConvertTask : public Task {
 public:
   enum class Conversion {
     U8_CF32_REAL,
+    U16_CF32_REAL,
     F32_U8_SCALED,
     F32_U16_SCALED,
-    CF32_F32_MODU
+    CF32_F32_MODU,
+    CF32_F32_ARGU
   };
 
   ConvertTask(const TaskMeta &meta, cudaStream_t stream, Conversion conv,
@@ -28,8 +30,6 @@ public:
               unique_device_ptr<uint8_t> d_min, size_t max_temp_storage_bytes,
               unique_device_ptr<uint8_t> d_max_temp_storage,
               unique_device_ptr<uint8_t> d_max);
-
-  ~ConvertTask() = default;
 
   tl::expected<void, Error> run(TensorView input, TensorView output) override;
 

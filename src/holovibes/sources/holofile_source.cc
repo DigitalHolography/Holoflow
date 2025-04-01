@@ -36,6 +36,7 @@ tl::expected<void, Error> HolofileSource::run(TensorView otens) {
   // Loop back to start
   if (frame_index_ + batch_size_ > end_frame_) {
     if (load_kind_ == LoadKind::READ_LIVE) {
+      holovibes_logger()->info("Loop back");
       auto result = reader_.seek(start_frame_);
       if (!result) {
         holovibes_logger()->warn("Failed to seek to start_frame: {}",
@@ -82,6 +83,7 @@ tl::expected<void, Error> HolofileSource::run(TensorView otens) {
   }
 
   frame_index_ += batch_size_;
+  cudaStreamSynchronize(stream_);
 
   return {};
 }
@@ -125,8 +127,16 @@ HolofileSourceFactory::type_check(const json &jparams) {
   auto reader = std::move(result.value());
   auto header = reader.header();
 
-  if (header.bits_per_pixel != 8) {
-    holovibes_logger()->warn("Only 8-bit frames are supported.");
+  DataType data_type;
+  switch (header.bits_per_pixel) {
+  case 8:
+    data_type = DataType::U8;
+    break;
+  case 16:
+    data_type = DataType::U16;
+    break;
+  default:
+    holovibes_logger()->warn("Only 8-bit and 16-bit frames are supported.");
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
@@ -135,7 +145,7 @@ HolofileSourceFactory::type_check(const json &jparams) {
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
-  TensorMeta ometa(DataType::U8, MemoryLocation::DEVICE,
+  TensorMeta ometa(data_type, MemoryLocation::DEVICE,
                    {(size_t)params.batch_size, (size_t)header.frame_height,
                     (size_t)header.frame_width});
 

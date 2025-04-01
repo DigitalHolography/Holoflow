@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <atomic>
+#include <chrono>
 #include <cuda_runtime.h>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -35,6 +36,7 @@ private:
   void on_frame_displayed();
 
   std::atomic<bool> frame_displayed_;
+  std::chrono::steady_clock::time_point last_display_time_;
 };
 
 class QtDisplaySinkFactory : public SinkFactory {

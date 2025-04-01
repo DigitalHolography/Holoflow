@@ -68,8 +68,9 @@ HolofileReader::open(const std::string &filename) {
   if (header.magic_number != magic_number)
     return tl::unexpected(make_error_code(HolofileError::InvalidMagicNumber));
 
-  if (header.version != 7)
-    return tl::unexpected(make_error_code(HolofileError::InvalidVersion));
+  // TODO version support
+  // if (header.version != 7)
+  //   return tl::unexpected(make_error_code(HolofileError::InvalidVersion));
 
   size_t pixels_per_frame = header.frame_width * header.frame_height;
   size_t bits_per_frame = pixels_per_frame * header.bits_per_pixel;

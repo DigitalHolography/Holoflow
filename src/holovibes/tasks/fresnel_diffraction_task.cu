@@ -149,9 +149,7 @@ FresnelDiffractionTaskFactory::type_check(const TensorMeta &imeta,
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
-  TensorMeta ometa(imeta.data_type(), imeta.memory_location(), imeta.shape(),
-                   imeta.strides());
-  return TaskMeta(imeta, ometa, true);
+  return TaskMeta(imeta, imeta, true);
 }
 
 tl::expected<std::unique_ptr<Task>, Error>
@@ -173,17 +171,20 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
 
   // Initialize cufft plan
   int rank = 2;
-  int n[2] = {height, width};
-  int inembed[2] = {height, width};
+  long long int n[2] = {height, width};
+  long long int inembed[2] = {height, width};
   int istride = 1;
   int idist = height * width;
-  int onembed[2] = {height, width};
+  CudaDataType inputtype(CUDA_C_32F);
+  long long int onembed[2] = {height, width};
   int ostride = 1;
   int odist = height * width;
-  CufftType type = CufftType(CUFFT_C2C);
+  CudaDataType outputtype(CUDA_C_32F);
+  CudaDataType executiontype(CUDA_C_32F);
 
-  auto plan_result = CufftHandle::try_plan_many(
-      rank, n, inembed, istride, idist, onembed, ostride, odist, type, batch);
+  auto plan_result = CufftHandle::try_xt_make_plan_many(
+      rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
+      outputtype, batch, executiontype);
   if (!plan_result) {
     holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create] Fourrier "
                              "transform creation failed with error: \"{}\"",
@@ -191,6 +192,28 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
   auto handle = std::move(plan_result.value());
+
+  // int rank = 2;
+  // int n[2] = {height, width};
+  // int inembed[2] = {height, width};
+  // int istride = 1;
+  // int idist = height * width;
+  // int onembed[2] = {height, width};
+  // int ostride = 1;
+  // int odist = height * width;
+  // CufftType type = CufftType(CUFFT_C2C);
+
+  // auto plan_result = CufftHandle::try_plan_many(
+  //     rank, n, inembed, istride, idist, onembed, ostride, odist, type,
+  //     batch);
+  // if (!plan_result) {
+  //   holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create]
+  //   Fourrier "
+  //                            "transform creation failed with error: \"{}\"",
+  //                            plan_result.error());
+  //   return tl::unexpected(Error::INTERNAL_ERROR);
+  // }
+  // auto handle = std::move(plan_result.value());
 
   auto stream_result = handle.try_set_stream(stream);
   if (!stream_result) {

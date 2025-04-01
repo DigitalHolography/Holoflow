@@ -14,10 +14,20 @@ namespace dh {
 // ==========================================================================
 
 QtDisplaySink::QtDisplaySink(const SinkMeta &meta, cudaStream_t stream)
-    : Sink(meta, stream), frame_displayed_(true) {}
+    : Sink(meta, stream), frame_displayed_(true),
+      last_display_time_(std::chrono::steady_clock::now()) {}
 
 tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
   holovibes_logger()->trace("running qt display sink");
+
+  // Throttle to 30 fps: skip frame if less than ~33ms since last display.
+  auto now = std::chrono::steady_clock::now();
+  if (now - last_display_time_ < std::chrono::milliseconds(33)) {
+    // Too soon: drop this frame.
+    holovibes_logger()->trace("Skipping frame to maintain 30fps");
+    return {};
+  }
+
   frame_displayed_.store(false, std::memory_order_release);
 
   auto host = make_unique_host_ptr<uint8_t>(itens.size_in_bytes());
@@ -34,6 +44,7 @@ tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
   while (!frame_displayed_) {
     std::this_thread::yield();
   }
+  last_display_time_ = std::chrono::steady_clock::now();
   holovibes_logger()->trace("FINISHED");
   return {};
 }

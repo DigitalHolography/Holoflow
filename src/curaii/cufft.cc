@@ -243,6 +243,49 @@ dh::CufftHandle::try_plan_many(int rank, int *n, int *inembed, int istride,
   return CufftHandle(handle);
 }
 
+tl::expected<dh::CufftHandle, dh::CufftResult>
+dh::CufftHandle::try_xt_make_plan_many(
+    int rank, long long int *n, long long int *inembed, long long int istride,
+    long long int idist, CudaDataType inputtype, long long int *onembed,
+    long long int ostride, long long int odist, CudaDataType outputtype,
+    long long int batch, CudaDataType executiontype) {
+  cufftHandle handle;
+  if (auto result = cufftCreate(&handle); result != CUFFT_SUCCESS) {
+    curaii_logger()->warn(
+        "[CufftHandle::try_xt_make_plan_many] failed with error: \"{}\"",
+        CufftResult(result));
+
+    return tl::unexpected<CufftResult>(result);
+  }
+
+  size_t ws = 0;
+  if (auto result = cufftXtGetSizeMany(handle, rank, n, inembed, istride, idist,
+                                       inputtype.data_type(), onembed, ostride,
+                                       odist, outputtype.data_type(), batch,
+                                       &ws, executiontype.data_type());
+      result != CUFFT_SUCCESS) {
+    curaii_logger()->warn(
+        "[CufftHandle::try_xt_make_plan_many] failed with error: \"{}\"",
+        CufftResult(result));
+
+    return tl::unexpected<CufftResult>(result);
+  }
+
+  if (auto result = cufftXtMakePlanMany(handle, rank, n, inembed, istride,
+                                        idist, inputtype.data_type(), onembed,
+                                        ostride, odist, outputtype.data_type(),
+                                        batch, &ws, executiontype.data_type());
+      result != CUFFT_SUCCESS) {
+    curaii_logger()->warn(
+        "[CufftHandle::try_xt_make_plan_many] failed with error: \"{}\"",
+        CufftResult(result));
+
+    return tl::unexpected<CufftResult>(result);
+  }
+
+  return CufftHandle(handle);
+}
+
 tl::expected<void, dh::CufftResult>
 dh::CufftHandle::try_set_stream(cudaStream_t stream) noexcept {
   if (auto result = cufftSetStream(handle_, stream); result != CUFFT_SUCCESS) {

@@ -42,6 +42,17 @@ __global__ void u8_cf32_real_kernel(const uint8_t *idata, cuFloatComplex *odata,
   odata[idx].y = 0.0f;
 }
 
+__global__ void u16_cf32_real_kernel(const uint16_t *idata,
+                                     cuFloatComplex *odata, int size) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= size) {
+    return;
+  }
+
+  odata[idx].x = static_cast<float>(idata[idx]);
+  odata[idx].y = 0.0f;
+}
+
 __global__ void f32_u8_scaled_kernel(const float *idata, uint8_t *odata,
                                      int size, float *min, float *max) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -73,7 +84,19 @@ __global__ void cf32_f32_modu_kernel(const cuFloatComplex *idata, float *odata,
     return;
   }
 
-  odata[idx] = cuCabsf(idata[idx]);
+  odata[idx] = hypotf(idata[idx].x, idata[idx].y);
+  // odata[idx] = cuCabsf(idata[idx]);
+  // odata[idx] = idata[idx].y;
+}
+
+__global__ void cf32_f32_argu_kernel(const cuFloatComplex *idata, float *odata,
+                                     int size) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= size) {
+    return;
+  }
+
+  odata[idx] = atan2f(idata[idx].y, idata[idx].x);
 }
 
 } // namespace
@@ -94,16 +117,19 @@ tl::expected<void, Error> ConvertTask::run(TensorView input,
         static_cast<uint8_t *>(idata), static_cast<cuFloatComplex *>(odata),
         size);
     break;
+  case Conversion::U16_CF32_REAL:
+    u16_cf32_real_kernel<<<grid_size, block_size, 0, stream_>>>(
+        static_cast<uint16_t *>(idata), static_cast<cuFloatComplex *>(odata),
+        size);
+    break;
 
   case Conversion::F32_U8_SCALED:
     cub::DeviceReduce::Min(d_min_temp_storage_.get(), min_temp_storage_bytes_,
                            static_cast<float *>(idata),
                            static_cast<float *>(d_min), size, stream_);
-
     cub::DeviceReduce::Max(d_max_temp_storage_.get(), max_temp_storage_bytes_,
                            static_cast<float *>(idata),
                            static_cast<float *>(d_max), size, stream_);
-
     f32_u8_scaled_kernel<<<grid_size, block_size, 0, stream_>>>(
         static_cast<float *>(idata), static_cast<uint8_t *>(odata), size,
         static_cast<float *>(d_min), static_cast<float *>(d_max));
@@ -113,11 +139,9 @@ tl::expected<void, Error> ConvertTask::run(TensorView input,
     cub::DeviceReduce::Min(d_min_temp_storage_.get(), min_temp_storage_bytes_,
                            static_cast<float *>(idata),
                            static_cast<float *>(d_min), size, stream_);
-
     cub::DeviceReduce::Max(d_max_temp_storage_.get(), max_temp_storage_bytes_,
                            static_cast<float *>(idata),
                            static_cast<float *>(d_max), size, stream_);
-
     f32_u16_scaled_kernel<<<grid_size, block_size, 0, stream_>>>(
         static_cast<float *>(idata), static_cast<uint16_t *>(odata), size,
         static_cast<float *>(d_min), static_cast<float *>(d_max));
@@ -128,6 +152,13 @@ tl::expected<void, Error> ConvertTask::run(TensorView input,
         static_cast<cuFloatComplex *>(idata), static_cast<float *>(odata),
         size);
     break;
+
+  case Conversion::CF32_F32_ARGU:
+    cf32_f32_argu_kernel<<<grid_size, block_size, 0, stream_>>>(
+        static_cast<cuFloatComplex *>(idata), static_cast<float *>(odata),
+        size);
+    break;
+
   default:
     holovibes_logger()->critical("unreachable code reached!");
     std::exit(EXIT_FAILURE);
@@ -156,13 +187,15 @@ ConvertTaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
   }
 
   DataType data_type;
-  if (params.conversion == "U8_CF32_REAL") {
+  if (params.conversion == "U8_CF32_REAL" ||
+      params.conversion == "U16_CF32_REAL") {
     data_type = DataType::CF32;
   } else if (params.conversion == "F32_U8_SCALED") {
     data_type = DataType::U8;
   } else if (params.conversion == "F32_U16_SCALED") {
     data_type = DataType::U16;
-  } else if (params.conversion == "CF32_F32_MODU") {
+  } else if (params.conversion == "CF32_F32_MODU" ||
+             params.conversion == "CF32_F32_ARGU") {
     data_type = DataType::F32;
   } else {
     holovibes_logger()->warn("Invalid conversion: {}", params.conversion);
@@ -171,11 +204,14 @@ ConvertTaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
 
   if ((params.conversion == "U8_CF32_REAL" &&
        imeta.data_type() != DataType::U8) ||
+      (params.conversion == "U16_CF32_REAL" &&
+       imeta.data_type() != DataType::U16) ||
       (params.conversion == "F32_U8_SCALED" &&
        imeta.data_type() != DataType::F32) ||
       (params.conversion == "F32_U16_SCALED" &&
        imeta.data_type() != DataType::F32) ||
-      (params.conversion == "CF32_F32_MODU" &&
+      ((params.conversion == "CF32_F32_MODU" ||
+        params.conversion == "CF32_F32_ARGU") &&
        imeta.data_type() != DataType::CF32)) {
     holovibes_logger()->warn("Invalid conversion: {} for: {}",
                              params.conversion, (int)imeta.data_type());
@@ -201,12 +237,16 @@ ConvertTaskFactory::create(const TensorMeta &imeta, const json &jparams,
   ConvertTask::Conversion conversion;
   if (params.conversion == "U8_CF32_REAL") {
     conversion = ConvertTask::Conversion::U8_CF32_REAL;
+  } else if (params.conversion == "U16_CF32_REAL") {
+    conversion = ConvertTask::Conversion::U16_CF32_REAL;
   } else if (params.conversion == "F32_U8_SCALED") {
     conversion = ConvertTask::Conversion::F32_U8_SCALED;
   } else if (params.conversion == "F32_U16_SCALED") {
     conversion = ConvertTask::Conversion::F32_U16_SCALED;
   } else if (params.conversion == "CF32_F32_MODU") {
     conversion = ConvertTask::Conversion::CF32_F32_MODU;
+  } else if (params.conversion == "CF32_F32_ARGU") {
+    conversion = ConvertTask::Conversion::CF32_F32_ARGU;
   } else {
     holovibes_logger()->critical("unreachable code reached!");
     std::exit(EXIT_FAILURE);
