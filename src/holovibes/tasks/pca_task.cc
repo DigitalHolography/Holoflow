@@ -184,6 +184,14 @@ PCATaskFactory::create(const TensorMeta &imeta, const json &jparams,
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
+  if (auto result = cusolver_handle.try_set_deterministic_mode(
+          CusolverDeterministicMode(CUSOLVER_ALLOW_NON_DETERMINISTIC_RESULTS));
+      !result) {
+    holovibes_logger()->warn(
+        "[PCATaskFactory::create] failed with error \"{}\"", result.error());
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
+
   // CusolverDnParams
   auto cusolver_params_result = CusolverDnParams::try_create();
   if (!cusolver_params_result) {

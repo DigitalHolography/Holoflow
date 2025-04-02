@@ -131,13 +131,6 @@ int main(int argc, char **argv) {
       "dequeue_batch_size": 1
     })"_json);
 
-  // descriptor.add_accumulator("BatchedSPSCAccumulatorFactory",
-  //                            "accumulation_accumulator",
-  //                            R"({
-  //     "nb_slots": 512,
-  //     "dequeue_batch_size": 128
-  //   })"_json);
-
   descriptor.add_accumulator("SlidingAverageAccumulatorFactory",
                              "avg_accumulator",
                              R"({

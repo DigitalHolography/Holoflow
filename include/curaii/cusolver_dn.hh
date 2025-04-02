@@ -69,6 +69,17 @@ private:
   cusolverEigMode_t eig_mode_;
 };
 
+class CusolverDeterministicMode {
+public:
+  explicit CusolverDeterministicMode(
+      cusolverDeterministicMode_t deterministic_mode) noexcept;
+
+  cusolverDeterministicMode_t deterministic_mode() const noexcept;
+
+private:
+  cusolverDeterministicMode_t deterministic_mode_;
+};
+
 class CusolverDnHandle {
 public:
   CusolverDnHandle(const CusolverDnHandle &) = delete;
@@ -85,6 +96,10 @@ public:
   [[nodiscard]]
   tl::expected<void, CusolverStatus>
   try_set_stream(CudaStreamRef stream) noexcept;
+
+  [[nodiscard]]
+  tl::expected<void, CusolverStatus> try_set_deterministic_mode(
+      CusolverDeterministicMode deterministic_mode) noexcept;
 
   [[nodiscard]]
   tl::expected<void, CusolverStatus> try_x_syevd_buffer_size(
@@ -122,4 +137,11 @@ struct fmt::formatter<dh::CusolverEigMode> : formatter<string_view> {
 
   auto format(dh::CusolverEigMode eig_mode, format_context &ctx) const
       -> format_context::iterator;
+};
+
+template <>
+struct fmt::formatter<dh::CusolverDeterministicMode> : formatter<string_view> {
+
+  auto format(dh::CusolverDeterministicMode deterministic_mode,
+              format_context &ctx) const -> format_context::iterator;
 };

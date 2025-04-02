@@ -203,6 +203,36 @@ auto fmt::formatter<dh::CusolverEigMode>::format(dh::CusolverEigMode eig_mode,
 }
 
 // ==========================================================================
+//                     CusolverDeterministicMode Implementation
+// ==========================================================================
+
+dh::CusolverDeterministicMode::CusolverDeterministicMode(
+    cusolverDeterministicMode_t deterministic_mode) noexcept
+    : deterministic_mode_(deterministic_mode) {}
+
+cusolverDeterministicMode_t
+dh::CusolverDeterministicMode::deterministic_mode() const noexcept {
+  return deterministic_mode_;
+}
+
+auto fmt::formatter<dh::CusolverDeterministicMode>::format(
+    dh::CusolverDeterministicMode deterministic_mode, format_context &ctx) const
+    -> format_context::iterator {
+  std::string_view name;
+  switch (deterministic_mode.deterministic_mode()) {
+  case CUSOLVER_DETERMINISTIC_RESULTS:
+    name = "CUSOLVER_DETERMINISTIC_RESULTS";
+    break;
+  case CUSOLVER_ALLOW_NON_DETERMINISTIC_RESULTS:
+    name = "CUSOLVER_ALLOW_NON_DETERMINISTIC_RESULTS";
+    break;
+  default:
+    UNREACHABLE("Invalid cusolver deterministic mode");
+  }
+  return formatter<string_view>::format(name, ctx);
+}
+
+// ==========================================================================
 //                     CusolverDnHandle Implementation
 // ==========================================================================
 
@@ -262,6 +292,20 @@ dh::CusolverDnHandle::try_set_stream(CudaStreamRef stream) noexcept {
     curaii_logger()->warn(
         "[CusolverDnHandle::try_set_stream] failed with error: \"{}\"",
         CusolverStatus(result));
+    return tl::unexpected<CusolverStatus>(result);
+  }
+  return {};
+}
+
+tl::expected<void, dh::CusolverStatus>
+dh::CusolverDnHandle::try_set_deterministic_mode(
+    CusolverDeterministicMode deterministic_mode) noexcept {
+  if (auto result = cusolverDnSetDeterministicMode(
+          handle_, deterministic_mode.deterministic_mode());
+      result != CUSOLVER_STATUS_SUCCESS) {
+    curaii_logger()->warn("[CusolverDnHandle::try_set_deterministic_mode] "
+                          "failed with error: \"{}\"",
+                          CusolverStatus(result));
     return tl::unexpected<CusolverStatus>(result);
   }
   return {};
