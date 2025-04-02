@@ -18,10 +18,8 @@
 
 namespace dh {
 
-class BatchedSPSCAccumulator : public Accumulator {
+class SlidingAverageAccumulator : public Accumulator {
 public:
-  ~BatchedSPSCAccumulator() = default;
-
   tl::expected<std::optional<TensorView>, Error> write_tensor() override;
 
   tl::expected<void, Error> commit_write() override;
@@ -30,41 +28,31 @@ public:
 
   tl::expected<void, Error> commit_read() override;
 
-  tl::expected<size_t, Error> size();
-
-  tl::expected<void, Error> reset();
-
-  tl::expected<void, Error> fill();
-
-  friend class BatchedSPSCAccumulatorFactory;
+  friend class SlidingAverageAccumulatorFactory;
 
 private:
-  BatchedSPSCAccumulator(const AccumulatorMeta &meta, cudaStream_t stream,
-                         size_t nb_slots, unique_host_ptr<uint8_t> host_buffer,
-                         unique_device_ptr<uint8_t> device_buffer);
+  SlidingAverageAccumulator(const AccumulatorMeta &meta, cudaStream_t stream,
+                            size_t nb_slots, size_t window_size,
+                            unique_device_ptr<uint8_t> d_buffer,
+                            unique_device_ptr<uint8_t> d_avg_frame);
 
   size_t writer_size();
 
   size_t reader_size();
 
+  size_t window_size_;
+
   /// The number of slots in the circular buffer.
   size_t nb_slots_;
-
-  /// The number of elements to be enqueued in a single batch.
-  size_t enqueue_batch_size_;
-
-  /// The number of elements to be dequeued in a single batch.
-  size_t dequeue_batch_size_;
 
   /// The size of each element in bytes.
   size_t element_size_;
 
-  /// A pre-allocated memory block for storing elements.
-  uint8_t *buffer_;
+  unique_device_ptr<uint8_t> d_buffer_;
 
-  unique_host_ptr<uint8_t> host_buffer_;
+  unique_device_ptr<uint8_t> d_running_avg_;
 
-  unique_device_ptr<uint8_t> device_buffer_;
+  alignas(CACHE_LINE_SIZE) std::atomic<size_t> avg_idx_;
 
   /// The current write index.
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;
@@ -73,7 +61,7 @@ private:
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_idx_;
 };
 
-class BatchedSPSCAccumulatorFactory : public AccumulatorFactory {
+class SlidingAverageAccumulatorFactory : public AccumulatorFactory {
 public:
   tl::expected<AccumulatorMeta, Error> type_check(const TensorMeta &imeta,
                                                   const json &params);
@@ -84,9 +72,9 @@ public:
 private:
   struct Params {
     size_t nb_slots;
-    size_t dequeue_batch_size;
+    size_t window_size;
 
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Params, nb_slots, dequeue_batch_size);
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Params, nb_slots, window_size);
   };
 };
 

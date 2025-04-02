@@ -2,6 +2,7 @@ qt_add_executable(holovibes
   main.cc
   ui/tensor_display_widget.cc
   accumulators/batched_spsc_accumulator.cc
+  accumulators/sliding_average_accumulator.cu
   sources/holofile_source.cc
   sinks/qt_display_sink.cc
   tasks/convert_task.cu

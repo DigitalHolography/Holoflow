@@ -35,8 +35,8 @@ tl::expected<void, Error> HolofileSource::run(TensorView otens) {
 
   // Loop back to start
   if (frame_index_ + batch_size_ > end_frame_) {
+    holovibes_logger()->info("Loop back");
     if (load_kind_ == LoadKind::READ_LIVE) {
-      holovibes_logger()->info("Loop back");
       auto result = reader_.seek(start_frame_);
       if (!result) {
         holovibes_logger()->warn("Failed to seek to start_frame: {}",

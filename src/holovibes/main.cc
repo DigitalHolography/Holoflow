@@ -10,6 +10,7 @@
 #include "holoflow/model_descriptor.hh"
 #include "holoflow/tensor.hh"
 #include "holovibes/accumulators/batched_spsc_accumulator.hh"
+#include "holovibes/accumulators/sliding_average_accumulator.hh"
 #include "holovibes/sinks/qt_display_sink.hh"
 #include "holovibes/sources/holofile_source.hh"
 #include "holovibes/tasks/average_task.hh"
@@ -67,6 +68,10 @@ int main(int argc, char **argv) {
       "BatchedSPSCAccumulatorFactory",
       std::make_unique<dh::BatchedSPSCAccumulatorFactory>());
 
+  descriptor.add_accumulator_factory(
+      "SlidingAverageAccumulatorFactory",
+      std::make_unique<dh::SlidingAverageAccumulatorFactory>());
+
   descriptor.add_task_factory("ConvertTaskFactory",
                               std::make_unique<dh::ConvertTaskFactory>());
 
@@ -98,9 +103,9 @@ int main(int argc, char **argv) {
                         R"({
     "path": "D:\\BatchTesting\\250220_GUJ0206_L.holo",
     "start_frame": 0,
-    "end_frame": 100000,
-    "batch_size": 32,
-    "load_kind": "READ_LIVE"
+    "end_frame": 50000,
+    "batch_size": 8,
+    "load_kind": "LOAD_IN_CPU"
   })"_json);
 
   descriptor.add_sink("QtDisplaySinkFactory", "processed_widget", R"({})"_json);
@@ -126,11 +131,18 @@ int main(int argc, char **argv) {
       "dequeue_batch_size": 1
     })"_json);
 
-  descriptor.add_accumulator("BatchedSPSCAccumulatorFactory",
-                             "accumulation_accumulator",
+  // descriptor.add_accumulator("BatchedSPSCAccumulatorFactory",
+  //                            "accumulation_accumulator",
+  //                            R"({
+  //     "nb_slots": 512,
+  //     "dequeue_batch_size": 128
+  //   })"_json);
+
+  descriptor.add_accumulator("SlidingAverageAccumulatorFactory",
+                             "avg_accumulator",
                              R"({
       "nb_slots": 512,
-      "dequeue_batch_size": 128
+      "window_size": 128
     })"_json);
 
   descriptor.add_task("ConvertTaskFactory", "u8_to_cf32",
@@ -191,9 +203,8 @@ int main(int argc, char **argv) {
   descriptor.add_child("pca", "cf32_to_f32");
   descriptor.add_child("cf32_to_f32", "p_frame_avg");
   descriptor.add_child("p_frame_avg", "fft_shift");
-  descriptor.add_child("fft_shift", "accumulation_accumulator");
-  descriptor.add_child("accumulation_accumulator", "output_average");
-  descriptor.add_child("output_average", "percentile_clip");
+  descriptor.add_child("fft_shift", "avg_accumulator");
+  descriptor.add_child("avg_accumulator", "percentile_clip");
   descriptor.add_child("percentile_clip", "f32_to_u8");
   descriptor.add_child("f32_to_u8", "output_accumulator");
   descriptor.add_child("output_accumulator", "processed_widget");
