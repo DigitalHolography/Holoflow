@@ -37,17 +37,11 @@ const TensorMeta &TaskMeta::imeta() const { return imeta_; }
 const TensorMeta &TaskMeta::ometa() const { return ometa_; }
 bool TaskMeta::inlined() const { return inlined_; }
 
-std::ostream &operator<<(std::ostream &os, const TaskMeta &meta) {
-  os << "TaskMeta(input=" << meta.imeta() << ", output=" << meta.ometa()
-     << ", inlined=" << (meta.inlined() ? "true" : "false") << ")";
-  return os;
-}
-
 // ==========================================================================
 //                     Task Implementation
 // ==========================================================================
 
-Task::Task(const TaskMeta &meta, cudaStream_t stream)
+Task::Task(const TaskMeta &meta, CudaStreamRef stream)
     : meta_(meta), stream_(stream) {}
 
 const TaskMeta &Task::meta() const { return meta_; }

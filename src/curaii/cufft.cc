@@ -287,8 +287,9 @@ dh::CufftHandle::try_xt_make_plan_many(
 }
 
 tl::expected<void, dh::CufftResult>
-dh::CufftHandle::try_set_stream(cudaStream_t stream) noexcept {
-  if (auto result = cufftSetStream(handle_, stream); result != CUFFT_SUCCESS) {
+dh::CufftHandle::try_set_stream(CudaStreamRef stream) noexcept {
+  if (auto result = cufftSetStream(handle_, stream.stream());
+      result != CUFFT_SUCCESS) {
     curaii_logger()->warn(
         "[CufftHandle::try_set_stream] failed with error: \"{}\"",
         CufftResult(result));

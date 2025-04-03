@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <tl/expected.hpp>
 
+#include "curaii/cuda_runtime.hh"
 #include "holoflow/error.hh"
 #include "holoflow/tensor.hh"
 
@@ -52,8 +53,6 @@ private:
   bool inlined_;     ///< Whether the task modifies the input tensor in place.
 };
 
-std::ostream &operator<<(std::ostream &os, const TaskMeta &meta);
-
 /**
  * @brief Represents a computational task that operates on tensors.
  *
@@ -68,7 +67,7 @@ public:
    * @param meta The task metadata.
    * @param stream The stream.
    */
-  Task(const TaskMeta &meta, cudaStream_t stream);
+  Task(const TaskMeta &meta, CudaStreamRef stream);
 
   /**
    * @brief Virtual destructor.
@@ -115,7 +114,7 @@ public:
 
 protected:
   TaskMeta meta_; ///< Metadata defining input/output tensors and inlining.
-  cudaStream_t stream_; ///< CUDA stream associated with the task execution.
+  CudaStreamRef stream_; ///< CUDA stream associated with the task execution.
 };
 
 /**
@@ -162,7 +161,7 @@ public:
    * task is destroyed.
    */
   virtual tl::expected<std::unique_ptr<Task>, Error>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream) = 0;
+  create(const TensorMeta &imeta, const json &params, CudaStreamRef stream) = 0;
 };
 
 } // namespace dh

@@ -6,6 +6,7 @@
 #include <optional>
 #include <tl/expected.hpp>
 
+#include "curaii/cuda_runtime.hh"
 #include "holoflow/error.hh"
 #include "holoflow/tensor.hh"
 
@@ -67,7 +68,7 @@ public:
    * @param meta The task metadata.
    * @param stream The stream.
    */
-  Accumulator(const AccumulatorMeta &meta, cudaStream_t stream);
+  Accumulator(const AccumulatorMeta &meta, CudaStreamRef stream);
 
   /**
    * @brief Virtual destructor.
@@ -147,7 +148,7 @@ public:
 
 protected:
   AccumulatorMeta meta_; ///< Metadata defining input/output tensors.
-  cudaStream_t stream_;  ///< CUDA stream associated with the accumulator.
+  CudaStreamRef stream_; ///< CUDA stream associated with the accumulator.
 };
 
 /**
@@ -197,7 +198,7 @@ public:
    * until the accumulator is destroyed.
    */
   virtual tl::expected<std::unique_ptr<Accumulator>, Error>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream) = 0;
+  create(const TensorMeta &imeta, const json &params, CudaStreamRef stream) = 0;
 };
 
 } // namespace dh

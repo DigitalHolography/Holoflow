@@ -11,6 +11,7 @@
 #include <unordered_set>
 
 #include "bug_buster/bug_buster.hh"
+#include "curaii/cuda_runtime.hh"
 #include "holoflow/holoflow.hh"
 
 namespace dh {
@@ -1053,7 +1054,7 @@ public:
 
     auto &factory = task_factories_map_.at(node.kind());
     auto result = factory.get().create(node.task_meta().imeta(), node.params(),
-                                       node.stream());
+                                       CudaStreamRef::from_raw(node.stream()));
     if (!result) {
       holoflow_logger()->warn("Factory call failed at node: {}", node.name());
       result_ = false;
@@ -1073,8 +1074,9 @@ public:
     DH_CHECK(accumulator_factories_map_.contains(node.kind()));
 
     auto &factory = accumulator_factories_map_.at(node.kind());
-    auto result = factory.get().create(node.accumulator_meta().imeta(),
-                                       node.params(), node.stream());
+    auto result =
+        factory.get().create(node.accumulator_meta().imeta(), node.params(),
+                             CudaStreamRef::from_raw(node.stream()));
     if (!result) {
       holoflow_logger()->warn("Factory call failed at node: {}", node.name());
       result_ = false;
@@ -1094,7 +1096,8 @@ public:
     DH_CHECK(source_factories_map_.contains(node.kind()));
 
     auto &factory = source_factories_map_.at(node.kind());
-    auto result = factory.get().create(node.params(), node.stream());
+    auto result = factory.get().create(node.params(),
+                                       CudaStreamRef::from_raw(node.stream()));
     if (!result) {
       holoflow_logger()->warn("Factory call failed at node: {}", node.name());
       result_ = false;
@@ -1115,7 +1118,7 @@ public:
 
     auto &factory = sink_factories_map_.at(node.kind());
     auto result = factory.get().create(node.sink_meta().imeta(), node.params(),
-                                       node.stream());
+                                       CudaStreamRef::from_raw(node.stream()));
     if (!result) {
       holoflow_logger()->warn("Factory call failed at node: {}", node.name());
       result_ = false;

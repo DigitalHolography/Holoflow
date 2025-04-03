@@ -48,7 +48,7 @@ __global__ void swap_corners_kernel(float *in, float *out, int width,
 
 } // namespace
 
-FFTShiftTask::FFTShiftTask(const TaskMeta &meta, cudaStream_t stream)
+FFTShiftTask::FFTShiftTask(const TaskMeta &meta, CudaStreamRef stream)
     : Task(meta, stream) {}
 
 tl::expected<void, Error> FFTShiftTask::run(TensorView input,
@@ -68,7 +68,7 @@ tl::expected<void, Error> FFTShiftTask::run(TensorView input,
                  (height_half + block_size.y - 1) / block_size.y,
                  (batch_size + block_size.z - 1) / block_size.z);
 
-  swap_corners_kernel<<<grid_size, block_size, 0, stream_>>>(
+  swap_corners_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
       idata, odata, width, height, batch_size);
 
   return {};
@@ -106,7 +106,7 @@ FFTShiftTaskFactory::type_check(const TensorMeta &imeta, const json &) {
 
 tl::expected<std::unique_ptr<Task>, Error>
 FFTShiftTaskFactory::create(const TensorMeta &imeta, const json &jparams,
-                            cudaStream_t stream) {
+                            CudaStreamRef stream) {
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {
     holovibes_logger()->warn("[PCATaskFactory::create] type check failed");

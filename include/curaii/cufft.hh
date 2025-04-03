@@ -5,6 +5,7 @@
 #include <fmt/base.h>
 #include <tl/expected.hpp>
 
+#include "curaii/cuda_runtime.hh"
 #include "curaii/library_types.hh"
 
 namespace dh {
@@ -65,7 +66,7 @@ public:
       long long int batch, CudaDataType executiontype);
 
   [[nodiscard]]
-  tl::expected<void, CufftResult> try_set_stream(cudaStream_t stream) noexcept;
+  tl::expected<void, CufftResult> try_set_stream(CudaStreamRef stream) noexcept;
 
   [[nodiscard]]
   tl::expected<void, CufftResult>

@@ -13,7 +13,7 @@ namespace dh {
 //                     HolofileSource Implementation
 // ==========================================================================
 
-HolofileSource::HolofileSource(const SourceMeta &meta, cudaStream_t stream,
+HolofileSource::HolofileSource(const SourceMeta &meta, CudaStreamRef stream,
                                const std::string &path, int start_frame,
                                int end_frame, int batch_size,
                                LoadKind load_kind, HolofileReader reader,
@@ -61,17 +61,17 @@ tl::expected<void, Error> HolofileSource::run(TensorView otens) {
   switch (load_kind_) {
   case LoadKind::READ_LIVE:
     error = cudaMemcpyAsync(otens.data(), internal_buffer_, size,
-                            cudaMemcpyHostToDevice, stream_);
+                            cudaMemcpyHostToDevice, stream_.stream());
     break;
   case LoadKind::LOAD_IN_CPU:
     error = cudaMemcpyAsync(otens.data(),
                             internal_buffer_ + frame_index_ * frame_size, size,
-                            cudaMemcpyHostToDevice, stream_);
+                            cudaMemcpyHostToDevice, stream_.stream());
     break;
   case LoadKind::LOAD_IN_GPU:
     error = cudaMemcpyAsync(otens.data(),
                             internal_buffer_ + frame_index_ * frame_size, size,
-                            cudaMemcpyDeviceToDevice, stream_);
+                            cudaMemcpyDeviceToDevice, stream_.stream());
     break;
   }
 
@@ -82,7 +82,6 @@ tl::expected<void, Error> HolofileSource::run(TensorView otens) {
   }
 
   frame_index_ += batch_size_;
-  cudaStreamSynchronize(stream_);
 
   return {};
 }
@@ -152,7 +151,7 @@ HolofileSourceFactory::type_check(const json &jparams) {
 }
 
 tl::expected<std::unique_ptr<Source>, Error>
-HolofileSourceFactory::create(const json &jparams, cudaStream_t stream) {
+HolofileSourceFactory::create(const json &jparams, CudaStreamRef stream) {
   auto meta_result = type_check(jparams);
   if (!meta_result) {
     holovibes_logger()->warn("type check failed");
@@ -214,7 +213,7 @@ HolofileSourceFactory::create(const json &jparams, cudaStream_t stream) {
   case HolofileSource::LoadKind::LOAD_IN_GPU:
     nb_frames = params.end_frame - params.start_frame;
     size = nb_frames * frame_size;
-    device_buffer = make_unique_device_ptr<uint8_t>(size, stream);
+    device_buffer = make_unique_device_ptr<uint8_t>(size, stream.stream());
     internal_buffer = device_buffer.get();
     break;
   }
@@ -236,7 +235,7 @@ HolofileSourceFactory::create(const json &jparams, cudaStream_t stream) {
     }
 
     auto error = cudaMemcpyAsync(internal_buffer, tmp_buffer.get(), size,
-                                 cudaMemcpyHostToDevice, stream);
+                                 cudaMemcpyHostToDevice, stream.stream());
     if (error != cudaSuccess) {
       holovibes_logger()->warn("CUDA call failed with error: {}",
                                cudaGetErrorString(error));

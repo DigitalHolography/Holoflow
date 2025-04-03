@@ -26,7 +26,7 @@ private:
     CF32_AVG,
   };
 
-  AverageTask(const TaskMeta &meta, cudaStream_t stream, int begin, int end,
+  AverageTask(const TaskMeta &meta, CudaStreamRef stream, int begin, int end,
               Kind kind);
 
   int begin_;
@@ -37,10 +37,11 @@ private:
 class AverageTaskFactory : public TaskFactory {
 public:
   tl::expected<TaskMeta, Error> type_check(const TensorMeta &imeta,
-                                           const json &params);
+                                           const json &params) override;
 
   tl::expected<std::unique_ptr<Task>, Error>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream);
+  create(const TensorMeta &imeta, const json &params,
+         CudaStreamRef stream) override;
 
 private:
   struct Params {

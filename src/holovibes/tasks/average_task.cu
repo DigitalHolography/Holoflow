@@ -83,7 +83,7 @@ __global__ void cf32_avg_kernel(const cuFloatComplex *idata,
 
 } // namespace
 
-AverageTask::AverageTask(const TaskMeta &meta, cudaStream_t stream, int begin,
+AverageTask::AverageTask(const TaskMeta &meta, CudaStreamRef stream, int begin,
                          int end, Kind kind)
     : Task(meta, stream), begin_(begin), end_(end), kind_(kind) {}
 
@@ -102,15 +102,15 @@ tl::expected<void, Error> AverageTask::run(TensorView input,
 
   switch (kind_) {
   case Kind::U8_AVG:
-    u8_avg_kernel<<<grid_size, block_size, 0, stream_>>>(
+    u8_avg_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
         (uint8_t *)idata, (uint8_t *)odata, nx, ny, nz);
     break;
   case Kind::F32_AVG:
-    f32_avg_kernel<<<grid_size, block_size, 0, stream_>>>(
+    f32_avg_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
         (float *)idata, (float *)odata, nx, ny, nz);
     break;
   case Kind::CF32_AVG:
-    cf32_avg_kernel<<<grid_size, block_size, 0, stream_>>>(
+    cf32_avg_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
         (cuFloatComplex *)idata, (cuFloatComplex *)odata, nx, ny, nz);
     break;
   default:
@@ -190,7 +190,7 @@ AverageTaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
 
 tl::expected<std::unique_ptr<Task>, Error>
 AverageTaskFactory::create(const TensorMeta &imeta, const json &jparams,
-                           cudaStream_t stream) {
+                           CudaStreamRef stream) {
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {
     holovibes_logger()->warn("[AverageTaskFactory::create] type check failed");

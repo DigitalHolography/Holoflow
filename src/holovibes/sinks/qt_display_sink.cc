@@ -14,7 +14,7 @@ namespace dh {
 //                     QtDisplaySink Implementation
 // ==========================================================================
 
-QtDisplaySink::QtDisplaySink(const SinkMeta &meta, cudaStream_t stream)
+QtDisplaySink::QtDisplaySink(const SinkMeta &meta, CudaStreamRef stream)
     : Sink(meta, stream), frame_displayed_(true),
       last_display_time_(std::chrono::steady_clock::now()) {}
 
@@ -33,9 +33,10 @@ tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
 
   auto host = make_unique_host_ptr<uint8_t>(itens.size_in_bytes());
   DH_CHECK(cudaMemcpyAsync(host.get(), itens.data(), itens.size_in_bytes(),
-                           cudaMemcpyDeviceToHost, stream_) == cudaSuccess);
+                           cudaMemcpyDeviceToHost,
+                           stream_.stream()) == cudaSuccess);
 
-  DH_CHECK(cudaStreamSynchronize(stream_) == cudaSuccess);
+  DH_CHECK(stream_.try_synchronize());
   TensorMeta host_meta(itens.data_type(), MemoryLocation::HOST,
                        {itens.shape().at(1), itens.shape().at(2)});
   TensorView host_view(host.get(), host_meta);
@@ -96,7 +97,7 @@ QtDisplaySinkFactory::type_check(const TensorMeta &imeta, const json &) {
 
 tl::expected<std::unique_ptr<Sink>, Error>
 QtDisplaySinkFactory::create(const TensorMeta &imeta, const json &jparams,
-                             cudaStream_t stream) {
+                             CudaStreamRef stream) {
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {
     holovibes_logger()->warn("type check failed");

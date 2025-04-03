@@ -18,7 +18,7 @@ namespace dh {
 //                     STFTTask Implementation
 // ==========================================================================
 
-STFTTask::STFTTask(const TaskMeta &meta, cudaStream_t stream,
+STFTTask::STFTTask(const TaskMeta &meta, CudaStreamRef stream,
                    CufftHandle handle)
     : Task(meta, stream), handle_(std::move(handle)) {}
 
@@ -69,7 +69,7 @@ STFTTaskFactory::type_check(const TensorMeta &imeta, const json &) {
 
 tl::expected<std::unique_ptr<Task>, Error>
 STFTTaskFactory::create(const TensorMeta &imeta, const json &jparams,
-                        cudaStream_t stream) {
+                        CudaStreamRef stream) {
 
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {

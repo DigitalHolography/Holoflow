@@ -34,7 +34,7 @@ __global__ void apply_lens_kernel(cuFloatComplex *idata, cuFloatComplex *odata,
 } // namespace
 
 FresnelDiffractionTask::FresnelDiffractionTask(
-    const TaskMeta &meta, cudaStream_t stream, float lambda, float z,
+    const TaskMeta &meta, CudaStreamRef stream, float lambda, float z,
     float pixel_size, bool skip_phase_shift,
     unique_device_ptr<cuFloatComplex> lens, CufftHandle handle)
     : Task(meta, stream), lambda_(lambda), z_(z), pixel_size_(pixel_size),
@@ -51,7 +51,7 @@ tl::expected<void, Error> FresnelDiffractionTask::run(TensorView input,
   dim3 block_size = 256;
   dim3 grid_size = (lens_size + block_size.x - 1) / block_size.x;
 
-  apply_lens_kernel<<<grid_size, block_size, 0, stream_>>>(
+  apply_lens_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
       idata, odata, lens_.get(), lens_size, batch_size);
 
   if (auto result =
@@ -155,7 +155,7 @@ FresnelDiffractionTaskFactory::type_check(const TensorMeta &imeta,
 tl::expected<std::unique_ptr<Task>, Error>
 FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
                                       const json &jparams,
-                                      cudaStream_t stream) {
+                                      CudaStreamRef stream) {
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {
     holovibes_logger()->warn("type check failed");
@@ -203,7 +203,7 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
 
   // Initialize lens
   auto d_lens_result = try_make_unique_device_ptr<cuFloatComplex>(
-      imeta.size_in_bytes() / batch, stream);
+      imeta.size_in_bytes() / batch, stream.stream());
   if (!d_lens_result) {
     holovibes_logger()->warn("[FresnelDiffractionTask::create] Cuda error: {}",
                              cudaGetErrorString(d_lens_result.error()));
@@ -215,7 +215,7 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
   dim3 grid_size((width + block_size.x - 1) / block_size.x,
                  (height + block_size.y - 1) / block_size.y);
 
-  quadratic_lens_kernel<<<grid_size, block_size, 0, stream>>>(
+  quadratic_lens_kernel<<<grid_size, block_size, 0, stream.stream()>>>(
       d_lens.get(), width, height, params.lambda, params.z, params.pixel_size);
 
   if (auto result = cudaPeekAtLastError(); result != cudaSuccess) {

@@ -20,7 +20,7 @@ public:
   friend class PercentileClipTaskFactory;
 
 private:
-  PercentileClipTask(const TaskMeta &meta, cudaStream_t stream,
+  PercentileClipTask(const TaskMeta &meta, CudaStreamRef stream,
                      unique_device_ptr<float> lower_threshold,
                      unique_device_ptr<float> upper_threshold,
                      unique_device_ptr<uint8_t> d_temp_storage,
@@ -35,10 +35,11 @@ private:
 class PercentileClipTaskFactory : public TaskFactory {
 public:
   tl::expected<TaskMeta, Error> type_check(const TensorMeta &imeta,
-                                           const json &params);
+                                           const json &params) override;
 
   tl::expected<std::unique_ptr<Task>, Error>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream);
+  create(const TensorMeta &imeta, const json &params,
+         CudaStreamRef stream) override;
 };
 
 } // namespace dh

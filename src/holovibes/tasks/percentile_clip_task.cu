@@ -34,7 +34,7 @@ __global__ void clip_kernel(const float *input, float *output, int count,
 } // namespace
 
 PercentileClipTask::PercentileClipTask(
-    const TaskMeta &meta, cudaStream_t stream,
+    const TaskMeta &meta, CudaStreamRef stream,
     unique_device_ptr<float> lower_threshold,
     unique_device_ptr<float> upper_threshold,
     unique_device_ptr<uint8_t> d_temp_storage, size_t temp_storage_bytes)
@@ -50,19 +50,19 @@ tl::expected<void, Error> PercentileClipTask::run(TensorView input,
   float *odata = static_cast<float *>(output.data());
   cub::DeviceRadixSort::SortKeys(d_temp_storage_.get(), temp_storage_bytes_,
                                  idata, odata, count, 0, sizeof(float) * 8,
-                                 stream_);
+                                 stream_.stream());
 
   int lower_idx = static_cast<int>(count * (0.02f / 100.0f));
   int upper_idx = static_cast<int>(count * (99.98f / 100.0f));
 
   cudaMemcpyAsync(lower_threshold_.get(), odata + lower_idx, sizeof(float),
-                  cudaMemcpyDeviceToDevice, stream_);
+                  cudaMemcpyDeviceToDevice, stream_.stream());
   cudaMemcpyAsync(upper_threshold_.get(), odata + upper_idx, sizeof(float),
-                  cudaMemcpyDeviceToDevice, stream_);
+                  cudaMemcpyDeviceToDevice, stream_.stream());
 
   int block_size = 256;
   int grid_size = (count + block_size - 1) / block_size;
-  clip_kernel<<<grid_size, block_size, 0, stream_>>>(
+  clip_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
       idata, odata, count, lower_threshold_.get(), upper_threshold_.get());
 
   return {};
@@ -103,7 +103,7 @@ PercentileClipTaskFactory::type_check(const TensorMeta &imeta, const json &) {
 
 tl::expected<std::unique_ptr<Task>, Error>
 PercentileClipTaskFactory::create(const TensorMeta &imeta, const json &jparams,
-                                  cudaStream_t stream) {
+                                  CudaStreamRef stream) {
 
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {
@@ -121,11 +121,11 @@ PercentileClipTaskFactory::create(const TensorMeta &imeta, const json &jparams,
   size_t temp_storage_bytes = 0;
   cub::DeviceRadixSort::SortKeys(d_temp_storage.get(), temp_storage_bytes,
                                  idata, odata, count, 0, sizeof(float) * 8,
-                                 stream);
+                                 stream.stream());
 
   // Temp storage
   auto d_temp_storage_result =
-      try_make_unique_device_ptr<uint8_t>(temp_storage_bytes, stream);
+      try_make_unique_device_ptr<uint8_t>(temp_storage_bytes, stream.stream());
   if (!d_temp_storage_result) {
     holovibes_logger()->warn(
         "[PercentileClipTaskFactory::create] failed with error \"{}\"",
@@ -135,7 +135,8 @@ PercentileClipTaskFactory::create(const TensorMeta &imeta, const json &jparams,
   d_temp_storage = std::move(d_temp_storage_result.value());
 
   // Upper threshold
-  auto d_upper_threshold_result = try_make_unique_device_ptr<float>(1, stream);
+  auto d_upper_threshold_result =
+      try_make_unique_device_ptr<float>(1, stream.stream());
   if (!d_upper_threshold_result) {
     holovibes_logger()->warn(
         "[PercentileClipTaskFactory::create] failed with error \"{}\"",
@@ -145,7 +146,8 @@ PercentileClipTaskFactory::create(const TensorMeta &imeta, const json &jparams,
   auto d_upper_threshold = std::move(d_upper_threshold_result.value());
 
   // Lower threshold
-  auto d_lower_threshold_result = try_make_unique_device_ptr<float>(1, stream);
+  auto d_lower_threshold_result =
+      try_make_unique_device_ptr<float>(1, stream.stream());
   if (!d_lower_threshold_result) {
     holovibes_logger()->warn(
         "[PercentileClipTaskFactory::create] failed with error \"{}\"",

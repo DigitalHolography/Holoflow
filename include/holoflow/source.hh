@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <tl/expected.hpp>
 
+#include "curaii/cuda_runtime.hh"
 #include "holoflow/error.hh"
 #include "holoflow/tensor.hh"
 
@@ -22,11 +23,9 @@ private:
   TensorMeta ometa_;
 };
 
-std::ostream &operator<<(std::ostream &os, const SourceMeta &meta);
-
 class Source {
 public:
-  Source(const SourceMeta &meta, cudaStream_t stream);
+  Source(const SourceMeta &meta, CudaStreamRef stream);
 
   virtual ~Source() = default;
 
@@ -43,7 +42,7 @@ public:
 
 protected:
   SourceMeta meta_;
-  cudaStream_t stream_;
+  CudaStreamRef stream_;
 };
 
 class SourceFactory {
@@ -60,7 +59,7 @@ public:
   virtual tl::expected<SourceMeta, Error> type_check(const json &params) = 0;
 
   virtual tl::expected<std::unique_ptr<Source>, Error>
-  create(const json &params, cudaStream_t stream) = 0;
+  create(const json &params, CudaStreamRef stream) = 0;
 };
 
 } // namespace dh

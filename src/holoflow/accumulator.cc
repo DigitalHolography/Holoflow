@@ -56,11 +56,12 @@ std::ostream &operator<<(std::ostream &os, const AccumulatorMeta &meta) {
 //                     Accumulator Implementation
 // ==========================================================================
 
-Accumulator::Accumulator(const AccumulatorMeta &meta, cudaStream_t stream)
+Accumulator::Accumulator(const AccumulatorMeta &meta, CudaStreamRef stream)
     : meta_(meta), stream_(stream) {
   dh::holoflow_logger()->trace(
       "Created Accumulator with stream={} and shape [{}]",
-      reinterpret_cast<void *>(stream), fmt::join(meta.imeta().shape(), ", "));
+      reinterpret_cast<void *>(stream.stream()),
+      fmt::join(meta.imeta().shape(), ", "));
 }
 
 const AccumulatorMeta &Accumulator::meta() const { return meta_; }
