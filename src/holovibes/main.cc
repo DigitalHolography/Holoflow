@@ -20,6 +20,7 @@
 #include "holovibes/tasks/identity_task.hh"
 #include "holovibes/tasks/pca_task.hh"
 #include "holovibes/tasks/percentile_clip_task.hh"
+#include "holovibes/tasks/stft_task.hh"
 #include "holovibes/ui/tensor_display_widget.hh"
 
 void setup_global_logger() {
@@ -84,6 +85,9 @@ int main(int argc, char **argv) {
 
   descriptor.add_task_factory("PCATaskFactory",
                               std::make_unique<dh::PCATaskFactory>());
+
+  descriptor.add_task_factory("STFTTaskFactory",
+                              std::make_unique<dh::STFTTaskFactory>());
 
   descriptor.add_task_factory("AverageTaskFactory",
                               std::make_unique<dh::AverageTaskFactory>());
@@ -171,6 +175,13 @@ int main(int argc, char **argv) {
       "end": 16
     })"_json);
 
+  descriptor.add_task("STFTTaskFactory", "stft", R"({})"_json);
+
+  descriptor.add_task("AverageTaskFactory", "p_frame_avg", R"({
+      "begin": 20,
+      "end": 26
+    })"_json);
+
   descriptor.add_task("AverageTaskFactory", "output_average", R"({
       "begin": 0,
       "end": 128
@@ -178,11 +189,6 @@ int main(int argc, char **argv) {
 
   descriptor.add_task("PercentileClipTaskFactory", "percentile_clip",
                       R"({})"_json);
-
-  descriptor.add_task("AverageTaskFactory", "p_frame_avg", R"({
-      "begin": 0,
-      "end": 16
-    })"_json);
 
   descriptor.add_task("FFTShiftTaskFactory", "fft_shift", R"({})"_json);
 
@@ -195,8 +201,8 @@ int main(int argc, char **argv) {
   descriptor.add_child("input_accumulator", "u8_to_cf32");
   descriptor.add_child("u8_to_cf32", "fresnel_diffraction");
   descriptor.add_child("fresnel_diffraction", "time_accumulator");
-  descriptor.add_child("time_accumulator", "pca");
-  descriptor.add_child("pca", "cf32_to_f32");
+  descriptor.add_child("time_accumulator", "stft");
+  descriptor.add_child("stft", "cf32_to_f32");
   descriptor.add_child("cf32_to_f32", "p_frame_avg");
   descriptor.add_child("p_frame_avg", "fft_shift");
   descriptor.add_child("fft_shift", "avg_accumulator");
