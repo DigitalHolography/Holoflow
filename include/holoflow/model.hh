@@ -27,7 +27,7 @@ public:
   using Child = std::reference_wrapper<ModelNode>;
 
   ModelNode(const std::string &kind, const std::string &name,
-            const json &params, cudaStream_t stream);
+            const json &params, CudaStreamRef stream);
 
   virtual ~ModelNode() = default;
 
@@ -74,7 +74,7 @@ public:
    */
   const json &params() const;
 
-  cudaStream_t stream() const;
+  CudaStreamRef stream() const;
 
   /**
    * @brief Adds a child node.
@@ -99,7 +99,7 @@ private:
   std::string kind_; ///< The kind/type of the node.
   json params_;      ///< JSON object storing the node parameters.
 
-  cudaStream_t stream_; ///< Cuda stream used by the node.
+  CudaStreamRef stream_; ///< Cuda stream used by the node.
 
   std::vector<Child> children_; ///< List of child nodes.
 };
@@ -107,7 +107,7 @@ private:
 class TaskNode : public ModelNode {
 public:
   TaskNode(const std::string &kind, const std::string &name, const json &params,
-           int itens_id, int otens_id, cudaStream_t stream,
+           int itens_id, int otens_id, CudaStreamRef stream,
            std::unique_ptr<Task> task, const TaskMeta &task_meta);
 
   void accept(ModelVisitor &visitor) override;
@@ -139,7 +139,8 @@ class AccumulatorNode : public ModelNode {
 public:
   AccumulatorNode(const std::string &kind, const std::string &name,
                   const json &params, int itens_id, int otens_id,
-                  cudaStream_t stream, std::unique_ptr<Accumulator> accumulator,
+                  CudaStreamRef stream,
+                  std::unique_ptr<Accumulator> accumulator,
                   const AccumulatorMeta &accumulator_meta);
 
   void accept(ModelVisitor &visitor) override;
@@ -170,7 +171,7 @@ private:
 class SourceNode : public ModelNode {
 public:
   SourceNode(const std::string &kind, const std::string &name,
-             const json &params, int otens_id, cudaStream_t stream,
+             const json &params, int otens_id, CudaStreamRef stream,
              std::unique_ptr<Source> source, const SourceMeta &source_meta);
 
   void accept(ModelVisitor &visitor) override;
@@ -196,7 +197,7 @@ private:
 class SinkNode : public ModelNode {
 public:
   SinkNode(const std::string &kind, const std::string &name, const json &params,
-           int itens_id, cudaStream_t stream, std::unique_ptr<Sink> sink,
+           int itens_id, CudaStreamRef stream, std::unique_ptr<Sink> sink,
            const SinkMeta &sink_meta);
 
   void accept(ModelVisitor &visitor) override;
@@ -257,7 +258,7 @@ public:
   Model(std::vector<std::unique_ptr<ModelNode>> nodes,
         std::unordered_map<int, TensorSlot> tensors,
         std::vector<std::reference_wrapper<ModelNode>> pes,
-        std::vector<unique_cuda_stream> streams, ModelNode &root);
+        std::vector<CudaStream> streams, ModelNode &root);
 
   Accumulator *input(const std::string &name);
   const Accumulator *input(const std::string &name) const;
@@ -275,7 +276,7 @@ private:
   std::vector<std::unique_ptr<ModelNode>> nodes_;
   std::unordered_map<int, TensorSlot> tensors_;
   std::vector<std::reference_wrapper<ModelNode>> pes_;
-  std::vector<unique_cuda_stream> streams_;
+  std::vector<CudaStream> streams_;
 
   State state_;
   std::atomic_bool stop_flag_;

@@ -35,7 +35,7 @@ const json &ModelNodeBuilder::params() const {
   return *params_;
 }
 
-cudaStream_t ModelNodeBuilder::stream() const {
+CudaStreamRef ModelNodeBuilder::stream() const {
   DH_CHECK(stream_);
   return *stream_;
 }
@@ -54,7 +54,7 @@ void ModelNodeBuilder::set_kind(const std::string &kind) { kind_ = kind; }
 
 void ModelNodeBuilder::set_params(const json &params) { params_ = params; }
 
-void ModelNodeBuilder::set_stream(cudaStream_t stream) { stream_ = stream; }
+void ModelNodeBuilder::set_stream(CudaStreamRef stream) { stream_ = stream; }
 
 void ModelNodeBuilder::add_child(ModelNodeBuilder &child) {
   children_.push_back(child);
@@ -379,9 +379,12 @@ class AssignStreams : public ModelBuilderVisitor {
   void visit(AccumulatorNodeBuilder &node) {
     holoflow_logger()->trace("[AssignStreams] visiting: {}", node.name());
 
-    auto stream = make_unique_cuda_stream();
-    node.set_stream(stream.get());
-    streams_stack_.push(stream.get());
+    auto stream_result = CudaStream::try_create();
+    DH_CHECK(stream_result);
+    auto stream = std::move(stream_result.value());
+
+    node.set_stream(stream.ref());
+    streams_stack_.push(stream.ref());
     streams_.push_back(std::move(stream));
 
     for (auto child : node.children()) {
@@ -394,9 +397,12 @@ class AssignStreams : public ModelBuilderVisitor {
   void visit(SourceNodeBuilder &node) {
     holoflow_logger()->trace("[AssignStreams] visiting: {}", node.name());
 
-    auto stream = make_unique_cuda_stream();
-    node.set_stream(stream.get());
-    streams_stack_.push(stream.get());
+    auto stream_result = CudaStream::try_create();
+    DH_CHECK(stream_result);
+    auto stream = std::move(stream_result.value());
+
+    node.set_stream(stream.ref());
+    streams_stack_.push(stream.ref());
     streams_.push_back(std::move(stream));
 
     for (auto child : node.children()) {
@@ -415,11 +421,11 @@ class AssignStreams : public ModelBuilderVisitor {
   }
 
 public:
-  std::vector<unique_cuda_stream> result() { return std::move(streams_); }
+  std::vector<CudaStream> result() { return std::move(streams_); }
 
 private:
-  std::vector<unique_cuda_stream> streams_;
-  std::stack<cudaStream_t> streams_stack_;
+  std::vector<CudaStream> streams_;
+  std::stack<CudaStreamRef> streams_stack_;
 };
 
 class TypeCheck : public ModelBuilderVisitor {
@@ -1054,7 +1060,7 @@ public:
 
     auto &factory = task_factories_map_.at(node.kind());
     auto result = factory.get().create(node.task_meta().imeta(), node.params(),
-                                       CudaStreamRef::from_raw(node.stream()));
+                                       node.stream());
     if (!result) {
       holoflow_logger()->warn("Factory call failed at node: {}", node.name());
       result_ = false;
@@ -1074,9 +1080,8 @@ public:
     DH_CHECK(accumulator_factories_map_.contains(node.kind()));
 
     auto &factory = accumulator_factories_map_.at(node.kind());
-    auto result =
-        factory.get().create(node.accumulator_meta().imeta(), node.params(),
-                             CudaStreamRef::from_raw(node.stream()));
+    auto result = factory.get().create(node.accumulator_meta().imeta(),
+                                       node.params(), node.stream());
     if (!result) {
       holoflow_logger()->warn("Factory call failed at node: {}", node.name());
       result_ = false;
@@ -1096,8 +1101,7 @@ public:
     DH_CHECK(source_factories_map_.contains(node.kind()));
 
     auto &factory = source_factories_map_.at(node.kind());
-    auto result = factory.get().create(node.params(),
-                                       CudaStreamRef::from_raw(node.stream()));
+    auto result = factory.get().create(node.params(), node.stream());
     if (!result) {
       holoflow_logger()->warn("Factory call failed at node: {}", node.name());
       result_ = false;
@@ -1118,7 +1122,7 @@ public:
 
     auto &factory = sink_factories_map_.at(node.kind());
     auto result = factory.get().create(node.sink_meta().imeta(), node.params(),
-                                       CudaStreamRef::from_raw(node.stream()));
+                                       node.stream());
     if (!result) {
       holoflow_logger()->warn("Factory call failed at node: {}", node.name());
       result_ = false;

@@ -42,7 +42,7 @@ TensorView Model::TensorSlot::view() { return TensorView(data, meta); }
 // ==========================================================================
 
 ModelNode::ModelNode(const std::string &kind, const std::string &name,
-                     const json &params, cudaStream_t stream)
+                     const json &params, CudaStreamRef stream)
     : kind_(kind), name_(name), params_(params), stream_(stream) {}
 
 std::string &ModelNode::name() { return name_; }
@@ -57,7 +57,7 @@ json &ModelNode::params() { return params_; }
 
 const json &ModelNode::params() const { return params_; }
 
-cudaStream_t ModelNode::stream() const { return stream_; }
+CudaStreamRef ModelNode::stream() const { return stream_; }
 
 void ModelNode::add_child(ModelNode &child) { children_.push_back(child); }
 
@@ -73,7 +73,7 @@ std::span<const ModelNode::Child> ModelNode::children() const {
 
 TaskNode::TaskNode(const std::string &kind, const std::string &name,
                    const json &params, int itens_id, int otens_id,
-                   cudaStream_t stream, std::unique_ptr<Task> task,
+                   CudaStreamRef stream, std::unique_ptr<Task> task,
                    const TaskMeta &task_meta)
     : ModelNode(kind, name, params, stream), task_(std::move(task)),
       task_meta_(task_meta), itens_id_(itens_id), otens_id_(otens_id) {}
@@ -103,7 +103,7 @@ const int &TaskNode::otens_id() const { return otens_id_; }
 AccumulatorNode::AccumulatorNode(const std::string &kind,
                                  const std::string &name, const json &params,
                                  int itens_id, int otens_id,
-                                 cudaStream_t stream,
+                                 CudaStreamRef stream,
                                  std::unique_ptr<Accumulator> accumulator,
                                  const AccumulatorMeta &accumulator_meta)
     : ModelNode(kind, name, params, stream),
@@ -139,7 +139,7 @@ const int &AccumulatorNode::otens_id() const { return otens_id_; }
 // ==========================================================================
 
 SourceNode::SourceNode(const std::string &kind, const std::string &name,
-                       const json &params, int otens_id, cudaStream_t stream,
+                       const json &params, int otens_id, CudaStreamRef stream,
                        std::unique_ptr<Source> source,
                        const SourceMeta &source_meta)
     : ModelNode(kind, name, params, stream), source_(std::move(source)),
@@ -164,7 +164,7 @@ const int &SourceNode::otens_id() const { return otens_id_; }
 // ==========================================================================
 
 SinkNode::SinkNode(const std::string &kind, const std::string &name,
-                   const json &params, int itens_id, cudaStream_t stream,
+                   const json &params, int itens_id, CudaStreamRef stream,
                    std::unique_ptr<Sink> sink, const SinkMeta &sink_meta)
     : ModelNode(kind, name, params, stream), sink_(std::move(sink)),
       sink_meta_(sink_meta), itens_id_(itens_id) {}
@@ -361,7 +361,6 @@ public:
       return;
     }
     if (&node == &root_) {
-      // nvtxRangePushA("PES");
       // Process non-inlined children first.
       for (auto child : node.children()) {
         auto *task = dynamic_cast<TaskNode *>(&child.get());
@@ -376,8 +375,6 @@ public:
           child.get().accept(*this);
         }
       }
-      DH_CHECK(cudaStreamSynchronize(node.stream()) == cudaSuccess);
-      // nvtxRangePop();
     }
   }
 
@@ -431,7 +428,7 @@ private:
 Model::Model(std::vector<std::unique_ptr<ModelNode>> nodes,
              std::unordered_map<int, TensorSlot> tensors,
              std::vector<std::reference_wrapper<ModelNode>> pes,
-             std::vector<unique_cuda_stream> streams, ModelNode &root)
+             std::vector<CudaStream> streams, ModelNode &root)
     : nodes_(std::move(nodes)), tensors_(std::move(tensors)),
       pes_(std::move(pes)), streams_(std::move(streams)), root_(root),
       state_(State::STOPPED), stop_flag_(false) {}
@@ -466,6 +463,8 @@ void Model::run() {
         nvtxRangePushA(exec_range_name.c_str());
         pes.get().accept(exec_pes);
         nvtxRangePop();
+
+        DH_CHECK(pes.get().stream().try_synchronize());
 
         nvtxRangePushA(free_range_name.c_str());
         pes.get().accept(free_pes);

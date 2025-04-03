@@ -31,7 +31,7 @@ public:
 
   const json &params() const;
 
-  cudaStream_t stream() const;
+  CudaStreamRef stream() const;
 
   std::span<Child> children();
 
@@ -43,7 +43,7 @@ public:
 
   void set_params(const json &params);
 
-  void set_stream(cudaStream_t stream);
+  void set_stream(CudaStreamRef stream);
 
   void add_child(ModelNodeBuilder &child);
   virtual void accept(ModelBuilderVisitor &visitor) = 0;
@@ -54,7 +54,7 @@ protected:
   std::optional<std::string> name_;
   std::optional<std::string> kind_;
   std::optional<json> params_;
-  std::optional<cudaStream_t> stream_;
+  std::optional<CudaStreamRef> stream_;
   std::vector<std::reference_wrapper<ModelNodeBuilder>> children_;
 };
 
