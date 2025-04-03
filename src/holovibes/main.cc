@@ -166,7 +166,10 @@ int main(int argc, char **argv) {
       "skip_phase_shift": true
     })"_json);
 
-  descriptor.add_task("PCATaskFactory", "pca", R"({})"_json);
+  descriptor.add_task("PCATaskFactory", "pca", R"({
+      "begin": 0,
+      "end": 16
+    })"_json);
 
   descriptor.add_task("AverageTaskFactory", "output_average", R"({
       "begin": 0,

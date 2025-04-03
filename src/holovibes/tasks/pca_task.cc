@@ -26,7 +26,8 @@ PCATask::PCATask(const TaskMeta &meta, cudaStream_t stream,
                  unique_device_ptr<int> d_info,
                  unique_host_ptr<uint8_t> h_workspace,
                  unique_device_ptr<uint8_t> d_workspace,
-                 size_t h_workspace_size, size_t d_workspace_size)
+                 size_t h_workspace_size, size_t d_workspace_size, size_t begin,
+                 size_t end)
     : Task(meta, stream), cublas_handle_(std::move(cublas_handle)),
       cusolver_handle_(std::move(cusolver_handle)),
       cusolver_params_(std::move(cusolver_params)),
@@ -34,7 +35,7 @@ PCATask::PCATask(const TaskMeta &meta, cudaStream_t stream,
       d_eigenvalues_(std::move(d_eigenvalues)), d_info_(std::move(d_info)),
       h_workspace_(std::move(h_workspace)),
       d_workspace_(std::move(d_workspace)), h_workspace_size_(h_workspace_size),
-      d_workspace_size_(d_workspace_size) {}
+      d_workspace_size_(d_workspace_size), begin_(begin), end_(end) {}
 
 tl::expected<void, Error> PCATask::run(TensorView input, TensorView output) {
   // Note:
@@ -93,7 +94,7 @@ tl::expected<void, Error> PCATask::run(TensorView input, TensorView output) {
   // basis defined by the eigenvectors.
   if (auto result = cublas_handle_.try_c_gemm_3m(
           CublasOperation(CUBLAS_OP_N), CublasOperation(CUBLAS_OP_N), n_samples,
-          n_features, n_features, &alpha, idata, n_samples, eigenvecs,
+          (int)(end_ - begin_), n_features, &alpha, idata, n_samples, eigenvecs,
           n_features, &beta, odata, n_samples);
       !result) {
     holovibes_logger()->warn("[PCATask::run] failed with error \"{}\"",
@@ -109,7 +110,22 @@ tl::expected<void, Error> PCATask::run(TensorView input, TensorView output) {
 // ==========================================================================
 
 tl::expected<TaskMeta, Error>
-PCATaskFactory::type_check(const TensorMeta &imeta, const json &) {
+PCATaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
+  auto params = jparams.get<Params>();
+
+  if (params.begin >= params.end) {
+    holovibes_logger()->warn(
+        "[PCATaskFactory::type_check] invalid begin end interval: [{};{}[",
+        params.begin, params.end);
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
+
+  if (params.end > imeta.shape().at(0)) {
+    holovibes_logger()->warn(
+        "[PCATaskFactory::type_check] end > batch size: {} > {}", params.end,
+        imeta.shape().at(0));
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
 
   if (imeta.memory_location() != MemoryLocation::DEVICE) {
     holovibes_logger()->warn(
@@ -131,7 +147,10 @@ PCATaskFactory::type_check(const TensorMeta &imeta, const json &) {
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
-  return TaskMeta(imeta, imeta, false);
+  auto oshape = imeta.shape();
+  oshape.at(0) = (params.end - params.begin);
+  TensorMeta ometa(imeta.data_type(), imeta.memory_location(), oshape);
+  return TaskMeta(imeta, ometa, false);
 }
 
 tl::expected<std::unique_ptr<Task>, Error>
@@ -144,6 +163,7 @@ PCATaskFactory::create(const TensorMeta &imeta, const json &jparams,
     return tl::unexpected(meta_result.error());
   }
   auto meta = meta_result.value();
+  auto params = jparams.get<Params>();
 
   size_t batch = imeta.shape().at(0);
   int n_features = static_cast<int>(batch);
@@ -215,7 +235,7 @@ PCATaskFactory::create(const TensorMeta &imeta, const json &jparams,
 
   // Eigenvalues
   auto d_eigenvalues_result =
-      try_make_unique_device_ptr<float>(n_features, stream);
+      try_make_unique_device_ptr<float>((params.end - params.begin), stream);
   if (!d_eigenvalues_result) {
     holovibes_logger()->warn(
         "[PCATaskFactory::create] failed with error \"{}\"",
@@ -275,7 +295,8 @@ PCATaskFactory::create(const TensorMeta &imeta, const json &jparams,
       meta, stream, std::move(cublas_handle), std::move(cusolver_handle),
       std::move(cusolver_params), std::move(d_cov_matrix),
       std::move(d_eigenvalues), std::move(d_info), std::move(h_workspace),
-      std::move(d_workspace), h_workspace_size, d_workspace_size);
+      std::move(d_workspace), h_workspace_size, d_workspace_size, params.begin,
+      params.end);
 
   return std::unique_ptr<PCATask>(task);
 }

@@ -29,7 +29,7 @@ private:
           unique_device_ptr<float> d_eigenvalues, unique_device_ptr<int> d_info,
           unique_host_ptr<uint8_t> h_workspace,
           unique_device_ptr<uint8_t> d_workspace, size_t h_workspace_size,
-          size_t d_workspace_size);
+          size_t d_workspace_size, size_t begin, size_t end);
 
   CublasHandle cublas_handle_;
   CusolverDnHandle cusolver_handle_;
@@ -41,6 +41,8 @@ private:
   unique_device_ptr<uint8_t> d_workspace_;
   size_t h_workspace_size_;
   size_t d_workspace_size_;
+  size_t begin_;
+  size_t end_;
 };
 
 class PCATaskFactory : public TaskFactory {
@@ -50,6 +52,14 @@ public:
 
   tl::expected<std::unique_ptr<Task>, Error>
   create(const TensorMeta &imeta, const json &params, cudaStream_t stream);
+
+private:
+  struct Params {
+    size_t begin;
+    size_t end;
+
+    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Params, begin, end);
+  };
 };
 
 } // namespace dh
