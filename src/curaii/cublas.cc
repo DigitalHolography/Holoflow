@@ -245,7 +245,7 @@ tl::expected<void, dh::CublasStatus> dh::CublasHandle::try_c_gemm_3m(
                         k, alpha, A, lda, B, ldb, beta, C, ldc);
       result != CUBLAS_STATUS_SUCCESS) {
     curaii_logger()->warn(
-        "[CublasHandle::try_set_stream] failed with error: \"{}\"",
+        "[CublasHandle::try_set_c_gemm_3m] failed with error: \"{}\"",
         CublasStatus(result));
 
     return tl::unexpected<CublasStatus>(result);
