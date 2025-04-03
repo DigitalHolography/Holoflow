@@ -1,0 +1,10 @@
+{
+  "dependencies": [
+    "benchmark",
+    "gtest",
+    "nlohmann-json",
+    "pybind11",
+    "tl-expected",
+    "spdlog"
+  ]
+}
