@@ -6,6 +6,7 @@
 #include <nlohmann/json.hpp>
 #include <tl/expected.hpp>
 
+#include "bug_buster/bug_buster.hh"
 #include "curaii/cublas.hh"
 #include "curaii/curaii.hh"
 #include "curaii/cusolver_dn.hh"
@@ -74,18 +75,25 @@ tl::expected<void, Error> PCATask::run(TensorView input, TensorView output) {
   // stored in the same memory as the covariance matrix. These eigenvectors
   // represent the directions of maximum variance in the data.
   cuFloatComplex *eigenvecs = d_cov_matrix_.get();
-  if (auto result = cusolver_handle_.try_x_syevd(
+
+  int64_t h_meig = 0;
+  float vl = 0;
+  float vu = 0;
+  if (auto result = cusolver_handle_.try_x_syevdx(
           cusolver_params_.ref(), CusolverEigMode(CUSOLVER_EIG_MODE_VECTOR),
+          CusolverEigRange(CUSOLVER_EIG_RANGE_I),
           CublasFillMode(CUBLAS_FILL_MODE_LOWER), n_features,
-          CudaDataType(CUDA_C_32F), d_cov_matrix_.get(), n_features,
-          CudaDataType(CUDA_R_32F), d_eigenvalues_.get(),
-          CudaDataType(CUDA_C_32F), d_workspace_.get(), d_workspace_size_,
-          h_workspace_.get(), h_workspace_size_, d_info_.get());
+          CudaDataType(CUDA_C_32F), d_cov_matrix_.get(), n_features, &vl, &vu,
+          begin_ + 1, end_, &h_meig, CudaDataType(CUDA_R_32F),
+          d_eigenvalues_.get(), CudaDataType(CUDA_C_32F), d_workspace_.get(),
+          d_workspace_size_, h_workspace_.get(), h_workspace_size_,
+          d_info_.get());
       !result) {
     holovibes_logger()->warn("[PCATask::run] failed with error \"{}\"",
                              result.error());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
+  DH_CHECK(h_meig == (int)end_ - (int)begin_);
 
   // Project data:
   // Multiply the input data by the eigenvector matrix
@@ -257,10 +265,13 @@ PCATaskFactory::create(const TensorMeta &imeta, const json &jparams,
   // Workspace sizes
   size_t d_workspace_size = 0;
   size_t h_workspace_size = 0;
-  if (auto result = cusolver_handle.try_x_syevd_buffer_size(
+  int64_t h_meig = 0;
+  if (auto result = cusolver_handle.try_x_syevdx_buffer_size(
           cusolver_params.ref(), CusolverEigMode(CUSOLVER_EIG_MODE_VECTOR),
+          CusolverEigRange(CUSOLVER_EIG_RANGE_I),
           CublasFillMode(CUBLAS_FILL_MODE_LOWER), n_features,
-          CudaDataType(CUDA_C_32F), d_cov_matrix.get(), n_features,
+          CudaDataType(CUDA_C_32F), d_cov_matrix.get(), n_features, nullptr,
+          nullptr, params.begin + 1, params.end, &h_meig,
           CudaDataType(CUDA_R_32F), d_eigenvalues.get(),
           CudaDataType(CUDA_C_32F), &d_workspace_size, &h_workspace_size);
       !result) {

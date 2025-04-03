@@ -361,7 +361,7 @@ public:
       return;
     }
     if (&node == &root_) {
-      nvtxRangePushA("PES");
+      // nvtxRangePushA("PES");
       // Process non-inlined children first.
       for (auto child : node.children()) {
         auto *task = dynamic_cast<TaskNode *>(&child.get());
@@ -377,7 +377,7 @@ public:
         }
       }
       DH_CHECK(cudaStreamSynchronize(node.stream()) == cudaSuccess);
-      nvtxRangePop();
+      // nvtxRangePop();
     }
   }
 
@@ -451,12 +451,27 @@ void Model::run() {
       ExecPES exec_pes(tensors_, pes, stop_flag_);
       FreePES free_pes(tensors_, pes, stop_flag_);
 
+      const auto &name = pes.get().name();
+      auto outer_range_name = fmt::format("PES: {}", name);
+      auto alloc_range_name = fmt::format("PES allocate: {}", name);
+      auto exec_range_name = fmt::format("PES exec: {}", name);
+      auto free_range_name = fmt::format("PES free: {}", name);
       while (!stop_flag_) {
-        holoflow_logger()->trace("PES START");
+        nvtxRangePushA(outer_range_name.c_str());
+
+        nvtxRangePushA(alloc_range_name.c_str());
         pes.get().accept(allocate_pes);
+        nvtxRangePop();
+
+        nvtxRangePushA(exec_range_name.c_str());
         pes.get().accept(exec_pes);
+        nvtxRangePop();
+
+        nvtxRangePushA(free_range_name.c_str());
         pes.get().accept(free_pes);
-        holoflow_logger()->trace("PES STOP");
+        nvtxRangePop();
+
+        nvtxRangePop();
       }
     });
   }
