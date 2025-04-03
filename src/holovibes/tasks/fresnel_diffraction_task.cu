@@ -193,28 +193,6 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
   }
   auto handle = std::move(plan_result.value());
 
-  // int rank = 2;
-  // int n[2] = {height, width};
-  // int inembed[2] = {height, width};
-  // int istride = 1;
-  // int idist = height * width;
-  // int onembed[2] = {height, width};
-  // int ostride = 1;
-  // int odist = height * width;
-  // CufftType type = CufftType(CUFFT_C2C);
-
-  // auto plan_result = CufftHandle::try_plan_many(
-  //     rank, n, inembed, istride, idist, onembed, ostride, odist, type,
-  //     batch);
-  // if (!plan_result) {
-  //   holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create]
-  //   Fourrier "
-  //                            "transform creation failed with error: \"{}\"",
-  //                            plan_result.error());
-  //   return tl::unexpected(Error::INTERNAL_ERROR);
-  // }
-  // auto handle = std::move(plan_result.value());
-
   auto stream_result = handle.try_set_stream(stream);
   if (!stream_result) {
     holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create] Fourrier "
