@@ -128,6 +128,12 @@ PCATaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
+  if (imeta.shape().size() != 3) {
+    holovibes_logger()->warn("[PCATaskFactory::type_check] invalid rank: {}",
+                             (int)imeta.shape().size());
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
+
   if (params.end > imeta.shape().at(0)) {
     holovibes_logger()->warn(
         "[PCATaskFactory::type_check] end > batch size: {} > {}", params.end,
@@ -146,12 +152,6 @@ PCATaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
     holovibes_logger()->warn(
         "[PCATaskFactory::type_check] invalid data type: {}",
         (int)imeta.data_type());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  if (imeta.shape().size() != 3) {
-    holovibes_logger()->warn("[PCATaskFactory::type_check] invalid rank: {}",
-                             (int)imeta.shape().size());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
