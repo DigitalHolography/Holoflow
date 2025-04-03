@@ -80,6 +80,16 @@ private:
   cusolverDeterministicMode_t deterministic_mode_;
 };
 
+class CusolverEigRange {
+public:
+  explicit CusolverEigRange(cusolverEigRange_t eig_range) noexcept;
+
+  cusolverEigRange_t eig_range() const noexcept;
+
+private:
+  cusolverEigRange_t eig_range_;
+};
+
 class CusolverDnHandle {
 public:
   CusolverDnHandle(const CusolverDnHandle &) = delete;
@@ -118,6 +128,25 @@ public:
               size_t workspaceInBytesOnDevice, void *bufferOnHost,
               size_t workspaceInBytesOnHost, int *info) noexcept;
 
+  [[nodiscard]]
+  tl::expected<void, CusolverStatus> try_x_syevdx_buffer_size(
+      CusolverDnParamsRef params, CusolverEigMode jobz, CusolverEigRange range,
+      CublasFillMode uplo, int64_t n, CudaDataType dataTypeA, const void *A,
+      int64_t lda, void *vl, void *vu, int64_t il, int64_t iu, int64_t *h_meig,
+      CudaDataType dataTypeW, const void *W, CudaDataType computeType,
+      size_t *workspaceInBytesOnDevice,
+      size_t *workspaceInBytesOnHost) noexcept;
+
+  [[nodiscard]]
+  tl::expected<void, CusolverStatus>
+  try_x_syevdx(CusolverDnParamsRef params, CusolverEigMode jobz,
+               CusolverEigRange range, CublasFillMode uplo, int64_t n,
+               CudaDataType dataTypeA, void *A, int64_t lda, void *vl, void *vu,
+               int64_t il, int64_t iu, int64_t *meig64, CudaDataType dataTypeW,
+               void *W, CudaDataType computeType, void *bufferOnDevice,
+               size_t workspaceInBytesOnDevice, void *bufferOnHost,
+               size_t workspaceInBytesOnHost, int *info) noexcept;
+
 private:
   CusolverDnHandle(cusolverDnHandle_t handle) noexcept;
 
@@ -144,4 +173,11 @@ struct fmt::formatter<dh::CusolverDeterministicMode> : formatter<string_view> {
 
   auto format(dh::CusolverDeterministicMode deterministic_mode,
               format_context &ctx) const -> format_context::iterator;
+};
+
+template <>
+struct fmt::formatter<dh::CusolverEigRange> : formatter<string_view> {
+
+  auto format(dh::CusolverEigRange eig_range, format_context &ctx) const
+      -> format_context::iterator;
 };

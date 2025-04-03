@@ -233,6 +233,37 @@ auto fmt::formatter<dh::CusolverDeterministicMode>::format(
 }
 
 // ==========================================================================
+//                     CusolverEigRange Implementation
+// ==========================================================================
+
+dh::CusolverEigRange::CusolverEigRange(cusolverEigRange_t eig_range) noexcept
+    : eig_range_(eig_range) {}
+
+cusolverEigRange_t dh::CusolverEigRange::eig_range() const noexcept {
+  return eig_range_;
+}
+
+auto fmt::formatter<dh::CusolverEigRange>::format(
+    dh::CusolverEigRange eig_range, format_context &ctx) const
+    -> format_context::iterator {
+  std::string_view name;
+  switch (eig_range.eig_range()) {
+  case CUSOLVER_EIG_RANGE_ALL:
+    name = "CUSOLVER_EIG_RANGE_ALL";
+    break;
+  case CUSOLVER_EIG_RANGE_I:
+    name = "CUSOLVER_EIG_RANGE_I";
+    break;
+  case CUSOLVER_EIG_RANGE_V:
+    name = "CUSOLVER_EIG_RANGE_V";
+    break;
+  default:
+    UNREACHABLE("Invalid cusolver eig range");
+  }
+  return formatter<string_view>::format(name, ctx);
+}
+
+// ==========================================================================
 //                     CusolverDnHandle Implementation
 // ==========================================================================
 
@@ -345,6 +376,49 @@ tl::expected<void, dh::CusolverStatus> dh::CusolverDnHandle::try_x_syevd(
       result != CUSOLVER_STATUS_SUCCESS) {
     curaii_logger()->warn(
         "[CusolverDnHandle::try_x_syevd] failed with error: \"{}\"",
+        CusolverStatus(result));
+    return tl::unexpected<CusolverStatus>(result);
+  }
+  return {};
+}
+
+tl::expected<void, dh::CusolverStatus>
+dh::CusolverDnHandle::try_x_syevdx_buffer_size(
+    CusolverDnParamsRef params, CusolverEigMode jobz, CusolverEigRange range,
+    CublasFillMode uplo, int64_t n, CudaDataType dataTypeA, const void *A,
+    int64_t lda, void *vl, void *vu, int64_t il, int64_t iu, int64_t *h_meig,
+    CudaDataType dataTypeW, const void *W, CudaDataType computeType,
+    size_t *workspaceInBytesOnDevice, size_t *workspaceInBytesOnHost) noexcept {
+  if (auto result = cusolverDnXsyevdx_bufferSize(
+          handle_, params.params(), jobz.eig_mode(), range.eig_range(),
+          uplo.fill_mode(), n, dataTypeA.data_type(), A, lda, vl, vu, il, iu,
+          h_meig, dataTypeW.data_type(), W, computeType.data_type(),
+          workspaceInBytesOnDevice, workspaceInBytesOnHost);
+      result != CUSOLVER_STATUS_SUCCESS) {
+    curaii_logger()->warn("[CusolverDnHandle::try_x_syevdx_buffer_size] failed "
+                          "with error: \"{}\"",
+                          CusolverStatus(result));
+    return tl::unexpected<CusolverStatus>(result);
+  }
+  return {};
+}
+
+tl::expected<void, dh::CusolverStatus> dh::CusolverDnHandle::try_x_syevdx(
+    CusolverDnParamsRef params, CusolverEigMode jobz, CusolverEigRange range,
+    CublasFillMode uplo, int64_t n, CudaDataType dataTypeA, void *A,
+    int64_t lda, void *vl, void *vu, int64_t il, int64_t iu, int64_t *meig64,
+    CudaDataType dataTypeW, void *W, CudaDataType computeType,
+    void *bufferOnDevice, size_t workspaceInBytesOnDevice, void *bufferOnHost,
+    size_t workspaceInBytesOnHost, int *info) noexcept {
+  if (auto result = cusolverDnXsyevdx(
+          handle_, params.params(), jobz.eig_mode(), range.eig_range(),
+          uplo.fill_mode(), n, dataTypeA.data_type(), A, lda, vl, vu, il, iu,
+          meig64, dataTypeW.data_type(), W, computeType.data_type(),
+          bufferOnDevice, workspaceInBytesOnDevice, bufferOnHost,
+          workspaceInBytesOnHost, info);
+      result != CUSOLVER_STATUS_SUCCESS) {
+    curaii_logger()->warn(
+        "[CusolverDnHandle::try_x_syevdx] failed with error: \"{}\"",
         CusolverStatus(result));
     return tl::unexpected<CusolverStatus>(result);
   }
