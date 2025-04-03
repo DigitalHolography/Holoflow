@@ -182,9 +182,7 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
   CudaDataType outputtype(CUDA_C_32F);
   CudaDataType executiontype(CUDA_C_32F);
 
-  auto plan_result = CufftHandle::try_xt_make_plan_many(
-      rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
-      outputtype, batch, executiontype);
+  auto plan_result = CufftHandle::try_create();
   if (!plan_result) {
     holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create] Fourrier "
                              "transform creation failed with error: \"{}\"",
@@ -192,6 +190,39 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
   auto handle = std::move(plan_result.value());
+
+  size_t work_size = 0;
+  if (auto result = handle.try_xt_get_size_many(
+          rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
+          outputtype, batch, &work_size, executiontype);
+      !result) {
+    holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create] Fourrier "
+                             "transform creation failed with error: \"{}\"",
+                             result.error());
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
+
+  if (auto result = handle.try_xt_make_plan_many(
+          rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
+          outputtype, batch, &work_size, executiontype);
+      !result) {
+    holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create] Fourrier "
+                             "transform creation failed with error: \"{}\"",
+                             result.error());
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
+
+  // auto plan_result = CufftHandle::try_xt_make_plan_many(
+  //     rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
+  //     outputtype, batch, executiontype);
+  // if (!plan_result) {
+  //   holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create]
+  //   Fourrier "
+  //                            "transform creation failed with error: \"{}\"",
+  //                            plan_result.error());
+  //   return tl::unexpected(Error::INTERNAL_ERROR);
+  // }
+  // auto handle = std::move(plan_result.value());
 
   auto stream_result = handle.try_set_stream(stream);
   if (!stream_result) {

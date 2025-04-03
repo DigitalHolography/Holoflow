@@ -95,16 +95,35 @@ STFTTaskFactory::create(const TensorMeta &imeta, const json &jparams,
   CudaDataType outputtype(CUDA_C_32F);
   CudaDataType executiontype(CUDA_C_32F);
 
-  auto plan_result = CufftHandle::try_xt_make_plan_many(
-      rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
-      outputtype, height * width, executiontype);
+  auto plan_result = CufftHandle::try_create();
   if (!plan_result) {
-    holovibes_logger()->warn("[STFTTaskFactory::create] Fourrier "
+    holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create] Fourrier "
                              "transform creation failed with error: \"{}\"",
                              plan_result.error());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
   auto handle = std::move(plan_result.value());
+
+  size_t work_size = 0;
+  if (auto result = handle.try_xt_get_size_many(
+          rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
+          outputtype, height * width, &work_size, executiontype);
+      !result) {
+    holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create] Fourrier "
+                             "transform creation failed with error: \"{}\"",
+                             result.error());
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
+
+  if (auto result = handle.try_xt_make_plan_many(
+          rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
+          outputtype, height * width, &work_size, executiontype);
+      !result) {
+    holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create] Fourrier "
+                             "transform creation failed with error: \"{}\"",
+                             result.error());
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
 
   auto stream_result = handle.try_set_stream(stream);
   if (!stream_result) {

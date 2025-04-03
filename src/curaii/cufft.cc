@@ -226,6 +226,19 @@ dh::CufftHandle::~CufftHandle() {
 }
 
 tl::expected<dh::CufftHandle, dh::CufftResult>
+dh::CufftHandle::try_create() noexcept {
+  cufftHandle handle;
+  if (auto result = cufftCreate(&handle); result != CUFFT_SUCCESS) {
+    curaii_logger()->warn("[CufftHandle::try_create] failed with error: \"{}\"",
+                          CufftResult(result));
+
+    return tl::unexpected<CufftResult>(result);
+  }
+
+  return CufftHandle(handle);
+}
+
+tl::expected<dh::CufftHandle, dh::CufftResult>
 dh::CufftHandle::try_plan_many(int rank, int *n, int *inembed, int istride,
                                int idist, int *onembed, int ostride, int odist,
                                CufftType type, int batch) noexcept {
@@ -243,26 +256,36 @@ dh::CufftHandle::try_plan_many(int rank, int *n, int *inembed, int istride,
   return CufftHandle(handle);
 }
 
-tl::expected<dh::CufftHandle, dh::CufftResult>
-dh::CufftHandle::try_xt_make_plan_many(
+tl::expected<void, dh::CufftResult> dh::CufftHandle::try_xt_get_size_many(
     int rank, long long int *n, long long int *inembed, long long int istride,
     long long int idist, CudaDataType inputtype, long long int *onembed,
     long long int ostride, long long int odist, CudaDataType outputtype,
-    long long int batch, CudaDataType executiontype) {
-  cufftHandle handle;
-  if (auto result = cufftCreate(&handle); result != CUFFT_SUCCESS) {
+    long long int batch, size_t *workSize,
+    CudaDataType executiontype) noexcept {
+  if (auto result = cufftXtGetSizeMany(
+          handle_, rank, n, inembed, istride, idist, inputtype.data_type(),
+          onembed, ostride, odist, outputtype.data_type(), batch, workSize,
+          executiontype.data_type());
+      result != CUFFT_SUCCESS) {
     curaii_logger()->warn(
-        "[CufftHandle::try_xt_make_plan_many] failed with error: \"{}\"",
+        "[CufftHandle::try_xt_get_size_many] failed with error: \"{}\"",
         CufftResult(result));
 
     return tl::unexpected<CufftResult>(result);
   }
 
-  size_t ws = 0;
-  if (auto result = cufftXtGetSizeMany(handle, rank, n, inembed, istride, idist,
-                                       inputtype.data_type(), onembed, ostride,
-                                       odist, outputtype.data_type(), batch,
-                                       &ws, executiontype.data_type());
+  return {};
+}
+
+tl::expected<void, dh::CufftResult> dh::CufftHandle::try_xt_make_plan_many(
+    int rank, long long int *n, long long int *inembed, long long int istride,
+    long long int idist, CudaDataType inputtype, long long int *onembed,
+    long long int ostride, long long int odist, CudaDataType outputtype,
+    long long int batch, size_t *workSize, CudaDataType executiontype) {
+  if (auto result = cufftXtMakePlanMany(
+          handle_, rank, n, inembed, istride, idist, inputtype.data_type(),
+          onembed, ostride, odist, outputtype.data_type(), batch, workSize,
+          executiontype.data_type());
       result != CUFFT_SUCCESS) {
     curaii_logger()->warn(
         "[CufftHandle::try_xt_make_plan_many] failed with error: \"{}\"",
@@ -271,19 +294,7 @@ dh::CufftHandle::try_xt_make_plan_many(
     return tl::unexpected<CufftResult>(result);
   }
 
-  if (auto result = cufftXtMakePlanMany(handle, rank, n, inembed, istride,
-                                        idist, inputtype.data_type(), onembed,
-                                        ostride, odist, outputtype.data_type(),
-                                        batch, &ws, executiontype.data_type());
-      result != CUFFT_SUCCESS) {
-    curaii_logger()->warn(
-        "[CufftHandle::try_xt_make_plan_many] failed with error: \"{}\"",
-        CufftResult(result));
-
-    return tl::unexpected<CufftResult>(result);
-  }
-
-  return CufftHandle(handle);
+  return {};
 }
 
 tl::expected<void, dh::CufftResult>
