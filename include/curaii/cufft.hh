@@ -42,6 +42,16 @@ private:
   int direction_;
 };
 
+class CufftXtCallbackType {
+public:
+  explicit CufftXtCallbackType(cufftXtCallbackType callback_type) noexcept;
+
+  cufftXtCallbackType callback_type() const noexcept;
+
+private:
+  cufftXtCallbackType callback_type_;
+};
+
 class CufftHandle {
 public:
   CufftHandle(const CufftHandle &) = delete;
@@ -78,6 +88,13 @@ public:
       long long int batch, size_t *workSize, CudaDataType executiontype);
 
   [[nodiscard]]
+  tl::expected<void, CufftResult>
+  try_xt_set_jit_callback(const char *callbackSymbolName,
+                          const void *callbackFatbin, size_t callbackFatbinSize,
+                          CufftXtCallbackType type,
+                          void **caller_info) noexcept;
+
+  [[nodiscard]]
   tl::expected<void, CufftResult> try_set_stream(CudaStreamRef stream) noexcept;
 
   [[nodiscard]]
@@ -109,5 +126,12 @@ template <> struct fmt::formatter<dh::CufftResult> : formatter<string_view> {
 template <> struct fmt::formatter<dh::CufftDirection> : formatter<string_view> {
 
   auto format(dh::CufftDirection direction, format_context &ctx) const
+      -> format_context::iterator;
+};
+
+template <>
+struct fmt::formatter<dh::CufftXtCallbackType> : formatter<string_view> {
+
+  auto format(dh::CufftXtCallbackType callback_type, format_context &ctx) const
       -> format_context::iterator;
 };

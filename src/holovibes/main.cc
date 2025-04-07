@@ -175,11 +175,11 @@ int main(int argc, char **argv) {
       "end": 16
     })"_json);
 
-  descriptor.add_task("STFTTaskFactory", "stft", R"({})"_json);
+  descriptor.add_task("STFTTaskFactory", "pca", R"({})"_json);
 
   descriptor.add_task("AverageTaskFactory", "p_frame_avg", R"({
-      "begin": 20,
-      "end": 26
+      "begin": 0,
+      "end": 16
     })"_json);
 
   descriptor.add_task("AverageTaskFactory", "output_average", R"({
@@ -201,8 +201,8 @@ int main(int argc, char **argv) {
   descriptor.add_child("input_accumulator", "u8_to_cf32");
   descriptor.add_child("u8_to_cf32", "fresnel_diffraction");
   descriptor.add_child("fresnel_diffraction", "time_accumulator");
-  descriptor.add_child("time_accumulator", "stft");
-  descriptor.add_child("stft", "cf32_to_f32");
+  descriptor.add_child("time_accumulator", "pca");
+  descriptor.add_child("pca", "cf32_to_f32");
   descriptor.add_child("cf32_to_f32", "p_frame_avg");
   descriptor.add_child("p_frame_avg", "fft_shift");
   descriptor.add_child("fft_shift", "avg_accumulator");
