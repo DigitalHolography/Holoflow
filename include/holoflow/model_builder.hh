@@ -191,6 +191,7 @@ public:
 
 class ModelBuilder {
 public:
+  [[nodiscard]]
   tl::expected<std::unique_ptr<Model>, Error>
   build(const ModelDescriptor &descriptor);
 };
