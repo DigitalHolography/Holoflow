@@ -13,6 +13,7 @@
 #include "holovibes/accumulators/sliding_average_accumulator.hh"
 #include "holovibes/sinks/qt_display_sink.hh"
 #include "holovibes/sources/holofile_source.hh"
+#include "holovibes/tasks/angular_spectrum_task.hh"
 #include "holovibes/tasks/average_task.hh"
 #include "holovibes/tasks/convert_task.hh"
 #include "holovibes/tasks/fft_shift_task.hh"
@@ -82,6 +83,10 @@ int main(int argc, char **argv) {
   descriptor.add_task_factory(
       "FresnelDiffractionTaskFactory",
       std::make_unique<dh::FresnelDiffractionTaskFactory>());
+
+  descriptor.add_task_factory(
+      "AngularSpectrumTaskFactory",
+      std::make_unique<dh::AngularSpectrumTaskFactory>());
 
   descriptor.add_task_factory("PCATaskFactory",
                               std::make_unique<dh::PCATaskFactory>());
@@ -170,16 +175,23 @@ int main(int argc, char **argv) {
       "skip_phase_shift": true
     })"_json);
 
+  descriptor.add_task("AngularSpectrumTaskFactory", "angular_spectrum",
+                      R"({
+      "lambda": 852e-9,
+      "z": 380e-3,
+      "pixel_size": 20e-6
+    })"_json);
+
   descriptor.add_task("PCATaskFactory", "pca", R"({
       "begin": 0,
       "end": 16
     })"_json);
 
-  descriptor.add_task("STFTTaskFactory", "pca", R"({})"_json);
+  descriptor.add_task("STFTTaskFactory", "stft", R"({})"_json);
 
   descriptor.add_task("AverageTaskFactory", "p_frame_avg", R"({
-      "begin": 0,
-      "end": 16
+      "begin": 10,
+      "end": 26
     })"_json);
 
   descriptor.add_task("AverageTaskFactory", "output_average", R"({
@@ -199,8 +211,8 @@ int main(int argc, char **argv) {
   descriptor.set_source("holofile_source");
   descriptor.add_child("holofile_source", "input_accumulator");
   descriptor.add_child("input_accumulator", "u8_to_cf32");
-  descriptor.add_child("u8_to_cf32", "fresnel_diffraction");
-  descriptor.add_child("fresnel_diffraction", "time_accumulator");
+  descriptor.add_child("u8_to_cf32", "angular_spectrum");
+  descriptor.add_child("angular_spectrum", "time_accumulator");
   descriptor.add_child("time_accumulator", "pca");
   descriptor.add_child("pca", "cf32_to_f32");
   descriptor.add_child("cf32_to_f32", "p_frame_avg");
