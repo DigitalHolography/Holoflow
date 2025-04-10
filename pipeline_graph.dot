@@ -1,0 +1,67 @@
+digraph G {
+0[label="holofile_source\n(Holofile)\n{
+  \"batch_size\": 8,
+  \"end_frame\": 50000,
+  \"load_kind\": \"LOAD_IN_CPU\",
+  \"path\": \"D:\\\\BatchTesting\\\\250220_GUJ0206_L.holo\",
+  \"start_frame\": 0
+}"];
+1[label="processed_widget\n(QtDisplay)\n{}"];
+2[label="input_accumulator\n(BatchedSPSC)\n{
+  \"dequeue_batch_size\": 32,
+  \"nb_slots\": 1024
+}"];
+3[label="time_accumulator\n(BatchedSPSC)\n{
+  \"dequeue_batch_size\": 32,
+  \"nb_slots\": 512
+}"];
+4[label="output_accumulator\n(BatchedSPSC)\n{
+  \"dequeue_batch_size\": 1,
+  \"nb_slots\": 512
+}"];
+5[label="avg_accumulator\n(SlidingAverage)\n{
+  \"nb_slots\": 512,
+  \"window_size\": 128
+}"];
+6[label="u8_to_cf32\n(Convert)\n{
+  \"conversion\": \"U8_CF32_REAL\"
+}"];
+7[label="cf32_to_f32\n(Convert)\n{
+  \"conversion\": \"CF32_F32_MODU\"
+}"];
+8[label="f32_to_u8\n(Convert)\n{
+  \"conversion\": \"F32_U8_SCALED\"
+}"];
+9[label="fresnel_diffraction\n(FresnelDiffraction)\n{
+  \"lambda\": 8.52e-07,
+  \"pixel_size\": 2e-05,
+  \"skip_phase_shift\": true,
+  \"z\": 0.38
+}"];
+10[label="pca\n(PCA)\n{
+  \"begin\": 0,
+  \"end\": 16
+}"];
+11[label="p_frame_avg\n(Average)\n{
+  \"begin\": 0,
+  \"end\": 16
+}"];
+12[label="percentile_clip\n(PercentileClip)\n{
+  \"lower_percentile\": 0.1,
+  \"upper_percentile\": 99.9
+}"];
+13[label="fft_shift\n(FFTShift)\n{}"];
+0->2 ;
+2->6 ;
+3->10 ;
+4->1 ;
+5->12 ;
+6->9 ;
+7->11 ;
+8->4 ;
+9->3 ;
+10->7 ;
+11->13 ;
+12->8 ;
+13->5 ;
+}

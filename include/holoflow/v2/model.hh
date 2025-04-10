@@ -3,6 +3,8 @@
 #include <memory>
 #include <tl/expected.hpp>
 
+#include "bug_buster/bug_buster.hh"
+#include "curaii/curaii.hh"
 #include "holoflow/accumulator.hh"
 #include "holoflow/sink.hh"
 #include "holoflow/source.hh"
@@ -15,46 +17,6 @@ class ModelTransaction;
 
 class Model {
 public:
-  Model(const Model &) = delete;
-  Model &operator=(const Model &) = delete;
-  Model(const Model &&) = delete;
-  Model &operator=(const Model &&) = delete;
-
-  [[nodiscard]]
-  static tl::expected<std::unique_ptr<Model>, Error> create();
-
-  [[nodiscard]]
-  tl::expected<void, Error>
-  register_task_factory(const std::string &kind,
-                        std::unique_ptr<TaskFactory> factory);
-
-  [[nodiscard]]
-  tl::expected<void, Error>
-  register_accumulator_factory(const std::string &kind,
-                               std::unique_ptr<AccumulatorFactory> factory);
-
-  [[nodiscard]]
-  tl::expected<void, Error>
-  register_source_factory(const std::string &kind,
-                          std::unique_ptr<SourceFactory> factory);
-
-  [[nodiscard]]
-  tl::expected<void, Error>
-  register_sink_factory(const std::string &kind,
-                        std::unique_ptr<SinkFactory> factory);
-
-  bool has_task_factory(const std::string &kind) const;
-  bool has_accumulator_factory(const std::string &kind) const;
-  bool has_source_factory(const std::string &kind) const;
-  bool has_sink_factory(const std::string &kind) const;
-  bool has_factory(const std::string &kind) const;
-
-  void start();
-  void stop();
-
-  ModelTransaction begin_transaction();
-
-private:
   /**
    * @brief Map from kind to task factory.
    */
@@ -102,6 +64,135 @@ private:
    */
   using SinkMap = std::unordered_map<std::string, std::pair<std::string, json>>;
 
+  Model(const Model &) = delete;
+  Model &operator=(const Model &) = delete;
+  Model(const Model &&) = delete;
+  Model &operator=(const Model &&) = delete;
+
+  [[nodiscard]]
+  static tl::expected<std::unique_ptr<Model>, Error> create();
+
+  [[nodiscard]]
+  tl::expected<void, Error>
+  register_task_factory(const std::string &kind,
+                        std::unique_ptr<TaskFactory> factory);
+
+  [[nodiscard]]
+  tl::expected<void, Error>
+  register_accumulator_factory(const std::string &kind,
+                               std::unique_ptr<AccumulatorFactory> factory);
+
+  [[nodiscard]]
+  tl::expected<void, Error>
+  register_source_factory(const std::string &kind,
+                          std::unique_ptr<SourceFactory> factory);
+
+  [[nodiscard]]
+  tl::expected<void, Error>
+  register_sink_factory(const std::string &kind,
+                        std::unique_ptr<SinkFactory> factory);
+
+  bool has_task_factory(const std::string &kind) const;
+  bool has_accumulator_factory(const std::string &kind) const;
+  bool has_source_factory(const std::string &kind) const;
+  bool has_sink_factory(const std::string &kind) const;
+  bool has_factory(const std::string &kind) const;
+
+  void start();
+  void stop();
+
+  ModelTransaction begin_transaction();
+
+private:
+  class NodeVisitor;
+
+  struct Node {
+    virtual void accept(NodeVisitor &visitor) = 0;
+
+    virtual bool is_inlined() = 0;
+
+    std::optional<std::string> name_;
+    std::optional<std::string> kind_;
+    std::optional<json> params_;
+    std::optional<CudaStreamRef> stream_;
+    std::vector<std::reference_wrapper<Node>> children_;
+  };
+
+  struct TaskNode : public Node {
+    void accept(NodeVisitor &visitor) override { visitor.visit(*this); }
+
+    bool is_inlined() override {
+      DH_CHECK(task_meta_);
+      return task_meta_->inlined();
+    }
+
+    std::optional<int> itens_id_;
+    std::optional<int> otens_id_;
+    std::unique_ptr<Task> task_;
+    std::optional<TaskMeta> task_meta_;
+  };
+
+  struct AccumulatorNode : public Node {
+    void accept(NodeVisitor &visitor) override { visitor.visit(*this); }
+
+    bool is_inlined() override {
+      DH_CHECK(accumulator_meta_);
+      return false;
+    }
+
+    std::optional<int> itens_id_;
+    std::optional<int> otens_id_;
+    std::unique_ptr<Accumulator> accumulator_;
+    std::optional<AccumulatorMeta> accumulator_meta_;
+  };
+
+  struct SourceNode : public Node {
+    void accept(NodeVisitor &visitor) override { visitor.visit(*this); }
+
+    bool is_inlined() override {
+      DH_CHECK(source_meta_);
+      return false;
+    }
+
+    std::optional<int> otens_id_;
+    std::unique_ptr<Source> source_;
+    std::optional<SourceMeta> source_meta_;
+  };
+
+  struct SinkNode : public Node {
+    void accept(NodeVisitor &visitor) override { visitor.visit(*this); }
+
+    bool is_inlined() override {
+      DH_CHECK(sink_meta_);
+      return false;
+    }
+
+    std::optional<int> itens_id_;
+    std::unique_ptr<Sink> sink_;
+    std::optional<SinkMeta> sink_meta_;
+  };
+
+  class NodeVisitor {
+  public:
+    virtual ~NodeVisitor() = default;
+    virtual void visit(TaskNode &node) = 0;
+    virtual void visit(AccumulatorNode &node) = 0;
+    virtual void visit(SourceNode &node) = 0;
+    virtual void visit(SinkNode &node) = 0;
+  };
+
+  struct TensorSlot {
+    TensorSlot(TensorMeta meta, unique_host_ptr<uint8_t> h = nullptr,
+               unique_device_ptr<uint8_t> d = nullptr);
+
+    TensorView view();
+
+    TensorMeta meta;
+    unique_host_ptr<uint8_t> host_data;
+    unique_device_ptr<uint8_t> device_data;
+    uint8_t *data;
+  };
+
   Model();
 
   TaskFactoryMap task_factories_map_;
@@ -123,6 +214,10 @@ private:
   std::vector<std::unique_ptr<Accumulator>> accumulators_;
   std::vector<std::unique_ptr<Source>> sources_;
   std::vector<std::unique_ptr<Sink>> sinks_;
+
+  int next_id_;
+  std::vector<std::unique_ptr<Model::Node>> nodes_;
+  std::vector<CudaStream> streams_;
 
   friend class ModelTransaction;
 };

@@ -14,10 +14,30 @@
 namespace dh::v2 {
 
 // ==========================================================================
+//                     TensorSlot Implementation
+// ==========================================================================
+
+Model::TensorSlot::TensorSlot(TensorMeta meta, unique_host_ptr<uint8_t> h,
+                              unique_device_ptr<uint8_t> d)
+    : meta(meta), host_data(std::move(h)), device_data(std::move(d)),
+      data(nullptr) {
+  switch (meta.memory_location()) {
+  case MemoryLocation::HOST:
+    data = host_data.get();
+    break;
+  case MemoryLocation::DEVICE:
+    data = device_data.get();
+    break;
+  }
+}
+
+TensorView Model::TensorSlot::view() { return TensorView(data, meta); }
+
+// ==========================================================================
 //                     Model Implementation
 // ==========================================================================
 
-Model::Model() {}
+Model::Model() : next_id_(0) {}
 
 tl::expected<std::unique_ptr<Model>, Error> Model::create() {
   auto *model = new Model();

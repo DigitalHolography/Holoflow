@@ -2,9 +2,12 @@
 
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <stack>
 #include <string>
 #include <tl/expected.hpp>
+#include <unordered_map>
 
+#include "bug_buster/bug_buster.hh"
 #include "curaii/cuda_runtime.hh"
 #include "holoflow/v2/error.hh"
 #include "holoflow/v2/model.hh"
@@ -61,52 +64,143 @@ public:
   tl::expected<void, Error> commit();
 
 private:
-  struct Node {
-    std::optional<std::string> name_;
-    std::optional<std::string> kind_;
-    std::optional<json> params_;
-    std::optional<CudaStreamRef> stream_;
-    std::vector<std::reference_wrapper<Node>> children_;
+  class AssignCudaStreamVisitor : public Model::NodeVisitor {
+  public:
+    AssignCudaStreamVisitor(std::vector<CudaStream> &streams,
+                            std::vector<Error> &errors);
+
+    void visit(Model::TaskNode &node) override;
+    void visit(Model::AccumulatorNode &node) override;
+    void visit(Model::SourceNode &node) override;
+    void visit(Model::SinkNode &node) override;
+
+  private:
+    std::stack<CudaStreamRef> stream_stack_;
+    std::vector<CudaStream> &streams_;
+    std::vector<Error> &errors_;
   };
 
-  struct TaskNode : Node {
-    std::optional<int> itens_id_;
-    std::optional<int> otens_id_;
-    std::unique_ptr<Task> task_;
-    std::optional<TaskMeta> task_meta_;
+  class TypeCheckVisitor : public Model::NodeVisitor {
+  public:
+    TypeCheckVisitor(
+        std::vector<Error> &errors,
+        const Model::TaskFactoryMap &task_factories_map,
+        const Model::AccumulatorFactoryMap &accumulator_factories_map,
+        const Model::SourceFactoryMap &source_factories_map,
+        const Model::SinkFactoryMap &sink_factories_map);
+
+    void visit(Model::TaskNode &node) override;
+    void visit(Model::AccumulatorNode &node) override;
+    void visit(Model::SourceNode &node) override;
+    void visit(Model::SinkNode &node) override;
+
+  private:
+    std::vector<Error> &errors_;
+    const Model::TaskFactoryMap &task_factories_map_;
+    const Model::AccumulatorFactoryMap &accumulator_factories_map_;
+    const Model::SourceFactoryMap &source_factories_map_;
+    const Model::SinkFactoryMap &sink_factories_map_;
+
+    std::stack<TensorMeta> imetas_stack_;
   };
 
-  struct AccumulatorNode : Node {
-    std::optional<int> itens_id_;
-    std::optional<int> otens_id_;
-    std::unique_ptr<Accumulator> accumulator_;
-    std::optional<AccumulatorMeta> accumulator_meta_;
+  class NonInlinedChildCheckVisitor : public Model::NodeVisitor {
+  public:
+    NonInlinedChildCheckVisitor(std::vector<Error> &errors);
+
+    void visit(Model::TaskNode &node) override;
+    void visit(Model::AccumulatorNode &node) override;
+    void visit(Model::SourceNode &node) override;
+    void visit(Model::SinkNode &node) override;
+
+  private:
+    std::vector<Error> &errors_;
+    std::stack<bool> seen_non_inlined_;
   };
 
-  struct SourceNode : Node {
-    std::optional<int> otens_id_;
-    std::unique_ptr<Source> source_;
-    std::optional<SourceMeta> source_meta_;
+  class AssignAccumulatorTensorsVisitor : public Model::NodeVisitor {
+  public:
+    AssignAccumulatorTensorsVisitor(int &next_id);
+
+    void visit(Model::TaskNode &node) override;
+    void visit(Model::AccumulatorNode &node) override;
+    void visit(Model::SourceNode &node) override;
+    void visit(Model::SinkNode &node) override;
+
+  private:
+    int &next_id_;
+    std::stack<std::reference_wrapper<Model::Node>> parents_stack_;
   };
 
-  struct SinkNode : Node {
-    std::optional<int> itens_id_;
-    std::unique_ptr<Sink> sink_;
-    std::optional<SinkMeta> sink_meta_;
+  class AssignInlinedTaskTensorsVisitor : public Model::NodeVisitor {
+  public:
+    AssignInlinedTaskTensorsVisitor(int &next_id);
+
+    void visit(Model::TaskNode &node) override;
+    void visit(Model::AccumulatorNode &node) override;
+    void visit(Model::SourceNode &node) override;
+    void visit(Model::SinkNode &node) override;
+
+  private:
+    int &next_id_;
+    std::stack<std::reference_wrapper<Model::Node>> parents_stack_;
+  };
+
+  class AssignNonInlinedTaskTensorsVisitor : public Model::NodeVisitor {
+  public:
+    AssignNonInlinedTaskTensorsVisitor(int &next_id);
+
+    void visit(Model::TaskNode &node) override;
+    void visit(Model::AccumulatorNode &node) override;
+    void visit(Model::SourceNode &node) override;
+    void visit(Model::SinkNode &node) override;
+
+  private:
+    int &next_id_;
+    std::stack<std::reference_wrapper<Model::Node>> parents_stack_;
+  };
+
+  class CallFactoriesVisitor : public Model::NodeVisitor {
+  public:
+    CallFactoriesVisitor(
+        const Model::TaskFactoryMap &task_factories_map,
+        const Model::AccumulatorFactoryMap &accumulator_factories_map,
+        const Model::SourceFactoryMap &source_factories_map,
+        const Model::SinkFactoryMap &sink_factories_map,
+        std::vector<Error> &errors);
+
+    void visit(Model::TaskNode &node) override;
+    void visit(Model::AccumulatorNode &node) override;
+    void visit(Model::SourceNode &node) override;
+    void visit(Model::SinkNode &node) override;
+
+  private:
+    const Model::TaskFactoryMap &task_factories_map_;
+    const Model::AccumulatorFactoryMap &accumulator_factories_map_;
+    const Model::SourceFactoryMap &source_factories_map_;
+    const Model::SinkFactoryMap &sink_factories_map_;
+    std::vector<Error> &errors_;
   };
 
   explicit ModelTransaction(Model &model);
+
+  Model::Node *get_root();
 
   void validate_orphan_nodes();
   void validate_childless_nodes();
   void validate_source_nodes();
   void validate_sink_nodes();
+  void assign_cuda_streams();
+  void perform_type_checking();
+  void perform_single_inlined_child_checking();
+  void perform_non_inlined_child_checking();
+  void reset_non_accumulator_tensors();
+  void assign_accumulator_tensors();
+  void assign_inlined_task_tensors();
+  void assign_non_inlined_task_tensors();
+  void call_factories();
 
   Model &model_;
-
-  Node *root_;
-  std::vector<std::unique_ptr<Node>> nodes_;
-
   std::vector<Error> errors_;
 
   friend class Model;
