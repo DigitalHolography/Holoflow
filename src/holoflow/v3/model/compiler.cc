@@ -102,6 +102,7 @@ void ModelCompiler::build_compiler_graph(const DescriptorGraph &graph) {
     const auto &node = graph[v];
     NodeProperties node_properties;
     node_properties.descriptor_ = node;
+
     node_properties.metrics_.num_executions_ =
         std::make_shared<std::atomic<int>>(0);
     node_properties.metrics_.last_reset_time_ =

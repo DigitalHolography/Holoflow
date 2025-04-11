@@ -74,12 +74,6 @@ private:
   void select_pes_roots();
 
   Model model_;
-  // Graph graph_;
-  // std::map<std::string, Vertex> node_map_;
-  // std::vector<dh::CudaStream> streams_;
-  // int next_tens_id_ = 0;
-  // std::map<int, TensorSlot> tensor_slots_;
-  // std::vector<size_t> pes_roots_;
 
   std::map<std::string, std::unique_ptr<dh::SourceFactory>> source_factories_;
   std::map<std::string, std::unique_ptr<dh::SinkFactory>> sink_factories_;
