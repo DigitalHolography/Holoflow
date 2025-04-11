@@ -1,5 +1,6 @@
 #include "holoflow/v3/model/model.hh"
 
+#include "holoflow/holoflow.hh"
 #include "holoflow/tensor.hh"
 
 namespace holoflow::model {

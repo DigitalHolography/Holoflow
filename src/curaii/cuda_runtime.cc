@@ -517,6 +517,11 @@ dh::CudaStream &dh::CudaStream::operator=(CudaStream &&other) noexcept {
 
 dh::CudaStream::~CudaStream() {
   if (stream_) {
+    if (auto error = cudaStreamSynchronize(stream_); error != cudaSuccess) {
+      curaii_logger()->warn("[CudaStream::operator=] failed with error: \"{}\"",
+                            CudaError(error));
+    }
+
     if (auto error = cudaStreamDestroy(stream_); error != cudaSuccess) {
       curaii_logger()->warn("[CudaStream::operator=] failed with error: \"{}\"",
                             CudaError(error));

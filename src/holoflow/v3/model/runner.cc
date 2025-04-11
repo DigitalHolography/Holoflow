@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <boost/graph/depth_first_search.hpp>
+#include <chrono>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -31,7 +32,7 @@ void Runner::stop() {
   stop_.store(true);
   thread_.join();
 
-  if (running_.exchange(false)) {
+  if (!running_.exchange(false)) {
     throw std::runtime_error("Runner is not running");
   }
 }
@@ -206,6 +207,29 @@ void Runner::exec_pes_rec(Vertex v) {
   ExecNodeVisitor visitor(model_.tensor_slots_);
   std::visit(visitor, node.type_specific_);
 
+  // Metrics are updated every 5s
+  node.metrics_.num_executions_->fetch_add(1);
+  auto now = std::chrono::high_resolution_clock::now();
+  auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
+      now - node.metrics_.last_reset_time_);
+  if (duration.count() > 5e6) {
+    auto num_executions = node.metrics_.num_executions_->load();
+    auto throughput = num_executions / (duration.count() / 1e6);
+    node.metrics_.execution_throughput_->store((int)throughput);
+    node.metrics_.last_reset_time_ = now;
+    node.metrics_.num_executions_->store(0);
+
+    // If source display throughput
+    if (node.kind_ == NodeKind::Source) {
+      auto prop = std::get<SourceProperties>(node.type_specific_);
+      auto ometa = prop.source_meta_->ometa();
+      auto batch_size = ometa.shape().at(0);
+      dh::holoflow_logger()->info(
+          "[Runner::exec_pes_rec] Source {} throughput: {}",
+          node.descriptor_.id, throughput * (int)batch_size);
+    }
+  }
+
   auto is_inlined = [](const auto &node) {
     return node.kind_ == NodeKind::Task &&
            std::get<TaskProperties>(node.type_specific_).task_meta_->inlined();
@@ -250,7 +274,12 @@ void Runner::run() {
 
         allocate_pes(pes_root);
         exec_pes(pes_root);
+
+        DH_CHECK(node.common_.stream_->try_synchronize());
+
         free_pes(pes_root);
+
+        DH_CHECK(node.common_.stream_->try_synchronize());
       }
     });
   }

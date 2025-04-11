@@ -102,6 +102,12 @@ void ModelCompiler::build_compiler_graph(const DescriptorGraph &graph) {
     const auto &node = graph[v];
     NodeProperties node_properties;
     node_properties.descriptor_ = node;
+    node_properties.metrics_.num_executions_ =
+        std::make_shared<std::atomic<int>>(0);
+    node_properties.metrics_.last_reset_time_ =
+        std::chrono::steady_clock::now();
+    node_properties.metrics_.execution_throughput_ =
+        std::make_shared<std::atomic<int>>(0);
 
     if (source_factories_.contains(node.type)) {
       node_properties.kind_ = NodeKind::Source;
@@ -709,27 +715,35 @@ void ModelCompiler::call_factories() {
     auto stream = *node_properties.common_.stream_;
     if (node_properties.kind_ == NodeKind::Source) {
       auto factory = source_factories_.at(type).get();
+      auto source = factory->create(config, stream).value();
       std::get<SourceProperties>(node_properties.type_specific_).source_ =
-          factory->create(config, stream).value();
+          source.get();
+      model_.sources_.push_back(std::move(source));
     } else if (node_properties.kind_ == NodeKind::Sink) {
       auto imeta = std::get<SinkProperties>(node_properties.type_specific_)
                        .sink_meta_->imeta();
       auto factory = sink_factories_.at(type).get();
+      auto sink = factory->create(imeta, config, stream).value();
       std::get<SinkProperties>(node_properties.type_specific_).sink_ =
-          factory->create(imeta, config, stream).value();
+          sink.get();
+      model_.sinks_.push_back(std::move(sink));
     } else if (node_properties.kind_ == NodeKind::Task) {
       auto imeta = std::get<TaskProperties>(node_properties.type_specific_)
                        .task_meta_->imeta();
       auto factory = task_factories_.at(type).get();
+      auto task = factory->create(imeta, config, stream).value();
       std::get<TaskProperties>(node_properties.type_specific_).task_ =
-          factory->create(imeta, config, stream).value();
+          task.get();
+      model_.tasks_.push_back(std::move(task));
     } else if (node_properties.kind_ == NodeKind::Accumulator) {
       auto imeta =
           std::get<AccumulatorProperties>(node_properties.type_specific_)
               .accumulator_meta_->imeta();
       auto factory = accumulator_factories_.at(type).get();
+      auto accumulator = factory->create(imeta, config, stream).value();
       std::get<AccumulatorProperties>(node_properties.type_specific_)
-          .accumulator_ = factory->create(imeta, config, stream).value();
+          .accumulator_ = accumulator.get();
+      model_.accumulators_.push_back(std::move(accumulator));
     }
   }
 }

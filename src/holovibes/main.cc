@@ -7,13 +7,6 @@
 #include <spdlog/spdlog.h>
 
 #include "bug_buster/bug_buster.hh"
-#include "curaii/cufft.hh"
-#include "holoflow/model.hh"
-#include "holoflow/model_descriptor.hh"
-#include "holoflow/tensor.hh"
-#include "holoflow/v2/error.hh"
-#include "holoflow/v2/model.hh"
-#include "holoflow/v2/model_transaction.hh"
 #include "holoflow/v3/model/compiler.hh"
 #include "holoflow/v3/model/descriptor.hh"
 #include "holoflow/v3/model/runner.hh"
@@ -47,7 +40,7 @@ void setup_global_logger() {
       "global_logger", sinks.begin(), sinks.end());
 
   spdlog::set_default_logger(global_logger);
-  spdlog::set_level(spdlog::level::trace);
+  spdlog::set_level(spdlog::level::info);
   spdlog::flush_on(spdlog::level::warn);
   spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%n] [%^%l%$] %v");
 }
@@ -212,7 +205,10 @@ int main(int argc, char **argv) {
   holoflow::model::Runner runner(model);
   runner.start();
   int result = app.exec();
+
+  dh::holovibes_logger()->info("Stopping the model...");
   runner.stop();
+  dh::holovibes_logger()->info("Model stopped.");
 
   return result;
 }

@@ -1,6 +1,8 @@
 #pragma once
 
+#include <atomic>
 #include <boost/graph/adjacency_list.hpp>
+#include <chrono>
 #include <memory>
 #include <optional>
 #include <string>
@@ -16,33 +18,39 @@
 
 namespace holoflow::model {
 
+struct MetricsProperties {
+  std::shared_ptr<std::atomic<int>> num_executions_{0};
+  std::chrono::steady_clock::time_point last_reset_time_;
+  std::shared_ptr<std::atomic<int>> execution_throughput_{0};
+};
+
 struct CommonProperties {
   std::optional<dh::CudaStreamRef> stream_;
 };
 
 struct SourceProperties {
   std::optional<int> otens_id_;
-  std::shared_ptr<dh::Source> source_;
+  dh::Source *source_;
   std::optional<dh::SourceMeta> source_meta_;
 };
 
 struct SinkProperties {
   std::optional<int> itens_id_;
-  std::shared_ptr<dh::Sink> sink_;
+  dh::Sink *sink_;
   std::optional<dh::SinkMeta> sink_meta_;
 };
 
 struct TaskProperties {
   std::optional<int> itens_id_;
   std::optional<int> otens_id_;
-  std::shared_ptr<dh::Task> task_;
+  dh::Task *task_;
   std::optional<dh::TaskMeta> task_meta_;
 };
 
 struct AccumulatorProperties {
   std::optional<int> itens_id_;
   std::optional<int> otens_id_;
-  std::shared_ptr<dh::Accumulator> accumulator_;
+  dh::Accumulator *accumulator_;
   std::optional<dh::AccumulatorMeta> accumulator_meta_;
 };
 
@@ -61,6 +69,7 @@ struct NodeProperties {
   DescriptorNodeProperties descriptor_;
   NodeKind kind_;
   CommonProperties common_;
+  MetricsProperties metrics_;
   TypeSpecificProperties type_specific_;
 };
 
