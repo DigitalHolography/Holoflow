@@ -98,6 +98,7 @@ void ImportWidget::setup_ui() {
   // Row 5: Start / Stop buttons
   start_button_ = new QPushButton(tr("Start"), this);
   stop_button_ = new QPushButton(tr("Stop"), this);
+  stop_button_->setEnabled(false);
   auto *button_layout = new QHBoxLayout();
   button_layout->addWidget(start_button_);
   button_layout->addWidget(stop_button_);

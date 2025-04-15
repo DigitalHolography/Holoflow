@@ -25,6 +25,13 @@ struct TensorSlot {
 };
 
 class Model {
+public:
+  Model(const Model &) = delete;
+  Model &operator=(const Model &) = delete;
+
+  Model(Model &&) = default;
+  Model &operator=(Model &&) = default;
+
 private:
   Model() = default;
 

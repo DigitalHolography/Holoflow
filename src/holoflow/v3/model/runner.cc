@@ -20,6 +20,8 @@ void Runner::start() {
     throw std::runtime_error("Runner is already running");
   }
 
+  curaii::cuda::peek_at_last_error();
+
   stop_.store(false);
   thread_ = std::thread([this]() { run(); });
 }
@@ -276,11 +278,11 @@ void Runner::run() {
         allocate_pes(pes_root);
         exec_pes(pes_root);
 
-        DH_CHECK(node.common_.stream_->try_synchronize());
+        node.common_.stream_->synchronize();
 
         free_pes(pes_root);
 
-        DH_CHECK(node.common_.stream_->try_synchronize());
+        node.common_.stream_->synchronize();
       }
     });
   }
@@ -288,6 +290,8 @@ void Runner::run() {
   for (auto &thread : threads) {
     thread.join();
   }
+
+  dh::holoflow_logger()->info("[Runner::run] model stoped");
 }
 
 } // namespace holoflow::model

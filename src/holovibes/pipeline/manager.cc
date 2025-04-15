@@ -277,7 +277,8 @@ void Manager::start_import() {
 
   build_desc_graph();
 
-  model_ = compiler_.compile(desc_graph_);
+  model_ = std::nullopt;
+  model_ = std::move(compiler_.compile(desc_graph_));
   runner_ = std::make_unique<holoflow::model::Runner>(*model_);
   runner_->start();
 }

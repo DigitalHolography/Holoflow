@@ -14,6 +14,24 @@
     std::abort();                                                              \
   } while (0)
 
+#define CUDA_CHECK(call)                                                       \
+  do {                                                                         \
+    cudaError_t err = call;                                                    \
+    if (err != cudaSuccess) {                                                  \
+      throw dh::CudaException(dh::CudaError(err));                             \
+    }                                                                          \
+  } while (0)
+
+#define CUDA_LOG_ERROR(call)                                                   \
+  do {                                                                         \
+    cudaError_t err = (call);                                                  \
+    if (err != cudaSuccess) {                                                  \
+      curaii_logger()->warn("[CUDA_LOG_ERROR] call `" #call                    \
+                            "` failed with error: \"{}\"",                     \
+                            dh::CudaError(err));                               \
+    }                                                                          \
+  } while (0)
+
 // ==========================================================================
 //                     CudaError Implementation
 // ==========================================================================
@@ -466,6 +484,17 @@ auto fmt::formatter<dh::CudaStreamFlags>::format(dh::CudaStreamFlags flags,
 }
 
 // ==========================================================================
+//                     CudaException Implementation
+// ==========================================================================
+
+dh::CudaException::CudaException(const CudaError &error)
+    : std::runtime_error(error.message()), error_(error) {}
+
+const dh::CudaError &dh::CudaException::error() const noexcept {
+  return error_;
+}
+
+// ==========================================================================
 //                     CudaStreamRef Implementation
 // ==========================================================================
 
@@ -476,15 +505,8 @@ dh::CudaStreamRef dh::CudaStreamRef::from_raw(cudaStream_t stream) noexcept {
   return CudaStreamRef(stream);
 }
 
-tl::expected<void, dh::CudaError>
-dh::CudaStreamRef::try_synchronize() const noexcept {
-  if (auto error = cudaStreamSynchronize(stream_); error != cudaSuccess) {
-    curaii_logger()->warn(
-        "[CudaStreamRef::try_synchronize] failed with error: \"{}\"",
-        CudaError(error));
-  }
-
-  return {};
+void dh::CudaStreamRef::synchronize() const {
+  CUDA_CHECK(cudaStreamSynchronize(stream_));
 }
 
 cudaStream_t dh::CudaStreamRef::stream() const noexcept { return stream_; }
@@ -495,19 +517,14 @@ cudaStream_t dh::CudaStreamRef::stream() const noexcept { return stream_; }
 
 dh::CudaStream::CudaStream(cudaStream_t stream) noexcept : stream_(stream) {}
 
-dh::CudaStream::CudaStream(CudaStream &&other) noexcept
-    : stream_(other.stream_) {
+dh::CudaStream::CudaStream(CudaStream &&other) : stream_(other.stream_) {
   other.stream_ = 0;
 }
 
-dh::CudaStream &dh::CudaStream::operator=(CudaStream &&other) noexcept {
+dh::CudaStream &dh::CudaStream::operator=(CudaStream &&other) {
   if (this != &other) {
     if (stream_) {
-      if (auto error = cudaStreamDestroy(stream_); error != cudaSuccess) {
-        curaii_logger()->warn(
-            "[CudaStream::operator=] failed with error: \"{}\"",
-            CudaError(error));
-      }
+      CUDA_CHECK(cudaStreamDestroy(stream_));
     }
     stream_ = other.stream_;
     other.stream_ = 0;
@@ -517,38 +534,20 @@ dh::CudaStream &dh::CudaStream::operator=(CudaStream &&other) noexcept {
 
 dh::CudaStream::~CudaStream() {
   if (stream_) {
-    if (auto error = cudaStreamSynchronize(stream_); error != cudaSuccess) {
-      curaii_logger()->warn("[CudaStream::operator=] failed with error: \"{}\"",
-                            CudaError(error));
-    }
-
-    if (auto error = cudaStreamDestroy(stream_); error != cudaSuccess) {
-      curaii_logger()->warn("[CudaStream::operator=] failed with error: \"{}\"",
-                            CudaError(error));
-    }
+    curaii_logger()->info("deleting stream {}", (void *)stream_);
+    synchronize();
+    CUDA_LOG_ERROR(cudaStreamDestroy(stream_));
   }
 }
 
-tl::expected<dh::CudaStream, dh::CudaError>
-dh::CudaStream::try_create() noexcept {
+dh::CudaStream dh::CudaStream::create() {
   cudaStream_t stream;
-  if (auto error = cudaStreamCreate(&stream); error != cudaSuccess) {
-    curaii_logger()->warn("[CudaStream::try_create] failed with error: \"{}\"",
-                          CudaError(error));
-  }
-
+  CUDA_CHECK(cudaStreamCreate(&stream));
   return CudaStream(stream);
 }
 
-tl::expected<void, dh::CudaError>
-dh::CudaStream::try_synchronize() const noexcept {
-  if (auto error = cudaStreamSynchronize(stream_); error != cudaSuccess) {
-    curaii_logger()->warn(
-        "[CudaStream::try_synchronize] failed with error: \"{}\"",
-        CudaError(error));
-  }
-
-  return {};
+void dh::CudaStream::synchronize() const {
+  CUDA_CHECK(cudaStreamSynchronize(stream_));
 }
 
 dh::CudaStreamRef dh::CudaStream::ref() noexcept {
@@ -556,3 +555,9 @@ dh::CudaStreamRef dh::CudaStream::ref() noexcept {
 }
 
 cudaStream_t dh::CudaStream::stream() const noexcept { return stream_; }
+
+namespace curaii::cuda {
+
+void peek_at_last_error() { CUDA_CHECK(cudaPeekAtLastError()); }
+
+} // namespace curaii::cuda

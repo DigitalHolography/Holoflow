@@ -36,7 +36,7 @@ tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
                            cudaMemcpyDeviceToHost,
                            stream_.stream()) == cudaSuccess);
 
-  DH_CHECK(stream_.try_synchronize());
+  stream_.synchronize();
   TensorMeta host_meta(itens.data_type(), MemoryLocation::HOST,
                        {itens.shape().at(1), itens.shape().at(2)});
   TensorView host_view(host.get(), host_meta);

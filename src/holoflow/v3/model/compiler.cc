@@ -240,7 +240,7 @@ struct AssignCudaStreamDFSVisitor : public boost::default_dfs_visitor {
     // They need to create a new stream.
     if (node.kind_ == NodeKind::Source || node.kind_ == NodeKind::Accumulator) {
       if (!node.common_.stream_) {
-        auto stream = dh::CudaStream::try_create().value();
+        auto stream = dh::CudaStream::create();
         node.common_.stream_ = stream.ref();
         streams_.push_back(std::move(stream));
       }
@@ -747,7 +747,7 @@ void ModelCompiler::call_factories() {
       model_.accumulators_.push_back(std::move(accumulator));
     }
 
-    DH_CHECK(stream.try_synchronize());
+    stream.synchronize();
   }
 }
 
@@ -858,7 +858,7 @@ Model ModelCompiler::compile(const DescriptorGraph &descriptor_graph) {
   dh::holoflow_logger()->debug(
       "[ModelCompiler::compile] Compiling model from descriptor graph");
 
-  model_ = Model();
+  model_ = std::move(Model());
 
   dh::holoflow_logger()->debug("[ModelCompiler::compile] building compiler "
                                "graph from descriptor graph");

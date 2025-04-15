@@ -73,6 +73,7 @@ struct DeviceDeleter {
   void operator()(void *ptr) const {
     if (ptr) {
       if (stream) {
+        cuda_logger()->info("[device deleter] {}", (void *)(stream));
         CUDA_CHECK_LOG(err, cudaFreeAsync(ptr, stream));
       } else {
         CUDA_CHECK_LOG(err, cudaFree(ptr));
