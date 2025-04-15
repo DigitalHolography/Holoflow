@@ -1,14 +1,14 @@
 digraph G {
 0[label="holofile_source\n(Holofile)\n{
   \"batch_size\": 32,
-  \"end_frame\": 60,
+  \"end_frame\": 131072,
   \"load_kind\": \"READ_LIVE\",
   \"path\": \"D:/BatchTesting/250220_GUJ0206_L.holo\",
-  \"start_frame\": 1
+  \"start_frame\": 0
 }"];
 1[label="input_queue\n(BatchedSPSC)\n{
   \"dequeue_batch_size\": 32,
-  \"nb_slots\": 128
+  \"nb_slots\": 4096
 }"];
 2[label="convert_input\n(Convert)\n{
   \"conversion\": \"U8_CF32_REAL\"
@@ -25,11 +25,43 @@ digraph G {
 }"];
 5[label="principal_component_analysis\n(PCA)\n{
   \"begin\": 0,
-  \"end\": 1
+  \"end\": 16
 }"];
+6[label="convert_postprocess\n(Convert)\n{
+  \"conversion\": \"CF32_F32_MODU\"
+}"];
+7[label="p_frame_average\n(Average)\n{
+  \"begin\": 0,
+  \"end\": 16
+}"];
+8[label="fft_shift\n(FFTShift)\n{}"];
+9[label="image_avg_accumulator\n(SlidingAverage)\n{
+  \"nb_slots\": 138,
+  \"window_size\": 128
+}"];
+10[label="percentile_clip\n(PercentileClip)\n{
+  \"lower_percentile\": 0.10000000149011612,
+  \"upper_percentile\": 99.9000015258789
+}"];
+11[label="convert_output\n(Convert)\n{
+  \"conversion\": \"F32_U8_SCALED\"
+}"];
+12[label="processed_output_queue\n(BatchedSPSC)\n{
+  \"dequeue_batch_size\": 1,
+  \"nb_slots\": 32
+}"];
+13[label="processed_display_sink\n(QtDisplay)\n{}"];
 0->1 ;
 1->2 ;
 2->3 ;
 3->4 ;
 4->5 ;
+5->6 ;
+6->7 ;
+7->8 ;
+8->9 ;
+9->10 ;
+10->11 ;
+11->12 ;
+12->13 ;
 }

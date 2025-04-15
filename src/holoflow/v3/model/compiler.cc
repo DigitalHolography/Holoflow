@@ -746,6 +746,8 @@ void ModelCompiler::call_factories() {
           .accumulator_ = accumulator.get();
       model_.accumulators_.push_back(std::move(accumulator));
     }
+
+    DH_CHECK(stream.try_synchronize());
   }
 }
 
@@ -855,6 +857,8 @@ void ModelCompiler::select_pes_roots() {
 Model ModelCompiler::compile(const DescriptorGraph &descriptor_graph) {
   dh::holoflow_logger()->debug(
       "[ModelCompiler::compile] Compiling model from descriptor graph");
+
+  model_ = Model();
 
   dh::holoflow_logger()->debug("[ModelCompiler::compile] building compiler "
                                "graph from descriptor graph");

@@ -179,11 +179,19 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
   int height = imeta.shape().at(1);
   int width = imeta.shape().at(2);
 
+  if (auto result = cudaPeekAtLastError(); result != cudaSuccess) {
+    holovibes_logger()->warn("[FresnelDiffractionTask::create] failed to "
+                             "compute lens -1: Cuda error: {}",
+                             cudaGetErrorString(result));
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
+
   // Initialize lens
   auto d_lens_result = try_make_unique_device_ptr<cuFloatComplex>(
       imeta.size_in_bytes() / batch, stream.stream());
   if (!d_lens_result) {
-    holovibes_logger()->warn("[FresnelDiffractionTask::create] Cuda error: {}",
+    holovibes_logger()->warn("[FresnelDiffractionTask::create] failed to "
+                             "allocate lens: Cuda error: {}",
                              cudaGetErrorString(d_lens_result.error()));
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
@@ -193,11 +201,19 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
   dim3 grid_size((width + block_size.x - 1) / block_size.x,
                  (height + block_size.y - 1) / block_size.y);
 
+  if (auto result = cudaPeekAtLastError(); result != cudaSuccess) {
+    holovibes_logger()->warn("[FresnelDiffractionTask::create] failed to "
+                             "compute lens 0: Cuda error: {}",
+                             cudaGetErrorString(result));
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
+
   quadratic_lens_kernel<<<grid_size, block_size, 0, stream.stream()>>>(
       d_lens.get(), width, height, params.lambda, params.z, params.pixel_size);
 
   if (auto result = cudaPeekAtLastError(); result != cudaSuccess) {
-    holovibes_logger()->warn("[FresnelDiffractionTask::create] Cuda error: {}",
+    holovibes_logger()->warn("[FresnelDiffractionTask::create] failed to "
+                             "compute lens: Cuda error: {}",
                              cudaGetErrorString(result));
     return tl::unexpected(Error::INTERNAL_ERROR);
   }

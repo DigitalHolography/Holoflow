@@ -30,7 +30,8 @@ void Runner::stop() {
   }
 
   stop_.store(true);
-  thread_.join();
+  // thread_.join();
+  thread_.detach();
 
   if (!running_.exchange(false)) {
     throw std::runtime_error("Runner is not running");

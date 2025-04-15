@@ -19,11 +19,15 @@
 #include "holovibes/ui/export_widget.hh"
 #include "holovibes/ui/image_rendering_widget.hh"
 #include "holovibes/ui/import_widget.hh"
+#include "holovibes/ui/tensor_display_widget.hh"
 #include "holovibes/ui/view_widget.hh"
 
 namespace holovibes::ui {
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+  processed_display_widget_ = new dh::TensorDisplayWidget(800, 800);
+  processed_display_widget_->show();
+
   // Create menus
   menuBar()->addMenu("&File");
   menuBar()->addMenu("&View");
@@ -57,7 +61,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   setWindowTitle("HoloVibes");
   resize(1000, 600);
 
-  auto *pipeline_mgr = new pipeline::Manager(this);
+  auto *pipeline_mgr = new pipeline::Manager(processed_display_widget_, this);
 
   // Link Image Rendering widget signals to Pipeline Manager.
   connect(image_rendering_widget, &ImageRenderingWidget::image_changed,

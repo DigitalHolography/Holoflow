@@ -23,7 +23,7 @@ tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
 
   // Throttle to 30 fps: skip frame if less than ~33ms since last display.
   auto now = std::chrono::steady_clock::now();
-  if (now - last_display_time_ < std::chrono::milliseconds(1000 / 60)) {
+  if (now - last_display_time_ < std::chrono::milliseconds(1000 / 120)) {
     // Too soon: drop this frame.
     holovibes_logger()->trace("Skipping frame to maintain 30fps");
     return {};

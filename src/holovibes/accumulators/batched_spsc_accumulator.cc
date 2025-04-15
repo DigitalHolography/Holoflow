@@ -201,7 +201,8 @@ BatchedSPSCAccumulatorFactory::create(const TensorMeta &imeta,
     host_buffer = make_unique_host_ptr<uint8_t>(buffer_size);
     break;
   case MemoryLocation::DEVICE:
-    device_buffer = make_unique_device_ptr<uint8_t>(buffer_size);
+    device_buffer =
+        make_unique_device_ptr<uint8_t>(buffer_size, stream.stream());
     break;
   }
 

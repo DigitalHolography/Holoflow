@@ -8,7 +8,11 @@
 #include <string>
 #include <vector>
 
+#include "holoflow/v3/model/compiler.hh"
 #include "holoflow/v3/model/descriptor.hh"
+#include "holoflow/v3/model/model.hh"
+#include "holoflow/v3/model/runner.hh"
+#include "holovibes/ui/tensor_display_widget.hh"
 
 using json = nlohmann::json;
 
@@ -18,7 +22,8 @@ class Manager : public QObject {
   Q_OBJECT
 
 public:
-  explicit Manager(QObject *parent = nullptr);
+  explicit Manager(dh::TensorDisplayWidget *processed_display_widget,
+                   QObject *parent = nullptr);
 
 public slots:
   // Image rendering slots
@@ -78,6 +83,14 @@ private:
   holoflow::model::DescriptorVertex add_space_transform_node();
   holoflow::model::DescriptorVertex add_time_accumulator_node();
   holoflow::model::DescriptorVertex add_time_transform_node();
+  holoflow::model::DescriptorVertex add_convert_postprocess_node();
+  holoflow::model::DescriptorVertex add_p_frame_avg_node();
+  holoflow::model::DescriptorVertex add_fft_shift_node();
+  holoflow::model::DescriptorVertex add_image_avg_accumulator_node();
+  holoflow::model::DescriptorVertex add_percentile_clip_node();
+  holoflow::model::DescriptorVertex add_convert_output_node();
+  holoflow::model::DescriptorVertex add_processed_output_queue_node();
+  holoflow::model::DescriptorVertex add_processed_display_sink_node();
 
   holoflow::model::DescriptorVertex
   add_node(const std::string &id, const std::string &type, const json &config);
@@ -89,6 +102,10 @@ private:
 
   holoflow::model::DescriptorGraph desc_graph_;
   std::map<std::string, holoflow::model::DescriptorVertex> nodes_;
+  holoflow::model::ModelCompiler compiler_;
+  std::optional<holoflow::model::Model> model_;
+  std::unique_ptr<holoflow::model::Runner> runner_;
+  dh::TensorDisplayWidget *processed_display_widget_;
 
   // Copies of Image Rendering Settings
   std::optional<std::string> image_;

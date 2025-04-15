@@ -7,6 +7,9 @@
 #include <QSizePolicy>
 #include <QSpacerItem>
 
+#include "holofile/holofile.hh"
+#include "holovibes/holovibes.hh"
+
 namespace holovibes::ui {
 
 ImportWidget::ImportWidget(QWidget *parent) : QGroupBox(tr("Import"), parent) {
@@ -29,10 +32,24 @@ void ImportWidget::setup_ui() {
 
   connect(file_browse_button_, &QPushButton::clicked, this, [this]() {
     QString file = QFileDialog::getOpenFileName(this, tr("Select File"));
-    if (!file.isEmpty()) {
-      file_line_edit_->setText(file);
-      emit file_selected(file);
+    if (file.isEmpty()) {
+      return;
     }
+
+    auto reader_result = dh::HolofileReader::open(file.toStdString());
+    if (!reader_result) {
+      dh::holovibes_logger()->error("failed to open \"{}\": \"{}\"",
+                                    file.toStdString(),
+                                    reader_result.error().message());
+      return;
+    }
+    auto reader = std::move(reader_result.value());
+    auto frame_count = reader.header().frame_count;
+
+    file_line_edit_->setText(file);
+    start_index_spin_->setValue(0);
+    end_index_spin_->setValue(frame_count);
+    emit file_selected(file);
   });
 
   // Row 1: Input FPS
@@ -51,7 +68,7 @@ void ImportWidget::setup_ui() {
   main_layout->addWidget(start_index_label, 2, 0);
 
   start_index_spin_ = new QSpinBox(this);
-  start_index_spin_->setRange(1, 999999);
+  start_index_spin_->setRange(0, 999999);
   start_index_spin_->setValue(1);
   main_layout->addWidget(start_index_spin_, 2, 1);
   connect(start_index_spin_, qOverload<int>(&QSpinBox::valueChanged), this,

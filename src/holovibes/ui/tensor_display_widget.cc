@@ -1,5 +1,6 @@
 #include "holovibes/ui/tensor_display_widget.hh"
 
+#include <QCoreApplication>
 #include <QImage>
 #include <QLabel>
 #include <QPixmap>

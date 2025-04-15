@@ -41,7 +41,7 @@ void setup_global_logger() {
       "global_logger", sinks.begin(), sinks.end());
 
   spdlog::set_default_logger(global_logger);
-  spdlog::set_level(spdlog::level::debug);
+  spdlog::set_level(spdlog::level::trace);
   spdlog::flush_on(spdlog::level::warn);
   spdlog::set_pattern("[%Y-%m-%d %H:%M:%S.%e] [thread %t] [%n] [%^%l%$] %v");
 }
