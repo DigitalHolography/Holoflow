@@ -71,15 +71,6 @@ tl::expected<void, Error> PCATask::run(TensorView input, TensorView output) {
                              result.error());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
-  // if (auto result = cublas_handle_.try_c_gemm_3m(
-  //         CublasOperation(CUBLAS_OP_C), CublasOperation(CUBLAS_OP_N),
-  //         n_features, n_features, n_samples, &alpha, idata, n_samples, idata,
-  //         n_samples, &beta, d_cov_matrix_.get(), n_features);
-  //     !result) {
-  //   holovibes_logger()->warn("[PCATask::run] failed with error \"{}\"",
-  //                            result.error());
-  //   return tl::unexpected(Error::INTERNAL_ERROR);
-  // }
 
   // Compute eigenvectors:
   // Perform an eigen decomposition on the covariance matrix to extract both
