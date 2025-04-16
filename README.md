@@ -18,4 +18,4 @@
 Contributions are welcome! Please check the [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## License
-Holoflow is licensed under the MIT License. See the [LICENSE](LICENSE.md) file for details.
+Holoflow is licensed under the GPL3 License. See the [LICENSE](LICENSE.md) file for details.
