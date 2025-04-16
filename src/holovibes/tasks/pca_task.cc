@@ -59,15 +59,27 @@ tl::expected<void, Error> PCATask::run(TensorView input, TensorView output) {
   // (n_samples x n_features). This operation yields an (n_features x
   // n_features) Hermitian matrix representing the covariance between each
   // pair of features (assuming the data has been centered).
-  if (auto result = cublas_handle_.try_c_gemm_3m(
+  if (auto result = cublas_handle_.try_gemm_ex(
           CublasOperation(CUBLAS_OP_C), CublasOperation(CUBLAS_OP_N),
-          n_features, n_features, n_samples, &alpha, idata, n_samples, idata,
-          n_samples, &beta, d_cov_matrix_.get(), n_features);
+          n_features, n_features, n_samples, &alpha, idata,
+          CudaDataType(CUDA_C_32F), n_samples, idata, CudaDataType(CUDA_C_32F),
+          n_samples, &beta, d_cov_matrix_.get(), CudaDataType(CUDA_C_32F),
+          n_features, CublasComputeType(CUBLAS_COMPUTE_32F_FAST_16F),
+          CUBLAS_GEMM_DEFAULT);
       !result) {
     holovibes_logger()->warn("[PCATask::run] failed with error \"{}\"",
                              result.error());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
+  // if (auto result = cublas_handle_.try_c_gemm_3m(
+  //         CublasOperation(CUBLAS_OP_C), CublasOperation(CUBLAS_OP_N),
+  //         n_features, n_features, n_samples, &alpha, idata, n_samples, idata,
+  //         n_samples, &beta, d_cov_matrix_.get(), n_features);
+  //     !result) {
+  //   holovibes_logger()->warn("[PCATask::run] failed with error \"{}\"",
+  //                            result.error());
+  //   return tl::unexpected(Error::INTERNAL_ERROR);
+  // }
 
   // Compute eigenvectors:
   // Perform an eigen decomposition on the covariance matrix to extract both
@@ -100,10 +112,13 @@ tl::expected<void, Error> PCATask::run(TensorView input, TensorView output) {
   // to transform the data into the principal component space. Each row of the
   // output corresponds to the projection of the original data onto the new
   // basis defined by the eigenvectors.
-  if (auto result = cublas_handle_.try_c_gemm_3m(
+  if (auto result = cublas_handle_.try_gemm_ex(
           CublasOperation(CUBLAS_OP_N), CublasOperation(CUBLAS_OP_N), n_samples,
-          (int)(end_ - begin_), n_features, &alpha, idata, n_samples, eigenvecs,
-          n_features, &beta, odata, n_samples);
+          (int)(end_ - begin_), n_features, &alpha, idata,
+          CudaDataType(CUDA_C_32F), n_samples, eigenvecs,
+          CudaDataType(CUDA_C_32F), n_features, &beta, odata,
+          CudaDataType(CUDA_C_32F), n_samples,
+          CublasComputeType(CUBLAS_COMPUTE_32F_FAST_16F), CUBLAS_GEMM_DEFAULT);
       !result) {
     holovibes_logger()->warn("[PCATask::run] failed with error \"{}\"",
                              result.error());
