@@ -19,7 +19,7 @@ namespace dh {
 //                     PCATask Implementation
 // ==========================================================================
 
-PCATask::PCATask(const TaskMeta &meta, cudaStream_t stream,
+PCATask::PCATask(const TaskMeta &meta, CudaStreamRef stream,
                  CublasHandle cublas_handle, CusolverDnHandle cusolver_handle,
                  CusolverDnParams cusolver_params,
                  unique_device_ptr<cuFloatComplex> d_cov_matrix,
@@ -59,10 +59,13 @@ tl::expected<void, Error> PCATask::run(TensorView input, TensorView output) {
   // (n_samples x n_features). This operation yields an (n_features x
   // n_features) Hermitian matrix representing the covariance between each
   // pair of features (assuming the data has been centered).
-  if (auto result = cublas_handle_.try_c_gemm_3m(
+  if (auto result = cublas_handle_.try_gemm_ex(
           CublasOperation(CUBLAS_OP_C), CublasOperation(CUBLAS_OP_N),
-          n_features, n_features, n_samples, &alpha, idata, n_samples, idata,
-          n_samples, &beta, d_cov_matrix_.get(), n_features);
+          n_features, n_features, n_samples, &alpha, idata,
+          CudaDataType(CUDA_C_32F), n_samples, idata, CudaDataType(CUDA_C_32F),
+          n_samples, &beta, d_cov_matrix_.get(), CudaDataType(CUDA_C_32F),
+          n_features, CublasComputeType(CUBLAS_COMPUTE_32F_FAST_16F),
+          CUBLAS_GEMM_DEFAULT);
       !result) {
     holovibes_logger()->warn("[PCATask::run] failed with error \"{}\"",
                              result.error());
@@ -100,10 +103,13 @@ tl::expected<void, Error> PCATask::run(TensorView input, TensorView output) {
   // to transform the data into the principal component space. Each row of the
   // output corresponds to the projection of the original data onto the new
   // basis defined by the eigenvectors.
-  if (auto result = cublas_handle_.try_c_gemm_3m(
+  if (auto result = cublas_handle_.try_gemm_ex(
           CublasOperation(CUBLAS_OP_N), CublasOperation(CUBLAS_OP_N), n_samples,
-          (int)(end_ - begin_), n_features, &alpha, idata, n_samples, eigenvecs,
-          n_features, &beta, odata, n_samples);
+          (int)(end_ - begin_), n_features, &alpha, idata,
+          CudaDataType(CUDA_C_32F), n_samples, eigenvecs,
+          CudaDataType(CUDA_C_32F), n_features, &beta, odata,
+          CudaDataType(CUDA_C_32F), n_samples,
+          CublasComputeType(CUBLAS_COMPUTE_32F_FAST_16F), CUBLAS_GEMM_DEFAULT);
       !result) {
     holovibes_logger()->warn("[PCATask::run] failed with error \"{}\"",
                              result.error());
@@ -128,6 +134,12 @@ PCATaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
+  if (imeta.shape().size() != 3) {
+    holovibes_logger()->warn("[PCATaskFactory::type_check] invalid rank: {}",
+                             (int)imeta.shape().size());
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
+
   if (params.end > imeta.shape().at(0)) {
     holovibes_logger()->warn(
         "[PCATaskFactory::type_check] end > batch size: {} > {}", params.end,
@@ -149,12 +161,6 @@ PCATaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
-  if (imeta.shape().size() != 3) {
-    holovibes_logger()->warn("[PCATaskFactory::type_check] invalid rank: {}",
-                             (int)imeta.shape().size());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
   auto oshape = imeta.shape();
   oshape.at(0) = (params.end - params.begin);
   TensorMeta ometa(imeta.data_type(), imeta.memory_location(), oshape);
@@ -163,7 +169,7 @@ PCATaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
 
 tl::expected<std::unique_ptr<Task>, Error>
 PCATaskFactory::create(const TensorMeta &imeta, const json &jparams,
-                       cudaStream_t stream) {
+                       CudaStreamRef stream) {
 
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {
@@ -186,9 +192,7 @@ PCATaskFactory::create(const TensorMeta &imeta, const json &jparams,
   }
   auto cublas_handle = std::move(cublas_handle_result.value());
 
-  if (auto result =
-          cublas_handle.try_set_stream(CudaStreamRef::from_raw(stream));
-      !result) {
+  if (auto result = cublas_handle.try_set_stream(stream); !result) {
     holovibes_logger()->warn(
         "[PCATaskFactory::create] failed with error \"{}\"", result.error());
     return tl::unexpected(Error::INTERNAL_ERROR);
@@ -204,9 +208,7 @@ PCATaskFactory::create(const TensorMeta &imeta, const json &jparams,
   }
   auto cusolver_handle = std::move(cusolver_handle_result.value());
 
-  if (auto result =
-          cusolver_handle.try_set_stream(CudaStreamRef::from_raw(stream));
-      !result) {
+  if (auto result = cusolver_handle.try_set_stream(stream); !result) {
     holovibes_logger()->warn(
         "[PCATaskFactory::create] failed with error \"{}\"", result.error());
     return tl::unexpected(Error::INTERNAL_ERROR);
@@ -232,7 +234,7 @@ PCATaskFactory::create(const TensorMeta &imeta, const json &jparams,
 
   // Covariance matrix
   auto d_cov_matrix_result = try_make_unique_device_ptr<cuFloatComplex>(
-      n_features * n_features, stream);
+      n_features * n_features, stream.stream());
   if (!d_cov_matrix_result) {
     holovibes_logger()->warn(
         "[PCATaskFactory::create] failed with error \"{}\"",
@@ -242,8 +244,8 @@ PCATaskFactory::create(const TensorMeta &imeta, const json &jparams,
   auto d_cov_matrix = std::move(d_cov_matrix_result.value());
 
   // Eigenvalues
-  auto d_eigenvalues_result =
-      try_make_unique_device_ptr<float>((params.end - params.begin), stream);
+  auto d_eigenvalues_result = try_make_unique_device_ptr<float>(
+      (params.end - params.begin), stream.stream());
   if (!d_eigenvalues_result) {
     holovibes_logger()->warn(
         "[PCATaskFactory::create] failed with error \"{}\"",
@@ -253,7 +255,7 @@ PCATaskFactory::create(const TensorMeta &imeta, const json &jparams,
   auto d_eigenvalues = std::move(d_eigenvalues_result.value());
 
   // Info
-  auto d_info_result = try_make_unique_device_ptr<int>(1, stream);
+  auto d_info_result = try_make_unique_device_ptr<int>(1, stream.stream());
   if (!d_info_result) {
     holovibes_logger()->warn(
         "[PCATaskFactory::create] failed with error \"{}\"",
@@ -282,7 +284,7 @@ PCATaskFactory::create(const TensorMeta &imeta, const json &jparams,
 
   // Device workspace
   auto d_workspace_result =
-      try_make_unique_device_ptr<uint8_t>(d_workspace_size, stream);
+      try_make_unique_device_ptr<uint8_t>(d_workspace_size, stream.stream());
   if (!d_workspace_result) {
     holovibes_logger()->warn(
         "[PCATaskFactory::create] failed with error \"{}\"",

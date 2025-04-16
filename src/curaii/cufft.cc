@@ -190,6 +190,56 @@ auto fmt::formatter<dh::CufftDirection>::format(dh::CufftDirection direction,
 }
 
 // ==========================================================================
+//                     CufftCallbackType Implementation
+// ==========================================================================
+
+dh::CufftXtCallbackType::CufftXtCallbackType(
+    cufftXtCallbackType callback_type) noexcept
+    : callback_type_(callback_type) {}
+
+cufftXtCallbackType dh::CufftXtCallbackType::callback_type() const noexcept {
+  return callback_type_;
+}
+
+auto fmt::formatter<dh::CufftXtCallbackType>::format(
+    dh::CufftXtCallbackType callback_type, format_context &ctx) const
+    -> format_context::iterator {
+  string_view name;
+  switch (callback_type.callback_type()) {
+  case CUFFT_CB_LD_COMPLEX:
+    name = "CUFFT_CB_LD_COMPLEX";
+    break;
+  case CUFFT_CB_LD_COMPLEX_DOUBLE:
+    name = "CUFFT_CB_LD_COMPLEX_DOUBLE";
+    break;
+  case CUFFT_CB_LD_REAL:
+    name = "CUFFT_CB_LD_REAL";
+    break;
+  case CUFFT_CB_LD_REAL_DOUBLE:
+    name = "CUFFT_CB_LD_REAL_DOUBLE";
+    break;
+  case CUFFT_CB_ST_COMPLEX:
+    name = "CUFFT_CB_ST_COMPLEX";
+    break;
+  case CUFFT_CB_ST_COMPLEX_DOUBLE:
+    name = "CUFFT_CB_ST_COMPLEX_DOUBLE";
+    break;
+  case CUFFT_CB_ST_REAL:
+    name = "CUFFT_CB_ST_REAL";
+    break;
+  case CUFFT_CB_ST_REAL_DOUBLE:
+    name = "CUFFT_CB_ST_REAL_DOUBLE";
+    break;
+  case CUFFT_CB_UNDEFINED:
+    name = "CUFFT_CB_UNDEFINED";
+    break;
+  default:
+    UNREACHABLE("Invalid cufft callback type");
+  }
+  return formatter<string_view>::format(name, ctx);
+}
+
+// ==========================================================================
 //                     CufftHandle Implementation
 // ==========================================================================
 
@@ -226,6 +276,19 @@ dh::CufftHandle::~CufftHandle() {
 }
 
 tl::expected<dh::CufftHandle, dh::CufftResult>
+dh::CufftHandle::try_create() noexcept {
+  cufftHandle handle;
+  if (auto result = cufftCreate(&handle); result != CUFFT_SUCCESS) {
+    curaii_logger()->warn("[CufftHandle::try_create] failed with error: \"{}\"",
+                          CufftResult(result));
+
+    return tl::unexpected<CufftResult>(result);
+  }
+
+  return CufftHandle(handle);
+}
+
+tl::expected<dh::CufftHandle, dh::CufftResult>
 dh::CufftHandle::try_plan_many(int rank, int *n, int *inembed, int istride,
                                int idist, int *onembed, int ostride, int odist,
                                CufftType type, int batch) noexcept {
@@ -243,26 +306,36 @@ dh::CufftHandle::try_plan_many(int rank, int *n, int *inembed, int istride,
   return CufftHandle(handle);
 }
 
-tl::expected<dh::CufftHandle, dh::CufftResult>
-dh::CufftHandle::try_xt_make_plan_many(
+tl::expected<void, dh::CufftResult> dh::CufftHandle::try_xt_get_size_many(
     int rank, long long int *n, long long int *inembed, long long int istride,
     long long int idist, CudaDataType inputtype, long long int *onembed,
     long long int ostride, long long int odist, CudaDataType outputtype,
-    long long int batch, CudaDataType executiontype) {
-  cufftHandle handle;
-  if (auto result = cufftCreate(&handle); result != CUFFT_SUCCESS) {
+    long long int batch, size_t *workSize,
+    CudaDataType executiontype) noexcept {
+  if (auto result = cufftXtGetSizeMany(
+          handle_, rank, n, inembed, istride, idist, inputtype.data_type(),
+          onembed, ostride, odist, outputtype.data_type(), batch, workSize,
+          executiontype.data_type());
+      result != CUFFT_SUCCESS) {
     curaii_logger()->warn(
-        "[CufftHandle::try_xt_make_plan_many] failed with error: \"{}\"",
+        "[CufftHandle::try_xt_get_size_many] failed with error: \"{}\"",
         CufftResult(result));
 
     return tl::unexpected<CufftResult>(result);
   }
 
-  size_t ws = 0;
-  if (auto result = cufftXtGetSizeMany(handle, rank, n, inembed, istride, idist,
-                                       inputtype.data_type(), onembed, ostride,
-                                       odist, outputtype.data_type(), batch,
-                                       &ws, executiontype.data_type());
+  return {};
+}
+
+tl::expected<void, dh::CufftResult> dh::CufftHandle::try_xt_make_plan_many(
+    int rank, long long int *n, long long int *inembed, long long int istride,
+    long long int idist, CudaDataType inputtype, long long int *onembed,
+    long long int ostride, long long int odist, CudaDataType outputtype,
+    long long int batch, size_t *workSize, CudaDataType executiontype) {
+  if (auto result = cufftXtMakePlanMany(
+          handle_, rank, n, inembed, istride, idist, inputtype.data_type(),
+          onembed, ostride, odist, outputtype.data_type(), batch, workSize,
+          executiontype.data_type());
       result != CUFFT_SUCCESS) {
     curaii_logger()->warn(
         "[CufftHandle::try_xt_make_plan_many] failed with error: \"{}\"",
@@ -271,24 +344,31 @@ dh::CufftHandle::try_xt_make_plan_many(
     return tl::unexpected<CufftResult>(result);
   }
 
-  if (auto result = cufftXtMakePlanMany(handle, rank, n, inembed, istride,
-                                        idist, inputtype.data_type(), onembed,
-                                        ostride, odist, outputtype.data_type(),
-                                        batch, &ws, executiontype.data_type());
+  return {};
+}
+
+tl::expected<void, dh::CufftResult> dh::CufftHandle::try_xt_set_jit_callback(
+    const char *callbackSymbolName, const void *callbackFatbin,
+    size_t callbackFatbinSize, CufftXtCallbackType type,
+    void **caller_info) noexcept {
+  if (auto result = cufftXtSetJITCallback(handle_, callbackSymbolName,
+                                          callbackFatbin, callbackFatbinSize,
+                                          type.callback_type(), caller_info);
       result != CUFFT_SUCCESS) {
     curaii_logger()->warn(
-        "[CufftHandle::try_xt_make_plan_many] failed with error: \"{}\"",
+        "[CufftHandle::try_set_stream] failed with error: \"{}\"",
         CufftResult(result));
 
     return tl::unexpected<CufftResult>(result);
   }
 
-  return CufftHandle(handle);
+  return {};
 }
 
 tl::expected<void, dh::CufftResult>
-dh::CufftHandle::try_set_stream(cudaStream_t stream) noexcept {
-  if (auto result = cufftSetStream(handle_, stream); result != CUFFT_SUCCESS) {
+dh::CufftHandle::try_set_stream(CudaStreamRef stream) noexcept {
+  if (auto result = cufftSetStream(handle_, stream.stream());
+      result != CUFFT_SUCCESS) {
     curaii_logger()->warn(
         "[CufftHandle::try_set_stream] failed with error: \"{}\"",
         CufftResult(result));

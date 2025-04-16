@@ -34,7 +34,7 @@ __global__ void apply_lens_kernel(cuFloatComplex *idata, cuFloatComplex *odata,
 } // namespace
 
 FresnelDiffractionTask::FresnelDiffractionTask(
-    const TaskMeta &meta, cudaStream_t stream, float lambda, float z,
+    const TaskMeta &meta, CudaStreamRef stream, float lambda, float z,
     float pixel_size, bool skip_phase_shift,
     unique_device_ptr<cuFloatComplex> lens, CufftHandle handle)
     : Task(meta, stream), lambda_(lambda), z_(z), pixel_size_(pixel_size),
@@ -51,7 +51,7 @@ tl::expected<void, Error> FresnelDiffractionTask::run(TensorView input,
   dim3 block_size = 256;
   dim3 grid_size = (lens_size + block_size.x - 1) / block_size.x;
 
-  apply_lens_kernel<<<grid_size, block_size, 0, stream_>>>(
+  apply_lens_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
       idata, odata, lens_.get(), lens_size, batch_size);
 
   if (auto result =
@@ -78,6 +78,16 @@ tl::expected<void, Error> FresnelDiffractionTask::run(TensorView input,
 // ==========================================================================
 
 namespace {
+
+__device__ cuFloatComplex apply_lens_callback(cuFloatComplex *data,
+                                              size_t offset, void *callerInfo,
+                                              void *sharedPtr) {
+  cuFloatComplex *lens = (cuFloatComplex *)callerInfo;
+  cuFloatComplex val = data[offset];
+  cuFloatComplex lens_val = lens[offset];
+
+  return cuCmulf(val, lens_val);
+}
 
 __global__ void quadratic_lens_kernel(cuFloatComplex *lens, int width,
                                       int height, float lambda, float z,
@@ -155,7 +165,7 @@ FresnelDiffractionTaskFactory::type_check(const TensorMeta &imeta,
 tl::expected<std::unique_ptr<Task>, Error>
 FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
                                       const json &jparams,
-                                      cudaStream_t stream) {
+                                      CudaStreamRef stream) {
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {
     holovibes_logger()->warn("type check failed");
@@ -168,6 +178,45 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
   int batch = imeta.shape().at(0);
   int height = imeta.shape().at(1);
   int width = imeta.shape().at(2);
+
+  if (auto result = cudaPeekAtLastError(); result != cudaSuccess) {
+    holovibes_logger()->warn("[FresnelDiffractionTask::create] failed to "
+                             "compute lens -1: Cuda error: {}",
+                             cudaGetErrorString(result));
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
+
+  // Initialize lens
+  auto d_lens_result = try_make_unique_device_ptr<cuFloatComplex>(
+      imeta.size_in_bytes() / batch, stream.stream());
+  if (!d_lens_result) {
+    holovibes_logger()->warn("[FresnelDiffractionTask::create] failed to "
+                             "allocate lens: Cuda error: {}",
+                             cudaGetErrorString(d_lens_result.error()));
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
+  auto d_lens = std::move(d_lens_result.value());
+
+  dim3 block_size(16, 16);
+  dim3 grid_size((width + block_size.x - 1) / block_size.x,
+                 (height + block_size.y - 1) / block_size.y);
+
+  if (auto result = cudaPeekAtLastError(); result != cudaSuccess) {
+    holovibes_logger()->warn("[FresnelDiffractionTask::create] failed to "
+                             "compute lens 0: Cuda error: {}",
+                             cudaGetErrorString(result));
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
+
+  quadratic_lens_kernel<<<grid_size, block_size, 0, stream.stream()>>>(
+      d_lens.get(), width, height, params.lambda, params.z, params.pixel_size);
+
+  if (auto result = cudaPeekAtLastError(); result != cudaSuccess) {
+    holovibes_logger()->warn("[FresnelDiffractionTask::create] failed to "
+                             "compute lens: Cuda error: {}",
+                             cudaGetErrorString(result));
+    return tl::unexpected(Error::INTERNAL_ERROR);
+  }
 
   // Initialize cufft plan
   int rank = 2;
@@ -182,9 +231,7 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
   CudaDataType outputtype(CUDA_C_32F);
   CudaDataType executiontype(CUDA_C_32F);
 
-  auto plan_result = CufftHandle::try_xt_make_plan_many(
-      rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
-      outputtype, batch, executiontype);
+  auto plan_result = CufftHandle::try_create();
   if (!plan_result) {
     holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create] Fourrier "
                              "transform creation failed with error: \"{}\"",
@@ -192,28 +239,6 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
   auto handle = std::move(plan_result.value());
-
-  // int rank = 2;
-  // int n[2] = {height, width};
-  // int inembed[2] = {height, width};
-  // int istride = 1;
-  // int idist = height * width;
-  // int onembed[2] = {height, width};
-  // int ostride = 1;
-  // int odist = height * width;
-  // CufftType type = CufftType(CUFFT_C2C);
-
-  // auto plan_result = CufftHandle::try_plan_many(
-  //     rank, n, inembed, istride, idist, onembed, ostride, odist, type,
-  //     batch);
-  // if (!plan_result) {
-  //   holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create]
-  //   Fourrier "
-  //                            "transform creation failed with error: \"{}\"",
-  //                            plan_result.error());
-  //   return tl::unexpected(Error::INTERNAL_ERROR);
-  // }
-  // auto handle = std::move(plan_result.value());
 
   auto stream_result = handle.try_set_stream(stream);
   if (!stream_result) {
@@ -223,26 +248,35 @@ FresnelDiffractionTaskFactory::create(const TensorMeta &imeta,
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 
-  // Initialize lens
-  auto d_lens_result = try_make_unique_device_ptr<cuFloatComplex>(
-      imeta.size_in_bytes() / batch, stream);
-  if (!d_lens_result) {
-    holovibes_logger()->warn("[FresnelDiffractionTask::create] Cuda error: {}",
-                             cudaGetErrorString(d_lens_result.error()));
+  // if (auto result = handle.try_xt_set_jit_callback(
+  //         (void **)&apply_lens_callback,
+  //         CufftXtCallbackType(CUFFT_CB_LD_COMPLEX), (void **)&d_lens.get());
+  //     !result) {
+  //   holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create]
+  //   Fourrier "
+  //                            "transform creation failed with error: \"{}\"",
+  //                            result.error());
+  //   return tl::unexpected(Error::INTERNAL_ERROR);
+  // }
+
+  size_t work_size = 0;
+  if (auto result = handle.try_xt_get_size_many(
+          rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
+          outputtype, batch, &work_size, executiontype);
+      !result) {
+    holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create] Fourrier "
+                             "transform creation failed with error: \"{}\"",
+                             result.error());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
-  auto d_lens = std::move(d_lens_result.value());
 
-  dim3 block_size(16, 16);
-  dim3 grid_size((width + block_size.x - 1) / block_size.x,
-                 (height + block_size.y - 1) / block_size.y);
-
-  quadratic_lens_kernel<<<grid_size, block_size, 0, stream>>>(
-      d_lens.get(), width, height, params.lambda, params.z, params.pixel_size);
-
-  if (auto result = cudaPeekAtLastError(); result != cudaSuccess) {
-    holovibes_logger()->warn("[FresnelDiffractionTask::create] Cuda error: {}",
-                             cudaGetErrorString(result));
+  if (auto result = handle.try_xt_make_plan_many(
+          rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
+          outputtype, batch, &work_size, executiontype);
+      !result) {
+    holovibes_logger()->warn("[FresnelDiffractionTaskFactory::create] Fourrier "
+                             "transform creation failed with error: \"{}\"",
+                             result.error());
     return tl::unexpected(Error::INTERNAL_ERROR);
   }
 

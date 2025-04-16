@@ -15,7 +15,7 @@ namespace dh {
 // ==========================================================================
 
 BatchedSPSCAccumulator::BatchedSPSCAccumulator(
-    const AccumulatorMeta &meta, cudaStream_t stream, size_t nb_slots,
+    const AccumulatorMeta &meta, CudaStreamRef stream, size_t nb_slots,
     unique_host_ptr<uint8_t> host_buffer,
     unique_device_ptr<uint8_t> device_buffer)
     : Accumulator(meta, stream) {
@@ -179,7 +179,7 @@ BatchedSPSCAccumulatorFactory::type_check(const TensorMeta &imeta,
 tl::expected<std::unique_ptr<Accumulator>, Error>
 BatchedSPSCAccumulatorFactory::create(const TensorMeta &imeta,
                                       const json &jparams,
-                                      cudaStream_t stream) {
+                                      CudaStreamRef stream) {
 
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {
@@ -201,7 +201,8 @@ BatchedSPSCAccumulatorFactory::create(const TensorMeta &imeta,
     host_buffer = make_unique_host_ptr<uint8_t>(buffer_size);
     break;
   case MemoryLocation::DEVICE:
-    device_buffer = make_unique_device_ptr<uint8_t>(buffer_size);
+    device_buffer =
+        make_unique_device_ptr<uint8_t>(buffer_size, stream.stream());
     break;
   }
 

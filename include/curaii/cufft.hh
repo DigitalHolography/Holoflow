@@ -5,6 +5,7 @@
 #include <fmt/base.h>
 #include <tl/expected.hpp>
 
+#include "curaii/cuda_runtime.hh"
 #include "curaii/library_types.hh"
 
 namespace dh {
@@ -41,6 +42,16 @@ private:
   int direction_;
 };
 
+class CufftXtCallbackType {
+public:
+  explicit CufftXtCallbackType(cufftXtCallbackType callback_type) noexcept;
+
+  cufftXtCallbackType callback_type() const noexcept;
+
+private:
+  cufftXtCallbackType callback_type_;
+};
+
 class CufftHandle {
 public:
   CufftHandle(const CufftHandle &) = delete;
@@ -52,20 +63,39 @@ public:
   ~CufftHandle();
 
   [[nodiscard]]
+  static tl::expected<CufftHandle, CufftResult> try_create() noexcept;
+
+  [[nodiscard]]
   static tl::expected<CufftHandle, CufftResult>
   try_plan_many(int rank, int *n, int *inembed, int istride, int idist,
                 int *onembed, int ostride, int odist, CufftType type,
                 int batch) noexcept;
 
   [[nodiscard]]
-  static tl::expected<CufftHandle, CufftResult> try_xt_make_plan_many(
+  tl::expected<void, CufftResult>
+  try_xt_get_size_many(int rank, long long int *n, long long int *inembed,
+                       long long int istride, long long int idist,
+                       CudaDataType inputtype, long long int *onembed,
+                       long long int ostride, long long int odist,
+                       CudaDataType outputtype, long long int batch,
+                       size_t *workSize, CudaDataType executiontype) noexcept;
+
+  [[nodiscard]]
+  tl::expected<void, CufftResult> try_xt_make_plan_many(
       int rank, long long int *n, long long int *inembed, long long int istride,
       long long int idist, CudaDataType inputtype, long long int *onembed,
       long long int ostride, long long int odist, CudaDataType outputtype,
-      long long int batch, CudaDataType executiontype);
+      long long int batch, size_t *workSize, CudaDataType executiontype);
 
   [[nodiscard]]
-  tl::expected<void, CufftResult> try_set_stream(cudaStream_t stream) noexcept;
+  tl::expected<void, CufftResult>
+  try_xt_set_jit_callback(const char *callbackSymbolName,
+                          const void *callbackFatbin, size_t callbackFatbinSize,
+                          CufftXtCallbackType type,
+                          void **caller_info) noexcept;
+
+  [[nodiscard]]
+  tl::expected<void, CufftResult> try_set_stream(CudaStreamRef stream) noexcept;
 
   [[nodiscard]]
   tl::expected<void, CufftResult>
@@ -96,5 +126,12 @@ template <> struct fmt::formatter<dh::CufftResult> : formatter<string_view> {
 template <> struct fmt::formatter<dh::CufftDirection> : formatter<string_view> {
 
   auto format(dh::CufftDirection direction, format_context &ctx) const
+      -> format_context::iterator;
+};
+
+template <>
+struct fmt::formatter<dh::CufftXtCallbackType> : formatter<string_view> {
+
+  auto format(dh::CufftXtCallbackType callback_type, format_context &ctx) const
       -> format_context::iterator;
 };

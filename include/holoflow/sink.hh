@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 #include <tl/expected.hpp>
 
+#include "curaii/cuda_runtime.hh"
 #include "holoflow/error.hh"
 #include "holoflow/tensor.hh"
 
@@ -22,11 +23,9 @@ private:
   TensorMeta imeta_;
 };
 
-std::ostream &operator<<(std::ostream &os, const SinkMeta &meta);
-
 class Sink {
 public:
-  Sink(const SinkMeta &meta, cudaStream_t stream);
+  Sink(const SinkMeta &meta, CudaStreamRef stream);
 
   virtual ~Sink() = default;
 
@@ -43,7 +42,7 @@ public:
 
 protected:
   SinkMeta meta_;
-  cudaStream_t stream_;
+  CudaStreamRef stream_;
 };
 
 class SinkFactory {
@@ -61,7 +60,7 @@ public:
                                                    const json &params) = 0;
 
   virtual tl::expected<std::unique_ptr<Sink>, Error>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream) = 0;
+  create(const TensorMeta &imeta, const json &params, CudaStreamRef stream) = 0;
 };
 
 } // namespace dh

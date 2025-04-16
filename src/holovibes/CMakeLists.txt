@@ -1,6 +1,8 @@
 qt_add_executable(holovibes
   main.cc
   ui/tensor_display_widget.cc
+  ui/main_window.cc
+  pipeline/worker.cc
   accumulators/batched_spsc_accumulator.cc
   accumulators/sliding_average_accumulator.cu
   sources/holofile_source.cc
@@ -12,10 +14,14 @@ qt_add_executable(holovibes
   tasks/average_task.cu
   tasks/percentile_clip_task.cu
   tasks/fft_shift_task.cu
+  tasks/stft_task.cc
+  tasks/angular_spectrum_task.cu
 
   # Must add header files with Q_OBJECT for qt AUTMOC to run on them
   ${PROJECT_SOURCE_DIR}/include/holovibes/sinks/qt_display_sink.hh
   ${PROJECT_SOURCE_DIR}/include/holovibes/ui/tensor_display_widget.hh
+  ${PROJECT_SOURCE_DIR}/include/holovibes/ui/main_window.hh
+  ${PROJECT_SOURCE_DIR}/include/holovibes/pipeline/worker.hh
 )
 
 set_common_target_properties(holovibes)

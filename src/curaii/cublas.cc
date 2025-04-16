@@ -81,6 +81,62 @@ auto fmt::formatter<dh::CublasFillMode>::format(dh::CublasFillMode fill_mode,
 }
 
 // ==========================================================================
+//                     CublasComputeType Implementation
+// ==========================================================================
+
+dh::CublasComputeType::CublasComputeType(
+    cublasComputeType_t compute_type) noexcept
+    : compute_type_(compute_type) {}
+
+cublasComputeType_t dh::CublasComputeType::compute_type() const noexcept {
+  return compute_type_;
+}
+
+auto fmt::formatter<dh::CublasComputeType>::format(
+    dh::CublasComputeType compute_type, format_context &ctx) const
+    -> format_context::iterator {
+  string_view name;
+  switch (compute_type.compute_type()) {
+  case CUBLAS_COMPUTE_16F:
+    name = "CUBLAS_COMPUTE_16F";
+    break;
+  case CUBLAS_COMPUTE_16F_PEDANTIC:
+    name = "CUBLAS_COMPUTE_16F_PEDANTIC";
+    break;
+  case CUBLAS_COMPUTE_32F:
+    name = "CUBLAS_COMPUTE_32F";
+    break;
+  case CUBLAS_COMPUTE_32F_PEDANTIC:
+    name = "CUBLAS_COMPUTE_32F_PEDANTIC";
+    break;
+  case CUBLAS_COMPUTE_32F_FAST_16F:
+    name = "CUBLAS_COMPUTE_32F_FAST_16F";
+    break;
+  case CUBLAS_COMPUTE_32F_FAST_16BF:
+    name = "CUBLAS_COMPUTE_32F_FAST_16BF";
+    break;
+  case CUBLAS_COMPUTE_32F_FAST_TF32:
+    name = "CUBLAS_COMPUTE_32F_FAST_TF32";
+    break;
+  case CUBLAS_COMPUTE_64F:
+    name = "CUBLAS_COMPUTE_64F";
+    break;
+  case CUBLAS_COMPUTE_64F_PEDANTIC:
+    name = "CUBLAS_COMPUTE_64F_PEDANTIC";
+    break;
+  case CUBLAS_COMPUTE_32I:
+    name = "CUBLAS_COMPUTE_32I";
+    break;
+  case CUBLAS_COMPUTE_32I_PEDANTIC:
+    name = "CUBLAS_COMPUTE_32I_PEDANTIC";
+    break;
+  default:
+    UNREACHABLE("Invalid cublas compute type");
+  }
+  return formatter<string_view>::format(name, ctx);
+}
+
+// ==========================================================================
 //                     CublasStatus Implementation
 // ==========================================================================
 
@@ -245,7 +301,28 @@ tl::expected<void, dh::CublasStatus> dh::CublasHandle::try_c_gemm_3m(
                         k, alpha, A, lda, B, ldb, beta, C, ldc);
       result != CUBLAS_STATUS_SUCCESS) {
     curaii_logger()->warn(
-        "[CublasHandle::try_set_c_gemm_3m] failed with error: \"{}\"",
+        "[CublasHandle::try_c_gemm_3m] failed with error: \"{}\"",
+        CublasStatus(result));
+
+    return tl::unexpected<CublasStatus>(result);
+  }
+
+  return {};
+}
+
+tl::expected<void, dh::CublasStatus> dh::CublasHandle::try_gemm_ex(
+    CublasOperation transa, CublasOperation transb, int m, int n, int k,
+    const cuComplex *alpha, const cuComplex *A, CudaDataType AType, int lda,
+    const cuComplex *B, CudaDataType BType, int ldb, const cuComplex *beta,
+    cuComplex *C, CudaDataType CType, int ldc, CublasComputeType computeType,
+    cublasGemmAlgo_t algo) noexcept {
+  if (auto result = cublasGemmEx(
+          handle_, transa.operation(), transb.operation(), m, n, k, alpha, A,
+          AType.data_type(), lda, B, BType.data_type(), ldb, beta, C,
+          CType.data_type(), ldc, computeType.compute_type(), algo);
+      result != CUBLAS_STATUS_SUCCESS) {
+    curaii_logger()->warn(
+        "[CublasHandle::try_gemm_ex] failed with error: \"{}\"",
         CublasStatus(result));
 
     return tl::unexpected<CublasStatus>(result);

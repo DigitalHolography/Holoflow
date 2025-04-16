@@ -31,7 +31,7 @@ public:
   friend class SlidingAverageAccumulatorFactory;
 
 private:
-  SlidingAverageAccumulator(const AccumulatorMeta &meta, cudaStream_t stream,
+  SlidingAverageAccumulator(const AccumulatorMeta &meta, CudaStreamRef stream,
                             size_t nb_slots, size_t window_size,
                             unique_device_ptr<uint8_t> d_buffer,
                             unique_device_ptr<uint8_t> d_avg_frame);
@@ -64,10 +64,11 @@ private:
 class SlidingAverageAccumulatorFactory : public AccumulatorFactory {
 public:
   tl::expected<AccumulatorMeta, Error> type_check(const TensorMeta &imeta,
-                                                  const json &params);
+                                                  const json &params) override;
 
   tl::expected<std::unique_ptr<Accumulator>, Error>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream);
+  create(const TensorMeta &imeta, const json &params,
+         CudaStreamRef stream) override;
 
 private:
   struct Params {

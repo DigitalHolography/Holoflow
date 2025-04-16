@@ -1,0 +1,29 @@
+digraph G {
+0[label="holofile_source\notens_id: 0", shape=box];
+1[label="processed_widget\nitens_id: 5\n", shape=box];
+2[label="input_accumulator\nitens_id: 0\notens_id: 1", shape=box];
+3[label="time_accumulator\nitens_id: 2\notens_id: 3", shape=box];
+4[label="output_accumulator\nitens_id: 4\notens_id: 5", shape=box];
+5[label="avg_accumulator\nitens_id: 6\notens_id: 7", shape=box];
+6[label="u8_to_cf32\nitens_id: 1\notens_id: 2", shape=box];
+7[label="cf32_to_f32\nitens_id: 8\notens_id: 9", shape=box];
+8[label="f32_to_u8\nitens_id: 10\notens_id: 4", shape=box];
+9[label="fresnel_diffraction\nitens_id: 2\notens_id: 2", shape=box];
+10[label="pca\nitens_id: 3\notens_id: 8", shape=box];
+11[label="p_frame_avg\nitens_id: 9\notens_id: 6", shape=box];
+12[label="percentile_clip\nitens_id: 7\notens_id: 10", shape=box];
+13[label="fft_shift\nitens_id: 6\notens_id: 6", shape=box];
+0->2 ;
+2->6 ;
+3->10 ;
+4->1 ;
+5->12 ;
+6->9 ;
+7->11 ;
+8->4 ;
+9->3 ;
+10->7 ;
+11->13 ;
+12->8 ;
+13->5 ;
+}

@@ -4,13 +4,13 @@
 
 namespace dh {
 
-IdentityTask::IdentityTask(const TaskMeta &meta, cudaStream_t stream)
+IdentityTask::IdentityTask(const TaskMeta &meta, CudaStreamRef stream)
     : Task(meta, stream) {}
 
 tl::expected<void, Error> IdentityTask::run(TensorView input,
                                             TensorView output) {
   cudaMemcpyAsync(output.data(), input.data(), input.size_in_bytes(),
-                  cudaMemcpyDeviceToDevice, stream_);
+                  cudaMemcpyDeviceToDevice, stream_.stream());
   return {};
 }
 
@@ -21,7 +21,7 @@ IdentityTaskFactory::type_check(const TensorMeta &imeta, const json &) {
 
 tl::expected<std::unique_ptr<Task>, Error>
 IdentityTaskFactory::create(const TensorMeta &imeta, const json &jparams,
-                            cudaStream_t stream) {
+                            CudaStreamRef stream) {
 
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {

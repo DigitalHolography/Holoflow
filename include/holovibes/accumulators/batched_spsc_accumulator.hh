@@ -39,7 +39,7 @@ public:
   friend class BatchedSPSCAccumulatorFactory;
 
 private:
-  BatchedSPSCAccumulator(const AccumulatorMeta &meta, cudaStream_t stream,
+  BatchedSPSCAccumulator(const AccumulatorMeta &meta, CudaStreamRef stream,
                          size_t nb_slots, unique_host_ptr<uint8_t> host_buffer,
                          unique_device_ptr<uint8_t> device_buffer);
 
@@ -76,10 +76,11 @@ private:
 class BatchedSPSCAccumulatorFactory : public AccumulatorFactory {
 public:
   tl::expected<AccumulatorMeta, Error> type_check(const TensorMeta &imeta,
-                                                  const json &params);
+                                                  const json &params) override;
 
   tl::expected<std::unique_ptr<Accumulator>, Error>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream);
+  create(const TensorMeta &imeta, const json &params,
+         CudaStreamRef stream) override;
 
 private:
   struct Params {

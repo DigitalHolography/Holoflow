@@ -29,7 +29,7 @@ private:
     LOAD_IN_GPU,
   };
 
-  HolofileSource(const SourceMeta &meta, cudaStream_t stream,
+  HolofileSource(const SourceMeta &meta, CudaStreamRef stream,
                  const std::string &path, int start_frame, int end_frame,
                  int batch_size, LoadKind load_kind, HolofileReader reader,
                  uint8_t *internal_buffer, unique_host_ptr<uint8_t> host_buffer,
@@ -50,10 +50,10 @@ private:
 
 class HolofileSourceFactory : public SourceFactory {
 public:
-  tl::expected<SourceMeta, Error> type_check(const json &params);
+  tl::expected<SourceMeta, Error> type_check(const json &params) override;
 
-  tl::expected<std::unique_ptr<Source>, Error> create(const json &params,
-                                                      cudaStream_t stream);
+  tl::expected<std::unique_ptr<Source>, Error>
+  create(const json &params, CudaStreamRef stream) override;
 
 private:
   struct Params {

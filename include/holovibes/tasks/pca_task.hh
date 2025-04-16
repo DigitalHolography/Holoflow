@@ -23,8 +23,9 @@ public:
   friend class PCATaskFactory;
 
 private:
-  PCATask(const TaskMeta &meta, cudaStream_t stream, CublasHandle cublas_handle,
-          CusolverDnHandle cusolver_handle, CusolverDnParams cusolver_params,
+  PCATask(const TaskMeta &meta, CudaStreamRef stream,
+          CublasHandle cublas_handle, CusolverDnHandle cusolver_handle,
+          CusolverDnParams cusolver_params,
           unique_device_ptr<cuFloatComplex> d_cov_matrix,
           unique_device_ptr<float> d_eigenvalues, unique_device_ptr<int> d_info,
           unique_host_ptr<uint8_t> h_workspace,
@@ -48,10 +49,11 @@ private:
 class PCATaskFactory : public TaskFactory {
 public:
   tl::expected<TaskMeta, Error> type_check(const TensorMeta &imeta,
-                                           const json &params);
+                                           const json &params) override;
 
   tl::expected<std::unique_ptr<Task>, Error>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream);
+  create(const TensorMeta &imeta, const json &params,
+         CudaStreamRef stream) override;
 
 private:
   struct Params {

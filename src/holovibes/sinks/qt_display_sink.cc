@@ -1,5 +1,6 @@
 #include "holovibes/sinks/qt_display_sink.hh"
 
+#include <QCoreApplication>
 #include <cassert>
 #include <cstdlib>
 #include <spdlog/spdlog.h>
@@ -14,7 +15,7 @@ namespace dh {
 //                     QtDisplaySink Implementation
 // ==========================================================================
 
-QtDisplaySink::QtDisplaySink(const SinkMeta &meta, cudaStream_t stream)
+QtDisplaySink::QtDisplaySink(const SinkMeta &meta, CudaStreamRef stream)
     : Sink(meta, stream), frame_displayed_(true),
       last_display_time_(std::chrono::steady_clock::now()) {}
 
@@ -23,7 +24,7 @@ tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
 
   // Throttle to 30 fps: skip frame if less than ~33ms since last display.
   auto now = std::chrono::steady_clock::now();
-  if (now - last_display_time_ < std::chrono::milliseconds(33)) {
+  if (now - last_display_time_ < std::chrono::milliseconds(1000 / 120)) {
     // Too soon: drop this frame.
     holovibes_logger()->trace("Skipping frame to maintain 30fps");
     return {};
@@ -33,18 +34,25 @@ tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
 
   auto host = make_unique_host_ptr<uint8_t>(itens.size_in_bytes());
   DH_CHECK(cudaMemcpyAsync(host.get(), itens.data(), itens.size_in_bytes(),
-                           cudaMemcpyDeviceToHost, stream_) == cudaSuccess);
+                           cudaMemcpyDeviceToHost,
+                           stream_.stream()) == cudaSuccess);
 
-  DH_CHECK(cudaStreamSynchronize(stream_) == cudaSuccess);
+  stream_.synchronize();
   TensorMeta host_meta(itens.data_type(), MemoryLocation::HOST,
                        {itens.shape().at(1), itens.shape().at(2)});
   TensorView host_view(host.get(), host_meta);
   emit frame_ready(host_view);
 
-  // Wait for frame to be displayed.
+  auto startTime = std::chrono::steady_clock::now();
   while (!frame_displayed_) {
     std::this_thread::yield();
+    auto elapsed = std::chrono::steady_clock::now() - startTime;
+    if (elapsed > std::chrono::milliseconds(100)) {
+      holovibes_logger()->warn("Timeout waiting for frame to be displayed.");
+      break;
+    }
   }
+
   last_display_time_ = std::chrono::steady_clock::now();
   holovibes_logger()->trace("FINISHED");
   return {};
@@ -96,7 +104,7 @@ QtDisplaySinkFactory::type_check(const TensorMeta &imeta, const json &) {
 
 tl::expected<std::unique_ptr<Sink>, Error>
 QtDisplaySinkFactory::create(const TensorMeta &imeta, const json &jparams,
-                             cudaStream_t stream) {
+                             CudaStreamRef stream) {
   auto meta_result = type_check(imeta, jparams);
   if (!meta_result) {
     holovibes_logger()->warn("type check failed");

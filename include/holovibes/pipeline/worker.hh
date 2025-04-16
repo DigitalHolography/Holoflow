@@ -1,0 +1,73 @@
+#pragma once
+
+#include <QObject>
+#include <optional>
+
+#include "holoflow/v3/model/compiler.hh"
+#include "holoflow/v3/model/descriptor.hh"
+#include "holoflow/v3/model/model.hh"
+#include "holoflow/v3/model/runner.hh"
+#include "holovibes/pipeline/settings.hh"
+#include "holovibes/ui/tensor_display_widget.hh"
+
+namespace holovibes::pipeline {
+
+class Worker : public QObject {
+  Q_OBJECT
+
+public:
+  explicit Worker(dh::TensorDisplayWidget *display_widget,
+                  QObject *parent = nullptr);
+
+  void set_settings(const Settings &settings);
+
+public slots:
+  void start();
+  void stop();
+  void update();
+
+signals:
+  void start_success();
+  void start_failure();
+  void stop_success();
+  void stop_failure();
+  void update_success();
+  void update_failure();
+
+private:
+  void build_desc_graph();
+
+  holoflow::model::DescriptorVertex add_node(const std::string &id,
+                                             const std::string &type,
+                                             const nlohmann::json &config);
+
+  holoflow::model::DescriptorVertex add_source_node();
+  holoflow::model::DescriptorVertex add_input_queue_node();
+  holoflow::model::DescriptorVertex add_convert_input_node();
+  holoflow::model::DescriptorVertex add_space_transform_node();
+  holoflow::model::DescriptorVertex add_time_accumulator_node();
+  holoflow::model::DescriptorVertex add_time_transform_node();
+  holoflow::model::DescriptorVertex add_convert_postprocess_node();
+  holoflow::model::DescriptorVertex add_p_frame_avg_node();
+  holoflow::model::DescriptorVertex add_fft_shift_node();
+  holoflow::model::DescriptorVertex add_image_avg_accumulator_node();
+  holoflow::model::DescriptorVertex add_percentile_clip_node();
+  holoflow::model::DescriptorVertex add_convert_output_node();
+  holoflow::model::DescriptorVertex add_processed_output_queue_node();
+  holoflow::model::DescriptorVertex add_processed_display_sink_node();
+
+  // External widgets
+  dh::TensorDisplayWidget *display_widget_;
+
+  // Settings
+  std::optional<Settings> settings_;
+
+  // Pipeline components
+  holoflow::model::ModelCompiler compiler_;
+  holoflow::model::DescriptorGraph desc_graph_;
+  std::unordered_map<std::string, holoflow::model::DescriptorVertex> nodes_;
+  std::optional<holoflow::model::Model> model_;
+  std::unique_ptr<holoflow::model::Runner> runner_;
+};
+
+} // namespace holovibes::pipeline

@@ -24,7 +24,7 @@ public:
   friend class FresnelDiffractionTaskFactory;
 
 private:
-  FresnelDiffractionTask(const TaskMeta &meta, cudaStream_t stream,
+  FresnelDiffractionTask(const TaskMeta &meta, CudaStreamRef stream,
                          float lambda, float z, float pixel_size,
                          bool skip_phase_shift,
                          unique_device_ptr<cuFloatComplex> lens,
@@ -41,10 +41,11 @@ private:
 class FresnelDiffractionTaskFactory : public TaskFactory {
 public:
   tl::expected<TaskMeta, Error> type_check(const TensorMeta &imeta,
-                                           const json &params);
+                                           const json &params) override;
 
   tl::expected<std::unique_ptr<Task>, Error>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream);
+  create(const TensorMeta &imeta, const json &params,
+         CudaStreamRef stream) override;
 
 private:
   struct Params {

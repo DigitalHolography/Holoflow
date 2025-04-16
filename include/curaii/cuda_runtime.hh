@@ -2,6 +2,7 @@
 
 #include <cuda_runtime.h>
 #include <fmt/base.h>
+#include <stdexcept>
 #include <tl/expected.hpp>
 
 namespace dh {
@@ -18,6 +19,16 @@ private:
   cudaError_t error_;
 };
 
+class CudaException : public std::runtime_error {
+public:
+  explicit CudaException(const CudaError &error);
+
+  const CudaError &error() const noexcept;
+
+private:
+  CudaError error_;
+};
+
 class CudaStreamFlags {
 public:
   explicit CudaStreamFlags(unsigned int flags) noexcept;
@@ -32,8 +43,7 @@ class CudaStreamRef {
 public:
   static CudaStreamRef from_raw(cudaStream_t stream) noexcept;
 
-  [[nodiscard]]
-  tl::expected<void, CudaError> try_synchronize() const noexcept;
+  void synchronize() const;
 
   cudaStream_t stream() const noexcept;
 
@@ -50,16 +60,14 @@ public:
   CudaStream(const CudaStream &) = delete;
   CudaStream &operator=(const CudaStream &) = delete;
 
-  CudaStream(CudaStream &&other) noexcept;
-  CudaStream &operator=(CudaStream &&) noexcept;
+  CudaStream(CudaStream &&other);
+  CudaStream &operator=(CudaStream &&);
 
-  ~CudaStream() noexcept;
+  ~CudaStream();
 
-  [[nodiscard]]
-  static tl::expected<CudaStream, CudaError> try_create() noexcept;
+  static CudaStream create();
 
-  [[nodiscard]]
-  tl::expected<void, CudaError> try_synchronize() const noexcept;
+  void synchronize() const;
 
   CudaStreamRef ref() noexcept;
 
@@ -85,3 +93,9 @@ struct fmt::formatter<dh::CudaStreamFlags> : formatter<string_view> {
   auto format(dh::CudaStreamFlags flags, format_context &ctx) const
       -> format_context::iterator;
 };
+
+namespace curaii::cuda {
+
+void peek_at_last_error();
+
+}

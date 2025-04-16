@@ -18,16 +18,11 @@ SinkMeta::SinkMeta(const TensorMeta &imeta) : imeta_(imeta) {
 
 const TensorMeta &SinkMeta::imeta() const { return imeta_; }
 
-std::ostream &operator<<(std::ostream &os, const SinkMeta &meta) {
-  os << "SinkMeta(input=" << meta.imeta() << ")";
-  return os;
-}
-
 // ==========================================================================
 //                     Sink Implementation
 // ==========================================================================
 
-Sink::Sink(const SinkMeta &meta, cudaStream_t stream)
+Sink::Sink(const SinkMeta &meta, CudaStreamRef stream)
     : meta_(meta), stream_(stream) {}
 
 const SinkMeta &Sink::meta() const { return meta_; }

@@ -2,11 +2,12 @@ add_library(holoflow STATIC
   tensor.cc
   task.cc
   accumulator.cc
-  model_descriptor.cc
-  model.cc
-  model_builder.cc
   source.cc
   sink.cc
+  v3/model/compiler.cc
+  v3/model/model.cc
+  v3/model/descriptor.cc
+  v3/model/runner.cc
 )
 
 set_common_target_properties(holoflow)
@@ -26,4 +27,5 @@ target_link_libraries(holoflow PUBLIC
     cudart
     tl::expected
     spdlog::spdlog
+    Boost::graph
 )

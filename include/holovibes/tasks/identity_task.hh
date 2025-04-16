@@ -20,16 +20,17 @@ public:
   friend class IdentityTaskFactory;
 
 private:
-  IdentityTask(const TaskMeta &meta, cudaStream_t stream);
+  IdentityTask(const TaskMeta &meta, CudaStreamRef stream);
 };
 
 class IdentityTaskFactory : public TaskFactory {
 public:
   tl::expected<TaskMeta, Error> type_check(const TensorMeta &imeta,
-                                           const json &params);
+                                           const json &params) override;
 
   tl::expected<std::unique_ptr<Task>, Error>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream);
+  create(const TensorMeta &imeta, const json &params,
+         CudaStreamRef stream) override;
 };
 
 } // namespace dh

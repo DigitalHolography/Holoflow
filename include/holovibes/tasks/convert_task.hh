@@ -24,7 +24,7 @@ public:
     CF32_F32_ARGU
   };
 
-  ConvertTask(const TaskMeta &meta, cudaStream_t stream, Conversion conv,
+  ConvertTask(const TaskMeta &meta, CudaStreamRef stream, Conversion conv,
               size_t min_temp_storage_bytes,
               unique_device_ptr<uint8_t> d_min_temp_storage,
               unique_device_ptr<uint8_t> d_min, size_t max_temp_storage_bytes,
@@ -46,10 +46,11 @@ private:
 class ConvertTaskFactory : public TaskFactory {
 public:
   tl::expected<TaskMeta, Error> type_check(const TensorMeta &imeta,
-                                           const json &params);
+                                           const json &params) override;
 
   tl::expected<std::unique_ptr<Task>, Error>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream);
+  create(const TensorMeta &imeta, const json &params,
+         CudaStreamRef stream) override;
 
 private:
   struct Params {

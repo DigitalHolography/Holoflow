@@ -1,5 +1,6 @@
 #include "holovibes/ui/tensor_display_widget.hh"
 
+#include <QCoreApplication>
 #include <QImage>
 #include <QLabel>
 #include <QPixmap>
@@ -69,7 +70,7 @@ void TensorDisplayWidget::show_tensor(TensorView tens) {
                                        Qt::SmoothTransformation);
   image_->setPixmap(scaledPixmap);
 
-  holovibes_logger()->trace("frame displayed");
+  // holovibes_logger()->info("frame displayed");
   emit frame_displayed();
 }
 

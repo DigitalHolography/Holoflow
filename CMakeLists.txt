@@ -18,6 +18,7 @@ find_package(tl-expected CONFIG REQUIRED)
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(spdlog REQUIRED)
+find_package(Boost REQUIRED COMPONENTS graph)
 
 qt_standard_project_setup()
 
