@@ -3,6 +3,8 @@
 #include <atomic>
 #include <boost/graph/depth_first_search.hpp>
 #include <chrono>
+#include <fmt/core.h>
+#include <nvtx3/nvToolsExt.h>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -32,7 +34,6 @@ void Runner::stop() {
   }
 
   stop_.store(true);
-  // thread_.join();
   thread_.detach();
 
   if (!running_.exchange(false)) {
@@ -270,19 +271,26 @@ void Runner::run() {
 
   for (auto &pes_root : model_.pes_roots_) {
     threads.emplace_back([this, &pes_root]() {
+      auto &name = model_.graph_[pes_root].descriptor_.id;
       while (!stop_.load()) {
         auto &node = model_.graph_[pes_root];
         dh::holoflow_logger()->debug("[Runner::run] Executing pes root {}",
                                      node.descriptor_.id);
 
+        nvtxRangePush(fmt::format("[PES::{}] allocate", name).c_str());
         allocate_pes(pes_root);
+        node.common_.stream_->synchronize();
+        nvtxRangePop();
+
+        nvtxRangePush(fmt::format("[PES::{}] exec", name).c_str());
         exec_pes(pes_root);
-
         node.common_.stream_->synchronize();
+        nvtxRangePop();
 
+        nvtxRangePush(fmt::format("[PES::{}] free", name).c_str());
         free_pes(pes_root);
-
         node.common_.stream_->synchronize();
+        nvtxRangePop();
       }
     });
   }

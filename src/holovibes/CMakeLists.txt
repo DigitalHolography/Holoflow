@@ -7,6 +7,7 @@ qt_add_executable(holovibes
   ui/import_widget.cc
   ui/export_widget.cc
   pipeline/manager.cc
+  pipeline/worker.cc
   accumulators/batched_spsc_accumulator.cc
   accumulators/sliding_average_accumulator.cu
   sources/holofile_source.cc
@@ -30,6 +31,7 @@ qt_add_executable(holovibes
   ${PROJECT_SOURCE_DIR}/include/holovibes/ui/import_widget.hh
   ${PROJECT_SOURCE_DIR}/include/holovibes/ui/export_widget.hh
   ${PROJECT_SOURCE_DIR}/include/holovibes/pipeline/manager.hh
+  ${PROJECT_SOURCE_DIR}/include/holovibes/pipeline/worker.hh
 )
 
 set_common_target_properties(holovibes)
