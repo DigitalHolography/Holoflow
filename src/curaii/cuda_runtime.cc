@@ -534,7 +534,6 @@ dh::CudaStream &dh::CudaStream::operator=(CudaStream &&other) {
 
 dh::CudaStream::~CudaStream() {
   if (stream_) {
-    curaii_logger()->info("deleting stream {}", (void *)stream_);
     synchronize();
     CUDA_LOG_ERROR(cudaStreamDestroy(stream_));
   }

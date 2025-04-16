@@ -1,5 +1,6 @@
 #include "holovibes/sinks/qt_display_sink.hh"
 
+#include <QCoreApplication>
 #include <cassert>
 #include <cstdlib>
 #include <spdlog/spdlog.h>
@@ -42,10 +43,16 @@ tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
   TensorView host_view(host.get(), host_meta);
   emit frame_ready(host_view);
 
-  // Wait for frame to be displayed.
+  auto startTime = std::chrono::steady_clock::now();
   while (!frame_displayed_) {
     std::this_thread::yield();
+    auto elapsed = std::chrono::steady_clock::now() - startTime;
+    if (elapsed > std::chrono::milliseconds(100)) {
+      holovibes_logger()->warn("Timeout waiting for frame to be displayed.");
+      break;
+    }
   }
+
   last_display_time_ = std::chrono::steady_clock::now();
   holovibes_logger()->trace("FINISHED");
   return {};

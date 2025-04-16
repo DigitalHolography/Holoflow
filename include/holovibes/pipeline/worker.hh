@@ -24,12 +24,15 @@ public:
 public slots:
   void start();
   void stop();
+  void update();
 
 signals:
   void start_success();
   void start_failure();
   void stop_success();
   void stop_failure();
+  void update_success();
+  void update_failure();
 
 private:
   void build_desc_graph();

@@ -34,7 +34,7 @@ void Runner::stop() {
   }
 
   stop_.store(true);
-  thread_.detach();
+  thread_.join();
 
   if (!running_.exchange(false)) {
     throw std::runtime_error("Runner is not running");
@@ -272,6 +272,7 @@ void Runner::run() {
   for (auto &pes_root : model_.pes_roots_) {
     threads.emplace_back([this, &pes_root]() {
       auto &name = model_.graph_[pes_root].descriptor_.id;
+      dh::holoflow_logger()->debug("[Runner::run] PES \"{}\" started", name);
       while (!stop_.load()) {
         auto &node = model_.graph_[pes_root];
         dh::holoflow_logger()->debug("[Runner::run] Executing pes root {}",
@@ -292,6 +293,8 @@ void Runner::run() {
         node.common_.stream_->synchronize();
         nvtxRangePop();
       }
+
+      dh::holoflow_logger()->debug("[Runner::run] PES \"{}\" stopped", name);
     });
   }
 

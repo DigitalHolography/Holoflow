@@ -70,7 +70,7 @@ void TensorDisplayWidget::show_tensor(TensorView tens) {
                                        Qt::SmoothTransformation);
   image_->setPixmap(scaledPixmap);
 
-  holovibes_logger()->trace("frame displayed");
+  // holovibes_logger()->info("frame displayed");
   emit frame_displayed();
 }
 

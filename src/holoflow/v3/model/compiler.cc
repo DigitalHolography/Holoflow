@@ -828,14 +828,14 @@ void ModelCompiler::allocate_non_accumulator_tensor_slots() {
 
     switch (slot.meta.memory_location()) {
     case dh::MemoryLocation::HOST:
-      dh::holoflow_logger()->info("allocation tens_id: {} on host", id);
+      dh::holoflow_logger()->debug("allocation tens_id: {} on host", id);
       slot.host_data =
           dh::make_unique_host_ptr<uint8_t>(slot.meta.size_in_bytes());
       slot.device_data.reset();
       slot.data = slot.host_data.get();
       break;
     case dh::MemoryLocation::DEVICE:
-      dh::holoflow_logger()->info("allocation tens_id: {} on device", id);
+      dh::holoflow_logger()->debug("allocation tens_id: {} on device", id);
       slot.device_data =
           dh::make_unique_device_ptr<uint8_t>(slot.meta.size_in_bytes());
       slot.host_data.reset();

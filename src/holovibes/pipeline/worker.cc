@@ -100,6 +100,48 @@ void Worker::stop() {
   emit stop_success();
 }
 
+void Worker::update() {
+  dh::holovibes_logger()->info("[Worker::update] update received");
+  if (!runner_) {
+    dh::holovibes_logger()->error("[Worker::update] Runner not active");
+    emit update_failure();
+    return;
+  }
+
+  runner_->stop();
+  dh::holovibes_logger()->info("[Worker::update] Pipeline stopped");
+
+  if (!settings_) {
+    dh::holovibes_logger()->error("[Worker::update] No settings provided");
+    emit update_failure();
+    return;
+  }
+
+  // Build the descriptor graph using settings.
+  build_desc_graph();
+  dh::holovibes_logger()->info("[Worker::update] descriptor graph built");
+
+  // Compile the pipeline.
+  model_ = std::nullopt;
+  model_ = std::move(compiler_.compile(desc_graph_));
+  if (!model_) {
+    dh::holovibes_logger()->error(
+        "[Worker::update] Pipeline compilation failed");
+    emit update_failure();
+    return;
+  }
+
+  dh::holovibes_logger()->info("[Worker::update] model compiled");
+
+  // Create and start the runner.
+  runner_ = std::make_unique<holoflow::model::Runner>(*model_);
+  runner_->start();
+
+  dh::holovibes_logger()->info(
+      "[Worker::update] Pipeline started successfully");
+  emit update_success();
+}
+
 void Worker::build_desc_graph() {
   DH_CHECK(settings_);
   const auto &s = *settings_;
@@ -169,8 +211,8 @@ void Worker::build_desc_graph() {
         dot_file, desc_graph_,
         holoflow::model::DescriptorNodePropertyWriter(desc_graph_),
         holoflow::model::DescriptorEdgePropertyWriter());
-    std::cout << "DOT file 'pipeline_graph.dot' created successfully."
-              << std::endl;
+    dh::holovibes_logger()->debug(
+        "DOT file 'pipeline_graph.dot' created successfully.");
   }
 }
 

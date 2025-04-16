@@ -1,6 +1,7 @@
 #include "holovibes/ui/main_window.hh"
 
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QFileDialog>
 #include <QGridLayout>
@@ -48,15 +49,17 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   main_layout->addLayout(left_panel_layout);
 
   setWindowTitle("Holovibes");
-  resize(1000, 600);
+  this->adjustSize();
+  this->setFixedSize(this->minimumSizeHint());
 
   display_widget_ = new dh::TensorDisplayWidget(800, 800, this);
   display_widget_->show();
-  pipeline_worker_ = new pipeline::Worker(display_widget_, this);
+  pipeline_worker_ = new pipeline::Worker(display_widget_);
   pipeline_worker_thread_ = new QThread(this);
   pipeline_worker_->moveToThread(pipeline_worker_thread_);
 
   setup_validation_connections();
+  setup_update_connections();
 
   connect(pipeline_worker_, &pipeline::Worker::start_success, this,
           [this]() { import_stop_button_->setEnabled(true); });
@@ -74,12 +77,35 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     import_stop_button_->setEnabled(false);
   });
 
+  connect(pipeline_worker_, &pipeline::Worker::update_success, this, [this]() {
+    update_in_progress_ = false;
+    import_stop_button_->setEnabled(true);
+  });
+
+  connect(pipeline_worker_, &pipeline::Worker::update_failure, this, [this]() {
+    update_in_progress_ = false;
+    import_start_button_->setEnabled(true);
+  });
+
   pipeline_worker_thread_->start();
 
   connect(import_start_button_, &QPushButton::clicked, this,
           &MainWindow::on_import_start_clicked);
   connect(import_stop_button_, &QPushButton::clicked, this,
           &MainWindow::on_import_stop_clicked);
+}
+
+void MainWindow::closeEvent(QCloseEvent *event) {
+  if (pipeline_worker_ && import_stop_button_->isEnabled()) {
+    on_import_stop_clicked();
+  }
+
+  if (pipeline_worker_thread_) {
+    pipeline_worker_thread_->quit();
+    pipeline_worker_thread_->wait();
+  }
+
+  QMainWindow::closeEvent(event);
 }
 
 void MainWindow::on_import_start_clicked() {
@@ -126,6 +152,33 @@ bool MainWindow::validate_inputs() {
     render_time_window_spin_->setStyleSheet("");
     view_z_spin_->setStyleSheet("");
     view_width_spin_->setStyleSheet("");
+  }
+
+  int start_frame = import_start_index_spin_->value();
+  int end_frame = import_end_index_spin_->value();
+  if (end_frame <= start_frame) {
+    import_start_index_spin_->setStyleSheet(
+        "background-color: rgba(255, 0, 0, 50);");
+    import_end_index_spin_->setStyleSheet(
+        "background-color: rgba(255, 0, 0, 50);");
+    return false;
+  } else {
+    import_start_index_spin_->setStyleSheet("");
+    import_end_index_spin_->setStyleSheet("");
+  }
+
+  if (time_stride > end_frame - start_frame) {
+    import_start_index_spin_->setStyleSheet(
+        "background-color: rgba(255, 0, 0, 50);");
+    import_end_index_spin_->setStyleSheet(
+        "background-color: rgba(255, 0, 0, 50);");
+    render_time_stride_spin_->setStyleSheet(
+        "background-color: rgba(255, 0, 0, 50);");
+    return false;
+  } else {
+    import_start_index_spin_->setStyleSheet("");
+    import_end_index_spin_->setStyleSheet("");
+    render_time_stride_spin_->setStyleSheet("");
   }
 
   return true;
@@ -233,6 +286,130 @@ void MainWindow::setup_validation_connections() {
           &MainWindow::validate_inputs);
   connect(view_renormalize_check_, &QCheckBox::toggled, this,
           &MainWindow::validate_inputs);
+}
+
+void MainWindow::setup_update_connections() {
+  // --- Import Group Connections ---
+  connect(import_file_line_edit_, &QLineEdit::editingFinished, this,
+          &MainWindow::update_if_running);
+  connect(import_browse_button_, &QPushButton::clicked, this,
+          &MainWindow::update_if_running);
+  connect(import_start_button_, &QPushButton::clicked, this,
+          &MainWindow::update_if_running);
+  connect(import_stop_button_, &QPushButton::clicked, this,
+          &MainWindow::update_if_running);
+  connect(import_fps_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &MainWindow::update_if_running);
+  connect(import_start_index_spin_, qOverload<int>(&QSpinBox::valueChanged),
+          this, &MainWindow::update_if_running);
+  connect(import_end_index_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &MainWindow::update_if_running);
+  connect(import_load_method_combo_,
+          qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &MainWindow::update_if_running);
+
+  // --- Export Group Connections ---
+  connect(export_image_type_combo_,
+          qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &MainWindow::update_if_running);
+  connect(export_file_line_edit_, &QLineEdit::editingFinished, this,
+          &MainWindow::update_if_running);
+  connect(export_browse_button_, &QPushButton::clicked, this,
+          &MainWindow::update_if_running);
+  connect(export_tag_combo_, qOverload<int>(&QComboBox::currentIndexChanged),
+          this, &MainWindow::update_if_running);
+  connect(export_frames_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+  connect(export_frames_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &MainWindow::update_if_running);
+  connect(export_record_button_, &QPushButton::clicked, this,
+          &MainWindow::update_if_running);
+  connect(export_stop_button_, &QPushButton::clicked, this,
+          &MainWindow::update_if_running);
+  connect(export_stop_fan_button_, &QPushButton::clicked, this,
+          &MainWindow::update_if_running);
+
+  // --- Image Rendering Group Connections ---
+  connect(render_image_combo_, qOverload<int>(&QComboBox::currentIndexChanged),
+          this, &MainWindow::update_if_running);
+  connect(render_batch_size_spin_, qOverload<int>(&QSpinBox::valueChanged),
+          this, &MainWindow::update_if_running);
+  connect(render_time_stride_spin_, qOverload<int>(&QSpinBox::valueChanged),
+          this, &MainWindow::update_if_running);
+  connect(render_filter_2d_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+  connect(render_space_transform_combo_,
+          qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &MainWindow::update_if_running);
+  connect(render_time_transform_combo_,
+          qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &MainWindow::update_if_running);
+  connect(render_time_window_spin_, qOverload<int>(&QSpinBox::valueChanged),
+          this, &MainWindow::update_if_running);
+  connect(render_lambda_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &MainWindow::update_if_running);
+  connect(render_boundary_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &MainWindow::update_if_running);
+  connect(render_focus_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &MainWindow::update_if_running);
+  connect(render_focus_slider_, &QSlider::valueChanged, this,
+          &MainWindow::update_if_running);
+  connect(render_convolution_combo_,
+          qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &MainWindow::update_if_running);
+  connect(render_convolution_divide_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+
+  // --- View Group Connections ---
+  connect(view_image_type_combo_,
+          qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &MainWindow::update_if_running);
+  connect(view_cuts_3d_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+  connect(view_fft_shift_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+  connect(view_lens_view_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+  connect(view_raw_view_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+  connect(view_z_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &MainWindow::update_if_running);
+  connect(view_width_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &MainWindow::update_if_running);
+  connect(view_kind_combo_, qOverload<int>(&QComboBox::currentIndexChanged),
+          this, &MainWindow::update_if_running);
+  connect(view_accumulation_spin_, qOverload<int>(&QSpinBox::valueChanged),
+          this, &MainWindow::update_if_running);
+  connect(view_auto_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+  connect(view_invert_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+  connect(view_range_start_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &MainWindow::update_if_running);
+  connect(view_range_end_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &MainWindow::update_if_running);
+  connect(view_renormalize_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+}
+
+void MainWindow::update_if_running() {
+  if (!pipeline_worker_ || !import_stop_button_->isEnabled()) {
+    return;
+  }
+
+  if (update_in_progress_) {
+    return;
+  }
+
+  if (!validate_inputs())
+    return;
+
+  update_in_progress_ = true;
+
+  holovibes::pipeline::Settings settings = get_pipeline_settings();
+  pipeline_worker_->set_settings(settings);
+  import_start_button_->setEnabled(false);
+  QMetaObject::invokeMethod(pipeline_worker_, "update", Qt::QueuedConnection);
 }
 
 holovibes::pipeline::Settings MainWindow::get_pipeline_settings() {

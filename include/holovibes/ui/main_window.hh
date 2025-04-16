@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QCheckBox>
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QGroupBox>
 #include <QLineEdit>
@@ -22,6 +23,9 @@ public:
   explicit MainWindow(QWidget *parent = nullptr);
   ~MainWindow() override = default;
 
+protected:
+  void closeEvent(QCloseEvent *event) override;
+
 private slots:
   void on_import_start_clicked();
   void on_import_stop_clicked();
@@ -30,8 +34,14 @@ private:
   bool validate_inputs();
 
   void setup_validation_connections();
+  void setup_update_connections();
+
+  void update_if_running();
 
   holovibes::pipeline::Settings get_pipeline_settings();
+
+  // Current state
+  bool update_in_progress_ = false;
 
   // Workers
   pipeline::Worker *pipeline_worker_;
