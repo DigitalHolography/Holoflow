@@ -92,6 +92,9 @@ struct Settings {
   size_t view_contrast_low;
   size_t view_contrast_high;
   bool view_renormalize;
+  float view_lower_percentile_;
+  float view_upper_percentile_;
+  float view_reticule_radius_;
 };
 
 } // namespace holovibes::pipeline

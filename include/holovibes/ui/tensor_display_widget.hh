@@ -15,6 +15,9 @@ public:
   explicit TensorDisplayWidget(int width, int height,
                                QWidget *parent = nullptr);
 
+  void set_display_reticle(bool on);
+  void set_reticle_radius(double r);
+
 public slots:
   void show_tensor(TensorView tens);
 
@@ -25,6 +28,9 @@ private:
   int width_;
   int height_;
   QLabel *image_;
+
+  bool display_reticle_;
+  double reticle_radius_;
 };
 
 } // namespace dh

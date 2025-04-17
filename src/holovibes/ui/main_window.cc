@@ -61,6 +61,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   setup_validation_connections();
   setup_update_connections();
 
+  connect(view_reticle_check_, &QCheckBox::toggled, display_widget_,
+          &dh::TensorDisplayWidget::set_display_reticle);
+
+  connect(view_reticle_radius_,
+          qOverload<double>(&QDoubleSpinBox::valueChanged), display_widget_,
+          &dh::TensorDisplayWidget::set_reticle_radius);
+
   connect(pipeline_worker_, &pipeline::Worker::start_success, this,
           [this]() { import_stop_button_->setEnabled(true); });
 
@@ -286,6 +293,11 @@ void MainWindow::setup_validation_connections() {
           &MainWindow::validate_inputs);
   connect(view_renormalize_check_, &QCheckBox::toggled, this,
           &MainWindow::validate_inputs);
+  connect(view_reticle_check_, &QCheckBox::toggled, this,
+          &MainWindow::validate_inputs);
+  connect(view_reticle_radius_,
+          qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+          &MainWindow::validate_inputs);
 }
 
 void MainWindow::setup_update_connections() {
@@ -389,6 +401,11 @@ void MainWindow::setup_update_connections() {
   connect(view_range_end_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &MainWindow::update_if_running);
   connect(view_renormalize_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+  connect(view_reticle_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+  connect(view_reticle_radius_,
+          qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           &MainWindow::update_if_running);
 }
 
@@ -522,6 +539,9 @@ holovibes::pipeline::Settings MainWindow::get_pipeline_settings() {
   s.view_contrast_low = static_cast<size_t>(view_range_start_spin_->value());
   s.view_contrast_high = static_cast<size_t>(view_range_end_spin_->value());
   s.view_renormalize = view_renormalize_check_->isChecked();
+  s.view_lower_percentile_ = 0.2f;
+  s.view_upper_percentile_ = 99.8f;
+  s.view_reticule_radius_ = view_reticle_radius_->value();
 
   return s;
 }
@@ -836,9 +856,18 @@ QGroupBox *MainWindow::create_view_group() {
   range_layout->addWidget(view_range_end_spin_, 0, 2);
   bright_layout->addLayout(range_layout, 1, 0, 1, 2);
 
+  view_reticle_check_ = new QCheckBox("Display reticle", brightness_group);
+  bright_layout->addWidget(view_reticle_check_, 2, 0);
+  view_reticle_radius_ = new QDoubleSpinBox(brightness_group);
+  view_reticle_radius_->setRange(0.05, 1.0);
+  view_reticle_radius_->setSingleStep(0.05);
+  view_reticle_radius_->setDecimals(2);
+  view_reticle_radius_->setValue(1.0);
+  bright_layout->addWidget(view_reticle_radius_, 2, 1);
+
   view_renormalize_check_ =
       new QCheckBox("Renormalize image levels", brightness_group);
-  bright_layout->addWidget(view_renormalize_check_, 2, 0, 1, 2);
+  bright_layout->addWidget(view_renormalize_check_, 3, 0, 1, 2);
   layout->addWidget(brightness_group, 6, 0, 1, 2);
 
   // Spacer

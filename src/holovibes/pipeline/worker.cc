@@ -382,9 +382,12 @@ holoflow::model::DescriptorVertex Worker::add_image_avg_accumulator_node() {
 }
 
 holoflow::model::DescriptorVertex Worker::add_percentile_clip_node() {
+  DH_CHECK(settings_);
+  const auto &s = *settings_;
   json config;
-  config["lower_percentile"] = 0.1f;
-  config["upper_percentile"] = 99.9f;
+  config["lower_percentile"] = s.view_lower_percentile_;
+  config["upper_percentile"] = s.view_upper_percentile_;
+  config["radius"] = s.view_reticule_radius_;
   return add_node("percentile_clip", "PercentileClip", config);
 }
 

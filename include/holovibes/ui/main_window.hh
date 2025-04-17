@@ -3,6 +3,7 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QLineEdit>
 #include <QMainWindow>
@@ -107,6 +108,8 @@ private:
   QSpinBox *view_range_start_spin_;
   QSpinBox *view_range_end_spin_;
   QCheckBox *view_renormalize_check_;
+  QCheckBox *view_reticle_check_;
+  QDoubleSpinBox *view_reticle_radius_;
 };
 
 } // namespace holovibes::ui
