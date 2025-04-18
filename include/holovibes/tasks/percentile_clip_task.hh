@@ -5,11 +5,12 @@
 #include <nlohmann/json.hpp>
 #include <tl/expected.hpp>
 
-#include "curaii/curaii.hh"
+#include "curaii/v2/cuda.hh"
 #include "holoflow/error.hh"
 #include "holoflow/task.hh"
 
 using json = nlohmann::json;
+using curaii::cuda::unique_device_ptr;
 
 namespace dh {
 

@@ -10,6 +10,8 @@
 #include "curaii/cuda_runtime.hh"
 #include "holovibes/holovibes.hh"
 
+using curaii::cuda::make_unique_device_ptr;
+
 namespace dh {
 
 // ==========================================================================
@@ -60,43 +62,46 @@ tl::expected<void, Error> PercentileClipTask::run(TensorView input,
   float *d_out = static_cast<float *>(output.data()); // clip result
 
   // 2) Filter ellipse ROI pixels
-  cub::DeviceSelect::Flagged(d_select_tmp_.get(), // d_temp_storage
-                             select_tmp_bytes_,   // temp_storage_byts
-                             d_in,                // d_in
-                             d_roi_mask_.get(),   // d_flags
-                             d_roi_values_.get(), // d_out
-                             d_roi_count_.get(),  // d_num_selected
-                             total_px,            // num_items
-                             stream_.stream());   // stream
+  CUDA_CHECK(cub::DeviceSelect::Flagged(d_select_tmp_.get(), // d_temp_storage
+                                        select_tmp_bytes_, // temp_storage_byts
+                                        d_in,              // d_in
+                                        d_roi_mask_.get(), // d_flags
+                                        d_roi_values_.get(), // d_out
+                                        d_roi_count_.get(),  // d_num_selected
+                                        total_px,            // num_items
+                                        stream_.stream()));  // stream
 
   // 3) Fetch how many pixels we kept
   int roi_px = 0;
-  cudaMemcpyAsync(&roi_px, d_roi_count_.get(), sizeof(int),
-                  cudaMemcpyDeviceToHost, stream_.stream());
-  cudaStreamSynchronize(stream_.stream());
+  CUDA_CHECK(cudaMemcpyAsync(&roi_px, d_roi_count_.get(), sizeof(int),
+                             cudaMemcpyDeviceToHost, stream_.stream()));
+  CUDA_CHECK(cudaStreamSynchronize(stream_.stream()));
 
   if (roi_px == 0)
     return tl::unexpected(Error::INTERNAL_ERROR);
 
   // 4) Sort ROI values to d_out (will be overwritten later)
-  cub::DeviceRadixSort::SortKeys(d_sort_tmp_.get(),   // d_temp_storage
-                                 sort_tmp_bytes_,     // temp_storage_bytes
-                                 d_roi_values_.get(), // d_keys_in
-                                 d_out,               // d_keys_out
-                                 roi_px,              // num_items
-                                 0,                   // begin_bit
-                                 sizeof(float) * 8,   // end_bit
-                                 stream_.stream());   // stream
+  CUDA_CHECK(
+      cub::DeviceRadixSort::SortKeys(d_sort_tmp_.get(),   // d_temp_storage
+                                     sort_tmp_bytes_,     // temp_storage_bytes
+                                     d_roi_values_.get(), // d_keys_in
+                                     d_out,               // d_keys_out
+                                     roi_px,              // num_items
+                                     0,                   // begin_bit
+                                     sizeof(float) * 8,   // end_bit
+                                     stream_.stream()));  // stream
 
   // 5) Percentile indices inside ROI
   const int idx_low = static_cast<int>(roi_px * (pct_low_ / 100.f));
   const int idx_high = static_cast<int>(roi_px * (pct_high_ / 100.f));
 
   // 6) Copy thresholds
-  cudaMemcpyAsync(d_lower_thresh_.get(), d_out + idx_low, sizeof(float),
-                  cudaMemcpyDeviceToDevice, stream_.stream());
-  cudaMemcpyAsync(d_upper_thresh_.get(), d_out + idx_high, sizeof(float),
-                  cudaMemcpyDeviceToDevice, stream_.stream());
+  CUDA_CHECK(cudaMemcpyAsync(d_lower_thresh_.get(), d_out + idx_low,
+                             sizeof(float), cudaMemcpyDeviceToDevice,
+                             stream_.stream()));
+  CUDA_CHECK(cudaMemcpyAsync(d_upper_thresh_.get(), d_out + idx_high,
+                             sizeof(float), cudaMemcpyDeviceToDevice,
+                             stream_.stream()));
 
   // 7) Clip the frame
   constexpr int block = 256;
@@ -105,6 +110,7 @@ tl::expected<void, Error> PercentileClipTask::run(TensorView input,
   clip_kernel<<<grid, block, 0, stream_.stream()>>>(
       d_in, d_out, total_px, d_lower_thresh_.get(), d_upper_thresh_.get());
 
+  CUDA_CHECK(cudaGetLastError());
   return {};
 }
 
@@ -209,22 +215,24 @@ PercentileClipTaskFactory::create(const TensorMeta &imeta, const json &jparams,
 
   // 2) CUB temp size
   size_t sort_tmp_bytes = 0;
-  cub::DeviceRadixSort::SortKeys(nullptr, sort_tmp_bytes, // d_temp_storage
-                                 static_cast<float *>(nullptr), // d_keys_in
-                                 static_cast<float *>(nullptr), // d_keys_out
-                                 N,                             // num_items
-                                 0,                             // begin_bit
-                                 sizeof(float) * 8,             // end_bit
-                                 stream.stream());              // stream
+  CUDA_CHECK(cub::DeviceRadixSort::SortKeys(
+      nullptr, sort_tmp_bytes,       // d_temp_storage
+      static_cast<float *>(nullptr), // d_keys_in
+      static_cast<float *>(nullptr), // d_keys_out
+      N,                             // num_items
+      0,                             // begin_bit
+      sizeof(float) * 8,             // end_bit
+      stream.stream()));             // stream
 
   size_t select_tmp_bytes = 0;
-  cub::DeviceSelect::Flagged(nullptr, select_tmp_bytes,       // d_temp_storage
-                             static_cast<float *>(nullptr),   // d_in
-                             static_cast<uint8_t *>(nullptr), // d_flags
-                             static_cast<float *>(nullptr),   // d_out
-                             static_cast<int *>(nullptr),     // d_num_selected
-                             N,                               // num_items
-                             stream.stream());                // stream
+  CUDA_CHECK(
+      cub::DeviceSelect::Flagged(nullptr, select_tmp_bytes, // d_temp_storage
+                                 static_cast<float *>(nullptr),   // d_in
+                                 static_cast<uint8_t *>(nullptr), // d_flags
+                                 static_cast<float *>(nullptr),   // d_out
+                                 static_cast<int *>(nullptr), // d_num_selected
+                                 N,                           // num_items
+                                 stream.stream()));           // stream
 
   // 3) Allocations
   auto d_sort_tmp =
@@ -255,6 +263,7 @@ PercentileClipTaskFactory::create(const TensorMeta &imeta, const json &jparams,
       select_tmp_bytes, params.lower_percentile, params.upper_percentile,
       params.radius);
 
+  CUDA_CHECK(cudaPeekAtLastError());
   return std::unique_ptr<PercentileClipTask>(task);
 }
 

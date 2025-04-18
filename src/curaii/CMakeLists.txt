@@ -6,6 +6,8 @@ add_library(curaii STATIC
   cufft.cc
   cublas.cc
   cusolver_dn.cc
+  v2/cuda.cc
+  v2/logger.cc
 )
 
 set_common_target_properties(curaii)
