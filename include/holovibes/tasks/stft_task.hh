@@ -4,7 +4,6 @@
 #include <cuda_runtime.h>
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <tl/expected.hpp>
 
 #include "curaii/cufft.hh"
 #include "curaii/curaii.hh"
@@ -16,7 +15,7 @@ using json = nlohmann::json;
 namespace dh {
 
 class STFTTask : public Task {
-  tl::expected<void, Error> run(TensorView input, TensorView output) override;
+  void run(TensorView input, TensorView output) override;
 
   friend class STFTTaskFactory;
 
@@ -27,12 +26,10 @@ private:
 };
 
 class STFTTaskFactory : public TaskFactory {
-  tl::expected<TaskMeta, Error> type_check(const TensorMeta &imeta,
-                                           const json &params) override;
+  TaskMeta type_check(const TensorMeta &imeta, const json &params) override;
 
-  tl::expected<std::unique_ptr<Task>, Error>
-  create(const TensorMeta &imeta, const json &params,
-         CudaStreamRef stream) override;
+  std::unique_ptr<Task> create(const TensorMeta &imeta, const json &params,
+                               CudaStreamRef stream) override;
 };
 
 } // namespace dh

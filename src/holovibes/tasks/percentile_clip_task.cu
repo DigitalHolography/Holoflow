@@ -54,8 +54,7 @@ PercentileClipTask::PercentileClipTask(const TaskMeta &meta,
       sort_tmp_bytes_(sort_tmp_bytes), select_tmp_bytes_(select_tmp_bytes),
       pct_low_(pct_low), pct_high_(pct_high), roi_radius_(roi_radius) {}
 
-tl::expected<void, Error> PercentileClipTask::run(TensorView input,
-                                                  TensorView output) {
+void PercentileClipTask::run(TensorView input, TensorView output) {
   // 1) Aliases
   const size_t total_px = input.size();
   float *d_in = static_cast<float *>(input.data());   // full frame
@@ -77,8 +76,9 @@ tl::expected<void, Error> PercentileClipTask::run(TensorView input,
                              cudaMemcpyDeviceToHost, stream_.stream()));
   CUDA_CHECK(cudaStreamSynchronize(stream_.stream()));
 
-  if (roi_px == 0)
-    return tl::unexpected(Error::INTERNAL_ERROR);
+  if (roi_px == 0) {
+    throw std::runtime_error("roi_x == 0");
+  }
 
   // 4) Sort ROI values to d_out (will be overwritten later)
   CUDA_CHECK(
@@ -111,7 +111,6 @@ tl::expected<void, Error> PercentileClipTask::run(TensorView input,
       d_in, d_out, total_px, d_lower_thresh_.get(), d_upper_thresh_.get());
 
   CUDA_CHECK(cudaGetLastError());
-  return {};
 }
 
 // ==========================================================================
@@ -152,61 +151,42 @@ __global__ void ellipse_mask_kernel(uint8_t *flagged, int width, int height,
 
 } // namespace
 
-tl::expected<TaskMeta, Error>
-PercentileClipTaskFactory::type_check(const TensorMeta &imeta,
-                                      const json &jparams) {
-  try {
-    // 0) Unpack parameters
-    const Params params = jparams.get<Params>();
+TaskMeta PercentileClipTaskFactory::type_check(const TensorMeta &imeta,
+                                               const json &jparams) {
+  // 0) Unpack parameters
+  const Params params = jparams.get<Params>();
 
-    const auto check = [&](bool cond, std::string_view what) {
-      if (!cond) {
-        throw std::runtime_error(std::string(what));
-      }
-    };
+  const auto check = [&](bool cond, std::string_view what) {
+    if (!cond) {
+      throw std::invalid_argument(std::string(what));
+    }
+  };
 
-    // 1) Parameter sanity
-    check(params.lower_percentile >= 0.0f && params.lower_percentile <= 100.0f,
-          "lower_percentile out of [0,100]");
+  // 1) Parameter sanity
+  check(params.lower_percentile >= 0.0f && params.lower_percentile <= 100.0f,
+        "lower_percentile out of [0,100]");
+  check(params.upper_percentile >= 0.0f && params.upper_percentile <= 100.0f,
+        "upper_percentile out of [0,100]");
+  check(params.lower_percentile < params.upper_percentile,
+        "lower_percentile >= upper_percentile");
+  check(params.radius >= 0.0f && params.radius <= 1.0f, "radius out of [0,1]");
 
-    check(params.upper_percentile >= 0.0f && params.upper_percentile <= 100.0f,
-          "upper_percentile out of [0,100]");
+  // 2) Tensor meta sanity
+  check(imeta.shape().size() == 3, "tensor rank != 3");
+  check(imeta.data_type() == DataType::F32, "tensor data_type != F32");
+  check(imeta.memory_location() == MemoryLocation::DEVICE,
+        "tensor not in DEVICE memory");
 
-    check(params.lower_percentile < params.upper_percentile,
-          "lower_percentile >= upper_percentile");
-
-    check(params.radius >= 0.0f && params.radius <= 1.0f,
-          "radius out of [0,1]");
-
-    // 2) Tensor meta sanity
-    check(imeta.shape().size() == 3, "tensor rank != 3");
-
-    check(imeta.memory_location() == MemoryLocation::DEVICE,
-          "tensor not in DEVICE memory");
-
-    check(imeta.data_type() == DataType::F32, "tensor data_type != F32");
-
-    // 3) Success
-    return TaskMeta(imeta, imeta, false);
-  }
-
-  catch (const std::exception &e) {
-    holovibes_logger()->warn("[PercentileClipTaskFactory::type_check] {}",
-                             e.what());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  // 3) Success
+  return TaskMeta(imeta, imeta, false);
 }
 
-tl::expected<std::unique_ptr<Task>, Error>
-PercentileClipTaskFactory::create(const TensorMeta &imeta, const json &jparams,
-                                  CudaStreamRef stream) {
+std::unique_ptr<Task> PercentileClipTaskFactory::create(const TensorMeta &imeta,
+                                                        const json &jparams,
+                                                        CudaStreamRef stream) {
   // 1) Validate
-  auto meta_result = type_check(imeta, jparams);
-  if (!meta_result)
-    return tl::unexpected(meta_result.error());
-
-  const auto meta = meta_result.value();
-  const auto params = jparams.get<Params>();
+  auto meta = type_check(imeta, jparams);
+  auto params = jparams.get<Params>();
 
   const int B = static_cast<int>(imeta.shape()[0]);
   const int H = static_cast<int>(imeta.shape()[1]);

@@ -7,6 +7,8 @@
 #include <numeric>
 #include <spdlog/spdlog.h>
 
+#include "bug_buster/bug_buster.hh"
+#include "curaii/v2/cuda.hh"
 #include "holovibes/holovibes.hh"
 
 namespace dh {
@@ -101,8 +103,7 @@ __global__ void cf32_f32_argu_kernel(const cuFloatComplex *idata, float *odata,
 
 } // namespace
 
-tl::expected<void, Error> ConvertTask::run(TensorView input,
-                                           TensorView output) {
+void ConvertTask::run(TensorView input, TensorView output) {
   void *d_min = d_min_.get();
   void *d_max = d_max_.get();
   void *idata = input.data();
@@ -124,24 +125,28 @@ tl::expected<void, Error> ConvertTask::run(TensorView input,
     break;
 
   case Conversion::F32_U8_SCALED:
-    cub::DeviceReduce::Min(d_min_temp_storage_.get(), min_temp_storage_bytes_,
-                           static_cast<float *>(idata),
-                           static_cast<float *>(d_min), size, stream_.stream());
-    cub::DeviceReduce::Max(d_max_temp_storage_.get(), max_temp_storage_bytes_,
-                           static_cast<float *>(idata),
-                           static_cast<float *>(d_max), size, stream_.stream());
+    CUDA_CHECK(cub::DeviceReduce::Min(
+        d_min_temp_storage_.get(), min_temp_storage_bytes_,
+        static_cast<float *>(idata), static_cast<float *>(d_min), size,
+        stream_.stream()));
+    CUDA_CHECK(cub::DeviceReduce::Max(
+        d_max_temp_storage_.get(), max_temp_storage_bytes_,
+        static_cast<float *>(idata), static_cast<float *>(d_max), size,
+        stream_.stream()));
     f32_u8_scaled_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
         static_cast<float *>(idata), static_cast<uint8_t *>(odata), size,
         static_cast<float *>(d_min), static_cast<float *>(d_max));
     break;
 
   case Conversion::F32_U16_SCALED:
-    cub::DeviceReduce::Min(d_min_temp_storage_.get(), min_temp_storage_bytes_,
-                           static_cast<float *>(idata),
-                           static_cast<float *>(d_min), size, stream_.stream());
-    cub::DeviceReduce::Max(d_max_temp_storage_.get(), max_temp_storage_bytes_,
-                           static_cast<float *>(idata),
-                           static_cast<float *>(d_max), size, stream_.stream());
+    CUDA_CHECK(cub::DeviceReduce::Min(
+        d_min_temp_storage_.get(), min_temp_storage_bytes_,
+        static_cast<float *>(idata), static_cast<float *>(d_min), size,
+        stream_.stream()));
+    CUDA_CHECK(cub::DeviceReduce::Max(
+        d_max_temp_storage_.get(), max_temp_storage_bytes_,
+        static_cast<float *>(idata), static_cast<float *>(d_max), size,
+        stream_.stream()));
     f32_u16_scaled_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
         static_cast<float *>(idata), static_cast<uint16_t *>(odata), size,
         static_cast<float *>(d_min), static_cast<float *>(d_max));
@@ -160,31 +165,52 @@ tl::expected<void, Error> ConvertTask::run(TensorView input,
     break;
 
   default:
-    holovibes_logger()->critical("unreachable code reached!");
-    std::exit(EXIT_FAILURE);
+    DH_BUG("unreachable statement reached");
   }
 
-  if (auto result = cudaPeekAtLastError(); result != cudaSuccess) {
-    holovibes_logger()->warn("cuda error: {}", cudaGetErrorString(result));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  return {};
+  CUDA_CHECK(cudaPeekAtLastError());
 }
 
 // ==========================================================================
 //                     ConvertTaskFactory Implementation
 // ==========================================================================
 
-tl::expected<TaskMeta, Error>
-ConvertTaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
-  auto params = jparams.get<Params>();
+TaskMeta ConvertTaskFactory::type_check(const TensorMeta &imeta,
+                                        const json &jparams) {
+  // 0) Unpack parameters
+  const Params params = jparams.get<Params>();
 
-  if (imeta.memory_location() != MemoryLocation::DEVICE) {
-    holovibes_logger()->warn("Invalid memory location: {}",
-                             (int)imeta.memory_location());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  const auto check = [&](bool cond, std::string_view what) {
+    if (!cond) {
+      throw std::invalid_argument(std::string(what));
+    }
+  };
+
+  // 1) Parameter sanity
+  check(params.conversion == "U8_CF32_REAL" ||
+            params.conversion == "U16_CF32_REAL" ||
+            params.conversion == "F32_U8_SCALED" ||
+            params.conversion == "F32_U16_SCALED" ||
+            params.conversion == "CF32_F32_MODU" ||
+            params.conversion == "CF32_F32_ARGU",
+        "conservion invalid");
+
+  // 2) Tensor meta sanity
+  check(imeta.memory_location() == MemoryLocation::DEVICE,
+        "tensor not in DEVICE memory");
+
+  check((params.conversion == "U8_CF32_REAL" &&
+         imeta.data_type() == DataType::U8) ||
+            (params.conversion == "U16_CF32_REAL" &&
+             imeta.data_type() == DataType::U16) ||
+            (params.conversion == "F32_U8_SCALED" &&
+             imeta.data_type() == DataType::F32) ||
+            (params.conversion == "F32_U16_SCALED" &&
+             imeta.data_type() == DataType::F32) ||
+            ((params.conversion == "CF32_F32_MODU" ||
+              params.conversion == "CF32_F32_ARGU") &&
+             imeta.data_type() == DataType::CF32),
+        "invalid conversion for tensor datatype");
 
   DataType data_type;
   if (params.conversion == "U8_CF32_REAL" ||
@@ -198,42 +224,21 @@ ConvertTaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
              params.conversion == "CF32_F32_ARGU") {
     data_type = DataType::F32;
   } else {
-    holovibes_logger()->warn("Invalid conversion: {}", params.conversion);
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  if ((params.conversion == "U8_CF32_REAL" &&
-       imeta.data_type() != DataType::U8) ||
-      (params.conversion == "U16_CF32_REAL" &&
-       imeta.data_type() != DataType::U16) ||
-      (params.conversion == "F32_U8_SCALED" &&
-       imeta.data_type() != DataType::F32) ||
-      (params.conversion == "F32_U16_SCALED" &&
-       imeta.data_type() != DataType::F32) ||
-      ((params.conversion == "CF32_F32_MODU" ||
-        params.conversion == "CF32_F32_ARGU") &&
-       imeta.data_type() != DataType::CF32)) {
-    holovibes_logger()->warn("Invalid conversion: {} for: {}",
-                             params.conversion, (int)imeta.data_type());
-    return tl::unexpected(Error::INTERNAL_ERROR);
+    DH_BUG("unreachable statement reached");
   }
 
   TensorMeta ometa(data_type, MemoryLocation::DEVICE, imeta.shape());
   return TaskMeta(imeta, ometa, false);
 }
 
-tl::expected<std::unique_ptr<Task>, Error>
-ConvertTaskFactory::create(const TensorMeta &imeta, const json &jparams,
-                           CudaStreamRef stream) {
-  auto meta_result = type_check(imeta, jparams);
-  if (!meta_result) {
-    holovibes_logger()->warn("type check failed");
-    return tl::unexpected(meta_result.error());
-  }
-
-  auto meta = meta_result.value();
+std::unique_ptr<Task> ConvertTaskFactory::create(const TensorMeta &imeta,
+                                                 const json &jparams,
+                                                 CudaStreamRef stream) {
+  // 1) Validate
+  auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
 
+  // 2) Extract conversion
   ConvertTask::Conversion conversion;
   if (params.conversion == "U8_CF32_REAL") {
     conversion = ConvertTask::Conversion::U8_CF32_REAL;
@@ -248,8 +253,7 @@ ConvertTaskFactory::create(const TensorMeta &imeta, const json &jparams,
   } else if (params.conversion == "CF32_F32_ARGU") {
     conversion = ConvertTask::Conversion::CF32_F32_ARGU;
   } else {
-    holovibes_logger()->critical("unreachable code reached!");
-    std::exit(EXIT_FAILURE);
+    DH_BUG("unreachable statement reached");
   }
 
   size_t min_temp_storage_bytes = 0;
@@ -260,17 +264,18 @@ ConvertTaskFactory::create(const TensorMeta &imeta, const json &jparams,
   unique_device_ptr<uint8_t> d_max_temp_storage = nullptr;
   unique_device_ptr<uint8_t> d_max = nullptr;
 
+  // 3) CUB temp storage
   if (conversion == ConvertTask::Conversion::F32_U8_SCALED ||
       conversion == ConvertTask::Conversion::F32_U16_SCALED) {
-    cub::DeviceReduce::Min(d_min_temp_storage.get(), min_temp_storage_bytes,
-                           static_cast<float *>(nullptr),
-                           static_cast<float *>(nullptr), imeta.size(),
-                           stream.stream());
+    CUDA_CHECK(cub::DeviceReduce::Min(
+        d_min_temp_storage.get(), min_temp_storage_bytes,
+        static_cast<float *>(nullptr), static_cast<float *>(nullptr),
+        imeta.size(), stream.stream()));
 
-    cub::DeviceReduce::Max(d_max_temp_storage.get(), max_temp_storage_bytes,
-                           static_cast<float *>(nullptr),
-                           static_cast<float *>(nullptr), imeta.size(),
-                           stream.stream());
+    CUDA_CHECK(cub::DeviceReduce::Max(
+        d_max_temp_storage.get(), max_temp_storage_bytes,
+        static_cast<float *>(nullptr), static_cast<float *>(nullptr),
+        imeta.size(), stream.stream()));
 
     d_min_temp_storage = make_unique_device_ptr<uint8_t>(min_temp_storage_bytes,
                                                          stream.stream());
@@ -280,6 +285,7 @@ ConvertTaskFactory::create(const TensorMeta &imeta, const json &jparams,
     d_max = make_unique_device_ptr<uint8_t>(sizeof(float), stream.stream());
   }
 
+  // 6) Assemble task
   auto *task = new ConvertTask(meta, stream, conversion, min_temp_storage_bytes,
                                std::move(d_min_temp_storage), std::move(d_min),
                                max_temp_storage_bytes,

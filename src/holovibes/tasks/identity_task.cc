@@ -1,5 +1,6 @@
 #include "holovibes/tasks/identity_task.hh"
 
+#include "curaii/v2/cuda.hh"
 #include "holovibes/holovibes.hh"
 
 namespace dh {
@@ -7,29 +8,23 @@ namespace dh {
 IdentityTask::IdentityTask(const TaskMeta &meta, CudaStreamRef stream)
     : Task(meta, stream) {}
 
-tl::expected<void, Error> IdentityTask::run(TensorView input,
-                                            TensorView output) {
-  cudaMemcpyAsync(output.data(), input.data(), input.size_in_bytes(),
-                  cudaMemcpyDeviceToDevice, stream_.stream());
-  return {};
+void IdentityTask::run(TensorView input, TensorView output) {
+  CUDA_CHECK(cudaMemcpyAsync(output.data(), input.data(), input.size_in_bytes(),
+                             cudaMemcpyDeviceToDevice, stream_.stream()));
 }
 
-tl::expected<TaskMeta, Error>
-IdentityTaskFactory::type_check(const TensorMeta &imeta, const json &) {
+TaskMeta IdentityTaskFactory::type_check(const TensorMeta &imeta,
+                                         const json &) {
   return TaskMeta(imeta, imeta, false);
 }
 
-tl::expected<std::unique_ptr<Task>, Error>
-IdentityTaskFactory::create(const TensorMeta &imeta, const json &jparams,
-                            CudaStreamRef stream) {
+std::unique_ptr<Task> IdentityTaskFactory::create(const TensorMeta &imeta,
+                                                  const json &jparams,
+                                                  CudaStreamRef stream) {
+  // 1) Validate
+  auto meta = type_check(imeta, jparams);
 
-  auto meta_result = type_check(imeta, jparams);
-  if (!meta_result) {
-    holovibes_logger()->warn("type check failed");
-    return tl::unexpected(meta_result.error());
-  }
-  auto meta = meta_result.value();
-
+  // 2) Assemble task
   auto *task = new IdentityTask(meta, stream);
   return std::unique_ptr<IdentityTask>(task);
 }

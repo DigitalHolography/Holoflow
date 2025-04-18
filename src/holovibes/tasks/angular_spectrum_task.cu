@@ -8,6 +8,7 @@
 #include <numeric>
 #include <spdlog/spdlog.h>
 
+#include "curaii/v2/cuda.hh"
 #include "holovibes/holovibes.hh"
 
 namespace dh {
@@ -41,38 +42,34 @@ AngularSpectrumTask::AngularSpectrumTask(const TaskMeta &meta,
     : Task(meta, stream), lambda_(lambda), z_(z), pixel_size_(pixel_size),
       lens_(std::move(lens)), handle_(std::move(handle)) {}
 
-tl::expected<void, Error> AngularSpectrumTask::run(TensorView input,
-                                                   TensorView output) {
+void AngularSpectrumTask::run(TensorView input, TensorView output) {
+  // 1) Aliase
   auto idata = (cuFloatComplex *)input.data();
   auto odata = (cuFloatComplex *)output.data();
-  int batch_size = input.meta().shape().at(0);
-  int lens_size = input.meta().size() / batch_size;
+  int B = input.meta().shape().at(0);
+  int frame_size = input.meta().size() / B;
 
   if (auto result =
           handle_.try_xt_exec(idata, odata, CufftDirection(CUFFT_FORWARD));
       !result) {
-    dh::holovibes_logger()->warn("[AngularSpectrumTask::run] Fourier "
-                                 "transform failed with error: \"{}\"",
-                                 result.error());
-    return tl::unexpected(Error::INTERNAL_ERROR);
+    throw std::runtime_error(fmt::format("[AngularSpectrumTask::run] Fourier "
+                                         "transform failed with error: \"{}\"",
+                                         result.error()));
   }
 
   dim3 block_size = 256;
-  dim3 grid_size = (lens_size + block_size.x - 1) / block_size.x;
+  dim3 grid_size = (frame_size + block_size.x - 1) / block_size.x;
 
   apply_lens_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
-      idata, odata, lens_.get(), lens_size, batch_size);
+      idata, odata, lens_.get(), frame_size, B);
 
   if (auto result =
           handle_.try_xt_exec(idata, odata, CufftDirection(CUFFT_INVERSE));
       !result) {
-    dh::holovibes_logger()->warn("[AngularSpectrumTask::run] Fourier "
-                                 "transform failed with error: \"{}\"",
-                                 result.error());
-    return tl::unexpected(Error::INTERNAL_ERROR);
+    throw std::runtime_error(fmt::format("[AngularSpectrumTask::run] Fourier "
+                                         "transform failed with error: \"{}\"",
+                                         result.error()));
   }
-
-  return {};
 }
 
 // ==========================================================================
@@ -140,128 +137,91 @@ __global__ void swap_corners_kernel(cuFloatComplex *in, cuFloatComplex *out,
 
 } // namespace
 
-tl::expected<TaskMeta, Error>
-AngularSpectrumTaskFactory::type_check(const TensorMeta &imeta,
-                                       const json &jparams) {
-  auto params = jparams.get<Params>();
+TaskMeta AngularSpectrumTaskFactory::type_check(const TensorMeta &imeta,
+                                                const json &jparams) {
+  // 0) Unpack parameters
+  const Params params = jparams.get<Params>();
 
-  if (imeta.memory_location() != MemoryLocation::DEVICE) {
-    holovibes_logger()->warn(
-        "[AngularSpectrumTaskFactory::type_check] Invalid memory location: {}",
-        (int)imeta.memory_location());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  const auto check = [&](bool cond, std::string_view what) {
+    if (!cond) {
+      throw std::invalid_argument(std::string(what));
+    }
+  };
 
-  if (imeta.data_type() != DataType::CF32) {
-    holovibes_logger()->warn(
-        "[AngularSpectrumTaskFactory::type_check] Invalid data type: {}",
-        (int)imeta.data_type());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  // 1) Parameter sanity
+  check(params.lambda > 0, "lambda <= 0");
+  check(params.pixel_size > 0, "pixel_size <= 0");
+  check(params.z > 0, "z <= 0");
 
-  if (imeta.shape().size() != 3) {
-    holovibes_logger()->warn(
-        "[AngularSpectrumTaskFactory::type_check] Invalid rank: {}",
-        (int)imeta.shape().size());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  if (params.lambda <= 0) {
-    holovibes_logger()->warn(
-        "[AngularSpectrumTaskFactory::type_check] Invalid lambda: {}",
-        params.lambda);
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  if (params.pixel_size <= 0) {
-    holovibes_logger()->warn(
-        "[AngularSpectrumTaskFactory::type_check] Invalid pixel_size: {}",
-        params.pixel_size);
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  if (params.z <= 0) {
-    holovibes_logger()->warn(
-        "[AngularSpectrumTaskFactory::type_check] Invalid z: {}", params.z);
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  // 2) Tensor meta sanity
+  check(imeta.shape().size() == 3, "tensor rank != 3");
+  check(imeta.data_type() == DataType::CF32, "tensor data_type != CF32");
+  check(imeta.memory_location() == MemoryLocation::DEVICE,
+        "tensor not in DEVICE memory");
 
   return TaskMeta(imeta, imeta, true);
 }
 
-tl::expected<std::unique_ptr<Task>, Error>
+std::unique_ptr<Task>
 AngularSpectrumTaskFactory::create(const TensorMeta &imeta, const json &jparams,
                                    CudaStreamRef stream) {
-  auto meta_result = type_check(imeta, jparams);
-  if (!meta_result) {
-    holovibes_logger()->warn(
-        "[AngularSpectrumTaskFactory::create] type check failed");
-    return tl::unexpected(meta_result.error());
-  }
-
-  auto meta = meta_result.value();
+  // 1) Validate
+  auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
 
-  int batch = imeta.shape().at(0);
-  int height = imeta.shape().at(1);
-  int width = imeta.shape().at(2);
+  const int B = static_cast<int>(imeta.shape()[0]);
+  const int H = static_cast<int>(imeta.shape()[1]);
+  const int W = static_cast<int>(imeta.shape()[2]);
 
-  // Initialize lens
-  auto d_lens_result = try_make_unique_device_ptr<cuFloatComplex>(
-      imeta.size_in_bytes() / batch, stream.stream());
-  if (!d_lens_result) {
-    holovibes_logger()->warn(
-        "[AngularSpectrumTaskFactory::create] Cuda error: {}",
-        cudaGetErrorString(d_lens_result.error()));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-  auto d_lens = std::move(d_lens_result.value());
+  // 2) Buffer sizes
+  const int frame_size = imeta.size_in_bytes() / B;
 
+  // 3) Allocations
+  auto d_lens =
+      make_unique_device_ptr<cuFloatComplex>(frame_size, stream.stream());
+
+  // 4) Compute lens
   dim3 block_size(16, 16);
-  dim3 grid_size((width + block_size.x - 1) / block_size.x,
-                 (height + block_size.y - 1) / block_size.y);
+  dim3 grid_size((W + block_size.x - 1) / block_size.x,
+                 (H + block_size.y - 1) / block_size.y);
 
   spectral_lens_kernel<<<grid_size, block_size, 0, stream.stream()>>>(
-      d_lens.get(), width, height, params.lambda, params.z, params.pixel_size);
+      d_lens.get(), W, H, params.lambda, params.z, params.pixel_size);
 
   swap_corners_kernel<<<grid_size, block_size, 0, stream.stream()>>>(
-      d_lens.get(), d_lens.get(), width, height, 1);
+      d_lens.get(), d_lens.get(), W, H, 1);
 
-  if (auto result = cudaPeekAtLastError(); result != cudaSuccess) {
-    holovibes_logger()->warn(
-        "[AngularSpectrumTaskFactory::create] Cuda error: {}",
-        cudaGetErrorString(result));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  CUDA_CHECK(cudaPeekAtLastError());
 
-  // Initialize cufft plan
+  // 5) Initialize cufft plan
   int rank = 2;
-  long long int n[2] = {height, width};
-  long long int inembed[2] = {height, width};
+  long long int n[2] = {H, W};
+  long long int inembed[2] = {H, W};
   int istride = 1;
-  int idist = height * width;
+  int idist = H * W;
   CudaDataType inputtype(CUDA_C_32F);
-  long long int onembed[2] = {height, width};
+  long long int onembed[2] = {H, W};
   int ostride = 1;
-  int odist = height * width;
+  int odist = H * W;
   CudaDataType outputtype(CUDA_C_32F);
+  int batch = B;
   CudaDataType executiontype(CUDA_C_32F);
 
   auto plan_result = CufftHandle::try_create();
   if (!plan_result) {
-    holovibes_logger()->warn("[AngularSpectrumTaskFactory::create] Fourrier "
-                             "transform creation failed with error: \"{}\"",
-                             plan_result.error());
-    return tl::unexpected(Error::INTERNAL_ERROR);
+    throw std::runtime_error(
+        fmt::format("[AngularSpectrumTaskFactory::create] Fourrier transform "
+                    "creation failed with error: \"{}\"",
+                    plan_result.error()));
   }
   auto handle = std::move(plan_result.value());
 
   auto stream_result = handle.try_set_stream(stream);
   if (!stream_result) {
-    holovibes_logger()->warn("[AngularSpectrumTaskFactory::create] Fourrier "
-                             "transform creation failed with error: \"{}\"",
-                             stream_result.error());
-    return tl::unexpected(Error::INTERNAL_ERROR);
+    throw std::runtime_error(
+        fmt::format("[AngularSpectrumTaskFactory::create] Fourrier transform "
+                    "creation failed with error: \"{}\"",
+                    stream_result.error()));
   }
 
   size_t work_size = 0;
@@ -269,22 +229,23 @@ AngularSpectrumTaskFactory::create(const TensorMeta &imeta, const json &jparams,
           rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
           outputtype, batch, &work_size, executiontype);
       !result) {
-    holovibes_logger()->warn("[AngularSpectrumTaskFactory::create] Fourrier "
-                             "transform creation failed with error: \"{}\"",
-                             result.error());
-    return tl::unexpected(Error::INTERNAL_ERROR);
+    throw std::runtime_error(
+        fmt::format("[AngularSpectrumTaskFactory::create] Fourrier transform "
+                    "creation failed with error: \"{}\"",
+                    result.error()));
   }
 
   if (auto result = handle.try_xt_make_plan_many(
           rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
           outputtype, batch, &work_size, executiontype);
       !result) {
-    holovibes_logger()->warn("[AngularSpectrumTaskFactory::create] Fourrier "
-                             "transform creation failed with error: \"{}\"",
-                             result.error());
-    return tl::unexpected(Error::INTERNAL_ERROR);
+    throw std::runtime_error(
+        fmt::format("[AngularSpectrumTaskFactory::create] Fourrier transform "
+                    "creation failed with error: \"{}\"",
+                    result.error()));
   }
 
+  // 6) Assemble task
   auto *task = new AngularSpectrumTask(meta, stream, params.lambda, params.z,
                                        params.pixel_size, std::move(d_lens),
                                        std::move(handle));

@@ -3,7 +3,6 @@
 #include <cuda_runtime.h>
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <tl/expected.hpp>
 
 #include "curaii/cuda_runtime.hh"
 #include "holoflow/error.hh"
@@ -86,7 +85,7 @@ public:
    * @param otens The output tensor view.
    * @return A tl::expected indicating success or an error.
    */
-  virtual tl::expected<void, Error> run(TensorView itens, TensorView otens) = 0;
+  virtual void run(TensorView itens, TensorView otens) = 0;
 
   /**
    * @brief Returns the metadata associated with the task.
@@ -147,8 +146,7 @@ public:
    * @param params Additional parameters in JSON format.
    * @return A tl::expected containing the produced TaskMeta or an error.
    */
-  virtual tl::expected<TaskMeta, Error> type_check(const TensorMeta &imeta,
-                                                   const json &params) = 0;
+  virtual TaskMeta type_check(const TensorMeta &imeta, const json &params) = 0;
 
   /**
    * @brief Creates a task instance with the given parameters.
@@ -160,7 +158,7 @@ public:
    * @note The stream is not owned by the task and must be kept alive until the
    * task is destroyed.
    */
-  virtual tl::expected<std::unique_ptr<Task>, Error>
+  virtual std::unique_ptr<Task>
   create(const TensorMeta &imeta, const json &params, CudaStreamRef stream) = 0;
 };
 

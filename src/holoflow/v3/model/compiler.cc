@@ -318,7 +318,7 @@ struct TypeCheckingDFSVisitor : public boost::default_dfs_visitor {
       DH_CHECK(task_factories_.contains(node.descriptor_.type));
       auto factory = task_factories_.at(node.descriptor_.type).get();
       auto imeta = imeta_stack_.top();
-      auto meta = factory->type_check(imeta, node.descriptor_.config).value();
+      auto meta = factory->type_check(imeta, node.descriptor_.config);
       std::get<TaskProperties>(node.type_specific_).task_meta_ = meta;
       imeta_stack_.push(meta.ometa());
     } else if (node.kind_ == NodeKind::Accumulator) {
@@ -732,7 +732,7 @@ void ModelCompiler::call_factories() {
       auto imeta = std::get<TaskProperties>(node_properties.type_specific_)
                        .task_meta_->imeta();
       auto factory = task_factories_.at(type).get();
-      auto task = factory->create(imeta, config, stream).value();
+      auto task = factory->create(imeta, config, stream);
       std::get<TaskProperties>(node_properties.type_specific_).task_ =
           task.get();
       model_.tasks_.push_back(std::move(task));

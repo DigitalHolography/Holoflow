@@ -16,7 +16,7 @@ namespace dh {
 
 class PercentileClipTask : public Task {
 public:
-  tl::expected<void, Error> run(TensorView input, TensorView output) override;
+  void run(TensorView input, TensorView output) override;
 
   friend class PercentileClipTaskFactory;
 
@@ -54,12 +54,10 @@ private:
 
 class PercentileClipTaskFactory : public TaskFactory {
 public:
-  tl::expected<TaskMeta, Error> type_check(const TensorMeta &imeta,
-                                           const json &params) override;
+  TaskMeta type_check(const TensorMeta &imeta, const json &params) override;
 
-  tl::expected<std::unique_ptr<Task>, Error>
-  create(const TensorMeta &imeta, const json &params,
-         CudaStreamRef stream) override;
+  std::unique_ptr<Task> create(const TensorMeta &imeta, const json &params,
+                               CudaStreamRef stream) override;
 
 private:
   struct Params {

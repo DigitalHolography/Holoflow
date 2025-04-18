@@ -3,7 +3,6 @@
 #include <cuda_runtime.h>
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <tl/expected.hpp>
 
 #include "curaii/curaii.hh"
 #include "holoflow/error.hh"
@@ -31,7 +30,7 @@ public:
               unique_device_ptr<uint8_t> d_max_temp_storage,
               unique_device_ptr<uint8_t> d_max);
 
-  tl::expected<void, Error> run(TensorView input, TensorView output) override;
+  void run(TensorView input, TensorView output) override;
 
 private:
   Conversion conversion_;
@@ -45,12 +44,10 @@ private:
 
 class ConvertTaskFactory : public TaskFactory {
 public:
-  tl::expected<TaskMeta, Error> type_check(const TensorMeta &imeta,
-                                           const json &params) override;
+  TaskMeta type_check(const TensorMeta &imeta, const json &params) override;
 
-  tl::expected<std::unique_ptr<Task>, Error>
-  create(const TensorMeta &imeta, const json &params,
-         CudaStreamRef stream) override;
+  std::unique_ptr<Task> create(const TensorMeta &imeta, const json &params,
+                               CudaStreamRef stream) override;
 
 private:
   struct Params {

@@ -2,6 +2,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include "bug_buster/bug_buster.hh"
+#include "curaii/v2/cuda.hh"
 #include "holovibes/holovibes.hh"
 
 namespace dh {
@@ -51,69 +53,57 @@ __global__ void swap_corners_kernel(float *in, float *out, int width,
 FFTShiftTask::FFTShiftTask(const TaskMeta &meta, CudaStreamRef stream)
     : Task(meta, stream) {}
 
-tl::expected<void, Error> FFTShiftTask::run(TensorView input,
-                                            TensorView output) {
+void FFTShiftTask::run(TensorView input, TensorView output) {
+  // 1) Aliases
   auto idata = static_cast<float *>(input.data());
   auto odata = static_cast<float *>(output.data());
+  const int B = input.meta().shape().at(0);
+  const int H = input.meta().shape().at(1);
+  const int W = input.meta().shape().at(2);
+  int W_h = W / 2;
+  int H_h = H / 2;
 
-  int batch_size = input.meta().shape().at(0);
-  int height = input.meta().shape().at(1);
-  int width = input.meta().shape().at(2);
-
-  int width_half = width / 2;
-  int height_half = height / 2;
-
+  // 2) Swap corners
   dim3 block_size(16, 16, 1);
-  dim3 grid_size((width_half + block_size.x - 1) / block_size.x,
-                 (height_half + block_size.y - 1) / block_size.y,
-                 (batch_size + block_size.z - 1) / block_size.z);
+  dim3 grid_size((W_h + block_size.x - 1) / block_size.x,
+                 (H_h + block_size.y - 1) / block_size.y,
+                 (B + block_size.z - 1) / block_size.z);
 
   swap_corners_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
-      idata, odata, width, height, batch_size);
+      idata, odata, W, H, B);
 
-  return {};
+  CUDA_CHECK(cudaPeekAtLastError());
 }
 
 // ==========================================================================
 //                     FresnelDiffractionTaskFactory Implementation
 // ==========================================================================
 
-tl::expected<TaskMeta, Error>
-FFTShiftTaskFactory::type_check(const TensorMeta &imeta, const json &) {
-  if (imeta.memory_location() != MemoryLocation::DEVICE) {
-    holovibes_logger()->warn(
-        "[FFTShiftTaskFactory::type_check] invalid memory location: {}",
-        (int)imeta.memory_location());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+TaskMeta FFTShiftTaskFactory::type_check(const TensorMeta &imeta,
+                                         const json &) {
+  const auto check = [&](bool cond, std::string_view what) {
+    if (!cond) {
+      throw std::invalid_argument(std::string(what));
+    }
+  };
 
-  if (imeta.data_type() != DataType::F32) {
-    holovibes_logger()->warn(
-        "[FFTShiftTaskFactory::type_check] invalid data type: {}",
-        (int)imeta.data_type());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  // 1) Tensor meta sanity
+  check(imeta.shape().size() == 3, "tensor rank != 3");
+  check(imeta.data_type() == DataType::F32, "tensor data_type != F32");
+  check(imeta.memory_location() == MemoryLocation::DEVICE,
+        "tensor not in DEVICE memory");
 
-  if (imeta.shape().size() != 3) {
-    holovibes_logger()->warn(
-        "[FFTShiftTaskFactory::type_check] invalid rank: {}",
-        (int)imeta.shape().size());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
+  // 2) Success
   return TaskMeta(imeta, imeta, true);
 }
 
-tl::expected<std::unique_ptr<Task>, Error>
-FFTShiftTaskFactory::create(const TensorMeta &imeta, const json &jparams,
-                            CudaStreamRef stream) {
-  auto meta_result = type_check(imeta, jparams);
-  if (!meta_result) {
-    holovibes_logger()->warn("[PCATaskFactory::create] type check failed");
-    return tl::unexpected(meta_result.error());
-  }
-  auto meta = meta_result.value();
+std::unique_ptr<Task> FFTShiftTaskFactory::create(const TensorMeta &imeta,
+                                                  const json &jparams,
+                                                  CudaStreamRef stream) {
+  // 1) Validate
+  auto meta = type_check(imeta, jparams);
 
+  // 2) Assemble task
   auto *task = new FFTShiftTask(meta, stream);
   return std::unique_ptr<FFTShiftTask>(task);
 }

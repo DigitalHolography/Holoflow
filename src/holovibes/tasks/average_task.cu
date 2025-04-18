@@ -3,7 +3,9 @@
 #include <cuComplex.h>
 #include <cuda_runtime.h>
 
+#include "bug_buster/bug_buster.hh"
 #include "curaii/cuda_runtime.hh"
+#include "curaii/v2/cuda.hh"
 #include "holovibes/holovibes.hh"
 
 #define UNREACHABLE(msg)                                                       \
@@ -87,8 +89,7 @@ AverageTask::AverageTask(const TaskMeta &meta, CudaStreamRef stream, int begin,
                          int end, Kind kind)
     : Task(meta, stream), begin_(begin), end_(end), kind_(kind) {}
 
-tl::expected<void, Error> AverageTask::run(TensorView input,
-                                           TensorView output) {
+void AverageTask::run(TensorView input, TensorView output) {
   size_t batch = input.meta().shape().at(0);
   off_t offset = begin_ * input.meta().size_in_bytes() / batch;
   void *idata = (uint8_t *)input.data() + offset;
@@ -114,61 +115,36 @@ tl::expected<void, Error> AverageTask::run(TensorView input,
         (cuFloatComplex *)idata, (cuFloatComplex *)odata, nx, ny, nz);
     break;
   default:
-    UNREACHABLE("invalid average task kind");
+    DH_BUG("unreachable statement reached");
   }
 
-  cudaError_t error = cudaPeekAtLastError();
-  if (error != cudaSuccess) {
-    holovibes_logger()->warn("[AverageTask::run] failed with error \"{}\"",
-                             CudaError(error));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  return {};
+  CUDA_CHECK(cudaPeekAtLastError());
 }
 
 // ==========================================================================
 //                     AverageTask Implementation
 // ==========================================================================
 
-tl::expected<TaskMeta, Error>
-AverageTaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
-  auto params = jparams.get<Params>();
+TaskMeta AverageTaskFactory::type_check(const TensorMeta &imeta,
+                                        const json &jparams) {
+  // 0) Unpack parameters
+  const Params params = jparams.get<Params>();
 
-  if (imeta.shape().size() != 3) {
-    holovibes_logger()->warn(
-        "[AverageTaskFactory::type_check] invalid rank \"{}\"",
-        imeta.shape().size());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  const auto check = [&](bool cond, std::string_view what) {
+    if (!cond) {
+      throw std::invalid_argument(std::string(what));
+    }
+  };
 
-  if (imeta.memory_location() != MemoryLocation::DEVICE) {
-    holovibes_logger()->warn(
-        "[AverageTaskFactory::type_check] invalid memory location \"{}\"",
-        (int)imeta.memory_location());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  // 1) Parameter sanity
+  check(params.begin >= 0, "begin < 0");
+  check(params.begin < params.end, "begin >= end");
 
-  if (params.begin < 0) {
-    holovibes_logger()->warn(
-        "[AverageTaskFactory::type_check] invalid param (begin < 0) \"{}\"",
-        params.begin);
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  if (params.begin >= params.end) {
-    holovibes_logger()->warn("[AverageTaskFactory::type_check] invalid param "
-                             "(begin >= end) \"{}\" \"{}\"",
-                             params.begin, params.end);
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  if (params.end > imeta.shape().at(0)) {
-    holovibes_logger()->warn("[AverageTaskFactory::type_check] invalid param "
-                             "(end > input batch size) \"{}\" \"{}\"",
-                             params.end, imeta.shape().at(0));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  // 2) Tensor meta sanity
+  check(imeta.shape().size() == 3, "tensor rank != 3");
+  check(params.end <= imeta.shape().at(0), "end > tensor dim 0");
+  check(imeta.memory_location() == MemoryLocation::DEVICE,
+        "tensor not in DEVICE memory");
 
   switch (imeta.data_type()) {
   case DataType::U8:
@@ -176,27 +152,21 @@ AverageTaskFactory::type_check(const TensorMeta &imeta, const json &jparams) {
   case DataType::CF32:
     break;
   default:
-    holovibes_logger()->warn(
-        "[AverageTaskFactory::type_check] invalid input type \"{}\"",
-        (int)imeta.data_type());
-    return tl::unexpected(Error::INTERNAL_ERROR);
+    throw std::invalid_argument("tensor datatype not in [U8, F32, CF32]");
   }
 
+  // 3) Success
   auto oshape = imeta.shape();
   oshape.at(0) = 1;
   TensorMeta ometa(imeta.data_type(), MemoryLocation::DEVICE, oshape);
   return TaskMeta(imeta, ometa, false);
 }
 
-tl::expected<std::unique_ptr<Task>, Error>
-AverageTaskFactory::create(const TensorMeta &imeta, const json &jparams,
-                           CudaStreamRef stream) {
-  auto meta_result = type_check(imeta, jparams);
-  if (!meta_result) {
-    holovibes_logger()->warn("[AverageTaskFactory::create] type check failed");
-    return tl::unexpected(meta_result.error());
-  }
-  auto meta = meta_result.value();
+std::unique_ptr<Task> AverageTaskFactory::create(const TensorMeta &imeta,
+                                                 const json &jparams,
+                                                 CudaStreamRef stream) {
+  // 1) Validate
+  auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
 
   AverageTask::Kind kind;
@@ -214,6 +184,7 @@ AverageTaskFactory::create(const TensorMeta &imeta, const json &jparams,
     UNREACHABLE("invalid data type was checked before");
   }
 
+  // 6) Assemble task
   auto *task = new AverageTask(meta, stream, params.begin, params.end, kind);
   return std::unique_ptr<AverageTask>(task);
 }

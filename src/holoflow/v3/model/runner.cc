@@ -188,7 +188,7 @@ struct ExecNodeVisitor {
   void operator()(TaskProperties &task) {
     auto itens = tensor_slots_.at(*task.itens_id_).view();
     auto otens = tensor_slots_.at(*task.otens_id_).view();
-    DH_CHECK(task.task_->run(itens, otens));
+    task.task_->run(itens, otens);
   }
   void operator()(AccumulatorProperties &) {}
 
