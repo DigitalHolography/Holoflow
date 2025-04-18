@@ -179,7 +179,7 @@ struct ExecNodeVisitor {
 
   void operator()(SourceProperties &source) {
     auto otens = tensor_slots_.at(*source.otens_id_).view();
-    DH_CHECK(source.source_->run(otens));
+    source.source_->run(otens);
   }
   void operator()(SinkProperties &sink) {
     auto itens = tensor_slots_.at(*sink.itens_id_).view();

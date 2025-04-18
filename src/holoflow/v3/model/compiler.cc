@@ -303,7 +303,7 @@ struct TypeCheckingDFSVisitor : public boost::default_dfs_visitor {
     if (node.kind_ == NodeKind::Source) {
       DH_CHECK(source_factories_.contains(node.descriptor_.type));
       auto factory = source_factories_.at(node.descriptor_.type).get();
-      auto meta = factory->type_check(node.descriptor_.config).value();
+      auto meta = factory->type_check(node.descriptor_.config);
       std::get<SourceProperties>(node.type_specific_).source_meta_ = meta;
       imeta_stack_.push(meta.ometa());
     } else if (node.kind_ == NodeKind::Sink) {
@@ -716,7 +716,7 @@ void ModelCompiler::call_factories() {
     auto stream = *node_properties.common_.stream_;
     if (node_properties.kind_ == NodeKind::Source) {
       auto factory = source_factories_.at(type).get();
-      auto source = factory->create(config, stream).value();
+      auto source = factory->create(config, stream);
       std::get<SourceProperties>(node_properties.type_specific_).source_ =
           source.get();
       model_.sources_.push_back(std::move(source));

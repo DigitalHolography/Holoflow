@@ -3,7 +3,6 @@
 #include <cuda_runtime.h>
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <tl/expected.hpp>
 
 #include "curaii/curaii.hh"
 #include "holofile/holofile.hh"
@@ -18,7 +17,7 @@ class HolofileSource : public Source {
 public:
   ~HolofileSource() = default;
 
-  tl::expected<void, Error> run(TensorView otens) override;
+  void run(TensorView otens) override;
 
   friend class HolofileSourceFactory;
 
@@ -50,10 +49,10 @@ private:
 
 class HolofileSourceFactory : public SourceFactory {
 public:
-  tl::expected<SourceMeta, Error> type_check(const json &params) override;
+  SourceMeta type_check(const json &params) override;
 
-  tl::expected<std::unique_ptr<Source>, Error>
-  create(const json &params, CudaStreamRef stream) override;
+  std::unique_ptr<Source> create(const json &params,
+                                 CudaStreamRef stream) override;
 
 private:
   struct Params {

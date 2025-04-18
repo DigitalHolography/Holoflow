@@ -3,7 +3,6 @@
 #include <cuda_runtime.h>
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <tl/expected.hpp>
 
 #include "curaii/cuda_runtime.hh"
 #include "holoflow/error.hh"
@@ -34,7 +33,7 @@ public:
   Source(Source &&) = delete;
   Source &operator=(Source &&) = delete;
 
-  virtual tl::expected<void, Error> run(TensorView otens) = 0;
+  virtual void run(TensorView otens) = 0;
 
   const SourceMeta &meta() const;
 
@@ -56,10 +55,10 @@ public:
   SourceFactory(SourceFactory &&) = delete;
   SourceFactory &operator=(SourceFactory &&) = delete;
 
-  virtual tl::expected<SourceMeta, Error> type_check(const json &params) = 0;
+  virtual SourceMeta type_check(const json &params) = 0;
 
-  virtual tl::expected<std::unique_ptr<Source>, Error>
-  create(const json &params, CudaStreamRef stream) = 0;
+  virtual std::unique_ptr<Source> create(const json &params,
+                                         CudaStreamRef stream) = 0;
 };
 
 } // namespace dh
