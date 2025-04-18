@@ -46,12 +46,6 @@ AccumulatorMeta::AccumulatorMeta(const TensorMeta &imeta,
 const TensorMeta &AccumulatorMeta::imeta() const { return imeta_; }
 const TensorMeta &AccumulatorMeta::ometa() const { return ometa_; }
 
-std::ostream &operator<<(std::ostream &os, const AccumulatorMeta &meta) {
-  os << "AccumulatorMeta(input=" << meta.imeta() << ", output=" << meta.ometa()
-     << ")";
-  return os;
-}
-
 // ==========================================================================
 //                     Accumulator Implementation
 // ==========================================================================

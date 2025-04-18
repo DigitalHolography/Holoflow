@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "curaii/cuda_runtime.hh"
+#include "curaii/v2/cuda.hh"
 #include "holovibes/holovibes.hh"
 
 namespace dh {
@@ -55,8 +56,7 @@ SlidingAverageAccumulator::SlidingAverageAccumulator(
       avg_idx_(nb_slots_ - window_size_), write_idx_(0),
       read_idx_(nb_slots_ - 1) {}
 
-tl::expected<std::optional<TensorView>, Error>
-SlidingAverageAccumulator::write_tensor() {
+std::optional<TensorView> SlidingAverageAccumulator::write_tensor() {
   if (nb_slots_ - writer_size() == 0) {
     return std::nullopt;
   }
@@ -66,7 +66,7 @@ SlidingAverageAccumulator::write_tensor() {
   return TensorView(data, meta_.imeta());
 }
 
-tl::expected<void, Error> SlidingAverageAccumulator::commit_write() {
+void SlidingAverageAccumulator::commit_write() {
   size_t write_idx = write_idx_.load(std::memory_order_relaxed);
   uint8_t *write_data = d_buffer_.get() + write_idx * element_size_;
 
@@ -88,23 +88,10 @@ tl::expected<void, Error> SlidingAverageAccumulator::commit_write() {
       reinterpret_cast<float *>(avg_data),
       reinterpret_cast<float *>(d_running_avg_.get()), nx, ny, window_size_);
 
-  if (auto error =
-          cudaMemcpyAsync(avg_data, d_running_avg_.get(), element_size_,
-                          cudaMemcpyDeviceToDevice, stream_.stream());
-      error != cudaSuccess) {
-    holovibes_logger()->warn(
-        "[SlidingAverageAccumulator::commit_write] failed with error \"{}\"",
-        CudaError(error));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  CUDA_CHECK(cudaMemcpyAsync(avg_data, d_running_avg_.get(), element_size_,
+                             cudaMemcpyDeviceToDevice, stream_.stream()));
 
-  if (auto error = cudaStreamSynchronize(stream_.stream());
-      error != cudaSuccess) {
-    holovibes_logger()->warn(
-        "[SlidingAverageAccumulator::commit_write] failed with error \"{}\"",
-        CudaError(error));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  CUDA_CHECK(cudaStreamSynchronize(stream_.stream()));
 
   size_t next_avg_idx = avg_idx + 1;
   if (next_avg_idx == nb_slots_)
@@ -117,11 +104,9 @@ tl::expected<void, Error> SlidingAverageAccumulator::commit_write() {
     next_write_idx = 0;
 
   write_idx_.store(next_write_idx, std::memory_order_release);
-  return {};
 }
 
-tl::expected<std::optional<TensorView>, Error>
-SlidingAverageAccumulator::read_tensor() {
+std::optional<TensorView> SlidingAverageAccumulator::read_tensor() {
   if (reader_size() <= window_size_)
     return std::nullopt;
 
@@ -130,14 +115,13 @@ SlidingAverageAccumulator::read_tensor() {
   return TensorView(data, meta_.ometa());
 }
 
-tl::expected<void, Error> SlidingAverageAccumulator::commit_read() {
+void SlidingAverageAccumulator::commit_read() {
   size_t read_idx = read_idx_.load(std::memory_order_relaxed);
   size_t next_read_idx = read_idx + 1;
   if (next_read_idx == nb_slots_)
     next_read_idx = 0;
 
   read_idx_.store(next_read_idx, std::memory_order_release);
-  return {};
 }
 
 size_t SlidingAverageAccumulator::writer_size() {
@@ -166,95 +150,52 @@ size_t SlidingAverageAccumulator::reader_size() {
 //                     SlidingAverageAccumulator Implementation
 // ==========================================================================
 
-tl::expected<AccumulatorMeta, Error>
+AccumulatorMeta
 SlidingAverageAccumulatorFactory::type_check(const TensorMeta &imeta,
                                              const json &jparams) {
-  auto params = jparams.get<Params>();
+  // 0) Unpack parameters
+  const Params params = jparams.get<Params>();
 
-  if (params.window_size == 0) {
-    holovibes_logger()->warn("[SlidingAverageAccumulatorFactory::type_check] "
-                             "Invalid window_size: \"{}\"",
-                             params.window_size);
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  const auto check = [&](bool cond, std::string_view what) {
+    if (!cond) {
+      throw std::invalid_argument(std::string(what));
+    }
+  };
 
-  if (params.nb_slots <= params.window_size + 1) {
-    holovibes_logger()->warn("[SlidingAverageAccumulatorFactory::type_check] "
-                             "Invalid nb_slots: \"{}\"",
-                             params.nb_slots);
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  // 1) Parameter sanity
+  check(params.window_size != 0, "window_size == 0");
+  check(params.nb_slots > params.window_size + 1,
+        "nb_slots <= window_size + 1");
 
-  if (imeta.shape().size() != 3) {
-    holovibes_logger()->warn(
-        "[SlidingAverageAccumulatorFactory::type_check] invalid rank \"{}\"",
-        imeta.shape().size());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  // 2) Tensor meta sanity
+  check(imeta.shape().size() == 3, "tensor rank != 3");
+  check(imeta.shape().at(0) == 1, "tensor dim 0 != 1");
+  check(imeta.memory_location() == MemoryLocation::DEVICE,
+        "tensor not in DEVICE memory");
+  check(imeta.data_type() == DataType::F32, "tensor data_type != F32");
 
-  if (imeta.shape().at(0) != 1) {
-    holovibes_logger()->warn("[SlidingAverageAccumulatorFactory::type_check] "
-                             "invalid batch size \"{}\"",
-                             imeta.shape().at(0));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  if (imeta.memory_location() != MemoryLocation::DEVICE) {
-    holovibes_logger()->warn("[SlidingAverageAccumulatorFactory::type_check] "
-                             "invalid memory location \"{}\"",
-                             (int)imeta.memory_location());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  switch (imeta.data_type()) {
-  case DataType::F32:
-    break;
-  default:
-    holovibes_logger()->warn("[SlidingAverageAccumulatorFactory::type_check] "
-                             "invalid input type \"{}\"",
-                             (int)imeta.data_type());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
+  // 3) Success
   return AccumulatorMeta(imeta, imeta);
 }
 
-tl::expected<std::unique_ptr<Accumulator>, Error>
-SlidingAverageAccumulatorFactory ::create(const TensorMeta &imeta,
-                                          const json &jparams,
-                                          CudaStreamRef stream) {
-  auto meta_result = type_check(imeta, jparams);
-  if (!meta_result) {
-    holovibes_logger()->warn(
-        "[SlidingAverageAccumulatorFactory::create] type check failed");
-    return tl::unexpected(meta_result.error());
-  }
-
-  auto meta = meta_result.value();
+std::unique_ptr<Accumulator> SlidingAverageAccumulatorFactory ::create(
+    const TensorMeta &imeta, const json &jparams, CudaStreamRef stream) {
+  // 1) Validate
+  auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
 
+  // 2) Buffer size
   auto element_size = meta.imeta().size_in_bytes();
+  auto buffer_size = params.nb_slots * element_size;
 
-  auto d_buffer_result = try_make_unique_device_ptr<uint8_t>(
+  // 3) Allocations
+  auto d_buffer = make_unique_device_ptr<uint8_t>(
       params.nb_slots * element_size, stream.stream());
-  if (!d_buffer_result) {
-    holovibes_logger()->warn(
-        "[SlidingAverageAccumulatorFactory::create] failed with error \"{}\"",
-        CudaError(d_buffer_result.error()));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-  auto d_buffer = std::move(d_buffer_result.value());
 
-  auto d_running_avg_result =
-      try_make_unique_device_ptr<uint8_t>(element_size, stream.stream());
-  if (!d_running_avg_result) {
-    holovibes_logger()->warn(
-        "[SlidingAverageAccumulatorFactory::create] failed with error \"{}\"",
-        CudaError(d_running_avg_result.error()));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-  auto d_running_avg = std::move(d_running_avg_result.value());
+  auto d_running_avg =
+      make_unique_device_ptr<uint8_t>(element_size, stream.stream());
 
+  // 4) Assemble accumulator
   auto *accumulator = new SlidingAverageAccumulator(
       meta, stream, params.nb_slots, params.window_size, std::move(d_buffer),
       std::move(d_running_avg));

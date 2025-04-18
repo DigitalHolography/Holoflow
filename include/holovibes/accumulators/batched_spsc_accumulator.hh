@@ -1,7 +1,5 @@
 #pragma once
 
-#include <tl/expected.hpp>
-
 #include "curaii/curaii.hh"
 #include "holoflow/accumulator.hh"
 #include "holoflow/error.hh"
@@ -22,19 +20,19 @@ class BatchedSPSCAccumulator : public Accumulator {
 public:
   ~BatchedSPSCAccumulator() = default;
 
-  tl::expected<std::optional<TensorView>, Error> write_tensor() override;
+  std::optional<TensorView> write_tensor() override;
 
-  tl::expected<void, Error> commit_write() override;
+  void commit_write() override;
 
-  tl::expected<std::optional<TensorView>, Error> read_tensor() override;
+  std::optional<TensorView> read_tensor() override;
 
-  tl::expected<void, Error> commit_read() override;
+  void commit_read() override;
 
-  tl::expected<size_t, Error> size();
+  size_t size();
 
-  tl::expected<void, Error> reset();
+  void reset();
 
-  tl::expected<void, Error> fill();
+  void fill();
 
   friend class BatchedSPSCAccumulatorFactory;
 
@@ -75,12 +73,12 @@ private:
 
 class BatchedSPSCAccumulatorFactory : public AccumulatorFactory {
 public:
-  tl::expected<AccumulatorMeta, Error> type_check(const TensorMeta &imeta,
-                                                  const json &params) override;
+  AccumulatorMeta type_check(const TensorMeta &imeta,
+                             const json &params) override;
 
-  tl::expected<std::unique_ptr<Accumulator>, Error>
-  create(const TensorMeta &imeta, const json &params,
-         CudaStreamRef stream) override;
+  std::unique_ptr<Accumulator> create(const TensorMeta &imeta,
+                                      const json &params,
+                                      CudaStreamRef stream) override;
 
 private:
   struct Params {

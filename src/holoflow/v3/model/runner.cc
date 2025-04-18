@@ -56,9 +56,9 @@ struct AllocatePesDFSVisitor : public boost::default_dfs_visitor {
 
     if (u == pes_root_ && g[u].kind_ == NodeKind::Accumulator) {
       auto prop = std::get<AccumulatorProperties>(g[u].type_specific_);
-      auto view = prop.accumulator_->read_tensor().value();
+      auto view = prop.accumulator_->read_tensor();
       while (!view && !stop_.load()) {
-        view = prop.accumulator_->read_tensor().value();
+        view = prop.accumulator_->read_tensor();
       }
 
       if (stop_.load()) {
@@ -71,9 +71,9 @@ struct AllocatePesDFSVisitor : public boost::default_dfs_visitor {
       otens.data = reinterpret_cast<uint8_t *>(view->data());
     } else if (g[u].kind_ == NodeKind::Accumulator) {
       auto prop = std::get<AccumulatorProperties>(g[u].type_specific_);
-      auto view = prop.accumulator_->write_tensor().value();
+      auto view = prop.accumulator_->write_tensor();
       while (!view && !stop_.load()) {
-        view = prop.accumulator_->write_tensor().value();
+        view = prop.accumulator_->write_tensor();
       }
 
       if (stop_.load()) {
@@ -134,10 +134,10 @@ struct FreePesDFSVisitor : public boost::default_dfs_visitor {
 
     if (u == pes_root_ && g[u].kind_ == NodeKind::Accumulator) {
       auto prop = std::get<AccumulatorProperties>(g[u].type_specific_);
-      DH_CHECK(prop.accumulator_->commit_read());
+      prop.accumulator_->commit_read();
     } else if (g[u].kind_ == NodeKind::Accumulator) {
       auto prop = std::get<AccumulatorProperties>(g[u].type_specific_);
-      DH_CHECK(prop.accumulator_->commit_write());
+      prop.accumulator_->commit_write();
     }
   }
 

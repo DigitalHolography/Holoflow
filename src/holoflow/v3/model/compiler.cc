@@ -326,7 +326,7 @@ struct TypeCheckingDFSVisitor : public boost::default_dfs_visitor {
       DH_CHECK(accumulator_factories_.contains(node.descriptor_.type));
       auto factory = accumulator_factories_.at(node.descriptor_.type).get();
       auto imeta = imeta_stack_.top();
-      auto meta = factory->type_check(imeta, node.descriptor_.config).value();
+      auto meta = factory->type_check(imeta, node.descriptor_.config);
       std::get<AccumulatorProperties>(node.type_specific_).accumulator_meta_ =
           meta;
       imeta_stack_.push(meta.ometa());
@@ -741,7 +741,7 @@ void ModelCompiler::call_factories() {
           std::get<AccumulatorProperties>(node_properties.type_specific_)
               .accumulator_meta_->imeta();
       auto factory = accumulator_factories_.at(type).get();
-      auto accumulator = factory->create(imeta, config, stream).value();
+      auto accumulator = factory->create(imeta, config, stream);
       std::get<AccumulatorProperties>(node_properties.type_specific_)
           .accumulator_ = accumulator.get();
       model_.accumulators_.push_back(std::move(accumulator));

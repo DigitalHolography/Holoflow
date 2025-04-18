@@ -20,13 +20,13 @@ namespace dh {
 
 class SlidingAverageAccumulator : public Accumulator {
 public:
-  tl::expected<std::optional<TensorView>, Error> write_tensor() override;
+  std::optional<TensorView> write_tensor() override;
 
-  tl::expected<void, Error> commit_write() override;
+  void commit_write() override;
 
-  tl::expected<std::optional<TensorView>, Error> read_tensor() override;
+  std::optional<TensorView> read_tensor() override;
 
-  tl::expected<void, Error> commit_read() override;
+  void commit_read() override;
 
   friend class SlidingAverageAccumulatorFactory;
 
@@ -63,12 +63,12 @@ private:
 
 class SlidingAverageAccumulatorFactory : public AccumulatorFactory {
 public:
-  tl::expected<AccumulatorMeta, Error> type_check(const TensorMeta &imeta,
-                                                  const json &params) override;
+  AccumulatorMeta type_check(const TensorMeta &imeta,
+                             const json &params) override;
 
-  tl::expected<std::unique_ptr<Accumulator>, Error>
-  create(const TensorMeta &imeta, const json &params,
-         CudaStreamRef stream) override;
+  std::unique_ptr<Accumulator> create(const TensorMeta &imeta,
+                                      const json &params,
+                                      CudaStreamRef stream) override;
 
 private:
   struct Params {

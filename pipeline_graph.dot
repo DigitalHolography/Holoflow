@@ -36,12 +36,12 @@ digraph G {
 }"];
 8[label="fft_shift\n(FFTShift)\n{}"];
 9[label="image_avg_accumulator\n(SlidingAverage)\n{
-  \"nb_slots\": 266,
-  \"window_size\": 256
+  \"nb_slots\": 138,
+  \"window_size\": 128
 }"];
 10[label="percentile_clip\n(PercentileClip)\n{
   \"lower_percentile\": 0.20000000298023224,
-  \"radius\": 0.699999988079071,
+  \"radius\": 0.5,
   \"upper_percentile\": 99.80000305175781
 }"];
 11[label="convert_output\n(Convert)\n{

@@ -4,7 +4,6 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
-#include <tl/expected.hpp>
 
 #include "curaii/cuda_runtime.hh"
 #include "holoflow/error.hh"
@@ -44,8 +43,6 @@ private:
   TensorMeta imeta_; ///< Input tensor metadata.
   TensorMeta ometa_; ///< Output tensor metadata.
 };
-
-std::ostream &operator<<(std::ostream &os, const AccumulatorMeta &meta);
 
 /**
  * @brief Represents an accumulator that operates on tensors.
@@ -92,7 +89,7 @@ public:
    * `commit_write` has been called. Not calling this function is the same as
    * discarding the write operation.
    */
-  virtual tl::expected<std::optional<TensorView>, Error> write_tensor() = 0;
+  virtual std::optional<TensorView> write_tensor() = 0;
 
   /**
    * @brief Commit the write operation.
@@ -104,7 +101,7 @@ public:
    * @warning Calling this function invalidates the tensor provided by
    * write_tensor. The user must not use it after.
    */
-  virtual tl::expected<void, Error> commit_write() = 0;
+  virtual void commit_write() = 0;
 
   /**
    * @brief Provide a tensor that the user can read from.
@@ -117,7 +114,7 @@ public:
    * `commit_read` has been called. Not calling this function is the same as
    * discarding the read operation.
    */
-  virtual tl::expected<std::optional<TensorView>, Error> read_tensor() = 0;
+  virtual std::optional<TensorView> read_tensor() = 0;
 
   /**
    * @brief Commit the read operation.
@@ -126,7 +123,7 @@ public:
    * @warning Calling this function invalidates the tensor provided by
    * read_tensor. The user must not use it after.
    */
-  virtual tl::expected<void, Error> commit_read() = 0;
+  virtual void commit_read() = 0;
 
   /**
    * @brief Returns the metadata associated with the accumulator.
@@ -183,8 +180,8 @@ public:
    * @param params Additional parameters in JSON format.
    * @return A tl::expected containing the produced AccumulatorMeta or an error.
    */
-  virtual tl::expected<AccumulatorMeta, Error>
-  type_check(const TensorMeta &imeta, const json &params) = 0;
+  virtual AccumulatorMeta type_check(const TensorMeta &imeta,
+                                     const json &params) = 0;
 
   /**
    * @brief Creates an accumulator instance with the given parameters.
@@ -197,7 +194,7 @@ public:
    * @note The stream is not owned by the accumulator and must be kept alive
    * until the accumulator is destroyed.
    */
-  virtual tl::expected<std::unique_ptr<Accumulator>, Error>
+  virtual std::unique_ptr<Accumulator>
   create(const TensorMeta &imeta, const json &params, CudaStreamRef stream) = 0;
 };
 
