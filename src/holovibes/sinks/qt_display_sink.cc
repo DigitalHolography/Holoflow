@@ -7,6 +7,7 @@
 
 #include "bug_buster/bug_buster.hh"
 #include "curaii/curaii.hh"
+#include "curaii/v2/cuda.hh"
 #include "holovibes/holovibes.hh"
 
 namespace dh {
@@ -19,23 +20,22 @@ QtDisplaySink::QtDisplaySink(const SinkMeta &meta, CudaStreamRef stream)
     : Sink(meta, stream), frame_displayed_(true),
       last_display_time_(std::chrono::steady_clock::now()) {}
 
-tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
+void QtDisplaySink::run(TensorView itens) {
   holovibes_logger()->trace("running qt display sink");
 
-  // Throttle to 30 fps: skip frame if less than ~33ms since last display.
+  // Throttle to 24 fps: skip frame if less than ~33ms since last display.
   auto now = std::chrono::steady_clock::now();
-  if (now - last_display_time_ < std::chrono::milliseconds(1000 / 120)) {
+  if (now - last_display_time_ < std::chrono::milliseconds(1000 / 25)) {
     // Too soon: drop this frame.
     holovibes_logger()->trace("Skipping frame to maintain 30fps");
-    return {};
+    return;
   }
 
   frame_displayed_.store(false, std::memory_order_release);
 
   auto host = make_unique_host_ptr<uint8_t>(itens.size_in_bytes());
-  DH_CHECK(cudaMemcpyAsync(host.get(), itens.data(), itens.size_in_bytes(),
-                           cudaMemcpyDeviceToHost,
-                           stream_.stream()) == cudaSuccess);
+  CUDA_CHECK(cudaMemcpyAsync(host.get(), itens.data(), itens.size_in_bytes(),
+                             cudaMemcpyDeviceToHost, stream_.stream()));
 
   stream_.synchronize();
   TensorMeta host_meta(itens.data_type(), MemoryLocation::HOST,
@@ -55,7 +55,6 @@ tl::expected<void, Error> QtDisplaySink::run(TensorView itens) {
 
   last_display_time_ = std::chrono::steady_clock::now();
   holovibes_logger()->trace("FINISHED");
-  return {};
 }
 
 void QtDisplaySink::on_frame_displayed() { frame_displayed_ = true; }
@@ -67,53 +66,37 @@ void QtDisplaySink::on_frame_displayed() { frame_displayed_ = true; }
 QtDisplaySinkFactory::QtDisplaySinkFactory(TensorDisplayWidget &widget)
     : widget_(widget) {}
 
-tl::expected<SinkMeta, Error>
-QtDisplaySinkFactory::type_check(const TensorMeta &imeta, const json &) {
-  if (imeta.shape().size() != 3) {
-    holovibes_logger()->warn("Invalid rank: {}", imeta.shape().size());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+SinkMeta QtDisplaySinkFactory::type_check(const TensorMeta &imeta,
+                                          const json &) {
+  const auto check = [&](bool cond, std::string_view what) {
+    if (!cond) {
+      throw std::invalid_argument(std::string(what));
+    }
+  };
 
-  if (imeta.shape().at(0) != 1) {
-    holovibes_logger()->warn("Invalid batch size: {}", imeta.shape().at(0));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
+  // 1) Tensor meta sanity
+  check(imeta.shape().size() == 3, "tensor rank != 3");
+  check(imeta.shape().at(0) == 1, "tensor dim 0 != 1");
+  check(imeta.data_type() == DataType::U8, "tensor data_type != U8");
+  check(imeta.strides().at(2) == 1, "tensor stride 2 != 1");
+  check(imeta.strides().at(1) == 1, "tensor stride 1 != tensor dim 2");
+  check(imeta.strides().at(0) == imeta.shape().at(2) * imeta.shape().at(1),
+        "tensor stride 0 != tensor dim 2 * tensor stride 1");
 
-  if (imeta.data_type() != DataType::U8) {
-    holovibes_logger()->warn("Invalid data type: {}", (int)imeta.data_type());
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  if (imeta.strides().at(2) != 1) {
-    holovibes_logger()->warn("Invalid stride: {}", imeta.strides().at(2));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  if (imeta.strides().at(1) != imeta.shape().at(2)) {
-    holovibes_logger()->warn("Invalid stride: {}", imeta.strides().at(1));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
-  if (imeta.strides().at(0) != imeta.shape().at(2) * imeta.shape().at(1)) {
-    holovibes_logger()->warn("Invalid stride: {}", imeta.strides().at(0));
-    return tl::unexpected(Error::INTERNAL_ERROR);
-  }
-
+  // 2) Success
   return SinkMeta(imeta);
 }
 
-tl::expected<std::unique_ptr<Sink>, Error>
-QtDisplaySinkFactory::create(const TensorMeta &imeta, const json &jparams,
-                             CudaStreamRef stream) {
-  auto meta_result = type_check(imeta, jparams);
-  if (!meta_result) {
-    holovibes_logger()->warn("type check failed");
-    return tl::unexpected(meta_result.error());
-  }
-  auto meta = meta_result.value();
+std::unique_ptr<Sink> QtDisplaySinkFactory::create(const TensorMeta &imeta,
+                                                   const json &jparams,
+                                                   CudaStreamRef stream) {
+  // 1) Validate
+  auto meta = type_check(imeta, jparams);
 
+  // 2) Assemble sink
   auto *sink = new QtDisplaySink(meta, stream);
 
+  // 3) Connect sink to display widget
   QObject::connect(sink, &QtDisplaySink::frame_ready, &widget_,
                    &TensorDisplayWidget::show_tensor, Qt::QueuedConnection);
 

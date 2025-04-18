@@ -6,7 +6,6 @@
 #include <cuda_runtime.h>
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <tl/expected.hpp>
 
 #include "holoflow/error.hh"
 #include "holoflow/sink.hh"
@@ -23,7 +22,7 @@ class QtDisplaySink : public QObject, public Sink {
 public:
   ~QtDisplaySink() override = default;
 
-  tl::expected<void, Error> run(TensorView itens) override;
+  void run(TensorView itens) override;
 
   friend class QtDisplaySinkFactory;
 
@@ -45,12 +44,10 @@ public:
 
   ~QtDisplaySinkFactory() override = default;
 
-  tl::expected<SinkMeta, Error> type_check(const TensorMeta &imeta,
-                                           const json &params) override;
+  SinkMeta type_check(const TensorMeta &imeta, const json &params) override;
 
-  tl::expected<std::unique_ptr<Sink>, Error>
-  create(const TensorMeta &imeta, const json &params,
-         CudaStreamRef stream) override;
+  std::unique_ptr<Sink> create(const TensorMeta &imeta, const json &params,
+                               CudaStreamRef stream) override;
 
 private:
   TensorDisplayWidget &widget_;

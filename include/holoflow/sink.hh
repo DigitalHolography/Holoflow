@@ -3,7 +3,6 @@
 #include <cuda_runtime.h>
 #include <memory>
 #include <nlohmann/json.hpp>
-#include <tl/expected.hpp>
 
 #include "curaii/cuda_runtime.hh"
 #include "holoflow/error.hh"
@@ -34,7 +33,7 @@ public:
   Sink(Sink &&) = delete;
   Sink &operator=(Sink &&) = delete;
 
-  virtual tl::expected<void, Error> run(TensorView itens) = 0;
+  virtual void run(TensorView itens) = 0;
 
   const SinkMeta &meta() const;
 
@@ -56,10 +55,9 @@ public:
   SinkFactory(SinkFactory &&) = delete;
   SinkFactory &operator=(SinkFactory &&) = delete;
 
-  virtual tl::expected<SinkMeta, Error> type_check(const TensorMeta &imeta,
-                                                   const json &params) = 0;
+  virtual SinkMeta type_check(const TensorMeta &imeta, const json &params) = 0;
 
-  virtual tl::expected<std::unique_ptr<Sink>, Error>
+  virtual std::unique_ptr<Sink>
   create(const TensorMeta &imeta, const json &params, CudaStreamRef stream) = 0;
 };
 

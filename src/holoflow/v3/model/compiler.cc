@@ -311,7 +311,7 @@ struct TypeCheckingDFSVisitor : public boost::default_dfs_visitor {
       DH_CHECK(sink_factories_.contains(node.descriptor_.type));
       auto factory = sink_factories_.at(node.descriptor_.type).get();
       auto imeta = imeta_stack_.top();
-      auto meta = factory->type_check(imeta, node.descriptor_.config).value();
+      auto meta = factory->type_check(imeta, node.descriptor_.config);
       std::get<SinkProperties>(node.type_specific_).sink_meta_ = meta;
     } else if (node.kind_ == NodeKind::Task) {
       DH_CHECK(!imeta_stack_.empty());
@@ -724,7 +724,7 @@ void ModelCompiler::call_factories() {
       auto imeta = std::get<SinkProperties>(node_properties.type_specific_)
                        .sink_meta_->imeta();
       auto factory = sink_factories_.at(type).get();
-      auto sink = factory->create(imeta, config, stream).value();
+      auto sink = factory->create(imeta, config, stream);
       std::get<SinkProperties>(node_properties.type_specific_).sink_ =
           sink.get();
       model_.sinks_.push_back(std::move(sink));

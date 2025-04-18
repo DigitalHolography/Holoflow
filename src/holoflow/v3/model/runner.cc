@@ -183,7 +183,7 @@ struct ExecNodeVisitor {
   }
   void operator()(SinkProperties &sink) {
     auto itens = tensor_slots_.at(*sink.itens_id_).view();
-    DH_CHECK(sink.sink_->run(itens));
+    sink.sink_->run(itens);
   }
   void operator()(TaskProperties &task) {
     auto itens = tensor_slots_.at(*task.itens_id_).view();
