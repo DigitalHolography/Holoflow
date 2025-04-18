@@ -97,7 +97,7 @@ SourceMeta HolofileSourceFactory::type_check(const json &jparams) {
   check(params.start_frame >= 0, "start_frame < 0");
   check(params.start_frame + params.batch_size <= params.end_frame,
         "start_frame + batch_size > end_frame");
-  check(params.load_kind == "READ_LIVE" && params.load_kind == "LOAD_IN_CPU" &&
+  check(params.load_kind == "READ_LIVE" || params.load_kind == "LOAD_IN_CPU" ||
             params.load_kind == "LOAD_IN_GPU",
         "load_kind is not in [READ_LIVE, LOAD_IN_CPU_LOAD_IN_GPU]");
 

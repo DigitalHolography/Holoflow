@@ -79,7 +79,8 @@ SinkMeta QtDisplaySinkFactory::type_check(const TensorMeta &imeta,
   check(imeta.shape().at(0) == 1, "tensor dim 0 != 1");
   check(imeta.data_type() == DataType::U8, "tensor data_type != U8");
   check(imeta.strides().at(2) == 1, "tensor stride 2 != 1");
-  check(imeta.strides().at(1) == 1, "tensor stride 1 != tensor dim 2");
+  check(imeta.strides().at(1) == imeta.shape().at(2),
+        "tensor stride 1 != tensor dim 2");
   check(imeta.strides().at(0) == imeta.shape().at(2) * imeta.shape().at(1),
         "tensor stride 0 != tensor dim 2 * tensor stride 1");
 
