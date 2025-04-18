@@ -1,10 +1,10 @@
 digraph G {
 0[label="holofile_source\n(Holofile)\n{
   \"batch_size\": 32,
-  \"end_frame\": 60,
+  \"end_frame\": 10000,
   \"load_kind\": \"READ_LIVE\",
-  \"path\": \"\",
-  \"start_frame\": 1
+  \"path\": \"D:/BatchTesting/250220_GUJ0206_L.holo\",
+  \"start_frame\": 96
 }"];
 1[label="input_queue\n(BatchedSPSC)\n{
   \"dequeue_batch_size\": 32,

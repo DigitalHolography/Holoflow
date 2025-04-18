@@ -100,6 +100,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
           &MainWindow::on_import_start_clicked);
   connect(import_stop_button_, &QPushButton::clicked, this,
           &MainWindow::on_import_stop_clicked);
+
+  validate_inputs();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
@@ -186,6 +188,15 @@ bool MainWindow::validate_inputs() {
     import_start_index_spin_->setStyleSheet("");
     import_end_index_spin_->setStyleSheet("");
     render_time_stride_spin_->setStyleSheet("");
+  }
+
+  std::string import_file_path = import_file_line_edit_->text().toStdString();
+  if (import_file_path == "") {
+    import_file_line_edit_->setStyleSheet(
+        "background-color: rgba(255, 0, 0, 50);");
+    return false;
+  } else {
+    import_file_line_edit_->setStyleSheet("");
   }
 
   return true;
@@ -578,6 +589,7 @@ QGroupBox *MainWindow::create_import_group() {
     import_file_line_edit_->setText(file);
     import_start_index_spin_->setValue(0);
     import_end_index_spin_->setValue(frame_count);
+    import_end_index_spin_->setRange(0, frame_count);
   });
 
   // Row 1: Input FPS
