@@ -5,9 +5,9 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
-#include "curaii/cufft.hh"
 #include "curaii/curaii.hh"
 #include "curaii/v2/cuda.hh"
+#include "curaii/v2/cufft.hh"
 #include "holoflow/error.hh"
 #include "holoflow/task.hh"
 #include "holovibes/holovibes.hh"
@@ -19,20 +19,14 @@ namespace dh {
 // ==========================================================================
 
 STFTTask::STFTTask(const TaskMeta &meta, CudaStreamRef stream,
-                   CufftHandle handle)
+                   curaii::cufft::Handle handle)
     : Task(meta, stream), handle_(std::move(handle)) {}
 
 void STFTTask::run(TensorView input, TensorView output) {
   auto idata = (cuFloatComplex *)input.data();
   auto odata = (cuFloatComplex *)output.data();
 
-  if (auto result =
-          handle_.try_xt_exec(idata, odata, CufftDirection(CUFFT_FORWARD));
-      !result) {
-    throw std::runtime_error(fmt::format(
-        "[STFTTask::run] Fourier transform failed with error: \"{}\"",
-        result.error()));
-  }
+  CUFFT_CHECK(cufftXtExec(handle_.get(), idata, odata, CUFFT_FORWARD));
 }
 
 // ==========================================================================
@@ -71,52 +65,25 @@ std::unique_ptr<Task> STFTTaskFactory::create(const TensorMeta &imeta,
   long long int inembed[1] = {B};
   int istride = H * W;
   int idist = 1;
-  CudaDataType inputtype(CUDA_C_32F);
+  cudaDataType inputtype = CUDA_C_32F;
   long long int onembed[1] = {B};
   int ostride = H * W;
   int odist = 1;
-  CudaDataType outputtype(CUDA_C_32F);
+  cudaDataType outputtype = CUDA_C_32F;
   int batch = H * W;
-  CudaDataType executiontype(CUDA_C_32F);
-
-  auto plan_result = CufftHandle::try_create();
-  if (!plan_result) {
-    throw std::runtime_error(
-        fmt::format("[FresnelDiffractionTaskFactory::create] Fourrier "
-                    "transform creation failed with error: \"{}\"",
-                    plan_result.error()));
-  }
-  auto handle = std::move(plan_result.value());
-
   size_t work_size = 0;
-  if (auto result = handle.try_xt_get_size_many(
-          rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
-          outputtype, batch, &work_size, executiontype);
-      !result) {
-    throw std::runtime_error(
-        fmt::format("[FresnelDiffractionTaskFactory::create] Fourrier "
-                    "transform creation failed with error: \"{}\"",
-                    result.error()));
-  }
+  cudaDataType executiontype = CUDA_C_32F;
 
-  if (auto result = handle.try_xt_make_plan_many(
-          rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
-          outputtype, batch, &work_size, executiontype);
-      !result) {
-    throw std::runtime_error(
-        fmt::format("[fresneldiffractiontaskfactory::create] fourrier "
-                    "transform creation failed with error: \"{}\"",
-                    result.error()));
-  }
+  curaii::cufft::Handle handle;
+  CUFFT_CHECK(cufftSetStream(handle.get(), stream.stream()));
+  CUFFT_CHECK(cufftXtGetSizeMany(handle.get(), rank, n, inembed, istride, idist,
+                                 inputtype, onembed, ostride, odist, outputtype,
+                                 batch, &work_size, executiontype));
+  CUFFT_CHECK(cufftXtMakePlanMany(
+      handle.get(), rank, n, inembed, istride, idist, inputtype, onembed,
+      ostride, odist, outputtype, batch, &work_size, executiontype));
 
-  auto stream_result = handle.try_set_stream(stream);
-  if (!stream_result) {
-    throw std::runtime_error(
-        fmt::format("[fresneldiffractiontaskfactory::create] fourrier "
-                    "transform creation failed with error: \"{}\"",
-                    stream_result.error()));
-  }
-
+  // 3) Assemble task
   auto *task = new STFTTask(meta, stream, std::move(handle));
   return std::unique_ptr<STFTTask>(task);
 }

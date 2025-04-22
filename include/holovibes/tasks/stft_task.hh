@@ -5,8 +5,8 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
-#include "curaii/cufft.hh"
 #include "curaii/curaii.hh"
+#include "curaii/v2/cufft.hh"
 #include "holoflow/error.hh"
 #include "holoflow/task.hh"
 
@@ -20,9 +20,10 @@ class STFTTask : public Task {
   friend class STFTTaskFactory;
 
 private:
-  STFTTask(const TaskMeta &meta, CudaStreamRef stream, CufftHandle handle);
+  STFTTask(const TaskMeta &meta, CudaStreamRef stream,
+           curaii::cufft::Handle handle);
 
-  CufftHandle handle_;
+  curaii::cufft::Handle handle_;
 };
 
 class STFTTaskFactory : public TaskFactory {

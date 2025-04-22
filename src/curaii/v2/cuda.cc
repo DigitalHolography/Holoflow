@@ -5,6 +5,8 @@
 #include <stdexcept>
 #include <string>
 
+#include "curaii/v2/logger.hh"
+
 namespace curaii::cuda {
 
 Error::Error(cudaError_t code, const char *what, const char *file, int line)
@@ -46,8 +48,8 @@ void DeviceDeleter::operator()(void *ptr) const noexcept {
 
 namespace curaii::cuda::detail {
 
-inline void log_cuda_failure(spdlog::level::level_enum lvl, cudaError_t code,
-                             const char *expr, const char *file, int line) {
+void log_cuda_failure(spdlog::level::level_enum lvl, cudaError_t code,
+                      const char *expr, const char *file, int line) {
   logger()->log(lvl, "CUDA error {} ({}): \"{}\"  [{}:{}]",
                 cudaGetErrorString(code), // e.g. "invalid argument"
                 static_cast<int>(code),   // numeric code

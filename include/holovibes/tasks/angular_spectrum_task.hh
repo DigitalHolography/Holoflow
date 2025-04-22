@@ -5,8 +5,8 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
-#include "curaii/cufft.hh"
 #include "curaii/curaii.hh"
+#include "curaii/v2/cufft.hh"
 #include "holoflow/error.hh"
 #include "holoflow/task.hh"
 
@@ -24,12 +24,12 @@ private:
   AngularSpectrumTask(const TaskMeta &meta, CudaStreamRef stream, float lambda,
                       float z, float pixel_size,
                       unique_device_ptr<cuFloatComplex> lens,
-                      CufftHandle handle);
+                      curaii::cufft::Handle handle);
   float lambda_;
   float z_;
   float pixel_size_;
   unique_device_ptr<cuFloatComplex> lens_;
-  CufftHandle handle_;
+  curaii::cufft::Handle handle_;
 };
 
 class AngularSpectrumTaskFactory : public TaskFactory {

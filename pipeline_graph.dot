@@ -13,9 +13,10 @@ digraph G {
 2[label="convert_input\n(Convert)\n{
   \"conversion\": \"U8_CF32_REAL\"
 }"];
-3[label="angular_spectrum_method\n(AngularSpectrum)\n{
+3[label="fresnel_diffraction\n(FresnelDiffraction)\n{
   \"lambda\": 8.519999710188131e-07,
   \"pixel_size\": 1.9999999494757503e-05,
+  \"skip_phase_shift\": true,
   \"z\": 0.3800000250339508
 }"];
 4[label="time_accumulator\n(BatchedSPSC)\n{
@@ -27,26 +28,27 @@ digraph G {
   \"conversion\": \"CF32_F32_MODU\"
 }"];
 7[label="p_frame_average\n(Average)\n{
-  \"begin\": 0,
-  \"end\": 16
+  \"begin\": 11,
+  \"end\": 27
 }"];
-8[label="image_avg_accumulator\n(SlidingAverage)\n{
+8[label="fft_shift\n(FFTShift)\n{}"];
+9[label="image_avg_accumulator\n(SlidingAverage)\n{
   \"nb_slots\": 138,
   \"window_size\": 128
 }"];
-9[label="percentile_clip\n(PercentileClip)\n{
+10[label="percentile_clip\n(PercentileClip)\n{
   \"lower_percentile\": 0.20000000298023224,
   \"radius\": 1.0,
   \"upper_percentile\": 99.80000305175781
 }"];
-10[label="convert_output\n(Convert)\n{
+11[label="convert_output\n(Convert)\n{
   \"conversion\": \"F32_U8_SCALED\"
 }"];
-11[label="processed_output_queue\n(BatchedSPSC)\n{
+12[label="processed_output_queue\n(BatchedSPSC)\n{
   \"dequeue_batch_size\": 1,
   \"nb_slots\": 32
 }"];
-12[label="processed_display_sink\n(QtDisplay)\n{}"];
+13[label="processed_display_sink\n(QtDisplay)\n{}"];
 0->1 ;
 1->2 ;
 2->3 ;
@@ -59,4 +61,5 @@ digraph G {
 9->10 ;
 10->11 ;
 11->12 ;
+12->13 ;
 }

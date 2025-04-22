@@ -9,6 +9,7 @@
 #include <spdlog/spdlog.h>
 
 #include "curaii/v2/cuda.hh"
+#include "curaii/v2/cufft.hh"
 #include "holovibes/holovibes.hh"
 
 namespace dh {
@@ -38,7 +39,7 @@ AngularSpectrumTask::AngularSpectrumTask(const TaskMeta &meta,
                                          CudaStreamRef stream, float lambda,
                                          float z, float pixel_size,
                                          unique_device_ptr<cuFloatComplex> lens,
-                                         CufftHandle handle)
+                                         curaii::cufft::Handle handle)
     : Task(meta, stream), lambda_(lambda), z_(z), pixel_size_(pixel_size),
       lens_(std::move(lens)), handle_(std::move(handle)) {}
 
@@ -49,27 +50,18 @@ void AngularSpectrumTask::run(TensorView input, TensorView output) {
   int B = input.meta().shape().at(0);
   int frame_size = input.meta().size() / B;
 
-  if (auto result =
-          handle_.try_xt_exec(idata, odata, CufftDirection(CUFFT_FORWARD));
-      !result) {
-    throw std::runtime_error(fmt::format("[AngularSpectrumTask::run] Fourier "
-                                         "transform failed with error: \"{}\"",
-                                         result.error()));
-  }
+  // 2) Forward FFT
+  CUFFT_CHECK(cufftXtExec(handle_.get(), idata, odata, CUFFT_FORWARD));
 
+  // 3) Apply lens in fourrier space
   dim3 block_size = 256;
   dim3 grid_size = (frame_size + block_size.x - 1) / block_size.x;
 
   apply_lens_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
-      idata, odata, lens_.get(), frame_size, B);
+      odata, odata, lens_.get(), frame_size, B);
 
-  if (auto result =
-          handle_.try_xt_exec(idata, odata, CufftDirection(CUFFT_INVERSE));
-      !result) {
-    throw std::runtime_error(fmt::format("[AngularSpectrumTask::run] Fourier "
-                                         "transform failed with error: \"{}\"",
-                                         result.error()));
-  }
+  // 4) Backward FFT
+  CUFFT_CHECK(cufftXtExec(handle_.get(), odata, odata, CUFFT_INVERSE));
 }
 
 // ==========================================================================
@@ -199,51 +191,23 @@ AngularSpectrumTaskFactory::create(const TensorMeta &imeta, const json &jparams,
   long long int inembed[2] = {H, W};
   int istride = 1;
   int idist = H * W;
-  CudaDataType inputtype(CUDA_C_32F);
+  cudaDataType inputtype = CUDA_C_32F;
   long long int onembed[2] = {H, W};
   int ostride = 1;
   int odist = H * W;
-  CudaDataType outputtype(CUDA_C_32F);
+  cudaDataType outputtype = CUDA_C_32F;
   int batch = B;
-  CudaDataType executiontype(CUDA_C_32F);
-
-  auto plan_result = CufftHandle::try_create();
-  if (!plan_result) {
-    throw std::runtime_error(
-        fmt::format("[AngularSpectrumTaskFactory::create] Fourrier transform "
-                    "creation failed with error: \"{}\"",
-                    plan_result.error()));
-  }
-  auto handle = std::move(plan_result.value());
-
-  auto stream_result = handle.try_set_stream(stream);
-  if (!stream_result) {
-    throw std::runtime_error(
-        fmt::format("[AngularSpectrumTaskFactory::create] Fourrier transform "
-                    "creation failed with error: \"{}\"",
-                    stream_result.error()));
-  }
-
   size_t work_size = 0;
-  if (auto result = handle.try_xt_get_size_many(
-          rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
-          outputtype, batch, &work_size, executiontype);
-      !result) {
-    throw std::runtime_error(
-        fmt::format("[AngularSpectrumTaskFactory::create] Fourrier transform "
-                    "creation failed with error: \"{}\"",
-                    result.error()));
-  }
+  cudaDataType executiontype = CUDA_C_32F;
 
-  if (auto result = handle.try_xt_make_plan_many(
-          rank, n, inembed, istride, idist, inputtype, onembed, ostride, odist,
-          outputtype, batch, &work_size, executiontype);
-      !result) {
-    throw std::runtime_error(
-        fmt::format("[AngularSpectrumTaskFactory::create] Fourrier transform "
-                    "creation failed with error: \"{}\"",
-                    result.error()));
-  }
+  curaii::cufft::Handle handle;
+  CUFFT_CHECK(cufftSetStream(handle.get(), stream.stream()));
+  CUFFT_CHECK(cufftXtGetSizeMany(handle.get(), rank, n, inembed, istride, idist,
+                                 inputtype, onembed, ostride, odist, outputtype,
+                                 batch, &work_size, executiontype));
+  CUFFT_CHECK(cufftXtMakePlanMany(
+      handle.get(), rank, n, inembed, istride, idist, inputtype, onembed,
+      ostride, odist, outputtype, batch, &work_size, executiontype));
 
   // 6) Assemble task
   auto *task = new AngularSpectrumTask(meta, stream, params.lambda, params.z,

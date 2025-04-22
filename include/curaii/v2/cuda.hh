@@ -6,13 +6,13 @@
  *
  * This header provides:
  *   - Two macros (CUDA_CHECK and CUDA_CHECK_NT) that validate CUDA
- *     runtime calls, log through a global <tt>spdlog</tt> logger and either
+ *     runtime calls, log through a global spdlog logger and either
  *     throw an exception or abort the process on failure.
  *   - A strongly‑typed exception class (curaii::cuda::Error).
  *   - Smart‑pointer aliases and factory helpers for host and device memory
  *     with safe deleters.
  *
- * All primitives live in the <tt>curaii::cuda</tt> namespace.
+ * All primitives live in the curaii::cuda namespace.
  */
 
 #pragma once
@@ -24,8 +24,6 @@
 #include <stdexcept>
 #include <string>
 
-#include "curaii/v2/logger.hh"
-
 /**
  * @def CUDA_CHECK
  * @brief Evaluate a CUDA expression and throw on error.
@@ -33,9 +31,6 @@
  * The macro executes @p expr, checks the returned ::cudaError_t and, if it is
  * not cudaSuccess, logs a message at @c spdlog::level::warn and throws
  * a @ref curaii::cuda::Error containing diagnostic information.
- *
- * The macro behaves as a single C/C++ statement and can therefore be used in
- * an if condition without braces.
  */
 #define CUDA_CHECK(expr)                                                       \
   do {                                                                         \
@@ -49,14 +44,11 @@
 
 /**
  * @def CUDA_CHECK_NT
- * @brief Non‑throwing variant suitable for <tt>noexcept</tt> contexts.
+ * @brief Non‑throwing variant suitable for noexcept contexts.
  *
  * Executes @p expr and logs a message at @c spdlog::level::err if the result is
  * not cudaSuccess. After logging, the macro calls
  * std::abort() to terminate the process.
- *
- * The macro behaves as a single C/C++ statement and can therefore be used in
- * an if condition without braces.
  */
 #define CUDA_CHECK_NT(expr)                                                    \
   do {                                                                         \
