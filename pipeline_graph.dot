@@ -23,13 +23,16 @@ digraph G {
   \"dequeue_batch_size\": 32,
   \"nb_slots\": 96
 }"];
-5[label="short_time_fourrier_transform\n(STFT)\n{}"];
+5[label="principal_component_analysis\n(PCA)\n{
+  \"begin\": 0,
+  \"end\": 16
+}"];
 6[label="convert_postprocess\n(Convert)\n{
   \"conversion\": \"CF32_F32_MODU\"
 }"];
 7[label="p_frame_average\n(Average)\n{
-  \"begin\": 11,
-  \"end\": 27
+  \"begin\": 0,
+  \"end\": 16
 }"];
 8[label="fft_shift\n(FFTShift)\n{}"];
 9[label="image_avg_accumulator\n(SlidingAverage)\n{

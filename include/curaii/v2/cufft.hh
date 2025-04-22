@@ -101,8 +101,7 @@ private:
  *
  * This class manages the lifetime of a ::cufftHandle, ensuring that
  * cufftCreate is called on construction and cufftDestroy on destruction.
- * It is non-copyable but movable, supports implicit conversion to
- * cufftHandle for API interoperability, and provides methods to
+ * It is non-copyable but movable, provides methods to
  * release or reset the underlying handle.
  */
 class Handle {

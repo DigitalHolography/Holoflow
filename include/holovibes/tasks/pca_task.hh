@@ -5,9 +5,10 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
-#include "curaii/cublas.hh"
 #include "curaii/curaii.hh"
-#include "curaii/cusolver_dn.hh"
+#include "curaii/v2/cublas.hh"
+#include "curaii/v2/cusolver_common.hh"
+#include "curaii/v2/cusolver_dn.hh"
 #include "holoflow/error.hh"
 #include "holoflow/task.hh"
 
@@ -23,17 +24,18 @@ public:
 
 private:
   PCATask(const TaskMeta &meta, CudaStreamRef stream,
-          CublasHandle cublas_handle, CusolverDnHandle cusolver_handle,
-          CusolverDnParams cusolver_params,
+          curaii::cublas::Handle cublas_handle,
+          curaii::cusolverdn::Handle cusolver_handle,
+          curaii::cusolverdn::Params cusolver_params,
           unique_device_ptr<cuFloatComplex> d_cov_matrix,
           unique_device_ptr<float> d_eigenvalues, unique_device_ptr<int> d_info,
           unique_host_ptr<uint8_t> h_workspace,
           unique_device_ptr<uint8_t> d_workspace, size_t h_workspace_size,
           size_t d_workspace_size, size_t begin, size_t end);
 
-  CublasHandle cublas_handle_;
-  CusolverDnHandle cusolver_handle_;
-  CusolverDnParams cusolver_params_;
+  curaii::cublas::Handle cublas_handle_;
+  curaii::cusolverdn::Handle cusolver_handle_;
+  curaii::cusolverdn::Params cusolver_params_;
   unique_device_ptr<cuFloatComplex> d_cov_matrix_;
   unique_device_ptr<float> d_eigenvalues_;
   unique_device_ptr<int> d_info_;

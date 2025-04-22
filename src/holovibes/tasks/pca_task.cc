@@ -7,9 +7,7 @@
 #include <tl/expected.hpp>
 
 #include "bug_buster/bug_buster.hh"
-#include "curaii/cublas.hh"
 #include "curaii/curaii.hh"
-#include "curaii/cusolver_dn.hh"
 #include "curaii/v2/cuda.hh"
 #include "holoflow/error.hh"
 #include "holovibes/holovibes.hh"
@@ -21,8 +19,9 @@ namespace dh {
 // ==========================================================================
 
 PCATask::PCATask(const TaskMeta &meta, CudaStreamRef stream,
-                 CublasHandle cublas_handle, CusolverDnHandle cusolver_handle,
-                 CusolverDnParams cusolver_params,
+                 curaii::cublas::Handle cublas_handle,
+                 curaii::cusolverdn::Handle cusolver_handle,
+                 curaii::cusolverdn::Params cusolver_params,
                  unique_device_ptr<cuFloatComplex> d_cov_matrix,
                  unique_device_ptr<float> d_eigenvalues,
                  unique_device_ptr<int> d_info,
@@ -60,17 +59,11 @@ void PCATask::run(TensorView input, TensorView output) {
   // (n_samples x n_features). This operation yields an (n_features x
   // n_features) Hermitian matrix representing the covariance between each
   // pair of features (assuming the data has been centered).
-  if (auto result = cublas_handle_.try_gemm_ex(
-          CublasOperation(CUBLAS_OP_C), CublasOperation(CUBLAS_OP_N),
-          n_features, n_features, n_samples, &alpha, idata,
-          CudaDataType(CUDA_C_32F), n_samples, idata, CudaDataType(CUDA_C_32F),
-          n_samples, &beta, d_cov_matrix_.get(), CudaDataType(CUDA_C_32F),
-          n_features, CublasComputeType(CUBLAS_COMPUTE_32F_FAST_16F),
-          CUBLAS_GEMM_DEFAULT);
-      !result) {
-    throw std::runtime_error(
-        fmt::format("[PCATask::run] failed with error \"{}\"", result.error()));
-  }
+  CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_C, CUBLAS_OP_N,
+                            n_features, n_features, n_samples, &alpha, idata,
+                            CUDA_C_32F, n_samples, idata, CUDA_C_32F, n_samples,
+                            &beta, d_cov_matrix_.get(), CUDA_C_32F, n_features,
+                            CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
 
   // 3) Compute eigenvectors:
   // Perform an eigen decomposition on the covariance matrix to extract both
@@ -82,19 +75,13 @@ void PCATask::run(TensorView input, TensorView output) {
   int64_t h_meig = 0;
   float vl = 0;
   float vu = 0;
-  if (auto result = cusolver_handle_.try_x_syevdx(
-          cusolver_params_.ref(), CusolverEigMode(CUSOLVER_EIG_MODE_VECTOR),
-          CusolverEigRange(CUSOLVER_EIG_RANGE_I),
-          CublasFillMode(CUBLAS_FILL_MODE_LOWER), n_features,
-          CudaDataType(CUDA_C_32F), d_cov_matrix_.get(), n_features, &vl, &vu,
-          begin_ + 1, end_, &h_meig, CudaDataType(CUDA_R_32F),
-          d_eigenvalues_.get(), CudaDataType(CUDA_C_32F), d_workspace_.get(),
-          d_workspace_size_, h_workspace_.get(), h_workspace_size_,
-          d_info_.get());
-      !result) {
-    throw std::runtime_error(
-        fmt::format("[PCATask::run] failed with error \"{}\"", result.error()));
-  }
+  CUSOLVER_CHECK(cusolverDnXsyevdx(
+      cusolver_handle_.get(), cusolver_params_.get(), CUSOLVER_EIG_MODE_VECTOR,
+      CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER, n_features, CUDA_C_32F,
+      d_cov_matrix_.get(), n_features, &vl, &vu, begin_ + 1, end_, &h_meig,
+      CUDA_R_32F, d_eigenvalues_.get(), CUDA_C_32F, d_workspace_.get(),
+      d_workspace_size_, h_workspace_.get(), h_workspace_size_, d_info_.get()));
+
   DH_CHECK(h_meig == (int)end_ - (int)begin_);
 
   // 4) Project data:
@@ -102,17 +89,11 @@ void PCATask::run(TensorView input, TensorView output) {
   // to transform the data into the principal component space. Each row of the
   // output corresponds to the projection of the original data onto the new
   // basis defined by the eigenvectors.
-  if (auto result = cublas_handle_.try_gemm_ex(
-          CublasOperation(CUBLAS_OP_N), CublasOperation(CUBLAS_OP_N), n_samples,
-          (int)(end_ - begin_), n_features, &alpha, idata,
-          CudaDataType(CUDA_C_32F), n_samples, eigenvecs,
-          CudaDataType(CUDA_C_32F), n_features, &beta, odata,
-          CudaDataType(CUDA_C_32F), n_samples,
-          CublasComputeType(CUBLAS_COMPUTE_32F_FAST_16F), CUBLAS_GEMM_DEFAULT);
-      !result) {
-    throw std::runtime_error(
-        fmt::format("[PCATask::run] failed with error \"{}\"", result.error()));
-  }
+  CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_N, CUBLAS_OP_N,
+                            n_samples, (int)(end_ - begin_), n_features, &alpha,
+                            idata, CUDA_C_32F, n_samples, eigenvecs, CUDA_C_32F,
+                            n_features, &beta, odata, CUDA_C_32F, n_samples,
+                            CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
 }
 
 // ==========================================================================
@@ -155,86 +136,44 @@ std::unique_ptr<Task> PCATaskFactory::create(const TensorMeta &imeta,
   size_t batch = imeta.shape().at(0);
   int n_features = static_cast<int>(batch);
 
-  // CublasHandle
-  auto cublas_handle_result = CublasHandle::try_create();
-  if (!cublas_handle_result) {
-    throw std::runtime_error(
-        fmt::format("[PCATaskFactory::create] failed with error \"{}\"",
-                    cublas_handle_result.error()));
-  }
-  auto cublas_handle = std::move(cublas_handle_result.value());
+  // 2) Handles and params
+  curaii::cublas::Handle cublas_handle;
+  CUBLAS_CHECK(cublasSetStream(cublas_handle.get(), stream.stream()));
 
-  if (auto result = cublas_handle.try_set_stream(stream); !result) {
-    throw std::runtime_error(fmt::format(
-        "[PCATaskFactory::create] failed with error \"{}\"", result.error()));
-  }
+  curaii::cusolverdn::Handle cusolver_handle;
+  CUSOLVER_CHECK(cusolverDnSetStream(cusolver_handle.get(), stream.stream()));
+  CUSOLVER_CHECK(cusolverDnSetDeterministicMode(
+      cusolver_handle.get(), CUSOLVER_ALLOW_NON_DETERMINISTIC_RESULTS));
 
-  // CusolverDnHandle
-  auto cusolver_handle_result = CusolverDnHandle::try_create();
-  if (!cusolver_handle_result) {
-    throw std::runtime_error(
-        fmt::format("[PCATaskFactory::create] failed with error \"{}\"",
-                    cusolver_handle_result.error()));
-  }
-  auto cusolver_handle = std::move(cusolver_handle_result.value());
+  curaii::cusolverdn::Params cusolver_params;
 
-  if (auto result = cusolver_handle.try_set_stream(stream); !result) {
-    throw std::runtime_error(fmt::format(
-        "[PCATaskFactory::create] failed with error \"{}\"", result.error()));
-  }
-
-  if (auto result = cusolver_handle.try_set_deterministic_mode(
-          CusolverDeterministicMode(CUSOLVER_ALLOW_NON_DETERMINISTIC_RESULTS));
-      !result) {
-    throw std::runtime_error(fmt::format(
-        "[PCATaskFactory::create] failed with error \"{}\"", result.error()));
-  }
-
-  // CusolverDnParams
-  auto cusolver_params_result = CusolverDnParams::try_create();
-  if (!cusolver_params_result) {
-    throw std::runtime_error(
-        fmt::format("[PCATaskFactory::create] failed with error \"{}\"",
-                    cusolver_params_result.error()));
-  }
-  auto cusolver_params = std::move(cusolver_params_result.value());
-
-  // Covariance matrix
+  // 3) Buffer allocations
   auto d_cov_matrix = make_unique_device_ptr<cuFloatComplex>(
       n_features * n_features, stream.stream());
 
-  // Eigenvalues
   auto d_eigenvalues = make_unique_device_ptr<float>(
       (params.end - params.begin), stream.stream());
 
-  // Info
   auto d_info = make_unique_device_ptr<int>(1, stream.stream());
 
-  // Workspace sizes
+  // 4) Workspace sizes
   size_t d_workspace_size = 0;
   size_t h_workspace_size = 0;
   int64_t h_meig = 0;
-  if (auto result = cusolver_handle.try_x_syevdx_buffer_size(
-          cusolver_params.ref(), CusolverEigMode(CUSOLVER_EIG_MODE_VECTOR),
-          CusolverEigRange(CUSOLVER_EIG_RANGE_I),
-          CublasFillMode(CUBLAS_FILL_MODE_LOWER), n_features,
-          CudaDataType(CUDA_C_32F), d_cov_matrix.get(), n_features, nullptr,
-          nullptr, params.begin + 1, params.end, &h_meig,
-          CudaDataType(CUDA_R_32F), d_eigenvalues.get(),
-          CudaDataType(CUDA_C_32F), &d_workspace_size, &h_workspace_size);
-      !result) {
-    throw std::runtime_error(fmt::format(
-        "[PCATaskFactory::create] failed with error \"{}\"", result.error()));
-  }
+  CUSOLVER_CHECK(cusolverDnXsyevdx_bufferSize(
+      cusolver_handle.get(), cusolver_params.get(), CUSOLVER_EIG_MODE_VECTOR,
+      CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER, n_features, CUDA_C_32F,
+      d_cov_matrix.get(), n_features, nullptr, nullptr, params.begin + 1,
+      params.end, &h_meig, CUDA_R_32F, d_eigenvalues.get(), CUDA_C_32F,
+      &d_workspace_size, &h_workspace_size));
 
-  // Device workspace
+  // 5) Workspace allocations
   auto d_workspace =
       make_unique_device_ptr<uint8_t>(d_workspace_size, stream.stream());
 
-  // Host workspace
   auto h_workspace = make_unique_host_ptr<uint8_t>(h_workspace_size);
 
-  // Return
+  // 6) Assemble task
   auto *task = new PCATask(
       meta, stream, std::move(cublas_handle), std::move(cusolver_handle),
       std::move(cusolver_params), std::move(d_cov_matrix),

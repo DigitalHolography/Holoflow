@@ -49,7 +49,7 @@ const char *cufftGetErrorString(cufftResult result) {
   case CUFFT_NOT_SUPPORTED:
     return "Operation is not supported for parameters given";
   default:
-    DH_BUG("Invalid cufft result");
+    DH_BUG("Invalid cuFFT result");
   }
 }
 

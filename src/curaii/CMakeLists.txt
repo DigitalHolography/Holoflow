@@ -3,10 +3,11 @@ add_library(curaii STATIC
   logger.cc
   library_types.cc
   cuda_runtime.cc
-  cublas.cc
-  cusolver_dn.cc
   v2/cuda.cc
   v2/cufft.cc
+  v2/cublas.cc
+  v2/cusolver_common.cc
+  v2/cusolver_dn.cc
   v2/logger.cc
 )
 
