@@ -19,7 +19,7 @@ public:
   friend class FFTShiftTaskFactory;
 
 private:
-  FFTShiftTask(const TaskMeta &meta, CudaStreamRef stream);
+  FFTShiftTask(const TaskMeta &meta, cudaStream_t stream);
 };
 
 class FFTShiftTaskFactory : public TaskFactory {
@@ -27,7 +27,7 @@ public:
   TaskMeta type_check(const TensorMeta &imeta, const json &params) override;
 
   std::unique_ptr<Task> create(const TensorMeta &imeta, const json &params,
-                               CudaStreamRef stream) override;
+                               cudaStream_t stream) override;
 };
 
 } // namespace dh

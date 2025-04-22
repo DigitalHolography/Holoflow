@@ -16,7 +16,7 @@
 #include <vector>
 
 #include "bug_buster/bug_buster.hh"
-#include "curaii/cuda_runtime.hh"
+#include "curaii/v2/cuda.hh"
 #include "holoflow/accumulator.hh"
 #include "holoflow/holoflow.hh"
 #include "holoflow/sink.hh"
@@ -229,7 +229,8 @@ void ModelCompiler::validate_source_is_unique() const {
 }
 
 struct AssignCudaStreamDFSVisitor : public boost::default_dfs_visitor {
-  AssignCudaStreamDFSVisitor(Graph &graph, std::vector<dh::CudaStream> &streams)
+  AssignCudaStreamDFSVisitor(Graph &graph,
+                             std::vector<curaii::cuda::Stream> &streams)
       : graph_(graph), streams_(streams) {}
 
   template <typename Vertex, typename Graph>
@@ -240,8 +241,8 @@ struct AssignCudaStreamDFSVisitor : public boost::default_dfs_visitor {
     // They need to create a new stream.
     if (node.kind_ == NodeKind::Source || node.kind_ == NodeKind::Accumulator) {
       if (!node.common_.stream_) {
-        auto stream = dh::CudaStream::create();
-        node.common_.stream_ = stream.ref();
+        curaii::cuda::Stream stream;
+        node.common_.stream_ = stream.get();
         streams_.push_back(std::move(stream));
       }
 
@@ -264,8 +265,8 @@ struct AssignCudaStreamDFSVisitor : public boost::default_dfs_visitor {
   }
 
   Graph &graph_;
-  std::vector<dh::CudaStream> &streams_;
-  std::stack<dh::CudaStreamRef> stream_stack_;
+  std::vector<curaii::cuda::Stream> &streams_;
+  std::stack<cudaStream_t> stream_stack_;
 };
 
 void ModelCompiler::assign_cuda_streams() {
@@ -747,7 +748,7 @@ void ModelCompiler::call_factories() {
       model_.accumulators_.push_back(std::move(accumulator));
     }
 
-    stream.synchronize();
+    CUDA_CHECK(cudaStreamSynchronize(stream));
   }
 }
 
@@ -829,15 +830,15 @@ void ModelCompiler::allocate_non_accumulator_tensor_slots() {
     switch (slot.meta.memory_location()) {
     case dh::MemoryLocation::HOST:
       dh::holoflow_logger()->debug("allocation tens_id: {} on host", id);
-      slot.host_data =
-          dh::make_unique_host_ptr<uint8_t>(slot.meta.size_in_bytes());
+      slot.host_data = curaii::cuda::make_unique_host_ptr<uint8_t>(
+          slot.meta.size_in_bytes());
       slot.device_data.reset();
       slot.data = slot.host_data.get();
       break;
     case dh::MemoryLocation::DEVICE:
       dh::holoflow_logger()->debug("allocation tens_id: {} on device", id);
-      slot.device_data =
-          dh::make_unique_device_ptr<uint8_t>(slot.meta.size_in_bytes());
+      slot.device_data = curaii::cuda::make_unique_device_ptr<uint8_t>(
+          slot.meta.size_in_bytes());
       slot.host_data.reset();
       slot.data = slot.device_data.get();
       break;

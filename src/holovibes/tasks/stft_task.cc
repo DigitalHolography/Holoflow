@@ -2,10 +2,10 @@
 
 #include <cuComplex.h>
 #include <cuda_runtime.h>
+#include <cufftXt.h>
 #include <memory>
 #include <nlohmann/json.hpp>
 
-#include "curaii/curaii.hh"
 #include "curaii/v2/cuda.hh"
 #include "curaii/v2/cufft.hh"
 #include "holoflow/error.hh"
@@ -18,7 +18,7 @@ namespace dh {
 //                     STFTTask Implementation
 // ==========================================================================
 
-STFTTask::STFTTask(const TaskMeta &meta, CudaStreamRef stream,
+STFTTask::STFTTask(const TaskMeta &meta, cudaStream_t stream,
                    curaii::cufft::Handle handle)
     : Task(meta, stream), handle_(std::move(handle)) {}
 
@@ -51,7 +51,7 @@ TaskMeta STFTTaskFactory::type_check(const TensorMeta &imeta, const json &) {
 
 std::unique_ptr<Task> STFTTaskFactory::create(const TensorMeta &imeta,
                                               const json &jparams,
-                                              CudaStreamRef stream) {
+                                              cudaStream_t stream) {
   // 1) Validate
   auto meta = type_check(imeta, jparams);
 
@@ -75,7 +75,7 @@ std::unique_ptr<Task> STFTTaskFactory::create(const TensorMeta &imeta,
   cudaDataType executiontype = CUDA_C_32F;
 
   curaii::cufft::Handle handle;
-  CUFFT_CHECK(cufftSetStream(handle.get(), stream.stream()));
+  CUFFT_CHECK(cufftSetStream(handle.get(), stream));
   CUFFT_CHECK(cufftXtGetSizeMany(handle.get(), rank, n, inembed, istride, idist,
                                  inputtype, onembed, ostride, odist, outputtype,
                                  batch, &work_size, executiontype));

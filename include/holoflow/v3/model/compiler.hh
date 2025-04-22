@@ -5,7 +5,6 @@
 #include <string>
 #include <vector>
 
-#include "curaii/cuda_runtime.hh"
 #include "holoflow/accumulator.hh"
 #include "holoflow/sink.hh"
 #include "holoflow/source.hh"

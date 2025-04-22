@@ -16,13 +16,12 @@ namespace dh {
 //                     HolofileSource Implementation
 // ==========================================================================
 
-HolofileSource::HolofileSource(const SourceMeta &meta, CudaStreamRef stream,
-                               const std::string &path, int start_frame,
-                               int end_frame, int batch_size,
-                               LoadKind load_kind, HolofileReader reader,
-                               uint8_t *internal_buffer,
-                               unique_host_ptr<uint8_t> host_buffer,
-                               unique_device_ptr<uint8_t> device_buffer)
+HolofileSource::HolofileSource(
+    const SourceMeta &meta, cudaStream_t stream, const std::string &path,
+    int start_frame, int end_frame, int batch_size, LoadKind load_kind,
+    HolofileReader reader, uint8_t *internal_buffer,
+    curaii::cuda::unique_host_ptr<uint8_t> host_buffer,
+    curaii::cuda::unique_device_ptr<uint8_t> device_buffer)
     : Source(meta, stream), path_(path), start_frame_(start_frame),
       end_frame_(end_frame), batch_size_(batch_size), load_kind_(load_kind),
       frame_index_(start_frame), reader_(std::move(reader)),
@@ -61,17 +60,17 @@ void HolofileSource::run(TensorView otens) {
   switch (load_kind_) {
   case LoadKind::READ_LIVE:
     CUDA_CHECK(cudaMemcpyAsync(otens.data(), internal_buffer_, size,
-                               cudaMemcpyHostToDevice, stream_.stream()));
+                               cudaMemcpyHostToDevice, stream_));
     break;
   case LoadKind::LOAD_IN_CPU:
     CUDA_CHECK(cudaMemcpyAsync(otens.data(),
                                internal_buffer_ + frame_index_ * frame_size,
-                               size, cudaMemcpyHostToDevice, stream_.stream()));
+                               size, cudaMemcpyHostToDevice, stream_));
     break;
   case LoadKind::LOAD_IN_GPU:
-    CUDA_CHECK(cudaMemcpyAsync(
-        otens.data(), internal_buffer_ + frame_index_ * frame_size, size,
-        cudaMemcpyDeviceToDevice, stream_.stream()));
+    CUDA_CHECK(cudaMemcpyAsync(otens.data(),
+                               internal_buffer_ + frame_index_ * frame_size,
+                               size, cudaMemcpyDeviceToDevice, stream_));
     break;
   }
 
@@ -134,7 +133,7 @@ SourceMeta HolofileSourceFactory::type_check(const json &jparams) {
 }
 
 std::unique_ptr<Source> HolofileSourceFactory::create(const json &jparams,
-                                                      CudaStreamRef stream) {
+                                                      cudaStream_t stream) {
   // 1) Validate
   auto meta = type_check(jparams);
   auto params = jparams.get<Params>();
@@ -170,8 +169,8 @@ std::unique_ptr<Source> HolofileSourceFactory::create(const json &jparams,
   size_t frame_size =
       header.frame_height * header.frame_width * header.bits_per_pixel / 8;
 
-  unique_host_ptr<uint8_t> host_buffer = nullptr;
-  unique_device_ptr<uint8_t> device_buffer = nullptr;
+  curaii::cuda::unique_host_ptr<uint8_t> host_buffer = nullptr;
+  curaii::cuda::unique_device_ptr<uint8_t> device_buffer = nullptr;
   uint8_t *internal_buffer = nullptr;
   size_t size = 0;
   size_t nb_frames = 0;
@@ -179,19 +178,19 @@ std::unique_ptr<Source> HolofileSourceFactory::create(const json &jparams,
   switch (load_kind) {
   case HolofileSource::LoadKind::READ_LIVE:
     size = params.batch_size * frame_size;
-    host_buffer = make_unique_host_ptr<uint8_t>(size);
+    host_buffer = curaii::cuda::make_unique_host_ptr<uint8_t>(size);
     internal_buffer = host_buffer.get();
     break;
   case HolofileSource::LoadKind::LOAD_IN_CPU:
     nb_frames = params.end_frame - params.start_frame;
     size = nb_frames * frame_size;
-    host_buffer = make_unique_host_ptr<uint8_t>(size);
+    host_buffer = curaii::cuda::make_unique_host_ptr<uint8_t>(size);
     internal_buffer = host_buffer.get();
     break;
   case HolofileSource::LoadKind::LOAD_IN_GPU:
     nb_frames = params.end_frame - params.start_frame;
     size = nb_frames * frame_size;
-    device_buffer = make_unique_device_ptr<uint8_t>(size, stream.stream());
+    device_buffer = curaii::cuda::make_unique_device_ptr<uint8_t>(size);
     internal_buffer = device_buffer.get();
     break;
   }
@@ -204,7 +203,7 @@ std::unique_ptr<Source> HolofileSourceFactory::create(const json &jparams,
           fmt::format("Failed to read frames: {}", result.error().message()));
     }
   } else if (load_kind == HolofileSource::LoadKind::LOAD_IN_GPU) {
-    auto tmp_buffer = make_unique_host_ptr<uint8_t>(size);
+    auto tmp_buffer = curaii::cuda::make_unique_host_ptr<uint8_t>(size);
     auto result = reader.read_frames(tmp_buffer.get(), nb_frames);
     if (!result) {
       throw std::runtime_error(
@@ -212,7 +211,7 @@ std::unique_ptr<Source> HolofileSourceFactory::create(const json &jparams,
     }
 
     CUDA_CHECK(cudaMemcpyAsync(internal_buffer, tmp_buffer.get(), size,
-                               cudaMemcpyHostToDevice, stream.stream()));
+                               cudaMemcpyHostToDevice));
   }
 
   // 5) Assemble source

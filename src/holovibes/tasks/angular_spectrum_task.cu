@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <cuComplex.h>
 #include <cub/cub.cuh>
+#include <cufftXt.h>
 #include <math_constants.h>
 #include <numeric>
 #include <spdlog/spdlog.h>
@@ -35,11 +36,10 @@ __global__ void apply_lens_kernel(cuFloatComplex *idata, cuFloatComplex *odata,
 
 } // namespace
 
-AngularSpectrumTask::AngularSpectrumTask(const TaskMeta &meta,
-                                         CudaStreamRef stream, float lambda,
-                                         float z, float pixel_size,
-                                         unique_device_ptr<cuFloatComplex> lens,
-                                         curaii::cufft::Handle handle)
+AngularSpectrumTask::AngularSpectrumTask(
+    const TaskMeta &meta, cudaStream_t stream, float lambda, float z,
+    float pixel_size, curaii::cuda::unique_device_ptr<cuFloatComplex> lens,
+    curaii::cufft::Handle handle)
     : Task(meta, stream), lambda_(lambda), z_(z), pixel_size_(pixel_size),
       lens_(std::move(lens)), handle_(std::move(handle)) {}
 
@@ -57,7 +57,7 @@ void AngularSpectrumTask::run(TensorView input, TensorView output) {
   dim3 block_size = 256;
   dim3 grid_size = (frame_size + block_size.x - 1) / block_size.x;
 
-  apply_lens_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
+  apply_lens_kernel<<<grid_size, block_size, 0, stream_>>>(
       odata, odata, lens_.get(), frame_size, B);
 
   // 4) Backward FFT
@@ -156,7 +156,7 @@ TaskMeta AngularSpectrumTaskFactory::type_check(const TensorMeta &imeta,
 
 std::unique_ptr<Task>
 AngularSpectrumTaskFactory::create(const TensorMeta &imeta, const json &jparams,
-                                   CudaStreamRef stream) {
+                                   cudaStream_t stream) {
   // 1) Validate
   auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
@@ -170,17 +170,17 @@ AngularSpectrumTaskFactory::create(const TensorMeta &imeta, const json &jparams,
 
   // 3) Allocations
   auto d_lens =
-      make_unique_device_ptr<cuFloatComplex>(frame_size, stream.stream());
+      curaii::cuda::make_unique_device_ptr<cuFloatComplex>(frame_size, stream);
 
   // 4) Compute lens
   dim3 block_size(16, 16);
   dim3 grid_size((W + block_size.x - 1) / block_size.x,
                  (H + block_size.y - 1) / block_size.y);
 
-  spectral_lens_kernel<<<grid_size, block_size, 0, stream.stream()>>>(
+  spectral_lens_kernel<<<grid_size, block_size, 0, stream>>>(
       d_lens.get(), W, H, params.lambda, params.z, params.pixel_size);
 
-  swap_corners_kernel<<<grid_size, block_size, 0, stream.stream()>>>(
+  swap_corners_kernel<<<grid_size, block_size, 0, stream>>>(
       d_lens.get(), d_lens.get(), W, H, 1);
 
   CUDA_CHECK(cudaPeekAtLastError());
@@ -201,7 +201,7 @@ AngularSpectrumTaskFactory::create(const TensorMeta &imeta, const json &jparams,
   cudaDataType executiontype = CUDA_C_32F;
 
   curaii::cufft::Handle handle;
-  CUFFT_CHECK(cufftSetStream(handle.get(), stream.stream()));
+  CUFFT_CHECK(cufftSetStream(handle.get(), stream));
   CUFFT_CHECK(cufftXtGetSizeMany(handle.get(), rank, n, inembed, istride, idist,
                                  inputtype, onembed, ostride, odist, outputtype,
                                  batch, &work_size, executiontype));

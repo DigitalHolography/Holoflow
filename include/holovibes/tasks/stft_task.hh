@@ -5,7 +5,6 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
-#include "curaii/curaii.hh"
 #include "curaii/v2/cufft.hh"
 #include "holoflow/error.hh"
 #include "holoflow/task.hh"
@@ -20,7 +19,7 @@ class STFTTask : public Task {
   friend class STFTTaskFactory;
 
 private:
-  STFTTask(const TaskMeta &meta, CudaStreamRef stream,
+  STFTTask(const TaskMeta &meta, cudaStream_t stream,
            curaii::cufft::Handle handle);
 
   curaii::cufft::Handle handle_;
@@ -30,7 +29,7 @@ class STFTTaskFactory : public TaskFactory {
   TaskMeta type_check(const TensorMeta &imeta, const json &params) override;
 
   std::unique_ptr<Task> create(const TensorMeta &imeta, const json &params,
-                               CudaStreamRef stream) override;
+                               cudaStream_t stream) override;
 };
 
 } // namespace dh

@@ -6,7 +6,6 @@
 #include <spdlog/spdlog.h>
 
 #include "bug_buster/bug_buster.hh"
-#include "curaii/curaii.hh"
 #include "curaii/v2/cuda.hh"
 #include "holovibes/holovibes.hh"
 
@@ -16,7 +15,7 @@ namespace dh {
 //                     QtDisplaySink Implementation
 // ==========================================================================
 
-QtDisplaySink::QtDisplaySink(const SinkMeta &meta, CudaStreamRef stream)
+QtDisplaySink::QtDisplaySink(const SinkMeta &meta, cudaStream_t stream)
     : Sink(meta, stream), frame_displayed_(true),
       last_display_time_(std::chrono::steady_clock::now()) {}
 
@@ -33,11 +32,13 @@ void QtDisplaySink::run(TensorView itens) {
 
   frame_displayed_.store(false, std::memory_order_release);
 
-  auto host = make_unique_host_ptr<uint8_t>(itens.size_in_bytes());
+  auto host =
+      curaii::cuda::make_unique_host_ptr<uint8_t>(itens.size_in_bytes());
   CUDA_CHECK(cudaMemcpyAsync(host.get(), itens.data(), itens.size_in_bytes(),
-                             cudaMemcpyDeviceToHost, stream_.stream()));
+                             cudaMemcpyDeviceToHost, stream_));
 
-  stream_.synchronize();
+  CUDA_CHECK(cudaStreamSynchronize(stream_));
+
   TensorMeta host_meta(itens.data_type(), MemoryLocation::HOST,
                        {itens.shape().at(1), itens.shape().at(2)});
   TensorView host_view(host.get(), host_meta);
@@ -90,7 +91,7 @@ SinkMeta QtDisplaySinkFactory::type_check(const TensorMeta &imeta,
 
 std::unique_ptr<Sink> QtDisplaySinkFactory::create(const TensorMeta &imeta,
                                                    const json &jparams,
-                                                   CudaStreamRef stream) {
+                                                   cudaStream_t stream) {
   // 1) Validate
   auto meta = type_check(imeta, jparams);
 

@@ -2,10 +2,6 @@
 
 #include "holoflow/accumulator.hh"
 
-#include <cassert>
-#include <fmt/ranges.h>
-#include <spdlog/spdlog.h>
-
 #include "bug_buster/bug_buster.hh"
 #include "holoflow/holoflow.hh"
 
@@ -18,10 +14,6 @@ namespace dh {
 AccumulatorMeta::AccumulatorMeta(const TensorMeta &imeta,
                                  const TensorMeta &ometa)
     : imeta_(imeta), ometa_(ometa) {
-  dh::holoflow_logger()->trace(
-      "Initializing AccumulatorMeta with input shape [{}], output shape [{}]",
-      fmt::join(imeta_.shape(), ", "), fmt::join(ometa_.shape(), ", "));
-
   DH_CHECK(imeta_.memory_location() == ometa_.memory_location() &&
            "Input and output tensors must have the same memory location");
   DH_CHECK(imeta_.data_type() == ometa_.data_type() &&
@@ -50,13 +42,8 @@ const TensorMeta &AccumulatorMeta::ometa() const { return ometa_; }
 //                     Accumulator Implementation
 // ==========================================================================
 
-Accumulator::Accumulator(const AccumulatorMeta &meta, CudaStreamRef stream)
-    : meta_(meta), stream_(stream) {
-  dh::holoflow_logger()->trace(
-      "Created Accumulator with stream={} and shape [{}]",
-      reinterpret_cast<void *>(stream.stream()),
-      fmt::join(meta.imeta().shape(), ", "));
-}
+Accumulator::Accumulator(const AccumulatorMeta &meta, cudaStream_t stream)
+    : meta_(meta), stream_(stream) {}
 
 const AccumulatorMeta &Accumulator::meta() const { return meta_; }
 const TensorMeta &Accumulator::imeta() const { return meta_.imeta(); }

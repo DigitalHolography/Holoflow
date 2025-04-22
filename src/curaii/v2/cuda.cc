@@ -44,6 +44,46 @@ void DeviceDeleter::operator()(void *ptr) const noexcept {
   }
 }
 
+Stream::Stream(unsigned flags, int priority) {
+  CUDA_CHECK(cudaStreamCreateWithPriority(&stream_, flags, priority));
+}
+
+Stream::Stream(Stream &&other) noexcept : stream_(other.stream_) {
+  other.stream_ = nullptr;
+}
+
+Stream &Stream::operator=(Stream &&other) noexcept {
+  if (this != &other) {
+    reset();
+    stream_ = other.stream_;
+    other.stream_ = nullptr;
+  }
+  return *this;
+}
+
+Stream::~Stream() noexcept {
+  if (stream_) {
+    CUDA_CHECK_NT(cudaStreamDestroy(stream_));
+  }
+}
+
+cudaStream_t Stream::get() const noexcept { return stream_; }
+
+cudaStream_t Stream::release() noexcept {
+  auto tmp = stream_;
+  stream_ = nullptr;
+  return tmp;
+}
+
+void Stream::reset(cudaStream_t s) noexcept {
+  if (stream_) {
+    CUDA_CHECK_NT(cudaStreamDestroy(stream_));
+  }
+  stream_ = s;
+}
+
+Stream::operator bool() const noexcept { return stream_ != nullptr; }
+
 } // namespace curaii::cuda
 
 namespace curaii::cuda::detail {

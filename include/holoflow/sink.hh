@@ -4,7 +4,6 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
-#include "curaii/cuda_runtime.hh"
 #include "holoflow/error.hh"
 #include "holoflow/tensor.hh"
 
@@ -24,7 +23,7 @@ private:
 
 class Sink {
 public:
-  Sink(const SinkMeta &meta, CudaStreamRef stream);
+  Sink(const SinkMeta &meta, cudaStream_t stream);
 
   virtual ~Sink() = default;
 
@@ -41,7 +40,7 @@ public:
 
 protected:
   SinkMeta meta_;
-  CudaStreamRef stream_;
+  cudaStream_t stream_;
 };
 
 class SinkFactory {
@@ -58,7 +57,7 @@ public:
   virtual SinkMeta type_check(const TensorMeta &imeta, const json &params) = 0;
 
   virtual std::unique_ptr<Sink>
-  create(const TensorMeta &imeta, const json &params, CudaStreamRef stream) = 0;
+  create(const TensorMeta &imeta, const json &params, cudaStream_t stream) = 0;
 };
 
 } // namespace dh

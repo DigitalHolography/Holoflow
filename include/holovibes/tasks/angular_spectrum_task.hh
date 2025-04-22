@@ -5,7 +5,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
-#include "curaii/curaii.hh"
+#include "curaii/v2/cuda.hh"
 #include "curaii/v2/cufft.hh"
 #include "holoflow/error.hh"
 #include "holoflow/task.hh"
@@ -21,14 +21,14 @@ public:
   friend class AngularSpectrumTaskFactory;
 
 private:
-  AngularSpectrumTask(const TaskMeta &meta, CudaStreamRef stream, float lambda,
+  AngularSpectrumTask(const TaskMeta &meta, cudaStream_t stream, float lambda,
                       float z, float pixel_size,
-                      unique_device_ptr<cuFloatComplex> lens,
+                      curaii::cuda::unique_device_ptr<cuFloatComplex> lens,
                       curaii::cufft::Handle handle);
   float lambda_;
   float z_;
   float pixel_size_;
-  unique_device_ptr<cuFloatComplex> lens_;
+  curaii::cuda::unique_device_ptr<cuFloatComplex> lens_;
   curaii::cufft::Handle handle_;
 };
 
@@ -37,7 +37,7 @@ public:
   TaskMeta type_check(const TensorMeta &imeta, const json &params) override;
 
   std::unique_ptr<Task> create(const TensorMeta &imeta, const json &params,
-                               CudaStreamRef stream) override;
+                               cudaStream_t stream) override;
 
 private:
   struct Params {

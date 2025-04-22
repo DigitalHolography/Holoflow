@@ -2,7 +2,7 @@
 
 #include <tl/expected.hpp>
 
-#include "curaii/curaii.hh"
+#include "curaii/v2/cuda.hh"
 #include "holoflow/accumulator.hh"
 #include "holoflow/error.hh"
 #include "holoflow/tensor.hh"
@@ -31,10 +31,10 @@ public:
   friend class SlidingAverageAccumulatorFactory;
 
 private:
-  SlidingAverageAccumulator(const AccumulatorMeta &meta, CudaStreamRef stream,
-                            size_t nb_slots, size_t window_size,
-                            unique_device_ptr<uint8_t> d_buffer,
-                            unique_device_ptr<uint8_t> d_avg_frame);
+  SlidingAverageAccumulator(
+      const AccumulatorMeta &meta, cudaStream_t stream, size_t nb_slots,
+      size_t window_size, curaii::cuda::unique_device_ptr<uint8_t> d_buffer,
+      curaii::cuda::unique_device_ptr<uint8_t> d_avg_frame);
 
   size_t writer_size();
 
@@ -48,9 +48,9 @@ private:
   /// The size of each element in bytes.
   size_t element_size_;
 
-  unique_device_ptr<uint8_t> d_buffer_;
+  curaii::cuda::unique_device_ptr<uint8_t> d_buffer_;
 
-  unique_device_ptr<uint8_t> d_running_avg_;
+  curaii::cuda::unique_device_ptr<uint8_t> d_running_avg_;
 
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> avg_idx_;
 
@@ -68,7 +68,7 @@ public:
 
   std::unique_ptr<Accumulator> create(const TensorMeta &imeta,
                                       const json &params,
-                                      CudaStreamRef stream) override;
+                                      cudaStream_t stream) override;
 
 private:
   struct Params {

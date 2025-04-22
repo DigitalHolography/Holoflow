@@ -1,9 +1,5 @@
 #include "holoflow/task.hh"
 
-#include <cassert>
-#include <fmt/ranges.h>
-#include <spdlog/spdlog.h>
-
 #include "bug_buster/bug_buster.hh"
 #include "holoflow/holoflow.hh"
 
@@ -16,11 +12,6 @@ namespace dh {
 TaskMeta::TaskMeta(const TensorMeta &imeta, const TensorMeta &ometa,
                    bool inlined)
     : imeta_(imeta), ometa_(ometa), inlined_(inlined) {
-  dh::holoflow_logger()->trace("Initializing TaskMeta with input shape [{}], "
-                               "output shape [{}], inlined []",
-                               fmt::join(imeta_.shape(), ", "),
-                               fmt::join(ometa_.shape(), ", "), inlined);
-
   if (inlined_) {
     DH_CHECK((imeta_.data_type() == ometa_.data_type()) &&
              "Inlined tasks must have equal input and output tensors");
@@ -41,7 +32,7 @@ bool TaskMeta::inlined() const { return inlined_; }
 //                     Task Implementation
 // ==========================================================================
 
-Task::Task(const TaskMeta &meta, CudaStreamRef stream)
+Task::Task(const TaskMeta &meta, cudaStream_t stream)
     : meta_(meta), stream_(stream) {}
 
 const TaskMeta &Task::meta() const { return meta_; }

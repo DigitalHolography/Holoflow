@@ -30,7 +30,7 @@ signals:
   void frame_ready(TensorView itens);
 
 private:
-  QtDisplaySink(const SinkMeta &meta, CudaStreamRef stream);
+  QtDisplaySink(const SinkMeta &meta, cudaStream_t stream);
 
   void on_frame_displayed();
 
@@ -47,7 +47,7 @@ public:
   SinkMeta type_check(const TensorMeta &imeta, const json &params) override;
 
   std::unique_ptr<Sink> create(const TensorMeta &imeta, const json &params,
-                               CudaStreamRef stream) override;
+                               cudaStream_t stream) override;
 
 private:
   TensorDisplayWidget &widget_;

@@ -4,7 +4,6 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
-#include "curaii/cuda_runtime.hh"
 #include "holoflow/error.hh"
 #include "holoflow/tensor.hh"
 
@@ -66,7 +65,7 @@ public:
    * @param meta The task metadata.
    * @param stream The stream.
    */
-  Task(const TaskMeta &meta, CudaStreamRef stream);
+  Task(const TaskMeta &meta, cudaStream_t stream);
 
   /**
    * @brief Virtual destructor.
@@ -113,7 +112,7 @@ public:
 
 protected:
   TaskMeta meta_; ///< Metadata defining input/output tensors and inlining.
-  CudaStreamRef stream_; ///< CUDA stream associated with the task execution.
+  cudaStream_t stream_; ///< CUDA stream associated with the task execution.
 };
 
 /**
@@ -159,7 +158,7 @@ public:
    * task is destroyed.
    */
   virtual std::unique_ptr<Task>
-  create(const TensorMeta &imeta, const json &params, CudaStreamRef stream) = 0;
+  create(const TensorMeta &imeta, const json &params, cudaStream_t stream) = 0;
 };
 
 } // namespace dh

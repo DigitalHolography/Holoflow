@@ -11,6 +11,7 @@
  *   - A strongly‑typed exception class (curaii::cuda::Error).
  *   - Smart‑pointer aliases and factory helpers for host and device memory
  *     with safe deleters.
+ *   - RAII wrapper for cudaStream_t.
  *
  * All primitives live in the curaii::cuda namespace.
  */
@@ -158,6 +159,68 @@ template <typename T>
 template <typename T>
 [[nodiscard]] unique_device_ptr<T>
 make_unique_device_ptr(std::size_t count, cudaStream_t stream = 0);
+
+/**
+ * @class Stream
+ * @brief RAII wrapper for CUDA streams.
+ *
+ * Calls cudaStreamCreateWithPriority on construction and
+ * cudaStreamDestroy on destruction. Movable but not copyable.
+ */
+class Stream {
+public:
+  /**
+   * @brief Create a new CUDA stream.
+   * @param flags    Creation flags (defaults to cudaStreamDefault).
+   * @param priority Priority within [0..maxPriority] (defaults to 0).
+   * @throws curaii::cuda::Error if creation fails.
+   */
+  explicit Stream(unsigned flags = cudaStreamDefault, int priority = 0);
+
+  Stream(const Stream &) = delete;
+  Stream &operator=(const Stream &) = delete;
+
+  /**
+   * @brief Move‑construct, taking ownership from @p other.
+   */
+  Stream(Stream &&other) noexcept;
+
+  /**
+   * @brief Move‑assign, destroying any existing stream and taking ownership.
+   */
+  Stream &operator=(Stream &&other) noexcept;
+
+  /**
+   * @brief Destroy the CUDA stream if valid.
+   */
+  ~Stream() noexcept;
+
+  /**
+   * @brief Get the raw cudaStream_t.
+   */
+  cudaStream_t get() const noexcept;
+
+  /**
+   * @brief Release ownership of the stream without destroying it.
+   * @return The raw stream handle; this object becomes empty.
+   */
+  cudaStream_t release() noexcept;
+
+  /**
+   * @brief Replace the managed stream, destroying the old one if valid.
+   * @param s New raw stream (or nullptr to clear).
+   */
+  void reset(cudaStream_t s = nullptr) noexcept;
+
+  /**
+   * @brief Check whether there is a valid stream.
+   * @return true if get() != nullptr.
+   */
+  explicit operator bool() const noexcept;
+
+private:
+  cudaStream_t stream_{nullptr};
+};
 
 } // namespace curaii::cuda
 

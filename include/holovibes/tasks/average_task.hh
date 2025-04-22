@@ -4,7 +4,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
-#include "curaii/curaii.hh"
+#include "curaii/v2/cuda.hh"
 #include "holoflow/error.hh"
 #include "holoflow/task.hh"
 
@@ -25,7 +25,7 @@ private:
     CF32_AVG,
   };
 
-  AverageTask(const TaskMeta &meta, CudaStreamRef stream, int begin, int end,
+  AverageTask(const TaskMeta &meta, cudaStream_t stream, int begin, int end,
               Kind kind);
 
   int begin_;
@@ -38,7 +38,7 @@ public:
   TaskMeta type_check(const TensorMeta &imeta, const json &params) override;
 
   std::unique_ptr<Task> create(const TensorMeta &imeta, const json &params,
-                               CudaStreamRef stream) override;
+                               cudaStream_t stream) override;
 
 private:
   struct Params {

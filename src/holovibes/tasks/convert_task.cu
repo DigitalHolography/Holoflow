@@ -17,13 +17,14 @@ namespace dh {
 //                     ConvertTask Implementation
 // ==========================================================================
 
-ConvertTask::ConvertTask(const TaskMeta &meta, CudaStreamRef stream,
-                         Conversion conv, size_t min_temp_storage_bytes,
-                         unique_device_ptr<uint8_t> d_min_temp_storage,
-                         unique_device_ptr<uint8_t> d_min,
-                         size_t max_temp_storage_bytes,
-                         unique_device_ptr<uint8_t> d_max_temp_storage,
-                         unique_device_ptr<uint8_t> d_max)
+ConvertTask::ConvertTask(
+    const TaskMeta &meta, cudaStream_t stream, Conversion conv,
+    size_t min_temp_storage_bytes,
+    curaii::cuda::unique_device_ptr<uint8_t> d_min_temp_storage,
+    curaii::cuda::unique_device_ptr<uint8_t> d_min,
+    size_t max_temp_storage_bytes,
+    curaii::cuda::unique_device_ptr<uint8_t> d_max_temp_storage,
+    curaii::cuda::unique_device_ptr<uint8_t> d_max)
     : Task(meta, stream), conversion_(conv),
       min_temp_storage_bytes_(min_temp_storage_bytes),
       d_min_temp_storage_(std::move(d_min_temp_storage)),
@@ -114,12 +115,12 @@ void ConvertTask::run(TensorView input, TensorView output) {
 
   switch (conversion_) {
   case Conversion::U8_CF32_REAL:
-    u8_cf32_real_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
+    u8_cf32_real_kernel<<<grid_size, block_size, 0, stream_>>>(
         static_cast<uint8_t *>(idata), static_cast<cuFloatComplex *>(odata),
         size);
     break;
   case Conversion::U16_CF32_REAL:
-    u16_cf32_real_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
+    u16_cf32_real_kernel<<<grid_size, block_size, 0, stream_>>>(
         static_cast<uint16_t *>(idata), static_cast<cuFloatComplex *>(odata),
         size);
     break;
@@ -128,12 +129,12 @@ void ConvertTask::run(TensorView input, TensorView output) {
     CUDA_CHECK(cub::DeviceReduce::Min(
         d_min_temp_storage_.get(), min_temp_storage_bytes_,
         static_cast<float *>(idata), static_cast<float *>(d_min), size,
-        stream_.stream()));
+        stream_));
     CUDA_CHECK(cub::DeviceReduce::Max(
         d_max_temp_storage_.get(), max_temp_storage_bytes_,
         static_cast<float *>(idata), static_cast<float *>(d_max), size,
-        stream_.stream()));
-    f32_u8_scaled_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
+        stream_));
+    f32_u8_scaled_kernel<<<grid_size, block_size, 0, stream_>>>(
         static_cast<float *>(idata), static_cast<uint8_t *>(odata), size,
         static_cast<float *>(d_min), static_cast<float *>(d_max));
     break;
@@ -142,24 +143,24 @@ void ConvertTask::run(TensorView input, TensorView output) {
     CUDA_CHECK(cub::DeviceReduce::Min(
         d_min_temp_storage_.get(), min_temp_storage_bytes_,
         static_cast<float *>(idata), static_cast<float *>(d_min), size,
-        stream_.stream()));
+        stream_));
     CUDA_CHECK(cub::DeviceReduce::Max(
         d_max_temp_storage_.get(), max_temp_storage_bytes_,
         static_cast<float *>(idata), static_cast<float *>(d_max), size,
-        stream_.stream()));
-    f32_u16_scaled_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
+        stream_));
+    f32_u16_scaled_kernel<<<grid_size, block_size, 0, stream_>>>(
         static_cast<float *>(idata), static_cast<uint16_t *>(odata), size,
         static_cast<float *>(d_min), static_cast<float *>(d_max));
     break;
 
   case Conversion::CF32_F32_MODU:
-    cf32_f32_modu_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
+    cf32_f32_modu_kernel<<<grid_size, block_size, 0, stream_>>>(
         static_cast<cuFloatComplex *>(idata), static_cast<float *>(odata),
         size);
     break;
 
   case Conversion::CF32_F32_ARGU:
-    cf32_f32_argu_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
+    cf32_f32_argu_kernel<<<grid_size, block_size, 0, stream_>>>(
         static_cast<cuFloatComplex *>(idata), static_cast<float *>(odata),
         size);
     break;
@@ -233,7 +234,7 @@ TaskMeta ConvertTaskFactory::type_check(const TensorMeta &imeta,
 
 std::unique_ptr<Task> ConvertTaskFactory::create(const TensorMeta &imeta,
                                                  const json &jparams,
-                                                 CudaStreamRef stream) {
+                                                 cudaStream_t stream) {
   // 1) Validate
   auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
@@ -257,12 +258,12 @@ std::unique_ptr<Task> ConvertTaskFactory::create(const TensorMeta &imeta,
   }
 
   size_t min_temp_storage_bytes = 0;
-  unique_device_ptr<uint8_t> d_min_temp_storage;
-  unique_device_ptr<uint8_t> d_min;
+  curaii::cuda::unique_device_ptr<uint8_t> d_min_temp_storage;
+  curaii::cuda::unique_device_ptr<uint8_t> d_min;
 
   size_t max_temp_storage_bytes = 0;
-  unique_device_ptr<uint8_t> d_max_temp_storage = nullptr;
-  unique_device_ptr<uint8_t> d_max = nullptr;
+  curaii::cuda::unique_device_ptr<uint8_t> d_max_temp_storage = nullptr;
+  curaii::cuda::unique_device_ptr<uint8_t> d_max = nullptr;
 
   // 3) CUB temp storage
   if (conversion == ConvertTask::Conversion::F32_U8_SCALED ||
@@ -270,19 +271,21 @@ std::unique_ptr<Task> ConvertTaskFactory::create(const TensorMeta &imeta,
     CUDA_CHECK(cub::DeviceReduce::Min(
         d_min_temp_storage.get(), min_temp_storage_bytes,
         static_cast<float *>(nullptr), static_cast<float *>(nullptr),
-        imeta.size(), stream.stream()));
+        imeta.size(), stream));
 
     CUDA_CHECK(cub::DeviceReduce::Max(
         d_max_temp_storage.get(), max_temp_storage_bytes,
         static_cast<float *>(nullptr), static_cast<float *>(nullptr),
-        imeta.size(), stream.stream()));
+        imeta.size(), stream));
 
-    d_min_temp_storage = make_unique_device_ptr<uint8_t>(min_temp_storage_bytes,
-                                                         stream.stream());
-    d_max_temp_storage = make_unique_device_ptr<uint8_t>(max_temp_storage_bytes,
-                                                         stream.stream());
-    d_min = make_unique_device_ptr<uint8_t>(sizeof(float), stream.stream());
-    d_max = make_unique_device_ptr<uint8_t>(sizeof(float), stream.stream());
+    d_min_temp_storage = curaii::cuda::make_unique_device_ptr<uint8_t>(
+        min_temp_storage_bytes, stream);
+    d_max_temp_storage = curaii::cuda::make_unique_device_ptr<uint8_t>(
+        max_temp_storage_bytes, stream);
+    d_min =
+        curaii::cuda::make_unique_device_ptr<uint8_t>(sizeof(float), stream);
+    d_max =
+        curaii::cuda::make_unique_device_ptr<uint8_t>(sizeof(float), stream);
   }
 
   // 6) Assemble task

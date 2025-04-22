@@ -22,7 +22,7 @@ void Runner::start() {
     throw std::runtime_error("Runner is already running");
   }
 
-  curaii::cuda::peek_at_last_error();
+  CUDA_CHECK(cudaPeekAtLastError());
 
   stop_.store(false);
   thread_ = std::thread([this]() { run(); });
@@ -280,17 +280,17 @@ void Runner::run() {
 
         nvtxRangePush(fmt::format("[PES::{}] allocate", name).c_str());
         allocate_pes(pes_root);
-        node.common_.stream_->synchronize();
+        CUDA_CHECK(cudaStreamSynchronize(node.common_.stream_.value()));
         nvtxRangePop();
 
         nvtxRangePush(fmt::format("[PES::{}] exec", name).c_str());
         exec_pes(pes_root);
-        node.common_.stream_->synchronize();
+        CUDA_CHECK(cudaStreamSynchronize(node.common_.stream_.value()));
         nvtxRangePop();
 
         nvtxRangePush(fmt::format("[PES::{}] free", name).c_str());
         free_pes(pes_root);
-        node.common_.stream_->synchronize();
+        CUDA_CHECK(cudaStreamSynchronize(node.common_.stream_.value()));
         nvtxRangePop();
       }
 

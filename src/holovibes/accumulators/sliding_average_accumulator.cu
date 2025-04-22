@@ -6,7 +6,6 @@
 #include <spdlog/spdlog.h>
 #include <vector>
 
-#include "curaii/cuda_runtime.hh"
 #include "curaii/v2/cuda.hh"
 #include "holovibes/holovibes.hh"
 
@@ -47,9 +46,9 @@ __global__ void f32_sub_avg_kernel(const float *idata, float *odata, int nx,
 } // namespace
 
 SlidingAverageAccumulator::SlidingAverageAccumulator(
-    const AccumulatorMeta &meta, CudaStreamRef stream, size_t nb_slots,
-    size_t window_size, unique_device_ptr<uint8_t> d_buffer,
-    unique_device_ptr<uint8_t> d_avg_frame)
+    const AccumulatorMeta &meta, cudaStream_t stream, size_t nb_slots,
+    size_t window_size, curaii::cuda::unique_device_ptr<uint8_t> d_buffer,
+    curaii::cuda::unique_device_ptr<uint8_t> d_avg_frame)
     : Accumulator(meta, stream), window_size_(window_size), nb_slots_(nb_slots),
       element_size_(meta_.imeta().size_in_bytes()),
       d_buffer_(std::move(d_buffer)), d_running_avg_(std::move(d_avg_frame)),
@@ -80,18 +79,18 @@ void SlidingAverageAccumulator::commit_write() {
   dim3 grid_size((nx + block_size.x - 1) / block_size.x,
                  (ny + block_size.y - 1) / block_size.y);
 
-  f32_add_avg_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
+  f32_add_avg_kernel<<<grid_size, block_size, 0, stream_>>>(
       reinterpret_cast<float *>(write_data),
       reinterpret_cast<float *>(d_running_avg_.get()), nx, ny, window_size_);
 
-  f32_sub_avg_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
+  f32_sub_avg_kernel<<<grid_size, block_size, 0, stream_>>>(
       reinterpret_cast<float *>(avg_data),
       reinterpret_cast<float *>(d_running_avg_.get()), nx, ny, window_size_);
 
   CUDA_CHECK(cudaMemcpyAsync(avg_data, d_running_avg_.get(), element_size_,
-                             cudaMemcpyDeviceToDevice, stream_.stream()));
+                             cudaMemcpyDeviceToDevice, stream_));
 
-  CUDA_CHECK(cudaStreamSynchronize(stream_.stream()));
+  CUDA_CHECK(cudaStreamSynchronize(stream_));
 
   size_t next_avg_idx = avg_idx + 1;
   if (next_avg_idx == nb_slots_)
@@ -179,7 +178,7 @@ SlidingAverageAccumulatorFactory::type_check(const TensorMeta &imeta,
 }
 
 std::unique_ptr<Accumulator> SlidingAverageAccumulatorFactory ::create(
-    const TensorMeta &imeta, const json &jparams, CudaStreamRef stream) {
+    const TensorMeta &imeta, const json &jparams, cudaStream_t stream) {
   // 1) Validate
   auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
@@ -189,11 +188,10 @@ std::unique_ptr<Accumulator> SlidingAverageAccumulatorFactory ::create(
   auto buffer_size = params.nb_slots * element_size;
 
   // 3) Allocations
-  auto d_buffer = make_unique_device_ptr<uint8_t>(
-      params.nb_slots * element_size, stream.stream());
+  auto d_buffer = curaii::cuda::make_unique_device_ptr<uint8_t>(buffer_size);
 
   auto d_running_avg =
-      make_unique_device_ptr<uint8_t>(element_size, stream.stream());
+      curaii::cuda::make_unique_device_ptr<uint8_t>(element_size);
 
   // 4) Assemble accumulator
   auto *accumulator = new SlidingAverageAccumulator(

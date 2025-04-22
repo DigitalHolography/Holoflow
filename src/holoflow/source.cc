@@ -1,8 +1,5 @@
 #include "holoflow/source.hh"
 
-#include <fmt/ranges.h>
-#include <spdlog/spdlog.h>
-
 #include "holoflow/holoflow.hh"
 
 namespace dh {
@@ -11,10 +8,7 @@ namespace dh {
 //                     SourceMeta Implementation
 // ==========================================================================
 
-SourceMeta::SourceMeta(const TensorMeta &ometa) : ometa_(ometa) {
-  dh::holoflow_logger()->trace("Initializing SourceMeta with output shape [{}]",
-                               fmt::join(ometa_.shape(), ", "));
-}
+SourceMeta::SourceMeta(const TensorMeta &ometa) : ometa_(ometa) {}
 
 const TensorMeta &SourceMeta::ometa() const { return ometa_; }
 
@@ -22,7 +16,7 @@ const TensorMeta &SourceMeta::ometa() const { return ometa_; }
 //                     Source Implementation
 // ==========================================================================
 
-Source::Source(const SourceMeta &meta, CudaStreamRef stream)
+Source::Source(const SourceMeta &meta, cudaStream_t stream)
     : meta_(meta), stream_(stream) {}
 
 const SourceMeta &Source::meta() const { return meta_; }

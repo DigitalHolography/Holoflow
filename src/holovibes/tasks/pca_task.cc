@@ -7,7 +7,6 @@
 #include <tl/expected.hpp>
 
 #include "bug_buster/bug_buster.hh"
-#include "curaii/curaii.hh"
 #include "curaii/v2/cuda.hh"
 #include "holoflow/error.hh"
 #include "holovibes/holovibes.hh"
@@ -18,15 +17,15 @@ namespace dh {
 //                     PCATask Implementation
 // ==========================================================================
 
-PCATask::PCATask(const TaskMeta &meta, CudaStreamRef stream,
+PCATask::PCATask(const TaskMeta &meta, cudaStream_t stream,
                  curaii::cublas::Handle cublas_handle,
                  curaii::cusolverdn::Handle cusolver_handle,
                  curaii::cusolverdn::Params cusolver_params,
-                 unique_device_ptr<cuFloatComplex> d_cov_matrix,
-                 unique_device_ptr<float> d_eigenvalues,
-                 unique_device_ptr<int> d_info,
-                 unique_host_ptr<uint8_t> h_workspace,
-                 unique_device_ptr<uint8_t> d_workspace,
+                 curaii::cuda::unique_device_ptr<cuFloatComplex> d_cov_matrix,
+                 curaii::cuda::unique_device_ptr<float> d_eigenvalues,
+                 curaii::cuda::unique_device_ptr<int> d_info,
+                 curaii::cuda::unique_host_ptr<uint8_t> h_workspace,
+                 curaii::cuda::unique_device_ptr<uint8_t> d_workspace,
                  size_t h_workspace_size, size_t d_workspace_size, size_t begin,
                  size_t end)
     : Task(meta, stream), cublas_handle_(std::move(cublas_handle)),
@@ -127,7 +126,7 @@ TaskMeta PCATaskFactory::type_check(const TensorMeta &imeta,
 
 std::unique_ptr<Task> PCATaskFactory::create(const TensorMeta &imeta,
                                              const json &jparams,
-                                             CudaStreamRef stream) {
+                                             cudaStream_t stream) {
 
   // 1) Validate
   auto meta = type_check(imeta, jparams);
@@ -138,23 +137,23 @@ std::unique_ptr<Task> PCATaskFactory::create(const TensorMeta &imeta,
 
   // 2) Handles and params
   curaii::cublas::Handle cublas_handle;
-  CUBLAS_CHECK(cublasSetStream(cublas_handle.get(), stream.stream()));
+  CUBLAS_CHECK(cublasSetStream(cublas_handle.get(), stream));
 
   curaii::cusolverdn::Handle cusolver_handle;
-  CUSOLVER_CHECK(cusolverDnSetStream(cusolver_handle.get(), stream.stream()));
+  CUSOLVER_CHECK(cusolverDnSetStream(cusolver_handle.get(), stream));
   CUSOLVER_CHECK(cusolverDnSetDeterministicMode(
       cusolver_handle.get(), CUSOLVER_ALLOW_NON_DETERMINISTIC_RESULTS));
 
   curaii::cusolverdn::Params cusolver_params;
 
   // 3) Buffer allocations
-  auto d_cov_matrix = make_unique_device_ptr<cuFloatComplex>(
-      n_features * n_features, stream.stream());
+  auto d_cov_matrix = curaii::cuda::make_unique_device_ptr<cuFloatComplex>(
+      n_features * n_features, stream);
 
-  auto d_eigenvalues = make_unique_device_ptr<float>(
-      (params.end - params.begin), stream.stream());
+  auto d_eigenvalues = curaii::cuda::make_unique_device_ptr<float>(
+      (params.end - params.begin), stream);
 
-  auto d_info = make_unique_device_ptr<int>(1, stream.stream());
+  auto d_info = curaii::cuda::make_unique_device_ptr<int>(1, stream);
 
   // 4) Workspace sizes
   size_t d_workspace_size = 0;
@@ -169,9 +168,10 @@ std::unique_ptr<Task> PCATaskFactory::create(const TensorMeta &imeta,
 
   // 5) Workspace allocations
   auto d_workspace =
-      make_unique_device_ptr<uint8_t>(d_workspace_size, stream.stream());
+      curaii::cuda::make_unique_device_ptr<uint8_t>(d_workspace_size, stream);
 
-  auto h_workspace = make_unique_host_ptr<uint8_t>(h_workspace_size);
+  auto h_workspace =
+      curaii::cuda::make_unique_host_ptr<uint8_t>(h_workspace_size);
 
   // 6) Assemble task
   auto *task = new PCATask(

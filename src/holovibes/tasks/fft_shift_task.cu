@@ -50,7 +50,7 @@ __global__ void swap_corners_kernel(float *in, float *out, int width,
 
 } // namespace
 
-FFTShiftTask::FFTShiftTask(const TaskMeta &meta, CudaStreamRef stream)
+FFTShiftTask::FFTShiftTask(const TaskMeta &meta, cudaStream_t stream)
     : Task(meta, stream) {}
 
 void FFTShiftTask::run(TensorView input, TensorView output) {
@@ -69,8 +69,8 @@ void FFTShiftTask::run(TensorView input, TensorView output) {
                  (H_h + block_size.y - 1) / block_size.y,
                  (B + block_size.z - 1) / block_size.z);
 
-  swap_corners_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
-      idata, odata, W, H, B);
+  swap_corners_kernel<<<grid_size, block_size, 0, stream_>>>(idata, odata, W, H,
+                                                             B);
 
   CUDA_CHECK(cudaPeekAtLastError());
 }
@@ -99,7 +99,7 @@ TaskMeta FFTShiftTaskFactory::type_check(const TensorMeta &imeta,
 
 std::unique_ptr<Task> FFTShiftTaskFactory::create(const TensorMeta &imeta,
                                                   const json &jparams,
-                                                  CudaStreamRef stream) {
+                                                  cudaStream_t stream) {
   // 1) Validate
   auto meta = type_check(imeta, jparams);
 

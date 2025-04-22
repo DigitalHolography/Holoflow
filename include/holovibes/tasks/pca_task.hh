@@ -5,8 +5,8 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
-#include "curaii/curaii.hh"
 #include "curaii/v2/cublas.hh"
+#include "curaii/v2/cuda.hh"
 #include "curaii/v2/cusolver_common.hh"
 #include "curaii/v2/cusolver_dn.hh"
 #include "holoflow/error.hh"
@@ -23,24 +23,26 @@ public:
   friend class PCATaskFactory;
 
 private:
-  PCATask(const TaskMeta &meta, CudaStreamRef stream,
+  PCATask(const TaskMeta &meta, cudaStream_t stream,
           curaii::cublas::Handle cublas_handle,
           curaii::cusolverdn::Handle cusolver_handle,
           curaii::cusolverdn::Params cusolver_params,
-          unique_device_ptr<cuFloatComplex> d_cov_matrix,
-          unique_device_ptr<float> d_eigenvalues, unique_device_ptr<int> d_info,
-          unique_host_ptr<uint8_t> h_workspace,
-          unique_device_ptr<uint8_t> d_workspace, size_t h_workspace_size,
-          size_t d_workspace_size, size_t begin, size_t end);
+          curaii::cuda::unique_device_ptr<cuFloatComplex> d_cov_matrix,
+          curaii::cuda::unique_device_ptr<float> d_eigenvalues,
+          curaii::cuda::unique_device_ptr<int> d_info,
+          curaii::cuda::unique_host_ptr<uint8_t> h_workspace,
+          curaii::cuda::unique_device_ptr<uint8_t> d_workspace,
+          size_t h_workspace_size, size_t d_workspace_size, size_t begin,
+          size_t end);
 
   curaii::cublas::Handle cublas_handle_;
   curaii::cusolverdn::Handle cusolver_handle_;
   curaii::cusolverdn::Params cusolver_params_;
-  unique_device_ptr<cuFloatComplex> d_cov_matrix_;
-  unique_device_ptr<float> d_eigenvalues_;
-  unique_device_ptr<int> d_info_;
-  unique_host_ptr<uint8_t> h_workspace_;
-  unique_device_ptr<uint8_t> d_workspace_;
+  curaii::cuda::unique_device_ptr<cuFloatComplex> d_cov_matrix_;
+  curaii::cuda::unique_device_ptr<float> d_eigenvalues_;
+  curaii::cuda::unique_device_ptr<int> d_info_;
+  curaii::cuda::unique_host_ptr<uint8_t> h_workspace_;
+  curaii::cuda::unique_device_ptr<uint8_t> d_workspace_;
   size_t h_workspace_size_;
   size_t d_workspace_size_;
   size_t begin_;
@@ -52,7 +54,7 @@ public:
   TaskMeta type_check(const TensorMeta &imeta, const json &params) override;
 
   std::unique_ptr<Task> create(const TensorMeta &imeta, const json &params,
-                               CudaStreamRef stream) override;
+                               cudaStream_t stream) override;
 
 private:
   struct Params {

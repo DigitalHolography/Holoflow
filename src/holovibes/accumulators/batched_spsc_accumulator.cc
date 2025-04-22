@@ -15,9 +15,9 @@ namespace dh {
 // ==========================================================================
 
 BatchedSPSCAccumulator::BatchedSPSCAccumulator(
-    const AccumulatorMeta &meta, CudaStreamRef stream, size_t nb_slots,
-    unique_host_ptr<uint8_t> host_buffer,
-    unique_device_ptr<uint8_t> device_buffer)
+    const AccumulatorMeta &meta, cudaStream_t stream, size_t nb_slots,
+    curaii::cuda::unique_host_ptr<uint8_t> host_buffer,
+    curaii::cuda::unique_device_ptr<uint8_t> device_buffer)
     : Accumulator(meta, stream) {
   nb_slots_ = nb_slots;
   enqueue_batch_size_ = meta_.imeta().shape().at(0);
@@ -162,7 +162,7 @@ BatchedSPSCAccumulatorFactory::type_check(const TensorMeta &imeta,
 }
 
 std::unique_ptr<Accumulator> BatchedSPSCAccumulatorFactory::create(
-    const TensorMeta &imeta, const json &jparams, CudaStreamRef stream) {
+    const TensorMeta &imeta, const json &jparams, cudaStream_t stream) {
   // 1) Validate
   auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
@@ -173,15 +173,15 @@ std::unique_ptr<Accumulator> BatchedSPSCAccumulatorFactory::create(
   auto buffer_size = params.nb_slots * element_size;
 
   // 3) Allocation
-  unique_host_ptr<uint8_t> host_buffer = nullptr;
-  unique_device_ptr<uint8_t> device_buffer = nullptr;
+  curaii::cuda::unique_host_ptr<uint8_t> host_buffer = nullptr;
+  curaii::cuda::unique_device_ptr<uint8_t> device_buffer = nullptr;
   switch (meta.imeta().memory_location()) {
   case MemoryLocation::HOST:
-    host_buffer = make_unique_host_ptr<uint8_t>(buffer_size);
+    host_buffer = curaii::cuda::make_unique_host_ptr<uint8_t>(buffer_size);
     break;
   case MemoryLocation::DEVICE:
     device_buffer =
-        make_unique_device_ptr<uint8_t>(buffer_size, stream.stream());
+        curaii::cuda::make_unique_device_ptr<uint8_t>(buffer_size, stream);
     break;
   }
 

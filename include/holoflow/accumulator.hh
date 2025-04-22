@@ -5,7 +5,6 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 
-#include "curaii/cuda_runtime.hh"
 #include "holoflow/error.hh"
 #include "holoflow/tensor.hh"
 
@@ -65,7 +64,7 @@ public:
    * @param meta The task metadata.
    * @param stream The stream.
    */
-  Accumulator(const AccumulatorMeta &meta, CudaStreamRef stream);
+  Accumulator(const AccumulatorMeta &meta, cudaStream_t stream);
 
   /**
    * @brief Virtual destructor.
@@ -145,7 +144,7 @@ public:
 
 protected:
   AccumulatorMeta meta_; ///< Metadata defining input/output tensors.
-  CudaStreamRef stream_; ///< CUDA stream associated with the accumulator.
+  cudaStream_t stream_;  ///< CUDA stream associated with the accumulator.
 };
 
 /**
@@ -195,7 +194,7 @@ public:
    * until the accumulator is destroyed.
    */
   virtual std::unique_ptr<Accumulator>
-  create(const TensorMeta &imeta, const json &params, CudaStreamRef stream) = 0;
+  create(const TensorMeta &imeta, const json &params, cudaStream_t stream) = 0;
 };
 
 } // namespace dh

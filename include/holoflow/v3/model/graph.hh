@@ -9,7 +9,6 @@
 #include <variant>
 #include <vector>
 
-#include "curaii/cuda_runtime.hh"
 #include "holoflow/accumulator.hh"
 #include "holoflow/sink.hh"
 #include "holoflow/source.hh"
@@ -25,7 +24,7 @@ struct MetricsProperties {
 };
 
 struct CommonProperties {
-  std::optional<dh::CudaStreamRef> stream_;
+  std::optional<cudaStream_t> stream_;
 };
 
 struct SourceProperties {

@@ -1,8 +1,5 @@
 
 add_library(curaii STATIC
-  logger.cc
-  library_types.cc
-  cuda_runtime.cc
   v2/cuda.cc
   v2/cufft.cc
   v2/cublas.cc

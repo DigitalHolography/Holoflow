@@ -1,6 +1,6 @@
 #pragma once
 
-#include "curaii/curaii.hh"
+#include "curaii/v2/cuda.hh"
 #include "holoflow/accumulator.hh"
 #include "holoflow/error.hh"
 #include "holoflow/tensor.hh"
@@ -37,9 +37,10 @@ public:
   friend class BatchedSPSCAccumulatorFactory;
 
 private:
-  BatchedSPSCAccumulator(const AccumulatorMeta &meta, CudaStreamRef stream,
-                         size_t nb_slots, unique_host_ptr<uint8_t> host_buffer,
-                         unique_device_ptr<uint8_t> device_buffer);
+  BatchedSPSCAccumulator(
+      const AccumulatorMeta &meta, cudaStream_t stream, size_t nb_slots,
+      curaii::cuda::unique_host_ptr<uint8_t> host_buffer,
+      curaii::cuda::unique_device_ptr<uint8_t> device_buffer);
 
   size_t writer_size();
 
@@ -60,9 +61,9 @@ private:
   /// A pre-allocated memory block for storing elements.
   uint8_t *buffer_;
 
-  unique_host_ptr<uint8_t> host_buffer_;
+  curaii::cuda::unique_host_ptr<uint8_t> host_buffer_;
 
-  unique_device_ptr<uint8_t> device_buffer_;
+  curaii::cuda::unique_device_ptr<uint8_t> device_buffer_;
 
   /// The current write index.
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;
@@ -78,7 +79,7 @@ public:
 
   std::unique_ptr<Accumulator> create(const TensorMeta &imeta,
                                       const json &params,
-                                      CudaStreamRef stream) override;
+                                      cudaStream_t stream) override;
 
 private:
   struct Params {

@@ -21,7 +21,7 @@ public:
   friend class PercentileClipTaskFactory;
 
 private:
-  PercentileClipTask(const TaskMeta &meta, CudaStreamRef stream,
+  PercentileClipTask(const TaskMeta &meta, cudaStream_t stream,
                      unique_device_ptr<float> d_lower_thresh,
                      unique_device_ptr<float> d_upper_thresh,
                      unique_device_ptr<uint8_t> d_sort_tmp,
@@ -57,7 +57,7 @@ public:
   TaskMeta type_check(const TensorMeta &imeta, const json &params) override;
 
   std::unique_ptr<Task> create(const TensorMeta &imeta, const json &params,
-                               CudaStreamRef stream) override;
+                               cudaStream_t stream) override;
 
 private:
   struct Params {

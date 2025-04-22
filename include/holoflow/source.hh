@@ -4,7 +4,6 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
-#include "curaii/cuda_runtime.hh"
 #include "holoflow/error.hh"
 #include "holoflow/tensor.hh"
 
@@ -24,7 +23,7 @@ private:
 
 class Source {
 public:
-  Source(const SourceMeta &meta, CudaStreamRef stream);
+  Source(const SourceMeta &meta, cudaStream_t stream);
 
   virtual ~Source() = default;
 
@@ -41,7 +40,7 @@ public:
 
 protected:
   SourceMeta meta_;
-  CudaStreamRef stream_;
+  cudaStream_t stream_;
 };
 
 class SourceFactory {
@@ -58,7 +57,7 @@ public:
   virtual SourceMeta type_check(const json &params) = 0;
 
   virtual std::unique_ptr<Source> create(const json &params,
-                                         CudaStreamRef stream) = 0;
+                                         cudaStream_t stream) = 0;
 };
 
 } // namespace dh

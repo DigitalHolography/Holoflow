@@ -5,8 +5,9 @@
 
 namespace holoflow::model {
 
-TensorSlot::TensorSlot(dh::TensorMeta meta, dh::unique_host_ptr<uint8_t> h,
-                       dh::unique_device_ptr<uint8_t> d)
+TensorSlot::TensorSlot(dh::TensorMeta meta,
+                       curaii::cuda::unique_host_ptr<uint8_t> h,
+                       curaii::cuda::unique_device_ptr<uint8_t> d)
     : meta(meta), host_data(std::move(h)), device_data(std::move(d)),
       data(nullptr) {
   switch (meta.memory_location()) {

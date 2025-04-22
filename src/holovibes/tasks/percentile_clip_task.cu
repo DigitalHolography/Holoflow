@@ -7,7 +7,7 @@
 #include <numeric>
 #include <spdlog/spdlog.h>
 
-#include "curaii/cuda_runtime.hh"
+#include "curaii/v2/cuda.hh"
 #include "holovibes/holovibes.hh"
 
 using curaii::cuda::make_unique_device_ptr;
@@ -34,7 +34,7 @@ __global__ void clip_kernel(const float *input, float *output, int count,
 } // namespace
 
 PercentileClipTask::PercentileClipTask(const TaskMeta &meta,
-                                       CudaStreamRef stream,
+                                       cudaStream_t stream,
                                        unique_device_ptr<float> d_lower_thresh,
                                        unique_device_ptr<float> d_upper_thresh,
                                        unique_device_ptr<uint8_t> d_sort_tmp,
@@ -68,13 +68,13 @@ void PercentileClipTask::run(TensorView input, TensorView output) {
                                         d_roi_values_.get(), // d_out
                                         d_roi_count_.get(),  // d_num_selected
                                         total_px,            // num_items
-                                        stream_.stream()));  // stream
+                                        stream_));           // stream
 
   // 3) Fetch how many pixels we kept
   int roi_px = 0;
   CUDA_CHECK(cudaMemcpyAsync(&roi_px, d_roi_count_.get(), sizeof(int),
-                             cudaMemcpyDeviceToHost, stream_.stream()));
-  CUDA_CHECK(cudaStreamSynchronize(stream_.stream()));
+                             cudaMemcpyDeviceToHost, stream_));
+  CUDA_CHECK(cudaStreamSynchronize(stream_));
 
   if (roi_px == 0) {
     throw std::runtime_error("roi_x == 0");
@@ -89,7 +89,7 @@ void PercentileClipTask::run(TensorView input, TensorView output) {
                                      roi_px,              // num_items
                                      0,                   // begin_bit
                                      sizeof(float) * 8,   // end_bit
-                                     stream_.stream()));  // stream
+                                     stream_));           // stream
 
   // 5) Percentile indices inside ROI
   const int idx_low = static_cast<int>(roi_px * (pct_low_ / 100.f));
@@ -97,17 +97,15 @@ void PercentileClipTask::run(TensorView input, TensorView output) {
 
   // 6) Copy thresholds
   CUDA_CHECK(cudaMemcpyAsync(d_lower_thresh_.get(), d_out + idx_low,
-                             sizeof(float), cudaMemcpyDeviceToDevice,
-                             stream_.stream()));
+                             sizeof(float), cudaMemcpyDeviceToDevice, stream_));
   CUDA_CHECK(cudaMemcpyAsync(d_upper_thresh_.get(), d_out + idx_high,
-                             sizeof(float), cudaMemcpyDeviceToDevice,
-                             stream_.stream()));
+                             sizeof(float), cudaMemcpyDeviceToDevice, stream_));
 
   // 7) Clip the frame
   constexpr int block = 256;
   const int grid = static_cast<int>((total_px + block - 1) / block);
 
-  clip_kernel<<<grid, block, 0, stream_.stream()>>>(
+  clip_kernel<<<grid, block, 0, stream_>>>(
       d_in, d_out, total_px, d_lower_thresh_.get(), d_upper_thresh_.get());
 
   CUDA_CHECK(cudaGetLastError());
@@ -183,7 +181,7 @@ TaskMeta PercentileClipTaskFactory::type_check(const TensorMeta &imeta,
 
 std::unique_ptr<Task> PercentileClipTaskFactory::create(const TensorMeta &imeta,
                                                         const json &jparams,
-                                                        CudaStreamRef stream) {
+                                                        cudaStream_t stream) {
   // 1) Validate
   auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
@@ -202,7 +200,7 @@ std::unique_ptr<Task> PercentileClipTaskFactory::create(const TensorMeta &imeta,
       N,                             // num_items
       0,                             // begin_bit
       sizeof(float) * 8,             // end_bit
-      stream.stream()));             // stream
+      stream));                      // stream
 
   size_t select_tmp_bytes = 0;
   CUDA_CHECK(
@@ -212,28 +210,26 @@ std::unique_ptr<Task> PercentileClipTaskFactory::create(const TensorMeta &imeta,
                                  static_cast<float *>(nullptr),   // d_out
                                  static_cast<int *>(nullptr), // d_num_selected
                                  N,                           // num_items
-                                 stream.stream()));           // stream
+                                 stream));                    // stream
 
   // 3) Allocations
-  auto d_sort_tmp =
-      make_unique_device_ptr<uint8_t>(sort_tmp_bytes, stream.stream());
-  auto d_select_tmp =
-      make_unique_device_ptr<uint8_t>(select_tmp_bytes, stream.stream());
+  auto d_sort_tmp = make_unique_device_ptr<uint8_t>(sort_tmp_bytes, stream);
+  auto d_select_tmp = make_unique_device_ptr<uint8_t>(select_tmp_bytes, stream);
 
-  auto d_upper_thr = make_unique_device_ptr<float>(1, stream.stream());
-  auto d_lower_thr = make_unique_device_ptr<float>(1, stream.stream());
+  auto d_upper_thr = make_unique_device_ptr<float>(1, stream);
+  auto d_lower_thr = make_unique_device_ptr<float>(1, stream);
 
-  auto d_flags = make_unique_device_ptr<uint8_t>(N, stream.stream());
-  auto d_roi = make_unique_device_ptr<float>(N, stream.stream());
-  auto d_n_selected = make_unique_device_ptr<int>(1, stream.stream());
+  auto d_flags = make_unique_device_ptr<uint8_t>(N, stream);
+  auto d_roi = make_unique_device_ptr<float>(N, stream);
+  auto d_n_selected = make_unique_device_ptr<int>(1, stream);
 
   // 4) Build ellipse mask
   const dim3 block(16, 16, 1);
   const dim3 grid((W + block.x - 1) / block.x, (H + block.y - 1) / block.y,
                   (B + block.z - 1) / block.z);
 
-  ellipse_mask_kernel<<<grid, block, 0, stream.stream()>>>(d_flags.get(), W, H,
-                                                           B, params.radius);
+  ellipse_mask_kernel<<<grid, block, 0, stream>>>(d_flags.get(), W, H, B,
+                                                  params.radius);
 
   // 5) Assemble task
   auto *task = new PercentileClipTask(

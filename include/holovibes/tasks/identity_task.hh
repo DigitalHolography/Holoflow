@@ -3,7 +3,6 @@
 #include <nlohmann/json.hpp>
 #include <tl/expected.hpp>
 
-#include "curaii/curaii.hh"
 #include "holoflow/error.hh"
 #include "holoflow/task.hh"
 
@@ -20,7 +19,7 @@ public:
   friend class IdentityTaskFactory;
 
 private:
-  IdentityTask(const TaskMeta &meta, CudaStreamRef stream);
+  IdentityTask(const TaskMeta &meta, cudaStream_t stream);
 };
 
 class IdentityTaskFactory : public TaskFactory {
@@ -28,7 +27,7 @@ public:
   TaskMeta type_check(const TensorMeta &imeta, const json &params) override;
 
   std::unique_ptr<Task> create(const TensorMeta &imeta, const json &params,
-                               CudaStreamRef stream) override;
+                               cudaStream_t stream) override;
 };
 
 } // namespace dh

@@ -4,7 +4,6 @@
 #include <cuda_runtime.h>
 
 #include "bug_buster/bug_buster.hh"
-#include "curaii/cuda_runtime.hh"
 #include "curaii/v2/cuda.hh"
 #include "holovibes/holovibes.hh"
 
@@ -85,7 +84,7 @@ __global__ void cf32_avg_kernel(const cuFloatComplex *idata,
 
 } // namespace
 
-AverageTask::AverageTask(const TaskMeta &meta, CudaStreamRef stream, int begin,
+AverageTask::AverageTask(const TaskMeta &meta, cudaStream_t stream, int begin,
                          int end, Kind kind)
     : Task(meta, stream), begin_(begin), end_(end), kind_(kind) {}
 
@@ -103,15 +102,15 @@ void AverageTask::run(TensorView input, TensorView output) {
 
   switch (kind_) {
   case Kind::U8_AVG:
-    u8_avg_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
+    u8_avg_kernel<<<grid_size, block_size, 0, stream_>>>(
         (uint8_t *)idata, (uint8_t *)odata, nx, ny, nz);
     break;
   case Kind::F32_AVG:
-    f32_avg_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
+    f32_avg_kernel<<<grid_size, block_size, 0, stream_>>>(
         (float *)idata, (float *)odata, nx, ny, nz);
     break;
   case Kind::CF32_AVG:
-    cf32_avg_kernel<<<grid_size, block_size, 0, stream_.stream()>>>(
+    cf32_avg_kernel<<<grid_size, block_size, 0, stream_>>>(
         (cuFloatComplex *)idata, (cuFloatComplex *)odata, nx, ny, nz);
     break;
   default:
@@ -164,7 +163,7 @@ TaskMeta AverageTaskFactory::type_check(const TensorMeta &imeta,
 
 std::unique_ptr<Task> AverageTaskFactory::create(const TensorMeta &imeta,
                                                  const json &jparams,
-                                                 CudaStreamRef stream) {
+                                                 cudaStream_t stream) {
   // 1) Validate
   auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();

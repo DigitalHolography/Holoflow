@@ -1,6 +1,6 @@
 #pragma once
 
-#include "curaii/curaii.hh"
+#include "curaii/v2/cuda.hh"
 #include "holoflow/accumulator.hh"
 #include "holoflow/sink.hh"
 #include "holoflow/source.hh"
@@ -13,14 +13,15 @@ namespace holoflow::model {
 
 struct TensorSlot {
 
-  TensorSlot(dh::TensorMeta meta, dh::unique_host_ptr<uint8_t> h = nullptr,
-             dh::unique_device_ptr<uint8_t> d = nullptr);
+  TensorSlot(dh::TensorMeta meta,
+             curaii::cuda::unique_host_ptr<uint8_t> h = nullptr,
+             curaii::cuda::unique_device_ptr<uint8_t> d = nullptr);
 
   dh::TensorView view();
 
   dh::TensorMeta meta;
-  dh::unique_host_ptr<uint8_t> host_data;
-  dh::unique_device_ptr<uint8_t> device_data;
+  curaii::cuda::unique_host_ptr<uint8_t> host_data;
+  curaii::cuda::unique_device_ptr<uint8_t> device_data;
   uint8_t *data;
 };
 
@@ -35,7 +36,7 @@ public:
 private:
   Model() = default;
 
-  std::vector<dh::CudaStream> streams_;
+  std::vector<curaii::cuda::Stream> streams_;
   std::vector<std::unique_ptr<dh::Task>> tasks_;
   std::vector<std::unique_ptr<dh::Accumulator>> accumulators_;
   std::vector<std::unique_ptr<dh::Source>> sources_;
