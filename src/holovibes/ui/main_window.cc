@@ -71,13 +71,13 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   connect(pipeline_worker_, &pipeline::Worker::start_success, this,
           [this]() { import_stop_button_->setEnabled(true); });
 
-  connect(pipeline_worker_, &pipeline::Worker::start_failure, this,
-          [this]() { import_start_button_->setEnabled(true); });
-
-  connect(pipeline_worker_, &pipeline::Worker::stop_success, this, [this]() {
+  connect(pipeline_worker_, &pipeline::Worker::start_failure, this, [this]() {
     import_start_button_->setEnabled(true);
     import_stop_button_->setEnabled(false);
   });
+
+  connect(pipeline_worker_, &pipeline::Worker::stop_success, this,
+          [this]() { import_start_button_->setEnabled(true); });
 
   connect(pipeline_worker_, &pipeline::Worker::stop_failure, this, [this]() {
     import_start_button_->setEnabled(true);
@@ -92,6 +92,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   connect(pipeline_worker_, &pipeline::Worker::update_failure, this, [this]() {
     update_in_progress_ = false;
     import_start_button_->setEnabled(true);
+    import_stop_button_->setEnabled(false);
   });
 
   pipeline_worker_thread_->start();

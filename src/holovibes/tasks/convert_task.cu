@@ -194,7 +194,7 @@ TaskMeta ConvertTaskFactory::type_check(const TensorMeta &imeta,
             params.conversion == "F32_U16_SCALED" ||
             params.conversion == "CF32_F32_MODU" ||
             params.conversion == "CF32_F32_ARGU",
-        "conservion invalid");
+        "conversion invalid");
 
   // 2) Tensor meta sanity
   check(imeta.memory_location() == MemoryLocation::DEVICE,

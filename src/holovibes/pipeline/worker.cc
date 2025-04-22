@@ -71,10 +71,16 @@ void Worker::start() {
 
   // Compile the pipeline.
   model_ = std::nullopt;
-  model_ = std::move(compiler_.compile(desc_graph_));
-  if (!model_) {
+  try {
+    model_ = std::move(compiler_.compile(desc_graph_));
+  } catch (std::invalid_argument &e) {
     dh::holovibes_logger()->error(
-        "[Worker::start] Pipeline compilation failed");
+        "[Worker::start] Model compilation failed: {}", e.what());
+    emit start_failure();
+    return;
+  } catch (std::exception &e) {
+    dh::holovibes_logger()->error(
+        "[Worker::start] Model compilation failed: {}", e.what());
     emit start_failure();
     return;
   }
@@ -123,10 +129,16 @@ void Worker::update() {
 
   // Compile the pipeline.
   model_ = std::nullopt;
-  model_ = std::move(compiler_.compile(desc_graph_));
-  if (!model_) {
+  try {
+    model_ = std::move(compiler_.compile(desc_graph_));
+  } catch (std::invalid_argument &e) {
     dh::holovibes_logger()->error(
-        "[Worker::update] Pipeline compilation failed");
+        "[Worker::update] Model compilation failed: {}", e.what());
+    emit update_failure();
+    return;
+  } catch (std::exception &e) {
+    dh::holovibes_logger()->error(
+        "[Worker::update] Model compilation failed: {}", e.what());
     emit update_failure();
     return;
   }
