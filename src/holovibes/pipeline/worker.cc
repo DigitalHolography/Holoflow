@@ -19,6 +19,7 @@
 #include "holovibes/tasks/fft_shift_task.hh"
 #include "holovibes/tasks/fresnel_diffraction_task.hh"
 #include "holovibes/tasks/identity_task.hh"
+#include "holovibes/tasks/memcpy_task.hh"
 #include "holovibes/tasks/pca_task.hh"
 #include "holovibes/tasks/percentile_clip_task.hh"
 #include "holovibes/tasks/stft_task.hh"
@@ -55,6 +56,7 @@ Worker::Worker(dh::TensorDisplayWidget *display_widget, QObject *parent)
                         std::make_unique<dh::PercentileClipTaskFactory>());
   compiler_.add_factory("FFTShift",
                         std::make_unique<dh::FFTShiftTaskFactory>());
+  compiler_.add_factory("Memcpy", std::make_unique<dh::MemcpyTaskFactory>());
 }
 
 void Worker::set_settings(const Settings &settings) { settings_ = settings; }
@@ -164,12 +166,20 @@ void Worker::build_desc_graph() {
 
   // Build the graph step by step using the helper functions.
   auto source_v = add_source_node();
+  auto parent_v = source_v;
+
+  if (s.import_load_method != ImportLoadMethod::LoadInGPU) {
+    // Output is on CPU memory, need to send it to GPU.
+    auto memcpy_v = add_cpy_cpu_to_gpu_node();
+    boost::add_edge(parent_v, memcpy_v, desc_graph_);
+    parent_v = memcpy_v;
+  }
+
   auto input_queue_v = add_input_queue_node();
-  boost::add_edge(source_v, input_queue_v, desc_graph_);
+  boost::add_edge(parent_v, input_queue_v, desc_graph_);
   auto convert_input_v = add_convert_input_node();
   boost::add_edge(input_queue_v, convert_input_v, desc_graph_);
-
-  auto parent_v = convert_input_v;
+  parent_v = convert_input_v;
 
   if (s.render_space_transform.has_value()) {
     auto space_v = add_space_transform_node();
@@ -202,6 +212,14 @@ void Worker::build_desc_graph() {
     auto fft_shift_v = add_fft_shift_node();
     boost::add_edge(parent_v, fft_shift_v, desc_graph_);
     parent_v = fft_shift_v;
+  }
+
+  if (!s.render_time_transform && s.render_batch_size != 1) {
+    auto split_v = add_split_axis_0_node();
+    boost::add_edge(parent_v, split_v, desc_graph_);
+    auto identity_v = add_identity_node();
+    boost::add_edge(split_v, identity_v, desc_graph_);
+    parent_v = identity_v;
   }
 
   auto img_avg_v = add_image_avg_accumulator_node();
@@ -237,6 +255,12 @@ holoflow::model::DescriptorVertex Worker::add_node(const std::string &id,
   desc_graph_[v].config = config;
   nodes_[id] = v;
   return v;
+}
+
+holoflow::model::DescriptorVertex Worker::add_cpy_cpu_to_gpu_node() {
+  json config;
+  config["kind"] = "HOST_TO_DEVICE";
+  return add_node("memcpy_cpu_to_gpu", "Memcpy", config);
 }
 
 holoflow::model::DescriptorVertex Worker::add_source_node() {
@@ -382,6 +406,26 @@ holoflow::model::DescriptorVertex Worker::add_p_frame_avg_node() {
 holoflow::model::DescriptorVertex Worker::add_fft_shift_node() {
   json config = json::object();
   return add_node("fft_shift", "FFTShift", config);
+}
+
+holoflow::model::DescriptorVertex Worker::add_split_axis_0_node() {
+  DH_CHECK(settings_);
+  const auto &s = *settings_;
+  DH_CHECK(!s.render_time_transform);
+  DH_CHECK(s.render_batch_size != 1);
+  json config;
+  config["nb_slots"] = s.render_batch_size * 2;
+  config["dequeue_batch_size"] = 1;
+  return add_node("split_axis_0", "BatchedSPSC", config);
+}
+
+holoflow::model::DescriptorVertex Worker::add_identity_node() {
+  DH_CHECK(settings_);
+  const auto &s = *settings_;
+  DH_CHECK(!s.render_time_transform);
+  DH_CHECK(s.render_batch_size != 1);
+  json config = json::object();
+  return add_node("identity", "Identity", config);
 }
 
 holoflow::model::DescriptorVertex Worker::add_image_avg_accumulator_node() {

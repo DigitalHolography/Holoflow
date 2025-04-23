@@ -48,24 +48,19 @@ void HolofileSource::run(TensorView otens) {
     frame_index_ = start_frame_;
   }
 
-  // Read frames
-  if (load_kind_ == LoadKind::READ_LIVE) {
-    auto result = reader_.read_frames(internal_buffer_, batch_size_);
+  switch (load_kind_) {
+  case LoadKind::READ_LIVE: {
+    auto result =
+        reader_.read_frames(static_cast<uint8_t *>(otens.data()), batch_size_);
     if (!result) {
       throw std::runtime_error(
           fmt::format("Failed to read frames: {}", result.error().message()));
     }
-  }
-
-  switch (load_kind_) {
-  case LoadKind::READ_LIVE:
-    CUDA_CHECK(cudaMemcpyAsync(otens.data(), internal_buffer_, size,
-                               cudaMemcpyHostToDevice, stream_));
-    break;
+  } break;
   case LoadKind::LOAD_IN_CPU:
     CUDA_CHECK(cudaMemcpyAsync(otens.data(),
                                internal_buffer_ + frame_index_ * frame_size,
-                               size, cudaMemcpyHostToDevice, stream_));
+                               size, cudaMemcpyHostToHost, stream_));
     break;
   case LoadKind::LOAD_IN_GPU:
     CUDA_CHECK(cudaMemcpyAsync(otens.data(),
@@ -125,7 +120,11 @@ SourceMeta HolofileSourceFactory::type_check(const json &jparams) {
         "end_frame > file frame count");
 
   // 3) Success
-  TensorMeta ometa(data_type, MemoryLocation::DEVICE,
+  MemoryLocation location = params.load_kind == "LOAD_IN_GPU"
+                                ? MemoryLocation::DEVICE
+                                : MemoryLocation::HOST;
+
+  TensorMeta ometa(data_type, location,
                    {(size_t)params.batch_size, (size_t)header.frame_height,
                     (size_t)header.frame_width});
 
@@ -177,9 +176,8 @@ std::unique_ptr<Source> HolofileSourceFactory::create(const json &jparams,
 
   switch (load_kind) {
   case HolofileSource::LoadKind::READ_LIVE:
-    size = params.batch_size * frame_size;
-    host_buffer = curaii::cuda::make_unique_host_ptr<uint8_t>(size);
-    internal_buffer = host_buffer.get();
+    // Do nothing here as the read buffer will be the one provided to the run
+    // method.
     break;
   case HolofileSource::LoadKind::LOAD_IN_CPU:
     nb_frames = params.end_frame - params.start_frame;

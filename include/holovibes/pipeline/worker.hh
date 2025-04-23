@@ -42,6 +42,7 @@ private:
                                              const nlohmann::json &config);
 
   holoflow::model::DescriptorVertex add_source_node();
+  holoflow::model::DescriptorVertex add_cpy_cpu_to_gpu_node();
   holoflow::model::DescriptorVertex add_input_queue_node();
   holoflow::model::DescriptorVertex add_convert_input_node();
   holoflow::model::DescriptorVertex add_space_transform_node();
@@ -50,6 +51,8 @@ private:
   holoflow::model::DescriptorVertex add_convert_postprocess_node();
   holoflow::model::DescriptorVertex add_p_frame_avg_node();
   holoflow::model::DescriptorVertex add_fft_shift_node();
+  holoflow::model::DescriptorVertex add_split_axis_0_node();
+  holoflow::model::DescriptorVertex add_identity_node();
   holoflow::model::DescriptorVertex add_image_avg_accumulator_node();
   holoflow::model::DescriptorVertex add_percentile_clip_node();
   holoflow::model::DescriptorVertex add_convert_output_node();

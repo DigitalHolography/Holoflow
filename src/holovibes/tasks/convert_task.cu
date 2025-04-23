@@ -6,6 +6,8 @@
 #include <cub/cub.cuh>
 #include <numeric>
 #include <spdlog/spdlog.h>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "bug_buster/bug_buster.hh"
 #include "curaii/v2/cuda.hh"
@@ -33,6 +35,15 @@ ConvertTask::ConvertTask(
       d_max_(std::move(d_max)) {}
 
 namespace {
+
+__global__ void u8_f32_kernel(const uint8_t *idata, float *odata, int size) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= size) {
+    return;
+  }
+
+  odata[idx] = static_cast<float>(idata[idx]);
+}
 
 __global__ void u8_cf32_real_kernel(const uint8_t *idata, cuFloatComplex *odata,
                                     int size) {
@@ -87,9 +98,7 @@ __global__ void cf32_f32_modu_kernel(const cuFloatComplex *idata, float *odata,
     return;
   }
 
-  odata[idx] = hypotf(idata[idx].x, idata[idx].y);
-  // odata[idx] = cuCabsf(idata[idx]);
-  // odata[idx] = idata[idx].y;
+  odata[idx] = cuCabsf(idata[idx]);
 }
 
 __global__ void cf32_f32_argu_kernel(const cuFloatComplex *idata, float *odata,
@@ -114,6 +123,10 @@ void ConvertTask::run(TensorView input, TensorView output) {
   dim3 grid_size = (size + block_size.x - 1) / block_size.x;
 
   switch (conversion_) {
+  case Conversion::U8_F32:
+    u8_f32_kernel<<<grid_size, block_size, 0, stream_>>>(
+        static_cast<uint8_t *>(idata), static_cast<float *>(odata), size);
+    break;
   case Conversion::U8_CF32_REAL:
     u8_cf32_real_kernel<<<grid_size, block_size, 0, stream_>>>(
         static_cast<uint8_t *>(idata), static_cast<cuFloatComplex *>(odata),
@@ -188,47 +201,32 @@ TaskMeta ConvertTaskFactory::type_check(const TensorMeta &imeta,
   };
 
   // 1) Parameter sanity
-  check(params.conversion == "U8_CF32_REAL" ||
-            params.conversion == "U16_CF32_REAL" ||
-            params.conversion == "F32_U8_SCALED" ||
-            params.conversion == "F32_U16_SCALED" ||
-            params.conversion == "CF32_F32_MODU" ||
-            params.conversion == "CF32_F32_ARGU",
-        "conversion invalid");
+  const std::unordered_set<std::string> valid_conversions = {
+      "U8_F32",         "U8_CF32_REAL",  "U16_CF32_REAL", "F32_U8_SCALED",
+      "F32_U16_SCALED", "CF32_F32_MODU", "CF32_F32_ARGU"};
+  check(valid_conversions.contains(params.conversion), "conversion invalid");
 
   // 2) Tensor meta sanity
   check(imeta.memory_location() == MemoryLocation::DEVICE,
         "tensor not in DEVICE memory");
+  const std::unordered_map<std::string, DataType> expected_types = {
+      {"U8_F32", DataType::U8},          {"U8_CF32_REAL", DataType::U8},
+      {"U16_CF32_REAL", DataType::U16},  {"F32_U8_SCALED", DataType::F32},
+      {"F32_U16_SCALED", DataType::F32}, {"CF32_F32_MODU", DataType::CF32},
+      {"CF32_F32_ARGU", DataType::CF32},
+  };
+  check(imeta.data_type() == expected_types.at(params.conversion),
+        "invalid tensor data type for conversion");
 
-  check((params.conversion == "U8_CF32_REAL" &&
-         imeta.data_type() == DataType::U8) ||
-            (params.conversion == "U16_CF32_REAL" &&
-             imeta.data_type() == DataType::U16) ||
-            (params.conversion == "F32_U8_SCALED" &&
-             imeta.data_type() == DataType::F32) ||
-            (params.conversion == "F32_U16_SCALED" &&
-             imeta.data_type() == DataType::F32) ||
-            ((params.conversion == "CF32_F32_MODU" ||
-              params.conversion == "CF32_F32_ARGU") &&
-             imeta.data_type() == DataType::CF32),
-        "invalid conversion for tensor datatype");
-
-  DataType data_type;
-  if (params.conversion == "U8_CF32_REAL" ||
-      params.conversion == "U16_CF32_REAL") {
-    data_type = DataType::CF32;
-  } else if (params.conversion == "F32_U8_SCALED") {
-    data_type = DataType::U8;
-  } else if (params.conversion == "F32_U16_SCALED") {
-    data_type = DataType::U16;
-  } else if (params.conversion == "CF32_F32_MODU" ||
-             params.conversion == "CF32_F32_ARGU") {
-    data_type = DataType::F32;
-  } else {
-    DH_BUG("unreachable statement reached");
-  }
-
-  TensorMeta ometa(data_type, MemoryLocation::DEVICE, imeta.shape());
+  // 3) Sucess
+  const std::unordered_map<std::string, DataType> output_data_types = {
+      {"U8_F32", DataType::F32},         {"U8_CF32_REAL", DataType::CF32},
+      {"U16_CF32_REAL", DataType::CF32}, {"F32_U8_SCALED", DataType::U8},
+      {"F32_U16_SCALED", DataType::U16}, {"CF32_F32_MODU", DataType::F32},
+      {"CF32_F32_ARGU", DataType::F32},
+  };
+  TensorMeta ometa(output_data_types.at(params.conversion),
+                   MemoryLocation::DEVICE, imeta.shape());
   return TaskMeta(imeta, ometa, false);
 }
 
@@ -240,22 +238,16 @@ std::unique_ptr<Task> ConvertTaskFactory::create(const TensorMeta &imeta,
   auto params = jparams.get<Params>();
 
   // 2) Extract conversion
-  ConvertTask::Conversion conversion;
-  if (params.conversion == "U8_CF32_REAL") {
-    conversion = ConvertTask::Conversion::U8_CF32_REAL;
-  } else if (params.conversion == "U16_CF32_REAL") {
-    conversion = ConvertTask::Conversion::U16_CF32_REAL;
-  } else if (params.conversion == "F32_U8_SCALED") {
-    conversion = ConvertTask::Conversion::F32_U8_SCALED;
-  } else if (params.conversion == "F32_U16_SCALED") {
-    conversion = ConvertTask::Conversion::F32_U16_SCALED;
-  } else if (params.conversion == "CF32_F32_MODU") {
-    conversion = ConvertTask::Conversion::CF32_F32_MODU;
-  } else if (params.conversion == "CF32_F32_ARGU") {
-    conversion = ConvertTask::Conversion::CF32_F32_ARGU;
-  } else {
-    DH_BUG("unreachable statement reached");
-  }
+  const std::unordered_map<std::string, ConvertTask::Conversion>
+      string_to_conversion = {
+          {"U8_F32", ConvertTask::Conversion::U8_F32},
+          {"U8_CF32_REAL", ConvertTask::Conversion::U8_CF32_REAL},
+          {"U16_CF32_REAL", ConvertTask::Conversion::U16_CF32_REAL},
+          {"F32_U8_SCALED", ConvertTask::Conversion::F32_U8_SCALED},
+          {"F32_U16_SCALED", ConvertTask::Conversion::F32_U16_SCALED},
+          {"CF32_F32_MODU", ConvertTask::Conversion::CF32_F32_MODU},
+          {"CF32_F32_ARGU", ConvertTask::Conversion::CF32_F32_ARGU}};
+  auto conversion = string_to_conversion.at(params.conversion);
 
   size_t min_temp_storage_bytes = 0;
   curaii::cuda::unique_device_ptr<uint8_t> d_min_temp_storage;

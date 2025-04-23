@@ -15,6 +15,7 @@ namespace dh {
 class ConvertTask : public Task {
 public:
   enum class Conversion {
+    U8_F32,
     U8_CF32_REAL,
     U16_CF32_REAL,
     F32_U8_SCALED,

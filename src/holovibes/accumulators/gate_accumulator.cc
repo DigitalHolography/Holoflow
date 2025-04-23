@@ -1,0 +1,1 @@
+#include "holovibes/accumulators/gate_accumulator.hh"

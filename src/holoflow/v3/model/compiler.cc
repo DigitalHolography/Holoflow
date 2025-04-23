@@ -402,15 +402,16 @@ void ModelCompiler::validate_single_inlined_or_accumulator_child() const {
   }
 }
 
-struct ValidateSingleInlinedChildDFSVisitor
+struct ValidateNonInlinedBetweenAccumulatorsDFSVisitor
     : public boost::default_dfs_visitor {
   template <typename Vertex, typename Graph>
   void discover_vertex(Vertex u, const Graph &g) {
     auto &node = g[u];
-    dh::holoflow_logger()->trace("[ValidateSingleInlinedChildDFSVisitor::"
-                                 "discover_vertex] Visiting node: "
-                                 "{}",
-                                 node.descriptor_.id);
+    dh::holoflow_logger()->trace(
+        "[ValidateNonInlinedBetweenAccumulatorsDFSVisitor::"
+        "discover_vertex] Visiting node: "
+        "{}",
+        node.descriptor_.id);
 
     if (node.kind_ == NodeKind::Task &&
         std::get<TaskProperties>(node.type_specific_).task_meta_->inlined()) {
@@ -436,15 +437,16 @@ struct ValidateSingleInlinedChildDFSVisitor
     auto &source_node = g[source];
     auto &target_node = g[target];
 
-    dh::holoflow_logger()->trace(
-        "[ValidateSingleInlinedChildDFSVisitor::examine_edge] Edge from {} "
-        "to {}",
-        source_node.descriptor_.id, target_node.descriptor_.id);
+    dh::holoflow_logger()->trace("[ValidateNonInlinedBetweenAccumulatorsDFSVisi"
+                                 "tor::examine_edge] Edge from {} "
+                                 "to {}",
+                                 source_node.descriptor_.id,
+                                 target_node.descriptor_.id);
 
     DH_CHECK(!seen_non_inlined_.empty());
     if (target_node.kind_ == NodeKind::Accumulator &&
         !seen_non_inlined_.top()) {
-      throw std::runtime_error("Non-inlined child found when reaching "
+      throw std::runtime_error("No non-inlined child found when reaching "
                                "accumulator node: " +
                                target_node.descriptor_.id);
     }
@@ -462,7 +464,7 @@ void ModelCompiler::validate_non_inlined_child_between_accumulators() const {
           "Starting DFS from accumulator node: {}",
           model_.graph_[v].descriptor_.id);
 
-      ValidateSingleInlinedChildDFSVisitor visitor;
+      ValidateNonInlinedBetweenAccumulatorsDFSVisitor visitor;
       std::vector<boost::default_color_type> color_map(
           num_vertices(model_.graph_));
       auto color_map_property = boost::make_iterator_property_map(
@@ -667,14 +669,24 @@ struct AssignNonInlinedTensorIdsDFSVisitor : public boost::default_dfs_visitor {
   template <typename Vertex, typename Graph>
   void discover_vertex(Vertex u, const Graph &) {
     auto &node = graph_[u];
-    if (node.kind_ != NodeKind::Task ||
-        std::get<TaskProperties>(node.type_specific_).task_meta_->inlined()) {
+    if (node.kind_ != NodeKind::Source &&
+        (node.kind_ != NodeKind::Task ||
+         std::get<TaskProperties>(node.type_specific_).task_meta_->inlined())) {
       return;
     }
 
-    auto otens_id = std::get<TaskProperties>(node.type_specific_).otens_id_;
-    if (otens_id) {
-      return;
+    if (node.kind_ == NodeKind::Source) {
+      auto otens_id = std::get<SourceProperties>(node.type_specific_).otens_id_;
+      if (otens_id) {
+        return;
+      }
+    }
+
+    if (node.kind_ == NodeKind::Task) {
+      auto otens_id = std::get<TaskProperties>(node.type_specific_).otens_id_;
+      if (otens_id) {
+        return;
+      }
     }
 
     // Set current node's otens_id_

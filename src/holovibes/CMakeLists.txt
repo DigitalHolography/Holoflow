@@ -4,6 +4,7 @@ qt_add_executable(holovibes
   ui/main_window.cc
   pipeline/worker.cc
   accumulators/batched_spsc_accumulator.cc
+  accumulators/gate_accumulator.cc
   accumulators/sliding_average_accumulator.cu
   sources/holofile_source.cc
   sinks/qt_display_sink.cc
@@ -16,6 +17,7 @@ qt_add_executable(holovibes
   tasks/fft_shift_task.cu
   tasks/stft_task.cc
   tasks/angular_spectrum_task.cu
+  tasks/memcpy_task.cc
 
   # Must add header files with Q_OBJECT for qt AUTMOC to run on them
   ${PROJECT_SOURCE_DIR}/include/holovibes/sinks/qt_display_sink.hh
