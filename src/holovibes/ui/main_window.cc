@@ -52,21 +52,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   this->adjustSize();
   this->setFixedSize(this->minimumSizeHint());
 
-  display_widget_ = new dh::TensorDisplayWidget(800, 800, this);
-  display_widget_->show();
-  pipeline_worker_ = new pipeline::Worker(display_widget_);
+  processed_display_widget_ = new dh::TensorDisplayWidget(800, 800, this);
+  raw_record_display_widget_ = new dh::TensorDisplayWidget(800, 800, this);
+  processed_display_widget_->show();
+  raw_record_display_widget_->show();
+  pipeline_worker_ = new pipeline::Worker(processed_display_widget_,
+                                          raw_record_display_widget_);
   pipeline_worker_thread_ = new QThread(this);
   pipeline_worker_->moveToThread(pipeline_worker_thread_);
 
   setup_validation_connections();
   setup_update_connections();
 
-  connect(view_reticle_check_, &QCheckBox::toggled, display_widget_,
+  connect(view_reticle_check_, &QCheckBox::toggled, processed_display_widget_,
           &dh::TensorDisplayWidget::set_display_reticle);
 
-  connect(view_reticle_radius_,
-          qOverload<double>(&QDoubleSpinBox::valueChanged), display_widget_,
-          &dh::TensorDisplayWidget::set_reticle_radius);
+  connect(
+      view_reticle_radius_, qOverload<double>(&QDoubleSpinBox::valueChanged),
+      processed_display_widget_, &dh::TensorDisplayWidget::set_reticle_radius);
 
   connect(pipeline_worker_, &pipeline::Worker::start_success, this,
           [this]() { import_stop_button_->setEnabled(true); });

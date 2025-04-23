@@ -337,7 +337,7 @@ struct TypeCheckingDFSVisitor : public boost::default_dfs_visitor {
   template <typename Vertex, typename Graph>
   void finish_vertex(Vertex u, const Graph &) {
     auto &node = graph_[u];
-    if (node.kind_ != NodeKind::Source) {
+    if (node.kind_ != NodeKind::Sink) {
       DH_CHECK(!imeta_stack_.empty());
       imeta_stack_.pop();
     }

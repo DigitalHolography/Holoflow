@@ -49,7 +49,8 @@ private:
   QThread *pipeline_worker_thread_;
 
   // Display widgets
-  dh::TensorDisplayWidget *display_widget_;
+  dh::TensorDisplayWidget *processed_display_widget_;
+  dh::TensorDisplayWidget *raw_record_display_widget_;
 
   // Helper methods to create UI sections
   QGroupBox *create_import_group();

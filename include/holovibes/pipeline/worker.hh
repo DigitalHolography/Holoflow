@@ -16,7 +16,8 @@ class Worker : public QObject {
   Q_OBJECT
 
 public:
-  explicit Worker(dh::TensorDisplayWidget *display_widget,
+  explicit Worker(dh::TensorDisplayWidget *processed_display_widget,
+                  dh::TensorDisplayWidget *raw_record_display_widget_,
                   QObject *parent = nullptr);
 
   void set_settings(const Settings &settings);
@@ -42,6 +43,8 @@ private:
                                              const nlohmann::json &config);
 
   holoflow::model::DescriptorVertex add_source_node();
+  holoflow::model::DescriptorVertex add_raw_record_display_sink_node();
+  holoflow::model::DescriptorVertex add_raw_record_accumulator_node();
   holoflow::model::DescriptorVertex add_cpy_cpu_to_gpu_node();
   holoflow::model::DescriptorVertex add_input_queue_node();
   holoflow::model::DescriptorVertex add_convert_input_node();
@@ -60,7 +63,8 @@ private:
   holoflow::model::DescriptorVertex add_processed_display_sink_node();
 
   // External widgets
-  dh::TensorDisplayWidget *display_widget_;
+  dh::TensorDisplayWidget *processed_display_widget_;
+  dh::TensorDisplayWidget *raw_record_display_widget_;
 
   // Settings
   std::optional<Settings> settings_;

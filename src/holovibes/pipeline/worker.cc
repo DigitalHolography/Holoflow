@@ -28,15 +28,22 @@ using json = nlohmann::json;
 
 namespace holovibes::pipeline {
 
-Worker::Worker(dh::TensorDisplayWidget *display_widget, QObject *parent)
-    : QObject(parent), display_widget_(display_widget) {
+Worker::Worker(dh::TensorDisplayWidget *processed_display_widget,
+               dh::TensorDisplayWidget *raw_record_display_widget,
+               QObject *parent)
+    : QObject(parent), processed_display_widget_(processed_display_widget),
+      raw_record_display_widget_(raw_record_display_widget) {
   dh::holovibes_logger()->debug("[Worker::Worker] Pipeline worker initialized");
 
   // Register the same factories as before.
   compiler_.add_factory("Holofile",
                         std::make_unique<dh::HolofileSourceFactory>());
+  compiler_.add_factory("QtDisplay", std::make_unique<dh::QtDisplaySinkFactory>(
+                                         *processed_display_widget_));
   compiler_.add_factory(
-      "QtDisplay", std::make_unique<dh::QtDisplaySinkFactory>(*display_widget));
+      "QtDisplayRawRecord",
+      std::make_unique<dh::QtDisplaySinkFactory>(*raw_record_display_widget_));
+
   compiler_.add_factory("BatchedSPSC",
                         std::make_unique<dh::BatchedSPSCAccumulatorFactory>());
   compiler_.add_factory(
@@ -168,6 +175,11 @@ void Worker::build_desc_graph() {
   auto source_v = add_source_node();
   auto parent_v = source_v;
 
+  auto raw_record_acc_v = add_raw_record_accumulator_node();
+  boost::add_edge(source_v, raw_record_acc_v, desc_graph_);
+  auto raw_record_display_v = add_raw_record_display_sink_node();
+  boost::add_edge(raw_record_acc_v, raw_record_display_v, desc_graph_);
+
   if (s.import_load_method != ImportLoadMethod::LoadInGPU) {
     // Output is on CPU memory, need to send it to GPU.
     auto memcpy_v = add_cpy_cpu_to_gpu_node();
@@ -255,6 +267,23 @@ holoflow::model::DescriptorVertex Worker::add_node(const std::string &id,
   desc_graph_[v].config = config;
   nodes_[id] = v;
   return v;
+}
+
+holoflow::model::DescriptorVertex Worker::add_raw_record_display_sink_node() {
+  json config = json::object();
+  return add_node("raw_record_display_sink", "QtDisplayRawRecord", config);
+}
+
+holoflow::model::DescriptorVertex Worker::add_raw_record_accumulator_node() {
+  DH_CHECK(settings_);
+  const auto &s = *settings_;
+
+  constexpr size_t TARGET_SIZE = 4096;
+  size_t nb_slots = (TARGET_SIZE / s.render_batch_size) * s.render_batch_size;
+  json config;
+  config["nb_slots"] = nb_slots;
+  config["dequeue_batch_size"] = 1;
+  return add_node("raw_record_queue", "BatchedSPSC", config);
 }
 
 holoflow::model::DescriptorVertex Worker::add_cpy_cpu_to_gpu_node() {
