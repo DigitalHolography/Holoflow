@@ -30,6 +30,8 @@ protected:
 private slots:
   void on_import_start_clicked();
   void on_import_stop_clicked();
+  void on_export_start_clicked();
+  void on_export_stop_clicked();
 
 private:
   bool validate_inputs();
@@ -43,6 +45,8 @@ private:
 
   // Current state
   bool update_in_progress_ = false;
+  bool pipeline_running_ = false;
+  bool export_in_progress_ = false;
 
   // Workers
   pipeline::Worker *pipeline_worker_;

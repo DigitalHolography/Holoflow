@@ -9,8 +9,11 @@ IdentityTask::IdentityTask(const TaskMeta &meta, cudaStream_t stream)
     : Task(meta, stream) {}
 
 void IdentityTask::run(TensorView input, TensorView output) {
+  auto kind = input.memory_location() == MemoryLocation::HOST
+                  ? cudaMemcpyHostToHost
+                  : cudaMemcpyDeviceToDevice;
   CUDA_CHECK(cudaMemcpyAsync(output.data(), input.data(), input.size_in_bytes(),
-                             cudaMemcpyDeviceToDevice, stream_));
+                             kind, stream_));
 }
 
 TaskMeta IdentityTaskFactory::type_check(const TensorMeta &imeta,

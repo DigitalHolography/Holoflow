@@ -7,6 +7,7 @@
 #include <memory>
 #include <nlohmann/json.hpp>
 
+#include "curaii/v2/cuda.hh"
 #include "holoflow/error.hh"
 #include "holoflow/sink.hh"
 #include "holoflow/tensor.hh"
@@ -30,12 +31,17 @@ signals:
   void frame_ready(TensorView itens);
 
 private:
-  QtDisplaySink(const SinkMeta &meta, cudaStream_t stream);
+  QtDisplaySink(const SinkMeta &meta, cudaStream_t stream,
+                curaii::cuda::unique_host_ptr<uint8_t> h_buffer,
+                TensorMeta h_meta);
 
   void on_frame_displayed();
 
   std::atomic<bool> frame_displayed_;
   std::chrono::steady_clock::time_point last_display_time_;
+
+  curaii::cuda::unique_host_ptr<uint8_t> h_buffer_;
+  TensorMeta host_meta_;
 };
 
 class QtDisplaySinkFactory : public SinkFactory {

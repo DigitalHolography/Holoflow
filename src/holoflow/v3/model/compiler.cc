@@ -727,6 +727,8 @@ void ModelCompiler::call_factories() {
     auto type = node_properties.descriptor_.type;
     auto config = node_properties.descriptor_.config;
     auto stream = *node_properties.common_.stream_;
+    auto &event_listeners =
+        model_.event_listeners_[node_properties.descriptor_.id];
     if (node_properties.kind_ == NodeKind::Source) {
       auto factory = source_factories_.at(type).get();
       auto source = factory->create(config, stream);
@@ -754,7 +756,8 @@ void ModelCompiler::call_factories() {
           std::get<AccumulatorProperties>(node_properties.type_specific_)
               .accumulator_meta_->imeta();
       auto factory = accumulator_factories_.at(type).get();
-      auto accumulator = factory->create(imeta, config, stream);
+      auto accumulator =
+          factory->create(imeta, config, stream, event_listeners);
       std::get<AccumulatorProperties>(node_properties.type_specific_)
           .accumulator_ = accumulator.get();
       model_.accumulators_.push_back(std::move(accumulator));
@@ -867,11 +870,13 @@ void ModelCompiler::select_pes_roots() {
   }
 }
 
-Model ModelCompiler::compile(const DescriptorGraph &descriptor_graph) {
+Model ModelCompiler::compile(const DescriptorGraph &descriptor_graph,
+                             EventListenerMap &event_listeners) {
   dh::holoflow_logger()->debug(
       "[ModelCompiler::compile] Compiling model from descriptor graph");
 
   model_ = std::move(Model());
+  model_.event_listeners_ = event_listeners;
 
   dh::holoflow_logger()->debug("[ModelCompiler::compile] building compiler "
                                "graph from descriptor graph");

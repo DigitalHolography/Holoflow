@@ -42,8 +42,19 @@ const TensorMeta &AccumulatorMeta::ometa() const { return ometa_; }
 //                     Accumulator Implementation
 // ==========================================================================
 
-Accumulator::Accumulator(const AccumulatorMeta &meta, cudaStream_t stream)
-    : meta_(meta), stream_(stream) {}
+Accumulator::Accumulator(const AccumulatorMeta &meta, cudaStream_t stream,
+                         EventListeners event_listeners)
+    : meta_(meta), stream_(stream), event_listeners_(event_listeners) {}
+
+void Accumulator::handle_event(const json &) {
+  throw std::runtime_error("Not implemented");
+}
+
+void Accumulator::emit_event(const nlohmann::json &event) {
+  for (auto &listener : event_listeners_) {
+    listener(event);
+  }
+}
 
 const AccumulatorMeta &Accumulator::meta() const { return meta_; }
 const TensorMeta &Accumulator::imeta() const { return meta_.imeta(); }

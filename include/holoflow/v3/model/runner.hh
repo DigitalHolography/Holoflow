@@ -1,9 +1,13 @@
 #pragma once
 
 #include <atomic>
+#include <nlohmann/json.hpp>
+#include <string>
 #include <thread>
 
 #include "holoflow/v3/model/model.hh"
+
+using json = nlohmann::json;
 
 namespace holoflow::model {
 
@@ -13,6 +17,8 @@ public:
 
   void start();
   void stop();
+
+  void send_event(const std::string &name, const json &event);
 
 private:
   void run();

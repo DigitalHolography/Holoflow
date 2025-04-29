@@ -55,6 +55,8 @@ struct AllocatePesDFSVisitor : public boost::default_dfs_visitor {
     }
 
     if (u == pes_root_ && g[u].kind_ == NodeKind::Accumulator) {
+      nvtxRangePush(
+          fmt::format("request read tens {}", g[u].descriptor_.id).c_str());
       auto prop = std::get<AccumulatorProperties>(g[u].type_specific_);
       auto view = prop.accumulator_->read_tensor();
       while (!view && !stop_.load()) {
@@ -69,7 +71,10 @@ struct AllocatePesDFSVisitor : public boost::default_dfs_visitor {
 
       auto &otens = tensor_slots_.at(*prop.otens_id_);
       otens.data = reinterpret_cast<uint8_t *>(view->data());
+      nvtxRangePop();
     } else if (g[u].kind_ == NodeKind::Accumulator) {
+      nvtxRangePush(
+          fmt::format("request write tens {}", g[u].descriptor_.id).c_str());
       auto prop = std::get<AccumulatorProperties>(g[u].type_specific_);
       auto view = prop.accumulator_->write_tensor();
       while (!view && !stop_.load()) {
@@ -84,6 +89,7 @@ struct AllocatePesDFSVisitor : public boost::default_dfs_visitor {
 
       auto &itens = tensor_slots_.at(*prop.itens_id_);
       itens.data = reinterpret_cast<uint8_t *>(view->data());
+      nvtxRangePop();
     }
   }
 
@@ -198,6 +204,7 @@ private:
 
 void Runner::exec_pes_rec(Vertex v) {
   auto &node = model_.graph_[v];
+  nvtxRangePush(fmt::format("exec {}", node.descriptor_.id).c_str());
 
   dh::holoflow_logger()->debug("[Runner::exec_pes_rec] Executing node {}",
                                node.descriptor_.id);
@@ -216,7 +223,7 @@ void Runner::exec_pes_rec(Vertex v) {
   auto now = std::chrono::high_resolution_clock::now();
   auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
       now - node.metrics_.last_reset_time_);
-  if (duration.count() > 5e6) {
+  if (duration.count() > 1e6) {
     auto num_executions = node.metrics_.num_executions_->load();
     auto throughput = num_executions / (duration.count() / 1e6);
     node.metrics_.execution_throughput_->store((int)throughput);
@@ -233,6 +240,8 @@ void Runner::exec_pes_rec(Vertex v) {
           node.descriptor_.id, throughput * (int)batch_size);
     }
   }
+
+  nvtxRangePop();
 
   auto is_inlined = [](const auto &node) {
     return node.kind_ == NodeKind::Task &&
@@ -303,6 +312,26 @@ void Runner::run() {
   }
 
   dh::holoflow_logger()->info("[Runner::run] model stoped");
+}
+
+void Runner::send_event(const std::string &name, const json &event) {
+  auto &node_v = model_.node_map_.at(name);
+  auto &node = model_.graph_[node_v];
+  switch (node.kind_) {
+  case NodeKind::Sink: {
+    auto &sink = std::get<SinkProperties>(node.type_specific_).sink_;
+    sink->handle_event(event);
+    break;
+  }
+  case NodeKind::Accumulator: {
+    auto &accumulator =
+        std::get<AccumulatorProperties>(node.type_specific_).accumulator_;
+    accumulator->handle_event(event);
+    break;
+  }
+  default:
+    throw std::runtime_error("not implemented");
+  }
 }
 
 } // namespace holoflow::model

@@ -19,6 +19,10 @@ const TensorMeta &SinkMeta::imeta() const { return imeta_; }
 Sink::Sink(const SinkMeta &meta, cudaStream_t stream)
     : meta_(meta), stream_(stream) {}
 
+void Sink::handle_event(const json &) {
+  throw std::runtime_error("Not implemented");
+}
+
 const SinkMeta &Sink::meta() const { return meta_; }
 
 const TensorMeta &Sink::imeta() const { return meta_.imeta(); }

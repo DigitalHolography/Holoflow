@@ -38,7 +38,8 @@ public:
 
 private:
   BatchedSPSCAccumulator(
-      const AccumulatorMeta &meta, cudaStream_t stream, size_t nb_slots,
+      const AccumulatorMeta &meta, cudaStream_t stream,
+      Accumulator::EventListeners event_listeners, size_t nb_slots,
       curaii::cuda::unique_host_ptr<uint8_t> host_buffer,
       curaii::cuda::unique_device_ptr<uint8_t> device_buffer);
 
@@ -77,9 +78,9 @@ public:
   AccumulatorMeta type_check(const TensorMeta &imeta,
                              const json &params) override;
 
-  std::unique_ptr<Accumulator> create(const TensorMeta &imeta,
-                                      const json &params,
-                                      cudaStream_t stream) override;
+  std::unique_ptr<Accumulator>
+  create(const TensorMeta &imeta, const json &params, cudaStream_t stream,
+         Accumulator::EventListeners event_listeners) override;
 
 private:
   struct Params {

@@ -32,7 +32,8 @@ public:
 
 private:
   SlidingAverageAccumulator(
-      const AccumulatorMeta &meta, cudaStream_t stream, size_t nb_slots,
+      const AccumulatorMeta &meta, cudaStream_t stream,
+      Accumulator::EventListeners event_listeners, size_t nb_slots,
       size_t window_size, curaii::cuda::unique_device_ptr<uint8_t> d_buffer,
       curaii::cuda::unique_device_ptr<uint8_t> d_avg_frame);
 
@@ -66,9 +67,9 @@ public:
   AccumulatorMeta type_check(const TensorMeta &imeta,
                              const json &params) override;
 
-  std::unique_ptr<Accumulator> create(const TensorMeta &imeta,
-                                      const json &params,
-                                      cudaStream_t stream) override;
+  std::unique_ptr<Accumulator>
+  create(const TensorMeta &imeta, const json &params, cudaStream_t stream,
+         Accumulator::EventListeners event_listeners) override;
 
 private:
   struct Params {

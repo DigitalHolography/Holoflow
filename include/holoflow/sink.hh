@@ -34,6 +34,8 @@ public:
 
   virtual void run(TensorView itens) = 0;
 
+  virtual void handle_event(const json &event);
+
   const SinkMeta &meta() const;
 
   const TensorMeta &imeta() const;

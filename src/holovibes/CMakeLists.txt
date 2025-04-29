@@ -8,6 +8,7 @@ qt_add_executable(holovibes
   accumulators/sliding_average_accumulator.cu
   sources/holofile_source.cc
   sinks/qt_display_sink.cc
+  sinks/holofile_record_sink.cc
   tasks/convert_task.cu
   tasks/identity_task.cc
   tasks/fresnel_diffraction_task.cu

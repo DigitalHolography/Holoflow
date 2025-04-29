@@ -63,6 +63,7 @@ struct Settings {
   std::string export_file_path;
   ExportTag export_tag;
   std::optional<size_t> export_frame_count;
+  bool export_activated;
 
   // --- Settings for Image Rendering ---
   RenderType render_type;

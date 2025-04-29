@@ -2,6 +2,7 @@
 
 #include <map>
 #include <memory>
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,9 @@ namespace holoflow::model {
 
 class ModelCompiler {
 public:
+  using EventListener = std::function<void(const nlohmann::json &)>;
+  using EventListenerMap = std::map<std::string, std::vector<EventListener>>;
+
   void add_factory(const std::string &type,
                    std::unique_ptr<dh::SourceFactory> factory);
 
@@ -29,7 +33,8 @@ public:
   void add_factory(const std::string &type,
                    std::unique_ptr<dh::AccumulatorFactory> factory);
 
-  Model compile(const DescriptorGraph &graph);
+  Model compile(const DescriptorGraph &graph,
+                EventListenerMap &event_listeners);
 
 private:
   void build_compiler_graph(const DescriptorGraph &graph);

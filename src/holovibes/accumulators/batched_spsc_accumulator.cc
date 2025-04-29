@@ -15,10 +15,11 @@ namespace dh {
 // ==========================================================================
 
 BatchedSPSCAccumulator::BatchedSPSCAccumulator(
-    const AccumulatorMeta &meta, cudaStream_t stream, size_t nb_slots,
+    const AccumulatorMeta &meta, cudaStream_t stream,
+    Accumulator::EventListeners event_listeners, size_t nb_slots,
     curaii::cuda::unique_host_ptr<uint8_t> host_buffer,
     curaii::cuda::unique_device_ptr<uint8_t> device_buffer)
-    : Accumulator(meta, stream) {
+    : Accumulator(meta, stream, event_listeners) {
   nb_slots_ = nb_slots;
   enqueue_batch_size_ = meta_.imeta().shape().at(0);
   dequeue_batch_size_ = meta_.ometa().shape().at(0);
@@ -140,15 +141,12 @@ BatchedSPSCAccumulatorFactory::type_check(const TensorMeta &imeta,
 
   // 1) Parameter sanity
   check(params.nb_slots > 0, "nb_slots <= 0");
-
   check(params.dequeue_batch_size > 0, "dequeue_batch_size <= 0");
-
   check(params.nb_slots % params.dequeue_batch_size == 0,
         "dequeue_batch_size is not a factor of nb_slots");
 
   // 2) Tensor meta sanity
   check(imeta.shape().size() == 3, "tensor rank != 3");
-
   check(params.nb_slots % imeta.shape().at(0) == 0,
         "input dim 0 is not a factor of nb_slots");
 
@@ -162,7 +160,8 @@ BatchedSPSCAccumulatorFactory::type_check(const TensorMeta &imeta,
 }
 
 std::unique_ptr<Accumulator> BatchedSPSCAccumulatorFactory::create(
-    const TensorMeta &imeta, const json &jparams, cudaStream_t stream) {
+    const TensorMeta &imeta, const json &jparams, cudaStream_t stream,
+    Accumulator::EventListeners event_listeners) {
   // 1) Validate
   auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
@@ -186,9 +185,9 @@ std::unique_ptr<Accumulator> BatchedSPSCAccumulatorFactory::create(
   }
 
   // 4) Assemble accumulator
-  auto *accumulator = new BatchedSPSCAccumulator(meta, stream, params.nb_slots,
-                                                 std::move(host_buffer),
-                                                 std::move(device_buffer));
+  auto *accumulator = new BatchedSPSCAccumulator(
+      meta, stream, event_listeners, params.nb_slots, std::move(host_buffer),
+      std::move(device_buffer));
 
   return std::unique_ptr<BatchedSPSCAccumulator>(accumulator);
 }

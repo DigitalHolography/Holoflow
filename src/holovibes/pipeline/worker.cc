@@ -9,6 +9,7 @@
 
 #include "bug_buster/bug_buster.hh"
 #include "holovibes/accumulators/batched_spsc_accumulator.hh"
+#include "holovibes/accumulators/gate_accumulator.hh"
 #include "holovibes/accumulators/sliding_average_accumulator.hh"
 #include "holovibes/holovibes.hh"
 #include "holovibes/sinks/qt_display_sink.hh"
@@ -49,6 +50,7 @@ Worker::Worker(dh::TensorDisplayWidget *processed_display_widget,
   compiler_.add_factory(
       "SlidingAverage",
       std::make_unique<dh::SlidingAverageAccumulatorFactory>());
+  compiler_.add_factory("Gate", std::make_unique<dh::GateAccumulatorFactory>());
   compiler_.add_factory("Convert", std::make_unique<dh::ConvertTaskFactory>());
   compiler_.add_factory("Identity",
                         std::make_unique<dh::IdentityTaskFactory>());
@@ -81,7 +83,7 @@ void Worker::start() {
   // Compile the pipeline.
   model_ = std::nullopt;
   try {
-    model_ = std::move(compiler_.compile(desc_graph_));
+    model_ = std::move(compiler_.compile(desc_graph_, event_listeners_));
   } catch (std::invalid_argument &e) {
     dh::holovibes_logger()->error(
         "[Worker::start] Model compilation failed: {}", e.what());
@@ -139,7 +141,7 @@ void Worker::update() {
   // Compile the pipeline.
   model_ = std::nullopt;
   try {
-    model_ = std::move(compiler_.compile(desc_graph_));
+    model_ = std::move(compiler_.compile(desc_graph_, event_listeners_));
   } catch (std::invalid_argument &e) {
     dh::holovibes_logger()->error(
         "[Worker::update] Model compilation failed: {}", e.what());
@@ -163,22 +165,68 @@ void Worker::update() {
   emit update_success();
 }
 
+void Worker::start_export() {
+  dh::holovibes_logger()->info("[Worker::start_export] starting export");
+  json event;
+  event["action"] = "start";
+  try {
+    runner_->send_event("raw_record_gate", event);
+  } catch (std::exception e) {
+    dh::holovibes_logger()->warn("[Worker::start_export] error: {}", e.what());
+    emit start_export_failure();
+    return;
+  }
+  emit start_export_success();
+}
+
+void Worker::stop_export() {
+  dh::holovibes_logger()->info("[Worker::stop_export] stoping export");
+  json event;
+  event["action"] = "stop";
+  try {
+    runner_->send_event("raw_record_gate", event);
+  } catch (std::exception e) {
+    dh::holovibes_logger()->warn("[Worker::stop_export] error: {}", e.what());
+    emit stop_export_failure();
+    return;
+  }
+
+  emit stop_export_success();
+}
+
 void Worker::build_desc_graph() {
   DH_CHECK(settings_);
   const auto &s = *settings_;
 
   // Reset the descriptor graph and nodes mapping.
   desc_graph_ = holoflow::model::DescriptorGraph();
+  event_listeners_.clear();
   nodes_.clear();
 
   // Build the graph step by step using the helper functions.
   auto source_v = add_source_node();
   auto parent_v = source_v;
 
+  auto raw_record_gate_v = add_raw_record_gate_node();
+  boost::add_edge(source_v, raw_record_gate_v, desc_graph_);
+  auto identity_v = add_raw_identity_node();
+  boost::add_edge(raw_record_gate_v, identity_v, desc_graph_);
   auto raw_record_acc_v = add_raw_record_accumulator_node();
-  boost::add_edge(source_v, raw_record_acc_v, desc_graph_);
+  boost::add_edge(identity_v, raw_record_acc_v, desc_graph_);
   auto raw_record_display_v = add_raw_record_display_sink_node();
   boost::add_edge(raw_record_acc_v, raw_record_display_v, desc_graph_);
+
+  // Write DOT file for debugging purposes.
+  std::ofstream dot_file0("pipeline_graph.dot");
+  if (dot_file0) {
+    boost::write_graphviz(
+        dot_file0, desc_graph_,
+
+        holoflow::model::DescriptorNodePropertyWriter(desc_graph_),
+        holoflow::model::DescriptorEdgePropertyWriter());
+    dh::holovibes_logger()->debug(
+        "DOT file 'pipeline_graph.dot' created successfully.");
+  }
 
   if (s.import_load_method != ImportLoadMethod::LoadInGPU) {
     // Output is on CPU memory, need to send it to GPU.
@@ -269,9 +317,32 @@ holoflow::model::DescriptorVertex Worker::add_node(const std::string &id,
   return v;
 }
 
-holoflow::model::DescriptorVertex Worker::add_raw_record_display_sink_node() {
+holoflow::model::DescriptorVertex Worker::add_raw_record_gate_node() {
+  DH_CHECK(settings_);
+  const auto &s = *settings_;
+
+  event_listeners_["raw_record_gate"].push_back(
+      [this](const nlohmann::json &evt) {
+        auto action = evt.value("action", "");
+        if (action == "started")
+          emit start_export_success();
+        else if (action == "start_failed")
+          emit start_export_failure();
+        else if (action == "stopped")
+          emit stop_export_success();
+        else if (action == "stop_failed")
+          emit stop_export_failure();
+      });
+
+  json config;
+  config["is_on"] = s.export_activated;
+  config["target"] = s.export_frame_count;
+  return add_node("raw_record_gate", "Gate", config);
+}
+
+holoflow::model::DescriptorVertex Worker::add_raw_identity_node() {
   json config = json::object();
-  return add_node("raw_record_display_sink", "QtDisplayRawRecord", config);
+  return add_node("raw_identity", "Identity", config);
 }
 
 holoflow::model::DescriptorVertex Worker::add_raw_record_accumulator_node() {
@@ -284,6 +355,11 @@ holoflow::model::DescriptorVertex Worker::add_raw_record_accumulator_node() {
   config["nb_slots"] = nb_slots;
   config["dequeue_batch_size"] = 1;
   return add_node("raw_record_queue", "BatchedSPSC", config);
+}
+
+holoflow::model::DescriptorVertex Worker::add_raw_record_display_sink_node() {
+  json config = json::object();
+  return add_node("raw_record_display_sink", "QtDisplayRawRecord", config);
 }
 
 holoflow::model::DescriptorVertex Worker::add_cpy_cpu_to_gpu_node() {

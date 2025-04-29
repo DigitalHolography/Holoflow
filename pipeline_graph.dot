@@ -6,65 +6,70 @@ digraph G {
   \"path\": \"D:/BatchTesting/250220_GUJ0206_L.holo\",
   \"start_frame\": 0
 }"];
-1[label="raw_record_queue\n(BatchedSPSC)\n{
+1[label="raw_record_gate\n(Gate)\n{
+  \"is_on\": false,
+  \"target\": 2048
+}"];
+2[label="raw_identity\n(Identity)\n{}"];
+3[label="raw_record_queue\n(BatchedSPSC)\n{
   \"dequeue_batch_size\": 1,
   \"nb_slots\": 4096
 }"];
-2[label="raw_record_display_sink\n(QtDisplayRawRecord)\n{}"];
-3[label="memcpy_cpu_to_gpu\n(Memcpy)\n{
+4[label="raw_record_display_sink\n(QtDisplayRawRecord)\n{}"];
+5[label="memcpy_cpu_to_gpu\n(Memcpy)\n{
   \"kind\": \"HOST_TO_DEVICE\"
 }"];
-4[label="input_queue\n(BatchedSPSC)\n{
+6[label="input_queue\n(BatchedSPSC)\n{
   \"dequeue_batch_size\": 32,
   \"nb_slots\": 4096
 }"];
-5[label="convert_input\n(Convert)\n{
+7[label="convert_input\n(Convert)\n{
   \"conversion\": \"U8_CF32_REAL\"
 }"];
-6[label="fresnel_diffraction\n(FresnelDiffraction)\n{
+8[label="fresnel_diffraction\n(FresnelDiffraction)\n{
   \"lambda\": 8.519999710188131e-07,
   \"pixel_size\": 1.9999999494757503e-05,
   \"skip_phase_shift\": true,
   \"z\": 0.3800000250339508
 }"];
-7[label="time_accumulator\n(BatchedSPSC)\n{
+9[label="time_accumulator\n(BatchedSPSC)\n{
   \"dequeue_batch_size\": 32,
   \"nb_slots\": 96
 }"];
-8[label="principal_component_analysis\n(PCA)\n{
+10[label="principal_component_analysis\n(PCA)\n{
   \"begin\": 0,
   \"end\": 16
 }"];
-9[label="convert_postprocess\n(Convert)\n{
+11[label="convert_postprocess\n(Convert)\n{
   \"conversion\": \"CF32_F32_MODU\"
 }"];
-10[label="p_frame_average\n(Average)\n{
+12[label="p_frame_average\n(Average)\n{
   \"begin\": 0,
   \"end\": 16
 }"];
-11[label="fft_shift\n(FFTShift)\n{}"];
-12[label="image_avg_accumulator\n(SlidingAverage)\n{
+13[label="fft_shift\n(FFTShift)\n{}"];
+14[label="image_avg_accumulator\n(SlidingAverage)\n{
   \"nb_slots\": 138,
   \"window_size\": 128
 }"];
-13[label="percentile_clip\n(PercentileClip)\n{
+15[label="percentile_clip\n(PercentileClip)\n{
   \"lower_percentile\": 0.20000000298023224,
   \"radius\": 1.0,
   \"upper_percentile\": 99.80000305175781
 }"];
-14[label="convert_output\n(Convert)\n{
+16[label="convert_output\n(Convert)\n{
   \"conversion\": \"F32_U8_SCALED\"
 }"];
-15[label="processed_output_queue\n(BatchedSPSC)\n{
+17[label="processed_output_queue\n(BatchedSPSC)\n{
   \"dequeue_batch_size\": 1,
   \"nb_slots\": 32
 }"];
-16[label="processed_display_sink\n(QtDisplay)\n{}"];
+18[label="processed_display_sink\n(QtDisplay)\n{}"];
 0->1 ;
-0->3 ;
+0->5 ;
 1->2 ;
+2->3 ;
 3->4 ;
-4->5 ;
 5->6 ;
 6->7 ;
 7->8 ;
@@ -76,4 +81,6 @@ digraph G {
 13->14 ;
 14->15 ;
 15->16 ;
+16->17 ;
+17->18 ;
 }

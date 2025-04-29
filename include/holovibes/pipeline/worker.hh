@@ -26,6 +26,8 @@ public slots:
   void start();
   void stop();
   void update();
+  void start_export();
+  void stop_export();
 
 signals:
   void start_success();
@@ -34,6 +36,10 @@ signals:
   void stop_failure();
   void update_success();
   void update_failure();
+  void start_export_success();
+  void start_export_failure();
+  void stop_export_success();
+  void stop_export_failure();
 
 private:
   void build_desc_graph();
@@ -43,8 +49,10 @@ private:
                                              const nlohmann::json &config);
 
   holoflow::model::DescriptorVertex add_source_node();
-  holoflow::model::DescriptorVertex add_raw_record_display_sink_node();
+  holoflow::model::DescriptorVertex add_raw_record_gate_node();
+  holoflow::model::DescriptorVertex add_raw_identity_node();
   holoflow::model::DescriptorVertex add_raw_record_accumulator_node();
+  holoflow::model::DescriptorVertex add_raw_record_display_sink_node();
   holoflow::model::DescriptorVertex add_cpy_cpu_to_gpu_node();
   holoflow::model::DescriptorVertex add_input_queue_node();
   holoflow::model::DescriptorVertex add_convert_input_node();
@@ -72,6 +80,7 @@ private:
   // Pipeline components
   holoflow::model::ModelCompiler compiler_;
   holoflow::model::DescriptorGraph desc_graph_;
+  holoflow::model::ModelCompiler::EventListenerMap event_listeners_;
   std::unordered_map<std::string, holoflow::model::DescriptorVertex> nodes_;
   std::optional<holoflow::model::Model> model_;
   std::unique_ptr<holoflow::model::Runner> runner_;

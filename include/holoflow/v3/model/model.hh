@@ -27,6 +27,9 @@ struct TensorSlot {
 
 class Model {
 public:
+  using EventListener = std::function<void(const nlohmann::json &)>;
+  using EventListenerMap = std::map<std::string, std::vector<EventListener>>;
+
   Model(const Model &) = delete;
   Model &operator=(const Model &) = delete;
 
@@ -46,6 +49,7 @@ private:
   std::map<int, TensorSlot> tensor_slots_;
   std::vector<size_t> pes_roots_;
   int next_tens_id_ = 0;
+  EventListenerMap event_listeners_;
 
   friend class ModelCompiler;
   friend class Runner;

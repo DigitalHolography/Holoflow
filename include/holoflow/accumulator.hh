@@ -59,12 +59,16 @@ private:
  */
 class Accumulator {
 public:
+  using EventListeners =
+      std::vector<std::function<void(const nlohmann::json &)>>;
+
   /**
    * @brief Constructs an accumulator with the given metadata.
    * @param meta The task metadata.
    * @param stream The stream.
    */
-  Accumulator(const AccumulatorMeta &meta, cudaStream_t stream);
+  Accumulator(const AccumulatorMeta &meta, cudaStream_t stream,
+              EventListeners event_listeners);
 
   /**
    * @brief Virtual destructor.
@@ -124,6 +128,8 @@ public:
    */
   virtual void commit_read() = 0;
 
+  virtual void handle_event(const json &event);
+
   /**
    * @brief Returns the metadata associated with the accumulator.
    * @return A reference to the AccumulatorMeta.
@@ -143,8 +149,11 @@ public:
   const TensorMeta &ometa() const;
 
 protected:
+  void emit_event(const nlohmann::json &event);
+
   AccumulatorMeta meta_; ///< Metadata defining input/output tensors.
   cudaStream_t stream_;  ///< CUDA stream associated with the accumulator.
+  EventListeners event_listeners_;
 };
 
 /**
@@ -194,7 +203,8 @@ public:
    * until the accumulator is destroyed.
    */
   virtual std::unique_ptr<Accumulator>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream) = 0;
+  create(const TensorMeta &imeta, const json &params, cudaStream_t stream,
+         Accumulator::EventListeners event_listeners) = 0;
 };
 
 } // namespace dh

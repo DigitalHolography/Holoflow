@@ -1,0 +1,1 @@
+#include "holovibes/sinks/holofile_record_sink.hh"

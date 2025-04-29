@@ -17,6 +17,7 @@
 #include <QThread>
 #include <QVBoxLayout>
 
+#include "bug_buster/bug_buster.hh"
 #include "holofile/holofile.hh"
 #include "holovibes/holovibes.hh"
 #include "holovibes/pipeline/settings.hh"
@@ -52,8 +53,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   this->adjustSize();
   this->setFixedSize(this->minimumSizeHint());
 
-  processed_display_widget_ = new dh::TensorDisplayWidget(800, 800, this);
-  raw_record_display_widget_ = new dh::TensorDisplayWidget(800, 800, this);
+  processed_display_widget_ = new dh::TensorDisplayWidget(600, 600, this);
+  raw_record_display_widget_ = new dh::TensorDisplayWidget(600, 600, this);
   processed_display_widget_->show();
   raw_record_display_widget_->show();
   pipeline_worker_ = new pipeline::Worker(processed_display_widget_,
@@ -71,18 +72,24 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
       view_reticle_radius_, qOverload<double>(&QDoubleSpinBox::valueChanged),
       processed_display_widget_, &dh::TensorDisplayWidget::set_reticle_radius);
 
-  connect(pipeline_worker_, &pipeline::Worker::start_success, this,
-          [this]() { import_stop_button_->setEnabled(true); });
+  connect(pipeline_worker_, &pipeline::Worker::start_success, this, [this]() {
+    pipeline_running_ = true;
+    import_stop_button_->setEnabled(true);
+  });
 
   connect(pipeline_worker_, &pipeline::Worker::start_failure, this, [this]() {
+    pipeline_running_ = false;
     import_start_button_->setEnabled(true);
     import_stop_button_->setEnabled(false);
   });
 
-  connect(pipeline_worker_, &pipeline::Worker::stop_success, this,
-          [this]() { import_start_button_->setEnabled(true); });
+  connect(pipeline_worker_, &pipeline::Worker::stop_success, this, [this]() {
+    pipeline_running_ = false;
+    import_start_button_->setEnabled(true);
+  });
 
   connect(pipeline_worker_, &pipeline::Worker::stop_failure, this, [this]() {
+    pipeline_running_ = false;
     import_start_button_->setEnabled(true);
     import_stop_button_->setEnabled(false);
   });
@@ -93,10 +100,39 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   });
 
   connect(pipeline_worker_, &pipeline::Worker::update_failure, this, [this]() {
+    pipeline_running_ = false;
     update_in_progress_ = false;
     import_start_button_->setEnabled(true);
     import_stop_button_->setEnabled(false);
   });
+
+  connect(pipeline_worker_, &pipeline::Worker::start_export_success, this,
+          [this]() {
+            export_in_progress_ = true;
+            export_record_button_->setEnabled(false);
+            export_stop_button_->setEnabled(true);
+          });
+
+  connect(pipeline_worker_, &pipeline::Worker::start_export_failure, this,
+          [this]() {
+            export_in_progress_ = false;
+            export_record_button_->setEnabled(true);
+            export_stop_button_->setEnabled(false);
+          });
+
+  connect(pipeline_worker_, &pipeline::Worker::stop_export_success, this,
+          [this]() {
+            export_in_progress_ = false;
+            export_stop_button_->setEnabled(false);
+            export_record_button_->setEnabled(true);
+          });
+
+  connect(pipeline_worker_, &pipeline::Worker::stop_export_failure, this,
+          [this]() {
+            export_in_progress_ = false;
+            export_stop_button_->setEnabled(false);
+            export_record_button_->setEnabled(true);
+          });
 
   pipeline_worker_thread_->start();
 
@@ -104,6 +140,10 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
           &MainWindow::on_import_start_clicked);
   connect(import_stop_button_, &QPushButton::clicked, this,
           &MainWindow::on_import_stop_clicked);
+  connect(export_record_button_, &QPushButton::clicked, this,
+          &MainWindow::on_export_start_clicked);
+  connect(export_stop_button_, &QPushButton::clicked, this,
+          &MainWindow::on_export_stop_clicked);
 
   validate_inputs();
 }
@@ -122,6 +162,8 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 }
 
 void MainWindow::on_import_start_clicked() {
+  DH_CHECK(!pipeline_running_);
+
   if (!validate_inputs())
     return;
 
@@ -132,78 +174,100 @@ void MainWindow::on_import_start_clicked() {
 }
 
 void MainWindow::on_import_stop_clicked() {
+  DH_CHECK(pipeline_running_);
   import_stop_button_->setEnabled(false);
   QMetaObject::invokeMethod(pipeline_worker_, "stop", Qt::QueuedConnection);
 }
 
+void MainWindow::on_export_start_clicked() {
+  DH_CHECK(!export_in_progress_);
+  export_record_button_->setEnabled(false);
+
+  if (pipeline_running_) {
+    QMetaObject::invokeMethod(pipeline_worker_, "start_export",
+                              Qt::QueuedConnection);
+  } else {
+    export_in_progress_ = true;
+    export_stop_button_->setEnabled(true);
+  }
+}
+
+void MainWindow::on_export_stop_clicked() {
+  DH_CHECK(export_in_progress_);
+  export_stop_button_->setEnabled(false);
+
+  if (pipeline_running_) {
+    QMetaObject::invokeMethod(pipeline_worker_, "stop_export",
+                              Qt::QueuedConnection);
+  } else {
+    export_in_progress_ = false;
+    export_record_button_->setEnabled(true);
+  }
+}
+
 bool MainWindow::validate_inputs() {
+  const QString style_fail =
+      QStringLiteral("background-color: rgba(255, 0, 0, 50);");
+
+  // 1) Clear all styles up front
+  const std::initializer_list<QWidget *> all_widgets = {
+      render_batch_size_spin_,  render_time_stride_spin_,
+      render_time_window_spin_, view_z_spin_,
+      view_width_spin_,         import_start_index_spin_,
+      import_end_index_spin_,   import_file_line_edit_,
+      export_frames_spin_};
+
+  for (auto *w : all_widgets)
+    w->setStyleSheet("");
+
+  bool all_good = true;
+
+  // helper: if cond==false, mark widgets and flag failure
+  auto mark_failure = [&](bool cond, std::initializer_list<QWidget *> widgets) {
+    if (!cond) {
+      all_good = false;
+      for (auto *w : widgets)
+        w->setStyleSheet(style_fail);
+    }
+  };
+
   int batch_size = render_batch_size_spin_->value();
   int time_stride = render_time_stride_spin_->value();
-
-  if (batch_size > 0 && (time_stride % batch_size != 0)) {
-    render_batch_size_spin_->setStyleSheet(
-        "background-color: rgba(255, 0, 0, 50);");
-    render_time_stride_spin_->setStyleSheet(
-        "background-color: rgba(255, 0, 0, 50);");
-    return false;
-  } else {
-    render_batch_size_spin_->setStyleSheet("");
-    render_time_stride_spin_->setStyleSheet("");
-  }
-
   int time_window = render_time_window_spin_->value();
   int p_frame_start = view_z_spin_->value();
   int p_frame_width = view_width_spin_->value();
-
-  if (p_frame_start + p_frame_width > time_window) {
-    render_time_window_spin_->setStyleSheet(
-        "background-color: rgba(255, 0, 0, 50);");
-    view_z_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-    view_width_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-    return false;
-  } else {
-    render_time_window_spin_->setStyleSheet("");
-    view_z_spin_->setStyleSheet("");
-    view_width_spin_->setStyleSheet("");
-  }
-
   int start_frame = import_start_index_spin_->value();
   int end_frame = import_end_index_spin_->value();
-  if (end_frame <= start_frame) {
-    import_start_index_spin_->setStyleSheet(
-        "background-color: rgba(255, 0, 0, 50);");
-    import_end_index_spin_->setStyleSheet(
-        "background-color: rgba(255, 0, 0, 50);");
-    return false;
-  } else {
-    import_start_index_spin_->setStyleSheet("");
-    import_end_index_spin_->setStyleSheet("");
+
+  // 2) batch_size divides time_stride
+  mark_failure(batch_size > 0 && (time_stride % batch_size == 0),
+               {render_batch_size_spin_, render_time_stride_spin_});
+
+  // 3) p_frame_start + p_frame_width <= time_window
+  mark_failure(p_frame_start + p_frame_width <= time_window,
+               {render_time_window_spin_, view_z_spin_, view_width_spin_});
+
+  // 4) end_frame > start_frame
+  mark_failure(end_frame > start_frame,
+               {import_start_index_spin_, import_end_index_spin_});
+
+  // 5) time_stride <= end_frame - start_frame
+  mark_failure(time_stride <= (end_frame - start_frame),
+               {import_start_index_spin_, import_end_index_spin_,
+                render_time_stride_spin_});
+
+  // 6) import path non-empty
+  bool hasPath = !import_file_line_edit_->text().isEmpty();
+  mark_failure(hasPath, {import_file_line_edit_});
+
+  // 7) if exporting frames, ensure divisible by batch_size
+  if (export_frames_check_->isChecked()) {
+    int exportCount = export_frames_spin_->value();
+    mark_failure((exportCount % batch_size) == 0,
+                 {export_frames_spin_, render_batch_size_spin_});
   }
 
-  if (time_stride > end_frame - start_frame) {
-    import_start_index_spin_->setStyleSheet(
-        "background-color: rgba(255, 0, 0, 50);");
-    import_end_index_spin_->setStyleSheet(
-        "background-color: rgba(255, 0, 0, 50);");
-    render_time_stride_spin_->setStyleSheet(
-        "background-color: rgba(255, 0, 0, 50);");
-    return false;
-  } else {
-    import_start_index_spin_->setStyleSheet("");
-    import_end_index_spin_->setStyleSheet("");
-    render_time_stride_spin_->setStyleSheet("");
-  }
-
-  std::string import_file_path = import_file_line_edit_->text().toStdString();
-  if (import_file_path == "") {
-    import_file_line_edit_->setStyleSheet(
-        "background-color: rgba(255, 0, 0, 50);");
-    return false;
-  } else {
-    import_file_line_edit_->setStyleSheet("");
-  }
-
-  return true;
+  return all_good;
 }
 
 void MainWindow::setup_validation_connections() {
@@ -321,10 +385,6 @@ void MainWindow::setup_update_connections() {
           &MainWindow::update_if_running);
   connect(import_browse_button_, &QPushButton::clicked, this,
           &MainWindow::update_if_running);
-  connect(import_start_button_, &QPushButton::clicked, this,
-          &MainWindow::update_if_running);
-  connect(import_stop_button_, &QPushButton::clicked, this,
-          &MainWindow::update_if_running);
   connect(import_fps_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &MainWindow::update_if_running);
   connect(import_start_index_spin_, qOverload<int>(&QSpinBox::valueChanged),
@@ -348,10 +408,6 @@ void MainWindow::setup_update_connections() {
   connect(export_frames_check_, &QCheckBox::toggled, this,
           &MainWindow::update_if_running);
   connect(export_frames_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
-          &MainWindow::update_if_running);
-  connect(export_record_button_, &QPushButton::clicked, this,
-          &MainWindow::update_if_running);
-  connect(export_stop_button_, &QPushButton::clicked, this,
           &MainWindow::update_if_running);
   connect(export_stop_fan_button_, &QPushButton::clicked, this,
           &MainWindow::update_if_running);
@@ -488,6 +544,7 @@ holovibes::pipeline::Settings MainWindow::get_pipeline_settings() {
   } else {
     s.export_frame_count = std::nullopt;
   }
+  s.export_activated = export_in_progress_;
 
   // --- Image Rendering Settings ---
   {
@@ -683,6 +740,7 @@ QGroupBox *MainWindow::create_export_group() {
   // Row 4: Action buttons: Record, Stop, Stop Fan
   export_record_button_ = new QPushButton("Record", group);
   export_stop_button_ = new QPushButton("Stop", group);
+  export_stop_button_->setEnabled(false);
   export_stop_fan_button_ = new QPushButton("Stop fan", group);
   QHBoxLayout *button_layout = new QHBoxLayout();
   button_layout->addWidget(export_record_button_);

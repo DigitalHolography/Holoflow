@@ -46,11 +46,12 @@ __global__ void f32_sub_avg_kernel(const float *idata, float *odata, int nx,
 } // namespace
 
 SlidingAverageAccumulator::SlidingAverageAccumulator(
-    const AccumulatorMeta &meta, cudaStream_t stream, size_t nb_slots,
+    const AccumulatorMeta &meta, cudaStream_t stream,
+    Accumulator::EventListeners event_listeners, size_t nb_slots,
     size_t window_size, curaii::cuda::unique_device_ptr<uint8_t> d_buffer,
     curaii::cuda::unique_device_ptr<uint8_t> d_avg_frame)
-    : Accumulator(meta, stream), window_size_(window_size), nb_slots_(nb_slots),
-      element_size_(meta_.imeta().size_in_bytes()),
+    : Accumulator(meta, stream, event_listeners), window_size_(window_size),
+      nb_slots_(nb_slots), element_size_(meta_.imeta().size_in_bytes()),
       d_buffer_(std::move(d_buffer)), d_running_avg_(std::move(d_avg_frame)),
       avg_idx_(nb_slots_ - window_size_), write_idx_(0),
       read_idx_(nb_slots_ - 1) {}
@@ -178,7 +179,8 @@ SlidingAverageAccumulatorFactory::type_check(const TensorMeta &imeta,
 }
 
 std::unique_ptr<Accumulator> SlidingAverageAccumulatorFactory ::create(
-    const TensorMeta &imeta, const json &jparams, cudaStream_t stream) {
+    const TensorMeta &imeta, const json &jparams, cudaStream_t stream,
+    Accumulator::EventListeners event_listeners) {
   // 1) Validate
   auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
@@ -195,8 +197,8 @@ std::unique_ptr<Accumulator> SlidingAverageAccumulatorFactory ::create(
 
   // 4) Assemble accumulator
   auto *accumulator = new SlidingAverageAccumulator(
-      meta, stream, params.nb_slots, params.window_size, std::move(d_buffer),
-      std::move(d_running_avg));
+      meta, stream, event_listeners, params.nb_slots, params.window_size,
+      std::move(d_buffer), std::move(d_running_avg));
 
   return std::unique_ptr<SlidingAverageAccumulator>(accumulator);
 }
