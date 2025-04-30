@@ -84,6 +84,44 @@ void Stream::reset(cudaStream_t s) noexcept {
 
 Stream::operator bool() const noexcept { return stream_ != nullptr; }
 
+Graph::Graph() { CUDA_CHECK(cudaGraphCreate(&graph_, 0)); }
+
+Graph::Graph(Graph &&other) noexcept : graph_(other.graph_) {
+  other.graph_ = nullptr;
+}
+
+Graph &Graph::operator=(Graph &&other) noexcept {
+  if (this != &other) {
+    reset();
+    graph_ = other.graph_;
+    other.graph_ = nullptr;
+  }
+  return *this;
+}
+
+Graph::~Graph() noexcept {
+  if (graph_) {
+    CUDA_CHECK_NT(cudaGraphDestroy(graph_));
+  }
+}
+
+cudaGraph_t Graph::get() const noexcept { return graph_; }
+
+cudaGraph_t Graph::release() noexcept {
+  auto tmp = graph_;
+  graph_ = nullptr;
+  return tmp;
+}
+
+void Graph::reset(cudaGraph_t s) noexcept {
+  if (graph_) {
+    CUDA_CHECK_NT(cudaGraphDestroy(graph_));
+  }
+  graph_ = s;
+}
+
+Graph::operator bool() const noexcept { return graph_ != nullptr; }
+
 } // namespace curaii::cuda
 
 namespace curaii::cuda::detail {

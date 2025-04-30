@@ -12,6 +12,7 @@
  *   - Smart‑pointer aliases and factory helpers for host and device memory
  *     with safe deleters.
  *   - RAII wrapper for cudaStream_t.
+ *   - RAII wrapper for cudaGraph_t.
  *
  * All primitives live in the curaii::cuda namespace.
  */
@@ -220,6 +221,66 @@ public:
 
 private:
   cudaStream_t stream_{nullptr};
+};
+
+/**
+ * @class Graph
+ * @brief RAII wrapper for CUDA graphs.
+ *
+ * Calls cudaGraphCreate on construction and
+ * cudaGraphDestroy on destruction. Movable but not copyable.
+ */
+class Graph {
+public:
+  /**
+   * @brief Create a new CUDA graph.
+   * @throws curaii::cuda::Error if creation fails.
+   */
+  Graph();
+
+  Graph(const Graph &) = delete;
+  Graph &operator=(const Graph &) = delete;
+
+  /**
+   * @brief Move‑construct, taking ownership from @p other.
+   */
+  Graph(Graph &&other) noexcept;
+
+  /**
+   * @brief Move‑assign, destroying any existing graph and taking ownership.
+   */
+  Graph &operator=(Graph &&other) noexcept;
+
+  /**
+   * @brief Destroy the CUDA graph if valid.
+   */
+  ~Graph() noexcept;
+
+  /**
+   * @brief Get the raw cudaGraph_t.
+   */
+  cudaGraph_t get() const noexcept;
+
+  /**
+   * @brief Release ownership of the graph without destroying it.
+   * @return The raw graph handle; this object becomes empty.
+   */
+  cudaGraph_t release() noexcept;
+
+  /**
+   * @brief Replace the managed graph, destroying the old one if valid.
+   * @param s New raw graph (or nullptr to clear).
+   */
+  void reset(cudaGraph_t s = nullptr) noexcept;
+
+  /**
+   * @brief Check whether there is a valid graph.
+   * @return true if get() != nullptr.
+   */
+  explicit operator bool() const noexcept;
+
+private:
+  cudaGraph_t graph_{nullptr};
 };
 
 } // namespace curaii::cuda
