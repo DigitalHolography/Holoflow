@@ -6,6 +6,7 @@
 #include <spdlog/spdlog.h>
 #include <vector>
 
+#include "bug_buster/bug_buster.hh"
 #include "holovibes/holovibes.hh"
 
 namespace holovibes::accumulators {
@@ -15,7 +16,7 @@ namespace holovibes::accumulators {
 // ==========================================================================
 
 void to_json(nlohmann::json &j, const BatchedSPSCParams &p) {
-  j = nlohmann::json{{"nb_slots", p.nb_slots},
+  j = nlohmann::json{{"capacity", p.capacity},
                      {"dequeue_batch_size", p.dequeue_batch_size}};
   if (p.stride.has_value()) {
     j["stride"] = p.stride.value();
@@ -23,7 +24,7 @@ void to_json(nlohmann::json &j, const BatchedSPSCParams &p) {
 }
 
 void from_json(const nlohmann::json &j, BatchedSPSCParams &p) {
-  j.at("nb_slots").get_to(p.nb_slots);
+  j.at("capacity").get_to(p.capacity);
   j.at("dequeue_batch_size").get_to(p.dequeue_batch_size);
 
   if (j.contains("stride")) {
@@ -39,11 +40,11 @@ void from_json(const nlohmann::json &j, BatchedSPSCParams &p) {
 
 BatchedSPSC::BatchedSPSC(const dh::AccumulatorMeta &meta, cudaStream_t stream,
                          dh::Accumulator::EventListeners event_listeners,
-                         size_t nb_slots, size_t stride,
+                         size_t capacity, size_t stride,
                          curaii::cuda::unique_host_ptr<uint8_t> host_buffer,
                          curaii::cuda::unique_device_ptr<uint8_t> device_buffer)
     : dh::Accumulator(meta, stream, event_listeners) {
-  nb_slots_ = nb_slots;
+  nb_slots_ = capacity;
   stride_ = stride;
   enqueue_batch_size_ = meta_.imeta().shape().at(0);
   dequeue_batch_size_ = meta_.ometa().shape().at(0);
@@ -60,11 +61,6 @@ BatchedSPSC::BatchedSPSC(const dh::AccumulatorMeta &meta, cudaStream_t stream,
   device_buffer_ = std::move(device_buffer);
   write_idx_ = 0;
   read_idx_ = 0;
-
-  dh::holovibes_logger()->trace(
-      "Constructed BatchedSPSC: nb_slots={}, enqueue_batch_size={}, "
-      "dequeue_batch_size={}, element_size={}",
-      nb_slots_, enqueue_batch_size_, dequeue_batch_size_, element_size_);
 }
 
 std::optional<dh::TensorView> BatchedSPSC::write_tensor() {
@@ -151,6 +147,17 @@ size_t BatchedSPSC::reader_size() {
 //                     BatchedSPSCFactory Implementation
 // ==========================================================================
 
+namespace {
+
+size_t ceil_lcm(size_t x, size_t y, size_t k) {
+  auto base = std::lcm(x, y);
+  DH_CHECK(base != 0);
+  auto n = (k + base - 1) / base;
+  return n * base;
+}
+
+} // namespace
+
 dh::AccumulatorMeta BatchedSPSCFactory::type_check(const dh::TensorMeta &imeta,
                                                    const json &jparams) {
   // 0) Unpack parameters
@@ -163,19 +170,19 @@ dh::AccumulatorMeta BatchedSPSCFactory::type_check(const dh::TensorMeta &imeta,
   };
 
   // 1) Parameter sanity
-  check(params.nb_slots > 0, "nb_slots <= 0");
+  check(params.capacity > 0, "capacity <= 0");
   check(params.dequeue_batch_size > 0, "dequeue_batch_size <= 0");
-  check(params.nb_slots % params.dequeue_batch_size == 0,
-        "dequeue_batch_size is not a factor of nb_slots");
   check(!params.stride || *params.stride % params.dequeue_batch_size == 0,
         "dequeue_batch_size is not a factor of stride");
-  check(!params.stride || params.nb_slots % *params.stride == 0,
-        "stride is not a factor of nb_slots");
+  // check(params.capacity % params.dequeue_batch_size == 0,
+  //       "dequeue_batch_size is not a factor of capacity");
+  // check(!params.stride || params.capacity % *params.stride == 0,
+  //       "stride is not a factor of capacity");
 
   // 2) Tensor meta sanity
   check(imeta.shape().size() == 3, "tensor rank != 3");
-  check(params.nb_slots % imeta.shape().at(0) == 0,
-        "input dim 0 is not a factor of nb_slots");
+  check(params.capacity % imeta.shape().at(0) == 0,
+        "input dim 0 is not a factor of capacity");
 
   // 3) Success
   auto oshape = imeta.shape();
@@ -193,11 +200,21 @@ BatchedSPSCFactory::create(const dh::TensorMeta &imeta, const json &jparams,
   // 1) Validate
   auto meta = type_check(imeta, jparams);
   auto params = jparams.get<BatchedSPSCParams>();
+  params.stride = params.stride.value_or(params.dequeue_batch_size);
+
+  // 2) Compute nb_slots such that:
+  //    - nb_slots >= capacity
+  //    - nb_slots % stride = 0
+  //    - nb_slots % input tensor dim 0 = 0
+  // This is required to guarantee no tensors provided by the BatchedSPSC
+  // accumulator will overlap over its internal buffer boundaries.
+  auto nb_slots = ceil_lcm(meta.imeta().shape().at(0), *params.stride,
+                           params.capacity + meta.imeta().shape().at(0));
 
   // 2) Buffer size
   auto enqueue_batch_size = meta.imeta().shape().at(0);
   auto element_size = meta.imeta().size_in_bytes() / enqueue_batch_size;
-  auto buffer_size = params.nb_slots * element_size;
+  auto buffer_size = nb_slots * element_size;
 
   // 3) Allocation
   curaii::cuda::unique_host_ptr<uint8_t> host_buffer = nullptr;
@@ -214,7 +231,7 @@ BatchedSPSCFactory::create(const dh::TensorMeta &imeta, const json &jparams,
 
   // 4) Assemble accumulator
   auto *accumulator =
-      new BatchedSPSC(meta, stream, event_listeners, params.nb_slots,
+      new BatchedSPSC(meta, stream, event_listeners, nb_slots,
                       params.stride.value_or(params.dequeue_batch_size),
                       std::move(host_buffer), std::move(device_buffer));
 

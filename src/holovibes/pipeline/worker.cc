@@ -30,12 +30,12 @@ using json = nlohmann::json;
 
 namespace holovibes::pipeline {
 
-size_t ceil_lcm(size_t x, size_t y, size_t k) {
-  auto base = std::lcm(x, y);
-  DH_CHECK(base != 0);
-  auto n = (k + base - 1) / base;
-  return n * base;
-}
+// size_t ceil_lcm(size_t x, size_t y, size_t k) {
+//   auto base = std::lcm(x, y);
+//   DH_CHECK(base != 0);
+//   auto n = (k + base - 1) / base;
+//   return n * base;
+// }
 
 Worker::Worker(dh::TensorDisplayWidget *processed_display_widget,
                dh::TensorDisplayWidget *raw_record_display_widget,
@@ -207,12 +207,12 @@ void Worker::build_desc_graph() {
   auto source_v = add_source_node();
   auto parent_v = source_v;
 
-  auto raw_record_gate_v = add_raw_record_gate_node();
-  boost::add_edge(source_v, raw_record_gate_v, desc_graph_);
-  auto identity_v = add_raw_identity_node();
-  boost::add_edge(raw_record_gate_v, identity_v, desc_graph_);
+  // auto raw_record_gate_v = add_raw_record_gate_node();
+  // boost::add_edge(source_v, raw_record_gate_v, desc_graph_);
+  // auto identity_v = add_raw_identity_node();
+  // boost::add_edge(raw_record_gate_v, identity_v, desc_graph_);
   auto raw_record_acc_v = add_raw_record_accumulator_node();
-  boost::add_edge(identity_v, raw_record_acc_v, desc_graph_);
+  boost::add_edge(parent_v, raw_record_acc_v, desc_graph_);
   auto raw_record_display_v = add_raw_record_display_sink_node();
   boost::add_edge(raw_record_acc_v, raw_record_display_v, desc_graph_);
 
@@ -342,13 +342,10 @@ holoflow::model::DescriptorVertex Worker::add_raw_identity_node() {
 holoflow::model::DescriptorVertex Worker::add_raw_record_accumulator_node() {
   DH_CHECK(settings_);
   const auto &s = *settings_;
-  auto batch_sz = s.render_batch_size;
   auto export_count = s.export_frame_count.value_or(4096);
 
-  size_t cap = export_count + batch_sz;
-
   accumulators::BatchedSPSCParams config;
-  config.nb_slots = ceil_lcm(batch_sz, 1, cap);
+  config.capacity = export_count;
   config.dequeue_batch_size = 1;
   return add_node("raw_record_queue", "BatchedSPSC", config);
 }
@@ -362,17 +359,14 @@ holoflow::model::DescriptorVertex Worker::add_cpu_input_queue_node() {
   DH_CHECK(settings_);
   const auto &s = *settings_;
   DH_CHECK(s.import_load_method != ImportLoadMethod::LoadInGPU);
-  auto batch_sz = s.render_batch_size;
+  auto time_win = s.render_time_window;
   auto stride = s.render_time_stride;
 
-  size_t cap = 4096 + batch_sz;
-
   accumulators::BatchedSPSCParams config;
-  config.nb_slots = ceil_lcm(batch_sz, batch_sz, cap);
-  config.dequeue_batch_size = batch_sz;
+  config.capacity = 4096;
+  config.dequeue_batch_size = time_win;
 
   if (opti_early_stride_) {
-    config.nb_slots = ceil_lcm(batch_sz, stride, cap);
     config.stride = stride;
   }
 
@@ -413,18 +407,15 @@ holoflow::model::DescriptorVertex Worker::add_source_node() {
 holoflow::model::DescriptorVertex Worker::add_input_queue_node() {
   DH_CHECK(settings_);
   const auto &s = *settings_;
-  auto batch_sz = s.render_batch_size;
+  auto time_win = s.render_time_window;
   auto stride = s.render_time_stride;
-
-  size_t cap = 4096 + batch_sz;
+  auto skip_cpu_queue = s.import_load_method == ImportLoadMethod::LoadInGPU;
 
   accumulators::BatchedSPSCParams config;
-  config.nb_slots = ceil_lcm(batch_sz, batch_sz, cap);
-  config.dequeue_batch_size = batch_sz;
+  config.capacity = 4096;
+  config.dequeue_batch_size = time_win;
 
-  if (opti_early_stride_ &&
-      s.import_load_method == ImportLoadMethod::LoadInGPU) {
-    config.nb_slots = ceil_lcm(batch_sz, stride, cap);
+  if (opti_early_stride_ && skip_cpu_queue) {
     config.stride = stride;
   }
 
@@ -474,14 +465,13 @@ holoflow::model::DescriptorVertex Worker::add_time_accumulator_node() {
   auto stride = s.render_time_stride;
 
   size_t cap = std::max(stride, batch_sz);
-  cap = cap * 2 + batch_sz;
+  cap = cap * 2;
 
   accumulators::BatchedSPSCParams config;
-  config.nb_slots = ceil_lcm(batch_sz, time_win, cap);
+  config.capacity = cap;
   config.dequeue_batch_size = time_win;
 
   if (!opti_early_stride_) {
-    config.nb_slots = ceil_lcm(batch_sz, stride, cap);
     config.stride = stride;
   }
 
@@ -552,10 +542,10 @@ holoflow::model::DescriptorVertex Worker::add_split_axis_0_node() {
   DH_CHECK(s.render_batch_size != 1);
   auto batch_sz = s.render_batch_size;
 
-  size_t cap = batch_sz * 3;
+  size_t cap = batch_sz * 2;
 
   accumulators::BatchedSPSCParams config;
-  config.nb_slots = ceil_lcm(batch_sz, 1, cap);
+  config.capacity = cap;
   config.dequeue_batch_size = 1;
   return add_node("split_axis_0", "BatchedSPSC", config);
 }
@@ -596,7 +586,7 @@ holoflow::model::DescriptorVertex Worker::add_convert_output_node() {
 
 holoflow::model::DescriptorVertex Worker::add_processed_output_queue_node() {
   accumulators::BatchedSPSCParams config;
-  config.nb_slots = 32;
+  config.capacity = 32;
   config.dequeue_batch_size = 1;
   return add_node("processed_output_queue", "BatchedSPSC", config);
 }

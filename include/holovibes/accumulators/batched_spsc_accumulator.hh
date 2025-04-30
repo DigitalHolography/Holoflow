@@ -17,7 +17,7 @@
 namespace holovibes::accumulators {
 
 struct BatchedSPSCParams {
-  size_t nb_slots{2};
+  size_t capacity{2};
   size_t dequeue_batch_size{1};
   std::optional<size_t> stride{std::nullopt};
 };
@@ -47,7 +47,7 @@ public:
 
 private:
   BatchedSPSC(const dh::AccumulatorMeta &meta, cudaStream_t stream,
-              dh::Accumulator::EventListeners event_listeners, size_t nb_slots,
+              dh::Accumulator::EventListeners event_listeners, size_t capacity,
               size_t stride, curaii::cuda::unique_host_ptr<uint8_t> host_buffer,
               curaii::cuda::unique_device_ptr<uint8_t> device_buffer);
 
