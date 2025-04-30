@@ -11,50 +11,36 @@
 #include "holoflow/accumulator.hh"
 #include "holoflow/tensor.hh"
 
-using json = nlohmann::json;
+namespace holovibes::accumulators {
 
-namespace nlohmann {
-template <typename T> struct adl_serializer<std::optional<T>> {
-  static void to_json(json &j, std::optional<T> const &opt) {
-    if (opt) {
-      j = *opt;
-    } else {
-      j = nullptr;
-    }
-  }
-
-  static void from_json(json const &j, std::optional<T> &opt) {
-    if (j.is_null()) {
-      opt = std::nullopt;
-    } else {
-      opt = j.get<T>();
-    }
-  }
+struct GateParams {
+  bool is_on;
+  std::optional<size_t> target;
 };
-} // namespace nlohmann
 
-namespace dh {
+void to_json(nlohmann::json &j, const GateParams &p);
+void from_json(const nlohmann::json &j, GateParams &p);
 
-class GateAccumulator : public Accumulator {
+class Gate : public dh::Accumulator {
 public:
-  std::optional<TensorView> write_tensor() override;
+  std::optional<dh::TensorView> write_tensor() override;
 
   void commit_write() override;
 
-  std::optional<TensorView> read_tensor() override;
+  std::optional<dh::TensorView> read_tensor() override;
 
   void commit_read() override;
 
   void handle_event(const json &event) override;
 
-  friend class GateAccumulatorFactory;
+  friend class GateFactory;
 
 private:
-  GateAccumulator(const AccumulatorMeta &meta, cudaStream_t stream,
-                  Accumulator::EventListeners event_listeners, bool is_on,
-                  std::optional<size_t> target,
-                  curaii::cuda::unique_host_ptr<uint8_t> h_buffer,
-                  curaii::cuda::unique_device_ptr<uint8_t> d_buffer);
+  Gate(const dh::AccumulatorMeta &meta, cudaStream_t stream,
+       dh::Accumulator::EventListeners event_listeners, bool is_on,
+       std::optional<size_t> target,
+       curaii::cuda::unique_host_ptr<uint8_t> h_buffer,
+       curaii::cuda::unique_device_ptr<uint8_t> d_buffer);
 
   std::atomic<bool> write_;
   std::atomic<bool> is_on_;
@@ -66,21 +52,13 @@ private:
   curaii::cuda::unique_device_ptr<uint8_t> d_buffer_;
 };
 
-class GateAccumulatorFactory : public AccumulatorFactory {
-  AccumulatorMeta type_check(const TensorMeta &imeta,
-                             const json &params) override;
+class GateFactory : public dh::AccumulatorFactory {
+  dh::AccumulatorMeta type_check(const dh::TensorMeta &imeta,
+                                 const json &params) override;
 
-  std::unique_ptr<Accumulator>
-  create(const TensorMeta &imeta, const json &params, cudaStream_t stream,
-         Accumulator::EventListeners event_listeners) override;
-
-private:
-  struct Params {
-    bool is_on;
-    std::optional<size_t> target;
-
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Params, is_on, target);
-  };
+  std::unique_ptr<dh::Accumulator>
+  create(const dh::TensorMeta &imeta, const json &params, cudaStream_t stream,
+         dh::Accumulator::EventListeners event_listeners) override;
 };
 
-} // namespace dh
+} // namespace holovibes::accumulators

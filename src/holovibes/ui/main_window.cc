@@ -239,9 +239,9 @@ bool MainWindow::validate_inputs() {
   int start_frame = import_start_index_spin_->value();
   int end_frame = import_end_index_spin_->value();
 
-  // 2) batch_size divides time_stride
-  mark_failure(batch_size > 0 && (time_stride % batch_size == 0),
-               {render_batch_size_spin_, render_time_stride_spin_});
+  // 2) time_window divides time_stride
+  mark_failure(time_window > 0 && (time_stride % time_window == 0),
+               {render_time_window_spin_, render_time_stride_spin_});
 
   // 3) p_frame_start + p_frame_width <= time_window
   mark_failure(p_frame_start + p_frame_width <= time_window,

@@ -13,34 +13,53 @@
 #include "holoflow/accumulator.hh"
 #include "holoflow/tensor.hh"
 
-namespace dh {
+namespace holovibes::accumulators {
 
 // ==========================================================================
-//                     GateAccumulator Implementation
+//                     GateParams Implementation
 // ==========================================================================
 
-GateAccumulator::GateAccumulator(
-    const AccumulatorMeta &meta, cudaStream_t stream,
-    Accumulator::EventListeners event_listeners, bool is_on,
-    std::optional<size_t> target,
-    curaii::cuda::unique_host_ptr<uint8_t> h_buffer,
-    curaii::cuda::unique_device_ptr<uint8_t> d_buffer)
-    : Accumulator(meta, stream, event_listeners), write_(true), is_on_(is_on),
-      target_(target), h_buffer_(std::move(h_buffer)),
+void to_json(nlohmann::json &j, const GateParams &p) {
+  j = nlohmann::json{{"is_on", p.is_on}};
+  if (p.target.has_value()) {
+    j["target"] = p.target.value();
+  }
+}
+
+void from_json(const nlohmann::json &j, GateParams &p) {
+  j.at("is_on").get_to(p.is_on);
+  if (j.contains("target")) {
+    p.target = j.at("target").get<size_t>();
+  } else {
+    p.target = std::nullopt;
+  }
+}
+
+// ==========================================================================
+//                     Gate Implementation
+// ==========================================================================
+
+Gate::Gate(const dh::AccumulatorMeta &meta, cudaStream_t stream,
+           dh::Accumulator::EventListeners event_listeners, bool is_on,
+           std::optional<size_t> target,
+           curaii::cuda::unique_host_ptr<uint8_t> h_buffer,
+           curaii::cuda::unique_device_ptr<uint8_t> d_buffer)
+    : dh::Accumulator(meta, stream, event_listeners), write_(true),
+      is_on_(is_on), target_(target), h_buffer_(std::move(h_buffer)),
       d_buffer_(std::move(d_buffer)), frames_passed_(0) {
   DH_CHECK((d_buffer_ && !h_buffer_) || (h_buffer_ && !d_buffer_));
   buffer_ = d_buffer_ ? d_buffer_.get() : h_buffer_.get();
 }
 
-std::optional<TensorView> GateAccumulator::write_tensor() {
+std::optional<dh::TensorView> Gate::write_tensor() {
   if (!write_) {
     return std::nullopt;
   }
 
-  return TensorView(buffer_, meta_.imeta());
+  return dh::TensorView(buffer_, meta_.imeta());
 }
 
-void GateAccumulator::commit_write() {
+void Gate::commit_write() {
   if (!is_on_) {
     return;
   }
@@ -48,15 +67,15 @@ void GateAccumulator::commit_write() {
   write_.store(false);
 }
 
-std::optional<TensorView> GateAccumulator::read_tensor() {
+std::optional<dh::TensorView> Gate::read_tensor() {
   if (write_ || !is_on_) {
     return std::nullopt;
   }
 
-  return TensorView(buffer_, meta_.imeta());
+  return dh::TensorView(buffer_, meta_.imeta());
 }
 
-void GateAccumulator::commit_read() {
+void Gate::commit_read() {
   frames_passed_ += meta_.ometa().shape().at(0);
   if (target_ && frames_passed_ >= *target_) {
     is_on_ = false;
@@ -69,7 +88,7 @@ void GateAccumulator::commit_read() {
   write_.store(true);
 }
 
-void GateAccumulator::handle_event(const json &event) {
+void Gate::handle_event(const json &event) {
   // 0) Unpack parameters
   std::string action = event.at("action").get<std::string>();
 
@@ -117,13 +136,12 @@ void GateAccumulator::handle_event(const json &event) {
 }
 
 // ==========================================================================
-//                     GateAccumulatorFactory Implementation
+//                     GateFactory Implementation
 // ==========================================================================
-
-AccumulatorMeta GateAccumulatorFactory::type_check(const TensorMeta &imeta,
-                                                   const json &jparams) {
+dh::AccumulatorMeta GateFactory::type_check(const dh::TensorMeta &imeta,
+                                            const json &jparams) {
   // 0) Unpack parameters
-  const Params params = jparams.get<Params>();
+  const GateParams params = jparams.get<GateParams>();
 
   const auto check = [&](bool cond, std::string_view what) {
     if (!cond) {
@@ -138,16 +156,16 @@ AccumulatorMeta GateAccumulatorFactory::type_check(const TensorMeta &imeta,
   }
 
   // 3) Success
-  return AccumulatorMeta(imeta, imeta);
+  return dh::AccumulatorMeta(imeta, imeta);
 }
 
-std::unique_ptr<Accumulator>
-GateAccumulatorFactory::create(const TensorMeta &imeta, const json &jparams,
-                               cudaStream_t stream,
-                               Accumulator::EventListeners event_listeners) {
+std::unique_ptr<dh::Accumulator>
+GateFactory::create(const dh::TensorMeta &imeta, const json &jparams,
+                    cudaStream_t stream,
+                    dh::Accumulator::EventListeners event_listeners) {
   // 1) Validate
   auto meta = type_check(imeta, jparams);
-  auto params = jparams.get<Params>();
+  auto params = jparams.get<GateParams>();
 
   // 2) Buffer size
   auto buffer_size = meta.imeta().size_in_bytes();
@@ -156,21 +174,21 @@ GateAccumulatorFactory::create(const TensorMeta &imeta, const json &jparams,
   curaii::cuda::unique_host_ptr<uint8_t> host_buffer = nullptr;
   curaii::cuda::unique_device_ptr<uint8_t> device_buffer = nullptr;
   switch (meta.imeta().memory_location()) {
-  case MemoryLocation::HOST:
+  case dh::MemoryLocation::HOST:
     host_buffer = curaii::cuda::make_unique_host_ptr<uint8_t>(buffer_size);
     break;
-  case MemoryLocation::DEVICE:
+  case dh::MemoryLocation::DEVICE:
     device_buffer =
         curaii::cuda::make_unique_device_ptr<uint8_t>(buffer_size, stream);
     break;
   }
 
   // 4) Assemble accumulator
-  auto *accumulator = new GateAccumulator(
-      meta, stream, event_listeners, params.is_on, params.target,
-      std::move(host_buffer), std::move(device_buffer));
+  auto *accumulator =
+      new Gate(meta, stream, event_listeners, params.is_on, params.target,
+               std::move(host_buffer), std::move(device_buffer));
 
-  return std::unique_ptr<GateAccumulator>(accumulator);
+  return std::unique_ptr<Gate>(accumulator);
 }
 
-} // namespace dh
+} // namespace holovibes::accumulators

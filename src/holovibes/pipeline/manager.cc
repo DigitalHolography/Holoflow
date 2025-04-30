@@ -39,7 +39,7 @@ Manager::Manager(dh::TensorDisplayWidget *processed_display_widget,
   // clang-format off
   compiler_.add_factory("Holofile", std::make_unique<dh::HolofileSourceFactory>());
   compiler_.add_factory("QtDisplay", std::make_unique<dh::QtDisplaySinkFactory>(*processed_display_widget_));
-  compiler_.add_factory("BatchedSPSC", std::make_unique<dh::BatchedSPSCAccumulatorFactory>());
+  compiler_.add_factory("BatchedSPSC", std::make_unique<dh::BatchedSPSCFactory>());
   compiler_.add_factory("SlidingAverage", std::make_unique<dh::SlidingAverageAccumulatorFactory>());
   compiler_.add_factory("Convert", std::make_unique<dh::ConvertTaskFactory>());
   compiler_.add_factory("Identity", std::make_unique<dh::IdentityTaskFactory>());

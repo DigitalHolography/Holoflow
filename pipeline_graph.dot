@@ -2,69 +2,75 @@ digraph G {
 0[label="holofile_source\n(Holofile)\n{
   \"batch_size\": 32,
   \"end_frame\": 131072,
-  \"load_kind\": \"READ_LIVE\",
+  \"load_kind\": \"LOAD_IN_CPU\",
   \"path\": \"D:/BatchTesting/250220_GUJ0206_L.holo\",
   \"start_frame\": 0
 }"];
 1[label="raw_record_gate\n(Gate)\n{
   \"is_on\": false,
-  \"target\": 2048
+  \"target\": null
 }"];
 2[label="raw_identity\n(Identity)\n{}"];
 3[label="raw_record_queue\n(BatchedSPSC)\n{
   \"dequeue_batch_size\": 1,
-  \"nb_slots\": 4096
+  \"nb_slots\": 4128
 }"];
 4[label="raw_record_display_sink\n(QtDisplayRawRecord)\n{}"];
-5[label="memcpy_cpu_to_gpu\n(Memcpy)\n{
+5[label="identity_0\n(Identity)\n{}"];
+6[label="cpu_input_queue\n(BatchedSPSC)\n{
+  \"dequeue_batch_size\": 32,
+  \"nb_slots\": 4160,
+  \"stride\": 64
+}"];
+7[label="memcpy_cpu_to_gpu\n(Memcpy)\n{
   \"kind\": \"HOST_TO_DEVICE\"
 }"];
-6[label="input_queue\n(BatchedSPSC)\n{
+8[label="input_queue\n(BatchedSPSC)\n{
   \"dequeue_batch_size\": 32,
-  \"nb_slots\": 4096
+  \"nb_slots\": 4128
 }"];
-7[label="convert_input\n(Convert)\n{
+9[label="convert_input\n(Convert)\n{
   \"conversion\": \"U8_CF32_REAL\"
 }"];
-8[label="fresnel_diffraction\n(FresnelDiffraction)\n{
+10[label="fresnel_diffraction\n(FresnelDiffraction)\n{
   \"lambda\": 8.519999710188131e-07,
   \"pixel_size\": 1.9999999494757503e-05,
   \"skip_phase_shift\": true,
   \"z\": 0.3800000250339508
 }"];
-9[label="time_accumulator\n(BatchedSPSC)\n{
+11[label="time_accumulator\n(BatchedSPSC)\n{
   \"dequeue_batch_size\": 32,
-  \"nb_slots\": 96
+  \"nb_slots\": 160
 }"];
-10[label="principal_component_analysis\n(PCA)\n{
+12[label="principal_component_analysis\n(PCA)\n{
   \"begin\": 0,
   \"end\": 16
 }"];
-11[label="convert_postprocess\n(Convert)\n{
+13[label="convert_postprocess\n(Convert)\n{
   \"conversion\": \"CF32_F32_MODU\"
 }"];
-12[label="p_frame_average\n(Average)\n{
+14[label="p_frame_average\n(Average)\n{
   \"begin\": 0,
   \"end\": 16
 }"];
-13[label="fft_shift\n(FFTShift)\n{}"];
-14[label="image_avg_accumulator\n(SlidingAverage)\n{
-  \"nb_slots\": 138,
-  \"window_size\": 128
+15[label="fft_shift\n(FFTShift)\n{}"];
+16[label="image_avg_accumulator\n(SlidingAverage)\n{
+  \"nb_slots\": 42,
+  \"window_size\": 32
 }"];
-15[label="percentile_clip\n(PercentileClip)\n{
+17[label="percentile_clip\n(PercentileClip)\n{
   \"lower_percentile\": 0.20000000298023224,
   \"radius\": 1.0,
   \"upper_percentile\": 99.80000305175781
 }"];
-16[label="convert_output\n(Convert)\n{
+18[label="convert_output\n(Convert)\n{
   \"conversion\": \"F32_U8_SCALED\"
 }"];
-17[label="processed_output_queue\n(BatchedSPSC)\n{
+19[label="processed_output_queue\n(BatchedSPSC)\n{
   \"dequeue_batch_size\": 1,
   \"nb_slots\": 32
 }"];
-18[label="processed_display_sink\n(QtDisplay)\n{}"];
+20[label="processed_display_sink\n(QtDisplay)\n{}"];
 0->1 ;
 0->5 ;
 1->2 ;
@@ -83,4 +89,6 @@ digraph G {
 15->16 ;
 16->17 ;
 17->18 ;
+18->19 ;
+19->20 ;
 }
