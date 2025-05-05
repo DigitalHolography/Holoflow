@@ -294,7 +294,8 @@ void Worker::build_desc_graph() {
     boost::write_graphviz(
         dot_file, desc_graph_,
         holoflow::model::DescriptorNodePropertyWriter(desc_graph_),
-        holoflow::model::DescriptorEdgePropertyWriter());
+        holoflow::model::DescriptorEdgePropertyWriter(),
+        holoflow::model::DescriptorWriter());
     dh::holovibes_logger()->debug(
         "DOT file 'pipeline_graph.dot' created successfully.");
   }

@@ -59,4 +59,8 @@ struct DescriptorEdgePropertyWriter {
   }
 };
 
+struct DescriptorWriter {
+  void operator()(std::ostream &out) const { out << "rankdir=LR;\n"; }
+};
+
 } // namespace holoflow::model

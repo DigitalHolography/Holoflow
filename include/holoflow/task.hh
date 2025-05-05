@@ -82,7 +82,6 @@ public:
    * @brief Executes the task using input and output tensor views.
    * @param itens The input tensor view.
    * @param otens The output tensor view.
-   * @return A tl::expected indicating success or an error.
    */
   virtual void run(TensorView itens, TensorView otens) = 0;
 
@@ -143,7 +142,6 @@ public:
    * @brief Checks whether the input metadata is valid for a specific task type.
    * @param imeta The input tensor metadata.
    * @param params Additional parameters in JSON format.
-   * @return A tl::expected containing the produced TaskMeta or an error.
    */
   virtual TaskMeta type_check(const TensorMeta &imeta, const json &params) = 0;
 
@@ -152,7 +150,6 @@ public:
    * @param imeta The input tensor metadata.
    * @param params Additional parameters in JSON format.
    * @param stream The CUDA stream to associate with the task.
-   * @return A tl::expected containing a unique_ptr to a Task or an error.
    *
    * @note The stream is not owned by the task and must be kept alive until the
    * task is destroyed.
