@@ -3,7 +3,7 @@ rankdir=LR;
 0[label="holofile_source\n(Holofile)\n{
   \"batch_size\": 32,
   \"end_frame\": 131072,
-  \"load_kind\": \"LOAD_IN_CPU\",
+  \"load_kind\": \"READ_LIVE\",
   \"path\": \"D:/BatchTesting/250220_GUJ0206_L.holo\",
   \"start_frame\": 0
 }"];
@@ -51,8 +51,8 @@ rankdir=LR;
 }"];
 13[label="fft_shift\n(FFTShift)\n{}"];
 14[label="image_avg_accumulator\n(SlidingAverage)\n{
-  \"nb_slots\": 42,
-  \"window_size\": 32
+  \"nb_slots\": 4106,
+  \"window_size\": 4096
 }"];
 15[label="percentile_clip\n(PercentileClip)\n{
   \"lower_percentile\": 0.20000000298023224,

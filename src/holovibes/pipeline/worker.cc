@@ -216,6 +216,20 @@ void Worker::build_desc_graph() {
   auto raw_record_display_v = add_raw_record_display_sink_node();
   boost::add_edge(raw_record_acc_v, raw_record_display_v, desc_graph_);
 
+  // // Write DOT file for debugging purposes.
+  // std::ofstream dot_file1("pipeline_graph.dot");
+  // if (dot_file1) {
+  //   boost::write_graphviz(
+  //       dot_file1, desc_graph_,
+  //       holoflow::model::DescriptorNodePropertyWriter(desc_graph_),
+  //       holoflow::model::DescriptorEdgePropertyWriter(),
+  //       holoflow::model::DescriptorWriter());
+  //   dh::holovibes_logger()->debug(
+  //       "DOT file 'pipeline_graph.dot' created successfully.");
+  // }
+
+  // return;
+
   if (s.import_load_method != ImportLoadMethod::LoadInGPU) {
     // Output is on CPU memory, need to send it to GPU.
     // We use CPU queue to enable parralelisme with

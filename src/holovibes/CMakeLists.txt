@@ -12,7 +12,7 @@ qt_add_executable(holovibes
   tasks/convert_task.cu
   tasks/identity_task.cc
   tasks/fresnel_diffraction_task.cu
-  tasks/pca_task.cc
+  tasks/pca_task.cu
   tasks/average_task.cu
   tasks/percentile_clip_task.cu
   tasks/fft_shift_task.cu

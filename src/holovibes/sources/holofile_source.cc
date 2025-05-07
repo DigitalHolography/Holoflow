@@ -57,11 +57,19 @@ void HolofileSource::run(TensorView otens) {
           fmt::format("Failed to read frames: {}", result.error().message()));
     }
   } break;
-  case LoadKind::LOAD_IN_CPU:
-    CUDA_CHECK(cudaMemcpyAsync(otens.data(),
-                               internal_buffer_ + frame_index_ * frame_size,
-                               size, cudaMemcpyHostToHost, stream_));
+  case LoadKind::LOAD_IN_CPU: {
+    int64_t *src = (int64_t *)(internal_buffer_ + frame_index_ * frame_size);
+    int64_t *dst = (int64_t *)otens.data();
+    int64_t nb_iter = size / 8;
+#pragma omp parallel for num_threads(12) schedule(static)
+    for (int64_t i = 0; i < nb_iter; i++) {
+      dst[i] = src[i];
+    }
+    // CUDA_CHECK(cudaMemcpyAsync(otens.data(),
+    //                            internal_buffer_ + frame_index_ * frame_size,
+    //                            size, cudaMemcpyHostToHost, stream_));
     break;
+  }
   case LoadKind::LOAD_IN_GPU:
     CUDA_CHECK(cudaMemcpyAsync(otens.data(),
                                internal_buffer_ + frame_index_ * frame_size,

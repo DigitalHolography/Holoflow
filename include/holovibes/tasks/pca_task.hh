@@ -27,18 +27,18 @@ private:
           curaii::cublas::Handle cublas_handle,
           curaii::cusolverdn::Handle cusolver_handle,
           curaii::cusolverdn::Params cusolver_params,
-          curaii::cuda::unique_device_ptr<cuFloatComplex> d_cov_matrix,
+          curaii::cuda::unique_device_ptr<uint8_t> d_cov_matrix,
           curaii::cuda::unique_device_ptr<float> d_eigenvalues,
           curaii::cuda::unique_device_ptr<int> d_info,
           curaii::cuda::unique_host_ptr<uint8_t> h_workspace,
           curaii::cuda::unique_device_ptr<uint8_t> d_workspace,
           size_t h_workspace_size, size_t d_workspace_size, size_t begin,
-          size_t end);
+          size_t end, bool is_complex);
 
   curaii::cublas::Handle cublas_handle_;
   curaii::cusolverdn::Handle cusolver_handle_;
   curaii::cusolverdn::Params cusolver_params_;
-  curaii::cuda::unique_device_ptr<cuFloatComplex> d_cov_matrix_;
+  curaii::cuda::unique_device_ptr<uint8_t> d_cov_matrix_;
   curaii::cuda::unique_device_ptr<float> d_eigenvalues_;
   curaii::cuda::unique_device_ptr<int> d_info_;
   curaii::cuda::unique_host_ptr<uint8_t> h_workspace_;
@@ -47,6 +47,7 @@ private:
   size_t d_workspace_size_;
   size_t begin_;
   size_t end_;
+  bool is_complex_;
 };
 
 class PCATaskFactory : public TaskFactory {

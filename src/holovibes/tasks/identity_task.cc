@@ -9,11 +9,23 @@ IdentityTask::IdentityTask(const TaskMeta &meta, cudaStream_t stream)
     : Task(meta, stream) {}
 
 void IdentityTask::run(TensorView input, TensorView output) {
-  auto kind = input.memory_location() == MemoryLocation::HOST
-                  ? cudaMemcpyHostToHost
-                  : cudaMemcpyDeviceToDevice;
-  CUDA_CHECK(cudaMemcpyAsync(output.data(), input.data(), input.size_in_bytes(),
-                             kind, stream_));
+  // auto kind = input.memory_location() == MemoryLocation::HOST
+  //                 ? cudaMemcpyHostToHost
+  //                 : cudaMemcpyDeviceToDevice;
+
+  if (input.memory_location() == MemoryLocation::DEVICE) {
+    CUDA_CHECK(cudaMemcpyAsync(output.data(), input.data(),
+                               input.size_in_bytes(), cudaMemcpyDeviceToDevice,
+                               stream_));
+  } else {
+    int64_t *src = (int64_t *)input.data();
+    int64_t *dst = (int64_t *)output.data();
+    int64_t nb_iter = input.size_in_bytes() / 8;
+#pragma omp parallel for num_threads(12) schedule(static)
+    for (int64_t i = 0; i < nb_iter; i++) {
+      dst[i] = src[i];
+    }
+  }
 }
 
 TaskMeta IdentityTaskFactory::type_check(const TensorMeta &imeta,

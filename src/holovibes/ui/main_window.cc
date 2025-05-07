@@ -613,6 +613,8 @@ holovibes::pipeline::Settings MainWindow::get_pipeline_settings() {
   s.view_renormalize = view_renormalize_check_->isChecked();
   s.view_lower_percentile_ = 0.2f;
   s.view_upper_percentile_ = 99.8f;
+  //   s.view_lower_percentile_ = 0.0f;
+  //   s.view_upper_percentile_ = 100.0f;
   s.view_reticule_radius_ = view_reticle_radius_->value();
 
   return s;

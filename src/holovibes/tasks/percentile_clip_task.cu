@@ -92,8 +92,8 @@ void PercentileClipTask::run(TensorView input, TensorView output) {
                                      stream_));           // stream
 
   // 5) Percentile indices inside ROI
-  const int idx_low = static_cast<int>(roi_px * (pct_low_ / 100.f));
-  const int idx_high = static_cast<int>(roi_px * (pct_high_ / 100.f));
+  const int idx_low = static_cast<int>((roi_px - 1) * (pct_low_ / 100.f));
+  const int idx_high = static_cast<int>((roi_px - 1) * (pct_high_ / 100.f));
 
   // 6) Copy thresholds
   CUDA_CHECK(cudaMemcpyAsync(d_lower_thresh_.get(), d_out + idx_low,
