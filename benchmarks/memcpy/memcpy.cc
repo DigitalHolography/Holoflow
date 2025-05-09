@@ -1,69 +1,122 @@
 #include <benchmark/benchmark.h>
 #include <cstdlib>
 #include <cstring>
-#include <malloc.h>
-#include <string>
+#include <memory>
 
-// User-defined literals for byte sizes (requires C++14+)
-constexpr std::size_t operator"" _B(unsigned long long k) { return k; }
-constexpr std::size_t operator"" _KB(unsigned long long k) {
-  return k * 1024ULL;
-}
-constexpr std::size_t operator"" _MB(unsigned long long m) {
-  return m * 1024ULL * 1024ULL;
-}
-constexpr std::size_t operator"" _GB(unsigned long long g) {
-  return g * 1024ULL * 1024ULL * 1024ULL;
+constexpr std::size_t SIZE = 8 * 1024 * 1024;
+constexpr std::size_t CACHE_LINE_SIZE = 64;
+constexpr std::size_t PAGE_SIZE = 4096;
+constexpr std::size_t NUM_PAGES = SIZE / PAGE_SIZE;
+
+__declspec(noinline) void *memcpy_std(void *dst, const void *src,
+                                      std::size_t count) {
+  return std::memcpy(dst, src, count);
 }
 
-// Helper: convert size to human-readable string
-static std::string human_readable_size(std::size_t size) {
-  if (size % 1_GB == 0 && size >= 1_GB)
-    return std::to_string(size / 1_GB) + "GB";
-  if (size % 1_MB == 0 && size >= 1_MB)
-    return std::to_string(size / 1_MB) + "MB";
-  if (size % 1_KB == 0 && size >= 1_KB)
-    return std::to_string(size / 1_KB) + "KB";
-  return std::to_string(size) + "B";
-}
+__declspec(noinline) void *memcpy_naive(void *dst, const void *src,
+                                        std::size_t count) {
+  auto *d = static_cast<uint8_t *>(dst);
+  const auto *s = static_cast<const uint8_t *>(src);
 
-// Core memcpy workload (no state.range usage)
-static void memcpy_work(benchmark::State &state, std::size_t size) {
-  // Allocate aligned buffers
-  uint64_t *src = (uint64_t *)_aligned_malloc(size, 256);
-  uint64_t *dst = (uint64_t *)_aligned_malloc(size, 256);
-  if (!src || !dst) {
-    state.SkipWithError("_aligned_malloc failed");
-    return;
+  for (int64_t i = 0; i < (int64_t)count; i++) {
+    d[i] = s[i];
   }
-  std::memset(src, 0x0, size);
+
+  return dst;
+}
+
+__declspec(noinline) void *memcpy_wide(void *dst, const void *src,
+                                       std::size_t count) {
+  auto *d = static_cast<uint64_t *>(dst);
+  const auto *s = static_cast<const uint64_t *>(src);
+  const auto n_iter = count / sizeof(uint64_t);
+
+  for (int64_t i = 0; i < (int64_t)n_iter; i++) {
+    d[i] = s[i];
+  }
+
+  return dst;
+}
+
+__declspec(noinline) void *memcpy_wide128(void *dst, const void *src,
+                                          std::size_t count) {
+  auto *d = static_cast<uint8_t *>(dst);
+  const auto *s = static_cast<const uint8_t *>(src);
+
+  for (int64_t i = 0; i < (int64_t)count; i += 16) {
+    _mm_stream_ps((float *)&d[i], _mm_load_ps((float *)&s[i]));
+  }
+
+  _mm_sfence();
+  return dst;
+}
+
+static void BM_memcpy_std(benchmark::State &state) {
+  auto src = std::make_unique<uint8_t[]>(SIZE);
+  auto dst = std::make_unique<uint8_t[]>(SIZE);
+
+  std::memset(src.get(), 0xA5, SIZE);
 
   for (auto _ : state) {
+    memcpy_std(dst.get(), src.get(), SIZE);
     benchmark::DoNotOptimize(dst);
-    int64_t nb_iter = size / 8;
-#pragma omp parallel for schedule(static)
-    for (int64_t i = 0; i < nb_iter; i++) {
-      dst[i] = src[i];
-    }
     benchmark::ClobberMemory();
   }
 
-  _aligned_free(src);
-  _aligned_free(dst);
-  state.SetBytesProcessed(uint64_t(state.iterations()) * size);
+  state.SetBytesProcessed(state.iterations() * SIZE);
 }
 
-int main(int argc, char **argv) {
-  benchmark::Initialize(&argc, argv);
-  // Register benchmarks for sizes 1B,2B,4B,... up to 5GB, without showing the
-  // raw arg value
-  for (std::size_t size = 1; size <= 5_GB; size *= 2) {
-    std::string name =
-        std::string("BM_memcpy/size:") + human_readable_size(size);
-    benchmark::RegisterBenchmark(name.c_str(), [size](benchmark::State &st) {
-      memcpy_work(st, size);
-    })->UseRealTime();
+BENCHMARK(BM_memcpy_std);
+
+static void BM_memcpy_naive(benchmark::State &state) {
+  auto src = std::make_unique<uint8_t[]>(SIZE);
+  auto dst = std::make_unique<uint8_t[]>(SIZE);
+
+  std::memset(src.get(), 0xA5, SIZE);
+
+  for (auto _ : state) {
+    memcpy_naive(dst.get(), src.get(), SIZE);
+    benchmark::DoNotOptimize(dst);
+    benchmark::ClobberMemory();
   }
-  benchmark::RunSpecifiedBenchmarks();
-  return 0;
+
+  state.SetBytesProcessed(state.iterations() * SIZE);
 }
+
+BENCHMARK(BM_memcpy_naive);
+
+static void BM_memcpy_wide(benchmark::State &state) {
+  auto src = std::make_unique<uint8_t[]>(SIZE);
+  auto dst = std::make_unique<uint8_t[]>(SIZE);
+
+  std::memset(src.get(), 0xA5, SIZE);
+
+  for (auto _ : state) {
+    memcpy_wide(dst.get(), src.get(), SIZE);
+    benchmark::DoNotOptimize(dst);
+    benchmark::ClobberMemory();
+  }
+
+  state.SetBytesProcessed(state.iterations() * SIZE);
+}
+
+BENCHMARK(BM_memcpy_wide);
+
+static void BM_memcpy_wide128(benchmark::State &state) {
+  auto src = std::make_unique<uint8_t[]>(SIZE);
+  auto dst = std::make_unique<uint8_t[]>(SIZE);
+
+  std::memset(src.get(), 0xA5, SIZE);
+
+  for (auto _ : state) {
+    memcpy_wide128(dst.get(), src.get(), SIZE);
+    benchmark::DoNotOptimize(dst);
+    benchmark::ClobberMemory();
+  }
+
+  state.SetBytesProcessed(state.iterations() * SIZE);
+}
+
+BENCHMARK(BM_memcpy_wide128);
+
+BENCHMARK_MAIN();

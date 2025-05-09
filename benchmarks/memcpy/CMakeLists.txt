@@ -6,3 +6,12 @@ set_common_compile_options(memcpy_bench)
 target_link_libraries(memcpy_bench PRIVATE 
     benchmark::benchmark
 )
+
+# target_compile_options(memcpy_bench PRIVATE
+#     $<$<COMPILE_LANGUAGE:CXX>:
+#         $<$<CXX_COMPILER_ID:MSVC>:
+#             /FAs;
+#             /Oi-
+#         >
+#     >
+# )

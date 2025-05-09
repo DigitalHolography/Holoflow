@@ -62,7 +62,7 @@ void PercentileClipTask::run(TensorView input, TensorView output) {
 
   // 2) Filter ellipse ROI pixels
   CUDA_CHECK(cub::DeviceSelect::Flagged(d_select_tmp_.get(), // d_temp_storage
-                                        select_tmp_bytes_, // temp_storage_byts
+                                        select_tmp_bytes_, // temp_storage_bytes
                                         d_in,              // d_in
                                         d_roi_mask_.get(), // d_flags
                                         d_roi_values_.get(), // d_out

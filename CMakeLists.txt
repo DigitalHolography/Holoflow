@@ -1,6 +1,7 @@
 cmake_minimum_required(VERSION 3.18)
 project(holoflow LANGUAGES CUDA CXX)
 
+set(CMAKE_CUDA_ARCHITECTURES 86-real 86-virtual)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # NVCC does not support utf-8 correctly
