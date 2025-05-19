@@ -8,33 +8,42 @@
 
 using json = nlohmann::json;
 
-namespace dh {
+namespace holovibes::tasks {
 
-class MemcpyTask : public Task {
+struct MemcpyParams {
+  enum class Kind {
+    HostToHost,
+    HostToDevice,
+    DeviceToHost,
+    DeviceToDevice,
+  };
+
+  Kind kind;
+};
+
+void to_json(nlohmann::json &j, const MemcpyParams &p);
+void from_json(const nlohmann::json &j, MemcpyParams &p);
+
+class Memcpy : public dh::Task {
 public:
-  void run(TensorView itens, TensorView otens) override;
+  void run(dh::TensorView itens, dh::TensorView otens) override;
 
-  friend class MemcpyTaskFactory;
+  friend class MemcpyFactory;
 
 private:
-  MemcpyTask(const TaskMeta &meta, cudaStream_t stream, cudaMemcpyKind kind);
+  Memcpy(const dh::TaskMeta &meta, cudaStream_t stream, cudaMemcpyKind kind);
 
   cudaMemcpyKind kind_;
 };
 
-class MemcpyTaskFactory : public TaskFactory {
+class MemcpyFactory : public dh::TaskFactory {
 public:
-  TaskMeta type_check(const TensorMeta &imeta, const json &params) override;
+  dh::TaskMeta type_check(const dh::TensorMeta &imeta,
+                          const json &params) override;
 
-  std::unique_ptr<Task> create(const TensorMeta &imeta, const json &params,
-                               cudaStream_t stream) override;
-
-private:
-  struct Params {
-    std::string kind;
-
-    NLOHMANN_DEFINE_TYPE_INTRUSIVE(Params, kind);
-  };
+  std::unique_ptr<dh::Task> create(const dh::TensorMeta &imeta,
+                                   const json &params,
+                                   cudaStream_t stream) override;
 };
 
-} // namespace dh
+} // namespace holovibes::tasks

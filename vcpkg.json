@@ -6,6 +6,7 @@
     "nlohmann-json",
     "pybind11",
     "spdlog",
-    "tl-expected"
+    "tl-expected",
+    "tbb"
   ]
 }

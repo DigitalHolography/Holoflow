@@ -29,6 +29,11 @@ qt_add_executable(holovibes
 
 set_common_target_properties(holovibes)
 set_common_compile_options(holovibes)
+# target_compile_definitions(holovibes PRIVATE
+#     CUDA_ARHC=86
+#     CUDA_PATH=$ENV{CUDA_PATH}
+#     -DSOURCE_PATH=${CMAKE_SOURCE_DIR}/src/holovibes
+# )
 
 target_include_directories(holovibes PRIVATE
     ${PROJECT_SOURCE_DIR}/include
@@ -44,4 +49,6 @@ target_link_libraries(holovibes PRIVATE
     holofile
     cufft
     curaii
+    nvJitLink
+    nvrtc
 )

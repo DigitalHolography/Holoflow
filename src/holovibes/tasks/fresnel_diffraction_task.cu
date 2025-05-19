@@ -5,13 +5,25 @@
 #include <cuComplex.h>
 #include <cub/cub.cuh>
 #include <cufftXt.h>
+#include <fstream>
 #include <math_constants.h>
 #include <numeric>
+#include <nvrtc.h>
 #include <spdlog/spdlog.h>
 
 #include "curaii/v2/cuda.hh"
 #include "curaii/v2/cufft.hh"
 #include "holovibes/holovibes.hh"
+
+#define NVRTC_SAFE_CALL(Name, x)                                               \
+  do {                                                                         \
+    nvrtcResult result = x;                                                    \
+    if (result != NVRTC_SUCCESS) {                                             \
+      std::cerr << "\nerror: " << Name << " failed with error "                \
+                << nvrtcGetErrorString(result) << std::endl;                   \
+      exit(1);                                                                 \
+    }                                                                          \
+  } while (0)
 
 namespace dh {
 
@@ -48,17 +60,17 @@ FresnelDiffractionTask::FresnelDiffractionTask(
 void FresnelDiffractionTask::run(TensorView input, TensorView output) {
   auto idata = (cuFloatComplex *)input.data();
   auto odata = (cuFloatComplex *)output.data();
-  int batch_size = input.meta().shape().at(0);
-  int lens_size = input.meta().size() / batch_size;
+  // int batch_size = input.meta().shape().at(0);
+  // int lens_size = input.meta().size() / batch_size;
 
-  dim3 block_size = 256;
-  dim3 grid_size = (lens_size + block_size.x - 1) / block_size.x;
+  // dim3 block_size = 256;
+  // dim3 grid_size = (lens_size + block_size.x - 1) / block_size.x;
 
-  apply_lens_kernel<<<grid_size, block_size, 0, stream_>>>(
-      idata, odata, lens_.get(), lens_size, batch_size);
+  // apply_lens_kernel<<<grid_size, block_size, 0, stream_>>>(
+  //     idata, odata, lens_.get(), lens_size, batch_size);
 
   CUFFT_CHECK(cufftXtExec(handle_.get(), odata, odata, CUFFT_FORWARD));
-  CUDA_CHECK(cudaPeekAtLastError());
+  // CUDA_CHECK(cudaPeekAtLastError());
 
   // TODO implement phase shift
 }
@@ -69,14 +81,69 @@ void FresnelDiffractionTask::run(TensorView input, TensorView output) {
 
 namespace {
 
-__device__ cuFloatComplex apply_lens_callback(cuFloatComplex *data,
-                                              size_t offset, void *callerInfo,
-                                              void *sharedPtr) {
-  cuFloatComplex *lens = (cuFloatComplex *)callerInfo;
-  cuFloatComplex val = data[offset];
-  cuFloatComplex lens_val = lens[offset];
+void compile_file_to_lto(std::vector<char> &cubin_result,
+                         const char *filename) {
+  ///////////////
+  // OPEN FILE //
+  ///////////////
+  std::ifstream inputFile(filename,
+                          std::ios::in | std::ios::binary | std::ios::ate);
+  if (!inputFile.is_open()) {
+    std::cerr << "\nerror: unable to open " << filename << " for reading!\n";
+    exit(1);
+  }
 
-  return cuCmulf(val, lens_val);
+  std::streampos pos = inputFile.tellg();
+  size_t inputSize = (size_t)pos;
+  std::vector<char> memBlock(inputSize + 1);
+
+  inputFile.seekg(0, std::ios::beg);
+  inputFile.read(memBlock.data(), inputSize);
+  inputFile.close();
+  memBlock[inputSize] = '\x0';
+
+  const int num_params = 6;
+  const char *compile_params[] = {
+      "-IC:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.9\\include",
+      "-arch=compute_86",
+      "--std=c++20",
+      "--relocatable-device-code=true",
+      "-default-device",
+      "-dlto"};
+
+  /////////////
+  // COMPILE //
+  /////////////
+  nvrtcProgram prog;
+  NVRTC_SAFE_CALL(
+      "nvrtcCreateProgram",
+      nvrtcCreateProgram(&prog, memBlock.data(), filename, 0, NULL, NULL));
+  nvrtcResult res = nvrtcCompileProgram(prog, num_params, compile_params);
+
+  ///////////////
+  // PRINT LOG //
+  ///////////////
+  size_t logSize;
+  NVRTC_SAFE_CALL("nvrtcGetProgramLogSize",
+                  nvrtcGetProgramLogSize(prog, &logSize));
+  std::vector<char> log(logSize + 1);
+  NVRTC_SAFE_CALL("nvrtcGetProgramLog", nvrtcGetProgramLog(prog, log.data()));
+  log[logSize] = '\x0';
+
+  if (log.size() > 2) {
+    std::cerr << "\n compilation log ---\n";
+    std::string s(log.begin(), log.end());
+    std::cerr << s;
+    std::cerr << "\n end log ---\n";
+  }
+
+  NVRTC_SAFE_CALL("nvrtcCompileProgram", res);
+
+  size_t codeSize;
+  NVRTC_SAFE_CALL("nvrtcGetLTOIRSize", nvrtcGetLTOIRSize(prog, &codeSize));
+  std::vector<char> buffer(codeSize);
+  NVRTC_SAFE_CALL("nvrtcGetNVVM", nvrtcGetLTOIR(prog, buffer.data()));
+  cubin_result = buffer;
 }
 
 __global__ void quadratic_lens_kernel(cuFloatComplex *lens, int width,
@@ -135,6 +202,13 @@ TaskMeta FresnelDiffractionTaskFactory::type_check(const TensorMeta &imeta,
 
 std::unique_ptr<Task> FresnelDiffractionTaskFactory::create(
     const TensorMeta &imeta, const json &jparams, cudaStream_t stream) {
+
+  std::vector<char> callback_buffer;
+  compile_file_to_lto(
+      callback_buffer,
+      "C:\\Users\\yakutsk\\Documents\\Holoflow\\src\\holovibes\\tasks\\apply_"
+      "lens_callback.cu");
+
   // 1) Validate
   auto meta = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
@@ -160,6 +234,8 @@ std::unique_ptr<Task> FresnelDiffractionTaskFactory::create(
 
   CUDA_CHECK(cudaPeekAtLastError());
 
+  auto *lens_ptr = d_lens.get();
+
   // 5) Initialize cufft plan
   int rank = 2;
   long long int n[2] = {H, W};
@@ -176,6 +252,9 @@ std::unique_ptr<Task> FresnelDiffractionTaskFactory::create(
   cudaDataType executiontype = CUDA_C_32F;
 
   curaii::cufft::Handle handle;
+  CUFFT_CHECK(cufftXtSetJITCallback(
+      handle.get(), "apply_lens_callback", (void *)callback_buffer.data(),
+      callback_buffer.size(), CUFFT_CB_LD_COMPLEX, (void **)&lens_ptr));
   CUFFT_CHECK(cufftSetStream(handle.get(), stream));
   CUFFT_CHECK(cufftXtGetSizeMany(handle.get(), rank, n, inembed, istride, idist,
                                  inputtype, onembed, ostride, odist, outputtype,

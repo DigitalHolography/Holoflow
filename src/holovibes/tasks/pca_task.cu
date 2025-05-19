@@ -56,17 +56,17 @@ void PCATask::run(TensorView input, TensorView output) {
   // not seems to make a difference in our application.
 
   // 1) Aliases
-  size_t batch = input.meta().shape().at(0);
-  size_t height = input.meta().shape().at(1);
-  size_t width = input.meta().shape().at(2);
+  size_t batch   = input.meta().shape().at(0);
+  size_t height  = input.meta().shape().at(1);
+  size_t width   = input.meta().shape().at(2);
   int n_features = static_cast<int>(batch);
-  int n_samples = static_cast<int>(height * width);
+  int n_samples  = static_cast<int>(height * width);
 
   if (is_complex_) {
-    auto idata = reinterpret_cast<cuFloatComplex *>(input.data());
-    auto odata = reinterpret_cast<cuFloatComplex *>(output.data());
+    auto idata      = reinterpret_cast<cuFloatComplex *>(input.data());
+    auto odata      = reinterpret_cast<cuFloatComplex *>(output.data());
     cuComplex alpha = make_cuComplex(1.0f, 0.0f);
-    cuComplex beta = make_cuComplex(0.0f, 0.0f);
+    cuComplex beta  = make_cuComplex(0.0f, 0.0f);
 
     // 2) Compute covariance matrix:
     // COV = I^H * I, where I is the input data matrix with dimensions
@@ -87,8 +87,8 @@ void PCATask::run(TensorView input, TensorView output) {
     auto eigenvecs = reinterpret_cast<cuFloatComplex *>(d_cov_matrix_.get());
 
     int64_t h_meig = 0;
-    float vl = 0;
-    float vu = 0;
+    float vl       = 0;
+    float vu       = 0;
     CUSOLVER_CHECK(cusolverDnXsyevdx(
         cusolver_handle_.get(), cusolver_params_.get(),
         CUSOLVER_EIG_MODE_VECTOR, CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER,
@@ -110,10 +110,10 @@ void PCATask::run(TensorView input, TensorView output) {
   }
 
   else {
-    auto idata = reinterpret_cast<float *>(input.data());
-    auto odata = reinterpret_cast<float *>(output.data());
+    auto idata  = reinterpret_cast<float *>(input.data());
+    auto odata  = reinterpret_cast<float *>(output.data());
     float alpha = 1.0f;
-    float beta = 0.0f;
+    float beta  = 0.0f;
 
     // 2) Compute covariance matrix:
     // COV = I^T * I, where I is the input data matrix with dimensions
@@ -134,8 +134,8 @@ void PCATask::run(TensorView input, TensorView output) {
     auto eigenvecs = reinterpret_cast<float *>(d_cov_matrix_.get());
 
     int64_t h_meig = 0;
-    float vl = 0;
-    float vu = 0;
+    float vl       = 0;
+    float vu       = 0;
     CUSOLVER_CHECK(cusolverDnXsyevdx(
         cusolver_handle_.get(), cusolver_params_.get(),
         CUSOLVER_EIG_MODE_VECTOR, CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER,
@@ -155,9 +155,9 @@ void PCATask::run(TensorView input, TensorView output) {
         eigenvecs, CUDA_R_32F, n_features, &beta, odata, CUDA_R_32F, n_samples,
         CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT));
 
-    int size = output.size();
+    int size    = output.size();
     int threads = 256;
-    int blocks = (size + threads - 1) / threads;
+    int blocks  = (size + threads - 1) / threads;
     abs_kernel<<<blocks, threads, 0, stream_>>>(odata, odata, size);
   }
 }
@@ -186,7 +186,7 @@ TaskMeta PCATaskFactory::type_check(const TensorMeta &imeta,
         "tensor not in DEVICE memory");
 
   // 2) Success
-  auto oshape = imeta.shape();
+  auto oshape  = imeta.shape();
   oshape.at(0) = (params.end - params.begin);
   TensorMeta ometa(imeta.data_type(), imeta.memory_location(), oshape);
   return TaskMeta(imeta, ometa, false);
@@ -197,11 +197,11 @@ std::unique_ptr<Task> PCATaskFactory::create(const TensorMeta &imeta,
                                              cudaStream_t stream) {
 
   // 1) Validate
-  auto meta = type_check(imeta, jparams);
+  auto meta   = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
 
-  size_t batch = imeta.shape().at(0);
-  int n_features = static_cast<int>(batch);
+  size_t batch    = imeta.shape().at(0);
+  int n_features  = static_cast<int>(batch);
   bool is_complex = imeta.data_type() == DataType::CF32;
 
   // 2) Handles and params
@@ -227,7 +227,7 @@ std::unique_ptr<Task> PCATaskFactory::create(const TensorMeta &imeta,
   // 4) Workspace sizes
   size_t d_workspace_size = 0;
   size_t h_workspace_size = 0;
-  int64_t h_meig = 0;
+  int64_t h_meig          = 0;
 
   if (is_complex) {
     CUSOLVER_CHECK(cusolverDnXsyevdx_bufferSize(

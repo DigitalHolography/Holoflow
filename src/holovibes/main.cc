@@ -5,6 +5,7 @@
 #include <spdlog/sinks/basic_file_sink.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
+#include <vector>
 
 #include "bug_buster/bug_buster.hh"
 #include "holoflow/v3/model/compiler.hh"

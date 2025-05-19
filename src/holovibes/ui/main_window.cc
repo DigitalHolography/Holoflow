@@ -56,7 +56,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   processed_display_widget_ = new dh::TensorDisplayWidget(600, 600, this);
   raw_record_display_widget_ = new dh::TensorDisplayWidget(600, 600, this);
   processed_display_widget_->show();
-  raw_record_display_widget_->show();
+  //   raw_record_display_widget_->show();
   pipeline_worker_ = new pipeline::Worker(processed_display_widget_,
                                           raw_record_display_widget_);
   pipeline_worker_thread_ = new QThread(this);

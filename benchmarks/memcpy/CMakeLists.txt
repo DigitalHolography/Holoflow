@@ -5,6 +5,7 @@ set_common_compile_options(memcpy_bench)
 
 target_link_libraries(memcpy_bench PRIVATE 
     benchmark::benchmark
+    TBB::tbb
 )
 
 # target_compile_options(memcpy_bench PRIVATE

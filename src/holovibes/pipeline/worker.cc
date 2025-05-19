@@ -60,7 +60,7 @@ Worker::Worker(dh::TensorDisplayWidget *processed_display_widget,
   compiler_.add_factory<dh::AverageTaskFactory>("Average");
   compiler_.add_factory<dh::PercentileClipTaskFactory>("PercentileClip");
   compiler_.add_factory<dh::FFTShiftTaskFactory>("FFTShift");
-  compiler_.add_factory<dh::MemcpyTaskFactory>("Memcpy");
+  compiler_.add_factory<tasks::MemcpyFactory>("Memcpy");
   // clang-format on
 }
 
@@ -207,41 +207,49 @@ void Worker::build_desc_graph() {
   auto source_v = add_source_node();
   auto parent_v = source_v;
 
-  // auto raw_record_gate_v = add_raw_record_gate_node();
-  // boost::add_edge(source_v, raw_record_gate_v, desc_graph_);
-  // auto identity_v = add_raw_identity_node();
-  // boost::add_edge(raw_record_gate_v, identity_v, desc_graph_);
   auto raw_record_acc_v = add_raw_record_accumulator_node();
   boost::add_edge(parent_v, raw_record_acc_v, desc_graph_);
   auto raw_record_display_v = add_raw_record_display_sink_node();
   boost::add_edge(raw_record_acc_v, raw_record_display_v, desc_graph_);
 
-  // // Write DOT file for debugging purposes.
-  // std::ofstream dot_file1("pipeline_graph.dot");
-  // if (dot_file1) {
-  //   boost::write_graphviz(
-  //       dot_file1, desc_graph_,
-  //       holoflow::model::DescriptorNodePropertyWriter(desc_graph_),
-  //       holoflow::model::DescriptorEdgePropertyWriter(),
-  //       holoflow::model::DescriptorWriter());
-  //   dh::holovibes_logger()->debug(
-  //       "DOT file 'pipeline_graph.dot' created successfully.");
-  // }
-
-  // return;
+  // The identity node is required because otherwise the source node would have
+  // two accumulator children.
+  auto source_identity_v = add_node("identity_0", "Identity", json::object());
+  boost::add_edge(parent_v, source_identity_v, desc_graph_);
+  parent_v = source_identity_v;
 
   if (s.import_load_method != ImportLoadMethod::LoadInGPU) {
-    // Output is on CPU memory, need to send it to GPU.
-    // We use CPU queue to enable parralelisme with
-    // record and optimize stride.
-    auto identity_v = add_node("identity_0", "Identity", json::object());
-    boost::add_edge(parent_v, identity_v, desc_graph_);
     auto cpu_queue_v = add_cpu_input_queue_node();
-    boost::add_edge(identity_v, cpu_queue_v, desc_graph_);
+    boost::add_edge(parent_v, cpu_queue_v, desc_graph_);
     auto memcpy_v = add_cpy_cpu_to_gpu_node();
     boost::add_edge(cpu_queue_v, memcpy_v, desc_graph_);
     parent_v = memcpy_v;
   }
+
+  // if (s.import_load_method != ImportLoadMethod::LoadInGPU) {
+  //   auto raw_record_acc_v = add_raw_record_accumulator_node();
+  //   boost::add_edge(parent_v, raw_record_acc_v, desc_graph_);
+  //   auto raw_record_display_v = add_raw_record_display_sink_node();
+  //   boost::add_edge(raw_record_acc_v, raw_record_display_v, desc_graph_);
+
+  //   auto identity_v = add_node("identity_0", "Identity", json::object());
+  //   boost::add_edge(parent_v, identity_v, desc_graph_);
+  //   auto cpu_queue_v = add_cpu_input_queue_node();
+  //   boost::add_edge(identity_v, cpu_queue_v, desc_graph_);
+  //   auto memcpy_v = add_cpy_cpu_to_gpu_node();
+  //   boost::add_edge(cpu_queue_v, memcpy_v, desc_graph_);
+  //   parent_v = memcpy_v;
+  // } else {
+  //   tasks::MemcpyParams config;
+  //   config.kind = tasks::MemcpyParams::Kind::DeviceToHost;
+  //   auto cpu_gpu_v = add_node("record.gpu_to_cpu", "Memcpy", config);
+  //   boost::add_edge(parent_v, cpu_gpu_v, desc_graph_);
+
+  //   auto raw_record_acc_v = add_raw_record_accumulator_node();
+  //   boost::add_edge(cpu_gpu_v, raw_record_acc_v, desc_graph_);
+  //   auto raw_record_display_v = add_raw_record_display_sink_node();
+  //   boost::add_edge(raw_record_acc_v, raw_record_display_v, desc_graph_);
+  // }
 
   auto input_queue_v = add_input_queue_node();
   boost::add_edge(parent_v, input_queue_v, desc_graph_);
@@ -282,13 +290,22 @@ void Worker::build_desc_graph() {
     parent_v = fft_shift_v;
   }
 
-  if (!s.render_time_transform && s.render_batch_size != 1) {
-    auto split_v = add_split_axis_0_node();
-    boost::add_edge(parent_v, split_v, desc_graph_);
-    auto identity_v = add_identity_node();
-    boost::add_edge(split_v, identity_v, desc_graph_);
-    parent_v = identity_v;
-  }
+  // if (!s.render_time_transform && s.render_batch_size != 1) {
+  //   auto split_v = add_split_axis_0_node();
+  //   boost::add_edge(parent_v, split_v, desc_graph_);
+  //   auto identity_v = add_identity_node();
+  //   boost::add_edge(split_v, identity_v, desc_graph_);
+  //   parent_v = identity_v;
+  // }
+
+  accumulators::BatchedSPSCParams config;
+  config.capacity = 128;
+  config.dequeue_batch_size = 1;
+  auto temp_v = add_node("debounce_queue", "BatchedSPSC", config);
+  boost::add_edge(parent_v, temp_v, desc_graph_);
+  auto identity_v = add_identity_node();
+  boost::add_edge(temp_v, identity_v, desc_graph_);
+  parent_v = identity_v;
 
   auto img_avg_v = add_image_avg_accumulator_node();
   boost::add_edge(parent_v, img_avg_v, desc_graph_);
@@ -389,8 +406,8 @@ holoflow::model::DescriptorVertex Worker::add_cpu_input_queue_node() {
 }
 
 holoflow::model::DescriptorVertex Worker::add_cpy_cpu_to_gpu_node() {
-  json config;
-  config["kind"] = "HOST_TO_DEVICE";
+  tasks::MemcpyParams config;
+  config.kind = tasks::MemcpyParams::Kind::HostToDevice;
   return add_node("memcpy_cpu_to_gpu", "Memcpy", config);
 }
 
@@ -566,10 +583,6 @@ holoflow::model::DescriptorVertex Worker::add_split_axis_0_node() {
 }
 
 holoflow::model::DescriptorVertex Worker::add_identity_node() {
-  DH_CHECK(settings_);
-  const auto &s = *settings_;
-  DH_CHECK(!s.render_time_transform);
-  DH_CHECK(s.render_batch_size != 1);
   json config = json::object();
   return add_node("identity", "Identity", config);
 }

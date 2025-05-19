@@ -31,10 +31,12 @@ function(set_common_compile_options target)
                 /openmp
             >
         >
-        $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda;
+        $<$<COMPILE_LANGUAGE:CUDA>:
+            --extended-lambda;
             -Xcudafe="--diag_suppress=1394";
             -Xcudafe="--diag_suppress=27";
             -Xcudafe="--diag_suppress=1388";
-            -Wno-deprecated-gpu-targets>
+            -Wno-deprecated-gpu-targets
+        >
     )
 endfunction()
