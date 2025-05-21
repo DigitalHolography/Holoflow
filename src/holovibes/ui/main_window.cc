@@ -53,12 +53,12 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   this->adjustSize();
   this->setFixedSize(this->minimumSizeHint());
 
-  processed_display_widget_ = new dh::TensorDisplayWidget(600, 600, this);
+  processed_display_widget_  = new dh::TensorDisplayWidget(600, 600, this);
   raw_record_display_widget_ = new dh::TensorDisplayWidget(600, 600, this);
   processed_display_widget_->show();
   //   raw_record_display_widget_->show();
-  pipeline_worker_ = new pipeline::Worker(processed_display_widget_,
-                                          raw_record_display_widget_);
+  pipeline_worker_        = new pipeline::Worker(processed_display_widget_,
+                                                 raw_record_display_widget_);
   pipeline_worker_thread_ = new QThread(this);
   pipeline_worker_->moveToThread(pipeline_worker_thread_);
 
@@ -100,7 +100,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   });
 
   connect(pipeline_worker_, &pipeline::Worker::update_failure, this, [this]() {
-    pipeline_running_ = false;
+    pipeline_running_   = false;
     update_in_progress_ = false;
     import_start_button_->setEnabled(true);
     import_stop_button_->setEnabled(false);
@@ -231,13 +231,13 @@ bool MainWindow::validate_inputs() {
     }
   };
 
-  int batch_size = render_batch_size_spin_->value();
-  int time_stride = render_time_stride_spin_->value();
-  int time_window = render_time_window_spin_->value();
+  int batch_size    = render_batch_size_spin_->value();
+  int time_stride   = render_time_stride_spin_->value();
+  int time_window   = render_time_window_spin_->value();
   int p_frame_start = view_z_spin_->value();
   int p_frame_width = view_width_spin_->value();
-  int start_frame = import_start_index_spin_->value();
-  int end_frame = import_end_index_spin_->value();
+  int start_frame   = import_start_index_spin_->value();
+  int end_frame     = import_end_index_spin_->value();
 
   // 2) time_window divides time_stride
   mark_failure(time_window > 0 && (time_stride % time_window == 0),
@@ -372,6 +372,11 @@ void MainWindow::setup_validation_connections() {
           &MainWindow::validate_inputs);
   connect(view_renormalize_check_, &QCheckBox::toggled, this,
           &MainWindow::validate_inputs);
+  connect(view_registration_check_, &QCheckBox::toggled, this,
+          &MainWindow::validate_inputs);
+  connect(view_registration_radius_,
+          qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+          &MainWindow::validate_inputs);
   connect(view_reticle_check_, &QCheckBox::toggled, this,
           &MainWindow::validate_inputs);
   connect(view_reticle_radius_,
@@ -473,6 +478,11 @@ void MainWindow::setup_update_connections() {
           &MainWindow::update_if_running);
   connect(view_renormalize_check_, &QCheckBox::toggled, this,
           &MainWindow::update_if_running);
+  connect(view_registration_check_, &QCheckBox::toggled, this,
+          &MainWindow::update_if_running);
+  connect(view_registration_radius_,
+          qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+          &MainWindow::update_if_running);
   connect(view_reticle_check_, &QCheckBox::toggled, this,
           &MainWindow::update_if_running);
   connect(view_reticle_radius_,
@@ -506,10 +516,10 @@ holovibes::pipeline::Settings MainWindow::get_pipeline_settings() {
   Settings s;
 
   // --- Import Settings ---
-  s.import_file_path = import_file_line_edit_->text().toStdString();
-  s.import_fps = static_cast<size_t>(import_fps_spin_->value());
+  s.import_file_path   = import_file_line_edit_->text().toStdString();
+  s.import_fps         = static_cast<size_t>(import_fps_spin_->value());
   s.import_start_index = static_cast<size_t>(import_start_index_spin_->value());
-  s.import_end_index = static_cast<size_t>(import_end_index_spin_->value());
+  s.import_end_index   = static_cast<size_t>(import_end_index_spin_->value());
 
   {
     QString method = import_load_method_combo_->currentText();
@@ -554,9 +564,9 @@ holovibes::pipeline::Settings MainWindow::get_pipeline_settings() {
     else if (rtype == "Processed")
       s.render_type = RenderType::Processed;
   }
-  s.render_batch_size = static_cast<size_t>(render_batch_size_spin_->value());
+  s.render_batch_size  = static_cast<size_t>(render_batch_size_spin_->value());
   s.render_time_stride = static_cast<size_t>(render_time_stride_spin_->value());
-  s.render_filter_2d = render_filter_2d_check_->isChecked();
+  s.render_filter_2d   = render_filter_2d_check_->isChecked();
   {
     QString st = render_space_transform_combo_->currentText();
     if (st == "Fresnel Diffraction")
@@ -576,8 +586,8 @@ holovibes::pipeline::Settings MainWindow::get_pipeline_settings() {
       s.render_time_transform = std::nullopt;
   }
   s.render_time_window = static_cast<size_t>(render_time_window_spin_->value());
-  s.render_lambda = static_cast<size_t>(render_lambda_spin_->value());
-  s.render_focus = static_cast<size_t>(render_focus_spin_->value());
+  s.render_lambda      = static_cast<size_t>(render_lambda_spin_->value());
+  s.render_focus       = static_cast<size_t>(render_focus_spin_->value());
   {
     QString conv = render_convolution_combo_->currentText();
     if (conv == "Gaussian")
@@ -589,11 +599,11 @@ holovibes::pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // --- View Settings ---
   // We have only one view type available in the Settings.
-  s.view_type = ViewType::Magnitude;
-  s.view_cuts_3d = view_cuts_3d_check_->isChecked();
-  s.view_fft_shift = view_fft_shift_check_->isChecked();
-  s.view_lens_view = view_lens_view_check_->isChecked();
-  s.view_raw_view = view_raw_view_check_->isChecked();
+  s.view_type          = ViewType::Magnitude;
+  s.view_cuts_3d       = view_cuts_3d_check_->isChecked();
+  s.view_fft_shift     = view_fft_shift_check_->isChecked();
+  s.view_lens_view     = view_lens_view_check_->isChecked();
+  s.view_raw_view      = view_raw_view_check_->isChecked();
   s.view_p_frame_start = static_cast<size_t>(view_z_spin_->value());
   s.view_p_frame_width = static_cast<size_t>(view_width_spin_->value());
   {
@@ -605,24 +615,26 @@ holovibes::pipeline::Settings MainWindow::get_pipeline_settings() {
     else if (axis == "YZ")
       s.view_axis = ViewAxis::YZ;
   }
-  s.view_accumulation = static_cast<size_t>(view_accumulation_spin_->value());
+  s.view_accumulation  = static_cast<size_t>(view_accumulation_spin_->value());
   s.view_auto_contrast = view_auto_check_->isChecked();
   s.view_invert_contrast = view_invert_check_->isChecked();
-  s.view_contrast_low = static_cast<size_t>(view_range_start_spin_->value());
-  s.view_contrast_high = static_cast<size_t>(view_range_end_spin_->value());
-  s.view_renormalize = view_renormalize_check_->isChecked();
+  s.view_contrast_low    = static_cast<size_t>(view_range_start_spin_->value());
+  s.view_contrast_high   = static_cast<size_t>(view_range_end_spin_->value());
+  s.view_renormalize     = view_renormalize_check_->isChecked();
   s.view_lower_percentile_ = 0.2f;
   s.view_upper_percentile_ = 99.8f;
-  //   s.view_lower_percentile_ = 0.0f;
-  //   s.view_upper_percentile_ = 100.0f;
-  s.view_reticule_radius_ = view_reticle_radius_->value();
+  s.view_reticule_radius_  = view_reticle_radius_->value();
+  s.view_registration_radius_ =
+      view_registration_check_->isChecked()
+          ? std::optional<float>(view_registration_radius_->value())
+          : std::nullopt;
 
   return s;
 }
 
 QGroupBox *MainWindow::create_import_group() {
-  QGroupBox *group = new QGroupBox("Import", this);
-  auto *layout = new QGridLayout(group);
+  QGroupBox *group  = new QGroupBox("Import", this);
+  auto      *layout = new QGridLayout(group);
 
   // Row 0: File selection
   import_file_line_edit_ = new QLineEdit(group);
@@ -647,7 +659,7 @@ QGroupBox *MainWindow::create_import_group() {
       return;
     }
 
-    auto reader = std::move(reader_result.value());
+    auto reader      = std::move(reader_result.value());
     auto frame_count = reader.header().frame_count;
     import_file_line_edit_->setText(file);
     import_start_index_spin_->setValue(0);
@@ -684,7 +696,7 @@ QGroupBox *MainWindow::create_import_group() {
 
   // Row 5: Start / Stop buttons
   import_start_button_ = new QPushButton("Start", group);
-  import_stop_button_ = new QPushButton("Stop", group);
+  import_stop_button_  = new QPushButton("Stop", group);
   import_stop_button_->setEnabled(false);
   QHBoxLayout *btn_layout = new QHBoxLayout();
   btn_layout->addWidget(import_start_button_);
@@ -699,8 +711,8 @@ QGroupBox *MainWindow::create_import_group() {
 }
 
 QGroupBox *MainWindow::create_export_group() {
-  QGroupBox *group = new QGroupBox("Export", this);
-  auto *layout = new QGridLayout(group);
+  QGroupBox *group  = new QGroupBox("Export", this);
+  auto      *layout = new QGridLayout(group);
 
   // Row 0: Image type combo
   export_image_type_combo_ = new QComboBox(group);
@@ -741,9 +753,9 @@ QGroupBox *MainWindow::create_export_group() {
 
   // Row 4: Action buttons: Record, Stop, Stop Fan
   export_record_button_ = new QPushButton("Record", group);
-  export_stop_button_ = new QPushButton("Stop", group);
+  export_stop_button_   = new QPushButton("Stop", group);
   export_stop_button_->setEnabled(false);
-  export_stop_fan_button_ = new QPushButton("Stop fan", group);
+  export_stop_fan_button_    = new QPushButton("Stop fan", group);
   QHBoxLayout *button_layout = new QHBoxLayout();
   button_layout->addWidget(export_record_button_);
   button_layout->addWidget(export_stop_button_);
@@ -758,8 +770,8 @@ QGroupBox *MainWindow::create_export_group() {
 }
 
 QGroupBox *MainWindow::create_image_rendering_group() {
-  QGroupBox *group = new QGroupBox("Image Rendering", this);
-  auto *layout = new QGridLayout(group);
+  QGroupBox *group  = new QGroupBox("Image Rendering", this);
+  auto      *layout = new QGridLayout(group);
 
   // Row 0: Image selection
   layout->addWidget(new QLabel("Image:"), 0, 0);
@@ -864,8 +876,8 @@ QGroupBox *MainWindow::create_image_rendering_group() {
 }
 
 QGroupBox *MainWindow::create_view_group() {
-  QGroupBox *group = new QGroupBox("View", this);
-  auto *layout = new QGridLayout(group);
+  QGroupBox *group  = new QGroupBox("View", this);
+  auto      *layout = new QGridLayout(group);
 
   // Row 0: Image Type
   layout->addWidget(new QLabel("Image Type:"), 0, 0);
@@ -945,6 +957,15 @@ QGroupBox *MainWindow::create_view_group() {
       new QCheckBox("Renormalize image levels", brightness_group);
   bright_layout->addWidget(view_renormalize_check_, 3, 0, 1, 2);
   layout->addWidget(brightness_group, 6, 0, 1, 2);
+
+  view_registration_check_ = new QCheckBox("registration", brightness_group);
+  bright_layout->addWidget(view_registration_check_, 4, 0);
+  view_registration_radius_ = new QDoubleSpinBox(brightness_group);
+  view_registration_radius_->setRange(0.05, 1.0);
+  view_registration_radius_->setSingleStep(0.05);
+  view_registration_radius_->setDecimals(2);
+  view_registration_radius_->setValue(1.0);
+  bright_layout->addWidget(view_registration_radius_, 4, 1);
 
   // Spacer
   layout->addItem(

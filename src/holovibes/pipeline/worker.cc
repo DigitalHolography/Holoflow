@@ -24,6 +24,7 @@
 #include "holovibes/tasks/memcpy_task.hh"
 #include "holovibes/tasks/pca_task.hh"
 #include "holovibes/tasks/percentile_clip_task.hh"
+#include "holovibes/tasks/registration.hh"
 #include "holovibes/tasks/stft_task.hh"
 
 using json = nlohmann::json;
@@ -39,7 +40,7 @@ namespace holovibes::pipeline {
 
 Worker::Worker(dh::TensorDisplayWidget *processed_display_widget,
                dh::TensorDisplayWidget *raw_record_display_widget,
-               QObject *parent)
+               QObject                 *parent)
     : QObject(parent), processed_display_widget_(processed_display_widget),
       raw_record_display_widget_(raw_record_display_widget) {
   dh::holovibes_logger()->debug("[Worker::Worker] Pipeline worker initialized");
@@ -61,6 +62,7 @@ Worker::Worker(dh::TensorDisplayWidget *processed_display_widget,
   compiler_.add_factory<dh::PercentileClipTaskFactory>("PercentileClip");
   compiler_.add_factory<dh::FFTShiftTaskFactory>("FFTShift");
   compiler_.add_factory<tasks::MemcpyFactory>("Memcpy");
+  compiler_.add_factory<tasks::RegistrationFactory>("Registration");
   // clang-format on
 }
 
@@ -298,14 +300,28 @@ void Worker::build_desc_graph() {
   //   parent_v = identity_v;
   // }
 
-  accumulators::BatchedSPSCParams config;
-  config.capacity = 128;
-  config.dequeue_batch_size = 1;
-  auto temp_v = add_node("debounce_queue", "BatchedSPSC", config);
-  boost::add_edge(parent_v, temp_v, desc_graph_);
-  auto identity_v = add_identity_node();
-  boost::add_edge(temp_v, identity_v, desc_graph_);
-  parent_v = identity_v;
+  // Debounce queue
+  {
+    accumulators::BatchedSPSCParams config;
+    config.capacity           = 128;
+    config.dequeue_batch_size = 1;
+    auto temp_v = add_node("debounce_queue", "BatchedSPSC", config);
+    boost::add_edge(parent_v, temp_v, desc_graph_);
+    parent_v = temp_v;
+  }
+
+  // Image registration
+  if (s.view_registration_radius_) {
+    tasks::RegistrationParams config;
+    config.radius = *s.view_registration_radius_;
+    auto reg_v    = add_node("registration", "Registration", config);
+    boost::add_edge(parent_v, reg_v, desc_graph_);
+    parent_v = reg_v;
+  } else {
+    auto identity_v = add_identity_node();
+    boost::add_edge(parent_v, identity_v, desc_graph_);
+    parent_v = identity_v;
+  }
 
   auto img_avg_v = add_image_avg_accumulator_node();
   boost::add_edge(parent_v, img_avg_v, desc_graph_);
@@ -334,12 +350,12 @@ void Worker::build_desc_graph() {
 
 holoflow::model::DescriptorVertex Worker::add_node(const std::string &id,
                                                    const std::string &type,
-                                                   const json &config) {
-  auto v = boost::add_vertex(desc_graph_);
-  desc_graph_[v].id = id;
-  desc_graph_[v].type = type;
+                                                   const json        &config) {
+  auto v                = boost::add_vertex(desc_graph_);
+  desc_graph_[v].id     = id;
+  desc_graph_[v].type   = type;
   desc_graph_[v].config = config;
-  nodes_[id] = v;
+  nodes_[id]            = v;
   return v;
 }
 
@@ -361,7 +377,7 @@ holoflow::model::DescriptorVertex Worker::add_raw_record_gate_node() {
       });
 
   accumulators::GateParams config;
-  config.is_on = s.export_activated;
+  config.is_on  = s.export_activated;
   config.target = s.export_frame_count;
   return add_node("raw_record_gate", "Gate", config);
 }
@@ -373,11 +389,11 @@ holoflow::model::DescriptorVertex Worker::add_raw_identity_node() {
 
 holoflow::model::DescriptorVertex Worker::add_raw_record_accumulator_node() {
   DH_CHECK(settings_);
-  const auto &s = *settings_;
-  auto export_count = s.export_frame_count.value_or(4096);
+  const auto &s            = *settings_;
+  auto        export_count = s.export_frame_count.value_or(4096);
 
   accumulators::BatchedSPSCParams config;
-  config.capacity = export_count;
+  config.capacity           = export_count;
   config.dequeue_batch_size = 1;
   return add_node("raw_record_queue", "BatchedSPSC", config);
 }
@@ -392,10 +408,10 @@ holoflow::model::DescriptorVertex Worker::add_cpu_input_queue_node() {
   const auto &s = *settings_;
   DH_CHECK(s.import_load_method != ImportLoadMethod::LoadInGPU);
   auto time_win = s.render_time_window;
-  auto stride = s.render_time_stride;
+  auto stride   = s.render_time_stride;
 
   accumulators::BatchedSPSCParams config;
-  config.capacity = 4096;
+  config.capacity           = 4096;
   config.dequeue_batch_size = time_win;
 
   if (opti_early_stride_) {
@@ -416,10 +432,10 @@ holoflow::model::DescriptorVertex Worker::add_source_node() {
   const auto &s = *settings_;
 
   json config;
-  config["path"] = s.import_file_path;
+  config["path"]        = s.import_file_path;
   config["start_frame"] = s.import_start_index;
-  config["end_frame"] = s.import_end_index;
-  config["batch_size"] = s.render_batch_size;
+  config["end_frame"]   = s.import_end_index;
+  config["batch_size"]  = s.render_batch_size;
 
   switch (s.import_load_method) {
   case ImportLoadMethod::ReadLive:
@@ -438,13 +454,13 @@ holoflow::model::DescriptorVertex Worker::add_source_node() {
 
 holoflow::model::DescriptorVertex Worker::add_input_queue_node() {
   DH_CHECK(settings_);
-  const auto &s = *settings_;
-  auto time_win = s.render_time_window;
-  auto stride = s.render_time_stride;
-  auto skip_cpu_queue = s.import_load_method == ImportLoadMethod::LoadInGPU;
+  const auto &s        = *settings_;
+  auto        time_win = s.render_time_window;
+  auto        stride   = s.render_time_stride;
+  auto skip_cpu_queue  = s.import_load_method == ImportLoadMethod::LoadInGPU;
 
   accumulators::BatchedSPSCParams config;
-  config.capacity = 4096;
+  config.capacity           = 4096;
   config.dequeue_batch_size = time_win;
 
   if (opti_early_stride_ && skip_cpu_queue) {
@@ -473,9 +489,9 @@ holoflow::model::DescriptorVertex Worker::add_space_transform_node() {
   DH_CHECK(s.render_focus > 0);
 
   constexpr float PIXEL_SIZE = 20e-6f;
-  json config;
-  config["lambda"] = static_cast<float>(s.render_lambda) * 1e-9f;
-  config["z"] = static_cast<float>(s.render_focus) * 1e-3f;
+  json            config;
+  config["lambda"]     = static_cast<float>(s.render_lambda) * 1e-9f;
+  config["z"]          = static_cast<float>(s.render_focus) * 1e-3f;
   config["pixel_size"] = PIXEL_SIZE;
 
   switch (*s.render_space_transform) {
@@ -491,16 +507,16 @@ holoflow::model::DescriptorVertex Worker::add_space_transform_node() {
 
 holoflow::model::DescriptorVertex Worker::add_time_accumulator_node() {
   DH_CHECK(settings_);
-  const auto &s = *settings_;
-  auto time_win = s.render_time_window;
-  auto batch_sz = s.render_batch_size;
-  auto stride = s.render_time_stride;
+  const auto &s        = *settings_;
+  auto        time_win = s.render_time_window;
+  auto        batch_sz = s.render_batch_size;
+  auto        stride   = s.render_time_stride;
 
   size_t cap = std::max(stride, batch_sz);
-  cap = cap * 2;
+  cap        = cap * 2;
 
   accumulators::BatchedSPSCParams config;
-  config.capacity = cap;
+  config.capacity           = cap;
   config.dequeue_batch_size = time_win;
 
   if (!opti_early_stride_) {
@@ -515,13 +531,13 @@ holoflow::model::DescriptorVertex Worker::add_time_transform_node() {
   const auto &s = *settings_;
   DH_CHECK(s.render_time_transform);
 
-  json config;
+  json   config;
   size_t begin = s.view_p_frame_start;
-  size_t end = begin + s.view_p_frame_width;
+  size_t end   = begin + s.view_p_frame_width;
   switch (*s.render_time_transform) {
   case RenderTimeTransform::PrincipalComponentAnalysis:
     config["begin"] = begin;
-    config["end"] = end;
+    config["end"]   = end;
     return add_node("principal_component_analysis", "PCA", config);
   case RenderTimeTransform::ShortTimeFourier:
     return add_node("short_time_fourrier_transform", "STFT", R"({})"_json);
@@ -542,15 +558,15 @@ holoflow::model::DescriptorVertex Worker::add_p_frame_avg_node() {
   DH_CHECK(s.render_time_transform);
 
   size_t begin = 0;
-  size_t end = 0;
+  size_t end   = 0;
   switch (*s.render_time_transform) {
   case RenderTimeTransform::PrincipalComponentAnalysis:
     begin = 0;
-    end = s.view_p_frame_width;
+    end   = s.view_p_frame_width;
     break;
   case RenderTimeTransform::ShortTimeFourier:
     begin = s.view_p_frame_start;
-    end = begin + s.view_p_frame_width;
+    end   = begin + s.view_p_frame_width;
     break;
   default:
     DH_BUG("Invalid time transform");
@@ -558,7 +574,7 @@ holoflow::model::DescriptorVertex Worker::add_p_frame_avg_node() {
 
   json config;
   config["begin"] = begin;
-  config["end"] = end;
+  config["end"]   = end;
   return add_node("p_frame_average", "Average", config);
 }
 
@@ -577,7 +593,7 @@ holoflow::model::DescriptorVertex Worker::add_split_axis_0_node() {
   size_t cap = batch_sz * 2;
 
   accumulators::BatchedSPSCParams config;
-  config.capacity = cap;
+  config.capacity           = cap;
   config.dequeue_batch_size = 1;
   return add_node("split_axis_0", "BatchedSPSC", config);
 }
@@ -590,19 +606,19 @@ holoflow::model::DescriptorVertex Worker::add_identity_node() {
 holoflow::model::DescriptorVertex Worker::add_image_avg_accumulator_node() {
   DH_CHECK(settings_);
   const auto &s = *settings_;
-  json config;
+  json        config;
   config["window_size"] = s.view_accumulation;
-  config["nb_slots"] = s.view_accumulation + 10;
+  config["nb_slots"]    = s.view_accumulation + 10;
   return add_node("image_avg_accumulator", "SlidingAverage", config);
 }
 
 holoflow::model::DescriptorVertex Worker::add_percentile_clip_node() {
   DH_CHECK(settings_);
   const auto &s = *settings_;
-  json config;
+  json        config;
   config["lower_percentile"] = s.view_lower_percentile_;
   config["upper_percentile"] = s.view_upper_percentile_;
-  config["radius"] = s.view_reticule_radius_;
+  config["radius"]           = s.view_reticule_radius_;
   return add_node("percentile_clip", "PercentileClip", config);
 }
 
@@ -614,7 +630,7 @@ holoflow::model::DescriptorVertex Worker::add_convert_output_node() {
 
 holoflow::model::DescriptorVertex Worker::add_processed_output_queue_node() {
   accumulators::BatchedSPSCParams config;
-  config.capacity = 32;
+  config.capacity           = 32;
   config.dequeue_batch_size = 1;
   return add_node("processed_output_queue", "BatchedSPSC", config);
 }

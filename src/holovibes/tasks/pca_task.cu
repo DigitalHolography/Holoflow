@@ -30,16 +30,14 @@ namespace dh {
 // ==========================================================================
 
 PCATask::PCATask(const TaskMeta &meta, cudaStream_t stream,
-                 curaii::cublas::Handle cublas_handle,
+                 curaii::cublas::Handle     cublas_handle,
                  curaii::cusolverdn::Handle cusolver_handle,
                  curaii::cusolverdn::Params cusolver_params,
-                 curaii::cuda::unique_device_ptr<uint8_t> d_cov_matrix,
-                 curaii::cuda::unique_device_ptr<float> d_eigenvalues,
-                 curaii::cuda::unique_device_ptr<int> d_info,
-                 curaii::cuda::unique_host_ptr<uint8_t> h_workspace,
-                 curaii::cuda::unique_device_ptr<uint8_t> d_workspace,
-                 size_t h_workspace_size, size_t d_workspace_size, size_t begin,
-                 size_t end, bool is_complex)
+                 DevPtr<uint8_t> d_cov_matrix, DevPtr<float> d_eigenvalues,
+                 DevPtr<int> d_info, HostPtr<uint8_t> h_workspace,
+                 DevPtr<uint8_t> d_workspace, size_t h_workspace_size,
+                 size_t d_workspace_size, size_t begin, size_t end,
+                 bool is_complex)
     : Task(meta, stream), cublas_handle_(std::move(cublas_handle)),
       cusolver_handle_(std::move(cusolver_handle)),
       cusolver_params_(std::move(cusolver_params)),
@@ -55,16 +53,16 @@ void PCATask::run(TensorView input, TensorView output) {
   // This PCA implementation does not normalize input as this does
   // not seems to make a difference in our application.
 
-  // 1) Aliases
-  size_t batch   = input.meta().shape().at(0);
-  size_t height  = input.meta().shape().at(1);
-  size_t width   = input.meta().shape().at(2);
-  int n_features = static_cast<int>(batch);
-  int n_samples  = static_cast<int>(height * width);
+  // Aliases
+  size_t batch      = input.meta().shape().at(0);
+  size_t height     = input.meta().shape().at(1);
+  size_t width      = input.meta().shape().at(2);
+  int    n_features = static_cast<int>(batch);
+  int    n_samples  = static_cast<int>(height * width);
 
   if (is_complex_) {
-    auto idata      = reinterpret_cast<cuFloatComplex *>(input.data());
-    auto odata      = reinterpret_cast<cuFloatComplex *>(output.data());
+    auto      idata = reinterpret_cast<cuFloatComplex *>(input.data());
+    auto      odata = reinterpret_cast<cuFloatComplex *>(output.data());
     cuComplex alpha = make_cuComplex(1.0f, 0.0f);
     cuComplex beta  = make_cuComplex(0.0f, 0.0f);
 
@@ -81,14 +79,14 @@ void PCATask::run(TensorView input, TensorView output) {
 
     // 3) Compute eigenvectors:
     // Perform an eigen decomposition on the covariance matrix to extract both
-    // eigenvalues and eigenvectors. The eigenvectors (principal components) are
-    // stored in the same memory as the covariance matrix. These eigenvectors
-    // represent the directions of maximum variance in the data.
+    // eigenvalues and eigenvectors. The eigenvectors (principal components)
+    // are stored in the same memory as the covariance matrix. These
+    // eigenvectors represent the directions of maximum variance in the data.
     auto eigenvecs = reinterpret_cast<cuFloatComplex *>(d_cov_matrix_.get());
 
     int64_t h_meig = 0;
-    float vl       = 0;
-    float vu       = 0;
+    float   vl     = 0;
+    float   vu     = 0;
     CUSOLVER_CHECK(cusolverDnXsyevdx(
         cusolver_handle_.get(), cusolver_params_.get(),
         CUSOLVER_EIG_MODE_VECTOR, CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER,
@@ -99,9 +97,9 @@ void PCATask::run(TensorView input, TensorView output) {
 
     // 4) Project data:
     // Multiply the input data by the eigenvector matrix
-    // to transform the data into the principal component space. Each row of the
-    // output corresponds to the projection of the original data onto the new
-    // basis defined by the eigenvectors.
+    // to transform the data into the principal component space. Each row of
+    // the output corresponds to the projection of the original data onto the
+    // new basis defined by the eigenvectors.
     CUBLAS_CHECK(cublasGemmEx(
         cublas_handle_.get(), CUBLAS_OP_N, CUBLAS_OP_N, n_samples,
         (int)(end_ - begin_), n_features, &alpha, idata, CUDA_C_32F, n_samples,
@@ -110,8 +108,8 @@ void PCATask::run(TensorView input, TensorView output) {
   }
 
   else {
-    auto idata  = reinterpret_cast<float *>(input.data());
-    auto odata  = reinterpret_cast<float *>(output.data());
+    auto  idata = reinterpret_cast<float *>(input.data());
+    auto  odata = reinterpret_cast<float *>(output.data());
     float alpha = 1.0f;
     float beta  = 0.0f;
 
@@ -134,8 +132,8 @@ void PCATask::run(TensorView input, TensorView output) {
     auto eigenvecs = reinterpret_cast<float *>(d_cov_matrix_.get());
 
     int64_t h_meig = 0;
-    float vl       = 0;
-    float vu       = 0;
+    float   vl     = 0;
+    float   vu     = 0;
     CUSOLVER_CHECK(cusolverDnXsyevdx(
         cusolver_handle_.get(), cusolver_params_.get(),
         CUSOLVER_EIG_MODE_VECTOR, CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER,
@@ -167,7 +165,7 @@ void PCATask::run(TensorView input, TensorView output) {
 // ==========================================================================
 
 TaskMeta PCATaskFactory::type_check(const TensorMeta &imeta,
-                                    const json &jparams) {
+                                    const json       &jparams) {
   // 0) Unpack parameters
   const Params params = jparams.get<Params>();
 
@@ -193,16 +191,16 @@ TaskMeta PCATaskFactory::type_check(const TensorMeta &imeta,
 }
 
 std::unique_ptr<Task> PCATaskFactory::create(const TensorMeta &imeta,
-                                             const json &jparams,
-                                             cudaStream_t stream) {
+                                             const json       &jparams,
+                                             cudaStream_t      stream) {
 
   // 1) Validate
   auto meta   = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
 
-  size_t batch    = imeta.shape().at(0);
-  int n_features  = static_cast<int>(batch);
-  bool is_complex = imeta.data_type() == DataType::CF32;
+  size_t batch      = imeta.shape().at(0);
+  int    n_features = static_cast<int>(batch);
+  bool   is_complex = imeta.data_type() == DataType::CF32;
 
   // 2) Handles and params
   curaii::cublas::Handle cublas_handle;
@@ -225,9 +223,9 @@ std::unique_ptr<Task> PCATaskFactory::create(const TensorMeta &imeta,
   auto d_info = curaii::cuda::make_unique_device_ptr<int>(1, stream);
 
   // 4) Workspace sizes
-  size_t d_workspace_size = 0;
-  size_t h_workspace_size = 0;
-  int64_t h_meig          = 0;
+  size_t  d_workspace_size = 0;
+  size_t  h_workspace_size = 0;
+  int64_t h_meig           = 0;
 
   if (is_complex) {
     CUSOLVER_CHECK(cusolverDnXsyevdx_bufferSize(

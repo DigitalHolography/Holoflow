@@ -33,15 +33,15 @@ __global__ void clip_kernel(const float *input, float *output, int count,
 
 } // namespace
 
-PercentileClipTask::PercentileClipTask(const TaskMeta &meta,
-                                       cudaStream_t stream,
+PercentileClipTask::PercentileClipTask(const TaskMeta          &meta,
+                                       cudaStream_t             stream,
                                        unique_device_ptr<float> d_lower_thresh,
                                        unique_device_ptr<float> d_upper_thresh,
                                        unique_device_ptr<uint8_t> d_sort_tmp,
-                                       unique_device_ptr<float> d_roi_values,
+                                       unique_device_ptr<float>   d_roi_values,
                                        unique_device_ptr<uint8_t> d_select_tmp,
                                        unique_device_ptr<uint8_t> d_roi_mask,
-                                       unique_device_ptr<int> d_roi_count,
+                                       unique_device_ptr<int>     d_roi_count,
                                        size_t sort_tmp_bytes,
                                        size_t select_tmp_bytes, float pct_low,
                                        float pct_high, float roi_radius)
@@ -57,8 +57,8 @@ PercentileClipTask::PercentileClipTask(const TaskMeta &meta,
 void PercentileClipTask::run(TensorView input, TensorView output) {
   // 1) Aliases
   const size_t total_px = input.size();
-  float *d_in = static_cast<float *>(input.data());   // full frame
-  float *d_out = static_cast<float *>(output.data()); // clip result
+  float       *d_in     = static_cast<float *>(input.data());  // full frame
+  float       *d_out    = static_cast<float *>(output.data()); // clip result
 
   // 2) Filter ellipse ROI pixels
   CUDA_CHECK(cub::DeviceSelect::Flagged(d_select_tmp_.get(), // d_temp_storage
@@ -92,7 +92,7 @@ void PercentileClipTask::run(TensorView input, TensorView output) {
                                      stream_));           // stream
 
   // 5) Percentile indices inside ROI
-  const int idx_low = static_cast<int>((roi_px - 1) * (pct_low_ / 100.f));
+  const int idx_low  = static_cast<int>((roi_px - 1) * (pct_low_ / 100.f));
   const int idx_high = static_cast<int>((roi_px - 1) * (pct_high_ / 100.f));
 
   // 6) Copy thresholds
@@ -103,7 +103,7 @@ void PercentileClipTask::run(TensorView input, TensorView output) {
 
   // 7) Clip the frame
   constexpr int block = 256;
-  const int grid = static_cast<int>((total_px + block - 1) / block);
+  const int     grid  = static_cast<int>((total_px + block - 1) / block);
 
   clip_kernel<<<grid, block, 0, stream_>>>(
       d_in, d_out, total_px, d_lower_thresh_.get(), d_upper_thresh_.get());
@@ -127,19 +127,37 @@ __global__ void ellipse_mask_kernel(uint8_t *flagged, int width, int height,
     return;
   }
 
+  // const float cx = 0.5f * (width - 1);
+  // const float cy = 0.5f * (height - 1);
+
+  // const float sx = static_cast<float>(width) / static_cast<float>(width);
+  // const float sy = static_cast<float>(height) / static_cast<float>(height);
+
+  // const float r_square = radius * 0.5f * static_cast<float>(min(width,
+  // height)); const float rx2 = (r_square / sx) * (r_square / sx); const float
+  // ry2 = (r_square / sy) * (r_square / sy);
+
+  // const float dx = static_cast<float>(x) - cx;
+  // const float dy = static_cast<float>(y) - cy;
+  // const bool inside = (dx * dx) / rx2 + (dy * dy) / ry2 <= 1.0f;
+
   const float cx = 0.5f * (width - 1);
   const float cy = 0.5f * (height - 1);
 
-  const float sx = static_cast<float>(width) / static_cast<float>(width);
-  const float sy = static_cast<float>(height) / static_cast<float>(height);
+  const float minDim = static_cast<float>(min(width, height));
 
-  const float r_square = radius * 0.5f * static_cast<float>(min(width, height));
-  const float rx2 = (r_square / sx) * (r_square / sx);
-  const float ry2 = (r_square / sy) * (r_square / sy);
+  const float r  = radius * 0.5f * minDim;
+  const float r2 = r * r;
 
-  const float dx = static_cast<float>(x) - cx;
-  const float dy = static_cast<float>(y) - cy;
-  const bool inside = (dx * dx) / rx2 + (dy * dy) / ry2 <= 1.0f;
+  const float sx = minDim / static_cast<float>(width);
+  const float sy = minDim / static_cast<float>(height);
+
+  const float dx  = static_cast<float>(x) - cx;
+  const float dy  = static_cast<float>(y) - cy;
+  const float dxs = dx * sx;
+  const float dys = dy * sy;
+
+  const bool inside = (dxs * dxs + dys * dys) <= r2;
 
   const size_t idx = static_cast<size_t>(z) * height * width +
                      static_cast<size_t>(y) * width + static_cast<size_t>(x);
@@ -150,7 +168,7 @@ __global__ void ellipse_mask_kernel(uint8_t *flagged, int width, int height,
 } // namespace
 
 TaskMeta PercentileClipTaskFactory::type_check(const TensorMeta &imeta,
-                                               const json &jparams) {
+                                               const json       &jparams) {
   // 0) Unpack parameters
   const Params params = jparams.get<Params>();
 
@@ -180,15 +198,15 @@ TaskMeta PercentileClipTaskFactory::type_check(const TensorMeta &imeta,
 }
 
 std::unique_ptr<Task> PercentileClipTaskFactory::create(const TensorMeta &imeta,
-                                                        const json &jparams,
+                                                        const json  &jparams,
                                                         cudaStream_t stream) {
   // 1) Validate
-  auto meta = type_check(imeta, jparams);
+  auto meta   = type_check(imeta, jparams);
   auto params = jparams.get<Params>();
 
-  const int B = static_cast<int>(imeta.shape()[0]);
-  const int H = static_cast<int>(imeta.shape()[1]);
-  const int W = static_cast<int>(imeta.shape()[2]);
+  const int    B = static_cast<int>(imeta.shape()[0]);
+  const int    H = static_cast<int>(imeta.shape()[1]);
+  const int    W = static_cast<int>(imeta.shape()[2]);
   const size_t N = imeta.size();
 
   // 2) CUB temp size
@@ -213,14 +231,14 @@ std::unique_ptr<Task> PercentileClipTaskFactory::create(const TensorMeta &imeta,
                                  stream));                    // stream
 
   // 3) Allocations
-  auto d_sort_tmp = make_unique_device_ptr<uint8_t>(sort_tmp_bytes, stream);
+  auto d_sort_tmp   = make_unique_device_ptr<uint8_t>(sort_tmp_bytes, stream);
   auto d_select_tmp = make_unique_device_ptr<uint8_t>(select_tmp_bytes, stream);
 
   auto d_upper_thr = make_unique_device_ptr<float>(1, stream);
   auto d_lower_thr = make_unique_device_ptr<float>(1, stream);
 
-  auto d_flags = make_unique_device_ptr<uint8_t>(N, stream);
-  auto d_roi = make_unique_device_ptr<float>(N, stream);
+  auto d_flags      = make_unique_device_ptr<uint8_t>(N, stream);
+  auto d_roi        = make_unique_device_ptr<float>(N, stream);
   auto d_n_selected = make_unique_device_ptr<int>(1, stream);
 
   // 4) Build ellipse mask
