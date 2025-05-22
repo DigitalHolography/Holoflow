@@ -1,8 +1,10 @@
 #include "holovibes/tasks/pca_task.hh"
 
+#include <complex>
 #include <cuComplex.h>
 #include <cuda_runtime.h>
 #include <memory>
+#include <mkl_lapacke.h>
 #include <nlohmann/json.hpp>
 #include <set>
 #include <tl/expected.hpp>
@@ -37,16 +39,21 @@ PCATask::PCATask(const TaskMeta &meta, cudaStream_t stream,
                  DevPtr<int> d_info, HostPtr<uint8_t> h_workspace,
                  DevPtr<uint8_t> d_workspace, size_t h_workspace_size,
                  size_t d_workspace_size, size_t begin, size_t end,
-                 bool is_complex)
+                 bool is_complex,
+                 // Host eigenvec
+                 HostPtr<uint8_t> h_cov, HostPtr<float> h_eigvals,
+                 HostPtr<lapack_complex_float> h_eigvecs,
+                 HostPtr<lapack_int>           h_isuppz)
     : Task(meta, stream), cublas_handle_(std::move(cublas_handle)),
       cusolver_handle_(std::move(cusolver_handle)),
       cusolver_params_(std::move(cusolver_params)),
-      d_cov_matrix_(std::move(d_cov_matrix)),
-      d_eigenvalues_(std::move(d_eigenvalues)), d_info_(std::move(d_info)),
-      h_workspace_(std::move(h_workspace)),
+      d_cov_(std::move(d_cov_matrix)), d_eigvals_(std::move(d_eigenvalues)),
+      d_info_(std::move(d_info)), h_workspace_(std::move(h_workspace)),
       d_workspace_(std::move(d_workspace)), h_workspace_size_(h_workspace_size),
       d_workspace_size_(d_workspace_size), begin_(begin), end_(end),
-      is_complex_(is_complex) {}
+      is_complex_(is_complex), h_cov_(std::move(h_cov)),
+      h_eigvals_(std::move(h_eigvals)), h_eigvecs_(std::move(h_eigvecs)),
+      h_isuppz_(std::move(h_isuppz)) {}
 
 void PCATask::run(TensorView input, TensorView output) {
   // Note:
@@ -74,7 +81,7 @@ void PCATask::run(TensorView input, TensorView output) {
     CUBLAS_CHECK(cublasGemmEx(
         cublas_handle_.get(), CUBLAS_OP_C, CUBLAS_OP_N, n_features, n_features,
         n_samples, &alpha, idata, CUDA_C_32F, n_samples, idata, CUDA_C_32F,
-        n_samples, &beta, d_cov_matrix_.get(), CUDA_C_32F, n_features,
+        n_samples, &beta, d_cov_.get(), CUDA_C_32F, n_features,
         CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
 
     // 3) Compute eigenvectors:
@@ -82,24 +89,37 @@ void PCATask::run(TensorView input, TensorView output) {
     // eigenvalues and eigenvectors. The eigenvectors (principal components)
     // are stored in the same memory as the covariance matrix. These
     // eigenvectors represent the directions of maximum variance in the data.
-    auto eigenvecs = reinterpret_cast<cuFloatComplex *>(d_cov_matrix_.get());
 
-    int64_t h_meig = 0;
-    float   vl     = 0;
-    float   vu     = 0;
-    CUSOLVER_CHECK(cusolverDnXsyevdx(
-        cusolver_handle_.get(), cusolver_params_.get(),
-        CUSOLVER_EIG_MODE_VECTOR, CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER,
-        n_features, CUDA_C_32F, d_cov_matrix_.get(), n_features, &vl, &vu,
-        begin_ + 1, end_, &h_meig, CUDA_R_32F, d_eigenvalues_.get(), CUDA_C_32F,
-        d_workspace_.get(), d_workspace_size_, h_workspace_.get(),
-        h_workspace_size_, d_info_.get()));
+    cudaMemcpyAsync(h_cov_.get(), d_cov_.get(),
+                    sizeof(lapack_complex_float) * n_features * n_features,
+                    cudaMemcpyDeviceToHost, stream_);
+
+    int        il = begin_ + 1;
+    int        iu = end_;
+    lapack_int m;
+    int        nev = iu - il + 1;
+
+    cudaStreamSynchronize(stream_);
+    int info = LAPACKE_cheevr(LAPACK_COL_MAJOR, 'V', 'I', 'L', n_features,
+                              (lapack_complex_float *)h_cov_.get(), n_features,
+                              0.0f, 0.0f, il, iu, 0.0f, &m, h_eigvals_.get(),
+                              h_eigvecs_.get(), n_features, h_isuppz_.get());
+
+    if (info != 0) {
+      throw std::runtime_error("LAPACKE_cheevr failed with code " +
+                               std::to_string(info));
+    }
+
+    cudaMemcpyAsync(d_cov_.get(), h_eigvecs_.get(),
+                    sizeof(lapack_complex_float) * n_features * nev,
+                    cudaMemcpyHostToDevice, stream_);
 
     // 4) Project data:
     // Multiply the input data by the eigenvector matrix
     // to transform the data into the principal component space. Each row of
     // the output corresponds to the projection of the original data onto the
     // new basis defined by the eigenvectors.
+    auto eigenvecs = reinterpret_cast<cuFloatComplex *>(d_cov_.get());
     CUBLAS_CHECK(cublasGemmEx(
         cublas_handle_.get(), CUBLAS_OP_N, CUBLAS_OP_N, n_samples,
         (int)(end_ - begin_), n_features, &alpha, idata, CUDA_C_32F, n_samples,
@@ -121,7 +141,7 @@ void PCATask::run(TensorView input, TensorView output) {
     CUBLAS_CHECK(cublasGemmEx(
         cublas_handle_.get(), CUBLAS_OP_T, CUBLAS_OP_N, n_features, n_features,
         n_samples, &alpha, idata, CUDA_R_32F, n_samples, idata, CUDA_R_32F,
-        n_samples, &beta, d_cov_matrix_.get(), CUDA_R_32F, n_features,
+        n_samples, &beta, d_cov_.get(), CUDA_R_32F, n_features,
         CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT));
 
     // 3) Compute eigenvectors:
@@ -129,7 +149,8 @@ void PCATask::run(TensorView input, TensorView output) {
     // eigenvalues and eigenvectors. The eigenvectors (principal components) are
     // stored in the same memory as the covariance matrix. These eigenvectors
     // represent the directions of maximum variance in the data.
-    auto eigenvecs = reinterpret_cast<float *>(d_cov_matrix_.get());
+
+    auto eigenvecs = reinterpret_cast<float *>(d_cov_.get());
 
     int64_t h_meig = 0;
     float   vl     = 0;
@@ -137,8 +158,8 @@ void PCATask::run(TensorView input, TensorView output) {
     CUSOLVER_CHECK(cusolverDnXsyevdx(
         cusolver_handle_.get(), cusolver_params_.get(),
         CUSOLVER_EIG_MODE_VECTOR, CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER,
-        n_features, CUDA_R_32F, d_cov_matrix_.get(), n_features, &vl, &vu,
-        begin_ + 1, end_, &h_meig, CUDA_R_32F, d_eigenvalues_.get(), CUDA_R_32F,
+        n_features, CUDA_R_32F, d_cov_.get(), n_features, &vl, &vu, begin_ + 1,
+        end_, &h_meig, CUDA_R_32F, d_eigvals_.get(), CUDA_R_32F,
         d_workspace_.get(), d_workspace_size_, h_workspace_.get(),
         h_workspace_size_, d_info_.get()));
 
@@ -193,6 +214,8 @@ TaskMeta PCATaskFactory::type_check(const TensorMeta &imeta,
 std::unique_ptr<Task> PCATaskFactory::create(const TensorMeta &imeta,
                                              const json       &jparams,
                                              cudaStream_t      stream) {
+  using curaii::cuda::make_unique_device_ptr;
+  using curaii::cuda::make_unique_host_ptr;
 
   // 1) Validate
   auto meta   = type_check(imeta, jparams);
@@ -214,13 +237,13 @@ std::unique_ptr<Task> PCATaskFactory::create(const TensorMeta &imeta,
   curaii::cusolverdn::Params cusolver_params;
 
   // 3) Buffer allocations
-  auto d_cov_matrix = curaii::cuda::make_unique_device_ptr<uint8_t>(
+  auto d_cov_matrix = make_unique_device_ptr<uint8_t>(
       n_features * n_features * size_of(imeta.data_type()), stream);
 
-  auto d_eigenvalues = curaii::cuda::make_unique_device_ptr<float>(
-      (params.end - params.begin), stream);
+  auto d_eigenvalues =
+      make_unique_device_ptr<float>((params.end - params.begin), stream);
 
-  auto d_info = curaii::cuda::make_unique_device_ptr<int>(1, stream);
+  auto d_info = make_unique_device_ptr<int>(1, stream);
 
   // 4) Workspace sizes
   size_t  d_workspace_size = 0;
@@ -246,11 +269,18 @@ std::unique_ptr<Task> PCATaskFactory::create(const TensorMeta &imeta,
   }
 
   // 5) Workspace allocations
-  auto d_workspace =
-      curaii::cuda::make_unique_device_ptr<uint8_t>(d_workspace_size, stream);
+  auto d_workspace = make_unique_device_ptr<uint8_t>(d_workspace_size, stream);
 
-  auto h_workspace =
-      curaii::cuda::make_unique_host_ptr<uint8_t>(h_workspace_size);
+  auto h_workspace = make_unique_host_ptr<uint8_t>(h_workspace_size);
+
+  // Host eigenvecs
+  auto h_cov = make_unique_host_ptr<uint8_t>(n_features * n_features *
+                                             size_of(imeta.data_type()));
+
+  auto h_eigvals = make_unique_host_ptr<float>((params.end - params.begin));
+  auto h_eigvecs =
+      make_unique_host_ptr<lapack_complex_float>(n_features * n_features);
+  auto h_isuppz = make_unique_host_ptr<lapack_int>(2 * n_features);
 
   // 6) Assemble task
   auto *task = new PCATask(
@@ -258,7 +288,8 @@ std::unique_ptr<Task> PCATaskFactory::create(const TensorMeta &imeta,
       std::move(cusolver_params), std::move(d_cov_matrix),
       std::move(d_eigenvalues), std::move(d_info), std::move(h_workspace),
       std::move(d_workspace), h_workspace_size, d_workspace_size, params.begin,
-      params.end, is_complex);
+      params.end, is_complex, std::move(h_cov), std::move(h_eigvals),
+      std::move(h_eigvecs), std::move(h_isuppz));
 
   return std::unique_ptr<PCATask>(task);
 }

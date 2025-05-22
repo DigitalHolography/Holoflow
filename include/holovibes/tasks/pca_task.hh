@@ -3,6 +3,7 @@
 #include <cuComplex.h>
 #include <cuda_runtime.h>
 #include <memory>
+#include <mkl_lapacke.h>
 #include <nlohmann/json.hpp>
 
 #include "curaii/v2/cublas.hh"
@@ -32,7 +33,11 @@ private:
           DevPtr<uint8_t> d_cov_matrix, DevPtr<float> d_eigenvalues,
           DevPtr<int> d_info, HostPtr<uint8_t> h_workspace,
           DevPtr<uint8_t> d_workspace, size_t h_workspace_size,
-          size_t d_workspace_size, size_t begin, size_t end, bool is_complex);
+          size_t d_workspace_size, size_t begin, size_t end, bool is_complex,
+          // Host eigenvec
+          HostPtr<uint8_t> h_cov, HostPtr<float> h_eigvals,
+          HostPtr<lapack_complex_float> h_eigvecs,
+          HostPtr<lapack_int>           h_isuppz);
 
   // Config
   size_t begin_;
@@ -45,13 +50,19 @@ private:
   curaii::cusolverdn::Params cusolver_params_;
 
   // Buffers
-  DevPtr<uint8_t>  d_cov_matrix_;
-  DevPtr<float>    d_eigenvalues_;
+  DevPtr<uint8_t>  d_cov_;
+  DevPtr<float>    d_eigvals_;
   DevPtr<int>      d_info_;
   HostPtr<uint8_t> h_workspace_;
   DevPtr<uint8_t>  d_workspace_;
   size_t           h_workspace_size_;
   size_t           d_workspace_size_;
+
+  // Host eigenvec
+  HostPtr<uint8_t>              h_cov_;
+  HostPtr<float>                h_eigvals_;
+  HostPtr<lapack_complex_float> h_eigvecs_;
+  HostPtr<lapack_int>           h_isuppz_;
 };
 
 class PCATaskFactory : public TaskFactory {

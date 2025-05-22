@@ -52,4 +52,19 @@ target_link_libraries(holovibes PRIVATE
     curaii
     nvJitLink
     nvrtc
+    MKL::MKL
 )
+
+set(VCPKG_BIN_DIR "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin")
+
+set(MKL_DLLS
+  "${VCPKG_BIN_DIR}/mkl_avx2.2.dll"
+  "${VCPKG_BIN_DIR}/mkl_def.2.dll"
+)
+foreach(DLL ${MKL_DLLS})
+  add_custom_command(TARGET holovibes POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+      "${DLL}"
+      "$<TARGET_FILE_DIR:holovibes>"
+  )
+endforeach()

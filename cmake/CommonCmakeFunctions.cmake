@@ -36,7 +36,8 @@ function(set_common_compile_options target)
             -Xcudafe="--diag_suppress=1394";
             -Xcudafe="--diag_suppress=27";
             -Xcudafe="--diag_suppress=1388";
-            -Wno-deprecated-gpu-targets
+            -Wno-deprecated-gpu-targets;
+            --expt-relaxed-constexpr
         >
     )
 endfunction()

@@ -4,9 +4,9 @@
     "boost-graph",
     "gtest",
     "nlohmann-json",
-    "pybind11",
     "spdlog",
+    "tbb",
     "tl-expected",
-    "tbb"
+    "intel-mkl"
   ]
 }

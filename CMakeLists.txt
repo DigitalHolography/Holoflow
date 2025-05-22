@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.21)
 project(holoflow LANGUAGES CUDA CXX)
 
 set(CMAKE_CUDA_ARCHITECTURES 86-real 86-virtual)
@@ -21,6 +21,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 find_package(spdlog REQUIRED)
 find_package(Boost REQUIRED COMPONENTS graph)
 find_package(TBB REQUIRED)
+find_package(MKL CONFIG REQUIRED)
 
 qt_standard_project_setup()
 

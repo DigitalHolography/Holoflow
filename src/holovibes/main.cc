@@ -31,7 +31,7 @@
 using json = nlohmann::json;
 
 void setup_global_logger() {
-  constexpr std::size_t queue_size = 8192;
+  constexpr std::size_t queue_size  = 8192;
   constexpr std::size_t num_threads = 1;
   spdlog::init_thread_pool(queue_size, num_threads);
 
@@ -51,7 +51,7 @@ int main(int argc, char **argv) {
   try {
     setup_global_logger();
 
-    QApplication app(argc, argv);
+    QApplication              app(argc, argv);
     holovibes::ui::MainWindow main_window;
     main_window.show();
     return app.exec();
