@@ -15,15 +15,15 @@ rankdir=LR;
 3[label="identity_0\n(Identity)\n{}"];
 4[label="cpu_input_queue\n(BatchedSPSC)\n{
   \"capacity\": 4096,
-  \"dequeue_batch_size\": 32,
-  \"stride\": 64
+  \"dequeue_batch_size\": 512,
+  \"stride\": 512
 }"];
 5[label="memcpy_cpu_to_gpu\n(Memcpy)\n{
   \"kind\": \"HostToDevice\"
 }"];
 6[label="input_queue\n(BatchedSPSC)\n{
   \"capacity\": 4096,
-  \"dequeue_batch_size\": 32
+  \"dequeue_batch_size\": 512
 }"];
 7[label="convert_input\n(Convert)\n{
   \"conversion\": \"U8_CF32_REAL\"
@@ -35,29 +35,31 @@ rankdir=LR;
   \"z\": 0.3800000250339508
 }"];
 9[label="time_accumulator\n(BatchedSPSC)\n{
-  \"capacity\": 128,
-  \"dequeue_batch_size\": 32
+  \"capacity\": 1024,
+  \"dequeue_batch_size\": 512
 }"];
 10[label="principal_component_analysis\n(PCA)\n{
-  \"begin\": 0,
-  \"end\": 16
+  \"begin\": 80,
+  \"end\": 480
 }"];
 11[label="convert_postprocess\n(Convert)\n{
   \"conversion\": \"CF32_F32_MODU\"
 }"];
 12[label="p_frame_average\n(Average)\n{
   \"begin\": 0,
-  \"end\": 16
+  \"end\": 400
 }"];
 13[label="fft_shift\n(FFTShift)\n{}"];
 14[label="debounce_queue\n(BatchedSPSC)\n{
   \"capacity\": 128,
   \"dequeue_batch_size\": 1
 }"];
-15[label="identity\n(Identity)\n{}"];
+15[label="registration\n(Registration)\n{
+  \"radius\": 0.699999988079071
+}"];
 16[label="image_avg_accumulator\n(SlidingAverage)\n{
-  \"nb_slots\": 42,
-  \"window_size\": 32
+  \"nb_slots\": 266,
+  \"window_size\": 256
 }"];
 17[label="percentile_clip\n(PercentileClip)\n{
   \"lower_percentile\": 0.20000000298023224,

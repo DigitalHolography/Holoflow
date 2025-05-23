@@ -58,7 +58,7 @@ void Memcpy::run(dh::TensorView input, dh::TensorView output) {
 // ==========================================================================
 
 dh::TaskMeta MemcpyFactory::type_check(const dh::TensorMeta &imeta,
-                                       const json &jparams) {
+                                       const json           &jparams) {
   // Unpack parameters
   const MemcpyParams params = jparams.get<MemcpyParams>();
 
@@ -85,16 +85,16 @@ dh::TaskMeta MemcpyFactory::type_check(const dh::TensorMeta &imeta,
       {MemcpyParams::Kind::DeviceToHost, dh::MemoryLocation::HOST},
       {MemcpyParams::Kind::DeviceToDevice, dh::MemoryLocation::DEVICE},
   };
-  auto location = kind_to_dst_loc.at(params.kind);
+  auto           location = kind_to_dst_loc.at(params.kind);
   dh::TensorMeta ometa(imeta.data_type(), location, imeta.shape());
   return dh::TaskMeta(imeta, ometa, false);
 }
 
 std::unique_ptr<dh::Task> MemcpyFactory::create(const dh::TensorMeta &imeta,
-                                                const json &jparams,
-                                                cudaStream_t stream) {
+                                                const json           &jparams,
+                                                cudaStream_t          stream) {
   // Validate
-  auto meta = type_check(imeta, jparams);
+  auto meta   = type_check(imeta, jparams);
   auto params = jparams.get<MemcpyParams>();
 
   // Extract memcpy kind
