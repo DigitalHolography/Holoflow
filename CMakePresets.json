@@ -1,0 +1,64 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 24,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "base-multi",
+            "hidden": true,
+            "generator": "Ninja Multi-Config",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "CMAKE_CONFIGURATION_TYPES": "Debug;Release;RelWithDebInfo;MinSizeRel"
+            }
+        },
+        {
+            "name": "msvc-multi",
+            "inherits": "base-multi"
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "build-Debug",
+            "configurePreset": "msvc-multi",
+            "configuration": "Debug"
+        },
+        {
+            "name": "build-Release",
+            "configurePreset": "msvc-multi",
+            "configuration": "Release"
+        },
+        {
+            "name": "build-RelWithDebInfo",
+            "configurePreset": "msvc-multi",
+            "configuration": "RelWithDebInfo"
+        },
+        {
+            "name": "build-MinSizeRel",
+            "configurePreset": "msvc-multi",
+            "configuration": "MinSizeRel"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "test-Debug",
+            "configurePreset": "msvc-multi",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "test-Release",
+            "configurePreset": "msvc-multi",
+            "configuration": "Release",
+            "output": {
+                "outputOnFailure": true
+            }
+        }
+    ]
+}
