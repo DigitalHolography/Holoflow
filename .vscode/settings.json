@@ -3,6 +3,7 @@
         "--compile-commands-dir=build/msvc-multi/"
     ],
     "conventionalCommits.scopes": [
-        "holoflow"
+        "holoflow",
+        "curaii"
     ]
 }
