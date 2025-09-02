@@ -61,4 +61,5 @@ target_link_libraries(${TARGET}
 PUBLIC
     project_options
     spdlog::spdlog
+    curaii
 )

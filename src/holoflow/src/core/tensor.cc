@@ -14,11 +14,14 @@
 
 #include "holoflow/core/tensor.hh"
 
+#include <limits>
+#include <stdexcept>
+
 #include "core/bug.hh"
 
 namespace holoflow::core {
 
-std::size_t size_of(DType dtype) noexcept {
+constexpr size_t size_of(DType dtype) noexcept {
   switch (dtype) {
   case DType::U8:
     return 1;
@@ -33,7 +36,7 @@ std::size_t size_of(DType dtype) noexcept {
   HOLOFLOW_UNREACHABLE();
 }
 
-const char *to_string(DType dtype) noexcept {
+constexpr std::string_view to_string(DType dtype) noexcept {
   switch (dtype) {
   case DType::U8:
     return "U8";
@@ -48,7 +51,7 @@ const char *to_string(DType dtype) noexcept {
   HOLOFLOW_UNREACHABLE();
 }
 
-const char *to_string(MemLoc loc) noexcept {
+constexpr std::string_view to_string(MemLoc loc) noexcept {
   switch (loc) {
   case MemLoc::Host:
     return "Host";
@@ -58,5 +61,53 @@ const char *to_string(MemLoc loc) noexcept {
 
   HOLOFLOW_UNREACHABLE();
 }
+
+size_t TDesc::rank() const noexcept { return shape.size(); }
+
+size_t TDesc::num_elements() const {
+  constexpr size_t max = std::numeric_limits<size_t>::max();
+  size_t           n   = 1;
+  for (auto d : shape) {
+    if (d == 0)
+      return 0;
+    if (n > max / d) {
+      throw std::overflow_error("num_elements overflow");
+    }
+    n *= d;
+  }
+  return n;
+}
+
+size_t TDesc::num_bytes() const {
+  size_t elems = num_elements();
+  size_t s     = size_of(dtype);
+  if (elems > std::numeric_limits<size_t>::max() / s) {
+    throw std::overflow_error("num_bytes overflow");
+  }
+  return elems * s;
+}
+
+Tensor::Tensor(const TDesc &desc) : desc_(desc), data_(nullptr) {
+  switch (desc_.mem_loc) {
+  case MemLoc::Host:
+    h_data_ = curaii::make_unique_host_ptr<std::byte>(desc_.num_bytes());
+    data_   = h_data_.get();
+    break;
+  case MemLoc::Device:
+    d_data_ = curaii::make_unique_device_ptr<std::byte>(desc_.num_bytes());
+    data_   = d_data_.get();
+    break;
+  }
+}
+
+void *Tensor::data() noexcept { return data_; }
+
+const void *Tensor::data() const noexcept { return data_; }
+
+const TDesc &Tensor::desc() const noexcept { return desc_; }
+
+TView Tensor::view() noexcept { return {data_, desc_}; }
+
+CTView Tensor::cview() const noexcept { return {data_, desc_}; }
 
 } // namespace holoflow::core
