@@ -49,9 +49,9 @@
 ///   given time.
 ///
 /// @section todos TODOs
-/// - Clarify the policy when an owned input has been acquired via
-///   @ref ITask::acquire_input() but execution should be cancelled before
-///   @ref IAsyncTask::try_push() is called. Possible options:
+/// @todo Clarify the policy when an owned input has been acquired via
+/// @ref ITask::acquire_input() but execution should be cancelled before
+/// @ref IAsyncTask::try_push() is called. Possible options:
 /// - Add an explicit @c abort_input(index) to roll back WRITING→FREE state.
 /// - Implicitly discard uncommitted slots on cancellation.
 /// - Require scheduler to @c try_push() and let the task drop the slot.
