@@ -272,7 +272,7 @@ public:
   virtual std::unique_ptr<ISyncTask> update(std::unique_ptr<ISyncTask> old_task,
                                             std::span<const TDesc>     input_descs,
                                             const nlohmann::json      &jsettings,
-                                            const SyncCreateCtx       &ctx) const = 0;
+                                            const SyncCreateCtx       &ctx) const;
 };
 
 /// Factory for asynchronous tasks.
@@ -300,7 +300,7 @@ public:
   virtual std::unique_ptr<IAsyncTask> update(std::unique_ptr<IAsyncTask> old_task,
                                              std::span<const TDesc>      input_descs,
                                              const nlohmann::json       &jsettings,
-                                             const AsyncCreateCtx       &ctx) const = 0;
+                                             const AsyncCreateCtx       &ctx) const;
 };
 
 } // namespace holoflow::core

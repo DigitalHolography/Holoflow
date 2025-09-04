@@ -62,5 +62,6 @@ PUBLIC
     project_options
     spdlog::spdlog
     nlohmann_json::nlohmann_json
+    Boost::graph
     curaii
 )
