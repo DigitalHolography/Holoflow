@@ -15,215 +15,192 @@
 /// @file tasks.hh
 /// @brief Interfaces and runtime contexts for Holoflow tasks.
 ///
-/// This header defines the common interfaces and runtime contexts used by
-/// synchronous and asynchronous tasks in Holoflow. A task is a computation unit
-/// that consumes zero or more input tensors and produces zero or more output
-/// tensors. Tasks may either be synchronous (blocking execution) or
-/// asynchronous (decoupled push/pop).
+/// A task consumes zero or more input tensors and produces zero or more output
+/// tensors. Tasks are either synchronous (blocking) or asynchronous
+/// (decoupled push/pop).
 ///
 /// @section overview Overview
-/// - @ref holoflow::core::SyncCtx, @ref holoflow::core::AsyncPushCtx,
-///   @ref holoflow::core::AsyncPopCtx : runtime contexts passed
-///   to task operations.
-/// - @ref holoflow::core::OpResult : possible control-flow outcomes of a task
-///   operation.
-/// - @ref holoflow::core::ITask : base interface providing acquisition/release
-///   hooks for owned tensors.
-/// - @ref holoflow::core::ISyncTask : interface for synchronous tasks providing
-///   synchronous execution semantics.
-/// - @ref holoflow::core::IAsyncTask : interface for asynchronous tasks
-///   providing asynchronous execution semantics.
-/// - @ref holoflow::core::InferResult : result structure returned by factory
-///   inference, describing tensor descriptors, ownership flags, and in-place
-///   links.
+/// - Contexts: @ref holoflow::core::SyncCtx, @ref holoflow::core::AsyncPushCtx,
+///   @ref holoflow::core::AsyncPopCtx
+/// - Control flow: @ref holoflow::core::OpResult
+/// - Task interfaces: @ref holoflow::core::ITask, @ref
+///   holoflow::core::ISyncTask, @ref holoflow::core::IAsyncTask
+/// - Factories: @ref holoflow::core::ITaskFactory,
+///   @ref holoflow::core::ISyncTaskFactory, @ref holoflow::core::IAsyncTaskFactory
+/// - Inference result: @ref holoflow::core::InferResult
 ///
-/// @section ownership Ownership model
-/// - By default, tensor views in contexts are non-owning views into externally
-///   allocated buffers.
-/// - Some tasks may require ownership of certain inputs or outputs. For those
-///   indices:
-/// - The scheduler calls @ref holoflow::core::ITask::acquire_input() to obtain
-///   a writable view into an owned input slot.
-/// - The task fills @ref holoflow::core::SyncCtx::outputs or
-///   @ref holoflow::core::AsyncPopCtx::outputs with mirrors into owned output
-///   buffers when producing results.
-/// - The scheduler must later call
-///   @ref holoflow::core::ITask::release_outputs() to release
-///   the last produced outputs when it is done forwarding them downstream.
-/// - This design assumes SPSC (single producer/single consumer) semantics, so
-///   only one acquired input slot and one unreleased output group exist at any
-///   given time.
+/// @section lifecycle Lifecycle (single source of truth)
+/// - **Inputs**: Scheduler provides views. For owned inputs, it must call
+///   @ref holoflow::core::ITask::acquire_input() and place the returned view in
+///   the context.
+/// - **Execution**:
+///   - Sync: scheduler calls @ref holoflow::core::ISyncTask::execute().
+///   - Async push: scheduler calls @ref holoflow::core::IAsyncTask::try_push().
+///   - Async pop: scheduler calls @ref holoflow::core::IAsyncTask::try_pop().
+/// - **Outputs**: Task writes views to the context. For owned outputs the task
+///   overwrites slots with owned views. After downstream use, the scheduler
+///   must call @ref holoflow::core::ITask::release_output() per owned slot.
+/// - **Cancellation**: cooperative via `cancelled`.
 ///
-/// @section error_handling Error handling
-/// - Errors are signalled via exceptions for invalid indices, shape mismatches,
-///   or internal failures.
-/// - @ref holoflow::core::OpResult is used strictly for control-flow outcomes:
-///   not-ready, cancellation, or end-of-stream.
+/// @section ownership Ownership
+/// - Acquire/release apply only to indices marked owned by factory inference.
+/// - Calling acquire/release on non-owned indices is undefined.
+/// - At most one acquired input group and one unreleased output group exist at
+///   a time under SPSC assumptions.
+/// - @todo Define policy for discarding an acquired input on cancellation
+///   before use (abort API vs implicit discard vs push-then-drop vs aggregation
+///   commit).
 ///
-/// @section todos TODOs
-/// @todo Clarify the policy when an owned input has been acquired via
-/// @ref holoflow::core::ITask::acquire_input() but execution should be
-/// cancelled before
-/// @ref holoflow::core::IAsyncTask::try_push() is called. Possible
-/// options:
-/// - Add an explicit @c abort_input(index) to roll back WRITING -> FREE
-///   state.
-/// - Implicitly discard uncommitted slots on cancellation.
-/// - Require scheduler to @c try_push() and let the task drop the slot.
-/// - Extend API for multi-slot aggregation tasks (N -> 1), where explicit
-///   commit may be needed.
-/// - Define how EOF interacts with owned inputs that were acquired but not yet
-///   pushed.
+/// @section errors Errors vs control flow
+/// - Exceptions report validation/runtime errors (indices, shapes, allocation,
+///   internal failures).
+/// - @ref holoflow::core::OpResult is only for control flow: NotReady,
+///   Cancelled, Eof.
+///
+/// @section concurrency Concurrency
+/// - Assumed SPSC for async tasks. MPMC is undefined behavior.
+/// - @todo Document/extend semantics if MPMC is added later.
 
 #pragma once
 
 #include <atomic>
 #include <cuda_runtime.h>
+#include <memory>
+#include <nlohmann/json.hpp>
 #include <optional>
 #include <span>
 #include <vector>
 
+#include "driver_types.h"
 #include "holoflow/core/tensor.hh"
 
 namespace holoflow::core {
 
 /// Runtime execution context for a synchronous task.
 struct SyncCtx {
-  std::span<TView>   inputs;    ///< Input tensor views
-  std::span<TView>   outputs;   ///< Output tensor views
-  std::atomic<bool> *cancelled; ///< Cancellation flag
+  std::span<TView>   inputs;    ///< Scheduler-provided input views; some may be owned.
+  std::span<TView>   outputs;   ///< Output slots; owned outputs are written by the task.
+  std::atomic<bool> *cancelled; ///< Non-null cancellation flag.
 };
 
 /// Runtime execution context for an asynchronous task push operation.
 struct AsyncPushCtx {
-  std::span<TView>   inputs;    ///< Input tensor views
-  std::atomic<bool> *cancelled; ///< Cancellation flag
+  std::span<TView>   inputs;    ///< Scheduler-provided input views; some may be owned.
+  std::atomic<bool> *cancelled; ///< Non-null cancellation flag.
 };
 
 /// Runtime execution context for an asynchronous task pop operation.
 struct AsyncPopCtx {
-  std::span<TView>   outputs;   ///< Output tensor views
-  std::atomic<bool> *cancelled; ///< Cancellation flag
+  std::span<TView>   outputs;   ///< Output slots; owned outputs are written by the task.
+  std::atomic<bool> *cancelled; ///< Non-null cancellation flag.
 };
 
 /// Possible expected outcomes of a task operation.
 enum class OpResult : uint8_t {
-  Ok,        ///< Operation succeeded
-  NotReady,  ///< Operation not ready to proceed
-  Cancelled, ///< Operation was cancelled
-  Eof,       ///< End of data stream
+  Ok,        ///< Completed successfully.
+  NotReady,  ///< Nothing to do now; caller may retry.
+  Cancelled, ///< Aborted due to cancellation.
+  Eof,       ///< End of stream.
 };
 
-/// Interface for a task. A task is a computation unit that processes zero,
-/// one, or more input tensors and produces zero, one, or more output tensors.
+/// @brief Abstract base interface for tasks with optional tensor ownership.
 ///
-/// A task may be synchronous or asynchronous. See @ref ISyncTask and @ref
-/// IAsyncTask for more details.
+/// Provides ownership hooks for inputs and outputs. Only indices declared as
+/// owned by the task (via factory inference) may be acquired or released.
 ///
-/// By default, inputs and outputs are assumed to be non-owning views into
-/// external tensor data. However, tasks may also take ownership of one or
-/// more input or output tensors.
+/// @warning Calling acquire/release on non-owned indices is undefined behavior.
+/// @warning Not calling acquire/release on owned indices is undefined behavior.
 ///
-/// In that case, the task should use:
-/// - @ref ITask::acquire_input to expose a view into the owned tensor data,
-/// - @ref ITask::release_outputs to release ownership of the output tensor
-///   data.
-///
-/// Releasing inputs and acquiring outputs are specific to the task kind
-/// (Sync/Async).
+/// @par Ownership lifecycle
+/// - Inputs (owned):
+///   - Acquire with @ref acquire_input(int) before execution or push.
+///   - The acquired view must not be used after the operation returns.
+/// - Outputs (owned):
+///   - The task assigns owned output views into the context during execute/pop.
+///   - After downstream consumption, scheduler calls @ref release_output(int).
+/// @todo Define rollback semantics on cancellation before use.
 class ITask {
 public:
   virtual ~ITask() = default;
 
-  /// Acquire a view into an input tensor.
-  /// The release of the view is specific to the task kind (Sync/Async).
-  /// @param index The index of the input tensor.
-  /// @return A view into the input tensor, or an empty optional if it cannot be
-  /// acquired yet.
-  /// @warning The acquired view may not be used after release.
+  /// Acquire a writable view for an **owned** input index.
+  /// Valid only for indices marked owned by inference.
+  /// The view is transient and must not outlive the operation.
+  /// @returns view or std::nullopt if not currently acquirable.
+  /// @throws std::out_of_range on bad index.
   [[nodiscard]] virtual std::optional<TView> acquire_input(int index);
 
-  /// Release a view into an output tensor.
-  /// The allocation of the view is specific to the task kind (Sync/Async).
-  /// @param index The index of the output tensor.
-  /// @warning The released view may not be used after calling this function.
-  virtual void release_outputs(int index);
+  /// Release a produced **owned** output at @p index after downstream use.
+  /// @throws std::out_of_range on bad index.
+  virtual void release_output(int index);
 };
 
-/// Interface for a synchronous task. A synchronous task is a computation unit
-/// that processes input tensors and produces output tensors in a blocking
-/// manner.
+/// @brief Interface for synchronous (blocking) tasks.
 ///
-/// The lifecyle of this task should be as follow:
-/// - acquire all owned inputs
-/// - use inputs (owned or not)
-/// - update owned inputs in context
-/// - execute the task
-/// - use outputs (owned or not)
-/// - release all owned outputs
+/// A synchronous task consumes inputs and produces outputs within a single
+/// blocking call to @ref execute().
+///
+/// @par Synchronous lifecycle
+/// 1. Scheduler optionally acquires owned inputs via
+///    @ref ITask::acquire_input(int).
+/// 2. Scheduler calls @ref execute().
+/// 3. Task may write owned output views into @ref SyncCtx::outputs,
+///    overwriting the corresponding slots.
+/// 4. Scheduler consumes outputs and calls @ref ITask::release_output(int)
+///    for each owned output slot.
+///
+/// @note Inputs acquired via @ref ITask::acquire_input(int) must not be used
+///       after @ref execute() returns.
 class ISyncTask : public ITask {
 public:
   virtual ~ISyncTask() = default;
 
-  /// Execute the task. If the task has owned input tensors, this function is
-  /// responsible for releasing them.
-  ///
-  /// If the task has owned output tensors, this function is responsible for
-  /// acquiring them and updating the output views in the context.
-  ///
-  /// @param ctx The context for the execution.
-  /// @return The result of the execution.
-  /// @warning The acquired input views may not be used after calling this
-  /// function.
-  /// @warning Slots in `ctx.outputs` will be reassigned for owned outputs.
+  /// Execute in a blocking manner.
+  /// Overwrites owned output slots in ctx.outputs.
+  /// @returns control-flow result; errors via exceptions.
   [[nodiscard]] virtual OpResult execute(SyncCtx &ctx) = 0;
 };
 
-/// Interface for an asynchronous task. An asynchronous task is a computation
-/// unit that processes input tensors and produces output tensors in a
-/// non-blocking manner.
+/// @brief Interface for asynchronous (decoupled) tasks.
 ///
-/// The input consumption and output production may
-/// occur concurrently.
+/// Asynchronous tasks split their interaction into a producer-side push and a
+/// consumer-side pop. Push submits inputs. Pop retrieves available outputs.
 ///
-/// The lifecyle of the producer should be as follow:
-/// - acquire all owned inputs
-/// - use inputs (owned or not)
-/// - update owned inputs in context
-/// - execute the task push operation
+/// @par Push lifecycle (producer)
+/// 1. Scheduler optionally acquires owned inputs via
+///    @ref ITask::acquire_input(int).
+/// 2. Scheduler calls @ref try_push().
+/// 3. Task consumes submitted inputs.
 ///
-/// The lifecyle of the consumer should be as follow:
-/// - execute the task pop operation
-/// - use outputs (owned or not)
-/// - release all owned outputs
+/// @par Pop lifecycle (consumer)
+/// 1. Scheduler calls @ref try_pop().
+/// 2. On success, task writes outputs, overwriting slots for owned outputs.
+/// 3. Scheduler consumes outputs and calls @ref ITask::release_output(int) for
+///    each owned output slot.
 class IAsyncTask : public ITask {
 public:
   virtual ~IAsyncTask() = default;
 
-  /// Try to push input tensors into the task.
-  ///
-  /// If the task has owned input tensors, this function is responsible for
-  /// releasing them.
-  /// @param ctx The context for the push operation.
-  /// @return The result of the push operation.
-  /// @warning The acquired input views may not be used after calling this
-  /// function.
+  /// Producer-side submission.
+  /// @returns control-flow result; errors via exceptions.
   [[nodiscard]] virtual OpResult try_push(AsyncPushCtx &ctx) = 0;
 
-  /// Try to pop output tensors from the task.
-  ///
-  /// If the task has owned output tensors, this function is responsible for
-  /// acquiring them and updating the output views in the context.
-  /// @param ctx The context for the pop operation.
-  /// @return The result of the pop operation.
-  /// @warning Slots in `ctx.outputs` will be reassigned for owned outputs.
+  /// Consumer-side retrieval.
+  /// Overwrites owned output slots in ctx.outputs.
+  /// @returns control-flow result; errors via exceptions.
   [[nodiscard]] virtual OpResult try_pop(AsyncPopCtx &ctx) = 0;
 };
 
 /// Describes an in-place link between an input and output tensor.
 struct InPlace {
-  int in_idx;  ///< Index of the input tensor
-  int out_idx; ///< Index of the output tensor
+  int in_idx;  ///< Input index reused/aliased.
+  int out_idx; ///< Output index reusing input storage.
+};
+
+/// Kind of task: synchronous or asynchronous.
+enum class TaskKind {
+  Sync,  /// Synchronous
+  Async, /// Asynchronous
 };
 
 /// Result of task inference from a factory infer function. This provides
@@ -235,6 +212,95 @@ struct InferResult {
   std::vector<InPlace> in_place;      ///< In-place input-output tensor pairs
   std::vector<bool>    owned_inputs;  ///< Ownership status of input tensors
   std::vector<bool>    owned_outputs; ///< Ownership status of output tensors
+  TaskKind             kind;          ///< Kind of task (sync or async)
+};
+
+/// Context for sync task creation.
+struct SyncCreateCtx {
+  cudaStream_t stream = static_cast<cudaStream_t>(0); ///< CUDA stream for task execution
+};
+
+/// Context for async task creation.
+struct AsyncCreateCtx {
+  /// CUDA streams for producer side.
+  cudaStream_t producer_stream = static_cast<cudaStream_t>(0);
+  /// CUDA streams for consumer side.
+  cudaStream_t consumer_stream = static_cast<cudaStream_t>(0);
+};
+
+/// Base factory interface. Provides common inference API.
+class ITaskFactory {
+public:
+  virtual ~ITaskFactory() = default;
+
+  /// Infer metadata for a task without constructing it.
+  ///
+  /// @param input_descs  Upstream input tensor descriptors.
+  /// @param jsettings    Task configuration (read-only view).
+  /// @return             Inference result (I/O descs, ownership, in-place).
+  /// @throws std::invalid_argument on inference failure.
+  [[nodiscard]]
+  virtual InferResult infer(std::span<const TDesc> input_descs,
+                            const nlohmann::json  &jsettings) const = 0;
+};
+
+/// Factory for synchronous tasks.
+class ISyncTaskFactory : public ITaskFactory {
+public:
+  virtual ~ISyncTaskFactory() = default;
+
+  /// Create a new synchronous task instance.
+  ///
+  /// @param input_descs  Upstream input tensor descriptors.
+  /// @param jsettings    Task configuration.
+  /// @param ctx          Runtime handles (sync stream).
+  /// @return             New task ready for `ISyncTask::execute()`.
+  virtual std::unique_ptr<ISyncTask> create(std::span<const TDesc> input_descs,
+                                            const nlohmann::json  &jsettings,
+                                            const SyncCreateCtx   &ctx) const = 0;
+
+  /// Update or replace an existing synchronous task.
+  ///
+  /// Use when inputs/settings change. Reuse internal allocations if possible.
+  /// Otherwise, construct a replacement and return it.
+  ///
+  /// @param old_task     Existing task to reuse or replace.
+  /// @param input_descs  New input descriptors.
+  /// @param jsettings    New configuration.
+  /// @param ctx          Runtime handles (sync stream).
+  /// @return             Updated task. `old_task` must not be used afterwards.
+  virtual std::unique_ptr<ISyncTask> update(std::unique_ptr<ISyncTask> old_task,
+                                            std::span<const TDesc>     input_descs,
+                                            const nlohmann::json      &jsettings,
+                                            const SyncCreateCtx       &ctx) const = 0;
+};
+
+/// Factory for asynchronous tasks.
+class IAsyncTaskFactory : public ITaskFactory {
+public:
+  virtual ~IAsyncTaskFactory() = default;
+
+  /// Create a new asynchronous task instance.
+  ///
+  /// @param input_descs  Upstream input tensor descriptors.
+  /// @param jsettings    Task configuration.
+  /// @param ctx          Runtime handles (producer and consumer streams).
+  /// @return             New task ready for `try_push()/try_pop()`
+  virtual std::unique_ptr<IAsyncTask> create(std::span<const TDesc> input_descs,
+                                             const nlohmann::json  &jsettings,
+                                             const AsyncCreateCtx  &ctx) const = 0;
+
+  /// Update or replace an existing asynchronous task.
+  ///
+  /// @param old_task     Existing task to reuse or replace.
+  /// @param input_descs  New input descriptors.
+  /// @param jsettings    New configuration.
+  /// @param ctx          Runtime handles (producer and consumer streams).
+  /// @return             Updated task. `old_task` must not be used afterwards.
+  virtual std::unique_ptr<IAsyncTask> update(std::unique_ptr<IAsyncTask> old_task,
+                                             std::span<const TDesc>      input_descs,
+                                             const nlohmann::json       &jsettings,
+                                             const AsyncCreateCtx       &ctx) const = 0;
 };
 
 } // namespace holoflow::core
