@@ -63,8 +63,8 @@ struct TDesc {
 
 /// A non-owning view into tensor data.
 struct TView {
-  std::byte  *data; ///< Pointer to the tensor data
-  const TDesc desc; ///< Description of the tensor
+  std::byte *data; ///< Pointer to the tensor data
+  TDesc      desc; ///< Description of the tensor
 };
 
 /// A view into constant tensor data.

@@ -17,7 +17,7 @@
 #include <limits>
 #include <stdexcept>
 
-#include "core/bug.hh"
+#include "bug.hh"
 
 namespace holoflow::core {
 
