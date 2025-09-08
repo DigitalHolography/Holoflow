@@ -58,12 +58,13 @@ PRIVATE
 )
 
 target_link_directories(${TARGET}
-PRIVATE
+PUBLIC
     $ENV{CUDA_PATH}/lib/x64
 )
 
 target_link_libraries(${TARGET}
+PUBLIC
     project_options
-    cudart_static
+    cudart
     spdlog::spdlog
 )

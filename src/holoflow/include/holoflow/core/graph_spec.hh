@@ -34,11 +34,11 @@ struct EdgeSpec {
 };
 
 /// Directed graph specification of a computation pipeline.
-using GraphSpec = boost::adjacency_list<boost::vecS,      // OutEdgeList
-                                        boost::vecS,      // VertexList
-                                        boost::directedS, // Directed graph
-                                        NodeSpec,         // Vertex properties
-                                        EdgeSpec          // Edge properties
+using GraphSpec = boost::adjacency_list<boost::vecS,           // OutEdgeList
+                                        boost::vecS,           // VertexList
+                                        boost::bidirectionalS, // Directed graph
+                                        NodeSpec,              // Vertex properties
+                                        EdgeSpec               // Edge properties
                                         >;
 
 /// Options for serializing a graph specification.

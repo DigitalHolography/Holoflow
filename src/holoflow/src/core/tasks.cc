@@ -13,3 +13,21 @@
 // limitations under the License.
 
 #include "holoflow/core/tasks.hh"
+
+namespace holoflow::core {
+
+std::unique_ptr<ISyncTask> ISyncTaskFactory::update(std::unique_ptr<ISyncTask>,
+                                                    std::span<const TDesc> input_descs,
+                                                    const nlohmann::json  &jsettings,
+                                                    const SyncCreateCtx   &ctx) const {
+  return create(input_descs, jsettings, ctx);
+}
+
+std::unique_ptr<IAsyncTask> IAsyncTaskFactory::update(std::unique_ptr<IAsyncTask>,
+                                                      std::span<const TDesc> input_descs,
+                                                      const nlohmann::json  &jsettings,
+                                                      const AsyncCreateCtx  &ctx) const {
+  return create(input_descs, jsettings, ctx);
+}
+
+} // namespace holoflow::core

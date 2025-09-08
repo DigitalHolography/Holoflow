@@ -13,3 +13,60 @@
 // limitations under the License.
 
 #include "holoflow/core/registry.hh"
+
+#include <stdexcept>
+#include <utility>
+
+namespace holoflow::core {
+
+void Registry::register_sync(const Key &kind, SyncPtr factory) {
+  if (!factory) {
+    throw std::invalid_argument("null sync factory");
+  }
+  if (sync_factories_.find(kind) != sync_factories_.end() ||
+      async_factories_.find(kind) != async_factories_.end()) {
+    throw std::invalid_argument("factory kind already registered: " + kind);
+  }
+  sync_factories_.emplace(kind, std::move(factory));
+}
+
+void Registry::register_async(const Key &kind, AsyncPtr factory) {
+  if (!factory) {
+    throw std::invalid_argument("null async factory");
+  }
+  if (sync_factories_.find(kind) != sync_factories_.end() ||
+      async_factories_.find(kind) != async_factories_.end()) {
+    throw std::invalid_argument("factory kind already registered: " + kind);
+  }
+  async_factories_.emplace(kind, std::move(factory));
+}
+
+const ISyncTaskFactory &Registry::get_sync(const Key &kind) const {
+  auto it = sync_factories_.find(kind);
+  if (it == sync_factories_.end()) {
+    throw std::out_of_range("unknown sync kind: " + kind);
+  }
+  return *(it->second);
+}
+
+const IAsyncTaskFactory &Registry::get_async(const Key &kind) const {
+  auto it = async_factories_.find(kind);
+  if (it == async_factories_.end()) {
+    throw std::out_of_range("unknown async kind: " + kind);
+  }
+  return *(it->second);
+}
+
+bool Registry::is_sync_registered(const Key &kind) const noexcept {
+  return sync_factories_.find(kind) != sync_factories_.end();
+}
+
+bool Registry::is_async_registered(const Key &kind) const noexcept {
+  return async_factories_.find(kind) != async_factories_.end();
+}
+
+bool Registry::is_registered(const Key &kind) const noexcept {
+  return is_sync_registered(kind) || is_async_registered(kind);
+}
+
+} // namespace holoflow::core

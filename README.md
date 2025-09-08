@@ -119,7 +119,10 @@ build\msvc-multi\src\holovibes\Release\Release\holovibes.exe --help
 ```
 
 ## Test
-> TODO
+The individual tests can be run from cmd:
+```powershell
+build\msvc-multi\test\holoflow\Debug\holoflow_test.exe
+```
 
 ## Benchmarks
 > TODO

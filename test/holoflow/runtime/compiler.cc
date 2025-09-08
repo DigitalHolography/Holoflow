@@ -12,4 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <gtest/gtest.h>
+
 #include "holoflow/runtime/compiler.hh"
+
+TEST(MathTest, Addition) { EXPECT_EQ(2 + 2, 4); }

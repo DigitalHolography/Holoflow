@@ -12,3 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+set(TARGET holoflow_test)
+
+file(GLOB_RECURSE HOLOFLOW_TEST_SOURCES 
+    ${CMAKE_CURRENT_SOURCE_DIR}/*.cc
+)
+
+add_executable(${TARGET} 
+    ${HOLOFLOW_TEST_SOURCES}
+)
+
+target_link_libraries(${TARGET}
+PRIVATE
+    project_options
+    holoflow
+    gtest_main
+)
+
+include(GoogleTest)
+gtest_discover_tests(${TARGET})

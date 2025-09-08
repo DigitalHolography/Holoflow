@@ -45,6 +45,18 @@ public:
   /// @throw std::out_of_range if `kind` is not registered.
   const IAsyncTaskFactory &get_async(const Key &kind) const;
 
+  /// Check whether a synchronous factory with the given key is registered.
+  /// @return true if a synchronous factory exists for `kind`
+  bool is_sync_registered(const Key &kind) const noexcept;
+
+  /// Check whether an asynchronous factory with the given key is registered.
+  /// @return true if an asynchronous factory exists for `kind`.
+  bool is_async_registered(const Key &kind) const noexcept;
+
+  /// Check whether any factory (synchronous or asynchronous) with the given key is registered.
+  /// @return true if either a synchronous or asynchronous factory exists for `kind`.
+  bool is_registered(const Key &kind) const noexcept;
+
 private:
   std::map<Key, SyncPtr>  sync_factories_;  ///< Registered synchronous task factories.
   std::map<Key, AsyncPtr> async_factories_; ///< Registered asynchronous task factories.

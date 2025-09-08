@@ -46,11 +46,11 @@ struct EdgePlan {
   int            tid;  ///< Tensor ID.
 };
 
-using GraphPlan = boost::adjacency_list<boost::vecS,      // OutEdgeList
-                                        boost::vecS,      // VertexList
-                                        boost::directedS, // Directed graph
-                                        NodePlan,         // Vertex properties
-                                        EdgePlan          // Edge properties
+using GraphPlan = boost::adjacency_list<boost::vecS,           // OutEdgeList
+                                        boost::vecS,           // VertexList
+                                        boost::bidirectionalS, // Directed graph
+                                        NodePlan,              // Vertex properties
+                                        EdgePlan               // Edge properties
                                         >;
 
 struct ExecResouces {
