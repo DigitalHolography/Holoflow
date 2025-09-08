@@ -17,10 +17,12 @@
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graph_traits.hpp>
 #include <chrono>
+#include <vector>
 #include <windows.h>
 #include <winnt.h>
 
 #include "boost/graph/properties.hpp"
+#include "boost/range/iterator_range_core.hpp"
 #include "bug.hh"
 #include "cuda_runtime_api.h"
 #include "curaii/cuda.hh"
@@ -30,9 +32,9 @@
 
 namespace holoflow::runtime {
 
-Scheduler::Scheduler(const GraphPlan &graph, ExecResouces &resources)
-    : graph_(graph), res_(resources) {
-  build_sections();
+Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
+                     ExecResouces &resources)
+    : graph_(graph), sections_(sections), res_(resources) {
   build_nodes_rts();
 }
 
@@ -73,6 +75,44 @@ void Scheduler::wait() {
   threads_.clear();
   running_.store(false);
   // TODO: Is this really the best place to reset running_?
+}
+
+bool Scheduler::is_running() const { return running_.load(); }
+
+bool Scheduler::stop_requested() const { return stop_.load(); }
+
+void Scheduler::build_nodes_rts() {
+  node_rts_.resize(boost::num_vertices(graph_));
+
+  for (auto v : boost::make_iterator_range(boost::vertices(graph_))) {
+    const auto idx  = boost::get(boost::vertex_index, graph_, v);
+    const auto np   = graph_[v];
+    auto      *task = res_.tasks.at(np.id).get();
+    HOLOFLOW_CHECK(task != nullptr, "Task for node {} is null", np.spec.name);
+
+    if (auto *st = dynamic_cast<core::ISyncTask *>(task)) {
+      SyncRt srt;
+      srt.task          = st;
+      srt.in_views      = std::vector<core::TView>(np.infer.input_descs.size());
+      srt.out_views     = std::vector<core::TView>(np.infer.output_descs.size());
+      srt.ctx.inputs    = srt.in_views;
+      srt.ctx.outputs   = srt.out_views;
+      srt.ctx.cancelled = &stop_;
+      node_rts_.at(idx) = srt;
+    } else if (auto *at = dynamic_cast<core::IAsyncTask *>(task)) {
+      AsyncRt art;
+      art.task           = at;
+      art.in_views       = std::vector<core::TView>(np.infer.input_descs.size());
+      art.out_views      = std::vector<core::TView>(np.infer.output_descs.size());
+      art.pctx.inputs    = art.in_views;
+      art.pctx.cancelled = &stop_;
+      art.xctx.outputs   = art.out_views;
+      art.xctx.cancelled = &stop_;
+      node_rts_.at(idx)  = art;
+    } else {
+      HOLOFLOW_BUG("Task for node {} is neither sync nor async", np.spec.name);
+    }
+  }
 }
 
 void Scheduler::run_section(int section_id) {
@@ -146,7 +186,6 @@ void Scheduler::run_section(int section_id) {
     for (auto v : sec.async_prod) {
       refresh_views_async_prod(v);
       run_async_prod(v);
-      refresh_outputs_async_prod(v);
     }
 
     // Release owned outputs.
@@ -255,7 +294,8 @@ void Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
   const auto &np  = graph_[v];
   auto       &nrt = node_rts_.at(idx);
 
-  HOLOFLOW_CHECK(std::holds_alternative<SyncRt>(nrt), "run_sync called on an asynchronous node");
+  auto is_sync = std::holds_alternative<SyncRt>(nrt);
+  HOLOFLOW_CHECK(is_sync, "run_sync called on an asynchronous node");
   auto &srt = std::get<SyncRt>(nrt);
 
   logger()->trace("Executing node '{}'", np.spec.name);
@@ -287,17 +327,120 @@ void Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
   srt.m.num_execs++;
 }
 
-void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) { HOLOFLOW_UNIMPLEMENTED(); }
+void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
+  using clock     = std::chrono::high_resolution_clock;
+  const auto  idx = boost::get(boost::vertex_index, graph_, v);
+  const auto &np  = graph_[v];
+  auto       &nrt = node_rts_.at(idx);
 
-void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) { HOLOFLOW_UNIMPLEMENTED(); }
+  auto is_async = std::holds_alternative<AsyncRt>(nrt);
+  HOLOFLOW_CHECK(is_async, "run_async_cons called on a synchronous node");
+  auto &art = std::get<AsyncRt>(nrt);
 
-void Scheduler::refresh_outputs_sync(GraphPlan::vertex_descriptor v) { HOLOFLOW_UNIMPLEMENTED(); }
+  logger()->trace("Executing node '{}'", np.spec.name);
+  auto t0 = clock::now();
+  auto r  = art.task->try_pop(art.xctx);
+  while (r == core::OpResult::NotReady) {
+    if (stop_.load())
+      return;
+    r = art.task->try_pop(art.xctx);
+  }
+  auto t1 = clock::now();
+
+  switch (r) {
+  case core::OpResult::Cancelled:
+    logger()->debug("Node '{}' execution cancelled", np.spec.name);
+    stop_.store(true);
+    break;
+  case core::OpResult::Eof:
+    logger()->debug("Node '{}' reached end of stream", np.spec.name);
+    stop_.store(true);
+    break;
+  case core::OpResult::NotReady:
+    HOLOFLOW_UNREACHABLE();
+    break;
+  case core::OpResult::Ok:
+    // All good.
+    break;
+  }
+
+  using msf = std::chrono::duration<double, std::milli>;
+  art.m.total_pop_ms += std::chrono::duration_cast<msf>(t1 - t0).count();
+  art.m.num_pops++;
+}
+
+void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
+  using clock     = std::chrono::high_resolution_clock;
+  const auto  idx = boost::get(boost::vertex_index, graph_, v);
+  const auto &np  = graph_[v];
+  auto       &nrt = node_rts_.at(idx);
+
+  auto is_async = std::holds_alternative<AsyncRt>(nrt);
+  HOLOFLOW_CHECK(is_async, "run_async_prod called on a synchronous node");
+  auto &art = std::get<AsyncRt>(nrt);
+
+  logger()->trace("Executing node '{}'", np.spec.name);
+  auto t0 = clock::now();
+  auto r  = art.task->try_push(art.pctx);
+  while (r == core::OpResult::NotReady) {
+    if (stop_.load())
+      return;
+    r = art.task->try_push(art.pctx);
+  }
+  auto t1 = clock::now();
+
+  switch (r) {
+  case core::OpResult::Cancelled:
+    logger()->debug("Node '{}' execution cancelled", np.spec.name);
+    stop_.store(true);
+    break;
+  case core::OpResult::Eof:
+    logger()->debug("Node '{}' reached end of stream", np.spec.name);
+    stop_.store(true);
+    break;
+  case core::OpResult::NotReady:
+    HOLOFLOW_UNREACHABLE();
+    break;
+  case core::OpResult::Ok:
+    // All good.
+    break;
+  }
+
+  using msf = std::chrono::duration<double, std::milli>;
+  art.m.total_push_ms += std::chrono::duration_cast<msf>(t1 - t0).count();
+  art.m.num_pushes++;
+}
+
+void Scheduler::refresh_outputs_sync(GraphPlan::vertex_descriptor v) {
+  const auto  idx = boost::get(boost::vertex_index, graph_, v);
+  const auto &np  = graph_[v];
+  auto       &nrt = node_rts_.at(idx);
+
+  auto is_sync = std::holds_alternative<SyncRt>(nrt);
+  HOLOFLOW_CHECK(is_sync, "refresh_outputs_sync called on an asynchronous node");
+  auto &srt = std::get<SyncRt>(nrt);
+
+  for (size_t i = 0; i < np.out_tids.size(); i++) {
+    if (np.infer.owned_outputs.at(i)) {
+      tviews_.at(np.out_tids.at(i)) = srt.out_views.at(i);
+    }
+  }
+}
 
 void Scheduler::refresh_outputs_async_cons(GraphPlan::vertex_descriptor v) {
-  HOLOFLOW_UNIMPLEMENTED();
+  const auto  idx = boost::get(boost::vertex_index, graph_, v);
+  const auto &np  = graph_[v];
+  auto       &nrt = node_rts_.at(idx);
+
+  auto is_async = std::holds_alternative<AsyncRt>(nrt);
+  HOLOFLOW_CHECK(is_async, "refresh_outputs_async_cons called on a synchronous node");
+  auto &art = std::get<AsyncRt>(nrt);
+
+  for (size_t i = 0; i < np.out_tids.size(); i++) {
+    if (np.infer.owned_outputs.at(i)) {
+      tviews_.at(np.out_tids.at(i)) = art.out_views.at(i);
+    }
+  }
 }
 
-void Scheduler::refresh_outputs_async_prod(GraphPlan::vertex_descriptor v) {
-  HOLOFLOW_UNIMPLEMENTED();
-}
 } // namespace holoflow::runtime
