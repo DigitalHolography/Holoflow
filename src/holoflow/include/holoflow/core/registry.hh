@@ -45,6 +45,11 @@ public:
   /// @throw std::out_of_range if `kind` is not registered.
   const IAsyncTaskFactory &get_async(const Key &kind) const;
 
+  /// Lookup any factory (synchronous or asynchronous) by kind.
+  /// @return A reference to the registered factory.
+  /// @throw std::out_of_range if `kind` is not registered.
+  const ITaskFactory &get(const Key &kind) const;
+
   /// Check whether a synchronous factory with the given key is registered.
   /// @return true if a synchronous factory exists for `kind`
   bool is_sync_registered(const Key &kind) const noexcept;

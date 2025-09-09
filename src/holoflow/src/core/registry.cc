@@ -57,6 +57,16 @@ const IAsyncTaskFactory &Registry::get_async(const Key &kind) const {
   return *(it->second);
 }
 
+const ITaskFactory &Registry::get(const Key &kind) const {
+  if (is_sync_registered(kind)) {
+    return get_sync(kind);
+  }
+  if (is_async_registered(kind)) {
+    return get_async(kind);
+  }
+  throw std::out_of_range("unknown kind: " + kind);
+}
+
 bool Registry::is_sync_registered(const Key &kind) const noexcept {
   return sync_factories_.find(kind) != sync_factories_.end();
 }

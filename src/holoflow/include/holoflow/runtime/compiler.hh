@@ -38,25 +38,17 @@ public:
 private:
   void check_duplicate_names() const;
   void check_duplicate_edge_dst() const;
+  void check_single_source() const;
+  void check_single_input() const;
   void check_factories_registered() const;
   void build_graph_plan();
-  void check_single_source() const;
-  void check_sources_are_orphan() const;
-  void check_no_childless_sources() const;
-  void check_no_orphan_sinks() const;
-  void check_sinks_are_childless() const;
-  void check_no_orphan_syncs() const;
-  void check_no_childless_syncs() const;
-  void check_no_orphan_asyncs() const;
-  void check_no_childless_asyncs() const;
-  void assign_cuda_streams();
   void check_typing();
-  void check_single_input() const;
   void check_buffer_temporal_consistency();
   void check_buffer_spatial_consistency();
   void assign_tensor_ids();
   void create_tensor_buffers();
   void create_tensor_views();
+  void assign_cuda_streams();
   void create_nodes_collection();
   void get_pes_roots();
   void assign_inputs_outputs();
