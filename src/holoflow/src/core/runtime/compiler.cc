@@ -18,10 +18,15 @@
 #include <array>
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/graph/depth_first_search.hpp>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 #include "boost/range/iterator_range_core.hpp"
 #include "bug.hh"
+#include "curaii/cuda.hh"
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
@@ -29,7 +34,34 @@
 
 namespace holoflow::runtime {
 
-void Compiler::check_duplicate_names() const {
+Compiler::Compiler(core::Registry &registry, const std::filesystem::path &log_dir)
+    : registry_(registry), log_dir_(log_dir) {}
+
+std::unique_ptr<CompilerOutput> Compiler::compile(const core::GraphSpec          &gspec,
+                                                  std::unique_ptr<CompilerOutput> prev) {
+  gspec_ = gspec;
+  prev_  = std::move(prev);
+  out_   = std::make_unique<CompilerOutput>();
+
+  check_duplicate_names();
+  check_duplicate_edge_dst();
+  check_factories_registered();
+  check_single_source();
+  check_single_input();
+  build_graph_plan();
+  check_typing();
+  assign_tensor_ids();
+  check_buffer_temporal_consistency();
+  check_buffer_spatial_consistency();
+  create_tensor_buffers();
+  create_sections();
+  assign_cuda_streams();
+  create_nodes_collection();
+
+  return std::move(out_);
+}
+
+void Compiler::check_duplicate_names() {
   std::set<std::string> names;
   for (const auto &v : boost::make_iterator_range(boost::vertices(gspec_))) {
     const auto &ns = gspec_[v];
@@ -39,7 +71,7 @@ void Compiler::check_duplicate_names() const {
   }
 }
 
-void Compiler::check_duplicate_edge_dst() const {
+void Compiler::check_duplicate_edge_dst() {
   std::set<std::string> dsts;
   for (const auto &e : boost::make_iterator_range(boost::edges(gspec_))) {
     const auto &es    = gspec_[e];
@@ -51,7 +83,7 @@ void Compiler::check_duplicate_edge_dst() const {
   }
 }
 
-void Compiler::check_factories_registered() const {
+void Compiler::check_factories_registered() {
   for (const auto &v : boost::make_iterator_range(boost::vertices(gspec_))) {
     const auto &ns = gspec_[v];
     if (!registry_.is_registered(ns.kind)) {
@@ -60,7 +92,7 @@ void Compiler::check_factories_registered() const {
   }
 }
 
-void Compiler::check_single_source() const {
+void Compiler::check_single_source() {
   int source_count = 0;
   for (const auto &v : boost::make_iterator_range(boost::vertices(gspec_))) {
     if (boost::in_degree(v, gspec_) == 0) {
@@ -75,7 +107,7 @@ void Compiler::check_single_source() const {
   }
 }
 
-void Compiler::check_single_input() const {
+void Compiler::check_single_input() {
   for (const auto &v : boost::make_iterator_range(boost::vertices(gspec_))) {
     if (boost::in_degree(v, gspec_) > 1) {
       const auto &np = gspec_[v];
@@ -91,17 +123,15 @@ void Compiler::build_graph_plan() {
 
   auto vertices = boost::make_iterator_range(boost::vertices(gspec_));
   auto edges    = boost::make_iterator_range(boost::edges(gspec_));
-  out_.graph    = GraphPlan();
-  int  nid      = 0;
+  out_->graph   = GraphPlan();
   VMap vmap;
 
   // Build vertices
   for (const auto &vs : vertices) {
     const auto &ns = gspec_[vs];
     NodePlan    np;
-    np.id   = nid++;
     np.spec = ns;
-    auto vp = boost::add_vertex(np, out_.graph);
+    auto vp = boost::add_vertex(np, out_->graph);
     vmap.insert({vs, vp});
   }
 
@@ -112,7 +142,7 @@ void Compiler::build_graph_plan() {
     const auto  vdstp = vmap.at(boost::target(e, gspec_));
     EdgePlan    ep;
     ep.spec = es;
-    boost::add_edge(vsrcp, vdstp, ep, out_.graph);
+    boost::add_edge(vsrcp, vdstp, ep, out_->graph);
   }
 }
 
@@ -160,16 +190,16 @@ void Compiler::check_typing() {
   };
 
   using ColorMap = std::vector<boost::default_color_type>;
-  ColorMap color_map(boost::num_vertices(out_.graph));
-  auto     color_map_p = boost::make_iterator_property_map(color_map.begin(),
-                                                           boost::get(boost::vertex_index, out_.graph));
+  ColorMap color_map(boost::num_vertices(out_->graph));
+  auto     color_map_p = boost::make_iterator_property_map(
+      color_map.begin(), boost::get(boost::vertex_index, out_->graph));
 
-  CheckTypingVisitor visitor(out_.graph, registry_);
-  for (auto v : boost::make_iterator_range(boost::vertices(out_.graph))) {
-    bool is_source = boost::in_degree(v, out_.graph) == 0;
+  CheckTypingVisitor visitor(out_->graph, registry_);
+  for (auto v : boost::make_iterator_range(boost::vertices(out_->graph))) {
+    bool is_source = boost::in_degree(v, out_->graph) == 0;
     if (is_source && color_map_p[v] == boost::white_color) {
       boost::queue<GraphPlan::vertex_descriptor> q;
-      boost::breadth_first_visit(out_.graph, v, q, visitor, color_map_p);
+      boost::breadth_first_visit(out_->graph, v, q, visitor, color_map_p);
     }
   }
 }
@@ -191,7 +221,7 @@ void Compiler::assign_tensor_ids() {
       }
 
       // Precompute in-place output tids
-      int              n_out = np.infer.output_descs.size();
+      int              n_out = static_cast<int>(np.infer.output_descs.size());
       std::vector<int> inplace_tids(n_out, -1);
       for (const auto &ip : np.infer.in_place) {
         inplace_tids.at(ip.out_idx) = input_tids.at(ip.in_idx);
@@ -222,30 +252,30 @@ void Compiler::assign_tensor_ids() {
   };
 
   using ColorMap = std::vector<boost::default_color_type>;
-  ColorMap color_map(boost::num_vertices(out_.graph));
-  auto     color_map_p = boost::make_iterator_property_map(color_map.begin(),
-                                                           boost::get(boost::vertex_index, out_.graph));
+  ColorMap color_map(boost::num_vertices(out_->graph));
+  auto     color_map_p = boost::make_iterator_property_map(
+      color_map.begin(), boost::get(boost::vertex_index, out_->graph));
 
-  AssignTensorIdsVisitor visitor(out_.graph);
-  for (auto v : boost::make_iterator_range(boost::vertices(out_.graph))) {
-    bool is_source = boost::in_degree(v, out_.graph) == 0;
+  AssignTensorIdsVisitor visitor(out_->graph);
+  for (auto v : boost::make_iterator_range(boost::vertices(out_->graph))) {
+    bool is_source = boost::in_degree(v, out_->graph) == 0;
     if (is_source && color_map_p[v] == boost::white_color) {
-      boost::depth_first_visit(out_.graph, v, visitor, color_map_p);
+      boost::depth_first_visit(out_->graph, v, visitor, color_map_p);
     }
   }
 }
 
 void Compiler::check_buffer_temporal_consistency() {
-  for (const auto &v : boost::make_iterator_range(boost::vertices(out_.graph))) {
-    const auto &np        = out_.graph[v];
-    const int   n_out     = np.infer.output_descs.size();
-    const auto  out_edges = boost::make_iterator_range(boost::out_edges(v, out_.graph));
+  for (const auto &v : boost::make_iterator_range(boost::vertices(out_->graph))) {
+    const auto &np        = out_->graph[v];
+    const int   n_out     = static_cast<int>(np.infer.output_descs.size());
+    const auto  out_edges = boost::make_iterator_range(boost::out_edges(v, out_->graph));
 
     // Count temporal restrictions per output index
     std::vector<int> restricted(n_out, 0);
     for (const auto &e : out_edges) {
-      const auto &ep  = out_.graph[e];
-      const auto &dst = out_.graph[boost::target(e, out_.graph)];
+      const auto &ep  = out_->graph[e];
+      const auto &dst = out_->graph[boost::target(e, out_->graph)];
 
       const bool owned   = dst.infer.owned_inputs.at(ep.spec.in_idx);
       const bool inplace = std::ranges::any_of(
@@ -269,8 +299,8 @@ void Compiler::check_buffer_temporal_consistency() {
 void Compiler::check_buffer_spatial_consistency() {
   // Count distinct tids
   int nb_tids = 0;
-  for (const auto &v : boost::make_iterator_range(boost::vertices(out_.graph))) {
-    const auto &np   = out_.graph[v];
+  for (const auto &v : boost::make_iterator_range(boost::vertices(out_->graph))) {
+    const auto &np   = out_->graph[v];
     const auto  tids = std::array{std::span{np.in_tids}, std::span{np.out_tids}} | std::views::join;
     int         max  = std::ranges::max(tids);
     nb_tids          = std::max(nb_tids, max + 1);
@@ -278,10 +308,10 @@ void Compiler::check_buffer_spatial_consistency() {
 
   // Count owner per tid
   std::vector<int> tid_owners(nb_tids, 0);
-  for (const auto &v : boost::make_iterator_range(boost::vertices(out_.graph))) {
-    const auto &np         = out_.graph[v];
-    int         nb_inputs  = np.infer.input_descs.size();
-    int         nb_outputs = np.infer.output_descs.size();
+  for (const auto &v : boost::make_iterator_range(boost::vertices(out_->graph))) {
+    const auto &np         = out_->graph[v];
+    int         nb_inputs  = static_cast<int>(np.infer.input_descs.size());
+    int         nb_outputs = static_cast<int>(np.infer.output_descs.size());
 
     for (int i = 0; i < nb_inputs; i++) {
       if (np.infer.owned_inputs.at(i)) {
@@ -302,6 +332,181 @@ void Compiler::check_buffer_spatial_consistency() {
   for (int tid = 0; tid < nb_tids; tid++) {
     if (tid_owners.at(tid) > 1) {
       throw std::logic_error(fmt::format("Tensor id {} has more than one owner", tid));
+    }
+  }
+}
+
+void Compiler::create_tensor_buffers() {
+  // Find owned tids
+  std::set<int> owned_tids;
+  for (const auto &v : boost::make_iterator_range(boost::vertices(out_->graph))) {
+    const auto &np        = out_->graph[v];
+    const int   n_inputs  = static_cast<int>(np.infer.input_descs.size());
+    const int   n_outputs = static_cast<int>(np.infer.output_descs.size());
+
+    for (int i = 0; i < n_inputs; i++) {
+      if (np.infer.owned_inputs.at(i)) {
+        int tid = np.in_tids.at(i);
+        owned_tids.insert(tid);
+      }
+    }
+
+    for (int i = 0; i < n_outputs; i++) {
+      if (np.infer.owned_outputs.at(i)) {
+        int tid = np.out_tids.at(i);
+        owned_tids.insert(tid);
+      }
+    }
+  }
+
+  // Create buffers
+  out_->resources.tensors.clear();
+  for (const auto &e : boost::make_iterator_range(boost::edges(out_->graph))) {
+    const auto &ep = out_->graph[e];
+    if (owned_tids.contains(ep.tid)) {
+      out_->resources.tensors.try_emplace(ep.tid, core::Tensor(ep.desc));
+    }
+  }
+}
+
+void Compiler::create_sections() {
+  auto is_section_start = [&](GraphPlan::vertex_descriptor v) {
+    return boost::in_degree(v, out_->graph) == 0 ||
+           out_->graph[v].infer.kind == core::TaskKind::Async;
+  };
+
+  // Find section starts
+  std::vector<GraphPlan::vertex_descriptor> starts;
+  for (const auto &v : boost::make_iterator_range(boost::vertices(out_->graph))) {
+    if (is_section_start(v)) {
+      starts.push_back(v);
+    }
+  }
+
+  // DFS to build sections
+  auto build_section_dfs = [this](auto self, GraphPlan::vertex_descriptor v, Section &sec,
+                                  bool is_root) -> void {
+    auto &np = out_->graph[v];
+    if (np.infer.kind == core::TaskKind::Sync) {
+      sec.sync_topo.push_back(v);
+      sync_section_map_.try_emplace(np.spec.name, sec.id);
+    } else if (is_root) {
+      sec.async_cons.push_back(v);
+      async_cons_section_map_.try_emplace(np.spec.name, sec.id);
+    } else {
+      sec.async_prod.push_back(v);
+      async_prod_section_map_.try_emplace(np.spec.name, sec.id);
+      return;
+    }
+
+    //! BUG: Inplace children should be run last in case several children share
+    //! the same inplace input.
+
+    for (auto e : boost::make_iterator_range(boost::out_edges(v, out_->graph))) {
+      auto vd = boost::target(e, out_->graph);
+      self(self, vd, sec, false);
+    }
+  };
+
+  // Build sections
+  int next_section_id = 0;
+  out_->sections.clear();
+  for (const auto &v : starts) {
+    Section sec;
+    sec.id     = next_section_id++;
+    sec.name   = fmt::format("section-{}", sec.id);
+    sec.stream = 0;
+
+    build_section_dfs(build_section_dfs, v, sec, true);
+    out_->sections.push_back(sec);
+  }
+}
+
+void Compiler::assign_cuda_streams() {
+  out_->resources.streams.clear();
+  for (auto &sec : out_->sections) {
+    auto stream = curaii::CudaStream();
+    sec.stream  = stream.get();
+    out_->resources.streams.try_emplace(sec.id, std::move(stream));
+  }
+}
+
+namespace {
+
+template <class To, class From>
+std::unique_ptr<To> dynamic_unique_ptr_cast(std::unique_ptr<From> &&ptr) noexcept {
+  if (auto casted = dynamic_cast<To *>(ptr.get())) {
+    ptr.release();
+    return std::unique_ptr<To>(casted);
+  }
+  return nullptr;
+}
+
+template <class Task, class Factory, class Ctx>
+std::unique_ptr<Task>
+create_or_update_task(Factory &factory, std::unique_ptr<core::ITask> *prev,
+                      std::span<const core::TDesc> input_descs, const nlohmann::json &settings,
+                      const Ctx &ctx, std::string_view node_name, std::string_view expected_kind) {
+  if (!prev) {
+    return factory.create(input_descs, settings, ctx);
+  }
+
+  auto prev_task = dynamic_unique_ptr_cast<Task>(std::move(*prev));
+  HOLOFLOW_CHECK(prev_task != nullptr, "Previous task for node {} is not a {} task", node_name,
+                 expected_kind);
+
+  return factory.update(std::move(prev_task), input_descs, settings, ctx);
+}
+
+} // namespace
+
+void Compiler::create_nodes_collection() {
+  out_->resources.tasks.clear();
+  auto &prev_tasks = prev_->resources.tasks;
+  auto &out_tasks  = out_->resources.tasks;
+  auto  vertices   = boost::make_iterator_range(boost::vertices(out_->graph));
+
+  for (auto v : vertices) {
+    const auto &np          = out_->graph[v];
+    const auto &input_descs = np.infer.input_descs;
+    const auto &settings    = np.spec.settings;
+    const auto  name        = std::string_view{np.spec.name};
+
+    // Reuse previous task if available
+    std::unique_ptr<core::ITask> *prev_slot = nullptr;
+    if (auto it = prev_tasks.find(np.spec.name); it != prev_tasks.end())
+      prev_slot = &it->second;
+
+    switch (np.infer.kind) {
+    case core::TaskKind::Sync: {
+      auto                     &factory = registry_.get_sync(np.spec.kind);
+      const int                 sid     = sync_section_map_.at(np.spec.name);
+      auto                     &section = out_->sections.at(sid);
+      const core::SyncCreateCtx ctx{.stream = section.stream};
+
+      auto task = create_or_update_task<core::ISyncTask>(factory, prev_slot, input_descs, settings,
+                                                         ctx, name, "sync");
+      out_tasks.emplace(np.spec.name, std::move(task));
+      break;
+    }
+
+    case core::TaskKind::Async: {
+      auto                      &factory = registry_.get_async(np.spec.kind);
+      const int                  prod_id = async_prod_section_map_.at(np.spec.name);
+      const int                  cons_id = async_cons_section_map_.at(np.spec.name);
+      auto                      &prod    = out_->sections.at(prod_id);
+      auto                      &cons    = out_->sections.at(cons_id);
+      const core::AsyncCreateCtx ctx{.producer_stream = prod.stream,
+                                     .consumer_stream = cons.stream};
+
+      auto task = create_or_update_task<core::IAsyncTask>(factory, prev_slot, input_descs, settings,
+                                                          ctx, name, "async");
+      out_tasks.emplace(np.spec.name, std::move(task));
+      break;
+    }
+
+    default:
+      HOLOFLOW_UNREACHABLE();
     }
   }
 }

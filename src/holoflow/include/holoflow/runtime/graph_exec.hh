@@ -32,12 +32,10 @@
 namespace holoflow::runtime {
 
 struct NodePlan {
-  int               id;       ///< Node ID.
   core::NodeSpec    spec;     ///< Node specification.
   core::InferResult infer;    ///< Inference metadata.
   std::vector<int>  in_tids;  ///< Input tensor IDs.
   std::vector<int>  out_tids; ///< Output tensor IDs.
-  int               section;  ///< Execution section ID.
 };
 
 struct EdgePlan {
@@ -54,9 +52,9 @@ using GraphPlan = boost::adjacency_list<boost::vecS,           // OutEdgeList
                                         >;
 
 struct ExecResouces {
-  std::map<int, curaii::CudaStream>           streams; ///< CUDA streams for each section ID.
-  std::map<int, std::unique_ptr<core::ITask>> tasks;   ///< Task instances for each node ID.
-  std::map<int, core::Tensor>                 tensors; ///< Allocated tensors by ID.
+  std::map<int, curaii::CudaStream>                   streams; ///< CUDA streams by ID.
+  std::map<std::string, std::unique_ptr<core::ITask>> tasks;   ///< Task instances by ID.
+  std::map<int, core::Tensor>                         tensors; ///< Allocated tensors by ID.
 };
 
 struct Section {

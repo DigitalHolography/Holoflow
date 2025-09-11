@@ -87,7 +87,7 @@ void Scheduler::build_nodes_rts() {
   for (auto v : boost::make_iterator_range(boost::vertices(graph_))) {
     const auto idx  = boost::get(boost::vertex_index, graph_, v);
     const auto np   = graph_[v];
-    auto      *task = res_.tasks.at(np.id).get();
+    auto      *task = res_.tasks.at(np.spec.name).get();
     HOLOFLOW_CHECK(task != nullptr, "Task for node {} is null", np.spec.name);
 
     if (auto *st = dynamic_cast<core::ISyncTask *>(task)) {

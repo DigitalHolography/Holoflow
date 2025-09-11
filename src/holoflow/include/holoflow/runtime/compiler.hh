@@ -16,8 +16,6 @@
 
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
-#include "holoflow/core/tasks.hh"
-#include "holoflow/core/tensor.hh"
 #include "holoflow/runtime/graph_exec.hh"
 #include <vector>
 
@@ -31,35 +29,37 @@ struct CompilerOutput {
 
 class Compiler {
 public:
-  Compiler(core::Registry &registry, std::filesystem::path log_dir = "");
+  Compiler(core::Registry &registry, const std::filesystem::path &log_dir = "");
 
-  CompilerOutput compile(const core::GraphSpec &gspec, CompilerOutput *prev = nullptr);
+  std::unique_ptr<CompilerOutput> compile(const core::GraphSpec          &gspec,
+                                          std::unique_ptr<CompilerOutput> prev = nullptr);
 
 private:
-  void check_duplicate_names() const;
-  void check_duplicate_edge_dst() const;
-  void check_single_source() const;
-  void check_single_input() const;
-  void check_factories_registered() const;
+  void check_duplicate_names();
+  void check_duplicate_edge_dst();
+  void check_single_source();
+  void check_single_input();
+  void check_factories_registered();
   void build_graph_plan();
   void check_typing();
+  void assign_tensor_ids();
   void check_buffer_temporal_consistency();
   void check_buffer_spatial_consistency();
-  void assign_tensor_ids();
   void create_tensor_buffers();
-  void create_tensor_views();
+  void create_sections();
   void assign_cuda_streams();
   void create_nodes_collection();
-  void get_pes_roots();
-  void assign_inputs_outputs();
 
 private:
   core::Registry       &registry_;
   std::filesystem::path log_dir_;
 
-  core::GraphSpec gspec_;
-  CompilerOutput *prev_ = nullptr;
-  CompilerOutput  out_;
+  core::GraphSpec                 gspec_;
+  std::unique_ptr<CompilerOutput> prev_ = nullptr;
+  std::unique_ptr<CompilerOutput> out_;
+  std::map<std::string, int>      sync_section_map_;
+  std::map<std::string, int>      async_prod_section_map_;
+  std::map<std::string, int>      async_cons_section_map_;
 };
 
 } // namespace holoflow::runtime
