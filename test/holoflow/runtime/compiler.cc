@@ -14,6 +14,12 @@
 
 #include <gtest/gtest.h>
 
+#include "holoflow/core/registry.hh"
 #include "holoflow/runtime/compiler.hh"
 
-TEST(MathTest, Addition) { EXPECT_EQ(2 + 2, 4); }
+TEST(CompilerTest, EmptyGraph) {
+  holoflow::core::Registry    registry;
+  holoflow::core::GraphSpec   gspec;
+  holoflow::runtime::Compiler compiler(registry);
+  EXPECT_THROW(compiler.compile(gspec), std::logic_error);
+}
