@@ -1,24 +1,22 @@
 #pragma once
 
-#ifndef CUURAII_CUDA_HXX_INCLUDED
+#ifndef CURAII_CUDA_HXX_INCLUDED
 #include "curaii/cuda.hh"
 #endif
 
-namespace curaii::cuda {
+namespace curaii {
 
-template <typename T>
-[[nodiscard]] unique_host_ptr<T> make_unique_host_ptr(size_t count) {
+template <typename T> [[nodiscard]] unique_host_ptr<T> make_unique_host_ptr(size_t count) {
   T *p = nullptr;
   CUDA_CHECK(cudaMallocHost(&p, count * sizeof(T)));
   return unique_host_ptr<T>(p);
 }
 
 template <typename T>
-[[nodiscard]] unique_device_ptr<T> make_unique_device_ptr(size_t       count,
-                                                          cudaStream_t stream) {
+[[nodiscard]] unique_device_ptr<T> make_unique_device_ptr(size_t count, cudaStream_t stream) {
   T *p = nullptr;
   CUDA_CHECK(cudaMallocAsync(&p, count * sizeof(T), stream));
   return unique_device_ptr<T>(p);
 }
 
-} // namespace curaii::cuda
+} // namespace curaii

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 #pragma once
 
 #include <cuda_runtime.h>
@@ -22,43 +21,40 @@
 
 namespace curaii::detail {
 
-void log_cuda_failure(spdlog::level::level_enum lvl, cudaError_t code,
-                      const char *expr, const char *file, int line);
+void log_cuda_failure(spdlog::level::level_enum lvl, cudaError_t code, const char *expr,
+                      const char *file, int line);
 
 } // namespace curaii::detail
 
-#define CUDA_CHECK(expr)                                                       \
-  do {                                                                         \
-    cudaError_t err__ = (expr);                                                \
-    if (err__ != cudaSuccess) {                                                \
-      ::curaii::detail::log_cuda_failure(spdlog::level::warn, err__, #expr,    \
-                                         __FILE__, __LINE__);                  \
-      throw ::curaii::CudaError(err__, #expr, __FILE__, __LINE__);             \
-    }                                                                          \
+#define CUDA_CHECK(expr)                                                                           \
+  do {                                                                                             \
+    cudaError_t err__ = (expr);                                                                    \
+    if (err__ != cudaSuccess) {                                                                    \
+      ::curaii::detail::log_cuda_failure(spdlog::level::warn, err__, #expr, __FILE__, __LINE__);   \
+      throw ::curaii::CudaError(err__, #expr, __FILE__, __LINE__);                                 \
+    }                                                                                              \
   } while (false)
 
-#define CUDA_CHECK_NT(expr)                                                    \
-  do {                                                                         \
-    cudaError_t err__ = (expr);                                                \
-    if (err__ != cudaSuccess) {                                                \
-      ::curaii::detail::log_cuda_failure(spdlog::level::critical, err__,       \
-                                         #expr, __FILE__, __LINE__);           \
-      std::abort();                                                            \
-    }                                                                          \
+#define CUDA_CHECK_NT(expr)                                                                        \
+  do {                                                                                             \
+    cudaError_t err__ = (expr);                                                                    \
+    if (err__ != cudaSuccess) {                                                                    \
+      ::curaii::detail::log_cuda_failure(spdlog::level::critical, err__, #expr, __FILE__,          \
+                                         __LINE__);                                                \
+      std::abort();                                                                                \
+    }                                                                                              \
   } while (false)
 
 namespace curaii {
 
 class CudaError : public std::runtime_error {
 public:
-  explicit CudaError(cudaError_t code, const char *what, const char *file,
-                     int line);
+  explicit CudaError(cudaError_t code, const char *what, const char *file, int line);
 
   [[nodiscard]] cudaError_t code() const noexcept;
 
 private:
-  static std::string make_message(cudaError_t code, const char *what,
-                                  const char *file, int line);
+  static std::string make_message(cudaError_t code, const char *what, const char *file, int line);
 
   cudaError_t code_;
 };
@@ -73,15 +69,12 @@ struct DeviceDeleter {
 
 template <typename T> using unique_host_ptr = std::unique_ptr<T, HostDeleter>;
 
-template <typename T>
-[[nodiscard]] unique_host_ptr<T> make_unique_host_ptr(size_t count);
+template <typename T> [[nodiscard]] unique_host_ptr<T> make_unique_host_ptr(size_t count);
+
+template <typename T> using unique_device_ptr = std::unique_ptr<T, DeviceDeleter>;
 
 template <typename T>
-using unique_device_ptr = std::unique_ptr<T, DeviceDeleter>;
-
-template <typename T>
-[[nodiscard]] unique_device_ptr<T>
-make_unique_device_ptr(size_t count, cudaStream_t stream = 0);
+[[nodiscard]] unique_device_ptr<T> make_unique_device_ptr(size_t count, cudaStream_t stream = 0);
 
 class CudaStream {
 public:
@@ -105,6 +98,6 @@ private:
 
 } // namespace curaii
 
-#define CUURAII_CUDA_HXX_INCLUDED
+#define CURAII_CUDA_HXX_INCLUDED
 #include "curaii/cuda.hxx"
-#undef CUURAII_CUDA_HXX_INCLUDED
+#undef CURAII_CUDA_HXX_INCLUDED
