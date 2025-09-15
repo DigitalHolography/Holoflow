@@ -18,9 +18,7 @@
 #include <array>
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/graph/depth_first_search.hpp>
-#include <iostream>
 #include <memory>
-#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -43,46 +41,20 @@ std::unique_ptr<CompilerOutput> Compiler::compile(const core::GraphSpec         
   gspec_ = gspec;
   prev_  = std::move(prev);
   out_   = std::make_unique<CompilerOutput>();
-  std::cout << "[Compiler] Checking duplicate names..." << std::endl;
+
   check_duplicate_names();
-
-  std::cout << "[Compiler] Checking duplicate edge destinations..." << std::endl;
   check_duplicate_edge_dst();
-
-  std::cout << "[Compiler] Checking factories registered..." << std::endl;
   check_factories_registered();
-
-  std::cout << "[Compiler] Checking single source..." << std::endl;
   check_single_source();
-
-  std::cout << "[Compiler] Checking single input..." << std::endl;
   check_single_input();
-
-  std::cout << "[Compiler] Building graph plan..." << std::endl;
   build_graph_plan();
-
-  std::cout << "[Compiler] Checking typing..." << std::endl;
   check_typing();
-
-  std::cout << "[Compiler] Assigning tensor ids..." << std::endl;
   assign_tensor_ids();
-
-  std::cout << "[Compiler] Checking buffer temporal consistency..." << std::endl;
   check_buffer_temporal_consistency();
-
-  std::cout << "[Compiler] Checking buffer spatial consistency..." << std::endl;
   check_buffer_spatial_consistency();
-
-  std::cout << "[Compiler] Creating tensor buffers..." << std::endl;
   create_tensor_buffers();
-
-  std::cout << "[Compiler] Creating sections..." << std::endl;
   create_sections();
-
-  std::cout << "[Compiler] Assigning CUDA streams..." << std::endl;
   assign_cuda_streams();
-
-  std::cout << "[Compiler] Creating nodes collection..." << std::endl;
   create_nodes_collection();
 
   return std::move(out_);
@@ -265,10 +237,14 @@ void Compiler::assign_tensor_ids() {
         groups.at(ep.spec.out_idx).push_back(e);
       }
 
+      np.in_tids = input_tids;
+      np.out_tids.assign(n_out, -1);
+
       // Assign tids per output group
       for (int i = 0; i < n_out; i++) {
-        int inplace_tid = inplace_tids.at(i);
-        int tid         = inplace_tid != -1 ? inplace_tid : next_id_++;
+        int inplace_tid   = inplace_tids.at(i);
+        int tid           = inplace_tid != -1 ? inplace_tid : next_id_++;
+        np.out_tids.at(i) = tid;
         for (const auto &e : groups.at(i)) {
           auto &ep = g_[e];
           ep.tid   = tid;
@@ -495,7 +471,7 @@ create_or_update_task(Factory &factory, std::unique_ptr<core::ITask> *prev,
 
 void Compiler::create_nodes_collection() {
   out_->resources.tasks.clear();
-  auto &prev_tasks = prev_->resources.tasks;
+  auto *prev_tasks = prev_ ? &prev_->resources.tasks : nullptr;
   auto &out_tasks  = out_->resources.tasks;
   auto  vertices   = boost::make_iterator_range(boost::vertices(out_->graph));
 
@@ -507,8 +483,10 @@ void Compiler::create_nodes_collection() {
 
     // Reuse previous task if available
     std::unique_ptr<core::ITask> *prev_slot = nullptr;
-    if (auto it = prev_tasks.find(np.spec.name); it != prev_tasks.end())
-      prev_slot = &it->second;
+    if (prev_tasks) {
+      if (auto it = prev_tasks->find(np.spec.name); it != prev_tasks->end())
+        prev_slot = &it->second;
+    }
 
     switch (np.infer.kind) {
     case core::TaskKind::Sync: {
