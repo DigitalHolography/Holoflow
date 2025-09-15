@@ -19,6 +19,7 @@ set(DOXYGEN_INPUT
     ${CMAKE_SOURCE_DIR}/src/holofile/include
     ${CMAKE_SOURCE_DIR}/src/holoflow/include
     ${CMAKE_SOURCE_DIR}/src/curaii/include
+    ${CMAKE_SOURCE_DIR}/src/holovibes/src
 )
 
 string(REPLACE ";" " " DOXYGEN_INPUT_JOINED "${DOXYGEN_INPUT}")

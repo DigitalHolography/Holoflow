@@ -5,6 +5,7 @@
     "conventionalCommits.scopes": [
         "holoflow",
         "curaii",
-        "holofile"
+        "holofile",
+        "holovibes"
     ]
 }
