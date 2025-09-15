@@ -1,0 +1,30 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "cmake build",
+      "type": "shell",
+      "command": "cmake",
+      "args": [
+        "--build",
+        "${workspaceFolder}/build/msvc-multi",
+        "--config",
+        "${input:buildType}"
+      ],
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "buildType",
+      "type": "pickString",
+      "description": "Choose build configuration",
+      "options": [
+        "Debug",
+        "Release",
+        "RelWithDebInfo",
+        "MinSizeRel"
+      ]
+    }
+  ]
+}

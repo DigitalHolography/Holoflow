@@ -18,6 +18,7 @@
 #include <array>
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/graph/depth_first_search.hpp>
+#include <iostream>
 #include <memory>
 #include <optional>
 #include <string>
@@ -42,20 +43,46 @@ std::unique_ptr<CompilerOutput> Compiler::compile(const core::GraphSpec         
   gspec_ = gspec;
   prev_  = std::move(prev);
   out_   = std::make_unique<CompilerOutput>();
-
+  std::cout << "[Compiler] Checking duplicate names..." << std::endl;
   check_duplicate_names();
+
+  std::cout << "[Compiler] Checking duplicate edge destinations..." << std::endl;
   check_duplicate_edge_dst();
+
+  std::cout << "[Compiler] Checking factories registered..." << std::endl;
   check_factories_registered();
+
+  std::cout << "[Compiler] Checking single source..." << std::endl;
   check_single_source();
+
+  std::cout << "[Compiler] Checking single input..." << std::endl;
   check_single_input();
+
+  std::cout << "[Compiler] Building graph plan..." << std::endl;
   build_graph_plan();
+
+  std::cout << "[Compiler] Checking typing..." << std::endl;
   check_typing();
+
+  std::cout << "[Compiler] Assigning tensor ids..." << std::endl;
   assign_tensor_ids();
+
+  std::cout << "[Compiler] Checking buffer temporal consistency..." << std::endl;
   check_buffer_temporal_consistency();
+
+  std::cout << "[Compiler] Checking buffer spatial consistency..." << std::endl;
   check_buffer_spatial_consistency();
+
+  std::cout << "[Compiler] Creating tensor buffers..." << std::endl;
   create_tensor_buffers();
+
+  std::cout << "[Compiler] Creating sections..." << std::endl;
   create_sections();
+
+  std::cout << "[Compiler] Assigning CUDA streams..." << std::endl;
   assign_cuda_streams();
+
+  std::cout << "[Compiler] Creating nodes collection..." << std::endl;
   create_nodes_collection();
 
   return std::move(out_);
@@ -161,7 +188,10 @@ void Compiler::check_typing() {
       // Gather input descs by input index
       std::vector<core::TDesc> idescs(in_degree);
       for (auto e : boost::make_iterator_range(in_edges)) {
-        const auto &ep            = g_[e];
+        const auto &ep = g_[e];
+        if (ep.spec.in_idx < 0 || ep.spec.in_idx >= static_cast<int>(in_degree)) {
+          throw std::logic_error("Invalid in_idx for node " + np.spec.name);
+        }
         idescs.at(ep.spec.in_idx) = ep.desc;
       }
 
@@ -302,8 +332,11 @@ void Compiler::check_buffer_spatial_consistency() {
   for (const auto &v : boost::make_iterator_range(boost::vertices(out_->graph))) {
     const auto &np   = out_->graph[v];
     const auto  tids = std::array{std::span{np.in_tids}, std::span{np.out_tids}} | std::views::join;
-    int         max  = std::ranges::max(tids);
-    nb_tids          = std::max(nb_tids, max + 1);
+
+    if (!tids.empty()) {
+      int max = std::ranges::max(tids);
+      nb_tids = std::max(nb_tids, max + 1);
+    }
   }
 
   // Count owner per tid

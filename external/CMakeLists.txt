@@ -39,6 +39,7 @@ if(ENABLE_FETCHCONTENT)
         boost
         GIT_REPOSITORY https://github.com/boostorg/boost.git
         GIT_TAG boost-1.89.0
+        #FETCHCONTENT_QUIET FALSE
     )
     FetchContent_MakeAvailable(boost)
 

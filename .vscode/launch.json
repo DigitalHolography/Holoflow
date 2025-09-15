@@ -1,0 +1,14 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "type": "lldb",
+      "request": "launch",
+      "name": "Launch holovibes",
+      "program": "${workspaceFolder}/build/msvc-multi/test/holoflow/Debug/holoflow_test.exe",
+      "args": [],
+      "stopAtEntry": true,
+      "preLaunchTask": "cmake build"
+    }
+  ],
+}
