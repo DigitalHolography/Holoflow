@@ -1,30 +1,71 @@
 {
   "version": "2.0.0",
-  "tasks": [
-    {
-      "label": "cmake build",
-      "type": "shell",
-      "command": "cmake",
-      "args": [
-        "--build",
-        "${workspaceFolder}/build/msvc-multi",
-        "--config",
-        "${input:buildType}"
-      ],
-      "problemMatcher": []
-    }
-  ],
   "inputs": [
     {
-      "id": "buildType",
-      "type": "pickString",
-      "description": "Choose build configuration",
-      "options": [
-        "Debug",
-        "Release",
-        "RelWithDebInfo",
-        "MinSizeRel"
+      "id": "vcvarsPath",
+      "type": "promptString",
+      "description": "Path to vcvars64.bat",
+      "default": "C:\\Program Files\\Microsoft Visual Studio\\2022\\Community\\VC\\Auxiliary\\Build\\vcvars64.bat"
+    }
+  ],
+  "options": {
+    "shell": {
+      "executable": "cmd.exe",
+      "args": [
+        "/c"
       ]
+    }
+  },
+  "tasks": [
+    {
+      "label": "configure:msvc-multi",
+      "type": "shell",
+      "command": "\"${input:vcvarsPath}\" && cmake --preset msvc-multi",
+      "problemMatcher": []
+    },
+    {
+      "label": "build:Debug",
+      "type": "shell",
+      "command": "\"${input:vcvarsPath}\" && cmake --build --preset build-Debug -j",
+      "problemMatcher": [
+        "$msCompile"
+      ],
+    },
+    {
+      "label": "build:Release",
+      "type": "shell",
+      "command": "\"${input:vcvarsPath}\" && cmake --build --preset build-Release -j",
+      "problemMatcher": [
+        "$msCompile"
+      ],
+    },
+    {
+      "label": "test:Debug",
+      "type": "shell",
+      "command": "\"${input:vcvarsPath}\" && ctest --preset test-Debug",
+      "problemMatcher": [],
+      "dependsOn": "build:Debug"
+    },
+    {
+      "label": "test:Release",
+      "type": "shell",
+      "command": "\"${input:vcvarsPath}\" && ctest --preset test-Release",
+      "problemMatcher": [],
+      "dependsOn": "build:Release"
+    },
+    {
+      "label": "run:holovibes:Debug",
+      "type": "shell",
+      "command": "\"${input:vcvarsPath}\" && build\\msvc-multi\\src\\holovibes\\Debug\\holovibes.exe --help",
+      "problemMatcher": [],
+      "dependsOn": "build:Debug"
+    },
+    {
+      "label": "run:holovibes:Release",
+      "type": "shell",
+      "command": "\"${input:vcvarsPath}\" && build\\msvc-multi\\src\\holovibes\\Release\\holovibes.exe --help",
+      "problemMatcher": [],
+      "dependsOn": "build:Release"
     }
   ]
 }
