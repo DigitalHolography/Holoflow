@@ -13,8 +13,16 @@
 // limitations under the License.
 
 #include "holoflow/core/tasks.hh"
+#include "holoflow/core/tensor.hh"
+#include <optional>
 
 namespace holoflow::core {
+
+std::optional<TView> ITask::acquire_input(int) {
+  throw std::out_of_range("Input index out of range");
+}
+
+void ITask::release_output(int) { throw std::out_of_range("Output index out of range"); }
 
 std::unique_ptr<ISyncTask> ISyncTaskFactory::update(std::unique_ptr<ISyncTask>,
                                                     std::span<const TDesc> input_descs,

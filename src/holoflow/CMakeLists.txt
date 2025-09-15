@@ -60,8 +60,8 @@ PRIVATE
 target_link_libraries(${TARGET} 
 PUBLIC
     project_options
+    curaii
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     Boost::graph
-    curaii
 )

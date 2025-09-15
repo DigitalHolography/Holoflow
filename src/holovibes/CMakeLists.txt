@@ -12,10 +12,40 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+set(TARGET holovibes)
+
+file(GLOB_RECURSE HOLOVIBES_PRIVATE_HEADERS 
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hxx
+)
+
+file(GLOB_RECURSE HOLOVIBES_SOURCES 
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc
+)
+
 add_executable(holovibes
-    src/main.cc
+    ${HOLOVIBES_SOURCES}
+)
+
+target_include_directories(holovibes 
+PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+)
+
+target_sources(holovibes 
+PRIVATE
+    FILE_SET private_headers
+    TYPE HEADERS
+    BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
+    FILES ${HOLOVIBES_PRIVATE_HEADERS}
 )
 
 target_link_libraries(holovibes PRIVATE
     project_options
+    holoflow
+    curaii
+    holofile
+    spdlog::spdlog
+    nlohmann_json::nlohmann_json
+    Boost::graph
 )
