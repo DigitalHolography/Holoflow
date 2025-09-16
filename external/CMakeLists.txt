@@ -15,6 +15,8 @@
 if(ENABLE_FETCHCONTENT)
     include(FetchContent)
 
+set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/.fc")
+
     # spdlog
     FetchContent_Declare(
         spdlog
@@ -39,7 +41,6 @@ if(ENABLE_FETCHCONTENT)
         boost
         GIT_REPOSITORY https://github.com/boostorg/boost.git
         GIT_TAG boost-1.89.0
-        #FETCHCONTENT_QUIET FALSE
     )
     FetchContent_MakeAvailable(boost)
 
@@ -74,11 +75,4 @@ endif()
 
 if (ENABLE_DOCS)
     find_package(Doxygen REQUIRED)
-endif()
-
-if (NOT DEFINED ENV{Qt6_DIR})
-    message(FATAL_ERROR "Qt6_DIR is not set. Please set it to the path containing Qt6Config.cmake")
-else()
-    find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui)
-    qt_standard_project_setup()
 endif()

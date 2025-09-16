@@ -39,6 +39,9 @@ project_options(
     ENABLE_WARNINGS_AS_ERRORS ${ENABLE_WARNINGS_AS_ERRORS}
 )
 
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui)
+qt_standard_project_setup()
+
 add_subdirectory(external)
 add_subdirectory(src)
 
