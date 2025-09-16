@@ -21,7 +21,7 @@
 
 namespace holoflow::core {
 
-constexpr size_t size_of(DType dtype) noexcept {
+size_t size_of(DType dtype) noexcept {
   switch (dtype) {
   case DType::U8:
     return 1;
@@ -36,7 +36,7 @@ constexpr size_t size_of(DType dtype) noexcept {
   HOLOFLOW_UNREACHABLE();
 }
 
-constexpr std::string_view to_string(DType dtype) noexcept {
+std::string_view to_string(DType dtype) noexcept {
   switch (dtype) {
   case DType::U8:
     return "U8";
@@ -51,7 +51,7 @@ constexpr std::string_view to_string(DType dtype) noexcept {
   HOLOFLOW_UNREACHABLE();
 }
 
-constexpr std::string_view to_string(MemLoc loc) noexcept {
+std::string_view to_string(MemLoc loc) noexcept {
   switch (loc) {
   case MemLoc::Host:
     return "Host";

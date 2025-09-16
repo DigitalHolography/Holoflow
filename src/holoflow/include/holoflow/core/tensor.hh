@@ -31,10 +31,10 @@ enum class DType : uint8_t {
 };
 
 /// Returns the size in bytes of a given DType.
-[[nodiscard]] constexpr size_t size_of(DType dtype) noexcept;
+[[nodiscard]] size_t size_of(DType dtype) noexcept;
 
 /// Returns a human-readable name for the DType.
-[[nodiscard]] constexpr std::string_view to_string(DType dtype) noexcept;
+[[nodiscard]] std::string_view to_string(DType dtype) noexcept;
 
 /// Where memory lives: host (CPU) or device (GPU).
 enum class MemLoc : uint8_t {
@@ -43,7 +43,7 @@ enum class MemLoc : uint8_t {
 };
 
 /// Returns a human-readable name for the MemLoc.
-[[nodiscard]] constexpr std::string_view to_string(MemLoc loc) noexcept;
+[[nodiscard]] std::string_view to_string(MemLoc loc) noexcept;
 
 /// Describes a multi-dimensional array (tensor).
 struct TDesc {

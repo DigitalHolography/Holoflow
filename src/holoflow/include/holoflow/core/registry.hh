@@ -17,7 +17,7 @@
 #include <map>
 #include <string>
 
-#include "holoflow/core//tasks.hh"
+#include "holoflow/core/tasks.hh"
 
 namespace holoflow::core {
 

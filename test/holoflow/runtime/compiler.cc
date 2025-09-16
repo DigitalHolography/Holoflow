@@ -28,6 +28,7 @@
 #include "factory_maker.hh"
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
+#include "holoflow/runtime/graph_display.hh"
 #include "holoflow/runtime/compiler.hh"
 
 namespace holoflow::runtime {
@@ -49,11 +50,11 @@ std::vector<core::TDesc> copy_descs(std::span<const core::TDesc> descs) {
 
 class GraphBuilder {
 public:
-  GraphBuilder &add_node(const std::string &id, const std::string &name, const std::string &kind) {
+  GraphBuilder &add_node(const std::string &id, const std::string &name, const std::string &kind, const nlohmann::json &settings = {}) {
     core::NodeSpec node;
     node.name     = name;
     node.kind     = kind;
-    node.settings = nlohmann::json::object();
+    node.settings = settings;
     auto v        = boost::add_vertex(node, graph_);
     nodes_.emplace(id, v);
     return *this;
@@ -103,6 +104,44 @@ TEST(CompilerValidation, EmptyGraphFails) {
   Compiler        compiler(registry);
   core::GraphSpec graph;
   EXPECT_THROW(compiler.compile(graph), std::logic_error);
+}
+
+TEST(CompilerValidation, SimpleGraphSucceeds) {
+  core::Registry registry;
+
+  SyncFactorySpec source_spec;
+  source_spec.infer = [](std::span<const core::TDesc>, const nlohmann::json &) {
+    return make_infer_result(TaskKind::Sync, {}, {make_desc({1})});
+  };
+  registry.register_sync("source", std::make_unique<RecordingSyncFactory>(std::move(source_spec)));
+
+  AsyncFactorySpec async_spec;
+  async_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
+    auto input_descs = copy_descs(inputs);
+    return make_infer_result(TaskKind::Async, std::move(input_descs), {make_desc({1}), make_desc({1})});
+  };
+  auto *queue_factory = new RecordingAsyncFactory(std::move(async_spec));
+  registry.register_async("queue", std::unique_ptr<RecordingAsyncFactory>(queue_factory));
+
+  SyncFactorySpec sink_spec;
+  sink_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
+    auto input_descs = copy_descs(inputs);
+    return make_infer_result(TaskKind::Sync, std::move(input_descs), {});
+  };
+  registry.register_sync("sink", std::make_unique<RecordingSyncFactory>(std::move(sink_spec)));
+
+  GraphBuilder builder;
+  builder.add_node("src", "src", "source");
+  builder.add_node("queue", "queue", "queue", {{"answer", 42}});
+  builder.add_node("snk", "snk", "sink");
+  builder.add_node("snk2", "snk2", "sink");
+  builder.add_edge("src", "queue", 0, 0);
+  builder.add_edge("queue", "snk", 0, 0);
+  builder.add_edge("queue", "snk2", 1, 0);
+  auto graph = builder.finish();
+
+  Compiler compiler(registry);
+  auto     output = compiler.compile(graph);
 }
 
 TEST(CompilerValidation, DuplicateNodeNameFails) {
@@ -506,6 +545,35 @@ TEST(CompilerSections, AsyncNodeGetsProducerAndConsumerStreams) {
   EXPECT_EQ(queue_task->ctx().consumer_stream, consumer_section.stream);
 }
 
+TEST(CompilerTyping, IncompatibleTensorsFail) {
+  core::Registry registry;
+
+  SyncFactorySpec source_spec;
+  source_spec.infer = [](std::span<const core::TDesc>, const nlohmann::json &) {
+    return make_infer_result(TaskKind::Sync, {}, {make_desc({4, 4}, core::DType::F32)}); // 4x4 F32 tensor
+  };
+  registry.register_sync("source", std::make_unique<RecordingSyncFactory>(std::move(source_spec)));
+
+  SyncFactorySpec sink_spec;
+  sink_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
+    if (inputs.empty() || inputs[0].shape != std::vector<size_t>{8, 8}) {
+      throw std::logic_error("Input tensor size mismatch");
+    }
+    auto input_descs = copy_descs(inputs);
+    return make_infer_result(TaskKind::Sync, std::move(input_descs), {});
+  };
+  registry.register_sync("sink", std::make_unique<RecordingSyncFactory>(std::move(sink_spec)));
+
+  GraphBuilder builder;
+  builder.add_node("src", "src", "source");
+  builder.add_node("snk", "snk", "sink");
+  builder.add_edge("src", "snk", 0, 0);
+  auto graph = builder.finish();
+
+  Compiler compiler(registry);
+  EXPECT_THROW(compiler.compile(graph), std::logic_error);
+}
+
 TEST(CompilerReuse, CallsUpdateWithPreviousOutput) {
   core::Registry registry;
 
@@ -543,6 +611,91 @@ TEST(CompilerReuse, CallsUpdateWithPreviousOutput) {
   EXPECT_EQ(factory->create_calls().size(), 1u);
   ASSERT_NE(second, nullptr);
   EXPECT_EQ(second->resources.tasks.size(), 1u);
+}
+
+TEST(CompilerResources, OwnedTensorsNotPreallocated) {
+  core::Registry registry;
+
+  SyncFactorySpec source_spec;
+  source_spec.infer = [](std::span<const core::TDesc>, const nlohmann::json &) {
+    std::vector<bool> owned_outputs = {false};
+    return make_infer_result(TaskKind::Sync, {}, {make_desc({4, 4})}, {}, owned_outputs);
+  };
+  registry.register_sync("source", std::make_unique<RecordingSyncFactory>(std::move(source_spec)));
+
+  SyncFactorySpec sink_spec;
+  sink_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
+    std::vector<bool> owned_inputs = {true};
+    auto input_descs = copy_descs(inputs);
+    return make_infer_result(TaskKind::Sync, std::move(input_descs), {}, owned_inputs);
+  };
+  registry.register_sync("sink", std::make_unique<RecordingSyncFactory>(std::move(sink_spec)));
+
+  GraphBuilder builder;
+  builder.add_node("src", "src", "source");
+  builder.add_node("snk", "snk", "sink");
+  builder.add_edge("src", "snk", 0, 0);
+  auto graph = builder.finish();
+
+  Compiler compiler(registry);
+  auto output = compiler.compile(graph);
+
+  const auto &tensors = output->resources.tensors;
+  EXPECT_TRUE(tensors.empty());
+}
+
+TEST(CompilerResources, TensorsAllocated) {
+  core::Registry registry;
+
+  auto source_desc = make_desc({4, 4}, core::DType::F32, core::MemLoc::Device);
+  SyncFactorySpec source_spec;
+  source_spec.infer = [source_desc](std::span<const core::TDesc>, const nlohmann::json &) {
+    return make_infer_result(TaskKind::Sync, {}, {source_desc});
+  };
+  registry.register_sync("source", std::make_unique<RecordingSyncFactory>(std::move(source_spec)));
+
+  auto mid_output_desc = make_desc({2, 8}, core::DType::F32, core::MemLoc::Device);
+  SyncFactorySpec mid_spec;
+  mid_spec.infer = [mid_output_desc](std::span<const core::TDesc> inputs, const nlohmann::json &) {
+    auto input_descs = copy_descs(inputs);
+    return make_infer_result(TaskKind::Sync, std::move(input_descs), {mid_output_desc});
+  };
+  registry.register_sync("mid", std::make_unique<RecordingSyncFactory>(std::move(mid_spec)));
+
+  SyncFactorySpec sink_spec;
+  sink_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
+    auto input_descs = copy_descs(inputs);
+    return make_infer_result(TaskKind::Sync, std::move(input_descs), {});
+  };
+  registry.register_sync("sink", std::make_unique<RecordingSyncFactory>(std::move(sink_spec)));
+
+  GraphBuilder builder;
+  builder.add_node("src", "src", "source");
+  builder.add_node("mid", "mid", "mid");
+  builder.add_node("snk", "snk", "sink");
+  builder.add_edge("src", "mid", 0, 0);
+  builder.add_edge("mid", "snk", 0, 0);
+  auto graph = builder.finish();
+
+  Compiler compiler(registry);
+  auto output = compiler.compile(graph);
+
+  const auto &tensors = output->resources.tensors;
+
+  ASSERT_EQ(tensors.size(), 2u);
+
+  EXPECT_TRUE(tensors.count(0) > 0);
+  EXPECT_TRUE(tensors.count(1) > 0);
+
+  auto plan = output->graph;
+  auto src_v = find_plan_vertex(plan, "src");
+  auto mid_v = find_plan_vertex(plan, "mid");
+  auto snk_v = find_plan_vertex(plan, "snk");
+
+  EXPECT_EQ(plan[src_v].out_tids.front(), 0);
+  EXPECT_EQ(plan[mid_v].in_tids.front(), 0);
+  EXPECT_EQ(plan[mid_v].out_tids.front(), 1);
+  EXPECT_EQ(plan[snk_v].in_tids.front(), 1);
 }
 
 } // namespace
