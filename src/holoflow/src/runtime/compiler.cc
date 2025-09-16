@@ -372,7 +372,7 @@ void Compiler::create_tensor_buffers() {
   out_->resources.tensors.clear();
   for (const auto &e : boost::make_iterator_range(boost::edges(out_->graph))) {
     const auto &ep = out_->graph[e];
-    if (owned_tids.contains(ep.tid)) {
+    if (!owned_tids.contains(ep.tid)) {
       out_->resources.tensors.try_emplace(ep.tid, core::Tensor(ep.desc));
     }
   }

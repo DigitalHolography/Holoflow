@@ -12,14 +12,16 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#define NOMINMAX
+
 #include "holoflow/runtime/graph_exec.hh"
 
+#include <algorithm>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graph_traits.hpp>
 #include <chrono>
 #include <vector>
 #include <windows.h>
-#include <winnt.h>
 
 #include "boost/graph/properties.hpp"
 #include "boost/range/iterator_range_core.hpp"
@@ -35,6 +37,23 @@ namespace holoflow::runtime {
 Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
                      ExecResouces &resources)
     : graph_(graph), sections_(sections), res_(resources) {
+  // Count distinct tids
+  int nb_tids = 0;
+  for (const auto &v : boost::make_iterator_range(boost::vertices(graph))) {
+    const auto &np   = graph[v];
+    const auto  tids = std::array{std::span{np.in_tids}, std::span{np.out_tids}} | std::views::join;
+
+    if (!tids.empty()) {
+      int max = std::ranges::max(tids);
+      nb_tids = std::max(nb_tids, max + 1);
+    }
+  }
+
+  tviews_.resize(nb_tids);
+  for (int tid = 0; tid < nb_tids; tid++) {
+    tviews_.at(tid) = resources.tensors.at(tid).view();
+  }
+
   build_nodes_rts();
 }
 
@@ -98,7 +117,7 @@ void Scheduler::build_nodes_rts() {
       srt.ctx.inputs    = srt.in_views;
       srt.ctx.outputs   = srt.out_views;
       srt.ctx.cancelled = &stop_;
-      node_rts_.at(idx) = srt;
+      node_rts_.at(idx) = std::move(srt);
     } else if (auto *at = dynamic_cast<core::IAsyncTask *>(task)) {
       AsyncRt art;
       art.task           = at;
@@ -108,7 +127,7 @@ void Scheduler::build_nodes_rts() {
       art.pctx.cancelled = &stop_;
       art.xctx.outputs   = art.out_views;
       art.xctx.cancelled = &stop_;
-      node_rts_.at(idx)  = art;
+      node_rts_.at(idx)  = std::move(art);
     } else {
       HOLOFLOW_BUG("Task for node {} is neither sync nor async", np.spec.name);
     }

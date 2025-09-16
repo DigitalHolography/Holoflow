@@ -5,7 +5,7 @@
       "type": "cppvsdbg",
       "request": "launch",
       "name": "Launch holovibes",
-      "program": "${workspaceFolder}/build/msvc-multi/test/holoflow/Debug/holoflow_test.exe",
+      "program": "${workspaceFolder}/build/msvc-multi/Debug/holovibes.exe",
       "args": [],
       "cwd": "${workspaceFolder}",
       "stopAtEntry": true,
