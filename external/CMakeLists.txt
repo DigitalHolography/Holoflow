@@ -76,7 +76,7 @@ if (ENABLE_DOCS)
     find_package(Doxygen REQUIRED)
 endif()
 
-if (NOT DEFINED Qt6_DIR)
+if (NOT DEFINED ENV{Qt6_DIR})
     message(FATAL_ERROR "Qt6_DIR is not set. Please set it to the path containing Qt6Config.cmake")
 else()
     find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui)
