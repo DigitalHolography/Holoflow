@@ -57,14 +57,15 @@ holoflow
 ```
 
 ## Prerequisites
-- Windows 10/11 x64
-- **MSVC** (Visual Studio Build Tools 2022) and SDK
-- **CMake >= 3.24**
-- **Ninja** (Multi-Config)
-- **CUDA Toolkit** (13.0+ recommended)
+- **Windows 10/11 x64**
+- **[MSVC](https://visualstudio.microsoft.com/)** (Visual Studio Build Tools 2022) and SDK
+- **CMake >= 3.24** usually comes with VS
+- **Ninja** (Multi-Config) usually comes with VS
+- **[CUDA Toolkit](https://developer.nvidia.com/cuda-downloads)** (13.0+ recommended)
 - **x64 Native Tools Command Prompt** (for running all commands)
-- **Python >= 3.10**
-- **Git**
+- **[Python](https://www.python.org/downloads/) >= 3.10**
+- **[Git](https://git-scm.com/downloads/win)**
+- **[Qt >= 6.5](https://www.qt.io/download-qt-installer-oss)** set `Qt6_DIR` env var to your Qt installation path, e.g. `C:\Qt\6.5.2\msvc2019_64\lib\cmake\Qt6`
 
 ## Python dependencies
 The python dependencies are listed in `requirements.txt`. The recommended way to set up the Python environment is by using a virtual environment. You can create and activate a virtual environment using the following commands:

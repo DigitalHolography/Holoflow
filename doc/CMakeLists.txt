@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-find_package(Doxygen REQUIRED)
-
 set(DOXYGEN_INPUT
     ${CMAKE_SOURCE_DIR}/README.md
     ${CMAKE_SOURCE_DIR}/src/holofile/include
