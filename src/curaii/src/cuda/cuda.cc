@@ -14,22 +14,19 @@
 
 #include "curaii/cuda.hh"
 
+#include <format>
+
 #include "logger.hh"
 
 namespace curaii {
 
-CudaError::CudaError(cudaError_t code, const char *what, const char *file,
-                     int line)
-    : std::runtime_error(CudaError::make_message(code, what, file, line)),
-      code_(code) {}
+CudaError::CudaError(cudaError_t code, const char *what, const char *file, int line)
+    : std::runtime_error(CudaError::make_message(code, what, file, line)), code_(code) {}
 
-std::string CudaError::make_message(cudaError_t code, const char *what,
-                                    const char *file, int line) {
-  std::ostringstream os;
-  os << "CUDA error: " << cudaGetErrorString(code) << " (" << code << ")\n"
-     << "  expression : " << what << '\n'
-     << "  location   : " << file << ':' << line;
-  return os.str();
+std::string CudaError::make_message(cudaError_t code, const char *what, const char *file,
+                                    int line) {
+  return std::format("CUDA error: {} ({})\n  expression : {}\n  location   : {}:{}",
+                     cudaGetErrorString(code), static_cast<int>(code), what, file, line);
 }
 
 cudaError_t CudaError::code() const noexcept { return code_; }
@@ -78,10 +75,12 @@ cudaStream_t CudaStream::release() noexcept {
 }
 
 void CudaStream::reset(cudaStream_t s) noexcept {
-  if (stream_) {
-    CUDA_CHECK_NT(cudaStreamDestroy(stream_));
+  if (stream_ != s) {
+    if (stream_) {
+      CUDA_CHECK_NT(cudaStreamDestroy(stream_));
+    }
+    stream_ = s;
   }
-  stream_ = s;
 }
 
 CudaStream::operator bool() const noexcept { return stream_ != nullptr; }
@@ -90,11 +89,10 @@ CudaStream::operator bool() const noexcept { return stream_ != nullptr; }
 
 namespace curaii::detail {
 
-void log_cuda_failure(spdlog::level::level_enum lvl, cudaError_t code,
-                      const char *expr, const char *file, int line) {
-  logger()->log(lvl, "CUDA error {} ({}): \"{}\"  [{}:{}]",
-                cudaGetErrorString(code), static_cast<int>(code), expr, file,
-                line);
+void log_cuda_failure(spdlog::level::level_enum lvl, cudaError_t code, const char *expr,
+                      const char *file, int line) {
+  logger()->log(lvl, "CUDA error {} ({}): \"{}\"  [{}:{}]", cudaGetErrorString(code),
+                static_cast<int>(code), expr, file, line);
 }
 
 } // namespace curaii::detail

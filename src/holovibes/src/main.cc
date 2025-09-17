@@ -13,13 +13,14 @@
 // limitations under the License.
 
 #include <QApplication>
-#include <iostream>
+#include <cstdlib>
 
-#include "boost/graph/compressed_sparse_row_graph.hpp"
+#include "bug.hh"
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
 #include "holoflow/runtime/compiler.hh"
 #include "holoflow/runtime/graph_exec.hh"
+#include "logger.hh"
 #include "spdlog/common.h"
 #include "tasks/display_tensor.hh"
 #include "tasks/holofile.hh"
@@ -27,6 +28,9 @@
 
 int main() {
   spdlog::set_level(spdlog::level::debug);
+
+  auto path = std::getenv("HOLOVIBES_DEFAULT_SOURCE_PATH");
+  HOLOVIBES_CHECK(path != nullptr, "Environment variable HOLOVIBES_DEFAULT_SOURCE_PATH is not set");
 
   QApplication                       app(__argc, __argv);
   holovibes::ui::TensorDisplayWidget widget;
@@ -42,7 +46,7 @@ int main() {
   holoflow::core::GraphSpec spec;
 
   const holovibes::tasks::HolofileSettings holofile_settings = {
-      .path        = "D:\\InputData\\250220_GUJ0206_L.holo",
+      .path        = std::string(path),
       .load_kind   = holovibes::tasks::HolofileSettings::LoadKind::Live,
       .start_frame = 0,
       .end_frame   = 2048,
