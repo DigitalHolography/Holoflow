@@ -87,10 +87,10 @@ public:
   CudaStream(CudaStream &&other) noexcept;
   CudaStream &operator=(CudaStream &&other) noexcept;
 
-  cudaStream_t get() const noexcept;
-  cudaStream_t release() noexcept;
-  void         reset(cudaStream_t s = nullptr) noexcept;
-  explicit     operator bool() const noexcept;
+  [[nodiscard]] cudaStream_t get() const noexcept;
+  [[nodiscard]] cudaStream_t release() noexcept;
+  void                       reset(cudaStream_t s = nullptr) noexcept;
+  explicit                   operator bool() const noexcept;
 
 private:
   cudaStream_t stream_{nullptr};
