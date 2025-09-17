@@ -67,5 +67,8 @@ PUBLIC
     project_options
     cudart
     cublas
+    cufft
+    cusolver
+    nvrtc
     spdlog::spdlog
 )
