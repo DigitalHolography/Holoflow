@@ -56,14 +56,14 @@
     {
       "label": "run:holovibes:Debug",
       "type": "shell",
-      "command": "\"${input:vcvarsPath}\" && build\\msvc-multi\\Debug\\holovibes.exe",
+      "command": "build\\msvc-multi\\Debug\\holovibes.exe",
       "problemMatcher": [],
       "dependsOn": "build:Debug"
     },
     {
       "label": "run:holovibes:Release",
       "type": "shell",
-      "command": "\"${input:vcvarsPath}\" && build\\msvc-multi\\src\\holovibes\\Release\\holovibes.exe",
+      "command": "build\\msvc-multi\\src\\holovibes\\Release\\holovibes.exe",
       "problemMatcher": [],
       "dependsOn": "build:Release"
     }
