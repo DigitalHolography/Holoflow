@@ -1,11 +1,9 @@
 {
-    "clangd.arguments": [
-        "--compile-commands-dir=build/msvc-multi/"
-    ],
     "conventionalCommits.scopes": [
         "holoflow",
         "curaii",
         "holofile",
         "holovibes"
-    ]
+    ],
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/msvc-multi/compile_commands.json"
 }
