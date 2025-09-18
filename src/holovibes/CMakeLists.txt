@@ -21,6 +21,7 @@ file(GLOB_RECURSE HOLOVIBES_PRIVATE_HEADERS
 
 file(GLOB_RECURSE HOLOVIBES_SOURCES 
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cu
 )
 
 qt_add_executable(holovibes

@@ -19,10 +19,15 @@ if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
     message(FATAL_ERROR "Only MSVC compiler is supported.")
 endif()
 
+# Required to silent boost warnings on Windows
 add_compile_definitions(
     $<$<AND:$<COMPILE_LANGUAGE:CXX>,$<CXX_COMPILER_ID:MSVC>>:_WIN32_WINNT=0x0A00>
     $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CXX_COMPILER_ID:MSVC>>:_WIN32_WINNT=0x0A00>
 )
+
+# NVCC does not support utf-8 correctly
+# https://github.com/fmtlib/fmt/issues/4389
+add_definitions(-DFMT_UNICODE=0)
 
 option(ENABLE_IPO "IPO/LTO" ON)
 option(ENABLE_TESTING "Build tests" ON)
