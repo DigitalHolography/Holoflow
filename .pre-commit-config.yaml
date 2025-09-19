@@ -18,3 +18,4 @@ repos:
   hooks:
   - id: addlicense
     args: [ "-c", "Digital Holography Foundation"]
+    files: \.(cc|cu|hh|hxx|cuh|cuhxx|py|txt|cmake|json)$
