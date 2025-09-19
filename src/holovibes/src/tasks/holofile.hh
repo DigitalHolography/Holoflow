@@ -31,7 +31,6 @@
 #include "holofile/holofile.hh"
 #include "holoflow/core/tasks.hh"
 
-using json                          = nlohmann::json;
 template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
 template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
@@ -80,10 +79,10 @@ struct HolofileSettings {
 /// @name JSON serialization
 /// @brief nlohmann::json adapters for @ref HolofileSettings and @ref HolofileSettings::LoadKind.
 /// @{
-void to_json(json &j, const HolofileSettings::LoadKind &lk);
-void from_json(const json &j, HolofileSettings::LoadKind &lk);
-void to_json(json &j, const HolofileSettings &hs);
-void from_json(const json &j, HolofileSettings &hs);
+void to_json(nlohmann::json &j, const HolofileSettings::LoadKind &lk);
+void from_json(const nlohmann::json &j, HolofileSettings::LoadKind &lk);
+void to_json(nlohmann::json &j, const HolofileSettings &hs);
+void from_json(const nlohmann::json &j, HolofileSettings &hs);
 /// @}
 
 /// @brief Synchronous task that reads frames from a HoloFile into a tensor.
@@ -127,15 +126,15 @@ private:
 class HolofileFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
-                                    const json &jsettings) const override;
+                                    const nlohmann::json &jsettings) const override;
 
   std::unique_ptr<holoflow::core::ISyncTask>
-  create(std::span<const holoflow::core::TDesc> input_descs, const json &jsettings,
+  create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 
   std::unique_ptr<holoflow::core::ISyncTask>
   update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
-         std::span<const holoflow::core::TDesc> input_descs, const json &jsettings,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

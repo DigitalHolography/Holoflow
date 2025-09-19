@@ -26,7 +26,7 @@
 
 namespace holovibes::tasks {
 
-void to_json(json &j, const HolofileSettings::LoadKind &lk) {
+void to_json(nlohmann::json &j, const HolofileSettings::LoadKind &lk) {
   std::map<HolofileSettings::LoadKind, std::string> lk_to_str = {
       {HolofileSettings::LoadKind::Live, "Live"},
       {HolofileSettings::LoadKind::CPUCached, "CPUCached"},
@@ -37,7 +37,7 @@ void to_json(json &j, const HolofileSettings::LoadKind &lk) {
   j = lk_to_str[lk];
 }
 
-void from_json(const json &j, HolofileSettings::LoadKind &lk) {
+void from_json(const nlohmann::json &j, HolofileSettings::LoadKind &lk) {
   std::map<std::string, HolofileSettings::LoadKind> str_to_lk = {
       {"Live", HolofileSettings::LoadKind::Live},
       {"CPUCached", HolofileSettings::LoadKind::CPUCached},
@@ -51,14 +51,14 @@ void from_json(const json &j, HolofileSettings::LoadKind &lk) {
   lk = str_to_lk[key];
 }
 
-void to_json(json &j, const HolofileSettings &hs) {
-  j = json{
+void to_json(nlohmann::json &j, const HolofileSettings &hs) {
+  j = nlohmann::json{
       {"path", hs.path},           {"load_kind", hs.load_kind},   {"start_frame", hs.start_frame},
       {"end_frame", hs.end_frame}, {"batch_size", hs.batch_size},
   };
 }
 
-void from_json(const json &j, HolofileSettings &hs) {
+void from_json(const nlohmann::json &j, HolofileSettings &hs) {
   j.at("path").get_to(hs.path);
   j.at("load_kind").get_to(hs.load_kind);
   j.at("start_frame").get_to(hs.start_frame);
