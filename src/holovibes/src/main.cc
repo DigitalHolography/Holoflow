@@ -154,6 +154,18 @@ int main() {
   auto v_fresnel = boost::add_vertex(fresnel_node, spec);
   boost::add_edge(v_to_cf32, v_fresnel, holoflow::core::EdgeSpec{0, 0}, spec);
 
+  const holoflow::core::NodeSpec pca_node = {
+      .name     = "pca",
+      .kind     = "Pca",
+      .settings = nlohmann::json(PcaSettings{
+          .begin = 0,
+          .end   = 16,
+      }),
+  };
+
+  auto v_pca = boost::add_vertex(pca_node, spec);
+  boost::add_edge(v_fresnel, v_pca, holoflow::core::EdgeSpec{0, 0}, spec);
+
   const holoflow::core::NodeSpec to_f32_node = {
       .name     = "to_f32",
       .kind     = "Conversion",
@@ -164,7 +176,29 @@ int main() {
   };
 
   auto v_to_f32 = boost::add_vertex(to_f32_node, spec);
-  boost::add_edge(v_fresnel, v_to_f32, holoflow::core::EdgeSpec{0, 0}, spec);
+  boost::add_edge(v_pca, v_to_f32, holoflow::core::EdgeSpec{0, 0}, spec);
+
+  const holoflow::core::NodeSpec avg_node = {
+      .name     = "avg",
+      .kind     = "Average",
+      .settings = nlohmann::json(AverageSettings{
+          .axis  = 0,
+          .start = 0,
+          .end   = 16,
+      }),
+  };
+
+  auto v_avg = boost::add_vertex(avg_node, spec);
+  boost::add_edge(v_to_f32, v_avg, holoflow::core::EdgeSpec{0, 0}, spec);
+
+  const holoflow::core::NodeSpec fft_shift_node = {
+      .name     = "fft_shift",
+      .kind     = "FFTShift",
+      .settings = nlohmann::json(FFTShiftSettings{}),
+  };
+
+  auto v_fft_shift = boost::add_vertex(fft_shift_node, spec);
+  boost::add_edge(v_avg, v_fft_shift, holoflow::core::EdgeSpec{0, 0}, spec);
 
   // TODO: Add post-processing nodes here.
 
@@ -178,7 +212,7 @@ int main() {
   };
 
   auto v_to_u8 = boost::add_vertex(to_u8_node, spec);
-  boost::add_edge(v_to_f32, v_to_u8, holoflow::core::EdgeSpec{0, 0}, spec);
+  boost::add_edge(v_fft_shift, v_to_u8, holoflow::core::EdgeSpec{0, 0}, spec);
 
   const holoflow::core::NodeSpec out_gpu_queue_node = {
       .name     = "out_gpu_queue",
