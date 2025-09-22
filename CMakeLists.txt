@@ -39,7 +39,7 @@ option(ENABLE_WARNINGS "Enable compiler warnings" ON)
 option(ENABLE_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 
 # GPU arch list editable by users: -DPROJECT_CUDA_ARCHS=86;89;90
-set(PROJECT_CUDA_ARCHS "75;86;89;90" CACHE STRING "CUDA archs for CUDA targets")
+set(PROJECT_CUDA_ARCHS "75;86;89;120-real;120-virtual" CACHE STRING "CUDA archs for CUDA targets")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 include(cmake/ProjectOptions.cmake)

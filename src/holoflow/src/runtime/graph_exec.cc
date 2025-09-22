@@ -51,7 +51,9 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
 
   tviews_.resize(nb_tids);
   for (int tid = 0; tid < nb_tids; tid++) {
-    tviews_.at(tid) = resources.tensors.at(tid).view();
+    if (resources.tensors.contains(tid)) {
+      tviews_.at(tid) = resources.tensors.at(tid).view();
+    }
   }
 
   build_nodes_rts();

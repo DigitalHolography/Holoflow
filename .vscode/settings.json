@@ -5,5 +5,8 @@
         "holofile",
         "holovibes"
     ],
-    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/msvc-multi/compile_commands.json"
+    "C_Cpp.default.compileCommands": "${workspaceFolder}/build/msvc-multi/compile_commands.json",
+    "files.associations": {
+        "xiosbase": "cpp"
+    }
 }

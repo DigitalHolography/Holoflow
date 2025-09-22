@@ -161,9 +161,9 @@ void Conversion::launch_u16_cf32_real(holoflow::core::CTView in, holoflow::core:
 }
 
 void Conversion::launch_f32_u8_scaled(holoflow::core::CTView in, holoflow::core::TView out) {
-  auto *idata = reinterpret_cast<const float *>(in.data);
+  auto *idata = reinterpret_cast<float *>(const_cast<std::byte *>(in.data));
   auto *odata = reinterpret_cast<uint8_t *>(out.data);
-  int   size  = static_cast<int>(in.desc.num_elements());
+  auto  size  = in.desc.num_elements();
 
   // Compute min and max using CUB
   size_t   min_storage_bytes = min_temp_storage_bytes_;
@@ -303,7 +303,7 @@ ConversionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   // Validate
   auto infer_result = infer(input_descs, jsettings);
   auto settings     = jsettings.get<ConversionSettings>();
-  auto num_elements = input_descs[0].num_elements();
+  auto count        = input_descs[0].num_elements();
 
   // CUB min
   size_t            min_storage_bytes = 0;
@@ -311,7 +311,7 @@ ConversionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   DevPtr<std::byte> d_min;
   float            *fnull = nullptr;
   if (settings.strategy == ConversionSettings::Strategy::Scaled) {
-    CUDA_CHECK(cub::DeviceReduce::Min(nullptr, min_storage_bytes, fnull, fnull, 0, ctx.stream));
+    CUDA_CHECK(cub::DeviceReduce::Min(nullptr, min_storage_bytes, fnull, fnull, count, ctx.stream));
     d_min_storage = curaii::make_unique_device_ptr<uint8_t>(min_storage_bytes);
     d_min         = curaii::make_unique_device_ptr<std::byte>(sizeof(float));
   }
@@ -321,7 +321,7 @@ ConversionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   DevPtr<uint8_t>   d_max_storage;
   DevPtr<std::byte> d_max;
   if (settings.strategy == ConversionSettings::Strategy::Scaled) {
-    CUDA_CHECK(cub::DeviceReduce::Max(nullptr, max_storage_bytes, fnull, fnull, 0, ctx.stream));
+    CUDA_CHECK(cub::DeviceReduce::Max(nullptr, max_storage_bytes, fnull, fnull, count, ctx.stream));
     d_max_storage = curaii::make_unique_device_ptr<uint8_t>(max_storage_bytes);
     d_max         = curaii::make_unique_device_ptr<std::byte>(sizeof(float));
   }
