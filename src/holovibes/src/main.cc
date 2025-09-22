@@ -140,6 +140,19 @@ int main() {
   boost::add_edge(v_in_gpu_queue, v_to_cf32, holoflow::core::EdgeSpec{0, 0}, spec);
 
   // TODO: Add processing nodes here.
+  const holoflow::core::NodeSpec fresnel_node = {
+      .name     = "fresnel",
+      .kind     = "FresnelDiffraction",
+      .settings = nlohmann::json(FresnelDiffractionSettings{
+          .lambda = 852e-9f,
+          .dx     = 20e-6f,
+          .dy     = 20e-6f,
+          .z      = 380e-3f,
+      }),
+  };
+
+  auto v_fresnel = boost::add_vertex(fresnel_node, spec);
+  boost::add_edge(v_to_cf32, v_fresnel, holoflow::core::EdgeSpec{0, 0}, spec);
 
   const holoflow::core::NodeSpec to_f32_node = {
       .name     = "to_f32",
@@ -151,7 +164,7 @@ int main() {
   };
 
   auto v_to_f32 = boost::add_vertex(to_f32_node, spec);
-  boost::add_edge(v_to_cf32, v_to_f32, holoflow::core::EdgeSpec{0, 0}, spec);
+  boost::add_edge(v_fresnel, v_to_f32, holoflow::core::EdgeSpec{0, 0}, spec);
 
   // TODO: Add post-processing nodes here.
 
