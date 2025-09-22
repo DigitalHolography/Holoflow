@@ -329,9 +329,9 @@ AngularSpectrumFactory::create(std::span<const holoflow::core::TDesc> input_desc
   CUFFT_CHECK(cufftSetStream(fwd_plan.get(), ctx.stream));
   CUFFT_CHECK(cufftSetStream(inv_plan.get(), ctx.stream));
 
-  auto *d_info_ptr = reinterpret_cast<void **>(d_info.get());
+  auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
   CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_lens_callback", lto.data(), lto.size(),
-                                    CUFFT_CB_LD_COMPLEX, d_info_ptr));
+                                    CUFFT_CB_LD_COMPLEX, &d_info_ptr));
 
   CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, inputtype,
                                   onembed, ostride, odist, outputtype, batch, &work_size,
@@ -390,9 +390,9 @@ AngularSpectrumFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_ta
   CUFFT_CHECK(cufftSetStream(fwd_plan.get(), ctx.stream));
   CUFFT_CHECK(cufftSetStream(inv_plan.get(), ctx.stream));
 
-  auto *d_info_ptr = reinterpret_cast<void **>(d_info.get());
+  auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
   CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_lens_callback", lto.data(), lto.size(),
-                                    CUFFT_CB_LD_COMPLEX, d_info_ptr));
+                                    CUFFT_CB_LD_COMPLEX, &d_info_ptr));
 
   CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, inputtype,
                                   onembed, ostride, odist, outputtype, batch, &work_size,
