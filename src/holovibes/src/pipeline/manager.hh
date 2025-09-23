@@ -1,0 +1,129 @@
+#pragma once
+
+#include <QObject>
+#include <concepts>
+#include <nlohmann/json.hpp>
+
+#include "holoflow/core/graph_spec.hh"
+#include "holoflow/core/registry.hh"
+#include "holoflow/runtime/compiler.hh"
+#include "holoflow/runtime/graph_exec.hh"
+#include "pipeline/settings.hh"
+#include "ui/tensor_display_widget.hh"
+
+namespace holovibes::pipeline {
+
+template <typename T>
+concept JsonSerializable = requires(T a, nlohmann::json j) {
+  { to_json(j, a) } -> std::same_as<void>;
+  { from_json(j, a) } -> std::same_as<void>;
+};
+
+class Manager : public QObject {
+  Q_OBJECT
+
+public:
+  Manager(ui::TensorDisplayWidget *xy_processed_widget,
+          ui::TensorDisplayWidget *xz_processed_widget,
+          ui::TensorDisplayWidget *yz_processed_widget, ui::TensorDisplayWidget *xy_raw_widget);
+
+  ~Manager() override = default;
+
+  void start_pipeline();
+  void stop_pipeline();
+  void update_pipeline(const Settings &settings);
+
+signals:
+  void start_pipeline_success();
+  void start_pipeline_failure();
+  void stop_pipeline_success();
+  void stop_pipeline_failure();
+  void update_pipeline_success();
+  void update_pipeline_failure();
+
+private:
+  using V = holoflow::core::GraphSpec::vertex_descriptor;
+
+  void build_and_run();
+  void build_graph_spec();
+  void reset_graph_spec();
+  void guess_optimizations();
+  void guess_source_dims();
+
+  // Utilities to build the graph
+  template <JsonSerializable S>
+  V add_node(const std::string &name, const std::string &kind, const S &settings);
+
+  template <JsonSerializable S>
+  V add_node_after(const V &after, int out_idx, int in_idx, const std::string &name,
+                   const std::string &kind, const S &settings);
+
+  V add_source();
+  V add_cpu_in_queue(V parent, int out_idx, int in_idx);
+  V add_cpu_gpu_cpy(V parent, int out_idx, int in_idx);
+  V add_gpu_in_queue(V parent, int out_idx, int in_idx);
+  V add_to_cf32(V parent, int out_idx, int in_idx);
+  V add_spacial_transform(V parent, int out_idx, int in_idx);
+  V add_spacial_filter(V parent, int out_idx, int in_idx);
+  V add_time_queue(V parent, int out_idx, int in_idx);
+  V add_time_transform(V parent, int out_idx, int in_idx);
+  V add_to_f32(V parent, int out_idx, int in_idx);
+  V add_debounce_queue(V parent, int out_idx, int in_idx);
+  V add_xy_cut_avg(V parent, int out_idx, int in_idx);
+  V add_fft_shift(V parent, int out_idx, int in_idx);
+  V add_xy_identity_0(V parent, int out_idx, int in_idx);
+  V add_xy_registration(V parent, int out_idx, int in_idx);
+  V add_xy_slide_avg(V parent, int out_idx, int in_idx);
+  V add_xy_identity_1(V parent, int out_idx, int in_idx);
+  V add_xy_fps_limiter(V parent, int out_idx, int in_idx);
+  V add_xy_convolution(V parent, int out_idx, int in_idx);
+  V add_xy_pctclip(V parent, int out_idx, int in_idx);
+  V add_xy_to_u8(V parent, int out_idx, int in_idx);
+  V add_xy_gpu_out_queue(V parent, int out_idx, int in_idx);
+  V add_xy_gpu_cpu_cpy(V parent, int out_idx, int in_idx);
+  V add_xy_cpu_out_queue(V parent, int out_idx, int in_idx);
+  V add_xy_processed_display(V parent, int out_idx, int in_idx);
+  V add_xz_cut_avg(V parent, int out_idx, int in_idx);
+  V add_xz_reshape(V parent, int out_idx, int in_idx);
+  V add_xz_slide_avg(V parent, int out_idx, int in_idx);
+  V add_xz_to_u8(V parent, int out_idx, int in_idx);
+  V add_xz_gpu_out_queue(V parent, int out_idx, int in_idx);
+  V add_xz_gpu_cpu_cpy(V parent, int out_idx, int in_idx);
+  V add_xz_cpu_out_queue(V parent, int out_idx, int in_idx);
+  V add_xz_processed_display(V parent, int out_idx, int in_idx);
+  V add_yz_cut_avg(V parent, int out_idx, int in_idx);
+  V add_yz_reshape(V parent, int out_idx, int in_idx);
+  V add_yz_slide_avg(V parent, int out_idx, int in_idx);
+  V add_yz_to_u8(V parent, int out_idx, int in_idx);
+  V add_yz_gpu_out_queue(V parent, int out_idx, int in_idx);
+  V add_yz_gpu_cpu_cpy(V parent, int out_idx, int in_idx);
+  V add_yz_cpu_out_queue(V parent, int out_idx, int in_idx);
+  V add_yz_processed_display(V parent, int out_idx, int in_idx);
+
+  // External widgets to display tensors
+  ui::TensorDisplayWidget *xy_processed_widget_;
+  ui::TensorDisplayWidget *xz_processed_widget_;
+  ui::TensorDisplayWidget *yz_processed_widget_;
+  ui::TensorDisplayWidget *xy_raw_widget_;
+
+  // Settings
+  Settings s_;
+  int      src_width_  = 0;
+  int      src_height_ = 0;
+
+  // Internal state
+  std::mutex mtx_;
+  bool       settings_dirty_ = false;
+
+  // Optimizations
+  bool opti_cpu_stride_ = false;
+  bool opti_gpu_stride_ = false;
+
+  // Holoflow components
+  holoflow::core::Registry                           registry_;
+  holoflow::core::GraphSpec                          spec_;
+  std::unique_ptr<holoflow::runtime::CompilerOutput> compiler_output_;
+  std::unique_ptr<holoflow::runtime::Scheduler>      scheduler_;
+};
+
+} // namespace holovibes::pipeline

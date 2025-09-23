@@ -81,7 +81,7 @@ int main() {
       .kind     = "Holofile",
       .settings = nlohmann::json(HolofileSettings{
           .path        = std::string(path),
-          .load_kind   = HolofileSettings::LoadKind::Live,
+          .load_kind   = HolofileSettings::LoadKind::CPUCached,
           .start_frame = 0,
           .end_frame   = 65536,
           .batch_size  = 1,
