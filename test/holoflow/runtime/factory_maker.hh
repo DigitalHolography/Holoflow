@@ -34,6 +34,10 @@ inline core::TDesc make_desc(std::initializer_list<size_t> shape = {1},
   return core::TDesc{std::vector<size_t>(shape), dtype, mem_loc};
 }
 
+inline std::vector<core::TDesc> copy_descs(std::span<const core::TDesc> descs) {
+  return std::vector<core::TDesc>(descs.begin(), descs.end());
+}
+
 inline core::InferResult make_infer_result(core::TaskKind kind,
                                            std::vector<core::TDesc> inputs,
                                            std::vector<core::TDesc> outputs,

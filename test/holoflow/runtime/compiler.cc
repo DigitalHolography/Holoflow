@@ -26,6 +26,7 @@
 #include <nlohmann/json.hpp>
 
 #include "factory_maker.hh"
+#include "graph_builder.hh"
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
 #include "holoflow/runtime/graph_display.hh"
@@ -37,57 +38,14 @@ namespace {
 using holoflow::core::TaskKind;
 using holoflow::test::AsyncFactorySpec;
 using holoflow::test::make_desc;
+using holoflow::test::copy_descs;
 using holoflow::test::make_infer_result;
 using holoflow::test::RecordingAsyncFactory;
 using holoflow::test::RecordingSyncFactory;
 using holoflow::test::StubAsyncTask;
 using holoflow::test::StubSyncTask;
 using holoflow::test::SyncFactorySpec;
-
-std::vector<core::TDesc> copy_descs(std::span<const core::TDesc> descs) {
-  return std::vector<core::TDesc>(descs.begin(), descs.end());
-}
-
-class GraphBuilder {
-public:
-  GraphBuilder &add_node(const std::string &id, const std::string &name, const std::string &kind, const nlohmann::json &settings = {}) {
-    core::NodeSpec node;
-    node.name     = name;
-    node.kind     = kind;
-    node.settings = settings;
-    auto v        = boost::add_vertex(node, graph_);
-    nodes_.emplace(id, v);
-    return *this;
-  }
-
-  GraphBuilder &add_node(const std::string &name, const std::string &kind) {
-    return add_node(name, name, kind);
-  }
-
-  GraphBuilder &add_edge(const std::string &src_id, const std::string &dst_id, int out_idx = 0,
-                         int in_idx = 0) {
-    core::EdgeSpec edge{out_idx, in_idx};
-    boost::add_edge(nodes_.at(src_id), nodes_.at(dst_id), edge, graph_);
-    return *this;
-  }
-
-  core::GraphSpec finish() { return std::move(graph_); }
-
-private:
-  core::GraphSpec                                                        graph_;
-  std::map<std::string, core::GraphSpec::vertex_descriptor, std::less<>> nodes_;
-};
-
-// core::GraphSpec::vertex_descriptor find_vertex(const core::GraphSpec &graph,
-//                                                const std::string &name) {
-//   for (auto v : boost::make_iterator_range(boost::vertices(graph))) {
-//     if (graph[v].name == name) {
-//       return v;
-//     }
-//   }
-//   ADD_FAILURE() << "Missing vertex " << name;
-//   return *boost::vertices(graph).first;
-// }
+using holoflow::test::GraphBuilder;
 
 GraphPlan::vertex_descriptor find_plan_vertex(const GraphPlan &graph, const std::string &name) {
   for (auto v : boost::make_iterator_range(boost::vertices(graph))) {

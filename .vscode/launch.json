@@ -9,6 +9,15 @@
       "args": [],
       "cwd": "${workspaceFolder}",
       "stopAtEntry": true,
+    },
+        {
+      "type": "cppvsdbg",
+      "request": "launch",
+      "name": "Run tests",
+      "program": "${workspaceFolder}/build/msvc-multi/Debug/holoflow_test.exe",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": true,
     }
   ],
 }
