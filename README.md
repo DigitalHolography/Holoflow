@@ -66,6 +66,7 @@ holoflow
 - **[Python](https://www.python.org/downloads/) >= 3.10**
 - **[Git](https://git-scm.com/downloads/win)**
 - **[Qt >= 6.5](https://www.qt.io/download-qt-installer-oss)** set `Qt6_DIR` env var to your Qt installation path, e.g. `C:\Qt\6.5.2\msvc2019_64\lib\cmake\Qt6`, add `C:\Qt\6.5.2\msvc2019_64\bin` to your `PATH`
+- **[Intel oneAPI Base Toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html)** add `C:\Program Files (x86)\Intel\oneAPI\mkl\latest\bin` to your `PATH`
 
 ## Python dependencies
 The python dependencies are listed in `requirements.txt`. The recommended way to set up the Python environment is by using a virtual environment. You can create and activate a virtual environment using the following commands:
@@ -116,13 +117,13 @@ Artifacts appear under `build/msvc-multi/`.
 The main application is `holovibes`.
 ```powershell
 # Example
-build\msvc-multi\src\holovibes\Release\Release\holovibes.exe --help
+build\msvc-multi\Release\holovibes.exe --help
 ```
 
 ## Test
 The individual tests can be run from cmd:
 ```powershell
-build\msvc-multi\test\holoflow\Debug\holoflow_test.exe
+build\msvc-multi\Debug\holoflow_test.exe
 ```
 
 ## Benchmarks
