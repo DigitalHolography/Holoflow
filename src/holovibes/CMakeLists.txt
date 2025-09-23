@@ -53,4 +53,6 @@ target_link_libraries(holovibes PRIVATE
     Qt6::Core
     Qt6::Widgets
     Qt6::Gui
+    Qt6::OpenGL
+    Qt6::OpenGLWidgets
 )

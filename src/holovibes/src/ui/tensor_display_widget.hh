@@ -16,38 +16,45 @@
 
 #include <QByteArray>
 #include <QImage>
+#include <QOpenGLExtraFunctions>
+#include <QOpenGLFunctions>
+#include <QOpenGLWidget>
 #include <QPixmap>
 #include <QWidget>
 
 namespace holovibes::ui {
 
 /// Widget that renders a 2D u8 tensor as a grayscale image.
-class TensorDisplayWidget : public QWidget {
+class TensorDisplayWidget : public QOpenGLWidget, protected QOpenGLExtraFunctions {
   Q_OBJECT
 
 public:
   explicit TensorDisplayWidget(QWidget *parent = nullptr);
 
-  [[nodiscard]] QSize sizeHint() const override;
+  // [[nodiscard]] QSize sizeHint() const override;
 
 public slots:
-  /// Receives tensor bytes and renders them as grayscale.
   void presentTensor(const QByteArray &bytes, int width, int height);
 
-  /// Renders an already constructed grayscale image.
-  void presentImage(const QImage &image);
-
 signals:
-  /// Emitted after the widget swaps the currently displayed tensor.
   void tensorDisplayed();
 
 protected:
-  void paintEvent(QPaintEvent *event) override;
+  void initializeGL() override;
+  void resizeGL(int w, int h) override;
+  void paintGL() override;
 
 private:
-  void updatePixmap(const QImage &image);
+  void ensureTexture(int w, int h);
+  void updateTexture(const quint8 *data, int w, int h);
+  void updateLetterboxViewport();
 
-  QPixmap pixmap_;
+  GLuint tex_   = 0;
+  GLuint vao_   = 0;
+  GLuint vbo_   = 0;
+  GLuint prog_  = 0;
+  int    img_w_ = 0, img_h_ = 0;
+  bool   texture_dirty_ = false;
 };
 
 } // namespace holovibes::ui
