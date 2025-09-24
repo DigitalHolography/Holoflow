@@ -31,8 +31,8 @@ template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 namespace holovibes::tasks {
 
 struct PcaSettings {
-  size_t begin;
-  size_t end;
+  int begin;
+  int end;
 };
 
 void to_json(nlohmann::json &j, const PcaSettings &settings);
