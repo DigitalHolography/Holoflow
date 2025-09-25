@@ -30,6 +30,7 @@
 #include "tasks/pca.hh"
 #include "tasks/pct_clip.hh"
 #include "tasks/stft.hh"
+#include "tasks/slide_avg.hh"
 
 using namespace holovibes::tasks;
 
@@ -498,10 +499,11 @@ Manager::V Manager::add_xy_registration(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_slide_avg(V parent, int out_idx, int in_idx) {
-  HOLOVIBES_UNIMPLEMENTED();
-  (void)parent;
-  (void)out_idx;
-  (void)in_idx;
+  return add_node_after<SlidingAverageSettings>(parent, out_idx, in_idx, "xy_slide_avg",
+                                            "SlidingAverage", SlidingAverageSettings{
+                                                .target_capacity        = 128,
+                                      .window_size = static_cast<size_t>(s_.pp_accumulation)
+                                            });
 }
 
 Manager::V Manager::add_xy_identity_1(V parent, int out_idx, int in_idx) {
