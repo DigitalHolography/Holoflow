@@ -71,6 +71,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<PcaFactory>(registry_, "Pca");
   reg_sync<PctClipFactory>(registry_, "PctClip");
   reg_sync<StftFactory>(registry_, "Stft");
+  reg_async<SlidingAverageFactory>(registry_, "SlidingAverage");
 }
 
 void Manager::start_pipeline() {
@@ -149,7 +150,7 @@ void Manager::build_and_run() {
   auto dot      = holoflow::core::to_dot(spec_);
   auto t        = floor<seconds>(system_clock::now());
   auto date     = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
-  auto log_path = std::format("{}/pipeline_{}.dot", LOG_FOLDER_PATH, date);
+  auto log_path = std::format("pipeline_{}.dot", LOG_FOLDER_PATH, date);
   std::ofstream(log_path) << dot;
   logger()->info("[Manager::build_and_run] Pipeline graph saved to {}", log_path);
 
@@ -176,7 +177,7 @@ void Manager::build_graph_spec() {
   if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
     auto cpu_in_queue = add_cpu_in_queue(parent, 0, 0);
     auto cpu_gpu_cpy  = add_cpu_gpu_cpy(cpu_in_queue, 0, 0);
-    parent            = add_gpu_in_queue(cpu_gpu_cpy, 0, 0);
+    parent            = cpu_gpu_cpy;
   }
 
   auto gpu_in_queue = add_gpu_in_queue(parent, 0, 0);
@@ -222,13 +223,14 @@ void Manager::build_graph_spec() {
 
     auto slide_avg   = add_xy_slide_avg(parent, 0, 0);
     auto identity_1  = add_xy_identity_1(slide_avg, 0, 0);
-    auto fps_limiter = add_xy_fps_limiter(identity_1, 0, 0);
-    parent           = fps_limiter;
+    // auto fps_limiter = add_xy_fps_limiter(identity_1, 0, 0);
+    // parent           = fps_limiter;
+    parent = identity_1;
 
-    if (s_.pp_convolution) {
-      auto convolution = add_xy_convolution(parent, 0, 0);
-      parent           = convolution;
-    }
+    // if (s_.pp_convolution) {
+    //   auto convolution = add_xy_convolution(parent, 0, 0);
+    //   parent           = convolution;
+    // }
 
     auto pctclip       = add_xy_pctclip(parent, 0, 0);
     auto to_u8         = add_xy_to_u8(pctclip, 0, 0);
@@ -450,7 +452,7 @@ Manager::V Manager::add_to_f32(V parent, int out_idx, int in_idx) {
   return add_node_after<ConversionSettings>(parent, out_idx, in_idx, "to_f32", "Conversion",
                                             ConversionSettings{
                                                 .target   = ConversionSettings::Target::F32,
-                                                .strategy = ConversionSettings::Strategy::Real,
+                                                .strategy = ConversionSettings::Strategy::Modulus,
                                             });
 }
 

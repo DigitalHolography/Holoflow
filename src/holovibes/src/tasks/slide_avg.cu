@@ -87,7 +87,7 @@ SlidingAverage::SlidingAverage(SlidingAverageSettings settings, const holoflow::
                                cudaStream_t consumer_stream, DevPtr<std::byte> &&d_buffer,
                                DevPtr<float> &&d_running_avg, DevPtr<float> &&d_output,
                                dim3 block_dim, dim3 grid_dim)
-    : settings_(std::move(settings)), producer_stream_(producer_stream),
+    : settings_(std::move(settings)), idesc_(idesc), odesc_(odesc), producer_stream_(producer_stream),
       consumer_stream_(consumer_stream), nb_slots_(nb_slots), input_batch_size_(input_batch_size),
       element_size_(element_size), frame_size_(frame_size), d_buffer_(std::move(d_buffer)),
       d_running_avg_(std::move(d_running_avg)), d_output_(std::move(d_output)),
