@@ -455,10 +455,12 @@ Manager::V Manager::add_to_f32(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_debounce_queue(V parent, int out_idx, int in_idx) {
-  HOLOVIBES_UNIMPLEMENTED();
-  (void)parent;
-  (void)out_idx;
-  (void)in_idx;
+  return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "debounce_queue", "BatchQueue",
+                                            BatchQueueSettings{
+                                                .target_capacity = 128,
+                                                .output_size     = 1,
+                                                .output_stride   = 1,
+                                            });
 }
 
 Manager::V Manager::add_xy_cut_avg(V parent, int out_idx, int in_idx) {
