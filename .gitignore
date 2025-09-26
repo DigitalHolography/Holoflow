@@ -1,3 +1,4 @@
 build/
 .venv/
 .fc/
+pipeline_logs.dot
