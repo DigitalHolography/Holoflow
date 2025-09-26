@@ -112,7 +112,7 @@ int SlidingAverage::reader_size() const {
 
 std::optional<holoflow::core::TView> SlidingAverage::acquire_input(int index) {
   if (index != 0) {
-    throw std::out_of_range("BatchQueue::acquire_input: invalid index");
+    throw std::out_of_range("SlidingAverage::acquire_input: invalid index");
   }
 
   if (nb_slots_ - writer_size() <= 1) {
@@ -129,7 +129,7 @@ std::optional<holoflow::core::TView> SlidingAverage::acquire_input(int index) {
 
 void SlidingAverage::release_output(int index) {
   if (index != 0) {
-    throw std::out_of_range("BatchQueue::release_output: invalid index");
+    throw std::out_of_range("SlidingAverage::release_output: invalid index");
   }
 
   int read_idx      = read_idx_.load(std::memory_order_relaxed);
