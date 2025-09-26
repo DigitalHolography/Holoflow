@@ -30,8 +30,8 @@
 #include "tasks/memcpy.hh"
 #include "tasks/pca.hh"
 #include "tasks/pct_clip.hh"
-#include "tasks/stft.hh"
 #include "tasks/slide_avg.hh"
+#include "tasks/stft.hh"
 
 using namespace holovibes::tasks;
 
@@ -231,8 +231,9 @@ void Manager::build_graph_spec() {
       parent            = registration;
     }
 
-    auto slide_avg   = add_xy_slide_avg(parent, 0, 0);
-    auto identity_1  = add_xy_identity_1(slide_avg, 0, 0);
+    auto slide_avg = add_xy_slide_avg(parent, 0, 0);
+    parent         = slide_avg;
+    // auto identity_1  = add_xy_identity_1(slide_avg, 0, 0);
     // auto fps_limiter = add_xy_fps_limiter(identity_1, 0, 0);
     // parent           = fps_limiter;
     // parent = identity_1;

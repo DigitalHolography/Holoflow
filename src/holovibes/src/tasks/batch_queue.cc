@@ -175,7 +175,7 @@ BatchQueueFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto infer    = this->infer(input_descs, jsettings);
   auto settings = jsettings.get<BatchQueueSettings>();
 
-  // Compute bn_slots such that:
+  // Compute n_slots such that:
   // - nb_slots >= target_capacity
   // - nb_slots % stride == 0
   // - nb_slots % input_descs[0].shape[0] == 0
