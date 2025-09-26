@@ -29,8 +29,8 @@
 #include "tasks/memcpy.hh"
 #include "tasks/pca.hh"
 #include "tasks/pct_clip.hh"
-#include "tasks/stft.hh"
 #include "tasks/slide_avg.hh"
+#include "tasks/stft.hh"
 
 using namespace holovibes::tasks;
 
@@ -213,27 +213,27 @@ void Manager::build_graph_spec() {
       parent         = fft_shift;
     }
 
-    auto identity_0 = add_xy_identity_0(parent, 0, 0);
-    parent          = identity_0;
+    // auto identity_0 = add_xy_identity_0(parent, 0, 0);
+    // parent          = identity_0;
 
     if (s_.pp_registration) {
       auto registration = add_xy_registration(parent, 0, 0);
       parent            = registration;
     }
 
-    auto slide_avg   = add_xy_slide_avg(parent, 0, 0);
-    auto identity_1  = add_xy_identity_1(slide_avg, 0, 0);
+    // auto slide_avg   = add_xy_slide_avg(parent, 0, 0);
+    // auto identity_1  = add_xy_identity_1(slide_avg, 0, 0);
     // auto fps_limiter = add_xy_fps_limiter(identity_1, 0, 0);
     // parent           = fps_limiter;
-    parent = identity_1;
+    // parent = identity_1;
 
     // if (s_.pp_convolution) {
     //   auto convolution = add_xy_convolution(parent, 0, 0);
     //   parent           = convolution;
     // }
 
-    auto pctclip       = add_xy_pctclip(parent, 0, 0);
-    auto to_u8         = add_xy_to_u8(pctclip, 0, 0);
+    // auto pctclip       = add_xy_pctclip(parent, 0, 0);
+    auto to_u8         = add_xy_to_u8(parent, 0, 0);
     auto gpu_out_queue = add_xy_gpu_out_queue(to_u8, 0, 0);
     auto gpu_cpu       = add_xy_gpu_cpu_cpy(gpu_out_queue, 0, 0);
     auto cpu_out_queue = add_xy_cpu_out_queue(gpu_cpu, 0, 0);
@@ -457,16 +457,26 @@ Manager::V Manager::add_to_f32(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_debounce_queue(V parent, int out_idx, int in_idx) {
+  if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts) {
+    return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "debounce_queue",
+                                              "BatchQueue",
+                                              BatchQueueSettings{
+                                                  .target_capacity = 128,
+                                                  .output_size   = s_.time_z_end - s_.time_z_begin,
+                                                  .output_stride = s_.time_z_end - s_.time_z_begin,
+                                              });
+  }
+
   return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "debounce_queue", "BatchQueue",
                                             BatchQueueSettings{
                                                 .target_capacity = 128,
-                                                .output_size     = 1,
-                                                .output_stride   = 1,
+                                                .output_size     = s_.time_window,
+                                                .output_stride   = s_.time_window,
                                             });
 }
 
 Manager::V Manager::add_xy_cut_avg(V parent, int out_idx, int in_idx) {
-  if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && s_.view_3d_cuts) {
+  if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts) {
     return add_node_after<AverageSettings>(parent, out_idx, in_idx, "xy_cut_avg", "Average",
                                            AverageSettings{
                                                .axis  = 0,
@@ -503,11 +513,10 @@ Manager::V Manager::add_xy_registration(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_slide_avg(V parent, int out_idx, int in_idx) {
-  return add_node_after<SlidingAverageSettings>(parent, out_idx, in_idx, "xy_slide_avg",
-                                            "SlidingAverage", SlidingAverageSettings{
-                                                .target_capacity        = 128,
-                                      .window_size = static_cast<size_t>(s_.pp_accumulation)
-                                            });
+  return add_node_after<SlidingAverageSettings>(
+      parent, out_idx, in_idx, "xy_slide_avg", "SlidingAverage",
+      SlidingAverageSettings{.target_capacity = 128,
+                             .window_size     = static_cast<size_t>(s_.pp_accumulation)});
 }
 
 Manager::V Manager::add_xy_identity_1(V parent, int out_idx, int in_idx) {
