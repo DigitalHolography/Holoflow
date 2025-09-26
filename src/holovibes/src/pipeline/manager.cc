@@ -17,6 +17,7 @@
 #include <fstream>
 
 #include "bug.hh"
+#include "holoflow/runtime/graph_display.hh"
 #include "logger.hh"
 #include "tasks/angular_spectrum.hh"
 #include "tasks/average.hh"
@@ -29,8 +30,8 @@
 #include "tasks/memcpy.hh"
 #include "tasks/pca.hh"
 #include "tasks/pct_clip.hh"
-#include "tasks/stft.hh"
 #include "tasks/slide_avg.hh"
+#include "tasks/stft.hh"
 
 using namespace holovibes::tasks;
 
@@ -156,10 +157,19 @@ void Manager::build_and_run() {
 
   auto old         = std::move(compiler_output_);
   compiler_output_ = holoflow::runtime::Compiler(registry_).compile(spec_);
-  auto &graph      = compiler_output_->graph;
-  auto &sections   = compiler_output_->sections;
-  auto &resources  = compiler_output_->resources;
-  scheduler_       = std::make_unique<holoflow::runtime::Scheduler>(graph, sections, resources);
+
+  auto &graph     = compiler_output_->graph;
+  auto &sections  = compiler_output_->sections;
+  auto &resources = compiler_output_->resources;
+
+  auto dot_compile = holoflow::runtime::to_dot(*compiler_output_, registry_);
+  t                = floor<seconds>(system_clock::now());
+  date             = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
+  log_path         = std::format("pipeline_compiled_{}.dot", LOG_FOLDER_PATH, date);
+  std::ofstream(log_path) << dot_compile;
+  logger()->info("[Manager::build_and_run] Compiled pipeline graph saved to {}", log_path);
+
+  scheduler_ = std::make_unique<holoflow::runtime::Scheduler>(graph, sections, resources);
   scheduler_->start();
 }
 
@@ -221,8 +231,8 @@ void Manager::build_graph_spec() {
       parent            = registration;
     }
 
-    auto slide_avg   = add_xy_slide_avg(parent, 0, 0);
-    auto identity_1  = add_xy_identity_1(slide_avg, 0, 0);
+    auto slide_avg  = add_xy_slide_avg(parent, 0, 0);
+    auto identity_1 = add_xy_identity_1(slide_avg, 0, 0);
     // auto fps_limiter = add_xy_fps_limiter(identity_1, 0, 0);
     // parent           = fps_limiter;
     parent = identity_1;
@@ -503,11 +513,10 @@ Manager::V Manager::add_xy_registration(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_slide_avg(V parent, int out_idx, int in_idx) {
-  return add_node_after<SlidingAverageSettings>(parent, out_idx, in_idx, "xy_slide_avg",
-                                            "SlidingAverage", SlidingAverageSettings{
-                                                .target_capacity        = 128,
-                                      .window_size = static_cast<size_t>(s_.pp_accumulation)
-                                            });
+  return add_node_after<SlidingAverageSettings>(
+      parent, out_idx, in_idx, "xy_slide_avg", "SlidingAverage",
+      SlidingAverageSettings{.target_capacity = 128,
+                             .window_size     = static_cast<size_t>(s_.pp_accumulation)});
 }
 
 Manager::V Manager::add_xy_identity_1(V parent, int out_idx, int in_idx) {

@@ -57,10 +57,10 @@ std::string escape_for_label(const std::string &s) {
 std::string tdesc_to_string(const core::TDesc &d) {
   std::ostringstream ss;
   ss << "shape " << d.shape.size();
-  ss << " x " << std::string(to_string(d.dtype));
-  ss << " (" << d.rank() << "D)";
-  ss << " mem=" << std::string(holoflow::core::to_string(d.mem_loc));
-  ss << " elems=" << d.num_elements() << " bytes=" << d.num_bytes();
+  ss << "\nx " << std::string(to_string(d.dtype));
+  ss << "(" << d.rank() << "D)";
+  ss << "\nmem=" << std::string(holoflow::core::to_string(d.mem_loc));
+  ss << "\nelems=" << d.num_elements() << "\nbytes=" << d.num_bytes();
 
   return ss.str();
 }
@@ -144,12 +144,12 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
 
     std::string esc_label = escape_for_label(label.str());
 
-    std::string shape = "record";
+    std::string shape = "box";
     try {
       registry.get_async(np.spec.kind);
       shape = "octagon";
     } catch (...) {
-      shape = "record";
+      shape = "box";
     }
 
     std::string style_attrs;
@@ -177,13 +177,13 @@ static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPla
     const runtime::EdgePlan &ep = g[e];
 
     std::ostringstream elabel;
-    elabel << "out:" << ep.spec.out_idx << " in:" << ep.spec.in_idx << " tid:" << ep.tid;
+    elabel << "out:" << ep.spec.out_idx << " \nin:" << ep.spec.in_idx << " \ntid:" << ep.tid;
 
     try {
       std::string desc_str = tdesc_to_string(ep.desc);
       if (desc_str.size() > desc_max_len)
         desc_str = desc_str.substr(0, desc_max_len) + "...";
-      elabel << " desc=" << desc_str;
+      elabel << " \ndesc=" << desc_str;
     } catch (...) {
       // ignore
     }
