@@ -39,7 +39,7 @@ static std::string escape_for_label(const std::string &s) {
 static void write_graph_header(std::ostringstream &ss) {
   ss << "digraph holoflow_graph {\n";
   ss << "  rankdir=LR;\n";
-  ss << "  node [shape=record, fontname=\"Helvetica\"];\n";
+  ss << "  node [shape=box, fontname=\"Helvetica\"];\n";
   ss << "  edge [fontname=\"Helvetica\"];\n\n";
 }
 
