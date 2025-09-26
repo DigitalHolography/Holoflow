@@ -60,9 +60,9 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
 }
 
 void Scheduler::start() {
-  logger()->info("Starting scheduler");
+  logger()->info("[Scheduler::start] Starting scheduler");
   if (running_.exchange(true)) {
-    logger()->warn("Scheduler is already running");
+    logger()->warn("[Scheduler::start] Scheduler is already running");
     return;
   }
 
@@ -74,26 +74,28 @@ void Scheduler::start() {
 }
 
 void Scheduler::request_stop() {
-  logger()->info("Stop requested");
+  logger()->info("[Scheduler::request_stop] Requesting scheduler to stop");
   if (!running_.load()) {
-    logger()->warn("Scheduler is not running");
+    logger()->warn("[Scheduler::request_stop] Scheduler is not running");
     return;
   }
   if (stop_.exchange(true)) {
-    logger()->warn("Stop already requested");
+    logger()->warn("[Scheduler::request_stop] Stop already requested");
     return;
   }
 }
 
 void Scheduler::wait() {
-  logger()->info("Waiting for scheduler to stop");
+  logger()->info("[Scheduler::wait] Waiting for scheduler to stop");
   for (auto &t : threads_) {
     auto tid = GetThreadId(static_cast<HANDLE>(t.native_handle()));
-    logger()->info("Joining thread {}", tid);
+    logger()->debug("[Scheduler::wait] Joining thread {}...", tid);
     t.join();
+    logger()->debug("[Scheduler::wait] Thread {} joined", tid);
   }
 
   threads_.clear();
+  logger()->info("[Scheduler::wait] Scheduler stopped");
   running_.store(false);
   // TODO: Is this really the best place to reset running_?
 }
@@ -158,7 +160,7 @@ void Scheduler::run_section(int section_id) {
   // Should we use cuda events?
 
   while (!stop_.load()) {
-    logger()->trace("Running section {}", sec.name);
+    logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
 
     // Acquire owned inputs.
     //
@@ -194,6 +196,9 @@ void Scheduler::run_section(int section_id) {
       refresh_views_async_cons(v);
       run_async_cons(v);
       refresh_outputs_async_cons(v);
+    }
+    if (stop_.load()) {
+      break;
     }
 
     for (auto v : sec.sync_topo) {
@@ -319,23 +324,24 @@ void Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
   HOLOFLOW_CHECK(is_sync, "run_sync called on an asynchronous node");
   auto &srt = std::get<SyncRt>(nrt);
 
-  logger()->trace("Executing node '{}'", np.spec.name);
+  logger()->trace("[Scheduler::run_sync] Executing node '{}'", np.spec.name);
   auto t0 = clock::now();
   auto r  = srt.task->execute(srt.ctx);
   auto t1 = clock::now();
 
   switch (r) {
   case core::OpResult::Cancelled:
-    logger()->debug("Node '{}' execution cancelled", np.spec.name);
+    logger()->debug("[Scheduler::run_sync] Node '{}' execution cancelled", np.spec.name);
     stop_.store(true);
     break;
   case core::OpResult::Eof:
-    logger()->debug("Node '{}' reached end of stream", np.spec.name);
+    logger()->debug("[Scheduler::run_sync] Node '{}' reached end of stream", np.spec.name);
     stop_.store(true);
     break;
   case core::OpResult::NotReady:
-    logger()->error("The synchronous task '{}' returned NotReady, which is not allowed",
-                    np.spec.name);
+    logger()->error(
+        "[Scheduler::run_sync] The synchronous task '{}' returned NotReady, which is not allowed",
+        np.spec.name);
     stop_.store(true);
     break;
   case core::OpResult::Ok:
@@ -358,7 +364,7 @@ void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
   HOLOFLOW_CHECK(is_async, "run_async_cons called on a synchronous node");
   auto &art = std::get<AsyncRt>(nrt);
 
-  logger()->trace("Executing node '{}'", np.spec.name);
+  logger()->trace("[Scheduler::run_async_cons] Executing node '{}'", np.spec.name);
   auto t0 = clock::now();
   auto r  = art.task->try_pop(art.xctx);
   while (r == core::OpResult::NotReady) {
@@ -370,11 +376,11 @@ void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
 
   switch (r) {
   case core::OpResult::Cancelled:
-    logger()->debug("Node '{}' execution cancelled", np.spec.name);
+    logger()->debug("[Scheduler::run_async_cons] Node '{}' execution cancelled", np.spec.name);
     stop_.store(true);
     break;
   case core::OpResult::Eof:
-    logger()->debug("Node '{}' reached end of stream", np.spec.name);
+    logger()->debug("[Scheduler::run_async_cons] Node '{}' reached end of stream", np.spec.name);
     stop_.store(true);
     break;
   case core::OpResult::NotReady:
@@ -400,7 +406,7 @@ void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
   HOLOFLOW_CHECK(is_async, "run_async_prod called on a synchronous node");
   auto &art = std::get<AsyncRt>(nrt);
 
-  logger()->trace("Executing node '{}'", np.spec.name);
+  logger()->trace("[Scheduler::run_async_prod] Executing node '{}'", np.spec.name);
   auto t0 = clock::now();
   auto r  = art.task->try_push(art.pctx);
   while (r == core::OpResult::NotReady) {
@@ -412,11 +418,11 @@ void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
 
   switch (r) {
   case core::OpResult::Cancelled:
-    logger()->debug("Node '{}' execution cancelled", np.spec.name);
+    logger()->debug("[Scheduler::run_async_prod] Node '{}' execution cancelled", np.spec.name);
     stop_.store(true);
     break;
   case core::OpResult::Eof:
-    logger()->debug("Node '{}' reached end of stream", np.spec.name);
+    logger()->debug("[Scheduler::run_async_prod] Node '{}' reached end of stream", np.spec.name);
     stop_.store(true);
     break;
   case core::OpResult::NotReady:
