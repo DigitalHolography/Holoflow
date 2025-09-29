@@ -15,6 +15,8 @@
 #include "pipeline/manager.hh"
 
 #include <fstream>
+#include <filesystem>
+#include <system_error>
 
 #include "bug.hh"
 #include "holoflow/runtime/graph_display.hh"
@@ -148,15 +150,21 @@ void Manager::build_and_run() {
   using namespace std::chrono;
   constexpr const char *LOG_FOLDER_PATH = "logs";
 
-  auto dot      = holoflow::core::to_dot(spec_);
-  auto t        = floor<seconds>(system_clock::now());
-  auto date     = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
-  auto log_path = std::format("pipeline_{}.dot", LOG_FOLDER_PATH, date);
-  std::ofstream(log_path) << dot;
-  logger()->info("[Manager::build_and_run] Pipeline graph saved to {}", log_path);
+  const std::filesystem::path log_root{LOG_FOLDER_PATH};
+  std::error_code              log_ec;
+  std::filesystem::create_directories(log_root, log_ec);
 
-  auto old         = std::move(compiler_output_);
-  compiler_output_ = holoflow::runtime::Compiler(registry_).compile(spec_);
+  auto dot  = holoflow::core::to_dot(spec_);
+  auto t    = floor<seconds>(system_clock::now());
+  auto date = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
+
+  const auto pipeline_path = log_root / std::format("pipeline_{}.dot", date);
+  std::ofstream(pipeline_path) << dot;
+  logger()->info("[Manager::build_and_run] Pipeline graph saved to {}", pipeline_path.string());
+
+  auto prev_output = std::move(compiler_output_);
+  compiler_output_ =
+      holoflow::runtime::Compiler(registry_, log_root).compile(spec_, std::move(prev_output));
 
   auto &graph     = compiler_output_->graph;
   auto &sections  = compiler_output_->sections;
@@ -165,9 +173,11 @@ void Manager::build_and_run() {
   auto dot_compile = holoflow::runtime::to_dot(*compiler_output_, registry_);
   t                = floor<seconds>(system_clock::now());
   date             = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
-  log_path         = std::format("pipeline_compiled_{}.dot", LOG_FOLDER_PATH, date);
-  std::ofstream(log_path) << dot_compile;
-  logger()->info("[Manager::build_and_run] Compiled pipeline graph saved to {}", log_path);
+
+  const auto compiled_path = log_root / std::format("pipeline_compiled_{}.dot", date);
+  std::ofstream(compiled_path) << dot_compile;
+  logger()->info("[Manager::build_and_run] Compiled pipeline graph saved to {}",
+                 compiled_path.string());
 
   scheduler_ = std::make_unique<holoflow::runtime::Scheduler>(graph, sections, resources);
   scheduler_->start();

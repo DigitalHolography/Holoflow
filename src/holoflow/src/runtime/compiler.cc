@@ -18,6 +18,11 @@
 #include <array>
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/graph/depth_first_search.hpp>
+#include <chrono>
+#include <exception>
+#include <filesystem>
+#include <format>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -41,23 +46,86 @@ std::unique_ptr<CompilerOutput> Compiler::compile(const core::GraphSpec         
   gspec_ = gspec;
   prev_  = std::move(prev);
   out_   = std::make_unique<CompilerOutput>();
+  node_timings_.clear();
 
-  check_duplicate_names();
-  check_duplicate_edge_dst();
-  check_factories_registered();
-  check_single_source();
-  check_single_input();
-  build_graph_plan();
-  check_typing();
-  assign_tensor_ids();
-  check_buffer_temporal_consistency();
-  check_buffer_spatial_consistency();
-  create_tensor_buffers();
-  create_sections();
-  assign_cuda_streams();
-  create_nodes_collection();
+  using Clock            = std::chrono::steady_clock;
+  const auto total_start = Clock::now();
+
+  std::vector<StepTiming> step_timings;
+  step_timings.reserve(14);
+
+  auto measure_step = [&](std::string_view name, auto &&fn) {
+    const auto start = Clock::now();
+    fn();
+    const auto end      = Clock::now();
+    const auto duration = std::chrono::duration<double, std::milli>(end - start).count();
+    step_timings.push_back(StepTiming{std::string{name}, duration});
+  };
+
+  measure_step("check_duplicate_names", [&] { check_duplicate_names(); });
+  measure_step("check_duplicate_edge_dst", [&] { check_duplicate_edge_dst(); });
+  measure_step("check_factories_registered", [&] { check_factories_registered(); });
+  measure_step("check_single_source", [&] { check_single_source(); });
+  measure_step("check_single_input", [&] { check_single_input(); });
+  measure_step("build_graph_plan", [&] { build_graph_plan(); });
+  measure_step("check_typing", [&] { check_typing(); });
+  measure_step("assign_tensor_ids", [&] { assign_tensor_ids(); });
+  measure_step("check_buffer_temporal_consistency", [&] { check_buffer_temporal_consistency(); });
+  measure_step("check_buffer_spatial_consistency", [&] { check_buffer_spatial_consistency(); });
+  measure_step("create_tensor_buffers", [&] { create_tensor_buffers(); });
+  measure_step("create_sections", [&] { create_sections(); });
+  measure_step("assign_cuda_streams", [&] { assign_cuda_streams(); });
+  measure_step("create_nodes_collection", [&] { create_nodes_collection(); });
+
+  const double total_duration_ms =
+      std::chrono::duration<double, std::milli>(Clock::now() - total_start).count();
+
+  write_profile_report(step_timings, total_duration_ms);
 
   return std::move(out_);
+}
+
+void Compiler::write_profile_report(const std::vector<StepTiming> &step_timings,
+                                    double                         total_duration_ms) const {
+  if (log_dir_.empty()) {
+    return;
+  }
+
+  try {
+    std::filesystem::create_directories(log_dir_);
+  } catch (const std::exception &) {
+    return;
+  }
+
+  const auto now       = std::chrono::system_clock::now();
+  const auto timestamp = std::chrono::floor<std::chrono::seconds>(now);
+
+  std::string filename;
+  try {
+    filename = std::format("compiler_profile_{:%Y-%m-%d_%H-%M-%S}.log", timestamp);
+  } catch (const std::exception &) {
+    filename = "compiler_profile.log";
+  }
+
+  const auto    filepath = log_dir_ / filename;
+  std::ofstream out(filepath, std::ios::trunc);
+  if (!out.is_open()) {
+    return;
+  }
+
+  out << "Compiler Profiling Report\n";
+  out << fmt::format("Total duration: {:.3f} ms\n\n", total_duration_ms);
+  out << "Steps:\n";
+  for (const auto &step : step_timings) {
+    out << fmt::format("  - {:<36} {:>10.3f} ms\n", step.name, step.duration_ms);
+  }
+
+  if (!node_timings_.empty()) {
+    out << "\nNodes:\n";
+    for (const auto &node : node_timings_) {
+      out << fmt::format("  - {:<36} {:>10.3f} ms\n", node.name, node.duration_ms);
+    }
+  }
 }
 
 void Compiler::check_duplicate_names() {
@@ -480,6 +548,7 @@ void Compiler::create_nodes_collection() {
     const auto &input_descs = np.infer.input_descs;
     const auto &settings    = np.spec.settings;
     const auto  name        = std::string_view{np.spec.name};
+    const auto  node_start  = std::chrono::steady_clock::now();
 
     // Reuse previous task if available
     std::unique_ptr<core::ITask> *prev_slot = nullptr;
@@ -519,6 +588,11 @@ void Compiler::create_nodes_collection() {
     default:
       HOLOFLOW_UNREACHABLE();
     }
+
+    const auto node_duration =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - node_start)
+            .count();
+    node_timings_.push_back(NodeTiming{std::string{name}, node_duration});
   }
 }
 

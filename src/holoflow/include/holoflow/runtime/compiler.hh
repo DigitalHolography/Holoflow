@@ -17,6 +17,7 @@
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
 #include "holoflow/runtime/graph_exec.hh"
+#include <string>
 #include <vector>
 
 namespace holoflow::runtime {
@@ -35,6 +36,18 @@ public:
                                           std::unique_ptr<CompilerOutput> prev = nullptr);
 
 private:
+  struct StepTiming {
+    std::string name;
+    double      duration_ms;
+  };
+
+  struct NodeTiming {
+    std::string name;
+    double      duration_ms;
+  };
+
+  void write_profile_report(const std::vector<StepTiming> &step_timings, double total_duration_ms) const;
+
   void check_duplicate_names();
   void check_duplicate_edge_dst();
   void check_single_source();
@@ -51,6 +64,8 @@ private:
   void create_nodes_collection();
 
 private:
+  std::vector<NodeTiming> node_timings_;
+
   core::Registry       &registry_;
   std::filesystem::path log_dir_;
 
