@@ -19,8 +19,10 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
+#include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSlider>
 #include <QSpinBox>
@@ -79,6 +81,7 @@ private:
   QGroupBox *create_export_group();
   QGroupBox *create_image_rendering_group();
   QGroupBox *create_view_group();
+  QGroupBox *create_system_monitor_group();
 
   // UI Members for Import Group
   QCheckBox   *import_cam_check_;
@@ -145,6 +148,22 @@ private:
   QDoubleSpinBox *view_registration_radius_;
   QCheckBox      *view_reticle_check_;
   QDoubleSpinBox *view_reticle_radius_;
+  // UI Members for System Monitor
+  QLabel       *metrics_current_fps_value_;
+  QLabel       *metrics_gpu_load_value_;
+  QLabel       *metrics_cpu_load_value_;
+  QLabel       *metrics_input_throughput_fps_value_;
+  QLabel       *metrics_input_throughput_bytes_value_;
+  QLabel       *metrics_cpu_throughput_value_;
+  QLabel       *metrics_gpu_throughput_value_;
+  QLabel       *metrics_ram_usage_value_;
+  QLabel       *metrics_vram_usage_value_;
+  QLabel       *metrics_dropped_frames_value_;
+  QLabel       *metrics_pipeline_latency_value_;
+  QProgressBar *metrics_input_queue_bar_;
+  QProgressBar *metrics_output_queue_bar_;
+  QProgressBar *metrics_record_queue_bar_;
+
 };
 
 } // namespace holovibes::ui

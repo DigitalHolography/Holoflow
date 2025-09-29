@@ -27,6 +27,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenuBar>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QSlider>
 #include <QSpacerItem>
@@ -63,6 +64,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   import_export_layout->addWidget(create_export_group());
   left_panel_layout->addLayout(import_export_layout);
   main_layout->addLayout(left_panel_layout);
+  main_layout->addWidget(create_system_monitor_group(), 0, Qt::AlignTop);
 
   // Display widgets
   xy_raw_widget_       = new TensorDisplayWidget(nullptr);
@@ -526,6 +528,59 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
   }
 
   return s;
+}
+
+QGroupBox *MainWindow::create_system_monitor_group() {
+  auto *group  = new QGroupBox("System Monitor", this);
+  auto *layout = new QVBoxLayout(group);
+
+  auto *metrics_layout = new QGridLayout();
+  metrics_layout->setColumnStretch(1, 1);
+
+  auto add_metric_row = [&](int row, const QString &label, QLabel **value_label,
+                            const QString &value) {
+    metrics_layout->addWidget(new QLabel(label, group), row, 0);
+    *value_label = new QLabel(value, group);
+    (*value_label)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    metrics_layout->addWidget(*value_label, row, 1);
+  };
+
+  add_metric_row(0, "Current FPS:", &metrics_current_fps_value_, "118 fps");
+  add_metric_row(1, "GPU Load:", &metrics_gpu_load_value_, "68 %");
+  add_metric_row(2, "CPU Load:", &metrics_cpu_load_value_, "42 %");
+  add_metric_row(3, "Input Throughput (FPS):", &metrics_input_throughput_fps_value_, "240 fps");
+  add_metric_row(4, "Input Throughput (Bytes):", &metrics_input_throughput_bytes_value_,
+                 "1.2 GB/s");
+  add_metric_row(5, "CPU Throughput:", &metrics_cpu_throughput_value_, "3.4 GB/s");
+  add_metric_row(6, "GPU Throughput:", &metrics_gpu_throughput_value_, "5.1 GB/s");
+  add_metric_row(7, "RAM Usage:", &metrics_ram_usage_value_, "12.3 / 32 GB");
+  add_metric_row(8, "VRAM Usage:", &metrics_vram_usage_value_, "6.5 / 12 GB");
+  add_metric_row(9, "Dropped Frames:", &metrics_dropped_frames_value_, "2");
+  add_metric_row(10, "Pipeline Latency:", &metrics_pipeline_latency_value_, "16 ms");
+
+  layout->addLayout(metrics_layout);
+
+  auto *queue_group   = new QGroupBox("Queues", group);
+  auto *queue_layout  = new QVBoxLayout(queue_group);
+  auto  configure_bar = [&](QProgressBar **bar, const QString &title, int value, int maximum) {
+    queue_layout->addWidget(new QLabel(title, queue_group));
+    *bar = new QProgressBar(queue_group);
+    (*bar)->setRange(0, maximum);
+    (*bar)->setValue(value);
+    (*bar)->setFormat("%v / %m");
+    (*bar)->setTextVisible(true);
+    queue_layout->addWidget(*bar);
+  };
+
+  configure_bar(&metrics_input_queue_bar_, "Input Queue", 48, 64);
+  configure_bar(&metrics_output_queue_bar_, "Output Queue", 22, 64);
+  configure_bar(&metrics_record_queue_bar_, "Record Queue", 12, 32);
+
+  layout->addWidget(queue_group);
+  layout->addItem(new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding));
+  layout->addStretch(1);
+
+  return group;
 }
 
 QGroupBox *MainWindow::create_import_group() {
