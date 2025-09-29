@@ -63,7 +63,7 @@
     {
       "label": "run:holovibes:Release",
       "type": "shell",
-      "command": "build\\msvc-multi\\src\\holovibes\\Release\\holovibes.exe",
+      "command": "build\\msvc-multi\\Release\\holovibes.exe",
       "problemMatcher": [],
       "dependsOn": "build:Release"
     }
