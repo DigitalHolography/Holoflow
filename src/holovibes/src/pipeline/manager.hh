@@ -25,6 +25,8 @@
 #include "pipeline/settings.hh"
 #include "ui/tensor_display_widget.hh"
 
+class QTimer;
+
 namespace holovibes::pipeline {
 
 template <typename T>
@@ -49,6 +51,7 @@ public:
 
 signals:
   void start_pipeline_success();
+  void metrics_updated(double input_fps);
   void start_pipeline_failure();
   void stop_pipeline_success();
   void stop_pipeline_failure();
@@ -57,6 +60,10 @@ signals:
 
 private:
   using V = holoflow::core::GraphSpec::vertex_descriptor;
+
+  void start_metrics_updates();
+  void stop_metrics_updates();
+  void poll_metrics();
 
   void build_and_run();
   void build_graph_spec();
@@ -138,6 +145,7 @@ private:
   holoflow::core::GraphSpec                          spec_;
   std::unique_ptr<holoflow::runtime::CompilerOutput> compiler_output_;
   std::unique_ptr<holoflow::runtime::Scheduler>      scheduler_;
+  QTimer                                             *metrics_timer_ = nullptr;
 };
 
 } // namespace holovibes::pipeline

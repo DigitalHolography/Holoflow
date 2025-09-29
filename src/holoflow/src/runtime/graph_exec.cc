@@ -20,6 +20,8 @@
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graph_traits.hpp>
 #include <chrono>
+#include <map>
+#include <mutex>
 #include <vector>
 #include <windows.h>
 
@@ -35,8 +37,8 @@
 namespace holoflow::runtime {
 
 Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
-                     ExecResouces &resources)
-    : graph_(graph), sections_(sections), res_(resources) {
+                     ExecResouces &resources, std::chrono::milliseconds metrics_interval)
+    : graph_(graph), sections_(sections), res_(resources), metrics_interval_(metrics_interval) {
   // Count distinct tids
   int nb_tids = 0;
   for (const auto &v : boost::make_iterator_range(boost::vertices(graph))) {
@@ -56,7 +58,36 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
     }
   }
 
+  if (metrics_interval_.count() <= 0) {
+    metrics_interval_ = std::chrono::milliseconds{1};
+  }
+
   build_nodes_rts();
+}
+
+Scheduler::~Scheduler() {
+  if (is_running()) {
+    request_stop();
+    wait();
+  } else {
+    stop_metrics_thread();
+  }
+}
+
+void Scheduler::set_metrics_interval(std::chrono::milliseconds interval) {
+  if (interval.count() <= 0) {
+    interval = std::chrono::milliseconds{1};
+  }
+  {
+    std::lock_guard<std::mutex> lock(metrics_thread_mutex_);
+    metrics_interval_ = interval;
+  }
+  metrics_cv_.notify_all();
+}
+
+std::map<std::string, NodeMetrics> Scheduler::metrics() const {
+  std::lock_guard<std::mutex> lock(metrics_mutex_);
+  return latest_metrics_;
 }
 
 void Scheduler::start() {
@@ -67,6 +98,8 @@ void Scheduler::start() {
   }
 
   stop_.store(false);
+  reset_metrics_state();
+  start_metrics_thread();
   threads_.reserve(sections_.size());
   for (size_t i = 0; i < sections_.size(); i++) {
     threads_.emplace_back(&Scheduler::run_section, this, static_cast<int>(i));
@@ -97,6 +130,7 @@ void Scheduler::wait() {
   threads_.clear();
   logger()->info("[Scheduler::wait] Scheduler stopped");
   running_.store(false);
+  stop_metrics_thread();
   // TODO: Is this really the best place to reset running_?
 }
 
@@ -105,12 +139,16 @@ bool Scheduler::is_running() const { return running_.load(); }
 bool Scheduler::stop_requested() const { return stop_.load(); }
 
 void Scheduler::build_nodes_rts() {
-  node_rts_.resize(boost::num_vertices(graph_));
+  const auto num_vertices = boost::num_vertices(graph_);
+  node_rts_.resize(num_vertices);
+  node_names_.resize(num_vertices);
+  metric_accumulators_.resize(num_vertices);
 
   for (auto v : boost::make_iterator_range(boost::vertices(graph_))) {
-    const auto idx  = boost::get(boost::vertex_index, graph_, v);
-    const auto np   = graph_[v];
-    auto      *task = res_.tasks.at(np.spec.name).get();
+    const auto idx      = boost::get(boost::vertex_index, graph_, v);
+    const auto np       = graph_[v];
+    node_names_.at(idx) = np.spec.name;
+    auto *task          = res_.tasks.at(np.spec.name).get();
     HOLOFLOW_CHECK(task != nullptr, "Task for node {} is null", np.spec.name);
 
     if (auto *st = dynamic_cast<core::ISyncTask *>(task)) {
@@ -349,9 +387,15 @@ void Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
     break;
   }
 
-  using msf = std::chrono::duration<double, std::milli>;
-  srt.m.total_ms += std::chrono::duration_cast<msf>(t1 - t0).count();
-  srt.m.num_execs++;
+  if (r == core::OpResult::Ok) {
+    const auto duration_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+    auto [host_in, device_in] =
+        sum_bytes(std::span<const core::TView>(srt.in_views.data(), srt.in_views.size()));
+    auto [host_out, device_out] =
+        sum_bytes(std::span<const core::TView>(srt.out_views.data(), srt.out_views.size()));
+    record_node_sample(idx, static_cast<uint64_t>(duration_ns), host_in + host_out,
+                       device_in + device_out);
+  }
 }
 
 void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
@@ -391,9 +435,12 @@ void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
     break;
   }
 
-  using msf = std::chrono::duration<double, std::milli>;
-  art.m.total_pop_ms += std::chrono::duration_cast<msf>(t1 - t0).count();
-  art.m.num_pops++;
+  if (r == core::OpResult::Ok) {
+    const auto duration_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+    auto [host_out, device_out] =
+        sum_bytes(std::span<const core::TView>(art.out_views.data(), art.out_views.size()));
+    record_node_sample(idx, static_cast<uint64_t>(duration_ns), host_out, device_out);
+  }
 }
 
 void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
@@ -433,9 +480,12 @@ void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
     break;
   }
 
-  using msf = std::chrono::duration<double, std::milli>;
-  art.m.total_push_ms += std::chrono::duration_cast<msf>(t1 - t0).count();
-  art.m.num_pushes++;
+  if (r == core::OpResult::Ok) {
+    const auto duration_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
+    auto [host_in, device_in] =
+        sum_bytes(std::span<const core::TView>(art.in_views.data(), art.in_views.size()));
+    record_node_sample(idx, static_cast<uint64_t>(duration_ns), host_in, device_in);
+  }
 }
 
 void Scheduler::refresh_outputs_sync(GraphPlan::vertex_descriptor v) {
@@ -468,6 +518,124 @@ void Scheduler::refresh_outputs_async_cons(GraphPlan::vertex_descriptor v) {
       tviews_.at(np.out_tids.at(i)) = art.out_views.at(i);
     }
   }
+}
+
+void Scheduler::reset_metrics_state() {
+  auto num_vertices = boost::num_vertices(graph_);
+  metric_accumulators_.clear();
+  metric_accumulators_.resize(num_vertices);
+
+  std::lock_guard<std::mutex> lock(metrics_mutex_);
+  latest_metrics_.clear();
+  for (const auto &name : node_names_) {
+    latest_metrics_.emplace(name, NodeMetrics{});
+  }
+}
+
+void Scheduler::start_metrics_thread() {
+  if (metrics_interval_.count() <= 0) {
+    return;
+  }
+  bool expected = false;
+  if (!metrics_running_.compare_exchange_strong(expected, true)) {
+    return;
+  }
+  metrics_thread_ = std::thread(&Scheduler::metrics_loop, this);
+}
+
+void Scheduler::stop_metrics_thread() {
+  bool expected = true;
+  if (!metrics_running_.compare_exchange_strong(expected, false)) {
+    return;
+  }
+  metrics_cv_.notify_all();
+  if (metrics_thread_.joinable()) {
+    metrics_thread_.join();
+  }
+  metrics_thread_ = std::thread();
+}
+
+void Scheduler::metrics_loop() {
+  auto                         last = std::chrono::steady_clock::now();
+  std::unique_lock<std::mutex> lock(metrics_thread_mutex_);
+  while (metrics_running_.load()) {
+    auto interval = metrics_interval_;
+    if (metrics_cv_.wait_for(lock, interval, [this] { return !metrics_running_.load(); })) {
+      break;
+    }
+    auto now     = std::chrono::steady_clock::now();
+    auto elapsed = std::chrono::duration<double>(now - last).count();
+    last         = now;
+    aggregate_metrics(elapsed);
+  }
+  auto now     = std::chrono::steady_clock::now();
+  auto elapsed = std::chrono::duration<double>(now - last).count();
+  aggregate_metrics(elapsed);
+}
+
+void Scheduler::aggregate_metrics(double interval_seconds) {
+  if (interval_seconds <= 0.0) {
+    interval_seconds = static_cast<double>(metrics_interval_.count()) / 1000.0;
+    if (interval_seconds <= 0.0) {
+      interval_seconds = 1.0;
+    }
+  }
+
+  std::map<std::string, NodeMetrics> snapshot;
+
+  for (std::size_t idx = 0; idx < metric_accumulators_.size(); ++idx) {
+    auto &acc = metric_accumulators_.at(idx);
+    const auto duration_ns = acc.duration_ns.exchange(0, std::memory_order_relaxed);
+    const auto runs        = acc.run_count.exchange(0, std::memory_order_relaxed);
+    const auto host_bytes  = acc.host_bytes.exchange(0, std::memory_order_relaxed);
+    const auto device_bytes = acc.device_bytes.exchange(0, std::memory_order_relaxed);
+
+    NodeMetrics metrics;
+    metrics.sample_count = runs;
+    if (runs > 0) {
+      metrics.average_duration_ms =
+          static_cast<double>(duration_ns) / static_cast<double>(runs) / 1'000'000.0;
+    }
+    if (interval_seconds > 0.0) {
+      metrics.runs_per_second                  = static_cast<double>(runs) / interval_seconds;
+      metrics.host_throughput_bytes_per_second = static_cast<double>(host_bytes) / interval_seconds;
+      metrics.device_throughput_bytes_per_second =
+          static_cast<double>(device_bytes) / interval_seconds;
+    }
+    snapshot.emplace(node_names_.at(idx), metrics);
+  }
+
+  std::lock_guard<std::mutex> lock(metrics_mutex_);
+  latest_metrics_ = std::move(snapshot);
+}
+
+void Scheduler::record_node_sample(std::size_t idx, uint64_t duration_ns, uint64_t host_bytes,
+                                   uint64_t device_bytes) {
+  if (idx >= metric_accumulators_.size()) {
+    return;
+  }
+  auto &acc = metric_accumulators_.at(idx);
+  acc.duration_ns.fetch_add(duration_ns, std::memory_order_relaxed);
+  acc.run_count.fetch_add(1, std::memory_order_relaxed);
+  acc.host_bytes.fetch_add(host_bytes, std::memory_order_relaxed);
+  acc.device_bytes.fetch_add(device_bytes, std::memory_order_relaxed);
+}
+
+std::pair<uint64_t, uint64_t> Scheduler::sum_bytes(std::span<const core::TView> views) {
+  uint64_t host_total   = 0;
+  uint64_t device_total = 0;
+  for (const auto &view : views) {
+    if (view.data == nullptr) {
+      continue;
+    }
+    const auto bytes = static_cast<uint64_t>(view.desc.num_bytes());
+    if (view.desc.mem_loc == core::MemLoc::Device) {
+      device_total += bytes;
+    } else {
+      host_total += bytes;
+    }
+  }
+  return {host_total, device_total};
 }
 
 } // namespace holoflow::runtime

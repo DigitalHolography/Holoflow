@@ -16,10 +16,18 @@
 
 #include <atomic>
 #include <boost/graph/adjacency_list.hpp>
+#include <chrono>
+#include <condition_variable>
 #include <cstddef>
+#include <cstdint>
 #include <cuda_runtime.h>
+#include <map>
 #include <memory>
+#include <mutex>
+#include <span>
+#include <string>
 #include <thread>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -66,24 +74,11 @@ struct Section {
   std::vector<GraphPlan::vertex_descriptor> async_prod; ///< Asynchronous producer nodes
 };
 
-struct SyncMetrics {
-  std::size_t num_execs = 0;
-  double      total_ms  = 0.0;
-};
-
-struct AsyncMetrics {
-  std::size_t num_pushes    = 0;
-  std::size_t num_pops      = 0;
-  double      total_push_ms = 0.0;
-  double      total_pop_ms  = 0.0;
-};
-
 struct SyncRt {
   core::ISyncTask         *task = nullptr;
   std::vector<core::TView> in_views;
   std::vector<core::TView> out_views;
   core::SyncCtx            ctx{};
-  SyncMetrics              m{};
 };
 
 struct AsyncRt {
@@ -92,14 +87,27 @@ struct AsyncRt {
   std::vector<core::TView> out_views;
   core::AsyncPushCtx       pctx{};
   core::AsyncPopCtx        xctx{};
-  AsyncMetrics             m{};
 };
 
 using NodeRt = std::variant<SyncRt, AsyncRt>;
 
+struct NodeMetrics {
+  double   average_duration_ms                = 0.0;
+  double   runs_per_second                    = 0.0;
+  double   host_throughput_bytes_per_second   = 0.0;
+  double   device_throughput_bytes_per_second = 0.0;
+  uint64_t sample_count                       = 0;
+};
+
 class Scheduler {
 public:
-  Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res);
+  Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
+            std::chrono::milliseconds metrics_interval = std::chrono::milliseconds{1000});
+
+  ~Scheduler();
+
+  void set_metrics_interval(std::chrono::milliseconds interval);
+  [[nodiscard]] std::map<std::string, NodeMetrics> metrics() const;
 
   void start();
   void request_stop();
@@ -110,6 +118,14 @@ public:
 
 private:
   void build_nodes_rts();
+  void reset_metrics_state();
+  void start_metrics_thread();
+  void stop_metrics_thread();
+  void metrics_loop();
+  void aggregate_metrics(double interval_seconds);
+  void record_node_sample(std::size_t idx, uint64_t duration_ns, uint64_t host_bytes,
+                          uint64_t device_bytes);
+  static std::pair<uint64_t, uint64_t> sum_bytes(std::span<const core::TView> views);
 
   void run_section(int section_id);
 
@@ -185,7 +201,52 @@ private:
   std::vector<core::TView> tviews_;
 
   std::vector<NodeRt>      node_rts_; ///< Runtime data for each node.
-  std::vector<std::thread> threads_;  ///< Threads for each section.
+  std::vector<std::string> node_names_;
+
+  struct NodeMetricAccumulator {
+    std::atomic<uint64_t> duration_ns{0};
+    std::atomic<uint64_t> run_count{0};
+    std::atomic<uint64_t> host_bytes{0};
+    std::atomic<uint64_t> device_bytes{0};
+
+    NodeMetricAccumulator() = default;
+
+    NodeMetricAccumulator(const NodeMetricAccumulator &other) {
+      duration_ns.store(other.duration_ns.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      run_count.store(other.run_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      host_bytes.store(other.host_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      device_bytes.store(other.device_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    }
+
+    NodeMetricAccumulator &operator=(const NodeMetricAccumulator &other) {
+      if (this == &other) {
+        return *this;
+      }
+      duration_ns.store(other.duration_ns.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      run_count.store(other.run_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      host_bytes.store(other.host_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      device_bytes.store(other.device_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      return *this;
+    }
+
+    NodeMetricAccumulator(NodeMetricAccumulator &&other) noexcept : NodeMetricAccumulator(other) {}
+
+    NodeMetricAccumulator &operator=(NodeMetricAccumulator &&other) noexcept {
+      return (*this = other);
+    }
+  };
+
+  std::vector<NodeMetricAccumulator> metric_accumulators_;
+
+  mutable std::mutex                 metrics_mutex_;
+  std::map<std::string, NodeMetrics> latest_metrics_;
+  std::chrono::milliseconds          metrics_interval_;
+  std::atomic<bool>                  metrics_running_{false};
+  std::thread                        metrics_thread_;
+  std::condition_variable            metrics_cv_;
+  mutable std::mutex                 metrics_thread_mutex_;
+
+  std::vector<std::thread> threads_; ///< Threads for each section.
 };
 
 } // namespace holoflow::runtime

@@ -45,6 +45,7 @@ protected:
 private slots:
   void on_import_start_clicked();
   void on_import_stop_clicked();
+  void on_metrics_updated(double input_fps);
 
 private:
   void on_start_pipeline_success();

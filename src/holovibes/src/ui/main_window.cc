@@ -111,6 +111,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   connect(pipeline_manager_, &pipeline::Manager::update_pipeline_failure, this,
           &MainWindow::on_update_pipeline_failure);
 
+  connect(pipeline_manager_, &pipeline::Manager::metrics_updated, this,
+          &MainWindow::on_metrics_updated, Qt::QueuedConnection);
+
   pipeline_manager_thread_->start();
 
   connect(import_start_button_, &QPushButton::clicked, this, &MainWindow::on_import_start_clicked);
@@ -140,6 +143,8 @@ void MainWindow::on_stop_pipeline_success() {
   logger()->info("[MainWindow::on_stop_pipeline_success]");
   pipeline_running_ = false;
   import_start_button_->setEnabled(true);
+  import_stop_button_->setEnabled(false);
+  on_metrics_updated(0.0);
 }
 
 void MainWindow::on_stop_pipeline_failure() {
@@ -147,6 +152,20 @@ void MainWindow::on_stop_pipeline_failure() {
   pipeline_running_ = false;
   import_start_button_->setEnabled(true);
   import_stop_button_->setEnabled(false);
+  on_metrics_updated(0.0);
+}
+
+void MainWindow::on_metrics_updated(double input_fps) {
+  if (!metrics_input_throughput_fps_value_) {
+    return;
+  }
+
+  if (input_fps < 0.0) {
+    input_fps = 0.0;
+  }
+
+  const QString text = QStringLiteral("%1 fps").arg(QString::number(input_fps, 'f', 1));
+  metrics_input_throughput_fps_value_->setText(text);
 }
 
 void MainWindow::on_update_pipeline_success() {
@@ -549,7 +568,7 @@ QGroupBox *MainWindow::create_system_monitor_group() {
   // clang-format off
   add_metric_row(0, "GPU Load:", &metrics_gpu_load_value_, "68 %");
   add_metric_row(1, "CPU Load:", &metrics_cpu_load_value_, "42 %");
-  add_metric_row(2, "Input Throughput (FPS):", &metrics_input_throughput_fps_value_, "240 fps");
+  add_metric_row(2, "Input Throughput (FPS):", &metrics_input_throughput_fps_value_, "0.0 fps");
   add_metric_row(3, "Input Throughput (Bytes):", &metrics_input_throughput_bytes_value_, "1.2 GB/s");
   add_metric_row(4, "CPU Throughput:", &metrics_cpu_throughput_value_, "3.4 GB/s");
   add_metric_row(5, "GPU Throughput:", &metrics_gpu_throughput_value_, "5.1 GB/s");

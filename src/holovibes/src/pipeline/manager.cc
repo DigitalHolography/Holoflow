@@ -14,8 +14,14 @@
 
 #include "pipeline/manager.hh"
 
-#include <fstream>
+#include <QTimer>
+
+#include <chrono>
 #include <filesystem>
+#include <fstream>
+#include <map>
+#include <string>
+#include <string_view>
 #include <system_error>
 
 #include "bug.hh"
@@ -75,6 +81,11 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<PctClipFactory>(registry_, "PctClip");
   reg_sync<StftFactory>(registry_, "Stft");
   reg_async<SlidingAverageFactory>(registry_, "SlidingAverage");
+
+  metrics_timer_ = new QTimer(this);
+  metrics_timer_->setInterval(1000);
+  metrics_timer_->setTimerType(Qt::TimerType::CoarseTimer);
+  connect(metrics_timer_, &QTimer::timeout, this, [this] { poll_metrics(); });
 }
 
 void Manager::start_pipeline() {
@@ -110,6 +121,7 @@ void Manager::stop_pipeline() {
   try {
     scheduler_->request_stop();
     scheduler_->wait();
+    stop_metrics_updates();
     logger()->info("[Manager::stop_pipeline] Pipeline stopped successfully");
     emit stop_pipeline_success();
   } catch (const std::exception &e) {
@@ -143,7 +155,47 @@ void Manager::update_pipeline(const Settings &settings) {
   }
 }
 
+void Manager::start_metrics_updates() {
+  if (!metrics_timer_) {
+    return;
+  }
+  if (!metrics_timer_->isActive()) {
+    metrics_timer_->start();
+  }
+}
+
+void Manager::stop_metrics_updates() {
+  if (!metrics_timer_) {
+    return;
+  }
+  if (metrics_timer_->isActive()) {
+    metrics_timer_->stop();
+  }
+  emit metrics_updated(0.0);
+}
+
+void Manager::poll_metrics() {
+  if (!scheduler_ || !scheduler_->is_running()) { // Not running
+    emit metrics_updated(0.0);
+    return;
+  }
+
+  auto snapshot = scheduler_->metrics();
+
+  if (snapshot.empty()) { // No metrics available
+    emit metrics_updated(0.0);
+    return;
+  }
+
+  HOLOVIBES_CHECK(snapshot.contains("source"), "Missing 'source' node metrics");
+  double input_fps = snapshot.at("source").runs_per_second;
+  input_fps *= s_.load_batch;
+  emit metrics_updated(input_fps);
+}
+
 void Manager::build_and_run() {
+  using Scheduler = holoflow::runtime::Scheduler;
+  stop_metrics_updates();
   build_graph_spec();
 
   // TODO: Proper log path in app data folder
@@ -151,7 +203,7 @@ void Manager::build_and_run() {
   constexpr const char *LOG_FOLDER_PATH = "logs";
 
   const std::filesystem::path log_root{LOG_FOLDER_PATH};
-  std::error_code              log_ec;
+  std::error_code             log_ec;
   std::filesystem::create_directories(log_root, log_ec);
 
   auto dot  = holoflow::core::to_dot(spec_);
@@ -179,8 +231,15 @@ void Manager::build_and_run() {
   logger()->info("[Manager::build_and_run] Compiled pipeline graph saved to {}",
                  compiled_path.string());
 
-  scheduler_ = std::make_unique<holoflow::runtime::Scheduler>(graph, sections, resources);
+  const auto metrics_interval = metrics_timer_
+                                    ? std::chrono::milliseconds{metrics_timer_->interval()}
+                                    : std::chrono::milliseconds{1000};
+
+  scheduler_ = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval);
+  scheduler_->set_metrics_interval(metrics_interval);
   scheduler_->start();
+  start_metrics_updates();
+  poll_metrics();
 }
 
 void Manager::build_graph_spec() {
