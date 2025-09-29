@@ -75,7 +75,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   xz_processed_widget_->setWindowTitle("XZ-Processed");
   yz_processed_widget_->setWindowTitle("YZ-Processed");
   xy_raw_widget_->setWindowTitle("XY-Raw");
-  xy_processed_widget_->setFixedSize(400, 400);
+  xy_processed_widget_->resize(400, 400);
   xy_processed_widget_->show();
 
   pipeline_manager_        = new pipeline::Manager(xy_processed_widget_, xz_processed_widget_,
@@ -118,7 +118,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
   validate_inputs();
   setWindowTitle("Holovibes");
-  this->adjustSize();
+  this->setFixedSize(this->minimumSizeHint());
+  // this->adjustSize();
   this->show();
 }
 
@@ -545,18 +546,18 @@ QGroupBox *MainWindow::create_system_monitor_group() {
     metrics_layout->addWidget(*value_label, row, 1);
   };
 
-  add_metric_row(0, "Current FPS:", &metrics_current_fps_value_, "118 fps");
-  add_metric_row(1, "GPU Load:", &metrics_gpu_load_value_, "68 %");
-  add_metric_row(2, "CPU Load:", &metrics_cpu_load_value_, "42 %");
-  add_metric_row(3, "Input Throughput (FPS):", &metrics_input_throughput_fps_value_, "240 fps");
-  add_metric_row(4, "Input Throughput (Bytes):", &metrics_input_throughput_bytes_value_,
-                 "1.2 GB/s");
-  add_metric_row(5, "CPU Throughput:", &metrics_cpu_throughput_value_, "3.4 GB/s");
-  add_metric_row(6, "GPU Throughput:", &metrics_gpu_throughput_value_, "5.1 GB/s");
-  add_metric_row(7, "RAM Usage:", &metrics_ram_usage_value_, "12.3 / 32 GB");
-  add_metric_row(8, "VRAM Usage:", &metrics_vram_usage_value_, "6.5 / 12 GB");
-  add_metric_row(9, "Dropped Frames:", &metrics_dropped_frames_value_, "2");
-  add_metric_row(10, "Pipeline Latency:", &metrics_pipeline_latency_value_, "16 ms");
+  // clang-format off
+  add_metric_row(0, "GPU Load:", &metrics_gpu_load_value_, "68 %");
+  add_metric_row(1, "CPU Load:", &metrics_cpu_load_value_, "42 %");
+  add_metric_row(2, "Input Throughput (FPS):", &metrics_input_throughput_fps_value_, "240 fps");
+  add_metric_row(3, "Input Throughput (Bytes):", &metrics_input_throughput_bytes_value_, "1.2 GB/s");
+  add_metric_row(4, "CPU Throughput:", &metrics_cpu_throughput_value_, "3.4 GB/s");
+  add_metric_row(5, "GPU Throughput:", &metrics_gpu_throughput_value_, "5.1 GB/s");
+  add_metric_row(6, "RAM Usage:", &metrics_ram_usage_value_, "12.3 / 32 GB");
+  add_metric_row(7, "VRAM Usage:", &metrics_vram_usage_value_, "6.5 / 12 GB");
+  add_metric_row(8, "Dropped Frames:", &metrics_dropped_frames_value_, "2");
+  add_metric_row(9, "Pipeline Latency:", &metrics_pipeline_latency_value_, "16 ms");
+  // clang-format on
 
   layout->addLayout(metrics_layout);
 

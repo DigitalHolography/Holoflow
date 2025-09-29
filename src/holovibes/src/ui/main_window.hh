@@ -149,7 +149,6 @@ private:
   QCheckBox      *view_reticle_check_;
   QDoubleSpinBox *view_reticle_radius_;
   // UI Members for System Monitor
-  QLabel       *metrics_current_fps_value_;
   QLabel       *metrics_gpu_load_value_;
   QLabel       *metrics_cpu_load_value_;
   QLabel       *metrics_input_throughput_fps_value_;
@@ -163,7 +162,6 @@ private:
   QProgressBar *metrics_input_queue_bar_;
   QProgressBar *metrics_output_queue_bar_;
   QProgressBar *metrics_record_queue_bar_;
-
 };
 
 } // namespace holovibes::ui
