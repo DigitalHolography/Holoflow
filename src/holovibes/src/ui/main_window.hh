@@ -60,7 +60,16 @@ private:
   void setup_update_connections();
   void update_if_running();
 
+  QSize guess_source_dims();
   pipeline::Settings get_pipeline_settings();
+
+  void setup_menu_bar();
+  void setup_main_layout();
+  void initialize_display_widgets();
+  void initialize_pipeline_manager();
+  void connect_manager_signals();
+  void connect_import_controls();
+  void configure_window();
 
   // Current state
   bool update_in_progress_ = false;
