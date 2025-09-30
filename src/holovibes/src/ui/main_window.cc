@@ -166,6 +166,16 @@ void MainWindow::on_metrics_updated(double input_fps) {
 
   const QString text = QStringLiteral("%1 fps").arg(QString::number(input_fps, 'f', 1));
   metrics_input_throughput_fps_value_->setText(text);
+
+  metrics_gpu_load_value_->setText("N/A");
+  metrics_cpu_load_value_->setText("N/A");
+  metrics_input_throughput_bytes_value_->setText("N/A");
+  metrics_cpu_throughput_value_->setText("N/A");
+  metrics_gpu_throughput_value_->setText("N/A");
+  metrics_ram_usage_value_->setText("N/A");
+  metrics_vram_usage_value_->setText("N/A");
+  metrics_dropped_frames_value_->setText("N/A");
+  metrics_pipeline_latency_value_->setText("N/A");
 }
 
 void MainWindow::on_update_pipeline_success() {
@@ -566,16 +576,16 @@ QGroupBox *MainWindow::create_system_monitor_group() {
   };
 
   // clang-format off
-  add_metric_row(0, "GPU Load:", &metrics_gpu_load_value_, "68 %");
-  add_metric_row(1, "CPU Load:", &metrics_cpu_load_value_, "42 %");
-  add_metric_row(2, "Input Throughput (FPS):", &metrics_input_throughput_fps_value_, "0.0 fps");
-  add_metric_row(3, "Input Throughput (Bytes):", &metrics_input_throughput_bytes_value_, "1.2 GB/s");
-  add_metric_row(4, "CPU Throughput:", &metrics_cpu_throughput_value_, "3.4 GB/s");
-  add_metric_row(5, "GPU Throughput:", &metrics_gpu_throughput_value_, "5.1 GB/s");
-  add_metric_row(6, "RAM Usage:", &metrics_ram_usage_value_, "12.3 / 32 GB");
-  add_metric_row(7, "VRAM Usage:", &metrics_vram_usage_value_, "6.5 / 12 GB");
-  add_metric_row(8, "Dropped Frames:", &metrics_dropped_frames_value_, "2");
-  add_metric_row(9, "Pipeline Latency:", &metrics_pipeline_latency_value_, "16 ms");
+  add_metric_row(0, "GPU Load:", &metrics_gpu_load_value_, "N/A");
+  add_metric_row(1, "CPU Load:", &metrics_cpu_load_value_, "N/A");
+  add_metric_row(2, "Input Throughput (FPS):", &metrics_input_throughput_fps_value_, "N/A");
+  add_metric_row(3, "Input Throughput (Bytes):", &metrics_input_throughput_bytes_value_, "N/A");
+  add_metric_row(4, "CPU Throughput:", &metrics_cpu_throughput_value_, "N/A");
+  add_metric_row(5, "GPU Throughput:", &metrics_gpu_throughput_value_, "N/A");
+  add_metric_row(6, "RAM Usage:", &metrics_ram_usage_value_, "N/A");
+  add_metric_row(7, "VRAM Usage:", &metrics_vram_usage_value_, "N/A");
+  add_metric_row(8, "Dropped Frames:", &metrics_dropped_frames_value_, "N/A");
+  add_metric_row(9, "Pipeline Latency:", &metrics_pipeline_latency_value_, "N/A");
   // clang-format on
 
   layout->addLayout(metrics_layout);
