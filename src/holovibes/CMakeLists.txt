@@ -24,8 +24,20 @@ file(GLOB_RECURSE HOLOVIBES_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cu
 )
 
+file(GLOB_RECURSE APP_RESOURCES
+    ${CMAKE_SOURCE_DIR}/resources/holovibes/*
+)
+
 qt_add_executable(holovibes
     ${HOLOVIBES_SOURCES}
+)
+
+file(RELATIVE_PATH APP_RESOURCES_REL "${CMAKE_CURRENT_SOURCE_DIR}" "${APP_RESOURCES}")
+
+qt_add_resources(holovibes "app_resources"
+    PREFIX "/"
+    FILES ${APP_RESOURCES_REL}
+    BASE ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
 target_include_directories(holovibes 

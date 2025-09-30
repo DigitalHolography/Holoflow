@@ -40,6 +40,7 @@
 #include "tasks/pct_clip.hh"
 #include "tasks/slide_avg.hh"
 #include "tasks/stft.hh"
+#include "tasks/convolution.hh"
 
 using namespace holovibes::tasks;
 
@@ -81,6 +82,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<PctClipFactory>(registry_, "PctClip");
   reg_sync<StftFactory>(registry_, "Stft");
   reg_async<SlidingAverageFactory>(registry_, "SlidingAverage");
+    reg_sync<ConvolutionFactory>(registry_, "Convolution");
 
   metrics_timer_ = new QTimer(this);
   metrics_timer_->setInterval(1000);
@@ -307,10 +309,10 @@ void Manager::build_graph_spec() {
     // parent           = fps_limiter;
     // parent = identity_1;
 
-    // if (s_.pp_convolution) {
-    //   auto convolution = add_xy_convolution(parent, 0, 0);
-    //   parent           = convolution;
-    // }
+    if (s_.pp_convolution) {
+      auto convolution = add_xy_convolution(parent, 0, 0);
+      parent           = convolution;
+    }
 
     // auto pctclip       = add_xy_pctclip(parent, 0, 0);
     auto to_u8         = add_xy_to_u8(parent, 0, 0);
@@ -614,10 +616,10 @@ Manager::V Manager::add_xy_fps_limiter(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_convolution(V parent, int out_idx, int in_idx) {
-  HOLOVIBES_UNIMPLEMENTED();
-  (void)parent;
-  (void)out_idx;
-  (void)in_idx;
+  return add_node_after<ConvolutionSettings>(parent, out_idx, in_idx, "xy_convolution", "Convolution",
+                                        ConvolutionSettings{
+                                            .kernel_file = s_.pp_convolution_path,
+                                        });
 }
 
 Manager::V Manager::add_xy_pctclip(V parent, int out_idx, int in_idx) {

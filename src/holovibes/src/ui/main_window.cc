@@ -18,6 +18,7 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDir>
+#include <QDirIterator>
 #include <QDockWidget>
 #include <QFileDialog>
 #include <QFileInfoList>
@@ -521,17 +522,16 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
   }
 
   // View Settings
-  {
-    s.view_3d_cuts = view_cuts_3d_check_->isChecked();
-  }
+  { s.view_3d_cuts = view_cuts_3d_check_->isChecked(); }
 
   // Post-processing Settings
   {
     // TODO: load from file
-    std::string kernel_path = "";
-    // std::string kernel_path =
-    //     convolutions_kernels_path() +
-    //     render_convolution_combo_->currentText().toStdString() + ".json";
+    QString     appDataBase = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+    QString     appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
+    QString     convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels/";
+    std::string kernel_path             = convolutionsKernelsPath.toStdString() +
+                              render_convolution_combo_->currentText().toStdString() + ".json";
 
     s.pp_fps                 = 60;
     s.pp_fft_shift           = view_fft_shift_check_->isChecked();
@@ -792,21 +792,22 @@ QGroupBox *MainWindow::create_export_group() {
 }
 
 QStringList loadAvailableKernels() {
-  // TODO: load kernels
-  // QDir dir(convolutions_kernels_path().c_str());
+  QString appDataBase = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  QString appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
+  QString convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels";
+  QDir    dir(convolutionsKernelsPath);
 
-  // QStringList filters;
-  // filters << QStringLiteral("*.json");
-  // QFileInfoList files = dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::Name);
+  QStringList filters;
+  filters << QStringLiteral("*.json");
+  QFileInfoList files = dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::Name);
 
-  // QStringList names;
-  // names << QStringLiteral("None");
-  // for (const QFileInfo &fi : files) {
-  //   names << fi.completeBaseName();
-  // }
+  QStringList names;
+  names << QStringLiteral("None");
+  for (const QFileInfo &fi : files) {
+    names << fi.completeBaseName();
+  }
 
-  // return names;
-  return {};
+  return names;
 }
 
 QGroupBox *MainWindow::create_image_rendering_group() {
