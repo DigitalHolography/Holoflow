@@ -60,6 +60,7 @@ private:
   void setup_update_connections();
   void update_if_running();
 
+  QSize guess_source_dims();
   pipeline::Settings get_pipeline_settings();
 
   void setup_menu_bar();

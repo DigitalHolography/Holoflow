@@ -23,6 +23,7 @@
 #include <QStyleOption>
 #include <cstring>
 
+#include "bug.hh"
 #include "logger.hh"
 
 namespace holovibes::ui {
@@ -44,6 +45,52 @@ void main(){
 TensorDisplayWidget::TensorDisplayWidget(QWidget *p) : QOpenGLWidget(p) {
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   setMinimumSize(160, 120);
+}
+
+void TensorDisplayWidget::set_fixed_aspect(std::optional<QSize> size) {
+  HOLOVIBES_CHECK(!size || size->width() > 0);
+  HOLOVIBES_CHECK(!size || size->height() > 0);
+  fixed_aspect_size_ = size;
+  updateGeometry();
+
+  if (fixed_aspect_size_) {
+    float ar = float(fixed_aspect_size_->width()) / float(fixed_aspect_size_->height());
+    HOLOVIBES_CHECK(ar > 0.f);
+    int h = height();
+    int w = int(std::round(h * ar));
+    // if (w > h) {
+    //   h = int(std::round(w / ar));
+    // } else {
+    //   w = int(std::round(h * ar));
+    // }
+    resize(w, h);
+  }
+}
+
+void TensorDisplayWidget::resizeEvent(QResizeEvent *event) {
+  if (fixed_aspect_size_) {
+    float ar = float(fixed_aspect_size_->width()) / float(fixed_aspect_size_->height());
+    HOLOVIBES_CHECK(ar > 0.f);
+    int h = event->size().height();
+    int w = event->size().width();
+    if (w > h) {
+      h = int(std::round(w / ar));
+    } else {
+      w = int(std::round(h * ar));
+    }
+    resize(w, h);
+  }
+
+  QOpenGLWidget::resizeEvent(event);
+}
+
+bool TensorDisplayWidget::hasHeightForWidth() const { return fixed_aspect_size_.has_value(); }
+
+int TensorDisplayWidget::heightForWidth(int w) const {
+  HOLOVIBES_CHECK(fixed_aspect_size_);
+  auto ar = float(fixed_aspect_size_->width()) / float(fixed_aspect_size_->height());
+  HOLOVIBES_CHECK(ar > 0.f);
+  return int(std::round(float(w) / ar));
 }
 
 void TensorDisplayWidget::initializeGL() {

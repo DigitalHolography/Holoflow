@@ -131,8 +131,8 @@ void MainWindow::initialize_display_widgets() {
   yz_processed_widget_->setWindowTitle("YZ-Processed");
   xy_raw_widget_->setWindowTitle("XY-Raw");
 
-  xy_processed_widget_->resize(400, 400);
-  xy_processed_widget_->show();
+  // xy_processed_widget_->resize(512 * 2, 320 * 2);
+  // xy_processed_widget_->show();
 }
 
 void MainWindow::initialize_pipeline_manager() {
@@ -181,6 +181,15 @@ void MainWindow::on_start_pipeline_success() {
   logger()->info("[MainWindow::on_start_pipeline_success]");
   pipeline_running_ = true;
   import_stop_button_->setEnabled(true);
+
+  auto dims = guess_source_dims();
+  xy_raw_widget_->set_fixed_aspect(dims);
+  if (render_space_transform_combo_->currentText() == "Fresnel Diffraction") {
+    dims = QSize(dims.width(), dims.width());
+  }
+  xy_processed_widget_->set_fixed_aspect(dims);
+
+  xy_processed_widget_->show();
 }
 
 void MainWindow::on_start_pipeline_failure() {
@@ -196,6 +205,11 @@ void MainWindow::on_stop_pipeline_success() {
   import_start_button_->setEnabled(true);
   import_stop_button_->setEnabled(false);
   on_metrics_updated(0.0);
+
+  xy_raw_widget_->hide();
+  xy_processed_widget_->hide();
+  xz_processed_widget_->hide();
+  yz_processed_widget_->hide();
 }
 
 void MainWindow::on_stop_pipeline_failure() {
@@ -204,6 +218,11 @@ void MainWindow::on_stop_pipeline_failure() {
   import_start_button_->setEnabled(true);
   import_stop_button_->setEnabled(false);
   on_metrics_updated(0.0);
+
+  xy_raw_widget_->hide();
+  xy_processed_widget_->hide();
+  xz_processed_widget_->hide();
+  yz_processed_widget_->hide();
 }
 
 void MainWindow::on_metrics_updated(double input_fps) {
@@ -233,6 +252,13 @@ void MainWindow::on_update_pipeline_success() {
   logger()->info("[MainWindow::on_update_pipeline_success]");
   update_in_progress_ = false;
   import_stop_button_->setEnabled(true);
+
+  auto dims = guess_source_dims();
+  xy_raw_widget_->set_fixed_aspect(dims);
+  if (render_space_transform_combo_->currentText() == "Fresnel Diffraction") {
+    dims = QSize(dims.width(), dims.width());
+  }
+  xy_processed_widget_->set_fixed_aspect(dims);
 }
 
 void MainWindow::on_update_pipeline_failure() {
@@ -501,6 +527,17 @@ void MainWindow::update_if_running() {
   pipeline::Settings settings = get_pipeline_settings();
   auto               update   = [=]() { pipeline_manager_->update_pipeline(settings); };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
+}
+
+QSize MainWindow::guess_source_dims() {
+  if (!import_cam_check_->isChecked()) {
+    auto header     = holofile::Reader(import_file_line_edit_->text().toStdString()).header();
+    int  src_width  = header.frame_width;
+    int  src_height = header.frame_height;
+    return QSize(src_width, src_height);
+  }
+
+  HOLOVIBES_UNIMPLEMENTED();
 }
 
 pipeline::Settings MainWindow::get_pipeline_settings() {

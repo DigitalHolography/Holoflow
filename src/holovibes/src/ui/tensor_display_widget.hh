@@ -31,7 +31,7 @@ class TensorDisplayWidget : public QOpenGLWidget, protected QOpenGLExtraFunction
 public:
   explicit TensorDisplayWidget(QWidget *parent = nullptr);
 
-  // [[nodiscard]] QSize sizeHint() const override;
+  void set_fixed_aspect(std::optional<QSize> size);
 
 public slots:
   void presentTensor(const QByteArray &bytes, int width, int height);
@@ -44,10 +44,18 @@ protected:
   void resizeGL(int w, int h) override;
   void paintGL() override;
 
+  bool hasHeightForWidth() const override;
+  int  heightForWidth(int w) const override;
+  // QSize sizeHint() const override;
+  // QSize minimumSizeHint() const override;
+
+  void resizeEvent(QResizeEvent *event) override;
+
 private:
   void ensureTexture(int w, int h);
   void updateTexture(const quint8 *data, int w, int h);
   void updateLetterboxViewport();
+  // float current_aspect() const;
 
   GLuint tex_   = 0;
   GLuint vao_   = 0;
@@ -55,6 +63,8 @@ private:
   GLuint prog_  = 0;
   int    img_w_ = 0, img_h_ = 0;
   bool   texture_dirty_ = false;
+
+  std::optional<QSize> fixed_aspect_size_{std::nullopt};
 };
 
 } // namespace holovibes::ui
