@@ -87,19 +87,20 @@ std::vector<std::string> get_nvrtc_args() {
 
   std::vector<std::string> args{
       "-I" + cuda_path + "/include",
-      "--arch=" + get_compute_arch(),
+      "-arch=" + get_compute_arch(),
       "--std=c++20",
-      "--relocableable-device-code=true",
-      "--default-device",
+      "--relocatable-device-code=true",
+      "-default-device",
       "-dlto",
   };
   return args;
 }
 
 std::vector<char> compile_source_to_lto(const std::string &source, const std::string &name) {
+  auto                 args_string = get_nvrtc_args();
   curaii::NvrtcProgram prog(source.c_str(), name.c_str(), 0, nullptr, nullptr);
   std::vector<char *>  args;
-  std::ranges::transform(get_nvrtc_args(), std::back_inserter(args),
+  std::ranges::transform(args_string, std::back_inserter(args),
                          [](const std::string &s) { return const_cast<char *>(s.c_str()); });
 
   try {
