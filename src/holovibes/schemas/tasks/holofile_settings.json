@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HolofileSettings",
+  "description": "Settings for the Holofile reader task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to the HoloFile."
+    },
+    "load_kind": {
+      "type": "string",
+      "description": "Loading strategy.",
+      "enum": [
+        "Live",
+        "CPUCached",
+        "GPUCached"
+      ]
+    },
+    "start_frame": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "First frame to read (inclusive)."
+    },
+    "end_frame": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Last frame to read (exclusive)."
+    },
+    "batch_size": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of frames per output tensor."
+    }
+  },
+  "required": [
+    "path",
+    "load_kind",
+    "start_frame",
+    "end_frame",
+    "batch_size"
+  ],
+  "examples": [
+    {
+      "path": "C:/data/run01.holo",
+      "load_kind": "Live",
+      "start_frame": 0,
+      "end_frame": 1024,
+      "batch_size": 8
+    }
+  ]
+}

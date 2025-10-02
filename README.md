@@ -67,6 +67,8 @@ holoflow
 - **[Git](https://git-scm.com/downloads/win)**
 - **[Qt >= 6.5](https://www.qt.io/download-qt-installer-oss)** set `Qt6_DIR` env var to your Qt installation path, e.g. `C:\Qt\6.5.2\msvc2019_64\lib\cmake\Qt6`, add `C:\Qt\6.5.2\msvc2019_64\bin` to your `PATH`
 - **[Intel oneAPI Base Toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html)** add `C:\Program Files (x86)\Intel\oneAPI\mkl\latest\bin` to your `PATH`
+- **[Node.js](https://nodejs.org/en/download/)** (both `node` and `npm` in your `PATH`)
+- **[quicktype](https://www.npmjs.com/package/quicktype)** install via `npm install -g quicktype`
 
 ## Python dependencies
 The python dependencies are listed in `requirements.txt`. The recommended way to set up the Python environment is by using a virtual environment. You can create and activate a virtual environment using the following commands:
@@ -76,7 +78,7 @@ The python dependencies are listed in `requirements.txt`. The recommended way to
 python -m venv .venv
 
 # Activate the virtual environment
-.\venv\Scripts\activate.bat
+.\.venv\Scripts\activate.bat
 ```
 
 After activating the virtual environment, you can install the required Python packages using:
