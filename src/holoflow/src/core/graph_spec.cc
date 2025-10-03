@@ -26,11 +26,20 @@ static std::string escape_for_label(const std::string &s) {
   out.reserve(s.size());
   for (char c : s) {
     switch (c) {
-    case '\\': out += "\\\\"; break;
-    case '"' : out += "\\\""; break;
-    case '\n': out += "\\n";  break;
-    case '\r': break;
-    default:   out += c;      break;
+    case '\\':
+      out += "\\\\";
+      break;
+    case '"':
+      out += "\\\"";
+      break;
+    case '\n':
+      out += "\\n";
+      break;
+    case '\r':
+      break;
+    default:
+      out += c;
+      break;
     }
   }
   return out;
@@ -47,7 +56,7 @@ static void write_nodes(std::ostringstream &ss, const GraphSpec &g) {
   using vertex_iter_t = boost::graph_traits<GraphSpec>::vertex_iterator;
   vertex_iter_t vi, vi_end;
   for (boost::tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi) {
-    auto v = *vi;
+    auto            v  = *vi;
     const NodeSpec &ns = g[v];
 
     std::ostringstream label;
@@ -61,9 +70,7 @@ static void write_nodes(std::ostringstream &ss, const GraphSpec &g) {
 
     try {
       if (!ns.settings.is_null() && !(ns.settings.is_object() && ns.settings.empty())) {
-        std::string settings_dump = ns.settings.dump();
-        if (settings_dump.size() > 300)
-          settings_dump = settings_dump.substr(0, 300) + "...";
+        std::string settings_dump = ns.settings.dump(2);
         label << "\n" << settings_dump;
       }
     } catch (...) {
@@ -81,18 +88,14 @@ static void write_edges(std::ostringstream &ss, const GraphSpec &g) {
   using edge_iter_t = boost::graph_traits<GraphSpec>::edge_iterator;
   edge_iter_t ei, ei_end;
   for (boost::tie(ei, ei_end) = boost::edges(g); ei != ei_end; ++ei) {
-    auto e = *ei;
-    auto s = boost::source(e, g);
-    auto t = boost::target(e, g);
+    auto            e  = *ei;
+    auto            s  = boost::source(e, g);
+    auto            t  = boost::target(e, g);
     const EdgeSpec &es = g[e];
 
-    std::ostringstream elabel;
-    elabel << "out:" << es.out_idx << " in:" << es.in_idx;
-
-    std::string esc_elabel = escape_for_label(elabel.str());
-
-    ss << "  v" << s << " -> v" << t
-       << " [label=\"" << esc_elabel << "\"];\n";
+    ss << "  v" << s << " -> v" << t << " [taillabel=\""
+       << escape_for_label(std::to_string(es.out_idx)) << "\""
+       << " headlabel=\"" << escape_for_label(std::to_string(es.in_idx)) << "\"];\n";
   }
 }
 
