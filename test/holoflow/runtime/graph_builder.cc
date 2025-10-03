@@ -44,6 +44,22 @@ namespace holoflow::test {
     return *this;
   }
 
+  
+  GraphBuilder &GraphBuilder::change_node(const std::string &id, const std::string &new_kind, const nlohmann::json &new_settings) {
+    auto it = nodes_.find(id);
+    if (it == nodes_.end()) {
+      throw std::runtime_error("Node with id '" + id + "' not found");
+    }
+
+    auto v = it->second;
+    auto &node = graph_[v];
+
+    node.kind     = new_kind;
+    node.settings = new_settings;
+
+    return *this;
+  }
+
   core::GraphSpec GraphBuilder::finish() { return std::move(graph_); }
 
 
