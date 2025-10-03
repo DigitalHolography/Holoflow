@@ -1,4 +1,4 @@
-#include "tasks/fresnel_diffraction.hh"
+#include "fresnel_diffraction.hh"
 
 #include <math_constants.h>
 

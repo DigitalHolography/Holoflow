@@ -1,4 +1,4 @@
-#include "tasks/average.hh"
+#include "average.hh"
 
 #include <cuComplex.h>
 #include <set>

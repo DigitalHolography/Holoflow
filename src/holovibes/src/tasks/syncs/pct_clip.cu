@@ -1,4 +1,4 @@
-#include "tasks/pct_clip.hh"
+#include "pct_clip.hh"
 
 #include <cub/cub.cuh>
 #include <math_constants.h>

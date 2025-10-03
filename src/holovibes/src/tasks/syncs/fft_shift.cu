@@ -1,4 +1,4 @@
-#include "tasks/fft_shift.hh"
+#include "fft_shift.hh"
 
 #include <cuComplex.h>
 #include <set>

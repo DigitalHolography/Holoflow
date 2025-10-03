@@ -1,4 +1,4 @@
-#include "tasks/angular_spectrum.hh"
+#include "angular_spectrum.hh"
 
 #include <math_constants.h>
 

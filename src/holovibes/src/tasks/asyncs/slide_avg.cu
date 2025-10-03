@@ -1,4 +1,4 @@
-#include "tasks/slide_avg.hh"
+#include "slide_avg.hh"
 
 #include "bug.hh"
 #include "curaii/cuda.hh"

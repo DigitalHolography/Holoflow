@@ -1,14 +1,13 @@
-#include "bug.hh"
-#include "tasks/convolution.hh"
+#include "convolution.hh"
 
 #include <fstream>
+
+#include "bug.hh"
 
 namespace holovibes::tasks {
 
 void to_json(nlohmann::json &j, const ConvolutionSettings &s) {
-  j = nlohmann::json{
-                     {"kernel_file", s.kernel_file}
-};
+  j = nlohmann::json{{"kernel_file", s.kernel_file}};
 }
 
 void from_json(const nlohmann::json &j, ConvolutionSettings &s) {
@@ -55,12 +54,11 @@ __global__ void convolution_2d_kernel(const float *__restrict__ input, float *__
 
 Convolution::Convolution(ConvolutionSettings settings, const holoflow::core::TDesc &input_desc,
                          const holoflow::core::TDesc &output_desc, cudaStream_t stream,
-                         DevPtr<float> &&d_kernel,
-                         size_t kernel_width, size_t kernel_height, size_t kernel_radius_x,
-                         size_t kernel_radius_y)
+                         DevPtr<float> &&d_kernel, size_t kernel_width, size_t kernel_height,
+                         size_t kernel_radius_x, size_t kernel_radius_y)
     : settings_(std::move(settings)), input_desc_(input_desc), output_desc_(output_desc),
-      stream_(stream), d_kernel_(std::move(d_kernel)),
-      kernel_width_(kernel_width), kernel_height_(kernel_height), kernel_radius_x_(kernel_radius_x),
+      stream_(stream), d_kernel_(std::move(d_kernel)), kernel_width_(kernel_width),
+      kernel_height_(kernel_height), kernel_radius_x_(kernel_radius_x),
       kernel_radius_y_(kernel_radius_y) {}
 
 holoflow::core::OpResult Convolution::execute(holoflow::core::SyncCtx &ctx) {
@@ -151,25 +149,25 @@ ConvolutionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const auto &input_desc = input_descs[0];
 
   std::ifstream file(settings.kernel_file);
-    if (!file.is_open()) {
-        throw std::runtime_error("Could not load :" + settings.kernel_file);
+  if (!file.is_open()) {
+    throw std::runtime_error("Could not load :" + settings.kernel_file);
+  }
+
+  nlohmann::json j;
+  file >> j;
+
+  auto kernel_json = j.at("kernel");
+
+  auto kernel_height = kernel_json.size();
+  auto kernel_width  = kernel_json[0].size();
+
+  std::vector<float> squashed_kernel;
+
+  for (const auto &row : kernel_json) {
+    for (const auto &val : row) {
+      squashed_kernel.push_back(val.get<float>());
     }
-
-    nlohmann::json j;
-    file >> j;
-
-    auto kernel_json = j.at("kernel");
-
-    auto kernel_height = kernel_json.size();
-    auto kernel_width = kernel_json[0].size();
-
-    std::vector<float> squashed_kernel;
-
-    for (const auto& row : kernel_json) {
-        for (const auto& val : row) {
-            squashed_kernel.push_back(val.get<float>());
-        }
-    }
+  }
 
   auto kernel_radius_x = kernel_width / 2;
   auto kernel_radius_y = kernel_height / 2;
@@ -182,8 +180,9 @@ ConvolutionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
 
-  return std::unique_ptr<holoflow::core::ISyncTask>(new Convolution(
-      settings, input_desc, result.output_descs[0], ctx.stream, std::move(d_kernel), kernel_width, kernel_height, kernel_radius_x, kernel_radius_y));
+  return std::unique_ptr<holoflow::core::ISyncTask>(
+      new Convolution(settings, input_desc, result.output_descs[0], ctx.stream, std::move(d_kernel),
+                      kernel_width, kernel_height, kernel_radius_x, kernel_radius_y));
 }
 
 } // namespace holovibes::tasks

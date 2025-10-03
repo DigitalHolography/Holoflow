@@ -1,4 +1,4 @@
-#include "tasks/conversion.hh"
+#include "conversion.hh"
 
 #include <cuComplex.h>
 #include <cub/cub.cuh>

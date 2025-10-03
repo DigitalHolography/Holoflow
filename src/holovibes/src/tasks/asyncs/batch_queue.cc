@@ -20,7 +20,6 @@
 #include <numeric>
 
 #include "bug.hh"
-#include "holofile.hh"
 #include "holoflow/core/tasks.hh"
 #include "logger.hh"
 
