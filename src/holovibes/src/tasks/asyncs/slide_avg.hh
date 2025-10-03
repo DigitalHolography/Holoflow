@@ -29,7 +29,7 @@
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::asyncs {
 
 struct SlidingAverageSettings {
   size_t target_capacity;
@@ -120,4 +120,4 @@ public:
          const holoflow::core::AsyncCreateCtx &ctx) const override;
 };
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::asyncs

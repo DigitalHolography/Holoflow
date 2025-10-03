@@ -32,7 +32,7 @@
 
 #include <cuda_runtime.h>
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::sinks {
 
 void to_json(nlohmann::json &j, const DisplayTensorSettings &ds) {
   j = nlohmann::json{
@@ -152,4 +152,4 @@ DisplayTensorFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::sinks

@@ -22,7 +22,7 @@
 #include "bug.hh"
 #include "logger.hh"
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 namespace {
 
@@ -225,4 +225,4 @@ PcaFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::syncs

@@ -67,23 +67,23 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
                  ui::TensorDisplayWidget *xy_raw_widget)
     : xy_processed_widget_(xy_processed_widget), xz_processed_widget_(xz_processed_widget),
       yz_processed_widget_(yz_processed_widget), xy_raw_widget_(xy_raw_widget) {
-  reg_sync<AngularSpectrumFactory>(registry_, "AngularSpectrum");
-  reg_sync<AverageFactory>(registry_, "Average");
-  reg_async<BatchQueueFactory>(registry_, "BatchQueue");
-  reg_sync<ConversionFactory>(registry_, "Conversion");
-  reg_sync<DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
-  reg_sync<DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
-  reg_sync<DisplayTensorFactory>(registry_, "DisplayTensorYZ", yz_processed_widget_);
-  reg_sync<DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
-  reg_sync<FFTShiftFactory>(registry_, "FFTShift");
-  reg_sync<FresnelDiffractionFactory>(registry_, "FresnelDiffraction");
-  reg_sync<HolofileFactory>(registry_, "Holofile");
-  reg_sync<MemcpyFactory>(registry_, "Memcpy");
-  reg_sync<PcaFactory>(registry_, "Pca");
-  reg_sync<PctClipFactory>(registry_, "PctClip");
-  reg_sync<StftFactory>(registry_, "Stft");
-  reg_async<SlidingAverageFactory>(registry_, "SlidingAverage");
-  reg_sync<ConvolutionFactory>(registry_, "Convolution");
+  reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
+  reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
+  reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
+  reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
+  reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ", yz_processed_widget_);
+  reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
+  reg_sync<sources::HolofileFactory>(registry_, "Holofile");
+  reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
+  reg_sync<syncs::AverageFactory>(registry_, "Average");
+  reg_sync<syncs::ConversionFactory>(registry_, "Conversion");
+  reg_sync<syncs::FFTShiftFactory>(registry_, "FFTShift");
+  reg_sync<syncs::FresnelDiffractionFactory>(registry_, "FresnelDiffraction");
+  reg_sync<syncs::MemcpyFactory>(registry_, "Memcpy");
+  reg_sync<syncs::PcaFactory>(registry_, "Pca");
+  reg_sync<syncs::PctClipFactory>(registry_, "PctClip");
+  reg_sync<syncs::StftFactory>(registry_, "Stft");
+  reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");
 
   metrics_timer_ = new QTimer(this);
   metrics_timer_->setInterval(1000);
@@ -395,11 +395,13 @@ Manager::V Manager::add_node_after(const V &after, int out_idx, int in_idx, cons
 }
 
 Manager::V Manager::add_source() {
+  using sources::HolofileSettings;
+  using LoadKind = HolofileSettings::LoadKind;
   if (s_.import_source == ImportSource::HOLOFILE) {
-    std::map<LoadMethod, HolofileSettings::LoadKind> load_method_map{
-        {LoadMethod::READ_LIVE, HolofileSettings::LoadKind::Live},
-        {LoadMethod::LOAD_IN_CPU, HolofileSettings::LoadKind::CPUCached},
-        {LoadMethod::LOAD_IN_GPU, HolofileSettings::LoadKind::GPUCached},
+    std::map<LoadMethod, LoadKind> load_method_map{
+        {LoadMethod::READ_LIVE, LoadKind::Live},
+        {LoadMethod::LOAD_IN_CPU, LoadKind::CPUCached},
+        {LoadMethod::LOAD_IN_GPU, LoadKind::GPUCached},
     };
 
     return add_node<HolofileSettings>("source", "Holofile",
@@ -416,6 +418,7 @@ Manager::V Manager::add_source() {
 }
 
 Manager::V Manager::add_cpu_in_queue(V parent, int out_idx, int in_idx) {
+  using asyncs::BatchQueueSettings;
   return add_node_after<BatchQueueSettings>(
       parent, out_idx, in_idx, "cpu_in_queue", "BatchQueue",
       BatchQueueSettings{
@@ -426,6 +429,7 @@ Manager::V Manager::add_cpu_in_queue(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_cpu_gpu_cpy(V parent, int out_idx, int in_idx) {
+  using syncs::MemcpySettings;
   return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "cpu_gpu", "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Device,
@@ -433,6 +437,7 @@ Manager::V Manager::add_cpu_gpu_cpy(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_gpu_in_queue(V parent, int out_idx, int in_idx) {
+  using asyncs::BatchQueueSettings;
   return add_node_after<BatchQueueSettings>(
       parent, out_idx, in_idx, "gpu_in_queue", "BatchQueue",
       BatchQueueSettings{
@@ -443,6 +448,7 @@ Manager::V Manager::add_gpu_in_queue(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_to_cf32(V parent, int out_idx, int in_idx) {
+  using syncs::ConversionSettings;
   return add_node_after<ConversionSettings>(parent, out_idx, in_idx, "to_cf32", "Conversion",
                                             ConversionSettings{
                                                 .target   = ConversionSettings::Target::CF32,
@@ -451,6 +457,8 @@ Manager::V Manager::add_to_cf32(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_spacial_transform(V parent, int out_idx, int in_idx) {
+  using syncs::AngularSpectrumSettings;
+  using syncs::FresnelDiffractionSettings;
   if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
     return add_node_after<FresnelDiffractionSettings>(parent, out_idx, in_idx, "spacial_transform",
                                                       "FresnelDiffraction",
@@ -496,6 +504,7 @@ Manager::V Manager::add_spacial_filter(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_time_queue(V parent, int out_idx, int in_idx) {
+  using asyncs::BatchQueueSettings;
   auto time_stride = (opti_cpu_stride_ || opti_gpu_stride_) ? s_.time_window : s_.time_stride;
   return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "time_queue", "BatchQueue",
                                             BatchQueueSettings{
@@ -506,6 +515,8 @@ Manager::V Manager::add_time_queue(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_time_transform(V parent, int out_idx, int in_idx) {
+  using syncs::PcaSettings;
+  using syncs::StftSettings;
   if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts) {
     return add_node_after<PcaSettings>(parent, out_idx, in_idx, "time_transform", "Pca",
                                        PcaSettings{
@@ -532,6 +543,7 @@ Manager::V Manager::add_time_transform(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_to_f32(V parent, int out_idx, int in_idx) {
+  using syncs::ConversionSettings;
   return add_node_after<ConversionSettings>(parent, out_idx, in_idx, "to_f32", "Conversion",
                                             ConversionSettings{
                                                 .target   = ConversionSettings::Target::F32,
@@ -540,6 +552,7 @@ Manager::V Manager::add_to_f32(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_debounce_queue(V parent, int out_idx, int in_idx) {
+  using asyncs::BatchQueueSettings;
   if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts) {
     return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "debounce_queue",
                                               "BatchQueue",
@@ -559,6 +572,7 @@ Manager::V Manager::add_debounce_queue(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_cut_avg(V parent, int out_idx, int in_idx) {
+  using syncs::AverageSettings;
   if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts) {
     return add_node_after<AverageSettings>(parent, out_idx, in_idx, "xy_cut_avg", "Average",
                                            AverageSettings{
@@ -577,11 +591,13 @@ Manager::V Manager::add_xy_cut_avg(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_fft_shift(V parent, int out_idx, int in_idx) {
+  using syncs::FFTShiftSettings;
   return add_node_after<FFTShiftSettings>(parent, out_idx, in_idx, "fft_shift", "FFTShift",
                                           FFTShiftSettings{});
 }
 
 Manager::V Manager::add_xy_identity_0(V parent, int out_idx, int in_idx) {
+  using syncs::MemcpySettings;
   return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "xy_identity_0", "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Device,
@@ -596,6 +612,7 @@ Manager::V Manager::add_xy_registration(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_slide_avg(V parent, int out_idx, int in_idx) {
+  using asyncs::SlidingAverageSettings;
   return add_node_after<SlidingAverageSettings>(
       parent, out_idx, in_idx, "xy_slide_avg", "SlidingAverage",
       SlidingAverageSettings{.target_capacity = 128,
@@ -603,6 +620,7 @@ Manager::V Manager::add_xy_slide_avg(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_identity_1(V parent, int out_idx, int in_idx) {
+  using syncs::MemcpySettings;
   return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "xy_identity_1", "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Device,
@@ -617,6 +635,7 @@ Manager::V Manager::add_xy_fps_limiter(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_convolution(V parent, int out_idx, int in_idx) {
+  using syncs::ConvolutionSettings;
   return add_node_after<ConvolutionSettings>(parent, out_idx, in_idx, "xy_convolution",
                                              "Convolution",
                                              ConvolutionSettings{
@@ -625,6 +644,7 @@ Manager::V Manager::add_xy_convolution(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_pctclip(V parent, int out_idx, int in_idx) {
+  using syncs::PctClipSettings;
   // TODO: THis formula is likely wrong
   auto r  = std::clamp(s_.pp_pctclip_radius, 0.0f, 1.0f);
   auto s  = static_cast<float>(std::min(src_width_, src_height_));
@@ -648,6 +668,7 @@ Manager::V Manager::add_xy_pctclip(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_to_u8(V parent, int out_idx, int in_idx) {
+  using syncs::ConversionSettings;
   return add_node_after<ConversionSettings>(parent, out_idx, in_idx, "xy_to_u8", "Conversion",
                                             ConversionSettings{
                                                 .target   = ConversionSettings::Target::U8,
@@ -656,6 +677,7 @@ Manager::V Manager::add_xy_to_u8(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_gpu_out_queue(V parent, int out_idx, int in_idx) {
+  using asyncs::BatchQueueSettings;
   return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "xy_gpu_out_queue",
                                             "BatchQueue",
                                             BatchQueueSettings{
@@ -666,6 +688,7 @@ Manager::V Manager::add_xy_gpu_out_queue(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_gpu_cpu_cpy(V parent, int out_idx, int in_idx) {
+  using syncs::MemcpySettings;
   return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "xy_gpu_cpu", "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Host,
@@ -673,6 +696,7 @@ Manager::V Manager::add_xy_gpu_cpu_cpy(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_cpu_out_queue(V parent, int out_idx, int in_idx) {
+  using asyncs::BatchQueueSettings;
   return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "xy_cpu_out_queue",
                                             "BatchQueue",
                                             BatchQueueSettings{
@@ -683,11 +707,13 @@ Manager::V Manager::add_xy_cpu_out_queue(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_processed_display(V parent, int out_idx, int in_idx) {
+  using sinks::DisplayTensorSettings;
   return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "xy_processed_display",
                                                "DisplayTensorXY", DisplayTensorSettings{});
 }
 
 Manager::V Manager::add_xz_cut_avg(V parent, int out_idx, int in_idx) {
+  using syncs::AverageSettings;
   return add_node_after<AverageSettings>(parent, out_idx, in_idx, "xz_cut_avg", "Average",
                                          AverageSettings{
                                              .axis  = 1,
@@ -711,6 +737,7 @@ Manager::V Manager::add_xz_slide_avg(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xz_to_u8(V parent, int out_idx, int in_idx) {
+  using syncs::ConversionSettings;
   return add_node_after<ConversionSettings>(parent, out_idx, in_idx, "xz_to_u8", "Conversion",
                                             ConversionSettings{
                                                 .target   = ConversionSettings::Target::U8,
@@ -719,6 +746,7 @@ Manager::V Manager::add_xz_to_u8(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xz_gpu_out_queue(V parent, int out_idx, int in_idx) {
+  using asyncs::BatchQueueSettings;
   return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "xz_gpu_out_queue",
                                             "BatchQueue",
                                             BatchQueueSettings{
@@ -729,6 +757,7 @@ Manager::V Manager::add_xz_gpu_out_queue(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xz_gpu_cpu_cpy(V parent, int out_idx, int in_idx) {
+  using syncs::MemcpySettings;
   return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "xz_gpu_cpu", "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Host,
@@ -736,6 +765,7 @@ Manager::V Manager::add_xz_gpu_cpu_cpy(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xz_cpu_out_queue(V parent, int out_idx, int in_idx) {
+  using asyncs::BatchQueueSettings;
   return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "xz_cpu_out_queue",
                                             "BatchQueue",
                                             BatchQueueSettings{
@@ -746,11 +776,13 @@ Manager::V Manager::add_xz_cpu_out_queue(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xz_processed_display(V parent, int out_idx, int in_idx) {
+  using sinks::DisplayTensorSettings;
   return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "xz_processed_display",
                                                "DisplayTensorXZ", DisplayTensorSettings{});
 }
 
 Manager::V Manager::add_yz_cut_avg(V parent, int out_idx, int in_idx) {
+  using syncs::AverageSettings;
   return add_node_after<AverageSettings>(parent, out_idx, in_idx, "yz_cut_avg", "Average",
                                          AverageSettings{
                                              .axis  = 2,
@@ -774,6 +806,7 @@ Manager::V Manager::add_yz_slide_avg(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_yz_to_u8(V parent, int out_idx, int in_idx) {
+  using syncs::ConversionSettings;
   return add_node_after<ConversionSettings>(parent, out_idx, in_idx, "yz_to_u8", "Conversion",
                                             ConversionSettings{
                                                 .target   = ConversionSettings::Target::U8,
@@ -782,6 +815,7 @@ Manager::V Manager::add_yz_to_u8(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_yz_gpu_out_queue(V parent, int out_idx, int in_idx) {
+  using asyncs::BatchQueueSettings;
   return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "yz_gpu_out_queue",
                                             "BatchQueue",
                                             BatchQueueSettings{
@@ -792,6 +826,7 @@ Manager::V Manager::add_yz_gpu_out_queue(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_yz_gpu_cpu_cpy(V parent, int out_idx, int in_idx) {
+  using syncs::MemcpySettings;
   return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "yz_gpu_cpu", "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Host,
@@ -799,6 +834,7 @@ Manager::V Manager::add_yz_gpu_cpu_cpy(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_yz_cpu_out_queue(V parent, int out_idx, int in_idx) {
+  using asyncs::BatchQueueSettings;
   return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "yz_cpu_out_queue",
                                             "BatchQueue",
                                             BatchQueueSettings{
@@ -809,6 +845,7 @@ Manager::V Manager::add_yz_cpu_out_queue(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_yz_processed_display(V parent, int out_idx, int in_idx) {
+  using sinks::DisplayTensorSettings;
   return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "yz_processed_display",
                                                "DisplayTensorYZ", DisplayTensorSettings{});
 }

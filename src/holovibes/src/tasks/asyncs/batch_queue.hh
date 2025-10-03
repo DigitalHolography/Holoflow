@@ -35,7 +35,7 @@
 template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
 template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::asyncs {
 
 struct BatchQueueSettings {
   int target_capacity; // Target capacity of the queue
@@ -96,7 +96,7 @@ public:
          const holoflow::core::AsyncCreateCtx &ctx) const override;
 };
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::asyncs
 
 #if defined(_MSC_VER)
 #if !defined(__clang__)

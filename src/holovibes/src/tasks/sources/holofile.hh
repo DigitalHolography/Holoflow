@@ -17,7 +17,7 @@
 /// @details
 /// - **Inputs:** none
 /// - **Outputs:** `[batch_size, height, width]` tensor of `u8` or `u16`
-/// - **Settings:** @ref holovibes::tasks::HolofileSettings
+/// - **Settings:** @ref holovibes::tasks::sources::HolofileSettings
 /// - **Failure modes:** Propagates I/O errors, JSON errors, CUDA transfer errors.
 
 #pragma once
@@ -34,7 +34,7 @@
 template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
 template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::sources {
 
 /// @brief Settings for the HoloFile reader task.
 /// @details
@@ -138,4 +138,4 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::sources

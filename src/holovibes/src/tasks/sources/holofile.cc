@@ -24,7 +24,7 @@
 #include "holoflow/core/tasks.hh"
 #include "logger.hh"
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::sources {
 
 void to_json(nlohmann::json &j, const HolofileSettings::LoadKind &lk) {
   std::map<HolofileSettings::LoadKind, std::string> lk_to_str = {
@@ -288,4 +288,4 @@ HolofileFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   return this->create(input_descs, jsettings, ctx);
 }
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::sources

@@ -4,7 +4,7 @@
 
 #include "bug.hh"
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 void to_json(nlohmann::json &j, const ConvolutionSettings &s) {
   j = nlohmann::json{{"kernel_file", s.kernel_file}};
@@ -185,4 +185,4 @@ ConvolutionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                       kernel_width, kernel_height, kernel_radius_x, kernel_radius_y));
 }
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::syncs

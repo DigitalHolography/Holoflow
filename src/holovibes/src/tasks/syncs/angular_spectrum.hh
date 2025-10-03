@@ -24,7 +24,7 @@
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 /// @brief Settings for the angular spectrum propagation task.
 /// @details
@@ -103,4 +103,4 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::syncs

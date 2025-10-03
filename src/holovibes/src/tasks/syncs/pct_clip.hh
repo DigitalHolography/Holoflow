@@ -21,7 +21,7 @@
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 /// @brief Settings for the percentile clipping task.
 /// @details
@@ -100,4 +100,4 @@ public:
 };
 
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::syncs

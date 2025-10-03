@@ -6,7 +6,7 @@
 #include "bug.hh"
 #include "logger.hh"
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 void to_json(nlohmann::json &j, const FFTShiftSettings &) { j = nlohmann::json::object(); }
 
@@ -149,4 +149,4 @@ FFTShiftFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::syncs

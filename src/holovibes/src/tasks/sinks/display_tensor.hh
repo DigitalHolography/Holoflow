@@ -27,7 +27,7 @@ namespace holovibes::ui {
 class TensorDisplayWidget;
 }
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::sinks {
 
 /// @brief Settings for the DisplayTensor task.
 /// @details
@@ -88,4 +88,4 @@ private:
   holovibes::ui::TensorDisplayWidget *widget_;
 };
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::sinks

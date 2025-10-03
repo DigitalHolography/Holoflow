@@ -8,7 +8,7 @@
 #include "holoflow/core/tasks.hh"
 #include "logger.hh"
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 void to_json(nlohmann::json &j, const PctClipSettings::Ellipse &e) {
   j = nlohmann::json{
@@ -240,4 +240,4 @@ PctClipFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::syncs

@@ -20,7 +20,7 @@
 
 using json = nlohmann::json;
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 struct ReshapeSettings {
   std::vector<std::size_t> shape;

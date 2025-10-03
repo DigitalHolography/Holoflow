@@ -19,7 +19,7 @@
 #include "curaii/cufft.hh"
 #include "holoflow/core/tasks.hh"
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 /// @brief Settings for the short-time Fourier transform (STFT) task.
 /// @details
@@ -66,4 +66,4 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::syncs

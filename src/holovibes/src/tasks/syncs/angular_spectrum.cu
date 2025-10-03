@@ -5,7 +5,7 @@
 #include "bug.hh"
 #include "logger.hh"
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 void to_json(nlohmann::json &j, const AngularSpectrumSettings::Filter &f) {
   j = nlohmann::json{
@@ -409,4 +409,4 @@ AngularSpectrumFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_ta
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::syncs

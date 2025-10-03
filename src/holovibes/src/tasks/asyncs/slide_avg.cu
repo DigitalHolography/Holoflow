@@ -14,7 +14,7 @@
 #include "logger.hh"
 #include <span>
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::asyncs {
 
 void to_json(nlohmann::json &j, const SlidingAverageSettings &s) {
   j = nlohmann::json{{"target_capacity", s.target_capacity}, {"window_size", s.window_size}};
@@ -268,4 +268,4 @@ SlidingAverageFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_ta
   return create(input_descs, jsettings, ctx);
 }
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::asyncs

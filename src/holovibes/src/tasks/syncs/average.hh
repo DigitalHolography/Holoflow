@@ -18,7 +18,7 @@
 
 #include "holoflow/core/tasks.hh"
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 /// @brief Settings for the average task.
 /// @details
@@ -66,4 +66,4 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::syncs

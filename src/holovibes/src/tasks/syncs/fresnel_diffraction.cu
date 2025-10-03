@@ -5,7 +5,7 @@
 #include "bug.hh"
 #include "logger.hh"
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 void to_json(nlohmann::json &j, const FresnelDiffractionSettings &fds) {
   j = nlohmann::json{
@@ -302,4 +302,4 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::syncs

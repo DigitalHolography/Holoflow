@@ -25,7 +25,7 @@
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 /// @brief Settings for convolution task
 struct ConvolutionSettings {
@@ -89,4 +89,4 @@ public:
         const holoflow::core::SyncCreateCtx& ctx) const override;
 };
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::syncs

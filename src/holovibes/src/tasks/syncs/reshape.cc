@@ -18,7 +18,7 @@
 #include "curaii/cuda.hh"
 #include "logger.hh"
 
-namespace holovibes::tasks {
+namespace holovibes::tasks::syncs {
 
 void to_json(json &j, const ReshapeSettings &s) { j = json{{"shape", s.shape}}; }
 
@@ -85,4 +85,4 @@ ReshapeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   return std::unique_ptr<holoflow::core::ISyncTask>(sync);
 }
 
-} // namespace holovibes::tasks
+} // namespace holovibes::tasks::syncs
