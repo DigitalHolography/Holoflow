@@ -31,6 +31,7 @@
 #include "tasks/average.hh"
 #include "tasks/batch_queue.hh"
 #include "tasks/conversion.hh"
+#include "tasks/convolution.hh"
 #include "tasks/display_tensor.hh"
 #include "tasks/fft_shift.hh"
 #include "tasks/fresnel_diffraction.hh"
@@ -40,7 +41,6 @@
 #include "tasks/pct_clip.hh"
 #include "tasks/slide_avg.hh"
 #include "tasks/stft.hh"
-#include "tasks/convolution.hh"
 
 using namespace holovibes::tasks;
 
@@ -82,7 +82,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<PctClipFactory>(registry_, "PctClip");
   reg_sync<StftFactory>(registry_, "Stft");
   reg_async<SlidingAverageFactory>(registry_, "SlidingAverage");
-    reg_sync<ConvolutionFactory>(registry_, "Convolution");
+  reg_sync<ConvolutionFactory>(registry_, "Convolution");
 
   metrics_timer_ = new QTimer(this);
   metrics_timer_->setInterval(1000);
@@ -616,10 +616,11 @@ Manager::V Manager::add_xy_fps_limiter(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_convolution(V parent, int out_idx, int in_idx) {
-  return add_node_after<ConvolutionSettings>(parent, out_idx, in_idx, "xy_convolution", "Convolution",
-                                        ConvolutionSettings{
-                                            .kernel_file = s_.pp_convolution_path,
-                                        });
+  return add_node_after<ConvolutionSettings>(parent, out_idx, in_idx, "xy_convolution",
+                                             "Convolution",
+                                             ConvolutionSettings{
+                                                 .kernel_file = s_.pp_convolution_path,
+                                             });
 }
 
 Manager::V Manager::add_xy_pctclip(V parent, int out_idx, int in_idx) {
