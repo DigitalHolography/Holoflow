@@ -116,4 +116,48 @@ void Reader::read_frames(uint8_t *data, std::size_t frame_count) {
   }
 }
 
+Writer::Writer(const std::string &path, const Header &header) : header_(header), frame_index_(0) {
+  // Open file
+  FILE *fp = nullptr;
+  if (fopen_s(&fp, path.c_str(), "wb") != 0 || !fp) {
+    std::error_code ec(errno, std::generic_category());
+    throw std::system_error(ec, "Failed to open \"" + path + "\"");
+  }
+  file_.reset(fp);
+
+  // Write header
+  std::size_t success = fwrite(&header_, sizeof(header_), 1, file_.get());
+  if (ferror(file_.get())) {
+    std::error_code ec(errno, std::generic_category());
+    throw std::system_error(ec, "Failed to write header:");
+  }
+
+  if (!success) {
+    logger()->critical("Unrecoverable error: fwrite() failed to write the "
+                       "header");
+    std::exit(EXIT_FAILURE);
+  }
+}
+
+void Writer::write_frames(const uint8_t *data, std::size_t frame_count) {
+  size_t pixels_per_frame = header_.frame_width * header_.frame_height;
+  size_t bits_per_frame   = pixels_per_frame * header_.bits_per_pixel;
+  size_t bytes_per_frame  = bits_per_frame / 8;
+
+  size_t frames_written = fwrite(data, bytes_per_frame, frame_count, file_.get());
+  frame_index_ += frames_written;
+
+  if (ferror(file_.get())) {
+    std::error_code ec(errno, std::generic_category());
+    throw std::system_error(ec, "Failed to write frames:");
+  }
+  if (frames_written != frame_count) {
+    logger()->critical("Unrecoverable error: fwrite() failed to write the "
+                       "requested number of frames.");
+    std::exit(EXIT_FAILURE);
+  }
+}
+
+size_t Writer::tell() const { return frame_index_; }
+
 } // namespace holofile

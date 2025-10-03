@@ -108,4 +108,20 @@ private:
   std::size_t                       frame_index_;
 };
 
+class Writer {
+public:
+  explicit Writer(const std::string &path, const Header &header);
+  void   write_frames(const uint8_t *data, std::size_t frame_count);
+  size_t tell() const;
+
+private:
+  struct FileCloser {
+    void operator()(FILE *file) const { fclose(file); }
+  };
+
+  std::unique_ptr<FILE, FileCloser> file_;
+  Header                            header_;
+  std::size_t                       frame_index_;
+};
+
 } // namespace holofile
