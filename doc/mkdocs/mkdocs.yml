@@ -1,0 +1,26 @@
+site_name: Holoflow
+nav:
+  - Home: index.md
+  - About: about.md
+  - Holovibes: holovibes/index.md
+  - Holoflow: 
+    - Overview: holoflow/index.md
+    - Concepts:
+      - Graph Model: holoflow/concepts/graph.md
+  - Curaii: curaii/index.md
+  - Holofile: holofile/index.md
+theme: 
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.top
+    - content.code.annotate
+    - content.code.copy
+    - toc.integrate
+markdown_extensions:
+  - pymdownx.arithmatex:
+      generic: true
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+plugins:
+  - mermaid2
