@@ -520,16 +520,31 @@ std::unique_ptr<To> dynamic_unique_ptr_cast(std::unique_ptr<From> &&ptr) noexcep
 }
 
 template <class Task, class Factory, class Ctx>
-std::unique_ptr<Task>
-create_or_update_task(Factory &factory, std::unique_ptr<core::ITask> *prev,
-                      std::span<const core::TDesc> input_descs, const nlohmann::json &settings,
-                      const Ctx &ctx, std::string_view node_name, std::string_view expected_kind) {
-  if (!prev) {
+std::unique_ptr<Task> create_or_update_task(
+    Factory &factory, std::map<std::string, std::unique_ptr<holoflow::core::ITask>> *prev_tasks,
+    GraphPlan *prev_graph, NodePlan np, std::span<const core::TDesc> input_descs,
+    const nlohmann::json &settings, const Ctx &ctx, std::string_view expected_kind) {
+
+  std::unique_ptr<core::ITask> *prev = nullptr;
+  if (prev_tasks) {
+    if (auto it = prev_tasks->find(np.spec.name); it != prev_tasks->end())
+      prev = &it->second;
+  }
+
+  if (!prev || !prev_graph) {
     return factory.create(input_descs, settings, ctx);
   }
 
+  auto [vi, vi_end] = boost::vertices(*prev_graph);
+  for (; vi != vi_end; ++vi) {
+    const NodePlan &node = (*prev_graph)[*vi];
+    if (node.spec.name == np.spec.name && node.spec.kind != np.spec.kind) {
+      return factory.create(input_descs, settings, ctx);
+    }
+  }
+
   auto prev_task = dynamic_unique_ptr_cast<Task>(std::move(*prev));
-  HOLOFLOW_CHECK(prev_task != nullptr, "Previous task for node {} is not a {} task", node_name,
+  HOLOFLOW_CHECK(prev_task != nullptr, "Previous task for node {} is not a {} task", np.spec.name,
                  expected_kind);
 
   return factory.update(std::move(prev_task), input_descs, settings, ctx);
@@ -540,8 +555,10 @@ create_or_update_task(Factory &factory, std::unique_ptr<core::ITask> *prev,
 void Compiler::create_nodes_collection() {
   out_->resources.tasks.clear();
   auto *prev_tasks = prev_ ? &prev_->resources.tasks : nullptr;
-  auto &out_tasks  = out_->resources.tasks;
-  auto  vertices   = boost::make_iterator_range(boost::vertices(out_->graph));
+  auto *prev_graph = prev_ ? &prev_->graph : nullptr;
+
+  auto &out_tasks = out_->resources.tasks;
+  auto  vertices  = boost::make_iterator_range(boost::vertices(out_->graph));
 
   for (auto v : vertices) {
     const auto &np          = out_->graph[v];
@@ -550,13 +567,6 @@ void Compiler::create_nodes_collection() {
     const auto  name        = std::string_view{np.spec.name};
     const auto  node_start  = std::chrono::steady_clock::now();
 
-    // Reuse previous task if available
-    std::unique_ptr<core::ITask> *prev_slot = nullptr;
-    if (prev_tasks) {
-      if (auto it = prev_tasks->find(np.spec.name); it != prev_tasks->end())
-        prev_slot = &it->second;
-    }
-
     switch (np.infer.kind) {
     case core::TaskKind::Sync: {
       auto                     &factory = registry_.get_sync(np.spec.kind);
@@ -564,8 +574,8 @@ void Compiler::create_nodes_collection() {
       auto                     &section = out_->sections.at(sid);
       const core::SyncCreateCtx ctx{.stream = section.stream};
 
-      auto task = create_or_update_task<core::ISyncTask>(factory, prev_slot, input_descs, settings,
-                                                         ctx, name, "sync");
+      auto task = create_or_update_task<core::ISyncTask>(factory, prev_tasks, prev_graph, np,
+                                                         input_descs, settings, ctx, "sync");
       out_tasks.emplace(np.spec.name, std::move(task));
       break;
     }
@@ -579,8 +589,8 @@ void Compiler::create_nodes_collection() {
       const core::AsyncCreateCtx ctx{.producer_stream = prod.stream,
                                      .consumer_stream = cons.stream};
 
-      auto task = create_or_update_task<core::IAsyncTask>(factory, prev_slot, input_descs, settings,
-                                                          ctx, name, "async");
+      auto task = create_or_update_task<core::IAsyncTask>(factory, prev_tasks, prev_graph, np,
+                                                          input_descs, settings, ctx, "async");
       out_tasks.emplace(np.spec.name, std::move(task));
       break;
     }

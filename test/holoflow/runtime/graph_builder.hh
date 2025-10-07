@@ -28,6 +28,8 @@ public:
   GraphBuilder &add_node(const std::string &name, const std::string &kind);
   GraphBuilder &add_edge(const std::string &src_id, const std::string &dst_id, int out_idx = 0,
                          int in_idx = 0);
+  GraphBuilder &change_node(const std::string &id, const std::string &new_kind, const nlohmann::json &new_settings);
+
 
   core::GraphSpec finish();
 
