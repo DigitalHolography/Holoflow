@@ -1,0 +1,46 @@
+site_name: Holoflow
+nav:
+  - Home: index.md
+  - About: about.md
+  - Holovibes: 
+    - Overview: holovibes/index.md
+    - Tasks:
+      - Holofile:
+        - Settings: schemas/holofile_settings.md
+  - Holoflow:
+    - Overview: holoflow/index.md
+    - Concepts:
+      - Graph Model: holoflow/concepts/graph.md
+      - Tasks: holoflow/concepts/tasks.md
+  - Curaii: curaii/index.md
+  - Holofile: holofile/index.md
+
+theme:
+  name: material
+  features:
+    - navigation.tabs
+    - navigation.top
+    - content.code.annotate
+    - content.code.copy
+    - toc.integrate
+
+markdown_extensions:
+  - admonition
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      linenums: true
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - attr_list
+
+plugins:
+  - search
+  - mermaid2
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js

@@ -352,6 +352,7 @@ TEST(Scheduler, WrongUpdate) {
   source_spec.infer = [](std::span<const core::TDesc>, const nlohmann::json &) {
     return make_infer_result(TaskKind::Sync, {}, {make_desc({4, 4}, core::DType::F32)});
   };
+
   source_spec.create = [](std::span<const core::TDesc>, const nlohmann::json &,
                           const core::SyncCreateCtx &ctx) {
     return std::make_unique<SourceTask>(ctx);
@@ -425,6 +426,137 @@ TEST(Scheduler, WrongUpdate) {
 
   scheduler2.start();
   EXPECT_TRUE(scheduler2.is_running());
+}
+
+TEST(Scheduler, OwnedInputHandling) {
+  core::Registry registry;
+
+  SyncFactorySpec source_spec;
+  source_spec.infer = [](std::span<const core::TDesc>, const nlohmann::json &) {
+    return make_infer_result(TaskKind::Sync, {}, {make_desc({4, 4}, core::DType::F32)});
+  };
+  auto *source_factory = new RecordingSyncFactory(std::move(source_spec));
+  registry.register_sync("source", std::unique_ptr<RecordingSyncFactory>(source_factory));
+
+  AsyncFactorySpec process_spec;
+  process_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
+    return make_infer_result(TaskKind::Async, copy_descs(inputs), copy_descs(inputs), {true}, {true});
+  };
+  auto *process_factory = new RecordingAsyncFactory(std::move(process_spec));
+  registry.register_async("process", std::unique_ptr<RecordingAsyncFactory>(process_factory));
+
+  SyncFactorySpec sink_spec;
+  sink_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
+    return make_infer_result(TaskKind::Sync, copy_descs(inputs), {}, {false}, {});
+  };
+  auto *sink_factory = new RecordingSyncFactory(std::move(sink_spec));
+  registry.register_sync("sink", std::unique_ptr<RecordingSyncFactory>(sink_factory));
+
+  GraphBuilder builder;
+  builder.add_node("src", "src", "source");
+  builder.add_node("proc", "proc", "process");
+  builder.add_node("snk", "snk", "sink");
+  builder.add_edge("src", "proc", 0, 0);
+  builder.add_edge("proc", "snk", 0, 0);
+  auto graph = builder.finish();
+
+  Compiler compiler(registry);
+  auto output = compiler.compile(graph);
+  Scheduler scheduler(output->graph, output->sections, output->resources);
+
+  scheduler.start();
+  EXPECT_TRUE(scheduler.is_running());
+  EXPECT_FALSE(scheduler.stop_requested());
+
+  scheduler.request_stop();
+  scheduler.wait();
+  EXPECT_FALSE(scheduler.is_running());
+
+  EXPECT_EQ(source_factory->create_calls().size(), 1);
+  EXPECT_EQ(process_factory->create_calls().size(), 1);
+  EXPECT_EQ(sink_factory->create_calls().size(), 1);
+    
+
+  scheduler.start();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  scheduler.request_stop();
+  scheduler.wait();
+
+  EXPECT_EQ(source_factory->create_calls().size(), 1);
+  EXPECT_EQ(process_factory->create_calls().size(), 1);
+  EXPECT_EQ(sink_factory->create_calls().size(), 1);
+}
+
+TEST(Scheduler, OwnedInputWrongUpdate) {
+  core::Registry registry;
+
+  SyncFactorySpec source_spec;
+  source_spec.infer = [](std::span<const core::TDesc>, const nlohmann::json &) {
+    return make_infer_result(TaskKind::Sync, {}, {make_desc({4, 4}, core::DType::F32)}, {}, {true});
+  };
+  source_spec.create = [](std::span<const core::TDesc>, const nlohmann::json &,
+                          const core::SyncCreateCtx &ctx) {
+    return std::make_unique<SourceTask>(ctx);
+  };
+  source_spec.update = [](std::unique_ptr<core::ISyncTask> old_task,
+                          std::span<const core::TDesc>, const nlohmann::json &,
+                          const core::SyncCreateCtx &ctx) {
+    EXPECT_NE(dynamic_cast<SourceTask *>(old_task.get()), nullptr);
+    return std::make_unique<SourceTask>(ctx);
+  };
+  registry.register_sync("source", std::make_unique<RecordingSyncFactory>(std::move(source_spec)));
+
+  SyncFactorySpec sink_spec;
+  sink_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
+    return make_infer_result(TaskKind::Sync, copy_descs(inputs), {}, {false}, {});
+  };
+  registry.register_sync("sink", std::make_unique<RecordingSyncFactory>(std::move(sink_spec)));
+
+  SyncFactorySpec other_source_spec;
+  other_source_spec.infer = [](std::span<const core::TDesc>, const nlohmann::json &) {
+    return make_infer_result(TaskKind::Sync, {}, {make_desc({4, 4}, core::DType::F32)});
+  };
+  other_source_spec.create = [](std::span<const core::TDesc>, const nlohmann::json &,
+                                const core::SyncCreateCtx &ctx) {
+    return std::make_unique<OtherSourceTask>(ctx);
+  };
+  other_source_spec.update = [](std::unique_ptr<core::ISyncTask> old_task,
+                                std::span<const core::TDesc>, const nlohmann::json &,
+                                const core::SyncCreateCtx &ctx) {
+    EXPECT_NE(dynamic_cast<OtherSourceTask *>(old_task.get()), nullptr);
+    return std::make_unique<OtherSourceTask>(ctx);
+  };
+  registry.register_sync("other_source", 
+                        std::make_unique<RecordingSyncFactory>(std::move(other_source_spec)));
+
+  GraphBuilder builder;
+  builder.add_node("src", "src", "source");
+  builder.add_node("snk", "snk", "sink");
+  builder.add_edge("src", "snk", 0, 0);
+  auto graph = builder.finish();
+
+  Compiler compiler(registry);
+  auto output = compiler.compile(graph);
+  Scheduler scheduler(output->graph, output->sections, output->resources);
+
+  scheduler.start();
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  scheduler.request_stop();
+  scheduler.wait();
+
+  builder.change_node("src", "other_source", {});
+  graph = builder.finish();
+
+  Compiler compiler2(registry);
+  output = compiler2.compile(graph, std::move(output));
+
+  Scheduler scheduler2(output->graph, output->sections, output->resources);
+  scheduler2.start();
+  EXPECT_TRUE(scheduler2.is_running());
+  
+  scheduler2.request_stop();
+  scheduler2.wait();
+  EXPECT_FALSE(scheduler2.is_running());
 }
 
 } // namespace
