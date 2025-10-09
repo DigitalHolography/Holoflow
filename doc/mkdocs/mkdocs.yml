@@ -7,6 +7,8 @@ nav:
     - Tasks:
       - Holofile:
         - Settings: schemas/holofile_settings.md
+      - Fresnel Diffraction:
+        - Settings: schemas/fresnel_diffraction_settings.md
   - Holoflow:
     - Overview: holoflow/index.md
     - Concepts:

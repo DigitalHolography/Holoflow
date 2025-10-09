@@ -25,101 +25,14 @@
 }
 ```
 
-| Property                       | Pattern | Type             | Deprecated | Definition | Title/Description                   |
-| ------------------------------ | ------- | ---------------- | ---------- | ---------- | ----------------------------------- |
-| + [path](#path )               | No      | string           | No         | -          | Path to the HoloFile.               |
-| + [load_kind](#load_kind )     | No      | enum (of string) | No         | -          | Loading strategy.                   |
-| + [start_frame](#start_frame ) | No      | integer          | No         | -          | First frame to read (inclusive).    |
-| + [end_frame](#end_frame )     | No      | integer          | No         | -          | Last frame to read (exclusive).     |
-| + [batch_size](#batch_size )   | No      | integer          | No         | -          | Number of frames per output tensor. |
-
-## <a name="path"></a>1. Property `HolofileSettings > path`
-
-<!--  -->
-
-<!-- |              |          |
-| ------------ | -------- |
-| **Type**     | `string` |
-| **Required** | Yes      |
- -->
-
-<!-- **Description:** Path to the HoloFile.
- -->
-
-| Restrictions   |   |
-| -------------- | - |
-| **Min length** | 1 |
-
-## <a name="load_kind"></a>2. Property `HolofileSettings > load_kind`
-
-<!--  -->
-
-<!-- |              |                    |
-| ------------ | ------------------ |
-| **Type**     | `enum (of string)` |
-| **Required** | Yes                |
- -->
-
-<!-- **Description:** Loading strategy.
- -->
-
-Must be one of:
-
-* "Live"
-* "CPUCached"
-* "GPUCached"
-
-## <a name="start_frame"></a>3. Property `HolofileSettings > start_frame`
-
-<!--  -->
-
-<!-- |              |           |
-| ------------ | --------- |
-| **Type**     | `integer` |
-| **Required** | Yes       |
- -->
-
-<!-- **Description:** First frame to read (inclusive).
- -->
-
-| Restrictions |        |
-| ------------ | ------ |
-| **Minimum**  | &ge; 0 |
-
-## <a name="end_frame"></a>4. Property `HolofileSettings > end_frame`
-
-<!--  -->
-
-<!-- |              |           |
-| ------------ | --------- |
-| **Type**     | `integer` |
-| **Required** | Yes       |
- -->
-
-<!-- **Description:** Last frame to read (exclusive).
- -->
-
-| Restrictions |        |
-| ------------ | ------ |
-| **Minimum**  | &ge; 0 |
-
-## <a name="batch_size"></a>5. Property `HolofileSettings > batch_size`
-
-<!--  -->
-
-<!-- |              |           |
-| ------------ | --------- |
-| **Type**     | `integer` |
-| **Required** | Yes       |
- -->
-
-<!-- **Description:** Number of frames per output tensor.
- -->
-
-| Restrictions |        |
-| ------------ | ------ |
-| **Minimum**  | &ge; 1 |
+| Property                       | Pattern | Type             | Deprecated | Definition | Title/Description                                                                                                                                                                     |
+| ------------------------------ | ------- | ---------------- | ---------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| + [path](#path )               | No      | string           | No         | -          | Path to the HoloFile. Must be a non-empty string.                                                                                                                                     |
+| + [load_kind](#load_kind )     | No      | enum (of string) | No         | -          | Loading strategy. Accepted values:<br />- Live: Read on demand from disk.<br />- CPUCached: Preload all frames into CPU memory.<br />- GPUCached: Preload all frames into GPU memory. |
+| + [start_frame](#start_frame ) | No      | integer          | No         | -          | First frame to read (inclusive). Must satisfy:<br />- start_frame ≥ 0<br />- start_frame < number of frames in file                                                                   |
+| + [end_frame](#end_frame )     | No      | integer          | No         | -          | Last frame to read (exclusive). Must satisfy:<br />- end_frame ≥ start_frame<br />- end_frame - start_frame ≥ batch_size<br />- end_frame <= number of frames in file                 |
+| + [batch_size](#batch_size )   | No      | integer          | No         | -          | Number of frames per output tensor. Must satisfy:<br />- batch_size > 0<br />- batch_size ≤ (end_frame - start_frame)                                                                 |
 
 <!-- ----------------------------------------------------------------------------------------------------------------------------
-Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-09 at 16:35:01 +0200
+Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-09 at 17:39:35 +0200
 -->

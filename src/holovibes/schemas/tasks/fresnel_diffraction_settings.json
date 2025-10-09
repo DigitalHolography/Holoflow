@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FresnelDiffractionSettings",
+  "description": "Settings for the Fresnel diffraction propagation task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "lambda": {
+      "type": "number",
+      "description": "Wavelength in meters. Must satisfy:\n- lambda > 0"
+    },
+    "dx": {
+      "type": "number",
+      "description": "Pixel pitch in meters along X. Must satisfy:\n- dx > 0\n- dx = dy"
+    },
+    "dy": {
+      "type": "number",
+      "description": "Pixel pitch in meters along Y. Must satisfy:\n- dy > 0\n- dy = dx"
+    },
+    "z": {
+      "type": "number",
+      "description": "Propagation distance in meters. Can be positive or negative."
+    }
+  },
+  "required": [
+    "lambda",
+    "dx",
+    "dy",
+    "z"
+  ],
+  "examples": [
+    {
+      "lambda": 5.32e-7,
+      "dx": 3.45e-6,
+      "dy": 3.45e-6,
+      "z": 0.10
+    }
+  ]
+}

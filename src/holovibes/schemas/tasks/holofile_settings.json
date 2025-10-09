@@ -7,12 +7,11 @@
   "properties": {
     "path": {
       "type": "string",
-      "minLength": 1,
-      "description": "Path to the HoloFile."
+      "description": "Path to the HoloFile. Must be a non-empty string."
     },
     "load_kind": {
       "type": "string",
-      "description": "Loading strategy.",
+      "description": "Loading strategy. Accepted values:\n- Live: Read on demand from disk.\n- CPUCached: Preload all frames into CPU memory.\n- GPUCached: Preload all frames into GPU memory.",
       "enum": [
         "Live",
         "CPUCached",
@@ -21,18 +20,15 @@
     },
     "start_frame": {
       "type": "integer",
-      "minimum": 0,
-      "description": "First frame to read (inclusive)."
+      "description": "First frame to read (inclusive). Must satisfy:\n- start_frame ≥ 0\n- start_frame < number of frames in file"
     },
     "end_frame": {
       "type": "integer",
-      "minimum": 0,
-      "description": "Last frame to read (exclusive)."
+      "description": "Last frame to read (exclusive). Must satisfy:\n- end_frame ≥ start_frame\n- end_frame - start_frame ≥ batch_size\n- end_frame <= number of frames in file"
     },
     "batch_size": {
       "type": "integer",
-      "minimum": 1,
-      "description": "Number of frames per output tensor."
+      "description": "Number of frames per output tensor. Must satisfy:\n- batch_size > 0\n- batch_size ≤ (end_frame - start_frame)"
     }
   },
   "required": [
