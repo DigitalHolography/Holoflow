@@ -1,186 +1,142 @@
 ## Tasks
 
-In Holoflow, a **task** is a unit of computation that transforms data. A task can be modeled as a function between tensors:
+Holoflow tasks are the executable vertices of a graph. Each task consumes a fixed
+set of tensor views and produces another fixed set of tensor views. The runtime
+uses the metadata inferred by the task factory to allocate buffers, reuse
+storage, and orchestrate execution.
 
-$$
-f : \mathcal{T} \cup \{\varnothing\} \longrightarrow \mathcal{T}^*
-$$
+### Signatures Are Static
 
-where:
+Task factories describe the full signature of a task before an instance is
+constructed. The inference step returns an `InferResult` (see
+`src/holoflow/include/holoflow/core/tasks.hh`) containing:
 
-* $\mathcal{T}$ is the set of all valid tensors.
-* $\varnothing$ represents the absence of input.
-* $\mathcal{T}^*$ denotes a finite sequence of output tensors (possibly empty).
+- `input_descs` / `output_descs`: tensor descriptors (`TDesc`) that lock shape,
+  dtype, memory location, and strides.
+- `in_place`: pairs of indices that alias the storage of an input and an output.
+- `owned_inputs` / `owned_outputs`: whether the scheduler or the task owns the
+  lifetime of each tensor slot (see below).
+- `kind`: synchronous (`ISyncTask`) or asynchronous (`IAsyncTask`).
 
-Thus, a task consumes zero or one tensor and produces zero, one, or several tensors.
+Once a task instance is created the arity, descriptors, and ownership flags do
+not change. If the upstream topology changes the compiler asks the factory to
+`update` (or recreate) the task.
 
-### Fixed Signature
+### Runtime Contexts
 
-Once a task is instantiated, its **signature is fixed**:
+At runtime the scheduler supplies spans of `TView` into the task context defined
+in `src/holoflow/include/holoflow/core/tasks.hh`:
 
-* **Input arity**: either zero or one, but always the same for that task instance.
-* **Output arity**: the number of outputs is determined at instantiation and cannot vary at runtime.
-* **Tensor descriptors** (shape, dtype, device, and other metadata) are also fixed. 
-* **Ordering**: Each output position corresponds to a well-defined tensor descriptor.
+- `SyncCtx` exposes `inputs`, `outputs`, and a `cancelled` flag. A synchronous
+  task performs its work inside a single `execute` call and returns an
+  `OpResult`.
+- `AsyncPushCtx` provides the input span to the producer side of an asynchronous
+  task (`try_push`).
+- `AsyncPopCtx` provides the output span to the consumer side (`try_pop`).
 
-Formally, each task instance defines a function
+The scheduler refreshes the spans before every call so the task always sees
+up-to-date views. Long running work should periodically check `cancelled` and
+return `OpResult::Cancelled` when requested.
 
-$$
-f : D \longrightarrow C
-$$
+### In-place Reuse
 
-with
+In-place reuse means an output tensor shares the storage of one of the inputs.
+Factories express this by filling `InferResult::in_place` with `(input, output)`
+pairs. During execution the scheduler ensures both indices point to the same
+`TView` instance.
 
-* $D \subseteq {\varnothing} \cup \mathcal{T}$ describing the admissible input tensor type/shape,
-* $C \subseteq \mathcal{T}^k$ for a fixed $k \geq 0$ describing the tuple of outputs.
-
-Tasks are splitted into two categories: **Synchronous** and **Asynchronous**. Synchronous tasks block the caller until completion, while asynchronous tasks return immediately and complete later. Both types can have **in-place** semantics, meaning they can modify their input tensor directly to produce outputs, and **owning** semantics, where they take responsibility for the input or output tensors allocations.
-
-Tasks are instantiated via **task factories**. A task factory is a callable that exposes an inference method to determine the signature of the task it will create based on provided settings and its inputs. It also exposes a method to create a new instance of the task and
-a method to update/recreate an instance by reusing resources when possible.
-
-!!! note
-    Although tasks can only have a single input, the API is based on multiple inputs. This design choice simplifies the implementation of tasks with zero inputs (by providing an empty input list) and allows for future extensions where tasks might accept multiple inputs.
-
-## Synchronous Tasks
 ```cpp
-struct SyncCtx {
-  std::span<TView>   inputs;
-  std::span<TView>   outputs;
-  std::atomic<bool> *cancelled;
-};
-
-class ISyncTask : public ITask {
-public:
-  virtual ~ISyncTask() = default;
-  [[nodiscard]] virtual OpResult execute(SyncCtx &ctx) = 0;
+return InferResult{
+    .input_descs   = {idesc},
+    .output_descs  = {idesc},
+    .in_place      = {{0, 0}},
+    .owned_inputs  = {false},
+    .owned_outputs = {false},
+    .kind          = TaskKind::Sync,
 };
 ```
 
-Creating a synchronous task is as simple as implementing the `ISyncTask` interface and defining the `execute` method. The method receives a context containing the input and output tensors as spans. The task can read from the input tensors and write to the output tensors. The method returns an `OpResult` indicating success or failure.
+The Fresnel diffraction task factory (`src/holovibes/src/tasks/syncs/fresnel_diffraction.cu:173`)
+uses this contract to run a CUFFT plan while overwriting the input buffer. The
+task implementation simply reads from `ctx.inputs[0]` and writes to
+`ctx.outputs[0]`, both pointing to the same memory. In-place reuse avoids extra
+allocations but requires the task to tolerate the overwritten input.
 
-Long running tasks should periodically check the `cancelled` flag to see if they should abort early. If the task is cancelled, it should return `OpResult::Cancelled`.
+### Tensor Ownership
 
-### Example
-The following example shows a simple synchronous task that computes the square root of each element in the input tensor and writes the result to the output tensor.
+Ownership controls who is responsible for allocating and recycling the storage
+referenced by a tensor view.
+
+- **Non-owned slots (`false`)**: the scheduler provides the `TView`. The task
+  must treat it as borrowed memory.
+- **Owned inputs (`true`)**: the task instance owns the underlying memory. Before
+  each execution the scheduler calls `ITask::acquire_input(index)` to request a
+  writable view. If the task temporarily cannot provide a buffer it returns
+  `std::nullopt` and the scheduler retries (see
+  `src/holoflow/src/runtime/graph_exec.cc:276`).
+- **Owned outputs (`true`)**: after a successful run the task writes its own view
+  into `ctx.outputs[index]`. Downstream consumers borrow the view until the
+  scheduler notifies completion via `ITask::release_output(index)`
+  (`graph_exec.cc:296`).
+
+The asynchronous batch queue (`src/holovibes/src/tasks/asyncs/batch_queue.cc`) is
+an example of full ownership. Its inference result sets both ownership masks to
+`true`, and the implementation manages a ring buffer: `acquire_input` hands out
+the next writable slot, `try_push` advances the writer index, `try_pop` installs
+the view for the reader, and `release_output` frees the consumed range.
+
+Ownership is orthogonal to in-place reuse. A task may own the storage and still
+declare an in-place mapping to recycle buffers across its own input/output
+interface.
+
+### Writing Synchronous Tasks
+
+Subclass `ISyncTask` and implement `OpResult execute(SyncCtx &ctx)`. Inputs and
+outputs are exposed as `std::span<TView>` so index into them directly. Validation
+should happen in the factory; by the time `execute` runs the spans match the
+inferred descriptors.
 
 ```cpp
 class SqrtTask final : public ISyncTask {
 public:
   [[nodiscard]] OpResult execute(SyncCtx &ctx) override {
-    const TView in  = ctx.inputs[0];
-    TView       out = ctx.outputs[0];
+    const auto elements = ctx.inputs[0].desc.num_elements();
+    const auto *in      = reinterpret_cast<const float *>(ctx.inputs[0].data);
+    auto       *out     = reinterpret_cast<float *>(ctx.outputs[0].data);
 
-    const size_t n = in.size();
-    auto *in_ptr   = in.data<float>();
-    auto *out_ptr  = out.data<float>();
-
-    for (size_t i = 0; i < n; ++i) {
-      out_ptr[i] = std::sqrt(in_ptr[i]);
+    for (size_t i = 0; i < elements; ++i) {
+      out[i] = std::sqrt(in[i]);
     }
-    
     return OpResult::Ok;
   }
 };
 ```
-!!! note
-    Inputs and outputs validation (arity, descriptors) is performed in the factory called by the holoflow compiler before execution. Tasks can assume that the inputs and outputs are valid by contract.
 
-## Synchronous Factories
-Factories are responsible for three main tasks:
+Synchronous tasks always run on the caller thread. When heavy GPU work is
+involved, the factory receives a `SyncCreateCtx` that carries the CUDA stream to
+use (see the Fresnel diffraction factory).
 
-1. **Inference**: Given the input tensor descriptors and settings, determine the output tensor descriptors, in-place capabilities, and ownership semantics. This is dynamic type-checking.
+### Writing Asynchronous Tasks
 
-2. **Creation**: Instantiate a new task instance based on the input descriptors and settings.
+Asynchronous tasks split the producer (`try_push`) and consumer (`try_pop`) sides
+in a single object implementing `IAsyncTask`. The scheduler alternates between
+pushing inputs and popping outputs based on `OpResult` (typically retrying on
+`NotReady`). The batch queue task demonstrates how ownership lets the task keep
+stateful buffers between pushes and pops without scheduler involvement.
 
-3. **Update**: Recreate or update an existing task instance, reusing resources when possible. By default, all factories implement this method by destroying the old task and creating a new one, but they can override it to provide more efficient updates.
+### Factories
 
+Factories are responsible for three operations:
 
-*Inference is common to both synchronous and asynchronous tasks factories, therefore it is implemented in a base class.*
-```cpp
-struct InferResult {
-  std::vector<TDesc>   input_descs;   
-  std::vector<TDesc>   output_descs;  
-  std::vector<InPlace> in_place;      
-  std::vector<bool>    owned_inputs;  
-  std::vector<bool>    owned_outputs; 
-  TaskKind             kind;          
-};
+- `infer(...)`: validate settings and inputs, then populate an `InferResult` with
+  descriptors, in-place relationships, ownership masks, and the task kind.
+- `create(...)`: instantiate the task and allocate any internal resources. The
+  create context (`SyncCreateCtx` or `AsyncCreateCtx`) carries runtime handles
+  such as CUDA streams.
+- `update(old_task, ...)`: optionally refresh an existing task by reusing
+  expensive allocations. The default implementation destroys `old_task` and
+  calls `create` again.
 
-class ITaskFactory {
-public:
-  virtual ~ITaskFactory() = default;
-
-  [[nodiscard]]
-  virtual InferResult infer(std::span<const TDesc> input_descs,
-                            const nlohmann::json  &jsettings) const = 0;
-};
-```
-
-*Creation and updates have different signatures for synchronous and asynchronous tasks factories, therefore they are implemented in separate abstract classes.*
-```cpp
-class ISyncTaskFactory : public ITaskFactory {
-public:
-  virtual ~ISyncTaskFactory() = default;
-
-  [[nodiscard]]
-  virtual std::unique_ptr<ISyncTask> create(std::span<const TDesc> input_descs,
-                                            const nlohmann::json  &jsettings,
-                                            const SyncCreateCtx   &ctx) const = 0;
-
-  [[nodiscard]]
-  virtual std::unique_ptr<ISyncTask> update(std::unique_ptr<ISyncTask> old_task,
-                                            std::span<const TDesc>     input_descs,
-                                            const nlohmann::json      &jsettings,
-                                            const SyncCreateCtx       &ctx) const;
-};
-```
-
-### Code Example
-Here is a simple synchronous task factory in C++ using the Holoflow API:
-```cpp
-class SqrtTaskFactory final : public ISyncTaskFactory {
-public:
-  [[nodiscard]] InferResult infer(std::span<const TDesc> input_descs,
-                                const nlohmann::json  &jsettings) const override;
-
-  [[nodiscard]] std::unique_ptr<ISyncTask> create(std::span<const TDesc> input_descs,
-                                                  const nlohmann::json  &jsettings,
-                                                  const SyncCreateCtx   &ctx) const override;
-};
-```
-
-!!! note
-    Here update is not benificial as the task does not hold time consuming resources.
-
-The inference method checks that the input tensor is a 1D float tensor and produces a 1D float tensor of the same size as output. The data for both must be on the CPU. The task is not in-place and does not own its inputs or outputs.
-
-```cpp
-[[nodiscard]] InferResult SqrtTaskFactory::infer(std::span<const TDesc> input_descs,
-                                                 const nlohmann::json  &jsettings) const {
-
-  if (input_descs.size() != 1) {
-    throw std::invalid_argument("SqrtTaskFactory: expected exactly one input");
-  }
-
-  const TDesc &idesc = input_descs[0];
-
-  if (idesc.dtype != DType::F32 || idesc.ranck() != 1 || idesc.mem_loc != MemLoc::Host) {
-    throw std::invalid_argument("SqrtTaskFactory: input must be a 1D float32 tensor on CPU");
-  }
-
-  TDesc out_desc = idesc; // output has the same shape and dtype as input
-
-  return InferResult{
-    .input_descs   = {idesc},
-    .output_descs  = {out_desc},
-    .in_place      = {},
-    .owned_inputs  = {false},
-    .owned_outputs = {false},
-    .kind          = TaskKind::Sync
-  };
-}
-```
-
-!!! note
-    Had we wanted this task to be in-place, we would have set `in_place = {{0, 0}}` in the `InferResult`, linking `inputs[0]` to `outputs[0]`. The `inputs[0]` and `outputs[0]` would then point to the same memory location in the `execute` method.
+By following the inference contract and ownership hooks, tasks integrate
+seamlessly with the Holoflow scheduler while retaining full control over their
+internal memory management strategies.

@@ -2,7 +2,11 @@ site_name: Holoflow
 nav:
   - Home: index.md
   - About: about.md
-  - Holovibes: holovibes/index.md
+  - Holovibes: 
+    - Overview: holovibes/index.md
+    - Tasks:
+      - Holofile:
+        - Settings: schemas/holofile_settings.md
   - Holoflow:
     - Overview: holoflow/index.md
     - Concepts:
