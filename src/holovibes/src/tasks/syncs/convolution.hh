@@ -11,7 +11,6 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 #pragma once
 
 #include <nlohmann/json.hpp>
@@ -19,6 +18,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <cufft.h>
 
 #include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
@@ -27,9 +27,27 @@ template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 namespace holovibes::tasks::syncs {
 
+struct FFTConvolutionData {
+  cufftHandle fft_plan;
+  DevPtr<cufftComplex> d_padded_input;
+  DevPtr<cufftComplex> d_padded_kernel;
+  DevPtr<cufftComplex> d_freq_input;
+  DevPtr<cufftComplex> d_freq_kernel;
+  unsigned int padded_width;
+  unsigned int padded_height;
+  
+  ~FFTConvolutionData() {
+    if (fft_plan) {
+      cufftDestroy(fft_plan);
+    }
+  }
+};
+
+
 /// @brief Settings for convolution task
 struct ConvolutionSettings {
     std::string kernel_file;
+    bool divide;
 };
 
 /// @name JSON serialization
@@ -38,7 +56,7 @@ void to_json(nlohmann::json& j, const ConvolutionSettings& s);
 void from_json(const nlohmann::json& j, ConvolutionSettings& s);
 /// @}
 
-/// @brief 2D convolution task for image processing
+/// @brief 2D convolution task for image processing using FFT
 class Convolution : public holoflow::core::ISyncTask {
 public:
     ~Convolution() override = default;
@@ -52,25 +70,22 @@ private:
                 const holoflow::core::TDesc& output_desc,
                 cudaStream_t stream,
                 DevPtr<float>&& d_kernel,
-                size_t kernel_width,
-                size_t kernel_height,
-                size_t kernel_radius_x,
-                size_t kernel_radius_y);
+                const int kernel_width,
+                const int kernel_height);
 
     friend class ConvolutionFactory;
 
     ConvolutionSettings settings_;
-
     holoflow::core::TDesc input_desc_;
     holoflow::core::TDesc output_desc_;
-
     cudaStream_t stream_;
-
     DevPtr<float> d_kernel_;
-    size_t kernel_width_;
-    size_t kernel_height_;
-    size_t kernel_radius_x_;
-    size_t kernel_radius_y_;
+    const int kernel_width_;
+    const int kernel_height_;
+    
+    mutable std::unique_ptr<FFTConvolutionData> fft_data_;
+
+    void create_fft_data();
 };
 
 /// @brief Factory for creating Convolution tasks

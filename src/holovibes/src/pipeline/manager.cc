@@ -640,6 +640,7 @@ Manager::V Manager::add_xy_convolution(V parent, int out_idx, int in_idx) {
                                              "Convolution",
                                              ConvolutionSettings{
                                                  .kernel_file = s_.pp_convolution_path,
+                                                 .divide = s_.pp_convolution_divide,
                                              });
 }
 
