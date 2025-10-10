@@ -1,4 +1,4 @@
-# BatchQueueSettings
+<!-- # BatchQueueSettings -->
 
 <!-- **Title:** BatchQueueSettings
  -->
@@ -30,5 +30,5 @@
 | + [output_stride](#output_stride )     | No      | integer | No         | -          | Distance in batches between two dequeued blocks. Must satisfy:<br />- output_stride > 0<br />- output_stride is a multiple of output_size |
 
 <!-- ----------------------------------------------------------------------------------------------------------------------------
-Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 11:09:40 +0200
+Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 12:08:06 +0200
 -->

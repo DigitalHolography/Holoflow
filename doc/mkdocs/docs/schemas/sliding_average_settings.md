@@ -1,4 +1,4 @@
-# SlidingAverageSettings
+<!-- # SlidingAverageSettings -->
 
 <!-- **Title:** SlidingAverageSettings
  -->
@@ -28,5 +28,5 @@
 | + [window_size](#window_size )         | No      | integer | No         | -          | Number of frames included in each running average. Must satisfy:<br />- window_size > 0                                   |
 
 <!-- ----------------------------------------------------------------------------------------------------------------------------
-Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 11:09:40 +0200
+Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 12:08:06 +0200
 -->

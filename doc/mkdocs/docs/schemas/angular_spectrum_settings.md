@@ -1,4 +1,4 @@
-# AngularSpectrumSettings
+<!-- # AngularSpectrumSettings -->
 
 <!-- **Title:** AngularSpectrumSettings
  -->
@@ -39,5 +39,5 @@
 | - [filter](#filter ) | No      | object | No         | -          | Optional bandlimiting filter expressed in pixels. Must satisfy:<br />- r_inner >= 0<br />- r_outer >= r_inner<br />- s_inner >= 0<br />- s_outer >= 0 |
 
 <!-- ----------------------------------------------------------------------------------------------------------------------------
-Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 11:09:40 +0200
+Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 12:08:06 +0200
 -->
