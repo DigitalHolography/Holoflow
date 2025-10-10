@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "BatchQueueSettings",
+  "description": "Settings for the BatchQueue async task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "target_capacity": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Target capacity of the circular buffer measured in input batches. Must satisfy:\n- target_capacity > 0"
+    },
+    "output_size": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of batches collected into each dequeued block. Must satisfy:\n- output_size > 0"
+    },
+    "output_stride": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Distance in batches between two dequeued blocks. Must satisfy:\n- output_stride > 0\n- output_stride is a multiple of output_size"
+    }
+  },
+  "required": [
+    "target_capacity",
+    "output_size",
+    "output_stride"
+  ],
+  "examples": [
+    {
+      "target_capacity": 64,
+      "output_size": 8,
+      "output_stride": 16
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MemcpySettings",
+  "description": "Settings for the Memcpy sync task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "target": {
+      "type": "string",
+      "enum": [
+        "Host",
+        "Device"
+      ],
+      "description": "Destination memory space for the copy. Accepted values:\n- Host: Copy into CPU memory\n- Device: Copy into GPU memory"
+    }
+  },
+  "required": [
+    "target"
+  ],
+  "examples": [
+    {
+      "target": "Device"
+    }
+  ]
+}

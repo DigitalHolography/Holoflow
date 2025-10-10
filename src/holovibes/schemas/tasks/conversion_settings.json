@@ -1,0 +1,39 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ConversionSettings",
+  "description": "Settings for the Conversion sync task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "target": {
+      "type": "string",
+      "enum": [
+        "U8",
+        "U16",
+        "F32",
+        "CF32"
+      ],
+      "description": "Desired output data type. Accepted values:\n- U8: 8-bit unsigned integer\n- U16: 16-bit unsigned integer\n- F32: 32-bit float\n- CF32: 32-bit complex float"
+    },
+    "strategy": {
+      "type": "string",
+      "enum": [
+        "Real",
+        "Scaled",
+        "Modulus",
+        "Argument"
+      ],
+      "description": "Conversion strategy to apply. Accepted values:\n- Real: Extract real component (valid when target is CF32 and the input is U8/U16)\n- Scaled: Normalize float input to integer range (valid when target is U8 or U16 and the input is F32)\n- Modulus: Emit magnitude (valid when target is F32 and the input is CF32)\n- Argument: Emit phase angle (valid when target is F32 and the input is CF32)"
+    }
+  },
+  "required": [
+    "target",
+    "strategy"
+  ],
+  "examples": [
+    {
+      "target": "F32",
+      "strategy": "Modulus"
+    }
+  ]
+}

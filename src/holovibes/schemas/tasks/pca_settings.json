@@ -1,0 +1,29 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PcaSettings",
+  "description": "Settings for the PCA sync task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "begin": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Inclusive index of the first eigencomponent to keep. Must satisfy:\n- begin >= 0\n- begin < end"
+    },
+    "end": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Exclusive index of the last eigencomponent to keep. Must satisfy:\n- end > begin\n- end <= number of input features"
+    }
+  },
+  "required": [
+    "begin",
+    "end"
+  ],
+  "examples": [
+    {
+      "begin": 0,
+      "end": 8
+    }
+  ]
+}

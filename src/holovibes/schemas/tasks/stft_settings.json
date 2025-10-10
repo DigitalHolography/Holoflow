@@ -1,0 +1,12 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "StftSettings",
+  "description": "Settings for the STFT sync task (no configurable fields).",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {},
+  "required": [],
+  "examples": [
+    {}
+  ]
+}

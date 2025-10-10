@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "DisplayTensorSettings",
+  "description": "Settings for the DisplayTensor sink task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "refresh_rate_hz": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Target refresh rate for the UI, in Hertz. Must satisfy:\n- refresh_rate_hz > 0"
+    }
+  },
+  "required": [
+    "refresh_rate_hz"
+  ],
+  "examples": [
+    {
+      "refresh_rate_hz": 30.0
+    }
+  ]
+}

@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AngularSpectrumSettings",
+  "description": "Settings for the Angular Spectrum propagation task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "lambda": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Wavelength in meters. Must satisfy:\n- lambda > 0"
+    },
+    "dx": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Pixel pitch along X in meters. Must satisfy:\n- dx > 0\n- dx == dy"
+    },
+    "dy": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "description": "Pixel pitch along Y in meters. Must satisfy:\n- dy > 0\n- dy == dx"
+    },
+    "z": {
+      "type": "number",
+      "description": "Propagation distance in meters. Positive values propagate forward; negative values back-propagate."
+    },
+    "filter": {
+      "type": "object",
+      "description": "Optional bandlimiting filter expressed in pixels. Must satisfy:\n- r_inner >= 0\n- r_outer >= r_inner\n- s_inner >= 0\n- s_outer >= 0",
+      "properties": {
+        "r_inner": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Radius where attenuation starts. Must satisfy:\n- r_inner >= 0"
+        },
+        "r_outer": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Radius where attenuation reaches zero. Must satisfy:\n- r_outer >= r_inner"
+        },
+        "s_inner": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Slope width inside the passband. Must satisfy:\n- s_inner >= 0"
+        },
+        "s_outer": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Slope width outside the passband. Must satisfy:\n- s_outer >= 0"
+        }
+      },
+      "required": [
+        "r_inner",
+        "r_outer",
+        "s_inner",
+        "s_outer"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "lambda",
+    "dx",
+    "dy",
+    "z"
+  ],
+  "examples": [
+    {
+      "lambda": 5.32e-7,
+      "dx": 3.45e-6,
+      "dy": 3.45e-6,
+      "z": 0.1,
+      "filter": {
+        "r_inner": 120,
+        "r_outer": 220,
+        "s_inner": 16,
+        "s_outer": 32
+      }
+    }
+  ]
+}

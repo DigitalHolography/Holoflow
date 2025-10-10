@@ -2,13 +2,45 @@ site_name: Holoflow
 nav:
   - Home: index.md
   - About: about.md
+
   - Holovibes: 
     - Overview: holovibes/index.md
     - Tasks:
-      - Holofile:
-        - Settings: schemas/holofile_settings.md
-      - Fresnel Diffraction:
-        - Settings: schemas/fresnel_diffraction_settings.md
+      - Sources:
+        - Holofile:
+          - Settings: schemas/holofile_settings.md
+      - Sinks:
+        - Display Tensor:
+          - Settings: schemas/display_tensor_settings.md
+      - Synchronous:
+        - Angular Spectrum:
+          - Settings: schemas/angular_spectrum_settings.md
+        - Average:
+          - Settings: schemas/average_settings.md
+        - Conversion:
+          - Settings: schemas/conversion_settings.md
+        - Convolution:
+          - Settings: schemas/convolution_settings.md
+        - FFT Shift:
+          - Settings: schemas/fft_shift_settings.md
+        - Memcpy:
+          - Settings: schemas/memcpy_settings.md
+        - PCA:
+          - Settings: schemas/pca_settings.md
+        - Percentile Clip:
+          - Settings: schemas/pct_clip_settings.md
+        - Reshape:
+          - Settings: schemas/reshape_settings.md
+        - STFT:
+          - Settings: schemas/stft_settings.md
+        - Fresnel Diffraction:
+          - Settings: schemas/fresnel_diffraction_settings.md
+      - Asynchronous:
+        - Batch Queue:
+          - Settings: schemas/batch_queue_settings.md
+        - Sliding Average:
+          - Settings: schemas/sliding_average_settings.md
+
   - Holoflow:
     - Overview: holoflow/index.md
     - Concepts:

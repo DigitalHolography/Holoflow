@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PctClipSettings",
+  "description": "Settings for the percentile clipping sync task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "min_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Lower percentile (0-100) used to clip values. Must satisfy:\n- min_pct >= 0\n- min_pct < max_pct"
+    },
+    "max_pct": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Upper percentile (0-100) used to clip values. Must satisfy:\n- max_pct <= 100\n- max_pct > min_pct"
+    },
+    "roi": {
+      "type": "object",
+      "description": "Elliptical region of interest expressed in normalized coordinates. Must satisfy:\n- 0 <= cx <= 1\n- 0 <= cy <= 1\n- 0 < rx <= 1\n- 0 < ry <= 1",
+      "properties": {
+        "cx": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Normalized horizontal center. Must satisfy:\n- 0 <= cx <= 1"
+        },
+        "cy": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Normalized vertical center. Must satisfy:\n- 0 <= cy <= 1"
+        },
+        "rx": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "Normalized horizontal radius. Must satisfy:\n- 0 < rx <= 1"
+        },
+        "ry": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "Normalized vertical radius. Must satisfy:\n- 0 < ry <= 1"
+        },
+        "angle": {
+          "type": "number",
+          "description": "Rotation in degrees (counter-clockwise)."
+        }
+      },
+      "required": [
+        "cx",
+        "cy",
+        "rx",
+        "ry",
+        "angle"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "min_pct",
+    "max_pct",
+    "roi"
+  ],
+  "examples": [
+    {
+      "min_pct": 0.5,
+      "max_pct": 99.5,
+      "roi": {
+        "cx": 0.5,
+        "cy": 0.5,
+        "rx": 0.45,
+        "ry": 0.45,
+        "angle": 0.0
+      }
+    }
+  ]
+}

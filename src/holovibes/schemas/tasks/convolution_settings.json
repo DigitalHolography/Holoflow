@@ -1,0 +1,28 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ConvolutionSettings",
+  "description": "Settings for the Convolution sync task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "kernel_file": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to a JSON file containing a 2D float kernel under the `kernel` key. Must satisfy:\n- kernel_file refers to a readable file\n- kernel array is rectangular and non-empty"
+    },
+    "divide": {
+      "type": "boolean",
+      "description": "When true, divides the input tensor by the convolution result after filtering."
+    }
+  },
+  "required": [
+    "kernel_file",
+    "divide"
+  ],
+  "examples": [
+    {
+      "kernel_file": "kernels/gaussian.json",
+      "divide": false
+    }
+  ]
+}
