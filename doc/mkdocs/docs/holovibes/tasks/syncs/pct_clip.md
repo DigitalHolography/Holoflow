@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\pct_clip_settings.md"

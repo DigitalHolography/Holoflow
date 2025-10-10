@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\memcpy_settings.md"

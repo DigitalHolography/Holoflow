@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\display_tensor_settings.md"

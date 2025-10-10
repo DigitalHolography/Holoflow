@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\reshape_settings.md"

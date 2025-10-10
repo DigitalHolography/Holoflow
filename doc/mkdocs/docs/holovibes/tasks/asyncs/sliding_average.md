@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\sliding_average_settings.md"

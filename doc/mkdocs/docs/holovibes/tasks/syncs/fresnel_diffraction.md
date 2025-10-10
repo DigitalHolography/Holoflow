@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\fresnel_diffraction_settings.md"

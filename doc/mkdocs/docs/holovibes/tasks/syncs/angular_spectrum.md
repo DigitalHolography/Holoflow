@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\angular_spectrum_settings.md"

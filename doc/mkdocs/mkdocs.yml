@@ -7,39 +7,24 @@ nav:
     - Overview: holovibes/index.md
     - Tasks:
       - Sources:
-        - Holofile:
-          - Settings: schemas/holofile_settings.md
+        - Holofile: holovibes/tasks/sources/holofile.md
       - Sinks:
-        - Display Tensor:
-          - Settings: schemas/display_tensor_settings.md
+        - Display Tensor: holovibes/tasks/sinks/display_tensor.md
       - Synchronous:
-        - Angular Spectrum:
-          - Settings: schemas/angular_spectrum_settings.md
-        - Average:
-          - Settings: schemas/average_settings.md
-        - Conversion:
-          - Settings: schemas/conversion_settings.md
-        - Convolution:
-          - Settings: schemas/convolution_settings.md
-        - FFT Shift:
-          - Settings: schemas/fft_shift_settings.md
-        - Memcpy:
-          - Settings: schemas/memcpy_settings.md
-        - PCA:
-          - Settings: schemas/pca_settings.md
-        - Percentile Clip:
-          - Settings: schemas/pct_clip_settings.md
-        - Reshape:
-          - Settings: schemas/reshape_settings.md
-        - STFT:
-          - Settings: schemas/stft_settings.md
-        - Fresnel Diffraction:
-          - Settings: schemas/fresnel_diffraction_settings.md
+        - Angular Spectrum: holovibes/tasks/syncs/angular_spectrum.md
+        - Average: holovibes/tasks/syncs/average.md
+        - Conversion: holovibes/tasks/syncs/conversion.md
+        - Convolution: holovibes/tasks/syncs/convolution.md
+        - FFT Shift: holovibes/tasks/syncs/fft_shift.md
+        - Memcpy: holovibes/tasks/syncs/memcpy.md
+        - PCA: holovibes/tasks/syncs/pca.md
+        - Percentile Clip: holovibes/tasks/syncs/pct_clip.md
+        - Reshape: holovibes/tasks/syncs/reshape.md
+        - STFT: holovibes/tasks/syncs/stft.md
+        - Fresnel Diffraction: holovibes/tasks/syncs/fresnel_diffraction.md
       - Asynchronous:
-        - Batch Queue:
-          - Settings: schemas/batch_queue_settings.md
-        - Sliding Average:
-          - Settings: schemas/sliding_average_settings.md
+        - Batch Queue: holovibes/tasks/asyncs/batch_queue.md
+        - Sliding Average: holovibes/tasks/asyncs/sliding_average.md
 
   - Holoflow:
     - Overview: holoflow/index.md
@@ -70,6 +55,8 @@ markdown_extensions:
         - name: mermaid
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.snippets:
+      check_paths: true
   - attr_list
 
 plugins:

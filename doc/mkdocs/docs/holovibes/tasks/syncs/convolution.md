@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\convolution_settings.md"

@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\holofile_settings.md"

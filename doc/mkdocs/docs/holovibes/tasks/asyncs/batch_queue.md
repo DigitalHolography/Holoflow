@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\batch_queue_settings.md"

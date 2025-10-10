@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\conversion_settings.md"

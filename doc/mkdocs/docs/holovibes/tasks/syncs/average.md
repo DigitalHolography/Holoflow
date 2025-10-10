@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\average_settings.md"

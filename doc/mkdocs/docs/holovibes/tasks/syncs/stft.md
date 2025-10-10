@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\stft_settings.md"

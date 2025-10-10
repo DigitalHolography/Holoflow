@@ -1,0 +1,1 @@
+--8<-- "docs\schemas\fft_shift_settings.md"
