@@ -13,7 +13,16 @@
 <!-- **Description:** Settings for the Angular Spectrum propagation task.
  -->
 
-**Example:**
+**Examples:**
+
+```json
+{
+    "lambda": 5.32e-07,
+    "dx": 3.45e-06,
+    "dy": 3.45e-06,
+    "z": 0.1
+}
+```
 
 ```json
 {
@@ -39,5 +48,5 @@
 | - [filter](#filter ) | No      | object | No         | -          | Optional bandlimiting filter expressed in pixels. Must satisfy:<br />- r_inner >= 0<br />- r_outer >= r_inner<br />- s_inner >= 0<br />- s_outer >= 0 |
 
 <!-- ----------------------------------------------------------------------------------------------------------------------------
-Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 12:08:06 +0200
+Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 13:11:10 +0200
 -->

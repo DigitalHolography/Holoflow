@@ -30,5 +30,5 @@
 | + [end](#end )     | No      | integer | No         | -          | Exclusive index where the average stops. Must satisfy:<br />- end > start<br />- end <= size along axis |
 
 <!-- ----------------------------------------------------------------------------------------------------------------------------
-Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 12:08:06 +0200
+Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 13:11:10 +0200
 -->

@@ -36,5 +36,5 @@
 | + [roi](#roi )         | No      | object | No         | -          | Elliptical region of interest expressed in normalized coordinates. Must satisfy:<br />- 0 <= cx <= 1<br />- 0 <= cy <= 1<br />- 0 < rx <= 1<br />- 0 < ry <= 1 |
 
 <!-- ----------------------------------------------------------------------------------------------------------------------------
-Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 12:08:06 +0200
+Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 13:11:10 +0200
 -->
