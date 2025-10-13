@@ -30,6 +30,7 @@
 #include "tasks/asyncs/batch_queue.hh"
 #include "tasks/asyncs/slide_avg.hh"
 #include "tasks/sinks/display_tensor.hh"
+#include "tasks/sinks/holofile.hh"
 #include "tasks/sources/holofile.hh"
 #include "tasks/syncs/angular_spectrum.hh"
 #include "tasks/syncs/average.hh"
@@ -73,6 +74,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
   reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ", yz_processed_widget_);
   reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
+  reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
   reg_sync<syncs::AverageFactory>(registry_, "Average");
@@ -256,11 +258,18 @@ void Manager::build_graph_spec() {
   auto source = add_source();
   auto parent = source;
 
+  std::optional<V> cpu_in_queue = std::nullopt;
   if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
-    auto cpu_in_queue = add_cpu_in_queue(parent, 0, 0);
-    auto cpu_gpu_cpy  = add_cpu_gpu_cpy(cpu_in_queue, 0, 0);
-    parent            = cpu_gpu_cpy;
+    cpu_in_queue     = add_cpu_in_queue(parent, 0, 0);
+    auto cpu_gpu_cpy = add_cpu_gpu_cpy(*cpu_in_queue, 0, 0);
+    parent           = cpu_gpu_cpy;
   }
+
+  // Record only if using CPU input queue)
+  // if (cpu_in_queue) {
+  //   auto raw_record = add_raw_record(*cpu_in_queue, 0, 0);
+  //   (void)raw_record;
+  // }
 
   auto gpu_in_queue = add_gpu_in_queue(parent, 0, 0);
   auto to_cf32      = add_to_cf32(gpu_in_queue, 0, 0);
@@ -425,6 +434,22 @@ Manager::V Manager::add_cpu_in_queue(V parent, int out_idx, int in_idx) {
           .target_capacity = s_.cpu_in_size,
           .output_size     = s_.time_window,
           .output_stride   = opti_cpu_stride_ ? s_.time_stride : s_.time_window,
+      });
+}
+
+Manager::V Manager::add_xy_raw_display(V parent, int out_idx, int in_idx) {
+  using sinks::DisplayTensorSettings;
+  return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "xy_raw_display",
+                                               "DisplayTensorXYRaw", DisplayTensorSettings{});
+}
+
+Manager::V Manager::add_raw_record(V parent, int out_idx, int in_idx) {
+  using sinks::HolofileSettings;
+  return add_node_after<HolofileSettings>(
+      parent, out_idx, in_idx, "raw_record", "HolofileWriter",
+      HolofileSettings{
+          .path  = "C:\\Users\\guill\\Documents\\holofiles_data\\250527_GUJ_L_2_record.holo",
+          .count = 16384,
       });
 }
 
@@ -640,7 +665,7 @@ Manager::V Manager::add_xy_convolution(V parent, int out_idx, int in_idx) {
                                              "Convolution",
                                              ConvolutionSettings{
                                                  .kernel_file = s_.pp_convolution_path,
-                                                 .divide = s_.pp_convolution_divide,
+                                                 .divide      = s_.pp_convolution_divide,
                                              });
 }
 

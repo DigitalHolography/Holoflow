@@ -85,6 +85,11 @@ struct Header {
   uint64_t data_size_in_bytes;
   uint8_t  endianness;
   char     padding[35];
+
+  static constexpr uint16_t CURRENT_VERSION = 66;
+  static constexpr uint8_t  LITTLE_ENDIAN   = 0;
+  static constexpr uint8_t  BIG_ENDIAN      = 1;
+  static constexpr uint32_t MAGIC_NUMBER_LE = 0x4F4C4F48;
 };
 #pragma pack(pop)
 

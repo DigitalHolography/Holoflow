@@ -81,6 +81,8 @@ private:
 
   V add_source();
   V add_cpu_in_queue(V parent, int out_idx, int in_idx);
+  V add_xy_raw_display(V parent, int out_idx, int in_idx);
+  V add_raw_record(V parent, int out_idx, int in_idx);
   V add_cpu_gpu_cpy(V parent, int out_idx, int in_idx);
   V add_gpu_in_queue(V parent, int out_idx, int in_idx);
   V add_to_cf32(V parent, int out_idx, int in_idx);
@@ -145,7 +147,7 @@ private:
   holoflow::core::GraphSpec                          spec_;
   std::unique_ptr<holoflow::runtime::CompilerOutput> compiler_output_;
   std::unique_ptr<holoflow::runtime::Scheduler>      scheduler_;
-  QTimer                                             *metrics_timer_ = nullptr;
+  QTimer                                            *metrics_timer_ = nullptr;
 };
 
 } // namespace holovibes::pipeline

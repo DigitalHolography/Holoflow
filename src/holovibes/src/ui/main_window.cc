@@ -189,8 +189,10 @@ void MainWindow::on_start_pipeline_success() {
     dims = QSize(dims.width(), dims.width());
   }
   xy_processed_widget_->set_fixed_aspect(dims);
+  xy_raw_widget_->set_fixed_aspect(guess_source_dims());
 
   xy_processed_widget_->show();
+  xy_raw_widget_->show();
 }
 
 void MainWindow::on_start_pipeline_failure() {
@@ -620,7 +622,9 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
   }
 
   // View Settings
-  { s.view_3d_cuts = view_cuts_3d_check_->isChecked(); }
+  {
+    s.view_3d_cuts = view_cuts_3d_check_->isChecked();
+  }
 
   // Post-processing Settings
   {
