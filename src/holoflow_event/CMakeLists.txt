@@ -12,25 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set(TARGET holoflow)
+set(TARGET holoflow_event)
 
-file(GLOB_RECURSE HOLOFLOW_PUBLIC_HEADERS 
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/holoflow/*.hh
-    ${CMAKE_CURRENT_SOURCE_DIR}/include/holoflow/*.hxx
+file(GLOB_RECURSE HOLOFLOW_EVENT_PUBLIC_HEADERS 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/${TARGET}/*.hh
+    ${CMAKE_CURRENT_SOURCE_DIR}/include/${TARGET}/*.hxx
 )
 
-file(GLOB_RECURSE HOLOFLOW_PRIVATE_HEADERS 
+file(GLOB_RECURSE HOLOFLOW_EVENT_PRIVATE_HEADERS 
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hh
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hxx
 )
 
-file(GLOB_RECURSE HOLOFLOW_SOURCES 
+file(GLOB_RECURSE HOLOFLOW_EVENT_SOURCES 
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc
 )
 
 add_library(${TARGET} 
 STATIC
-    ${HOLOFLOW_SOURCES}
+    ${HOLOFLOW_EVENT_SOURCES}
 )
 
 target_include_directories(${TARGET} 
@@ -46,7 +46,7 @@ PUBLIC
     FILE_SET public_headers
     TYPE HEADERS
     BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/include
-    FILES ${HOLOFLOW_PUBLIC_HEADERS}
+    FILES ${HOLOFLOW_EVENT_PUBLIC_HEADERS}
 )
 
 target_sources(${TARGET} 
@@ -54,15 +54,11 @@ PRIVATE
     FILE_SET private_headers
     TYPE HEADERS
     BASE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src
-    FILES ${HOLOFLOW_PRIVATE_HEADERS}
+    FILES ${HOLOFLOW_EVENT_PRIVATE_HEADERS}
 )
 
 target_link_libraries(${TARGET} 
 PUBLIC
     project_options
-    holoflow_event
-    curaii
-    spdlog::spdlog
     nlohmann_json::nlohmann_json
-    Boost::graph
 )
