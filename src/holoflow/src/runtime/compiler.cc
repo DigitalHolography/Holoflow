@@ -219,11 +219,11 @@ void Compiler::check_typing() {
     CheckTypingVisitor(GraphPlan &g, const core::Registry &reg) : g_(g), reg_(reg) {}
 
     void discover_vertex(GraphPlan::vertex_descriptor v, const GraphPlan &) {
-      auto &np         = g_[v];
-      auto  in_degree  = boost::in_degree(v, g_);
-      auto  in_edges   = boost::in_edges(v, g_);
-      auto  out_degree = boost::out_degree(v, g_);
-      auto  out_edges  = boost::out_edges(v, g_);
+      auto &np        = g_[v];
+      auto  in_degree = boost::in_degree(v, g_);
+      auto  in_edges  = boost::in_edges(v, g_);
+      // auto  out_degree = boost::out_degree(v, g_);
+      auto out_edges = boost::out_edges(v, g_);
 
       // Gather input descs by input index
       std::vector<core::TDesc> idescs(in_degree);
@@ -245,12 +245,24 @@ void Compiler::check_typing() {
       std::set<int> seen;
       for (auto e : boost::make_iterator_range(out_edges)) {
         auto &ep = g_[e];
-        ep.desc  = infer.output_descs.at(ep.spec.out_idx);
+        if (ep.spec.out_idx < 0 || ep.spec.out_idx >= static_cast<int>(infer.output_descs.size())) {
+          throw std::logic_error("Invalid out_idx (" + std::to_string(ep.spec.out_idx) +
+                                 ") for edge between nodes " + np.spec.name + " and " +
+                                 g_[boost::target(e, g_)].spec.name);
+        }
+
+        ep.desc = infer.output_descs.at(ep.spec.out_idx);
         seen.insert(ep.spec.out_idx);
       }
 
-      if (seen.size() != out_degree) {
-        throw std::logic_error("Not all outputs of node " + np.spec.name + " are connected");
+      // if (seen.size() < out_degree) {
+      //   throw std::logic_error("Not all outputs of node " + np.spec.name + " are connected");
+      // }
+      for (int i = 0; i < static_cast<int>(infer.output_descs.size()); i++) {
+        if (!seen.contains(i)) {
+          throw std::logic_error("Output " + std::to_string(i) + " of node " + np.spec.name +
+                                 " is not connected");
+        }
       }
     }
 
