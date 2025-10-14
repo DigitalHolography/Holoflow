@@ -153,10 +153,11 @@ __global__ void divide_kernel(const float *a, const float *b, float *c, int num_
 
 Convolution::Convolution(ConvolutionSettings settings, const holoflow::core::TDesc &input_desc,
                          const holoflow::core::TDesc &output_desc, cudaStream_t stream,
-                         DevPtr<float> &&d_kernel, const int kernel_width, const int kernel_height)
+                         DevPtr<float> &&d_kernel, const int kernel_width, const int kernel_height,
+                         std::filesystem::file_time_type kernel_last_write_time)
     : settings_(std::move(settings)), input_desc_(input_desc), output_desc_(output_desc),
       stream_(stream), d_kernel_(std::move(d_kernel)), kernel_width_(kernel_width),
-      kernel_height_(kernel_height) {}
+      kernel_height_(kernel_height), kernel_last_write_time_(kernel_last_write_time) {}
 
 holoflow::core::OpResult Convolution::execute(holoflow::core::SyncCtx &ctx) {
   if (ctx.cancelled && ctx.cancelled->load(std::memory_order_acquire)) {
@@ -297,6 +298,8 @@ ConvolutionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     throw std::runtime_error("Could not load :" + settings.kernel_file);
   }
 
+  auto last_write_time = std::filesystem::last_write_time(settings.kernel_file);
+
   nlohmann::json j;
   file >> j;
 
@@ -321,11 +324,53 @@ ConvolutionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
 
-  auto task =
-      new Convolution(settings, input_desc, result.output_descs[0], ctx.stream, std::move(d_kernel),
-                      static_cast<int>(kernel_width), static_cast<int>(kernel_height));
+  auto task = new Convolution(settings, input_desc, result.output_descs[0], ctx.stream,
+                              std::move(d_kernel), static_cast<int>(kernel_width),
+                              static_cast<int>(kernel_height), last_write_time);
 
   task->create_fft_data();
+
+  // Compile callback LTO
+  auto lto   = complex_multiply_callback_lto();
+  task->lto_ = lto;
+
+  // Create FFT plans using XtMakePlanMany
+  int           rank          = 2;
+  long long int n[2]          = {static_cast<long long>(task->fft_data_->padded_height),
+                                 static_cast<long long>(task->fft_data_->padded_width)};
+  long long int inembed[2]    = {static_cast<long long>(task->fft_data_->padded_height),
+                                 static_cast<long long>(task->fft_data_->padded_width)};
+  int           istride       = 1;
+  int           idist         = task->fft_data_->padded_height * task->fft_data_->padded_width;
+  cudaDataType  inputtype     = CUDA_C_32F;
+  long long int onembed[2]    = {static_cast<long long>(task->fft_data_->padded_height),
+                                 static_cast<long long>(task->fft_data_->padded_width)};
+  int           ostride       = 1;
+  int           odist         = task->fft_data_->padded_height * task->fft_data_->padded_width;
+  cudaDataType  outputtype    = CUDA_C_32F;
+  int           batch         = 1;
+  size_t        work_size     = 0;
+  cudaDataType  executiontype = CUDA_C_32F;
+
+  CUFFT_CHECK(cufftSetStream(task->fft_data_->fft_plan.get(), task->stream_));
+  CUFFT_CHECK(cufftSetStream(task->fft_data_->inv_plan.get(), task->stream_));
+
+  auto *d_info_ptr = reinterpret_cast<void *>(task->fft_data_->d_callback_info.get());
+  CUFFT_CHECK(cufftXtSetJITCallback(task->fft_data_->inv_plan.get(), "complex_multiply_callback",
+                                    lto.data(), lto.size(), CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+
+  CUFFT_CHECK(cufftXtMakePlanMany(task->fft_data_->fft_plan.get(), rank, n, inembed, istride, idist,
+                                  inputtype, onembed, ostride, odist, outputtype, batch, &work_size,
+                                  executiontype));
+  CUFFT_CHECK(cufftXtMakePlanMany(task->fft_data_->inv_plan.get(), rank, n, inembed, istride, idist,
+                                  inputtype, onembed, ostride, odist, outputtype, batch, &work_size,
+                                  executiontype));
+
+  cufftExecC2C(task->fft_data_->fft_plan.get(), task->fft_data_->d_padded_kernel.get(),
+               task->fft_data_->d_freq_kernel.get(), CUFFT_FORWARD);
+
+  CUDA_CHECK(cudaStreamSynchronize(task->stream_));
+
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
@@ -336,70 +381,54 @@ void Convolution::create_fft_data() {
           ? static_cast<unsigned int>(input_desc_.shape[input_desc_.shape.size() - 2])
           : 1;
 
-  if (!fft_data_) {
-    fft_data_ = std::make_unique<FFTConvolutionData>();
+  fft_data_ = std::make_unique<FFTConvolutionData>();
 
-    fft_data_->padded_width  = input_width;
-    fft_data_->padded_height = input_height;
+  fft_data_->padded_width  = input_width;
+  fft_data_->padded_height = input_height;
 
-    size_t padded_size         = fft_data_->padded_width * fft_data_->padded_height;
-    fft_data_->d_padded_input  = curaii::make_unique_device_ptr<cufftComplex>(padded_size);
-    fft_data_->d_padded_kernel = curaii::make_unique_device_ptr<cufftComplex>(padded_size);
-    fft_data_->d_freq_input    = curaii::make_unique_device_ptr<cufftComplex>(padded_size);
-    fft_data_->d_freq_kernel   = curaii::make_unique_device_ptr<cufftComplex>(padded_size);
-    fft_data_->d_callback_info = curaii::make_unique_device_ptr<ComplexMultiplyCallerInfo>(1);
+  size_t padded_size         = fft_data_->padded_width * fft_data_->padded_height;
+  fft_data_->d_padded_input  = curaii::make_unique_device_ptr<cufftComplex>(padded_size);
+  fft_data_->d_padded_kernel = curaii::make_unique_device_ptr<cufftComplex>(padded_size);
+  fft_data_->d_freq_input    = curaii::make_unique_device_ptr<cufftComplex>(padded_size);
+  fft_data_->d_freq_kernel   = curaii::make_unique_device_ptr<cufftComplex>(padded_size);
+  fft_data_->d_callback_info = curaii::make_unique_device_ptr<ComplexMultiplyCallerInfo>(1);
 
-    // Compile callback LTO
-    auto lto = complex_multiply_callback_lto();
+  dim3 block_dim(16, 16);
+  dim3 grid_dim((fft_data_->padded_width + block_dim.x - 1) / block_dim.x,
+                (fft_data_->padded_height + block_dim.y - 1) / block_dim.y);
 
-    // Create FFT plans using XtMakePlanMany
-    int           rank          = 2;
-    long long int n[2]          = {static_cast<long long>(fft_data_->padded_height),
-                                   static_cast<long long>(fft_data_->padded_width)};
-    long long int inembed[2]    = {static_cast<long long>(fft_data_->padded_height),
-                                   static_cast<long long>(fft_data_->padded_width)};
-    int           istride       = 1;
-    int           idist         = fft_data_->padded_height * fft_data_->padded_width;
-    cudaDataType  inputtype     = CUDA_C_32F;
-    long long int onembed[2]    = {static_cast<long long>(fft_data_->padded_height),
-                                   static_cast<long long>(fft_data_->padded_width)};
-    int           ostride       = 1;
-    int           odist         = fft_data_->padded_height * fft_data_->padded_width;
-    cudaDataType  outputtype    = CUDA_C_32F;
-    int           batch         = 1;
-    size_t        work_size     = 0;
-    cudaDataType  executiontype = CUDA_C_32F;
+  pad_kernel<<<grid_dim, block_dim, 0, stream_>>>(
+      d_kernel_.get(), fft_data_->d_padded_kernel.get(), kernel_width_, kernel_height_,
+      fft_data_->padded_width, fft_data_->padded_height);
 
-    CUFFT_CHECK(cufftSetStream(fft_data_->fft_plan.get(), stream_));
-    CUFFT_CHECK(cufftSetStream(fft_data_->inv_plan.get(), stream_));
+  CUDA_CHECK(cudaGetLastError());
+}
 
-    auto *d_info_ptr = reinterpret_cast<void *>(fft_data_->d_callback_info.get());
-    CUFFT_CHECK(cufftXtSetJITCallback(fft_data_->inv_plan.get(), "complex_multiply_callback",
-                                      lto.data(), lto.size(), CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+std::unique_ptr<holoflow::core::ISyncTask>
+ConvolutionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                           std::span<const holoflow::core::TDesc>     input_descs,
+                           const nlohmann::json                      &jsettings,
+                           const holoflow::core::SyncCreateCtx       &ctx) const {
+  auto *old_conv = dynamic_cast<Convolution *>(old_task.get());
+  HOLOVIBES_CHECK(old_conv != nullptr, "old_task is not an Convolution");
 
-    CUFFT_CHECK(cufftXtMakePlanMany(fft_data_->fft_plan.get(), rank, n, inembed, istride, idist,
-                                    inputtype, onembed, ostride, odist, outputtype, batch,
-                                    &work_size, executiontype));
-    CUFFT_CHECK(cufftXtMakePlanMany(fft_data_->inv_plan.get(), rank, n, inembed, istride, idist,
-                                    inputtype, onembed, ostride, odist, outputtype, batch,
-                                    &work_size, executiontype));
+  auto        result     = infer(input_descs, jsettings);
+  auto        settings   = jsettings.get<ConvolutionSettings>();
+  const auto &input_desc = input_descs[0];
 
-    // Precompute kernel FFT
-    dim3 block_dim(16, 16);
-    dim3 grid_dim((fft_data_->padded_width + block_dim.x - 1) / block_dim.x,
-                  (fft_data_->padded_height + block_dim.y - 1) / block_dim.y);
+  auto current_write_time = std::filesystem::last_write_time(settings.kernel_file);
+  bool kernel_changed     = (current_write_time != old_conv->kernel_last_write_time_);
 
-    pad_kernel<<<grid_dim, block_dim, 0, stream_>>>(
-        d_kernel_.get(), fft_data_->d_padded_kernel.get(), kernel_width_, kernel_height_,
-        fft_data_->padded_width, fft_data_->padded_height);
-
-    CUDA_CHECK(cudaGetLastError());
-
-    cufftExecC2C(fft_data_->fft_plan.get(), fft_data_->d_padded_kernel.get(),
-                 fft_data_->d_freq_kernel.get(), CUFFT_FORWARD);
-
-    CUDA_CHECK(cudaStreamSynchronize(stream_));
+  if (!kernel_changed) {
+    old_conv->settings_ = settings;
+    old_conv->stream_   = ctx.stream;
+    old_task.release();
+    CUFFT_CHECK(cufftSetStream(old_conv->fft_data_->fft_plan.get(), old_conv->stream_));
+    CUFFT_CHECK(cufftSetStream(old_conv->fft_data_->inv_plan.get(), old_conv->stream_));
+    return std::unique_ptr<holoflow::core::ISyncTask>(old_conv);
   }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holovibes::tasks::syncs

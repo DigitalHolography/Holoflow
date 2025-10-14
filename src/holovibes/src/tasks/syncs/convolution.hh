@@ -13,6 +13,7 @@
 // limitations under the License.
 #pragma once
 
+#include <filesystem>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <span>
@@ -70,7 +71,8 @@ public:
 private:
   Convolution(ConvolutionSettings settings, const holoflow::core::TDesc &input_desc,
               const holoflow::core::TDesc &output_desc, cudaStream_t stream,
-              DevPtr<float> &&d_kernel, const int kernel_width, const int kernel_height);
+              DevPtr<float> &&d_kernel, const int kernel_width, const int kernel_height,
+              std::filesystem::file_time_type kernel_last_write_time);
 
   friend class ConvolutionFactory;
 
@@ -81,6 +83,9 @@ private:
   DevPtr<float>         d_kernel_;
   const int             kernel_width_;
   const int             kernel_height_;
+  std::vector<char>     lto_;
+
+  std::filesystem::file_time_type kernel_last_write_time_;
 
   mutable std::unique_ptr<FFTConvolutionData> fft_data_;
 
@@ -99,6 +104,11 @@ public:
   /// @brief Create a new Convolution task instance
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
