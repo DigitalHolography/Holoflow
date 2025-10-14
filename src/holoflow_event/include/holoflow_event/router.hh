@@ -68,7 +68,7 @@ public:
 
   [[nodiscard]] size_t drop_all() noexcept;
 
-  [[nodiscard]] MailboxCounters counters() const noexcept;
+  [[nodiscard]] MailboxCounters::Snapshot counters() const noexcept;
 
 private:
   BoundedMPMC<Event> *queue_;
@@ -81,7 +81,7 @@ public:
 
   [[nodiscard]] bool try_push(Event &&event) noexcept;
 
-  [[nodiscard]] MailboxCounters counters() const noexcept;
+  [[nodiscard]] MailboxCounters::Snapshot counters() const noexcept;
 
 private:
   BoundedMPMC<Event> *queue_;

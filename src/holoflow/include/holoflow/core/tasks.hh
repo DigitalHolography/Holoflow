@@ -79,11 +79,11 @@ namespace holoflow::core {
 
 /// Runtime execution context for a synchronous task.
 struct SyncCtx {
-  std::span<TView>   inputs;    ///< Scheduler-provided input views; some may be owned.
-  std::span<TView>   outputs;   ///< Output slots; owned outputs are written by the task.
-  std::atomic<bool> *cancelled; ///< Non-null cancellation flag.
-  // holoflow_event::EventWriter event_writer; ///< Event writer for emitting events.
-  // holoflow_event::EventReader event_reader; ///< Event reader for receiving events.
+  std::span<TView>             inputs;    ///< Scheduler-provided input views; some may be owned.
+  std::span<TView>             outputs;   ///< Output slots; owned outputs are written by the task.
+  std::atomic<bool>           *cancelled; ///< Non-null cancellation flag.
+  holoflow_event::EventWriter *event_writer; ///< Event writer for emitting events.
+  holoflow_event::EventReader *event_reader; ///< Event reader for receiving events.
 };
 
 /// Runtime execution context for an asynchronous task push operation.

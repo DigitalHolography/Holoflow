@@ -36,6 +36,7 @@
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
+#include "holoflow_event/router.hh"
 
 namespace holoflow::runtime {
 
@@ -116,7 +117,12 @@ public:
   bool is_running() const;
   bool stop_requested() const;
 
+  [[nodiscard]] bool ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept;
+
+  [[nodiscard]] std::optional<holoflow_event::Event> ui_try_receive() noexcept;
+
 private:
+  void build_event_handles();
   void build_nodes_rts();
   void reset_metrics_state();
   void start_metrics_thread();
@@ -126,6 +132,8 @@ private:
   void record_node_sample(std::size_t idx, uint64_t duration_ns, uint64_t host_bytes,
                           uint64_t device_bytes);
   static std::pair<uint64_t, uint64_t> sum_bytes(std::span<const core::TView> views);
+
+  void run_router();
 
   void run_section(int section_id);
 
@@ -212,20 +220,24 @@ private:
     NodeMetricAccumulator() = default;
 
     NodeMetricAccumulator(const NodeMetricAccumulator &other) {
-      duration_ns.store(other.duration_ns.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      duration_ns.store(other.duration_ns.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
       run_count.store(other.run_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
       host_bytes.store(other.host_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      device_bytes.store(other.device_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      device_bytes.store(other.device_bytes.load(std::memory_order_relaxed),
+                         std::memory_order_relaxed);
     }
 
     NodeMetricAccumulator &operator=(const NodeMetricAccumulator &other) {
       if (this == &other) {
         return *this;
       }
-      duration_ns.store(other.duration_ns.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      duration_ns.store(other.duration_ns.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
       run_count.store(other.run_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
       host_bytes.store(other.host_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      device_bytes.store(other.device_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      device_bytes.store(other.device_bytes.load(std::memory_order_relaxed),
+                         std::memory_order_relaxed);
       return *this;
     }
 
@@ -247,6 +259,9 @@ private:
   mutable std::mutex                 metrics_thread_mutex_;
 
   std::vector<std::thread> threads_; ///< Threads for each section.
+
+  holoflow_event::Router                                     router_;
+  std::map<std::string, holoflow_event::Router::NodeHandles> event_handles_;
 };
 
 } // namespace holoflow::runtime

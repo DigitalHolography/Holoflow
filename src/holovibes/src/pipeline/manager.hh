@@ -65,6 +65,10 @@ private:
   void stop_metrics_updates();
   void poll_metrics();
 
+  void start_event_polling();
+  void stop_event_polling();
+  void poll_events();
+
   void build_and_run();
   void build_graph_spec();
   void reset_graph_spec();
@@ -148,6 +152,7 @@ private:
   std::unique_ptr<holoflow::runtime::CompilerOutput> compiler_output_;
   std::unique_ptr<holoflow::runtime::Scheduler>      scheduler_;
   QTimer                                            *metrics_timer_ = nullptr;
+  QTimer                                            *events_timer_  = nullptr;
 };
 
 } // namespace holovibes::pipeline

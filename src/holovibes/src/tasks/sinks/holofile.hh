@@ -46,6 +46,7 @@ private:
   HolofileSettings settings_;
   holofile::Writer writer_;
   int              frames_written_;
+  bool             finished_ = false;
 };
 
 class HolofileFactory : public holoflow::core::ISyncTaskFactory {

@@ -53,7 +53,24 @@ Holofile::~Holofile() {
 }
 
 [[nodiscard]] holoflow::core::OpResult Holofile::execute(holoflow::core::SyncCtx &ctx) {
+  if (finished_) {
+    return holoflow::core::OpResult::Ok;
+  }
+
   if (frames_written_ >= settings_.count) {
+    logger()->info("[Holofile] Finished writing {} frames to {}", frames_written_, settings_.path);
+    finished_       = true;
+    auto event_data = nlohmann::json{
+        {"type", "recording_finished"},
+        {"path", settings_.path},
+        {"frames_written", frames_written_},
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(
+                        holoflow_event::Event{.direction = holoflow_event::EventDirection::ToUi,
+                                              .node_id   = "", // TODO: node id
+                                              .data      = std::move(event_data),
+                                              .ts        = std::chrono::steady_clock::now()}),
+                    "Failed to send recording_finished event");
     return holoflow::core::OpResult::Ok;
   }
 

@@ -24,6 +24,44 @@ MailboxCounters::Snapshot MailboxCounters::snapshot() const noexcept {
                   sent_events.load(std::memory_order_relaxed)};
 }
 
+EventReader::EventReader(BoundedMPMC<Event> *queue, MailboxCounters *counters)
+    : queue_(queue), counters_(counters) {}
+
+std::optional<Event> EventReader::try_pop() noexcept {
+  auto event = queue_->try_pop();
+  if (event) {
+    counters_->received_events.fetch_add(1, std::memory_order_relaxed);
+  }
+  return event;
+}
+
+size_t EventReader::drop_all() noexcept {
+  size_t dropped = 0;
+  while (true) {
+    auto event = queue_->try_pop();
+    if (!event) {
+      break;
+    }
+    dropped++;
+  }
+  counters_->dropped_events.fetch_add(dropped, std::memory_order_relaxed);
+  return dropped;
+}
+
+MailboxCounters::Snapshot EventReader::counters() const noexcept { return counters_->snapshot(); }
+
+EventWriter::EventWriter(BoundedMPMC<Event> *queue, MailboxCounters *counters)
+    : queue_(queue), counters_(counters) {}
+
+bool EventWriter::try_push(Event &&event) noexcept {
+  bool ok = queue_->try_push(std::move(event));
+  counters_->sent_events.fetch_add(ok, std::memory_order_relaxed);
+  counters_->dropped_events.fetch_add(!ok, std::memory_order_relaxed);
+  return ok;
+}
+
+MailboxCounters::Snapshot EventWriter::counters() const noexcept { return counters_->snapshot(); }
+
 Router::Router(const Config &config)
     : config_(config), ui_to_router_(config.ui_to_router_capacity),
       router_to_ui_(config.router_to_ui_capacity),

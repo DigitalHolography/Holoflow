@@ -62,6 +62,7 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
     metrics_interval_ = std::chrono::milliseconds{1};
   }
 
+  build_event_handles();
   build_nodes_rts();
 }
 
@@ -104,6 +105,8 @@ void Scheduler::start() {
   for (size_t i = 0; i < sections_.size(); i++) {
     threads_.emplace_back(&Scheduler::run_section, this, static_cast<int>(i));
   }
+
+  threads_.emplace_back(&Scheduler::run_router, this);
 }
 
 void Scheduler::request_stop() {
@@ -138,6 +141,22 @@ bool Scheduler::is_running() const { return running_.load(); }
 
 bool Scheduler::stop_requested() const { return stop_.load(); }
 
+bool Scheduler::ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept {
+  return router_.ui_try_send(node_id, std::move(data));
+}
+
+std::optional<holoflow_event::Event> Scheduler::ui_try_receive() noexcept {
+  return router_.ui_try_receive();
+}
+
+void Scheduler::build_event_handles() {
+  event_handles_.clear();
+  for (auto v : boost::make_iterator_range(boost::vertices(graph_))) {
+    const auto &np = graph_[v];
+    event_handles_.emplace(np.spec.name, router_.bind_node(np.spec.name));
+  }
+}
+
 void Scheduler::build_nodes_rts() {
   const auto num_vertices = boost::num_vertices(graph_);
   node_rts_.resize(num_vertices);
@@ -153,13 +172,15 @@ void Scheduler::build_nodes_rts() {
 
     if (auto *st = dynamic_cast<core::ISyncTask *>(task)) {
       SyncRt srt;
-      srt.task          = st;
-      srt.in_views      = std::vector<core::TView>(np.infer.input_descs.size());
-      srt.out_views     = std::vector<core::TView>(np.infer.output_descs.size());
-      srt.ctx.inputs    = srt.in_views;
-      srt.ctx.outputs   = srt.out_views;
-      srt.ctx.cancelled = &stop_;
-      node_rts_.at(idx) = std::move(srt);
+      srt.task             = st;
+      srt.in_views         = std::vector<core::TView>(np.infer.input_descs.size());
+      srt.out_views        = std::vector<core::TView>(np.infer.output_descs.size());
+      srt.ctx.inputs       = srt.in_views;
+      srt.ctx.outputs      = srt.out_views;
+      srt.ctx.cancelled    = &stop_;
+      srt.ctx.event_writer = &event_handles_.at(np.spec.name).out;
+      srt.ctx.event_reader = &event_handles_.at(np.spec.name).in;
+      node_rts_.at(idx)    = std::move(srt);
     } else if (auto *at = dynamic_cast<core::IAsyncTask *>(task)) {
       AsyncRt art;
       art.task           = at;
@@ -174,6 +195,15 @@ void Scheduler::build_nodes_rts() {
       HOLOFLOW_BUG("Task for node {} is neither sync nor async", np.spec.name);
     }
   }
+}
+
+void Scheduler::run_router() {
+  logger()->info("[Scheduler::run_router] Starting event router");
+  while (!stop_.load()) {
+    router_.tick();
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  logger()->info("[Scheduler::run_router] Event router stopped");
 }
 
 void Scheduler::run_section(int section_id) {
@@ -584,10 +614,10 @@ void Scheduler::aggregate_metrics(double interval_seconds) {
   std::map<std::string, NodeMetrics> snapshot;
 
   for (std::size_t idx = 0; idx < metric_accumulators_.size(); ++idx) {
-    auto &acc = metric_accumulators_.at(idx);
-    const auto duration_ns = acc.duration_ns.exchange(0, std::memory_order_relaxed);
-    const auto runs        = acc.run_count.exchange(0, std::memory_order_relaxed);
-    const auto host_bytes  = acc.host_bytes.exchange(0, std::memory_order_relaxed);
+    auto      &acc          = metric_accumulators_.at(idx);
+    const auto duration_ns  = acc.duration_ns.exchange(0, std::memory_order_relaxed);
+    const auto runs         = acc.run_count.exchange(0, std::memory_order_relaxed);
+    const auto host_bytes   = acc.host_bytes.exchange(0, std::memory_order_relaxed);
     const auto device_bytes = acc.device_bytes.exchange(0, std::memory_order_relaxed);
 
     NodeMetrics metrics;

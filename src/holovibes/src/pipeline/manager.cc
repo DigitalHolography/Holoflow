@@ -91,6 +91,11 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   metrics_timer_->setInterval(1000);
   metrics_timer_->setTimerType(Qt::TimerType::CoarseTimer);
   connect(metrics_timer_, &QTimer::timeout, this, [this] { poll_metrics(); });
+
+  events_timer_ = new QTimer(this);
+  events_timer_->setInterval(5);
+  events_timer_->setTimerType(Qt::TimerType::CoarseTimer);
+  connect(events_timer_, &QTimer::timeout, this, [this] { poll_events(); });
 }
 
 void Manager::start_pipeline() {
@@ -127,6 +132,7 @@ void Manager::stop_pipeline() {
     scheduler_->request_stop();
     scheduler_->wait();
     stop_metrics_updates();
+    stop_event_polling();
     logger()->info("[Manager::stop_pipeline] Pipeline stopped successfully");
     emit stop_pipeline_success();
   } catch (const std::exception &e) {
@@ -198,9 +204,45 @@ void Manager::poll_metrics() {
   emit metrics_updated(input_fps);
 }
 
+void Manager::start_event_polling() {
+  if (!events_timer_) {
+    return;
+  }
+  if (!events_timer_->isActive()) {
+    events_timer_->start();
+  }
+}
+
+void Manager::stop_event_polling() {
+  if (!events_timer_) {
+    return;
+  }
+  if (events_timer_->isActive()) {
+    events_timer_->stop();
+  }
+}
+
+void Manager::poll_events() {
+  if (!scheduler_ || !scheduler_->is_running()) { // Not running
+    return;
+  }
+
+  while (true) {
+    auto event = scheduler_->ui_try_receive();
+    if (!event.has_value()) {
+      break;
+    }
+
+    // Handle event
+    logger()->info("[Manager::poll_events] Received event from node '{}': {}", event->node_id,
+                   event->data.dump());
+  }
+}
+
 void Manager::build_and_run() {
   using Scheduler = holoflow::runtime::Scheduler;
   stop_metrics_updates();
+  stop_event_polling();
   build_graph_spec();
 
   // TODO: Proper log path in app data folder
@@ -245,6 +287,7 @@ void Manager::build_and_run() {
   scheduler_->start();
   start_metrics_updates();
   poll_metrics();
+  start_event_polling();
 }
 
 void Manager::build_graph_spec() {
@@ -448,7 +491,8 @@ Manager::V Manager::add_raw_record(V parent, int out_idx, int in_idx) {
   return add_node_after<HolofileSettings>(
       parent, out_idx, in_idx, "raw_record", "HolofileWriter",
       HolofileSettings{
-          .path  = "C:\\Users\\guill\\Documents\\holofiles_data\\250527_GUJ_L_2_record.holo",
+          // .path  = "C:\\Users\\guill\\Documents\\holofiles_data\\250527_GUJ_L_2_record.holo",
+          .path  = "D:\\InputData\\250220_GUJ0206_L_record.holo",
           .count = 16384,
       });
 }
