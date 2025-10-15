@@ -39,6 +39,7 @@
 #include "tasks/syncs/conversion.hh"
 #include "tasks/syncs/convolution.hh"
 #include "tasks/syncs/fft_shift.hh"
+#include "tasks/syncs/filter2d.hh"
 #include "tasks/syncs/fresnel_diffraction.hh"
 #include "tasks/syncs/memcpy.hh"
 #include "tasks/syncs/pca.hh"
@@ -88,6 +89,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<syncs::PctClipFactory>(registry_, "PctClip");
   reg_sync<syncs::StftFactory>(registry_, "Stft");
   reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");
+  reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
 
   metrics_timer_ = new QTimer(this);
   metrics_timer_->setInterval(1000);
@@ -407,14 +409,14 @@ void Manager::build_graph_spec() {
   auto to_cf32      = add_to_cf32(gpu_in_queue, 0, 0);
   parent            = to_cf32;
 
-  if (s_.spacial_method != SpacialMethod::NONE) {
-    auto spacial_transform = add_spacial_transform(parent, 0, 0);
-    parent                 = spacial_transform;
-  }
-
   if (s_.filter_2d) {
     auto spacial_filter = add_spacial_filter(parent, 0, 0);
     parent              = spacial_filter;
+  }
+
+  if (s_.spacial_method != SpacialMethod::NONE) {
+    auto spacial_transform = add_spacial_transform(parent, 0, 0);
+    parent                 = spacial_transform;
   }
 
   if (s_.time_method != TimeMethod::NONE) {
@@ -628,7 +630,8 @@ Manager::V Manager::add_spacial_transform(V parent, int out_idx, int in_idx) {
 
   if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
     std::optional<AngularSpectrumSettings::Filter> filter = std::nullopt;
-    if (s_.filter_2d) {
+    // FIXME: Temporarily disable filter optimization
+    if (s_.filter_2d && false) {
       filter = AngularSpectrumSettings::Filter{
           .r_inner = s_.filter_r_inner,
           .r_outer = s_.filter_r_outer,
@@ -653,10 +656,14 @@ Manager::V Manager::add_spacial_transform(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_spacial_filter(V parent, int out_idx, int in_idx) {
-  HOLOVIBES_UNIMPLEMENTED();
-  (void)parent;
-  (void)out_idx;
-  (void)in_idx;
+  using syncs::Filter2DSettings;
+  return add_node_after<Filter2DSettings>(parent, out_idx, in_idx, "spacial_filter", "Filter2D",
+                                          Filter2DSettings{
+                                              .r_inner = s_.filter_r_inner,
+                                              .r_outer = s_.filter_r_outer,
+                                              .s_inner = s_.filter_smooth_inner,
+                                              .s_outer = s_.filter_smooth_outer,
+                                          });
 }
 
 Manager::V Manager::add_time_queue(V parent, int out_idx, int in_idx) {
