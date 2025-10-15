@@ -18,6 +18,7 @@
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <set>
 #include <string>
 
@@ -36,17 +37,30 @@ void from_json(const nlohmann::json &j, HolofileSettings &hs);
 
 class Holofile : public holoflow::core::ISyncTask {
 public:
-  Holofile(const HolofileSettings &settings, holofile::Writer writer);
+  struct RecordingGeometry {
+    uint8_t  bits_per_pixel;
+    uint32_t frame_width;
+    uint32_t frame_height;
+  };
+
+  Holofile(const HolofileSettings &settings, RecordingGeometry geometry);
 
   ~Holofile() override;
 
   [[nodiscard]] holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  HolofileSettings settings_;
-  holofile::Writer writer_;
-  int              frames_written_;
-  bool             finished_ = false;
+  void               handle_events(holoflow::core::SyncCtx &ctx);
+  void               start_recording(const std::string &path, int count);
+  void               finalize_recording(holoflow::core::SyncCtx &ctx);
+  holofile::Header   make_header(int count) const;
+  [[nodiscard]] bool is_recording() const noexcept;
+  void               reset_recording_state();
+
+  HolofileSettings                settings_;
+  RecordingGeometry               geometry_;
+  std::optional<holofile::Writer> writer_;
+  int                             frames_written_ = 0;
 };
 
 class HolofileFactory : public holoflow::core::ISyncTaskFactory {

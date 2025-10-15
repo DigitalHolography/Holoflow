@@ -16,7 +16,9 @@
 
 #include <QObject>
 #include <concepts>
+#include <filesystem>
 #include <nlohmann/json.hpp>
+#include <optional>
 
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
@@ -49,14 +51,21 @@ public:
   void stop_pipeline();
   void update_pipeline(const Settings &settings);
 
+  void start_raw_record();
+  void stop_raw_record();
+
 signals:
   void start_pipeline_success();
-  void metrics_updated(double input_fps);
   void start_pipeline_failure();
   void stop_pipeline_success();
   void stop_pipeline_failure();
   void update_pipeline_success();
   void update_pipeline_failure();
+  void metrics_updated(double input_fps);
+  void raw_record_started_success();
+  void raw_record_started_failure();
+  void raw_record_stopped_success();
+  void raw_record_stopped_failure();
 
 private:
   using V = holoflow::core::GraphSpec::vertex_descriptor;
@@ -140,7 +149,8 @@ private:
 
   // Internal state
   std::mutex mtx_;
-  bool       settings_dirty_ = false;
+  bool       settings_dirty_       = false;
+  bool       raw_recording_active_ = false;
 
   // Optimizations
   bool opti_cpu_stride_ = false;

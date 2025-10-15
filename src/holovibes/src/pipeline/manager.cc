@@ -16,9 +16,11 @@
 
 #include <QTimer>
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <string>
 #include <string_view>
@@ -133,6 +135,7 @@ void Manager::stop_pipeline() {
     scheduler_->wait();
     stop_metrics_updates();
     stop_event_polling();
+    raw_recording_active_ = false;
     logger()->info("[Manager::stop_pipeline] Pipeline stopped successfully");
     emit stop_pipeline_success();
   } catch (const std::exception &e) {
@@ -157,6 +160,7 @@ void Manager::update_pipeline(const Settings &settings) {
   try {
     scheduler_->request_stop();
     scheduler_->wait();
+    raw_recording_active_ = false;
     build_and_run();
     logger()->info("[Manager::update_pipeline] Pipeline updated successfully");
     emit update_pipeline_success();
@@ -164,6 +168,62 @@ void Manager::update_pipeline(const Settings &settings) {
     logger()->error("[Manager::update_pipeline] Failed to update pipeline: {}", e.what());
     emit update_pipeline_failure();
   }
+}
+
+void Manager::start_raw_record() {
+  auto payload = nlohmann::json{
+      {"type", "start_recording"},
+  };
+
+  std::lock_guard lock(mtx_);
+  if (!scheduler_ || !scheduler_->is_running()) {
+    logger()->error("[Manager::start_raw_record] Pipeline is not running");
+    emit raw_record_started_failure();
+    return;
+  }
+
+  if (raw_recording_active_) {
+    logger()->warn("[Manager::start_raw_record] Recording already in progress");
+    emit raw_record_started_failure();
+    return;
+  }
+
+  if (!scheduler_->ui_try_send("raw_record", std::move(payload))) {
+    logger()->error("[Manager::start_raw_record] Failed to enqueue start_recording event");
+    emit raw_record_started_failure();
+    return;
+  }
+
+  raw_recording_active_ = true;
+
+  logger()->info("[Manager::start_raw_record] Recording request enqueued");
+  emit raw_record_started_success();
+}
+
+void Manager::stop_raw_record() {
+  std::lock_guard lock(mtx_);
+  if (!scheduler_ || !scheduler_->is_running()) {
+    logger()->error("[Manager::stop_raw_record] Pipeline is not running");
+    emit raw_record_stopped_failure();
+    return;
+  }
+
+  if (!raw_recording_active_) {
+    logger()->warn("[Manager::stop_raw_record] No active recording to stop");
+    emit raw_record_stopped_failure();
+    return;
+  }
+
+  nlohmann::json payload{{"type", "stop_recording"}};
+  if (!scheduler_->ui_try_send("raw_record", std::move(payload))) {
+    logger()->error("[Manager::stop_raw_record] Failed to enqueue stop_recording event");
+    emit raw_record_stopped_failure();
+    return;
+  }
+
+  logger()->info("[Manager::stop_raw_record] Stop request enqueued");
+  raw_recording_active_ = false;
+  emit raw_record_stopped_success();
 }
 
 void Manager::start_metrics_updates() {
@@ -236,6 +296,32 @@ void Manager::poll_events() {
     // Handle event
     logger()->info("[Manager::poll_events] Received event from node '{}': {}", event->node_id,
                    event->data.dump());
+
+    std::string type;
+    if (auto it = event->data.find("type"); it != event->data.end() && it->is_string()) {
+      type = it->get<std::string>();
+    }
+
+    if (type == "recording_finished") {
+      std::string path_str;
+      if (auto pit = event->data.find("path"); pit != event->data.end() && pit->is_string()) {
+        path_str = pit->get<std::string>();
+      }
+
+      bool should_emit = false;
+      {
+        std::lock_guard lock(mtx_);
+        if (raw_recording_active_) {
+          raw_recording_active_ = false;
+          should_emit           = true;
+        }
+      }
+
+      if (should_emit) {
+        logger()->info("[Manager::poll_events] Recording finished successfully at {}", path_str);
+        emit raw_record_stopped_success();
+      }
+    }
   }
 }
 
@@ -284,6 +370,7 @@ void Manager::build_and_run() {
 
   scheduler_ = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval);
   scheduler_->set_metrics_interval(metrics_interval);
+  raw_recording_active_ = false;
   scheduler_->start();
   start_metrics_updates();
   poll_metrics();
@@ -308,11 +395,13 @@ void Manager::build_graph_spec() {
     parent           = cpu_gpu_cpy;
   }
 
-  // Record only if using CPU input queue)
-  // if (cpu_in_queue) {
-  //   auto raw_record = add_raw_record(*cpu_in_queue, 0, 0);
-  //   (void)raw_record;
-  // }
+  if (cpu_in_queue.has_value()) {
+    auto raw_record = add_raw_record(*cpu_in_queue, 0, 0);
+    (void)raw_record;
+  } else {
+    logger()->warn(
+        "[Manager::build_graph_spec] Unable to add raw recording node: missing CPU queue");
+  }
 
   auto gpu_in_queue = add_gpu_in_queue(parent, 0, 0);
   auto to_cf32      = add_to_cf32(gpu_in_queue, 0, 0);
@@ -488,13 +577,11 @@ Manager::V Manager::add_xy_raw_display(V parent, int out_idx, int in_idx) {
 
 Manager::V Manager::add_raw_record(V parent, int out_idx, int in_idx) {
   using sinks::HolofileSettings;
-  return add_node_after<HolofileSettings>(
-      parent, out_idx, in_idx, "raw_record", "HolofileWriter",
-      HolofileSettings{
-          // .path  = "C:\\Users\\guill\\Documents\\holofiles_data\\250527_GUJ_L_2_record.holo",
-          .path  = "D:\\InputData\\250220_GUJ0206_L_record.holo",
-          .count = 16384,
-      });
+  return add_node_after<HolofileSettings>(parent, out_idx, in_idx, "raw_record", "HolofileWriter",
+                                          HolofileSettings{
+                                              .path  = s_.recording_path.string(),
+                                              .count = s_.recording_count,
+                                          });
 }
 
 Manager::V Manager::add_cpu_gpu_cpy(V parent, int out_idx, int in_idx) {

@@ -14,8 +14,12 @@
 
 #include "holofile.hh"
 
+#include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
+#include <utility>
 
 #include "bug.hh"
 #include "holoflow/core/tasks.hh"
@@ -35,42 +39,35 @@ void from_json(const nlohmann::json &j, HolofileSettings &hs) {
   j.at("count").get_to(hs.count);
 }
 
-Holofile::Holofile(const HolofileSettings &settings, holofile::Writer writer)
-    : settings_(settings), writer_(std::move(writer)), frames_written_(0) {}
+Holofile::Holofile(const HolofileSettings &settings, RecordingGeometry geometry)
+    : settings_(settings), geometry_(geometry) {}
 
 Holofile::~Holofile() {
-  if (frames_written_ == settings_.count) {
+  if (!is_recording()) {
     return;
   }
 
-  logger()->warn("[Holofile] Destructor called before all frames were written "
-                 "({}/{}), deleting incomplete file at {}",
+  if (frames_written_ >= settings_.count) {
+    return;
+  }
+
+  logger()->warn("[Holofile] Recording stopped before completion ({}/{}), deleting {}",
                  frames_written_, settings_.count, settings_.path);
 
-  // Delete incomplete file
-  HOLOVIBES_CHECK(std::remove(settings_.path.c_str()) == 0,
-                  "Failed to delete incomplete HoloFile at {}", settings_.path);
+  writer_.reset();
+  bool removed = std::remove(settings_.path.c_str()) == 0;
+  HOLOVIBES_CHECK(removed, "Failed to delete incomplete recording at {}", settings_.path);
 }
 
 [[nodiscard]] holoflow::core::OpResult Holofile::execute(holoflow::core::SyncCtx &ctx) {
-  if (finished_) {
+  handle_events(ctx);
+
+  if (is_recording() && frames_written_ >= settings_.count) {
+    finalize_recording(ctx);
     return holoflow::core::OpResult::Ok;
   }
 
-  if (frames_written_ >= settings_.count) {
-    logger()->info("[Holofile] Finished writing {} frames to {}", frames_written_, settings_.path);
-    finished_       = true;
-    auto event_data = nlohmann::json{
-        {"type", "recording_finished"},
-        {"path", settings_.path},
-        {"frames_written", frames_written_},
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(
-                        holoflow_event::Event{.direction = holoflow_event::EventDirection::ToUi,
-                                              .node_id   = "", // TODO: node id
-                                              .data      = std::move(event_data),
-                                              .ts        = std::chrono::steady_clock::now()}),
-                    "Failed to send recording_finished event");
+  if (!is_recording()) {
     return holoflow::core::OpResult::Ok;
   }
 
@@ -78,9 +75,104 @@ Holofile::~Holofile() {
   auto  batch_size = static_cast<int>(ctx.inputs[0].desc.shape[0]);
   auto  to_write   = std::min(remaining, batch_size);
   auto *idata      = reinterpret_cast<const uint8_t *>(ctx.inputs[0].data);
-  writer_.write_frames(idata, to_write);
+  writer_->write_frames(idata, to_write);
   frames_written_ += to_write;
+
+  if (frames_written_ >= settings_.count) {
+    finalize_recording(ctx);
+  }
+
   return holoflow::core::OpResult::Ok;
+}
+
+void Holofile::handle_events(holoflow::core::SyncCtx &ctx) {
+  if (ctx.event_reader == nullptr) {
+    return;
+  }
+
+  while (true) {
+    auto event = ctx.event_reader->try_pop();
+    if (!event.has_value()) {
+      break;
+    }
+
+    constexpr auto EXPECTED_DIRECTION = holoflow_event::EventDirection::ToNode;
+    HOLOVIBES_CHECK(event->direction == EXPECTED_DIRECTION, "Unexpected event direction");
+    auto type = event->data["type"].get<std::string>();
+
+    if (type == "start_recording") {
+      HOLOVIBES_CHECK(!is_recording(), "Received start_recording event while already recording");
+      start_recording(settings_.path, settings_.count);
+    }
+
+    else if (type == "stop_recording") {
+      HOLOVIBES_CHECK(is_recording(), "Received stop_recording event while not recording");
+      writer_.reset();
+      bool removed = std::remove(settings_.path.c_str()) == 0;
+      HOLOVIBES_CHECK(removed, "Failed to delete incomplete recording at {}", settings_.path);
+      frames_written_ = 0;
+    }
+
+    else {
+      HOLOVIBES_BUG("Unknown event type: {}", type);
+    }
+  }
+}
+
+void Holofile::start_recording(const std::string &path, int count) {
+  HOLOVIBES_CHECK(!path.empty(), "Cannot start recording: empty path");
+  HOLOVIBES_CHECK(count > 0, "Cannot start recording: count must be positive (got {})", count);
+  HOLOVIBES_CHECK(!is_recording(), "Cannot start recording: already recording");
+
+  frames_written_ = 0;
+  writer_.emplace(path, make_header(count));
+}
+
+void Holofile::finalize_recording(holoflow::core::SyncCtx &ctx) {
+  HOLOVIBES_CHECK(is_recording(), "Cannot finalize recording: not recording");
+  HOLOVIBES_CHECK(frames_written_ == settings_.count,
+                  "Cannot finalize recording: incomplete ({} / {})", frames_written_,
+                  settings_.count);
+
+  auto event_data = nlohmann::json{
+      {"type", "recording_finished"},
+      {"path", settings_.path},
+      {"frames_written", frames_written_},
+  };
+
+  auto event = holoflow_event::Event{
+      .direction = holoflow_event::EventDirection::ToUi,
+      .node_id   = "",
+      .data      = std::move(event_data),
+      .ts        = std::chrono::steady_clock::now(),
+  };
+
+  bool pushed = ctx.event_writer->try_push(std::move(event));
+  HOLOVIBES_CHECK(pushed, "Failed to emit recording_finished event");
+  reset_recording_state();
+}
+
+holofile::Header Holofile::make_header(int count) const {
+  const auto frame_count = static_cast<uint32_t>(count);
+  const auto data_size   = static_cast<uint64_t>(frame_count) * geometry_.frame_height *
+                         geometry_.frame_width * geometry_.bits_per_pixel / 8;
+  return holofile::Header{
+      .magic_number       = holofile::Header::MAGIC_NUMBER_LE,
+      .version            = holofile::Header::CURRENT_VERSION,
+      .bits_per_pixel     = geometry_.bits_per_pixel,
+      .frame_width        = geometry_.frame_width,
+      .frame_height       = geometry_.frame_height,
+      .frame_count        = frame_count,
+      .data_size_in_bytes = data_size,
+      .endianness         = holofile::Header::LITTLE_ENDIAN,
+  };
+}
+
+[[nodiscard]] bool Holofile::is_recording() const noexcept { return writer_.has_value(); }
+
+void Holofile::reset_recording_state() {
+  writer_.reset();
+  frames_written_ = 0;
 }
 
 holoflow::core::InferResult
@@ -133,27 +225,18 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto &idesc    = input_descs[0];
 
   // Setup writer
-  auto dtype        = idesc.dtype;
-  auto bpp          = dtype_to_bpp.at(dtype);
-  auto frame_width  = static_cast<uint32_t>(idesc.shape[2]);
-  auto frame_height = static_cast<uint32_t>(idesc.shape[1]);
-  auto frame_count  = static_cast<uint32_t>(settings.count);
-  auto data_size    = frame_count * frame_height * frame_width * bpp / 8;
-  auto header       = holofile::Header{
-            .magic_number       = holofile::Header::MAGIC_NUMBER_LE,
-            .version            = holofile::Header::CURRENT_VERSION,
-            .bits_per_pixel     = bpp,
-            .frame_width        = frame_width,
-            .frame_height       = frame_height,
-            .frame_count        = frame_count,
-            .data_size_in_bytes = data_size,
-            .endianness         = holofile::Header::LITTLE_ENDIAN,
+  auto                        dtype        = idesc.dtype;
+  auto                        bpp          = dtype_to_bpp.at(dtype);
+  auto                        frame_width  = static_cast<uint32_t>(idesc.shape[2]);
+  auto                        frame_height = static_cast<uint32_t>(idesc.shape[1]);
+  Holofile::RecordingGeometry geometry{
+      .bits_per_pixel = bpp,
+      .frame_width    = frame_width,
+      .frame_height   = frame_height,
   };
 
-  auto writer = holofile::Writer(settings.path, header);
-
   // Success
-  auto *task = new Holofile(settings, std::move(writer));
+  auto *task = new Holofile(settings, geometry);
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 

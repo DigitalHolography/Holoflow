@@ -43,6 +43,12 @@ enum class TimeMethod {
   SHORT_TIME_FOURIER,
 };
 
+enum class RecordingMethod {
+  NONE,
+  RAW,
+  PROCESSED,
+};
+
 struct Settings {
   // Advanced
   int cpu_in_size;
@@ -100,6 +106,11 @@ struct Settings {
   float       pp_pctclip_radius;
   bool        pp_registration;
   float       pp_registration_radius;
+
+  // Recording
+  RecordingMethod       recording_method;
+  std::filesystem::path recording_path;
+  int                   recording_count;
 };
 
 } // namespace holovibes::pipeline

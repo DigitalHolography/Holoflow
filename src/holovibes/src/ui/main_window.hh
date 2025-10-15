@@ -27,6 +27,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QWidget>
+#include <optional>
 
 #include "pipeline/manager.hh"
 #include "pipeline/settings.hh"
@@ -46,6 +47,12 @@ private slots:
   void on_import_start_clicked();
   void on_import_stop_clicked();
   void on_metrics_updated(double input_fps);
+  void on_export_record_clicked();
+  void on_export_stop_clicked();
+  void on_raw_record_started_success();
+  void on_raw_record_started_failure();
+  void on_raw_record_stopped_success();
+  void on_raw_record_stopped_failure();
 
 private:
   void on_start_pipeline_success();

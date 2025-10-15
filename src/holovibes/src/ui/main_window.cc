@@ -39,6 +39,8 @@
 #include <QStringList>
 #include <QThread>
 #include <QVBoxLayout>
+#include <filesystem>
+#include <optional>
 
 #include "bug.hh"
 #include "holofile/holofile.hh"
@@ -165,11 +167,26 @@ void MainWindow::connect_manager_signals() {
 
   connect(pipeline_manager_, &pipeline::Manager::metrics_updated, this,
           &MainWindow::on_metrics_updated, Qt::QueuedConnection);
+
+  connect(pipeline_manager_, &pipeline::Manager::raw_record_started_success, this,
+          &MainWindow::on_raw_record_started_success, Qt::QueuedConnection);
+
+  connect(pipeline_manager_, &pipeline::Manager::raw_record_started_failure, this,
+          &MainWindow::on_raw_record_started_failure, Qt::QueuedConnection);
+
+  connect(pipeline_manager_, &pipeline::Manager::raw_record_stopped_success, this,
+          &MainWindow::on_raw_record_stopped_success, Qt::QueuedConnection);
+
+  connect(pipeline_manager_, &pipeline::Manager::raw_record_stopped_failure, this,
+          &MainWindow::on_raw_record_stopped_failure, Qt::QueuedConnection);
 }
 
 void MainWindow::connect_import_controls() {
   connect(import_start_button_, &QPushButton::clicked, this, &MainWindow::on_import_start_clicked);
   connect(import_stop_button_, &QPushButton::clicked, this, &MainWindow::on_import_stop_clicked);
+  connect(export_record_button_, &QPushButton::clicked, this,
+          &MainWindow::on_export_record_clicked);
+  connect(export_stop_button_, &QPushButton::clicked, this, &MainWindow::on_export_stop_clicked);
 }
 
 void MainWindow::configure_window() {
@@ -182,6 +199,8 @@ void MainWindow::on_start_pipeline_success() {
   logger()->info("[MainWindow::on_start_pipeline_success]");
   pipeline_running_ = true;
   import_stop_button_->setEnabled(true);
+  export_record_button_->setEnabled(!export_in_progress_);
+  export_stop_button_->setEnabled(export_in_progress_);
 
   auto dims = guess_source_dims();
   xy_raw_widget_->set_fixed_aspect(dims);
@@ -197,9 +216,12 @@ void MainWindow::on_start_pipeline_success() {
 
 void MainWindow::on_start_pipeline_failure() {
   logger()->error("[MainWindow::on_start_pipeline_failure]");
-  pipeline_running_ = false;
+  pipeline_running_   = false;
+  export_in_progress_ = false;
   import_start_button_->setEnabled(true);
   import_stop_button_->setEnabled(false);
+  export_record_button_->setEnabled(false);
+  export_stop_button_->setEnabled(false);
 }
 
 void MainWindow::on_stop_pipeline_success() {
@@ -207,6 +229,9 @@ void MainWindow::on_stop_pipeline_success() {
   pipeline_running_ = false;
   import_start_button_->setEnabled(true);
   import_stop_button_->setEnabled(false);
+  export_in_progress_ = false;
+  export_record_button_->setEnabled(false);
+  export_stop_button_->setEnabled(false);
   on_metrics_updated(0.0);
 
   xy_raw_widget_->hide();
@@ -220,6 +245,9 @@ void MainWindow::on_stop_pipeline_failure() {
   pipeline_running_ = false;
   import_start_button_->setEnabled(true);
   import_stop_button_->setEnabled(false);
+  export_in_progress_ = false;
+  export_record_button_->setEnabled(false);
+  export_stop_button_->setEnabled(false);
   on_metrics_updated(0.0);
 
   xy_raw_widget_->hide();
@@ -255,6 +283,8 @@ void MainWindow::on_update_pipeline_success() {
   logger()->info("[MainWindow::on_update_pipeline_success]");
   update_in_progress_ = false;
   import_stop_button_->setEnabled(true);
+  export_record_button_->setEnabled(!export_in_progress_);
+  export_stop_button_->setEnabled(export_in_progress_);
 
   auto dims = guess_source_dims();
   xy_raw_widget_->set_fixed_aspect(dims);
@@ -270,6 +300,9 @@ void MainWindow::on_update_pipeline_failure() {
   update_in_progress_ = false;
   import_start_button_->setEnabled(true);
   import_stop_button_->setEnabled(false);
+  export_in_progress_ = false;
+  export_record_button_->setEnabled(false);
+  export_stop_button_->setEnabled(false);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
@@ -308,6 +341,72 @@ void MainWindow::on_import_stop_clicked() {
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, stop, Qt::QueuedConnection));
 }
 
+void MainWindow::on_export_record_clicked() {
+  if (export_in_progress_) {
+    logger()->warn("[MainWindow::on_export_record_clicked] Recording already in progress");
+    return;
+  }
+  if (!pipeline_running_) {
+    logger()->warn("[MainWindow::on_export_record_clicked] Pipeline is not running");
+    return;
+  }
+
+  if (!validate_inputs()) {
+    logger()->warn("[MainWindow::on_export_record_clicked] Validation failed");
+    export_record_button_->setEnabled(pipeline_running_);
+    return;
+  }
+
+  export_record_button_->setEnabled(false);
+  export_stop_button_->setEnabled(false);
+
+  std::filesystem::path record_path{export_file_line_edit_->text().toStdString()};
+  std::optional<size_t> frame_count;
+  if (export_frames_check_->isChecked()) {
+    frame_count = static_cast<size_t>(export_frames_spin_->value());
+  }
+
+  auto start = [mgr = pipeline_manager_]() { mgr->start_raw_record(); };
+  HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
+}
+
+void MainWindow::on_export_stop_clicked() {
+  if (!export_in_progress_) {
+    logger()->warn("[MainWindow::on_export_stop_clicked] No active recording to stop");
+    return;
+  }
+
+  export_stop_button_->setEnabled(false);
+  auto stop = [mgr = pipeline_manager_]() { mgr->stop_raw_record(); };
+  HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, stop, Qt::QueuedConnection));
+}
+
+void MainWindow::on_raw_record_started_success() {
+  logger()->info("[MainWindow::on_raw_record_started_success]");
+  export_in_progress_ = true;
+  export_stop_button_->setEnabled(true);
+  export_record_button_->setEnabled(false);
+}
+
+void MainWindow::on_raw_record_started_failure() {
+  logger()->error("[MainWindow::on_raw_record_started_failure]");
+  export_in_progress_ = false;
+  export_record_button_->setEnabled(pipeline_running_);
+  export_stop_button_->setEnabled(false);
+}
+
+void MainWindow::on_raw_record_stopped_success() {
+  logger()->info("[MainWindow::on_raw_record_stopped_success]");
+  export_in_progress_ = false;
+  export_stop_button_->setEnabled(false);
+  export_record_button_->setEnabled(pipeline_running_);
+}
+
+void MainWindow::on_raw_record_stopped_failure() {
+  logger()->error("[MainWindow::on_raw_record_stopped_failure]");
+  export_stop_button_->setEnabled(pipeline_running_);
+}
+
 bool MainWindow::validate_inputs() {
   const QString style_fail = QStringLiteral("background-color: rgba(255, 0, 0, 50);");
 
@@ -317,7 +416,8 @@ bool MainWindow::validate_inputs() {
       render_time_window_spin_, view_z_spin_,
       view_z_width_spin_,       import_start_index_spin_,
       import_end_index_spin_,   import_file_line_edit_,
-      export_frames_spin_,      import_cam_config_line_edit_};
+      export_frames_spin_,      import_cam_config_line_edit_,
+      export_file_line_edit_};
 
   for (auto *w : all_widgets) {
     w->setStyleSheet("");
@@ -368,6 +468,9 @@ bool MainWindow::validate_inputs() {
     bool hasCamConfig = !import_cam_config_line_edit_->text().isEmpty();
     mark_failure(hasCamConfig, {import_cam_config_line_edit_});
   }
+
+  bool has_export_path = !export_file_line_edit_->text().isEmpty();
+  mark_failure(has_export_path, {export_file_line_edit_});
 
   // if exporting frames, ensure divisible by batch_size
   if (export_frames_check_->isChecked()) {
@@ -649,6 +752,13 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_registration_radius = view_registration_radius_->value();
   }
 
+  // Recording Settings
+  {
+    s.recording_method = pipeline::RecordingMethod::RAW;
+    s.recording_path   = export_file_line_edit_->text().toStdString();
+    s.recording_count  = export_frames_spin_->value();
+  }
+
   return s;
 }
 
@@ -861,6 +971,7 @@ QGroupBox *MainWindow::create_export_group() {
   export_stop_button_   = new QPushButton("Stop", group);
   export_stop_button_->setEnabled(false);
   export_stop_fan_button_ = new QPushButton("Stop fan", group);
+  export_record_button_->setEnabled(false);
   button_layout->addWidget(export_record_button_);
   button_layout->addWidget(export_stop_button_);
   button_layout->addWidget(export_stop_fan_button_);
