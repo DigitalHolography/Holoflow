@@ -412,9 +412,8 @@ ConvolutionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   auto *old_conv = dynamic_cast<Convolution *>(old_task.get());
   HOLOVIBES_CHECK(old_conv != nullptr, "old_task is not an Convolution");
 
-  auto        result     = infer(input_descs, jsettings);
-  auto        settings   = jsettings.get<ConvolutionSettings>();
-  const auto &input_desc = input_descs[0];
+  infer(input_descs, jsettings);
+  auto settings = jsettings.get<ConvolutionSettings>();
 
   auto current_write_time = std::filesystem::last_write_time(settings.kernel_file);
   bool kernel_changed     = (current_write_time != old_conv->kernel_last_write_time_);
