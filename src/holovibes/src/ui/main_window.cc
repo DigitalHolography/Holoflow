@@ -982,7 +982,7 @@ QGroupBox *MainWindow::create_export_group() {
                   2);
 
   connect(export_browse_button_, &QPushButton::clicked, this, [=]() {
-    QString file = QFileDialog::getOpenFileName(this, tr("Select File"));
+    QString file = QFileDialog::getSaveFileName(this, tr("Select File"));
     if (!file.isEmpty()) {
       export_file_line_edit_->setText(file);
     }
