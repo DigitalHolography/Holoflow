@@ -40,6 +40,7 @@
 #include <QThread>
 #include <QVBoxLayout>
 #include <filesystem>
+#include <fstream>
 #include <optional>
 
 #include "bug.hh"
@@ -640,6 +641,19 @@ QSize MainWindow::guess_source_dims() {
     auto header     = holofile::Reader(import_file_line_edit_->text().toStdString()).header();
     int  src_width  = header.frame_width;
     int  src_height = header.frame_height;
+    return QSize(src_width, src_height);
+  }
+
+  else if (import_cam_check_->isChecked()) {
+    auto path     = import_cam_config_line_edit_->text().toStdString();
+    auto cfg_file = std::ifstream(path);
+    if (!cfg_file.is_open()) {
+      throw std::runtime_error(std::format("Could not open camera config file: {}", path));
+    }
+
+    auto cfg        = nlohmann::json::parse(cfg_file).at("s710");
+    int  src_width  = cfg.at("Width").get<int>();
+    int  src_height = cfg.at("Height").get<int>();
     return QSize(src_width, src_height);
   }
 
