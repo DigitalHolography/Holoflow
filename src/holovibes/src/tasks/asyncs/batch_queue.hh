@@ -60,11 +60,11 @@ public:
 private:
   BatchQueue(const BatchQueueSettings &settings, const holoflow::core::TDesc &idesc,
              const holoflow::core::TDesc &odesc, HostPtr<std::byte> &&h_buf,
-             DevPtr<std::byte> &&d_buf, std::byte *buf, int nb_slots, int input_size,
-             int element_size);
+             DevPtr<std::byte> &&d_buf, std::byte *buf, size_t nb_slots, size_t input_size,
+             size_t element_size);
 
-  int writer_size() const;
-  int reader_size() const;
+  size_t writer_size() const;
+  size_t reader_size() const;
 
   friend class BatchQueueFactory;
 
@@ -74,11 +74,11 @@ private:
   HostPtr<std::byte>    h_buf_;
   DevPtr<std::byte>     d_buf_;
   std::byte            *buf_;
-  int                   nb_slots_;
-  int                   input_size_;
-  int                   element_size_;
-  alignas(CACHE_LINE_SIZE) std::atomic<int> write_idx_;
-  alignas(CACHE_LINE_SIZE) std::atomic<int> read_idx_;
+  size_t                nb_slots_;
+  size_t                input_size_;
+  size_t                element_size_;
+  alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;
+  alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_idx_;
 };
 
 class BatchQueueFactory : public holoflow::core::IAsyncTaskFactory {

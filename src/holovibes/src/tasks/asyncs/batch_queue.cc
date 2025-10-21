@@ -41,8 +41,8 @@ void from_json(const nlohmann::json &j, BatchQueueSettings &bqs) {
 
 BatchQueue::BatchQueue(const BatchQueueSettings &settings, const holoflow::core::TDesc &idesc,
                        const holoflow::core::TDesc &odesc, HostPtr<std::byte> &&h_buf,
-                       DevPtr<std::byte> &&d_buf, std::byte *buf, int nb_slots, int input_size,
-                       int element_size)
+                       DevPtr<std::byte> &&d_buf, std::byte *buf, size_t nb_slots, size_t input_size,
+                       size_t element_size)
     : settings_(settings), idesc_(idesc), odesc_(odesc), h_buf_(std::move(h_buf)),
       d_buf_(std::move(d_buf)), buf_(buf), nb_slots_(nb_slots), input_size_(input_size),
       element_size_(element_size) {}
@@ -56,7 +56,7 @@ std::optional<holoflow::core::TView> BatchQueue::acquire_input(int index) {
     return std::nullopt;
   }
 
-  int        write_idx = write_idx_.load(std::memory_order_relaxed);
+  size_t        write_idx = write_idx_.load(std::memory_order_relaxed);
   std::byte *data      = buf_ + write_idx * element_size_;
   return holoflow::core::TView{
       .data = data,
@@ -69,8 +69,8 @@ void BatchQueue::release_output(int index) {
     throw std::out_of_range("BatchQueue::release_output: invalid index");
   }
 
-  int read_idx      = read_idx_.load(std::memory_order_relaxed);
-  int next_read_idx = read_idx + settings_.output_stride;
+  size_t read_idx      = read_idx_.load(std::memory_order_relaxed);
+  size_t next_read_idx = read_idx + settings_.output_stride;
   if (next_read_idx == nb_slots_) {
     next_read_idx = 0;
   }
@@ -78,8 +78,8 @@ void BatchQueue::release_output(int index) {
 }
 
 holoflow::core::OpResult BatchQueue::try_push(holoflow::core::AsyncPushCtx &) {
-  int write_idx      = write_idx_.load(std::memory_order_relaxed);
-  int next_write_idx = write_idx + input_size_;
+  size_t write_idx      = write_idx_.load(std::memory_order_relaxed);
+  size_t next_write_idx = write_idx + input_size_;
   if (next_write_idx >= nb_slots_) {
     next_write_idx = 0;
   }
@@ -92,7 +92,7 @@ holoflow::core::OpResult BatchQueue::try_pop(holoflow::core::AsyncPopCtx &ctx) {
     return holoflow::core::OpResult::NotReady;
   }
 
-  int        read_idx = read_idx_.load(std::memory_order_relaxed);
+  size_t        read_idx = read_idx_.load(std::memory_order_relaxed);
   std::byte *data     = buf_ + read_idx * element_size_;
   ctx.outputs[0]      = holoflow::core::TView{
            .data = data,
@@ -101,20 +101,20 @@ holoflow::core::OpResult BatchQueue::try_pop(holoflow::core::AsyncPopCtx &ctx) {
   return holoflow::core::OpResult::Ok;
 }
 
-int BatchQueue::writer_size() const {
-  int write_idx = write_idx_.load(std::memory_order_relaxed);
-  int read_idx  = read_idx_.load(std::memory_order_acquire);
-  int diff      = write_idx - read_idx;
+size_t BatchQueue::writer_size() const {
+  size_t write_idx = write_idx_.load(std::memory_order_relaxed);
+  size_t read_idx  = read_idx_.load(std::memory_order_acquire);
+  size_t diff      = write_idx - read_idx;
   if (write_idx < read_idx) {
     diff += nb_slots_;
   }
   return diff;
 }
 
-int BatchQueue::reader_size() const {
-  int write_idx = write_idx_.load(std::memory_order_acquire);
-  int read_idx  = read_idx_.load(std::memory_order_relaxed);
-  int diff      = write_idx - read_idx;
+size_t BatchQueue::reader_size() const {
+  size_t write_idx = write_idx_.load(std::memory_order_acquire);
+  size_t read_idx  = read_idx_.load(std::memory_order_relaxed);
+  size_t diff      = write_idx - read_idx;
   if (write_idx < read_idx) {
     diff += nb_slots_;
   }
@@ -184,9 +184,15 @@ BatchQueueFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   int nb_slots = lcm_above(x, y, k);
 
   // Setup buffers
-  int                input_size   = static_cast<int>(input_descs[0].shape[0]);
-  int                element_size = static_cast<int>(input_descs[0].num_bytes() / input_size);
-  int                bytes        = nb_slots * element_size;
+  size_t             input_size   = static_cast<int>(input_descs[0].shape[0]);
+  size_t             element_size = static_cast<int>(input_descs[0].num_bytes() / input_size);
+  size_t             bytes        = nb_slots * element_size;
+
+  logger()->debug(
+      "[BatchQueueFactory::create] Creating BatchQueue with {} slots, input_size={}, element_size={}, "
+      "total_bytes={}",
+      nb_slots, input_size, element_size, bytes);
+
   HostPtr<std::byte> h_buf        = nullptr;
   DevPtr<std::byte>  d_buf        = nullptr;
   std::byte         *buf          = nullptr;

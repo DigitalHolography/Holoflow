@@ -33,6 +33,7 @@
 #include "tasks/asyncs/slide_avg.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/holofile.hh"
+#include "tasks/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "tasks/sources/holofile.hh"
 #include "tasks/syncs/angular_spectrum.hh"
 #include "tasks/syncs/average.hh"
@@ -80,6 +81,8 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
+  reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_,
+                                                          "AmetekS710EuresysCoaxlinkOcto");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
   reg_sync<syncs::AverageFactory>(registry_, "Average");
   reg_sync<syncs::ConversionFactory>(registry_, "Conversion");
@@ -516,6 +519,19 @@ void Manager::guess_source_dims() {
     return;
   }
 
+  else if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
+    auto cfg_file = std::ifstream(s_.camera_config_path);
+    if (!cfg_file.is_open()) {
+      throw std::runtime_error(
+          std::format("Could not open camera config file: {}", s_.camera_config_path.string()));
+    }
+
+    auto cfg    = nlohmann::json::parse(cfg_file).at("s710");
+    src_width_  = cfg.at("Width").get<int>();
+    src_height_ = cfg.at("Height").get<int>();
+    return;
+  }
+
   HOLOVIBES_UNIMPLEMENTED();
 }
 
@@ -540,9 +556,9 @@ Manager::V Manager::add_node_after(const V &after, int out_idx, int in_idx, cons
 }
 
 Manager::V Manager::add_source() {
-  using sources::HolofileSettings;
-  using LoadKind = HolofileSettings::LoadKind;
   if (s_.import_source == ImportSource::HOLOFILE) {
+    using sources::HolofileSettings;
+    using LoadKind = HolofileSettings::LoadKind;
     std::map<LoadMethod, LoadKind> load_method_map{
         {LoadMethod::READ_LIVE, LoadKind::Live},
         {LoadMethod::LOAD_IN_CPU, LoadKind::CPUCached},
@@ -557,6 +573,15 @@ Manager::V Manager::add_source() {
                                           .end_frame   = s_.load_end,
                                           .batch_size  = s_.load_batch,
                                       });
+  }
+
+  else if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
+    using sources::AmetekS710EuresysCoaxlinkOctoSettings;
+    return add_node<AmetekS710EuresysCoaxlinkOctoSettings>(
+        "source", "AmetekS710EuresysCoaxlinkOcto",
+        AmetekS710EuresysCoaxlinkOctoSettings{
+            .cfg_path = s_.camera_config_path.string(),
+        });
   }
 
   HOLOVIBES_UNIMPLEMENTED();
