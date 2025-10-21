@@ -44,6 +44,7 @@
 #include "tasks/syncs/memcpy.hh"
 #include "tasks/syncs/pca.hh"
 #include "tasks/syncs/pct_clip.hh"
+#include "tasks/syncs/registration.hh"
 #include "tasks/syncs/reshape.hh"
 #include "tasks/syncs/stft.hh"
 
@@ -90,6 +91,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<syncs::StftFactory>(registry_, "Stft");
   reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
+  reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
 
   metrics_timer_ = new QTimer(this);
   metrics_timer_->setInterval(1000);
@@ -458,8 +460,8 @@ void Manager::build_graph_spec() {
       parent           = convolution;
     }
 
-    // auto pctclip       = add_xy_pctclip(parent, 0, 0);
-    auto to_u8         = add_xy_to_u8(parent, 0, 0);
+    auto pctclip       = add_xy_pctclip(parent, 0, 0);
+    auto to_u8         = add_xy_to_u8(pctclip, 0, 0);
     auto gpu_out_queue = add_xy_gpu_out_queue(to_u8, 0, 0);
     auto gpu_cpu       = add_xy_gpu_cpu_cpy(gpu_out_queue, 0, 0);
     auto cpu_out_queue = add_xy_cpu_out_queue(gpu_cpu, 0, 0);
@@ -768,10 +770,13 @@ Manager::V Manager::add_xy_identity_0(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xy_registration(V parent, int out_idx, int in_idx) {
-  HOLOVIBES_UNIMPLEMENTED();
-  (void)parent;
-  (void)out_idx;
-  (void)in_idx;
+  using syncs::RegistrationSettings;
+
+  return add_node_after<RegistrationSettings>(parent, out_idx, in_idx, "xy_registration",
+                                              "Registration",
+                                              RegistrationSettings{
+                                                  .radius = s_.pp_registration_radius,
+                                              });
 }
 
 Manager::V Manager::add_xy_slide_avg(V parent, int out_idx, int in_idx) {
@@ -811,9 +816,8 @@ Manager::V Manager::add_xy_pctclip(V parent, int out_idx, int in_idx) {
   using syncs::PctClipSettings;
   // TODO: THis formula is likely wrong
   auto r  = std::clamp(s_.pp_pctclip_radius, 0.0f, 1.0f);
-  auto s  = static_cast<float>(std::min(src_width_, src_height_));
-  auto rx = r * (s / static_cast<float>(src_width_));
-  auto ry = r * (s / static_cast<float>(src_height_));
+  auto rx = r * 0.5f;
+  auto ry = r * 0.5f;
 
   PctClipSettings::Ellipse roi{
       .cx    = 0.5f,
