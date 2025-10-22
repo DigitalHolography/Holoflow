@@ -122,6 +122,7 @@ private:
   V add_xz_cut_avg(V parent, int out_idx, int in_idx);
   V add_xz_reshape(V parent, int out_idx, int in_idx);
   V add_xz_slide_avg(V parent, int out_idx, int in_idx);
+  V add_xz_crop2frames(V parent, int out_idx, int in_idx);
   V add_xz_to_u8(V parent, int out_idx, int in_idx);
   V add_xz_gpu_out_queue(V parent, int out_idx, int in_idx);
   V add_xz_gpu_cpu_cpy(V parent, int out_idx, int in_idx);
@@ -130,6 +131,7 @@ private:
   V add_yz_cut_avg(V parent, int out_idx, int in_idx);
   V add_yz_reshape(V parent, int out_idx, int in_idx);
   V add_yz_slide_avg(V parent, int out_idx, int in_idx);
+  V add_yz_crop2frames(V parent, int out_idx, int in_idx);
   V add_yz_to_u8(V parent, int out_idx, int in_idx);
   V add_yz_gpu_out_queue(V parent, int out_idx, int in_idx);
   V add_yz_gpu_cpu_cpy(V parent, int out_idx, int in_idx);
