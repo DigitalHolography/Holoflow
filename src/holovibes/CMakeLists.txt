@@ -13,6 +13,8 @@
 # limitations under the License.
 
 set(TARGET holovibes)
+set(HOLOVIBES_VERSION "0.0.0-dev-0")
+add_definitions(-DHOLOVIBES_VERSION_SEMVER2="${HOLOVIBES_VERSION}")
 
 file(GLOB_RECURSE HOLOVIBES_PRIVATE_HEADERS 
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hh

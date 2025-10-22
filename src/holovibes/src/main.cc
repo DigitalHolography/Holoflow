@@ -33,8 +33,6 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 
-#define HOLOVIBES_VERSION_SEMVER2 "0.0.0-dev-0"
-
 void copy_resources_recursively(const QString &resourceRoot, const QString &targetRoot) {
   QDirIterator it(resourceRoot, QDir::NoFilter, QDirIterator::Subdirectories);
   const int    prefixLength = resourceRoot.length() + 1;
