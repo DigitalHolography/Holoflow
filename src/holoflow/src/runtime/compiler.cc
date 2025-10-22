@@ -29,8 +29,10 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <boost/range/iterator_range_core.hpp>
 
 #include "bug.hh"
+#include "logger.hh"
 #include "curaii/cuda.hh"
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/tasks.hh"
@@ -590,6 +592,7 @@ void Compiler::create_nodes_collection() {
     const auto &settings    = np.spec.settings;
     const auto  name        = std::string_view{np.spec.name};
     const auto  node_start  = std::chrono::steady_clock::now();
+    logger()->trace("Creating task for node '{}'", name);
 
     switch (np.infer.kind) {
     case core::TaskKind::Sync: {

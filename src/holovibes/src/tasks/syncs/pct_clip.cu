@@ -47,10 +47,8 @@ __global__ void clip_kernel(float *odata, const float *idata, int N, float *min_
     return;
   }
 
-  float min  = fmax(*min_val, 1.0f);
-  float max  = fmin(*max_val, 99.0f);
   float val  = idata[idx];
-  val        = fmin(fmax(val, min), max);
+  val        = fmin(fmax(val, *min_val), *max_val);
   odata[idx] = val;
 }
 
