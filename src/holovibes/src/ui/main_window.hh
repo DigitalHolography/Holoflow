@@ -50,24 +50,25 @@ private slots:
   void on_export_record_clicked();
   void on_export_stop_clicked();
   void on_raw_record_started_success();
-  void on_raw_record_started_failure();
+  void on_raw_record_started_failure(const QString &error);
   void on_raw_record_stopped_success();
-  void on_raw_record_stopped_failure();
+  void on_raw_record_stopped_failure(const QString &error);
 
 private:
+  void show_pipeline_error_popup(const QString &message);
   void on_start_pipeline_success();
-  void on_start_pipeline_failure();
+  void on_start_pipeline_failure(const QString &error);
   void on_stop_pipeline_success();
-  void on_stop_pipeline_failure();
+  void on_stop_pipeline_failure(const QString &error);
   void on_update_pipeline_success();
-  void on_update_pipeline_failure();
+  void on_update_pipeline_failure(const QString &error);
 
   bool validate_inputs();
   void setup_validation_connections();
   void setup_update_connections();
   void update_if_running();
 
-  QSize guess_source_dims();
+  QSize              guess_source_dims();
   pipeline::Settings get_pipeline_settings();
 
   void setup_menu_bar();

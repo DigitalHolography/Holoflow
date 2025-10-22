@@ -29,6 +29,7 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSlider>
@@ -42,6 +43,7 @@
 #include <filesystem>
 #include <fstream>
 #include <optional>
+
 
 #include "bug.hh"
 #include "holofile/holofile.hh"
@@ -196,6 +198,16 @@ void MainWindow::configure_window() {
   show();
 }
 
+void MainWindow::show_pipeline_error_popup(const QString &message) {
+  QMessageBox msgBox(this);
+  msgBox.setIcon(QMessageBox::Critical);
+  msgBox.setWindowTitle(tr("Pipeline Error"));
+  msgBox.setText(message);
+  msgBox.setStandardButtons(QMessageBox::Ok);
+  msgBox.setDefaultButton(QMessageBox::Ok);
+  msgBox.exec();
+}
+
 void MainWindow::on_start_pipeline_success() {
   logger()->info("[MainWindow::on_start_pipeline_success]");
   pipeline_running_ = true;
@@ -215,7 +227,7 @@ void MainWindow::on_start_pipeline_success() {
   xy_raw_widget_->show();
 }
 
-void MainWindow::on_start_pipeline_failure() {
+void MainWindow::on_start_pipeline_failure(const QString &error) {
   logger()->error("[MainWindow::on_start_pipeline_failure]");
   pipeline_running_   = false;
   export_in_progress_ = false;
@@ -223,6 +235,8 @@ void MainWindow::on_start_pipeline_failure() {
   import_stop_button_->setEnabled(false);
   export_record_button_->setEnabled(false);
   export_stop_button_->setEnabled(false);
+
+  show_pipeline_error_popup(tr("An error occurred while starting the pipeline:\n%1").arg(error));
 }
 
 void MainWindow::on_stop_pipeline_success() {
@@ -241,7 +255,7 @@ void MainWindow::on_stop_pipeline_success() {
   yz_processed_widget_->hide();
 }
 
-void MainWindow::on_stop_pipeline_failure() {
+void MainWindow::on_stop_pipeline_failure(const QString &error) {
   logger()->error("[MainWindow::on_stop_pipeline_failure]");
   pipeline_running_ = false;
   import_start_button_->setEnabled(true);
@@ -255,6 +269,8 @@ void MainWindow::on_stop_pipeline_failure() {
   xy_processed_widget_->hide();
   xz_processed_widget_->hide();
   yz_processed_widget_->hide();
+
+  show_pipeline_error_popup(error);
 }
 
 void MainWindow::on_metrics_updated(double input_fps) {
@@ -295,7 +311,7 @@ void MainWindow::on_update_pipeline_success() {
   xy_processed_widget_->set_fixed_aspect(dims);
 }
 
-void MainWindow::on_update_pipeline_failure() {
+void MainWindow::on_update_pipeline_failure(const QString &error) {
   logger()->error("[MainWindow::on_update_pipeline_failure]");
   pipeline_running_   = false;
   update_in_progress_ = false;
@@ -304,6 +320,8 @@ void MainWindow::on_update_pipeline_failure() {
   export_in_progress_ = false;
   export_record_button_->setEnabled(false);
   export_stop_button_->setEnabled(false);
+
+  show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
@@ -389,11 +407,13 @@ void MainWindow::on_raw_record_started_success() {
   export_record_button_->setEnabled(false);
 }
 
-void MainWindow::on_raw_record_started_failure() {
+void MainWindow::on_raw_record_started_failure(const QString &error) {
   logger()->error("[MainWindow::on_raw_record_started_failure]");
   export_in_progress_ = false;
   export_record_button_->setEnabled(pipeline_running_);
   export_stop_button_->setEnabled(false);
+
+  show_pipeline_error_popup(tr("An error occurred while starting raw recording:\n%1").arg(error));
 }
 
 void MainWindow::on_raw_record_stopped_success() {
@@ -403,9 +423,10 @@ void MainWindow::on_raw_record_stopped_success() {
   export_record_button_->setEnabled(pipeline_running_);
 }
 
-void MainWindow::on_raw_record_stopped_failure() {
+void MainWindow::on_raw_record_stopped_failure(const QString &error) {
   logger()->error("[MainWindow::on_raw_record_stopped_failure]");
   export_stop_button_->setEnabled(pipeline_running_);
+  show_pipeline_error_popup(tr("An error occurred while stopping raw recording:\n%1").arg(error));
 }
 
 bool MainWindow::validate_inputs() {
@@ -739,9 +760,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
   }
 
   // View Settings
-  {
-    s.view_3d_cuts = view_cuts_3d_check_->isChecked();
-  }
+  { s.view_3d_cuts = view_cuts_3d_check_->isChecked(); }
 
   // Post-processing Settings
   {

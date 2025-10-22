@@ -112,8 +112,9 @@ void Manager::start_pipeline() {
   std::lock_guard lock(mtx_);
 
   if (scheduler_ && scheduler_->is_running()) {
+    const QString msg = QString("Pipeline is already running");
     logger()->error("[Manager::start_pipeline] Pipeline is already running");
-    emit start_pipeline_failure();
+    emit start_pipeline_failure(msg);
     return;
   }
 
@@ -122,8 +123,9 @@ void Manager::start_pipeline() {
     logger()->info("[Manager::start_pipeline] Pipeline started successfully");
     emit start_pipeline_success();
   } catch (const std::exception &e) {
+    const QString msg = QString("Failed to start pipeline: %1").arg(e.what());
     logger()->error("[Manager::start_pipeline] Failed to start pipeline: {}", e.what());
-    emit start_pipeline_failure();
+    emit start_pipeline_failure(msg);
   }
 }
 
@@ -132,8 +134,9 @@ void Manager::stop_pipeline() {
   std::lock_guard lock(mtx_);
 
   if (!scheduler_ || !scheduler_->is_running()) {
+    const QString msg = QString("Pipeline is not running");
     logger()->error("[Manager::stop_pipeline] Pipeline is not running");
-    emit stop_pipeline_failure();
+    emit stop_pipeline_failure(msg);
     return;
   }
 
@@ -146,8 +149,9 @@ void Manager::stop_pipeline() {
     logger()->info("[Manager::stop_pipeline] Pipeline stopped successfully");
     emit stop_pipeline_success();
   } catch (const std::exception &e) {
+    const QString msg = QString("Failed to stop pipeline: %1").arg(e.what());
     logger()->error("[Manager::stop_pipeline] Failed to stop pipeline: {}", e.what());
-    emit stop_pipeline_failure();
+    emit stop_pipeline_failure(msg);
   }
 }
 
@@ -172,8 +176,9 @@ void Manager::update_pipeline(const Settings &settings) {
     logger()->info("[Manager::update_pipeline] Pipeline updated successfully");
     emit update_pipeline_success();
   } catch (const std::exception &e) {
+    const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
     logger()->error("[Manager::update_pipeline] Failed to update pipeline: {}", e.what());
-    emit update_pipeline_failure();
+    emit update_pipeline_failure(msg);
   }
 }
 
@@ -184,20 +189,23 @@ void Manager::start_raw_record() {
 
   std::lock_guard lock(mtx_);
   if (!scheduler_ || !scheduler_->is_running()) {
+    const QString msg = QString("Pipeline is not running");
     logger()->error("[Manager::start_raw_record] Pipeline is not running");
-    emit raw_record_started_failure();
+    emit raw_record_started_failure(msg);
     return;
   }
 
   if (raw_recording_active_) {
+    const QString msg = QString("Recording already in progress"); 
     logger()->warn("[Manager::start_raw_record] Recording already in progress");
-    emit raw_record_started_failure();
+    emit raw_record_started_failure(msg);
     return;
   }
 
   if (!scheduler_->ui_try_send("raw_record", std::move(payload))) {
+    const QString msg = QString("Failed to enqueue start_recording event");
     logger()->error("[Manager::start_raw_record] Failed to enqueue start_recording event");
-    emit raw_record_started_failure();
+    emit raw_record_started_failure(msg);
     return;
   }
 
@@ -210,21 +218,24 @@ void Manager::start_raw_record() {
 void Manager::stop_raw_record() {
   std::lock_guard lock(mtx_);
   if (!scheduler_ || !scheduler_->is_running()) {
+    const QString msg = QString("Pipeline is not running");
     logger()->error("[Manager::stop_raw_record] Pipeline is not running");
-    emit raw_record_stopped_failure();
+    emit raw_record_stopped_failure(msg);
     return;
   }
 
   if (!raw_recording_active_) {
+    const QString msg = QString("No active recording to stop");
     logger()->warn("[Manager::stop_raw_record] No active recording to stop");
-    emit raw_record_stopped_failure();
+    emit raw_record_stopped_failure(msg);
     return;
   }
 
   nlohmann::json payload{{"type", "stop_recording"}};
   if (!scheduler_->ui_try_send("raw_record", std::move(payload))) {
+    const QString msg = QString("Failed to enqueue stop_recording event");
     logger()->error("[Manager::stop_raw_record] Failed to enqueue stop_recording event");
-    emit raw_record_stopped_failure();
+    emit raw_record_stopped_failure(msg);
     return;
   }
 

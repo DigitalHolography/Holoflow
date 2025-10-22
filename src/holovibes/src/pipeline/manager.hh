@@ -56,16 +56,16 @@ public:
 
 signals:
   void start_pipeline_success();
-  void start_pipeline_failure();
+  void start_pipeline_failure(const QString& error);
   void stop_pipeline_success();
-  void stop_pipeline_failure();
+  void stop_pipeline_failure(const QString& error);
   void update_pipeline_success();
-  void update_pipeline_failure();
+  void update_pipeline_failure(const QString& error);
   void metrics_updated(double input_fps);
   void raw_record_started_success();
-  void raw_record_started_failure();
+  void raw_record_started_failure(const QString& error);
   void raw_record_stopped_success();
-  void raw_record_stopped_failure();
+  void raw_record_stopped_failure(const QString& error);
 
 private:
   using V = holoflow::core::GraphSpec::vertex_descriptor;
