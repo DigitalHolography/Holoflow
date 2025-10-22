@@ -764,7 +764,6 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Post-processing Settings
   {
-    // TODO: load from file
     QString     appDataBase = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     QString     appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
     QString     convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels/";
