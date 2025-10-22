@@ -265,3 +265,16 @@ private:
 };
 
 } // namespace holoflow::runtime
+
+template <> struct fmt::formatter<holoflow::runtime::NodeMetrics> {
+  constexpr auto parse(format_parse_context &ctx) { return ctx.begin(); }
+
+  template <typename FormatContext>
+  auto format(const holoflow::runtime::NodeMetrics &m, FormatContext &ctx) const {
+    return fmt::format_to(
+        ctx.out(),
+        "{{avg: {:.3f} ms, rps: {:.3f}, host: {:.3f} B/s, device: {:.3f} B/s, samples: {}}}",
+        m.average_duration_ms, m.runs_per_second, m.host_throughput_bytes_per_second,
+        m.device_throughput_bytes_per_second, m.sample_count);
+  }
+};

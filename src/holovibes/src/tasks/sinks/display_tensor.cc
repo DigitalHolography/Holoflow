@@ -99,7 +99,7 @@ void DisplayTensorTask::dispatchToUi(QByteArray payload, int width, int height) 
   QPointer<holovibes::ui::TensorDisplayWidget> safe_widget = widget_;
   QMetaObject::invokeMethod(
       widget_.data(),
-      [safe_widget, payload = std::move(payload), width, height]() mutable {
+      [this, safe_widget, payload = std::move(payload), width, height]() mutable {
         if (safe_widget.isNull()) {
           logger()->warn("[DisplayTensorTask::dispatchToUi] target widget is not available");
           return;

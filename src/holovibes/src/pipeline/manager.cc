@@ -22,6 +22,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <spdlog/fmt/ranges.h>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -257,6 +258,7 @@ void Manager::poll_metrics() {
   }
 
   auto snapshot = scheduler_->metrics();
+  logger()->debug("[Manager::poll_metrics] Metrics snapshot:\n\t{}", fmt::join(snapshot, "\n\t"));
 
   if (snapshot.empty()) { // No metrics available
     emit metrics_updated(0.0);

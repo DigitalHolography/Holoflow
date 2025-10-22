@@ -136,6 +136,14 @@ public:
   /// Release a produced **owned** output at @p index after downstream use.
   /// @throws std::out_of_range on bad index.
   virtual void release_output(int index);
+
+  void bind_logger(std::shared_ptr<spdlog::logger> logger);
+
+protected:
+  spdlog::logger *logger();
+
+private:
+  std::shared_ptr<spdlog::logger> logger_;
 };
 
 /// @brief Interface for synchronous (blocking) tasks.

@@ -697,6 +697,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       QString source       = import_camera_combo_->currentText();
       s.import_source      = source_from_str.at(source.toStdString());
       s.camera_config_path = import_cam_config_line_edit_->text().toStdString();
+      s.load_batch         = 64;
     }
   }
 
