@@ -52,7 +52,7 @@ holoflow::core::OpResult Crop::execute(holoflow::core::SyncCtx& ctx) {
   const std::size_t origin_y = settings_.origin[1];
   const std::size_t origin_x = settings_.origin[2];
 
-  logger()->debug("[Crop] 3D crop: input shape = [{}, {}, {}], output shape = [{}, {}, {}], origin = [{}, {}, {}]",
+  logger()->trace("[Crop] 3D crop: input shape = [{}, {}, {}], output shape = [{}, {}, {}], origin = [{}, {}, {}]",
                  input_depth, input_height, input_width,
                  output_depth, output_height, output_width,
                  origin_z, origin_y, origin_x);

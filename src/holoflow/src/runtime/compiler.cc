@@ -572,7 +572,6 @@ std::shared_ptr<spdlog::logger> create_task_logger(const std::string &node_name,
   auto logger_name = fmt::format("TaskLogger-{}-{}", node_kind, node_name);
   auto logger      = std::make_shared<spdlog::logger>(logger_name, sink);
   logger->set_level(spdlog::default_logger()->level());
-  spdlog::register_logger(logger);
   return logger;
 }
 
