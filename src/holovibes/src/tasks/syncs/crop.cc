@@ -35,8 +35,6 @@ Crop::Crop(const CropSettings& settings, cudaStream_t stream)
     : settings_(settings), stream_(stream) {}
 
 holoflow::core::OpResult Crop::execute(holoflow::core::SyncCtx& ctx) {
-//   auto* input = reinterpret_cast<float*>(ctx.inputs[0].data);
-//   auto* output = reinterpret_cast<float*>(ctx.outputs[0].data);
   
   holoflow::core::TView& input = ctx.inputs[0];
   holoflow::core::TView& output = ctx.outputs[0];
@@ -57,7 +55,6 @@ holoflow::core::OpResult Crop::execute(holoflow::core::SyncCtx& ctx) {
                  output_depth, output_height, output_width,
                  origin_z, origin_y, origin_x);
   
-  // Vérification que la région à copier est valide
   if (origin_z + output_depth > input_depth ||
       origin_y + output_height > input_height ||
       origin_x + output_width > input_width) {
@@ -65,45 +62,38 @@ holoflow::core::OpResult Crop::execute(holoflow::core::SyncCtx& ctx) {
     return holoflow::core::OpResult::Cancelled;
   }
   
-  // Configuration pour cudaMemcpy3D
   cudaMemcpy3DParms params = {0};
   
-  // Source configuration - pointer vers le début du tensor d'entrée
   params.srcPtr = make_cudaPitchedPtr(
-      (void*)input.data,                    // Pointer vers le début
-      input_width * sizeof(float),     // pitch (bytes per row)
-      input_width,                     // width in elements
-      input_height                     // height in rows
+      (void*)input.data,
+      input_width * sizeof(float),
+      input_width,
+      input_height
   );
   
-  // Destination configuration  
   params.dstPtr = make_cudaPitchedPtr(
       (void*)output.data,
-      output_width * sizeof(float),    // pitch (bytes per row)
-      output_width,                    // width in elements
-      output_height                    // height in rows
+      output_width * sizeof(float),
+      output_width,
+      output_height
   );
   
-  // Position de départ dans la source
   params.srcPos = make_cudaPos(
-      origin_x,        // x position en bytes
-      origin_y,                        // y position en lignes
-      origin_z                         // z position en frames
+      origin_x,
+      origin_y,
+      origin_z
   );
   
-  // Position de départ dans la destination (toujours 0,0,0)
   params.dstPos = make_cudaPos(0, 0, 0);
   
-  // Extent (region to copy)
   params.extent = make_cudaExtent(
-      output_width * sizeof(float),                    // width in bytes
-      output_height,                   // height in rows
-      output_depth                     // depth in frames
+      output_width * sizeof(float),
+      output_height,
+      output_depth
   );
   
   params.kind = cudaMemcpyDeviceToDevice;
   
-  // Execute the 3D copy
   CUDA_CHECK(cudaMemcpy3DAsync(&params, stream_));
   
   return holoflow::core::OpResult::Ok;
@@ -135,7 +125,6 @@ holoflow::core::InferResult CropFactory::infer(
   auto odesc = idesc;
   odesc.shape.assign(settings.shape.begin(), settings.shape.end());
 
-  // Success
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
       .output_descs  = {odesc},
@@ -150,11 +139,10 @@ std::unique_ptr<holoflow::core::ISyncTask>
 CropFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                     const nlohmann::json& jsettings,
                     const holoflow::core::SyncCreateCtx& ctx) const {
-  // Validate
+
   auto infer = this->infer(input_descs, jsettings);
   auto settings = jsettings.get<CropSettings>();
 
-  // Success - set up with context's stream
   auto* task = new Crop(settings, ctx.stream);
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }

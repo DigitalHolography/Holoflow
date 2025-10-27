@@ -49,6 +49,7 @@
 #include "tasks/syncs/pct_clip.hh"
 #include "tasks/syncs/registration.hh"
 #include "tasks/syncs/reshape.hh"
+#include "tasks/syncs/rotation.hh"
 #include "tasks/syncs/stft.hh"
 
 using namespace holovibes::tasks;
@@ -99,6 +100,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
   reg_sync<syncs::ReshapeFactory>(registry_, "Reshape");
   reg_sync<syncs::CropFactory>(registry_, "Crop");
+  reg_sync<syncs::RotationFactory>(registry_, "Rotation");
 
   metrics_timer_ = new QTimer(this);
   metrics_timer_->setInterval(1000);
@@ -498,7 +500,8 @@ void Manager::build_graph_spec() {
     auto slide_avg = add_yz_slide_avg(reshape, 0, 0);
     auto crop      = add_yz_crop2frames(slide_avg, 0, 0);
     auto to_u8     = add_yz_to_u8(crop, 0, 0);
-    auto gpu_out   = add_yz_gpu_out_queue(to_u8, 0, 0);
+    auto rotation  = add_yz_rotation(to_u8, 0, 0);
+    auto gpu_out   = add_yz_gpu_out_queue(rotation, 0, 0);
     auto gpu_cpu   = add_yz_gpu_cpu_cpy(gpu_out, 0, 0);
     auto cpu_out   = add_yz_cpu_out_queue(gpu_cpu, 0, 0);
     auto display   = add_yz_processed_display(cpu_out, 0, 0);
@@ -1029,6 +1032,15 @@ Manager::V Manager::add_yz_to_u8(V parent, int out_idx, int in_idx) {
                                                 .strategy = ConversionSettings::Strategy::Scaled,
                                             });
 }
+
+Manager::V Manager::add_yz_rotation(V parent, int out_idx, int in_idx) {
+  using syncs::RotationSettings;
+  return add_node_after<RotationSettings>(parent, out_idx, in_idx, "yz_rotation", "Rotation",
+                                         RotationSettings{
+                                             .angle = 90,
+                                         });
+}
+
 
 Manager::V Manager::add_yz_crop2frames(V parent, int out_idx, int in_idx) {
   using syncs::CropSettings;

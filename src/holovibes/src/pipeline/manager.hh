@@ -133,6 +133,7 @@ private:
   V add_yz_slide_avg(V parent, int out_idx, int in_idx);
   V add_yz_crop2frames(V parent, int out_idx, int in_idx);
   V add_yz_to_u8(V parent, int out_idx, int in_idx);
+  V add_yz_rotation(V parent, int out_idx, int in_idx);
   V add_yz_gpu_out_queue(V parent, int out_idx, int in_idx);
   V add_yz_gpu_cpu_cpy(V parent, int out_idx, int in_idx);
   V add_yz_cpu_out_queue(V parent, int out_idx, int in_idx);
