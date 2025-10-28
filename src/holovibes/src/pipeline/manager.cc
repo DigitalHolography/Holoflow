@@ -22,6 +22,7 @@
 #include <fstream>
 #include <limits>
 #include <map>
+#include <spdlog/fmt/ranges.h>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -39,6 +40,7 @@
 #include "tasks/syncs/average.hh"
 #include "tasks/syncs/conversion.hh"
 #include "tasks/syncs/convolution.hh"
+#include "tasks/syncs/crop.hh"
 #include "tasks/syncs/fft_shift.hh"
 #include "tasks/syncs/filter2d.hh"
 #include "tasks/syncs/fresnel_diffraction.hh"
@@ -47,6 +49,7 @@
 #include "tasks/syncs/pct_clip.hh"
 #include "tasks/syncs/registration.hh"
 #include "tasks/syncs/reshape.hh"
+#include "tasks/syncs/rotation.hh"
 #include "tasks/syncs/stft.hh"
 
 using namespace holovibes::tasks;
@@ -95,6 +98,9 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
+  reg_sync<syncs::ReshapeFactory>(registry_, "Reshape");
+  reg_sync<syncs::CropFactory>(registry_, "Crop");
+  reg_sync<syncs::RotationFactory>(registry_, "Rotation");
 
   metrics_timer_ = new QTimer(this);
   metrics_timer_->setInterval(1000);
@@ -270,6 +276,7 @@ void Manager::poll_metrics() {
   }
 
   auto snapshot = scheduler_->metrics();
+  logger()->debug("[Manager::poll_metrics] Metrics snapshot:\n\t{}", fmt::join(snapshot, "\n\t"));
 
   if (snapshot.empty()) { // No metrics available
     emit metrics_updated(0.0);
@@ -488,7 +495,8 @@ void Manager::build_graph_spec() {
     auto cut_avg   = add_xz_cut_avg(debounce_queue, 0, 0);
     auto reshape   = add_xz_reshape(cut_avg, 0, 0);
     auto slide_avg = add_xz_slide_avg(reshape, 0, 0);
-    auto to_u8     = add_xz_to_u8(slide_avg, 0, 0);
+    auto crop      = add_xz_crop2frames(slide_avg, 0, 0);
+    auto to_u8     = add_xz_to_u8(crop, 0, 0); 
     auto gpu_out   = add_xz_gpu_out_queue(to_u8, 0, 0);
     auto gpu_cpu   = add_xz_gpu_cpu_cpy(gpu_out, 0, 0);
     auto cpu_out   = add_xz_cpu_out_queue(gpu_cpu, 0, 0);
@@ -501,8 +509,10 @@ void Manager::build_graph_spec() {
     auto cut_avg   = add_yz_cut_avg(debounce_queue, 0, 0);
     auto reshape   = add_yz_reshape(cut_avg, 0, 0);
     auto slide_avg = add_yz_slide_avg(reshape, 0, 0);
-    auto to_u8     = add_yz_to_u8(slide_avg, 0, 0);
-    auto gpu_out   = add_yz_gpu_out_queue(to_u8, 0, 0);
+    auto crop      = add_yz_crop2frames(slide_avg, 0, 0);
+    auto to_u8     = add_yz_to_u8(crop, 0, 0);
+    auto rotation  = add_yz_rotation(to_u8, 0, 0);
+    auto gpu_out   = add_yz_gpu_out_queue(rotation, 0, 0);
     auto gpu_cpu   = add_yz_gpu_cpu_cpy(gpu_out, 0, 0);
     auto cpu_out   = add_yz_cpu_out_queue(gpu_cpu, 0, 0);
     auto display   = add_yz_processed_display(cpu_out, 0, 0);
@@ -927,17 +937,19 @@ Manager::V Manager::add_xz_cut_avg(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_xz_reshape(V parent, int out_idx, int in_idx) {
-  HOLOVIBES_UNIMPLEMENTED();
-  (void)parent;
-  (void)out_idx;
-  (void)in_idx;
+  using syncs::ReshapeSettings;
+  return add_node_after<ReshapeSettings>(parent, out_idx, in_idx, "xz_reshape", "Reshape",
+                                        ReshapeSettings{
+                                            .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
+                                        });
 }
 
 Manager::V Manager::add_xz_slide_avg(V parent, int out_idx, int in_idx) {
-  HOLOVIBES_UNIMPLEMENTED();
-  (void)parent;
-  (void)out_idx;
-  (void)in_idx;
+  using asyncs::SlidingAverageSettings;
+  return add_node_after<SlidingAverageSettings>(
+      parent, out_idx, in_idx, "xz_slide_avg", "SlidingAverage",
+      SlidingAverageSettings{.target_capacity = 128,
+                             .window_size     = static_cast<size_t>(s_.pp_accumulation)});
 }
 
 Manager::V Manager::add_xz_to_u8(V parent, int out_idx, int in_idx) {
@@ -947,6 +959,17 @@ Manager::V Manager::add_xz_to_u8(V parent, int out_idx, int in_idx) {
                                                 .target   = ConversionSettings::Target::U8,
                                                 .strategy = ConversionSettings::Strategy::Scaled,
                                             });
+}
+
+Manager::V Manager::add_xz_crop2frames(V parent, int out_idx, int in_idx) {
+  using syncs::CropSettings;
+  return add_node_after<CropSettings>(parent, out_idx, in_idx, "xz_crop2frames", "Crop",
+                                     CropSettings{
+                                         .origin = {0, 10, 0},
+                                         .shape  = {static_cast<size_t>(1),
+                                                    static_cast<size_t>(src_height_ - 20),
+                                                    static_cast<size_t>(s_.time_window)},
+                                     });
 }
 
 Manager::V Manager::add_xz_gpu_out_queue(V parent, int out_idx, int in_idx) {
@@ -996,17 +1019,20 @@ Manager::V Manager::add_yz_cut_avg(V parent, int out_idx, int in_idx) {
 }
 
 Manager::V Manager::add_yz_reshape(V parent, int out_idx, int in_idx) {
-  HOLOVIBES_UNIMPLEMENTED();
-  (void)parent;
-  (void)out_idx;
-  (void)in_idx;
+  using syncs::ReshapeSettings;
+  return add_node_after<ReshapeSettings>(parent, out_idx, in_idx, "yz_reshape", "Reshape",
+                                        ReshapeSettings{
+                                            .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
+                                        });
 }
 
 Manager::V Manager::add_yz_slide_avg(V parent, int out_idx, int in_idx) {
-  HOLOVIBES_UNIMPLEMENTED();
-  (void)parent;
-  (void)out_idx;
-  (void)in_idx;
+  using asyncs::SlidingAverageSettings;
+  return add_node_after<SlidingAverageSettings>(
+      parent, out_idx, in_idx, "yz_slide_avg", "SlidingAverage",
+      SlidingAverageSettings{.target_capacity = 128,
+                             .window_size     = static_cast<size_t>(s_.pp_accumulation)
+                            });
 }
 
 Manager::V Manager::add_yz_to_u8(V parent, int out_idx, int in_idx) {
@@ -1016,6 +1042,26 @@ Manager::V Manager::add_yz_to_u8(V parent, int out_idx, int in_idx) {
                                                 .target   = ConversionSettings::Target::U8,
                                                 .strategy = ConversionSettings::Strategy::Scaled,
                                             });
+}
+
+Manager::V Manager::add_yz_rotation(V parent, int out_idx, int in_idx) {
+  using syncs::RotationSettings;
+  return add_node_after<RotationSettings>(parent, out_idx, in_idx, "yz_rotation", "Rotation",
+                                         RotationSettings{
+                                             .angle = 90,
+                                         });
+}
+
+
+Manager::V Manager::add_yz_crop2frames(V parent, int out_idx, int in_idx) {
+  using syncs::CropSettings;
+  return add_node_after<CropSettings>(parent, out_idx, in_idx, "yz_crop", "Crop",
+                                     CropSettings{
+                                         .origin = {0, 10, 0},
+                                         .shape  = {static_cast<size_t>(1),
+                                                    static_cast<size_t>(src_height_ - 20),
+                                                    static_cast<size_t>(s_.time_window)},
+                                     });
 }
 
 Manager::V Manager::add_yz_gpu_out_queue(V parent, int out_idx, int in_idx) {

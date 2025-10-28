@@ -18,12 +18,14 @@
 #include <array>
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/graph/depth_first_search.hpp>
+#include <boost/range/iterator_range_core.hpp>
 #include <chrono>
 #include <exception>
 #include <filesystem>
 #include <format>
 #include <fstream>
 #include <memory>
+#include <spdlog/sinks/stdout_color_sinks.h>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -563,6 +565,16 @@ std::unique_ptr<Task> create_or_update_task(
   return factory.update(std::move(prev_task), input_descs, settings, ctx);
 }
 
+std::shared_ptr<spdlog::logger> create_task_logger(const std::string &node_name,
+                                                   const std::string &node_kind) {
+  auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+  sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [thread %t] [%^%l%$] %v");
+  auto logger_name = fmt::format("TaskLogger-{}-{}", node_kind, node_name);
+  auto logger      = std::make_shared<spdlog::logger>(logger_name, sink);
+  logger->set_level(spdlog::default_logger()->level());
+  return logger;
+}
+
 } // namespace
 
 void Compiler::create_nodes_collection() {
@@ -590,6 +602,8 @@ void Compiler::create_nodes_collection() {
 
       auto task = create_or_update_task<core::ISyncTask>(factory, prev_tasks, prev_graph, np,
                                                          input_descs, settings, ctx, "sync");
+
+      task->bind_logger(create_task_logger(np.spec.name, np.spec.kind));
       out_tasks.emplace(np.spec.name, std::move(task));
       break;
     }
@@ -605,6 +619,7 @@ void Compiler::create_nodes_collection() {
 
       auto task = create_or_update_task<core::IAsyncTask>(factory, prev_tasks, prev_graph, np,
                                                           input_descs, settings, ctx, "async");
+      task->bind_logger(create_task_logger(np.spec.name, np.spec.kind));
       out_tasks.emplace(np.spec.name, std::move(task));
       break;
     }

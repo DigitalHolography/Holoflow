@@ -13,8 +13,11 @@
 // limitations under the License.
 
 #include "holoflow/core/tasks.hh"
-#include "holoflow/core/tensor.hh"
+
 #include <optional>
+
+#include "bug.hh"
+#include "holoflow/core/tensor.hh"
 
 namespace holoflow::core {
 
@@ -23,6 +26,16 @@ std::optional<TView> ITask::acquire_input(int) {
 }
 
 void ITask::release_output(int) { throw std::out_of_range("Output index out of range"); }
+
+void ITask::bind_logger(std::shared_ptr<spdlog::logger> logger) {
+  HOLOFLOW_CHECK(logger != nullptr, "Cannot bind null logger to task");
+  logger_ = std::move(logger);
+}
+
+spdlog::logger *ITask::logger() {
+  HOLOFLOW_CHECK(logger_, "Logger not bound to task");
+  return logger_.get();
+}
 
 std::unique_ptr<ISyncTask> ISyncTaskFactory::update(std::unique_ptr<ISyncTask>,
                                                     std::span<const TDesc> input_descs,

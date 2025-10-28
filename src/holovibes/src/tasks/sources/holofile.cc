@@ -112,7 +112,7 @@ holoflow::core::OpResult Holofile::execute(holoflow::core::SyncCtx &ctx) {
       reader_.seek(settings_.start_frame);
     }
     frame_idx_ = settings_.start_frame;
-    logger()->debug("[Holofile] Looping back to start frame {}", settings_.start_frame);
+    logger()->debug("Looping back to start frame {}", settings_.start_frame);
   }
 
   // Read frames into buffer.
