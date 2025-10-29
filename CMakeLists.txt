@@ -72,3 +72,70 @@ endif()
 if(ENABLE_DOCUMENTATION)
     add_subdirectory(doc)
 endif()
+
+# CPack configuration
+
+if(WIN32 AND MSVC)
+    install(TARGETS holovibes
+        RUNTIME DESTINATION bin COMPONENT binaries
+    )
+    
+    get_target_property(QT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
+    get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
+    find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${QT_BIN_DIR}")
+    
+    if(NOT WINDEPLOYQT_EXECUTABLE)
+        message(WARNING "windeployqt not found. Qt dependencies might be missing in the installer.")
+    else()
+        message(STATUS "Found windeployqt: ${WINDEPLOYQT_EXECUTABLE}")
+        
+        install(CODE "
+            set(_qt_deps_dir \"\${CMAKE_INSTALL_PREFIX}/_qt_deps\")
+            execute_process(
+                COMMAND \"${CMAKE_COMMAND}\" -E make_directory \"\${_qt_deps_dir}\"
+            )
+            
+            # Run windeployqt to gather Qt dependencies
+            execute_process(
+                COMMAND \"${WINDEPLOYQT_EXECUTABLE}\" 
+                    --verbose 1
+                    --no-compiler-runtime
+                    --no-opengl-sw
+                    --dir \"\${_qt_deps_dir}\"
+                    \"\${CMAKE_INSTALL_PREFIX}/../binaries/bin/holovibes.exe\"
+                RESULT_VARIABLE _result
+            )
+            
+            if(NOT _result EQUAL 0)
+                message(WARNING \"windeployqt failed: \${_result}\")
+            else()
+                # Copy Qt dependencies to bin directory
+                execute_process(
+                    COMMAND \"${CMAKE_COMMAND}\" -E copy_directory \"\${_qt_deps_dir}\" \"\${CMAKE_INSTALL_PREFIX}/bin\"
+                )
+            endif()
+            
+            # Clean up temporary directory
+            execute_process(
+                COMMAND \"${CMAKE_COMMAND}\" -E remove_directory \"\${_qt_deps_dir}\"
+            )
+        " COMPONENT dependencies)
+    endif()
+
+    install(FILES
+        "C:/Program Files (x86)/Intel/oneAPI/compiler/2025.2/bin/libiomp5md.dll"
+        "C:/Program Files (x86)/Intel/oneAPI/mkl/2025.2/bin/mkl_intel_thread.2.dll"
+        DESTINATION bin
+        COMPONENT dependencies
+    )
+
+    set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
+    ReadEnvStr \\$0 CUDA_PATH
+    StrCmp \\$0 \\\"\\\" 0 cuda_ok
+    MessageBox MB_OK|MB_ICONEXCLAMATION \
+        'CUDA Toolkit not detected!\\$\\\\n\\$\\\\nPlease install CUDA Toolkit from:\\$\\\\nhttps://developer.nvidia.com/cuda-downloads\\$\\\\n\\$\\\\nNVRTC features will not work without CUDA.'
+    cuda_ok:
+    ")
+endif()
+
+include (CPackConfig)
