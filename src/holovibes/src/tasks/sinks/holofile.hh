@@ -25,11 +25,14 @@
 #include "holofile/holofile.hh"
 #include "holoflow/core/tasks.hh"
 
+#include "pipeline/settings.hh"
+
 namespace holovibes::tasks::sinks {
 
 struct HolofileSettings {
-  std::string path;  // Path to the HoloFile.
-  int         count; // Number of frames to write.
+  std::string    path;              // Path to the HoloFile.
+  int            count;             // Number of frames to write.
+  nlohmann::json pipeline_settings; // Pipeline settings to store in footer.
 };
 
 void to_json(nlohmann::json &j, const HolofileSettings &hs);

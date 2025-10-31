@@ -36,6 +36,8 @@ InvalidVersionException::InvalidVersionException() : Exception("Holofile: Invali
 InvalidFrameSizeException::InvalidFrameSizeException()
     : Exception("Holofile: Invalid frame size") {}
 
+InvalidFooterException::InvalidFooterException() : Exception("Holofile: Invalid footer") {}
+
 Reader::Reader(const std::string &path) : frame_index_(0) {
   // Open file
   FILE *fp = nullptr;
@@ -74,9 +76,93 @@ Reader::Reader(const std::string &path) : frame_index_(0) {
   if (bits_per_frame % 8 != 0) {
     throw InvalidFrameSizeException();
   }
+
+  try {
+    read_footer();
+    auto dump = footer_.value().pipeline_settings.dump();
+    logger()->info("Holofile footer pipeline settings: {}", dump);
+  } catch (const Exception &e) {
+    logger()->warn("Holofile footer could not be read: {}", e.what());
+    footer_ = std::nullopt;
+
+    if (fseek(file_.get(), sizeof(header_), SEEK_SET) != 0) {
+      std::error_code ec(errno, std::generic_category());
+      throw std::system_error(ec, "Failed to seek:");
+    }
+  }
 }
 
 const Header &Reader::header() const { return header_; }
+
+std::optional<Footer> Reader::footer() const { return footer_; }
+
+void Reader::read_footer() {
+  size_t footer_offset = sizeof(Header) + header_.data_size_in_bytes;
+
+  int64_t current_pos = _ftelli64(file_.get());
+  if (current_pos == -1) {
+    std::error_code ec(errno, std::generic_category());
+    throw std::system_error(ec, "Failed to get current file position:");
+  }
+
+  if (_fseeki64(file_.get(), 0, SEEK_END) != 0) {
+    std::error_code ec(errno, std::generic_category());
+    throw std::system_error(ec, "Failed to seek to end:");
+  }
+  int64_t file_size = _ftelli64(file_.get());
+  if (file_size == -1) {
+    std::error_code ec(errno, std::generic_category());
+    throw std::system_error(ec, "Failed to get file size:");
+  }
+
+  if (static_cast<size_t>(file_size) <= footer_offset) {
+    logger()->info("No footer found - file ends at data section");
+    throw InvalidFooterException();
+  }
+
+  size_t footer_size = file_size - footer_offset;
+
+  if (footer_size > 1024 * 1024) {
+    logger()->warn("Footer appears too large ({} bytes), likely not a valid footer", footer_size);
+    throw InvalidFooterException();
+  }
+
+  if (_fseeki64(file_.get(), static_cast<int64_t>(footer_offset), SEEK_SET) != 0) {
+    std::error_code ec(errno, std::generic_category());
+    throw std::system_error(ec, "Failed to seek to footer:");
+  }
+
+  std::string footer_json;
+  footer_json.resize(footer_size);
+
+  size_t bytes_read = fread(footer_json.data(), 1, footer_size, file_.get());
+  if (bytes_read != footer_size) {
+    std::error_code ec(errno, std::generic_category());
+    throw std::system_error(ec, "Failed to read footer:");
+  }
+
+  if (footer_json.empty() || footer_json[0] != '{') {
+    logger()->warn("Footer does not appear to be valid JSON (starts with '{}')",
+                   footer_json.empty() ? "empty" : std::string(1, footer_json[0]));
+    throw InvalidFooterException();
+  }
+
+  try {
+    Footer footer;
+    footer.pipeline_settings = nlohmann::json::parse(footer_json);
+    footer_                  = footer;
+  } catch (const nlohmann::json::exception &e) {
+    logger()->error("Failed to parse Holofile footer JSON: {}", e.what());
+    std::string preview = footer_json.substr(0, std::min(footer_json.size(), size_t(100)));
+    logger()->debug("Footer content preview: {}", preview);
+    throw InvalidFooterException();
+  }
+
+  if (_fseeki64(file_.get(), current_pos, SEEK_SET) != 0) {
+    std::error_code ec(errno, std::generic_category());
+    throw std::system_error(ec, "Failed to restore file position:");
+  }
+}
 
 void Reader::seek(std::size_t frame_index) {
   size_t pixels_per_frame = header_.frame_width * header_.frame_height;
@@ -116,7 +202,8 @@ void Reader::read_frames(uint8_t *data, std::size_t frame_count) {
   }
 }
 
-Writer::Writer(const std::string &path, const Header &header) : header_(header), frame_index_(0) {
+Writer::Writer(const std::string &path, const Header &header, const Footer &footer)
+    : header_(header), frame_index_(0), footer_(footer) {
   // Open file
   FILE *fp = nullptr;
   if (fopen_s(&fp, path.c_str(), "wb") != 0 || !fp) {
@@ -136,6 +223,27 @@ Writer::Writer(const std::string &path, const Header &header) : header_(header),
     logger()->critical("Unrecoverable error: fwrite() failed to write the "
                        "header");
     std::exit(EXIT_FAILURE);
+  }
+}
+
+void Writer::write_footer() {
+  std::string footer_json = footer_.pipeline_settings.dump();
+
+  logger()->info("Writing Holofile footer with pipeline settings: {}", footer_json);
+
+  if (_fseeki64(file_.get(), 0, SEEK_END) != 0) {
+    std::error_code ec(errno, std::generic_category());
+    throw std::system_error(ec, "Failed to seek to end of file:");
+  }
+
+  if (fwrite(footer_json.data(), 1, footer_json.size(), file_.get()) != footer_json.size()) {
+    std::error_code ec(errno, std::generic_category());
+    throw std::system_error(ec, "Failed to write footer JSON:");
+  }
+
+  if (fflush(file_.get()) != 0) {
+    std::error_code ec(errno, std::generic_category());
+    throw std::system_error(ec, "Failed to flush file:");
   }
 }
 

@@ -44,10 +44,10 @@
 #include <fstream>
 #include <optional>
 
-
 #include "bug.hh"
 #include "holofile/holofile.hh"
 #include "logger.hh"
+#include "settings_loader.hh"
 
 namespace {
 
@@ -196,6 +196,251 @@ void MainWindow::configure_window() {
   setWindowTitle("Holovibes");
   setFixedSize(minimumSizeHint());
   show();
+}
+
+std::filesystem::path MainWindow::makeRecordingPath(const QString &userText) const {
+  namespace fs = std::filesystem;
+
+  QFileInfo info(userText);
+
+  fs::path dir = info.absolutePath().isEmpty() ? fs::current_path()
+                                               : fs::path(info.absolutePath().toStdString());
+
+  QString baseName = info.completeBaseName();
+
+  // Ensure .holo extension
+  QString extension = ".holo";
+
+  // Date prefix
+  QString datePrefix = QDate::currentDate().toString("yyMMdd") + "_";
+
+  // Candidate file
+  QString  finalFileName = datePrefix + baseName + extension;
+  fs::path candidate     = dir / finalFileName.toStdString();
+
+  // Add suffix if needed
+  int counter = 1;
+  while (fs::exists(candidate)) {
+    finalFileName = datePrefix + baseName + QString("_%1").arg(counter++) + extension;
+    candidate     = dir / finalFileName.toStdString();
+  }
+
+  logger()->info("[MainWindow::makeRecordingPath] Generated recording path: {}",
+                 candidate.string());
+
+  return candidate;
+}
+
+void MainWindow::load_holofile_settings(const nlohmann::json &settings) {
+  try {
+    // Image Rendering Settings
+    if (settings.contains("compute_settings") &&
+        settings["compute_settings"].contains("image_rendering")) {
+      auto &rendering = settings["compute_settings"]["image_rendering"];
+
+      // Batch size
+      if (rendering.contains("batch_size") && render_batch_size_spin_) {
+        render_batch_size_spin_->setValue(rendering["batch_size"]);
+      }
+
+      // Time transformation settings
+      if (rendering.contains("time_transformation_stride") && render_time_stride_spin_) {
+        render_time_stride_spin_->setValue(rendering["time_transformation_stride"]);
+      }
+      if (rendering.contains("time_transformation_size") && render_time_window_spin_) {
+        render_time_window_spin_->setValue(rendering["time_transformation_size"]);
+      }
+
+      // 2D Filter settings
+      if (rendering.contains("filter2d") && render_filter_2d_check_) {
+        render_filter_2d_check_->setChecked(rendering["filter2d"]["enabled"]);
+      }
+      if (rendering.contains("filter2d") && render_filter_2d_inner_spin_) {
+        render_filter_2d_inner_spin_->setValue(rendering["filter2d"]["inner_radius"]);
+      }
+      if (rendering.contains("filter2d") && render_filter_2d_outer_spin_) {
+        render_filter_2d_outer_spin_->setValue(rendering["filter2d"]["outer_radius"]);
+      }
+
+      // Space transformation
+      if (rendering.contains("space_transformation") && render_space_transform_combo_) {
+        QString transform = QString::fromStdString(rendering["space_transformation"]);
+        // Convert from FRESNELTR to UI format if needed
+        if (transform == "FRESNELTR")
+          transform = "Fresnel";
+        // I DUNNO - exact mapping of space transformation values
+        int index = render_space_transform_combo_->findText(transform, Qt::MatchContains);
+        if (index >= 0)
+          render_space_transform_combo_->setCurrentIndex(index);
+      }
+
+      // Time transformation
+      if (rendering.contains("time_transformation") && render_time_transform_combo_) {
+        QString transform = QString::fromStdString(rendering["time_transformation"]);
+        // I DUNNO - exact mapping of time transformation values
+        int index = render_time_transform_combo_->findText(transform, Qt::MatchContains);
+        if (index >= 0)
+          render_time_transform_combo_->setCurrentIndex(index);
+      }
+
+      // Lambda (wavelength)
+      if (rendering.contains("lambda") && render_lambda_spin_) {
+        double lambda = rendering["lambda"];
+        render_lambda_spin_->setValue(lambda * 1e9); // Convert from meters to nanometers
+      }
+
+      // Propagation distance (focus)
+      if (rendering.contains("propagation_distance") && render_focus_spin_) {
+        render_focus_spin_->setValue(rendering["propagation_distance"].get<float>() * 1000);
+      }
+
+      // Convolution settings
+      if (rendering.contains("convolution") && render_convolution_combo_) {
+        QString conv_type = QString::fromStdString(rendering["convolution"]["type"]);
+        // I DUNNO - exact mapping of convolution types
+        int index = render_convolution_combo_->findText(conv_type, Qt::MatchContains);
+        if (index >= 0)
+          render_convolution_combo_->setCurrentIndex(index);
+      }
+      if (rendering.contains("convolution") && render_convolution_divide_check_) {
+        render_convolution_divide_check_->setChecked(rendering["convolution"]["divide"]);
+      }
+    }
+
+    // View Settings
+    if (settings.contains("compute_settings") && settings["compute_settings"].contains("view")) {
+      auto &view = settings["compute_settings"]["view"];
+
+      // Image type
+      if (view.contains("image_type") && view_image_type_combo_) {
+        QString image_type = QString::fromStdString(view["image_type"]);
+        // Convert from MODULUS to UI format if needed
+        if (image_type == "MODULUS")
+          image_type = "Modulus";
+        // I DUNNO - exact mapping of image types
+        int index = view_image_type_combo_->findText(image_type, Qt::MatchContains);
+        if (index >= 0)
+          view_image_type_combo_->setCurrentIndex(index);
+      }
+
+      // FFT shift
+      if (view.contains("fft_shift") && view_fft_shift_check_) {
+        view_fft_shift_check_->setChecked(view["fft_shift"]);
+      }
+
+      // Renormalization
+      if (view.contains("renorm") && view_renormalize_check_) {
+        view_renormalize_check_->setChecked(view["renorm"]);
+      }
+
+      // Registration
+      if (view.contains("registration") && view_registration_check_) {
+        view_registration_check_->setChecked(view["registration"]["registration_enabled"]);
+      }
+      if (view.contains("registration") && view_registration_radius_) {
+        view_registration_radius_->setValue(view["registration"]["registration_zone"]);
+      }
+
+      // Reticle
+      if (view.contains("reticle") && view_reticle_check_) {
+        view_reticle_check_->setChecked(view["reticle"]["display_enabled"]);
+      }
+      if (view.contains("reticle") && view_reticle_radius_) {
+        view_reticle_radius_->setValue(view["reticle"]["scale"]);
+      }
+
+      // View coordinates
+      if (view.contains("x") && view_x_spin_ && view_x_width_spin_) {
+        view_x_spin_->setValue(view["x"]["start"]);
+        view_x_width_spin_->setValue(view["x"]["width"]);
+      }
+      if (view.contains("y") && view_y_spin_ && view_y_width_spin_) {
+        view_y_spin_->setValue(view["y"]["start"]);
+        view_y_width_spin_->setValue(view["y"]["width"]);
+      }
+      if (view.contains("z") && view_z_spin_ && view_z_width_spin_) {
+        view_z_spin_->setValue(view["z"]["start"]);
+        view_z_width_spin_->setValue(view["z"]["width"]);
+      }
+
+      // Window/contrast settings
+      if (view.contains("window") && view.contains("window") && view.contains("window")) {
+        auto &window = view["window"];
+
+        // XY view settings
+        if (window.contains("xy")) {
+          auto &xy = window["xy"];
+          if (xy.contains("enabled") && view_cuts_3d_check_) {
+            // I DUNNO - assuming 3D cuts enabled if XY view is enabled
+            view_cuts_3d_check_->setChecked(xy["enabled"]);
+          }
+          if (xy.contains("output_image_accumulation") && view_accumulation_spin_) {
+            view_accumulation_spin_->setValue(xy["output_image_accumulation"]);
+          }
+          if (xy.contains("contrast")) {
+            auto &contrast = xy["contrast"];
+            if (contrast.contains("auto_refresh") && view_auto_check_) {
+              view_auto_check_->setChecked(contrast["auto_refresh"]);
+            }
+            if (contrast.contains("invert") && view_invert_check_) {
+              view_invert_check_->setChecked(contrast["invert"]);
+            }
+            if (contrast.contains("min") && view_range_start_spin_) {
+              view_range_start_spin_->setValue(contrast["min"]);
+            }
+            if (contrast.contains("max") && view_range_end_spin_) {
+              view_range_end_spin_->setValue(contrast["max"]);
+            }
+          }
+        }
+      }
+    }
+
+    // Advanced settings
+    if (settings.contains("compute_settings") &&
+        settings["compute_settings"].contains("advanced")) {
+      auto &advanced = settings["compute_settings"]["advanced"];
+
+      // Buffer sizes
+      if (advanced.contains("buffer_size")) {
+        // auto& buffer_size = advanced["buffer_size"];
+        //  These would typically go to pipeline settings, not directly to UI
+        // I DUNNO - how buffer sizes map to UI elements
+      }
+
+      // Frame recording count
+      if (advanced.contains("nb_frames_to_record") && export_frames_spin_) {
+        export_frames_spin_->setValue(advanced["nb_frames_to_record"]);
+      }
+
+      // Contrast settings
+      if (advanced.contains("contrast")) {
+        auto &contrast = advanced["contrast"];
+        // These might map to view range settings
+        if (contrast.contains("lower") && view_range_start_spin_) {
+          // I DUNNO - might need to scale or convert
+          view_range_start_spin_->setValue(contrast["lower"]);
+        }
+        if (contrast.contains("upper") && view_range_end_spin_) {
+          view_range_end_spin_->setValue(contrast["upper"]);
+        }
+      }
+    }
+
+    // Info section (read-only or for validation)
+    if (settings.contains("info")) {
+      auto &info = settings["info"];
+      if (info.contains("input_fps") && import_fps_spin_) {
+        import_fps_spin_->setValue(info["input_fps"]);
+      }
+      // I DUNNO - how to use other info fields like camera_fps, holovibes_version, etc.
+    }
+
+    logger()->info("Holofile settings loaded successfully");
+
+  } catch (const std::exception &e) {
+    logger()->error("Failed to load Holofile settings: {}", e.what());
+  }
 }
 
 void MainWindow::show_pipeline_error_popup(const QString &message) {
@@ -379,13 +624,13 @@ void MainWindow::on_export_record_clicked() {
   export_record_button_->setEnabled(false);
   export_stop_button_->setEnabled(false);
 
-  std::filesystem::path record_path{export_file_line_edit_->text().toStdString()};
+  std::filesystem::path record_path = makeRecordingPath(export_file_line_edit_->text());
   std::optional<size_t> frame_count;
   if (export_frames_check_->isChecked()) {
     frame_count = static_cast<size_t>(export_frames_spin_->value());
   }
 
-  auto start = [mgr = pipeline_manager_]() { mgr->start_raw_record(); };
+  auto start = [mgr = pipeline_manager_, record_path]() { mgr->start_raw_record(record_path); };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
 }
 
@@ -795,6 +1040,136 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
   return s;
 }
 
+void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
+  using namespace holovibes::pipeline;
+
+  // --- Advanced Settings ---
+  {
+    // These are fixed in get_pipeline_settings(), so you may want to display them in spinboxes
+    // later cpu_in_size_, gpu_in_size_, etc.
+  }
+
+  // --- Import Settings ---
+  {
+    // Source: camera or file
+    if (s.import_source == ImportSource::HOLOFILE) {
+      import_cam_check_->setChecked(false);
+      import_file_line_edit_->setText(QString::fromStdString(s.load_path.string()));
+      import_start_index_spin_->setValue(static_cast<int>(s.load_begin));
+      import_end_index_spin_->setValue(static_cast<int>(s.load_end));
+
+      QString method;
+      switch (s.load_method) {
+      case LoadMethod::READ_LIVE:
+        method = "Read Live";
+        break;
+      case LoadMethod::LOAD_IN_CPU:
+        method = "Load in CPU RAM";
+        break;
+      case LoadMethod::LOAD_IN_GPU:
+        method = "Load in GPU RAM";
+        break;
+      default:
+        method = "Read Live";
+        break;
+      }
+      import_load_method_combo_->setCurrentText(method);
+    } else {
+      import_cam_check_->setChecked(true);
+      import_cam_config_line_edit_->setText(QString::fromStdString(s.camera_config_path.string()));
+
+      QString source;
+      switch (s.import_source) {
+      case ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO:
+        source = "Ametek S710 Euresys Coaxlink Octo";
+        break;
+      default:
+        source = "Ametek S710 Euresys Coaxlink Octo";
+        break;
+      }
+      import_camera_combo_->setCurrentText(source);
+    }
+  }
+
+  // --- Image Rendering Settings ---
+  {
+    QString method;
+    switch (s.spacial_method) {
+    case SpacialMethod::FRESNEL_DIFFRACTION:
+      method = "Fresnel Diffraction";
+      break;
+    case SpacialMethod::ANGULAR_SPECTRUM:
+      method = "Angular Spectrum";
+      break;
+    default:
+      method = "None";
+      break;
+    }
+    render_space_transform_combo_->setCurrentText(method);
+    render_lambda_spin_->setValue(s.spacial_lambda * 1e9); // nm
+    render_focus_spin_->setValue(s.spacial_z * 1e3);       // mm
+  }
+  {
+    render_filter_2d_check_->setChecked(s.filter_2d);
+    render_filter_2d_inner_spin_->setValue(s.filter_r_inner);
+    render_filter_2d_outer_spin_->setValue(s.filter_r_outer);
+    // smooth_inner/smooth_outer omitted since not exposed in UI
+  }
+  {
+    QString method;
+    switch (s.time_method) {
+    case TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS:
+      method = "Principal Component Analysis";
+      break;
+    case TimeMethod::SHORT_TIME_FOURIER:
+      method = "Short Time Fourier";
+      break;
+    default:
+      method = "None";
+      break;
+    }
+    render_time_transform_combo_->setCurrentText(method);
+    render_time_window_spin_->setValue(static_cast<int>(s.time_window));
+    render_time_stride_spin_->setValue(static_cast<int>(s.time_stride));
+
+    view_x_spin_->setValue(static_cast<int>(s.time_x_begin));
+    view_x_width_spin_->setValue(static_cast<int>(s.time_x_end - s.time_x_begin));
+    view_y_spin_->setValue(static_cast<int>(s.time_y_begin));
+    view_y_width_spin_->setValue(static_cast<int>(s.time_y_end - s.time_y_begin));
+    view_z_spin_->setValue(static_cast<int>(s.time_z_begin));
+    view_z_width_spin_->setValue(static_cast<int>(s.time_z_end - s.time_z_begin));
+  }
+
+  // --- View Settings ---
+  { view_cuts_3d_check_->setChecked(s.view_3d_cuts); }
+
+  // --- Post-processing Settings ---
+  {
+    view_fft_shift_check_->setChecked(s.pp_fft_shift);
+    view_accumulation_spin_->setValue(static_cast<int>(s.pp_accumulation));
+    render_convolution_divide_check_->setChecked(s.pp_convolution_divide);
+
+    // Select convolution kernel name from path
+    QString convName = "None";
+    if (s.pp_convolution && !s.pp_convolution_path.empty()) {
+      auto fileName = QFileInfo(QString::fromStdString(s.pp_convolution_path)).baseName();
+      convName      = fileName;
+    }
+    render_convolution_combo_->setCurrentText(convName);
+
+    view_reticle_radius_->setValue(s.pp_pctclip_radius);
+    view_registration_check_->setChecked(s.pp_registration);
+    view_registration_radius_->setValue(s.pp_registration_radius);
+  }
+
+  // --- Recording Settings ---
+  {
+    export_file_line_edit_->setText(QString::fromStdString(s.recording_path.string()));
+    export_frames_spin_->setValue(static_cast<int>(s.recording_count));
+    // recording_method not exposed (always RAW in get_pipeline_settings)
+  }
+}
+
 QGroupBox *MainWindow::create_system_monitor_group() {
   auto *group  = new QGroupBox("System Monitor", this);
   auto *layout = new QVBoxLayout(group);
@@ -906,6 +1281,14 @@ QGroupBox *MainWindow::create_import_group() {
         view_x_width_spin_->setValue(reader.header().frame_width);
         view_y_spin_->setValue(0);
         view_y_width_spin_->setValue(reader.header().frame_height);
+
+        if (reader.footer().has_value()) {
+          auto               footer        = reader.footer().value();
+          pipeline::Settings prev_settings = get_pipeline_settings();
+          pipeline::Settings new_settings =
+              pipeline::old_json_to_settings(footer.pipeline_settings, prev_settings);
+          set_pipeline_settings(new_settings);
+        }
       } catch (std::exception &e) {
         logger()->error("failed to open \"{}\": \"{}\"", file.toStdString(), e.what());
       }
@@ -1017,7 +1400,21 @@ QGroupBox *MainWindow::create_export_group() {
   connect(export_browse_button_, &QPushButton::clicked, this, [=]() {
     QString file = QFileDialog::getSaveFileName(this, tr("Select File"));
     if (!file.isEmpty()) {
-      export_file_line_edit_->setText(file);
+      QFileInfo info(file);
+      QString   dirPath  = info.absolutePath();
+      QString   baseName = info.completeBaseName();
+
+      QRegularExpression      autoPattern(R"(^\d{6}_(.*?)$)");
+      QRegularExpressionMatch match = autoPattern.match(baseName);
+      if (match.hasMatch())
+        baseName = match.captured(1);
+
+      QString cleanedFileName = baseName + ".holo";
+
+      QString finalDisplayPath =
+          dirPath.isEmpty() ? cleanedFileName : dirPath + "/" + cleanedFileName;
+
+      export_file_line_edit_->setText(finalDisplayPath);
     }
   });
 

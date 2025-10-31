@@ -70,6 +70,7 @@ private:
 
   QSize              guess_source_dims();
   pipeline::Settings get_pipeline_settings();
+  void set_pipeline_settings(const pipeline::Settings& s);
 
   void setup_menu_bar();
   void setup_main_layout();
@@ -78,7 +79,8 @@ private:
   void connect_manager_signals();
   void connect_import_controls();
   void configure_window();
-
+  std::filesystem::path makeRecordingPath(const QString& userText) const;
+  
   // Current state
   bool update_in_progress_ = false;
   bool pipeline_running_   = false;

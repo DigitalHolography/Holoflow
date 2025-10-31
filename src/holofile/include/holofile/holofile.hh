@@ -16,6 +16,8 @@
 
 #include <cstdint>
 #include <memory>
+#include <nlohmann/json.hpp>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -74,6 +76,14 @@ public:
   InvalidFrameSizeException();
 };
 
+/// @brief Exception indicating that the footer in the file is invalid.
+///
+/// Thrown when the footer cannot be read or parsed correctly.
+class InvalidFooterException : public Exception {
+public:
+  InvalidFooterException();
+};
+
 #pragma pack(push, 1)
 struct Header {
   uint32_t magic_number;
@@ -91,6 +101,10 @@ struct Header {
   static constexpr uint8_t  BIG_ENDIAN      = 1;
   static constexpr uint32_t MAGIC_NUMBER_LE = 0x4F4C4F48;
 };
+
+struct Footer {
+  nlohmann::json pipeline_settings;
+};
 #pragma pack(pop)
 
 static_assert(sizeof(Header) == 64, "Holofile header must be 64 bytes");
@@ -98,25 +112,31 @@ static_assert(sizeof(Header) == 64, "Holofile header must be 64 bytes");
 class Reader {
 public:
   explicit Reader(const std::string &path);
-  const Header &header() const;
-  void          seek(std::size_t frame_index);
-  std::size_t   tell() const;
-  void          read_frames(uint8_t *data, std::size_t frame_count);
+  const Header         &header() const;
+  std::optional<Footer> footer() const;
+  void                  seek(std::size_t frame_index);
+  std::size_t           tell() const;
+  void                  read_frames(uint8_t *data, std::size_t frame_count);
 
 private:
+  void read_footer();
+
   struct FileCloser {
     void operator()(FILE *file) const { fclose(file); }
   };
 
   std::unique_ptr<FILE, FileCloser> file_;
   Header                            header_;
+  std::optional<Footer>             footer_;
   std::size_t                       frame_index_;
+  std::size_t                       data_end_offset_;
 };
 
 class Writer {
 public:
-  explicit Writer(const std::string &path, const Header &header);
+  explicit Writer(const std::string &path, const Header &header, const Footer &footer);
   void   write_frames(const uint8_t *data, std::size_t frame_count);
+  void   write_footer();
   size_t tell() const;
 
 private:
@@ -126,7 +146,9 @@ private:
 
   std::unique_ptr<FILE, FileCloser> file_;
   Header                            header_;
+  Footer                            footer_;
   std::size_t                       frame_index_;
+  std::size_t                       data_end_offset_;
 };
 
 } // namespace holofile

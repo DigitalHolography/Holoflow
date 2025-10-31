@@ -31,12 +31,14 @@ void to_json(nlohmann::json &j, const HolofileSettings &hs) {
   j = nlohmann::json{
       {"path", hs.path},
       {"count", hs.count},
+      {"pipeline_settings", hs.pipeline_settings},
   };
 }
 
 void from_json(const nlohmann::json &j, HolofileSettings &hs) {
   j.at("path").get_to(hs.path);
   j.at("count").get_to(hs.count);
+  j.at("pipeline_settings").get_to(hs.pipeline_settings);
 }
 
 Holofile::Holofile(const HolofileSettings &settings, RecordingGeometry geometry)
@@ -98,7 +100,9 @@ void Holofile::handle_events(holoflow::core::SyncCtx &ctx) {
 
     constexpr auto EXPECTED_DIRECTION = holoflow_event::EventDirection::ToNode;
     HOLOVIBES_CHECK(event->direction == EXPECTED_DIRECTION, "Unexpected event direction");
-    auto type = event->data["type"].get<std::string>();
+    auto type      = event->data["type"].get<std::string>();
+    auto new_path  = event->data["record_path"].get<std::string>();
+    settings_.path = new_path;
 
     if (type == "start_recording") {
       HOLOVIBES_CHECK(!is_recording(), "Received start_recording event while already recording");
@@ -125,7 +129,8 @@ void Holofile::start_recording(const std::string &path, int count) {
   HOLOVIBES_CHECK(!is_recording(), "Cannot start recording: already recording");
 
   frames_written_ = 0;
-  writer_.emplace(path, make_header(count));
+  auto footer     = holofile::Footer{.pipeline_settings = settings_.pipeline_settings};
+  writer_.emplace(path, make_header(count), footer);
 }
 
 void Holofile::finalize_recording(holoflow::core::SyncCtx &ctx) {
@@ -133,6 +138,8 @@ void Holofile::finalize_recording(holoflow::core::SyncCtx &ctx) {
   HOLOVIBES_CHECK(frames_written_ == settings_.count,
                   "Cannot finalize recording: incomplete ({} / {})", frames_written_,
                   settings_.count);
+
+  writer_->write_footer();
 
   auto event_data = nlohmann::json{
       {"type", "recording_finished"},

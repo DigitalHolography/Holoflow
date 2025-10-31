@@ -51,21 +51,21 @@ public:
   void stop_pipeline();
   void update_pipeline(const Settings &settings);
 
-  void start_raw_record();
+  void start_raw_record(std::filesystem::path record_path);
   void stop_raw_record();
 
 signals:
   void start_pipeline_success();
-  void start_pipeline_failure(const QString& error);
+  void start_pipeline_failure(const QString &error);
   void stop_pipeline_success();
-  void stop_pipeline_failure(const QString& error);
+  void stop_pipeline_failure(const QString &error);
   void update_pipeline_success();
-  void update_pipeline_failure(const QString& error);
+  void update_pipeline_failure(const QString &error);
   void metrics_updated(double input_fps);
   void raw_record_started_success();
-  void raw_record_started_failure(const QString& error);
+  void raw_record_started_failure(const QString &error);
   void raw_record_stopped_success();
-  void raw_record_stopped_failure(const QString& error);
+  void raw_record_stopped_failure(const QString &error);
 
 private:
   using V = holoflow::core::GraphSpec::vertex_descriptor;
@@ -94,6 +94,8 @@ private:
 
   V add_source();
   V add_cpu_in_queue(V parent, int out_idx, int in_idx);
+  V add_cpu_cpu_cpy(V parent, int out_idx, int in_idx);
+  V add_record_queue(V parent, int out_idx, int in_idx);
   V add_xy_raw_display(V parent, int out_idx, int in_idx);
   V add_raw_record(V parent, int out_idx, int in_idx);
   V add_cpu_gpu_cpy(V parent, int out_idx, int in_idx);

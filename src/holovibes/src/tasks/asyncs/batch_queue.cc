@@ -41,8 +41,8 @@ void from_json(const nlohmann::json &j, BatchQueueSettings &bqs) {
 
 BatchQueue::BatchQueue(const BatchQueueSettings &settings, const holoflow::core::TDesc &idesc,
                        const holoflow::core::TDesc &odesc, HostPtr<std::byte> &&h_buf,
-                       DevPtr<std::byte> &&d_buf, std::byte *buf, size_t nb_slots, size_t input_size,
-                       size_t element_size)
+                       DevPtr<std::byte> &&d_buf, std::byte *buf, size_t nb_slots,
+                       size_t input_size, size_t element_size)
     : settings_(settings), idesc_(idesc), odesc_(odesc), h_buf_(std::move(h_buf)),
       d_buf_(std::move(d_buf)), buf_(buf), nb_slots_(nb_slots), input_size_(input_size),
       element_size_(element_size) {}
@@ -56,7 +56,7 @@ std::optional<holoflow::core::TView> BatchQueue::acquire_input(int index) {
     return std::nullopt;
   }
 
-  size_t        write_idx = write_idx_.load(std::memory_order_relaxed);
+  size_t     write_idx = write_idx_.load(std::memory_order_relaxed);
   std::byte *data      = buf_ + write_idx * element_size_;
   return holoflow::core::TView{
       .data = data,
@@ -92,7 +92,7 @@ holoflow::core::OpResult BatchQueue::try_pop(holoflow::core::AsyncPopCtx &ctx) {
     return holoflow::core::OpResult::NotReady;
   }
 
-  size_t        read_idx = read_idx_.load(std::memory_order_relaxed);
+  size_t     read_idx = read_idx_.load(std::memory_order_relaxed);
   std::byte *data     = buf_ + read_idx * element_size_;
   ctx.outputs[0]      = holoflow::core::TView{
            .data = data,
@@ -184,18 +184,18 @@ BatchQueueFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   int nb_slots = lcm_above(x, y, k);
 
   // Setup buffers
-  size_t             input_size   = static_cast<int>(input_descs[0].shape[0]);
-  size_t             element_size = static_cast<int>(input_descs[0].num_bytes() / input_size);
-  size_t             bytes        = nb_slots * element_size;
+  size_t input_size   = static_cast<int>(input_descs[0].shape[0]);
+  size_t element_size = static_cast<int>(input_descs[0].num_bytes() / input_size);
+  size_t bytes        = nb_slots * element_size;
 
-  logger()->debug(
-      "[BatchQueueFactory::create] Creating BatchQueue with {} slots, input_size={}, element_size={}, "
-      "total_bytes={}",
-      nb_slots, input_size, element_size, bytes);
+  logger()->debug("[BatchQueueFactory::create] Creating BatchQueue with {} slots, input_size={}, "
+                  "element_size={}, "
+                  "total_bytes={}",
+                  nb_slots, input_size, element_size, bytes);
 
-  HostPtr<std::byte> h_buf        = nullptr;
-  DevPtr<std::byte>  d_buf        = nullptr;
-  std::byte         *buf          = nullptr;
+  HostPtr<std::byte> h_buf = nullptr;
+  DevPtr<std::byte>  d_buf = nullptr;
+  std::byte         *buf   = nullptr;
   switch (input_descs[0].mem_loc) {
   case holoflow::core::MemLoc::Host:
     h_buf = curaii::make_unique_host_ptr<std::byte>(bytes);
@@ -225,14 +225,14 @@ BatchQueueFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
   HOLOVIBES_CHECK(old_bq != nullptr, "old_task is not a BatchQueue instance");
 
   // Update
-  int  x            = static_cast<int>(input_descs[0].shape[0]);
-  int  y            = settings.output_stride;
-  int  k            = settings.target_capacity + x;
-  int  nb_slots     = lcm_above(x, y, k);
-  int  input_size   = static_cast<int>(input_descs[0].shape[0]);
-  int  element_size = static_cast<int>(input_descs[0].num_bytes() / input_size);
-  int  bytes        = nb_slots * element_size;
-  bool same_buffer  = (bytes == old_bq->nb_slots_ * old_bq->element_size_) &&
+  int    x            = static_cast<int>(input_descs[0].shape[0]);
+  int    y            = settings.output_stride;
+  int    k            = settings.target_capacity + x;
+  int    nb_slots     = lcm_above(x, y, k);
+  size_t input_size   = static_cast<int>(input_descs[0].shape[0]);
+  size_t element_size = static_cast<int>(input_descs[0].num_bytes() / input_size);
+  size_t bytes        = nb_slots * element_size;
+  bool   same_buffer  = (bytes == old_bq->nb_slots_ * old_bq->element_size_) &&
                      (input_descs[0].mem_loc == old_bq->idesc_.mem_loc);
 
   if (same_buffer) {

@@ -30,6 +30,7 @@
 #include "bug.hh"
 #include "holoflow/runtime/graph_display.hh"
 #include "logger.hh"
+#include "settings_loader.hh"
 #include "tasks/asyncs/batch_queue.hh"
 #include "tasks/asyncs/slide_avg.hh"
 #include "tasks/sinks/display_tensor.hh"
@@ -188,9 +189,10 @@ void Manager::update_pipeline(const Settings &settings) {
   }
 }
 
-void Manager::start_raw_record() {
+void Manager::start_raw_record(std::filesystem::path record_path) {
   auto payload = nlohmann::json{
       {"type", "start_recording"},
+      {"record_path", record_path},
   };
 
   std::lock_guard lock(mtx_);
@@ -202,7 +204,7 @@ void Manager::start_raw_record() {
   }
 
   if (raw_recording_active_) {
-    const QString msg = QString("Recording already in progress"); 
+    const QString msg = QString("Recording already in progress");
     logger()->warn("[Manager::start_raw_record] Recording already in progress");
     emit raw_record_started_failure(msg);
     return;
@@ -276,7 +278,6 @@ void Manager::poll_metrics() {
   }
 
   auto snapshot = scheduler_->metrics();
-  logger()->debug("[Manager::poll_metrics] Metrics snapshot:\n\t{}", fmt::join(snapshot, "\n\t"));
 
   if (snapshot.empty()) { // No metrics available
     emit metrics_updated(0.0);
@@ -421,7 +422,9 @@ void Manager::build_graph_spec() {
   }
 
   if (cpu_in_queue.has_value()) {
-    auto raw_record = add_raw_record(*cpu_in_queue, 0, 0);
+    auto record_cpu_cpu = add_cpu_cpu_cpy(*cpu_in_queue, 0, 0);
+    auto record_queue   = add_record_queue(record_cpu_cpu, 0, 0);
+    auto raw_record     = add_raw_record(record_queue, 0, 0);
     (void)raw_record;
   } else {
     logger()->warn(
@@ -496,7 +499,7 @@ void Manager::build_graph_spec() {
     auto reshape   = add_xz_reshape(cut_avg, 0, 0);
     auto slide_avg = add_xz_slide_avg(reshape, 0, 0);
     auto crop      = add_xz_crop2frames(slide_avg, 0, 0);
-    auto to_u8     = add_xz_to_u8(crop, 0, 0); 
+    auto to_u8     = add_xz_to_u8(crop, 0, 0);
     auto gpu_out   = add_xz_gpu_out_queue(to_u8, 0, 0);
     auto gpu_cpu   = add_xz_gpu_cpu_cpy(gpu_out, 0, 0);
     auto cpu_out   = add_xz_cpu_out_queue(gpu_cpu, 0, 0);
@@ -619,6 +622,24 @@ Manager::V Manager::add_cpu_in_queue(V parent, int out_idx, int in_idx) {
       });
 }
 
+Manager::V Manager::add_record_queue(V parent, int out_idx, int in_idx) {
+  using asyncs::BatchQueueSettings;
+  return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "record_queue", "BatchQueue",
+                                            BatchQueueSettings{
+                                                .target_capacity = s_.recording_count,
+                                                .output_size     = s_.time_window,
+                                                .output_stride   = s_.time_stride,
+                                            });
+}
+
+Manager::V Manager::add_cpu_cpu_cpy(V parent, int out_idx, int in_idx) {
+  using syncs::MemcpySettings;
+  return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "cpu_cpu", "Memcpy",
+                                        MemcpySettings{
+                                            .target = MemcpySettings::Target::Host,
+                                        });
+}
+
 Manager::V Manager::add_xy_raw_display(V parent, int out_idx, int in_idx) {
   using sinks::DisplayTensorSettings;
   return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "xy_raw_display",
@@ -629,8 +650,9 @@ Manager::V Manager::add_raw_record(V parent, int out_idx, int in_idx) {
   using sinks::HolofileSettings;
   return add_node_after<HolofileSettings>(parent, out_idx, in_idx, "raw_record", "HolofileWriter",
                                           HolofileSettings{
-                                              .path  = s_.recording_path.string(),
-                                              .count = s_.recording_count,
+                                              .path              = s_.recording_path.string(),
+                                              .count             = s_.recording_count,
+                                              .pipeline_settings = settings_to_old_json(s_),
                                           });
 }
 
@@ -938,10 +960,11 @@ Manager::V Manager::add_xz_cut_avg(V parent, int out_idx, int in_idx) {
 
 Manager::V Manager::add_xz_reshape(V parent, int out_idx, int in_idx) {
   using syncs::ReshapeSettings;
-  return add_node_after<ReshapeSettings>(parent, out_idx, in_idx, "xz_reshape", "Reshape",
-                                        ReshapeSettings{
-                                            .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
-                                        });
+  return add_node_after<ReshapeSettings>(
+      parent, out_idx, in_idx, "xz_reshape", "Reshape",
+      ReshapeSettings{
+          .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
+      });
 }
 
 Manager::V Manager::add_xz_slide_avg(V parent, int out_idx, int in_idx) {
@@ -963,13 +986,13 @@ Manager::V Manager::add_xz_to_u8(V parent, int out_idx, int in_idx) {
 
 Manager::V Manager::add_xz_crop2frames(V parent, int out_idx, int in_idx) {
   using syncs::CropSettings;
-  return add_node_after<CropSettings>(parent, out_idx, in_idx, "xz_crop2frames", "Crop",
-                                     CropSettings{
-                                         .origin = {0, 10, 0},
-                                         .shape  = {static_cast<size_t>(1),
-                                                    static_cast<size_t>(src_height_ - 20),
-                                                    static_cast<size_t>(s_.time_window)},
-                                     });
+  return add_node_after<CropSettings>(
+      parent, out_idx, in_idx, "xz_crop2frames", "Crop",
+      CropSettings{
+          .origin = {0, 10, 0},
+          .shape  = {static_cast<size_t>(1), static_cast<size_t>(src_height_ - 20),
+                     static_cast<size_t>(s_.time_window)},
+      });
 }
 
 Manager::V Manager::add_xz_gpu_out_queue(V parent, int out_idx, int in_idx) {
@@ -1020,10 +1043,11 @@ Manager::V Manager::add_yz_cut_avg(V parent, int out_idx, int in_idx) {
 
 Manager::V Manager::add_yz_reshape(V parent, int out_idx, int in_idx) {
   using syncs::ReshapeSettings;
-  return add_node_after<ReshapeSettings>(parent, out_idx, in_idx, "yz_reshape", "Reshape",
-                                        ReshapeSettings{
-                                            .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
-                                        });
+  return add_node_after<ReshapeSettings>(
+      parent, out_idx, in_idx, "yz_reshape", "Reshape",
+      ReshapeSettings{
+          .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
+      });
 }
 
 Manager::V Manager::add_yz_slide_avg(V parent, int out_idx, int in_idx) {
@@ -1031,8 +1055,7 @@ Manager::V Manager::add_yz_slide_avg(V parent, int out_idx, int in_idx) {
   return add_node_after<SlidingAverageSettings>(
       parent, out_idx, in_idx, "yz_slide_avg", "SlidingAverage",
       SlidingAverageSettings{.target_capacity = 128,
-                             .window_size     = static_cast<size_t>(s_.pp_accumulation)
-                            });
+                             .window_size     = static_cast<size_t>(s_.pp_accumulation)});
 }
 
 Manager::V Manager::add_yz_to_u8(V parent, int out_idx, int in_idx) {
@@ -1047,21 +1070,20 @@ Manager::V Manager::add_yz_to_u8(V parent, int out_idx, int in_idx) {
 Manager::V Manager::add_yz_rotation(V parent, int out_idx, int in_idx) {
   using syncs::RotationSettings;
   return add_node_after<RotationSettings>(parent, out_idx, in_idx, "yz_rotation", "Rotation",
-                                         RotationSettings{
-                                             .angle = 90,
-                                         });
+                                          RotationSettings{
+                                              .angle = 90,
+                                          });
 }
-
 
 Manager::V Manager::add_yz_crop2frames(V parent, int out_idx, int in_idx) {
   using syncs::CropSettings;
-  return add_node_after<CropSettings>(parent, out_idx, in_idx, "yz_crop", "Crop",
-                                     CropSettings{
-                                         .origin = {0, 10, 0},
-                                         .shape  = {static_cast<size_t>(1),
-                                                    static_cast<size_t>(src_height_ - 20),
-                                                    static_cast<size_t>(s_.time_window)},
-                                     });
+  return add_node_after<CropSettings>(
+      parent, out_idx, in_idx, "yz_crop", "Crop",
+      CropSettings{
+          .origin = {0, 10, 0},
+          .shape  = {static_cast<size_t>(1), static_cast<size_t>(src_height_ - 20),
+                     static_cast<size_t>(s_.time_window)},
+      });
 }
 
 Manager::V Manager::add_yz_gpu_out_queue(V parent, int out_idx, int in_idx) {
