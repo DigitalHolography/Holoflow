@@ -1380,7 +1380,7 @@ QGroupBox *MainWindow::create_view_group() {
   view_reticle_radius_ = create_double_spin_box(brightness_group, 0.05, 1.0, 0.05, 1.0);
   bright_layout->addWidget(view_reticle_radius_, 2, 1);
 
-  view_registration_check_ = new QCheckBox("registration", brightness_group);
+  view_registration_check_ = new QCheckBox("Registration", brightness_group);
   bright_layout->addWidget(view_registration_check_, 4, 0);
   view_registration_radius_ = create_double_spin_box(brightness_group, 0.05, 1.0, 0.05, 1.0);
   bright_layout->addWidget(view_registration_radius_, 4, 1);
