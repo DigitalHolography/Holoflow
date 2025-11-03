@@ -139,7 +139,6 @@ private:
   QComboBox *render_time_transform_combo_;
   QSpinBox  *render_time_window_spin_;
   QSpinBox  *render_lambda_spin_;
-  QSpinBox  *render_boundary_spin_;
   QSpinBox  *render_focus_spin_;
   QSlider   *render_focus_slider_;
   QComboBox *render_convolution_combo_;
@@ -163,7 +162,6 @@ private:
   QCheckBox      *view_invert_check_;
   QSpinBox       *view_range_start_spin_;
   QSpinBox       *view_range_end_spin_;
-  QCheckBox      *view_renormalize_check_;
   QCheckBox      *view_registration_check_;
   QDoubleSpinBox *view_registration_radius_;
   QCheckBox      *view_reticle_check_;

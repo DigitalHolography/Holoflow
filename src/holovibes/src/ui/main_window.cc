@@ -573,7 +573,6 @@ void MainWindow::setup_validation_connections() {
   connect(render_time_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, cb);
   connect(render_time_window_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
   connect(render_lambda_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
-  connect(render_boundary_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
   connect(render_focus_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
   connect(render_focus_slider_, &QSlider::valueChanged, this, cb);
   connect(render_convolution_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, cb);
@@ -597,7 +596,6 @@ void MainWindow::setup_validation_connections() {
   connect(view_invert_check_, &QCheckBox::toggled, this, cb);
   connect(view_range_start_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
   connect(view_range_end_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
-  connect(view_renormalize_check_, &QCheckBox::toggled, this, cb);
   connect(view_registration_check_, &QCheckBox::toggled, this, cb);
   connect(view_registration_radius_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, cb);
   connect(view_reticle_check_, &QCheckBox::toggled, this, cb);
@@ -639,7 +637,6 @@ void MainWindow::setup_update_connections() {
   connect(render_time_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, cb);
   connect(render_time_window_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
   connect(render_lambda_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
-  connect(render_boundary_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
   connect(render_focus_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
   connect(render_focus_slider_, &QSlider::valueChanged, this, cb);
   connect(render_convolution_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, cb);
@@ -663,7 +660,6 @@ void MainWindow::setup_update_connections() {
   connect(view_invert_check_, &QCheckBox::toggled, this, cb);
   connect(view_range_start_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
   connect(view_range_end_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
-  connect(view_renormalize_check_, &QCheckBox::toggled, this, cb);
   connect(view_registration_check_, &QCheckBox::toggled, this, cb);
   connect(view_registration_radius_, qOverload<double>(&QDoubleSpinBox::valueChanged), this, cb);
   connect(view_reticle_check_, &QCheckBox::toggled, this, cb);
@@ -1268,7 +1264,6 @@ QGroupBox *MainWindow::create_image_rendering_group() {
   add_combo_row("Time Transform:", render_time_transform_combo_, time_transforms);
   add_spin_row("Time Window:", render_time_window_spin_, 1, kLargeSpinMax, 32);
   add_spin_row("Lambda (nm):", render_lambda_spin_, 1, kLargeSpinMax, 852);
-  add_spin_row("Boundary (mm):", render_boundary_spin_, 1, kLargeSpinMax, 0);
   add_spin_row("Focus (mm):", render_focus_spin_, 1, kLargeSpinMax, 380);
 
   render_focus_slider_ = new QSlider(Qt::Horizontal, group);
@@ -1384,9 +1379,6 @@ QGroupBox *MainWindow::create_view_group() {
   bright_layout->addWidget(view_reticle_check_, 2, 0);
   view_reticle_radius_ = create_double_spin_box(brightness_group, 0.05, 1.0, 0.05, 1.0);
   bright_layout->addWidget(view_reticle_radius_, 2, 1);
-
-  view_renormalize_check_ = new QCheckBox("Renormalize image levels", brightness_group);
-  bright_layout->addWidget(view_renormalize_check_, 3, 0, 1, 2);
 
   view_registration_check_ = new QCheckBox("registration", brightness_group);
   bright_layout->addWidget(view_registration_check_, 4, 0);
