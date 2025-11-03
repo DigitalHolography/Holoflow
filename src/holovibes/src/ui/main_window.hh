@@ -80,6 +80,7 @@ private:
   void connect_import_controls();
   void configure_window();
   std::filesystem::path makeRecordingPath(const QString& userText) const;
+  void load_holofile_settings(const nlohmann::json &settings);
   
   // Current state
   bool update_in_progress_ = false;
