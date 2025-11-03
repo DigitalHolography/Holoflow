@@ -14,6 +14,8 @@
 
 #include "settings_loader.hh"
 
+#include "logger.hh"
+
 namespace holovibes::pipeline {
 
 // Convert new Settings to old JSON format
@@ -21,39 +23,14 @@ nlohmann::json settings_to_old_json(const Settings &settings) {
   nlohmann::json j;
 
   // Advanced section
-  j["compute_settings"]["advanced"]["buffer_size"]["input"]  = settings.gpu_in_size;
-  j["compute_settings"]["advanced"]["buffer_size"]["output"] = settings.gpu_out_size;
-  j["compute_settings"]["advanced"]["buffer_size"]["record"] = settings.cpu_rec_size;
-  // FIXME: buffer_size.file - no mapping found
-  //   j["compute_settings"]["advanced"]["buffer_size"]["file"] = 1024;
-  // FIXME: buffer_size.time_transformation_cuts - no mapping found
-  //   j["compute_settings"]["advanced"]["buffer_size"]["time_transformation_cuts"] = 512;
-
-  // FIXME: contrast.frame_index_offset - no mapping found
-  //   j["compute_settings"]["advanced"]["contrast"]["frame_index_offset"] = 2;
-  // FIXME: contrast.lower - no mapping found
-  //   j["compute_settings"]["advanced"]["contrast"]["lower"] = 0.02;
-  // FIXME: contrast.upper - no mapping found
-  //   j["compute_settings"]["advanced"]["contrast"]["upper"] = 99.98;
-
-  // FIXME: make sure it s good
+  j["compute_settings"]["advanced"]["buffer_size"]["input"]    = settings.gpu_in_size;
+  j["compute_settings"]["advanced"]["buffer_size"]["output"]   = settings.gpu_out_size;
+  j["compute_settings"]["advanced"]["buffer_size"]["record"]   = settings.cpu_rec_size;
   j["compute_settings"]["advanced"]["filter2d_smooth"]["high"] = settings.filter_smooth_outer;
   j["compute_settings"]["advanced"]["filter2d_smooth"]["low"]  = settings.filter_smooth_inner;
-
-  // FIXME: nb_frames_to_record - closest is recording_count but context differs
-  j["compute_settings"]["advanced"]["nb_frames_to_record"] = settings.recording_count;
-  // FIXME: raw_bitshift - no mapping found
-  //   j["compute_settings"]["advanced"]["raw_bitshift"] = 0;
-  // FIXME: renorm_constant - no mapping found
-  //   j["compute_settings"]["advanced"]["renorm_constant"] = 5;
-
-  // FIXME: entire color_composite_image section - no mapping found
-  //   j["compute_settings"]["color_composite_image"]["auto_weight"] = false;
-  //   j["compute_settings"]["color_composite_image"]["mode"]        = "RGB";
-  // ... (HSV/RGB subsections omitted for brevity, all FIXMEs)
+  j["compute_settings"]["advanced"]["nb_frames_to_record"]     = settings.recording_count;
 
   // Image rendering section
-  // FIXME: batch_size - closest is load_batch but context differs
   j["compute_settings"]["image_rendering"]["batch_size"] = settings.load_batch;
 
   j["compute_settings"]["image_rendering"]["convolution"]["divide"] =
@@ -65,16 +42,11 @@ nlohmann::json settings_to_old_json(const Settings &settings) {
   j["compute_settings"]["image_rendering"]["filter2d"]["inner_radius"] = settings.filter_r_inner;
   j["compute_settings"]["image_rendering"]["filter2d"]["outer_radius"] = settings.filter_r_outer;
 
-  // FIXME: image_mode - no mapping found, inferring from spacial_method
   std::string image_mode = "HOLOGRAM";
   if (settings.spacial_method != SpacialMethod::NONE) {
     image_mode = "HOLOGRAM";
   }
-  j["compute_settings"]["image_rendering"]["image_mode"] = image_mode;
-
-  // FIXME: input_filter.type - no mapping found
-  //   j["compute_settings"]["image_rendering"]["input_filter"]["type"] = "None";
-
+  j["compute_settings"]["image_rendering"]["image_mode"]           = image_mode;
   j["compute_settings"]["image_rendering"]["lambda"]               = settings.spacial_lambda;
   j["compute_settings"]["image_rendering"]["propagation_distance"] = settings.spacial_z;
 
@@ -108,75 +80,32 @@ nlohmann::json settings_to_old_json(const Settings &settings) {
   j["compute_settings"]["image_rendering"]["time_transformation_size"]   = settings.time_window;
   j["compute_settings"]["image_rendering"]["time_transformation_stride"] = settings.time_stride;
 
-  //   j["compute_settings"]["version"] = "v1";
-
   // View section
-  j["compute_settings"]["view"]["fft_shift"] = settings.pp_fft_shift;
-  // FIXME: image_type - no mapping found
-  //   j["compute_settings"]["view"]["image_type"] = "MODULUS";
-
+  j["compute_settings"]["view"]["fft_shift"]                            = settings.pp_fft_shift;
   j["compute_settings"]["view"]["registration"]["registration_enabled"] = settings.pp_registration;
   j["compute_settings"]["view"]["registration"]["registration_zone"] =
       settings.pp_registration_radius;
-
-  // FIXME: renorm - closest might be pp_pctclip but not clear
-  //   j["compute_settings"]["view"]["renorm"] = true;
-
-  // FIXME: reticle section - no mapping found
-  //   j["compute_settings"]["view"]["reticle"]["display_enabled"] = false;
-  //   j["compute_settings"]["view"]["reticle"]["scale"]           = 0.5;
-
-  // Window sections
-  // FIXME: filter2d window contrast - different from pp_pctclip
-  //   j["compute_settings"]["view"]["window"]["filter2d"]["contrast"]["auto_refresh"] = false;
   j["compute_settings"]["view"]["window"]["filter2d"]["contrast"]["enabled"] = settings.pp_pctclip;
-  //   j["compute_settings"]["view"]["window"]["filter2d"]["contrast"]["invert"]  = false;
-  // FIXME: contrast min/max values
-  //   j["compute_settings"]["view"]["window"]["filter2d"]["contrast"]["max"] = 65535.0;
-  //   j["compute_settings"]["view"]["window"]["filter2d"]["contrast"]["min"] = 1.0;
-  //   j["compute_settings"]["view"]["window"]["filter2d"]["log_enabled"]     = false;
 
   // XY window
-  //   j["compute_settings"]["view"]["window"]["xy"]["contrast"]["auto_refresh"] = false;
   j["compute_settings"]["view"]["window"]["xy"]["contrast"]["enabled"] = settings.pp_pctclip;
-  //   j["compute_settings"]["view"]["window"]["xy"]["contrast"]["invert"]       = false;
-  // FIXME: xy contrast values - using pctclip but units may differ
-  j["compute_settings"]["view"]["window"]["xy"]["contrast"]["max"] = settings.pp_pctclip_upper;
-  j["compute_settings"]["view"]["window"]["xy"]["contrast"]["min"] = settings.pp_pctclip_lower;
-  //   j["compute_settings"]["view"]["window"]["xy"]["enabled"]         = false;
-  //   j["compute_settings"]["view"]["window"]["xy"]["horizontal_flip"] = false;
-  //   j["compute_settings"]["view"]["window"]["xy"]["log_enabled"]     = false;
+  j["compute_settings"]["view"]["window"]["xy"]["contrast"]["max"]     = settings.pp_pctclip_upper;
+  j["compute_settings"]["view"]["window"]["xy"]["contrast"]["min"]     = settings.pp_pctclip_lower;
   j["compute_settings"]["view"]["window"]["xy"]["output_image_accumulation"] =
       settings.pp_accumulation;
-  // FIXME: rotation - no mapping found
-  //   j["compute_settings"]["view"]["window"]["xy"]["rotation"] = 0.0;
-
-  // FIXME: xz and yz windows - no specific mappings
   j["compute_settings"]["view"]["window"]["xz"]["enabled"] = settings.view_3d_cuts;
   j["compute_settings"]["view"]["window"]["yz"]["enabled"] = settings.view_3d_cuts;
 
   // Coordinate ranges
-  //   j["compute_settings"]["view"]["x"]["start"] = 0; // FIXME: no mapping for x range
-  //   j["compute_settings"]["view"]["x"]["width"] = 0;
-  //   j["compute_settings"]["view"]["y"]["start"] = 0; // FIXME: no mapping for y range
-  //   j["compute_settings"]["view"]["y"]["width"] = 0;
+  j["compute_settings"]["view"]["x"]["start"] = settings.time_x_begin;
+  j["compute_settings"]["view"]["x"]["width"] = settings.time_x_end - settings.time_x_begin;
+  j["compute_settings"]["view"]["y"]["start"] = settings.time_y_begin;
+  j["compute_settings"]["view"]["y"]["width"] = settings.time_y_end - settings.time_y_begin;
   j["compute_settings"]["view"]["z"]["start"] = settings.time_z_begin;
   j["compute_settings"]["view"]["z"]["width"] = settings.time_z_end - settings.time_z_begin;
-  // FIXME: z2 - no mapping found
-  // j["compute_settings"]["view"]["z2"]["start"] = 0;
-  // j["compute_settings"]["view"]["z2"]["width"] = 0;
 
   // Info section
-  // FIXME: camera_fps - no mapping found
-  //   j["info"]["camera_fps"] = 37037;
-  // FIXME: contiguous - no mapping found
-  j["info"]["contiguous"] = settings.cpu_rec_size;
-  // FIXME: eye_type - no mapping found
-  //   j["info"]["eye_type"] = "LEFT";
-  // FIXME: get the version
-  //   j["info"]["holovibes_version"] = "0.0.0";
-  // FIXME: input_fps - no mapping found
-  //   j["info"]["input_fps"]        = 37037;
+  j["info"]["contiguous"]       = settings.cpu_rec_size;
   j["info"]["pixel_pitch"]["x"] = settings.spacial_pixel_size;
   j["info"]["pixel_pitch"]["y"] = settings.spacial_pixel_size;
 
@@ -203,12 +132,14 @@ Settings old_json_to_settings(const nlohmann::json &j, const Settings &default_s
   settings.gpu_out_size = val(buf, "output", default_settings.gpu_out_size);
 
   // --- Import ---
-  settings.import_source      = default_settings.import_source;
-  settings.load_path          = default_settings.load_path;
-  settings.load_method        = default_settings.load_method;
-  settings.load_begin         = default_settings.load_begin;
-  settings.load_end           = default_settings.load_end;
-  settings.load_batch         = val(rend, "batch_size", default_settings.load_batch);
+  settings.import_source = default_settings.import_source;
+  settings.load_path     = default_settings.load_path;
+  settings.load_method   = default_settings.load_method;
+  settings.load_begin    = default_settings.load_begin;
+  settings.load_end      = default_settings.load_end;
+  settings.load_batch    = val(rend, "batch_size", default_settings.load_batch);
+  logger()->info("Using load batch size: {}", settings.load_batch);
+  logger()->warn("batch size : {}", rend["batch_size"].get<int>());
   settings.camera_config_path = default_settings.camera_config_path;
 
   // --- Spatial ---
@@ -248,16 +179,24 @@ Settings old_json_to_settings(const nlohmann::json &j, const Settings &default_s
       settings.time_method = TimeMethod::NONE;
   }
 
-  settings.time_window  = val(rend, "time_transformation_size", default_settings.time_window);
-  settings.time_stride  = val(rend, "time_transformation_stride", default_settings.time_stride);
-  settings.time_x_begin = default_settings.time_x_begin;
-  settings.time_x_end   = default_settings.time_x_end;
-  settings.time_y_begin = default_settings.time_y_begin;
-  settings.time_y_end   = default_settings.time_y_end;
+  settings.time_window = val(rend, "time_transformation_size", default_settings.time_window);
+  settings.time_stride = val(rend, "time_transformation_stride", default_settings.time_stride);
 
+  const auto &xview     = view.value("x", nlohmann::json{});
+  const auto &yview     = view.value("y", nlohmann::json{});
   const auto &zview     = view.value("z", nlohmann::json{});
+  settings.time_x_begin = val(xview, "start", default_settings.time_x_begin);
+  settings.time_y_begin = val(yview, "start", default_settings.time_y_begin);
   settings.time_z_begin = val(zview, "start", default_settings.time_z_begin);
-  settings.time_z_end   = settings.time_z_begin + static_cast<int>(val(zview, "width", 0));
+  const auto x_width    = val(xview, "width", -42);
+  settings.time_x_end =
+      x_width == -42 ? default_settings.time_x_end : settings.time_x_begin + x_width;
+  const auto y_width = val(yview, "width", -42);
+  settings.time_y_end =
+      y_width == -42 ? default_settings.time_y_end : settings.time_y_begin + y_width;
+  const auto z_width = val(zview, "width", -42);
+  settings.time_z_end =
+      z_width == -42 ? default_settings.time_z_end : settings.time_z_begin + z_width;
 
   // --- View ---
   const auto &win       = view.value("window", nlohmann::json{});
@@ -277,11 +216,13 @@ Settings old_json_to_settings(const nlohmann::json &j, const Settings &default_s
   settings.pp_convolution_path   = conv_type;
   settings.pp_convolution_divide = val(conv, "divide", default_settings.pp_convolution_divide);
 
-  const auto &contrast       = xy.value("contrast", nlohmann::json{});
-  settings.pp_pctclip        = val(contrast, "enabled", default_settings.pp_pctclip);
-  settings.pp_pctclip_lower  = val(contrast, "min", default_settings.pp_pctclip_lower);
-  settings.pp_pctclip_upper  = val(contrast, "max", default_settings.pp_pctclip_upper);
-  settings.pp_pctclip_radius = default_settings.pp_pctclip_radius;
+  const auto &contrast      = xy.value("contrast", nlohmann::json{});
+  settings.pp_pctclip       = val(contrast, "enabled", default_settings.pp_pctclip);
+  settings.pp_pctclip_lower = val(contrast, "min", default_settings.pp_pctclip_lower);
+  settings.pp_pctclip_upper = val(contrast, "max", default_settings.pp_pctclip_upper);
+
+  const auto &reticle        = view.value("reticle", nlohmann::json{});
+  settings.pp_pctclip_radius = val(reticle, "scale", default_settings.pp_pctclip_radius);
 
   const auto &reg          = view.value("registration", nlohmann::json{});
   settings.pp_registration = val(reg, "registration_enabled", default_settings.pp_registration);

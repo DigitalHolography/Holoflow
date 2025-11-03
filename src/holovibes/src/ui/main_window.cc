@@ -742,7 +742,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       s.load_end      = static_cast<size_t>(import_end_index_spin_->value());
       QString method  = import_load_method_combo_->currentText();
       s.load_method   = method_from_str.at(method.toStdString());
-      s.load_batch    = 32;
+      s.load_batch    = render_batch_size_spin_->value();
     } else {
       QString source       = import_camera_combo_->currentText();
       s.import_source      = source_from_str.at(source.toStdString());
@@ -829,8 +829,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
 
   // --- Advanced Settings ---
   {
-    // These are fixed in get_pipeline_settings(), so you may want to display them in spinboxes
-    // later cpu_in_size_, gpu_in_size_, etc.
+    // (none exposed in UI)
   }
 
   // --- Import Settings ---
@@ -889,6 +888,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
       method = "None";
       break;
     }
+    render_batch_size_spin_->setValue(s.load_batch);
     render_space_transform_combo_->setCurrentText(method);
     render_lambda_spin_->setValue(s.spacial_lambda * 1e9); // nm
     render_focus_spin_->setValue(s.spacial_z * 1e3);       // mm
