@@ -701,7 +701,9 @@ QSize MainWindow::guess_source_dims() {
       throw std::runtime_error(std::format("Could not open camera config file: {}", path));
     }
 
-    auto cfg        = nlohmann::json::parse(cfg_file).at("s710");
+    // FIXE: This needs to be properly handeled for more camera support
+    auto cfg_json   = nlohmann::json::parse(cfg_file);
+    auto cfg        = cfg_json.contains("s711") ? cfg_json.at("s711") : cfg_json.at("s710");
     int  src_width  = cfg.at("Width").get<int>();
     int  src_height = cfg.at("Height").get<int>();
     return QSize(src_width, src_height);
@@ -733,6 +735,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     };
     std::map<std::string, ImportSource> source_from_str{
         {"Ametek S710 Euresys Coaxlink Octo", ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO},
+        {"Ametek S711 Euresys Coaxlink Octo", ImportSource::AMETEK_S711_EURESYS_COAXLINK_OCTO},
     };
 
     if (!import_cam_check_->isChecked()) {
@@ -753,6 +756,8 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Image Rendering Settings
   {
+    s.raw_view = render_image_combo_->currentText() == "Raw";
+
     std::map<std::string, SpacialMethod> method_from_str{
         {"None", SpacialMethod::NONE},
         {"Fresnel Diffraction", SpacialMethod::FRESNEL_DIFFRACTION},
@@ -816,7 +821,9 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Recording Settings
   {
-    s.recording_method = pipeline::RecordingMethod::RAW;
+    s.recording_method = export_image_type_combo_->currentText() == "Raw Image"
+                             ? RecordingMethod::RAW
+                             : RecordingMethod::PROCESSED;
     s.recording_path   = export_file_line_edit_->text().toStdString();
     s.recording_count  = export_frames_spin_->value();
   }
@@ -865,6 +872,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
       switch (s.import_source) {
       case ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO:
         source = "Ametek S710 Euresys Coaxlink Octo";
+        break;
+      case ImportSource::AMETEK_S711_EURESYS_COAXLINK_OCTO:
+        source = "Ametek S711 Euresys Coaxlink Octo";
         break;
       default:
         source = "Ametek S710 Euresys Coaxlink Octo";
@@ -1087,7 +1097,8 @@ QGroupBox *MainWindow::create_import_group() {
     int   row  = 0;
 
     grid->addWidget(new QLabel("Camera", page), row, 0);
-    import_camera_combo_ = create_combo_box(page, QStringList{"Ametek S710 Euresys Coaxlink Octo"});
+    import_camera_combo_ = create_combo_box(page, QStringList{"Ametek S710 Euresys Coaxlink Octo",
+                                                              "Ametek S711 Euresys Coaxlink Octo"});
     grid->addWidget(import_camera_combo_, row, 1);
     ++row;
 

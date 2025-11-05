@@ -1,0 +1,19 @@
+{
+    "s711": {
+        "NbBuffers": 64,
+        "BufferPartCount": 64,
+        "Height": 320,
+        "Width": 512,
+        "PixelFormat": "Mono8",
+        "TriggerSource": "SWTRIGGER",
+        "TriggerMode": "On",
+        "TriggerSelector": "ExposureStart",
+        "GainSelector": "DigitalAll",
+        "Gain": 1.0,
+        "FlatFieldCorrection": "Off",
+        "BalanceWhiteMarker": "Off",
+        "ExposureTime": 24,
+        "CycleMinimumPeriod": 27,
+        "Offset": [0, 8]
+    }
+}

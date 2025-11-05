@@ -1,0 +1,19 @@
+{
+    "s710": {
+        "NbBuffers": 64,
+        "BufferPartCount": 64,
+        "Height": 320,
+        "Width": 512,
+        "PixelFormat": "Mono8",
+        "TriggerSource": "SWTRIGGER",
+        "TriggerMode": "TriggerModeOn",
+        "FanCtrl": "FanOn",
+        "GainSelector": "DigitalAll",
+        "Gain": 1.0,
+        "FlatFieldCorrection": "FlatFieldCorrectionOff",
+        "BalanceWhiteMarker": "BalanceWhiteMarkerOff",
+        "ExposureTime": 24,
+        "CycleMinimumPeriod": 27,
+        "Offset": [0, 8, 16, 24]
+    }
+}

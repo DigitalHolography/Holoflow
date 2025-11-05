@@ -36,6 +36,7 @@
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/holofile.hh"
 #include "tasks/sources/ametek_s710_euresys_coaxlink_octo.hh"
+#include "tasks/sources/ametek_s711_euresys_coaxlink_octo.hh"
 #include "tasks/sources/holofile.hh"
 #include "tasks/syncs/angular_spectrum.hh"
 #include "tasks/syncs/average.hh"
@@ -87,6 +88,9 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_,
                                                           "AmetekS710EuresysCoaxlinkOcto");
+                                                      
+  reg_sync<sources::AmetekS711EuresysCoaxlinkOctoFactory>(registry_,
+                                                          "AmetekS711EuresysCoaxlinkOcto");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
   reg_sync<syncs::AverageFactory>(registry_, "Average");
   reg_sync<syncs::ConversionFactory>(registry_, "Conversion");
@@ -415,20 +419,45 @@ void Manager::build_graph_spec() {
   auto parent = source;
 
   std::optional<V> cpu_in_queue = std::nullopt;
+
+  if (s_.raw_view) {
+    cpu_in_queue        = add_cpu_in_queue(parent, 0, 0);
+    auto cpu_gpu_cpy    = add_cpu_gpu_cpy(*cpu_in_queue, 0, 0);
+    auto gpu_in_queue   = add_gpu_in_queue(cpu_gpu_cpy, 0, 0);
+    auto to_cf32        = add_to_cf32(gpu_in_queue, 0, 0);
+    parent              = to_cf32;
+    auto to_f32         = add_to_f32(parent, 0, 0);
+    auto debounce_queue = add_debounce_queue(to_f32, 0, 0);
+
+    auto to_u8         = add_xy_to_u8(debounce_queue, 0, 0);
+    auto gpu_out_queue = add_xy_gpu_out_queue(to_u8, 0, 0);
+    auto gpu_cpu       = add_xy_gpu_cpu_cpy(gpu_out_queue, 0, 0);
+    auto cpu_out_queue = add_xy_cpu_out_queue(gpu_cpu, 0, 0);
+    auto display       = add_xy_processed_display(cpu_out_queue, 0, 0);
+
+    (void)display;
+
+    settings_dirty_ = false;
+    logger()->debug("[Manager::build_graph_spec] Graph spec built successfully for raw view");
+    return;
+  }
+
   if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
     cpu_in_queue     = add_cpu_in_queue(parent, 0, 0);
     auto cpu_gpu_cpy = add_cpu_gpu_cpy(*cpu_in_queue, 0, 0);
     parent           = cpu_gpu_cpy;
   }
 
-  if (cpu_in_queue.has_value()) {
-    auto record_cpu_cpu = add_cpu_cpu_cpy(*cpu_in_queue, 0, 0);
-    auto record_queue   = add_record_queue(record_cpu_cpu, 0, 0);
-    auto raw_record     = add_raw_record(record_queue, 0, 0);
-    (void)raw_record;
-  } else {
-    logger()->warn(
-        "[Manager::build_graph_spec] Unable to add raw recording node: missing CPU queue");
+  if (s_.recording_method == RecordingMethod::RAW) {
+    if (cpu_in_queue.has_value()) {
+      auto record_cpu_cpu = add_cpu_cpu_cpy(*cpu_in_queue, 0, 0);
+      auto record_queue   = add_record_queue(record_cpu_cpu, 0, 0);
+      auto raw_record     = add_raw_record(record_queue, 0, 0);
+      (void)raw_record;
+    } else {
+      logger()->warn(
+          "[Manager::build_graph_spec] Unable to add raw recording node: missing CPU queue");
+    }
   }
 
   auto gpu_in_queue = add_gpu_in_queue(parent, 0, 0);
@@ -490,6 +519,14 @@ void Manager::build_graph_spec() {
     auto gpu_cpu       = add_xy_gpu_cpu_cpy(gpu_out_queue, 0, 0);
     auto cpu_out_queue = add_xy_cpu_out_queue(gpu_cpu, 0, 0);
     auto display       = add_xy_processed_display(cpu_out_queue, 0, 0);
+
+    if (s_.recording_method == RecordingMethod::PROCESSED) {
+      auto record_cpu_cpu = add_cpu_cpu_cpy(cpu_out_queue, 0, 0);
+      auto record_queue   = add_record_queue(record_cpu_cpu, 0, 0);
+      auto raw_record     = add_raw_record(record_queue, 0, 0);
+      (void)raw_record;
+    }
+
     (void)display;
   }
 
@@ -556,6 +593,19 @@ void Manager::guess_source_dims() {
     return;
   }
 
+    else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_OCTO) {
+    auto cfg_file = std::ifstream(s_.camera_config_path);
+    if (!cfg_file.is_open()) {
+      throw std::runtime_error(
+          std::format("Could not open camera config file: {}", s_.camera_config_path.string()));
+    }
+
+    auto cfg    = nlohmann::json::parse(cfg_file).at("s711");
+    src_width_  = cfg.at("Width").get<int>();
+    src_height_ = cfg.at("Height").get<int>();
+    return;
+  }
+
   HOLOVIBES_UNIMPLEMENTED();
 }
 
@@ -604,6 +654,15 @@ Manager::V Manager::add_source() {
     return add_node<AmetekS710EuresysCoaxlinkOctoSettings>(
         "source", "AmetekS710EuresysCoaxlinkOcto",
         AmetekS710EuresysCoaxlinkOctoSettings{
+            .cfg_path = s_.camera_config_path.string(),
+        });
+  }
+
+    else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_OCTO) {
+    using sources::AmetekS711EuresysCoaxlinkOctoSettings;
+    return add_node<AmetekS711EuresysCoaxlinkOctoSettings>(
+        "source", "AmetekS711EuresysCoaxlinkOcto",
+        AmetekS711EuresysCoaxlinkOctoSettings{
             .cfg_path = s_.camera_config_path.string(),
         });
   }
