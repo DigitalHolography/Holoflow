@@ -421,19 +421,9 @@ void Manager::build_graph_spec() {
   std::optional<V> cpu_in_queue = std::nullopt;
 
   if (s_.raw_view) {
-    cpu_in_queue        = add_cpu_in_queue(parent, 0, 0);
-    auto cpu_gpu_cpy    = add_cpu_gpu_cpy(*cpu_in_queue, 0, 0);
-    auto gpu_in_queue   = add_gpu_in_queue(cpu_gpu_cpy, 0, 0);
-    auto to_cf32        = add_to_cf32(gpu_in_queue, 0, 0);
-    parent              = to_cf32;
-    auto to_f32         = add_to_f32(parent, 0, 0);
-    auto debounce_queue = add_debounce_queue(to_f32, 0, 0);
-
-    auto to_u8         = add_xy_to_u8(debounce_queue, 0, 0);
-    auto gpu_out_queue = add_xy_gpu_out_queue(to_u8, 0, 0);
-    auto gpu_cpu       = add_xy_gpu_cpu_cpy(gpu_out_queue, 0, 0);
-    auto cpu_out_queue = add_xy_cpu_out_queue(gpu_cpu, 0, 0);
-    auto display       = add_xy_processed_display(cpu_out_queue, 0, 0);
+    cpu_in_queue        = add_cpu_raw_queue(parent, 0, 0);
+    auto raw_reshape    = add_raw_reshape(*cpu_in_queue, 0, 0);
+    auto display        = add_xy_processed_display(raw_reshape, 0, 0);
 
     (void)display;
 
@@ -668,6 +658,25 @@ Manager::V Manager::add_source() {
   }
 
   HOLOVIBES_UNIMPLEMENTED();
+}
+
+Manager::V Manager::add_cpu_raw_queue(V parent, int out_idx, int in_idx) {
+  using asyncs::BatchQueueSettings;
+  return add_node_after<BatchQueueSettings>(
+      parent, out_idx, in_idx, "cpu_raw_queue", "BatchQueue",
+      BatchQueueSettings{
+          .target_capacity = s_.cpu_in_size,
+          .output_size     = 1,
+          .output_stride   = opti_cpu_stride_ ? s_.time_stride : s_.time_window,
+      });
+}
+
+Manager::V Manager::add_raw_reshape(V parent, int out_idx, int in_idx) {
+  using syncs::ReshapeSettings;
+  return add_node_after<ReshapeSettings>(parent, out_idx, in_idx, "raw_reshape", "Reshape",
+                                            ReshapeSettings{
+                                                .shape   = {1, static_cast<size_t>(src_height_), static_cast<size_t>(src_width_)},
+                                            });
 }
 
 Manager::V Manager::add_cpu_in_queue(V parent, int out_idx, int in_idx) {

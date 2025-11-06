@@ -471,7 +471,7 @@ bool MainWindow::validate_inputs() {
       render_time_window_spin_, view_z_spin_,
       view_z_width_spin_,       import_start_index_spin_,
       import_end_index_spin_,   import_file_line_edit_,
-      export_frames_spin_,      import_cam_config_line_edit_,
+      export_frames_spin_,      import_camera_config_combo_,
       export_file_line_edit_};
 
   for (auto *w : all_widgets) {
@@ -520,8 +520,8 @@ bool MainWindow::validate_inputs() {
     bool hasPath = !import_file_line_edit_->text().isEmpty();
     mark_failure(hasPath, {import_file_line_edit_});
   } else {
-    bool hasCamConfig = !import_cam_config_line_edit_->text().isEmpty();
-    mark_failure(hasCamConfig, {import_cam_config_line_edit_});
+    // bool hasCamConfig = !import_cam_config_line_edit_->text().isEmpty();
+    // mark_failure(hasCamConfig, {import_cam_config_line_edit_});
   }
 
   bool has_export_path = !export_file_line_edit_->text().isEmpty();
@@ -550,8 +550,9 @@ void MainWindow::setup_validation_connections() {
   connect(import_load_method_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, cb);
   connect(import_cam_check_, &QCheckBox::toggled, this, &MainWindow::validate_inputs);
   connect(import_camera_combo_, &QComboBox::currentIndexChanged, this, cb);
-  connect(import_cam_config_line_edit_, &QLineEdit::editingFinished, this, cb);
-  connect(import_cam_config_browse_button_, &QPushButton::clicked, this, cb);
+  connect(import_camera_config_combo_, &QComboBox::currentIndexChanged, this, cb);
+  // connect(import_cam_config_line_edit_, &QLineEdit::editingFinished, this, cb);
+  // connect(import_cam_config_browse_button_, &QPushButton::clicked, this, cb);
 
   // Export Group Connections
   connect(export_image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, cb);
@@ -614,8 +615,9 @@ void MainWindow::setup_update_connections() {
   connect(import_load_method_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, cb);
   connect(import_cam_check_, &QCheckBox::toggled, this, cb);
   connect(import_camera_combo_, &QComboBox::currentIndexChanged, this, cb);
-  connect(import_cam_config_line_edit_, &QLineEdit::editingFinished, this, cb);
-  connect(import_cam_config_browse_button_, &QPushButton::clicked, this, cb);
+  connect(import_camera_config_combo_, &QComboBox::currentIndexChanged, this, cb);
+  // connect(import_cam_config_line_edit_, &QLineEdit::editingFinished, this, cb);
+  // connect(import_cam_config_browse_button_, &QPushButton::clicked, this, cb);
 
   // Export Group Connections
   connect(export_image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, cb);
@@ -695,13 +697,13 @@ QSize MainWindow::guess_source_dims() {
   }
 
   else if (import_cam_check_->isChecked()) {
-    auto path     = import_cam_config_line_edit_->text().toStdString();
+    auto path     = get_selected_camera_config_path();
     auto cfg_file = std::ifstream(path);
     if (!cfg_file.is_open()) {
       throw std::runtime_error(std::format("Could not open camera config file: {}", path));
     }
 
-    // FIXE: This needs to be properly handeled for more camera support
+    // FIXME: This needs to be properly handeled for more camera support
     auto cfg_json   = nlohmann::json::parse(cfg_file);
     auto cfg        = cfg_json.contains("s711") ? cfg_json.at("s711") : cfg_json.at("s710");
     int  src_width  = cfg.at("Width").get<int>();
@@ -749,7 +751,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     } else {
       QString source       = import_camera_combo_->currentText();
       s.import_source      = source_from_str.at(source.toStdString());
-      s.camera_config_path = import_cam_config_line_edit_->text().toStdString();
+      s.camera_config_path = get_selected_camera_config_path();
       s.load_batch         = 64;
     }
   }
@@ -866,7 +868,6 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
       import_load_method_combo_->setCurrentText(method);
     } else {
       import_cam_check_->setChecked(true);
-      import_cam_config_line_edit_->setText(QString::fromStdString(s.camera_config_path.string()));
 
       QString source;
       switch (s.import_source) {
@@ -1103,25 +1104,28 @@ QGroupBox *MainWindow::create_import_group() {
     ++row;
 
     grid->addWidget(new QLabel("Config File", page), row, 0);
-    import_cam_config_line_edit_ = new QLineEdit(page);
-    import_cam_config_line_edit_->setPlaceholderText("Select Config");
-    import_cam_config_line_edit_->setReadOnly(true);
-    grid->addWidget(import_cam_config_line_edit_, row, 1);
+    import_camera_config_combo_ = create_combo_box(page, load_available_camera_configs());
+    grid->addWidget(import_camera_config_combo_, row, 1);
+    // import_cam_config_line_edit_ = new QLineEdit(page);
+    // import_cam_config_line_edit_->setPlaceholderText("Select Config");
+    // import_cam_config_line_edit_->setReadOnly(true);
+    // grid->addWidget(import_cam_config_line_edit_, row, 1);
 
-    import_cam_config_browse_button_ = new QPushButton("...", page);
-    import_cam_config_browse_button_->setFixedWidth(30);
-    grid->addWidget(import_cam_config_browse_button_, row, 2);
+    // import_cam_config_browse_button_ = new QPushButton("...", page);
+    // import_cam_config_browse_button_->setFixedWidth(30);
+    // grid->addWidget(import_cam_config_browse_button_, row, 2);
     ++row;
 
     grid->setRowStretch(row, 1);
 
-    connect(import_cam_config_browse_button_, &QPushButton::clicked, this, [=]() {
-      QString file = QFileDialog::getOpenFileName(this, tr("Select File"));
-      if (file.isEmpty()) {
-        return;
-      }
-      import_cam_config_line_edit_->setText(file);
-    });
+    // connect(import_cam_config_browse_button_, &QPushButton::clicked, this, [=]() {
+    //   QString file = QFileDialog::getOpenFileName(this, tr("Select File"));
+    //   if (file.isEmpty()) {
+    //     return;
+    //   }
+    //   // import_cam_config_line_edit_->setText(file);
+    //   import_camera_config_combo_->setCurrentText("None");
+    // });
 
     return page;
   };
@@ -1233,6 +1237,33 @@ QStringList loadAvailableKernels() {
   }
 
   return names;
+}
+
+QStringList MainWindow::load_available_camera_configs() {
+  QString appDataBase       = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  QString appDataPath       = appDataBase + "/" + QCoreApplication::applicationVersion();
+  QString cameraConfigsPath = appDataPath + "/" + "camera_configs";
+  QDir    dir(cameraConfigsPath);
+
+  QStringList filters;
+  filters << QStringLiteral("*.json");
+  QFileInfoList files = dir.entryInfoList(filters, QDir::Files | QDir::Readable, QDir::Name);
+
+  QStringList names;
+  for (const QFileInfo &fi : files) {
+    names << fi.completeBaseName();
+  }
+
+  return names;
+}
+
+std::string MainWindow::get_selected_camera_config_path() {
+  QString     appDataBase      = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+  QString     appDataPath      = appDataBase + "/" + QCoreApplication::applicationVersion();
+  QString     cameraConfigPath = appDataPath + "/" + "camera_configs/";
+  std::string config_path      = cameraConfigPath.toStdString() +
+                            import_camera_config_combo_->currentText().toStdString() + ".json";
+  return config_path;
 }
 
 QGroupBox *MainWindow::create_image_rendering_group() {

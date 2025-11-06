@@ -72,14 +72,17 @@ private:
   pipeline::Settings get_pipeline_settings();
   void               set_pipeline_settings(const pipeline::Settings &s);
 
-  void                  setup_menu_bar();
-  void                  setup_main_layout();
-  void                  initialize_display_widgets();
-  void                  initialize_pipeline_manager();
-  void                  connect_manager_signals();
-  void                  connect_import_controls();
-  void                  configure_window();
+  void setup_menu_bar();
+  void setup_main_layout();
+  void initialize_display_widgets();
+  void initialize_pipeline_manager();
+  void connect_manager_signals();
+  void connect_import_controls();
+  void configure_window();
+
   std::filesystem::path makeRecordingPath(const QString &userText) const;
+  QStringList           load_available_camera_configs();
+  std::string           get_selected_camera_config_path();
 
   // Current state
   bool update_in_progress_ = false;
@@ -112,8 +115,9 @@ private:
   QSpinBox    *import_end_index_spin_;
   QComboBox   *import_load_method_combo_;
   QComboBox   *import_camera_combo_;
-  QLineEdit   *import_cam_config_line_edit_;
-  QPushButton *import_cam_config_browse_button_;
+  QComboBox   *import_camera_config_combo_;
+  // QLineEdit   *import_cam_config_line_edit_;
+  // QPushButton *import_cam_config_browse_button_;
   QPushButton *import_start_button_;
   QPushButton *import_stop_button_;
 

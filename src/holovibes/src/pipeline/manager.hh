@@ -93,6 +93,8 @@ private:
                    const std::string &kind, const S &settings);
 
   V add_source();
+  V add_cpu_raw_queue(V parent, int out_idx, int in_idx);
+  V add_raw_reshape(V parent, int out_idx, int in_idx);
   V add_cpu_in_queue(V parent, int out_idx, int in_idx);
   V add_cpu_cpu_cpy(V parent, int out_idx, int in_idx);
   V add_record_queue(V parent, int out_idx, int in_idx);
