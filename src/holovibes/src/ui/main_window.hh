@@ -116,8 +116,6 @@ private:
   QComboBox   *import_load_method_combo_;
   QComboBox   *import_camera_combo_;
   QComboBox   *import_camera_config_combo_;
-  // QLineEdit   *import_cam_config_line_edit_;
-  // QPushButton *import_cam_config_browse_button_;
   QPushButton *import_start_button_;
   QPushButton *import_stop_button_;
 

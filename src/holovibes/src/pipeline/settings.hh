@@ -50,6 +50,11 @@ enum class RecordingMethod {
   PROCESSED,
 };
 
+enum class ViewType {
+  PROCESSED,
+  RAW,
+};
+
 struct Settings {
   // Advanced
   int cpu_in_size;
@@ -94,6 +99,7 @@ struct Settings {
   // View
   bool view_3d_cuts;
   bool raw_view;
+  ViewType view_type;
 
   // Post-processing
   int         pp_fps;

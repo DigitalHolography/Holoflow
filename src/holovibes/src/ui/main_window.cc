@@ -257,7 +257,9 @@ void MainWindow::on_start_pipeline_success() {
   xy_raw_widget_->set_fixed_aspect(guess_source_dims());
 
   xy_processed_widget_->show();
-  xy_raw_widget_->show();
+  if (view_raw_view_check_->isChecked()) {
+    xy_raw_widget_->show();
+  }
 }
 
 void MainWindow::on_start_pipeline_failure(const QString &error) {
@@ -342,6 +344,11 @@ void MainWindow::on_update_pipeline_success() {
     dims = QSize(dims.width(), dims.width());
   }
   xy_processed_widget_->set_fixed_aspect(dims);
+  if (view_raw_view_check_->isChecked()) {
+    xy_raw_widget_->show();
+  } else {
+    xy_raw_widget_->hide();
+  }
 }
 
 void MainWindow::on_update_pipeline_failure(const QString &error) {
@@ -519,9 +526,6 @@ bool MainWindow::validate_inputs() {
   if (!is_cam_mode) {
     bool hasPath = !import_file_line_edit_->text().isEmpty();
     mark_failure(hasPath, {import_file_line_edit_});
-  } else {
-    // bool hasCamConfig = !import_cam_config_line_edit_->text().isEmpty();
-    // mark_failure(hasCamConfig, {import_cam_config_line_edit_});
   }
 
   bool has_export_path = !export_file_line_edit_->text().isEmpty();
@@ -551,8 +555,6 @@ void MainWindow::setup_validation_connections() {
   connect(import_cam_check_, &QCheckBox::toggled, this, &MainWindow::validate_inputs);
   connect(import_camera_combo_, &QComboBox::currentIndexChanged, this, cb);
   connect(import_camera_config_combo_, &QComboBox::currentIndexChanged, this, cb);
-  // connect(import_cam_config_line_edit_, &QLineEdit::editingFinished, this, cb);
-  // connect(import_cam_config_browse_button_, &QPushButton::clicked, this, cb);
 
   // Export Group Connections
   connect(export_image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, cb);
@@ -616,8 +618,6 @@ void MainWindow::setup_update_connections() {
   connect(import_cam_check_, &QCheckBox::toggled, this, cb);
   connect(import_camera_combo_, &QComboBox::currentIndexChanged, this, cb);
   connect(import_camera_config_combo_, &QComboBox::currentIndexChanged, this, cb);
-  // connect(import_cam_config_line_edit_, &QLineEdit::editingFinished, this, cb);
-  // connect(import_cam_config_browse_button_, &QPushButton::clicked, this, cb);
 
   // Export Group Connections
   connect(export_image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, cb);
@@ -758,7 +758,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Image Rendering Settings
   {
-    s.raw_view = render_image_combo_->currentText() == "Raw";
+    s.view_type = render_image_combo_->currentText() == "Raw" ? ViewType::RAW : ViewType::PROCESSED;
 
     std::map<std::string, SpacialMethod> method_from_str{
         {"None", SpacialMethod::NONE},
@@ -797,7 +797,10 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
   }
 
   // View Settings
-  { s.view_3d_cuts = view_cuts_3d_check_->isChecked(); }
+  {
+    s.view_3d_cuts = view_cuts_3d_check_->isChecked();
+    s.raw_view     = view_raw_view_check_->isChecked();
+  }
 
   // Post-processing Settings
   {
@@ -1106,26 +1109,9 @@ QGroupBox *MainWindow::create_import_group() {
     grid->addWidget(new QLabel("Config File", page), row, 0);
     import_camera_config_combo_ = create_combo_box(page, load_available_camera_configs());
     grid->addWidget(import_camera_config_combo_, row, 1);
-    // import_cam_config_line_edit_ = new QLineEdit(page);
-    // import_cam_config_line_edit_->setPlaceholderText("Select Config");
-    // import_cam_config_line_edit_->setReadOnly(true);
-    // grid->addWidget(import_cam_config_line_edit_, row, 1);
-
-    // import_cam_config_browse_button_ = new QPushButton("...", page);
-    // import_cam_config_browse_button_->setFixedWidth(30);
-    // grid->addWidget(import_cam_config_browse_button_, row, 2);
     ++row;
 
     grid->setRowStretch(row, 1);
-
-    // connect(import_cam_config_browse_button_, &QPushButton::clicked, this, [=]() {
-    //   QString file = QFileDialog::getOpenFileName(this, tr("Select File"));
-    //   if (file.isEmpty()) {
-    //     return;
-    //   }
-    //   // import_cam_config_line_edit_->setText(file);
-    //   import_camera_config_combo_->setCurrentText("None");
-    // });
 
     return page;
   };
@@ -1377,6 +1363,14 @@ QGroupBox *MainWindow::create_view_group() {
   view_raw_view_check_ = new QCheckBox("Raw View", group);
   layout->addWidget(view_raw_view_check_, row, 1);
   ++row;
+
+  connect(view_raw_view_check_, &QCheckBox::checkStateChanged, this, [=](int state) {
+    if (pipeline_running_ && state == Qt::Checked) {
+      xy_raw_widget_->show();
+    } else {
+      xy_raw_widget_->hide();
+    }
+  });
 
   auto *axes_layout  = new QGridLayout();
   int   axis_row     = 0;

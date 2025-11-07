@@ -88,7 +88,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_,
                                                           "AmetekS710EuresysCoaxlinkOcto");
-                                                      
+
   reg_sync<sources::AmetekS711EuresysCoaxlinkOctoFactory>(registry_,
                                                           "AmetekS711EuresysCoaxlinkOcto");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
@@ -420,33 +420,43 @@ void Manager::build_graph_spec() {
 
   std::optional<V> cpu_in_queue = std::nullopt;
 
-  if (s_.raw_view) {
-    cpu_in_queue        = add_cpu_raw_queue(parent, 0, 0);
-    auto raw_reshape    = add_raw_reshape(*cpu_in_queue, 0, 0);
-    auto display        = add_xy_processed_display(raw_reshape, 0, 0);
-
-    (void)display;
-
-    settings_dirty_ = false;
-    logger()->debug("[Manager::build_graph_spec] Graph spec built successfully for raw view");
-    return;
-  }
-
   if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
-    cpu_in_queue     = add_cpu_in_queue(parent, 0, 0);
-    auto cpu_gpu_cpy = add_cpu_gpu_cpy(*cpu_in_queue, 0, 0);
-    parent           = cpu_gpu_cpy;
+    cpu_in_queue = add_cpu_in_queue(parent, 0, 0);
+    if (s_.view_type == ViewType::PROCESSED) {
+      auto cpu_gpu_cpy = add_cpu_gpu_cpy(*cpu_in_queue, 0, 0);
+      parent           = cpu_gpu_cpy;
+    }
   }
 
-  if (s_.recording_method == RecordingMethod::RAW) {
+  if (s_.raw_view || s_.view_type == ViewType::RAW || s_.recording_method == RecordingMethod::RAW) {
     if (cpu_in_queue.has_value()) {
-      auto record_cpu_cpu = add_cpu_cpu_cpy(*cpu_in_queue, 0, 0);
-      auto record_queue   = add_record_queue(record_cpu_cpu, 0, 0);
-      auto raw_record     = add_raw_record(record_queue, 0, 0);
-      (void)raw_record;
-    } else {
       logger()->warn(
           "[Manager::build_graph_spec] Unable to add raw recording node: missing CPU queue");
+    }
+
+    auto cpu_cpu_cpy = add_cpu_cpu_cpy(*cpu_in_queue, 0, 0);
+    if (s_.recording_method == RecordingMethod::RAW) {
+      auto record_queue = add_record_queue(cpu_cpu_cpy, 0, 0);
+      auto raw_record   = add_raw_record(record_queue, 0, 0);
+      (void)raw_record;
+    }
+
+    if (s_.raw_view || s_.view_type == ViewType::RAW) {
+      auto cpu_raw_view_cpy = add_cpu_raw_view_cpy(*cpu_in_queue, 0, 0);
+      auto raw_view_queue   = add_cpu_raw_queue(cpu_raw_view_cpy, 0, 0);
+      auto raw_reshape      = add_raw_reshape(raw_view_queue, 0, 0);
+      if (s_.raw_view) {
+        auto display = add_xy_raw_display(raw_reshape, 0, 0);
+        (void)display;
+      }
+      if (s_.view_type == ViewType::RAW) {
+        auto display = add_xy_processed_display(raw_reshape, 0, 0);
+        (void)display;
+
+        settings_dirty_ = false;
+        logger()->debug("[Manager::build_graph_spec] Graph spec built successfully for raw view");
+        return;
+      }
     }
   }
 
@@ -559,7 +569,9 @@ void Manager::guess_optimizations() {
   bool load_in_gpu     = (s_.load_method == LoadMethod::LOAD_IN_GPU);
   bool stride_multiple = (s_.time_stride % s_.time_window == 0);
   opti_cpu_stride_     = stride_multiple && !load_in_gpu;
-  opti_gpu_stride_     = stride_multiple && load_in_gpu;
+  opti_gpu_stride_     = (stride_multiple && load_in_gpu) || opti_cpu_stride_;
+  // FIXME : disabled for now due to time stride in raw record
+  opti_cpu_stride_     = false;
 }
 
 void Manager::guess_source_dims() {
@@ -583,7 +595,7 @@ void Manager::guess_source_dims() {
     return;
   }
 
-    else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_OCTO) {
+  else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_OCTO) {
     auto cfg_file = std::ifstream(s_.camera_config_path);
     if (!cfg_file.is_open()) {
       throw std::runtime_error(
@@ -648,7 +660,7 @@ Manager::V Manager::add_source() {
         });
   }
 
-    else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_OCTO) {
+  else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_OCTO) {
     using sources::AmetekS711EuresysCoaxlinkOctoSettings;
     return add_node<AmetekS711EuresysCoaxlinkOctoSettings>(
         "source", "AmetekS711EuresysCoaxlinkOcto",
@@ -673,10 +685,11 @@ Manager::V Manager::add_cpu_raw_queue(V parent, int out_idx, int in_idx) {
 
 Manager::V Manager::add_raw_reshape(V parent, int out_idx, int in_idx) {
   using syncs::ReshapeSettings;
-  return add_node_after<ReshapeSettings>(parent, out_idx, in_idx, "raw_reshape", "Reshape",
-                                            ReshapeSettings{
-                                                .shape   = {1, static_cast<size_t>(src_height_), static_cast<size_t>(src_width_)},
-                                            });
+  return add_node_after<ReshapeSettings>(
+      parent, out_idx, in_idx, "raw_reshape", "Reshape",
+      ReshapeSettings{
+          .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(src_width_)},
+      });
 }
 
 Manager::V Manager::add_cpu_in_queue(V parent, int out_idx, int in_idx) {
@@ -703,6 +716,14 @@ Manager::V Manager::add_record_queue(V parent, int out_idx, int in_idx) {
 Manager::V Manager::add_cpu_cpu_cpy(V parent, int out_idx, int in_idx) {
   using syncs::MemcpySettings;
   return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "cpu_cpu", "Memcpy",
+                                        MemcpySettings{
+                                            .target = MemcpySettings::Target::Host,
+                                        });
+}
+
+Manager::V Manager::add_cpu_raw_view_cpy(V parent, int out_idx, int in_idx) {
+  using syncs::MemcpySettings;
+  return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "cpu_raw_view_cpy", "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Host,
                                         });

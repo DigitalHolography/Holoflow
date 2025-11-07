@@ -97,6 +97,7 @@ private:
   V add_raw_reshape(V parent, int out_idx, int in_idx);
   V add_cpu_in_queue(V parent, int out_idx, int in_idx);
   V add_cpu_cpu_cpy(V parent, int out_idx, int in_idx);
+  V add_cpu_raw_view_cpy(V parent, int out_idx, int in_idx);
   V add_record_queue(V parent, int out_idx, int in_idx);
   V add_xy_raw_display(V parent, int out_idx, int in_idx);
   V add_raw_record(V parent, int out_idx, int in_idx);
