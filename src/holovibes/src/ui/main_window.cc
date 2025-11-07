@@ -250,7 +250,7 @@ void MainWindow::on_start_pipeline_success() {
 
   auto dims = guess_source_dims();
   xy_raw_widget_->set_fixed_aspect(dims);
-  if (render_space_transform_combo_->currentText() == "Fresnel Diffraction") {
+  if (render_space_transform_combo_->currentText() == "Fresnel Diffraction" && render_image_combo_->currentText() != "Raw") {
     dims = QSize(dims.width(), dims.width());
   }
   xy_processed_widget_->set_fixed_aspect(dims);
