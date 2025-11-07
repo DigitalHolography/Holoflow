@@ -826,11 +826,16 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Recording Settings
   {
-    s.recording_method = export_image_type_combo_->currentText() == "Raw Image"
-                             ? RecordingMethod::RAW
-                             : RecordingMethod::PROCESSED;
-    s.recording_path   = export_file_line_edit_->text().toStdString();
-    s.recording_count  = export_frames_spin_->value();
+    if (export_group_->isChecked()) {
+
+      s.recording_method = export_image_type_combo_->currentText() == "Raw Image"
+                               ? RecordingMethod::RAW
+                               : RecordingMethod::PROCESSED;
+    } else {
+      s.recording_method = RecordingMethod::NONE;
+    }
+    s.recording_path  = export_file_line_edit_->text().toStdString();
+    s.recording_count = export_frames_spin_->value();
   }
 
   return s;
@@ -1137,7 +1142,9 @@ QGroupBox *MainWindow::create_import_group() {
 }
 
 QGroupBox *MainWindow::create_export_group() {
-  auto *group  = new QGroupBox("Export", this);
+  auto *group = new QGroupBox("Export", this);
+  group->setCheckable(true);
+  group->setChecked(false);
   auto *layout = new QGridLayout(group);
   int   row    = 0;
 
@@ -1203,6 +1210,7 @@ QGroupBox *MainWindow::create_export_group() {
     }
   });
 
+  export_group_ = group;
   return group;
 }
 

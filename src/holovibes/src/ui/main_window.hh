@@ -120,6 +120,7 @@ private:
   QPushButton *import_stop_button_;
 
   // UI Members for Export Group
+  QGroupBox   *export_group_;
   QComboBox   *export_image_type_combo_;
   QLineEdit   *export_file_line_edit_;
   QPushButton *export_browse_button_;

@@ -428,35 +428,28 @@ void Manager::build_graph_spec() {
     }
   }
 
-  if (s_.raw_view || s_.view_type == ViewType::RAW || s_.recording_method == RecordingMethod::RAW) {
-    if (cpu_in_queue.has_value()) {
-      logger()->warn(
-          "[Manager::build_graph_spec] Unable to add raw recording node: missing CPU queue");
+  if (s_.recording_method == RecordingMethod::RAW) {
+    auto cpu_cpu_cpy  = add_cpu_cpu_cpy(*cpu_in_queue, 0, 0);
+    auto record_queue = add_record_queue(cpu_cpu_cpy, 0, 0);
+    auto raw_record   = add_raw_record(record_queue, 0, 0);
+    (void)raw_record;
+  }
+
+  if (s_.raw_view || s_.view_type == ViewType::RAW) {
+    auto cpu_raw_view_cpy = add_cpu_raw_view_cpy(*cpu_in_queue, 0, 0);
+    auto raw_view_queue   = add_cpu_raw_queue(cpu_raw_view_cpy, 0, 0);
+    auto raw_reshape      = add_raw_reshape(raw_view_queue, 0, 0);
+    if (s_.raw_view) {
+      auto display = add_xy_raw_display(raw_reshape, 0, 0);
+      (void)display;
     }
+    if (s_.view_type == ViewType::RAW) {
+      auto display = add_xy_processed_display(raw_reshape, 0, 0);
+      (void)display;
 
-    auto cpu_cpu_cpy = add_cpu_cpu_cpy(*cpu_in_queue, 0, 0);
-    if (s_.recording_method == RecordingMethod::RAW) {
-      auto record_queue = add_record_queue(cpu_cpu_cpy, 0, 0);
-      auto raw_record   = add_raw_record(record_queue, 0, 0);
-      (void)raw_record;
-    }
-
-    if (s_.raw_view || s_.view_type == ViewType::RAW) {
-      auto cpu_raw_view_cpy = add_cpu_raw_view_cpy(*cpu_in_queue, 0, 0);
-      auto raw_view_queue   = add_cpu_raw_queue(cpu_raw_view_cpy, 0, 0);
-      auto raw_reshape      = add_raw_reshape(raw_view_queue, 0, 0);
-      if (s_.raw_view) {
-        auto display = add_xy_raw_display(raw_reshape, 0, 0);
-        (void)display;
-      }
-      if (s_.view_type == ViewType::RAW) {
-        auto display = add_xy_processed_display(raw_reshape, 0, 0);
-        (void)display;
-
-        settings_dirty_ = false;
-        logger()->debug("[Manager::build_graph_spec] Graph spec built successfully for raw view");
-        return;
-      }
+      settings_dirty_ = false;
+      logger()->debug("[Manager::build_graph_spec] Graph spec built successfully for raw view");
+      return;
     }
   }
 
@@ -571,7 +564,7 @@ void Manager::guess_optimizations() {
   opti_cpu_stride_     = stride_multiple && !load_in_gpu;
   opti_gpu_stride_     = (stride_multiple && load_in_gpu) || opti_cpu_stride_;
   // FIXME : disabled for now due to time stride in raw record
-  opti_cpu_stride_     = false;
+  opti_cpu_stride_ = false;
 }
 
 void Manager::guess_source_dims() {
