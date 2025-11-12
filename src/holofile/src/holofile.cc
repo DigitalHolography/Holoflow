@@ -78,9 +78,7 @@ Reader::Reader(const std::string &path) : frame_index_(0) {
   }
 
   try {
-    read_footer();
-    auto dump = footer_.value().pipeline_settings.dump();
-    logger()->info("Holofile footer pipeline settings: {}", dump);
+    read_footer();\
   } catch (const Exception &e) {
     logger()->warn("Holofile footer could not be read: {}", e.what());
     footer_ = std::nullopt;
