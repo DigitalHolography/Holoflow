@@ -438,13 +438,12 @@ void Manager::build_graph_spec() {
   if (s_.raw_view || s_.view_type == ViewType::RAW) {
     auto cpu_raw_view_cpy = add_cpu_raw_view_cpy(*cpu_in_queue, 0, 0);
     auto raw_view_queue   = add_cpu_raw_queue(cpu_raw_view_cpy, 0, 0);
-    auto raw_reshape      = add_raw_reshape(raw_view_queue, 0, 0);
     if (s_.raw_view) {
-      auto display = add_xy_raw_display(raw_reshape, 0, 0);
+      auto display = add_xy_raw_display(raw_view_queue, 0, 0);
       (void)display;
     }
     if (s_.view_type == ViewType::RAW) {
-      auto display = add_xy_processed_display(raw_reshape, 0, 0);
+      auto display = add_xy_processed_display(raw_view_queue, 0, 0);
       (void)display;
 
       settings_dirty_ = false;
@@ -1045,7 +1044,7 @@ Manager::V Manager::add_xz_reshape(V parent, int out_idx, int in_idx) {
   return add_node_after<ReshapeSettings>(
       parent, out_idx, in_idx, "xz_reshape", "Reshape",
       ReshapeSettings{
-          .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
+          .shape = {static_cast<size_t>(src_width_), static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
       });
 }
 
@@ -1128,7 +1127,7 @@ Manager::V Manager::add_yz_reshape(V parent, int out_idx, int in_idx) {
   return add_node_after<ReshapeSettings>(
       parent, out_idx, in_idx, "yz_reshape", "Reshape",
       ReshapeSettings{
-          .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
+          .shape = {static_cast<size_t>(src_width_), static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
       });
 }
 
