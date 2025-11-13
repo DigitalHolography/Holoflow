@@ -181,20 +181,40 @@ void TensorDisplayWidget::ensureTexture(int w, int h) {
   updateLetterboxViewport();
 }
 
-void TensorDisplayWidget::updateTexture(const quint8 *pixels, int w, int h) {
+void TensorDisplayWidget::updateTexture(const void *pixels, int w, int h,
+                                        holoflow::core::DType dtype) {
   ensureTexture(w, h);
   glBindTexture(GL_TEXTURE_2D, tex_);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-  glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED, GL_UNSIGNED_BYTE, pixels);
+
+  switch (dtype) {
+  case holoflow::core::DType::U8: {
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED, GL_UNSIGNED_BYTE, pixels);
+  } break;
+
+  case holoflow::core::DType::U16: {
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED, GL_UNSIGNED_SHORT, pixels);
+  } break;
+  }
+
   texture_dirty_ = true;
 }
 
-void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h) {
-  const qsizetype need = qsizetype(w) * qsizetype(h);
+void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
+                                        holoflow::core::DType dtype) {
+  qsizetype need = qsizetype(w) * qsizetype(h);
+
+  switch (dtype) {
+  case holoflow::core::DType::U16: {
+    need *= qsizetype(2);
+    break;
+  }
+  }
+
   if (w <= 0 || h <= 0 || bytes.size() < need)
     return;
   makeCurrent(); // safe from GUI thread
-  updateTexture(reinterpret_cast<const quint8 *>(bytes.constData()), w, h);
+  updateTexture(reinterpret_cast<const void *>(bytes.constData()), w, h, dtype);
   doneCurrent();
   update(); // triggers paintGL
   emit tensorDisplayed();

@@ -63,34 +63,45 @@ holoflow::core::OpResult DisplayTensorTask::execute(holoflow::core::SyncCtx &ctx
   auto delta_ms = static_cast<int>(1000 / settings_.refresh_rate_hz);
   next_refresh_ = now + std::chrono::milliseconds(delta_ms);
 
-  const auto  &input    = ctx.inputs[0];
-  const auto  &desc     = input.desc;
-  const size_t height   = desc.rank() == 2 ? desc.shape[0] : desc.shape[1];
-  const size_t width    = desc.rank() == 2 ? desc.shape[1] : desc.shape[2];
-  const size_t expected = width * height;
+  const auto  &input     = ctx.inputs[0];
+  const auto  &desc      = input.desc;
+  const size_t height    = desc.rank() == 2 ? desc.shape[0] : desc.shape[1];
+  const size_t width     = desc.rank() == 2 ? desc.shape[1] : desc.shape[2];
+  const size_t elt_count = width * height;
+  size_t       byte_count;
+
+  switch (desc.dtype) {
+  case holoflow::core::DType::U16: {
+    byte_count = 2;
+  } break;
+
+  default:
+    byte_count = 1;
+  }
 
   QByteArray payload;
-  payload.resize(static_cast<qsizetype>(expected));
+  payload.resize(static_cast<qsizetype>(byte_count * elt_count));
   void *dst = payload.data();
 
   switch (desc.mem_loc) {
   case holoflow::core::MemLoc::Host: {
     const void *src = static_cast<const void *>(input.data);
-    CUDA_CHECK(cudaMemcpyAsync(dst, src, expected, cudaMemcpyHostToHost, stream_));
+    CUDA_CHECK(cudaMemcpyAsync(dst, src, byte_count * elt_count, cudaMemcpyHostToHost, stream_));
   } break;
 
   case holoflow::core::MemLoc::Device: {
     const void *src = static_cast<const void *>(input.data);
-    CUDA_CHECK(cudaMemcpyAsync(dst, src, expected, cudaMemcpyDeviceToHost, stream_));
+    CUDA_CHECK(cudaMemcpyAsync(dst, src, byte_count * elt_count, cudaMemcpyDeviceToHost, stream_));
   } break;
   }
 
   CUDA_CHECK(cudaStreamSynchronize(stream_));
-  dispatchToUi(std::move(payload), static_cast<int>(width), static_cast<int>(height));
+  dispatchToUi(std::move(payload), static_cast<int>(width), static_cast<int>(height), desc.dtype);
   return holoflow::core::OpResult::Ok;
 }
 
-void DisplayTensorTask::dispatchToUi(QByteArray payload, int width, int height) {
+void DisplayTensorTask::dispatchToUi(QByteArray payload, int width, int height,
+                                     holoflow::core::DType dtype) {
   if (widget_.isNull()) {
     logger()->warn("[DisplayTensorTask::dispatchToUi] target widget is not available");
     return;
@@ -99,12 +110,12 @@ void DisplayTensorTask::dispatchToUi(QByteArray payload, int width, int height) 
   QPointer<holovibes::ui::TensorDisplayWidget> safe_widget = widget_;
   QMetaObject::invokeMethod(
       widget_.data(),
-      [this, safe_widget, payload = std::move(payload), width, height]() mutable {
+      [this, safe_widget, payload = std::move(payload), width, height, dtype]() mutable {
         if (safe_widget.isNull()) {
           logger()->warn("[DisplayTensorTask::dispatchToUi] target widget is not available");
           return;
         }
-        safe_widget->presentTensor(payload, width, height);
+        safe_widget->presentTensor(payload, width, height, dtype);
       },
       Qt::QueuedConnection);
 }
@@ -129,7 +140,8 @@ DisplayTensorFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   const auto &desc         = input_descs[0];
   const bool  is_2d_tensor = desc.rank() == 2 || (desc.rank() == 3 && desc.shape[0] == 1);
   check(is_2d_tensor, "DisplayTensorFactory supports only 2D tensors");
-  check(desc.dtype == holoflow::core::DType::U8, "DisplayTensorFactory supports only u8 tensors");
+  check(desc.dtype == holoflow::core::DType::U8 || desc.dtype == holoflow::core::DType::U16,
+        "DisplayTensorFactory supports only u8 or u16 tensors");
 
   // Success
   return holoflow::core::InferResult{

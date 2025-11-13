@@ -22,6 +22,8 @@
 #include <QPixmap>
 #include <QWidget>
 
+#include "holoflow/core/tensor.hh"
+
 namespace holovibes::ui {
 
 /// Widget that renders a 2D u8 tensor as a grayscale image.
@@ -36,7 +38,7 @@ public:
   void set_reticle_radius(double radius); 
 
 public slots:
-  void presentTensor(const QByteArray &bytes, int width, int height);
+  void presentTensor(const QByteArray &bytes, int width, int height, holoflow::core::DType dtype);
 
 signals:
   void tensorDisplayed();
@@ -55,7 +57,7 @@ protected:
 
 private:
   void ensureTexture(int w, int h);
-  void updateTexture(const quint8 *data, int w, int h);
+  void updateTexture(const void *data, int w, int h, holoflow::core::DType dtype);
   void updateLetterboxViewport();
   QRect getLetterboxRect() const;
   void initializeReticle();
