@@ -21,6 +21,7 @@
 #include <QPaintEvent>
 #include <QPainter>
 #include <QStyleOption>
+#include <cmath>
 #include <cstring>
 
 #include "bug.hh"
@@ -41,6 +42,15 @@ void main(){
   float g = texture(tex, uv).r;
   frag = vec4(g,g,g,1.0);
 })";
+
+static const char *kReticleVS = R"(#version 330 core
+layout(location=0) in vec2 inPos;
+void main(){ gl_Position=vec4(inPos,0.0,1.0); })";
+
+static const char *kReticleFS = R"(#version 330 core
+out vec4 frag;
+uniform vec4 color;
+void main(){ frag = color; })";
 
 TensorDisplayWidget::TensorDisplayWidget(QWidget *p) : QOpenGLWidget(p) {
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -127,6 +137,38 @@ void TensorDisplayWidget::initializeGL() {
   // Swizzle RED to RGB for GL_R8 -> grayscale
   GLint swz[4] = {GL_RED, GL_RED, GL_RED, GL_ONE};
   glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swz);
+
+  // Initialize reticle rendering
+  initializeReticle();
+}
+
+void TensorDisplayWidget::initializeReticle() {
+  // Create shader program for reticle
+  reticle_prog_ = glCreateProgram();
+
+  // Vertex shader
+  GLuint      vs        = glCreateShader(GL_VERTEX_SHADER);
+  const char *vs_source = kReticleVS;
+  glShaderSource(vs, 1, &vs_source, nullptr);
+  glCompileShader(vs);
+  glAttachShader(reticle_prog_, vs);
+
+  // Fragment shader
+  GLuint      fs        = glCreateShader(GL_FRAGMENT_SHADER);
+  const char *fs_source = kReticleFS;
+  glShaderSource(fs, 1, &fs_source, nullptr);
+  glCompileShader(fs);
+  glAttachShader(reticle_prog_, fs);
+
+  glLinkProgram(reticle_prog_);
+  glDeleteShader(vs);
+  glDeleteShader(fs);
+
+  reticle_color_loc_ = glGetUniformLocation(reticle_prog_, "color");
+
+  // Create VAO and VBO for reticle
+  glGenVertexArrays(1, &reticle_vao_);
+  glGenBuffers(1, &reticle_vbo_);
 }
 
 void TensorDisplayWidget::ensureTexture(int w, int h) {
@@ -180,6 +222,45 @@ void TensorDisplayWidget::updateLetterboxViewport() {
   }
 }
 
+void TensorDisplayWidget::set_reticle_enabled(bool enabled) {
+  reticle_enabled_ = enabled;
+  update();
+}
+
+void TensorDisplayWidget::set_reticle_radius(double radius) {
+  reticle_radius_ = qBound(0.05, radius, 1.0);
+  update();
+}
+
+void TensorDisplayWidget::drawReticle() {
+  if (!reticle_enabled_ || img_w_ <= 0 || img_h_ <= 0)
+    return;
+
+  const int          segments = 64;
+  std::vector<float> vertices;
+
+  for (int i = 0; i <= segments; ++i) {
+    float angle = 2.0f * 3.14159265359f * float(i) / float(segments);
+    vertices.push_back(std::cos(angle) * reticle_radius_);
+    vertices.push_back(std::sin(angle) * reticle_radius_);
+  }
+
+  glBindVertexArray(reticle_vao_);
+  glBindBuffer(GL_ARRAY_BUFFER, reticle_vbo_);
+  glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
+
+  glUseProgram(reticle_prog_);
+  glUniform4f(reticle_color_loc_, 1.0f, 0.0f, 0.0f, 1.0f); // Red color
+
+  glLineWidth(2.0f);
+
+  glDrawArrays(GL_LINE_STRIP, 0, segments + 1);
+
+  glLineWidth(1.0f);
+}
+
 void TensorDisplayWidget::paintGL() {
   glClear(GL_COLOR_BUFFER_BIT);
   if (img_w_ <= 0 || img_h_ <= 0)
@@ -189,6 +270,7 @@ void TensorDisplayWidget::paintGL() {
   glBindTexture(GL_TEXTURE_2D, tex_);
   glBindVertexArray(vao_);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+  drawReticle();
 }
 
 } // namespace holovibes::ui

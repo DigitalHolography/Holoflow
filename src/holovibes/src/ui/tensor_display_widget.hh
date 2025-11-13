@@ -32,6 +32,8 @@ public:
   explicit TensorDisplayWidget(QWidget *parent = nullptr);
 
   void set_fixed_aspect(std::optional<QSize> size);
+  void set_reticle_enabled(bool enabled);
+  void set_reticle_radius(double radius); 
 
 public slots:
   void presentTensor(const QByteArray &bytes, int width, int height);
@@ -55,14 +57,24 @@ private:
   void ensureTexture(int w, int h);
   void updateTexture(const quint8 *data, int w, int h);
   void updateLetterboxViewport();
+  QRect getLetterboxRect() const;
+  void initializeReticle();
+  void drawReticle();
   // float current_aspect() const;
 
   GLuint tex_   = 0;
   GLuint vao_   = 0;
   GLuint vbo_   = 0;
   GLuint prog_  = 0;
+  GLuint reticle_vao_ = 0;
+  GLuint reticle_vbo_ = 0;
+  GLuint reticle_prog_ = 0;
+  GLint  reticle_color_loc_ = -1;
   int    img_w_ = 0, img_h_ = 0;
   bool   texture_dirty_ = false;
+
+  bool reticle_enabled_ = false;
+  double reticle_radius_ = 1.0; 
 
   std::optional<QSize> fixed_aspect_size_{std::nullopt};
 };

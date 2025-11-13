@@ -151,7 +151,6 @@ private:
   QComboBox      *view_image_type_combo_;
   QCheckBox      *view_cuts_3d_check_;
   QCheckBox      *view_fft_shift_check_;
-  QCheckBox      *view_lens_view_check_;
   QCheckBox      *view_raw_view_check_;
   QSpinBox       *view_x_spin_;
   QSpinBox       *view_x_width_spin_;

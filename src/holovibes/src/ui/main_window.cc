@@ -585,7 +585,6 @@ void MainWindow::setup_validation_connections() {
   connect(view_image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, cb);
   connect(view_cuts_3d_check_, &QCheckBox::toggled, this, cb);
   connect(view_fft_shift_check_, &QCheckBox::toggled, this, cb);
-  connect(view_lens_view_check_, &QCheckBox::toggled, this, cb);
   connect(view_raw_view_check_, &QCheckBox::toggled, this, cb);
   connect(view_x_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
   connect(view_x_width_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
@@ -648,7 +647,6 @@ void MainWindow::setup_update_connections() {
   connect(view_image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, cb);
   connect(view_cuts_3d_check_, &QCheckBox::toggled, this, cb);
   connect(view_fft_shift_check_, &QCheckBox::toggled, this, cb);
-  connect(view_lens_view_check_, &QCheckBox::toggled, this, cb);
   connect(view_raw_view_check_, &QCheckBox::toggled, this, cb);
   connect(view_x_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
   connect(view_x_width_spin_, qOverload<int>(&QSpinBox::valueChanged), this, cb);
@@ -1366,10 +1364,8 @@ QGroupBox *MainWindow::create_view_group() {
   layout->addWidget(view_fft_shift_check_, row, 1);
   ++row;
 
-  view_lens_view_check_ = new QCheckBox("Lens View", group);
-  layout->addWidget(view_lens_view_check_, row, 0);
   view_raw_view_check_ = new QCheckBox("Raw View", group);
-  layout->addWidget(view_raw_view_check_, row, 1);
+  layout->addWidget(view_raw_view_check_, row, 0);
   ++row;
 
   connect(view_raw_view_check_, &QCheckBox::checkStateChanged, this, [=](int state) {
@@ -1444,6 +1440,24 @@ QGroupBox *MainWindow::create_view_group() {
       yz_processed_widget_->hide();
     }
   });
+
+  connect(view_reticle_check_, &QCheckBox::toggled, this, [this](bool checked) {
+    if (xy_processed_widget_) {
+      (void)checked;
+        xy_processed_widget_->set_reticle_enabled(checked);
+        if (checked) {
+            xy_processed_widget_->set_reticle_radius(view_reticle_radius_->value());
+        }
+    }
+});
+
+connect(view_reticle_radius_, qOverload<double>(&QDoubleSpinBox::valueChanged), 
+        this, [this](double value) {
+          (void)value;
+    if (xy_processed_widget_ && view_reticle_check_->isChecked()) {
+        xy_processed_widget_->set_reticle_radius(value);
+    }
+});
 
   return group;
 }
