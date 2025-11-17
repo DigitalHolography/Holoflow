@@ -1044,7 +1044,7 @@ Manager::V Manager::add_xz_reshape(V parent, int out_idx, int in_idx) {
   return add_node_after<ReshapeSettings>(
       parent, out_idx, in_idx, "xz_reshape", "Reshape",
       ReshapeSettings{
-          .shape = {static_cast<size_t>(src_width_), static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
+          .shape = {1, static_cast<size_t>(s_.time_window), static_cast<size_t>(src_width_)},
       });
 }
 
@@ -1071,8 +1071,8 @@ Manager::V Manager::add_xz_crop2frames(V parent, int out_idx, int in_idx) {
       parent, out_idx, in_idx, "xz_crop2frames", "Crop",
       CropSettings{
           .origin = {0, 10, 0},
-          .shape  = {static_cast<size_t>(1), static_cast<size_t>(src_height_ - 20),
-                     static_cast<size_t>(s_.time_window)},
+          .shape  = {static_cast<size_t>(1), static_cast<size_t>(s_.time_window - 20),
+                     static_cast<size_t>(src_width_)},
       });
 }
 
@@ -1127,7 +1127,7 @@ Manager::V Manager::add_yz_reshape(V parent, int out_idx, int in_idx) {
   return add_node_after<ReshapeSettings>(
       parent, out_idx, in_idx, "yz_reshape", "Reshape",
       ReshapeSettings{
-          .shape = {static_cast<size_t>(src_width_), static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
+          .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
       });
 }
 
