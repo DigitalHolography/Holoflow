@@ -22,6 +22,7 @@
 #include <span>
 
 #include "holoflow/core/tasks.hh"
+#include "holoflow/core/tensor.hh"
 
 namespace holovibes::ui {
 class TensorDisplayWidget;
@@ -64,7 +65,7 @@ public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  void dispatchToUi(QByteArray payload, int width, int height);
+  void dispatchToUi(QByteArray payload, int width, int height, holoflow::core::DType dtype);
 
   DisplayTensorSettings                        settings_;
   std::chrono::steady_clock::time_point        next_refresh_;

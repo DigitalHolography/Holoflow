@@ -56,8 +56,16 @@ ReshapeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   auto has_zero = std::ranges::any_of(settings.shape, [](std::size_t dim) { return dim == 0; });
   check(!has_zero, "new shape should not have zeros");
 
+  logger()->error("input shape: {}, {}, {} | output shape: {}, {}, {}", idesc.shape[2],
+                  idesc.shape[1], idesc.shape[0], settings.shape[2], settings.shape[1],
+                  settings.shape[0]);
+
   auto nb_elements = std::accumulate(settings.shape.begin(), settings.shape.end(), 1ULL,
                                      std::multiplies<std::size_t>());
+
+  logger()->error("nb_elements: {}, idesc.num_elements(): {}", nb_elements,
+                  idesc.num_elements());
+
   check(idesc.num_elements() == nb_elements,
         "new shape does not have same number of elements as input");
 

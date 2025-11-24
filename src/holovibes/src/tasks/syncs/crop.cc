@@ -117,6 +117,10 @@ holoflow::core::InferResult CropFactory::infer(
         "only Float32 data type is supported");
   const auto &idesc = input_descs[0];
 
+  logger()->error("input shape: {}, {}, {} | output shape: {}, {}, {}", idesc.shape[2],
+                  idesc.shape[1], idesc.shape[0], settings.shape[2], settings.shape[1],
+                  settings.shape[0]);
+
   for (size_t i = 0; i < idesc.rank(); ++i) {
     check(settings.origin[i] + settings.shape[i] <= idesc.shape[i],
           "Crop region exceeds input bounds in dimension " + std::to_string(i));
