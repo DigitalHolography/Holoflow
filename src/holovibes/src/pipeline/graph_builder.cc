@@ -39,7 +39,6 @@
 #include "tasks/syncs/rotation.hh"
 #include "tasks/syncs/stft.hh"
 
-
 using namespace holovibes::tasks;
 
 namespace holovibes::pipeline {
@@ -145,9 +144,9 @@ GraphBuilder::V GraphBuilder::build_processed_branch(V parent) {
 }
 
 void GraphBuilder::build_xy_branch(V debounce_queue) {
-    current_section_name_ = "xy_processed_view::";
-  auto cut_avg = add_xy_cut_avg(debounce_queue, 0, 0);
-  auto parent  = cut_avg;
+  current_section_name_ = "xy_processed_view::";
+  auto cut_avg          = add_xy_cut_avg(debounce_queue, 0, 0);
+  auto parent           = cut_avg;
 
   if (s_.pp_fft_shift) {
     auto fft_shift = add_fft_shift(parent, 0, 0);
@@ -177,9 +176,9 @@ void GraphBuilder::build_xy_branch(V debounce_queue) {
 
   if (s_.recording_method == RecordingMethod::PROCESSED) {
     current_section_name_ = "processed_recording::";
-    auto record_cpu_cpu = add_cpu_cpu_cpy(cpu_out_queue, 0, 0);
-    auto record_queue   = add_record_queue(record_cpu_cpu, 0, 0);
-    auto raw_record     = add_raw_record(record_queue, 0, 0);
+    auto record_cpu_cpu   = add_cpu_cpu_cpy(cpu_out_queue, 0, 0);
+    auto record_queue     = add_record_queue(record_cpu_cpu, 0, 0);
+    auto raw_record       = add_raw_record(record_queue, 0, 0);
     (void)raw_record;
     current_section_name_.clear();
   }
@@ -188,32 +187,32 @@ void GraphBuilder::build_xy_branch(V debounce_queue) {
 }
 
 void GraphBuilder::build_xz_branch(V debounce_queue) {
-    current_section_name_ = "xz_processed_view::";
-  auto cut_avg   = add_xz_cut_avg(debounce_queue, 0, 0);
-  auto reshape   = add_xz_reshape(cut_avg, 0, 0);
-  auto slide_avg = add_xz_slide_avg(reshape, 0, 0);
-  auto crop      = add_xz_crop2frames(slide_avg, 0, 0);
-  auto to_u8     = add_xz_to_u8(crop, 0, 0);
-  auto gpu_out   = add_xz_gpu_out_queue(to_u8, 0, 0);
-  auto gpu_cpu   = add_xz_gpu_cpu_cpy(gpu_out, 0, 0);
-  auto cpu_out   = add_xz_cpu_out_queue(gpu_cpu, 0, 0);
-  auto display   = add_xz_processed_display(cpu_out, 0, 0);
+  current_section_name_ = "xz_processed_view::";
+  auto cut_avg          = add_xz_cut_avg(debounce_queue, 0, 0);
+  auto reshape          = add_xz_reshape(cut_avg, 0, 0);
+  auto slide_avg        = add_xz_slide_avg(reshape, 0, 0);
+  auto crop             = add_xz_crop2frames(slide_avg, 0, 0);
+  auto to_u8            = add_xz_to_u8(crop, 0, 0);
+  auto gpu_out          = add_xz_gpu_out_queue(to_u8, 0, 0);
+  auto gpu_cpu          = add_xz_gpu_cpu_cpy(gpu_out, 0, 0);
+  auto cpu_out          = add_xz_cpu_out_queue(gpu_cpu, 0, 0);
+  auto display          = add_xz_processed_display(cpu_out, 0, 0);
   (void)display;
   current_section_name_.clear();
 }
 
 void GraphBuilder::build_yz_branch(V debounce_queue) {
-    current_section_name_ = "yz_processed_view::";
-  auto cut_avg   = add_yz_cut_avg(debounce_queue, 0, 0);
-  auto reshape   = add_yz_reshape(cut_avg, 0, 0);
-  auto slide_avg = add_yz_slide_avg(reshape, 0, 0);
-  auto crop      = add_yz_crop2frames(slide_avg, 0, 0);
-  auto to_u8     = add_yz_to_u8(crop, 0, 0);
-  auto rotation  = add_yz_rotation(to_u8, 0, 0);
-  auto gpu_out   = add_yz_gpu_out_queue(rotation, 0, 0);
-  auto gpu_cpu   = add_yz_gpu_cpu_cpy(gpu_out, 0, 0);
-  auto cpu_out   = add_yz_cpu_out_queue(gpu_cpu, 0, 0);
-  auto display   = add_yz_processed_display(cpu_out, 0, 0);
+  current_section_name_ = "yz_processed_view::";
+  auto cut_avg          = add_yz_cut_avg(debounce_queue, 0, 0);
+  auto reshape          = add_yz_reshape(cut_avg, 0, 0);
+  auto slide_avg        = add_yz_slide_avg(reshape, 0, 0);
+  auto crop             = add_yz_crop2frames(slide_avg, 0, 0);
+  auto to_u8            = add_yz_to_u8(crop, 0, 0);
+  auto rotation         = add_yz_rotation(to_u8, 0, 0);
+  auto gpu_out          = add_yz_gpu_out_queue(rotation, 0, 0);
+  auto gpu_cpu          = add_yz_gpu_cpu_cpy(gpu_out, 0, 0);
+  auto cpu_out          = add_yz_cpu_out_queue(gpu_cpu, 0, 0);
+  auto display          = add_yz_processed_display(cpu_out, 0, 0);
   (void)display;
   current_section_name_.clear();
 }

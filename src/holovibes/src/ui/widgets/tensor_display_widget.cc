@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "tensor_display_widget.hh"
+#include "ui/widgets/tensor_display_widget.hh"
 
 #include <QDebug>
 #include <QMetaType>

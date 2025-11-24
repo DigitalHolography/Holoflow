@@ -25,7 +25,7 @@
 #include "holoflow/runtime/compiler.hh"
 #include "holoflow/runtime/graph_exec.hh"
 #include "pipeline/settings.hh"
-#include "ui/tensor_display_widget.hh"
+#include "ui/widgets/tensor_display_widget.hh"
 
 class QTimer;
 
