@@ -23,7 +23,6 @@
 #include "logger.hh"
 #include "spdlog/common.h"
 #include "ui/main_window.hh"
-#include "ui/tensor_display_widget.hh"
 #include "app_utils.hh"
 
 int main(int argc, char **argv) {

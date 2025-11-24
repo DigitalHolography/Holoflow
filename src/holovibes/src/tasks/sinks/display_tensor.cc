@@ -28,7 +28,7 @@
 #include "driver_types.h"
 #include "holoflow/core/tensor.hh"
 #include "logger.hh"
-#include "ui/tensor_display_widget.hh"
+#include "ui/widgets/tensor_display_widget.hh"
 
 #include <cuda_runtime.h>
 
