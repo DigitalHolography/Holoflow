@@ -133,10 +133,11 @@ build\msvc-multi\Debug\holoflow_test.exe
 
 ## Documentation
 This project’s documentation is built using **MkDocs** and organized into a structured set of Markdown (`.md`) files.
+
 Link to the [**documentation**](https://www.google.com). <!-- #TODO : Change the link to the real documentation link when it will be up -->
 
 ### Build and Run
-| Before building or serving the documentation, ensure that all **required Python dependencies** are installed. If not, you can refer to the Python dependencies section of the README.
+> Before building or serving the documentation, ensure that all **required Python dependencies** are installed. If not, you can refer to the Python dependencies section of the README.
 
 Make sure you are working inside the project’s virtual environment. If it is not already activated, you can activate it with:
 ```cmd
@@ -144,9 +145,9 @@ Make sure you are working inside the project’s virtual environment. If it is n
 ```
 Navigate to the documentation directory, which contains the `mkdocs.yml` configuration file:
 ```cmd
-cd doc/mkdocs/
+cd doc\mkdocs
 ```
-| **Important:** You must run all MkDocs commands from the directory where the mkdocs.yml file is located.
+> You must run all MkDocs commands from the directory where the mkdocs.yml file is located.
 
 You can now start the MkDocs development server:
 ```cmd
@@ -155,15 +156,15 @@ mkdocs serve
 This command will launch a local web server where you can preview the documentation during development.
 
 ### Generate JSON schema
-The JSON schemas are generated using the `json-schema-for-humans` dependency.  
-They are used to display the settings associated of each node.
+The JSON schemas are generated using the `json-schema-for-humans` dependency. They are used to display the settings associated of each node.
+
 To generate a new schema, you must first create the corresponding `xxx-settings.json` file inside the `src/holovibes/schemas/tasks/` directory.
 
 Once the file is created, run the following command:
 ```cmd
 generate-schema-doc src\holovibes\schemas\tasks\xxx-settings.json doc\mkdocs\docs\schemas\xxx_settings.md --config template_name=md
 ```
-| **Important:** You must run this command in Python Virtual Environment
+> You must run this command in Python Virtual Environment
 
 ## Dependency management
 - **FetchContent**: enabled by `ENABLE_FETCHCONTENT=ON`. Dependencies declared in `external/CMakeLists.txt`.
