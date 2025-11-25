@@ -16,12 +16,13 @@ nav:
         - Conversion: holovibes/tasks/syncs/conversion.md
         - Convolution: holovibes/tasks/syncs/convolution.md
         - FFT Shift: holovibes/tasks/syncs/fft_shift.md
+        - Fresnel Diffraction: holovibes/tasks/syncs/fresnel_diffraction.md
         - Memcpy: holovibes/tasks/syncs/memcpy.md
         - PCA: holovibes/tasks/syncs/pca.md
         - Percentile Clip: holovibes/tasks/syncs/pct_clip.md
         - Reshape: holovibes/tasks/syncs/reshape.md
+        - Rotation: holovibes/tasks/syncs/rotation.md
         - STFT: holovibes/tasks/syncs/stft.md
-        - Fresnel Diffraction: holovibes/tasks/syncs/fresnel_diffraction.md
       - Asynchronous:
         - Batch Queue: holovibes/tasks/asyncs/batch_queue.md
         - Sliding Average: holovibes/tasks/asyncs/sliding_average.md

@@ -26,27 +26,6 @@
 
 namespace holovibes::tasks::syncs {
 
-void to_json(nlohmann::json &j, const RotationSettings::Axis &a) {
-  static const std::map<RotationSettings::Axis, std::string> axis_to_string{
-      {RotationSettings::Axis::X, "X"},
-      {RotationSettings::Axis::Y, "Y"},
-      {RotationSettings::Axis::Z, "Z"},
-  };
-
-  j = axis_to_string.at(a);
-}
-
-void from_json(const nlohmann::json &j, RotationSettings::Axis &a) {
-  static const std::map<std::string, RotationSettings::Axis> string_to_axis{
-      {"X", RotationSettings::Axis::X},
-      {"Y", RotationSettings::Axis::Y},
-      {"Z", RotationSettings::Axis::Z},
-  };
-
-  const std::string s = j.get<std::string>();
-  a = string_to_axis.at(s);
-}
-
 void to_json(nlohmann::json &j, const RotationSettings &s) {
   j = nlohmann::json{{"angle", s.angle}, {"axis", s.axis}};
 }
