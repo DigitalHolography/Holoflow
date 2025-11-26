@@ -803,7 +803,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Recording Settings
   {
-    if (true) { // FIXME: TODO: check if recording is enabled
+    if (export_widget_->isChecked()) {
 
       s.recording_method = export_widget_->get_image_type() == "Raw Image"
                                ? RecordingMethod::RAW
