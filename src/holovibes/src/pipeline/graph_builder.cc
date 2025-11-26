@@ -69,9 +69,9 @@ void GraphBuilder::build() {
     current_section_name_ = "recording::";
     auto cpu_cpu_cpy      = add_cpu_cpu_cpy(*cpu_in_queue, 0, 0);
     auto record_queue     = add_record_queue(cpu_cpu_cpy, 0, 0);
+    current_section_name_.clear();
     auto raw_record       = add_raw_record(record_queue, 0, 0);
     (void)raw_record;
-    current_section_name_.clear();
   }
 
   // Build raw view branch
