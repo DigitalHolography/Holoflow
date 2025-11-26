@@ -158,11 +158,11 @@ This command will launch a local web server where you can preview the documentat
 ### Generate JSON schema
 The JSON schemas are generated using the `json-schema-for-humans` dependency. They are used to display the settings associated of each node.
 
-To generate a new schema, you must first create the corresponding `xxx-settings.json` file inside the `src/holovibes/schemas/tasks/` directory.
+To generate a new schema, you must first create the corresponding `xxx_settings.json` file inside the `src/holovibes/schemas/tasks/` directory.
 
 Once the file is created, run the following command:
 ```cmd
-generate-schema-doc src\holovibes\schemas\tasks\xxx-settings.json doc\mkdocs\docs\schemas\xxx_settings.md --config template_name=md
+generate-schema-doc src\holovibes\schemas\tasks\xxx_settings.json doc\mkdocs\docs\schemas\xxx_settings.md --config template_name=md
 ```
 > You must run this command in Python Virtual Environment
 

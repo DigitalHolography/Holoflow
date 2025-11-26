@@ -25,7 +25,7 @@ where:
 See [Angular Spectrum Method - Wikipedia](https://en.wikipedia.org/wiki/Angular_spectrum_method) and [Angular Spectrum Method - LibreTexts](https://phys.libretexts.org/Bookshelves/Optics/BSc_Optics_(Konijnenberg_Adam_and_Urbach)/06%3A_Scalar_diffraction_optics/6.04%3A_Angular_Spectrum_Method) for more details.
 
 !!! note
-    This task can perform an optional **frequency domain filtering** step specified by the **optional** `filter` setting. See the [Filter 2D](filter_2d.md) task documentation for more details on the available filter types and settings.
+    This task can perform an optional **frequency domain filtering** step specified by the **optional** `filter` setting. See the [Filter 2D](filter2d.md) task documentation for more details on the available filter types and settings.
 
 
 ## Inputs
