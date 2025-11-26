@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Filter2DSettings",
+  "description": "Settings for the Filter2D sync task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "r_inner": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Inner radius in pixels (non-negative). Controls the inner boundary of the spatial frequency filter."
+    },
+    "r_outer": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Outer radius in pixels (non-negative). Controls the outer boundary of the spatial frequency filter."
+    },
+    "s_inner": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Inner slope (smoothness) in pixels (non-negative). Defines the smoothing width around the inner radius."
+    },
+    "s_outer": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Outer slope (smoothness) in pixels (non-negative). Defines the smoothing width around the outer radius."
+    }
+  },
+  "required": [
+    "r_inner",
+    "r_outer",
+    "s_inner",
+    "s_outer"
+  ],
+  "examples": [
+    {
+      "r_inner": 10,
+      "r_outer": 100,
+      "s_inner": 5,
+      "s_outer": 10
+    }
+  ]
+}

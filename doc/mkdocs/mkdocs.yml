@@ -16,10 +16,12 @@ nav:
         - Conversion: holovibes/tasks/syncs/conversion.md
         - Convolution: holovibes/tasks/syncs/convolution.md
         - FFT Shift: holovibes/tasks/syncs/fft_shift.md
+        - Filter 2D: holovibes/tasks/syncs/filter2d.md
         - Fresnel Diffraction: holovibes/tasks/syncs/fresnel_diffraction.md
         - Memcpy: holovibes/tasks/syncs/memcpy.md
         - PCA: holovibes/tasks/syncs/pca.md
         - Percentile Clip: holovibes/tasks/syncs/pct_clip.md
+        - Registration: holovibes/tasks/syncs/registration.md
         - Reshape: holovibes/tasks/syncs/reshape.md
         - Rotation: holovibes/tasks/syncs/rotation.md
         - STFT: holovibes/tasks/syncs/stft.md
