@@ -49,11 +49,11 @@ private:
 
   // Utilities to build the graph
   template <JsonSerializable S>
-  V add_node(const std::string &name, const std::string &kind, const S &settings);
+  V add_node(const std::string &name, const std::string &kind, const S &settings, bool debug = true);
 
   template <JsonSerializable S>
   V add_node_after(const V &after, int out_idx, int in_idx, const std::string &name,
-                   const std::string &kind, const S &settings);
+                   const std::string &kind, const S &settings, bool debug = true);
 
   // Pipeline branches
   V    build_raw_branch(V cpu_in_queue);

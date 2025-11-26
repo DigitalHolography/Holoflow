@@ -22,9 +22,10 @@ namespace holoflow::core {
 
 /// Specification of a computation node.
 struct NodeSpec {
-  std::string    name;     ///< Unique node name.
-  std::string    kind;     ///< Task kind.
-  nlohmann::json settings; ///< Task configuration.
+  std::string    name;         ///< Unique node name.
+  std::string    kind;         ///< Task kind.
+  nlohmann::json settings;     ///< Task configuration.
+  bool           debug = true; ///< Whether to enable debug mode for this node.
 };
 
 /// Specification of a directed edge between two nodes.

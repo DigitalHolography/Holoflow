@@ -113,7 +113,7 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
       label << "\n(" << np.spec.kind << ")";
 
     try {
-      if (!np.spec.settings.is_null() &&
+      if (np.spec.debug && !np.spec.settings.is_null() &&
           !(np.spec.settings.is_object() && np.spec.settings.empty())) {
         std::string sd = np.spec.settings.dump();
         if (sd.size() > settings_max_len)

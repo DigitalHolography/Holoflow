@@ -69,7 +69,7 @@ static void write_nodes(std::ostringstream &ss, const GraphSpec &g) {
       label << "\n(" << ns.kind << ")";
 
     try {
-      if (!ns.settings.is_null() && !(ns.settings.is_object() && ns.settings.empty())) {
+      if (ns.debug && !ns.settings.is_null() && !(ns.settings.is_object() && ns.settings.empty())) {
         std::string settings_dump = ns.settings.dump(2);
         label << "\n" << settings_dump;
       }

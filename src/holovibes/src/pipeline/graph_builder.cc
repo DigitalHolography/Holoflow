@@ -219,12 +219,13 @@ void GraphBuilder::build_yz_branch(V debounce_queue) {
 
 template <JsonSerializable S>
 GraphBuilder::V GraphBuilder::add_node(const std::string &name, const std::string &kind,
-                                       const S &settings) {
+                                       const S &settings, bool debug) {
   auto v = boost::add_vertex(
       holoflow::core::NodeSpec{
           .name     = current_section_name_ + name,
           .kind     = kind,
           .settings = nlohmann::json(settings),
+          .debug    = debug
       },
       spec_);
   return v;
@@ -233,8 +234,8 @@ GraphBuilder::V GraphBuilder::add_node(const std::string &name, const std::strin
 template <JsonSerializable S>
 GraphBuilder::V GraphBuilder::add_node_after(const V &after, int out_idx, int in_idx,
                                              const std::string &name, const std::string &kind,
-                                             const S &settings) {
-  auto v = add_node(name, kind, settings);
+                                             const S &settings, bool debug) {
+  auto v = add_node(name, kind, settings, debug);
   boost::add_edge(after, v, {out_idx, in_idx}, spec_);
   return v;
 }
@@ -350,7 +351,7 @@ GraphBuilder::V GraphBuilder::add_raw_record(V parent, int out_idx, int in_idx) 
                                               .path              = s_.recording_path.string(),
                                               .count             = s_.recording_count,
                                               .pipeline_settings = settings_to_old_json(s_),
-                                          });
+                                          }, false);
 }
 
 GraphBuilder::V GraphBuilder::add_cpu_gpu_cpy(V parent, int out_idx, int in_idx) {
