@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RegistrationSettings",
+  "description": "Settings for the Registration sync task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "radius": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Normalized radius of the circular mask applied to the region of interest. Defines the elliptical area used for cross-correlation computation. Must satisfy:\n- 0.0 ≤ radius ≤ 1.0\n- Radius is normalized relative to the smallest image dimension"
+    }
+  },
+  "required": [
+    "radius"
+  ],
+  "examples": [
+    {
+      "radius": 0.8
+    }
+  ]
+}
