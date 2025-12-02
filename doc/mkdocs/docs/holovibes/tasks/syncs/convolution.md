@@ -59,4 +59,4 @@ All rows must have the same width, and the kernel must be non-empty.
 
 ---
 ## Settings
---8<-- "docs\schemas\convolution_settings.md"
+--8<-- "docs\schemas\syncs\convolution_settings.md"

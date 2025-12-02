@@ -21,4 +21,4 @@ This task does not own any inputs or outputs.
 
 ---
 ## Settings
---8<-- "docs\schemas\reshape_settings.md"
+--8<-- "docs\schemas\syncs\reshape_settings.md"

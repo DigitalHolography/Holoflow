@@ -45,4 +45,4 @@ This task **does not** support inplace execution.
 The Rotation task does not own its input or output tensors.
 
 ## Settings
---8<-- "docs/schemas/rotation_settings.md"
+--8<-- "docs/schemas\syncs/rotation_settings.md"

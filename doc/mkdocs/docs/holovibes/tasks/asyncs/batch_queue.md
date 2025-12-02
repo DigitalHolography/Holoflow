@@ -38,4 +38,4 @@ The task owns both its input and output memory.
 
 ---
 ## Settings
---8<-- "docs\schemas\batch_queue_settings.md"
+--8<-- "docs\schemas\asyncs\batch_queue_settings.md"

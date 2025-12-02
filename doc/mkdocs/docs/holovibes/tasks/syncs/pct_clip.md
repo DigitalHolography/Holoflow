@@ -27,4 +27,4 @@ This task does not own any inputs or outputs.
 
 ---
 ## Settings
---8<-- "docs\schemas\pct_clip_settings.md"
+--8<-- "docs\schemas\syncs\pct_clip_settings.md"

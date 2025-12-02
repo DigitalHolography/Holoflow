@@ -58,4 +58,4 @@ This task does not own any inputs or outputs.
 
 ---
 ## Settings
---8<-- "docs\schemas\angular_spectrum_settings.md"
+--8<-- "docs\schemas\syncs\angular_spectrum_settings.md"
