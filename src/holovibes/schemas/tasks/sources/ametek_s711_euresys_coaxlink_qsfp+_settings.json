@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AmetekS711EuresysCoaxlinkQSFPSettings",
+  "description": "Settings for the Ametek S711 Euresys Coaxlink QSFP camera source.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "cfg_path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Path to the JSON configuration file for the Phantom S711 camera. The file must contain a top-level 's711' object with camera parameters (Width, Height, PixelFormat, BufferPartCount, ExposureTime, etc.)."
+    }
+  },
+  "required": [
+    "cfg_path"
+  ],
+  "examples": [
+    {
+      "cfg_path": "configs/phantom_s711_config.json"
+    }
+  ]
+}

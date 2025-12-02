@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "ametek_s711_euresys_coaxlink_octo.hh"
+#include "ametek_s711_euresys_coaxlink_qsfp+.hh"
 
 #include <EGrabber.h>
 #include <EuresysGenapiErrorFormats.h>
@@ -27,18 +27,18 @@
 
 namespace holovibes::tasks::sources {
 
-void to_json(nlohmann::json &j, const AmetekS711EuresysCoaxlinkOctoSettings &s) {
+void to_json(nlohmann::json &j, const AmetekS711EuresysCoaxlinkQSFPSettings &s) {
   j = nlohmann::json{
       {"cfg_path", s.cfg_path},
   };
 }
 
-void from_json(const nlohmann::json &j, AmetekS711EuresysCoaxlinkOctoSettings &s) {
+void from_json(const nlohmann::json &j, AmetekS711EuresysCoaxlinkQSFPSettings &s) {
   j.at("cfg_path").get_to(s.cfg_path);
 }
 
 AmetekS711EuresysCoaxlinkOcto::AmetekS711EuresysCoaxlinkOcto(
-    const AmetekS711EuresysCoaxlinkOctoSettings &settings, HostPtr<uint8_t> &&buffers,
+    const AmetekS711EuresysCoaxlinkQSFPSettings &settings, HostPtr<uint8_t> &&buffers,
     std::unique_ptr<Euresys::EGenTL> &&gentl, std::unique_ptr<Euresys::EGrabber<>> &&grabber)
     : settings_(settings), buffers_(std::move(buffers)), gentl_(std::move(gentl)),
       grabber_(std::move(grabber)), running_(false) {
@@ -245,7 +245,7 @@ AmetekS711EuresysCoaxlinkOctoFactory::infer(std::span<const holoflow::core::TDes
       {"Mono16", holoflow::core::DType::U16},
   };
 
-  auto settings = jsettings.get<AmetekS711EuresysCoaxlinkOctoSettings>();
+  auto settings = jsettings.get<AmetekS711EuresysCoaxlinkQSFPSettings>();
 
   // Validate
   check(input_descs.size() == 0, "Expected zero input tensors");
@@ -286,7 +286,7 @@ AmetekS711EuresysCoaxlinkOctoFactory::create(std::span<const holoflow::core::TDe
 
   // Validate
   auto infer    = this->infer(input_descs, jsettings);
-  auto settings = jsettings.get<AmetekS711EuresysCoaxlinkOctoSettings>();
+  auto settings = jsettings.get<AmetekS711EuresysCoaxlinkQSFPSettings>();
   auto cfg_file = std::ifstream(settings.cfg_path);
   auto cfg      = nlohmann::json::parse(cfg_file).at("s711");
 
@@ -319,7 +319,7 @@ AmetekS711EuresysCoaxlinkOctoFactory::update(std::unique_ptr<holoflow::core::ISy
 
   // Validate
   auto infer    = this->infer(input_descs, jsettings);
-  auto settings = jsettings.get<AmetekS711EuresysCoaxlinkOctoSettings>();
+  auto settings = jsettings.get<AmetekS711EuresysCoaxlinkQSFPSettings>();
   auto cfg_file = std::ifstream(settings.cfg_path);
   auto cfg      = nlohmann::json::parse(cfg_file).at("s711");
 

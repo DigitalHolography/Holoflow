@@ -193,7 +193,7 @@ QWidget *ImportWidget::create_camera_page() {
 
   grid->addWidget(new QLabel("Camera", page), row, 0);
   camera_combo_ = create_combo_box(
-      page, QStringList{"Ametek S710 Euresys Coaxlink Octo", "Ametek S711 Euresys Coaxlink Octo"});
+      page, QStringList{"Ametek S710 Euresys Coaxlink Octo", "Ametek S711 Euresys Coaxlink QSFP+"});
   grid->addWidget(camera_combo_, row, 1);
   ++row;
 

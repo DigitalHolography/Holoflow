@@ -8,6 +8,7 @@ nav:
     - Tasks:
       - Sources:
         - Ametek s710 Euresys Coaxlink Octo: holovibes/tasks/sources/ametek_s710_euresys_coaxlink_octo.md
+        - Ametek s711 Euresys Coaxlink QSFP+: holovibes/tasks/sources/ametek_s711_euresys_coaxlink_qsfp+.md
         - Holofile: holovibes/tasks/sources/holofile.md
       - Sinks:
         - Display Tensor: holovibes/tasks/sinks/display_tensor.md
