@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "HolofileSettings",
+  "description": "Settings for the Holofile sink task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Filesystem path where the HoloFile will be written. Must be a non-empty string."
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Number of frames to write. Must be a positive integer."
+    },
+    "pipeline_settings": {
+      "description": "Arbitrary pipeline settings JSON that will be stored in the file footer. Any valid JSON value is accepted.",
+      "type": [
+        "object",
+        "array",
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ]
+    }
+  },
+  "required": [
+    "path",
+    "count",
+    "pipeline_settings"
+  ],
+  "examples": [
+    {
+      "path": "recordings/session_001.hf",
+      "count": 250,
+      "pipeline_settings": {
+        "exposure_ms": 5.0,
+        "gain": 1.2,
+        "pipeline_version": "v1.3.0"
+      }
+    }
+  ]
+}

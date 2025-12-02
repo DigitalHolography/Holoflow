@@ -10,6 +10,7 @@ nav:
         - Holofile: holovibes/tasks/sources/holofile.md
       - Sinks:
         - Display Tensor: holovibes/tasks/sinks/display_tensor.md
+        - Holofile: holovibes/tasks/sinks/holofile.md
       - Synchronous:
         - Angular Spectrum: holovibes/tasks/syncs/angular_spectrum.md
         - Average: holovibes/tasks/syncs/average.md

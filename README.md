@@ -162,7 +162,7 @@ To generate a new schema, you must first create the corresponding `xxx_settings.
 
 Once the file is created, run the following command:
 ```cmd
-generate-schema-doc src\holovibes\schemas\tasks\xxx_settings.json doc\mkdocs\docs\schemas\xxx_settings.md --config template_name=md
+generate-schema-doc src\holovibes\schemas\tasks\node_type\xxx_settings.json doc\mkdocs\docs\schemas\node_type\xxx_settings.md --config template_name=md
 ```
 > You must run this command in Python Virtual Environment
 
