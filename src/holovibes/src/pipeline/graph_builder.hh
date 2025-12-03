@@ -71,7 +71,7 @@ private:
   V add_cpu_cpu_cpy(V parent, int out_idx, int in_idx);
   V add_cpu_raw_view_cpy(V parent, int out_idx, int in_idx);
   V add_xy_raw_display(V parent, int out_idx, int in_idx);
-  V add_raw_record(V parent, int out_idx, int in_idx);
+  V add_record(V parent, int out_idx, int in_idx);
   V add_cpu_gpu_cpy(V parent, int out_idx, int in_idx);
   V add_gpu_in_queue(V parent, int out_idx, int in_idx);
   V add_to_cf32(V parent, int out_idx, int in_idx);

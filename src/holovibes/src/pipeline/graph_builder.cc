@@ -70,7 +70,7 @@ void GraphBuilder::build() {
     auto cpu_cpu_cpy      = add_cpu_cpu_cpy(*cpu_in_queue, 0, 0);
     auto record_queue     = add_record_queue(cpu_cpu_cpy, 0, 0);
     current_section_name_.clear();
-    auto raw_record       = add_raw_record(record_queue, 0, 0);
+    auto raw_record = add_record(record_queue, 0, 0);
     (void)raw_record;
   }
 
@@ -182,9 +182,9 @@ void GraphBuilder::build_xy_branch(V debounce_queue) {
     current_section_name_ = "processed_recording::";
     auto record_cpu_cpu   = add_cpu_cpu_cpy(cpu_out_queue, 0, 0);
     auto record_queue     = add_record_queue(record_cpu_cpu, 0, 0);
-    auto raw_record       = add_raw_record(record_queue, 0, 0);
-    (void)raw_record;
     current_section_name_.clear();
+    auto record = add_record(record_queue, 0, 0);
+    (void)record;
   }
 
   (void)display;
@@ -224,14 +224,11 @@ void GraphBuilder::build_yz_branch(V debounce_queue) {
 template <JsonSerializable S>
 GraphBuilder::V GraphBuilder::add_node(const std::string &name, const std::string &kind,
                                        const S &settings, bool debug) {
-  auto v = boost::add_vertex(
-      holoflow::core::NodeSpec{
-          .name     = current_section_name_ + name,
-          .kind     = kind,
-          .settings = nlohmann::json(settings),
-          .debug    = debug
-      },
-      spec_);
+  auto v = boost::add_vertex(holoflow::core::NodeSpec{.name     = current_section_name_ + name,
+                                                      .kind     = kind,
+                                                      .settings = nlohmann::json(settings),
+                                                      .debug    = debug},
+                             spec_);
   return v;
 }
 
@@ -348,14 +345,15 @@ GraphBuilder::V GraphBuilder::add_xy_raw_display(V parent, int out_idx, int in_i
                                                "DisplayTensorXYRaw", DisplayTensorSettings{});
 }
 
-GraphBuilder::V GraphBuilder::add_raw_record(V parent, int out_idx, int in_idx) {
+GraphBuilder::V GraphBuilder::add_record(V parent, int out_idx, int in_idx) {
   using sinks::HolofileSettings;
-  return add_node_after<HolofileSettings>(parent, out_idx, in_idx, "raw_record", "HolofileWriter",
+  return add_node_after<HolofileSettings>(parent, out_idx, in_idx, "record", "HolofileWriter",
                                           HolofileSettings{
                                               .path              = s_.recording_path.string(),
                                               .count             = s_.recording_count,
                                               .pipeline_settings = settings_to_old_json(s_),
-                                          }, false);
+                                          },
+                                          false);
 }
 
 GraphBuilder::V GraphBuilder::add_cpu_gpu_cpy(V parent, int out_idx, int in_idx) {

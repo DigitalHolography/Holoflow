@@ -216,7 +216,7 @@ void Manager::start_raw_record(std::filesystem::path record_path) {
     return;
   }
 
-  if (!scheduler_->ui_try_send("raw_record", std::move(payload))) {
+  if (!scheduler_->ui_try_send("record", std::move(payload))) {
     const QString msg = QString("Failed to enqueue start_recording event");
     logger()->error("[Manager::start_raw_record] Failed to enqueue start_recording event");
     emit raw_record_started_failure(msg);
@@ -246,7 +246,7 @@ void Manager::stop_raw_record() {
   }
 
   nlohmann::json payload{{"type", "stop_recording"}};
-  if (!scheduler_->ui_try_send("raw_record", std::move(payload))) {
+  if (!scheduler_->ui_try_send("record", std::move(payload))) {
     const QString msg = QString("Failed to enqueue stop_recording event");
     logger()->error("[Manager::stop_raw_record] Failed to enqueue stop_recording event");
     emit raw_record_stopped_failure(msg);
