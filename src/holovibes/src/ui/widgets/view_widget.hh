@@ -100,6 +100,9 @@ signals:
   void reticle_toggled(bool enabled);
   void reticle_radius_changed(double radius);
 
+private slots:
+  void update_3d_cut_controls(bool enabled);
+
 private:
   void setup_ui();
   void connect_signals();

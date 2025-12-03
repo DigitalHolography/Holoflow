@@ -124,6 +124,14 @@ QDoubleSpinBox *ViewWidget::reticle_radius() { return reticle_radius_; }
 QCheckBox      *ViewWidget::pct_check() { return pct_check_; }
 QDoubleSpinBox *ViewWidget::pct_radius() { return pct_radius_; }
 
+void ViewWidget::update_3d_cut_controls(bool enabled)
+{
+    x_spin_->setEnabled(enabled);
+    x_width_spin_->setEnabled(enabled);
+    y_spin_->setEnabled(enabled);
+    y_width_spin_->setEnabled(enabled);
+}
+
 void ViewWidget::setup_ui() {
   auto *layout = new QGridLayout(this);
   int   row    = 0;
@@ -208,6 +216,7 @@ void ViewWidget::setup_ui() {
 
   layout->addItem(new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding), row, 0, 1,
                   2);
+  update_3d_cut_controls(cuts_3d_check_->isChecked());
 }
 
 void ViewWidget::connect_signals() {
@@ -217,6 +226,8 @@ void ViewWidget::connect_signals() {
   connect(reticle_check_, &QCheckBox::toggled, this, &ViewWidget::reticle_toggled);
   connect(reticle_radius_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           &ViewWidget::reticle_radius_changed);
+  connect(cuts_3d_check_, &QCheckBox::toggled,
+        this, &ViewWidget::update_3d_cut_controls);
 
   // Emit settings_changed for all control changes
   connect(image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
