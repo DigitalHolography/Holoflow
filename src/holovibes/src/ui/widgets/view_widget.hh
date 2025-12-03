@@ -41,14 +41,14 @@ public:
   int get_z_width() const;
   QString get_view_kind() const;
   int get_accumulation() const;
-  bool is_auto_brightness() const;
-  bool is_invert() const;
   int get_range_start() const;
   int get_range_end() const;
   bool is_registration_enabled() const;
   double get_registration_radius() const;
   bool is_reticle_enabled() const;
   double get_reticle_radius() const;
+  bool is_pct_enabled() const;
+  double get_pct_radius() const;
 
   // Setters
   void set_x_origin(int value);
@@ -63,6 +63,8 @@ public:
   void set_reticle_radius(int value);
   void set_registration_enabled(bool enabled);
   void set_registration_radius(int value);
+  void set_pct_enabled(bool enabled);
+  void set_pct_radius(int value);
 
   // Validation
   void clear_validation_styles();
@@ -82,14 +84,14 @@ public:
   QSpinBox *z_width_spin();
   QComboBox *kind_combo();
   QSpinBox *accumulation_spin();
-  QCheckBox *auto_check();
-  QCheckBox *invert_check();
   QSpinBox *range_start_spin();
   QSpinBox *range_end_spin();
   QCheckBox *registration_check();
   QDoubleSpinBox *registration_radius();
   QCheckBox *reticle_check();
   QDoubleSpinBox *reticle_radius();
+  QCheckBox *pct_check();
+  QDoubleSpinBox *pct_radius();
 
 signals:
   void settings_changed();
@@ -114,14 +116,14 @@ private:
   QSpinBox *z_width_spin_;
   QComboBox *kind_combo_;
   QSpinBox *accumulation_spin_;
-  QCheckBox *auto_check_;
-  QCheckBox *invert_check_;
   QSpinBox *range_start_spin_;
   QSpinBox *range_end_spin_;
   QCheckBox *registration_check_;
   QDoubleSpinBox *registration_radius_;
   QCheckBox *reticle_check_;
   QDoubleSpinBox *reticle_radius_;
+  QCheckBox *pct_check_;
+  QDoubleSpinBox *pct_radius_;
 };
 
 } // namespace holovibes::ui

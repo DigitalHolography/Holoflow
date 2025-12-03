@@ -67,14 +67,14 @@ int     ViewWidget::get_z_origin() const { return z_spin_->value(); }
 int     ViewWidget::get_z_width() const { return z_width_spin_->value(); }
 QString ViewWidget::get_view_kind() const { return kind_combo_->currentText(); }
 int     ViewWidget::get_accumulation() const { return accumulation_spin_->value(); }
-bool    ViewWidget::is_auto_brightness() const { return auto_check_->isChecked(); }
-bool    ViewWidget::is_invert() const { return invert_check_->isChecked(); }
 int     ViewWidget::get_range_start() const { return range_start_spin_->value(); }
 int     ViewWidget::get_range_end() const { return range_end_spin_->value(); }
 bool    ViewWidget::is_registration_enabled() const { return registration_check_->isChecked(); }
 double  ViewWidget::get_registration_radius() const { return registration_radius_->value(); }
 bool    ViewWidget::is_reticle_enabled() const { return reticle_check_->isChecked(); }
 double  ViewWidget::get_reticle_radius() const { return reticle_radius_->value(); }
+bool   ViewWidget::is_pct_enabled() const { return pct_check_->isChecked(); }
+double ViewWidget::get_pct_radius() const { return pct_radius_->value(); }
 
 // Setters
 void ViewWidget::set_x_origin(int value) { x_spin_->setValue(value); }
@@ -91,6 +91,8 @@ void ViewWidget::set_registration_enabled(bool enabled) {
   registration_check_->setChecked(enabled);
 }
 void ViewWidget::set_registration_radius(int value) { registration_radius_->setValue(value); }
+void ViewWidget::set_pct_enabled(bool enabled) { pct_check_->setChecked(enabled); }
+void ViewWidget::set_pct_radius(int value) { pct_radius_->setValue(value); }
 
 // Validation
 void ViewWidget::mark_z_invalid() {
@@ -113,14 +115,14 @@ QSpinBox       *ViewWidget::z_spin() { return z_spin_; }
 QSpinBox       *ViewWidget::z_width_spin() { return z_width_spin_; }
 QComboBox      *ViewWidget::kind_combo() { return kind_combo_; }
 QSpinBox       *ViewWidget::accumulation_spin() { return accumulation_spin_; }
-QCheckBox      *ViewWidget::auto_check() { return auto_check_; }
-QCheckBox      *ViewWidget::invert_check() { return invert_check_; }
 QSpinBox       *ViewWidget::range_start_spin() { return range_start_spin_; }
 QSpinBox       *ViewWidget::range_end_spin() { return range_end_spin_; }
 QCheckBox      *ViewWidget::registration_check() { return registration_check_; }
 QDoubleSpinBox *ViewWidget::registration_radius() { return registration_radius_; }
 QCheckBox      *ViewWidget::reticle_check() { return reticle_check_; }
 QDoubleSpinBox *ViewWidget::reticle_radius() { return reticle_radius_; }
+QCheckBox      *ViewWidget::pct_check() { return pct_check_; }
+QDoubleSpinBox *ViewWidget::pct_radius() { return pct_radius_; }
 
 void ViewWidget::setup_ui() {
   auto *layout = new QGridLayout(this);
@@ -179,11 +181,6 @@ void ViewWidget::setup_ui() {
   brightness_group->setChecked(true);
   auto *bright_layout = new QGridLayout(brightness_group);
 
-  auto_check_ = new QCheckBox("Auto", brightness_group);
-  bright_layout->addWidget(auto_check_, 0, 0);
-  invert_check_ = new QCheckBox("Invert", brightness_group);
-  bright_layout->addWidget(invert_check_, 0, 1);
-
   auto *range_layout = new QGridLayout();
   range_layout->addWidget(new QLabel("Range:", brightness_group), 0, 0);
   range_start_spin_ = create_spin_box(brightness_group, 1, kLargeSpinMax, 0);
@@ -196,6 +193,10 @@ void ViewWidget::setup_ui() {
   bright_layout->addWidget(reticle_check_, 2, 0);
   reticle_radius_ = create_double_spin_box(brightness_group, 0.05, 1.0, 0.05, 1.0);
   bright_layout->addWidget(reticle_radius_, 2, 1);
+  pct_check_ = new QCheckBox("PCT", brightness_group);
+  bright_layout->addWidget(pct_check_, 3, 0);
+  pct_radius_ = create_double_spin_box(brightness_group, 0.05, 1.0, 0.05, 1.0);
+  bright_layout->addWidget(pct_radius_, 3, 1);
 
   registration_check_ = new QCheckBox("Registration", brightness_group);
   bright_layout->addWidget(registration_check_, 4, 0);
@@ -236,8 +237,6 @@ void ViewWidget::connect_signals() {
           &ViewWidget::settings_changed);
   connect(accumulation_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);
-  connect(auto_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
-  connect(invert_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
   connect(range_start_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);
   connect(range_end_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
@@ -245,8 +244,8 @@ void ViewWidget::connect_signals() {
   connect(registration_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
   connect(registration_radius_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);
-  connect(reticle_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
-  connect(reticle_radius_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+  connect(pct_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
+  connect(pct_radius_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);
 }
 

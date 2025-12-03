@@ -793,10 +793,10 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_convolution         = render_widget_->get_convolution() != "None";
     s.pp_convolution_path    = kernel_path;
     s.pp_convolution_divide  = render_widget_->is_convolution_divide();
-    s.pp_pctclip             = true;
+    s.pp_pctclip             = view_widget_->is_pct_enabled();
     s.pp_pctclip_lower       = 0.02f;
     s.pp_pctclip_upper       = 99.98f;
-    s.pp_pctclip_radius      = view_widget_->get_reticle_radius();
+    s.pp_pctclip_radius      = view_widget_->get_pct_radius();
     s.pp_registration        = view_widget_->is_registration_enabled();
     s.pp_registration_radius = view_widget_->get_registration_radius();
   }
@@ -937,7 +937,8 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     }
     render_widget_->set_convolution(convName);
 
-    view_widget_->set_reticle_radius(s.pp_pctclip_radius);
+    view_widget_->set_pct_radius(s.pp_pctclip_radius);
+    view_widget_->set_pct_enabled(s.pp_pctclip);
     view_widget_->set_registration_enabled(s.pp_registration);
     view_widget_->set_registration_radius(s.pp_registration_radius);
   }
