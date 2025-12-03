@@ -15,6 +15,7 @@
 #pragma once
 
 #include <QByteArray>
+#include <QCloseEvent>
 #include <QImage>
 #include <QOpenGLExtraFunctions>
 #include <QOpenGLFunctions>
@@ -35,7 +36,7 @@ public:
 
   void set_fixed_aspect(std::optional<QSize> size);
   void set_reticle_enabled(bool enabled);
-  void set_reticle_radius(double radius); 
+  void set_reticle_radius(double radius);
 
 public slots:
   void presentTensor(const QByteArray &bytes, int width, int height, holoflow::core::DType dtype);
@@ -44,6 +45,7 @@ signals:
   void tensorDisplayed();
 
 protected:
+  void closeEvent(QCloseEvent *event) override { event->ignore(); }
   void initializeGL() override;
   void resizeGL(int w, int h) override;
   void paintGL() override;
@@ -56,27 +58,27 @@ protected:
   void resizeEvent(QResizeEvent *event) override;
 
 private:
-  void ensureTexture(int w, int h);
-  void updateTexture(const void *data, int w, int h, holoflow::core::DType dtype);
-  void updateLetterboxViewport();
+  void  ensureTexture(int w, int h);
+  void  updateTexture(const void *data, int w, int h, holoflow::core::DType dtype);
+  void  updateLetterboxViewport();
   QRect getLetterboxRect() const;
-  void initializeReticle();
-  void drawReticle();
+  void  initializeReticle();
+  void  drawReticle();
   // float current_aspect() const;
 
-  GLuint tex_   = 0;
-  GLuint vao_   = 0;
-  GLuint vbo_   = 0;
-  GLuint prog_  = 0;
-  GLuint reticle_vao_ = 0;
-  GLuint reticle_vbo_ = 0;
-  GLuint reticle_prog_ = 0;
+  GLuint tex_               = 0;
+  GLuint vao_               = 0;
+  GLuint vbo_               = 0;
+  GLuint prog_              = 0;
+  GLuint reticle_vao_       = 0;
+  GLuint reticle_vbo_       = 0;
+  GLuint reticle_prog_      = 0;
   GLint  reticle_color_loc_ = -1;
   int    img_w_ = 0, img_h_ = 0;
   bool   texture_dirty_ = false;
 
-  bool reticle_enabled_ = false;
-  double reticle_radius_ = 1.0; 
+  bool   reticle_enabled_ = false;
+  double reticle_radius_  = 1.0;
 
   std::optional<QSize> fixed_aspect_size_{std::nullopt};
 };
