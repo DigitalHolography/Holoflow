@@ -27,33 +27,6 @@ void from_json(const nlohmann::json &j, SlidingAverageSettings &s) {
 
 namespace {
 
-__global__ void slide_avg_kernel(const float *input_frame, float *circular_buffer,
-                                 float *running_sum, float *output_frame, const int buffer_stride,
-                                 const int current_index, const int oldest_index,
-                                 const int window_size, const int total_frames_processed,
-                                 const int frame_size) {
-  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= frame_size)
-    return;
-
-  float sum = running_sum[idx];
-
-  if (total_frames_processed >= window_size && oldest_index >= 0) {
-    const float *oldest_frame = circular_buffer + oldest_index * buffer_stride;
-    sum -= oldest_frame[idx];
-  }
-
-  const float new_val = input_frame[idx];
-  sum += new_val;
-
-  running_sum[idx]     = sum;
-  float *current_frame = circular_buffer + current_index * buffer_stride;
-  current_frame[idx]   = new_val;
-
-  const int effective_window_size = min(total_frames_processed + 1, window_size);
-  output_frame[idx]               = sum / effective_window_size;
-}
-
 __global__ void f32_add_avg_kernel(const float *idata, float *odata, int nx, int ny, int avg_size) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
