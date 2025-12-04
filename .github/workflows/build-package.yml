@@ -18,12 +18,6 @@ jobs:
       with:
         submodules: recursive
 
-      uses: actions/download-artifact@v4
-      with:
-        name: fc-cache
-        path: .fc
-      continue-on-error: true
-        
     - name: Configure
       run: |
         cmake --preset msvc-multi -DFETCHCONTENT_BASE_DIR="C:/.fc"
