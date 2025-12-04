@@ -97,8 +97,8 @@ struct Settings {
   int        time_z_end;
 
   // View
-  bool view_3d_cuts;
-  bool raw_view;
+  bool     view_3d_cuts;
+  bool     raw_view;
   ViewType view_type;
 
   // Post-processing
@@ -119,6 +119,13 @@ struct Settings {
   RecordingMethod       recording_method;
   std::filesystem::path recording_path;
   int                   recording_count;
+
+  // Auto-focus
+  bool  autofocus_enabled;
+  int   autofocus_nb_subaps;
+  int   autofocus_max_iter;
+  float autofocus_tolerance;
+  float autofocus_gain;
 };
 
 } // namespace holovibes::pipeline

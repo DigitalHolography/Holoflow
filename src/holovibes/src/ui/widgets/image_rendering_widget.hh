@@ -20,6 +20,8 @@
 #include <QSlider>
 #include <QSpinBox>
 
+#include "ui/widgets/auto_focus_widget.hh"
+
 namespace holovibes::ui {
 
 class ImageRenderingWidget : public QGroupBox {
@@ -64,20 +66,21 @@ public:
   void mark_time_window_invalid();
 
   // Access to widgets for connection setup
-  QComboBox *image_combo();
-  QSpinBox  *batch_size_spin();
-  QSpinBox  *time_stride_spin();
-  QCheckBox *filter_2d_check();
-  QSpinBox  *filter_2d_inner_spin();
-  QSpinBox  *filter_2d_outer_spin();
-  QComboBox *space_transform_combo();
-  QComboBox *time_transform_combo();
-  QSpinBox  *time_window_spin();
-  QSpinBox  *lambda_spin();
-  QSpinBox  *focus_spin();
-  QSlider   *focus_slider();
-  QComboBox *convolution_combo();
-  QCheckBox *convolution_divide_check();
+  QComboBox       *image_combo();
+  QSpinBox        *batch_size_spin();
+  QSpinBox        *time_stride_spin();
+  QCheckBox       *filter_2d_check();
+  QSpinBox        *filter_2d_inner_spin();
+  QSpinBox        *filter_2d_outer_spin();
+  QComboBox       *space_transform_combo();
+  QComboBox       *time_transform_combo();
+  QSpinBox        *time_window_spin();
+  QSpinBox        *lambda_spin();
+  QSpinBox        *focus_spin();
+  QSlider         *focus_slider();
+  QComboBox       *convolution_combo();
+  QCheckBox       *convolution_divide_check();
+  AutoFocusWidget *autofocus_widget();
 
 signals:
   void settings_changed();
@@ -87,20 +90,21 @@ private:
   void        connect_signals();
   QStringList load_available_kernels();
 
-  QComboBox *image_combo_;
-  QSpinBox  *batch_size_spin_;
-  QSpinBox  *time_stride_spin_;
-  QCheckBox *filter_2d_check_;
-  QSpinBox  *filter_2d_inner_spin_;
-  QSpinBox  *filter_2d_outer_spin_;
-  QComboBox *space_transform_combo_;
-  QComboBox *time_transform_combo_;
-  QSpinBox  *time_window_spin_;
-  QSpinBox  *lambda_spin_;
-  QSpinBox  *focus_spin_;
-  QSlider   *focus_slider_;
-  QComboBox *convolution_combo_;
-  QCheckBox *convolution_divide_check_;
+  QComboBox       *image_combo_;
+  QSpinBox        *batch_size_spin_;
+  QSpinBox        *time_stride_spin_;
+  QCheckBox       *filter_2d_check_;
+  QSpinBox        *filter_2d_inner_spin_;
+  QSpinBox        *filter_2d_outer_spin_;
+  QComboBox       *space_transform_combo_;
+  QComboBox       *time_transform_combo_;
+  QSpinBox        *time_window_spin_;
+  QSpinBox        *lambda_spin_;
+  QSpinBox        *focus_spin_;
+  QSlider         *focus_slider_;
+  QComboBox       *convolution_combo_;
+  QCheckBox       *convolution_divide_check_;
+  AutoFocusWidget *autofocus_widget_;
 };
 
 } // namespace holovibes::ui

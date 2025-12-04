@@ -115,6 +115,7 @@ QSpinBox  *ImageRenderingWidget::focus_spin() { return focus_spin_; }
 QSlider   *ImageRenderingWidget::focus_slider() { return focus_slider_; }
 QComboBox *ImageRenderingWidget::convolution_combo() { return convolution_combo_; }
 QCheckBox *ImageRenderingWidget::convolution_divide_check() { return convolution_divide_check_; }
+AutoFocusWidget *ImageRenderingWidget::autofocus_widget() { return autofocus_widget_; }
 
 void ImageRenderingWidget::setup_ui() {
   auto *layout = new QGridLayout(this);
@@ -161,6 +162,10 @@ void ImageRenderingWidget::setup_ui() {
   focus_slider_->setRange(0, 1000);
   focus_slider_->setValue(focus_spin_->value());
   layout->addWidget(focus_slider_, row, 0, 1, 2);
+  ++row;
+
+  autofocus_widget_ = new AutoFocusWidget(this);
+  layout->addWidget(autofocus_widget_, row, 0, 1, 2);
   ++row;
 
   layout->addWidget(new QLabel("Convolution:", this), row, 0, 1, 2);

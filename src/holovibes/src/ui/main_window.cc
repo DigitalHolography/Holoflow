@@ -815,6 +815,15 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.recording_count = export_widget_->get_frame_count();
   }
 
+  // Auto-Focus Settings
+  {
+    s.autofocus_enabled   = render_widget_->autofocus_widget()->is_enabled();
+    s.autofocus_nb_subaps = render_widget_->autofocus_widget()->get_nb_subaps();
+    s.autofocus_max_iter  = render_widget_->autofocus_widget()->get_max_iter();
+    s.autofocus_tolerance = render_widget_->autofocus_widget()->get_tolerance();
+    s.autofocus_gain      = render_widget_->autofocus_widget()->get_gain();
+  }
+
   return s;
 }
 
