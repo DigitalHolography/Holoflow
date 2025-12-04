@@ -1,0 +1,32 @@
+name: Build Artifacts
+
+on:
+  push:
+    branches: [ refactor ]
+
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: [ self-hosted, windows, x64 ]
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        
+    - name: Configure
+      run: |
+        cmake --preset msvc-multi
+          
+    - name: Build
+      run: |
+        cmake --build --preset build-Release -j
+
+    - name: Test
+      run: |
+        build\msvc-multi\Debug\holoflow_test.exe
+        
