@@ -27,33 +27,6 @@ void from_json(const nlohmann::json &j, SlidingAverageSettings &s) {
 
 namespace {
 
-__global__ void slide_avg_kernel(const float *input_frame, float *circular_buffer,
-                                 float *running_sum, float *output_frame, const int buffer_stride,
-                                 const int current_index, const int oldest_index,
-                                 const int window_size, const int total_frames_processed,
-                                 const int frame_size) {
-  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= frame_size)
-    return;
-
-  float sum = running_sum[idx];
-
-  if (total_frames_processed >= window_size && oldest_index >= 0) {
-    const float *oldest_frame = circular_buffer + oldest_index * buffer_stride;
-    sum -= oldest_frame[idx];
-  }
-
-  const float new_val = input_frame[idx];
-  sum += new_val;
-
-  running_sum[idx]     = sum;
-  float *current_frame = circular_buffer + current_index * buffer_stride;
-  current_frame[idx]   = new_val;
-
-  const int effective_window_size = min(total_frames_processed + 1, window_size);
-  output_frame[idx]               = sum / effective_window_size;
-}
-
 __global__ void f32_add_avg_kernel(const float *idata, float *odata, int nx, int ny, int avg_size) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -76,6 +49,21 @@ __global__ void f32_sub_avg_kernel(const float *idata, float *odata, int nx, int
 
   int idx = y * nx + x;
   odata[idx] -= idata[idx] / avg_size;
+}
+
+template <typename T>
+__global__ void slide_avg_kernel(const T *push_data, const T *pop_data, T *running_avg, T *odata,
+                                 int nx, int ny, int avg_size) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= nx || y >= ny) {
+    return;
+  }
+
+  int idx = y * nx + x;
+  running_avg[idx] += push_data[idx] / avg_size;
+  running_avg[idx] -= pop_data[idx] / avg_size;
+  odata[idx] = running_avg[idx];
 }
 
 } // namespace
@@ -155,14 +143,19 @@ holoflow::core::OpResult SlidingAverage::try_push(holoflow::core::AsyncPushCtx &
   dim3 block_size(16, 16);
   dim3 grid_size((nx + block_size.x - 1) / block_size.x, (ny + block_size.y - 1) / block_size.y);
 
-  f32_add_avg_kernel<<<grid_size, block_size, 0, producer_stream_>>>(
-      reinterpret_cast<float *>(write_data), d_running_avg_.get(), nx, ny, settings_.window_size);
+  slide_avg_kernel<<<grid_size, block_size, 0, producer_stream_>>>(
+      reinterpret_cast<const float *>(write_data), reinterpret_cast<const float *>(avg_data),
+      d_running_avg_.get(), reinterpret_cast<float *>(avg_data), nx, ny, settings_.window_size);
 
-  f32_sub_avg_kernel<<<grid_size, block_size, 0, producer_stream_>>>(
-      reinterpret_cast<float *>(avg_data), d_running_avg_.get(), nx, ny, settings_.window_size);
+  // f32_add_avg_kernel<<<grid_size, block_size, 0, producer_stream_>>>(
+  //     reinterpret_cast<float *>(write_data), d_running_avg_.get(), nx, ny,
+  //     settings_.window_size);
 
-  CUDA_CHECK(cudaMemcpyAsync(avg_data, d_running_avg_.get(), element_size_,
-                             cudaMemcpyDeviceToDevice, producer_stream_));
+  // f32_sub_avg_kernel<<<grid_size, block_size, 0, producer_stream_>>>(
+  //     reinterpret_cast<float *>(avg_data), d_running_avg_.get(), nx, ny, settings_.window_size);
+
+  // CUDA_CHECK(cudaMemcpyAsync(avg_data, d_running_avg_.get(), element_size_,
+  //                            cudaMemcpyDeviceToDevice, producer_stream_));
 
   CUDA_CHECK(cudaStreamSynchronize(producer_stream_));
 

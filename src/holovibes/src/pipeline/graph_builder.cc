@@ -178,8 +178,8 @@ void GraphBuilder::build_xy_branch(V debounce_queue) {
     parent           = convolution;
   }
 
-  auto pctclip       = add_xy_pctclip(parent, 0, 0);
-  auto to_u8         = add_xy_to_u8(pctclip, 0, 0);
+  // auto pctclip       = add_xy_pctclip(parent, 0, 0);
+  auto to_u8         = add_xy_to_u8(parent, 0, 0);
   auto gpu_out_queue = add_xy_gpu_out_queue(to_u8, 0, 0);
   auto gpu_cpu       = add_xy_gpu_cpu_cpy(gpu_out_queue, 0, 0);
   auto cpu_out_queue = add_xy_cpu_out_queue(gpu_cpu, 0, 0);
