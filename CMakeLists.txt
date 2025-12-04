@@ -122,17 +122,30 @@ if(WIN32 AND MSVC)
         " COMPONENT dependencies)
     endif()
 
+    set(CUDA_BIN_DIR "$ENV{CUDA_PATH}/bin/x64")
+    file(REAL_PATH "${CUDA_BIN_DIR}/cublas64_13.dll" CUDA_CUBLAS)
+    file(REAL_PATH "${CUDA_BIN_DIR}/cublasLt64_13.dll" CUDA_CUBLASLT)
+    file(REAL_PATH "${CUDA_BIN_DIR}/cufft64_12.dll" CUDA_CUFFT)
+    file(REAL_PATH "${CUDA_BIN_DIR}/cusolver64_12.dll" CUDA_CUSOLVER)
+    file(REAL_PATH "${CUDA_BIN_DIR}/cusparse64_12.dll" CUDA_CUSPARSE)
+    file(REAL_PATH "${CUDA_BIN_DIR}/nvJitLink_130_0.dll" CUDA_NVJIT)
+    file(REAL_PATH "${CUDA_BIN_DIR}/nvrtc64_130_0.dll" CUDA_NVRTC)
+    file(REAL_PATH "${CUDA_BIN_DIR}/nvrtc-builtins64_130.dll" CUDA_NVRTC_BUILTINS)
+
+    file(REAL_PATH "C:/Program Files (x86)/Intel/oneAPI/compiler/latest/bin/libiomp5md.dll" INTEL_LIBIOMP5MD)
+    file(REAL_PATH "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/bin/mkl_intel_thread.2.dll" INTEL_MKL_INTEL_THREAD)
+
     install(FILES
-        "C:/Program Files (x86)/Intel/oneAPI/compiler/2025.2/bin/libiomp5md.dll"
-        "C:/Program Files (x86)/Intel/oneAPI/mkl/2025.2/bin/mkl_intel_thread.2.dll"
-        "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/bin/x64/cublas64_13.dll"
-        "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/bin/x64/cublasLt64_13.dll"
-        "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/bin/x64/cufft64_12.dll"
-        "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/bin/x64/cusolver64_12.dll"
-        "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/bin/x64/cusparse64_12.dll"
-        "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/bin/x64/nvJitLink_130_0.dll"
-        "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/bin/x64/nvrtc64_130_0.dll"
-        "C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.0/bin/x64/nvrtc-builtins64_130.dll"
+        "${INTEL_LIBIOMP5MD}"
+        "${INTEL_MKL_INTEL_THREAD}"
+        "${CUDA_CUBLAS}"
+        "${CUDA_CUBLASLT}"
+        "${CUDA_CUFFT}"
+        "${CUDA_CUSOLVER}"
+        "${CUDA_CUSPARSE}"
+        "${CUDA_NVJIT}"
+        "${CUDA_NVRTC}"
+        "${CUDA_NVRTC_BUILTINS}"
         DESTINATION bin
         COMPONENT dependencies
     )

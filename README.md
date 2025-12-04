@@ -128,6 +128,26 @@ The individual tests can be run from cmd:
 build\msvc-multi\Debug\holoflow_test.exe
 ```
 
+## Package
+
+This project uses **CMake**, **CPack**, and the **NSIS installer generator** to produce a Windows installer (`.exe`) that contains the compiled application and all required Qt runtime libraries.
+
+### Prerequisites
+
+Before packaging, make sure these following tools are installed :
+
+- **[NSIS](https://nsis.sourceforge.io/Download)**
+
+### Command
+
+To generate the installer, run:
+
+```powershell
+cmake --build --preset build-Release --target package -j
+```
+
+It will generate the installer inside the `build\msvc-multi\` folder.
+
 ## Benchmarks
 > TODO
 
