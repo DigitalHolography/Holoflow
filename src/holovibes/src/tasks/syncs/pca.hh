@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//      http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -38,39 +38,54 @@ struct PcaSettings {
 void to_json(nlohmann::json &j, const PcaSettings &settings);
 void from_json(const nlohmann::json &j, PcaSettings &settings);
 
-class Pca : public holoflow::core::ISyncTask {
+// Traits to map Device types to Host types (e.g., cuFloatComplex -> lapack_complex_float)
+template <typename T> struct PcaTypeTraits;
+
+template <> struct PcaTypeTraits<float> {
+  using HostType = float;
+};
+
+template <> struct PcaTypeTraits<cuFloatComplex> {
+  using HostType = lapack_complex_float;
+};
+
+template <typename T> class Pca : public holoflow::core::ISyncTask {
 public:
+  using HostType = typename PcaTypeTraits<T>::HostType;
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
-private:
   Pca(const PcaSettings &settings, curaii::CublasHandle &&cublas_handle,
       curaii::CusolverDnHandle &&cusolver_handle, curaii::CusolverDnParams &&cusolver_params,
-      DevPtr<cuFloatComplex> &&d_cov, DevPtr<float> &&d_eigvals, DevPtr<int> &&d_info,
-      DevPtr<uint8_t> &&d_workspace, HostPtr<uint8_t> &&h_workspace,
-      HostPtr<lapack_complex_float> &&h_cov, HostPtr<float> &&h_eigvals,
-      HostPtr<lapack_complex_float> &&h_eigvecs, HostPtr<int64_t> &&h_meig,
+      DevPtr<T> &&d_cov, DevPtr<float> &&d_eigvals, DevPtr<int> &&d_info,
+      DevPtr<uint8_t> &&d_workspace, HostPtr<uint8_t> &&h_workspace, HostPtr<HostType> &&h_cov,
+      HostPtr<float> &&h_eigvals, HostPtr<HostType> &&h_eigvecs, HostPtr<int64_t> &&h_meig,
       HostPtr<lapack_int> &&h_isuppz, size_t d_workspace_size, size_t h_workspace_size,
       cudaStream_t stream);
 
-  friend class PcaFactory;
+private:
+  PcaSettings              settings_;
+  curaii::CublasHandle     cublas_handle_;
+  curaii::CusolverDnHandle cusolver_handle_;
+  curaii::CusolverDnParams cusolver_params_;
 
-  PcaSettings                   settings_;
-  curaii::CublasHandle          cublas_handle_;
-  curaii::CusolverDnHandle      cusolver_handle_;
-  curaii::CusolverDnParams      cusolver_params_;
-  DevPtr<cuFloatComplex>        d_cov_;
-  DevPtr<float>                 d_eigvals_;
-  DevPtr<int>                   d_info_;
-  DevPtr<uint8_t>               d_workspace_;
-  HostPtr<uint8_t>              h_workspace_;
-  HostPtr<lapack_complex_float> h_cov_;
-  HostPtr<float>                h_eigvals_;
-  HostPtr<lapack_complex_float> h_eigvecs_;
-  HostPtr<int64_t>              h_meig_;
-  HostPtr<lapack_int>           h_isuppz_;
-  size_t                        d_workspace_size_;
-  size_t                        h_workspace_size_;
-  cudaStream_t                  stream_;
+  // Data dependent types
+  DevPtr<T>        d_cov_;
+  DevPtr<float>    d_eigvals_; // Eigenvalues are always real
+  DevPtr<int>      d_info_;
+  DevPtr<uint8_t>  d_workspace_;
+  HostPtr<uint8_t> h_workspace_;
+
+  HostPtr<HostType> h_cov_;
+  HostPtr<float>    h_eigvals_;
+  HostPtr<HostType> h_eigvecs_;
+
+  HostPtr<int64_t>    h_meig_;
+  HostPtr<lapack_int> h_isuppz_;
+
+  size_t       d_workspace_size_;
+  size_t       h_workspace_size_;
+  cudaStream_t stream_;
 
   static constexpr int cpu_heuristic_max_ = 32;
 };

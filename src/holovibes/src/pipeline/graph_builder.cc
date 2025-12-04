@@ -70,7 +70,7 @@ void GraphBuilder::build() {
     auto cpu_cpu_cpy      = add_cpu_cpu_cpy(*cpu_in_queue, 0, 0);
     auto record_queue     = add_record_queue(cpu_cpu_cpy, 0, 0);
     current_section_name_.clear();
-    auto raw_record       = add_raw_record(record_queue, 0, 0);
+    auto raw_record = add_raw_record(record_queue, 0, 0);
     (void)raw_record;
   }
 
@@ -117,8 +117,26 @@ GraphBuilder::V GraphBuilder::build_raw_branch(V cpu_in_queue) {
 
 GraphBuilder::V GraphBuilder::build_processed_branch(V parent) {
   current_section_name_ = "processed_view::";
-  auto to_cf32          = add_to_cf32(parent, 0, 0);
-  parent                = to_cf32;
+  using syncs::ConversionSettings;
+  using Target   = ConversionSettings::Target;
+  using Strategy = ConversionSettings::Strategy;
+  auto to_f32    = add_node_after<ConversionSettings>(parent, 0, 0, "to_f32_", "Conversion",
+                                                      {
+                                                          .target   = Target::F32,
+                                                          .strategy = Strategy::Real,
+                                                   });
+  parent         = to_f32;
+
+  if (s_.time_method != TimeMethod::NONE) {
+    auto time_transform = add_time_transform(parent, 0, 0);
+    // auto time_queue     = add_time_queue(time_transform, 0, 0);
+    parent = time_transform;
+  }
+
+  if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
+    auto to_cf32 = add_to_cf32(parent, 0, 0);
+    parent       = to_cf32;
+  }
 
   if (s_.filter_2d) {
     auto spacial_filter = add_spacial_filter(parent, 0, 0);
@@ -130,17 +148,11 @@ GraphBuilder::V GraphBuilder::build_processed_branch(V parent) {
     parent                 = spacial_transform;
   }
 
-  if (s_.time_method != TimeMethod::NONE) {
-    auto time_queue     = add_time_queue(parent, 0, 0);
-    auto time_transform = add_time_transform(time_queue, 0, 0);
-    parent              = time_transform;
-  }
-
-  auto to_f32         = add_to_f32(parent, 0, 0);
-  auto debounce_queue = add_debounce_queue(to_f32, 0, 0);
+  to_f32 = add_to_f32(parent, 0, 0);
+  // auto debounce_queue = add_debounce_queue(to_f32, 0, 0);
 
   current_section_name_.clear();
-  return debounce_queue;
+  return to_f32;
 }
 
 void GraphBuilder::build_xy_branch(V debounce_queue) {
@@ -220,14 +232,11 @@ void GraphBuilder::build_yz_branch(V debounce_queue) {
 template <JsonSerializable S>
 GraphBuilder::V GraphBuilder::add_node(const std::string &name, const std::string &kind,
                                        const S &settings, bool debug) {
-  auto v = boost::add_vertex(
-      holoflow::core::NodeSpec{
-          .name     = current_section_name_ + name,
-          .kind     = kind,
-          .settings = nlohmann::json(settings),
-          .debug    = debug
-      },
-      spec_);
+  auto v = boost::add_vertex(holoflow::core::NodeSpec{.name     = current_section_name_ + name,
+                                                      .kind     = kind,
+                                                      .settings = nlohmann::json(settings),
+                                                      .debug    = debug},
+                             spec_);
   return v;
 }
 
@@ -351,7 +360,8 @@ GraphBuilder::V GraphBuilder::add_raw_record(V parent, int out_idx, int in_idx) 
                                               .path              = s_.recording_path.string(),
                                               .count             = s_.recording_count,
                                               .pipeline_settings = settings_to_old_json(s_),
-                                          }, false);
+                                          },
+                                          false);
 }
 
 GraphBuilder::V GraphBuilder::add_cpu_gpu_cpy(V parent, int out_idx, int in_idx) {

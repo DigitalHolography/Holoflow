@@ -57,12 +57,12 @@ __global__ void clip_kernel(float *odata, const float *idata, int N, float *min_
 PctClip::PctClip(const PctClipSettings &settings, DevPtr<float> &&d_min, DevPtr<float> &&d_max,
                  DevPtr<uint8_t> &&d_roi_mask, size_t sort_tmp_bytes, DevPtr<uint8_t> &&d_sort_tmp,
                  size_t select_tmp_bytes, DevPtr<uint8_t> &&d_select_tmp, DevPtr<float> &&d_roi,
-                 DevPtr<int> &&d_roi_count, cudaStream_t stream)
+                 DevPtr<int> &&d_roi_count, HostPtr<int> &&h_roi_count, cudaStream_t stream)
     : settings_(settings), d_min_(std::move(d_min)), d_max_(std::move(d_max)),
       d_roi_mask_(std::move(d_roi_mask)), sort_tmp_bytes_(sort_tmp_bytes),
       d_sort_tmp_(std::move(d_sort_tmp)), select_tmp_bytes_(select_tmp_bytes),
       d_select_tmp_(std::move(d_select_tmp)), d_roi_(std::move(d_roi)),
-      d_roi_count_(std::move(d_roi_count)), stream_(stream) {}
+      d_roi_count_(std::move(d_roi_count)), h_roi_count_(std::move(h_roi_count)), stream_(stream) {}
 
 holoflow::core::OpResult PctClip::execute(holoflow::core::SyncCtx &ctx) {
   auto [idata, idesc] = ctx.inputs[0];
@@ -73,21 +73,23 @@ holoflow::core::OpResult PctClip::execute(holoflow::core::SyncCtx &ctx) {
   CUDA_CHECK(cub::DeviceSelect::Flagged(d_select_tmp_.get(), select_tmp_bytes_,
                                         reinterpret_cast<float *>(idata), d_roi_mask_.get(),
                                         d_roi_.get(), d_roi_count_.get(), count, stream_));
-  int  h_roi_count;
-  auto kind = cudaMemcpyDeviceToHost;
-  CUDA_CHECK(cudaMemcpyAsync(&h_roi_count, d_roi_count_.get(), sizeof(int), kind, stream_));
-  CUDA_CHECK(cudaStreamSynchronize(stream_));
+  // int  h_roi_count;
+  // auto kind = cudaMemcpyDeviceToHost;
+  // CUDA_CHECK(cudaMemcpyAsync(&h_roi_count, d_roi_count_.get(), sizeof(int), kind, stream_));
+  // CUDA_CHECK(cudaStreamSynchronize(stream_));
+  // auto str = fmt::format("h_roi_count = {}, *h_roi_count_ = {}", h_roi_count, *h_roi_count_);
+  // HOLOVIBES_CHECK(h_roi_count == *h_roi_count_, "{}", str);
 
   // Sort ROI pixels (d_out is temporary storage here).
   CUDA_CHECK(cub::DeviceRadixSort::SortKeys(d_sort_tmp_.get(), sort_tmp_bytes_, d_roi_.get(),
-                                            reinterpret_cast<float *>(odata), h_roi_count, 0, 32,
+                                            reinterpret_cast<float *>(odata), *h_roi_count_, 0, 32,
                                             stream_));
 
   // Compute percentiles.
-  HOLOVIBES_CHECK(h_roi_count > 0, "No pixels in ROI");
-  kind           = cudaMemcpyDeviceToDevice;
-  int    min_idx = static_cast<int>(settings_.min_pct / 100.0f * (h_roi_count - 1));
-  int    max_idx = static_cast<int>(settings_.max_pct / 100.0f * (h_roi_count - 1));
+  HOLOVIBES_CHECK(*h_roi_count_ > 0, "No pixels in ROI");
+  auto   kind    = cudaMemcpyDeviceToDevice;
+  int    min_idx = static_cast<int>(settings_.min_pct / 100.0f * (*h_roi_count_ - 1));
+  int    max_idx = static_cast<int>(settings_.max_pct / 100.0f * (*h_roi_count_ - 1));
   float *d_min   = reinterpret_cast<float *>(odata) + min_idx;
   float *d_max   = reinterpret_cast<float *>(odata) + max_idx;
   CUDA_CHECK(cudaMemcpyAsync(d_min_.get(), d_min, sizeof(float), kind, stream_));
@@ -130,7 +132,8 @@ __device__ bool in_ellipse(int x, int y, int W, int H, PctClipSettings::Ellipse 
   return (xr * xr) / (roi.rx * roi.rx) + (yr * yr) / (roi.ry * roi.ry) <= 1.0f;
 }
 
-__global__ void roi_mask_kernel(uint8_t *mask, int W, int H, int Z, PctClipSettings::Ellipse roi) {
+__global__ void roi_mask_kernel(uint8_t *mask, int W, int H, int Z, PctClipSettings::Ellipse roi,
+                                int *roi_count) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
   int z = blockIdx.z * blockDim.z + threadIdx.z;
@@ -140,6 +143,9 @@ __global__ void roi_mask_kernel(uint8_t *mask, int W, int H, int Z, PctClipSetti
 
   int idx   = z * W * H + y * W + x;
   mask[idx] = in_ellipse(x, y, W, H, roi);
+  if (mask[idx]) {
+    atomicAdd(roi_count, 1);
+  }
 }
 
 } // namespace
@@ -192,6 +198,7 @@ PctClipFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                        const nlohmann::json                  &jsettings,
                        const holoflow::core::SyncCreateCtx   &ctx) const {
   using curaii::make_unique_device_ptr;
+  using curaii::make_unique_host_ptr;
 
   // Validate
   auto infer    = this->infer(input_descs, jsettings);
@@ -221,20 +228,25 @@ PctClipFactory::create(std::span<const holoflow::core::TDesc> input_descs,
       static_cast<float *>(nullptr), static_cast<int *>(nullptr), N, ctx.stream));
   auto d_select_tmp = make_unique_device_ptr<uint8_t>(select_tmp_bytes);
   auto d_roi_count  = make_unique_device_ptr<int>(1);
+  CUDA_CHECK(cudaMemsetAsync(d_roi_count.get(), 0, sizeof(int), ctx.stream));
 
   // Compute ROI mask
   auto d_roi = make_unique_device_ptr<float>(N);
   dim3 block_size(16, 16, 1);
   dim3 grid_size((W + block_size.x - 1) / block_size.x, (H + block_size.y - 1) / block_size.y,
                  (Z + block_size.z - 1) / block_size.z);
-  roi_mask_kernel<<<grid_size, block_size, 0, ctx.stream>>>(d_roi_mask.get(), W, H, Z,
-                                                            settings.roi);
+  roi_mask_kernel<<<grid_size, block_size, 0, ctx.stream>>>(d_roi_mask.get(), W, H, Z, settings.roi,
+                                                            d_roi_count.get());
+  CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
+  auto h_roi_count = make_unique_host_ptr<int>(1);
+  CUDA_CHECK(cudaMemcpy(h_roi_count.get(), d_roi_count.get(), sizeof(int), cudaMemcpyDeviceToHost));
 
   // Success
   auto *task =
       new PctClip(settings, std::move(d_min), std::move(d_max), std::move(d_roi_mask),
                   sort_tmp_bytes, std::move(d_sort_tmp), select_tmp_bytes, std::move(d_select_tmp),
-                  std::move(d_roi), std::move(d_roi_count), ctx.stream);
+                  std::move(d_roi), std::move(d_roi_count), std::move(h_roi_count), ctx.stream);
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 

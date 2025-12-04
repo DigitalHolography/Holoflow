@@ -22,9 +22,9 @@
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <nvtx3/nvtx3.hpp>
 #include <vector>
 #include <windows.h>
-#include <nvtx3/nvtx3.hpp>
 
 #include "boost/graph/properties.hpp"
 #include "boost/range/iterator_range_core.hpp"
@@ -230,7 +230,7 @@ void Scheduler::run_section(int section_id) {
 
   while (!stop_.load()) {
     logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
-      nvtxRangePush(sec.name.c_str());
+    nvtxRangePush(sec.name.c_str());
 
     // Acquire owned inputs.
     //
@@ -241,12 +241,14 @@ void Scheduler::run_section(int section_id) {
     //   the scheduler may have been requested to stop while waiting
     //   for owned inputs to become available. This leads to undefined
     //   behavior if we proceed to execute nodes after stop_ was set.
+    nvtxRangePush("Acquire owned inputs");
     for (auto v : sec.sync_topo) {
       acquire_owned_inputs(v);
     }
     for (auto v : sec.async_prod) {
       acquire_owned_inputs(v);
     }
+    nvtxRangePop();
     if (stop_.load()) {
       break;
     }
@@ -262,38 +264,46 @@ void Scheduler::run_section(int section_id) {
     //   as async consumers from the next section may depend on work done on this stream,
     //   and we have no guarantee that the async producer at the end of this section
     //   will synchronize the stream before pushing data (it may not be cuda-related).
+    nvtxRangePush("Execute async consumers");
     for (auto v : sec.async_cons) {
       refresh_views_async_cons(v);
       run_async_cons(v);
       refresh_outputs_async_cons(v);
     }
+    nvtxRangePop();
     if (stop_.load()) {
       break;
     }
 
+    nvtxRangePush("Execute sync nodes");
     for (auto v : sec.sync_topo) {
       refresh_views_sync(v);
       run_sync(v);
       refresh_outputs_sync(v);
     }
-
     CUDA_CHECK(cudaStreamSynchronize(stream));
+    nvtxRangePop();
 
+    nvtxRangePush("Execute async producers");
     for (auto v : sec.async_prod) {
       refresh_views_async_prod(v);
       run_async_prod(v);
     }
+    nvtxRangePop();
 
     // Release owned outputs.
     //
     // - We do not release owned-outputs of async producers here, as they
     // used only in the next section.
+    nvtxRangePush("Release owned outputs");
     for (auto v : sec.sync_topo) {
       release_owned_outputs(v);
     }
     for (auto v : sec.async_cons) {
       release_owned_outputs(v);
     }
+    nvtxRangePop();
+
     nvtxRangePop();
   }
 }
@@ -306,11 +316,12 @@ void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v) {
   auto       *task       = std::holds_alternative<SyncRt>(nrt)
                                ? static_cast<core::ITask *>(std::get<SyncRt>(nrt).task)
                                : static_cast<core::ITask *>(std::get<AsyncRt>(nrt).task);
+  nvtxRangePush(fmt::format("{}: Acquire owned inputs", np.spec.name).c_str());
 
   for (size_t i = 0; i < owned_mask.size(); i++) {
     if (!owned_mask.at(i))
       continue;
-
+    nvtxRangePush(fmt::format("Acquire owned input {}", i).c_str());
     std::optional<core::TView> tview = task->acquire_input(static_cast<int>(i));
     while (!tview.has_value()) {
       if (stop_.load())
@@ -319,7 +330,9 @@ void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v) {
     }
 
     tviews_.at(np.in_tids.at(i)) = tview.value();
+    nvtxRangePop();
   }
+  nvtxRangePop();
 }
 
 void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v) {
@@ -330,14 +343,18 @@ void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v) {
   auto       *task       = std::holds_alternative<SyncRt>(nrt)
                                ? static_cast<core::ITask *>(std::get<SyncRt>(nrt).task)
                                : static_cast<core::ITask *>(std::get<AsyncRt>(nrt).task);
+  nvtxRangePush(fmt::format("{}: Release owned outputs", np.spec.name).c_str());
 
   for (size_t i = 0; i < owned_mask.size(); i++) {
     if (!owned_mask.at(i))
       continue;
 
+    nvtxRangePush(fmt::format("Release owned output {}", i).c_str());
     task->release_output(static_cast<int>(i));
     tviews_.at(np.out_tids.at(i)) = core::TView{nullptr, core::TDesc{}};
+    nvtxRangePop();
   }
+  nvtxRangePop();
 }
 
 void Scheduler::refresh_views_sync(GraphPlan::vertex_descriptor v) {
@@ -396,9 +413,11 @@ void Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
   auto &srt = std::get<SyncRt>(nrt);
 
   logger()->trace("[Scheduler::run_sync] Executing node '{}'", np.spec.name);
+  nvtxRangePush(fmt::format("Execute sync node '{}'", np.spec.name).c_str());
   auto t0 = clock::now();
   auto r  = srt.task->execute(srt.ctx);
   auto t1 = clock::now();
+  nvtxRangePop();
 
   switch (r) {
   case core::OpResult::Cancelled:
@@ -442,6 +461,7 @@ void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
   auto &art = std::get<AsyncRt>(nrt);
 
   logger()->trace("[Scheduler::run_async_cons] Executing node '{}'", np.spec.name);
+  nvtxRangePush(fmt::format("Execute async consumers '{}'", np.spec.name).c_str());
   auto t0 = clock::now();
   auto r  = art.task->try_pop(art.xctx);
   while (r == core::OpResult::NotReady) {
@@ -450,6 +470,7 @@ void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
     r = art.task->try_pop(art.xctx);
   }
   auto t1 = clock::now();
+  nvtxRangePop();
 
   switch (r) {
   case core::OpResult::Cancelled:
@@ -487,6 +508,7 @@ void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
   auto &art = std::get<AsyncRt>(nrt);
 
   logger()->trace("[Scheduler::run_async_prod] Executing node '{}'", np.spec.name);
+  nvtxRangePush(fmt::format("Execute async producers '{}'", np.spec.name).c_str());
   auto t0 = clock::now();
   auto r  = art.task->try_push(art.pctx);
   while (r == core::OpResult::NotReady) {
@@ -495,6 +517,7 @@ void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
     r = art.task->try_push(art.pctx);
   }
   auto t1 = clock::now();
+  nvtxRangePop();
 
   switch (r) {
   case core::OpResult::Cancelled:

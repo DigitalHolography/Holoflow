@@ -19,7 +19,8 @@
 #include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
 
-template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
+template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
 namespace holovibes::tasks::syncs {
 
@@ -72,7 +73,7 @@ private:
   PctClip(const PctClipSettings &settings, DevPtr<float> &&d_min, DevPtr<float> &&d_max,
           DevPtr<uint8_t> &&d_roi_mask, size_t sort_tmp_bytes, DevPtr<uint8_t> &&d_sort_tmp,
           size_t select_tmp_bytes, DevPtr<uint8_t> &&d_select_tmp, DevPtr<float> &&d_roi,
-          DevPtr<int> &&d_roi_count, cudaStream_t stream);
+          DevPtr<int> &&d_roi_count, HostPtr<int> &&h_roi_count, cudaStream_t stream);
 
   friend class PctClipFactory;
 
@@ -86,6 +87,7 @@ private:
   DevPtr<uint8_t> d_select_tmp_;
   DevPtr<float>   d_roi_;
   DevPtr<int>     d_roi_count_;
+  HostPtr<int>    h_roi_count_;
   cudaStream_t    stream_;
 };
 
@@ -98,6 +100,5 @@ public:
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
-
 
 } // namespace holovibes::tasks::syncs
