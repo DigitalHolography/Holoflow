@@ -40,7 +40,8 @@ private:
   AmetekS710EuresysCoaxlinkOcto(const AmetekS710EuresysCoaxlinkOctoSettings &settings,
                                 HostPtr<uint8_t>                           &&buffers,
                                 std::unique_ptr<Euresys::EGenTL>           &&gentl,
-                                std::unique_ptr<Euresys::EGrabber<>>       &&grabber);
+                                std::unique_ptr<Euresys::EGrabber<>>       &&grabber,
+                                nlohmann::json                              &cfg);
 
   friend class AmetekS710EuresysCoaxlinkOctoFactory;
 
@@ -49,6 +50,7 @@ private:
   std::unique_ptr<Euresys::EGenTL>      gentl_;
   std::unique_ptr<Euresys::EGrabber<>>  grabber_;
   bool                                  running_;
+  nlohmann::json                        cfg_;
 };
 
 class AmetekS710EuresysCoaxlinkOctoFactory : public holoflow::core::ISyncTaskFactory {

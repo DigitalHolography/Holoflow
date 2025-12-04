@@ -39,9 +39,10 @@ void from_json(const nlohmann::json &j, AmetekS710EuresysCoaxlinkOctoSettings &s
 
 AmetekS710EuresysCoaxlinkOcto::AmetekS710EuresysCoaxlinkOcto(
     const AmetekS710EuresysCoaxlinkOctoSettings &settings, HostPtr<uint8_t> &&buffers,
-    std::unique_ptr<Euresys::EGenTL> &&gentl, std::unique_ptr<Euresys::EGrabber<>> &&grabber)
+    std::unique_ptr<Euresys::EGenTL> &&gentl, std::unique_ptr<Euresys::EGrabber<>> &&grabber,
+    nlohmann::json &cfg)
     : settings_(settings), buffers_(std::move(buffers)), gentl_(std::move(gentl)),
-      grabber_(std::move(grabber)), running_(false) {
+      grabber_(std::move(grabber)), running_(false), cfg_(cfg) {
   HOLOVIBES_CHECK(grabber_ != nullptr);
   HOLOVIBES_CHECK(gentl_ != nullptr);
   HOLOVIBES_CHECK(buffers_ != nullptr);
@@ -306,7 +307,7 @@ AmetekS710EuresysCoaxlinkOctoFactory::create(std::span<const holoflow::core::TDe
 
   // Success
   auto *task = new AmetekS710EuresysCoaxlinkOcto(settings, std::move(buffers), std::move(gentl),
-                                                 std::move(grabber));
+                                                 std::move(grabber), cfg);
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
@@ -325,37 +326,15 @@ AmetekS710EuresysCoaxlinkOctoFactory::update(std::unique_ptr<holoflow::core::ISy
 
   auto *old = dynamic_cast<AmetekS710EuresysCoaxlinkOcto *>(old_task.get());
   HOLOVIBES_CHECK(old != nullptr, "Old task is not of type AmetekS710EuresysCoaxlinkOcto");
-  auto old_cfg_file = std::ifstream(old->settings_.cfg_path);
-  auto old_cfg      = nlohmann::json::parse(old_cfg_file).at("s710");
+  auto old_cfg = old->cfg_;
 
-  auto same_cfg      = cfg == old_cfg;
-  auto reuse_grabber = same_cfg;
-  auto reuse_buffers = same_cfg;
-
-  auto gentl   = std::move(old->gentl_);
-  auto grabber = std::move(old->grabber_);
-  auto buffers = std::move(old->buffers_);
-
-  if (!reuse_grabber) {
-    logger()->info("[AmetekS710EuresysCoaxlinkOctoFactory::update] Recreating grabber");
-    auto camera_info = find_camera(*gentl, "Phantom S710");
-    if (!camera_info.has_value()) {
-      logger()->error("[AmetekS710EuresysCoaxlinkOctoFactory::update] Could not find Phantom S710");
-      throw std::runtime_error("Could not find Phantom S710 camera");
-    }
-    configure_grabber(*camera_info, cfg);
+  auto same_cfg = cfg == old_cfg;
+  if (same_cfg) {
+    return old_task;
+  } else {
+    old_task.reset();
+    return create(input_descs, jsettings, ctx);
   }
-
-  if (!reuse_buffers) {
-    logger()->info("[AmetekS710EuresysCoaxlinkOctoFactory::update] Reallocating buffers");
-    auto buffer_size = infer.output_descs[0].num_bytes();
-    buffers          = allocate_buffers(*grabber, cfg.at("BufferPartCount"), buffer_size);
-  }
-
-  // Success
-  auto *task = new AmetekS710EuresysCoaxlinkOcto(settings, std::move(buffers), std::move(gentl),
-                                                 std::move(grabber));
-  return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
 } // namespace holovibes::tasks::sources
