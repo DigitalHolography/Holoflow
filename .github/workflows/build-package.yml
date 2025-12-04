@@ -28,5 +28,5 @@ jobs:
 
     - name: Test
       run: |
-        build\msvc-multi\Debug\holoflow_test.exe
+        build\msvc-multi\Release\holoflow_test.exe
         
