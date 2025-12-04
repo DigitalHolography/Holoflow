@@ -54,13 +54,20 @@ public:
   void release_output(int index) override;
 
 private:
-  SlidingAverage(SlidingAverageSettings settings, const holoflow::core::TDesc &idesc,
-                 holoflow::core::TDesc &odesc, cudaStream_t producer_stream,
-                 cudaStream_t consumer_stream, size_t nb_slots, size_t element_size,
-                 DevPtr<std::byte> &&d_buffer, DevPtr<float> &&d_running_avg);
+  SlidingAverage(SlidingAverageSettings       settings,
+                 const holoflow::core::TDesc &idesc,
+                 holoflow::core::TDesc       &odesc,
+                 cudaStream_t                 producer_stream,
+                 cudaStream_t                 consumer_stream,
+                 size_t                       nb_slots,
+                 size_t                       element_size,
+                 DevPtr<std::byte>          &&d_buffer,
+                 DevPtr<float>              &&d_running_avg);
 
-  int writer_size() const;
-  int reader_size() const;
+  int        writer_size() const;
+  int        reader_size() const;
+  std::byte *get_slot_ptr(size_t slot_idx) const;
+  size_t     next_slot_index(size_t slot_idx) const;
 
   friend class SlidingAverageFactory;
 
@@ -105,8 +112,9 @@ public:
   /// @param ctx Async creation context with streams
   /// @return New task instance
   std::unique_ptr<holoflow::core::IAsyncTask>
-  create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
-         const holoflow::core::AsyncCreateCtx &ctx) const override;
+  create(std::span<const holoflow::core::TDesc> input_descs,
+         const nlohmann::json                  &jsettings,
+         const holoflow::core::AsyncCreateCtx  &ctx) const override;
 
   /// @brief Update an existing task with new configuration
   /// @param old_task Existing task to update
@@ -116,8 +124,9 @@ public:
   /// @return Updated task instance
   std::unique_ptr<holoflow::core::IAsyncTask>
   update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
-         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
-         const holoflow::core::AsyncCreateCtx &ctx) const override;
+         std::span<const holoflow::core::TDesc>      input_descs,
+         const nlohmann::json                       &jsettings,
+         const holoflow::core::AsyncCreateCtx       &ctx) const override;
 };
 
 } // namespace holovibes::tasks::asyncs
