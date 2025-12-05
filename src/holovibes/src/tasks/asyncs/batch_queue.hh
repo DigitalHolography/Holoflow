@@ -58,22 +58,30 @@ public:
   holoflow::core::OpResult             try_pop(holoflow::core::AsyncPopCtx &ctx) override;
 
 private:
-  BatchQueue(const BatchQueueSettings &settings, const holoflow::core::TDesc &idesc,
-             const holoflow::core::TDesc &odesc, HostPtr<std::byte> &&h_buf,
-             DevPtr<std::byte> &&d_buf, std::byte *buf, size_t nb_slots, size_t input_size,
-             size_t element_size);
+  BatchQueue(const BatchQueueSettings    &settings,
+             const holoflow::core::TDesc &idesc,
+             const holoflow::core::TDesc &odesc,
+             HostPtr<std::byte>         &&h_buf,
+             DevPtr<std::byte>          &&d_buf,
+             std::byte                   *buf,
+             size_t                       nb_slots,
+             size_t                       input_size,
+             size_t                       element_size);
 
-  size_t writer_size() const;
-  size_t reader_size() const;
+  size_t     writer_size() const;
+  size_t     reader_size() const;
+  std::byte *get_slot_ptr(size_t slot_idx) const;
+  size_t     next_write_index(size_t slot_idx) const;
+  size_t     next_read_index(size_t slot_idx) const;
 
   friend class BatchQueueFactory;
 
   BatchQueueSettings    settings_;
   holoflow::core::TDesc idesc_;
   holoflow::core::TDesc odesc_;
-  HostPtr<std::byte>    h_buf_;
-  DevPtr<std::byte>     d_buf_;
-  std::byte            *buf_;
+  HostPtr<std::byte>    h_buffer_;
+  DevPtr<std::byte>     d_buffer_;
+  std::byte            *buffer_;
   size_t                nb_slots_;
   size_t                input_size_;
   size_t                element_size_;
@@ -87,13 +95,15 @@ public:
                                     const nlohmann::json &jsettings) const override;
 
   std::unique_ptr<holoflow::core::IAsyncTask>
-  create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
-         const holoflow::core::AsyncCreateCtx &ctx) const override;
+  create(std::span<const holoflow::core::TDesc> input_descs,
+         const nlohmann::json                  &jsettings,
+         const holoflow::core::AsyncCreateCtx  &ctx) const override;
 
   std::unique_ptr<holoflow::core::IAsyncTask>
   update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
-         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
-         const holoflow::core::AsyncCreateCtx &ctx) const override;
+         std::span<const holoflow::core::TDesc>      input_descs,
+         const nlohmann::json                       &jsettings,
+         const holoflow::core::AsyncCreateCtx       &ctx) const override;
 };
 
 } // namespace holovibes::tasks::asyncs
