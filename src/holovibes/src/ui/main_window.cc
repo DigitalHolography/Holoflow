@@ -541,7 +541,7 @@ void MainWindow::on_raw_record_started_failure(const QString &error) {
 void MainWindow::on_raw_record_stopped_success() {
   logger()->info("[MainWindow::on_raw_record_stopped_success]");
   export_in_progress_ = false;
-  export_widget_->set_record_enabled(pipeline_running_);
+  export_widget_->set_record_enabled(pipeline_running_  && export_widget_->isChecked());
   export_widget_->set_stop_enabled(false);
 }
 
