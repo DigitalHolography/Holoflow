@@ -19,20 +19,18 @@ jobs:
           echo "This is a forked repository."
           exit 1
 
-  deploy:
+  documentation:
     runs-on: [ self-hosted, windows, x64 ]
+    needs: check-fork
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
       - name: Install dependencies
         run: |
+          python -m venv .env
+          .\.env\Scripts\activate
           pip install mkdocs mkdocs-material mkdocs-material-extensions
 
       - name: Deploy MkDocs
@@ -40,3 +38,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           mkdocs gh-deploy
+
+      - name: Clean up
+        run: |
+          deactivate
+          Remove-Item .env -Recurse -Force
