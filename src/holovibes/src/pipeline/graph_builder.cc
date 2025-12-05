@@ -319,7 +319,7 @@ GraphBuilder::V GraphBuilder::add_record_queue(V parent, int out_idx, int in_idx
                                             BatchQueueSettings{
                                                 .target_capacity = s_.recording_count,
                                                 .output_size     = s_.time_window,
-                                                .output_stride   = s_.time_stride,
+                                                .output_stride   = s_.time_window,
                                             });
 }
 
