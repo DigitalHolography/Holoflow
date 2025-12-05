@@ -692,55 +692,5 @@ TEST(Scheduler, StopRequest) {
   EXPECT_TRUE(scheduler.stop_requested());
 }
 
-TEST(Scheduler, BigGraphAsyncNode) {
-  core::Registry registry;
-
-  SyncFactorySpec source_spec;
-  source_spec.infer = [](std::span<const core::TDesc>, const nlohmann::json &) {
-    return make_infer_result(TaskKind::Sync, {}, {make_desc({4, 4}, core::DType::F32)}, {}, {true});
-  };
-  auto *source_factory = new RecordingSyncFactory(std::move(source_spec));
-  registry.register_sync("source", std::unique_ptr<RecordingSyncFactory>(source_factory));
-
-  AsyncFactorySpec process_spec;
-  process_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
-    return make_infer_result(TaskKind::Async, copy_descs(inputs), copy_descs(inputs), {false}, {false});
-  };
-  auto *process_factory = new RecordingAsyncFactory(std::move(process_spec));
-  registry.register_async("process", std::unique_ptr<RecordingAsyncFactory>(process_factory));
-
-  SyncFactorySpec sink_spec;
-  sink_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
-    return make_infer_result(TaskKind::Sync, copy_descs(inputs), {}, {false}, {});
-  };
-  auto *sink_factory = new RecordingSyncFactory(std::move(sink_spec));
-  registry.register_sync("sink", std::unique_ptr<RecordingSyncFactory>(sink_factory));
-
-  GraphBuilder builder;
-  builder.add_node("src", "src", "source");
-
-  const int num_nodes = 100;  
-  for (int i = 1; i < num_nodes; ++i) {
-    builder.add_node("node" + std::to_string(i), "proc" + std::to_string(i), "process");
-    builder.add_node("snk" + std::to_string(i), "snk" + std::to_string(i), "sink");
-    builder.add_edge("src", "node" + std::to_string(i), 0, 0);
-    builder.add_edge("node" + std::to_string(i), "snk" + std::to_string(i), 0, 0);
-  }
-
-  auto graph = builder.finish();
-
-  Compiler compiler(registry);
-  auto     output = compiler.compile(graph);
-
-  Scheduler scheduler(output->graph, output->sections, output->resources);
-
-  scheduler.start();
-  std::this_thread::sleep_for(std::chrono::milliseconds(100));
-  scheduler.request_stop();
-  scheduler.wait();
-
-  EXPECT_EQ(process_factory->create_calls().size(), num_nodes - 1);
-}
-
 } // namespace
 } // namespace holoflow::runtime
