@@ -34,10 +34,12 @@ jobs:
           pip install mkdocs mkdocs-material mkdocs-material-extensions
 
       - name: Deploy MkDocs
+        run: |
+          .\.env\Scripts\activate
+          cd doc/mkdocs
+          mkdocs gh-deploy
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          mkdocs gh-deploy
 
       - name: Clean up
         run: |

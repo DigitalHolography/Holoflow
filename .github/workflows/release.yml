@@ -48,7 +48,7 @@ jobs:
     - name: Create Release
       run: |
         $version = Get-Content VERSION
-        gh release create "v$version" "build/msvc-multi/Release/Holoflow-$version-windows-x64.msi" `
+        gh release create "v$version" "build/msvc-multi/Holoflow-$version-win64.exe" `
           --title "v$version" `
           --notes "Automated release of version $version"
       env:
