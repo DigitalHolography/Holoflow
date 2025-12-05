@@ -1,11 +1,26 @@
 #include "fresnel_diffraction.hh"
 
-#include <math_constants.h>
+#include <algorithm>
+#include <cmath>
+#include <complex>
+#include <cstdlib>
+#include <iterator>
+#include <memory>
+#include <numbers>
+#include <stdexcept>
+#include <string>
+#include <vector>
+
+#include <cuComplex.h>
 
 #include "bug.hh"
 #include "logger.hh"
 
 namespace holovibes::tasks::syncs {
+
+// -------------------------------------------------------------------------------------------------
+// JSON Serialization
+// -------------------------------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const FresnelDiffractionSettings &fds) {
   j = nlohmann::json{
@@ -23,12 +38,20 @@ void from_json(const nlohmann::json &j, FresnelDiffractionSettings &fds) {
   j.at("z").get_to(fds.z);
 }
 
+// -------------------------------------------------------------------------------------------------
+// FresnelDiffraction Implementation
+// -------------------------------------------------------------------------------------------------
+
 FresnelDiffraction::FresnelDiffraction(const FresnelDiffractionSettings &settings,
                                        curaii::CufftHandle             &&fft_handle,
                                        DevPtr<cuFloatComplex>          &&d_lens,
-                                       DevPtr<void> &&d_caller_info, std::vector<char> &&lto)
-    : settings_(settings), fft_handle_(std::move(fft_handle)), d_lens_(std::move(d_lens)),
-      d_caller_info_(std::move(d_caller_info)), lto_(std::move(lto)) {}
+                                       DevPtr<void>                    &&d_caller_info,
+                                       std::vector<char>               &&lto) :
+    settings_(settings),
+    fft_handle_(std::move(fft_handle)),
+    d_lens_(std::move(d_lens)),
+    d_caller_info_(std::move(d_caller_info)),
+    lto_(std::move(lto)) {}
 
 holoflow::core::OpResult FresnelDiffraction::execute(holoflow::core::SyncCtx &ctx) {
   auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data);
@@ -38,6 +61,10 @@ holoflow::core::OpResult FresnelDiffraction::execute(holoflow::core::SyncCtx &ct
 }
 
 namespace {
+
+// -------------------------------------------------------------------------------------------------
+// NVRTC / LTO Helpers
+// -------------------------------------------------------------------------------------------------
 
 struct ApplyLensCallerInfo {
   int             width;
@@ -55,115 +82,184 @@ std::string get_compute_arch() {
 }
 
 std::vector<std::string> get_nvrtc_args() {
-  auto CUDA_PATH = std::getenv("CUDA_PATH");
-  HOLOVIBES_CHECK(CUDA_PATH != nullptr, "CUDA_PATH environment variable not set");
-  std::string cuda_path{CUDA_PATH};
+  const char *cuda_path_env = std::getenv("CUDA_PATH");
+  HOLOVIBES_CHECK(cuda_path_env != nullptr, "CUDA_PATH environment variable not set");
 
-  std::vector<std::string> args{
-      "-I" + cuda_path + "/include",
-      "-arch=" + get_compute_arch(),
-      "--std=c++20",
-      "--relocatable-device-code=true",
-      "-default-device",
-      "-dlto",
-  };
-  return args;
+  std::string include_path = std::string("-I") + cuda_path_env + "/include";
+  std::string arch_flag    = "-arch=" + get_compute_arch();
+
+  return {std::move(include_path),
+          std::move(arch_flag),
+          "--std=c++20",
+          "--relocatable-device-code=true",
+          "-default-device",
+          "-dlto"};
 }
 
 std::vector<char> compile_source_to_lto(const std::string &source, const std::string &name) {
-  auto                 args_string = get_nvrtc_args();
+  auto args_string = get_nvrtc_args();
+
+  std::vector<const char *> args;
+  args.reserve(args_string.size());
+  for (const auto &s : args_string) {
+    args.push_back(s.c_str());
+  }
+
   curaii::NvrtcProgram prog(source.c_str(), name.c_str(), 0, nullptr, nullptr);
-  std::vector<char *>  args;
-  std::ranges::transform(args_string, std::back_inserter(args),
-                         [](const std::string &s) { return const_cast<char *>(s.c_str()); });
 
   try {
     NVRTC_CHECK(nvrtcCompileProgram(prog.get(), static_cast<int>(args.size()), args.data()));
+
     size_t code_size = 0;
     NVRTC_CHECK(nvrtcGetLTOIRSize(prog.get(), &code_size));
+
     std::vector<char> lto(code_size);
     NVRTC_CHECK(nvrtcGetLTOIR(prog.get(), lto.data()));
     return lto;
-  } catch (const curaii::NvrtcError &e) {
+  }
+
+  catch (const curaii::NvrtcError &) {
     size_t log_size = 0;
     NVRTC_CHECK(nvrtcGetProgramLogSize(prog.get(), &log_size));
+
     std::string log(log_size, '\0');
     NVRTC_CHECK(nvrtcGetProgramLog(prog.get(), log.data()));
+
     logger()->error("[FresnelDiffraction] NVRTC compilation log:\n{}", log);
-    throw e;
+    throw;
   }
 }
 
-std::vector<char> apply_lens_lto() {
-  std::string apply_lens_callback = R"(
-  #include <cuComplex.h>
+std::vector<char> generate_apply_lens_lto() {
+  // Callback applied "inside" the FFT (quad in)
+  constexpr const char *apply_lens_callback_src = R"(
+    #include <cuComplex.h>
 
-  struct ApplyLensCallerInfo {
-    int             width;
-    int             height;
-    int             batch;
-    cuFloatComplex *lens;
-  };
+    struct ApplyLensCallerInfo {
+      int             width;
+      int             height;
+      int             batch;
+      cuFloatComplex *lens;
+    };
 
-  __device__ cuFloatComplex apply_lens_callback(
-      void *data, size_t offset, void *callerInfo, void *sharedPtr) {
-    auto  *info     = (ApplyLensCallerInfo *)callerInfo;
-    size_t lens_idx = offset % (info->width * info->height);
-    auto  *lens     = info->lens;
-    auto   val      = ((cuFloatComplex *)data)[offset];
-    auto   lens_val = lens[lens_idx];
+    __device__ cuFloatComplex apply_lens_callback(void  *data,
+                                                  size_t offset,
+                                                  void  *callerInfo,
+                                                  void  *sharedPtr) {
+      const auto *info = (const ApplyLensCallerInfo *)callerInfo;
 
-    return cuCmulf(val, lens_val);
-  }
+      const size_t plane_size = (size_t)info->width * info->height;
+      const size_t lens_idx   = offset % plane_size;
+
+      const cuFloatComplex val      = ((const cuFloatComplex *)data)[offset];
+      const cuFloatComplex lens_val = info->lens[lens_idx];
+
+      return cuCmulf(val, lens_val);
+    }
   )";
 
-  return compile_source_to_lto(apply_lens_callback, "apply_lens_callback.cu");
+  return compile_source_to_lto(apply_lens_callback_src, "apply_lens_callback.cu");
 }
 
-__global__ void quadratic_lens_kernel(cuFloatComplex *lens, int width, int height, float lambda,
-                                      float z, float pixel_size) {
-  int col = blockIdx.x * blockDim.x + threadIdx.x;
-  int row = blockIdx.y * blockDim.y + threadIdx.y;
-  if (col >= width || row >= height)
-    return;
+// -------------------------------------------------------------------------------------------------
+// Quadratic Lens Generation
+// -------------------------------------------------------------------------------------------------
 
-  int size = width > height ? width : height;
+/**
+ * @brief Generates the quadratic phase lens on the Host CPU.
+ * Formula: exp(i * (pi / (lambda * z)) * (x^2 + y^2))
+ */
+std::vector<cuFloatComplex>
+generate_quadratic_lens_host(int width, int height, const FresnelDiffractionSettings &settings) {
+  std::vector<cuFloatComplex> lens(width * height);
 
-  // The intent with offsets is to support non-square images.
-  // They are used to "center" the indexes as if the rectangle was extended to
-  // a square.
-  int offset_x = (size - width) / 2;
-  int offset_y = (size - height) / 2;
+  // Constant factor: pi / (lambda * z)
+  const float factor = std::numbers::pi_v<float> / (settings.lambda * settings.z);
 
-  float x = ((col + offset_x) - size / 2.0f) * pixel_size;
-  float y = ((row + offset_y) - size / 2.0f) * pixel_size;
+  const float half_w = width * 0.5f;
+  const float half_h = height * 0.5f;
 
-  float phase     = CUDART_PI_F / (lambda * z) * (x * x + y * y);
-  float cos_phase = cosf(phase);
-  float sin_phase = sinf(phase);
+  for (int y = 0; y < height; ++y) {
+    for (int x = 0; x < width; ++x) {
+      // Physical coordinates centered at 0
+      const float phys_y = (y - half_h) * settings.dy;
+      const float y_sq   = phys_y * phys_y;
+      const float phys_x = (x - half_w) * settings.dx;
+      const float x_sq   = phys_x * phys_x;
 
-  lens[row * width + col] = make_cuComplex(cos_phase, sin_phase);
+      // Calculate complex exponential: cos(phase) + i*sin(phase)
+      const float phase   = factor * (x_sq + y_sq);
+      lens[y * width + x] = make_cuComplex(std::cos(phase), std::sin(phase));
+    }
+  }
+
+  return lens;
 }
 
-DevPtr<cuFloatComplex> make_quadratic_lens(int W, int H,
-                                           const FresnelDiffractionSettings &settings) {
-  auto bytes  = W * H * sizeof(cuFloatComplex);
-  auto d_lens = curaii::make_unique_device_ptr<cuFloatComplex>(bytes);
+// -------------------------------------------------------------------------------------------------
+// FFT Helpers
+// -------------------------------------------------------------------------------------------------
 
-  dim3 block_size(16, 16);
-  dim3 grid_size((W + block_size.x - 1) / block_size.x, (H + block_size.y - 1) / block_size.y);
-  quadratic_lens_kernel<<<grid_size, block_size>>>(d_lens.get(), W, H, settings.lambda, settings.z,
-                                                   settings.dx);
+struct FftPlanParams {
+  int           rank;
+  long long int n[2];
+  long long int inembed[2];
+  int           istride;
+  int           idist;
+  long long int onembed[2];
+  int           ostride;
+  int           odist;
+  int           batch;
+};
 
-  CUDA_CHECK(cudaGetLastError());
-  return d_lens;
+curaii::CufftHandle create_configured_fft_handle(const FftPlanParams         &params,
+                                                 const std::vector<char>     &lto_code,
+                                                 DevPtr<ApplyLensCallerInfo> &d_caller_info_ptr,
+                                                 cudaStream_t                 stream) {
+  curaii::CufftHandle handle;
+  CUFFT_CHECK(cufftSetStream(handle.get(), stream));
+
+  void *info_ptr = d_caller_info_ptr.get();
+  CUFFT_CHECK(cufftXtSetJITCallback(handle.get(),
+                                    "apply_lens_callback",
+                                    const_cast<char *>(lto_code.data()),
+                                    lto_code.size(),
+                                    CUFFT_CB_LD_COMPLEX,
+                                    &info_ptr));
+
+  size_t     work_size   = 0;
+  long long *n_ptr       = const_cast<long long *>(params.n);
+  long long *inembed_ptr = const_cast<long long *>(params.inembed);
+  long long *onembed_ptr = const_cast<long long *>(params.onembed);
+
+  CUFFT_CHECK(cufftXtMakePlanMany(handle.get(),
+                                  params.rank,
+                                  n_ptr,
+                                  inembed_ptr,
+                                  params.istride,
+                                  params.idist,
+                                  CUDA_C_32F,
+                                  onembed_ptr,
+                                  params.ostride,
+                                  params.odist,
+                                  CUDA_C_32F,
+                                  params.batch,
+                                  &work_size,
+                                  CUDA_C_32F));
+
+  return handle;
 }
 
 } // namespace
 
+// -------------------------------------------------------------------------------------------------
+// FresnelDiffractionFactory Implementation
+// -------------------------------------------------------------------------------------------------
+
 holoflow::core::InferResult
 FresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                  const nlohmann::json                  &jsettings) const {
+
   const auto check = [&](bool condition, const std::string &msg) {
     if (!condition) {
       logger()->error("[FresnelDiffractionFactory::infer] error: {}", msg);
@@ -174,15 +270,15 @@ FresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc> input_de
   auto settings = jsettings.get<FresnelDiffractionSettings>();
 
   // Validate
-  check(input_descs.size() == 1, "expected exactly one input");
-  auto &idesc = input_descs[0];
-  check(idesc.rank() == 3, "input must be a 3D tensor");
-  check(idesc.dtype == holoflow::core::DType::CF32, "input must be complex float32");
-  check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
-  check(settings.lambda > 0.0f, "wavelength must be positive");
-  check(settings.dx > 0.0f, "dx must be positive");
-  check(settings.dy > 0.0f, "dy must be positive");
-  check(settings.dx == settings.dy, "dx must equal dy");
+  check(input_descs.size() == 1, "Expected exactly one input");
+  const auto &idesc = input_descs[0];
+  check(idesc.rank() == 3, "Input must be a 3D tensor (Batch, Height, Width)");
+  check(idesc.dtype == holoflow::core::DType::CF32, "Input must be complex float32");
+  check(idesc.mem_loc == holoflow::core::MemLoc::Device, "Input must be in device memory");
+  check(settings.lambda > 0.0f, "Wavelength (lambda) must be positive");
+  check(settings.dx > 0.0f && settings.dy > 0.0f, "Pixel pitch (dx, dy) must be positive");
+  constexpr float epsilon = 1e-6f;
+  check(std::abs(settings.dx - settings.dy) < epsilon, "dx must equal dy (square pixels required)");
 
   // Success
   return holoflow::core::InferResult{
@@ -208,42 +304,41 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
   const int H = static_cast<int>(idesc.shape[1]);
   const int W = static_cast<int>(idesc.shape[2]);
 
-  // LTO apply lens
-  auto                d_lens = make_quadratic_lens(W, H, settings);
-  ApplyLensCallerInfo info{W, H, B, d_lens.get()};
-  auto                d_info = curaii::make_unique_device_ptr<ApplyLensCallerInfo>(sizeof(info));
+  // Generate lens
+  auto lens_bytes = W * H * sizeof(cuFloatComplex);
+  auto h_lens     = generate_quadratic_lens_host(W, H, settings);
+  auto d_lens     = curaii::make_unique_device_ptr<cuFloatComplex>(lens_bytes);
+  CUDA_CHECK(cudaMemcpy(d_lens.get(),
+                        h_lens.data(),
+                        h_lens.size() * sizeof(cuFloatComplex),
+                        cudaMemcpyHostToDevice));
+
+  // Prepare caller info
+  using Info    = ApplyLensCallerInfo;
+  auto lto_code = generate_apply_lens_lto();
+  Info info{W, H, B, d_lens.get()};
+  auto d_info = curaii::make_unique_device_ptr<Info>(sizeof(info));
   CUDA_CHECK(cudaMemcpy(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice));
-  auto lto = apply_lens_lto();
 
-  // FFT plan
-  int           rank          = 2;
-  long long int n[2]          = {H, W};
-  long long int inembed[2]    = {H, W};
-  int           istride       = 1;
-  int           idist         = H * W;
-  cudaDataType  inputtype     = CUDA_C_32F;
-  long long int onembed[2]    = {H, W};
-  int           ostride       = 1;
-  int           odist         = H * W;
-  cudaDataType  outputtype    = CUDA_C_32F;
-  int           batch         = B;
-  size_t        work_size     = 0;
-  cudaDataType  executiontype = CUDA_C_32F;
+  // Prepare FFT plan
+  FftPlanParams params{.rank    = 2,
+                       .n       = {H, W},
+                       .inembed = {H, W},
+                       .istride = 1,
+                       .idist   = H * W,
+                       .onembed = {H, W},
+                       .ostride = 1,
+                       .odist   = H * W,
+                       .batch   = B};
 
-  curaii::CufftHandle fft_handle;
-  CUFFT_CHECK(cufftSetStream(fft_handle.get(), ctx.stream));
-
-  auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
-  CUFFT_CHECK(cufftXtSetJITCallback(fft_handle.get(), "apply_lens_callback", lto.data(), lto.size(),
-                                    CUFFT_CB_LD_COMPLEX, &d_info_ptr));
-
-  CUFFT_CHECK(cufftXtMakePlanMany(fft_handle.get(), rank, n, inembed, istride, idist, inputtype,
-                                  onembed, ostride, odist, outputtype, batch, &work_size,
-                                  executiontype));
+  auto fft_handle = create_configured_fft_handle(params, lto_code, d_info, ctx.stream);
 
   // Success
-  auto *task = new FresnelDiffraction(settings, std::move(fft_handle), std::move(d_lens),
-                                      std::move(d_info), std::move(lto));
+  auto *task = new FresnelDiffraction(settings,
+                                      std::move(fft_handle),
+                                      std::move(d_lens),
+                                      std::move(d_info),
+                                      std::move(lto_code));
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
@@ -263,42 +358,41 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
   const int H = static_cast<int>(idesc.shape[1]);
   const int W = static_cast<int>(idesc.shape[2]);
 
-  // LTO apply lens
-  auto                d_lens = make_quadratic_lens(W, H, settings);
-  ApplyLensCallerInfo info{W, H, B, d_lens.get()};
-  auto                d_info = curaii::make_unique_device_ptr<ApplyLensCallerInfo>(sizeof(info));
+  // Recreate lens
+  auto lens_bytes = W * H * sizeof(cuFloatComplex);
+  auto h_lens     = generate_quadratic_lens_host(W, H, settings);
+  auto d_lens     = curaii::make_unique_device_ptr<cuFloatComplex>(lens_bytes);
+  CUDA_CHECK(cudaMemcpy(d_lens.get(),
+                        h_lens.data(),
+                        h_lens.size() * sizeof(cuFloatComplex),
+                        cudaMemcpyHostToDevice));
+
+  // Recreate caller info (reuse LTO)
+  using Info    = ApplyLensCallerInfo;
+  auto lto_code = old_fresnel->lto_;
+  Info info{W, H, B, d_lens.get()};
+  auto d_info = curaii::make_unique_device_ptr<Info>(sizeof(info));
   CUDA_CHECK(cudaMemcpy(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice));
-  auto lto = std::move(old_fresnel->lto_);
 
-  // FFT plan
-  int           rank          = 2;
-  long long int n[2]          = {H, W};
-  long long int inembed[2]    = {H, W};
-  int           istride       = 1;
-  int           idist         = H * W;
-  cudaDataType  inputtype     = CUDA_C_32F;
-  long long int onembed[2]    = {H, W};
-  int           ostride       = 1;
-  int           odist         = H * W;
-  cudaDataType  outputtype    = CUDA_C_32F;
-  int           batch         = B;
-  size_t        work_size     = 0;
-  cudaDataType  executiontype = CUDA_C_32F;
+  // Recreate FFT plan
+  FftPlanParams params{.rank    = 2,
+                       .n       = {H, W},
+                       .inembed = {H, W},
+                       .istride = 1,
+                       .idist   = H * W,
+                       .onembed = {H, W},
+                       .ostride = 1,
+                       .odist   = H * W,
+                       .batch   = B};
 
-  curaii::CufftHandle fft_handle;
-  CUFFT_CHECK(cufftSetStream(fft_handle.get(), ctx.stream));
-
-  auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
-  CUFFT_CHECK(cufftXtSetJITCallback(fft_handle.get(), "apply_lens_callback", lto.data(), lto.size(),
-                                    CUFFT_CB_LD_COMPLEX, &d_info_ptr));
-
-  CUFFT_CHECK(cufftXtMakePlanMany(fft_handle.get(), rank, n, inembed, istride, idist, inputtype,
-                                  onembed, ostride, odist, outputtype, batch, &work_size,
-                                  executiontype));
+  auto fft_handle = create_configured_fft_handle(params, lto_code, d_info, ctx.stream);
 
   // Success
-  auto *task = new FresnelDiffraction(settings, std::move(fft_handle), std::move(d_lens),
-                                      std::move(d_info), std::move(lto));
+  auto *task = new FresnelDiffraction(settings,
+                                      std::move(fft_handle),
+                                      std::move(d_lens),
+                                      std::move(d_info),
+                                      std::move(lto_code));
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
