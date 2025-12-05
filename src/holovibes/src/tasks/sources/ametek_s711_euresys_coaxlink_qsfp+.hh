@@ -25,19 +25,19 @@ template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
 namespace holovibes::tasks::sources {
 
-struct AmetekS711EuresysCoaxlinkOctoSettings {
+struct AmetekS711EuresysCoaxlinkQSFPSettings {
   std::string cfg_path;
 };
 
-void to_json(nlohmann::json &j, const AmetekS711EuresysCoaxlinkOctoSettings &s);
-void from_json(const nlohmann::json &j, AmetekS711EuresysCoaxlinkOctoSettings &s);
+void to_json(nlohmann::json &j, const AmetekS711EuresysCoaxlinkQSFPSettings &s);
+void from_json(const nlohmann::json &j, AmetekS711EuresysCoaxlinkQSFPSettings &s);
 
 class AmetekS711EuresysCoaxlinkOcto : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  AmetekS711EuresysCoaxlinkOcto(const AmetekS711EuresysCoaxlinkOctoSettings &settings,
+  AmetekS711EuresysCoaxlinkOcto(const AmetekS711EuresysCoaxlinkQSFPSettings &settings,
                                 HostPtr<uint8_t>                           &&buffers,
                                 std::unique_ptr<Euresys::EGenTL>           &&gentl,
                                 std::unique_ptr<Euresys::EGrabber<>>       &&grabber,
@@ -45,7 +45,7 @@ private:
 
   friend class AmetekS711EuresysCoaxlinkOctoFactory;
 
-  AmetekS711EuresysCoaxlinkOctoSettings settings_;
+  AmetekS711EuresysCoaxlinkQSFPSettings settings_;
   HostPtr<uint8_t>                      buffers_;
   std::unique_ptr<Euresys::EGenTL>      gentl_;
   std::unique_ptr<Euresys::EGrabber<>>  grabber_;

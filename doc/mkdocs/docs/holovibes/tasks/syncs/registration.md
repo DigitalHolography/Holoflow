@@ -36,4 +36,4 @@ This task does not own any inputs or outputs.
 
 ---
 ## Settings
---8<-- "docs\schemas\registration_settings.md"
+--8<-- "docs\schemas\syncs\registration_settings.md"

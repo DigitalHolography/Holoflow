@@ -1,0 +1,45 @@
+name: Build Package
+
+on:
+  push:
+    branches: [ refactor ]
+
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: [ self-hosted, windows, x64 ]
+    
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Configure
+      run: |
+        cmake --preset msvc-multi -DFETCHCONTENT_BASE_DIR="C:/.fc"
+          
+    - name: Build
+      run: |
+        cmake --build --preset build-Release -j
+
+    - name: Test
+      run: |
+        build\msvc-multi\Release\holoflow_test.exe
+      
+    - name: Package
+      run: |
+        cmake --build --preset build-Release --target package -j
+
+    - name: Create Release
+      run: |
+        $version = Get-Content VERSION
+        gh release create "v$version" "build/msvc-multi/Release/Holoflow-$version-windows-x64.msi" `
+          --title "v$version" `
+          --notes "Automated release of version $version"
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        

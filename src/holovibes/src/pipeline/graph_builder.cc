@@ -21,7 +21,7 @@
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/holofile.hh"
 #include "tasks/sources/ametek_s710_euresys_coaxlink_octo.hh"
-#include "tasks/sources/ametek_s711_euresys_coaxlink_octo.hh"
+#include "tasks/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "tasks/sources/holofile.hh"
 #include "tasks/syncs/angular_spectrum.hh"
 #include "tasks/syncs/average.hh"
@@ -270,11 +270,11 @@ GraphBuilder::V GraphBuilder::add_source() {
         });
   }
 
-  else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_OCTO) {
-    using sources::AmetekS711EuresysCoaxlinkOctoSettings;
-    return add_node<AmetekS711EuresysCoaxlinkOctoSettings>(
-        "source", "AmetekS711EuresysCoaxlinkOcto",
-        AmetekS711EuresysCoaxlinkOctoSettings{
+  else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
+    using sources::AmetekS711EuresysCoaxlinkQSFPSettings;
+    return add_node<AmetekS711EuresysCoaxlinkQSFPSettings>(
+        "source", "AmetekS711EuresysCoaxlinkQSFP+",
+        AmetekS711EuresysCoaxlinkQSFPSettings{
             .cfg_path = s_.camera_config_path.string(),
         });
   }

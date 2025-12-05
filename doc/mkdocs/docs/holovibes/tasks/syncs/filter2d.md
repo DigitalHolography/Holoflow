@@ -35,4 +35,4 @@ This task does not own any inputs or outputs.
 
 ---
 ## Settings
---8<-- "docs\schemas\filter2d_settings.md"
+--8<-- "docs\schemas\syncs\filter2d_settings.md"

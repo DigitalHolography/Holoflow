@@ -23,4 +23,4 @@ The task owns both the input and output storage it exposes.
 
 ---
 ## Settings
---8<-- "docs\schemas\sliding_average_settings.md"
+--8<-- "docs\schemas\asyncs\sliding_average_settings.md"

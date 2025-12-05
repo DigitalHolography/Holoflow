@@ -29,4 +29,4 @@ This task does not own any inputs or outputs.
 
 ---
 ## Settings
---8<-- "docs\schemas\fft_shift_settings.md"
+--8<-- "docs\schemas\syncs\fft_shift_settings.md"

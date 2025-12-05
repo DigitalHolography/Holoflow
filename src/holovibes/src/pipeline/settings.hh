@@ -22,7 +22,7 @@ namespace holovibes::pipeline {
 
 enum class ImportSource {
   AMETEK_S710_EURESYS_COAXLINK_OCTO,
-  AMETEK_S711_EURESYS_COAXLINK_OCTO,
+  AMETEK_S711_EURESYS_COAXLINK_QSFP,
   HOLOFILE,
 };
 

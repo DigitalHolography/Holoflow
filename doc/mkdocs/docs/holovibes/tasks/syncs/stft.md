@@ -32,4 +32,4 @@ This task does not own any inputs or outputs.
 
 ---
 ## Settings
---8<-- "docs\schemas\stft_settings.md"
+--8<-- "docs\schemas\syncs\stft_settings.md"

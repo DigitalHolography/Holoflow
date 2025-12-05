@@ -36,7 +36,7 @@
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/holofile.hh"
 #include "tasks/sources/ametek_s710_euresys_coaxlink_octo.hh"
-#include "tasks/sources/ametek_s711_euresys_coaxlink_octo.hh"
+#include "tasks/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "tasks/sources/holofile.hh"
 #include "tasks/syncs/angular_spectrum.hh"
 #include "tasks/syncs/average.hh"
@@ -92,7 +92,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
                                                           "AmetekS710EuresysCoaxlinkOcto");
 
   reg_sync<sources::AmetekS711EuresysCoaxlinkOctoFactory>(registry_,
-                                                          "AmetekS711EuresysCoaxlinkOcto");
+                                                          "AmetekS711EuresysCoaxlinkQSFP+");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
   reg_sync<syncs::AverageFactory>(registry_, "Average");
   reg_sync<syncs::ConversionFactory>(registry_, "Conversion");
@@ -457,7 +457,7 @@ void Manager::guess_source_dims() {
     return;
   }
 
-  else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_OCTO) {
+  else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
     auto cfg_file = std::ifstream(s_.camera_config_path);
     if (!cfg_file.is_open()) {
       throw std::runtime_error(

@@ -21,4 +21,4 @@ This task does not own any inputs or outputs.
 
 ---
 ## Settings
---8<-- "docs\schemas\display_tensor_settings.md"
+--8<-- "docs\schemas\sinks\display_tensor_settings.md"

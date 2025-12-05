@@ -15,7 +15,9 @@
 if(ENABLE_FETCHCONTENT)
     include(FetchContent)
 
-set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/.fc")
+if(NOT DEFINED FETCHCONTENT_BASE_DIR)
+    set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/.fc")
+endif()
 
     # spdlog
     FetchContent_Declare(

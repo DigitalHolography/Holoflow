@@ -714,7 +714,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     };
     std::map<std::string, ImportSource> source_from_str{
         {"Ametek S710 Euresys Coaxlink Octo", ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO},
-        {"Ametek S711 Euresys Coaxlink Octo", ImportSource::AMETEK_S711_EURESYS_COAXLINK_OCTO},
+        {"Ametek S711 Euresys Coaxlink Octo", ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP},
     };
 
     if (!import_widget_->is_camera_mode()) {
@@ -868,8 +868,8 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
       case ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO:
         source = "Ametek S710 Euresys Coaxlink Octo";
         break;
-      case ImportSource::AMETEK_S711_EURESYS_COAXLINK_OCTO:
-        source = "Ametek S711 Euresys Coaxlink Octo";
+      case ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP:
+        source = "Ametek S711 Euresys Coaxlink QSFP+";
         break;
       default:
         source = "Ametek S710 Euresys Coaxlink Octo";

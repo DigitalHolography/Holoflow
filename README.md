@@ -66,7 +66,7 @@ holoflow
 - **[Python](https://www.python.org/downloads/) >= 3.10**
 - **[Git](https://git-scm.com/downloads/win)**
 - **[Qt >= 6.5](https://www.qt.io/download-qt-installer-oss)** set `Qt6_DIR` env var to your Qt installation path, e.g. `C:\Qt\6.5.2\msvc2019_64\lib\cmake\Qt6`, add `C:\Qt\6.5.2\msvc2019_64\bin` to your `PATH`
-- **[Intel oneAPI Base Toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html)** add `C:\Program Files (x86)\Intel\oneAPI\mkl\latest\bin` to your `PATH`
+- **[Intel oneAPI Base Toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html)** add `C:\Program Files (x86)\Intel\oneAPI\mkl\latest\bin` and `C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin` to your `PATH`
 - **[Node.js](https://nodejs.org/en/download/)** (both `node` and `npm` in your `PATH`)
 - **[quicktype](https://www.npmjs.com/package/quicktype)** install via `npm install -g quicktype`
 
@@ -128,6 +128,26 @@ The individual tests can be run from cmd:
 build\msvc-multi\Debug\holoflow_test.exe
 ```
 
+## Package
+
+This project uses **CMake**, **CPack**, and the **NSIS installer generator** to produce a Windows installer (`.exe`) that contains the compiled application and all required Qt runtime libraries.
+
+### Prerequisites
+
+Before packaging, make sure these following tools are installed :
+
+- **[NSIS](https://nsis.sourceforge.io/Download)**
+
+### Command
+
+To generate the installer, run:
+
+```powershell
+cmake --build --preset build-Release --target package -j
+```
+
+It will generate the installer inside the `build\msvc-multi\` folder.
+
 ## Benchmarks
 > TODO
 
@@ -162,7 +182,7 @@ To generate a new schema, you must first create the corresponding `xxx_settings.
 
 Once the file is created, run the following command:
 ```cmd
-generate-schema-doc src\holovibes\schemas\tasks\xxx_settings.json doc\mkdocs\docs\schemas\xxx_settings.md --config template_name=md
+generate-schema-doc src\holovibes\schemas\tasks\node_type\xxx_settings.json doc\mkdocs\docs\schemas\node_type\xxx_settings.md --config template_name=md
 ```
 > You must run this command in Python Virtual Environment
 

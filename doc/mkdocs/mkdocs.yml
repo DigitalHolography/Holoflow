@@ -7,9 +7,12 @@ nav:
     - Overview: holovibes/index.md
     - Tasks:
       - Sources:
+        - Ametek s710 Euresys Coaxlink Octo: holovibes/tasks/sources/ametek_s710_euresys_coaxlink_octo.md
+        - Ametek s711 Euresys Coaxlink QSFP+: holovibes/tasks/sources/ametek_s711_euresys_coaxlink_qsfp+.md
         - Holofile: holovibes/tasks/sources/holofile.md
       - Sinks:
         - Display Tensor: holovibes/tasks/sinks/display_tensor.md
+        - Holofile: holovibes/tasks/sinks/holofile.md
       - Synchronous:
         - Angular Spectrum: holovibes/tasks/syncs/angular_spectrum.md
         - Average: holovibes/tasks/syncs/average.md
@@ -68,3 +71,5 @@ plugins:
 
 extra_javascript:
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+use_directory_urls: false
