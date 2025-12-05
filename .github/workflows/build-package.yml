@@ -35,7 +35,6 @@ jobs:
         cmake --build --preset build-Release --target package -j
 
     - name: Create Release
-      shell: pwsh
       run: |
         $version = Get-Content VERSION
         gh release create "v$version" "build/msvc-multi/Release/Holoflow-$version-windows-x64.msi" `
