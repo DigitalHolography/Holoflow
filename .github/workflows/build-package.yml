@@ -2,7 +2,7 @@ name: Build Package
 
 on:
   push:
-    branches: [ main ]
+    branches: [ refactor ]
 
   workflow_dispatch:
 
@@ -35,23 +35,10 @@ jobs:
         cmake --build --preset build-Release --target package -j
 
     - name: Create Release
-      id: create_release
-      uses: actions/create-release@v1
+      run: |
+        gh release create v$(<VERSION) build/msvc-multi/Release/Holoflow-$(<VERSION)-windows-x64.msi \
+          --title "v$(<VERSION)" \
+          --notes "Automated release of version $(<VERSION)."
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: Test
-        release_name: Test
-        draft: false
-        prerelease: false
-
-    - name: Upload Release Assets
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./build/msvc-multi/Holoflow-0.1.0-win64.exe
-        asset_name: Holoflow-0.1.0-win64.exe
-        asset_content_type: application/octet-stream
         
