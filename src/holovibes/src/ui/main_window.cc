@@ -331,7 +331,7 @@ void MainWindow::on_start_pipeline_success() {
   logger()->info("[MainWindow::on_start_pipeline_success]");
   pipeline_running_ = true;
   import_widget_->set_stop_enabled(true);
-  export_widget_->set_record_enabled(!export_in_progress_);
+  export_widget_->set_record_enabled(!export_in_progress_  && export_widget_->isChecked());
   export_widget_->set_stop_enabled(export_in_progress_);
 
   auto dims = guess_source_dims();
@@ -418,7 +418,7 @@ void MainWindow::on_update_pipeline_success() {
   logger()->info("[MainWindow::on_update_pipeline_success]");
   update_in_progress_ = false;
   import_widget_->set_start_enabled(false);
-  export_widget_->set_record_enabled(!export_in_progress_);
+  export_widget_->set_record_enabled(!export_in_progress_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(export_in_progress_);
 
   auto dims = guess_source_dims();
@@ -532,7 +532,7 @@ void MainWindow::on_raw_record_started_success() {
 void MainWindow::on_raw_record_started_failure(const QString &error) {
   logger()->error("[MainWindow::on_raw_record_started_failure]");
   export_in_progress_ = false;
-  export_widget_->set_record_enabled(pipeline_running_);
+  export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(false);
 
   show_pipeline_error_popup(tr("An error occurred while starting raw recording:\n%1").arg(error));
