@@ -35,12 +35,12 @@ jobs:
         cmake --build --preset build-Release --target package -j
 
     - name: Create Release
-      shell: bash
+      shell: pwsh
       run: |
-        version=$(cat VERSION)
-        gh release create "v$version" build/msvc-multi/Release/Holoflow-$version-windows-x64.msi \
-          --title "v$version)" \
-          --notes "Automated release of version $version."
+        $version = Get-Content VERSION
+        gh release create "v$version" "build/msvc-multi/Release/Holoflow-$version-windows-x64.msi" `
+          --title "v$version" `
+          --notes "Automated release of version $version"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
