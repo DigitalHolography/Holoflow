@@ -37,8 +37,8 @@ void from_json(const nlohmann::json &j, AmetekS711EuresysCoaxlinkQSFPSettings &s
   j.at("cfg_path").get_to(s.cfg_path);
 }
 
-AmetekS711EuresysCoaxlinkOcto::AmetekS711EuresysCoaxlinkOcto(
-    const AmetekS711EuresysCoaxlinkOctoSettings &settings, HostPtr<uint8_t> &&buffers,
+AmetekS711EuresysCoaxlinkQSFP::AmetekS711EuresysCoaxlinkQSFP(
+    const AmetekS711EuresysCoaxlinkQSFPSettings &settings, HostPtr<uint8_t> &&buffers,
     std::unique_ptr<Euresys::EGenTL> &&gentl, std::unique_ptr<Euresys::EGrabber<>> &&grabber,
     nlohmann::json &cfg)
     : settings_(settings), buffers_(std::move(buffers)), gentl_(std::move(gentl)),
@@ -48,7 +48,7 @@ AmetekS711EuresysCoaxlinkOcto::AmetekS711EuresysCoaxlinkOcto(
   HOLOVIBES_CHECK(buffers_ != nullptr);
 }
 
-holoflow::core::OpResult AmetekS711EuresysCoaxlinkOcto::execute(holoflow::core::SyncCtx &ctx) {
+holoflow::core::OpResult AmetekS711EuresysCoaxlinkQSFP::execute(holoflow::core::SyncCtx &ctx) {
   using namespace Euresys;
   constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
   constexpr auto TIMESTAMP = GenTL::BUFFER_INFO_TIMESTAMP;
@@ -65,7 +65,7 @@ holoflow::core::OpResult AmetekS711EuresysCoaxlinkOcto::execute(holoflow::core::
       auto delivered = buffer.getInfo<uint64_t>(DELIVERED);
       auto ts        = buffer.getInfo<uint64_t>(TIMESTAMP);
 
-      logger()->trace("[AmetekS711EuresysCoaxlinkOcto] Acquired buffer with {} parts, timestamp {}",
+      logger()->trace("[AmetekS711EuresysCoaxlinkQSFP] Acquired buffer with {} parts, timestamp {}",
                       delivered, ts);
 
       const auto *idata = buffer.getInfo<void *>(GenTL::BUFFER_INFO_BASE);
@@ -73,13 +73,13 @@ holoflow::core::OpResult AmetekS711EuresysCoaxlinkOcto::execute(holoflow::core::
       std::memcpy(odata, idata, ctx.outputs[0].desc.num_bytes());
       return holoflow::core::OpResult::Ok;
     } catch (const Euresys::genapi_error &err) {
-      logger()->error("[AmetekS711EuresysCoaxlinkOcto] GenApi error while acquiring buffer: {}",
+      logger()->error("[AmetekS711EuresysCoaxlinkQSFP] GenApi error while acquiring buffer: {}",
                       err.what());
     } catch (const Euresys::gentl_error &err) {
-      logger()->error("[AmetekS711EuresysCoaxlinkOcto] GenTL error while acquiring buffer: {}",
+      logger()->error("[AmetekS711EuresysCoaxlinkQSFP] GenTL error while acquiring buffer: {}",
                       err.what());
     } catch (const std::exception &err) {
-      logger()->error("[AmetekS711EuresysCoaxlinkOcto] Error while acquiring buffer: {}",
+      logger()->error("[AmetekS711EuresysCoaxlinkQSFP] Error while acquiring buffer: {}",
                       err.what());
     }
   }
@@ -232,12 +232,12 @@ HostPtr<uint8_t> allocate_buffers(Euresys::EGrabber<> &g, std::size_t nb_buffers
 } // namespace
 
 holoflow::core::InferResult
-AmetekS711EuresysCoaxlinkOctoFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
+AmetekS711EuresysCoaxlinkQSFPFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                             const nlohmann::json &jsettings) const {
   const auto check = [&](bool condition, const std::string &msg) {
     if (!condition) {
-      logger()->error("[AmetekS711EuresysCoaxlinkOctoFactory::infer] error: {}", msg);
-      throw std::invalid_argument("AmetekS711EuresysCoaxlinkOctoFactory inference error: " + msg);
+      logger()->error("[AmetekS711EuresysCoaxlinkQSFPFactory::infer] error: {}", msg);
+      throw std::invalid_argument("AmetekS711EuresysCoaxlinkQSFPFactory inference error: " + msg);
     }
   };
 
@@ -280,7 +280,7 @@ AmetekS711EuresysCoaxlinkOctoFactory::infer(std::span<const holoflow::core::TDes
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
-AmetekS711EuresysCoaxlinkOctoFactory::create(std::span<const holoflow::core::TDesc> input_descs,
+AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                              const nlohmann::json                  &jsettings,
                                              const holoflow::core::SyncCreateCtx   &ctx) const {
   (void)ctx;
@@ -291,15 +291,15 @@ AmetekS711EuresysCoaxlinkOctoFactory::create(std::span<const holoflow::core::TDe
   auto cfg_file = std::ifstream(settings.cfg_path);
   auto cfg      = nlohmann::json::parse(cfg_file).at("s711");
 
-  logger()->info("[AmetekS711EuresysCoaxlinkOctoFactory::update] Creating task");
-  logger()->info("[AmetekS711EuresysCoaxlinkOctoFactory::update] New cfg: {}", cfg.dump());
+  logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory::update] Creating task");
+  logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory::update] New cfg: {}", cfg.dump());
 
   // Setup GenTL
   auto gentl       = std::make_unique<Euresys::EGenTL>();
   auto camera_info = find_camera(*gentl, "Phantom S711");
 
   if (!camera_info.has_value()) {
-    logger()->error("[AmetekS711EuresysCoaxlinkOctoFactory::create] Could not find Phantom S711");
+    logger()->error("[AmetekS711EuresysCoaxlinkQSFPFactory::create] Could not find Phantom S711");
     throw std::runtime_error("Could not find Phantom S711 camera");
   }
 
@@ -309,13 +309,13 @@ AmetekS711EuresysCoaxlinkOctoFactory::create(std::span<const holoflow::core::TDe
   auto buffers     = allocate_buffers(*grabber, cfg.at("BufferPartCount"), buffer_size);
 
   // Success
-  auto *task = new AmetekS711EuresysCoaxlinkOcto(settings, std::move(buffers), std::move(gentl),
+  auto *task = new AmetekS711EuresysCoaxlinkQSFP(settings, std::move(buffers), std::move(gentl),
                                                  std::move(grabber), cfg);
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
-AmetekS711EuresysCoaxlinkOctoFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+AmetekS711EuresysCoaxlinkQSFPFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                                              std::span<const holoflow::core::TDesc>     input_descs,
                                              const nlohmann::json                      &jsettings,
                                              const holoflow::core::SyncCreateCtx       &ctx) const {
@@ -327,8 +327,8 @@ AmetekS711EuresysCoaxlinkOctoFactory::update(std::unique_ptr<holoflow::core::ISy
   auto cfg_file = std::ifstream(settings.cfg_path);
   auto cfg      = nlohmann::json::parse(cfg_file).at("s711");
 
-  auto *old = dynamic_cast<AmetekS711EuresysCoaxlinkOcto *>(old_task.get());
-  HOLOVIBES_CHECK(old != nullptr, "Old task is not of type AmetekS711EuresysCoaxlinkOcto");
+  auto *old = dynamic_cast<AmetekS711EuresysCoaxlinkQSFP *>(old_task.get());
+  HOLOVIBES_CHECK(old != nullptr, "Old task is not of type AmetekS711EuresysCoaxlinkQSFP");
   auto old_cfg = old->cfg_;
 
   auto same_cfg = cfg == old_cfg;

@@ -91,7 +91,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_,
                                                           "AmetekS710EuresysCoaxlinkOcto");
 
-  reg_sync<sources::AmetekS711EuresysCoaxlinkOctoFactory>(registry_,
+  reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_,
                                                           "AmetekS711EuresysCoaxlinkQSFP+");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
   reg_sync<syncs::AverageFactory>(registry_, "Average");
