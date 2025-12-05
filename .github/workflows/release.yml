@@ -10,6 +10,16 @@ env:
   BUILD_TYPE: Release
 
 jobs:
+
+  check-fork:
+    runs-on: [ self-hosted, windows, x64 ]
+    steps:
+      - name: Fork Check
+        if: github.event.pull_request.head.repo.fork == true
+        run: |
+          echo "This is a forked repository."
+          exit 1
+
   build:
     runs-on: [ self-hosted, windows, x64 ]
     
@@ -42,4 +52,4 @@ jobs:
           --notes "Automated release of version $version"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        
+    

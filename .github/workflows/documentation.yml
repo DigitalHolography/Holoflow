@@ -1,0 +1,42 @@
+name: Deploy Documentation
+
+on:
+  push:
+    branches: [ refactor ]
+
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  check-fork:
+    runs-on: [ self-hosted, windows, x64 ]
+    steps:
+      - name: Fork Check
+        if: github.event.pull_request.head.repo.fork == true
+        run: |
+          echo "This is a forked repository."
+          exit 1
+
+  deploy:
+    runs-on: [ self-hosted, windows, x64 ]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install mkdocs mkdocs-material mkdocs-material-extensions
+
+      - name: Deploy MkDocs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdocs gh-deploy
