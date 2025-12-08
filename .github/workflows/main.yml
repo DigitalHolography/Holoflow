@@ -1,6 +1,9 @@
 name: Build Package
 
-on: [ push, fork ]
+on:
+  pull_request:
+    branches:
+      - refactor
 
 env:
   BUILD_TYPE: Release
