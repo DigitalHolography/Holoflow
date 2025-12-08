@@ -20,39 +20,51 @@ jobs:
           echo "This is a forked repository."
           exit 1
 
-  build:
+  bump-version:
+
+    runs-on: [ self-hosted, windows, x64 ]
+    needs: check-fork
+    steps:
+      - name: Create bump and changelog
+        uses: commitizen-tools/commitizen-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          changelog_increment_filename: CHANGELOG.md
+
+  build-package:
     runs-on: [ self-hosted, windows, x64 ]
     needs: check-fork
     
     steps:
-    - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
-    - name: Configure
-      run: |
-        cmake --preset msvc-multi -DFETCHCONTENT_BASE_DIR="C:/.fc"
-          
-    - name: Build
-      run: |
-        cmake --build --preset build-Release -j
+      - name: Configure
+        run: |
+          cmake --preset msvc-multi -DFETCHCONTENT_BASE_DIR="C:/.fc"
+            
+      - name: Build
+        run: |
+          cmake --build --preset build-Release -j
 
-    - name: Test
-      run: |
-        build\msvc-multi\Release\holoflow_test.exe
-      
-    - name: Package
-      run: |
-        cmake --build --preset build-Release --target package -j
+      - name: Test
+        run: |
+          build\msvc-multi\Release\holoflow_test.exe
+        
+      - name: Package
+        run: |
+          cmake --build --preset build-Release --target package -j
 
-    - name: Create Release
-      run: |
-        $version = Get-Content VERSION
-        gh release create "v$version" "build/msvc-multi/Holoflow-$version-win64.exe" `
-          --title "v$version" `
-          --notes "Automated release of version $version"
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create Release
+        run: |
+          $version = Get-Content VERSION
+          gh release create "v$version" "build/msvc-multi/Holoflow-$version-win64.exe" `
+            --title "v$version" `
+            --notes "Automated release of version $version" `
+            --latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   documentation:
     runs-on: [ self-hosted, windows, x64 ]
@@ -64,13 +76,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m venv .env
-          .\.env\Scripts\activate
           pip install mkdocs==1.6.1 mkdocs-get-deps==0.2.0 mkdocs-material==9.6.21 mkdocs-material-extensions==1.3.1 mkdocs-mermaid2-plugin==1.2.2 mkdocs-simple-hooks==0.1.5
 
       - name: Deploy MkDocs
         run: |
-          .\.env\Scripts\activate
           cd doc/mkdocs
           mkdocs gh-deploy --force
         env:
