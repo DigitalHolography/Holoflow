@@ -53,4 +53,31 @@ jobs:
           --notes "Automated release of version $version"
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  documentation:
+    runs-on: [ self-hosted, windows, x64 ]
+    needs: check-fork
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          python -m venv .env
+          .\.env\Scripts\activate
+          pip install mkdocs mkdocs-material mkdocs-material-extensions
+
+      - name: Deploy MkDocs
+        run: |
+          .\.env\Scripts\activate
+          cd doc/mkdocs
+          mkdocs gh-deploy
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Clean up
+        run: |
+          deactivate
+          Remove-Item .env -Recurse -Force
     
