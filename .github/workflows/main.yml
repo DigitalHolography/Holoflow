@@ -72,7 +72,7 @@ jobs:
         run: |
           .\.env\Scripts\activate
           cd doc/mkdocs
-          mkdocs gh-deploy
+          mkdocs gh-deploy --force
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
