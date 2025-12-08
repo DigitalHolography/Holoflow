@@ -7,15 +7,6 @@ env:
 
 jobs:
 
-  check-fork:
-    runs-on: [ self-hosted, windows, x64 ]
-    steps:
-      - name: Fork Check
-        if: github.event.pull_request.head.repo.fork == true
-        run: |
-          echo "This is a forked repository."
-          exit 1
-
   build-package:
     runs-on: [ self-hosted, windows, x64 ]
     needs: check-fork    
