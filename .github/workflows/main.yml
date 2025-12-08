@@ -1,10 +1,6 @@
 name: Build Package
 
-on:
-  push:
-    branches: [ refactor ]
-
-  workflow_dispatch:
+on: [ push, fork ]
 
 env:
   BUILD_TYPE: Release
@@ -20,21 +16,9 @@ jobs:
           echo "This is a forked repository."
           exit 1
 
-  bump-version:
-
-    runs-on: [ self-hosted, windows, x64 ]
-    needs: check-fork
-    steps:
-      - name: Create bump and changelog
-        uses: commitizen-tools/commitizen-action@master
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          changelog_increment_filename: CHANGELOG.md
-
   build-package:
     runs-on: [ self-hosted, windows, x64 ]
-    needs: check-fork
-    
+    needs: check-fork    
     steps:
       - uses: actions/checkout@v4
         with:
@@ -84,9 +68,3 @@ jobs:
           mkdocs gh-deploy --force
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Clean up
-        run: |
-          deactivate
-          Remove-Item .env -Recurse -Force
-    
