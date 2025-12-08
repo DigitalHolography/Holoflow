@@ -3,10 +3,8 @@ name: Build Package
 on:
   push:
     branches:
-      - refactor
-  pull_request:
-    branches:
-      - refactor
+      - main
+  workflow_dispatch:
 
 env:
   BUILD_TYPE: Release
