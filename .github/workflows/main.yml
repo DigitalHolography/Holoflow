@@ -1,6 +1,12 @@
 name: Build Package
 
-on: [ push, fork ]
+on:
+  push:
+    branches:
+      - refactor
+  pull_request:
+    branches:
+      - refactor
 
 env:
   BUILD_TYPE: Release
@@ -52,7 +58,7 @@ jobs:
 
   documentation:
     runs-on: [ self-hosted, windows, x64 ]
-    needs: check-fork
+    needs: build-package
 
     steps:
       - name: Checkout
