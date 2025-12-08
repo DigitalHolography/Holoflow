@@ -1,6 +1,9 @@
 name: Build Package
 
 on:
+  push:
+    branches:
+      - refactor
   pull_request:
     branches:
       - refactor
@@ -46,7 +49,7 @@ jobs:
 
   documentation:
     runs-on: [ self-hosted, windows, x64 ]
-    needs: check-fork
+    needs: build-package
 
     steps:
       - name: Checkout
