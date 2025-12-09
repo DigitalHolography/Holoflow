@@ -13,7 +13,7 @@
 # limitations under the License.
 
 set(TARGET holovibes)
-set(HOLOVIBES_VERSION "0.0.0-dev-0")
+set(HOLOVIBES_VERSION "${PROJECT_VERSION_FULL}")
 add_definitions(-DHOLOVIBES_VERSION_SEMVER2="${HOLOVIBES_VERSION}")
 
 set(APP_ICON_RESOURCE_WINDOWS "${CMAKE_SOURCE_DIR}/resources/holovibes/assets/appicon.rc")
