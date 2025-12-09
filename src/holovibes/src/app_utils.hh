@@ -16,5 +16,5 @@
 #include <QString>
 
 namespace holovibes::utils {
-  void setupAppData();
+void setupAppData();
 }

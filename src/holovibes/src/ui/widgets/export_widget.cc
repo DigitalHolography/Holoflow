@@ -128,8 +128,7 @@ void ExportWidget::connect_signals() {
   connect(browse_button_, &QPushButton::clicked, this, &ExportWidget::browse_clicked);
 
   // Emit settings_changed for all control changes
-  connect(this, &QGroupBox::isChecked, this,
-          &ExportWidget::settings_changed);
+  connect(this, &QGroupBox::isChecked, this, &ExportWidget::settings_changed);
   connect(image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
   connect(file_line_edit_, &QLineEdit::editingFinished, this, &ExportWidget::settings_changed);

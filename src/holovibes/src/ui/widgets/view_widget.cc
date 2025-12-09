@@ -73,8 +73,8 @@ bool    ViewWidget::is_registration_enabled() const { return registration_check_
 double  ViewWidget::get_registration_radius() const { return registration_radius_->value(); }
 bool    ViewWidget::is_reticle_enabled() const { return reticle_check_->isChecked(); }
 double  ViewWidget::get_reticle_radius() const { return reticle_radius_->value(); }
-bool   ViewWidget::is_pct_enabled() const { return pct_check_->isChecked(); }
-double ViewWidget::get_pct_radius() const { return pct_radius_->value(); }
+bool    ViewWidget::is_pct_enabled() const { return pct_check_->isChecked(); }
+double  ViewWidget::get_pct_radius() const { return pct_radius_->value(); }
 
 // Setters
 void ViewWidget::set_x_origin(int value) { x_spin_->setValue(value); }
@@ -124,12 +124,11 @@ QDoubleSpinBox *ViewWidget::reticle_radius() { return reticle_radius_; }
 QCheckBox      *ViewWidget::pct_check() { return pct_check_; }
 QDoubleSpinBox *ViewWidget::pct_radius() { return pct_radius_; }
 
-void ViewWidget::update_3d_cut_controls(bool enabled)
-{
-    x_spin_->setEnabled(enabled);
-    x_width_spin_->setEnabled(enabled);
-    y_spin_->setEnabled(enabled);
-    y_width_spin_->setEnabled(enabled);
+void ViewWidget::update_3d_cut_controls(bool enabled) {
+  x_spin_->setEnabled(enabled);
+  x_width_spin_->setEnabled(enabled);
+  y_spin_->setEnabled(enabled);
+  y_width_spin_->setEnabled(enabled);
 }
 
 void ViewWidget::setup_ui() {
@@ -226,8 +225,7 @@ void ViewWidget::connect_signals() {
   connect(reticle_check_, &QCheckBox::toggled, this, &ViewWidget::reticle_toggled);
   connect(reticle_radius_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           &ViewWidget::reticle_radius_changed);
-  connect(cuts_3d_check_, &QCheckBox::toggled,
-        this, &ViewWidget::update_3d_cut_controls);
+  connect(cuts_3d_check_, &QCheckBox::toggled, this, &ViewWidget::update_3d_cut_controls);
 
   // Emit settings_changed for all control changes
   connect(image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,

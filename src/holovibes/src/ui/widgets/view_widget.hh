@@ -30,25 +30,25 @@ public:
 
   // Getters
   QString get_image_type() const;
-  bool is_cuts_3d_enabled() const;
-  bool is_fft_shift_enabled() const;
-  bool is_raw_view_enabled() const;
-  int get_x_origin() const;
-  int get_x_width() const;
-  int get_y_origin() const;
-  int get_y_width() const;
-  int get_z_origin() const;
-  int get_z_width() const;
+  bool    is_cuts_3d_enabled() const;
+  bool    is_fft_shift_enabled() const;
+  bool    is_raw_view_enabled() const;
+  int     get_x_origin() const;
+  int     get_x_width() const;
+  int     get_y_origin() const;
+  int     get_y_width() const;
+  int     get_z_origin() const;
+  int     get_z_width() const;
   QString get_view_kind() const;
-  int get_accumulation() const;
-  int get_range_start() const;
-  int get_range_end() const;
-  bool is_registration_enabled() const;
-  double get_registration_radius() const;
-  bool is_reticle_enabled() const;
-  double get_reticle_radius() const;
-  bool is_pct_enabled() const;
-  double get_pct_radius() const;
+  int     get_accumulation() const;
+  int     get_range_start() const;
+  int     get_range_end() const;
+  bool    is_registration_enabled() const;
+  double  get_registration_radius() const;
+  bool    is_reticle_enabled() const;
+  double  get_reticle_radius() const;
+  bool    is_pct_enabled() const;
+  double  get_pct_radius() const;
 
   // Setters
   void set_x_origin(int value);
@@ -72,25 +72,25 @@ public:
   void mark_z_width_invalid();
 
   // Access to widgets for connection setup
-  QComboBox *image_type_combo();
-  QCheckBox *cuts_3d_check();
-  QCheckBox *fft_shift_check();
-  QCheckBox *raw_view_check();
-  QSpinBox *x_spin();
-  QSpinBox *x_width_spin();
-  QSpinBox *y_spin();
-  QSpinBox *y_width_spin();
-  QSpinBox *z_spin();
-  QSpinBox *z_width_spin();
-  QComboBox *kind_combo();
-  QSpinBox *accumulation_spin();
-  QSpinBox *range_start_spin();
-  QSpinBox *range_end_spin();
-  QCheckBox *registration_check();
+  QComboBox      *image_type_combo();
+  QCheckBox      *cuts_3d_check();
+  QCheckBox      *fft_shift_check();
+  QCheckBox      *raw_view_check();
+  QSpinBox       *x_spin();
+  QSpinBox       *x_width_spin();
+  QSpinBox       *y_spin();
+  QSpinBox       *y_width_spin();
+  QSpinBox       *z_spin();
+  QSpinBox       *z_width_spin();
+  QComboBox      *kind_combo();
+  QSpinBox       *accumulation_spin();
+  QSpinBox       *range_start_spin();
+  QSpinBox       *range_end_spin();
+  QCheckBox      *registration_check();
   QDoubleSpinBox *registration_radius();
-  QCheckBox *reticle_check();
+  QCheckBox      *reticle_check();
   QDoubleSpinBox *reticle_radius();
-  QCheckBox *pct_check();
+  QCheckBox      *pct_check();
   QDoubleSpinBox *pct_radius();
 
 signals:
@@ -107,25 +107,25 @@ private:
   void setup_ui();
   void connect_signals();
 
-  QComboBox *image_type_combo_;
-  QCheckBox *cuts_3d_check_;
-  QCheckBox *fft_shift_check_;
-  QCheckBox *raw_view_check_;
-  QSpinBox *x_spin_;
-  QSpinBox *x_width_spin_;
-  QSpinBox *y_spin_;
-  QSpinBox *y_width_spin_;
-  QSpinBox *z_spin_;
-  QSpinBox *z_width_spin_;
-  QComboBox *kind_combo_;
-  QSpinBox *accumulation_spin_;
-  QSpinBox *range_start_spin_;
-  QSpinBox *range_end_spin_;
-  QCheckBox *registration_check_;
+  QComboBox      *image_type_combo_;
+  QCheckBox      *cuts_3d_check_;
+  QCheckBox      *fft_shift_check_;
+  QCheckBox      *raw_view_check_;
+  QSpinBox       *x_spin_;
+  QSpinBox       *x_width_spin_;
+  QSpinBox       *y_spin_;
+  QSpinBox       *y_width_spin_;
+  QSpinBox       *z_spin_;
+  QSpinBox       *z_width_spin_;
+  QComboBox      *kind_combo_;
+  QSpinBox       *accumulation_spin_;
+  QSpinBox       *range_start_spin_;
+  QSpinBox       *range_end_spin_;
+  QCheckBox      *registration_check_;
   QDoubleSpinBox *registration_radius_;
-  QCheckBox *reticle_check_;
+  QCheckBox      *reticle_check_;
   QDoubleSpinBox *reticle_radius_;
-  QCheckBox *pct_check_;
+  QCheckBox      *pct_check_;
   QDoubleSpinBox *pct_radius_;
 };
 

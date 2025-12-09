@@ -22,7 +22,6 @@
 #include <QFileInfo>
 #include <QStandardPaths>
 
-
 namespace holovibes::utils {
 
 static void copyResourcesRecursively(const QString &resourceRoot, const QString &targetRoot) {

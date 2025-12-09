@@ -17,7 +17,6 @@
 #include "pipeline/settings.hh"
 #include <nlohmann/json.hpp>
 
-
 namespace holovibes::pipeline {
 
 /**

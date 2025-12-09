@@ -15,6 +15,7 @@
 #include <QApplication>
 #include <cstdlib>
 
+#include "app_utils.hh"
 #include "bug.hh"
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
@@ -23,7 +24,7 @@
 #include "logger.hh"
 #include "spdlog/common.h"
 #include "ui/main_window.hh"
-#include "app_utils.hh"
+
 
 int main(int argc, char **argv) {
   spdlog::set_level(spdlog::level::debug);
