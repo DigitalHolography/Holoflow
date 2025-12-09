@@ -308,10 +308,7 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
   auto lens_bytes = W * H * sizeof(cuFloatComplex);
   auto h_lens     = generate_quadratic_lens_host(W, H, settings);
   auto d_lens     = curaii::make_unique_device_ptr<cuFloatComplex>(lens_bytes);
-  CUDA_CHECK(cudaMemcpy(d_lens.get(),
-                        h_lens.data(),
-                        h_lens.size() * sizeof(cuFloatComplex),
-                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_lens.get(), h_lens.data(), lens_bytes, cudaMemcpyHostToDevice));
 
   // Prepare caller info
   using Info    = ApplyLensCallerInfo;
@@ -362,10 +359,7 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
   auto lens_bytes = W * H * sizeof(cuFloatComplex);
   auto h_lens     = generate_quadratic_lens_host(W, H, settings);
   auto d_lens     = curaii::make_unique_device_ptr<cuFloatComplex>(lens_bytes);
-  CUDA_CHECK(cudaMemcpy(d_lens.get(),
-                        h_lens.data(),
-                        h_lens.size() * sizeof(cuFloatComplex),
-                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(d_lens.get(), h_lens.data(), lens_bytes, cudaMemcpyHostToDevice));
 
   // Recreate caller info (reuse LTO)
   using Info    = ApplyLensCallerInfo;
