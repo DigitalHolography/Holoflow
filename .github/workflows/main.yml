@@ -1,0 +1,74 @@
+name: Build Package
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+
+  check-fork:
+    runs-on: [ self-hosted, windows, x64 ]
+    steps:
+      - name: Fork Check
+        if: github.event.pull_request.head.repo.fork == true
+        run: |
+          echo "This is a forked repository."
+          exit 1
+
+  build-package:
+    runs-on: [ self-hosted, windows, x64 ]
+    needs: check-fork    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        run: |
+          cmake --preset msvc-multi -DFETCHCONTENT_BASE_DIR="C:/.fc"
+            
+      - name: Build
+        run: |
+          cmake --build --preset build-Release -j
+
+      - name: Test
+        run: |
+          build\msvc-multi\Release\holoflow_test.exe
+        
+      - name: Package
+        run: |
+          cmake --build --preset build-Release --target package -j
+
+      - name: Create Release
+        run: |
+          $version = Get-Content VERSION
+          gh release create "v$version" "build/msvc-multi/Holoflow-$version-win64.exe" `
+            --title "v$version" `
+            --notes "Automated release of version $version" `
+            --latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  documentation:
+    runs-on: [ self-hosted, windows, x64 ]
+    needs: build-package
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          pip install mkdocs==1.6.1 mkdocs-get-deps==0.2.0 mkdocs-material==9.6.21 mkdocs-material-extensions==1.3.1 mkdocs-mermaid2-plugin==1.2.2 mkdocs-simple-hooks==0.1.5
+
+      - name: Deploy MkDocs
+        run: |
+          cd doc/mkdocs
+          mkdocs gh-deploy --force
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
