@@ -54,29 +54,9 @@ void GraphBuilder::build() {
   auto source = add_source();
   auto parent = source;
 
-  std::optional<V> cpu_in_queue = std::nullopt;
-
-  if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
-    cpu_in_queue = add_cpu_in_queue(parent, 0, 0);
-    if (s_.view_type == ViewType::PROCESSED) {
-      auto cpu_gpu_cpy = add_cpu_gpu_cpy(*cpu_in_queue, 0, 0);
-      parent           = cpu_gpu_cpy;
-    }
-  }
-
-  // Build recording branch if needed
-  if (s_.recording_method == RecordingMethod::RAW && cpu_in_queue) {
-    current_section_name_ = "recording::";
-    auto cpu_cpu_cpy      = add_cpu_cpu_cpy(*cpu_in_queue, 0, 0);
-    auto record_queue     = add_record_queue(cpu_cpu_cpy, 0, 0);
-    current_section_name_.clear();
-    auto raw_record = add_raw_record(record_queue, 0, 0);
-    (void)raw_record;
-  }
-
   // Build raw view branch
-  if ((s_.raw_view || s_.view_type == ViewType::RAW) && cpu_in_queue) {
-    build_raw_branch(*cpu_in_queue);
+  if (s_.raw_view || s_.view_type == ViewType::RAW) {
+    build_raw_branch(source);
 
     if (s_.view_type == ViewType::RAW) {
       logger()->debug("[GraphBuilder::build] Graph spec built successfully for raw view");
@@ -84,9 +64,25 @@ void GraphBuilder::build() {
     }
   }
 
+  // Build raw record branch
+  if (s_.recording_method == RecordingMethod::RAW) {
+    current_section_name_ = "recording::";
+    auto cpu_cpu_cpy  = add_cpu_cpu_cpy(source, 0, 0);
+    auto record_queue = add_record_queue(cpu_cpu_cpy, 0, 0);
+    current_section_name_.clear();
+    auto raw_record = add_raw_record(record_queue, 0, 0);
+    (void)raw_record;
+  }
+
+  if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
+    auto cpu_gpu_cpy = add_cpu_gpu_cpy(parent, 0, 0);
+    auto gpu_in_queue = add_gpu_in_queue(cpu_gpu_cpy, 0, 0);
+    parent           = gpu_in_queue;
+  }
+
   // Build processed branches
-  auto gpu_in_queue     = add_gpu_in_queue(parent, 0, 0);
-  auto processed_parent = build_processed_branch(gpu_in_queue);
+  // auto gpu_in_queue     = add_gpu_in_queue(parent, 0, 0);
+  auto processed_parent = build_processed_branch(parent);
   build_xy_branch(processed_parent);
 
   if (s_.view_3d_cuts) {

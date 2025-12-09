@@ -53,8 +53,11 @@ void from_json(const nlohmann::json &j, HolofileSettings::LoadKind &lk) {
 
 void to_json(nlohmann::json &j, const HolofileSettings &hs) {
   j = nlohmann::json{
-      {"path", hs.path},           {"load_kind", hs.load_kind},   {"start_frame", hs.start_frame},
-      {"end_frame", hs.end_frame}, {"batch_size", hs.batch_size},
+      {"path", hs.path},
+      {"load_kind", hs.load_kind},
+      {"start_frame", hs.start_frame},
+      {"end_frame", hs.end_frame},
+      {"batch_size", hs.batch_size},
   };
 }
 
@@ -66,45 +69,38 @@ void from_json(const nlohmann::json &j, HolofileSettings &hs) {
   j.at("batch_size").get_to(hs.batch_size);
 }
 
-namespace {
+Holofile::Holofile(const HolofileSettings &settings,
+                   holoflow::core::TDesc   odesc,
+                   holofile::Reader      &&reader,
+                   const holofile::Header &header,
+                   int                     frame_idx,
+                   std::byte              *buf,
+                   HostPtr<std::byte>    &&h_buf,
+                   DevPtr<std::byte>     &&d_buf,
+                   cudaStream_t            stream) :
+    settings_(settings),
+    odesc_(odesc),
+    reader_(std::move(reader)),
+    header_(header),
+    frame_idx_(frame_idx),
+    buf_(buf),
+    h_buf_(std::move(h_buf)),
+    d_buf_(std::move(d_buf)),
+    stream_(stream) {}
 
-void mt_memcpy(void *dst, const void *src, const std::size_t n) {
-  constexpr int NUM_THREADS = 2;
-  auto         *dst_bytes   = static_cast<std::uint8_t *>(dst);
-  const auto   *src_bytes   = static_cast<const std::uint8_t *>(src);
-
-  const std::size_t chunk_size = n / NUM_THREADS;
-  const std::size_t remainder  = n % NUM_THREADS;
-
-#pragma omp parallel num_threads(NUM_THREADS)
-  {
-    const int         tid       = omp_get_thread_num();
-    const std::size_t offset    = tid * chunk_size;
-    std::size_t       this_size = chunk_size;
-
-    if (tid == NUM_THREADS - 1) {
-      this_size += remainder;
-    }
-
-    if (this_size > 0) {
-      std::memcpy(dst_bytes + offset, src_bytes + offset, this_size);
-    }
+void Holofile::release_output(int index) {
+  if (index != 0) {
+    throw std::out_of_range("Holofile::release_output: invalid output index " +
+                            std::to_string(index));
   }
+  // No-op
 }
-
-} // namespace
-
-Holofile::Holofile(const HolofileSettings &settings, holofile::Reader &&reader,
-                   const holofile::Header &header, int frame_idx, std::byte *buf,
-                   HostPtr<std::byte> &&h_buf, DevPtr<std::byte> &&d_buf, cudaStream_t stream)
-    : settings_(settings), reader_(std::move(reader)), header_(header), frame_idx_(frame_idx),
-      buf_(buf), h_buf_(std::move(h_buf)), d_buf_(std::move(d_buf)), stream_(stream) {}
 
 holoflow::core::OpResult Holofile::execute(holoflow::core::SyncCtx &ctx) {
   size_t pixels_per_frame = header_.frame_width * header_.frame_height;
   size_t bits_per_frame   = pixels_per_frame * header_.bits_per_pixel;
   size_t bytes_per_frame  = bits_per_frame / 8;
-  size_t bytes_per_batch  = settings_.batch_size * bytes_per_frame;
+  // size_t bytes_per_batch  = settings_.batch_size * bytes_per_frame;
 
   // Loop back to start when EOF would be bypassed when reading next batch.
   if (frame_idx_ + settings_.batch_size > settings_.end_frame) {
@@ -115,20 +111,22 @@ holoflow::core::OpResult Holofile::execute(holoflow::core::SyncCtx &ctx) {
     logger()->debug("Looping back to start frame {}", settings_.start_frame);
   }
 
-  // Read frames into buffer.
-  auto *odata = reinterpret_cast<uint8_t *>(ctx.outputs[0].data);
-  switch (settings_.load_kind) {
-  case HolofileSettings::LoadKind::Live:
-    reader_.read_frames(odata, settings_.batch_size);
-    break;
+  if (settings_.load_kind == HolofileSettings::LoadKind::Live) {
+    // Read frames into buf_
+    reader_.read_frames(reinterpret_cast<uint8_t *>(buf_), settings_.batch_size);
 
-  case HolofileSettings::LoadKind::CPUCached:
-    mt_memcpy(odata, buf_ + frame_idx_ * bytes_per_frame, bytes_per_batch);
-    break;
+    ctx.outputs[0] = holoflow::core::TView{
+        .data = buf_,
+        .desc = odesc_,
+    };
+  }
 
-  case HolofileSettings::LoadKind::GPUCached:
-    CUDA_CHECK(cudaMemcpyAsync(odata, buf_ + frame_idx_ * bytes_per_frame, bytes_per_batch,
-                               cudaMemcpyDeviceToDevice, stream_));
+  else {
+    // Use preloaded buffer
+    ctx.outputs[0] = holoflow::core::TView{
+        .data = buf_ + frame_idx_ * bytes_per_frame,
+        .desc = odesc_,
+    };
   }
 
   frame_idx_ += settings_.batch_size;
@@ -138,12 +136,14 @@ holoflow::core::OpResult Holofile::execute(holoflow::core::SyncCtx &ctx) {
 holoflow::core::InferResult
 HolofileFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                        const nlohmann::json                  &jsettings) const {
+
   const auto check = [&](bool condition, const std::string &msg) {
     if (!condition) {
       logger()->error("[HolofileFactory::infer] error: {}", msg);
       throw std::invalid_argument("HolofileFactory inference error: " + msg);
     }
   };
+
   std::map<size_t, holoflow::core::DType> bpp_to_dtype = {
       {8, holoflow::core::DType::U8},
       {16, holoflow::core::DType::U16},
@@ -176,8 +176,8 @@ HolofileFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
       .input_descs   = {},
       .output_descs  = {out_desc},
       .in_place      = {},
-      .owned_inputs  = {},
-      .owned_outputs = {false},
+      .owned_inputs  = {false},
+      .owned_outputs = {true},
       .kind          = holoflow::core::TaskKind::Sync,
   };
 }
@@ -189,6 +189,7 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   // Validate
   auto infer    = this->infer(input_descs, jsettings);
   auto settings = jsettings.get<HolofileSettings>();
+  auto odesc    = infer.output_descs[0];
 
   // Setup reader
   auto reader = holofile::Reader(settings.path);
@@ -210,7 +211,8 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   switch (settings.load_kind) {
   case HolofileSettings::LoadKind::Live:
-    // No preloading
+    h_buf = make_unique_host_ptr<std::byte>(bytes_per_frame * settings.batch_size);
+    buf   = h_buf.get();
     break;
 
   case HolofileSettings::LoadKind::CPUCached:
@@ -237,15 +239,22 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   case HolofileSettings::LoadKind::GPUCached: {
     auto temp_buf = make_unique_host_ptr<std::byte>(bytes_to_load);
     reader.read_frames(reinterpret_cast<uint8_t *>(temp_buf.get()), frames_to_load);
-    CUDA_CHECK(cudaMemcpyAsync(d_buf.get(), temp_buf.get(), bytes_to_load, cudaMemcpyHostToDevice,
-                               ctx.stream));
+    CUDA_CHECK(cudaMemcpy(d_buf.get(), temp_buf.get(), bytes_to_load, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
-  } break;
+    break;
+  }
   }
 
   // Success
-  auto *task = new Holofile(settings, std::move(reader), header, settings.start_frame, buf,
-                            std::move(h_buf), std::move(d_buf), ctx.stream);
+  auto *task = new Holofile(settings,
+                            odesc,
+                            std::move(reader),
+                            header,
+                            settings.start_frame,
+                            buf,
+                            std::move(h_buf),
+                            std::move(d_buf),
+                            ctx.stream);
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
@@ -257,17 +266,19 @@ HolofileFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   // Validate
   auto infer        = this->infer(input_descs, jsettings);
   auto settings     = jsettings.get<HolofileSettings>();
+  auto odesc        = infer.output_descs[0];
   auto old_holofile = dynamic_cast<Holofile *>(old_task.get());
   HOLOVIBES_CHECK(old_holofile != nullptr, "old_task is not a Holofile instance");
 
   // Update
-  bool same_cfg = (old_holofile->settings_.path == settings.path) &&
-                  (old_holofile->settings_.load_kind == settings.load_kind) &&
-                  (old_holofile->settings_.start_frame == settings.start_frame) &&
-                  (old_holofile->settings_.end_frame == settings.end_frame) &&
-                  (old_holofile->settings_.batch_size == settings.batch_size);
-
-  bool reuse_buf = same_cfg && settings.load_kind != HolofileSettings::LoadKind::Live;
+  bool same_path        = (old_holofile->settings_.path == settings.path);
+  bool same_load_kind   = (old_holofile->settings_.load_kind == settings.load_kind);
+  bool same_start_frame = (old_holofile->settings_.start_frame == settings.start_frame);
+  bool same_end_frame   = (old_holofile->settings_.end_frame == settings.end_frame);
+  bool same_batch_size  = (old_holofile->settings_.batch_size == settings.batch_size);
+  bool same_data        = same_path && same_load_kind && same_start_frame && same_end_frame;
+  bool reuse_buf =
+      same_data && (settings.load_kind != HolofileSettings::LoadKind::Live || same_batch_size);
 
   if (reuse_buf) {
     logger()->debug("[HolofileFactory::update] Reusing existing Holofile task");
@@ -278,8 +289,15 @@ HolofileFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     auto d_buf  = std::move(old_holofile->d_buf_);
     reader.seek(settings.start_frame);
     int   frame_idx = settings.start_frame;
-    auto *task = new Holofile(settings, std::move(reader), header, frame_idx, buf, std::move(h_buf),
-                              std::move(d_buf), ctx.stream);
+    auto *task      = new Holofile(settings,
+                              odesc,
+                              std::move(reader),
+                              header,
+                              frame_idx,
+                              buf,
+                              std::move(h_buf),
+                              std::move(d_buf),
+                              ctx.stream);
     return std::unique_ptr<holoflow::core::ISyncTask>(task);
   }
 

@@ -100,20 +100,28 @@ void from_json(const nlohmann::json &j, HolofileSettings &hs);
 /// - CUDA runtime errors from transfer operations
 class Holofile : public holoflow::core::ISyncTask {
 public:
+  void                     release_output(int index) override;
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  Holofile(const HolofileSettings &settings, holofile::Reader &&reader,
-           const holofile::Header &header, int frame_idx, std::byte *buf,
-           HostPtr<std::byte> &&h_buf, DevPtr<std::byte> &&d_buf, cudaStream_t stream);
+  Holofile(const HolofileSettings &settings,
+           holoflow::core::TDesc   odesc,
+           holofile::Reader      &&reader,
+           const holofile::Header &header,
+           int                     frame_idx,
+           std::byte              *buf,
+           HostPtr<std::byte>    &&h_buf,
+           DevPtr<std::byte>     &&d_buf,
+           cudaStream_t            stream);
 
   friend class HolofileFactory;
 
   HolofileSettings settings_; //< Settings.
 
-  holofile::Reader reader_;    //< Reader.
-  holofile::Header header_;    //< Header.
-  int              frame_idx_; //< Next frame to read.
+  holoflow::core::TDesc odesc_;
+  holofile::Reader      reader_;    //< Reader.
+  holofile::Header      header_;    //< Header.
+  int                   frame_idx_; //< Next frame to read.
 
   std::byte         *buf_;   // Non-owning view of the active buffer.
   HostPtr<std::byte> h_buf_; // Owned CPU buffer (if any).
@@ -129,13 +137,15 @@ public:
                                     const nlohmann::json &jsettings) const override;
 
   std::unique_ptr<holoflow::core::ISyncTask>
-  create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
-         const holoflow::core::SyncCreateCtx &ctx) const override;
+  create(std::span<const holoflow::core::TDesc> input_descs,
+         const nlohmann::json                  &jsettings,
+         const holoflow::core::SyncCreateCtx   &ctx) const override;
 
   std::unique_ptr<holoflow::core::ISyncTask>
   update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
-         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
-         const holoflow::core::SyncCreateCtx &ctx) const override;
+         std::span<const holoflow::core::TDesc>     input_descs,
+         const nlohmann::json                      &jsettings,
+         const holoflow::core::SyncCreateCtx       &ctx) const override;
 };
 
 } // namespace holovibes::tasks::sources

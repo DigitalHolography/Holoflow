@@ -40,6 +40,14 @@
       ],
     },
     {
+      "label": "build:RelWithDebInfo",
+      "type": "shell",
+      "command": "\"${input:vcvarsPath}\" && cmake --build --preset build-RelWithDebInfo -j",
+      "problemMatcher": [
+        "$msCompile"
+      ],
+    },
+    {
       "label": "test:Debug",
       "type": "shell",
       "command": "\"${input:vcvarsPath}\" && ctest --preset test-Debug",
@@ -66,6 +74,13 @@
       "command": "build\\msvc-multi\\Release\\holovibes.exe",
       "problemMatcher": [],
       "dependsOn": "build:Release"
+    },
+    {
+      "label": "run:holovibes:RelWithDebInfo",
+      "type": "shell",
+      "command": "build\\msvc-multi\\RelWithDebInfo\\holovibes.exe",
+      "problemMatcher": [],
+      "dependsOn": "build:RelWithDebInfo"
     }
   ]
 }
