@@ -1,0 +1,32 @@
+name: Deploy Documentation CI
+
+on: workflow_dispatch
+
+jobs:
+  check-fork:
+    runs-on: [ self-hosted, windows, x64 ]
+    steps:
+      - name: Fork Check
+        if: github.event.pull_request.head.repo.fork == true
+        run: |
+          echo "This is a forked repository."
+          exit 1
+
+  documentation:
+    runs-on: [ self-hosted, windows, x64 ]
+    needs: check-fork
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          pip install mkdocs==1.6.1 mkdocs-get-deps==0.2.0 mkdocs-material==9.6.21 mkdocs-material-extensions==1.3.1 mkdocs-mermaid2-plugin==1.2.2 mkdocs-simple-hooks==0.1.5
+
+      - name: Deploy MkDocs
+        run: |
+          cd doc/mkdocs
+          mkdocs gh-deploy --force
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
