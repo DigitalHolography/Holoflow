@@ -1,15 +1,11 @@
-name: Main Branch CI
+name: Release CI
 
-on:
-  push:
-    branches:
-      - main
+on: workflow_dispatch
 
 env:
   BUILD_TYPE: Release
 
 jobs:
-
   check-fork:
     runs-on: [ self-hosted, windows, x64 ]
     steps:
@@ -50,24 +46,5 @@ jobs:
             --title "v$version" `
             --notes "Automated release of version $version" `
             --latest
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  documentation:
-    runs-on: [ self-hosted, windows, x64 ]
-    needs: build-package
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          pip install mkdocs==1.6.1 mkdocs-get-deps==0.2.0 mkdocs-material==9.6.21 mkdocs-material-extensions==1.3.1 mkdocs-mermaid2-plugin==1.2.2 mkdocs-simple-hooks==0.1.5
-
-      - name: Deploy MkDocs
-        run: |
-          cd doc/mkdocs
-          mkdocs gh-deploy --force
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
