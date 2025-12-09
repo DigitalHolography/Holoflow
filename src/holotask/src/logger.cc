@@ -35,4 +35,4 @@ std::shared_ptr<spdlog::logger> logger() {
   return logger;
 }
 
-} // namespace holovibes
+} // namespace holotask

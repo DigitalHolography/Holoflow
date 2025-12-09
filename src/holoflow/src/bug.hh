@@ -24,21 +24,19 @@
 #define ANSI_RED "\033[31m"
 #define ANSI_RESET "\033[0m"
 
-#define HOLOFLOW_BUG(fmt, ...)                                                 \
-  do {                                                                         \
-    spdlog::critical(ANSI_RED                                                  \
-                     "THIS IS A BUG!\nPlease report it to [{}] at [{}].\n" fmt \
-                     "\n(File: {}, Line: {})" ANSI_RESET,                      \
-                     DH_ORG, DH_CONTACT, ##__VA_ARGS__, __FILE__, __LINE__);   \
-    std::abort();                                                              \
+#define HOLOFLOW_BUG(fmt, ...)                                                                     \
+  do {                                                                                             \
+    spdlog::critical(ANSI_RED "THIS IS A BUG!\nPlease report it to [{}] at [{}].\n" fmt            \
+                              "\n(File: {}, Line: {})" ANSI_RESET,                                 \
+                     DH_ORG, DH_CONTACT, ##__VA_ARGS__, __FILE__, __LINE__);                       \
+    std::abort();                                                                                  \
   } while (0)
 
-#define HOLOFLOW_CHECK(condition, ...)                                         \
-  do {                                                                         \
-    if (!(condition)) {                                                        \
-      HOLOFLOW_BUG("Check failed: {}." __VA_OPT__(" ") __VA_ARGS__,            \
-                   #condition);                                                \
-    }                                                                          \
+#define HOLOFLOW_CHECK(condition, ...)                                                             \
+  do {                                                                                             \
+    if (!(condition)) {                                                                            \
+      HOLOFLOW_BUG("Check failed: {}." __VA_OPT__(" ") __VA_ARGS__, #condition);                   \
+    }                                                                                              \
   } while (0)
 
 #define HOLOFLOW_UNIMPLEMENTED() HOLOFLOW_BUG("Unimplemented code reached.")

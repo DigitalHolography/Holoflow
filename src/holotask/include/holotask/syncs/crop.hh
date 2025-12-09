@@ -14,9 +14,9 @@
 
 #pragma once
 
-#include <vector>
-#include "holoflow/core/tasks.hh"
 #include "curaii/cuda.hh"
+#include "holoflow/core/tasks.hh"
+#include <vector>
 
 namespace holotask::syncs {
 
@@ -25,42 +25,38 @@ struct CropSettings {
   std::vector<std::size_t> shape;  // Forme résultante [new_dim0, new_dim1, new_dim2, ...]
 };
 
-void to_json(nlohmann::json& j, const CropSettings& settings);
-void from_json(const nlohmann::json& j, CropSettings& settings);
+void to_json(nlohmann::json &j, const CropSettings &settings);
+void from_json(const nlohmann::json &j, CropSettings &settings);
 
 class Crop : public holoflow::core::ISyncTask {
 public:
-  Crop(const CropSettings& settings, cudaStream_t stream);
+  Crop(const CropSettings &settings, cudaStream_t stream);
 
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx& ctx) override;
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
   CropSettings settings_;
   cudaStream_t stream_;
-  
+
   // Méthodes pour les différentes dimensions
-  void crop_1d(const holoflow::core::TDesc& input_desc, 
-               const holoflow::core::TDesc& output_desc,
-               float* input, float* output);
-  
-  void crop_2d(const holoflow::core::TDesc& input_desc,
-               const holoflow::core::TDesc& output_desc,
-               float* input, float* output);
-  
-  void crop_3d(const holoflow::core::TDesc& input_desc,
-               const holoflow::core::TDesc& output_desc,
-               float* input, float* output);
+  void crop_1d(const holoflow::core::TDesc &input_desc, const holoflow::core::TDesc &output_desc,
+               float *input, float *output);
+
+  void crop_2d(const holoflow::core::TDesc &input_desc, const holoflow::core::TDesc &output_desc,
+               float *input, float *output);
+
+  void crop_3d(const holoflow::core::TDesc &input_desc, const holoflow::core::TDesc &output_desc,
+               float *input, float *output);
 };
 
 class CropFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
-                                    const nlohmann::json& jsettings) const override;
+                                    const nlohmann::json &jsettings) const override;
 
   std::unique_ptr<holoflow::core::ISyncTask>
-  create(std::span<const holoflow::core::TDesc> input_descs,
-         const nlohmann::json& jsettings,
-         const holoflow::core::SyncCreateCtx& ctx) const override;
+  create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
 } // namespace holotask::syncs

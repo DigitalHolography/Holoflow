@@ -78,7 +78,7 @@ Reader::Reader(const std::string &path) : frame_index_(0) {
   }
 
   try {
-    read_footer();\
+    read_footer();
   } catch (const Exception &e) {
     logger()->warn("Holofile footer could not be read: {}", e.what());
     footer_ = std::nullopt;

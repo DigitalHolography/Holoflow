@@ -46,7 +46,8 @@ private:
     double      duration_ms;
   };
 
-  void write_profile_report(const std::vector<StepTiming> &step_timings, double total_duration_ms) const;
+  void write_profile_report(const std::vector<StepTiming> &step_timings,
+                            double                         total_duration_ms) const;
 
   void check_duplicate_names();
   void check_duplicate_edge_dst();

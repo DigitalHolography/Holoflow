@@ -71,8 +71,8 @@ public:
 
   [[nodiscard]] cufftHandle get() const noexcept;
   [[nodiscard]] cufftHandle release() noexcept;
-  void                     reset(cufftHandle handle = 0) noexcept;
-  explicit                 operator bool() const noexcept;
+  void                      reset(cufftHandle handle = 0) noexcept;
+  explicit                  operator bool() const noexcept;
 
 private:
   cufftHandle handle_{0};

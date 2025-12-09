@@ -32,4 +32,4 @@ namespace holoflow::runtime {
 /// @return          DOT source as std::string.
 std::string to_dot(const CompilerOutput &out, core::Registry &registry);
 
-} // namespace holoflow::core
+} // namespace holoflow::runtime

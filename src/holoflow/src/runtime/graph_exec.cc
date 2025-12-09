@@ -22,9 +22,9 @@
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <nvtx3/nvtx3.hpp>
 #include <vector>
 #include <windows.h>
-#include <nvtx3/nvtx3.hpp>
 
 #include "boost/graph/properties.hpp"
 #include "boost/range/iterator_range_core.hpp"
@@ -230,7 +230,7 @@ void Scheduler::run_section(int section_id) {
 
   while (!stop_.load()) {
     logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
-      nvtxRangePush(sec.name.c_str());
+    nvtxRangePush(sec.name.c_str());
 
     // Acquire owned inputs.
     //

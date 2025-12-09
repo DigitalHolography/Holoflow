@@ -99,5 +99,4 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
-
 } // namespace holotask::syncs

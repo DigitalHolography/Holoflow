@@ -72,13 +72,12 @@ public:
   NvrtcProgram &operator=(NvrtcProgram &&other) noexcept;
 
   void create(const char *source, const char *name, int numHeaders = 0,
-              const char *const *headers = nullptr,
-              const char *const *includeNames = nullptr);
+              const char *const *headers = nullptr, const char *const *includeNames = nullptr);
 
   [[nodiscard]] nvrtcProgram get() const noexcept;
   [[nodiscard]] nvrtcProgram release() noexcept;
-  void                      reset(nvrtcProgram program = nullptr) noexcept;
-  explicit                  operator bool() const noexcept;
+  void                       reset(nvrtcProgram program = nullptr) noexcept;
+  explicit                   operator bool() const noexcept;
 
 private:
   nvrtcProgram program_{nullptr};

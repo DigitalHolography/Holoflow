@@ -1,16 +1,30 @@
 repos:
-- hooks:
-  - args:
-    - -c
-    - Digital Holography Foundation
-    files: \.(cc|cu|hh|hxx|cuh|cuhxx|py|txt|cmake|json)$
-    id: addlicense
-  repo: https://github.com/google/addlicense
-  rev: v1.2.0
-# - hooks:
-#   - id: commitizen
-#   - id: commitizen-branch
-#     stages:
-#     - pre-push
-#   repo: https://github.com/commitizen-tools/commitizen
-#   rev: v4.10.0
+  # -------------------------------------------------------------------
+  # Add license headers
+  # -------------------------------------------------------------------
+  - repo: https://github.com/google/addlicense
+    rev: v1.2.0
+    hooks:
+      - id: addlicense
+        name: addlicense
+        args:
+          - -c
+          - "Digital Holography Foundation"
+        files: \.(cc|hh|cu|cuh|hxx|cuhxx|py|txt|cmake|json)$
+        stages: [ pre-commit ]
+
+  # -------------------------------------------------------------------
+  # Check C++ / CUDA formatting
+  # -------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: clang-format
+        name: clang-format
+        entry: clang-format
+        language: system
+        files: \.(cc|hh|cu|cuh|hxx|cuhxx)$
+        args:
+          - --style=file
+          - --dry-run
+          - --Werror
+        stages: [ pre-commit ]
