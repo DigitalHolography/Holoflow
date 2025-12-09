@@ -29,34 +29,34 @@
 
 #include "bug.hh"
 #include "holoflow/runtime/graph_display.hh"
+#include "holotask/asyncs/batch_queue.hh"
+#include "holotask/asyncs/slide_avg.hh"
+#include "holotask/sinks/holofile.hh"
+#include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
+#include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sources/holofile.hh"
+#include "holotask/syncs/angular_spectrum.hh"
+#include "holotask/syncs/average.hh"
+#include "holotask/syncs/conversion.hh"
+#include "holotask/syncs/convolution.hh"
+#include "holotask/syncs/crop.hh"
+#include "holotask/syncs/fft_shift.hh"
+#include "holotask/syncs/filter2d.hh"
+#include "holotask/syncs/fresnel_diffraction.hh"
+#include "holotask/syncs/memcpy.hh"
+#include "holotask/syncs/pca.hh"
+#include "holotask/syncs/pct_clip.hh"
+#include "holotask/syncs/registration.hh"
+#include "holotask/syncs/reshape.hh"
+#include "holotask/syncs/rotation.hh"
+#include "holotask/syncs/stft.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
-#include "tasks/asyncs/batch_queue.hh"
-#include "tasks/asyncs/slide_avg.hh"
 #include "tasks/sinks/display_tensor.hh"
-#include "tasks/sinks/holofile.hh"
-#include "tasks/sources/ametek_s710_euresys_coaxlink_octo.hh"
-#include "tasks/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
-#include "tasks/sources/holofile.hh"
-#include "tasks/syncs/angular_spectrum.hh"
-#include "tasks/syncs/average.hh"
-#include "tasks/syncs/conversion.hh"
-#include "tasks/syncs/convolution.hh"
-#include "tasks/syncs/crop.hh"
-#include "tasks/syncs/fft_shift.hh"
-#include "tasks/syncs/filter2d.hh"
-#include "tasks/syncs/fresnel_diffraction.hh"
-#include "tasks/syncs/memcpy.hh"
-#include "tasks/syncs/pca.hh"
-#include "tasks/syncs/pct_clip.hh"
-#include "tasks/syncs/registration.hh"
-#include "tasks/syncs/reshape.hh"
-#include "tasks/syncs/rotation.hh"
-#include "tasks/syncs/stft.hh"
 
 #include "graph_builder.hh"
 
-using namespace holovibes::tasks;
+using namespace holotask;
 
 namespace holovibes::pipeline {
 
@@ -82,16 +82,20 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
       yz_processed_widget_(yz_processed_widget), xy_raw_widget_(xy_raw_widget) {
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
-  reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
-  reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
-  reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ", yz_processed_widget_);
-  reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY",
+                                                          xy_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ",
+                                                          xz_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ",
+                                                          yz_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw",
+                                                          xy_raw_widget_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_,
                                                           "AmetekS710EuresysCoaxlinkOcto");
 
-  reg_sync<sources::AmetekS711EuresysCoaxlinkOctoFactory>(registry_,
+  reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_,
                                                           "AmetekS711EuresysCoaxlinkQSFP+");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
   reg_sync<syncs::AverageFactory>(registry_, "Average");

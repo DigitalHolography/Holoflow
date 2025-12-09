@@ -14,32 +14,32 @@
 
 #include "graph_builder.hh"
 #include "bug.hh"
+#include "holotask/asyncs/batch_queue.hh"
+#include "holotask/asyncs/slide_avg.hh"
+#include "holotask/sinks/holofile.hh"
+#include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
+#include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sources/holofile.hh"
+#include "holotask/syncs/angular_spectrum.hh"
+#include "holotask/syncs/average.hh"
+#include "holotask/syncs/conversion.hh"
+#include "holotask/syncs/convolution.hh"
+#include "holotask/syncs/crop.hh"
+#include "holotask/syncs/fft_shift.hh"
+#include "holotask/syncs/filter2d.hh"
+#include "holotask/syncs/fresnel_diffraction.hh"
+#include "holotask/syncs/memcpy.hh"
+#include "holotask/syncs/pca.hh"
+#include "holotask/syncs/pct_clip.hh"
+#include "holotask/syncs/registration.hh"
+#include "holotask/syncs/reshape.hh"
+#include "holotask/syncs/rotation.hh"
+#include "holotask/syncs/stft.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
-#include "tasks/asyncs/batch_queue.hh"
-#include "tasks/asyncs/slide_avg.hh"
 #include "tasks/sinks/display_tensor.hh"
-#include "tasks/sinks/holofile.hh"
-#include "tasks/sources/ametek_s710_euresys_coaxlink_octo.hh"
-#include "tasks/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
-#include "tasks/sources/holofile.hh"
-#include "tasks/syncs/angular_spectrum.hh"
-#include "tasks/syncs/average.hh"
-#include "tasks/syncs/conversion.hh"
-#include "tasks/syncs/convolution.hh"
-#include "tasks/syncs/crop.hh"
-#include "tasks/syncs/fft_shift.hh"
-#include "tasks/syncs/filter2d.hh"
-#include "tasks/syncs/fresnel_diffraction.hh"
-#include "tasks/syncs/memcpy.hh"
-#include "tasks/syncs/pca.hh"
-#include "tasks/syncs/pct_clip.hh"
-#include "tasks/syncs/registration.hh"
-#include "tasks/syncs/reshape.hh"
-#include "tasks/syncs/rotation.hh"
-#include "tasks/syncs/stft.hh"
 
-using namespace holovibes::tasks;
+using namespace holotask;
 
 namespace holovibes::pipeline {
 
@@ -340,7 +340,7 @@ GraphBuilder::V GraphBuilder::add_cpu_raw_view_cpy(V parent, int out_idx, int in
 }
 
 GraphBuilder::V GraphBuilder::add_xy_raw_display(V parent, int out_idx, int in_idx) {
-  using sinks::DisplayTensorSettings;
+  using holovibes::tasks::sinks::DisplayTensorSettings;
   return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "xy_raw_display",
                                                "DisplayTensorXYRaw", DisplayTensorSettings{});
 }
@@ -627,7 +627,7 @@ GraphBuilder::V GraphBuilder::add_xy_cpu_out_queue(V parent, int out_idx, int in
 }
 
 GraphBuilder::V GraphBuilder::add_xy_processed_display(V parent, int out_idx, int in_idx) {
-  using sinks::DisplayTensorSettings;
+  using holovibes::tasks::sinks::DisplayTensorSettings;
   return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "xy_processed_display",
                                                "DisplayTensorXY", DisplayTensorSettings{});
 }
@@ -710,7 +710,7 @@ GraphBuilder::V GraphBuilder::add_xz_cpu_out_queue(V parent, int out_idx, int in
 }
 
 GraphBuilder::V GraphBuilder::add_xz_processed_display(V parent, int out_idx, int in_idx) {
-  using sinks::DisplayTensorSettings;
+  using holovibes::tasks::sinks::DisplayTensorSettings;
   return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "xz_processed_display",
                                                "DisplayTensorXZ", DisplayTensorSettings{});
 }
@@ -801,7 +801,7 @@ GraphBuilder::V GraphBuilder::add_yz_cpu_out_queue(V parent, int out_idx, int in
 }
 
 GraphBuilder::V GraphBuilder::add_yz_processed_display(V parent, int out_idx, int in_idx) {
-  using sinks::DisplayTensorSettings;
+  using holovibes::tasks::sinks::DisplayTensorSettings;
   return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "yz_processed_display",
                                                "DisplayTensorYZ", DisplayTensorSettings{});
 }
