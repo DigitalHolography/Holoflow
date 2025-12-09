@@ -120,7 +120,7 @@ __global__ void apply_filter_2d_kernel(cuFloatComplex *filter, const uint32_t wi
   const float r_x  = static_cast<float>(x) - static_cast<float>(width) / 2;
   const float r_y  = static_cast<float>(y) - static_cast<float>(height) / 2;
   const float dist = hypotf(r_x, r_y);
-  
+
   const float f_r_inner      = static_cast<float>(r_inner);
   const float f_r_outer      = static_cast<float>(r_outer);
   const float f_smooth_inner = static_cast<float>(smooth_inner);

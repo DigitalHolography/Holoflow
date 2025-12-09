@@ -930,7 +930,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   }
 
   // --- View Settings ---
-  { view_widget_->set_cuts_3d_enabled(s.view_3d_cuts); }
+  {
+    view_widget_->set_cuts_3d_enabled(s.view_3d_cuts);
+  }
 
   // --- Post-processing Settings ---
   {

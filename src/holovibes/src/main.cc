@@ -25,7 +25,6 @@
 #include "spdlog/common.h"
 #include "ui/main_window.hh"
 
-
 int main(int argc, char **argv) {
   spdlog::set_level(spdlog::level::debug);
 

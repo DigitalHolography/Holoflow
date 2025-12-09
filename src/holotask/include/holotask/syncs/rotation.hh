@@ -24,7 +24,7 @@ struct RotationSettings {
   enum class Axis { X, Y, Z };
 
   size_t angle = 0;
-  Axis axis = Axis::Z;
+  Axis   axis  = Axis::Z;
 };
 
 void to_json(nlohmann::json &j, const RotationSettings &s);
@@ -38,7 +38,7 @@ public:
 
 private:
   RotationSettings settings_;
-  cudaStream_t stream_;
+  cudaStream_t     stream_;
 };
 
 class RotationFactory : public holoflow::core::ISyncTaskFactory {
@@ -47,8 +47,7 @@ public:
                                     const nlohmann::json &jsettings) const override;
 
   std::unique_ptr<holoflow::core::ISyncTask>
-  create(std::span<const holoflow::core::TDesc> input_descs,
-         const nlohmann::json &jsettings,
+  create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

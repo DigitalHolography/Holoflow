@@ -19,91 +19,70 @@
 
 namespace holotask::syncs {
 
-void to_json(nlohmann::json& j, const CropSettings& settings) {
-  j = nlohmann::json{
-      {"origin", settings.origin},
-      {"shape", settings.shape}
-  };
+void to_json(nlohmann::json &j, const CropSettings &settings) {
+  j = nlohmann::json{{"origin", settings.origin}, {"shape", settings.shape}};
 }
 
-void from_json(const nlohmann::json& j, CropSettings& settings) {
+void from_json(const nlohmann::json &j, CropSettings &settings) {
   j.at("origin").get_to(settings.origin);
   j.at("shape").get_to(settings.shape);
 }
 
-Crop::Crop(const CropSettings& settings, cudaStream_t stream)
+Crop::Crop(const CropSettings &settings, cudaStream_t stream)
     : settings_(settings), stream_(stream) {}
 
-holoflow::core::OpResult Crop::execute(holoflow::core::SyncCtx& ctx) {
-  
-  holoflow::core::TView& input = ctx.inputs[0];
-  holoflow::core::TView& output = ctx.outputs[0];
-  
-  const std::size_t input_depth = input.desc.shape[0];
-  const std::size_t input_height = input.desc.shape[1];
-  const std::size_t input_width = input.desc.shape[2];
-  const std::size_t output_depth = output.desc.shape[0];
+holoflow::core::OpResult Crop::execute(holoflow::core::SyncCtx &ctx) {
+
+  holoflow::core::TView &input  = ctx.inputs[0];
+  holoflow::core::TView &output = ctx.outputs[0];
+
+  const std::size_t input_depth   = input.desc.shape[0];
+  const std::size_t input_height  = input.desc.shape[1];
+  const std::size_t input_width   = input.desc.shape[2];
+  const std::size_t output_depth  = output.desc.shape[0];
   const std::size_t output_height = output.desc.shape[1];
-  const std::size_t output_width = output.desc.shape[2];
-  
+  const std::size_t output_width  = output.desc.shape[2];
+
   const std::size_t origin_z = settings_.origin[0];
   const std::size_t origin_y = settings_.origin[1];
   const std::size_t origin_x = settings_.origin[2];
 
-  logger()->trace("[Crop] 3D crop: input shape = [{}, {}, {}], output shape = [{}, {}, {}], origin = [{}, {}, {}]",
-                 input_depth, input_height, input_width,
-                 output_depth, output_height, output_width,
-                 origin_z, origin_y, origin_x);
-  
-  if (origin_z + output_depth > input_depth ||
-      origin_y + output_height > input_height ||
+  logger()->trace("[Crop] 3D crop: input shape = [{}, {}, {}], output shape = [{}, {}, {}], origin "
+                  "= [{}, {}, {}]",
+                  input_depth, input_height, input_width, output_depth, output_height, output_width,
+                  origin_z, origin_y, origin_x);
+
+  if (origin_z + output_depth > input_depth || origin_y + output_height > input_height ||
       origin_x + output_width > input_width) {
     logger()->error("[Crop] Crop region exceeds input bounds");
     return holoflow::core::OpResult::Cancelled;
   }
-  
+
   cudaMemcpy3DParms params = {0};
-  
-  params.srcPtr = make_cudaPitchedPtr(
-      (void*)input.data,
-      input_width * sizeof(float),
-      input_width,
-      input_height
-  );
-  
-  params.dstPtr = make_cudaPitchedPtr(
-      (void*)output.data,
-      output_width * sizeof(float),
-      output_width,
-      output_height
-  );
-  
-  params.srcPos = make_cudaPos(
-      origin_x,
-      origin_y,
-      origin_z
-  );
-  
+
+  params.srcPtr = make_cudaPitchedPtr((void *)input.data, input_width * sizeof(float), input_width,
+                                      input_height);
+
+  params.dstPtr = make_cudaPitchedPtr((void *)output.data, output_width * sizeof(float),
+                                      output_width, output_height);
+
+  params.srcPos = make_cudaPos(origin_x, origin_y, origin_z);
+
   params.dstPos = make_cudaPos(0, 0, 0);
-  
-  params.extent = make_cudaExtent(
-      output_width * sizeof(float),
-      output_height,
-      output_depth
-  );
-  
+
+  params.extent = make_cudaExtent(output_width * sizeof(float), output_height, output_depth);
+
   params.kind = cudaMemcpyDeviceToDevice;
-  
+
   CUDA_CHECK(cudaMemcpy3DAsync(&params, stream_));
-  
+
   return holoflow::core::OpResult::Ok;
 }
 
-holoflow::core::InferResult CropFactory::infer(
-    std::span<const holoflow::core::TDesc> input_descs,
-    const nlohmann::json& jsettings) const {
-  
-  const auto check = [&](bool condition, const std::string& msg) {
+holoflow::core::InferResult CropFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
+                                               const nlohmann::json &jsettings) const {
+
+  const auto check = [&](bool condition, const std::string &msg) {
     if (!condition) {
       logger()->error("[CropFactory::infer] error: {}", msg);
       throw std::invalid_argument("CropFactory inference error: " + msg);
@@ -113,8 +92,7 @@ holoflow::core::InferResult CropFactory::infer(
   auto settings = jsettings.get<CropSettings>();
 
   check(input_descs.size() == 1, "expected exactly one input");
-  check(input_descs[0].dtype == holoflow::core::DType::F32,
-        "only Float32 data type is supported");
+  check(input_descs[0].dtype == holoflow::core::DType::F32, "only Float32 data type is supported");
   const auto &idesc = input_descs[0];
 
   logger()->error("input shape: {}, {}, {} | output shape: {}, {}, {}", idesc.shape[2],
@@ -141,13 +119,13 @@ holoflow::core::InferResult CropFactory::infer(
 
 std::unique_ptr<holoflow::core::ISyncTask>
 CropFactory::create(std::span<const holoflow::core::TDesc> input_descs,
-                    const nlohmann::json& jsettings,
-                    const holoflow::core::SyncCreateCtx& ctx) const {
+                    const nlohmann::json                  &jsettings,
+                    const holoflow::core::SyncCreateCtx   &ctx) const {
 
-  auto infer = this->infer(input_descs, jsettings);
+  auto infer    = this->infer(input_descs, jsettings);
   auto settings = jsettings.get<CropSettings>();
 
-  auto* task = new Crop(settings, ctx.stream);
+  auto *task = new Crop(settings, ctx.stream);
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 

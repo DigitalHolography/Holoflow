@@ -30,7 +30,7 @@ void log_cusolver_failure(spdlog::level::level_enum lvl, cusolverStatus_t code, 
     cusolverStatus_t err__ = (expr);                                                               \
     if (err__ != CUSOLVER_STATUS_SUCCESS) {                                                        \
       ::curaii::detail::log_cusolver_failure(spdlog::level::warn, err__, #expr, __FILE__,          \
-                                              __LINE__);                                           \
+                                             __LINE__);                                            \
       throw ::curaii::CusolverError(err__, #expr, __FILE__, __LINE__);                             \
     }                                                                                              \
   } while (false)
@@ -40,7 +40,7 @@ void log_cusolver_failure(spdlog::level::level_enum lvl, cusolverStatus_t code, 
     cusolverStatus_t err__ = (expr);                                                               \
     if (err__ != CUSOLVER_STATUS_SUCCESS) {                                                        \
       ::curaii::detail::log_cusolver_failure(spdlog::level::critical, err__, #expr, __FILE__,      \
-                                              __LINE__);                                           \
+                                             __LINE__);                                            \
       std::abort();                                                                                \
     }                                                                                              \
   } while (false)
@@ -73,8 +73,8 @@ public:
 
   [[nodiscard]] cusolverDnHandle_t get() const noexcept;
   [[nodiscard]] cusolverDnHandle_t release() noexcept;
-  void                              reset(cusolverDnHandle_t handle = nullptr) noexcept;
-  explicit                          operator bool() const noexcept;
+  void                             reset(cusolverDnHandle_t handle = nullptr) noexcept;
+  explicit                         operator bool() const noexcept;
 
 private:
   cusolverDnHandle_t handle_{nullptr};
@@ -93,8 +93,8 @@ public:
 
   [[nodiscard]] cusolverDnParams_t get() const noexcept;
   [[nodiscard]] cusolverDnParams_t release() noexcept;
-  void                              reset(cusolverDnParams_t params = nullptr) noexcept;
-  explicit                          operator bool() const noexcept;
+  void                             reset(cusolverDnParams_t params = nullptr) noexcept;
+  explicit                         operator bool() const noexcept;
 
 private:
   cusolverDnParams_t params_{nullptr};

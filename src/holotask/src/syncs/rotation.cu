@@ -37,15 +37,15 @@ void from_json(const nlohmann::json &j, RotationSettings &s) {
 
 namespace {
 
-__global__ void rotate_kernel(holoflow::core::TView Source, holoflow::core::TView Destination, int sizeX, int sizeY, float deg)
-{
+__global__ void rotate_kernel(holoflow::core::TView Source, holoflow::core::TView Destination,
+                              int sizeX, int sizeY, float deg) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
 
   if (x >= sizeX || y >= sizeY)
     return;
 
-  int newX = sizeX - 1 - y;   
+  int newX = sizeX - 1 - y;
 
   Destination.data[x * sizeY + newX] = Source.data[y * sizeX + x];
 }
@@ -63,16 +63,15 @@ holoflow::core::OpResult Rotation::execute(holoflow::core::SyncCtx &ctx) {
     return holoflow::core::OpResult::NotReady;
   }
 
-  holoflow::core::TView& input = ctx.inputs[0];
-  holoflow::core::TView& output = ctx.outputs[0];
+  holoflow::core::TView &input  = ctx.inputs[0];
+  holoflow::core::TView &output = ctx.outputs[0];
 
-  logger()->trace("[Rotation::execute] Rotating tensor of shape {} by {} degrees for a new tensor of shape {}",
-                 input.desc.shape,
-                 settings_.angle,
-                 output.desc.shape);
+  logger()->trace(
+      "[Rotation::execute] Rotating tensor of shape {} by {} degrees for a new tensor of shape {}",
+      input.desc.shape, settings_.angle, output.desc.shape);
 
   int height = input.desc.shape[1];
-  int width = input.desc.shape[2];
+  int width  = input.desc.shape[2];
 
   CUDA_CHECK(cudaGetLastError());
 
@@ -83,13 +82,13 @@ holoflow::core::OpResult Rotation::execute(holoflow::core::SyncCtx &ctx) {
 
   CUDA_CHECK(cudaGetLastError());
   CUDA_CHECK(cudaStreamSynchronize(stream_));
-  
+
   return holoflow::core::OpResult::Ok;
 }
 
 holoflow::core::InferResult
 RotationFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
-                     const nlohmann::json &jsettings) const {
+                       const nlohmann::json                  &jsettings) const {
   const auto check = [&](bool condition, const std::string &msg) {
     if (!condition) {
       logger()->error("[RotationFactory::infer] error: {}", msg);
@@ -113,7 +112,7 @@ RotationFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
   auto odesc = idesc;
 
-  auto temp = odesc.shape[1];
+  auto temp      = odesc.shape[1];
   odesc.shape[1] = idesc.shape[2];
   odesc.shape[2] = temp;
 
@@ -129,10 +128,10 @@ RotationFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
 std::unique_ptr<holoflow::core::ISyncTask>
 RotationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
-                      const nlohmann::json &jsettings,
-                      const holoflow::core::SyncCreateCtx &ctx) const {
+                        const nlohmann::json                  &jsettings,
+                        const holoflow::core::SyncCreateCtx   &ctx) const {
   auto infer_result = infer(input_descs, jsettings);
-  auto settings = jsettings.get<RotationSettings>();
+  auto settings     = jsettings.get<RotationSettings>();
 
   auto *task = new Rotation(settings, ctx.stream);
   return std::unique_ptr<holoflow::core::ISyncTask>(task);

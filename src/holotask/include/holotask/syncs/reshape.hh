@@ -34,13 +34,12 @@ public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  explicit Reshape(
-      ReshapeSettings settings, cudaStream_t stream);
+  explicit Reshape(ReshapeSettings settings, cudaStream_t stream);
 
   friend class ReshapeFactory;
 
   ReshapeSettings settings_;
-  cudaStream_t   stream_;
+  cudaStream_t    stream_;
 };
 
 class ReshapeFactory : public holoflow::core::ISyncTaskFactory {
@@ -53,5 +52,4 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
-
-} // namespace holovibes::syncs
+} // namespace holotask::syncs
