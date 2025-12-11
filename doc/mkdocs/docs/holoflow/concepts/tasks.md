@@ -18,7 +18,7 @@ constructed. The inference step returns an `InferResult` (see
   lifetime of each tensor slot (see below).
 - `kind`: synchronous (`ISyncTask`) or asynchronous (`IAsyncTask`).
 
-Once a task instance is created the arity, descriptors, and ownership flags do
+Once a task instance is created the parity, descriptors, and ownership flags do
 not change. If the upstream topology changes the compiler asks the factory to
 `update` (or recreate) the task.
 
@@ -27,8 +27,11 @@ not change. If the upstream topology changes the compiler asks the factory to
 At runtime the scheduler supplies spans of `TView` into the task context defined
 in `src/holoflow/include/holoflow/core/tasks.hh`:
 
-- `SyncCtx` exposes `inputs`, `outputs`, and a `cancelled` flag. A synchronous
-  task performs its work inside a single `execute` call and returns an
+ - `SyncCtx` exposes `inputs`, `outputs`, a `cancelled` flag and two event
+  handles: `event_writer` and `event_reader`. These allow a synchronous task
+  to emit runtime events (UI telemetry, diagnostics) and to read events
+  posted by other components. A synchronous task performs its work inside a
+  single `execute` call and returns an
   `OpResult`.
 - `AsyncPushCtx` provides the input span to the producer side of an asynchronous
   task (`try_push`).
@@ -37,6 +40,17 @@ in `src/holoflow/include/holoflow/core/tasks.hh`:
 The scheduler refreshes the spans before every call so the task always sees
 up-to-date views. Long running work should periodically check `cancelled` and
 return `OpResult::Cancelled` when requested.
+
+### OpResult values
+
+Tasks use `OpResult` to indicate control flow status rather than errors. At
+this level you'll typically handle these cases returned by task operations:
+
+- `OpResult::Ok` — operation completed and output(s) are available.
+- `OpResult::NotReady` — no work available now; caller may retry later.
+- `OpResult::Cancelled` — cooperative cancellation; caller should stop using
+  the task.
+- `OpResult::Eof` — end-of-stream for push/pop style tasks.
 
 ### In-place Reuse
 

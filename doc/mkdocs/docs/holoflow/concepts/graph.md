@@ -197,7 +197,17 @@ GraphSpec create_graph_spec() {
 
   return graph_spec;
 }
+
 ```
+
+### GraphSpec utilities & serialization
+
+Holoflow provides helpers to serialize and inspect graph specifications. You
+can convert a `GraphSpec` into JSON (and back) and produce Graphviz DOT source
+for visualization. The JSON helper accepts `GraphSpecWriteOptions` that let
+you control how much detail is emitted (node names, kinds, settings, edge
+indices, ...). These utilities are intended for debugging, logging and
+persisting pipeline specs.
 
 ## Graph Compilation & Execution
 ### Factories
@@ -280,6 +290,19 @@ void compile_graph() {
   }
 }
 ```
+    
+### Compiled artifacts (brief)
+
+The compiler produces a `CompilerOutput` containing a low-level `GraphPlan` and
+execution artifacts. The `GraphPlan` uses `NodePlan` and `EdgePlan` entries to
+carry inference metadata and assigned tensor IDs. The `ExecResouces` object
+contains preallocated CUDA streams, instantiated task objects, and allocated
+`Tensor` buffers indexed by tensor id. These are then grouped into `Section`
+objects used by the scheduler.
+
+The important practical point is that the compiled artifacts include both the
+logical plan and the physical resources required to run the pipeline — and you
+should keep these alive while the scheduler is executing the graph.
 
 ### Execution
 The holoflow scheduler is started with those three components and executes the graph accordingly. It is also responsible for runtime

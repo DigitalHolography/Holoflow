@@ -12,6 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-enable_testing()
-add_subdirectory(holoflow)
-add_subdirectory(holotask)
+set(TARGET holotask_test)
+
+file(GLOB_RECURSE HOLOTASK_TEST_SOURCES 
+    ${CMAKE_CURRENT_SOURCE_DIR}/*.cc
+)
+
+add_executable(${TARGET} 
+    ${HOLOTASK_TEST_SOURCES}
+)
+
+target_link_libraries(${TARGET}
+PRIVATE
+    project_options
+    holotask
+    gtest_main
+)
+
+include(GoogleTest)
+gtest_discover_tests(${TARGET})
