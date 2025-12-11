@@ -55,6 +55,7 @@
 #include "tasks/syncs/stft.hh"
 
 #include "graph_builder.hh"
+#include "graph_builder_v2.hh"
 
 using namespace holovibes::tasks;
 
@@ -77,9 +78,11 @@ void reg_async(holoflow::core::Registry &r, std::string_view name, Args &&...arg
 Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
                  ui::TensorDisplayWidget *xz_processed_widget,
                  ui::TensorDisplayWidget *yz_processed_widget,
-                 ui::TensorDisplayWidget *xy_raw_widget)
-    : xy_processed_widget_(xy_processed_widget), xz_processed_widget_(xz_processed_widget),
-      yz_processed_widget_(yz_processed_widget), xy_raw_widget_(xy_raw_widget) {
+                 ui::TensorDisplayWidget *xy_raw_widget) :
+    xy_processed_widget_(xy_processed_widget),
+    xz_processed_widget_(xz_processed_widget),
+    yz_processed_widget_(yz_processed_widget),
+    xy_raw_widget_(xy_raw_widget) {
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
   reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
@@ -326,7 +329,8 @@ void Manager::poll_events() {
     }
 
     // Handle event
-    logger()->info("[Manager::poll_events] Received event from node '{}': {}", event->node_id,
+    logger()->info("[Manager::poll_events] Received event from node '{}': {}",
+                   event->node_id,
                    event->data.dump());
 
     std::string type;
@@ -412,6 +416,11 @@ void Manager::build_and_run() {
 void Manager::build_graph_spec() {
   logger()->info("[Manager::build_graph_spec] Building graph spec...");
   HOLOVIBES_CHECK(settings_dirty_, "Settings are not dirty, no need to rebuild graph spec");
+
+  GraphBuilder_v2 builder_v2(s_, registry_);
+  auto            g   = builder_v2.build();
+  auto            dot = holoflow::core::to_dot(g);
+  std::ofstream("logs/graph_builder_v2_output.dot") << dot;
 
   reset_graph_spec();
   guess_optimizations();

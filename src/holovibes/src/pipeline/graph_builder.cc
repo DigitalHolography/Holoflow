@@ -43,10 +43,18 @@ using namespace holovibes::tasks;
 
 namespace holovibes::pipeline {
 
-GraphBuilder::GraphBuilder(holoflow::core::GraphSpec &spec, const Settings &settings, int src_width,
-                           int src_height, bool opti_cpu_stride, bool opti_gpu_stride)
-    : spec_(spec), s_(settings), src_width_(src_width), src_height_(src_height),
-      opti_cpu_stride_(opti_cpu_stride), opti_gpu_stride_(opti_gpu_stride) {}
+GraphBuilder::GraphBuilder(holoflow::core::GraphSpec &spec,
+                           const Settings            &settings,
+                           int                        src_width,
+                           int                        src_height,
+                           bool                       opti_cpu_stride,
+                           bool                       opti_gpu_stride) :
+    spec_(spec),
+    s_(settings),
+    src_width_(src_width),
+    src_height_(src_height),
+    opti_cpu_stride_(opti_cpu_stride),
+    opti_gpu_stride_(opti_gpu_stride) {}
 
 void GraphBuilder::build() {
   logger()->info("[GraphBuilder::build] Building graph spec...");
@@ -67,17 +75,17 @@ void GraphBuilder::build() {
   // Build raw record branch
   if (s_.recording_method == RecordingMethod::RAW) {
     current_section_name_ = "recording::";
-    auto cpu_cpu_cpy  = add_cpu_cpu_cpy(source, 0, 0);
-    auto record_queue = add_record_queue(cpu_cpu_cpy, 0, 0);
+    auto cpu_cpu_cpy      = add_cpu_cpu_cpy(source, 0, 0);
+    auto record_queue     = add_record_queue(cpu_cpu_cpy, 0, 0);
     current_section_name_.clear();
     auto raw_record = add_raw_record(record_queue, 0, 0);
     (void)raw_record;
   }
 
   if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
-    auto cpu_gpu_cpy = add_cpu_gpu_cpy(parent, 0, 0);
+    auto cpu_gpu_cpy  = add_cpu_gpu_cpy(parent, 0, 0);
     auto gpu_in_queue = add_gpu_in_queue(cpu_gpu_cpy, 0, 0);
-    parent           = gpu_in_queue;
+    parent            = gpu_in_queue;
   }
 
   // Build processed branches
@@ -116,7 +124,11 @@ GraphBuilder::V GraphBuilder::build_processed_branch(V parent) {
   using syncs::ConversionSettings;
   using Target   = ConversionSettings::Target;
   using Strategy = ConversionSettings::Strategy;
-  auto to_f32    = add_node_after<ConversionSettings>(parent, 0, 0, "to_f32_", "Conversion",
+  auto to_f32    = add_node_after<ConversionSettings>(parent,
+                                                   0,
+                                                   0,
+                                                   "to_f32_",
+                                                   "Conversion",
                                                       {
                                                           .target   = Target::F32,
                                                           .strategy = Strategy::Real,
@@ -130,8 +142,9 @@ GraphBuilder::V GraphBuilder::build_processed_branch(V parent) {
   }
 
   if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
-    auto to_cf32 = add_to_cf32(parent, 0, 0);
-    parent       = to_cf32;
+    auto time_queue = add_time_queue(parent, 0, 0);
+    auto to_cf32    = add_to_cf32(time_queue, 0, 0);
+    parent          = to_cf32;
   }
 
   if (s_.filter_2d) {
@@ -226,8 +239,10 @@ void GraphBuilder::build_yz_branch(V debounce_queue) {
 }
 
 template <JsonSerializable S>
-GraphBuilder::V GraphBuilder::add_node(const std::string &name, const std::string &kind,
-                                       const S &settings, bool debug) {
+GraphBuilder::V GraphBuilder::add_node(const std::string &name,
+                                       const std::string &kind,
+                                       const S           &settings,
+                                       bool               debug) {
   auto v = boost::add_vertex(holoflow::core::NodeSpec{.name     = current_section_name_ + name,
                                                       .kind     = kind,
                                                       .settings = nlohmann::json(settings),
@@ -237,9 +252,13 @@ GraphBuilder::V GraphBuilder::add_node(const std::string &name, const std::strin
 }
 
 template <JsonSerializable S>
-GraphBuilder::V GraphBuilder::add_node_after(const V &after, int out_idx, int in_idx,
-                                             const std::string &name, const std::string &kind,
-                                             const S &settings, bool debug) {
+GraphBuilder::V GraphBuilder::add_node_after(const V           &after,
+                                             int                out_idx,
+                                             int                in_idx,
+                                             const std::string &name,
+                                             const std::string &kind,
+                                             const S           &settings,
+                                             bool               debug) {
   auto v = add_node(name, kind, settings, debug);
   boost::add_edge(after, v, {out_idx, in_idx}, spec_);
   return v;
@@ -255,7 +274,8 @@ GraphBuilder::V GraphBuilder::add_source() {
         {LoadMethod::LOAD_IN_GPU, LoadKind::GPUCached},
     };
 
-    return add_node<HolofileSettings>("source", "Holofile",
+    return add_node<HolofileSettings>("source",
+                                      "Holofile",
                                       HolofileSettings{
                                           .path        = s_.load_path.string(),
                                           .load_kind   = load_method_map.at(s_.load_method),
@@ -268,7 +288,8 @@ GraphBuilder::V GraphBuilder::add_source() {
   else if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
     using sources::AmetekS710EuresysCoaxlinkOctoSettings;
     return add_node<AmetekS710EuresysCoaxlinkOctoSettings>(
-        "source", "AmetekS710EuresysCoaxlinkOcto",
+        "source",
+        "AmetekS710EuresysCoaxlinkOcto",
         AmetekS710EuresysCoaxlinkOctoSettings{
             .cfg_path = s_.camera_config_path.string(),
         });
@@ -277,7 +298,8 @@ GraphBuilder::V GraphBuilder::add_source() {
   else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
     using sources::AmetekS711EuresysCoaxlinkQSFPSettings;
     return add_node<AmetekS711EuresysCoaxlinkQSFPSettings>(
-        "source", "AmetekS711EuresysCoaxlinkQSFP+",
+        "source",
+        "AmetekS711EuresysCoaxlinkQSFP+",
         AmetekS711EuresysCoaxlinkQSFPSettings{
             .cfg_path = s_.camera_config_path.string(),
         });
@@ -289,7 +311,11 @@ GraphBuilder::V GraphBuilder::add_source() {
 GraphBuilder::V GraphBuilder::add_cpu_raw_queue(V parent, int out_idx, int in_idx) {
   using asyncs::BatchQueueSettings;
   return add_node_after<BatchQueueSettings>(
-      parent, out_idx, in_idx, "cpu_raw_queue", "BatchQueue",
+      parent,
+      out_idx,
+      in_idx,
+      "cpu_raw_queue",
+      "BatchQueue",
       BatchQueueSettings{
           .target_capacity = s_.cpu_in_size,
           .output_size     = 1,
@@ -300,7 +326,11 @@ GraphBuilder::V GraphBuilder::add_cpu_raw_queue(V parent, int out_idx, int in_id
 GraphBuilder::V GraphBuilder::add_raw_reshape(V parent, int out_idx, int in_idx) {
   using syncs::ReshapeSettings;
   return add_node_after<ReshapeSettings>(
-      parent, out_idx, in_idx, "raw_reshape", "Reshape",
+      parent,
+      out_idx,
+      in_idx,
+      "raw_reshape",
+      "Reshape",
       ReshapeSettings{
           .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(src_width_)},
       });
@@ -309,7 +339,11 @@ GraphBuilder::V GraphBuilder::add_raw_reshape(V parent, int out_idx, int in_idx)
 GraphBuilder::V GraphBuilder::add_cpu_in_queue(V parent, int out_idx, int in_idx) {
   using asyncs::BatchQueueSettings;
   return add_node_after<BatchQueueSettings>(
-      parent, out_idx, in_idx, "cpu_in_queue", "BatchQueue",
+      parent,
+      out_idx,
+      in_idx,
+      "cpu_in_queue",
+      "BatchQueue",
       BatchQueueSettings{
           .target_capacity = s_.cpu_in_size,
           .output_size     = s_.time_window,
@@ -319,7 +353,11 @@ GraphBuilder::V GraphBuilder::add_cpu_in_queue(V parent, int out_idx, int in_idx
 
 GraphBuilder::V GraphBuilder::add_record_queue(V parent, int out_idx, int in_idx) {
   using asyncs::BatchQueueSettings;
-  return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "record_queue", "BatchQueue",
+  return add_node_after<BatchQueueSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "record_queue",
+                                            "BatchQueue",
                                             BatchQueueSettings{
                                                 .target_capacity = s_.recording_count,
                                                 .output_size     = s_.time_window,
@@ -329,7 +367,11 @@ GraphBuilder::V GraphBuilder::add_record_queue(V parent, int out_idx, int in_idx
 
 GraphBuilder::V GraphBuilder::add_cpu_cpu_cpy(V parent, int out_idx, int in_idx) {
   using syncs::MemcpySettings;
-  return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "cpu_cpu", "Memcpy",
+  return add_node_after<MemcpySettings>(parent,
+                                        out_idx,
+                                        in_idx,
+                                        "cpu_cpu",
+                                        "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Host,
                                         });
@@ -337,7 +379,11 @@ GraphBuilder::V GraphBuilder::add_cpu_cpu_cpy(V parent, int out_idx, int in_idx)
 
 GraphBuilder::V GraphBuilder::add_cpu_raw_view_cpy(V parent, int out_idx, int in_idx) {
   using syncs::MemcpySettings;
-  return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "cpu_raw_view_cpy", "Memcpy",
+  return add_node_after<MemcpySettings>(parent,
+                                        out_idx,
+                                        in_idx,
+                                        "cpu_raw_view_cpy",
+                                        "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Host,
                                         });
@@ -345,13 +391,21 @@ GraphBuilder::V GraphBuilder::add_cpu_raw_view_cpy(V parent, int out_idx, int in
 
 GraphBuilder::V GraphBuilder::add_xy_raw_display(V parent, int out_idx, int in_idx) {
   using sinks::DisplayTensorSettings;
-  return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "xy_raw_display",
-                                               "DisplayTensorXYRaw", DisplayTensorSettings{});
+  return add_node_after<DisplayTensorSettings>(parent,
+                                               out_idx,
+                                               in_idx,
+                                               "xy_raw_display",
+                                               "DisplayTensorXYRaw",
+                                               DisplayTensorSettings{});
 }
 
 GraphBuilder::V GraphBuilder::add_raw_record(V parent, int out_idx, int in_idx) {
   using sinks::HolofileSettings;
-  return add_node_after<HolofileSettings>(parent, out_idx, in_idx, "raw_record", "HolofileWriter",
+  return add_node_after<HolofileSettings>(parent,
+                                          out_idx,
+                                          in_idx,
+                                          "raw_record",
+                                          "HolofileWriter",
                                           HolofileSettings{
                                               .path              = s_.recording_path.string(),
                                               .count             = s_.recording_count,
@@ -362,7 +416,11 @@ GraphBuilder::V GraphBuilder::add_raw_record(V parent, int out_idx, int in_idx) 
 
 GraphBuilder::V GraphBuilder::add_cpu_gpu_cpy(V parent, int out_idx, int in_idx) {
   using syncs::MemcpySettings;
-  return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "cpu_gpu", "Memcpy",
+  return add_node_after<MemcpySettings>(parent,
+                                        out_idx,
+                                        in_idx,
+                                        "cpu_gpu",
+                                        "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Device,
                                         });
@@ -371,7 +429,11 @@ GraphBuilder::V GraphBuilder::add_cpu_gpu_cpy(V parent, int out_idx, int in_idx)
 GraphBuilder::V GraphBuilder::add_gpu_in_queue(V parent, int out_idx, int in_idx) {
   using asyncs::BatchQueueSettings;
   return add_node_after<BatchQueueSettings>(
-      parent, out_idx, in_idx, "gpu_in_queue", "BatchQueue",
+      parent,
+      out_idx,
+      in_idx,
+      "gpu_in_queue",
+      "BatchQueue",
       BatchQueueSettings{
           .target_capacity = s_.gpu_in_size,
           .output_size     = s_.time_window,
@@ -381,7 +443,11 @@ GraphBuilder::V GraphBuilder::add_gpu_in_queue(V parent, int out_idx, int in_idx
 
 GraphBuilder::V GraphBuilder::add_to_cf32(V parent, int out_idx, int in_idx) {
   using syncs::ConversionSettings;
-  return add_node_after<ConversionSettings>(parent, out_idx, in_idx, "to_cf32", "Conversion",
+  return add_node_after<ConversionSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "to_cf32",
+                                            "Conversion",
                                             ConversionSettings{
                                                 .target   = ConversionSettings::Target::CF32,
                                                 .strategy = ConversionSettings::Strategy::Real,
@@ -392,7 +458,10 @@ GraphBuilder::V GraphBuilder::add_spacial_transform(V parent, int out_idx, int i
   using syncs::AngularSpectrumSettings;
   using syncs::FresnelDiffractionSettings;
   if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
-    return add_node_after<FresnelDiffractionSettings>(parent, out_idx, in_idx, "spacial_transform",
+    return add_node_after<FresnelDiffractionSettings>(parent,
+                                                      out_idx,
+                                                      in_idx,
+                                                      "spacial_transform",
                                                       "FresnelDiffraction",
                                                       FresnelDiffractionSettings{
                                                           .lambda = s_.spacial_lambda,
@@ -414,7 +483,10 @@ GraphBuilder::V GraphBuilder::add_spacial_transform(V parent, int out_idx, int i
       };
     }
 
-    return add_node_after<AngularSpectrumSettings>(parent, out_idx, in_idx, "spacial_transform",
+    return add_node_after<AngularSpectrumSettings>(parent,
+                                                   out_idx,
+                                                   in_idx,
+                                                   "spacial_transform",
                                                    "AngularSpectrum",
                                                    AngularSpectrumSettings{
                                                        .lambda = s_.spacial_lambda,
@@ -431,7 +503,11 @@ GraphBuilder::V GraphBuilder::add_spacial_transform(V parent, int out_idx, int i
 
 GraphBuilder::V GraphBuilder::add_spacial_filter(V parent, int out_idx, int in_idx) {
   using syncs::Filter2DSettings;
-  return add_node_after<Filter2DSettings>(parent, out_idx, in_idx, "spacial_filter", "Filter2D",
+  return add_node_after<Filter2DSettings>(parent,
+                                          out_idx,
+                                          in_idx,
+                                          "spacial_filter",
+                                          "Filter2D",
                                           Filter2DSettings{
                                               .r_inner = s_.filter_r_inner,
                                               .r_outer = s_.filter_r_outer,
@@ -442,20 +518,37 @@ GraphBuilder::V GraphBuilder::add_spacial_filter(V parent, int out_idx, int in_i
 
 GraphBuilder::V GraphBuilder::add_time_queue(V parent, int out_idx, int in_idx) {
   using asyncs::BatchQueueSettings;
-  auto time_stride = (opti_cpu_stride_ || opti_gpu_stride_) ? s_.time_window : s_.time_stride;
-  return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "time_queue", "BatchQueue",
+  const int Nz = (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts)
+                     ? (s_.time_z_end - s_.time_z_begin)
+                     : s_.time_window;
+  return add_node_after<BatchQueueSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "time_queue",
+                                            "BatchQueue",
                                             BatchQueueSettings{
-                                                .target_capacity = s_.time_stride * 2,
-                                                .output_size     = s_.time_window,
-                                                .output_stride   = time_stride,
+                                                .target_capacity = Nz * 2,
+                                                .output_size     = Nz,
+                                                .output_stride   = Nz,
                                             });
+  // auto time_stride = (opti_cpu_stride_ || opti_gpu_stride_) ? s_.time_window : s_.time_stride;
+  // return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "time_queue", "BatchQueue",
+  //                                           BatchQueueSettings{
+  //                                               .target_capacity = s_.time_stride * 2,
+  //                                               .output_size     = s_.time_window,
+  //                                               .output_stride   = time_stride,
+  //                                           });
 }
 
 GraphBuilder::V GraphBuilder::add_time_transform(V parent, int out_idx, int in_idx) {
   using syncs::PcaSettings;
   using syncs::StftSettings;
   if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts) {
-    return add_node_after<PcaSettings>(parent, out_idx, in_idx, "time_transform", "Pca",
+    return add_node_after<PcaSettings>(parent,
+                                       out_idx,
+                                       in_idx,
+                                       "time_transform",
+                                       "Pca",
                                        PcaSettings{
                                            .begin = s_.time_z_begin,
                                            .end   = s_.time_z_end,
@@ -463,7 +556,11 @@ GraphBuilder::V GraphBuilder::add_time_transform(V parent, int out_idx, int in_i
   }
 
   if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && s_.view_3d_cuts) {
-    return add_node_after<PcaSettings>(parent, out_idx, in_idx, "time_transform", "Pca",
+    return add_node_after<PcaSettings>(parent,
+                                       out_idx,
+                                       in_idx,
+                                       "time_transform",
+                                       "Pca",
                                        PcaSettings{
                                            .begin = 0,
                                            .end   = s_.time_window,
@@ -471,7 +568,11 @@ GraphBuilder::V GraphBuilder::add_time_transform(V parent, int out_idx, int in_i
   }
 
   if (s_.time_method == TimeMethod::SHORT_TIME_FOURIER) {
-    return add_node_after<StftSettings>(parent, out_idx, in_idx, "time_transform", "Stft",
+    return add_node_after<StftSettings>(parent,
+                                        out_idx,
+                                        in_idx,
+                                        "time_transform",
+                                        "Stft",
                                         StftSettings{});
   }
 
@@ -481,7 +582,11 @@ GraphBuilder::V GraphBuilder::add_time_transform(V parent, int out_idx, int in_i
 
 GraphBuilder::V GraphBuilder::add_to_f32(V parent, int out_idx, int in_idx) {
   using syncs::ConversionSettings;
-  return add_node_after<ConversionSettings>(parent, out_idx, in_idx, "to_f32", "Conversion",
+  return add_node_after<ConversionSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "to_f32",
+                                            "Conversion",
                                             ConversionSettings{
                                                 .target   = ConversionSettings::Target::F32,
                                                 .strategy = ConversionSettings::Strategy::Modulus,
@@ -491,7 +596,10 @@ GraphBuilder::V GraphBuilder::add_to_f32(V parent, int out_idx, int in_idx) {
 GraphBuilder::V GraphBuilder::add_debounce_queue(V parent, int out_idx, int in_idx) {
   using asyncs::BatchQueueSettings;
   if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts) {
-    return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "debounce_queue",
+    return add_node_after<BatchQueueSettings>(parent,
+                                              out_idx,
+                                              in_idx,
+                                              "debounce_queue",
                                               "BatchQueue",
                                               BatchQueueSettings{
                                                   .target_capacity = 128,
@@ -500,7 +608,11 @@ GraphBuilder::V GraphBuilder::add_debounce_queue(V parent, int out_idx, int in_i
                                               });
   }
 
-  return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "debounce_queue", "BatchQueue",
+  return add_node_after<BatchQueueSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "debounce_queue",
+                                            "BatchQueue",
                                             BatchQueueSettings{
                                                 .target_capacity = 128,
                                                 .output_size     = s_.time_window,
@@ -511,7 +623,11 @@ GraphBuilder::V GraphBuilder::add_debounce_queue(V parent, int out_idx, int in_i
 GraphBuilder::V GraphBuilder::add_xy_cut_avg(V parent, int out_idx, int in_idx) {
   using syncs::AverageSettings;
   if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts) {
-    return add_node_after<AverageSettings>(parent, out_idx, in_idx, "xy_cut_avg", "Average",
+    return add_node_after<AverageSettings>(parent,
+                                           out_idx,
+                                           in_idx,
+                                           "xy_cut_avg",
+                                           "Average",
                                            AverageSettings{
                                                .axis  = 0,
                                                .start = 0,
@@ -519,7 +635,11 @@ GraphBuilder::V GraphBuilder::add_xy_cut_avg(V parent, int out_idx, int in_idx) 
                                            });
   }
 
-  return add_node_after<AverageSettings>(parent, out_idx, in_idx, "xy_cut_avg", "Average",
+  return add_node_after<AverageSettings>(parent,
+                                         out_idx,
+                                         in_idx,
+                                         "xy_cut_avg",
+                                         "Average",
                                          AverageSettings{
                                              .axis  = 0,
                                              .start = s_.time_z_begin,
@@ -529,14 +649,21 @@ GraphBuilder::V GraphBuilder::add_xy_cut_avg(V parent, int out_idx, int in_idx) 
 
 GraphBuilder::V GraphBuilder::add_fft_shift(V parent, int out_idx, int in_idx) {
   using syncs::FFTShiftSettings;
-  return add_node_after<FFTShiftSettings>(parent, out_idx, in_idx, "fft_shift", "FFTShift",
+  return add_node_after<FFTShiftSettings>(parent,
+                                          out_idx,
+                                          in_idx,
+                                          "fft_shift",
+                                          "FFTShift",
                                           FFTShiftSettings{});
 }
 
 GraphBuilder::V GraphBuilder::add_xy_registration(V parent, int out_idx, int in_idx) {
   using syncs::RegistrationSettings;
 
-  return add_node_after<RegistrationSettings>(parent, out_idx, in_idx, "xy_registration",
+  return add_node_after<RegistrationSettings>(parent,
+                                              out_idx,
+                                              in_idx,
+                                              "xy_registration",
                                               "Registration",
                                               RegistrationSettings{
                                                   .radius = s_.pp_registration_radius,
@@ -546,7 +673,11 @@ GraphBuilder::V GraphBuilder::add_xy_registration(V parent, int out_idx, int in_
 GraphBuilder::V GraphBuilder::add_xy_slide_avg(V parent, int out_idx, int in_idx) {
   using asyncs::SlidingAverageSettings;
   return add_node_after<SlidingAverageSettings>(
-      parent, out_idx, in_idx, "xy_slide_avg", "SlidingAverage",
+      parent,
+      out_idx,
+      in_idx,
+      "xy_slide_avg",
+      "SlidingAverage",
       SlidingAverageSettings{.target_capacity = 128,
                              .window_size     = static_cast<size_t>(s_.pp_accumulation)});
 }
@@ -560,7 +691,10 @@ GraphBuilder::V GraphBuilder::add_xy_fps_limiter(V parent, int out_idx, int in_i
 
 GraphBuilder::V GraphBuilder::add_xy_convolution(V parent, int out_idx, int in_idx) {
   using syncs::ConvolutionSettings;
-  return add_node_after<ConvolutionSettings>(parent, out_idx, in_idx, "xy_convolution",
+  return add_node_after<ConvolutionSettings>(parent,
+                                             out_idx,
+                                             in_idx,
+                                             "xy_convolution",
                                              "Convolution",
                                              ConvolutionSettings{
                                                  .kernel_file = s_.pp_convolution_path,
@@ -583,7 +717,11 @@ GraphBuilder::V GraphBuilder::add_xy_pctclip(V parent, int out_idx, int in_idx) 
       .angle = 0.0f,
   };
 
-  return add_node_after<PctClipSettings>(parent, out_idx, in_idx, "xy_pctclip", "PctClip",
+  return add_node_after<PctClipSettings>(parent,
+                                         out_idx,
+                                         in_idx,
+                                         "xy_pctclip",
+                                         "PctClip",
                                          PctClipSettings{
                                              .min_pct = s_.pp_pctclip_lower,
                                              .max_pct = s_.pp_pctclip_upper,
@@ -593,7 +731,11 @@ GraphBuilder::V GraphBuilder::add_xy_pctclip(V parent, int out_idx, int in_idx) 
 
 GraphBuilder::V GraphBuilder::add_xy_to_u8(V parent, int out_idx, int in_idx) {
   using syncs::ConversionSettings;
-  return add_node_after<ConversionSettings>(parent, out_idx, in_idx, "xy_to_u8", "Conversion",
+  return add_node_after<ConversionSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "xy_to_u8",
+                                            "Conversion",
                                             ConversionSettings{
                                                 .target   = ConversionSettings::Target::U8,
                                                 .strategy = ConversionSettings::Strategy::Scaled,
@@ -602,7 +744,10 @@ GraphBuilder::V GraphBuilder::add_xy_to_u8(V parent, int out_idx, int in_idx) {
 
 GraphBuilder::V GraphBuilder::add_xy_gpu_out_queue(V parent, int out_idx, int in_idx) {
   using asyncs::BatchQueueSettings;
-  return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "xy_gpu_out_queue",
+  return add_node_after<BatchQueueSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "xy_gpu_out_queue",
                                             "BatchQueue",
                                             BatchQueueSettings{
                                                 .target_capacity = s_.gpu_out_size,
@@ -613,7 +758,11 @@ GraphBuilder::V GraphBuilder::add_xy_gpu_out_queue(V parent, int out_idx, int in
 
 GraphBuilder::V GraphBuilder::add_xy_gpu_cpu_cpy(V parent, int out_idx, int in_idx) {
   using syncs::MemcpySettings;
-  return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "xy_gpu_cpu", "Memcpy",
+  return add_node_after<MemcpySettings>(parent,
+                                        out_idx,
+                                        in_idx,
+                                        "xy_gpu_cpu",
+                                        "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Host,
                                         });
@@ -621,7 +770,10 @@ GraphBuilder::V GraphBuilder::add_xy_gpu_cpu_cpy(V parent, int out_idx, int in_i
 
 GraphBuilder::V GraphBuilder::add_xy_cpu_out_queue(V parent, int out_idx, int in_idx) {
   using asyncs::BatchQueueSettings;
-  return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "xy_cpu_out_queue",
+  return add_node_after<BatchQueueSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "xy_cpu_out_queue",
                                             "BatchQueue",
                                             BatchQueueSettings{
                                                 .target_capacity = s_.cpu_out_size,
@@ -632,13 +784,21 @@ GraphBuilder::V GraphBuilder::add_xy_cpu_out_queue(V parent, int out_idx, int in
 
 GraphBuilder::V GraphBuilder::add_xy_processed_display(V parent, int out_idx, int in_idx) {
   using sinks::DisplayTensorSettings;
-  return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "xy_processed_display",
-                                               "DisplayTensorXY", DisplayTensorSettings{});
+  return add_node_after<DisplayTensorSettings>(parent,
+                                               out_idx,
+                                               in_idx,
+                                               "xy_processed_display",
+                                               "DisplayTensorXY",
+                                               DisplayTensorSettings{});
 }
 
 GraphBuilder::V GraphBuilder::add_xz_cut_avg(V parent, int out_idx, int in_idx) {
   using syncs::AverageSettings;
-  return add_node_after<AverageSettings>(parent, out_idx, in_idx, "xz_cut_avg", "Average",
+  return add_node_after<AverageSettings>(parent,
+                                         out_idx,
+                                         in_idx,
+                                         "xz_cut_avg",
+                                         "Average",
                                          AverageSettings{
                                              .axis  = 1,
                                              .start = s_.time_y_begin,
@@ -649,7 +809,11 @@ GraphBuilder::V GraphBuilder::add_xz_cut_avg(V parent, int out_idx, int in_idx) 
 GraphBuilder::V GraphBuilder::add_xz_reshape(V parent, int out_idx, int in_idx) {
   using syncs::ReshapeSettings;
   return add_node_after<ReshapeSettings>(
-      parent, out_idx, in_idx, "xz_reshape", "Reshape",
+      parent,
+      out_idx,
+      in_idx,
+      "xz_reshape",
+      "Reshape",
       ReshapeSettings{
           .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
       });
@@ -658,14 +822,22 @@ GraphBuilder::V GraphBuilder::add_xz_reshape(V parent, int out_idx, int in_idx) 
 GraphBuilder::V GraphBuilder::add_xz_slide_avg(V parent, int out_idx, int in_idx) {
   using asyncs::SlidingAverageSettings;
   return add_node_after<SlidingAverageSettings>(
-      parent, out_idx, in_idx, "xz_slide_avg", "SlidingAverage",
+      parent,
+      out_idx,
+      in_idx,
+      "xz_slide_avg",
+      "SlidingAverage",
       SlidingAverageSettings{.target_capacity = 128,
                              .window_size     = static_cast<size_t>(s_.pp_accumulation)});
 }
 
 GraphBuilder::V GraphBuilder::add_xz_to_u8(V parent, int out_idx, int in_idx) {
   using syncs::ConversionSettings;
-  return add_node_after<ConversionSettings>(parent, out_idx, in_idx, "xz_to_u8", "Conversion",
+  return add_node_after<ConversionSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "xz_to_u8",
+                                            "Conversion",
                                             ConversionSettings{
                                                 .target   = ConversionSettings::Target::U8,
                                                 .strategy = ConversionSettings::Strategy::Scaled,
@@ -674,18 +846,25 @@ GraphBuilder::V GraphBuilder::add_xz_to_u8(V parent, int out_idx, int in_idx) {
 
 GraphBuilder::V GraphBuilder::add_xz_crop2frames(V parent, int out_idx, int in_idx) {
   using syncs::CropSettings;
-  return add_node_after<CropSettings>(
-      parent, out_idx, in_idx, "xz_crop2frames", "Crop",
-      CropSettings{
-          .origin = {0, 10, 0},
-          .shape  = {static_cast<size_t>(1), static_cast<size_t>(src_height_ - 20),
-                     static_cast<size_t>(s_.time_window)},
-      });
+  return add_node_after<CropSettings>(parent,
+                                      out_idx,
+                                      in_idx,
+                                      "xz_crop2frames",
+                                      "Crop",
+                                      CropSettings{
+                                          .origin = {0, 10, 0},
+                                          .shape  = {static_cast<size_t>(1),
+                                                     static_cast<size_t>(src_height_ - 20),
+                                                     static_cast<size_t>(s_.time_window)},
+                                      });
 }
 
 GraphBuilder::V GraphBuilder::add_xz_gpu_out_queue(V parent, int out_idx, int in_idx) {
   using asyncs::BatchQueueSettings;
-  return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "xz_gpu_out_queue",
+  return add_node_after<BatchQueueSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "xz_gpu_out_queue",
                                             "BatchQueue",
                                             BatchQueueSettings{
                                                 .target_capacity = s_.gpu_out_size,
@@ -696,7 +875,11 @@ GraphBuilder::V GraphBuilder::add_xz_gpu_out_queue(V parent, int out_idx, int in
 
 GraphBuilder::V GraphBuilder::add_xz_gpu_cpu_cpy(V parent, int out_idx, int in_idx) {
   using syncs::MemcpySettings;
-  return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "xz_gpu_cpu", "Memcpy",
+  return add_node_after<MemcpySettings>(parent,
+                                        out_idx,
+                                        in_idx,
+                                        "xz_gpu_cpu",
+                                        "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Host,
                                         });
@@ -704,7 +887,10 @@ GraphBuilder::V GraphBuilder::add_xz_gpu_cpu_cpy(V parent, int out_idx, int in_i
 
 GraphBuilder::V GraphBuilder::add_xz_cpu_out_queue(V parent, int out_idx, int in_idx) {
   using asyncs::BatchQueueSettings;
-  return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "xz_cpu_out_queue",
+  return add_node_after<BatchQueueSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "xz_cpu_out_queue",
                                             "BatchQueue",
                                             BatchQueueSettings{
                                                 .target_capacity = s_.cpu_out_size,
@@ -715,13 +901,21 @@ GraphBuilder::V GraphBuilder::add_xz_cpu_out_queue(V parent, int out_idx, int in
 
 GraphBuilder::V GraphBuilder::add_xz_processed_display(V parent, int out_idx, int in_idx) {
   using sinks::DisplayTensorSettings;
-  return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "xz_processed_display",
-                                               "DisplayTensorXZ", DisplayTensorSettings{});
+  return add_node_after<DisplayTensorSettings>(parent,
+                                               out_idx,
+                                               in_idx,
+                                               "xz_processed_display",
+                                               "DisplayTensorXZ",
+                                               DisplayTensorSettings{});
 }
 
 GraphBuilder::V GraphBuilder::add_yz_cut_avg(V parent, int out_idx, int in_idx) {
   using syncs::AverageSettings;
-  return add_node_after<AverageSettings>(parent, out_idx, in_idx, "yz_cut_avg", "Average",
+  return add_node_after<AverageSettings>(parent,
+                                         out_idx,
+                                         in_idx,
+                                         "yz_cut_avg",
+                                         "Average",
                                          AverageSettings{
                                              .axis  = 2,
                                              .start = s_.time_x_begin,
@@ -732,7 +926,11 @@ GraphBuilder::V GraphBuilder::add_yz_cut_avg(V parent, int out_idx, int in_idx) 
 GraphBuilder::V GraphBuilder::add_yz_reshape(V parent, int out_idx, int in_idx) {
   using syncs::ReshapeSettings;
   return add_node_after<ReshapeSettings>(
-      parent, out_idx, in_idx, "yz_reshape", "Reshape",
+      parent,
+      out_idx,
+      in_idx,
+      "yz_reshape",
+      "Reshape",
       ReshapeSettings{
           .shape = {1, static_cast<size_t>(src_height_), static_cast<size_t>(s_.time_window)},
       });
@@ -741,14 +939,22 @@ GraphBuilder::V GraphBuilder::add_yz_reshape(V parent, int out_idx, int in_idx) 
 GraphBuilder::V GraphBuilder::add_yz_slide_avg(V parent, int out_idx, int in_idx) {
   using asyncs::SlidingAverageSettings;
   return add_node_after<SlidingAverageSettings>(
-      parent, out_idx, in_idx, "yz_slide_avg", "SlidingAverage",
+      parent,
+      out_idx,
+      in_idx,
+      "yz_slide_avg",
+      "SlidingAverage",
       SlidingAverageSettings{.target_capacity = 128,
                              .window_size     = static_cast<size_t>(s_.pp_accumulation)});
 }
 
 GraphBuilder::V GraphBuilder::add_yz_to_u8(V parent, int out_idx, int in_idx) {
   using syncs::ConversionSettings;
-  return add_node_after<ConversionSettings>(parent, out_idx, in_idx, "yz_to_u8", "Conversion",
+  return add_node_after<ConversionSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "yz_to_u8",
+                                            "Conversion",
                                             ConversionSettings{
                                                 .target   = ConversionSettings::Target::U8,
                                                 .strategy = ConversionSettings::Strategy::Scaled,
@@ -757,7 +963,11 @@ GraphBuilder::V GraphBuilder::add_yz_to_u8(V parent, int out_idx, int in_idx) {
 
 GraphBuilder::V GraphBuilder::add_yz_rotation(V parent, int out_idx, int in_idx) {
   using syncs::RotationSettings;
-  return add_node_after<RotationSettings>(parent, out_idx, in_idx, "yz_rotation", "Rotation",
+  return add_node_after<RotationSettings>(parent,
+                                          out_idx,
+                                          in_idx,
+                                          "yz_rotation",
+                                          "Rotation",
                                           RotationSettings{
                                               .angle = 90,
                                           });
@@ -765,18 +975,25 @@ GraphBuilder::V GraphBuilder::add_yz_rotation(V parent, int out_idx, int in_idx)
 
 GraphBuilder::V GraphBuilder::add_yz_crop2frames(V parent, int out_idx, int in_idx) {
   using syncs::CropSettings;
-  return add_node_after<CropSettings>(
-      parent, out_idx, in_idx, "yz_crop", "Crop",
-      CropSettings{
-          .origin = {0, 10, 0},
-          .shape  = {static_cast<size_t>(1), static_cast<size_t>(src_height_ - 20),
-                     static_cast<size_t>(s_.time_window)},
-      });
+  return add_node_after<CropSettings>(parent,
+                                      out_idx,
+                                      in_idx,
+                                      "yz_crop",
+                                      "Crop",
+                                      CropSettings{
+                                          .origin = {0, 10, 0},
+                                          .shape  = {static_cast<size_t>(1),
+                                                     static_cast<size_t>(src_height_ - 20),
+                                                     static_cast<size_t>(s_.time_window)},
+                                      });
 }
 
 GraphBuilder::V GraphBuilder::add_yz_gpu_out_queue(V parent, int out_idx, int in_idx) {
   using asyncs::BatchQueueSettings;
-  return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "yz_gpu_out_queue",
+  return add_node_after<BatchQueueSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "yz_gpu_out_queue",
                                             "BatchQueue",
                                             BatchQueueSettings{
                                                 .target_capacity = s_.gpu_out_size,
@@ -787,7 +1004,11 @@ GraphBuilder::V GraphBuilder::add_yz_gpu_out_queue(V parent, int out_idx, int in
 
 GraphBuilder::V GraphBuilder::add_yz_gpu_cpu_cpy(V parent, int out_idx, int in_idx) {
   using syncs::MemcpySettings;
-  return add_node_after<MemcpySettings>(parent, out_idx, in_idx, "yz_gpu_cpu", "Memcpy",
+  return add_node_after<MemcpySettings>(parent,
+                                        out_idx,
+                                        in_idx,
+                                        "yz_gpu_cpu",
+                                        "Memcpy",
                                         MemcpySettings{
                                             .target = MemcpySettings::Target::Host,
                                         });
@@ -795,7 +1016,10 @@ GraphBuilder::V GraphBuilder::add_yz_gpu_cpu_cpy(V parent, int out_idx, int in_i
 
 GraphBuilder::V GraphBuilder::add_yz_cpu_out_queue(V parent, int out_idx, int in_idx) {
   using asyncs::BatchQueueSettings;
-  return add_node_after<BatchQueueSettings>(parent, out_idx, in_idx, "yz_cpu_out_queue",
+  return add_node_after<BatchQueueSettings>(parent,
+                                            out_idx,
+                                            in_idx,
+                                            "yz_cpu_out_queue",
                                             "BatchQueue",
                                             BatchQueueSettings{
                                                 .target_capacity = s_.cpu_out_size,
@@ -806,8 +1030,12 @@ GraphBuilder::V GraphBuilder::add_yz_cpu_out_queue(V parent, int out_idx, int in
 
 GraphBuilder::V GraphBuilder::add_yz_processed_display(V parent, int out_idx, int in_idx) {
   using sinks::DisplayTensorSettings;
-  return add_node_after<DisplayTensorSettings>(parent, out_idx, in_idx, "yz_processed_display",
-                                               "DisplayTensorYZ", DisplayTensorSettings{});
+  return add_node_after<DisplayTensorSettings>(parent,
+                                               out_idx,
+                                               in_idx,
+                                               "yz_processed_display",
+                                               "DisplayTensorYZ",
+                                               DisplayTensorSettings{});
 }
 
 } // namespace holovibes::pipeline
