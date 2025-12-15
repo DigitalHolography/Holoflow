@@ -68,6 +68,14 @@ target_link_libraries(${TARGET}
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     Boost::graph
-    EGrabber
     MKL::MKL
 )
+
+if(EGrabber_FOUND)
+    target_compile_definitions(${TARGET} PRIVATE HOLOTASK_HAS_EGRABBER)
+
+    target_link_libraries(${TARGET}
+        PUBLIC
+        EGrabber
+    )
+endif()

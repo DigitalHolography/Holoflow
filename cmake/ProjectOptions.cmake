@@ -43,6 +43,7 @@ function(project_options)
         /openmp
         /external:anglebrackets
         /external:W0
+        /wd4211
     )
     set(_NVCC_COMMON
         --generate-line-info

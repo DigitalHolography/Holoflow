@@ -72,7 +72,7 @@ project_options(
     ENABLE_WARNINGS_AS_ERRORS ${ENABLE_WARNINGS_AS_ERRORS}
 )
 
-find_package(EGrabber REQUIRED)
+find_package(EGrabber)
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui OpenGL OpenGLWidgets)
 qt_standard_project_setup()
 

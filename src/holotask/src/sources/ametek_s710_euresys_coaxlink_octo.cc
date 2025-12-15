@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#ifdef HOLOTASK_HAS_GRABBER
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 
 #include <EGrabber.h>
@@ -338,3 +339,38 @@ AmetekS710EuresysCoaxlinkOctoFactory::update(std::unique_ptr<holoflow::core::ISy
 }
 
 } // namespace holotask::sources
+
+#else
+
+
+#include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
+
+namespace holotask::sources {
+
+void to_json(nlohmann::json &j, const AmetekS710EuresysCoaxlinkOctoSettings &s) {
+  j = nlohmann::json{
+      {"cfg_path", s.cfg_path},
+  };
+}
+
+void from_json(const nlohmann::json &j, AmetekS710EuresysCoaxlinkOctoSettings &s) {
+  j.at("cfg_path").get_to(s.cfg_path);
+}
+
+
+holoflow::core::InferResult
+AmetekS710EuresysCoaxlinkOctoFactory::infer(std::span<const holoflow::core::TDesc> ,
+                                            const nlohmann::json &) const {
+  throw std::logic_error("holotask library was built without Egrabber support");
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+AmetekS710EuresysCoaxlinkOctoFactory::create(std::span<const holoflow::core::TDesc> ,
+                                             const nlohmann::json                  &,
+                                             const holoflow::core::SyncCreateCtx   &) const {
+  throw std::logic_error("holotask library was built without Egrabber support");
+}
+
+}
+  
+#endif
