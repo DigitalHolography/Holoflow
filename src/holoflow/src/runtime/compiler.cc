@@ -29,20 +29,20 @@
 #include <string>
 #include <string_view>
 #include <vector>
-#include <boost/range/iterator_range_core.hpp>
 
 #include "bug.hh"
-#include "logger.hh"
 #include "curaii/cuda.hh"
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
 #include "holoflow/runtime/graph_exec.hh"
+#include "logger.hh"
 
 namespace holoflow::runtime {
 
-Compiler::Compiler(core::Registry &registry, const std::filesystem::path &log_dir)
-    : registry_(registry), log_dir_(log_dir) {}
+Compiler::Compiler(core::Registry &registry, const std::filesystem::path &log_dir) :
+    registry_(registry),
+    log_dir_(log_dir) {}
 
 std::unique_ptr<CompilerOutput> Compiler::compile(const core::GraphSpec          &gspec,
                                                   std::unique_ptr<CompilerOutput> prev) {
@@ -100,15 +100,7 @@ void Compiler::write_profile_report(const std::vector<StepTiming> &step_timings,
     return;
   }
 
-  const auto now       = std::chrono::system_clock::now();
-  const auto timestamp = std::chrono::floor<std::chrono::seconds>(now);
-
-  std::string filename;
-  try {
-    filename = std::format("compiler_profile_{:%Y-%m-%d_%H-%M-%S}.log", timestamp);
-  } catch (const std::exception &) {
-    filename = "compiler_profile.log";
-  }
+  std::string filename = "compiler_profile.log";
 
   const auto    filepath = log_dir_ / filename;
   std::ofstream out(filepath, std::ios::trunc);
@@ -219,7 +211,9 @@ void Compiler::build_graph_plan() {
 void Compiler::check_typing() {
   struct CheckTypingVisitor : boost::default_bfs_visitor {
   public:
-    CheckTypingVisitor(GraphPlan &g, const core::Registry &reg) : g_(g), reg_(reg) {}
+    CheckTypingVisitor(GraphPlan &g, const core::Registry &reg) :
+        g_(g),
+        reg_(reg) {}
 
     void discover_vertex(GraphPlan::vertex_descriptor v, const GraphPlan &) {
       auto &np        = g_[v];
@@ -276,8 +270,9 @@ void Compiler::check_typing() {
 
   using ColorMap = std::vector<boost::default_color_type>;
   ColorMap color_map(boost::num_vertices(out_->graph));
-  auto     color_map_p = boost::make_iterator_property_map(
-      color_map.begin(), boost::get(boost::vertex_index, out_->graph));
+  auto     color_map_p =
+      boost::make_iterator_property_map(color_map.begin(),
+                                        boost::get(boost::vertex_index, out_->graph));
 
   CheckTypingVisitor visitor(out_->graph, registry_);
   for (auto v : boost::make_iterator_range(boost::vertices(out_->graph))) {
@@ -291,7 +286,8 @@ void Compiler::check_typing() {
 
 void Compiler::assign_tensor_ids() {
   struct AssignTensorIdsVisitor : boost::default_dfs_visitor {
-    AssignTensorIdsVisitor(GraphPlan &g) : g_(g) {}
+    AssignTensorIdsVisitor(GraphPlan &g) :
+        g_(g) {}
 
     void discover_vertex(GraphPlan::vertex_descriptor v, const GraphPlan &) {
       auto &np        = g_[v];
@@ -342,8 +338,9 @@ void Compiler::assign_tensor_ids() {
 
   using ColorMap = std::vector<boost::default_color_type>;
   ColorMap color_map(boost::num_vertices(out_->graph));
-  auto     color_map_p = boost::make_iterator_property_map(
-      color_map.begin(), boost::get(boost::vertex_index, out_->graph));
+  auto     color_map_p =
+      boost::make_iterator_property_map(color_map.begin(),
+                                        boost::get(boost::vertex_index, out_->graph));
 
   AssignTensorIdsVisitor visitor(out_->graph);
   for (auto v : boost::make_iterator_range(boost::vertices(out_->graph))) {
@@ -367,8 +364,9 @@ void Compiler::check_buffer_temporal_consistency() {
       const auto &dst = out_->graph[boost::target(e, out_->graph)];
 
       const bool owned   = dst.infer.owned_inputs.at(ep.spec.in_idx);
-      const bool inplace = std::ranges::any_of(
-          dst.infer.in_place, [&](const auto &ip) { return ip.in_idx == ep.spec.out_idx; });
+      const bool inplace = std::ranges::any_of(dst.infer.in_place, [&](const auto &ip) {
+        return ip.in_idx == ep.spec.out_idx;
+      });
 
       if (owned || inplace) {
         restricted.at(ep.spec.out_idx)++;
@@ -378,8 +376,10 @@ void Compiler::check_buffer_temporal_consistency() {
     // Check no output is temporally restricted more than once
     for (int i = 0; i < n_out; i++) {
       if (restricted.at(i) > 1) {
-        throw std::logic_error(fmt::format(
-            "Output {} of node {} is temporally restricted more than once", i, np.spec.name));
+        throw std::logic_error(
+            fmt::format("Output {} of node {} is temporally restricted more than once",
+                        i,
+                        np.spec.name));
       }
     }
   }
@@ -476,8 +476,8 @@ void Compiler::create_sections() {
   }
 
   // DFS to build sections
-  auto build_section_dfs = [this](auto self, GraphPlan::vertex_descriptor v, Section &sec,
-                                  bool is_root) -> void {
+  auto build_section_dfs =
+      [this](auto self, GraphPlan::vertex_descriptor v, Section &sec, bool is_root) -> void {
     auto &np = out_->graph[v];
     if (np.infer.kind == core::TaskKind::Sync) {
       sec.sync_topo.push_back(v);
@@ -535,10 +535,15 @@ std::unique_ptr<To> dynamic_unique_ptr_cast(std::unique_ptr<From> &&ptr) noexcep
 }
 
 template <class Task, class Factory, class Ctx>
-std::unique_ptr<Task> create_or_update_task(
-    Factory &factory, std::map<std::string, std::unique_ptr<holoflow::core::ITask>> *prev_tasks,
-    GraphPlan *prev_graph, NodePlan np, std::span<const core::TDesc> input_descs,
-    const nlohmann::json &settings, const Ctx &ctx, std::string_view expected_kind) {
+std::unique_ptr<Task>
+create_or_update_task(Factory                                                       &factory,
+                      std::map<std::string, std::unique_ptr<holoflow::core::ITask>> *prev_tasks,
+                      GraphPlan                                                     *prev_graph,
+                      NodePlan                                                       np,
+                      std::span<const core::TDesc>                                   input_descs,
+                      const nlohmann::json                                          &settings,
+                      const Ctx                                                     &ctx,
+                      std::string_view expected_kind) {
 
   std::unique_ptr<core::ITask> *prev = nullptr;
   if (prev_tasks) {
@@ -559,7 +564,9 @@ std::unique_ptr<Task> create_or_update_task(
   }
 
   auto prev_task = dynamic_unique_ptr_cast<Task>(std::move(*prev));
-  HOLOFLOW_CHECK(prev_task != nullptr, "Previous task for node {} is not a {} task", np.spec.name,
+  HOLOFLOW_CHECK(prev_task != nullptr,
+                 "Previous task for node {} is not a {} task",
+                 np.spec.name,
                  expected_kind);
 
   return factory.update(std::move(prev_task), input_descs, settings, ctx);
@@ -600,8 +607,14 @@ void Compiler::create_nodes_collection() {
       auto                     &section = out_->sections.at(sid);
       const core::SyncCreateCtx ctx{.stream = section.stream};
 
-      auto task = create_or_update_task<core::ISyncTask>(factory, prev_tasks, prev_graph, np,
-                                                         input_descs, settings, ctx, "sync");
+      auto task = create_or_update_task<core::ISyncTask>(factory,
+                                                         prev_tasks,
+                                                         prev_graph,
+                                                         np,
+                                                         input_descs,
+                                                         settings,
+                                                         ctx,
+                                                         "sync");
 
       task->bind_logger(create_task_logger(np.spec.name, np.spec.kind));
       out_tasks.emplace(np.spec.name, std::move(task));
@@ -617,8 +630,14 @@ void Compiler::create_nodes_collection() {
       const core::AsyncCreateCtx ctx{.producer_stream = prod.stream,
                                      .consumer_stream = cons.stream};
 
-      auto task = create_or_update_task<core::IAsyncTask>(factory, prev_tasks, prev_graph, np,
-                                                          input_descs, settings, ctx, "async");
+      auto task = create_or_update_task<core::IAsyncTask>(factory,
+                                                          prev_tasks,
+                                                          prev_graph,
+                                                          np,
+                                                          input_descs,
+                                                          settings,
+                                                          ctx,
+                                                          "async");
       task->bind_logger(create_task_logger(np.spec.name, np.spec.kind));
       out_tasks.emplace(np.spec.name, std::move(task));
       break;

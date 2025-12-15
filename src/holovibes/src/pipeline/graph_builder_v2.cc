@@ -16,106 +16,264 @@
 
 #include "bug.hh"
 #include "logger.hh"
+#include "settings_loader.hh"
 
 namespace holovibes::pipeline {
+
+// -------------------------------------------------------------------------------------------------
+// GraphBuilder Implementation
+// -------------------------------------------------------------------------------------------------
 
 GraphBuilder_v2::GraphBuilder_v2(const Settings &settings, holoflow::core::Registry &registry) :
     s_(settings),
     reg_(registry) {}
 
 holoflow::core::GraphSpec GraphBuilder_v2::build() {
-  logger()->info("[GraphBuilder_v2::build] Building graph spec...");
+  auto cam_path = s_.camera_config_path.string();
 
   auto lam    = s_.spacial_lambda;
   auto dx     = s_.spacial_pixel_size;
   auto dy     = s_.spacial_pixel_size;
   auto z_prop = s_.spacial_z;
 
-  TDesc I0;
-  TDesc FH;
-  TDesc FH_prop;
-  TDesc S;
-
-  if (s_.import_source == ImportSource::HOLOFILE) {
-    std::tie(I0) = unpack<1>(holofile_read({s_.load_path.string(),
-                                            load_method_map_.at(s_.load_method),
-                                            s_.load_begin,
-                                            s_.load_end,
-                                            s_.load_batch}));
-  }
-
-  else {
-    HOLOVIBES_UNREACHABLE();
-  }
-
-  if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
-    std::tie(I0) = unpack<1>(memcpy(I0, {tasks::syncs::MemcpySettings::Target::Device}));
-    std::tie(I0) = unpack<1>(batched_queue(I0, {s_.gpu_in_size, s_.time_window, s_.time_window}));
-  }
+  auto ri = s_.filter_r_inner;
+  auto ro = s_.filter_r_outer;
+  auto si = s_.filter_smooth_inner;
+  auto so = s_.filter_smooth_outer;
 
   using Target = tasks::syncs::ConversionSettings::Target;
   using Strat  = tasks::syncs::ConversionSettings::Strategy;
-  std::tie(I0) = unpack<1>(convert(I0, {Target::F32, Strat::Real}));
+  auto Host    = tasks::syncs::MemcpySettings::Target::Host;
+  auto Device  = tasks::syncs::MemcpySettings::Target::Device;
+
+  // -------------------------------------------------------------------------------------------------
+  // Acquisition (H - Hologram)
+  // -------------------------------------------------------------------------------------------------
+
+  TDesc H;
+
+  if (s_.import_source == ImportSource::HOLOFILE) {
+    std::tie(H) = unpack<1>(holofile_read({s_.load_path.string(),
+                                           load_method_map_.at(s_.load_method),
+                                           s_.load_begin,
+                                           s_.load_end,
+                                           s_.load_batch}));
+  } else if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
+    std::tie(H) = unpack<1>(ametek_s710_euresys_coaxlink_octo({cam_path}));
+  } else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
+    std::tie(H) = unpack<1>(ametek_s711_euresys_coaxlink_qsfp_plus({cam_path}));
+  } else {
+    HOLOVIBES_UNREACHABLE();
+  }
+
+  // Raw view
+  if (s_.raw_view || s_.view_type == ViewType::RAW) {
+    auto shape  = H.shape;
+    shape.at(0) = 1;
+
+    auto [H_disp]     = unpack<1>(memcpy(H, {Host}));
+    auto [H_view]     = unpack<1>(batched_queue(H_disp, {s_.cpu_out_size, 1, 1}));
+    auto [H_reshaped] = unpack<1>(reshape(H_view, {shape}));
+
+    if (s_.raw_view) {
+      xy_raw_display(H_reshaped, {});
+    }
+    if (s_.view_type == ViewType::RAW) {
+      xy_processed_display(H_reshaped, {});
+      return g_;
+    }
+  }
+
+  // GPU transfer and conversion to float32
+  if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
+    std::tie(H) = unpack<1>(memcpy(H, {Device}));
+    std::tie(H) = unpack<1>(batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window}));
+  }
+  std::tie(H) = unpack<1>(convert(H, {Target::F32, Strat::Real}));
+
+  // -------------------------------------------------------------------------------------------------
+  // Time-Frequency Analysis (H -> FH - Frequency Hologram)
+  // -------------------------------------------------------------------------------------------------
+
+  TDesc FH;
 
   if (s_.time_method == TimeMethod::SHORT_TIME_FOURIER) {
-    std::tie(FH) = unpack<1>(stft(I0, {}));
+    // TODO: Enquire about Zoom FFT
+    std::tie(FH) = unpack<1>(stft(H, {}));
   }
 
-  else if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts) {
-    std::tie(FH) = unpack<1>(pca(I0, {s_.time_z_begin, s_.time_z_end}));
+  else if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
+    // PCA range depends on whether we need the full 3D volume for cuts
+    int pca_min = s_.view_3d_cuts ? 0 : s_.time_z_begin;
+    int pca_max = s_.view_3d_cuts ? s_.time_window : s_.time_z_end;
+
+    std::tie(FH) = unpack<1>(pca(H, {pca_min, pca_max}));
     std::tie(FH) = unpack<1>(convert(FH, {Target::CF32, Strat::Real}));
   }
 
-  else if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && s_.view_3d_cuts) {
-    std::tie(FH) = unpack<1>(pca(I0, {0, s_.time_window}));
-    std::tie(FH) = unpack<1>(convert(FH, {Target::CF32, Strat::Real}));
-  }
+  // -------------------------------------------------------------------------------------------------
+  // Spacial Propagation (FH -> FH_z - Propagated Frequency Hologram)
+  // -------------------------------------------------------------------------------------------------
+
+  TDesc FH_z;
 
   if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
-    std::tie(FH_prop) = unpack<1>(fresnel_diffraction(FH, {lam, dx, dy, z_prop}));
+    std::tie(FH_z) = unpack<1>(fresnel_diffraction(FH, {lam, dx, dy, z_prop}));
   }
 
   else if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
-    std::tie(FH_prop) = unpack<1>(angular_spectrum(FH, {lam, dx, dy, z_prop, std::nullopt}));
+    std::tie(FH_z) = unpack<1>(angular_spectrum(FH, {lam, dx, dy, z_prop, std::nullopt}));
   }
 
   if (s_.filter_2d) {
-    std::tie(FH_prop) = unpack<1>(filter_2d(
-        FH_prop,
-        {s_.filter_r_inner, s_.filter_r_outer, s_.filter_smooth_inner, s_.filter_smooth_outer}));
+    std::tie(FH_z) = unpack<1>(filter_2d(FH_z, {ri, ro, si, so}));
   }
 
-  std::tie(S) = unpack<1>(convert(FH_prop, {Target::F32, Strat::Modulus}));
+  // -------------------------------------------------------------------------------------------------
+  // Spectral Density (FH_z -> S - Spectral Density)
+  // -------------------------------------------------------------------------------------------------
+  auto [S] = unpack<1>(convert(FH_z, {Target::F32, Strat::Modulus}));
 
-  // XY branch
+  // -------------------------------------------------------------------------------------------------
+  // XY View Processing (S -> M0 - Processed XY View)
+  // -------------------------------------------------------------------------------------------------
   {
-    TDesc M0;
+    // Define accumulation range (act as Time-domain frequency filter)
+    int z0 = (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts)
+                 ? 0
+                 : s_.time_z_begin;
+    int z1 = (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts)
+                 ? (int)S.shape.at(0)
+                 : s_.time_z_end;
 
-    std::tie(M0) = unpack<1>(average(S, {0, 0, (int)S.shape.at(0)}));
+    auto [M0] = unpack<1>(average(S, {0, z0, z1}));
+
+    if (s_.pp_fft_shift) {
+      std::tie(M0) = unpack<1>(fft_shift(M0, {}));
+    }
+
+    if (s_.pp_registration) {
+      std::tie(M0) = unpack<1>(registration(M0, {s_.pp_registration_radius}));
+    }
+
+    auto [M0_avg] = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
+
+    if (s_.pp_convolution) {
+      std::tie(M0_avg) =
+          unpack<1>(convolution(M0_avg, {s_.pp_convolution_path, s_.pp_convolution_divide}));
+    }
+
+    std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
+    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
+    std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
+    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
+    xy_processed_display(M0_avg, {});
+
+    // XY processed recording
+    if (s_.recording_method == RecordingMethod::PROCESSED) {
+      auto path     = s_.recording_path;
+      auto count    = s_.recording_count;
+      auto settings = settings_to_old_json(s_);
+
+      auto [M0_rec]    = unpack<1>(memcpy(M0_avg, {Host}));
+      std::tie(M0_rec) = unpack<1>(batched_queue(M0_rec, {s_.cpu_out_size, 1, 1}));
+      holofile_write(M0_rec, {path.string(), count, settings});
+    }
   }
 
-  logger()->debug("[GraphBuilder_v2::build] Graph spec built successfully");
+  if (!s_.view_3d_cuts) {
+    return g_;
+  }
+
+  // -------------------------------------------------------------------------------------------------
+  // XZ View Processing (S -> M0 - Processed XZ View)
+  // -------------------------------------------------------------------------------------------------
+  {
+    std::vector<size_t> crop_origin = {0, 10, 0};
+    std::vector<size_t> crop_shape  = {1, S.shape.at(1) - 20, S.shape.at(0)};
+
+    auto [M0]        = unpack<1>(average(S, {1, s_.time_y_begin, s_.time_y_end}));
+    std::tie(M0)     = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
+    auto [M0_avg]    = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
+    std::tie(M0_avg) = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
+    std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
+    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
+    std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
+    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
+    xz_processed_display(M0_avg, {});
+  }
+
+  // -------------------------------------------------------------------------------------------------
+  // YZ View Processing (S -> M0 - Processed YZ View)
+  // -------------------------------------------------------------------------------------------------
+  {
+    std::vector<size_t> crop_origin = {0, 10, 0};
+    std::vector<size_t> crop_shape  = {1, S.shape.at(1) - 20, S.shape.at(0)};
+
+    auto [M0]        = unpack<1>(average(S, {2, s_.time_x_begin, s_.time_x_end}));
+    std::tie(M0)     = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
+    auto [M0_avg]    = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
+    std::tie(M0_avg) = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
+    std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
+    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
+    std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
+    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
+    yz_processed_display(M0_avg, {});
+  }
+
   return g_;
 }
 
-} // namespace holovibes::pipeline
+// -------------------------------------------------------------------------------------------------
+// Task Wrappers Implementations
+// -------------------------------------------------------------------------------------------------
 
-#define DEFINE_SOURCE_SYNC_NODE(fn_name, node_name_str, kind_str, reg_key_str, SettingsType)       \
+#define DEFINE_SOURCE_SYNC_NODE(fn_name, node_name_str, kind_str, SettingsType)                    \
   std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::fn_name(SettingsType s) {                   \
-    return make_source_sync_node(node_name_str, kind_str, reg_key_str, s);                         \
+    return make_source_sync_node(node_name_str, kind_str, kind_str, s);                            \
   }
 
-#define DEFINE_UNARY_SYNC_NODE(fn_name, node_name_str, kind_str, reg_key_str, SettingsType)        \
+#define DEFINE_UNARY_SYNC_NODE(fn_name, node_name_str, kind_str, SettingsType)                     \
   std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::fn_name(const TDesc &X, SettingsType s) {   \
-    return make_unary_sync_node(node_name_str, kind_str, reg_key_str, X, s);                       \
+    return make_unary_sync_node(node_name_str, kind_str, kind_str, X, s);                          \
   }
 
-#define DEFINE_UNARY_ASYNC_NODE(fn_name, node_name_str, kind_str, reg_key_str, SettingsType)       \
+#define DEFINE_UNARY_ASYNC_NODE(fn_name, node_name_str, kind_str, SettingsType)                    \
   std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::fn_name(const TDesc &X, SettingsType s) {   \
-    return make_unary_async_node(node_name_str, kind_str, reg_key_str, X, s);                      \
+    return make_unary_async_node(node_name_str, kind_str, kind_str, X, s);                         \
   }
 
-namespace holovibes::pipeline {
+// clang-format off
+DEFINE_SOURCE_SYNC_NODE(holofile_read,                          "source",                              "Holofile",                       tasks::sources::HolofileSettings)
+DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "ametek_s710_euresys_coaxlink_octo",   "AmetekS710EuresysCoaxlinkOcto",  tasks::sources::AmetekS710EuresysCoaxlinkOctoSettings)
+DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "ametek_s711_euresys_coaxlink_qsfp_+", "AmetekS711EuresysCoaxlinkQSFP+", tasks::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
+DEFINE_UNARY_SYNC_NODE (memcpy,                                 "memcpy",                              "Memcpy",                         tasks::syncs::MemcpySettings)
+DEFINE_UNARY_SYNC_NODE (convert,                                "conversion",                          "Conversion",                     tasks::syncs::ConversionSettings)
+DEFINE_UNARY_SYNC_NODE (pca,                                    "pca",                                 "Pca",                            tasks::syncs::PcaSettings)
+DEFINE_UNARY_SYNC_NODE (stft,                                   "stft",                                "Stft",                           tasks::syncs::StftSettings)
+DEFINE_UNARY_SYNC_NODE (filter_2d,                              "filter_2d",                           "Filter2D",                       tasks::syncs::Filter2DSettings)
+DEFINE_UNARY_SYNC_NODE (fresnel_diffraction,                    "fresnel_diffraction",                 "FresnelDiffraction",             tasks::syncs::FresnelDiffractionSettings)
+DEFINE_UNARY_SYNC_NODE (angular_spectrum,                       "angular_spectrum",                    "AngularSpectrum",                tasks::syncs::AngularSpectrumSettings)
+DEFINE_UNARY_SYNC_NODE (reshape,                                "reshape",                             "Reshape",                        tasks::syncs::ReshapeSettings)
+DEFINE_UNARY_SYNC_NODE (average,                                "average",                             "Average",                        tasks::syncs::AverageSettings)
+DEFINE_UNARY_SYNC_NODE (convolution,                            "convolution",                         "Convolution",                    tasks::syncs::ConvolutionSettings)
+DEFINE_UNARY_SYNC_NODE (crop,                                   "crop",                                "Crop",                           tasks::syncs::CropSettings)
+DEFINE_UNARY_SYNC_NODE (fft_shift,                              "fft_shift",                           "FFTShift",                       tasks::syncs::FFTShiftSettings)
+DEFINE_UNARY_SYNC_NODE (pct_clip,                               "pct_clip",                            "PctClip",                        tasks::syncs::PctClipSettings)
+DEFINE_UNARY_SYNC_NODE (registration,                           "registration",                        "Registration",                   tasks::syncs::RegistrationSettings)
+DEFINE_UNARY_SYNC_NODE (rotation,                               "rotation",                            "Rotation",                       tasks::syncs::RotationSettings)
+DEFINE_UNARY_SYNC_NODE (xy_raw_display,                         "xy_raw_display",                      "DisplayTensorXYRaw",             tasks::sinks::DisplayTensorSettings)
+DEFINE_UNARY_SYNC_NODE (xy_processed_display,                   "xy_processed_display",                "DisplayTensorXY",                tasks::sinks::DisplayTensorSettings)
+DEFINE_UNARY_SYNC_NODE (xz_processed_display,                   "xz_processed_display",                "DisplayTensorXZ",                tasks::sinks::DisplayTensorSettings)
+DEFINE_UNARY_SYNC_NODE (yz_processed_display,                   "yz_processed_display",                "DisplayTensorYZ",                tasks::sinks::DisplayTensorSettings)
+DEFINE_UNARY_SYNC_NODE (holofile_write,                         "holofile_write",                      "HolofileWriter",                 tasks::sinks::HolofileSettings)
+DEFINE_UNARY_ASYNC_NODE(batched_queue,                          "batch_queue",                         "BatchQueue",                     tasks::asyncs::BatchQueueSettings)
+DEFINE_UNARY_ASYNC_NODE(slide_avg,                              "slide_avg",                           "SlidingAverage",                 tasks::asyncs::SlidingAverageSettings)
+// clang-format on
+
+// -------------------------------------------------------------------------------------------------
+// Various Helpers
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::TDesc GraphBuilder_v2::TDesc::as_core() const {
   holoflow::core::TDesc t{};
@@ -232,123 +390,5 @@ GraphBuilder_v2::make_unary_async_node(std::string_view node_name,
   const auto infer       = factory.infer(core_inputs, nlohmann::json(s));
   return wrap_infer_outputs(node_name, v, infer);
 }
-
-DEFINE_SOURCE_SYNC_NODE(holofile_read,
-                        "source",
-                        "Holofile",
-                        "Holofile",
-                        tasks::sources::HolofileSettings)
-
-DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,
-                        "ametek_s710_euresys_coaxlink_octo",
-                        "AmetekS710EuresysCoaxlinkOcto",
-                        "AmetekS710EuresysCoaxlinkOcto",
-                        tasks::sources::AmetekS710EuresysCoaxlinkOctoSettings)
-
-DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus,
-                        "ametek_s711_euresys_coaxlink_qsfp_plus",
-                        "AmetekS711EuresysCoaxlinkQSFPPlus",
-                        "AmetekS711EuresysCoaxlinkQSFPPlus",
-                        tasks::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
-
-DEFINE_UNARY_SYNC_NODE(memcpy, "memcpy", "Memcpy", "Memcpy", tasks::syncs::MemcpySettings)
-
-DEFINE_UNARY_SYNC_NODE(convert,
-                       "conversion",
-                       "Conversion",
-                       "Conversion",
-                       tasks::syncs::ConversionSettings)
-
-DEFINE_UNARY_SYNC_NODE(pca, "pca", "Pca", "Pca", tasks::syncs::PcaSettings)
-
-DEFINE_UNARY_SYNC_NODE(stft, "stft", "Stft", "Stft", tasks::syncs::StftSettings)
-
-DEFINE_UNARY_SYNC_NODE(filter_2d,
-                       "filter_2d",
-                       "Filter2D",
-                       "Filter2D",
-                       tasks::syncs::Filter2DSettings)
-
-DEFINE_UNARY_SYNC_NODE(fresnel_diffraction,
-                       "fresnel_diffraction",
-                       "FresnelDiffraction",
-                       "FresnelDiffraction",
-                       tasks::syncs::FresnelDiffractionSettings)
-
-DEFINE_UNARY_SYNC_NODE(angular_spectrum,
-                       "angular_spectrum",
-                       "AngularSpectrum",
-                       "AngularSpectrum",
-                       tasks::syncs::AngularSpectrumSettings)
-
-DEFINE_UNARY_SYNC_NODE(reshape, "reshape", "Reshape", "Reshape", tasks::syncs::ReshapeSettings)
-
-DEFINE_UNARY_SYNC_NODE(average, "average", "Average", "Average", tasks::syncs::AverageSettings)
-
-DEFINE_UNARY_SYNC_NODE(convolution,
-                       "convolution",
-                       "Convolution",
-                       "Convolution",
-                       tasks::syncs::ConvolutionSettings)
-
-DEFINE_UNARY_SYNC_NODE(crop, "crop", "Crop", "Crop", tasks::syncs::CropSettings)
-
-DEFINE_UNARY_SYNC_NODE(fft_shift,
-                       "fft_shift",
-                       "FftShift",
-                       "FftShift",
-                       tasks::syncs::FFTShiftSettings)
-
-DEFINE_UNARY_SYNC_NODE(pct_clip, "pct_clip", "PctClip", "PctClip", tasks::syncs::PctClipSettings)
-
-DEFINE_UNARY_SYNC_NODE(registration,
-                       "registration",
-                       "Registration",
-                       "Registration",
-                       tasks::syncs::RegistrationSettings)
-
-DEFINE_UNARY_SYNC_NODE(rotation, "rotation", "Rotation", "Rotation", tasks::syncs::RotationSettings)
-
-DEFINE_UNARY_SYNC_NODE(xy_raw_display,
-                       "xy_raw_display",
-                       "DisplayTensorXYRaw",
-                       "DisplayTensorXYRaw",
-                       tasks::sinks::DisplayTensorSettings)
-
-DEFINE_UNARY_SYNC_NODE(xy_processed_display,
-                       "xy_processed_display",
-                       "DisplayTensorXY",
-                       "DisplayTensorXY",
-                       tasks::sinks::DisplayTensorSettings)
-
-DEFINE_UNARY_SYNC_NODE(xz_processed_display,
-                       "xz_processed_display",
-                       "DisplayTensorXZ",
-                       "DisplayTensorXZ",
-                       tasks::sinks::DisplayTensorSettings)
-
-DEFINE_UNARY_SYNC_NODE(yz_processed_display,
-                       "yz_processed_display",
-                       "DisplayTensorYZ",
-                       "DisplayTensorYZ",
-                       tasks::sinks::DisplayTensorSettings)
-
-DEFINE_UNARY_SYNC_NODE(holofile_write,
-                       "holofile_write",
-                       "HolofileWrite",
-                       "HolofileWrite",
-                       tasks::sinks::HolofileSettings)
-
-DEFINE_UNARY_ASYNC_NODE(batched_queue,
-                        "batch_queue",
-                        "BatchQueue",
-                        "BatchQueue",
-                        tasks::asyncs::BatchQueueSettings)
-
-DEFINE_UNARY_ASYNC_NODE(slide_avg,
-                        "slide_avg",
-                        "SlidingAverage",
-                        "SlidingAverage",
-                        tasks::asyncs::SlidingAverageSettings)
 
 } // namespace holovibes::pipeline

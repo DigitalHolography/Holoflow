@@ -83,34 +83,33 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
     xz_processed_widget_(xz_processed_widget),
     yz_processed_widget_(yz_processed_widget),
     xy_raw_widget_(xy_raw_widget) {
-  reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
-  reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
-  reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
-  reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
-  reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ", yz_processed_widget_);
-  reg_sync<sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
-  reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
-  reg_sync<sources::HolofileFactory>(registry_, "Holofile");
-  reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_,
-                                                          "AmetekS710EuresysCoaxlinkOcto");
-
-  reg_sync<sources::AmetekS711EuresysCoaxlinkOctoFactory>(registry_,
-                                                          "AmetekS711EuresysCoaxlinkQSFP+");
-  reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
-  reg_sync<syncs::AverageFactory>(registry_, "Average");
-  reg_sync<syncs::ConversionFactory>(registry_, "Conversion");
-  reg_sync<syncs::FFTShiftFactory>(registry_, "FFTShift");
-  reg_sync<syncs::FresnelDiffractionFactory>(registry_, "FresnelDiffraction");
-  reg_sync<syncs::MemcpyFactory>(registry_, "Memcpy");
-  reg_sync<syncs::PcaFactory>(registry_, "Pca");
-  reg_sync<syncs::PctClipFactory>(registry_, "PctClip");
-  reg_sync<syncs::StftFactory>(registry_, "Stft");
-  reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");
-  reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
-  reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
-  reg_sync<syncs::ReshapeFactory>(registry_, "Reshape");
-  reg_sync<syncs::CropFactory>(registry_, "Crop");
-  reg_sync<syncs::RotationFactory>(registry_, "Rotation");
+  // clang-format off
+  reg_sync <sources::HolofileFactory>                     (registry_, "Holofile");
+  reg_sync <sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
+  reg_sync <sources::AmetekS711EuresysCoaxlinkOctoFactory>(registry_, "AmetekS711EuresysCoaxlinkQSFP+");
+  reg_sync <syncs::MemcpyFactory>                         (registry_, "Memcpy");
+  reg_sync <syncs::ConversionFactory>                     (registry_, "Conversion");
+  reg_sync <syncs::PcaFactory>                            (registry_, "Pca");
+  reg_sync <syncs::StftFactory>                           (registry_, "Stft");
+  reg_sync <syncs::Filter2DFactory>                       (registry_, "Filter2D");
+  reg_sync <syncs::FresnelDiffractionFactory>             (registry_, "FresnelDiffraction");
+  reg_sync <syncs::AngularSpectrumFactory>                (registry_, "AngularSpectrum");
+  reg_sync <syncs::ReshapeFactory>                        (registry_, "Reshape");
+  reg_sync <syncs::AverageFactory>                        (registry_, "Average");
+  reg_sync <syncs::ConvolutionFactory>                    (registry_, "Convolution");
+  reg_sync <syncs::CropFactory>                           (registry_, "Crop");
+  reg_sync <syncs::FFTShiftFactory>                       (registry_, "FFTShift");
+  reg_sync <syncs::PctClipFactory>                        (registry_, "PctClip");
+  reg_sync <syncs::RegistrationFactory>                   (registry_, "Registration");
+  reg_sync <syncs::RotationFactory>                       (registry_, "Rotation");
+  reg_sync <sinks::DisplayTensorFactory>                  (registry_, "DisplayTensorXYRaw",             xy_raw_widget_);
+  reg_sync <sinks::DisplayTensorFactory>                  (registry_, "DisplayTensorXY",                xy_processed_widget_);
+  reg_sync <sinks::DisplayTensorFactory>                  (registry_, "DisplayTensorXZ",                xz_processed_widget_);
+  reg_sync <sinks::DisplayTensorFactory>                  (registry_, "DisplayTensorYZ",                yz_processed_widget_);
+  reg_sync <sinks::HolofileFactory>                       (registry_, "HolofileWriter");
+  reg_async<asyncs::BatchQueueFactory>                    (registry_, "BatchQueue");
+  reg_async<asyncs::SlidingAverageFactory>                (registry_, "SlidingAverage");
+  // clang-format on
 
   metrics_timer_ = new QTimer(this);
   metrics_timer_->setInterval(1000);
@@ -375,11 +374,8 @@ void Manager::build_and_run() {
   std::error_code             log_ec;
   std::filesystem::create_directories(log_root, log_ec);
 
-  auto dot  = holoflow::core::to_dot(spec_);
-  auto t    = floor<seconds>(system_clock::now());
-  auto date = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
-
-  const auto pipeline_path = log_root / std::format("pipeline_{}.dot", date);
+  auto       dot           = holoflow::core::to_dot(spec_);
+  const auto pipeline_path = log_root / "pipeline.dot";
   std::ofstream(pipeline_path) << dot;
   logger()->info("[Manager::build_and_run] Pipeline graph saved to {}", pipeline_path.string());
 
@@ -391,11 +387,8 @@ void Manager::build_and_run() {
   auto &sections  = compiler_output_->sections;
   auto &resources = compiler_output_->resources;
 
-  auto dot_compile = holoflow::runtime::to_dot(*compiler_output_, registry_);
-  t                = floor<seconds>(system_clock::now());
-  date             = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
-
-  const auto compiled_path = log_root / std::format("pipeline_compiled_{}.dot", date);
+  auto       dot_compile   = holoflow::runtime::to_dot(*compiler_output_, registry_);
+  const auto compiled_path = log_root / "pipeline_compiled.dot";
   std::ofstream(compiled_path) << dot_compile;
   logger()->info("[Manager::build_and_run] Compiled pipeline graph saved to {}",
                  compiled_path.string());
