@@ -30,7 +30,7 @@ namespace {
 __global__ void log_kernel(const float *idata, float *odata, int size) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx < size) {
-    odata[idx] = logf(idata[idx]);
+    odata[idx] = log10f(idata[idx]);
   }
 }
 

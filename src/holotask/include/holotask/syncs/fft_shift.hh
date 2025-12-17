@@ -15,6 +15,7 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
+#include <vector>
 
 #include "holoflow/core/tasks.hh"
 
@@ -25,10 +26,12 @@ namespace holotask::syncs {
 /// JSON schema (informal):
 /// @code{.json}
 /// {
+///   "axes": [0] | [1, 2]
 /// }
 /// @endcode
 struct FFTShiftSettings {
-  // Empty for now
+  /// Axes along which to perform the shift. Supports [0] for depth or [1,2] for XY.
+  std::vector<int> axes;
 };
 
 /// @name JSON serialization

@@ -179,13 +179,16 @@ GraphBuilder::V GraphBuilder::build_processed_spectrum_branch(V parent) {
   using holovibes::tasks::sinks::DisplayTensorSettings;
   using syncs::AverageSettings;
   using syncs::ConversionSettings;
+  using syncs::FFTShiftSettings;
   using syncs::LogSettings;
   using syncs::MemcpySettings;
   using syncs::ReshapeSettings;
   current_section_name_ = "processed_spectrum_view::";
 
-  auto v =
-      add_node_after<AverageSettings>(parent, 0, 0, "cpu_processed_spectrum_average_xz", "Average",
+  auto v = add_node_after<FFTShiftSettings>(parent, 0, 0, "fft_shift", "FFTShift",
+                                            FFTShiftSettings{.axes = {0}});
+
+  v = add_node_after<AverageSettings>(v, 0, 0, "cpu_processed_spectrum_average_xz", "Average",
                                       AverageSettings{
                                           .axis  = 1,
                                           .start = 0,
@@ -632,7 +635,7 @@ GraphBuilder::V GraphBuilder::add_xy_cut_avg(V parent, int out_idx, int in_idx) 
 GraphBuilder::V GraphBuilder::add_fft_shift(V parent, int out_idx, int in_idx) {
   using syncs::FFTShiftSettings;
   return add_node_after<FFTShiftSettings>(parent, out_idx, in_idx, "fft_shift", "FFTShift",
-                                          FFTShiftSettings{});
+                                          FFTShiftSettings{.axes = {1, 2}});
 }
 
 GraphBuilder::V GraphBuilder::add_xy_registration(V parent, int out_idx, int in_idx) {
