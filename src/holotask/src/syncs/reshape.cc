@@ -14,9 +14,27 @@
 
 #include "holotask/syncs/reshape.hh"
 
+#include <format>
+
 #include "bug.hh"
 #include "curaii/cuda.hh"
 #include "logger.hh"
+
+template <typename T> struct std::formatter<std::vector<T>> {
+  constexpr auto parse(std::format_parse_context &ctx) { return ctx.begin(); }
+
+  template <typename FormatContext> auto format(const std::vector<T> &v, FormatContext &ctx) const {
+    auto out = ctx.out();
+    out      = std::format_to(out, "[");
+    for (size_t i = 0; i < v.size(); ++i) {
+      out = std::format_to(out, "{}", v[i]);
+      if (i + 1 < v.size())
+        out = std::format_to(out, ", ");
+    }
+    out = std::format_to(out, "]");
+    return out;
+  }
+};
 
 namespace holotask::syncs {
 
@@ -60,7 +78,9 @@ ReshapeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                      std::multiplies<std::size_t>());
 
   check(idesc.num_elements() == nb_elements,
-        "new shape does not have same number of elements as input");
+        std::format("new shape does not have same number of elements as input: {} vs {}",
+                    settings.shape, idesc.shape));
+  // /* "new shape does not have same number of elements as input" */);
 
   auto odesc = idesc;
   odesc.shape.assign(settings.shape.begin(), settings.shape.end());

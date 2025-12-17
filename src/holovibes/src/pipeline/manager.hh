@@ -37,7 +37,9 @@ class Manager : public QObject {
 public:
   Manager(ui::TensorDisplayWidget *xy_processed_widget,
           ui::TensorDisplayWidget *xz_processed_widget,
-          ui::TensorDisplayWidget *yz_processed_widget, ui::TensorDisplayWidget *xy_raw_widget);
+          ui::TensorDisplayWidget *yz_processed_widget, ui::TensorDisplayWidget *xy_raw_widget,
+          ui::TensorDisplayWidget *raw_spectrum_widget,
+          ui::TensorDisplayWidget *processed_spectrum_widget);
 
   ~Manager() override = default;
 
@@ -83,6 +85,8 @@ private:
   ui::TensorDisplayWidget *xz_processed_widget_;
   ui::TensorDisplayWidget *yz_processed_widget_;
   ui::TensorDisplayWidget *xy_raw_widget_;
+  ui::TensorDisplayWidget *raw_spectrum_widget_;
+  ui::TensorDisplayWidget *processed_spectrum_widget_;
 
   // Settings
   Settings s_;

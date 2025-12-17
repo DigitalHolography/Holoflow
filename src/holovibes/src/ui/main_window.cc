@@ -134,15 +134,25 @@ void MainWindow::setup_main_layout() {
 }
 
 void MainWindow::initialize_display_widgets() {
-  xy_raw_widget_       = new TensorDisplayWidget(nullptr);
-  xy_processed_widget_ = new TensorDisplayWidget(nullptr);
-  xz_processed_widget_ = new TensorDisplayWidget(nullptr);
-  yz_processed_widget_ = new TensorDisplayWidget(nullptr);
+  xy_raw_widget_             = new TensorDisplayWidget(nullptr);
+  xy_processed_widget_       = new TensorDisplayWidget(nullptr);
+  xz_processed_widget_       = new TensorDisplayWidget(nullptr);
+  yz_processed_widget_       = new TensorDisplayWidget(nullptr);
+  raw_spectrum_widget_       = new TensorDisplayWidget(nullptr);
+  processed_spectrum_widget_ = new TensorDisplayWidget(nullptr);
 
   xy_processed_widget_->setWindowTitle("XY-Processed");
   xz_processed_widget_->setWindowTitle("XZ-Processed");
   yz_processed_widget_->setWindowTitle("YZ-Processed");
   xy_raw_widget_->setWindowTitle("XY-Raw");
+  raw_spectrum_widget_->setWindowTitle("Raw Spectrum");
+  processed_spectrum_widget_->setWindowTitle("Processed Spectrum");
+
+  raw_spectrum_widget_->resize(512, 512);
+  raw_spectrum_widget_->show();
+
+  processed_spectrum_widget_->resize(512, 512);
+  processed_spectrum_widget_->show();
 
   // xy_processed_widget_->resize(512 * 2, 320 * 2);
   // xy_processed_widget_->show();
@@ -182,8 +192,9 @@ void MainWindow::initialize_display_widgets() {
 }
 
 void MainWindow::initialize_pipeline_manager() {
-  pipeline_manager_        = new pipeline::Manager(xy_processed_widget_, xz_processed_widget_,
-                                                   yz_processed_widget_, xy_raw_widget_);
+  pipeline_manager_ =
+      new pipeline::Manager(xy_processed_widget_, xz_processed_widget_, yz_processed_widget_,
+                            xy_raw_widget_, raw_spectrum_widget_, processed_spectrum_widget_);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);
   pipeline_manager_thread_->start();
@@ -775,8 +786,10 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // View Settings
   {
-    s.view_3d_cuts = view_widget_->is_cuts_3d_enabled();
-    s.raw_view     = view_widget_->is_raw_view_enabled();
+    s.view_3d_cuts            = view_widget_->is_cuts_3d_enabled();
+    s.raw_view                = view_widget_->is_raw_view_enabled();
+    s.view_raw_spectrum       = true;
+    s.view_processed_spectrum = true;
   }
 
   // Post-processing Settings

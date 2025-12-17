@@ -28,6 +28,7 @@
 #include "holotask/syncs/fft_shift.hh"
 #include "holotask/syncs/filter2d.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
+#include "holotask/syncs/log.hh"
 #include "holotask/syncs/memcpy.hh"
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
@@ -85,9 +86,19 @@ void GraphBuilder::build() {
   }
 
   // Build processed branches
-  auto gpu_in_queue     = add_gpu_in_queue(parent, 0, 0);
+  auto gpu_in_queue = add_gpu_in_queue(parent, 0, 0);
+
+  // Build raw spectrum view branch
+  if (s_.view_raw_spectrum) {
+    build_raw_spectrum_branch(gpu_in_queue);
+  }
+
   auto processed_parent = build_processed_branch(gpu_in_queue);
   build_xy_branch(processed_parent);
+
+  if (s_.view_processed_spectrum) {
+    build_processed_spectrum_branch(processed_parent);
+  }
 
   if (s_.view_3d_cuts) {
     build_xz_branch(processed_parent);
@@ -113,6 +124,101 @@ GraphBuilder::V GraphBuilder::build_raw_branch(V cpu_in_queue) {
   }
   current_section_name_.clear();
   return raw_reshape;
+}
+
+GraphBuilder::V GraphBuilder::build_raw_spectrum_branch(V gpu_in_queue) {
+  using asyncs::BatchQueueSettings;
+  using holovibes::tasks::sinks::DisplayTensorSettings;
+  using syncs::AverageSettings;
+  using syncs::MemcpySettings;
+  using syncs::ReshapeSettings;
+  current_section_name_ = "raw_spectrum_view::";
+
+  auto v = add_node_after<MemcpySettings>(gpu_in_queue, 0, 0, "cpu_raw_spectrum_view_cpy", "Memcpy",
+                                          MemcpySettings{
+                                              .target = MemcpySettings::Target::Device,
+                                          });
+
+  v = add_node_after<BatchQueueSettings>(v, 0, 0, "gpu_raw_spectrum_queue", "BatchQueue",
+                                         BatchQueueSettings{
+                                             .target_capacity = 128,
+                                             .output_size     = s_.time_window,
+                                             .output_stride   = s_.time_window,
+                                         });
+
+  v = add_node_after<AverageSettings>(v, 0, 0, "cpu_raw_spectrum_average_xz", "Average",
+                                      AverageSettings{
+                                          .axis  = 1,
+                                          .start = 0,
+                                          .end   = src_height_,
+                                      });
+
+  v = add_node_after<AverageSettings>(v, 0, 0, "cpu_raw_spectrum_average_yz", "Average",
+                                      AverageSettings{
+                                          .axis  = 2,
+                                          .start = 0,
+                                          .end   = src_width_,
+                                      });
+
+  v = add_node_after<ReshapeSettings>(v, 0, 0, "xz_reshape", "Reshape",
+                                      ReshapeSettings{
+                                          .shape = {1, 1, static_cast<size_t>(s_.time_window)},
+                                      });
+
+  v = add_node_after<MemcpySettings>(v, 0, 0, "cpu_raw_spectrum_view_cpu_cpy", "Memcpy",
+                                     MemcpySettings{
+                                         .target = MemcpySettings::Target::Host,
+                                     });
+
+  return add_node_after<DisplayTensorSettings>(v, 0, 0, "raw_spectrum_display",
+                                               "DisplayRawSpectrum", DisplayTensorSettings{});
+}
+
+GraphBuilder::V GraphBuilder::build_processed_spectrum_branch(V parent) {
+  using asyncs::BatchQueueSettings;
+  using holovibes::tasks::sinks::DisplayTensorSettings;
+  using syncs::AverageSettings;
+  using syncs::ConversionSettings;
+  using syncs::LogSettings;
+  using syncs::MemcpySettings;
+  using syncs::ReshapeSettings;
+  current_section_name_ = "processed_spectrum_view::";
+
+  auto v =
+      add_node_after<AverageSettings>(parent, 0, 0, "cpu_processed_spectrum_average_xz", "Average",
+                                      AverageSettings{
+                                          .axis  = 1,
+                                          .start = 0,
+                                          .end   = src_height_,
+                                      });
+
+  v = add_node_after<AverageSettings>(v, 0, 0, "cpu_processed_spectrum_average_yz", "Average",
+                                      AverageSettings{
+                                          .axis  = 2,
+                                          .start = 0,
+                                          .end   = src_width_,
+                                      });
+
+  v = add_node_after<ReshapeSettings>(v, 0, 0, "cpu_processed_spectrum_reshape", "Reshape",
+                                      ReshapeSettings{
+                                          .shape = {1, 1, static_cast<size_t>(s_.time_window)},
+                                      });
+
+  v = add_node_after<LogSettings>(v, 0, 0, "cpu_processed_spectrum_log", "Log", LogSettings{});
+
+  v = add_node_after<ConversionSettings>(v, 0, 0, "cpu_processed_spectrum_to_u8", "Conversion",
+                                         ConversionSettings{
+                                             .target   = ConversionSettings::Target::U8,
+                                             .strategy = ConversionSettings::Strategy::Scaled,
+                                         });
+
+  v = add_node_after<MemcpySettings>(v, 0, 0, "cpu_processed_spectrum_view_cpu_cpy", "Memcpy",
+                                     MemcpySettings{
+                                         .target = MemcpySettings::Target::Host,
+                                     });
+
+  return add_node_after<DisplayTensorSettings>(v, 0, 0, "processed_spectrum_display",
+                                               "DisplayProcessedSpectrum", DisplayTensorSettings{});
 }
 
 GraphBuilder::V GraphBuilder::build_processed_branch(V parent) {

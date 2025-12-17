@@ -110,6 +110,8 @@ private:
   TensorDisplayWidget *xz_processed_widget_;
   TensorDisplayWidget *yz_processed_widget_;
   TensorDisplayWidget *xy_raw_widget_;
+  TensorDisplayWidget *raw_spectrum_widget_;
+  TensorDisplayWidget *processed_spectrum_widget_;
 };
 
 } // namespace holovibes::ui

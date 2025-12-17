@@ -58,6 +58,8 @@ private:
 
   // Pipeline branches
   V    build_raw_branch(V cpu_in_queue);
+  V    build_raw_spectrum_branch(V cpu_in_queue);
+  V    build_processed_spectrum_branch(V gpu_in_queue);
   V    build_processed_branch(V parent);
   void build_xy_branch(V debounce_queue);
   void build_xz_branch(V debounce_queue);

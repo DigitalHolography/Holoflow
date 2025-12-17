@@ -43,6 +43,7 @@
 #include "holotask/syncs/fft_shift.hh"
 #include "holotask/syncs/filter2d.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
+#include "holotask/syncs/log.hh"
 #include "holotask/syncs/memcpy.hh"
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
@@ -77,9 +78,13 @@ void reg_async(holoflow::core::Registry &r, std::string_view name, Args &&...arg
 Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
                  ui::TensorDisplayWidget *xz_processed_widget,
                  ui::TensorDisplayWidget *yz_processed_widget,
-                 ui::TensorDisplayWidget *xy_raw_widget)
+                 ui::TensorDisplayWidget *xy_raw_widget,
+                 ui::TensorDisplayWidget *raw_spectrum_widget,
+                 ui::TensorDisplayWidget *processed_spectrum_widget)
     : xy_processed_widget_(xy_processed_widget), xz_processed_widget_(xz_processed_widget),
-      yz_processed_widget_(yz_processed_widget), xy_raw_widget_(xy_raw_widget) {
+      yz_processed_widget_(yz_processed_widget), xy_raw_widget_(xy_raw_widget),
+      raw_spectrum_widget_(raw_spectrum_widget),
+      processed_spectrum_widget_(processed_spectrum_widget) {
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY",
@@ -90,6 +95,10 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
                                                           yz_processed_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw",
                                                           xy_raw_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum",
+                                                          raw_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum",
+                                                          processed_spectrum_widget_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_,
@@ -108,6 +117,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<syncs::StftFactory>(registry_, "Stft");
   reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
+  reg_sync<syncs::LogFactory>(registry_, "Log");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
   reg_sync<syncs::ReshapeFactory>(registry_, "Reshape");
   reg_sync<syncs::CropFactory>(registry_, "Crop");

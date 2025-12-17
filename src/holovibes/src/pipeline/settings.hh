@@ -100,6 +100,8 @@ struct Settings {
   bool     view_3d_cuts;
   bool     raw_view;
   ViewType view_type;
+  bool     view_raw_spectrum;
+  bool     view_processed_spectrum;
 
   // Post-processing
   int         pp_fps;
