@@ -28,6 +28,8 @@
 #include <system_error>
 
 #include "bug.hh"
+#include "graph_builder.hh"
+#include "graph_builder_v2.hh"
 #include "holoflow/runtime/graph_display.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
@@ -54,8 +56,6 @@
 #include "logger.hh"
 #include "settings_loader.hh"
 #include "tasks/sinks/display_tensor.hh"
-
-#include "graph_builder.hh"
 
 using namespace holotask;
 
@@ -304,8 +304,8 @@ void Manager::poll_metrics() {
     return;
   }
 
-  HOLOVIBES_CHECK(snapshot.contains("source"), "Missing 'source' node metrics");
-  double input_fps = snapshot.at("source").runs_per_second;
+  HOLOVIBES_CHECK(snapshot.contains("source_0"), "Missing 'source' node metrics");
+  double input_fps = snapshot.at("source_0").runs_per_second;
   input_fps *= s_.load_batch;
   emit metrics_updated(input_fps);
 }
@@ -432,8 +432,10 @@ void Manager::build_graph_spec() {
   guess_source_dims();
 
   GraphBuilder builder{spec_, s_, src_width_, src_height_, opti_cpu_stride_, opti_gpu_stride_};
-
   builder.build();
+
+  GraphBuilder_v2 builder_v2{s_, registry_};
+  spec_ = builder_v2.build();
 
   settings_dirty_ = false;
   logger()->debug("[Manager::build_graph_spec] Graph spec built successfully");
