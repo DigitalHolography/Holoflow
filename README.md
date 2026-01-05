@@ -65,7 +65,7 @@ holoflow
 - **x64 Native Tools Command Prompt** (for running all commands)
 - **[Python](https://www.python.org/downloads/) >= 3.10**
 - **[Git](https://git-scm.com/downloads/win)**
-- **[Qt >= 6.5](https://www.qt.io/download-qt-installer-oss)** set `Qt6_DIR` env var to your Qt installation path, e.g. `C:\Qt\6.5.2\msvc2019_64\lib\cmake\Qt6`, add `C:\Qt\6.5.2\msvc2019_64\bin` to your `PATH`
+- **[Qt >= 6.5](https://www.qt.io/download-qt-installer-oss)** with `Qt Graphs` package enabled during a custom installation. Set `Qt6_DIR` env var to your Qt installation path, e.g. `C:\Qt\6.5.2\msvc2019_64\lib\cmake\Qt6`, add `C:\Qt\6.5.2\msvc2019_64\bin` to your `PATH`
 - **[Intel oneAPI Base Toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html)** add `C:\Program Files (x86)\Intel\oneAPI\mkl\latest\bin` and `C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin` to your `PATH`
 - **[Node.js](https://nodejs.org/en/download/)** (both `node` and `npm` in your `PATH`)
 - **[quicktype](https://www.npmjs.com/package/quicktype)** install via `npm install -g quicktype`
