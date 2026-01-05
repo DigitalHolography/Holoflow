@@ -147,13 +147,6 @@ void MainWindow::initialize_display_widgets() {
   xy_raw_widget_->setWindowTitle("XY-Raw");
   raw_spectrum_widget_->setWindowTitle("Raw Spectrum");
   processed_spectrum_widget_->setWindowTitle("Processed Spectrum");
-
-  raw_spectrum_widget_->resize(512, 512);
-  raw_spectrum_widget_->show();
-
-  processed_spectrum_widget_->resize(512, 512);
-  processed_spectrum_widget_->show();
-
   // xy_processed_widget_->resize(512 * 2, 320 * 2);
   // xy_processed_widget_->show();
 
@@ -189,6 +182,8 @@ void MainWindow::initialize_display_widgets() {
       xy_processed_widget_->set_reticle_radius(value);
     }
   });
+
+  // TODO Add a button to toggle spectrum views
 }
 
 void MainWindow::initialize_pipeline_manager() {
@@ -358,6 +353,14 @@ void MainWindow::on_start_pipeline_success() {
   if (view_widget_->is_raw_view_enabled()) {
     xy_raw_widget_->show();
   }
+
+  // TODO Add a button to toggle these spectrum views
+
+  raw_spectrum_widget_->resize(512, 512);
+  raw_spectrum_widget_->show();
+
+  processed_spectrum_widget_->resize(512, 512);
+  processed_spectrum_widget_->show();
 }
 
 void MainWindow::on_start_pipeline_failure(const QString &error) {
@@ -386,6 +389,8 @@ void MainWindow::on_stop_pipeline_success() {
   xy_processed_widget_->hide();
   xz_processed_widget_->hide();
   yz_processed_widget_->hide();
+  raw_spectrum_widget_->hide();
+  processed_spectrum_widget_->hide();
 }
 
 void MainWindow::on_stop_pipeline_failure(const QString &error) {
@@ -402,6 +407,8 @@ void MainWindow::on_stop_pipeline_failure(const QString &error) {
   xy_processed_widget_->hide();
   xz_processed_widget_->hide();
   yz_processed_widget_->hide();
+  raw_spectrum_widget_->hide();
+  processed_spectrum_widget_->hide();
 
   show_pipeline_error_popup(error);
 }
@@ -458,6 +465,42 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
+  if (xy_processed_widget_) {
+    if (xy_processed_widget_->isVisible())
+      xy_processed_widget_->hide();
+    xy_processed_widget_->deleteLater();
+  }
+
+  if (xz_processed_widget_) {
+    if (xz_processed_widget_->isVisible())
+      xz_processed_widget_->hide();
+    xz_processed_widget_->deleteLater();
+  }
+
+  if (yz_processed_widget_) {
+    if (yz_processed_widget_->isVisible())
+      yz_processed_widget_->hide();
+    yz_processed_widget_->deleteLater();
+  }
+
+  if (xy_raw_widget_) {
+    if (xy_raw_widget_->isVisible())
+      xy_raw_widget_->hide();
+    xy_raw_widget_->deleteLater();
+  }
+
+  if (raw_spectrum_widget_) {
+    if (raw_spectrum_widget_->isVisible())
+      raw_spectrum_widget_->hide();
+    raw_spectrum_widget_->deleteLater();
+  }
+
+  if (processed_spectrum_widget_) {
+    if (processed_spectrum_widget_->isVisible())
+      processed_spectrum_widget_->hide();
+    processed_spectrum_widget_->deleteLater();
+  }
+
   if (pipeline_manager_ && import_widget_->is_stop_enabled()) {
     pipeline_manager_->stop_pipeline();
   }
