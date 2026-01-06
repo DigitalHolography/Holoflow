@@ -90,6 +90,7 @@ private:
   void initialize_pipeline_manager();
   void connect_manager_signals();
   void connect_import_controls();
+  void connect_export_controls();
   void configure_window();
 
   std::filesystem::path makeRecordingPath(const QString &userText) const;

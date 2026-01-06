@@ -88,6 +88,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
   connect_manager_signals();
   connect_import_controls();
+  connect_export_controls();
   setup_validation_connections();
   setup_update_connections();
 
@@ -141,14 +142,12 @@ void MainWindow::initialize_display_widgets() {
   raw_spectrum_widget_       = new TensorDisplayWidget(nullptr);
   processed_spectrum_widget_ = new TensorDisplayWidget(nullptr);
 
+  xy_raw_widget_->setWindowTitle("XY-Raw");
   xy_processed_widget_->setWindowTitle("XY-Processed");
   xz_processed_widget_->setWindowTitle("XZ-Processed");
   yz_processed_widget_->setWindowTitle("YZ-Processed");
-  xy_raw_widget_->setWindowTitle("XY-Raw");
   raw_spectrum_widget_->setWindowTitle("Raw Spectrum");
   processed_spectrum_widget_->setWindowTitle("Processed Spectrum");
-  // xy_processed_widget_->resize(512 * 2, 320 * 2);
-  // xy_processed_widget_->show();
 
   connect(view_widget_, &ViewWidget::cuts_3d_toggled, this, [this](bool checked) {
     if (checked) {
@@ -198,8 +197,6 @@ void MainWindow::initialize_display_widgets() {
       xy_processed_widget_->set_reticle_radius(value);
     }
   });
-
-  // TODO Add a button to toggle spectrum views
 }
 
 void MainWindow::initialize_pipeline_manager() {
@@ -274,6 +271,9 @@ void MainWindow::connect_import_controls() {
       logger()->error("failed to open \"{}\": \"{}\"", file.toStdString(), e.what());
     }
   });
+}
+
+void MainWindow::connect_export_controls() {
 
   connect(export_widget_, &ExportWidget::record_clicked, this,
           &MainWindow::on_export_record_clicked);
@@ -355,6 +355,12 @@ void MainWindow::on_start_pipeline_success() {
   import_widget_->set_stop_enabled(true);
   export_widget_->set_record_enabled(!export_in_progress_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(export_in_progress_);
+
+  if (render_widget_->get_image_mode() == "Raw") {
+    xy_processed_widget_->setWindowTitle("XY-Raw");
+  } else {
+    xy_processed_widget_->setWindowTitle("XY-Processed");
+  }
 
   auto dims = guess_source_dims();
   xy_raw_widget_->set_fixed_aspect(dims);
@@ -455,6 +461,12 @@ void MainWindow::on_update_pipeline_success() {
   import_widget_->set_start_enabled(false);
   export_widget_->set_record_enabled(!export_in_progress_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(export_in_progress_);
+
+  if (render_widget_->get_image_mode() == "Raw") {
+    xy_processed_widget_->setWindowTitle("XY-Raw");
+  } else {
+    xy_processed_widget_->setWindowTitle("XY-Processed");
+  }
 
   auto dims = guess_source_dims();
   xy_raw_widget_->set_fixed_aspect(dims);
