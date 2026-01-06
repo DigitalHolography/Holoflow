@@ -33,6 +33,8 @@ public:
   bool    is_cuts_3d_enabled() const;
   bool    is_fft_shift_enabled() const;
   bool    is_raw_view_enabled() const;
+  bool    is_raw_spectrum_view_enabled() const;
+  bool    is_process_spectrum_view_enabled() const;
   int     get_x_origin() const;
   int     get_x_width() const;
   int     get_y_origin() const;
@@ -76,6 +78,8 @@ public:
   QCheckBox      *cuts_3d_check();
   QCheckBox      *fft_shift_check();
   QCheckBox      *raw_view_check();
+  QCheckBox      *raw_spectrum_view_check();
+  QCheckBox      *process_spectrum_view_check();
   QSpinBox       *x_spin();
   QSpinBox       *x_width_spin();
   QSpinBox       *y_spin();
@@ -97,6 +101,8 @@ signals:
   void settings_changed();
   void cuts_3d_toggled(bool enabled);
   void raw_view_toggled(bool enabled);
+  void raw_spectrum_view_toggled(bool enabled);
+  void process_spectrum_view_toggled(bool enabled);
   void reticle_toggled(bool enabled);
   void reticle_radius_changed(double radius);
 
@@ -111,6 +117,8 @@ private:
   QCheckBox      *cuts_3d_check_;
   QCheckBox      *fft_shift_check_;
   QCheckBox      *raw_view_check_;
+  QCheckBox      *raw_spectrum_view_check_;
+  QCheckBox      *process_spectrum_view_check_;
   QSpinBox       *x_spin_;
   QSpinBox       *x_width_spin_;
   QSpinBox       *y_spin_;

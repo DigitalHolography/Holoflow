@@ -168,6 +168,22 @@ void MainWindow::initialize_display_widgets() {
     }
   });
 
+  connect(view_widget_, &ViewWidget::raw_spectrum_view_toggled, this, [this](bool checked) {
+    if (pipeline_running_ && checked) {
+      raw_spectrum_widget_->show();
+    } else {
+      raw_spectrum_widget_->hide();
+    }
+  });
+
+  connect(view_widget_, &ViewWidget::process_spectrum_view_toggled, this, [this](bool checked) {
+    if (pipeline_running_ && checked) {
+      processed_spectrum_widget_->show();
+    } else {
+      processed_spectrum_widget_->hide();
+    }
+  });
+
   connect(view_widget_, &ViewWidget::reticle_toggled, this, [this](bool checked) {
     if (xy_processed_widget_) {
       xy_processed_widget_->set_reticle_enabled(checked);
@@ -350,17 +366,18 @@ void MainWindow::on_start_pipeline_success() {
   xy_raw_widget_->set_fixed_aspect(guess_source_dims());
 
   xy_processed_widget_->show();
+
   if (view_widget_->is_raw_view_enabled()) {
     xy_raw_widget_->show();
   }
 
-  // TODO Add a button to toggle these spectrum views
+  if (view_widget_->is_raw_spectrum_view_enabled()) {
+    raw_spectrum_widget_->show();
+  }
 
-  raw_spectrum_widget_->resize(512, 512);
-  raw_spectrum_widget_->show();
-
-  processed_spectrum_widget_->resize(512, 512);
-  processed_spectrum_widget_->show();
+  if (view_widget_->is_process_spectrum_view_enabled()) {
+    processed_spectrum_widget_->show();
+  }
 }
 
 void MainWindow::on_start_pipeline_failure(const QString &error) {

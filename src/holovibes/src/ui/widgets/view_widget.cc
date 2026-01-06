@@ -59,6 +59,12 @@ QString ViewWidget::get_image_type() const { return image_type_combo_->currentTe
 bool    ViewWidget::is_cuts_3d_enabled() const { return cuts_3d_check_->isChecked(); }
 bool    ViewWidget::is_fft_shift_enabled() const { return fft_shift_check_->isChecked(); }
 bool    ViewWidget::is_raw_view_enabled() const { return raw_view_check_->isChecked(); }
+bool    ViewWidget::is_raw_spectrum_view_enabled() const {
+  return raw_spectrum_view_check_->isChecked();
+}
+bool ViewWidget::is_process_spectrum_view_enabled() const {
+  return process_spectrum_view_check_->isChecked();
+}
 int     ViewWidget::get_x_origin() const { return x_spin_->value(); }
 int     ViewWidget::get_x_width() const { return x_width_spin_->value(); }
 int     ViewWidget::get_y_origin() const { return y_spin_->value(); }
@@ -107,6 +113,8 @@ QComboBox      *ViewWidget::image_type_combo() { return image_type_combo_; }
 QCheckBox      *ViewWidget::cuts_3d_check() { return cuts_3d_check_; }
 QCheckBox      *ViewWidget::fft_shift_check() { return fft_shift_check_; }
 QCheckBox      *ViewWidget::raw_view_check() { return raw_view_check_; }
+QCheckBox      *ViewWidget::raw_spectrum_view_check() { return raw_spectrum_view_check_; }
+QCheckBox      *ViewWidget::process_spectrum_view_check() { return process_spectrum_view_check_; }
 QSpinBox       *ViewWidget::x_spin() { return x_spin_; }
 QSpinBox       *ViewWidget::x_width_spin() { return x_width_spin_; }
 QSpinBox       *ViewWidget::y_spin() { return y_spin_; }
@@ -154,12 +162,20 @@ void ViewWidget::setup_ui() {
 
   cuts_3d_check_ = new QCheckBox("3D Cuts", this);
   layout->addWidget(cuts_3d_check_, row, 0);
+
   fft_shift_check_ = new QCheckBox("FFT Shift", this);
   layout->addWidget(fft_shift_check_, row, 1);
   ++row;
 
   raw_view_check_ = new QCheckBox("Raw View", this);
   layout->addWidget(raw_view_check_, row, 0);
+  ++row;
+
+  raw_spectrum_view_check_ = new QCheckBox("Raw Spectrum View", this);
+  layout->addWidget(raw_spectrum_view_check_, row, 0);
+
+  process_spectrum_view_check_ = new QCheckBox("Processed Spectrum View", this);
+  layout->addWidget(process_spectrum_view_check_, row, 1);
   ++row;
 
   auto *axes_layout  = new QGridLayout();
@@ -222,6 +238,10 @@ void ViewWidget::connect_signals() {
   // Special signals for UI changes
   connect(cuts_3d_check_, &QCheckBox::toggled, this, &ViewWidget::cuts_3d_toggled);
   connect(raw_view_check_, &QCheckBox::toggled, this, &ViewWidget::raw_view_toggled);
+  connect(raw_spectrum_view_check_, &QCheckBox::toggled, this,
+          &ViewWidget::raw_spectrum_view_toggled);
+  connect(process_spectrum_view_check_, &QCheckBox::toggled, this,
+          &ViewWidget::process_spectrum_view_toggled);
   connect(reticle_check_, &QCheckBox::toggled, this, &ViewWidget::reticle_toggled);
   connect(reticle_radius_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           &ViewWidget::reticle_radius_changed);
@@ -233,6 +253,8 @@ void ViewWidget::connect_signals() {
   connect(cuts_3d_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
   connect(fft_shift_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
   connect(raw_view_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
+  connect(raw_spectrum_view_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
+  connect(process_spectrum_view_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
   connect(x_spin_, qOverload<int>(&QSpinBox::valueChanged), this, &ViewWidget::settings_changed);
   connect(x_width_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);

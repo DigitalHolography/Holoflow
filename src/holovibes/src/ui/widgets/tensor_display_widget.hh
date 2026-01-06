@@ -45,7 +45,7 @@ signals:
   void tensorDisplayed();
 
 protected:
-  void closeEvent(QCloseEvent *event) override { event->ignore(); }
+  void closeEvent(QCloseEvent *event) override;
   void initializeGL() override;
   void resizeGL(int w, int h) override;
   void paintGL() override;

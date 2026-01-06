@@ -87,7 +87,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     std::tie(H) = unpack<1>(batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window}));
   }
   std::tie(H) = unpack<1>(convert(H, {Target::CF32, Strat::Real}));
-  
+
   // -------------------------------------------------------------------------------------------------
   // Spacial Propagation (H -> H_z - Propagated Hologram)
   // -------------------------------------------------------------------------------------------------
@@ -111,7 +111,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   // -------------------------------------------------------------------------------------------------
 
   TDesc FH_z;
-  
+
   if (s_.time_method != TimeMethod::NONE) {
     std::tie(H_z) = unpack<1>(batched_queue(H_z, {s_.gpu_in_size, s_.time_window, s_.time_window}));
   }

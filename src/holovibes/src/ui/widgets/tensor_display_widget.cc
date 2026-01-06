@@ -103,6 +103,11 @@ int TensorDisplayWidget::heightForWidth(int w) const {
   return int(std::round(float(w) / ar));
 }
 
+void TensorDisplayWidget::closeEvent(QCloseEvent *event) {
+  event->ignore();
+  this->hide();
+}
+
 void TensorDisplayWidget::initializeGL() {
   initializeOpenGLFunctions();
 
