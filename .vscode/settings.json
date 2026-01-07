@@ -1,4 +1,5 @@
 {
+    "editor.formatOnSave": true,
     "conventionalCommits.scopes": [
         "holoflow",
         "curaii",
