@@ -63,6 +63,19 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     HOLOVIBES_UNREACHABLE();
   }
 
+  // Raw record
+  if (s_.recording_method == RecordingMethod::RAW) {
+    TDesc H_rec;
+    auto  count    = s_.recording_count;
+    auto  batch    = s_.time_window;
+    auto  path     = s_.recording_path.string();
+    auto  settings = settings_to_old_json(s_);
+
+    std::tie(H_rec) = unpack<1>(memcpy(H, {Host}));
+    std::tie(H_rec) = unpack<1>(batched_queue(H_rec, {count, batch, batch}));
+    holofile_write(H_rec, {path, count, settings});
+  }
+
   // Raw view
   if (s_.raw_view || s_.view_type == ViewType::RAW) {
     auto shape  = H.shape;
@@ -271,10 +284,35 @@ DEFINE_UNARY_SYNC_NODE (xy_raw_display,                         "xy_raw_display"
 DEFINE_UNARY_SYNC_NODE (xy_processed_display,                   "xy_processed_display",                "DisplayTensorXY",                tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (xz_processed_display,                   "xz_processed_display",                "DisplayTensorXZ",                tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (yz_processed_display,                   "yz_processed_display",                "DisplayTensorYZ",                tasks::sinks::DisplayTensorSettings)
-DEFINE_UNARY_SYNC_NODE (holofile_write,                         "holofile_write",                      "HolofileWriter",                 holotask::sinks::HolofileSettings)
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                          "batch_queue",                         "BatchQueue",                     holotask::asyncs::BatchQueueSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                              "slide_avg",                           "SlidingAverage",                 holotask::asyncs::SlidingAverageSettings)
 // clang-format on
+
+std::vector<GraphBuilder_v2::TDesc>
+GraphBuilder_v2::holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s) {
+  auto node_name = "record";
+  auto kind      = "HolofileWriter";
+  auto reg_key   = "HolofileWriter";
+  auto debug     = false;
+
+  HOLOVIBES_CHECK(X.producer.has_value());
+  HOLOVIBES_CHECK(reg_.is_sync_registered(std::string{reg_key}));
+
+  holoflow::core::NodeSpec node_spec{
+      .name     = std::string{node_name},
+      .kind     = std::string{kind},
+      .settings = nlohmann::json(s),
+      .debug    = debug,
+  };
+
+  auto v = boost::add_vertex(node_spec, g_);
+  boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, 0}, g_);
+
+  auto      &factory     = reg_.get_sync(std::string{reg_key});
+  const auto core_inputs = to_core_descs(std::span{&X, 1});
+  const auto infer       = factory.infer(core_inputs, nlohmann::json(s));
+  return wrap_infer_outputs(node_name, v, infer);
+}
 
 // -------------------------------------------------------------------------------------------------
 // Various Helpers
@@ -325,14 +363,14 @@ GraphBuilder_v2::wrap_infer_outputs(std::string_view node_id, V vertex, const In
 template <typename SettingsT>
 std::vector<GraphBuilder_v2::TDesc>
 GraphBuilder_v2::make_source_sync_node(std::string_view node_name, std::string_view kind,
-                                       std::string_view reg_key, const SettingsT &s) {
+                                       std::string_view reg_key, const SettingsT &s, bool debug) {
   HOLOVIBES_CHECK(reg_.is_sync_registered(std::string{reg_key}));
 
   holoflow::core::NodeSpec node_spec{
       .name     = std::string{node_name} + "_" + std::to_string(unique_id_counter_++),
       .kind     = std::string{kind},
       .settings = nlohmann::json(s),
-      .debug    = true,
+      .debug    = debug,
   };
 
   auto v = boost::add_vertex(node_spec, g_);
@@ -345,8 +383,8 @@ GraphBuilder_v2::make_source_sync_node(std::string_view node_name, std::string_v
 template <typename SettingsT>
 std::vector<GraphBuilder_v2::TDesc>
 GraphBuilder_v2::make_unary_sync_node(std::string_view node_name, std::string_view kind,
-                                      std::string_view reg_key, const TDesc &X,
-                                      const SettingsT &s) {
+                                      std::string_view reg_key, const TDesc &X, const SettingsT &s,
+                                      bool debug) {
   HOLOVIBES_CHECK(X.producer.has_value());
   HOLOVIBES_CHECK(reg_.is_sync_registered(std::string{reg_key}));
 
@@ -354,7 +392,7 @@ GraphBuilder_v2::make_unary_sync_node(std::string_view node_name, std::string_vi
       .name     = std::string{node_name} + "_" + std::to_string(unique_id_counter_++),
       .kind     = std::string{kind},
       .settings = nlohmann::json(s),
-      .debug    = true,
+      .debug    = debug,
   };
 
   auto v = boost::add_vertex(node_spec, g_);
@@ -369,8 +407,8 @@ GraphBuilder_v2::make_unary_sync_node(std::string_view node_name, std::string_vi
 template <typename SettingsT>
 std::vector<GraphBuilder_v2::TDesc>
 GraphBuilder_v2::make_unary_async_node(std::string_view node_name, std::string_view kind,
-                                       std::string_view reg_key, const TDesc &X,
-                                       const SettingsT &s) {
+                                       std::string_view reg_key, const TDesc &X, const SettingsT &s,
+                                       bool debug) {
   HOLOVIBES_CHECK(X.producer.has_value());
   HOLOVIBES_CHECK(reg_.is_async_registered(std::string{reg_key}));
 
@@ -378,7 +416,7 @@ GraphBuilder_v2::make_unary_async_node(std::string_view node_name, std::string_v
       .name     = std::string{node_name} + "_" + std::to_string(unique_id_counter_++),
       .kind     = std::string{kind},
       .settings = nlohmann::json(s),
-      .debug    = true,
+      .debug    = debug,
   };
 
   auto v = boost::add_vertex(node_spec, g_);
