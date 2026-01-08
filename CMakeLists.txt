@@ -169,7 +169,7 @@ if(WIN32 AND MSVC)
         "${INTEL_MKL_INTEL_THREAD}"
         "${INTEL_MKL_CORE}"
         "${INTEL_MKL_AVX2}"
-        "${INTEL_MKL_AVX512}
+        "${INTEL_MKL_AVX512}"
         "${INTEL_MKL_SEQUENTIAL}"
 
         "${CUDA_CUBLAS}"
