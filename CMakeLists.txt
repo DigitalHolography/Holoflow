@@ -155,14 +155,23 @@ if(WIN32 AND MSVC)
     file(REAL_PATH "${CUDA_BIN_DIR}/nvrtc64_130_0.dll" CUDA_NVRTC)
     file(REAL_PATH "${CUDA_BIN_DIR}/nvrtc-builtins64_130.dll" CUDA_NVRTC_BUILTINS)
 
-    file(REAL_PATH "C:/Program Files (x86)/Intel/oneAPI/compiler/latest/bin/libiomp5md.dll" INTEL_LIBIOMP5MD)
-    file(REAL_PATH "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/bin/mkl_intel_thread.2.dll" INTEL_MKL_INTEL_THREAD)
-    file(REAL_PATH "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/bin/mkl_core.2.dll" INTEL_MKL_CORE)
+    set(INTEL_COMPILER_BIN_DIR "C:/Program Files (x86)/Intel/oneAPI/compiler/latest/bin")
+    set(INTEL_MKL_BIN_DIR "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/bin")
+    file(REAL_PATH "${INTEL_COMPILER_BIN_DIR}/libiomp5md.dll" INTEL_LIBIOMP5MD)
+    file(REAL_PATH "${INTEL_MKL_BIN_DIR}/mkl_intel_thread.2.dll" INTEL_MKL_INTEL_THREAD)
+    file(REAL_PATH "${INTEL_MKL_BIN_DIR}/mkl_core.2.dll" INTEL_MKL_CORE)
+    file(REAL_PATH "${INTEL_MKL_BIN_DIR}/mkl_avx2.2.dll" INTEL_MKL_AVX2)
+    file(REAL_PATH "${INTEL_MKL_BIN_DIR}/mkl_avx512.2.dll" INTEL_MKL_AVX512)
+    file(REAL_PATH "${INTEL_MKL_BIN_DIR}/mkl_sequential.2.dll" INTEL_MKL_SEQUENTIAL)
 
     install(FILES
         "${INTEL_LIBIOMP5MD}"
         "${INTEL_MKL_INTEL_THREAD}"
         "${INTEL_MKL_CORE}"
+        "${INTEL_MKL_AVX2}"
+        "${INTEL_MKL_AVX512}
+        "${INTEL_MKL_SEQUENTIAL}"
+
         "${CUDA_CUBLAS}"
         "${CUDA_CUBLASLT}"
         "${CUDA_CUFFT}"
