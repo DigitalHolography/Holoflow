@@ -119,6 +119,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   if (s_.time_method == TimeMethod::SHORT_TIME_FOURIER) {
     // TODO: Enquire about Zoom FFT
     std::tie(FH_z) = unpack<1>(stft(H_z, {}));
+    std::tie(FH_z) = unpack<1>(memcpy(FH_z, {Device}));
   }
 
   else if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
