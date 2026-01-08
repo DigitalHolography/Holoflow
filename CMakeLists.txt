@@ -157,6 +157,7 @@ if(WIN32 AND MSVC)
 
     file(REAL_PATH "C:/Program Files (x86)/Intel/oneAPI/compiler/latest/bin/libiomp5md.dll" INTEL_LIBIOMP5MD)
     file(REAL_PATH "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/bin/mkl_intel_thread.2.dll" INTEL_MKL_INTEL_THREAD)
+    file(REAL_PATH "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/bin/mkl_rt.2.dll" INTEL_MKL_CORE)
 
     install(FILES
         "${INTEL_LIBIOMP5MD}"
