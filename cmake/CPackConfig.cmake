@@ -15,15 +15,14 @@
 include(InstallRequiredSystemLibraries)
 
 # installer rules. 
-set(CPACK_PACKAGE_NAME "Holoflow")
+set(CPACK_PACKAGE_NAME "Holovibes")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Holoflow - Digital Holography Software")
 set(CPACK_PACKAGE_VENDOR "Holoflow Developers")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION})
 set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
-# set(CPACK_NSIS_MODIFY_PATH ON)
 
 set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/holovibes/assets/holovibes_logo.ico")
-set(CPACK_PACKAGE_INSTALL_DIRECTORY "Holoflow ${PROJECT_VERSION}")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "${PROJECT_VERSION}")
 set(CPACK_NSIS_INSTALLED_ICON_NAME "${CMAKE_CURRENT_SOURCE_DIR}/resources/holovibes/assets/holovibes_logo.ico")
 set(CPACK_NSIS_DISPLAY_NAME "Holoflow ${PROJECT_VERSION}")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
@@ -56,5 +55,13 @@ if (CMAKE_CL_64)
 else (CMAKE_CL_64)
     set(CPACK_NSIS_INSTALL_ROOT "$PROGRAMFILES")
 endif (CMAKE_CL_64)
+
+set(CPACK_NSIS_CREATE_ICONS_EXTRA "
+    CreateShortCut '$DESKTOP\\\\Holoflow ${PROJECT_VERSION}.lnk' '$INSTDIR\\\\bin\\\\holovibes.exe'
+")
+
+set(CPACK_NSIS_DELETE_ICONS_EXTRA "
+    Delete '$DESKTOP\\\\Holoflow ${PROJECT_VERSION}.lnk'
+")
 
 include(CPack)
