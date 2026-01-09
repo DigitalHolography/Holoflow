@@ -15,37 +15,193 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <boost/graph/graph_traits.hpp>
+#include <filesystem>
+#include <fstream>
 #include <functional>
 #include <map>
+#include <nlohmann/json.hpp>
 #include <span>
 #include <string>
 #include <utility>
 #include <vector>
 
-#include <boost/graph/graph_traits.hpp>
-#include <nlohmann/json.hpp>
-
 #include "factory_maker.hh"
 #include "graph_builder.hh"
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
-#include "holoflow/runtime/graph_display.hh"
 #include "holoflow/runtime/compiler.hh"
+#include "holoflow/runtime/graph_display.hh"
+#include "holotask/asyncs/batch_queue.hh"
+#include "holotask/asyncs/slide_avg.hh"
+#include "holotask/sinks/holofile.hh"
+#include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
+#include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sources/holofile.hh"
+#include "holotask/syncs/angular_spectrum.hh"
+#include "holotask/syncs/average.hh"
+#include "holotask/syncs/conversion.hh"
+#include "holotask/syncs/convolution.hh"
+#include "holotask/syncs/crop.hh"
+#include "holotask/syncs/fft_shift.hh"
+#include "holotask/syncs/filter2d.hh"
+#include "holotask/syncs/fresnel_diffraction.hh"
+#include "holotask/syncs/log.hh"
+#include "holotask/syncs/memcpy.hh"
+#include "holotask/syncs/pca.hh"
+#include "holotask/syncs/pct_clip.hh"
+#include "holotask/syncs/registration.hh"
+#include "holotask/syncs/reshape.hh"
+#include "holotask/syncs/rotation.hh"
+#include "holotask/syncs/stft.hh"
+
+using namespace holotask;
 
 namespace holoflow::runtime {
 namespace {
 
 using holoflow::core::TaskKind;
 using holoflow::test::AsyncFactorySpec;
-using holoflow::test::make_desc;
 using holoflow::test::copy_descs;
+using holoflow::test::GraphBuilder;
+using holoflow::test::make_desc;
 using holoflow::test::make_infer_result;
 using holoflow::test::RecordingAsyncFactory;
 using holoflow::test::RecordingSyncFactory;
 using holoflow::test::StubAsyncTask;
 using holoflow::test::StubSyncTask;
 using holoflow::test::SyncFactorySpec;
-using holoflow::test::GraphBuilder;
+
+std::vector<std::filesystem::path> list_json_files(const std::filesystem::path &dir) {
+  std::vector<std::filesystem::path> json_files;
+  for (const auto &entry : std::filesystem::directory_iterator(dir)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".json") {
+      json_files.push_back(entry.path());
+    }
+  }
+  return json_files;
+}
+
+enum class Expect { Pass, Fail };
+
+struct CompilerCase {
+  std::filesystem::path path;
+  Expect                expect;
+};
+
+std::string gtest_case_name(const ::testing::TestParamInfo<CompilerCase> &info) {
+  auto s = info.param.path.generic_string();
+
+  // Gtest names must be [a-zA-Z0-9_]
+  for (auto &c : s) {
+    if (!std::isalnum(c)) {
+      c = '_';
+    }
+  }
+
+  // Avoid leading digit
+  if (!s.empty() && std::isdigit(s[0])) {
+    s = "_" + s;
+  }
+
+  // Avoid empty name
+  if (s.empty()) {
+    s = "empty";
+  }
+
+  return s;
+}
+
+std::vector<CompilerCase> discover_compiler_cases() {
+  const std::filesystem::path root = HOLOFLOW_TESTDATA_DIR;
+  std::vector<CompilerCase>   cases;
+
+  for (const auto &path : list_json_files(root / "compiler" / "ok")) {
+    cases.push_back(CompilerCase{path, Expect::Pass});
+  }
+
+  for (const auto &path : list_json_files(root / "compiler" / "fail")) {
+    cases.push_back(CompilerCase{path, Expect::Fail});
+  }
+
+  return cases;
+}
+
+template <class F, class... Args>
+void reg_sync(holoflow::core::Registry &r, std::string_view name, Args &&...args) {
+  r.register_sync(std::string{name}, std::make_unique<F>(std::forward<Args>(args)...));
+}
+
+template <class F, class... Args>
+void reg_async(holoflow::core::Registry &r, std::string_view name, Args &&...args) {
+  r.register_async(std::string{name}, std::make_unique<F>(std::forward<Args>(args)...));
+}
+
+class CompilerSuite : public ::testing::TestWithParam<CompilerCase> {
+protected:
+  core::Registry registry;
+
+  void SetUp() override {
+    // clang-format off
+    reg_async<asyncs::BatchQueueFactory>(registry, "BatchQueue");
+    reg_async<asyncs::SlidingAverageFactory>(registry, "SlidingAverage");
+    reg_sync<sinks::HolofileFactory>(registry, "HolofileWriter");
+    reg_sync<sources::HolofileFactory>(registry, "Holofile");
+    reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry, "AmetekS710EuresysCoaxlinkOcto");
+    reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry, "AmetekS711EuresysCoaxlinkQSFP+");
+    reg_sync<syncs::AngularSpectrumFactory>(registry, "AngularSpectrum");
+    reg_sync<syncs::AverageFactory>(registry, "Average");
+    reg_sync<syncs::ConversionFactory>(registry, "Conversion");
+    reg_sync<syncs::FFTShiftFactory>(registry, "FFTShift");
+    reg_sync<syncs::FresnelDiffractionFactory>(registry, "FresnelDiffraction");
+    reg_sync<syncs::MemcpyFactory>(registry, "Memcpy");
+    reg_sync<syncs::PcaFactory>(registry, "Pca");
+    reg_sync<syncs::PctClipFactory>(registry, "PctClip");
+    reg_sync<syncs::StftFactory>(registry, "Stft");
+    reg_sync<syncs::ConvolutionFactory>(registry, "Convolution");
+    reg_sync<syncs::Filter2DFactory>(registry, "Filter2D");
+    reg_sync<syncs::LogFactory>(registry, "Log");
+    reg_sync<syncs::RegistrationFactory>(registry, "Registration");
+    reg_sync<syncs::ReshapeFactory>(registry, "Reshape");
+    reg_sync<syncs::CropFactory>(registry, "Crop");
+    reg_sync<syncs::RotationFactory>(registry, "Rotation");
+    // clang-format on
+
+    SyncFactorySpec sink_spec;
+    sink_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
+      auto input_descs = copy_descs(inputs);
+      return make_infer_result(TaskKind::Sync, std::move(input_descs), {});
+    };
+    registry.register_sync("DisplayTensorXY",
+                           std::make_unique<RecordingSyncFactory>(std::move(sink_spec)));
+  }
+};
+
+TEST_P(CompilerSuite, Compile) {
+  const auto &param = GetParam();
+  const auto  path  = param.path;
+
+  // Load graph spec
+  nlohmann::json j;
+  {
+    std::ifstream in(path);
+    if (!in.is_open()) {
+      FAIL() << "Failed to open test case file: " << path;
+    }
+    in >> j;
+  }
+
+  auto     g = holoflow::core::from_json(j);
+  Compiler compiler{registry};
+  if (param.expect == Expect::Pass) {
+    EXPECT_NO_THROW(compiler.compile(g)) << "Test case: " << path;
+  } else {
+    EXPECT_THROW(compiler.compile(g), std::exception) << "Test case: " << path;
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(CompilerCases, CompilerSuite,
+                         ::testing::ValuesIn(discover_compiler_cases()), gtest_case_name);
 
 GraphPlan::vertex_descriptor find_plan_vertex(const GraphPlan &graph, const std::string &name) {
   for (auto v : boost::make_iterator_range(boost::vertices(graph))) {
@@ -76,7 +232,8 @@ TEST(CompilerValidation, SimpleGraphSucceeds) {
   AsyncFactorySpec async_spec;
   async_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
     auto input_descs = copy_descs(inputs);
-    return make_infer_result(TaskKind::Async, std::move(input_descs), {make_desc({1}), make_desc({1})});
+    return make_infer_result(TaskKind::Async, std::move(input_descs),
+                             {make_desc({1}), make_desc({1})});
   };
   auto *queue_factory = new RecordingAsyncFactory(std::move(async_spec));
   registry.register_async("queue", std::unique_ptr<RecordingAsyncFactory>(queue_factory));
@@ -508,7 +665,8 @@ TEST(CompilerTyping, IncompatibleTensorsFail) {
 
   SyncFactorySpec source_spec;
   source_spec.infer = [](std::span<const core::TDesc>, const nlohmann::json &) {
-    return make_infer_result(TaskKind::Sync, {}, {make_desc({4, 4}, core::DType::F32)}); // 4x4 F32 tensor
+    return make_infer_result(TaskKind::Sync, {},
+                             {make_desc({4, 4}, core::DType::F32)}); // 4x4 F32 tensor
   };
   registry.register_sync("source", std::make_unique<RecordingSyncFactory>(std::move(source_spec)));
 
@@ -584,7 +742,7 @@ TEST(CompilerResources, OwnedTensorsNotPreallocated) {
   SyncFactorySpec sink_spec;
   sink_spec.infer = [](std::span<const core::TDesc> inputs, const nlohmann::json &) {
     std::vector<bool> owned_inputs = {true};
-    auto input_descs = copy_descs(inputs);
+    auto              input_descs  = copy_descs(inputs);
     return make_infer_result(TaskKind::Sync, std::move(input_descs), {}, owned_inputs);
   };
   registry.register_sync("sink", std::make_unique<RecordingSyncFactory>(std::move(sink_spec)));
@@ -596,7 +754,7 @@ TEST(CompilerResources, OwnedTensorsNotPreallocated) {
   auto graph = builder.finish();
 
   Compiler compiler(registry);
-  auto output = compiler.compile(graph);
+  auto     output = compiler.compile(graph);
 
   const auto &tensors = output->resources.tensors;
   EXPECT_TRUE(tensors.empty());
@@ -605,14 +763,14 @@ TEST(CompilerResources, OwnedTensorsNotPreallocated) {
 TEST(CompilerResources, TensorsAllocated) {
   core::Registry registry;
 
-  auto source_desc = make_desc({4, 4}, core::DType::F32, core::MemLoc::Device);
+  auto            source_desc = make_desc({4, 4}, core::DType::F32, core::MemLoc::Device);
   SyncFactorySpec source_spec;
   source_spec.infer = [source_desc](std::span<const core::TDesc>, const nlohmann::json &) {
     return make_infer_result(TaskKind::Sync, {}, {source_desc});
   };
   registry.register_sync("source", std::make_unique<RecordingSyncFactory>(std::move(source_spec)));
 
-  auto mid_output_desc = make_desc({2, 8}, core::DType::F32, core::MemLoc::Device);
+  auto            mid_output_desc = make_desc({2, 8}, core::DType::F32, core::MemLoc::Device);
   SyncFactorySpec mid_spec;
   mid_spec.infer = [mid_output_desc](std::span<const core::TDesc> inputs, const nlohmann::json &) {
     auto input_descs = copy_descs(inputs);
@@ -636,7 +794,7 @@ TEST(CompilerResources, TensorsAllocated) {
   auto graph = builder.finish();
 
   Compiler compiler(registry);
-  auto output = compiler.compile(graph);
+  auto     output = compiler.compile(graph);
 
   const auto &tensors = output->resources.tensors;
 
@@ -645,7 +803,7 @@ TEST(CompilerResources, TensorsAllocated) {
   EXPECT_TRUE(tensors.count(0) > 0);
   EXPECT_TRUE(tensors.count(1) > 0);
 
-  auto plan = output->graph;
+  auto plan  = output->graph;
   auto src_v = find_plan_vertex(plan, "src");
   auto mid_v = find_plan_vertex(plan, "mid");
   auto snk_v = find_plan_vertex(plan, "snk");

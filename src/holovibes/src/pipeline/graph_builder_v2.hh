@@ -107,17 +107,18 @@ private:
 
   template <typename SettingsT>
   std::vector<TDesc> make_source_sync_node(std::string_view node_name, std::string_view kind,
-                                           std::string_view reg_key, const SettingsT &s);
+                                           std::string_view reg_key, const SettingsT &s,
+                                           bool debug = true);
 
   template <typename SettingsT>
   std::vector<TDesc> make_unary_sync_node(std::string_view node_name, std::string_view kind,
                                           std::string_view reg_key, const TDesc &X,
-                                          const SettingsT &s);
+                                          const SettingsT &s, bool debug = true);
 
   template <typename SettingsT>
   std::vector<TDesc> make_unary_async_node(std::string_view node_name, std::string_view kind,
                                            std::string_view reg_key, const TDesc &X,
-                                           const SettingsT &s);
+                                           const SettingsT &s, bool debug = true);
 
   Settings                  s_;
   holoflow::core::Registry &reg_;

@@ -26,7 +26,13 @@ target_link_libraries(${TARGET}
 PRIVATE
     project_options
     holoflow
+    holotask
     gtest_main
+)
+
+target_compile_definitions(${TARGET}
+PRIVATE
+    HOLOFLOW_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/testdata"
 )
 
 include(GoogleTest)
