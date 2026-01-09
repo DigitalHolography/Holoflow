@@ -37,7 +37,7 @@ void from_json(const nlohmann::json &j, RotationSettings &s) {
 
 namespace {
 
-__global__ void rotate_kernel(holoflow::core::TView Source, holoflow::core::TView Destination,
+__global__ void kernel_2d_270(holoflow::core::TView Source, holoflow::core::TView Destination,
                               int sizeX, int sizeY, float deg) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -45,10 +45,140 @@ __global__ void rotate_kernel(holoflow::core::TView Source, holoflow::core::TVie
   if (x >= sizeX || y >= sizeY)
     return;
 
-  int newX = sizeX - 1 - y;
+  int newX = y;
+  int newY = sizeY - 1 - x;
 
-  Destination.data[x * sizeY + newX] = Source.data[y * sizeX + x];
+  Destination.data[newY * sizeY + newX] = Source.data[y * sizeX + x];
 }
+__global__ void kernel_2d_180(holoflow::core::TView Source, holoflow::core::TView Destination,
+                              int sizeX, int sizeY, float deg) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if (x >= sizeX || y >= sizeY)
+    return;
+
+  int newX = sizeY - 1 - x;
+  int newY = sizeX - 1 - y;
+
+  Destination.data[newY * sizeY + newX] = Source.data[y * sizeX + x];
+}
+__global__ void kernel_2d_90(holoflow::core::TView Source, holoflow::core::TView Destination,
+                             int sizeX, int sizeY, float deg) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+  if (x >= sizeX || y >= sizeY)
+    return;
+
+  int newX = sizeX - 1 - y;
+  int newY = x;
+
+  Destination.data[newY * sizeY + newX] = Source.data[y * sizeX + x];
+}
+
+void rotate_2d(cudaStream_t stream_, holoflow::core::TView input, holoflow::core::TView output,
+               int height, int width, float deg) {
+
+  int  angle = static_cast<int>(deg);
+  dim3 block(16, 16);
+  dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+
+  switch (angle) {
+  case 90:
+    kernel_2d_90<<<grid, block, 0, stream_>>>(input, output, width, height, deg);
+    break;
+  case 180:
+    kernel_2d_180<<<grid, block, 0, stream_>>>(input, output, width, height, deg);
+    break;
+  case 270:
+    kernel_2d_270<<<grid, block, 0, stream_>>>(input, output, width, height, deg);
+    break;
+  default:
+    logger()->error("[rotate_2d] Invalid angle impossible case");
+    break;
+  }
+}
+
+__global__ void kernel_3d_90_xaxis(holoflow::core::TView Source, holoflow::core::TView Destination,
+                                   int sizeZ, int sizeX, int sizeY) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  int z = blockIdx.z;
+
+  if (x >= sizeX || y >= sizeY || z >= sizeZ)
+    return;
+
+  int newX = x;
+  int newY = z;
+  int newZ = sizeY - 1 - y;
+
+  Destination.data[newZ * (sizeX * sizeZ) + newY * sizeX + newX] =
+      Source.data[z * (sizeX * sizeY) + y * sizeX + x];
+}
+
+__global__ void kernel_3d_90_yaxis(holoflow::core::TView Source, holoflow::core::TView Destination,
+                                   int sizeZ, int sizeX, int sizeY) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  int z = blockIdx.z;
+
+  if (x >= sizeX || y >= sizeY || z >= sizeZ)
+    return;
+
+  int newX = z;
+  int newY = y;
+  int newZ = sizeX - 1 - x;
+
+  Destination.data[newZ * (sizeZ * sizeY) + newY * sizeZ + newX] =
+      Source.data[z * (sizeX * sizeY) + y * sizeX + x];
+}
+
+__global__ void kernel_3d_90_zaxis(holoflow::core::TView Source, holoflow::core::TView Destination,
+                                   int sizeZ, int sizeX, int sizeY) {
+  int x = blockIdx.x * blockDim.x + threadIdx.x;
+  int y = blockIdx.y * blockDim.y + threadIdx.y;
+  int z = blockIdx.z;
+
+  if (x >= sizeX || y >= sizeY || z >= sizeZ)
+    return;
+
+  int newX = sizeX - 1 - y;
+  int newY = x;
+  int newZ = z;
+
+  Destination.data[newZ * (sizeX * sizeY) + newY * sizeY + newX] =
+      Source.data[z * (sizeX * sizeY) + y * sizeX + x];
+}
+
+void rotate_3d(cudaStream_t stream_, holoflow::core::TView input, holoflow::core::TView output,
+               int depth, int height, int width, float deg, RotationSettings::Axis axis) {
+
+  int  it = deg / 90;
+  dim3 block(16, 16);
+  dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y, depth);
+
+  switch (axis) {
+  case RotationSettings::Axis::Z:
+    for (int i = 0; i < it; i++) {
+      kernel_3d_90_zaxis<<<grid, block, 0, stream_>>>(input, output, depth, width, height);
+    }
+    break;
+  case RotationSettings::Axis::Y:
+    for (int i = 0; i < it; i++) {
+      kernel_3d_90_yaxis<<<grid, block, 0, stream_>>>(input, output, depth, width, height);
+    }
+    break;
+  case RotationSettings::Axis::X:
+    for (int i = 0; i < it; i++) {
+      kernel_3d_90_xaxis<<<grid, block, 0, stream_>>>(input, output, depth, width, height);
+    }
+    break;
+  default:
+    logger()->error("[rotate_3d] Invalid axis impossible case");
+  }
+}
+
 } // namespace
 
 Rotation::Rotation(const RotationSettings &settings, cudaStream_t stream)
@@ -70,16 +200,22 @@ holoflow::core::OpResult Rotation::execute(holoflow::core::SyncCtx &ctx) {
       "[Rotation::execute] Rotating tensor of shape {} by {} degrees for a new tensor of shape {}",
       input.desc.shape, settings_.angle, output.desc.shape);
 
+  int depth  = input.desc.shape[0];
   int height = input.desc.shape[1];
   int width  = input.desc.shape[2];
 
   CUDA_CHECK(cudaGetLastError());
 
-  dim3 block(16, 16);
-  dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+  if (depth == 1) // 2d rotation
+  {
+    logger()->trace("[Rotation::execute] 2d rotation");
+    rotate_2d(stream_, input, output, width, height, settings_.angle);
 
-  rotate_kernel<<<grid, block, 0, stream_>>>(input, output, width, height, settings_.angle);
-
+  } else // 3d rotation
+  {
+    logger()->trace("[Rotation::execute] 3d rotation");
+    rotate_3d(stream_, input, output, depth, width, height, settings_.angle, settings_.axis);
+  }
   CUDA_CHECK(cudaGetLastError());
   CUDA_CHECK(cudaStreamSynchronize(stream_));
 
@@ -98,7 +234,7 @@ RotationFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
   auto settings = jsettings.get<RotationSettings>();
 
-  settings.angle = settings.angle % 360;
+  settings.angle = ((settings.angle % 360) + 360) % 360;
   logger()->debug("[RotationFactory::infer] angle: {}", settings.angle);
 
   check(input_descs.size() == 1, "Expected exactly one input tensor");
