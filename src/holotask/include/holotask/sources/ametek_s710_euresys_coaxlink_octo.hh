@@ -14,7 +14,7 @@
 
 #pragma once
 
-#ifdef HOLOTASK_HAS_GRABBER
+#ifdef HOLOTASK_HAS_EGRABBER
 #define NOMINMAX
 #include <EGrabber.h>
 #include <nlohmann/json.hpp>
@@ -96,6 +96,6 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
-}
+} // namespace holotask::sources
 
 #endif

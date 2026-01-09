@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifdef HOLOTASK_HAS_GRABBER
+#ifdef HOLOTASK_HAS_EGRABBER
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 
 #include <EGrabber.h>
