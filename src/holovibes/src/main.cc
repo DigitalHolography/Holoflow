@@ -25,8 +25,22 @@
 #include "spdlog/common.h"
 #include "ui/main_window.hh"
 
+#include "holonp/arange.hh"
+
 int main(int argc, char **argv) {
   spdlog::set_level(spdlog::level::debug);
+
+  holonp::ArangeSettings s{
+      .start  = 0.0,
+      .stop   = 10.0,
+      .step   = 0.5,
+      .dtype  = holoflow::core::DType::F32,
+      .device = holoflow::core::MemLoc::Device,
+  };
+
+  nlohmann::json j = s;
+
+  spdlog::info("ArangeSettings as JSON: {}", j.dump(2));
 
   QCoreApplication::setApplicationName("Holovibes");
   QCoreApplication::setApplicationVersion(HOLOVIBES_VERSION_SEMVER2);

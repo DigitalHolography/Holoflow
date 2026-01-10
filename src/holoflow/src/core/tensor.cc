@@ -51,6 +51,23 @@ std::string_view to_string(DType dtype) noexcept {
   HOLOFLOW_UNREACHABLE();
 }
 
+void to_json(nlohmann::json &j, DType dtype) { j = to_string(dtype); }
+
+void from_json(const nlohmann::json &j, DType &dtype) {
+  std::string_view s = j.get<std::string_view>();
+  if (s == "U8") {
+    dtype = DType::U8;
+  } else if (s == "U16") {
+    dtype = DType::U16;
+  } else if (s == "F32") {
+    dtype = DType::F32;
+  } else if (s == "CF32") {
+    dtype = DType::CF32;
+  } else {
+    throw std::invalid_argument("invalid DType string");
+  }
+}
+
 std::string_view to_string(MemLoc loc) noexcept {
   switch (loc) {
   case MemLoc::Host:
@@ -60,6 +77,19 @@ std::string_view to_string(MemLoc loc) noexcept {
   }
 
   HOLOFLOW_UNREACHABLE();
+}
+
+void to_json(nlohmann::json &j, MemLoc loc) { j = to_string(loc); }
+
+void from_json(const nlohmann::json &j, MemLoc &loc) {
+  std::string_view s = j.get<std::string_view>();
+  if (s == "Host") {
+    loc = MemLoc::Host;
+  } else if (s == "Device") {
+    loc = MemLoc::Device;
+  } else {
+    throw std::invalid_argument("invalid MemLoc string");
+  }
 }
 
 size_t TDesc::rank() const noexcept { return shape.size(); }

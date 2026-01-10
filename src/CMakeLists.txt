@@ -15,6 +15,7 @@
 add_subdirectory(holovibes)
 add_subdirectory(holoflow)
 add_subdirectory(holotask)
+add_subdirectory(holonp)
 add_subdirectory(holoflow_event)
 add_subdirectory(curaii)
 add_subdirectory(holofile)

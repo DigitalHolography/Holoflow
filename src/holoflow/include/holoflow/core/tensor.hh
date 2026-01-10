@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdint>
+#include <nlohmann/json.hpp>
 #include <string_view>
 #include <vector>
 
@@ -36,6 +37,9 @@ enum class DType : uint8_t {
 /// Returns a human-readable name for the DType.
 [[nodiscard]] std::string_view to_string(DType dtype) noexcept;
 
+void to_json(nlohmann::json &j, DType dtype);
+void from_json(const nlohmann::json &j, DType &dtype);
+
 /// Where memory lives: host (CPU) or device (GPU).
 enum class MemLoc : uint8_t {
   Host,   ///< CPU-accessible memory
@@ -44,6 +48,9 @@ enum class MemLoc : uint8_t {
 
 /// Returns a human-readable name for the MemLoc.
 [[nodiscard]] std::string_view to_string(MemLoc loc) noexcept;
+
+void to_json(nlohmann::json &j, MemLoc loc);
+void from_json(const nlohmann::json &j, MemLoc &loc);
 
 /// Describes a multi-dimensional array (tensor).
 struct TDesc {

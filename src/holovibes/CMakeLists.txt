@@ -61,6 +61,7 @@ target_link_libraries(holovibes PRIVATE
     project_options
     holoflow
     holotask
+    holonp
     curaii
     holofile
     spdlog::spdlog
