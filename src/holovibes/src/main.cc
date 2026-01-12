@@ -24,6 +24,7 @@
 #include "logger.hh"
 #include "spdlog/common.h"
 #include "ui/main_window.hh"
+#include "ui/widgets/quiver_widget.hh"
 
 #include "holonp/arange.hh"
 
@@ -45,7 +46,8 @@ int main(int argc, char **argv) {
   QCoreApplication::setApplicationName("Holovibes");
   QCoreApplication::setApplicationVersion(HOLOVIBES_VERSION_SEMVER2);
   holovibes::utils::setupAppData();
-  QApplication              app(argc, argv);
+  QApplication app(argc, argv);
+
   holovibes::ui::MainWindow main_window;
   app.setWindowIcon(QIcon(":/resources/holovibes/assets/holovibes_logo.png"));
   main_window.show();
