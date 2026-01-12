@@ -4,7 +4,8 @@
         "curaii",
         "holofile",
         "holovibes",
-        "holotask"
+        "holotask",
+        "holonp"
     ],
     "C_Cpp.default.compileCommands": "${workspaceFolder}/build/msvc-multi/compile_commands.json",
     "files.associations": {

@@ -36,6 +36,40 @@
 #include "logger.hh"
 
 namespace holoflow::runtime {
+namespace {
+
+inline std::string node_context_msg(const holoflow::runtime::GraphPlan             &g,
+                                    holoflow::runtime::GraphPlan::vertex_descriptor v,
+                                    std::string_view phase, int section_id,
+                                    std::string_view section_name) {
+  const auto &np       = g[v];
+  const auto  vertex_i = static_cast<std::size_t>(boost::get(boost::vertex_index, g, v));
+  const auto  tid      = ::GetCurrentThreadId();
+
+  return std::format("Exception in node '{}'\n"
+                     "  phase: {}\n"
+                     "  section: {} (id={})\n"
+                     "  vertex_idx: {}\n"
+                     "  thread_id: {}\n",
+                     np.spec.name, phase, section_name, section_id, vertex_i, tid);
+}
+
+[[noreturn]] inline void
+rethrow_with_node_context(const holoflow::runtime::GraphPlan             &g,
+                          holoflow::runtime::GraphPlan::vertex_descriptor v, std::string_view phase,
+                          int section_id, std::string_view section_name) {
+  try {
+    throw; // rethrow current exception
+  } catch (const std::exception &e) {
+    throw std::runtime_error(node_context_msg(g, v, phase, section_id, section_name) +
+                             std::string{"  what: "} + e.what());
+  } catch (...) {
+    throw std::runtime_error(node_context_msg(g, v, phase, section_id, section_name) +
+                             "  what: <non-std exception>");
+  }
+}
+
+} // namespace
 
 Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
                      ExecResouces &resources, std::chrono::milliseconds metrics_interval)
@@ -273,7 +307,12 @@ void Scheduler::run_section(int section_id) {
 
     for (auto v : sec.sync_topo) {
       refresh_views_sync(v);
-      run_sync(v);
+      try {
+        run_sync(v);
+      } catch (...) {
+        stop_.store(true);
+        rethrow_with_node_context(graph_, v, "sync/execute", section_id, sec.name);
+      }
       refresh_outputs_sync(v);
     }
 

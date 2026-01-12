@@ -31,6 +31,8 @@
 #include "graph_builder.hh"
 #include "graph_builder_v2.hh"
 #include "holoflow/runtime/graph_display.hh"
+#include "holonp/arange.hh"
+#include "holonp/meshgrid.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/holofile.hh"
@@ -58,6 +60,7 @@
 #include "tasks/sinks/display_tensor.hh"
 
 using namespace holotask;
+using namespace holonp;
 
 namespace holovibes::pipeline {
 
@@ -114,6 +117,9 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<syncs::ReshapeFactory>(registry_, "Reshape");
   reg_sync<syncs::CropFactory>(registry_, "Crop");
   reg_sync<syncs::RotationFactory>(registry_, "Rotation");
+
+  reg_sync<ArangeFactory>(registry_, "Arange");
+  reg_sync<MeshgridFactory>(registry_, "Meshgrid");
   // clang-format on
 
   metrics_timer_ = new QTimer(this);
@@ -428,6 +434,144 @@ void Manager::build_graph_spec() {
   reset_graph_spec();
   guess_optimizations();
   guess_source_dims();
+
+  if (true) {
+    using json      = nlohmann::json;
+    using GraphSpec = holoflow::core::GraphSpec;
+    using NodeSpec  = holoflow::core::NodeSpec;
+    using EdgeSpec  = holoflow::core::EdgeSpec;
+
+    auto x = boost::add_vertex(
+        NodeSpec{
+            .name = "source_0",
+            .kind = "Arange",
+            .settings =
+                json{
+                    {"start", 0},
+                    {"stop", 512},
+                    {"step", 1},
+                    {"dtype", "F32"},
+                    {"device", "Device"},
+                },
+        },
+        spec_);
+
+    auto y = boost::add_vertex(
+        NodeSpec{
+            .name = "arange_y",
+            .kind = "Arange",
+            .settings =
+                json{
+                    {"start", 0},
+                    {"stop", 512},
+                    {"step", 1},
+                    {"dtype", "F32"},
+                    {"device", "Device"},
+                },
+        },
+        spec_);
+
+    auto XY = boost::add_vertex(
+        NodeSpec{
+            .name = "meshgrid_xy",
+            .kind = "Meshgrid",
+            .settings =
+                json{
+                    {"indexing", "xy"},
+                },
+        },
+        spec_);
+
+    auto X_u8 = boost::add_vertex(
+        NodeSpec{
+            .name     = "convert_x_u8",
+            .kind     = "Conversion",
+            .settings = json{{"target", "U8"}, {"strategy", "Scaled"}},
+        },
+        spec_);
+
+    auto Y_u8 = boost::add_vertex(
+        NodeSpec{
+            .name     = "convert_y_u8",
+            .kind     = "Conversion",
+            .settings = json{{"target", "U8"}, {"strategy", "Scaled"}},
+        },
+        spec_);
+
+    auto X_display = boost::add_vertex(
+        NodeSpec{
+            .name     = "display_xy",
+            .kind     = "DisplayTensorXY",
+            .settings = json{{"refresh_rate_hz", 30}},
+        },
+        spec_);
+
+    auto Y_display = boost::add_vertex(
+        NodeSpec{
+            .name     = "display_yz",
+            .kind     = "DisplayTensorYZ",
+            .settings = json{{"refresh_rate_hz", 30}},
+        },
+        spec_);
+
+    boost::add_edge(x, XY,
+                    EdgeSpec{
+                        .out_idx = 0,
+                        .in_idx  = 0,
+                    },
+                    spec_);
+
+    boost::add_edge(y, XY,
+                    EdgeSpec{
+                        .out_idx = 0,
+                        .in_idx  = 1,
+                    },
+                    spec_);
+
+    boost::add_edge(XY, X_u8,
+                    EdgeSpec{
+                        .out_idx = 0,
+                        .in_idx  = 0,
+                    },
+                    spec_);
+
+    boost::add_edge(XY, Y_u8,
+                    EdgeSpec{
+                        .out_idx = 1,
+                        .in_idx  = 0,
+                    },
+                    spec_);
+
+    boost::add_edge(X_u8, X_display,
+                    EdgeSpec{
+                        .out_idx = 0,
+                        .in_idx  = 0,
+                    },
+                    spec_);
+
+    boost::add_edge(Y_u8, Y_display,
+                    EdgeSpec{
+                        .out_idx = 0,
+                        .in_idx  = 0,
+                    },
+                    spec_);
+
+    // boost::add_edge(XY, X_display,
+    //                 EdgeSpec{
+    //                     .out_idx = 0,
+    //                     .in_idx  = 0,
+    //                 },
+    //                 spec_);
+
+    // boost::add_edge(XY, Y_display,
+    //                 EdgeSpec{
+    //                     .out_idx = 1,
+    //                     .in_idx  = 0,
+    //                 },
+    //                 spec_);
+
+    return;
+  }
 
   GraphBuilder builder{spec_, s_, src_width_, src_height_, opti_cpu_stride_, opti_gpu_stride_};
   builder.build();

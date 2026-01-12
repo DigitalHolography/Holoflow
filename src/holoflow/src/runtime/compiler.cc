@@ -18,6 +18,7 @@
 #include <array>
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/graph/depth_first_search.hpp>
+#include <boost/graph/topological_sort.hpp>
 #include <boost/range/iterator_range_core.hpp>
 #include <chrono>
 #include <exception>
@@ -67,8 +68,6 @@ std::unique_ptr<CompilerOutput> Compiler::compile(const core::GraphSpec         
   measure_step("check_duplicate_names", [&] { check_duplicate_names(); });
   measure_step("check_duplicate_edge_dst", [&] { check_duplicate_edge_dst(); });
   measure_step("check_factories_registered", [&] { check_factories_registered(); });
-  measure_step("check_single_source", [&] { check_single_source(); });
-  measure_step("check_single_input", [&] { check_single_input(); });
   measure_step("build_graph_plan", [&] { build_graph_plan(); });
   measure_step("check_typing", [&] { check_typing(); });
   measure_step("assign_tensor_ids", [&] { assign_tensor_ids(); });
@@ -145,7 +144,7 @@ void Compiler::check_duplicate_edge_dst() {
   for (const auto &e : boost::make_iterator_range(boost::edges(gspec_))) {
     const auto &es    = gspec_[e];
     const auto  dst   = gspec_[boost::target(e, gspec_)];
-    auto        label = fmt::format("{}:{}", dst.name, es.out_idx);
+    auto        label = fmt::format("{}:{}", dst.name, es.in_idx);
     if (!dsts.insert(label).second) {
       throw std::logic_error("Duplicate edge destination: " + label);
     }
@@ -157,30 +156,6 @@ void Compiler::check_factories_registered() {
     const auto &ns = gspec_[v];
     if (!registry_.is_registered(ns.kind)) {
       throw std::logic_error("No factory registered for kind: " + ns.kind);
-    }
-  }
-}
-
-void Compiler::check_single_source() {
-  int source_count = 0;
-  for (const auto &v : boost::make_iterator_range(boost::vertices(gspec_))) {
-    if (boost::in_degree(v, gspec_) == 0) {
-      source_count++;
-    }
-  }
-  if (source_count == 0) {
-    throw std::logic_error("No source nodes found in the graph");
-  }
-  if (source_count > 1) {
-    throw std::logic_error("Multiple source nodes found in the graph");
-  }
-}
-
-void Compiler::check_single_input() {
-  for (const auto &v : boost::make_iterator_range(boost::vertices(gspec_))) {
-    if (boost::in_degree(v, gspec_) > 1) {
-      const auto &np = gspec_[v];
-      throw std::logic_error("Node " + np.name + " has multiple inputs");
     }
   }
 }
@@ -216,142 +191,306 @@ void Compiler::build_graph_plan() {
 }
 
 void Compiler::check_typing() {
-  struct CheckTypingVisitor : boost::default_bfs_visitor {
-  public:
-    CheckTypingVisitor(GraphPlan &g, const core::Registry &reg) : g_(g), reg_(reg) {}
+  auto &g = out_->graph;
 
-    void discover_vertex(GraphPlan::vertex_descriptor v, const GraphPlan &) {
-      auto &np        = g_[v];
-      auto  in_degree = boost::in_degree(v, g_);
-      auto  in_edges  = boost::in_edges(v, g_);
-      // auto  out_degree = boost::out_degree(v, g_);
-      auto out_edges = boost::out_edges(v, g_);
+  using V = GraphPlan::vertex_descriptor;
 
-      // Gather input descs by input index
-      std::vector<core::TDesc> idescs(in_degree);
-      for (auto e : boost::make_iterator_range(in_edges)) {
-        const auto &ep = g_[e];
-        if (ep.spec.in_idx < 0 || ep.spec.in_idx >= static_cast<int>(in_degree)) {
-          throw std::logic_error("Invalid in_idx for node " + np.spec.name);
-        }
-        idescs.at(ep.spec.in_idx) = ep.desc;
+  // 1) Compute topo order (sources -> sinks)
+  std::vector<V> topo;
+  topo.reserve(boost::num_vertices(g));
+
+  try {
+    boost::topological_sort(g, std::back_inserter(topo)); // reverse topo: sinks -> sources
+  } catch (const boost::not_a_dag &) {
+    throw std::logic_error("Graph is not a DAG (cycle detected)");
+  }
+
+  std::reverse(topo.begin(), topo.end()); // now sources -> sinks
+
+  // 2) Process vertices in topo order
+  for (V v : topo) {
+    auto &np = g[v];
+
+    // Incoming edges
+    auto in_edges = boost::in_edges(v, g);
+
+    // Determine input count. Your original code sized by in_degree.
+    // This assumes every input slot has exactly one incoming edge and all are connected.
+    const auto in_degree = boost::in_degree(v, g);
+
+    std::vector<core::TDesc> idescs(in_degree);
+
+    // Fill by in_idx
+    for (auto e : boost::make_iterator_range(in_edges)) {
+      const auto &ep = g[e];
+
+      if (ep.spec.in_idx < 0 || ep.spec.in_idx >= static_cast<int>(in_degree)) {
+        throw std::logic_error("Invalid in_idx for node " + np.spec.name);
       }
 
-      // Call factory
-      const auto &factory = reg_.get(np.spec.kind);
-      const auto  infer   = factory.infer(idescs, np.spec.settings);
-      np.infer            = infer;
-
-      // Assign outgoing edge descs
-      // Verify every out_idx in [0, out_degree) is connected
-      std::set<int> seen;
-      for (auto e : boost::make_iterator_range(out_edges)) {
-        auto &ep = g_[e];
-        if (ep.spec.out_idx < 0 || ep.spec.out_idx >= static_cast<int>(infer.output_descs.size())) {
-          throw std::logic_error("Invalid out_idx (" + std::to_string(ep.spec.out_idx) +
-                                 ") for edge between nodes " + np.spec.name + " and " +
-                                 g_[boost::target(e, g_)].spec.name);
-        }
-
-        ep.desc = infer.output_descs.at(ep.spec.out_idx);
-        seen.insert(ep.spec.out_idx);
-      }
-
-      // if (seen.size() < out_degree) {
-      //   throw std::logic_error("Not all outputs of node " + np.spec.name + " are connected");
-      // }
-      for (int i = 0; i < static_cast<int>(infer.output_descs.size()); i++) {
-        if (!seen.contains(i)) {
-          throw std::logic_error("Output " + std::to_string(i) + " of node " + np.spec.name +
-                                 " is not connected");
-        }
-      }
+      // At this point, because of topo order, ep.desc MUST already be set by the producer node.
+      // If you have a "null/invalid" state for TDesc, validate it here.
+      idescs.at(ep.spec.in_idx) = ep.desc;
     }
 
-  private:
-    GraphPlan            &g_;
-    const core::Registry &reg_;
-  };
+    // Optional: detect missing input slots (if TDesc can be default-constructed)
+    // e.g., if (idescs[i].is_invalid()) throw ...
 
-  using ColorMap = std::vector<boost::default_color_type>;
-  ColorMap color_map(boost::num_vertices(out_->graph));
-  auto     color_map_p = boost::make_iterator_property_map(
-      color_map.begin(), boost::get(boost::vertex_index, out_->graph));
+    // Infer node typing
+    const auto &factory = registry_.get(np.spec.kind);
+    const auto  infer   = factory.infer(idescs, np.spec.settings);
+    np.infer            = infer;
 
-  CheckTypingVisitor visitor(out_->graph, registry_);
-  for (auto v : boost::make_iterator_range(boost::vertices(out_->graph))) {
-    bool is_source = boost::in_degree(v, out_->graph) == 0;
-    if (is_source && color_map_p[v] == boost::white_color) {
-      boost::queue<GraphPlan::vertex_descriptor> q;
-      boost::breadth_first_visit(out_->graph, v, q, visitor, color_map_p);
+    // Assign outgoing edge descs + verify all outputs are connected
+    auto          out_edges = boost::out_edges(v, g);
+    std::set<int> seen;
+
+    for (auto e : boost::make_iterator_range(out_edges)) {
+      auto &ep = g[e];
+
+      if (ep.spec.out_idx < 0 || ep.spec.out_idx >= static_cast<int>(infer.output_descs.size())) {
+        throw std::logic_error("Invalid out_idx (" + std::to_string(ep.spec.out_idx) +
+                               ") for edge between nodes " + np.spec.name + " and " +
+                               g[boost::target(e, g)].spec.name);
+      }
+
+      ep.desc = infer.output_descs.at(ep.spec.out_idx);
+      seen.insert(ep.spec.out_idx);
+    }
+
+    for (int i = 0; i < static_cast<int>(infer.output_descs.size()); ++i) {
+      if (!seen.contains(i)) {
+        throw std::logic_error("Output " + std::to_string(i) + " of node " + np.spec.name +
+                               " is not connected");
+      }
     }
   }
 }
+
+// void Compiler::check_typing() {
+//   struct CheckTypingVisitor : boost::default_bfs_visitor {
+//   public:
+//     CheckTypingVisitor(GraphPlan &g, const core::Registry &reg) : g_(g), reg_(reg) {}
+
+//     void discover_vertex(GraphPlan::vertex_descriptor v, const GraphPlan &) {
+//       auto &np        = g_[v];
+//       auto  in_degree = boost::in_degree(v, g_);
+//       auto  in_edges  = boost::in_edges(v, g_);
+//       // auto  out_degree = boost::out_degree(v, g_);
+//       auto out_edges = boost::out_edges(v, g_);
+
+//       // Gather input descs by input index
+//       std::vector<core::TDesc> idescs(in_degree);
+//       for (auto e : boost::make_iterator_range(in_edges)) {
+//         const auto &ep = g_[e];
+//         if (ep.spec.in_idx < 0 || ep.spec.in_idx >= static_cast<int>(in_degree)) {
+//           throw std::logic_error("Invalid in_idx for node " + np.spec.name);
+//         }
+//         idescs.at(ep.spec.in_idx) = ep.desc;
+//       }
+
+//       // Call factory
+//       const auto &factory = reg_.get(np.spec.kind);
+//       const auto  infer   = factory.infer(idescs, np.spec.settings);
+//       np.infer            = infer;
+
+//       // Assign outgoing edge descs
+//       // Verify every out_idx in [0, out_degree) is connected
+//       std::set<int> seen;
+//       for (auto e : boost::make_iterator_range(out_edges)) {
+//         auto &ep = g_[e];
+//         if (ep.spec.out_idx < 0 || ep.spec.out_idx >=
+//         static_cast<int>(infer.output_descs.size())) {
+//           throw std::logic_error("Invalid out_idx (" + std::to_string(ep.spec.out_idx) +
+//                                  ") for edge between nodes " + np.spec.name + " and " +
+//                                  g_[boost::target(e, g_)].spec.name);
+//         }
+
+//         ep.desc = infer.output_descs.at(ep.spec.out_idx);
+//         seen.insert(ep.spec.out_idx);
+//       }
+
+//       // if (seen.size() < out_degree) {
+//       //   throw std::logic_error("Not all outputs of node " + np.spec.name + " are connected");
+//       // }
+//       for (int i = 0; i < static_cast<int>(infer.output_descs.size()); i++) {
+//         if (!seen.contains(i)) {
+//           throw std::logic_error("Output " + std::to_string(i) + " of node " + np.spec.name +
+//                                  " is not connected");
+//         }
+//       }
+//     }
+
+//   private:
+//     GraphPlan            &g_;
+//     const core::Registry &reg_;
+//   };
+
+//   using ColorMap = std::vector<boost::default_color_type>;
+//   ColorMap color_map(boost::num_vertices(out_->graph));
+//   auto     color_map_p = boost::make_iterator_property_map(
+//       color_map.begin(), boost::get(boost::vertex_index, out_->graph));
+
+//   CheckTypingVisitor visitor(out_->graph, registry_);
+//   for (auto v : boost::make_iterator_range(boost::vertices(out_->graph))) {
+//     bool is_source = boost::in_degree(v, out_->graph) == 0;
+//     if (is_source && color_map_p[v] == boost::white_color) {
+//       boost::queue<GraphPlan::vertex_descriptor> q;
+//       boost::breadth_first_visit(out_->graph, v, q, visitor, color_map_p);
+//     }
+//   }
+// }
 
 void Compiler::assign_tensor_ids() {
-  struct AssignTensorIdsVisitor : boost::default_dfs_visitor {
-    AssignTensorIdsVisitor(GraphPlan &g) : g_(g) {}
+  auto &g = out_->graph;
+  using V = GraphPlan::vertex_descriptor;
+  using E = GraphPlan::edge_descriptor;
 
-    void discover_vertex(GraphPlan::vertex_descriptor v, const GraphPlan &) {
-      auto &np        = g_[v];
-      auto  in_edges  = boost::make_iterator_range(boost::in_edges(v, g_));
-      auto  out_edges = boost::make_iterator_range(boost::out_edges(v, g_));
+  // 1) Topological order (sources -> sinks)
+  std::vector<V> topo;
+  topo.reserve(boost::num_vertices(g));
 
-      // Map input tids by input index
-      std::vector<int> input_tids(np.infer.input_descs.size(), -1);
-      for (auto e : in_edges) {
-        const auto &ep                = g_[e];
-        input_tids.at(ep.spec.in_idx) = ep.tid;
+  try {
+    boost::topological_sort(g, std::back_inserter(topo)); // reverse topo
+  } catch (const boost::not_a_dag &) {
+    throw std::logic_error("Graph is not a DAG (cycle detected)");
+  }
+  std::reverse(topo.begin(), topo.end());
+
+  // 2) Assign tensor ids in topo order
+  int next_id = 0;
+
+  for (V v : topo) {
+    auto &np = g[v];
+
+    auto in_edges  = boost::make_iterator_range(boost::in_edges(v, g));
+    auto out_edges = boost::make_iterator_range(boost::out_edges(v, g));
+
+    // Map input tids by input index
+    std::vector<int> input_tids(np.infer.input_descs.size(), -1);
+    for (auto e : in_edges) {
+      const auto &ep = g[e];
+
+      if (ep.spec.in_idx < 0 || ep.spec.in_idx >= static_cast<int>(input_tids.size())) {
+        throw std::logic_error("Invalid in_idx for node " + np.spec.name);
       }
 
-      // Precompute in-place output tids
-      int              n_out = static_cast<int>(np.infer.output_descs.size());
-      std::vector<int> inplace_tids(n_out, -1);
-      for (const auto &ip : np.infer.in_place) {
-        inplace_tids.at(ip.out_idx) = input_tids.at(ip.in_idx);
+      // In topo order, producer must have assigned ep.tid already.
+      if (ep.tid < 0) {
+        throw std::logic_error("Unassigned input tid for node " + np.spec.name + " (input " +
+                               std::to_string(ep.spec.in_idx) + ")");
       }
 
-      // Group outgoing edges by output index
-      using E = GraphPlan::edge_descriptor;
-      std::vector<std::vector<E>> groups(n_out);
-      for (auto e : out_edges) {
-        const auto &ep = g_[e];
-        groups.at(ep.spec.out_idx).push_back(e);
-      }
+      input_tids.at(ep.spec.in_idx) = ep.tid;
+    }
 
-      np.in_tids = input_tids;
-      np.out_tids.assign(n_out, -1);
-
-      // Assign tids per output group
-      for (int i = 0; i < n_out; i++) {
-        int inplace_tid   = inplace_tids.at(i);
-        int tid           = inplace_tid != -1 ? inplace_tid : next_id_++;
-        np.out_tids.at(i) = tid;
-        for (const auto &e : groups.at(i)) {
-          auto &ep = g_[e];
-          ep.tid   = tid;
-        }
+    // Optional: ensure all required inputs are connected
+    for (int i = 0; i < static_cast<int>(input_tids.size()); ++i) {
+      if (input_tids[i] < 0) {
+        throw std::logic_error("Missing input " + std::to_string(i) + " for node " + np.spec.name);
       }
     }
 
-  private:
-    GraphPlan &g_;
-    int        next_id_ = 0;
-  };
+    // Precompute in-place output tids
+    const int        n_out = static_cast<int>(np.infer.output_descs.size());
+    std::vector<int> inplace_tids(n_out, -1);
+    for (const auto &ip : np.infer.in_place) {
+      if (ip.in_idx < 0 || ip.in_idx >= static_cast<int>(input_tids.size()) || ip.out_idx < 0 ||
+          ip.out_idx >= n_out) {
+        throw std::logic_error("Invalid in_place mapping for node " + np.spec.name);
+      }
+      inplace_tids.at(ip.out_idx) = input_tids.at(ip.in_idx);
+    }
 
-  using ColorMap = std::vector<boost::default_color_type>;
-  ColorMap color_map(boost::num_vertices(out_->graph));
-  auto     color_map_p = boost::make_iterator_property_map(
-      color_map.begin(), boost::get(boost::vertex_index, out_->graph));
+    // Group outgoing edges by output index
+    std::vector<std::vector<E>> groups(n_out);
+    for (auto e : out_edges) {
+      const auto &ep = g[e];
+      if (ep.spec.out_idx < 0 || ep.spec.out_idx >= n_out) {
+        throw std::logic_error("Invalid out_idx for node " + np.spec.name);
+      }
+      groups.at(ep.spec.out_idx).push_back(e);
+    }
 
-  AssignTensorIdsVisitor visitor(out_->graph);
-  for (auto v : boost::make_iterator_range(boost::vertices(out_->graph))) {
-    bool is_source = boost::in_degree(v, out_->graph) == 0;
-    if (is_source && color_map_p[v] == boost::white_color) {
-      boost::depth_first_visit(out_->graph, v, visitor, color_map_p);
+    np.in_tids = input_tids;
+    np.out_tids.assign(n_out, -1);
+
+    // Assign tids per output group
+    for (int i = 0; i < n_out; ++i) {
+      const int tid     = (inplace_tids[i] != -1) ? inplace_tids[i] : next_id++;
+      np.out_tids.at(i) = tid;
+
+      for (E e : groups.at(i)) {
+        g[e].tid = tid;
+      }
     }
   }
 }
+
+// void Compiler::assign_tensor_ids() {
+//   struct AssignTensorIdsVisitor : boost::default_dfs_visitor {
+//     AssignTensorIdsVisitor(GraphPlan &g) : g_(g) {}
+
+//     void discover_vertex(GraphPlan::vertex_descriptor v, const GraphPlan &) {
+//       auto &np        = g_[v];
+//       auto  in_edges  = boost::make_iterator_range(boost::in_edges(v, g_));
+//       auto  out_edges = boost::make_iterator_range(boost::out_edges(v, g_));
+
+//       // Map input tids by input index
+//       std::vector<int> input_tids(np.infer.input_descs.size(), -1);
+//       for (auto e : in_edges) {
+//         const auto &ep                = g_[e];
+//         input_tids.at(ep.spec.in_idx) = ep.tid;
+//       }
+
+//       // Precompute in-place output tids
+//       int              n_out = static_cast<int>(np.infer.output_descs.size());
+//       std::vector<int> inplace_tids(n_out, -1);
+//       for (const auto &ip : np.infer.in_place) {
+//         inplace_tids.at(ip.out_idx) = input_tids.at(ip.in_idx);
+//       }
+
+//       // Group outgoing edges by output index
+//       using E = GraphPlan::edge_descriptor;
+//       std::vector<std::vector<E>> groups(n_out);
+//       for (auto e : out_edges) {
+//         const auto &ep = g_[e];
+//         groups.at(ep.spec.out_idx).push_back(e);
+//       }
+
+//       np.in_tids = input_tids;
+//       np.out_tids.assign(n_out, -1);
+
+//       // Assign tids per output group
+//       for (int i = 0; i < n_out; i++) {
+//         int inplace_tid   = inplace_tids.at(i);
+//         int tid           = inplace_tid != -1 ? inplace_tid : next_id_++;
+//         np.out_tids.at(i) = tid;
+//         for (const auto &e : groups.at(i)) {
+//           auto &ep = g_[e];
+//           ep.tid   = tid;
+//         }
+//       }
+//     }
+
+//   private:
+//     GraphPlan &g_;
+//     int        next_id_ = 0;
+//   };
+
+//   using ColorMap = std::vector<boost::default_color_type>;
+//   ColorMap color_map(boost::num_vertices(out_->graph));
+//   auto     color_map_p = boost::make_iterator_property_map(
+//       color_map.begin(), boost::get(boost::vertex_index, out_->graph));
+
+//   AssignTensorIdsVisitor visitor(out_->graph);
+//   for (auto v : boost::make_iterator_range(boost::vertices(out_->graph))) {
+//     bool is_source = boost::in_degree(v, out_->graph) == 0;
+//     if (is_source && color_map_p[v] == boost::white_color) {
+//       boost::depth_first_visit(out_->graph, v, visitor, color_map_p);
+//     }
+//   }
+// }
 
 void Compiler::check_buffer_temporal_consistency() {
   for (const auto &v : boost::make_iterator_range(boost::vertices(out_->graph))) {
