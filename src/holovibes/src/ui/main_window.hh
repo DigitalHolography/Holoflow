@@ -31,7 +31,6 @@
 
 #include "pipeline/manager.hh"
 #include "pipeline/settings.hh"
-
 #include "ui/widgets/export_widget.hh"
 #include "ui/widgets/image_rendering_widget.hh"
 #include "ui/widgets/import_widget.hh"
@@ -113,6 +112,7 @@ private:
   TensorDisplayWidget *xy_raw_widget_;
   TensorDisplayWidget *raw_spectrum_widget_;
   TensorDisplayWidget *processed_spectrum_widget_;
+  TensorDisplayWidget *shack_hartmann_widget_;
 };
 
 } // namespace holovibes::ui

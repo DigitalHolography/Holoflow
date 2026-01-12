@@ -50,6 +50,7 @@
 #include "holotask/syncs/stft.hh"
 #include "pipeline/settings.hh"
 #include "tasks/sinks/display_tensor.hh"
+#include "holonp/transpose.hh"
 
 namespace holovibes::pipeline {
 
@@ -150,6 +151,7 @@ private:
   std::vector<TDesc> xy_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   std::vector<TDesc> xz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   std::vector<TDesc> yz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  std::vector<TDesc> shack_hartmann_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   std::vector<TDesc> ametek_s710_euresys_coaxlink_octo(holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings s);
   std::vector<TDesc> ametek_s711_euresys_coaxlink_qsfp_plus(holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
   std::vector<TDesc> average(const TDesc &X, holotask::syncs::AverageSettings s);
@@ -160,6 +162,7 @@ private:
   std::vector<TDesc> registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
   std::vector<TDesc> rotation(const TDesc &X, holotask::syncs::RotationSettings s);
   std::vector<TDesc> holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
+  std::vector<TDesc> transpose(const TDesc &X, holonp::TransposeSettings s);
   // clang-format on
 };
 

@@ -182,6 +182,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     }
 
     std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
+    std::tie(M0_avg) = unpack<1>(transpose(M0_avg, {{0, 2, 1}}));
     std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
     std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
     std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
@@ -199,44 +200,55 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     }
   }
 
-  if (!s_.view_3d_cuts) {
-    return g_;
+  if (s_.view_3d_cuts) {
+    // -------------------------------------------------------------------------------------------------
+    // XZ View Processing (S -> M0 - Processed XZ View)
+    // -------------------------------------------------------------------------------------------------
+    {
+      std::vector<size_t> crop_origin = {0, 10, 0};
+      std::vector<size_t> crop_shape  = {1, S.shape.at(1) - 20, S.shape.at(0)};
+
+      auto [M0]        = unpack<1>(average(S, {1, s_.time_y_begin, s_.time_y_end}));
+      std::tie(M0)     = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
+      auto [M0_avg]    = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
+      std::tie(M0_avg) = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
+      std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
+      std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
+      std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
+      std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
+      xz_processed_display(M0_avg, {});
+    }
+
+    // -------------------------------------------------------------------------------------------------
+    // YZ View Processing (S -> M0 - Processed YZ View)
+    // -------------------------------------------------------------------------------------------------
+    {
+      std::vector<size_t> crop_origin = {0, 10, 0};
+      std::vector<size_t> crop_shape  = {1, S.shape.at(1) - 20, S.shape.at(0)};
+
+      auto [M0]        = unpack<1>(average(S, {2, s_.time_x_begin, s_.time_x_end}));
+      std::tie(M0)     = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
+      auto [M0_avg]    = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
+      std::tie(M0_avg) = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
+      std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
+      std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
+      std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
+      std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
+      yz_processed_display(M0_avg, {});
+    }
   }
 
   // -------------------------------------------------------------------------------------------------
-  // XZ View Processing (S -> M0 - Processed XZ View)
+  // Shack-Hartmann View Processing (S -> SH - Shack-Hartmann View)
   // -------------------------------------------------------------------------------------------------
-  {
-    std::vector<size_t> crop_origin = {0, 10, 0};
-    std::vector<size_t> crop_shape  = {1, S.shape.at(1) - 20, S.shape.at(0)};
 
-    auto [M0]        = unpack<1>(average(S, {1, s_.time_y_begin, s_.time_y_end}));
-    std::tie(M0)     = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
-    auto [M0_avg]    = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
-    std::tie(M0_avg) = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
-    std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
-    std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
-    xz_processed_display(M0_avg, {});
-  }
-
-  // -------------------------------------------------------------------------------------------------
-  // YZ View Processing (S -> M0 - Processed YZ View)
-  // -------------------------------------------------------------------------------------------------
-  {
-    std::vector<size_t> crop_origin = {0, 10, 0};
-    std::vector<size_t> crop_shape  = {1, S.shape.at(1) - 20, S.shape.at(0)};
-
-    auto [M0]        = unpack<1>(average(S, {2, s_.time_x_begin, s_.time_x_end}));
-    std::tie(M0)     = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
-    auto [M0_avg]    = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
-    std::tie(M0_avg) = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
-    std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
-    std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
-    yz_processed_display(M0_avg, {});
+  if (true) {
+    auto [SH]    = unpack<1>(convert(H, {Target::F32, Strat::Modulus}));
+    std::tie(SH) = unpack<1>(convert(SH, {Target::U8, Strat::Scaled}));
+    std::tie(SH) = unpack<1>(batched_queue(SH, {s_.gpu_out_size, 1, 1}));
+    std::tie(SH) = unpack<1>(memcpy(SH, {Host}));
+    std::tie(SH) = unpack<1>(batched_queue(SH, {s_.cpu_out_size, 1, 1}));
+    shack_hartmann_display(SH, {});
   }
 
   return g_;
@@ -284,6 +296,8 @@ DEFINE_UNARY_SYNC_NODE (xy_raw_display,                         "xy_raw_display"
 DEFINE_UNARY_SYNC_NODE (xy_processed_display,                   "xy_processed_display",                "DisplayTensorXY",                tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (xz_processed_display,                   "xz_processed_display",                "DisplayTensorXZ",                tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (yz_processed_display,                   "yz_processed_display",                "DisplayTensorYZ",                tasks::sinks::DisplayTensorSettings)
+DEFINE_UNARY_SYNC_NODE (shack_hartmann_display,                 "shack_hartmann_display",              "DisplayTensorShackHartmann",     tasks::sinks::DisplayTensorSettings)
+DEFINE_UNARY_SYNC_NODE (transpose,                              "transpose",                           "Transpose",                      holonp::TransposeSettings)
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                          "batch_queue",                         "BatchQueue",                     holotask::asyncs::BatchQueueSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                              "slide_avg",                           "SlidingAverage",                 holotask::asyncs::SlidingAverageSettings)
 // clang-format on

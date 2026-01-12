@@ -83,11 +83,13 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
                  ui::TensorDisplayWidget *yz_processed_widget,
                  ui::TensorDisplayWidget *xy_raw_widget,
                  ui::TensorDisplayWidget *raw_spectrum_widget,
-                 ui::TensorDisplayWidget *processed_spectrum_widget)
+                 ui::TensorDisplayWidget *processed_spectrum_widget,
+                 ui::TensorDisplayWidget *shack_hartmann_widget)
     : xy_processed_widget_(xy_processed_widget), xz_processed_widget_(xz_processed_widget),
       yz_processed_widget_(yz_processed_widget), xy_raw_widget_(xy_raw_widget),
       raw_spectrum_widget_(raw_spectrum_widget),
-      processed_spectrum_widget_(processed_spectrum_widget) {
+      processed_spectrum_widget_(processed_spectrum_widget),
+      shack_hartmann_widget_(shack_hartmann_widget) {
   // clang-format off
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
@@ -97,6 +99,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum", raw_spectrum_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum", processed_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann", shack_hartmann_widget_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
@@ -120,6 +123,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
 
   reg_sync<ArangeFactory>(registry_, "Arange");
   reg_sync<MeshgridFactory>(registry_, "Meshgrid");
+  reg_sync<holonp::TransposeFactory>(registry_, "Transpose");
   // clang-format on
 
   metrics_timer_ = new QTimer(this);
@@ -435,7 +439,7 @@ void Manager::build_graph_spec() {
   guess_optimizations();
   guess_source_dims();
 
-  if (true) {
+  if (false) {
     using json      = nlohmann::json;
     using GraphSpec = holoflow::core::GraphSpec;
     using NodeSpec  = holoflow::core::NodeSpec;

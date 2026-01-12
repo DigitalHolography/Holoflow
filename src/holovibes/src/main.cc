@@ -29,7 +29,7 @@
 #include "holonp/arange.hh"
 
 int main(int argc, char **argv) {
-  spdlog::set_level(spdlog::level::trace);
+  spdlog::set_level(spdlog::level::debug);
 
   holonp::ArangeSettings s{
       .start  = 0.0,

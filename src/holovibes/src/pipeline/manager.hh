@@ -39,7 +39,8 @@ public:
           ui::TensorDisplayWidget *xz_processed_widget,
           ui::TensorDisplayWidget *yz_processed_widget, ui::TensorDisplayWidget *xy_raw_widget,
           ui::TensorDisplayWidget *raw_spectrum_widget,
-          ui::TensorDisplayWidget *processed_spectrum_widget);
+          ui::TensorDisplayWidget *processed_spectrum_widget,
+          ui::TensorDisplayWidget *shack_hartmann_widget);
 
   ~Manager() override = default;
 
@@ -87,6 +88,7 @@ private:
   ui::TensorDisplayWidget *xy_raw_widget_;
   ui::TensorDisplayWidget *raw_spectrum_widget_;
   ui::TensorDisplayWidget *processed_spectrum_widget_;
+  ui::TensorDisplayWidget *shack_hartmann_widget_;
 
   // Settings
   Settings s_;
