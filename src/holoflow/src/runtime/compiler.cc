@@ -30,6 +30,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <spdlog/fmt/ranges.h>
 
 #include "bug.hh"
 #include "curaii/cuda.hh"
@@ -599,6 +600,178 @@ void Compiler::create_tensor_buffers() {
   }
 }
 
+
+void Compiler::create_sections() {
+  using V = GraphPlan::vertex_descriptor;
+
+  auto is_async = [&](V v) { return out_->graph[v].infer.kind == core::TaskKind::Async; };
+  auto is_sync  = [&](V v) { return out_->graph[v].infer.kind == core::TaskKind::Sync; };
+
+  // --- Build undirected "bounce graph" over Sync nodes ---
+  std::unordered_map<V, std::vector<V>> adj;
+  adj.reserve(boost::num_vertices(out_->graph));
+
+  auto add_undirected = [&](V a, V b) {
+    adj[a].push_back(b);
+    adj[b].push_back(a);
+  };
+
+  // 1) Bounce on Sync<->Sync edges (ignore any edge touching a wall)
+  for (auto e : boost::make_iterator_range(boost::edges(out_->graph))) {
+    const V u = boost::source(e, out_->graph);
+    const V v = boost::target(e, out_->graph);
+    if (is_sync(u) && is_sync(v)) {
+      add_undirected(u, v);
+    }
+  }
+
+  // 2) For each wall, connect all Sync inputs together AND all Sync outputs together
+  auto clique = [&](const std::vector<V>& xs) {
+    for (std::size_t i = 0; i < xs.size(); ++i)
+      for (std::size_t j = i + 1; j < xs.size(); ++j)
+        add_undirected(xs[i], xs[j]);
+  };
+
+  for (auto w : boost::make_iterator_range(boost::vertices(out_->graph))) {
+    if (!is_async(w)) continue;
+
+    std::vector<V> preds;
+    for (auto e : boost::make_iterator_range(boost::in_edges(w, out_->graph))) {
+      const V p = boost::source(e, out_->graph);
+      if (is_sync(p)) preds.push_back(p);
+    }
+
+    std::vector<V> succs;
+    for (auto e : boost::make_iterator_range(boost::out_edges(w, out_->graph))) {
+      const V s = boost::target(e, out_->graph);
+      if (is_sync(s)) succs.push_back(s);
+    }
+
+    // Optional small dedup to avoid quadratic duplicates
+    auto dedup = [](std::vector<V>& v) {
+      std::sort(v.begin(), v.end());
+      v.erase(std::unique(v.begin(), v.end()), v.end());
+    };
+    dedup(preds);
+    dedup(succs);
+
+    clique(preds);  // inputs connected
+    clique(succs);  // outputs connected
+  }
+
+  // dedup adjacency lists (optional)
+  for (auto& [v, ns] : adj) {
+    std::sort(ns.begin(), ns.end());
+    ns.erase(std::unique(ns.begin(), ns.end()), ns.end());
+  }
+
+  // --- Connected components on derived undirected graph (Sync only) ---
+  std::unordered_map<V, int> comp;
+  comp.reserve(boost::num_vertices(out_->graph));
+
+  int next_comp = 0;
+  std::vector<V> stack;
+  stack.reserve(256);
+
+  for (auto v : boost::make_iterator_range(boost::vertices(out_->graph))) {
+    if (!is_sync(v)) continue;
+    if (comp.contains(v)) continue;
+
+    const int cid = next_comp++;
+    comp.emplace(v, cid);
+    stack.push_back(v);
+
+    while (!stack.empty()) {
+      const V cur = stack.back();
+      stack.pop_back();
+
+      auto it = adj.find(cur);
+      if (it == adj.end()) continue;
+
+      for (V nb : it->second) {
+        if (!comp.contains(nb)) {
+          comp.emplace(nb, cid);
+          stack.push_back(nb);
+        }
+      }
+    }
+  }
+
+  // --- Initialize sections ---
+  out_->sections.clear();
+  out_->sections.resize(next_comp);
+  for (int cid = 0; cid < next_comp; ++cid) {
+    auto& sec = out_->sections[cid];
+    sec.id     = cid;
+    sec.name   = fmt::format("section-{}", cid);
+    sec.stream = 0;
+  }
+
+  // Global topo, then filter Sync nodes into their section to keep executable order
+  std::vector<V> topo;
+  topo.reserve(boost::num_vertices(out_->graph));
+  boost::topological_sort(out_->graph, std::back_inserter(topo));
+  std::reverse(topo.begin(), topo.end());
+
+  sync_section_map_.clear();
+  async_cons_section_map_.clear();
+  async_prod_section_map_.clear();
+
+  for (V v : topo) {
+    if (!is_sync(v)) continue;
+    const int cid = comp.at(v);
+    out_->sections[cid].sync_topo.push_back(v);
+    sync_section_map_.try_emplace(out_->graph[v].spec.name, cid);
+  }
+
+  // Helpers: component of any Sync predecessor/successor
+  auto comp_of_any_sync_pred = [&](V a) -> std::optional<int> {
+    for (auto e : boost::make_iterator_range(boost::in_edges(a, out_->graph))) {
+      const V p = boost::source(e, out_->graph);
+      if (is_sync(p)) return comp.at(p);
+    }
+    return std::nullopt;
+  };
+  auto comp_of_any_sync_succ = [&](V a) -> std::optional<int> {
+    for (auto e : boost::make_iterator_range(boost::out_edges(a, out_->graph))) {
+      const V s = boost::target(e, out_->graph);
+      if (is_sync(s)) return comp.at(s);
+    }
+    return std::nullopt;
+  };
+
+  // --- Attach wall halves (consumer to input section, producer to output section) ---
+  for (auto w : boost::make_iterator_range(boost::vertices(out_->graph))) {
+    if (!is_async(w)) continue;
+    auto& np = out_->graph[w];
+
+    // Consumer belongs to OUTPUT section (upstream)
+    if (auto in_sec = comp_of_any_sync_succ(w)) {
+      out_->sections[*in_sec].async_cons.push_back(w);
+      async_cons_section_map_.try_emplace(np.spec.name, *in_sec);
+    }
+
+    // Producer belongs to INPUT section (downstream)
+    if (auto out_sec = comp_of_any_sync_pred(w)) {
+      out_->sections[*out_sec].async_prod.push_back(w);
+      async_prod_section_map_.try_emplace(np.spec.name, *out_sec);
+    }
+
+    // Degenerate: wall with no sync preds/succs => choose policy; here: own section as consumer
+    if (!comp_of_any_sync_pred(w) && !comp_of_any_sync_succ(w)) {
+      Section sec;
+      sec.id     = static_cast<int>(out_->sections.size());
+      sec.name   = fmt::format("section-{}", sec.id);
+      sec.stream = 0;
+      sec.async_cons.push_back(w);
+      async_cons_section_map_.try_emplace(np.spec.name, sec.id);
+      out_->sections.push_back(std::move(sec));
+    }
+  }
+}
+
+
+/*
 void Compiler::create_sections() {
   auto is_section_start = [&](GraphPlan::vertex_descriptor v) {
     return boost::in_degree(v, out_->graph) == 0 ||
@@ -651,6 +824,7 @@ void Compiler::create_sections() {
     out_->sections.push_back(sec);
   }
 }
+*/
 
 void Compiler::assign_cuda_streams() {
   out_->resources.streams.clear();
@@ -730,6 +904,10 @@ void Compiler::create_nodes_collection() {
     const auto  name        = std::string_view{np.spec.name};
     const auto  node_start  = std::chrono::steady_clock::now();
     logger()->trace("Creating task for node '{}'", name);
+    
+    logger()->debug("sync_section_map_: {}", fmt::join(sync_section_map_, ", "));
+    logger()->debug("async_prod_section_map_: {}", fmt::join(async_prod_section_map_, ", "));
+    logger()->debug("async_cons_section_map_: {}", fmt::join(async_cons_section_map_, ", "));
 
     switch (np.infer.kind) {
     case core::TaskKind::Sync: {
