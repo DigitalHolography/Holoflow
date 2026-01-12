@@ -36,4 +36,4 @@ PRIVATE
 )
 
 include(GoogleTest)
-gtest_discover_tests(${TARGET})
+gtest_discover_tests(${TARGET} DISCOVERY_MODE PRE_TEST)
