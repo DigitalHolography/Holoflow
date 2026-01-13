@@ -115,6 +115,10 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     std::tie(H_z) = unpack<1>(angular_spectrum(H, {lam, dx, dy, z_prop, std::nullopt}));
   }
 
+  else {
+    H_z = H;
+  }
+
   if (s_.filter_2d) {
     std::tie(H_z) = unpack<1>(filter_2d(H_z, {ri, ro, si, so}));
   }
@@ -141,6 +145,10 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     int pca_max = s_.view_3d_cuts ? s_.time_window : s_.time_z_end;
 
     std::tie(FH_z) = unpack<1>(pca(H_z, {pca_min, pca_max}));
+  }
+
+  else {
+    FH_z = H_z;
   }
 
   if (s_.time_method != TimeMethod::NONE) {
