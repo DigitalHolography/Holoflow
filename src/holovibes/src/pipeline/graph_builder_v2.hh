@@ -28,6 +28,9 @@
 #include "holoflow/core/registry.hh"
 #include "holoflow/core/tasks.hh"
 #include "holonp/arange.hh"
+#include "holonp/fft.hh"
+#include "holonp/fft2.hh"
+#include "holonp/fftshift.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/slice_copy.hh"
 #include "holonp/transpose.hh"
@@ -167,6 +170,9 @@ private:
   std::vector<TDesc> holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
   std::vector<TDesc> transpose(const TDesc &X, holonp::TransposeSettings s);
   std::vector<TDesc> slice_copy(const TDesc &X, holonp::SliceCopySettings s);
+  std::vector<TDesc> fft(const TDesc &X, holonp::FFTSettings s);
+  std::vector<TDesc> fft2(const TDesc &X, holonp::FFT2Settings s);
+  std::vector<TDesc> fftshift(const TDesc &X, holonp::FFTShiftSettings s);
   // clang-format on
 };
 

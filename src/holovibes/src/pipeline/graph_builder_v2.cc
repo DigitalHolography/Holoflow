@@ -120,7 +120,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   }
 
   // -------------------------------------------------------------------------------------------------
-  // Time-Frequency Analysis (H-z -> FH_z - Frequency Hologram)
+  // Time-Frequency Analysis (H_z -> FH_z - Frequency Hologram)
   // -------------------------------------------------------------------------------------------------
 
   TDesc FH_z;
@@ -242,16 +242,27 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   // -------------------------------------------------------------------------------------------------
 
   if (true) {
+    // TODO: start from u8 SH
     auto nb_subap = 3;
     auto subap_w  = S.shape.at(2) / nb_subap;
     auto subap_h  = S.shape.at(1) / nb_subap;
-    auto [SH]     = unpack<1>(convert(H, {Target::F32, Strat::Modulus}));
-    std::tie(SH)  = unpack<1>(convert(SH, {Target::U8, Strat::Scaled}));
-    std::tie(SH)  = unpack<1>(slice_copy(SH, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
-    std::tie(SH)  = unpack<1>(batched_queue(SH, {s_.gpu_out_size, 1, 1}));
-    std::tie(SH)  = unpack<1>(memcpy(SH, {Host}));
-    std::tie(SH)  = unpack<1>(batched_queue(SH, {s_.cpu_out_size, 1, 1}));
-    shack_hartmann_display(SH, {});
+    // auto tmp      = convert(H, {Target::F32, Strat::Modulus});
+    // auto [H]      = unpack<1>(tmp);
+
+    // -------------------------------------------------------------------------------------------------
+    // Time-Frequency Analysis (SH -> FH - Frequency Hologram -> FH_filt - Filtered Frequency
+    // Hologram)
+    // -------------------------------------------------------------------------------------------------
+    auto [FH] = unpack<1>(fft(H, {0}));
+    // std::tie(FH) = unpack<1>(fftshift(FH, {{0}}));
+
+    std::tie(FH) = unpack<1>(convert(FH, {Target::F32, Strat::Modulus}));
+    std::tie(FH) = unpack<1>(convert(FH, {Target::U8, Strat::Scaled}));
+    std::tie(FH) = unpack<1>(slice_copy(FH, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
+    std::tie(FH) = unpack<1>(batched_queue(FH, {s_.gpu_out_size, 1, 1}));
+    std::tie(FH) = unpack<1>(memcpy(FH, {Host}));
+    std::tie(FH) = unpack<1>(batched_queue(FH, {s_.cpu_out_size, 1, 1}));
+    shack_hartmann_display(FH, {});
   }
 
   return g_;
@@ -302,6 +313,9 @@ DEFINE_UNARY_SYNC_NODE (yz_processed_display,                   "yz_processed_di
 DEFINE_UNARY_SYNC_NODE (shack_hartmann_display,                 "shack_hartmann_display",              "DisplayTensorShackHartmann",     tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (transpose,                              "transpose",                           "Transpose",                      holonp::TransposeSettings)
 DEFINE_UNARY_SYNC_NODE (slice_copy,                             "slice_copy",                          "SliceCopy",                      holonp::SliceCopySettings)
+DEFINE_UNARY_SYNC_NODE (fft,                                    "fft",                                 "FFT",                            holonp::FFTSettings)
+DEFINE_UNARY_SYNC_NODE (fft2,                                   "fft2",                                "FFT2",                           holonp::FFT2Settings)
+DEFINE_UNARY_SYNC_NODE (fftshift,                               "fftshift",                            "FFTShiftNp",                     holonp::FFTShiftSettings)
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                          "batch_queue",                         "BatchQueue",                     holotask::asyncs::BatchQueueSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                              "slide_avg",                           "SlidingAverage",                 holotask::asyncs::SlidingAverageSettings)
 // clang-format on

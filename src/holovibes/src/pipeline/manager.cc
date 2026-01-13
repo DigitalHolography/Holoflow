@@ -32,6 +32,9 @@
 #include "graph_builder_v2.hh"
 #include "holoflow/runtime/graph_display.hh"
 #include "holonp/arange.hh"
+#include "holonp/fft.hh"
+#include "holonp/fft2.hh"
+#include "holonp/fftshift.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/slice_copy.hh"
 #include "holonp/transpose.hh"
@@ -127,6 +130,9 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<MeshgridFactory>(registry_, "Meshgrid");
   reg_sync<TransposeFactory>(registry_, "Transpose");
   reg_sync<SliceCopyFactory>(registry_, "SliceCopy");
+  reg_sync<FFTFactory>(registry_, "FFT");
+  reg_sync<FFT2Factory>(registry_, "FFT2");
+  reg_sync<FFTShiftFactory>(registry_, "FFTShiftNp");
   // clang-format on
 
   metrics_timer_ = new QTimer(this);

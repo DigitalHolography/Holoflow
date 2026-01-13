@@ -1,0 +1,63 @@
+// Copyright 2026 Digital Holography Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+//
+#pragma once
+
+#include <nlohmann/json.hpp>
+#include <stdexcept>
+#include <string>
+#include <string_view>
+
+namespace holonp {
+
+enum class FftNorm {
+  Backward,
+  Forward,
+  Ortho,
+};
+
+inline std::string_view to_string(FftNorm norm) noexcept {
+  switch (norm) {
+  case FftNorm::Backward:
+    return "backward";
+  case FftNorm::Forward:
+    return "forward";
+  case FftNorm::Ortho:
+    return "ortho";
+  default:
+    return "backward";
+  }
+}
+
+inline void to_json(nlohmann::json &j, FftNorm norm) { j = std::string(to_string(norm)); }
+
+inline void from_json(const nlohmann::json &j, FftNorm &norm) {
+  if (j.is_null()) {
+    norm = FftNorm::Backward;
+    return;
+  }
+
+  auto s = j.get<std::string>();
+  if (s == "backward" || s == "none") {
+    norm = FftNorm::Backward;
+  } else if (s == "forward") {
+    norm = FftNorm::Forward;
+  } else if (s == "ortho") {
+    norm = FftNorm::Ortho;
+  } else {
+    throw std::invalid_argument("FftNorm: unsupported norm '" + s + "'");
+  }
+}
+
+} // namespace holonp
