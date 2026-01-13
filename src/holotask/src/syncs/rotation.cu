@@ -246,11 +246,38 @@ RotationFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(settings.axis == RotationSettings::Axis::Z || idesc.rank() == 2,
         "Rotation axis other than Z is only valid for 3D tensors");
 
-  auto odesc = idesc;
+  auto odesc  = idesc;
+  int  depth  = idesc.shape[0];
+  int  height = idesc.shape[1];
+  int  width  = idesc.shape[2];
 
-  auto temp      = odesc.shape[1];
-  odesc.shape[1] = idesc.shape[2];
-  odesc.shape[2] = temp;
+  if (depth == 1) {
+
+    auto temp      = odesc.shape[1];
+    odesc.shape[1] = idesc.shape[2];
+    odesc.shape[2] = temp;
+  } else {
+    switch (settings.axis) {
+      size_t temp;
+    case RotationSettings::Axis::Z:
+      temp           = odesc.shape[1];
+      odesc.shape[1] = idesc.shape[2];
+      odesc.shape[2] = temp;
+      break;
+    case RotationSettings::Axis::Y:
+      temp           = odesc.shape[2];
+      odesc.shape[2] = idesc.shape[0];
+      odesc.shape[0] = temp;
+      break;
+    case RotationSettings::Axis::X:
+      temp           = odesc.shape[1];
+      odesc.shape[1] = idesc.shape[0];
+      odesc.shape[0] = temp;
+      break;
+    default:
+      logger()->error("[RotationFactory::infer] Invalid axis impossible case");
+    }
+  }
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
