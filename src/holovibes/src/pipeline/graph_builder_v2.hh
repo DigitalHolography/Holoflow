@@ -27,6 +27,10 @@
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
 #include "holoflow/core/tasks.hh"
+#include "holonp/arange.hh"
+#include "holonp/meshgrid.hh"
+#include "holonp/slice_copy.hh"
+#include "holonp/transpose.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/holofile.hh"
@@ -50,7 +54,6 @@
 #include "holotask/syncs/stft.hh"
 #include "pipeline/settings.hh"
 #include "tasks/sinks/display_tensor.hh"
-#include "holonp/transpose.hh"
 
 namespace holovibes::pipeline {
 
@@ -163,6 +166,7 @@ private:
   std::vector<TDesc> rotation(const TDesc &X, holotask::syncs::RotationSettings s);
   std::vector<TDesc> holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
   std::vector<TDesc> transpose(const TDesc &X, holonp::TransposeSettings s);
+  std::vector<TDesc> slice_copy(const TDesc &X, holonp::SliceCopySettings s);
   // clang-format on
 };
 
