@@ -246,6 +246,8 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto nb_subap = 3;
     auto subap_w  = S.shape.at(2) / nb_subap;
     auto subap_h  = S.shape.at(1) / nb_subap;
+    subap_w       = S.shape.at(2);
+    subap_h       = S.shape.at(1);
     // auto tmp      = convert(H, {Target::F32, Strat::Modulus});
     // auto [H]      = unpack<1>(tmp);
 
@@ -255,14 +257,17 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // -------------------------------------------------------------------------------------------------
     auto [FH] = unpack<1>(fft(H, {0}));
     // std::tie(FH) = unpack<1>(fftshift(FH, {{0}}));
+    auto [FH_sub] = unpack<1>(slice_copy(FH, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
 
-    std::tie(FH) = unpack<1>(convert(FH, {Target::F32, Strat::Modulus}));
-    std::tie(FH) = unpack<1>(convert(FH, {Target::U8, Strat::Scaled}));
-    std::tie(FH) = unpack<1>(slice_copy(FH, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
-    std::tie(FH) = unpack<1>(batched_queue(FH, {s_.gpu_out_size, 1, 1}));
-    std::tie(FH) = unpack<1>(memcpy(FH, {Host}));
-    std::tie(FH) = unpack<1>(batched_queue(FH, {s_.cpu_out_size, 1, 1}));
-    shack_hartmann_display(FH, {});
+    auto [S]  = unpack<1>(abs(FH_sub, {}));
+    auto [M0] = unpack<1>(mean(S, {{0}, true}));
+    // auto [M0] = unpack<1>(average(S, {0, 0, 32}));
+
+    std::tie(M0) = unpack<1>(convert(M0, {Target::U8, Strat::Scaled}));
+    std::tie(M0) = unpack<1>(batched_queue(M0, {s_.gpu_out_size, 1, 1}));
+    std::tie(M0) = unpack<1>(memcpy(M0, {Host}));
+    std::tie(M0) = unpack<1>(batched_queue(M0, {s_.cpu_out_size, 1, 1}));
+    shack_hartmann_display(M0, {});
   }
 
   return g_;
@@ -316,6 +321,8 @@ DEFINE_UNARY_SYNC_NODE (slice_copy,                             "slice_copy",   
 DEFINE_UNARY_SYNC_NODE (fft,                                    "fft",                                 "FFT",                            holonp::FFTSettings)
 DEFINE_UNARY_SYNC_NODE (fft2,                                   "fft2",                                "FFT2",                           holonp::FFT2Settings)
 DEFINE_UNARY_SYNC_NODE (fftshift,                               "fftshift",                            "FFTShiftNp",                     holonp::FFTShiftSettings)
+DEFINE_UNARY_SYNC_NODE (abs,                                    "abs",                                 "Abs",                            holonp::AbsSettings)
+DEFINE_UNARY_SYNC_NODE (mean,                                   "mean",                                "Mean",                           holonp::MeanSettings)
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                          "batch_queue",                         "BatchQueue",                     holotask::asyncs::BatchQueueSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                              "slide_avg",                           "SlidingAverage",                 holotask::asyncs::SlidingAverageSettings)
 // clang-format on
