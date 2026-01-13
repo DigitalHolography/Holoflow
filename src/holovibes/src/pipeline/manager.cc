@@ -429,8 +429,8 @@ void Manager::build_graph_spec() {
   guess_optimizations();
   guess_source_dims();
 
-  GraphBuilder builder{spec_, s_, src_width_, src_height_, opti_cpu_stride_, opti_gpu_stride_};
-  builder.build();
+  // GraphBuilder builder{spec_, s_, src_width_, src_height_, opti_cpu_stride_, opti_gpu_stride_};
+  // builder.build();
 
   GraphBuilder_v2 builder_v2{s_, registry_};
   spec_ = builder_v2.build();
