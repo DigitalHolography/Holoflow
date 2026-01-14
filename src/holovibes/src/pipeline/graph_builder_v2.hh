@@ -35,6 +35,7 @@
 #include "holonp/fftshift.hh"
 #include "holonp/mean.hh"
 #include "holonp/meshgrid.hh"
+#include "holonp/mul.hh"
 #include "holonp/rfft.hh"
 #include "holonp/slice_copy.hh"
 #include "holonp/transpose.hh"
@@ -43,6 +44,7 @@
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sources/fresnel_qin.hh"
 #include "holotask/sources/holofile.hh"
 #include "holotask/syncs/angular_spectrum.hh"
 #include "holotask/syncs/average.hh"
@@ -159,6 +161,7 @@ private:
   std::vector<TDesc> stft(const TDesc &X, holotask::syncs::StftSettings s);
   std::vector<TDesc> filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
   std::vector<TDesc> fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
+  std::vector<TDesc> fresnel_qin(holotask::sources::FresnelQinSettings s);
   std::vector<TDesc> angular_spectrum(const TDesc &X, holotask::syncs::AngularSpectrumSettings s);
   std::vector<TDesc> reshape(const TDesc &X, holotask::syncs::ReshapeSettings s);
   std::vector<TDesc> slide_avg(const TDesc &X, holotask::asyncs::SlidingAverageSettings s);
@@ -179,6 +182,7 @@ private:
   std::vector<TDesc> holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
   std::vector<TDesc> concatenate(std::span<const TDesc> Xs, holonp::ConcatenateSettings s);
   std::vector<TDesc> transpose(const TDesc &X, holonp::TransposeSettings s);
+  std::vector<TDesc> mul(const TDesc &A, const TDesc &B, holonp::MulSettings s);
   std::vector<TDesc> rfft(const TDesc &X, holonp::RFFTSettings s);
   std::vector<TDesc> slice_copy(const TDesc &X, holonp::SliceCopySettings s);
   std::vector<TDesc> fft(const TDesc &X, holonp::FFTSettings s);

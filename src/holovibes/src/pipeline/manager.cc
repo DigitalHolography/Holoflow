@@ -39,6 +39,7 @@
 #include "holonp/fftshift.hh"
 #include "holonp/mean.hh"
 #include "holonp/meshgrid.hh"
+#include "holonp/mul.hh"
 #include "holonp/rfft.hh"
 #include "holonp/slice_copy.hh"
 #include "holonp/transpose.hh"
@@ -47,6 +48,7 @@
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sources/fresnel_qin.hh"
 #include "holotask/sources/holofile.hh"
 #include "holotask/syncs/angular_spectrum.hh"
 #include "holotask/syncs/average.hh"
@@ -113,6 +115,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
   reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS711EuresysCoaxlinkQSFP+");
+  reg_sync<sources::FresnelQinFactory>(registry_, "FresnelQin");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
   reg_sync<syncs::AverageFactory>(registry_, "Average");
   reg_sync<syncs::ConversionFactory>(registry_, "Conversion");
@@ -141,6 +144,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<MeanFactory>(registry_, "Mean");
   reg_sync<ConcatenateFactory>(registry_, "Concatenate");
   reg_sync<RFFTFactory>(registry_, "RFFT");
+  reg_sync<MulFactory>(registry_, "Mul");
   // clang-format on
 
   metrics_timer_ = new QTimer(this);

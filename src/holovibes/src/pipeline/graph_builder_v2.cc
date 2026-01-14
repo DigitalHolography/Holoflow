@@ -260,7 +260,16 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [FH]      = unpack<1>(rfft(H, {0}));
     auto [FH_filt] = unpack<1>(slice_copy(FH, {{{111, 145}, {}, {}}}));
 
-    auto [FH_sub] = unpack<1>(slice_copy(FH_filt, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
+    // -------------------------------------------------------------------------------------------------
+    // Shack-Hartmann processing (FH_filt -> FH_Qin (fresnel lens applied) -> H_sub (subaperture) ->
+    // H_sub_prop -> S -> M0 (final display)
+    // -------------------------------------------------------------------------------------------------
+
+    auto nx          = S.shape.at(2);
+    auto ny          = S.shape.at(1);
+    auto [FH_Qin]    = unpack<1>(fresnel_qin({lam, dx, dy, z_prop, nx, ny}));
+    std::tie(FH_Qin) = unpack<1>(mul(FH_filt, FH_Qin, {}));
+    auto [FH_sub]    = unpack<1>(slice_copy(FH_Qin, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
 
     auto [S]  = unpack<1>(abs(FH_sub, {}));
     auto [M0] = unpack<1>(mean(S, {{0}, true}));
@@ -304,6 +313,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 DEFINE_SOURCE_SYNC_NODE(holofile_read,                          "source",                              "Holofile",                       holotask::sources::HolofileSettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "ametek_s710_euresys_coaxlink_octo",   "AmetekS710EuresysCoaxlinkOcto",  holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "ametek_s711_euresys_coaxlink_qsfp_+", "AmetekS711EuresysCoaxlinkQSFP+", holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
+DEFINE_SOURCE_SYNC_NODE(fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                     holotask::sources::FresnelQinSettings)
 DEFINE_UNARY_SYNC_NODE (memcpy,                                 "memcpy",                              "Memcpy",                         holotask::syncs::MemcpySettings)
 DEFINE_UNARY_SYNC_NODE (convert,                                "conversion",                          "Conversion",                     holotask::syncs::ConversionSettings)
 DEFINE_UNARY_SYNC_NODE (pca,                                    "pca",                                 "Pca",                            holotask::syncs::PcaSettings)
@@ -324,7 +334,7 @@ DEFINE_UNARY_SYNC_NODE (xy_processed_display,                   "xy_processed_di
 DEFINE_UNARY_SYNC_NODE (xz_processed_display,                   "xz_processed_display",                "DisplayTensorXZ",                tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (yz_processed_display,                   "yz_processed_display",                "DisplayTensorYZ",                tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (shack_hartmann_display,                 "shack_hartmann_display",              "DisplayTensorShackHartmann",     tasks::sinks::DisplayTensorSettings)
-DEFINE_NARY_SYNC_NODE (concatenate,                             "concatenate",                         "Concatenate",                    holonp::ConcatenateSettings)
+DEFINE_NARY_SYNC_NODE  (concatenate,                            "concatenate",                         "Concatenate",                    holonp::ConcatenateSettings)
 DEFINE_UNARY_SYNC_NODE (transpose,                              "transpose",                           "Transpose",                      holonp::TransposeSettings)
 DEFINE_UNARY_SYNC_NODE (rfft,                                   "rfft",                                "RFFT",                           holonp::RFFTSettings)
 DEFINE_UNARY_SYNC_NODE (slice_copy,                             "slice_copy",                          "SliceCopy",                      holonp::SliceCopySettings)
@@ -336,6 +346,12 @@ DEFINE_UNARY_SYNC_NODE (mean,                                   "mean",         
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                          "batch_queue",                         "BatchQueue",                     holotask::asyncs::BatchQueueSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                              "slide_avg",                           "SlidingAverage",                 holotask::asyncs::SlidingAverageSettings)
 // clang-format on
+
+std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::mul(const TDesc &A, const TDesc &B,
+                                                         holonp::MulSettings s) {
+  std::array<TDesc, 2> inputs{A, B};
+  return make_nary_sync_node("mul", "Mul", "Mul", std::span<const TDesc>{inputs}, s);
+}
 
 std::vector<GraphBuilder_v2::TDesc>
 GraphBuilder_v2::holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s) {
