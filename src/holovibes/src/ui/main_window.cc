@@ -372,7 +372,7 @@ void MainWindow::on_start_pipeline_success() {
   }
   xy_processed_widget_->set_fixed_aspect(dims);
   xy_raw_widget_->set_fixed_aspect(guess_source_dims());
-  shack_hartmann_widget_->set_fixed_aspect(guess_source_dims());
+  shack_hartmann_widget_->set_fixed_aspect(dims);
 
   xy_processed_widget_->show();
   shack_hartmann_widget_->show();

@@ -248,30 +248,34 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto nb_subap = 3;
     auto subap_w  = S.shape.at(2) / nb_subap;
     auto subap_h  = S.shape.at(1) / nb_subap;
-    subap_w       = S.shape.at(2);
-    subap_h       = S.shape.at(1);
-    auto tmp      = convert(H, {Target::F32, Strat::Modulus});
-    auto [H]      = unpack<1>(tmp);
+    // subap_w       = S.shape.at(2);
+    // subap_h       = S.shape.at(1);
+    auto tmp = convert(H, {Target::F32, Strat::Modulus});
+    auto [H] = unpack<1>(tmp);
 
     // -------------------------------------------------------------------------------------------------
     // Time-Frequency Analysis (SH -> FH - Frequency Hologram -> FH_filt - Filtered Frequency
     // Hologram)
     // -------------------------------------------------------------------------------------------------
     auto [FH]      = unpack<1>(rfft(H, {0}));
-    auto [FH_filt] = unpack<1>(slice_copy(FH, {{{111, 145}, {}, {}}}));
+    auto [FH_filt] = unpack<1>(slice_copy(FH, {{{111, 222}, {}, {}}}));
 
     // -------------------------------------------------------------------------------------------------
     // Shack-Hartmann processing (FH_filt -> FH_Qin (fresnel lens applied) -> H_sub (subaperture) ->
     // H_sub_prop -> S -> M0 (final display)
     // -------------------------------------------------------------------------------------------------
 
-    auto nx          = S.shape.at(2);
-    auto ny          = S.shape.at(1);
-    auto [FH_Qin]    = unpack<1>(fresnel_qin({lam, dx, dy, z_prop, nx, ny}));
-    std::tie(FH_Qin) = unpack<1>(mul(FH_filt, FH_Qin, {}));
-    auto [FH_sub]    = unpack<1>(slice_copy(FH_Qin, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
+    auto nx       = S.shape.at(2);
+    auto ny       = S.shape.at(1);
+    auto [Qin]    = unpack<1>(fresnel_qin({lam, dx, dy, z_prop, nx, ny}));
+    std::tie(Qin) = unpack<1>(reshape(Qin, {{1, Qin.shape.at(0), Qin.shape.at(1)}}));
+    auto [FH_Qin] = unpack<1>(mul(FH_filt, Qin, {}));
 
-    auto [S]  = unpack<1>(abs(FH_sub, {}));
+    auto [FH_sub]         = unpack<1>(slice_copy(FH_Qin, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
+    auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
+    std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
+
+    auto [S]  = unpack<1>(abs(FH_sub_prop, {}));
     auto [M0] = unpack<1>(mean(S, {{0}, true}));
 
     std::tie(M0) = unpack<1>(convert(M0, {Target::U8, Strat::Scaled}));
