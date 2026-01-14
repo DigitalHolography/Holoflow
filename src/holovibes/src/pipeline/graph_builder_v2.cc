@@ -143,9 +143,11 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     std::tie(FH_z) = unpack<1>(pca(H_z, {pca_min, pca_max}));
   }
 
-  if (s_.time_method != TimeMethod::NONE) {
-    std::tie(FH_z) = unpack<1>(batched_queue(FH_z, {128, s_.time_window, s_.time_window}));
-  }
+  // TODO: This costs a lot of memory when time_window is large
+  // if (s_.time_method != TimeMethod::NONE) {
+  //   std::tie(FH_z) =
+  //       unpack<1>(batched_queue(FH_z, {s_.time_window, s_.time_window, s_.time_window}));
+  // }
 
   // -------------------------------------------------------------------------------------------------
   // Spectral Density (FH_z -> S - Spectral Density)
@@ -248,20 +250,20 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto subap_h  = S.shape.at(1) / nb_subap;
     subap_w       = S.shape.at(2);
     subap_h       = S.shape.at(1);
-    // auto tmp      = convert(H, {Target::F32, Strat::Modulus});
-    // auto [H]      = unpack<1>(tmp);
+    auto tmp      = convert(H, {Target::F32, Strat::Modulus});
+    auto [H]      = unpack<1>(tmp);
 
     // -------------------------------------------------------------------------------------------------
     // Time-Frequency Analysis (SH -> FH - Frequency Hologram -> FH_filt - Filtered Frequency
     // Hologram)
     // -------------------------------------------------------------------------------------------------
-    auto [FH] = unpack<1>(fft(H, {0}));
-    // std::tie(FH) = unpack<1>(fftshift(FH, {{0}}));
-    auto [FH_sub] = unpack<1>(slice_copy(FH, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
+    auto [FH]      = unpack<1>(rfft(H, {0}));
+    auto [FH_filt] = unpack<1>(slice_copy(FH, {{{111, 145}, {}, {}}}));
+
+    auto [FH_sub] = unpack<1>(slice_copy(FH_filt, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
 
     auto [S]  = unpack<1>(abs(FH_sub, {}));
     auto [M0] = unpack<1>(mean(S, {{0}, true}));
-    // auto [M0] = unpack<1>(average(S, {0, 0, 32}));
 
     std::tie(M0) = unpack<1>(convert(M0, {Target::U8, Strat::Scaled}));
     std::tie(M0) = unpack<1>(batched_queue(M0, {s_.gpu_out_size, 1, 1}));
@@ -285,6 +287,12 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 #define DEFINE_UNARY_SYNC_NODE(fn_name, node_name_str, kind_str, SettingsType)                     \
   std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::fn_name(const TDesc &X, SettingsType s) {   \
     return make_unary_sync_node(node_name_str, kind_str, kind_str, X, s);                          \
+  }
+
+#define DEFINE_NARY_SYNC_NODE(fn_name, node_name_str, kind_str, SettingsType)                      \
+  std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::fn_name(std::span<const TDesc> Xs,          \
+                                                               SettingsType           s) {                   \
+    return make_nary_sync_node(node_name_str, kind_str, kind_str, Xs, s);                          \
   }
 
 #define DEFINE_UNARY_ASYNC_NODE(fn_name, node_name_str, kind_str, SettingsType)                    \
@@ -316,7 +324,9 @@ DEFINE_UNARY_SYNC_NODE (xy_processed_display,                   "xy_processed_di
 DEFINE_UNARY_SYNC_NODE (xz_processed_display,                   "xz_processed_display",                "DisplayTensorXZ",                tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (yz_processed_display,                   "yz_processed_display",                "DisplayTensorYZ",                tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (shack_hartmann_display,                 "shack_hartmann_display",              "DisplayTensorShackHartmann",     tasks::sinks::DisplayTensorSettings)
+DEFINE_NARY_SYNC_NODE (concatenate,                             "concatenate",                         "Concatenate",                    holonp::ConcatenateSettings)
 DEFINE_UNARY_SYNC_NODE (transpose,                              "transpose",                           "Transpose",                      holonp::TransposeSettings)
+DEFINE_UNARY_SYNC_NODE (rfft,                                   "rfft",                                "RFFT",                           holonp::RFFTSettings)
 DEFINE_UNARY_SYNC_NODE (slice_copy,                             "slice_copy",                          "SliceCopy",                      holonp::SliceCopySettings)
 DEFINE_UNARY_SYNC_NODE (fft,                                    "fft",                                 "FFT",                            holonp::FFTSettings)
 DEFINE_UNARY_SYNC_NODE (fft2,                                   "fft2",                                "FFT2",                           holonp::FFT2Settings)
@@ -439,6 +449,36 @@ GraphBuilder_v2::make_unary_sync_node(std::string_view node_name, std::string_vi
 
   auto      &factory     = reg_.get_sync(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});
+  const auto infer       = factory.infer(core_inputs, nlohmann::json(s));
+  return wrap_infer_outputs(node_name, v, infer);
+}
+
+template <typename SettingsT>
+std::vector<GraphBuilder_v2::TDesc>
+GraphBuilder_v2::make_nary_sync_node(std::string_view node_name, std::string_view kind,
+                                     std::string_view reg_key, std::span<const TDesc> inputs,
+                                     const SettingsT &s, bool debug) {
+  HOLOVIBES_CHECK(!inputs.empty());
+  for (const auto &X : inputs) {
+    HOLOVIBES_CHECK(X.producer.has_value());
+  }
+  HOLOVIBES_CHECK(reg_.is_sync_registered(std::string{reg_key}));
+
+  holoflow::core::NodeSpec node_spec{
+      .name     = std::string{node_name} + "_" + std::to_string(unique_id_counter_++),
+      .kind     = std::string{kind},
+      .settings = nlohmann::json(s),
+      .debug    = debug,
+  };
+
+  auto v = boost::add_vertex(node_spec, g_);
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    const auto &X = inputs[i];
+    boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, static_cast<int>(i)}, g_);
+  }
+
+  auto      &factory     = reg_.get_sync(std::string{reg_key});
+  const auto core_inputs = to_core_descs(inputs);
   const auto infer       = factory.infer(core_inputs, nlohmann::json(s));
   return wrap_infer_outputs(node_name, v, infer);
 }

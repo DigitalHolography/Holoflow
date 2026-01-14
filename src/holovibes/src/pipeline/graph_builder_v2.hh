@@ -29,11 +29,13 @@
 #include "holoflow/core/tasks.hh"
 #include "holonp/abs.hh"
 #include "holonp/arange.hh"
+#include "holonp/concatenate.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
 #include "holonp/mean.hh"
 #include "holonp/meshgrid.hh"
+#include "holonp/rfft.hh"
 #include "holonp/slice_copy.hh"
 #include "holonp/transpose.hh"
 #include "holotask/asyncs/batch_queue.hh"
@@ -125,6 +127,11 @@ private:
                                           const SettingsT &s, bool debug = true);
 
   template <typename SettingsT>
+  std::vector<TDesc> make_nary_sync_node(std::string_view node_name, std::string_view kind,
+                                         std::string_view reg_key, std::span<const TDesc> inputs,
+                                         const SettingsT &s, bool debug = true);
+
+  template <typename SettingsT>
   std::vector<TDesc> make_unary_async_node(std::string_view node_name, std::string_view kind,
                                            std::string_view reg_key, const TDesc &X,
                                            const SettingsT &s, bool debug = true);
@@ -170,7 +177,9 @@ private:
   std::vector<TDesc> registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
   std::vector<TDesc> rotation(const TDesc &X, holotask::syncs::RotationSettings s);
   std::vector<TDesc> holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
+  std::vector<TDesc> concatenate(std::span<const TDesc> Xs, holonp::ConcatenateSettings s);
   std::vector<TDesc> transpose(const TDesc &X, holonp::TransposeSettings s);
+  std::vector<TDesc> rfft(const TDesc &X, holonp::RFFTSettings s);
   std::vector<TDesc> slice_copy(const TDesc &X, holonp::SliceCopySettings s);
   std::vector<TDesc> fft(const TDesc &X, holonp::FFTSettings s);
   std::vector<TDesc> fft2(const TDesc &X, holonp::FFT2Settings s);

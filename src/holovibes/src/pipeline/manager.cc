@@ -33,11 +33,13 @@
 #include "holoflow/runtime/graph_display.hh"
 #include "holonp/abs.hh"
 #include "holonp/arange.hh"
+#include "holonp/concatenate.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
 #include "holonp/mean.hh"
 #include "holonp/meshgrid.hh"
+#include "holonp/rfft.hh"
 #include "holonp/slice_copy.hh"
 #include "holonp/transpose.hh"
 #include "holotask/asyncs/batch_queue.hh"
@@ -137,6 +139,8 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<FFTShiftFactory>(registry_, "FFTShiftNp");
   reg_sync<AbsFactory>(registry_, "Abs");
   reg_sync<MeanFactory>(registry_, "Mean");
+  reg_sync<ConcatenateFactory>(registry_, "Concatenate");
+  reg_sync<RFFTFactory>(registry_, "RFFT");
   // clang-format on
 
   metrics_timer_ = new QTimer(this);
