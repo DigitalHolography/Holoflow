@@ -275,6 +275,20 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
     std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
 
+    for (auto sy = 0; sy < nb_subap - 2; ++sy) {
+      for (auto sx = 0; sx < nb_subap - 2; ++sx) {
+        auto y_start = sy * subap_h;
+        auto x_start = sx * subap_w;
+        auto y_end   = y_start + subap_h;
+        auto x_end   = x_start + subap_w;
+
+        auto [FH_sub] =
+            unpack<1>(slice_copy(FH_Qin, {{{}, {y_start, y_end, 1}, {x_start, x_end, 1}}}));
+        auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
+        std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
+      }
+    }
+
     auto [S]  = unpack<1>(abs(FH_sub_prop, {}));
     auto [M0] = unpack<1>(mean(S, {{0}, true}));
 
