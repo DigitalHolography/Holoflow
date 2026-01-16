@@ -150,11 +150,7 @@ holoflow::core::InferResult ArangeFactory::infer(std::span<const holoflow::core:
 
   const size_t n = arange_len(settings.start, settings.stop, settings.step);
 
-  holoflow::core::TDesc odesc{
-      .shape   = {n},
-      .dtype   = dtype,
-      .mem_loc = memloc,
-  };
+  holoflow::core::TDesc odesc({n}, dtype, memloc);
 
   return holoflow::core::InferResult{
       .input_descs   = {},

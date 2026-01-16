@@ -42,6 +42,7 @@
 #include "holonp/meshgrid.hh"
 #include "holonp/mul.hh"
 #include "holonp/rfft.hh"
+#include "holonp/slice_assign.hh"
 #include "holonp/slice_copy.hh"
 #include "holonp/transpose.hh"
 #include "holotask/asyncs/batch_queue.hh"
@@ -139,6 +140,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<MeshgridFactory>(registry_, "Meshgrid");
   reg_sync<TransposeFactory>(registry_, "Transpose");
   reg_sync<SliceCopyFactory>(registry_, "SliceCopy");
+  reg_sync<SliceAssignFactory>(registry_, "SliceAssign");
   reg_sync<FFTFactory>(registry_, "FFT");
   reg_sync<FFT2Factory>(registry_, "FFT2");
   reg_sync<FFTShiftFactory>(registry_, "FFTShiftNp");

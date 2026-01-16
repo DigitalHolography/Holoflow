@@ -164,17 +164,15 @@ HolofileFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
         "Unsupported bits_per_pixel: " + std::to_string(header.bits_per_pixel));
 
   // Success
-  holoflow::core::TDesc out_desc = {
-      .shape   = {(size_t)settings.batch_size, header.frame_height, header.frame_width},
-      .dtype   = bpp_to_dtype[header.bits_per_pixel],
-      .mem_loc = settings.load_kind == HolofileSettings::LoadKind::GPUCached
-                     ? holoflow::core::MemLoc::Device
-                     : holoflow::core::MemLoc::Host,
-  };
+  holoflow::core::TDesc odesc(
+      {(size_t)settings.batch_size, header.frame_height, header.frame_width},
+      bpp_to_dtype[header.bits_per_pixel],
+      settings.load_kind == HolofileSettings::LoadKind::GPUCached ? holoflow::core::MemLoc::Device
+                                                                  : holoflow::core::MemLoc::Host);
 
   return holoflow::core::InferResult{
       .input_descs   = {},
-      .output_descs  = {out_desc},
+      .output_descs  = {odesc},
       .in_place      = {},
       .owned_inputs  = {},
       .owned_outputs = {false},

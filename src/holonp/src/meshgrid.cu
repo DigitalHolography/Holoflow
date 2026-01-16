@@ -302,11 +302,7 @@ MeshgridFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   std::vector<holoflow::core::TDesc> out_descs;
   out_descs.reserve(input_descs.size());
   for (size_t i = 0; i < input_descs.size(); ++i) {
-    out_descs.push_back(holoflow::core::TDesc{
-        .shape   = shape,
-        .dtype   = dtype,
-        .mem_loc = memloc,
-    });
+    out_descs.push_back(holoflow::core::TDesc(shape, dtype, memloc));
   }
 
   return holoflow::core::InferResult{

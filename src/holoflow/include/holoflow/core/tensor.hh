@@ -58,6 +58,9 @@ struct TDesc {
   DType               dtype;   ///< The data type of the tensor elements
   MemLoc              mem_loc; ///< The memory location of the tensor
 
+  TDesc() = default;
+  TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc);
+
   /// Returns the rank (number of dimensions) of the tensor.
   size_t rank() const noexcept;
 

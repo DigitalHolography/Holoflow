@@ -94,6 +94,9 @@ void from_json(const nlohmann::json &j, MemLoc &loc) {
 
 size_t TDesc::rank() const noexcept { return shape.size(); }
 
+TDesc::TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc)
+    : shape(std::move(shape)), dtype(dtype), mem_loc(mem_loc) {}
+
 size_t TDesc::num_elements() const {
   constexpr size_t max = std::numeric_limits<size_t>::max();
   size_t           n   = 1;

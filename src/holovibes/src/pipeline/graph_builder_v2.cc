@@ -245,13 +245,12 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
   if (true) {
     // TODO: start from u8 SH
-    auto nb_subap = 3;
+    auto nb_subap = 3ULL;
     auto subap_w  = S.shape.at(2) / nb_subap;
     auto subap_h  = S.shape.at(1) / nb_subap;
-    // subap_w       = S.shape.at(2);
-    // subap_h       = S.shape.at(1);
-    auto tmp = convert(H, {Target::F32, Strat::Modulus});
-    auto [H] = unpack<1>(tmp);
+    auto tmp      = convert(H, {Target::F32, Strat::Modulus});
+    auto [H]      = unpack<1>(tmp);
+    // auto [M0_subaps] = unpack<1>(empty({{nb_subap * nb_subap, subap_h, subap_w}}));
 
     // -------------------------------------------------------------------------------------------------
     // Time-Frequency Analysis (SH -> FH - Frequency Hologram -> FH_filt - Filtered Frequency
@@ -275,22 +274,25 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
     std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
 
-    for (auto sy = 0; sy < nb_subap; ++sy) {
-      for (auto sx = 0; sx < nb_subap; ++sx) {
-        auto              y_start = sy * subap_h;
-        auto              y_end   = y_start + subap_h;
-        holonp::SliceItem slice_y{.start = y_start, .stop = y_end, .step = 1};
-        auto              x_start = sx * subap_w;
-        auto              x_end   = x_start + subap_w;
-        holonp::SliceItem slice_x{.start = x_start, .stop = x_end, .step = 1};
+    // for (auto sy = 0; sy < nb_subap; ++sy) {
+    //   for (auto sx = 0; sx < nb_subap; ++sx) {
+    //     auto              y_start = sy * subap_h;
+    //     auto              y_end   = y_start + subap_h;
+    //     holonp::SliceItem slice_y{.start = y_start, .stop = y_end, .step = 1};
+    //     auto              x_start = sx * subap_w;
+    //     auto              x_end   = x_start + subap_w;
+    //     holonp::SliceItem slice_x{.start = x_start, .stop = x_end, .step = 1};
 
-        auto [FH_sub]         = unpack<1>(slice_copy(FH_Qin, {{{}, slice_y, slice_x}}));
-        auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
-        std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
-        auto [S]              = unpack<1>(abs(FH_sub_prop, {}));
-        auto [M0]             = unpack<1>(mean(S, {{0}, true}));
-      }
-    }
+    //     auto [FH_sub]         = unpack<1>(slice_copy(FH_Qin, {{{}, slice_y, slice_x}}));
+    //     auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
+    //     std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
+    //     auto [S]              = unpack<1>(abs(FH_sub_prop, {}));
+    //     auto [M0]             = unpack<1>(mean(S, {{0}, true}));
+    //     std::tie(M0)          = unpack<1>(reshape(M0, {{1, 1, 1, M0.shape.at(1),
+    //     M0.shape.at(2)}})); std::tie(M0_subaps)   = unpack<1>(
+    //         slice_assign(M0, M0_subaps, {{{sy, sy + 1, 1}, {sx, sx + 1, 1}, {}, {}, {}}}));
+    //   }
+    // }
 
     auto [S]  = unpack<1>(abs(FH_sub_prop, {}));
     auto [M0] = unpack<1>(mean(S, {{0}, true}));
@@ -373,6 +375,13 @@ std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::mul(const TDesc &A, const T
                                                          holonp::MulSettings s) {
   std::array<TDesc, 2> inputs{A, B};
   return make_nary_sync_node("mul", "Mul", "Mul", std::span<const TDesc>{inputs}, s);
+}
+
+std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::slice_assign(const TDesc &X, const TDesc &Y,
+                                                                  holonp::SliceAssignSettings s) {
+  std::array<TDesc, 2> inputs{X, Y};
+  return make_nary_sync_node("slice_assign", "SliceAssign", "SliceAssign",
+                             std::span<const TDesc>{inputs}, s);
 }
 
 std::vector<GraphBuilder_v2::TDesc>

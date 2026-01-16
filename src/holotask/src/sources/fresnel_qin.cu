@@ -98,11 +98,8 @@ FresnelQinFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(settings.nx > 0, "nx must be positive");
   check(settings.ny > 0, "ny must be positive");
 
-  holoflow::core::TDesc odesc{
-      .shape   = {settings.ny, settings.nx},
-      .dtype   = holoflow::core::DType::CF32,
-      .mem_loc = holoflow::core::MemLoc::Device,
-  };
+  holoflow::core::TDesc odesc({settings.ny, settings.nx}, holoflow::core::DType::CF32,
+                              holoflow::core::MemLoc::Device);
 
   return holoflow::core::InferResult{
       .input_descs   = {},

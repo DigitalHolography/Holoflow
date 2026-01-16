@@ -67,11 +67,7 @@ holoflow::core::InferResult EmptyFactory::infer(std::span<const holoflow::core::
   check(settings.order == "C", "only C order is supported");
   check(memloc == holoflow::core::MemLoc::Device, "only Device output is supported (for now)");
 
-  holoflow::core::TDesc odesc{
-      .shape   = settings.shape,
-      .dtype   = dtype,
-      .mem_loc = memloc,
-  };
+  holoflow::core::TDesc odesc({settings.shape}, dtype, memloc);
 
   return holoflow::core::InferResult{
       .input_descs   = {},
