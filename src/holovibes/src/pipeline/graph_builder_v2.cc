@@ -275,17 +275,20 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
     std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
 
-    for (auto sy = 0; sy < nb_subap - 2; ++sy) {
-      for (auto sx = 0; sx < nb_subap - 2; ++sx) {
-        auto y_start = sy * subap_h;
-        auto x_start = sx * subap_w;
-        auto y_end   = y_start + subap_h;
-        auto x_end   = x_start + subap_w;
+    for (auto sy = 0; sy < nb_subap; ++sy) {
+      for (auto sx = 0; sx < nb_subap; ++sx) {
+        auto              y_start = sy * subap_h;
+        auto              y_end   = y_start + subap_h;
+        holonp::SliceItem slice_y{.start = y_start, .stop = y_end, .step = 1};
+        auto              x_start = sx * subap_w;
+        auto              x_end   = x_start + subap_w;
+        holonp::SliceItem slice_x{.start = x_start, .stop = x_end, .step = 1};
 
-        auto [FH_sub] =
-            unpack<1>(slice_copy(FH_Qin, {{{}, {y_start, y_end, 1}, {x_start, x_end, 1}}}));
+        auto [FH_sub]         = unpack<1>(slice_copy(FH_Qin, {{{}, slice_y, slice_x}}));
         auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
         std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
+        auto [S]              = unpack<1>(abs(FH_sub_prop, {}));
+        auto [M0]             = unpack<1>(mean(S, {{0}, true}));
       }
     }
 
@@ -329,6 +332,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
 // clang-format off
 DEFINE_SOURCE_SYNC_NODE(holofile_read,                          "source",                              "Holofile",                       holotask::sources::HolofileSettings)
+DEFINE_SOURCE_SYNC_NODE(empty,                                 "empty",                               "Empty",                          holonp::EmptySettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "ametek_s710_euresys_coaxlink_octo",   "AmetekS710EuresysCoaxlinkOcto",  holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "ametek_s711_euresys_coaxlink_qsfp_+", "AmetekS711EuresysCoaxlinkQSFP+", holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
 DEFINE_SOURCE_SYNC_NODE(fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                     holotask::sources::FresnelQinSettings)

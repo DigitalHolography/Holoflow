@@ -30,6 +30,7 @@
 #include "holonp/abs.hh"
 #include "holonp/arange.hh"
 #include "holonp/concatenate.hh"
+#include "holonp/empty.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
@@ -154,6 +155,7 @@ private:
 
   // clang-format off
   std::vector<TDesc> holofile_read(holotask::sources::HolofileSettings s);
+  std::vector<TDesc> empty(holonp::EmptySettings s);
   std::vector<TDesc> memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);
   std::vector<TDesc> batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
   std::vector<TDesc> convert(const TDesc &X, holotask::syncs::ConversionSettings s);

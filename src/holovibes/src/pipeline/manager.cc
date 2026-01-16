@@ -34,6 +34,7 @@
 #include "holonp/abs.hh"
 #include "holonp/arange.hh"
 #include "holonp/concatenate.hh"
+#include "holonp/empty.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
@@ -134,6 +135,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<syncs::RotationFactory>(registry_, "Rotation");
 
   reg_sync<ArangeFactory>(registry_, "Arange");
+  reg_sync<EmptyFactory>(registry_, "Empty");
   reg_sync<MeshgridFactory>(registry_, "Meshgrid");
   reg_sync<TransposeFactory>(registry_, "Transpose");
   reg_sync<SliceCopyFactory>(registry_, "SliceCopy");
