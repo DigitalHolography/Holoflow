@@ -797,7 +797,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     };
     std::map<std::string, ImportSource> source_from_str{
         {"Ametek S710 Euresys Coaxlink Octo", ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO},
-        {"Ametek S711 Euresys Coaxlink Octo", ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP},
+        {"Ametek S711 Euresys Coaxlink QSFP+", ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP},
     };
 
     if (!import_widget_->is_camera_mode()) {
@@ -1015,9 +1015,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   }
 
   // --- View Settings ---
-  {
-    view_widget_->set_cuts_3d_enabled(s.view_3d_cuts);
-  }
+  { view_widget_->set_cuts_3d_enabled(s.view_3d_cuts); }
 
   // --- Post-processing Settings ---
   {

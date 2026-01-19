@@ -85,27 +85,19 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
       yz_processed_widget_(yz_processed_widget), xy_raw_widget_(xy_raw_widget),
       raw_spectrum_widget_(raw_spectrum_widget),
       processed_spectrum_widget_(processed_spectrum_widget) {
+  // clang-format off
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY",
-                                                          xy_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ",
-                                                          xz_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ",
-                                                          yz_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw",
-                                                          xy_raw_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum",
-                                                          raw_spectrum_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum",
-                                                          processed_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ", yz_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum", raw_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum", processed_spectrum_widget_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
-  reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_,
-                                                          "AmetekS710EuresysCoaxlinkOcto");
-
-  reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_,
-                                                          "AmetekS711EuresysCoaxlinkQSFP+");
+  reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
+  reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS711EuresysCoaxlinkQSFP+");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
   reg_sync<syncs::AverageFactory>(registry_, "Average");
   reg_sync<syncs::ConversionFactory>(registry_, "Conversion");
@@ -122,6 +114,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<syncs::ReshapeFactory>(registry_, "Reshape");
   reg_sync<syncs::CropFactory>(registry_, "Crop");
   reg_sync<syncs::RotationFactory>(registry_, "Rotation");
+  // clang-format on
 
   metrics_timer_ = new QTimer(this);
   metrics_timer_->setInterval(1000);
@@ -385,6 +378,7 @@ void Manager::build_and_run() {
   std::error_code             log_ec;
   std::filesystem::create_directories(log_root, log_ec);
 
+  auto json = holoflow::core::to_json(spec_);
   auto dot  = holoflow::core::to_dot(spec_);
   auto t    = floor<seconds>(system_clock::now());
   auto date = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
@@ -392,6 +386,10 @@ void Manager::build_and_run() {
   const auto pipeline_path = log_root / std::format("pipeline_{}.dot", date);
   std::ofstream(pipeline_path) << dot;
   logger()->info("[Manager::build_and_run] Pipeline graph saved to {}", pipeline_path.string());
+  std::ofstream json_file(log_root / std::format("pipeline_{}.json", date));
+  json_file << json.dump(2);
+  logger()->info("[Manager::build_and_run] Pipeline JSON saved to {}",
+                 (log_root / std::format("pipeline_{}.json", date)).string());
 
   auto prev_output = std::move(compiler_output_);
   compiler_output_ =
@@ -431,8 +429,8 @@ void Manager::build_graph_spec() {
   guess_optimizations();
   guess_source_dims();
 
-  GraphBuilder builder{spec_, s_, src_width_, src_height_, opti_cpu_stride_, opti_gpu_stride_};
-  builder.build();
+  // GraphBuilder builder{spec_, s_, src_width_, src_height_, opti_cpu_stride_, opti_gpu_stride_};
+  // builder.build();
 
   GraphBuilder_v2 builder_v2{s_, registry_};
   spec_ = builder_v2.build();

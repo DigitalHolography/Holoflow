@@ -78,4 +78,7 @@ if(EGrabber_FOUND)
         PUBLIC
         EGrabber
     )
+    message(STATUS "EGrabber found. Camera support enabled.")
+else()
+    message(WARNING "EGrabber not found. Camera support will be disabled.")
 endif()

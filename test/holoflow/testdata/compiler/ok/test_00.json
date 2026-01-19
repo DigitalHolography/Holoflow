@@ -1,0 +1,144 @@
+{
+  "nodes": {
+    "source_0": {
+      "type": "Holofile",
+      "params": {
+        "batch_size": 32,
+        "end_frame": 32768,
+        "load_kind": "Live",
+        "path": "C:/Users/guill/Documents/holofiles_data/260108_test_4.holo",
+        "start_frame": 0
+      }
+    },
+    "memcpy_1": {
+      "type": "Memcpy",
+      "params": { "target": "Device" }
+    },
+    "batch_queue_2": {
+      "type": "BatchQueue",
+      "params": {
+        "output_size": 32,
+        "output_stride": 32,
+        "target_capacity": 4096
+      }
+    },
+    "conversion_3": {
+      "type": "Conversion",
+      "params": {
+        "strategy": "Real",
+        "target": "CF32"
+      }
+    },
+    "fresnel_diffraction_4": {
+      "type": "FresnelDiffraction",
+      "params": {
+        "dx": 1.9999999494757503e-05,
+        "dy": 1.9999999494757503e-05,
+        "lambda": 8.499999921696144e-07,
+        "z": 0.48600003123283386
+      }
+    },
+    "batch_queue_5": {
+      "type": "BatchQueue",
+      "params": {
+        "output_size": 32,
+        "output_stride": 32,
+        "target_capacity": 4096
+      }
+    },
+    "pca_6": {
+      "type": "Pca",
+      "params": {
+        "begin": 0,
+        "end": 16
+      }
+    },
+    "batch_queue_7": {
+      "type": "BatchQueue",
+      "params": {
+        "output_size": 32,
+        "output_stride": 32,
+        "target_capacity": 128
+      }
+    },
+    "conversion_8": {
+      "type": "Conversion",
+      "params": {
+        "strategy": "Modulus",
+        "target": "F32"
+      }
+    },
+    "average_9": {
+      "type": "Average",
+      "params": {
+        "axis": 0,
+        "start": 0,
+        "end": 32
+      }
+    },
+    "fft_shift_10": {
+      "type": "FFTShift",
+      "params": {
+        "axes": [1, 2]
+      }
+    },
+    "slide_avg_11": {
+      "type": "SlidingAverage",
+      "params": {
+        "target_capacity": 128,
+        "window_size": 32
+      }
+    },
+    "conversion_12": {
+      "type": "Conversion",
+      "params": {
+        "strategy": "Scaled",
+        "target": "U8"
+      }
+    },
+    "batch_queue_13": {
+      "type": "BatchQueue",
+      "params": {
+        "output_size": 1,
+        "output_stride": 1,
+        "target_capacity": 32
+      }
+    },
+    "memcpy_14": {
+      "type": "Memcpy",
+      "params": { "target": "Host" }
+    },
+    "batch_queue_15": {
+      "type": "BatchQueue",
+      "params": {
+        "output_size": 1,
+        "output_stride": 1,
+        "target_capacity": 32
+      }
+    },
+    "xy_processed_display_16": {
+      "type": "DisplayTensorXY",
+      "params": {
+        "refresh_rate_hz": 30.0
+      }
+    }
+  },
+  "edges": [
+    { "from": "source_0", "to": "memcpy_1", "out": 0, "in": 0 },
+    { "from": "memcpy_1", "to": "batch_queue_2", "out": 0, "in": 0 },
+    { "from": "batch_queue_2", "to": "conversion_3", "out": 0, "in": 0 },
+    { "from": "conversion_3", "to": "fresnel_diffraction_4", "out": 0, "in": 0 },
+    { "from": "fresnel_diffraction_4", "to": "batch_queue_5", "out": 0, "in": 0 },
+    { "from": "batch_queue_5", "to": "pca_6", "out": 0, "in": 0 },
+    { "from": "pca_6", "to": "batch_queue_7", "out": 0, "in": 0 },
+    { "from": "batch_queue_7", "to": "conversion_8", "out": 0, "in": 0 },
+    { "from": "conversion_8", "to": "average_9", "out": 0, "in": 0 },
+    { "from": "average_9", "to": "fft_shift_10", "out": 0, "in": 0 },
+    { "from": "fft_shift_10", "to": "slide_avg_11", "out": 0, "in": 0 },
+    { "from": "slide_avg_11", "to": "conversion_12", "out": 0, "in": 0 },
+    { "from": "conversion_12", "to": "batch_queue_13", "out": 0, "in": 0 },
+    { "from": "batch_queue_13", "to": "memcpy_14", "out": 0, "in": 0 },
+    { "from": "memcpy_14", "to": "batch_queue_15", "out": 0, "in": 0 },
+    { "from": "batch_queue_15", "to": "xy_processed_display_16", "out": 0, "in": 0 }
+  ]
+}

@@ -115,6 +115,10 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     std::tie(H_z) = unpack<1>(angular_spectrum(H, {lam, dx, dy, z_prop, std::nullopt}));
   }
 
+  else {
+    H_z = H;
+  }
+
   if (s_.filter_2d) {
     std::tie(H_z) = unpack<1>(filter_2d(H_z, {ri, ro, si, so}));
   }
@@ -141,6 +145,10 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     int pca_max = s_.view_3d_cuts ? s_.time_window : s_.time_z_end;
 
     std::tie(FH_z) = unpack<1>(pca(H_z, {pca_min, pca_max}));
+  }
+
+  else {
+    FH_z = H_z;
   }
 
   if (s_.time_method != TimeMethod::NONE) {
@@ -263,8 +271,8 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
 // clang-format off
 DEFINE_SOURCE_SYNC_NODE(holofile_read,                          "source",                              "Holofile",                       holotask::sources::HolofileSettings)
-DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "ametek_s710_euresys_coaxlink_octo",   "AmetekS710EuresysCoaxlinkOcto",  holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)
-DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "ametek_s711_euresys_coaxlink_qsfp_+", "AmetekS711EuresysCoaxlinkQSFP+", holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
+DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "source",                              "AmetekS710EuresysCoaxlinkOcto",  holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)
+DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "source",                              "AmetekS711EuresysCoaxlinkQSFP+", holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
 DEFINE_UNARY_SYNC_NODE (memcpy,                                 "memcpy",                              "Memcpy",                         holotask::syncs::MemcpySettings)
 DEFINE_UNARY_SYNC_NODE (convert,                                "conversion",                          "Conversion",                     holotask::syncs::ConversionSettings)
 DEFINE_UNARY_SYNC_NODE (pca,                                    "pca",                                 "Pca",                            holotask::syncs::PcaSettings)

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifdef HOLOTASK_HAS_GRABBER
+#ifdef HOLOTASK_HAS_EGRABBER
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 
 #include <EGrabber.h>
@@ -367,6 +367,13 @@ AmetekS711EuresysCoaxlinkQSFPFactory::infer(std::span<const holoflow::core::TDes
 
 std::unique_ptr<holoflow::core::ISyncTask>
 AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDesc>,
+                                             const nlohmann::json &,
+                                             const holoflow::core::SyncCreateCtx &) const {
+  throw std::logic_error("holotask library was built without Egrabber support");
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+AmetekS711EuresysCoaxlinkQSFPFactory::update(std::span<const holoflow::core::TDesc>,
                                              const nlohmann::json &,
                                              const holoflow::core::SyncCreateCtx &) const {
   throw std::logic_error("holotask library was built without Egrabber support");
