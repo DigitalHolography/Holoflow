@@ -245,12 +245,12 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
   if (true) {
     // TODO: start from u8 SH
-    auto nb_subap = 3ULL;
-    auto subap_w  = S.shape.at(2) / nb_subap;
-    auto subap_h  = S.shape.at(1) / nb_subap;
-    auto tmp      = convert(H, {Target::F32, Strat::Modulus});
-    auto [H]      = unpack<1>(tmp);
-    // auto [M0_subaps] = unpack<1>(empty({{nb_subap * nb_subap, subap_h, subap_w}}));
+    auto nb_subap    = 3ULL;
+    auto subap_w     = S.shape.at(2) / nb_subap;
+    auto subap_h     = S.shape.at(1) / nb_subap;
+    auto tmp         = convert(H, {Target::F32, Strat::Modulus});
+    auto [H]         = unpack<1>(tmp);
+    // auto [M0_subaps] = unpack<1>(empty({{nb_subap, nb_subap, 1, subap_h, subap_w}}));
 
     // -------------------------------------------------------------------------------------------------
     // Time-Frequency Analysis (SH -> FH - Frequency Hologram -> FH_filt - Filtered Frequency
@@ -288,8 +288,8 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     //     std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
     //     auto [S]              = unpack<1>(abs(FH_sub_prop, {}));
     //     auto [M0]             = unpack<1>(mean(S, {{0}, true}));
-    //     std::tie(M0)          = unpack<1>(reshape(M0, {{1, 1, 1, M0.shape.at(1),
-    //     M0.shape.at(2)}})); std::tie(M0_subaps)   = unpack<1>(
+    //     std::tie(M0)          = unpack<1>(reshape(M0, {{1, 1, 1, M0.shape.at(1), M0.shape.at(2)}}));
+    //     std::tie(M0_subaps)   = unpack<1>(
     //         slice_assign(M0, M0_subaps, {{{sy, sy + 1, 1}, {sx, sx + 1, 1}, {}, {}, {}}}));
     //   }
     // }

@@ -92,10 +92,45 @@ void from_json(const nlohmann::json &j, MemLoc &loc) {
   }
 }
 
-size_t TDesc::rank() const noexcept { return shape.size(); }
+void to_json(nlohmann::json &j, const TDesc &desc) {
+  j = nlohmann::json{
+      {"shape", desc.shape},
+      {"dtype", desc.dtype},
+      {"mem_loc", desc.mem_loc},
+      {"strides", desc.strides},
+  };
+}
+
+void from_json(const nlohmann::json &j, TDesc &desc) {
+  j.at("shape").get_to(desc.shape);
+  j.at("dtype").get_to(desc.dtype);
+  j.at("mem_loc").get_to(desc.mem_loc);
+  j.at("strides").get_to(desc.strides);
+}
+
+namespace {
+std::vector<std::size_t>
+make_default_strides(const std::vector<std::size_t>& shape, DType dtype)
+{
+  std::vector<std::size_t> strides(shape.size());
+
+  std::size_t stride = size_of(dtype);
+  for (std::size_t i = shape.size(); i-- > 0; ) {
+    strides[i] = stride;
+    stride *= shape[i];
+  }
+
+  return strides;
+}
+} // namespace
 
 TDesc::TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc)
-    : shape(std::move(shape)), dtype(dtype), mem_loc(mem_loc) {}
+    : shape(std::move(shape)), dtype(dtype), mem_loc(mem_loc), strides(make_default_strides(this->shape, this->dtype)) {}
+    
+TDesc::TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc, std::vector<size_t> strides)
+    : shape(std::move(shape)), dtype(dtype), mem_loc(mem_loc), strides(std::move(strides)) {}
+
+size_t TDesc::rank() const noexcept { return shape.size(); }
 
 size_t TDesc::num_elements() const {
   constexpr size_t max = std::numeric_limits<size_t>::max();

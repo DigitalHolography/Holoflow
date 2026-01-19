@@ -57,9 +57,11 @@ struct TDesc {
   std::vector<size_t> shape;   ///< The shape of the tensor (dimensions)
   DType               dtype;   ///< The data type of the tensor elements
   MemLoc              mem_loc; ///< The memory location of the tensor
+  std::vector<size_t> strides; ///< The strides of the tensor (in bytes)
 
   TDesc() = default;
   TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc);
+  TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc, std::vector<size_t> strides);
 
   /// Returns the rank (number of dimensions) of the tensor.
   size_t rank() const noexcept;
@@ -70,6 +72,9 @@ struct TDesc {
   /// Returns the total size in bytes of the tensor data.
   size_t num_bytes() const;
 };
+
+void to_json(nlohmann::json &j, const TDesc &desc);
+void from_json(const nlohmann::json &j, TDesc &desc);
 
 /// A non-owning view into tensor data.
 struct TView {

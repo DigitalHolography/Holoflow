@@ -288,24 +288,15 @@ SliceAssignFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(same_rank || slot_rank,
         "unsupported ranks: expected src.ndim == dst.ndim, or dst.ndim == src.ndim + 2");
 
-  if (same_rank) {
-    // Original mode: src shape must match slice shape exactly.
-    for (int i = 0; i < dst_ndim; ++i) {
-      const auto expected = slice_shape[static_cast<size_t>(i)];
-      const auto actual   = src_desc.shape[static_cast<size_t>(i)];
-      check(actual == expected, "read shape must match slice shape");
-    }
-  } else {
-    // NumPy slot-assign mode:
-    // dst: (sy,sx,...) , src: (...) and slice must select exactly one (iy,ix) slot.
-    check(slice_shape[0] == 1 && slice_shape[1] == 1,
-          "slot-assign requires first two slice dims to have length 1 (iy:iy+1, ix:ix+1)");
+  // NumPy slot-assign mode:
+  // dst: (sy,sx,...) , src: (...) and slice must select exactly one (iy,ix) slot.
+  check(slice_shape[0] == 1 && slice_shape[1] == 1,
+        "slot-assign requires first two slice dims to have length 1 (iy:iy+1, ix:ix+1)");
 
-    for (int k = 0; k < src_ndim; ++k) {
-      const auto expected = slice_shape[static_cast<size_t>(k + 2)];
-      const auto actual   = src_desc.shape[static_cast<size_t>(k)];
-      check(actual == expected, "read shape must match slice shape on trailing dims");
-    }
+  for (int k = 0; k < src_ndim; ++k) {
+    const auto expected = slice_shape[static_cast<size_t>(k)];
+    const auto actual   = src_desc.shape[static_cast<size_t>(k)];
+    check(actual == expected, "read shape must match slice shape on trailing dims");
   }
 
   const auto total_out = product_shape(slice_shape);

@@ -54,25 +54,42 @@ std::string escape_for_label(const std::string &s) {
   return out;
 }
 
+namespace {
+
 std::string tdesc_to_string(const core::TDesc &d) {
   std::ostringstream ss;
-  ss << "shape " << d.shape.size();
-  ss << "\nx " << std::string(to_string(d.dtype));
-  ss << "(" << d.rank() << "D)";
-  ss << "\nmem=" << std::string(holoflow::core::to_string(d.mem_loc));
-  ss << "\nelems=" << d.num_elements() << "\nbytes=" << d.num_bytes();
+  ss << "{" << "\\n";
+  ss << "  shape: " << escape_for_label(nlohmann::json(d.shape).dump()) << ",\\n";
+  ss << "  dtype: " << escape_for_label(nlohmann::json(d.dtype).dump()) << ",\\n";
+  ss << "  mem_loc: " << escape_for_label(nlohmann::json(d.mem_loc).dump()) << ",\\n";
+  ss << "  strides: " << escape_for_label(nlohmann::json(d.strides).dump()) << "\\n";
+  ss << "}";
 
   return ss.str();
 }
 
-std::string tensor_summary(const core::Tensor &t) {
-  std::ostringstream ss;
-  const core::TDesc &d = t.desc();
-  ss << tdesc_to_string(d);
-  const void *ptr = t.data();
-  ss << " ptr=" << reinterpret_cast<uintptr_t>(ptr);
-  return ss.str();
-}
+} // namespace
+
+// std::string tdesc_to_string(const core::TDesc &d) {
+//   std::ostringstream ss;
+//   ss << "shape " << d.shape.size();
+//   ss << "\nx " << std::string(to_string(d.dtype));
+//   ss << "(" << d.rank() << "D)";
+//   ss << "\nmem=" << std::string(holoflow::core::to_string(d.mem_loc));
+//   ss << "\nelems=" << d.num_elements() << "\nbytes=" << d.num_bytes();
+
+//   return ss.str();
+// }
+
+// std::string tensor_summary(const core::Tensor &t) {
+//   std::ostringstream ss;
+//   const core::TDesc &d = t.desc();
+//   ss << tdesc_to_string(d);
+//   const void *ptr = t.data();
+//   ss << " ptr=" << reinterpret_cast<uintptr_t>(ptr);
+//   return ss.str();
+// }
+
 } // namespace
 
 static void write_compiled_graph_header(std::ostringstream &ss,
@@ -168,6 +185,7 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
 
 static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPlan &g,
                                  std::size_t desc_max_len = 200) {
+  (void)desc_max_len;
   using edge_iter_t = boost::graph_traits<runtime::GraphPlan>::edge_iterator;
   edge_iter_t ei, ei_end;
   for (boost::tie(ei, ei_end) = boost::edges(g); ei != ei_end; ++ei) {
@@ -176,22 +194,32 @@ static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPla
     auto                     t  = boost::target(e, g);
     const runtime::EdgePlan &ep = g[e];
 
-    std::ostringstream elabel;
-    elabel << "out:" << ep.spec.out_idx << " \nin:" << ep.spec.in_idx << " \ntid:" << ep.tid;
+    ss << "  v" << s << " -> v" << t << " [taillabel=\""
+       << escape_for_label(std::to_string(ep.spec.out_idx)) << "\""
+       << " headlabel=\"" << escape_for_label(std::to_string(ep.spec.in_idx)) << "\""
+       << " label=\"" << "tid:" << escape_for_label(std::to_string(ep.tid)) << "\\n"
+       << "TDesc:" << tdesc_to_string(ep.desc) << "\"];\n";
 
-    try {
-      std::string desc_str = tdesc_to_string(ep.desc);
-      if (desc_str.size() > desc_max_len)
-        desc_str = desc_str.substr(0, desc_max_len) + "...";
-      elabel << " \ndesc=" << desc_str;
-    } catch (...) {
-      // ignore
-    }
+    // ss << "tid:" << escape_for_label(std::to_string(ep.tid)) << "\n";
+    // ss << "TDesc:" << escape_for_label(nlohmann::json(ep.desc).dump(2)) << "\n";
 
-    std::string esc_elabel = escape_for_label(elabel.str());
-    ss << "  v" << s << " -> v" << t << " [label=\"" << esc_elabel << "\"];\n";
+    // std::ostringstream elabel;
+    // elabel << "out:" << ep.spec.out_idx << " \nin:" << ep.spec.in_idx << " \ntid:" << ep.tid;
+    // elabel << nlohmann::json(ep.desc).dump(2);
+
+    // // try {
+    // //   std::string desc_str = tdesc_to_string(ep.desc);
+    // //   if (desc_str.size() > desc_max_len)
+    // //     desc_str = desc_str.substr(0, desc_max_len) + "...";
+    // //   elabel << " \ndesc=" << desc_str;
+    // // } catch (...) {
+    // //   // ignore
+    // // }
+
+    // std::string esc_elabel = escape_for_label(elabel.str());
+    // ss << "  v" << s << " -> v" << t << " [label=\"" << esc_elabel << "\"];\n";
   }
-  ss << "\n";
+  // ss << "\n";
 }
 
 static void write_compiled_sections(std::ostringstream                  &ss,
@@ -251,7 +279,7 @@ static void write_compiled_resources(std::ostringstream &ss, const runtime::Exec
   for (const auto &p : res.tensors) {
     int                 tid = p.first;
     const core::Tensor &t   = p.second;
-    ss << "  //   tid=" << tid << " : " << escape_for_label(tensor_summary(t)) << "\n";
+    ss << "  //   tid=" << tid << " : " << nlohmann::json(t.desc()).dump() << "\n";
   }
   ss << "\n";
 }
