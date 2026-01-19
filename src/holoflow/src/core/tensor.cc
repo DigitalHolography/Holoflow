@@ -147,12 +147,11 @@ size_t TDesc::num_elements() const {
 }
 
 size_t TDesc::num_bytes() const {
-  size_t elems = num_elements();
-  size_t s     = size_of(dtype);
-  if (elems > std::numeric_limits<size_t>::max() / s) {
-    throw std::overflow_error("num_bytes overflow");
+  if (shape.empty()) {
+    return 0;
   }
-  return elems * s;
+
+  return strides[0] * shape[0];
 }
 
 Tensor::Tensor(const TDesc &desc) : desc_(desc), data_(nullptr) {

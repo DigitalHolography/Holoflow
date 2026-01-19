@@ -284,8 +284,9 @@ ConversionFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(cfg_to_dtype.contains(cfg), "Unsupported conversion configuration");
 
   // Success
-  holoflow::core::TDesc odesc = idesc;
-  odesc.dtype                 = cfg_to_dtype.at(cfg);
+  // holoflow::core::TDesc odesc = idesc;
+  // odesc.dtype                 = cfg_to_dtype.at(cfg);
+  holoflow::core::TDesc odesc(idesc.shape, cfg_to_dtype.at(cfg), holoflow::core::MemLoc::Device);
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
       .output_descs  = {odesc},

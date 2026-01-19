@@ -82,8 +82,9 @@ ReshapeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                     settings.shape, idesc.shape));
   // /* "new shape does not have same number of elements as input" */);
 
-  auto odesc = idesc;
-  odesc.shape.assign(settings.shape.begin(), settings.shape.end());
+  // auto odesc = idesc;
+  // odesc.shape.assign(settings.shape.begin(), settings.shape.end());
+  holoflow::core::TDesc odesc(settings.shape, idesc.dtype, idesc.mem_loc);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},

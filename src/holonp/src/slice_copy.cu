@@ -218,15 +218,24 @@ SliceCopyFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   const auto settings = jsettings.get<SliceCopySettings>();
   const auto nslices  = normalize_and_validate_slices(settings.slices, idesc.shape);
 
-  holoflow::core::TDesc odesc = idesc;
-  odesc.shape.resize(static_cast<size_t>(ndim));
+  // holoflow::core::TDesc odesc = idesc;
+  // odesc.shape.resize(static_cast<size_t>(ndim));
+  // for (int i = 0; i < ndim; ++i) {
+  //   odesc.shape[static_cast<size_t>(i)] =
+  //       static_cast<size_t>(out_len(nslices[static_cast<size_t>(i)]));
+  // }
+  // 
+
+  std::vector<size_t> out_shape(static_cast<size_t>(ndim));
   for (int i = 0; i < ndim; ++i) {
-    odesc.shape[static_cast<size_t>(i)] =
+    out_shape[static_cast<size_t>(i)] =
         static_cast<size_t>(out_len(nslices[static_cast<size_t>(i)]));
   }
 
-  const auto total_out = product_shape(odesc.shape);
+  const auto total_out = product_shape(out_shape);
   check(total_out > 0, "slice produces an empty tensor (not supported for now)");
+
+  holoflow::core::TDesc odesc(out_shape, idesc.dtype, holoflow::core::MemLoc::Device);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},

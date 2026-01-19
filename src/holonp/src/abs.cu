@@ -110,10 +110,16 @@ holoflow::core::InferResult AbsFactory::infer(std::span<const holoflow::core::TD
         "unsupported input dtype");
   check(idesc.num_elements() > 0, "input tensor has zero elements");
 
-  holoflow::core::TDesc odesc = idesc;
-  if (idesc.dtype == holoflow::core::DType::CF32) {
-    odesc.dtype = holoflow::core::DType::F32;
-  }
+  // holoflow::core::TDesc odesc = idesc;
+  // if (idesc.dtype == holoflow::core::DType::CF32) {
+  //   odesc.dtype = holoflow::core::DType::F32;
+  // }
+  // 
+
+  holoflow::core::TDesc odesc(
+      idesc.shape,
+      idesc.dtype == holoflow::core::DType::CF32 ? holoflow::core::DType::F32 : idesc.dtype,
+      holoflow::core::MemLoc::Device);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},

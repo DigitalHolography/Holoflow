@@ -148,9 +148,14 @@ holoflow::core::InferResult RFFTFactory::infer(std::span<const holoflow::core::T
   const auto n_fft = idesc.shape[static_cast<size_t>(axis)];
   check(n_fft > 0, "invalid FFT length");
 
-  holoflow::core::TDesc odesc            = idesc;
-  odesc.dtype                            = holoflow::core::DType::CF32;
-  odesc.shape[static_cast<size_t>(axis)] = n_fft / 2 + 1;
+  // holoflow::core::TDesc odesc            = idesc;
+  // odesc.dtype                            = holoflow::core::DType::CF32;
+  // odesc.shape[static_cast<size_t>(axis)] = n_fft / 2 + 1;
+  // 
+
+  auto odesc_shape = idesc.shape;
+  odesc_shape[static_cast<size_t>(axis)] = n_fft / 2 + 1;
+  holoflow::core::TDesc odesc(odesc_shape, holoflow::core::DType::CF32, holoflow::core::MemLoc::Device);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
