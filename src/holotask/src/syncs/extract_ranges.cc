@@ -101,10 +101,10 @@ holoflow::core::OpResult ExtractRanges::execute(holoflow::core::SyncCtx &ctx) {
   holoflow::core::TView &input  = ctx.inputs[0];
   holoflow::core::TView &output = ctx.outputs[0];
 
-  cudaPitchedPtr src_ptr = make_cudaPitchedPtr((void *)input.data, input_width_ * sizeof(float),
+  cudaPitchedPtr src_ptr = make_cudaPitchedPtr((void *)input.data(), input_width_ * sizeof(float),
                                                input_width_, input_height_);
 
-  cudaPitchedPtr dst_ptr = make_cudaPitchedPtr((void *)output.data, output_width_ * sizeof(float),
+  cudaPitchedPtr dst_ptr = make_cudaPitchedPtr((void *)output.data(), output_width_ * sizeof(float),
                                                output_width_, output_height_);
 
   for (const auto &op : copy_ops_) {

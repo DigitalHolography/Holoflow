@@ -112,9 +112,9 @@ Transpose::Transpose(const TransposeSettings &settings, cudaStream_t stream, siz
       h_axes_(std::move(h_axes)), d_axes_(std::move(d_axes)) {}
 
 holoflow::core::OpResult Transpose::execute(holoflow::core::SyncCtx &ctx) {
-  auto [idata, idesc] = ctx.inputs[0];
-  auto [odata, odesc] = ctx.outputs[0];
-  (void)odesc;
+  auto *idata = ctx.inputs[0].data();
+  auto *odata = ctx.outputs[0].data();
+  const auto &idesc = ctx.inputs[0].desc;
 
   constexpr int block_size = 256;
   const auto    total_i64  = static_cast<std::int64_t>(total_);

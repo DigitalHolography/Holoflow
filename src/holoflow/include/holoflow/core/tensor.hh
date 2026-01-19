@@ -15,6 +15,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <nlohmann/json.hpp>
 #include <string_view>
 #include <vector>
@@ -52,6 +53,14 @@ enum class MemLoc : uint8_t {
 void to_json(nlohmann::json &j, MemLoc loc);
 void from_json(const nlohmann::json &j, MemLoc &loc);
 
+struct Storage {
+  MemLoc   mem_loc; ///< Memory location
+  size_t   bytes;   ///< Size in bytes
+  std::byte *ptr;     ///< Pointer to memory
+};
+
+using StorageRef = std::reference_wrapper<Storage>;
+
 /// Describes a multi-dimensional array (tensor).
 struct TDesc {
   std::vector<size_t> shape;   ///< The shape of the tensor (dimensions)
@@ -78,14 +87,11 @@ void from_json(const nlohmann::json &j, TDesc &desc);
 
 /// A non-owning view into tensor data.
 struct TView {
-  std::byte *data; ///< Pointer to the tensor data
-  TDesc      desc; ///< Description of the tensor
-};
+  std::byte *ptr;    ///< Pointer to the tensor data
+  TDesc      desc;    ///< Description of the tensor
+  StorageRef storage; ///< Reference to the underlying storage
 
-/// A view into constant tensor data.
-struct CTView {
-  const std::byte *data; ///< Pointer to the tensor data
-  const TDesc      desc; ///< Description of the tensor
+  std::byte *data();
 };
 
 /// A multi-dimensional array (tensor) holding data in either host or device
@@ -108,9 +114,6 @@ public:
   /// Returns a non-owning mutable view into the tensor data.
   [[nodiscard]] TView view() noexcept;
 
-  /// Returns a non-owning constant view into the tensor data.
-  [[nodiscard]] CTView cview() const noexcept;
-
 private:
   using HData = curaii::unique_host_ptr<std::byte>;
   using DData = curaii::unique_device_ptr<std::byte>;
@@ -119,6 +122,7 @@ private:
   HData      h_data_; ///< Host memory (if applicable)
   DData      d_data_; ///< Device memory (if applicable)
   std::byte *data_;   ///< Raw pointer to the tensor data
+  Storage    storage_;///< Underlying storage information
 };
 
 } // namespace holoflow::core

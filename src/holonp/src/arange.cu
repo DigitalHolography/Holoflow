@@ -59,7 +59,8 @@ Arange::Arange(const ArangeSettings &settings, cudaStream_t stream)
     : settings_(settings), stream_(stream) {}
 
 holoflow::core::OpResult Arange::execute(holoflow::core::SyncCtx &ctx) {
-  auto [odata, odesc] = ctx.outputs[0];
+  auto *odata = ctx.outputs[0].data();
+  auto  odesc = ctx.outputs[0].desc;
   const auto dtype    = settings_.dtype.value_or(holoflow::core::DType::F32);
   const auto n        = static_cast<std::int64_t>(odesc.num_elements());
 

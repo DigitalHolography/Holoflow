@@ -149,8 +149,11 @@ Average::Average(const AverageSettings &settings, cudaStream_t stream)
     : settings_(settings), stream_(stream) {}
 
 holoflow::core::OpResult Average::execute(holoflow::core::SyncCtx &ctx) {
-  auto [idata, idesc] = ctx.inputs[0];
-  auto [odata, odesc] = ctx.outputs[0];
+  // auto [idata, idesc] = ctx.inputs[0];
+  // auto [odata, odesc] = ctx.outputs[0];
+  auto *idata = reinterpret_cast<const std::byte *>(ctx.inputs[0].data());
+  auto *odata = reinterpret_cast<std::byte *>(ctx.outputs[0].data());
+  const auto &idesc = ctx.inputs[0].desc;
   int  B              = static_cast<int>(idesc.shape.at(0));
   int  H              = static_cast<int>(idesc.shape.at(1));
   int  W              = static_cast<int>(idesc.shape.at(2));

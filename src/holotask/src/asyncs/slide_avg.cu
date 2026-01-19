@@ -94,9 +94,14 @@ std::optional<holoflow::core::TView> SlidingAverage::acquire_input(int index) {
 
   int        write_idx = write_idx_.load(std::memory_order_relaxed);
   std::byte *data      = d_buffer_.get() + write_idx * element_size_;
+  istorage_.bytes     = idesc_.num_bytes();
+  istorage_.mem_loc   = idesc_.mem_loc;
+  istorage_.ptr       = data;
+
   return holoflow::core::TView{
-      .data = data,
+      .ptr = data,
       .desc = idesc_,
+      .storage = std::ref(istorage_),
   };
 }
 
@@ -163,9 +168,14 @@ holoflow::core::OpResult SlidingAverage::try_pop(holoflow::core::AsyncPopCtx &ct
 
   int        read_idx = read_idx_.load(std::memory_order_relaxed);
   std::byte *data     = d_buffer_.get() + read_idx * element_size_;
+  ostorage_.bytes     = odesc_.num_bytes();
+  ostorage_.mem_loc   = odesc_.mem_loc;
+  ostorage_.ptr       = data;
+
   ctx.outputs[0]      = holoflow::core::TView{
-           .data = data,
+           .ptr = data,
            .desc = odesc_,
+           .storage = std::ref(ostorage_),
   };
   logger()->trace("[SlidingAverage::try_pop] read_idx={}", read_idx);
   return holoflow::core::OpResult::Ok;

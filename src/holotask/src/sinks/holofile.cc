@@ -76,7 +76,7 @@ Holofile::~Holofile() {
   auto  remaining  = settings_.count - frames_written_;
   auto  batch_size = static_cast<int>(ctx.inputs[0].desc.shape[0]);
   auto  to_write   = std::min(remaining, batch_size);
-  auto *idata      = reinterpret_cast<const uint8_t *>(ctx.inputs[0].data);
+  auto *idata      = reinterpret_cast<const uint8_t *>(ctx.inputs[0].data());
   writer_->write_frames(idata, to_write);
   frames_written_ += to_write;
 

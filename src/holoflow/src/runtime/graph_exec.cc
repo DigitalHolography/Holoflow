@@ -208,8 +208,8 @@ void Scheduler::build_nodes_rts() {
     if (auto *st = dynamic_cast<core::ISyncTask *>(task)) {
       SyncRt srt;
       srt.task             = st;
-      srt.in_views         = std::vector<core::TView>(np.infer.input_descs.size());
-      srt.out_views        = std::vector<core::TView>(np.infer.output_descs.size());
+      srt.in_views         = std::vector<core::TView>();
+      srt.out_views        = std::vector<core::TView>();
       srt.ctx.inputs       = srt.in_views;
       srt.ctx.outputs      = srt.out_views;
       srt.ctx.cancelled    = &stop_;
@@ -219,8 +219,8 @@ void Scheduler::build_nodes_rts() {
     } else if (auto *at = dynamic_cast<core::IAsyncTask *>(task)) {
       AsyncRt art;
       art.task           = at;
-      art.in_views       = std::vector<core::TView>(np.infer.input_descs.size());
-      art.out_views      = std::vector<core::TView>(np.infer.output_descs.size());
+      art.in_views       = std::vector<core::TView>();
+      art.out_views      = std::vector<core::TView>();
       art.pctx.inputs    = art.in_views;
       art.pctx.cancelled = &stop_;
       art.xctx.outputs   = art.out_views;
@@ -375,7 +375,7 @@ void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v) {
       continue;
 
     task->release_output(static_cast<int>(i));
-    tviews_.at(np.out_tids.at(i)) = core::TView{nullptr, core::TDesc{}};
+    tviews_.at(np.out_tids.at(i)) = std::nullopt;
   }
 }
 
@@ -389,10 +389,14 @@ void Scheduler::refresh_views_sync(GraphPlan::vertex_descriptor v) {
 
   auto &srt = std::get<SyncRt>(nrt);
   for (size_t i = 0; i < np.in_tids.size(); i++) {
-    srt.in_views.at(i) = tviews_.at(np.in_tids.at(i));
+    HOLOFLOW_CHECK(tviews_.at(np.in_tids.at(i)).has_value(),
+                   "Input tensor view {} for node {} is not available", i, np.spec.name);
+    srt.in_views.at(i) = tviews_.at(np.in_tids.at(i)).value();
   }
   for (size_t i = 0; i < np.out_tids.size(); i++) {
-    srt.out_views.at(i) = tviews_.at(np.out_tids.at(i));
+    HOLOFLOW_CHECK(tviews_.at(np.out_tids.at(i)).has_value(),
+                   "Output tensor view {} for node {} is not available", i, np.spec.name);
+    srt.out_views.at(i) = tviews_.at(np.out_tids.at(i)).value();
   }
 }
 
@@ -406,7 +410,9 @@ void Scheduler::refresh_views_async_cons(GraphPlan::vertex_descriptor v) {
 
   auto &art = std::get<AsyncRt>(nrt);
   for (size_t i = 0; i < np.out_tids.size(); i++) {
-    art.out_views.at(i) = tviews_.at(np.out_tids.at(i));
+    HOLOFLOW_CHECK(tviews_.at(np.out_tids.at(i)).has_value(),
+                   "Output tensor view {} for node {} is not available", i, np.spec.name);
+    art.out_views.at(i) = tviews_.at(np.out_tids.at(i)).value();
   }
 }
 
@@ -420,7 +426,9 @@ void Scheduler::refresh_views_async_prod(GraphPlan::vertex_descriptor v) {
 
   auto &art = std::get<AsyncRt>(nrt);
   for (size_t i = 0; i < np.in_tids.size(); i++) {
-    art.in_views.at(i) = tviews_.at(np.in_tids.at(i));
+    HOLOFLOW_CHECK(tviews_.at(np.in_tids.at(i)).has_value(),
+                   "Input tensor view {} for node {} is not available", i, np.spec.name);
+    art.in_views.at(i) = tviews_.at(np.in_tids.at(i)).value();
   }
 }
 
@@ -697,7 +705,7 @@ std::pair<uint64_t, uint64_t> Scheduler::sum_bytes(std::span<const core::TView> 
   uint64_t host_total   = 0;
   uint64_t device_total = 0;
   for (const auto &view : views) {
-    if (view.data == nullptr) {
+    if (view.ptr == nullptr) {
       continue;
     }
     const auto bytes = static_cast<uint64_t>(view.desc.num_bytes());

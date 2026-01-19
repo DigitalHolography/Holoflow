@@ -154,6 +154,8 @@ size_t TDesc::num_bytes() const {
   return strides[0] * shape[0];
 }
 
+std::byte *TView::data() { return ptr; }
+
 Tensor::Tensor(const TDesc &desc) : desc_(desc), data_(nullptr) {
   switch (desc_.mem_loc) {
   case MemLoc::Host:
@@ -165,6 +167,8 @@ Tensor::Tensor(const TDesc &desc) : desc_(desc), data_(nullptr) {
     data_   = d_data_.get();
     break;
   }
+  
+  storage_ = Storage{desc_.mem_loc, desc_.num_bytes(), data_};
 }
 
 void *Tensor::data() noexcept { return data_; }
@@ -173,8 +177,6 @@ const void *Tensor::data() const noexcept { return data_; }
 
 const TDesc &Tensor::desc() const noexcept { return desc_; }
 
-TView Tensor::view() noexcept { return {data_, desc_}; }
-
-CTView Tensor::cview() const noexcept { return {data_, desc_}; }
+TView Tensor::view() noexcept { return {data_, desc_, std::ref(storage_)}; }
 
 } // namespace holoflow::core

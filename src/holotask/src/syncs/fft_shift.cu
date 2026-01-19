@@ -132,8 +132,9 @@ FFTShift::FFTShift(const FFTShiftSettings &settings, cudaStream_t stream)
     : settings_(settings), stream_(stream) {}
 
 holoflow::core::OpResult FFTShift::execute(holoflow::core::SyncCtx &ctx) {
-  auto [idata, idesc] = ctx.inputs[0];
-  auto [odata, odesc] = ctx.outputs[0];
+  auto *idata = ctx.inputs[0].data();
+  auto *odata = ctx.outputs[0].data();
+  auto  idesc = ctx.inputs[0].desc;
   int B               = static_cast<int>(idesc.shape[0]);
   int H               = static_cast<int>(idesc.shape[1]);
   int W               = static_cast<int>(idesc.shape[2]);

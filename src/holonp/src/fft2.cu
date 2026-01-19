@@ -110,10 +110,8 @@ FFT2::FFT2(const FFT2Settings &settings, curaii::CufftHandle &&plan, size_t tota
       input_dtype_(input_dtype), stream_(stream), d_tmp_(std::move(d_tmp)) {}
 
 holoflow::core::OpResult FFT2::execute(holoflow::core::SyncCtx &ctx) {
-  auto [idata, idesc] = ctx.inputs[0];
-  auto [odata, odesc] = ctx.outputs[0];
-  (void)idesc;
-  (void)odesc;
+  auto *idata = ctx.inputs[0].data();
+  auto *odata = ctx.outputs[0].data();
 
   const auto total_i64 = static_cast<std::int64_t>(total_elems_);
   const int  block     = 256;

@@ -178,9 +178,9 @@ SliceCopy::SliceCopy(const SliceCopySettings &settings, cudaStream_t stream, siz
       d_out_shape_(std::move(d_out_shape)) {}
 
 holoflow::core::OpResult SliceCopy::execute(holoflow::core::SyncCtx &ctx) {
-  auto [idata, idesc] = ctx.inputs[0];
-  auto [odata, odesc] = ctx.outputs[0];
-  (void)odesc;
+  auto *idata = ctx.inputs[0].data();
+  auto *odata = ctx.outputs[0].data();
+  const auto &idesc = ctx.inputs[0].desc;
 
   constexpr int block_size = 256;
   const auto    total_i64  = static_cast<std::int64_t>(total_out_);

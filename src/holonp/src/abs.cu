@@ -51,9 +51,9 @@ __global__ void abs_kernel_cf32(const cuFloatComplex *__restrict__ in, float *__
 Abs::Abs(const AbsSettings &settings, cudaStream_t stream) : settings_(settings), stream_(stream) {}
 
 holoflow::core::OpResult Abs::execute(holoflow::core::SyncCtx &ctx) {
-  auto [idata, idesc] = ctx.inputs[0];
-  auto [odata, odesc] = ctx.outputs[0];
-  (void)odesc;
+  auto *idata = ctx.inputs[0].data();
+  auto *odata = ctx.outputs[0].data();
+  const auto &idesc = ctx.inputs[0].desc;
 
   const auto n = static_cast<std::int64_t>(idesc.num_elements());
   if (n == 0) {

@@ -226,12 +226,9 @@ SliceAssign::SliceAssign(const SliceAssignSettings &settings, cudaStream_t strea
       d_slice_shape_(std::move(d_slice_shape)) {}
 
 holoflow::core::OpResult SliceAssign::execute(holoflow::core::SyncCtx &ctx) {
-  auto [src_data, src_desc] = ctx.inputs[0];
-  auto [dst_in, dst_desc]   = ctx.inputs[1];
-  auto [dst_data, odesc]    = ctx.outputs[0];
-  (void)dst_in;
-  (void)dst_desc;
-  (void)odesc;
+  auto *src_data = ctx.inputs[0].data();
+  auto *dst_data = ctx.outputs[0].data();
+  const auto &src_desc = ctx.inputs[0].desc;
 
   constexpr int block_size = 256;
   const auto    total_i64  = static_cast<std::int64_t>(total_out_);

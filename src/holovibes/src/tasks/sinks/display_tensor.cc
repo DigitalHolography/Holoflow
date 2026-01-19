@@ -63,7 +63,7 @@ holoflow::core::OpResult DisplayTensorTask::execute(holoflow::core::SyncCtx &ctx
   auto delta_ms = static_cast<int>(1000 / settings_.refresh_rate_hz);
   next_refresh_ = now + std::chrono::milliseconds(delta_ms);
 
-  const auto  &input     = ctx.inputs[0];
+  auto  &input     = ctx.inputs[0];
   const auto  &desc      = input.desc;
   const size_t height    = desc.rank() == 2 ? desc.shape[0] : desc.shape[1];
   const size_t width     = desc.rank() == 2 ? desc.shape[1] : desc.shape[2];
@@ -85,12 +85,12 @@ holoflow::core::OpResult DisplayTensorTask::execute(holoflow::core::SyncCtx &ctx
 
   switch (desc.mem_loc) {
   case holoflow::core::MemLoc::Host: {
-    const void *src = static_cast<const void *>(input.data);
+    void *src = static_cast<void *>(input.data());
     CUDA_CHECK(cudaMemcpyAsync(dst, src, byte_count * elt_count, cudaMemcpyHostToHost, stream_));
   } break;
 
   case holoflow::core::MemLoc::Device: {
-    const void *src = static_cast<const void *>(input.data);
+    void *src = static_cast<void *>(input.data());
     CUDA_CHECK(cudaMemcpyAsync(dst, src, byte_count * elt_count, cudaMemcpyDeviceToHost, stream_));
   } break;
   }

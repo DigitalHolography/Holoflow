@@ -116,7 +116,7 @@ holoflow::core::OpResult Holofile::execute(holoflow::core::SyncCtx &ctx) {
   }
 
   // Read frames into buffer.
-  auto *odata = reinterpret_cast<uint8_t *>(ctx.outputs[0].data);
+  auto *odata = reinterpret_cast<uint8_t *>(ctx.outputs[0].data());
   switch (settings_.load_kind) {
   case HolofileSettings::LoadKind::Live:
     reader_.read_frames(odata, settings_.batch_size);

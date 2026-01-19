@@ -138,9 +138,9 @@ Conversion::Conversion(const ConversionSettings &settings, size_t min_temp_stora
       d_max_temp_storage_(std::move(d_max_temp_storage)), d_max_(std::move(d_max)),
       stream_(stream) {}
 
-void Conversion::launch_u8_cf32_real(holoflow::core::CTView in, holoflow::core::TView out) {
-  auto *idata = reinterpret_cast<const uint8_t *>(in.data);
-  auto *odata = reinterpret_cast<cuFloatComplex *>(out.data);
+void Conversion::launch_u8_cf32_real(holoflow::core::TView in, holoflow::core::TView out) {
+  auto *idata = reinterpret_cast<const uint8_t *>(in.data());
+  auto *odata = reinterpret_cast<cuFloatComplex *>(out.data());
   int   size  = static_cast<int>(in.desc.num_elements());
 
   const int block_size = 256;
@@ -149,9 +149,9 @@ void Conversion::launch_u8_cf32_real(holoflow::core::CTView in, holoflow::core::
   CUDA_CHECK(cudaGetLastError());
 }
 
-void Conversion::launch_u16_cf32_real(holoflow::core::CTView in, holoflow::core::TView out) {
-  auto *idata = reinterpret_cast<const uint16_t *>(in.data);
-  auto *odata = reinterpret_cast<cuFloatComplex *>(out.data);
+void Conversion::launch_u16_cf32_real(holoflow::core::TView in, holoflow::core::TView out) {
+  auto *idata = reinterpret_cast<const uint16_t *>(in.data());
+  auto *odata = reinterpret_cast<cuFloatComplex *>(out.data());
   int   size  = static_cast<int>(in.desc.num_elements());
 
   const int block_size = 256;
@@ -160,9 +160,9 @@ void Conversion::launch_u16_cf32_real(holoflow::core::CTView in, holoflow::core:
   CUDA_CHECK(cudaGetLastError());
 }
 
-void Conversion::launch_f32_u8_scaled(holoflow::core::CTView in, holoflow::core::TView out) {
-  auto *idata = reinterpret_cast<float *>(const_cast<std::byte *>(in.data));
-  auto *odata = reinterpret_cast<uint8_t *>(out.data);
+void Conversion::launch_f32_u8_scaled(holoflow::core::TView in, holoflow::core::TView out) {
+  auto *idata = reinterpret_cast<float *>(const_cast<std::byte *>(in.data()));
+  auto *odata = reinterpret_cast<uint8_t *>(out.data());
   auto  size  = in.desc.num_elements();
 
   // Compute min and max using CUB
@@ -182,9 +182,9 @@ void Conversion::launch_f32_u8_scaled(holoflow::core::CTView in, holoflow::core:
   CUDA_CHECK(cudaGetLastError());
 }
 
-void Conversion::launch_f32_u16_scaled(holoflow::core::CTView in, holoflow::core::TView out) {
-  auto *idata = reinterpret_cast<const float *>(in.data);
-  auto *odata = reinterpret_cast<uint16_t *>(out.data);
+void Conversion::launch_f32_u16_scaled(holoflow::core::TView in, holoflow::core::TView out) {
+  auto *idata = reinterpret_cast<const float *>(in.data());
+  auto *odata = reinterpret_cast<uint16_t *>(out.data());
   int   size  = static_cast<int>(in.desc.num_elements());
 
   // Compute min and max using CUB
@@ -204,9 +204,9 @@ void Conversion::launch_f32_u16_scaled(holoflow::core::CTView in, holoflow::core
   CUDA_CHECK(cudaGetLastError());
 }
 
-void Conversion::launch_cf32_f32_modulus(holoflow::core::CTView in, holoflow::core::TView out) {
-  auto *idata = reinterpret_cast<const cuFloatComplex *>(in.data);
-  auto *odata = reinterpret_cast<float *>(out.data);
+void Conversion::launch_cf32_f32_modulus(holoflow::core::TView in, holoflow::core::TView out) {
+  auto *idata = reinterpret_cast<const cuFloatComplex *>(in.data());
+  auto *odata = reinterpret_cast<float *>(out.data());
   int   size  = static_cast<int>(in.desc.num_elements());
 
   const int block_size = 256;
@@ -215,9 +215,9 @@ void Conversion::launch_cf32_f32_modulus(holoflow::core::CTView in, holoflow::co
   CUDA_CHECK(cudaGetLastError());
 }
 
-void Conversion::launch_cf32_f32_argument(holoflow::core::CTView in, holoflow::core::TView out) {
-  auto *idata = reinterpret_cast<const cuFloatComplex *>(in.data);
-  auto *odata = reinterpret_cast<float *>(out.data);
+void Conversion::launch_cf32_f32_argument(holoflow::core::TView in, holoflow::core::TView out) {
+  auto *idata = reinterpret_cast<const cuFloatComplex *>(in.data());
+  auto *odata = reinterpret_cast<float *>(out.data());
   int   size  = static_cast<int>(in.desc.num_elements());
 
   const int block_size = 256;
@@ -234,7 +234,7 @@ holoflow::core::OpResult Conversion::execute(holoflow::core::SyncCtx &ctx) {
   using Target   = ConversionSettings::Target;
   using Strategy = ConversionSettings::Strategy;
   using Cfg      = std::tuple<DType, Target, Strategy>;
-  using LaunchFn = void (Conversion::*)(holoflow::core::CTView, holoflow::core::TView);
+  using LaunchFn = void (Conversion::*)(holoflow::core::TView, holoflow::core::TView);
   static const std::map<Cfg, LaunchFn> launch_map{
       {{DType::U8, Target::CF32, Strategy::Real}, &Conversion::launch_u8_cf32_real},
       {{DType::U16, Target::CF32, Strategy::Real}, &Conversion::launch_u16_cf32_real},
@@ -247,7 +247,7 @@ holoflow::core::OpResult Conversion::execute(holoflow::core::SyncCtx &ctx) {
   Cfg cfg{in.desc.dtype, settings_.target, settings_.strategy};
   HOLOVIBES_CHECK(launch_map.contains(cfg), "Unsupported conversion configuration");
   LaunchFn launch_fn = launch_map.at(cfg);
-  (this->*launch_fn)(holoflow::core::CTView{.data = in.data, .desc = in.desc}, out);
+  (this->*launch_fn)(in, out);
   return holoflow::core::OpResult::Ok;
 }
 
@@ -284,8 +284,6 @@ ConversionFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(cfg_to_dtype.contains(cfg), "Unsupported conversion configuration");
 
   // Success
-  // holoflow::core::TDesc odesc = idesc;
-  // odesc.dtype                 = cfg_to_dtype.at(cfg);
   holoflow::core::TDesc odesc(idesc.shape, cfg_to_dtype.at(cfg), holoflow::core::MemLoc::Device);
   return holoflow::core::InferResult{
       .input_descs   = {idesc},

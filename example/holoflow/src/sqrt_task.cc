@@ -22,10 +22,10 @@
 namespace holoflow_examples {
 
 holoflow::core::OpResult SqrtTask::execute(holoflow::core::SyncCtx &ctx) {
-  const auto  &input  = ctx.inputs[0];
+  auto  &input  = ctx.inputs[0];
   auto        &output = ctx.outputs[0];
-  const float *idata  = reinterpret_cast<const float *>(input.data);
-  float       *odata  = reinterpret_cast<float *>(output.data);
+  float *idata  = reinterpret_cast<float *>(input.data());
+  float       *odata  = reinterpret_cast<float *>(output.data());
   const size_t nelems = input.desc.num_elements();
 
   for (size_t i = 0; i < nelems; ++i) {

@@ -65,8 +65,9 @@ PctClip::PctClip(const PctClipSettings &settings, DevPtr<float> &&d_min, DevPtr<
       d_roi_count_(std::move(d_roi_count)), stream_(stream) {}
 
 holoflow::core::OpResult PctClip::execute(holoflow::core::SyncCtx &ctx) {
-  auto [idata, idesc] = ctx.inputs[0];
-  auto [odata, odesc] = ctx.outputs[0];
+  auto *idata = ctx.inputs[0].data();
+  auto *odata = ctx.outputs[0].data();
+  auto  idesc = ctx.inputs[0].desc;
   auto count          = idesc.num_elements();
 
   // Filter ROI pixels.

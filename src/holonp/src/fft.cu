@@ -91,10 +91,8 @@ FFT::FFT(const FFTSettings &settings, curaii::CufftHandle &&plan, size_t total_e
       stream_(stream), d_tmp_(std::move(d_tmp)) {}
 
 holoflow::core::OpResult FFT::execute(holoflow::core::SyncCtx &ctx) {
-  auto [idata, idesc] = ctx.inputs[0];
-  auto [odata, odesc] = ctx.outputs[0];
-  (void)idesc;
-  (void)odesc;
+  auto *idata = ctx.inputs[0].data();
+  auto *odata = ctx.outputs[0].data();
 
   const auto total_i64 = static_cast<std::int64_t>(total_elems_);
   const int  block     = 256;

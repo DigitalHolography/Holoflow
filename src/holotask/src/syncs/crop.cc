@@ -60,10 +60,10 @@ holoflow::core::OpResult Crop::execute(holoflow::core::SyncCtx &ctx) {
 
   cudaMemcpy3DParms params = {0};
 
-  params.srcPtr = make_cudaPitchedPtr((void *)input.data, input_width * sizeof(float), input_width,
+  params.srcPtr = make_cudaPitchedPtr((void *)input.data(), input_width * sizeof(float), input_width,
                                       input_height);
 
-  params.dstPtr = make_cudaPitchedPtr((void *)output.data, output_width * sizeof(float),
+  params.dstPtr = make_cudaPitchedPtr((void *)output.data(), output_width * sizeof(float),
                                       output_width, output_height);
 
   params.srcPos = make_cudaPos(origin_x, origin_y, origin_z);

@@ -56,8 +56,8 @@ AngularSpectrum::AngularSpectrum(const AngularSpectrumSettings &settings,
       d_lens_(std::move(d_lens)), d_caller_info_(std::move(d_caller_info)), lto_(std::move(lto)) {}
 
 holoflow::core::OpResult AngularSpectrum::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data);
-  auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data);
+  auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
+  auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
   CUFFT_CHECK(cufftXtExec(fwd_plan_.get(), idata, idata, CUFFT_FORWARD));
   CUFFT_CHECK(cufftXtExec(inv_plan_.get(), idata, odata, CUFFT_INVERSE));
   return holoflow::core::OpResult::Ok;

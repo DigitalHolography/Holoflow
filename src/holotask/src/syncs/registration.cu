@@ -195,11 +195,11 @@ holoflow::core::OpResult Registration::execute(holoflow::core::SyncCtx &ctx) {
     return holoflow::core::OpResult::NotReady;
   }
 
-  const auto &input_view  = ctx.inputs[0];
+  auto &input_view  = ctx.inputs[0];
   auto       &output_view = ctx.outputs[0];
 
-  const float *input_data  = reinterpret_cast<const float *>(input_view.data);
-  float       *output_data = reinterpret_cast<float *>(output_view.data);
+  float *input_data  = reinterpret_cast<float *>(input_view.data());
+  float       *output_data = reinterpret_cast<float *>(output_view.data());
 
   auto width  = input_desc_.shape.back();
   auto height = input_desc_.shape.size() > 1 ? input_desc_.shape[input_desc_.shape.size() - 2] : 1;

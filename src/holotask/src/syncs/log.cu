@@ -39,8 +39,9 @@ __global__ void log_kernel(const float *idata, float *odata, int size) {
 Log::Log(const LogSettings &settings, cudaStream_t stream) : settings_(settings), stream_(stream) {}
 
 holoflow::core::OpResult Log::execute(holoflow::core::SyncCtx &ctx) {
-  auto [idata, idesc] = ctx.inputs[0];
-  auto [odata, odesc] = ctx.outputs[0];
+  auto *idata = ctx.inputs[0].data();
+  auto *odata = ctx.outputs[0].data();
+  auto  idesc = ctx.inputs[0].desc;
   int   size          = static_cast<int>(idesc.num_elements());
   int   block_size    = 256;
   int   grid_size     = (size + block_size - 1) / block_size;

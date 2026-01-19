@@ -84,8 +84,8 @@ Memcpy::Memcpy(const MemcpySettings &settings, cudaStream_t stream)
     : settings_(settings), stream_(stream) {}
 
 holoflow::core::OpResult Memcpy::execute(holoflow::core::SyncCtx &ctx) {
-  auto *src       = ctx.inputs[0].data;
-  auto *dst       = ctx.outputs[0].data;
+  auto *src       = ctx.inputs[0].data();
+  auto *dst       = ctx.outputs[0].data();
   auto  n         = ctx.outputs[0].desc.num_bytes();
   auto  copy_desc = std::make_pair(ctx.inputs[0].desc.mem_loc, settings_.target);
   using CopyDesc  = std::pair<holoflow::core::MemLoc, MemcpySettings::Target>;

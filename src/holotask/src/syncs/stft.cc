@@ -34,8 +34,8 @@ Stft::Stft(const StftSettings &settings, curaii::CufftHandle &&plan)
     : settings_(settings), plan_(std::move(plan)) {}
 
 holoflow::core::OpResult Stft::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data);
-  auto *odata = reinterpret_cast<float *>(ctx.outputs[0].data);
+  auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data());
+  auto *odata = reinterpret_cast<float *>(ctx.outputs[0].data());
   CUFFT_CHECK(cufftXtExec(plan_.get(), idata, odata, CUFFT_FORWARD));
   return holoflow::core::OpResult::Ok;
 }

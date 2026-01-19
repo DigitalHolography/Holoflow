@@ -68,8 +68,8 @@ Pca::Pca(const PcaSettings &settings, curaii::CublasHandle &&cublas_handle,
 holoflow::core::OpResult Pca::execute(holoflow::core::SyncCtx &ctx) {
   auto &iview = ctx.inputs[0];
   auto &oview = ctx.outputs[0];
-  auto *idata = reinterpret_cast<cuFloatComplex *>(iview.data);
-  auto *odata = reinterpret_cast<cuFloatComplex *>(oview.data);
+  auto *idata = reinterpret_cast<cuFloatComplex *>(iview.data());
+  auto *odata = reinterpret_cast<cuFloatComplex *>(oview.data());
 
   const auto   &idesc      = iview.desc;
   const int     n_features = static_cast<int>(idesc.shape.at(0));

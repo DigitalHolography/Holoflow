@@ -81,6 +81,9 @@ private:
   // Device buffers
   DevPtr<std::byte> d_buffer_;      ///< Circular buffer storage
   DevPtr<float>     d_running_avg_; ///< Running sum buffer
+                                    
+  holoflow::core::Storage istorage_; 
+  holoflow::core::Storage ostorage_; 
 
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> avg_idx_;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;

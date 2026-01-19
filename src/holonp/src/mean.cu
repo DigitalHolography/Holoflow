@@ -285,9 +285,9 @@ Mean::Mean(const MeanSettings &settings, cudaStream_t stream, size_t out_ndim, s
       d_red_strides_(std::move(d_red_strides)) {}
 
 holoflow::core::OpResult Mean::execute(holoflow::core::SyncCtx &ctx) {
-  auto [idata, idesc] = ctx.inputs[0];
-  auto [odata, odesc] = ctx.outputs[0];
-  (void)odesc;
+  auto *idata = ctx.inputs[0].data();
+  auto *odata = ctx.outputs[0].data();
+  const auto &idesc = ctx.inputs[0].desc;
 
   const auto    total_out = total_out_;
   constexpr int block     = 256;

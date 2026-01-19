@@ -197,7 +197,8 @@ holoflow::core::OpResult Concatenate::execute(holoflow::core::SyncCtx &ctx) {
     std::abort();
   }
 
-  auto [odata, odesc]  = ctx.outputs[0];
+  auto *odata = ctx.outputs[0].data();
+  const auto odesc = ctx.outputs[0].desc;
   const auto total_out = static_cast<std::int64_t>(odesc.num_elements());
   if (total_out <= 0) {
     return holoflow::core::OpResult::Ok;
@@ -213,8 +214,7 @@ holoflow::core::OpResult Concatenate::execute(holoflow::core::SyncCtx &ctx) {
       continue;
     }
 
-    auto [idata, idesc] = ctx.inputs[i];
-    (void)idesc;
+    auto *idata = ctx.inputs[i].data();
 
     const int grid_size = static_cast<int>((total_in + block_size - 1) / block_size);
 

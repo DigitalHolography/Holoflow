@@ -29,7 +29,7 @@ FresnelQin::FresnelQin(const FresnelQinSettings &settings, DevPtr<cuFloatComplex
 
 holoflow::core::OpResult FresnelQin::execute(holoflow::core::SyncCtx &ctx) {
   auto *idata = d_lens_.get();
-  auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data);
+  auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
   auto  bytes = settings_.nx * settings_.ny * sizeof(cuFloatComplex);
   CUDA_CHECK(cudaMemcpyAsync(odata, idata, bytes, cudaMemcpyDeviceToDevice, stream_));
   return holoflow::core::OpResult::Ok;

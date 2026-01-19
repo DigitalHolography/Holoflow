@@ -168,11 +168,11 @@ holoflow::core::OpResult Convolution::execute(holoflow::core::SyncCtx &ctx) {
     return holoflow::core::OpResult::NotReady;
   }
 
-  const auto &input_view  = ctx.inputs[0];
+  auto &input_view  = ctx.inputs[0];
   auto       &output_view = ctx.outputs[0];
 
-  const float *input_data  = reinterpret_cast<const float *>(input_view.data);
-  float       *output_data = reinterpret_cast<float *>(output_view.data);
+  float *input_data  = reinterpret_cast<float *>(input_view.data());
+  float       *output_data = reinterpret_cast<float *>(output_view.data());
 
   auto input_width = static_cast<unsigned int>(input_desc_.shape.back());
   auto input_height =

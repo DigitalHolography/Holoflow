@@ -49,7 +49,7 @@ holoflow::core::OpResult Reshape::execute(holoflow::core::SyncCtx &ctx) {
   auto &iview = ctx.inputs[0];
   auto &oview = ctx.outputs[0];
 
-  CUDA_CHECK(cudaMemcpyAsync(oview.data, iview.data, oview.desc.num_bytes(),
+  CUDA_CHECK(cudaMemcpyAsync(oview.data(), iview.data(), oview.desc.num_bytes(),
                              cudaMemcpyDeviceToDevice, stream_));
   CUDA_CHECK(cudaStreamSynchronize(stream_));
 

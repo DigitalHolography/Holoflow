@@ -203,8 +203,8 @@ Filter2D::Filter2D(const Filter2DSettings &settings, curaii::CufftHandle &&fwd_p
       lto_(std::move(lto)) {}
 
 holoflow::core::OpResult Filter2D::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data);
-  auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data);
+  auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
+  auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
   CUFFT_CHECK(cufftXtExec(fwd_plan_.get(), idata, idata, CUFFT_FORWARD));
   CUFFT_CHECK(cufftXtExec(inv_plan_.get(), idata, odata, CUFFT_INVERSE));
   return holoflow::core::OpResult::Ok;

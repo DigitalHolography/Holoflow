@@ -99,10 +99,8 @@ RFFT::RFFT(const RFFTSettings &settings, curaii::CufftHandle &&plan, size_t tota
       stream_(stream) {}
 
 holoflow::core::OpResult RFFT::execute(holoflow::core::SyncCtx &ctx) {
-  auto [idata, idesc] = ctx.inputs[0];
-  auto [odata, odesc] = ctx.outputs[0];
-  (void)idesc;
-  (void)odesc;
+  auto *idata = ctx.inputs[0].data();
+  auto *odata = ctx.outputs[0].data();
 
   auto *in  = reinterpret_cast<float *>(idata);
   auto *out = reinterpret_cast<cuFloatComplex *>(odata);

@@ -210,11 +210,15 @@ holoflow::core::OpResult Mul::execute(holoflow::core::SyncCtx &ctx) {
     std::abort();
   }
 
-  auto [a_data, a_desc] = ctx.inputs[0];
-  auto [b_data, b_desc] = ctx.inputs[1];
-  auto [o_data, o_desc] = ctx.outputs[0];
-  (void)b_desc;
-  (void)o_desc;
+  // auto [a_data, a_desc] = ctx.inputs[0];
+  // auto [b_data, b_desc] = ctx.inputs[1];
+  // auto [o_data, o_desc] = ctx.outputs[0];
+  // (void)b_desc;
+  // (void)o_desc;
+  auto *a_data = ctx.inputs[0].data();
+  auto *b_data = ctx.inputs[1].data();
+  auto *o_data = ctx.outputs[0].data();
+  const auto &a_desc = ctx.inputs[0].desc;
 
   const auto total_out = total_out_;
   if (total_out == 0) {

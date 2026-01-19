@@ -47,7 +47,8 @@ __global__ void rotate_kernel(holoflow::core::TView Source, holoflow::core::TVie
 
   int newX = sizeX - 1 - y;
 
-  Destination.data[x * sizeY + newX] = Source.data[y * sizeX + x];
+  // TODO: Who wrote that??
+  // Destination.data[x * sizeY + newX] = Source.data[y * sizeX + x];
 }
 } // namespace
 

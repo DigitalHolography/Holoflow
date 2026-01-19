@@ -31,8 +31,8 @@ FresnelDiffraction::FresnelDiffraction(const FresnelDiffractionSettings &setting
       d_caller_info_(std::move(d_caller_info)), lto_(std::move(lto)) {}
 
 holoflow::core::OpResult FresnelDiffraction::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data);
-  auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data);
+  auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
+  auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
   CUFFT_CHECK(cufftXtExec(fft_handle_.get(), idata, odata, CUFFT_FORWARD));
   return holoflow::core::OpResult::Ok;
 }

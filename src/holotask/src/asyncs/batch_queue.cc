@@ -58,9 +58,14 @@ std::optional<holoflow::core::TView> BatchQueue::acquire_input(int index) {
 
   size_t     write_idx = write_idx_.load(std::memory_order_relaxed);
   std::byte *data      = buf_ + write_idx * element_size_;
+  istorage_.bytes      = input_size_ * element_size_;
+  istorage_.mem_loc    = idesc_.mem_loc;
+  istorage_.ptr        = data;
+
   return holoflow::core::TView{
-      .data = data,
-      .desc = idesc_,
+      .ptr    = data,
+      .desc    = idesc_,
+      .storage = std::ref(istorage_),
   };
 }
 
@@ -94,9 +99,14 @@ holoflow::core::OpResult BatchQueue::try_pop(holoflow::core::AsyncPopCtx &ctx) {
 
   size_t     read_idx = read_idx_.load(std::memory_order_relaxed);
   std::byte *data     = buf_ + read_idx * element_size_;
-  ctx.outputs[0]      = holoflow::core::TView{
-           .data = data,
-           .desc = odesc_,
+  ostorage_.bytes     = settings_.output_size * element_size_;
+  ostorage_.mem_loc   = odesc_.mem_loc;
+  ostorage_.ptr       = data;
+
+  ctx.outputs[0] = holoflow::core::TView{
+      .ptr    = data,
+      .desc    = odesc_,
+      .storage = std::ref(ostorage_),
   };
   return holoflow::core::OpResult::Ok;
 }
