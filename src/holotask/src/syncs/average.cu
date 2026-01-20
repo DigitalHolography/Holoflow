@@ -171,6 +171,9 @@ AverageFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
       throw std::invalid_argument("AverageFactory inference error: " + msg);
     }
   };
+  auto settings = jsettings.get<AverageSettings>();
+
+  const auto &idesc = input_descs[0];
 
   const std::set<holoflow::core::DType> supported_dtypes = {
       holoflow::core::DType::U8,
@@ -179,11 +182,8 @@ AverageFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
       holoflow::core::DType::CF32,
   };
 
-  auto settings = jsettings.get<AverageSettings>();
-
   // Validate
   check(input_descs.size() == 1, "expected exactly one input");
-  const auto &idesc = input_descs[0];
   check(idesc.shape.size() == 3, "expected 3D input");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be on Device");
   check(supported_dtypes.contains(idesc.dtype), "unsupported input dtype");
@@ -195,6 +195,9 @@ AverageFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   // Success
   auto odesc                    = idesc;
   odesc.shape.at(settings.axis) = 1;
+  logger()->debug("[AverageFactory::infer] input shape z,y,x: {}, {}, {} / {}, {}, {}, axis = {}",
+                  idesc.shape[0], idesc.shape[1], idesc.shape[2], odesc.shape[0], odesc.shape[1],
+                  odesc.shape[2], settings.axis);
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
       .output_descs  = {odesc},

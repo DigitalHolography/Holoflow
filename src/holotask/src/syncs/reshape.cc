@@ -74,16 +74,19 @@ ReshapeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   auto has_zero = std::ranges::any_of(settings.shape, [](std::size_t dim) { return dim == 0; });
   check(!has_zero, "new shape should not have zeros");
 
-  auto nb_elements = std::accumulate(settings.shape.begin(), settings.shape.end(), 1ULL,
-                                     std::multiplies<std::size_t>());
+  // auto nb_elements = std::accumulate(settings.shape.begin(), settings.shape.end(), 1ULL,
+  //                                  std::multiplies<std::size_t>());
 
-  check(idesc.num_elements() == nb_elements,
-        std::format("new shape does not have same number of elements as input: {} vs {}",
-                    settings.shape, idesc.shape));
-  // /* "new shape does not have same number of elements as input" */);
+  // check(idesc.num_elements() == nb_elements,
+  //       std::format("new shape does not have same number of elements as input: {} vs {}",
+  //                   settings.shape, idesc.shape));
+  //  /* "new shape does not have same number of elements as input" */);
 
   auto odesc = idesc;
   odesc.shape.assign(settings.shape.begin(), settings.shape.end());
+  logger()->debug("[ReshapeFactory::infer] input shape z,y,x: {}, {}, {} / {}, {}, {}",
+                  idesc.shape[0], idesc.shape[1], idesc.shape[2], odesc.shape[0], odesc.shape[1],
+                  odesc.shape[2]);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},

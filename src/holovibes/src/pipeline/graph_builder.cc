@@ -301,10 +301,12 @@ void GraphBuilder::build_xy_branch(V debounce_queue) {
 
 void GraphBuilder::build_xz_branch(V debounce_queue) {
   current_section_name_ = "xz_processed_view::";
-  auto cut_avg          = add_xz_cut_avg(debounce_queue, 0, 0);
-  auto reshape          = add_xz_reshape(cut_avg, 0, 0);
-  auto slide_avg        = add_xz_slide_avg(reshape, 0, 0);
-  auto crop             = add_xz_crop2frames(slide_avg, 0, 0);
+  auto rotation         = add_xz_rotation(debounce_queue, 0, 0);
+
+ // auto cut_avg          = add_xz_cut_avg(debounce_queue, 0, 0);
+  auto reshape          = add_xz_reshape(rotation, 0, 0);
+ // auto slide_avg        = add_xz_slide_avg(reshape, 0, 0);
+  auto crop             = add_xz_crop2frames(reshape, 0, 0);
   auto to_u8            = add_xz_to_u8(crop, 0, 0);
   auto gpu_out          = add_xz_gpu_out_queue(to_u8, 0, 0);
   auto gpu_cpu          = add_xz_gpu_cpu_cpy(gpu_out, 0, 0);
@@ -316,13 +318,15 @@ void GraphBuilder::build_xz_branch(V debounce_queue) {
 
 void GraphBuilder::build_yz_branch(V debounce_queue) {
   current_section_name_ = "yz_processed_view::";
-  auto cut_avg          = add_yz_cut_avg(debounce_queue, 0, 0);
-  auto reshape          = add_yz_reshape(cut_avg, 0, 0);
-  auto slide_avg        = add_yz_slide_avg(reshape, 0, 0);
-  auto crop             = add_yz_crop2frames(slide_avg, 0, 0);
+  auto rotation         = add_yz_rotation(debounce_queue, 0, 0);
+
+  //auto cut_avg          = add_yz_cut_avg(debounce_queue, 0, 0);
+  auto reshape          = add_yz_reshape(rotation, 0, 0);
+  //auto slide_avg        = add_yz_slide_avg(reshape, 0, 0);
+  auto crop             = add_yz_crop2frames(reshape, 0, 0);
+
   auto to_u8            = add_yz_to_u8(crop, 0, 0);
-  auto rotation         = add_yz_rotation(to_u8, 0, 0);
-  auto gpu_out          = add_yz_gpu_out_queue(rotation, 0, 0);
+  auto gpu_out          = add_yz_gpu_out_queue(to_u8, 0, 0);
   auto gpu_cpu          = add_yz_gpu_cpu_cpy(gpu_out, 0, 0);
   auto cpu_out          = add_yz_cpu_out_queue(gpu_cpu, 0, 0);
   auto display          = add_yz_processed_display(cpu_out, 0, 0);
@@ -775,6 +779,13 @@ GraphBuilder::V GraphBuilder::add_xz_to_u8(V parent, int out_idx, int in_idx) {
                                                 .target   = ConversionSettings::Target::U8,
                                                 .strategy = ConversionSettings::Strategy::Scaled,
                                             });
+}
+GraphBuilder::V GraphBuilder::add_xz_rotation(V parent, int out_idx, int in_idx) {
+  using syncs::RotationSettings;
+  return add_node_after<RotationSettings>(parent, out_idx, in_idx, "xz_rotation", "Rotation",
+                                          RotationSettings{
+                                              .angle = 90,
+                                          });
 }
 
 GraphBuilder::V GraphBuilder::add_xz_crop2frames(V parent, int out_idx, int in_idx) {

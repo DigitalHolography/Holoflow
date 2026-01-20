@@ -196,7 +196,7 @@ holoflow::core::OpResult Rotation::execute(holoflow::core::SyncCtx &ctx) {
   holoflow::core::TView &input  = ctx.inputs[0];
   holoflow::core::TView &output = ctx.outputs[0];
 
-  logger()->trace(
+  logger()->debug(
       "[Rotation::execute] Rotating tensor of shape {} by {} degrees for a new tensor of shape {}",
       input.desc.shape, settings_.angle, output.desc.shape);
 
@@ -208,12 +208,12 @@ holoflow::core::OpResult Rotation::execute(holoflow::core::SyncCtx &ctx) {
 
   if (depth == 1) // 2d rotation
   {
-    logger()->trace("[Rotation::execute] 2d rotation");
+    logger()->debug("[Rotation::execute] 2d rotation");
     rotate_2d(stream_, input, output, width, height, settings_.angle);
 
   } else // 3d rotation
   {
-    logger()->trace("[Rotation::execute] 3d rotation");
+    logger()->debug("[Rotation::execute] 3d rotation");
     rotate_3d(stream_, input, output, depth, width, height, settings_.angle, settings_.axis);
   }
   CUDA_CHECK(cudaGetLastError());

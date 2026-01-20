@@ -369,13 +369,12 @@ AmetekS710EuresysCoaxlinkOctoFactory::create(std::span<const holoflow::core::TDe
   throw std::logic_error("holotask library was built without Egrabber support");
 }
 
-std::unique_ptr<holoflow::core::ISyncTask>
-AmetekS710EuresysCoaxlinkOctoFactory::update(std::span<const holoflow::core::TDesc>,
-                                             const nlohmann::json &,
-                                             const holoflow::core::SyncCreateCtx &) const {
+std::unique_ptr<holoflow::core::ISyncTask> AmetekS710EuresysCoaxlinkOctoFactory::update(
+    std::unique_ptr<holoflow::core::ISyncTask>, std::span<const holoflow::core::TDesc>,
+    const nlohmann::json &, const holoflow::core::SyncCreateCtx &) const {
   throw std::logic_error("holotask library was built without Egrabber support");
 }
 
 } // namespace holotask::sources
 
-#endif
+#endif                        B    CVB++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++

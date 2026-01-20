@@ -215,17 +215,17 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   // XZ View Processing (S -> M0 - Processed XZ View)
   // -------------------------------------------------------------------------------------------------
   {
-    std::vector<size_t> crop_origin = {0, 10, 0};
-    std::vector<size_t> crop_shape  = {1, S.shape.at(1) - 20, S.shape.at(0)};
 
-    auto [M0]        = unpack<1>(average(S, {1, s_.time_y_begin, s_.time_y_end}));
-    std::tie(M0)     = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
-    auto [M0_avg]    = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
-    std::tie(M0_avg) = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
-    std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
-    std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
+    auto [M0]                       = unpack<1>(average(S, {1, s_.time_y_begin, s_.time_y_end}));
+    std::tie(M0)                    = unpack<1>(reshape(M0, {{1, M0.shape.at(0), M0.shape.at(2)}}));
+    auto [M0_avg]                   = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
+    std::vector<size_t> crop_origin = {0, 10, 0};
+    std::vector<size_t> crop_shape  = {1, M0_avg.shape.at(1) - 20, M0_avg.shape.at(2)};
+    std::tie(M0_avg)                = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
+    std::tie(M0_avg)                = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
+    std::tie(M0_avg)                = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
+    std::tie(M0_avg)                = unpack<1>(memcpy(M0_avg, {Host}));
+    std::tie(M0_avg)                = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
     xz_processed_display(M0_avg, {});
   }
 
@@ -233,17 +233,17 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   // YZ View Processing (S -> M0 - Processed YZ View)
   // -------------------------------------------------------------------------------------------------
   {
-    std::vector<size_t> crop_origin = {0, 10, 0};
-    std::vector<size_t> crop_shape  = {1, S.shape.at(1) - 20, S.shape.at(0)};
 
-    auto [M0]        = unpack<1>(average(S, {2, s_.time_x_begin, s_.time_x_end}));
-    std::tie(M0)     = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
-    auto [M0_avg]    = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
-    std::tie(M0_avg) = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
-    std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
-    std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
+    auto [M0]                       = unpack<1>(average(S, {2, s_.time_x_begin, s_.time_x_end}));
+    std::tie(M0)                    = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
+    auto [M0_avg]                   = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
+    std::vector<size_t> crop_origin = {0, 10, 0};
+    std::vector<size_t> crop_shape  = {1, M0_avg.shape.at(1) - 20, M0_avg.shape.at(2)};
+    std::tie(M0_avg)                = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
+    std::tie(M0_avg)                = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
+    std::tie(M0_avg)                = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
+    std::tie(M0_avg)                = unpack<1>(memcpy(M0_avg, {Host}));
+    std::tie(M0_avg)                = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
     yz_processed_display(M0_avg, {});
   }
 
@@ -281,13 +281,13 @@ DEFINE_UNARY_SYNC_NODE (filter_2d,                              "filter_2d",    
 DEFINE_UNARY_SYNC_NODE (fresnel_diffraction,                    "fresnel_diffraction",                 "FresnelDiffraction",             holotask::syncs::FresnelDiffractionSettings)
 DEFINE_UNARY_SYNC_NODE (angular_spectrum,                       "angular_spectrum",                    "AngularSpectrum",                holotask::syncs::AngularSpectrumSettings)
 DEFINE_UNARY_SYNC_NODE (reshape,                                "reshape",                             "Reshape",                        holotask::syncs::ReshapeSettings)
+DEFINE_UNARY_SYNC_NODE (rotation,                               "rotation",                            "Rotation",                       holotask::syncs::RotationSettings)
 DEFINE_UNARY_SYNC_NODE (average,                                "average",                             "Average",                        holotask::syncs::AverageSettings)
 DEFINE_UNARY_SYNC_NODE (convolution,                            "convolution",                         "Convolution",                    holotask::syncs::ConvolutionSettings)
 DEFINE_UNARY_SYNC_NODE (crop,                                   "crop",                                "Crop",                           holotask::syncs::CropSettings)
 DEFINE_UNARY_SYNC_NODE (fft_shift,                              "fft_shift",                           "FFTShift",                       holotask::syncs::FFTShiftSettings)
 DEFINE_UNARY_SYNC_NODE (pct_clip,                               "pct_clip",                            "PctClip",                        holotask::syncs::PctClipSettings)
 DEFINE_UNARY_SYNC_NODE (registration,                           "registration",                        "Registration",                   holotask::syncs::RegistrationSettings)
-DEFINE_UNARY_SYNC_NODE (rotation,                               "rotation",                            "Rotation",                       holotask::syncs::RotationSettings)
 DEFINE_UNARY_SYNC_NODE (xy_raw_display,                         "xy_raw_display",                      "DisplayTensorXYRaw",             tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (xy_processed_display,                   "xy_processed_display",                "DisplayTensorXY",                tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (xz_processed_display,                   "xz_processed_display",                "DisplayTensorXZ",                tasks::sinks::DisplayTensorSettings)

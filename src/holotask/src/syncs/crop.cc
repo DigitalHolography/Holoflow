@@ -95,9 +95,9 @@ holoflow::core::InferResult CropFactory::infer(std::span<const holoflow::core::T
   check(input_descs[0].dtype == holoflow::core::DType::F32, "only Float32 data type is supported");
   const auto &idesc = input_descs[0];
 
-  logger()->error("input shape: {}, {}, {} | output shape: {}, {}, {}", idesc.shape[2],
-                  idesc.shape[1], idesc.shape[0], settings.shape[2], settings.shape[1],
-                  settings.shape[0]);
+  logger()->debug("[CropFactory::infer] input shape z,y,x: {}, {}, {} | output shape: {}, {}, {}", idesc.shape[0],
+                  idesc.shape[1], idesc.shape[2], settings.shape[0], settings.shape[1],
+                  settings.shape[2]);
 
   for (size_t i = 0; i < idesc.rank(); ++i) {
     check(settings.origin[i] + settings.shape[i] <= idesc.shape[i],
