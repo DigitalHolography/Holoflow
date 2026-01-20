@@ -207,7 +207,7 @@ private:
   /// If a TView is {nullptr, {}}, it means the tensor is not currently
   /// available (owned tensor not aqcuired).
   /// They are exclusive to sections, i.e. no sharing between sections.
-  std::vector<std::optional<core::TView>> tviews_;
+  std::vector<core::TView> tviews_;
 
   std::vector<NodeRt>      node_rts_; ///< Runtime data for each node.
   std::vector<std::string> node_names_;

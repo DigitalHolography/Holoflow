@@ -68,17 +68,17 @@ private:
 
   friend class BatchQueueFactory;
 
-  BatchQueueSettings    settings_;
-  holoflow::core::TDesc idesc_;
-  holoflow::core::TDesc odesc_;
-  HostPtr<std::byte>    h_buf_;
-  DevPtr<std::byte>     d_buf_;
-  std::byte            *buf_;
-  size_t                nb_slots_;
-  size_t                input_size_;
-  size_t                element_size_;
-  holoflow::core::Storage istorage_;
-  holoflow::core::Storage ostorage_;
+  BatchQueueSettings                       settings_;
+  holoflow::core::TDesc                    idesc_;
+  holoflow::core::TDesc                    odesc_;
+  HostPtr<std::byte>                       h_buf_;
+  DevPtr<std::byte>                        d_buf_;
+  std::byte                               *buf_;
+  size_t                                   nb_slots_;
+  size_t                                   input_size_;
+  size_t                                   element_size_;
+  std::unique_ptr<holoflow::core::Storage> istorage_;
+  std::unique_ptr<holoflow::core::Storage> ostorage_;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_idx_;
 };

@@ -208,8 +208,8 @@ void Scheduler::build_nodes_rts() {
     if (auto *st = dynamic_cast<core::ISyncTask *>(task)) {
       SyncRt srt;
       srt.task             = st;
-      srt.in_views         = std::vector<core::TView>();
-      srt.out_views        = std::vector<core::TView>();
+      srt.in_views         = std::vector<core::TView>(np.in_tids.size());
+      srt.out_views        = std::vector<core::TView>(np.out_tids.size());
       srt.ctx.inputs       = srt.in_views;
       srt.ctx.outputs      = srt.out_views;
       srt.ctx.cancelled    = &stop_;
@@ -219,8 +219,8 @@ void Scheduler::build_nodes_rts() {
     } else if (auto *at = dynamic_cast<core::IAsyncTask *>(task)) {
       AsyncRt art;
       art.task           = at;
-      art.in_views       = std::vector<core::TView>();
-      art.out_views      = std::vector<core::TView>();
+      art.in_views       = std::vector<core::TView>(np.in_tids.size());
+      art.out_views      = std::vector<core::TView>(np.out_tids.size());
       art.pctx.inputs    = art.in_views;
       art.pctx.cancelled = &stop_;
       art.xctx.outputs   = art.out_views;
@@ -307,12 +307,7 @@ void Scheduler::run_section(int section_id) {
 
     for (auto v : sec.sync_topo) {
       refresh_views_sync(v);
-      try {
-        run_sync(v);
-      } catch (...) {
-        stop_.store(true);
-        rethrow_with_node_context(graph_, v, "sync/execute", section_id, sec.name);
-      }
+      run_sync(v);
       refresh_outputs_sync(v);
     }
 
@@ -375,7 +370,7 @@ void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v) {
       continue;
 
     task->release_output(static_cast<int>(i));
-    tviews_.at(np.out_tids.at(i)) = std::nullopt;
+    tviews_.at(np.out_tids.at(i)) = core::TView{};
   }
 }
 
@@ -383,20 +378,21 @@ void Scheduler::refresh_views_sync(GraphPlan::vertex_descriptor v) {
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
   auto       &nrt = node_rts_.at(idx);
-
-  HOLOFLOW_CHECK(std::holds_alternative<SyncRt>(nrt),
-                 "refresh_views_sync called on an asynchronous node");
-
+  HOLOFLOW_CHECK(std::holds_alternative<SyncRt>(nrt));
   auto &srt = std::get<SyncRt>(nrt);
-  for (size_t i = 0; i < np.in_tids.size(); i++) {
-    HOLOFLOW_CHECK(tviews_.at(np.in_tids.at(i)).has_value(),
-                   "Input tensor view {} for node {} is not available", i, np.spec.name);
-    srt.in_views.at(i) = tviews_.at(np.in_tids.at(i)).value();
+
+  for (size_t i = 0; i < np.in_tids.size(); ++i) {
+    auto &tv = tviews_.at(np.in_tids[i]);
+    HOLOFLOW_CHECK(!tv.is_nullptr());
+    srt.in_views[i] = tv;
   }
-  for (size_t i = 0; i < np.out_tids.size(); i++) {
-    HOLOFLOW_CHECK(tviews_.at(np.out_tids.at(i)).has_value(),
-                   "Output tensor view {} for node {} is not available", i, np.spec.name);
-    srt.out_views.at(i) = tviews_.at(np.out_tids.at(i)).value();
+
+  for (size_t i = 0; i < np.out_tids.size(); ++i) {
+    auto &tv    = tviews_.at(np.out_tids[i]);
+    bool  owned = np.infer.owned_outputs[i];
+
+    HOLOFLOW_CHECK(owned == tv.is_nullptr());
+    srt.out_views[i] = tv;
   }
 }
 
@@ -404,15 +400,15 @@ void Scheduler::refresh_views_async_cons(GraphPlan::vertex_descriptor v) {
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
   auto       &nrt = node_rts_.at(idx);
-
-  HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt),
-                 "refresh_views_async_cons called on a synchronous node");
-
+  HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
   auto &art = std::get<AsyncRt>(nrt);
+
   for (size_t i = 0; i < np.out_tids.size(); i++) {
-    HOLOFLOW_CHECK(tviews_.at(np.out_tids.at(i)).has_value(),
-                   "Output tensor view {} for node {} is not available", i, np.spec.name);
-    art.out_views.at(i) = tviews_.at(np.out_tids.at(i)).value();
+    auto &tv    = tviews_.at(np.out_tids[i]);
+    bool  owned = np.infer.owned_outputs[i];
+
+    HOLOFLOW_CHECK(owned == tv.is_nullptr());
+    art.out_views[i] = tv;
   }
 }
 
@@ -420,15 +416,13 @@ void Scheduler::refresh_views_async_prod(GraphPlan::vertex_descriptor v) {
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
   auto       &nrt = node_rts_.at(idx);
-
-  HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt),
-                 "refresh_views_async_prod called on a synchronous node");
-
+  HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
   auto &art = std::get<AsyncRt>(nrt);
+
   for (size_t i = 0; i < np.in_tids.size(); i++) {
-    HOLOFLOW_CHECK(tviews_.at(np.in_tids.at(i)).has_value(),
-                   "Input tensor view {} for node {} is not available", i, np.spec.name);
-    art.in_views.at(i) = tviews_.at(np.in_tids.at(i)).value();
+    auto &tv = tviews_.at(np.in_tids[i]);
+    HOLOFLOW_CHECK(!tv.is_nullptr());
+    art.in_views[i] = tv;
   }
 }
 
@@ -437,9 +431,7 @@ void Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
   auto       &nrt = node_rts_.at(idx);
-
-  auto is_sync = std::holds_alternative<SyncRt>(nrt);
-  HOLOFLOW_CHECK(is_sync, "run_sync called on an asynchronous node");
+  HOLOFLOW_CHECK(std::holds_alternative<SyncRt>(nrt));
   auto &srt = std::get<SyncRt>(nrt);
 
   logger()->trace("[Scheduler::run_sync] Executing node '{}'", np.spec.name);
@@ -483,9 +475,7 @@ void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
   auto       &nrt = node_rts_.at(idx);
-
-  auto is_async = std::holds_alternative<AsyncRt>(nrt);
-  HOLOFLOW_CHECK(is_async, "run_async_cons called on a synchronous node");
+  HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
   auto &art = std::get<AsyncRt>(nrt);
 
   logger()->trace("[Scheduler::run_async_cons] Executing node '{}'", np.spec.name);
@@ -528,9 +518,7 @@ void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
   auto       &nrt = node_rts_.at(idx);
-
-  auto is_async = std::holds_alternative<AsyncRt>(nrt);
-  HOLOFLOW_CHECK(is_async, "run_async_prod called on a synchronous node");
+  HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
   auto &art = std::get<AsyncRt>(nrt);
 
   logger()->trace("[Scheduler::run_async_prod] Executing node '{}'", np.spec.name);
@@ -572,9 +560,7 @@ void Scheduler::refresh_outputs_sync(GraphPlan::vertex_descriptor v) {
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
   auto       &nrt = node_rts_.at(idx);
-
-  auto is_sync = std::holds_alternative<SyncRt>(nrt);
-  HOLOFLOW_CHECK(is_sync, "refresh_outputs_sync called on an asynchronous node");
+  HOLOFLOW_CHECK(std::holds_alternative<SyncRt>(nrt));
   auto &srt = std::get<SyncRt>(nrt);
 
   for (size_t i = 0; i < np.out_tids.size(); i++) {
@@ -588,9 +574,7 @@ void Scheduler::refresh_outputs_async_cons(GraphPlan::vertex_descriptor v) {
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
   auto       &nrt = node_rts_.at(idx);
-
-  auto is_async = std::holds_alternative<AsyncRt>(nrt);
-  HOLOFLOW_CHECK(is_async, "refresh_outputs_async_cons called on a synchronous node");
+  HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
   auto &art = std::get<AsyncRt>(nrt);
 
   for (size_t i = 0; i < np.out_tids.size(); i++) {
@@ -705,9 +689,6 @@ std::pair<uint64_t, uint64_t> Scheduler::sum_bytes(std::span<const core::TView> 
   uint64_t host_total   = 0;
   uint64_t device_total = 0;
   for (const auto &view : views) {
-    if (view.ptr == nullptr) {
-      continue;
-    }
     const auto bytes = static_cast<uint64_t>(view.desc.num_bytes());
     if (view.desc.mem_loc == core::MemLoc::Device) {
       device_total += bytes;

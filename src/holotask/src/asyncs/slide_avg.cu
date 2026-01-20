@@ -61,7 +61,14 @@ SlidingAverage::SlidingAverage(SlidingAverageSettings settings, const holoflow::
       producer_stream_(producer_stream), consumer_stream_(consumer_stream), nb_slots_(nb_slots),
       element_size_(element_size), d_buffer_(std::move(d_buffer)),
       d_running_avg_(std::move(d_running_avg)), avg_idx_(nb_slots - settings.window_size),
-      write_idx_(0), read_idx_(nb_slots - 1) {}
+      write_idx_(0), read_idx_(nb_slots - 1) {
+  istorage_          = std::make_unique<holoflow::core::Storage>();
+  ostorage_          = std::make_unique<holoflow::core::Storage>();
+  istorage_->mem_loc = idesc_.mem_loc;
+  ostorage_->mem_loc = odesc_.mem_loc;
+  istorage_->bytes   = idesc_.num_bytes();
+  ostorage_->bytes   = odesc_.num_bytes();
+}
 
 int SlidingAverage::writer_size() const {
   int write_idx = write_idx_.load(std::memory_order_relaxed);
@@ -94,14 +101,11 @@ std::optional<holoflow::core::TView> SlidingAverage::acquire_input(int index) {
 
   int        write_idx = write_idx_.load(std::memory_order_relaxed);
   std::byte *data      = d_buffer_.get() + write_idx * element_size_;
-  istorage_.bytes     = idesc_.num_bytes();
-  istorage_.mem_loc   = idesc_.mem_loc;
-  istorage_.ptr       = data;
+  istorage_->ptr       = data;
 
   return holoflow::core::TView{
-      .ptr = data,
-      .desc = idesc_,
-      .storage = std::ref(istorage_),
+      .desc    = idesc_,
+      .storage = istorage_.get(),
   };
 }
 
@@ -168,14 +172,11 @@ holoflow::core::OpResult SlidingAverage::try_pop(holoflow::core::AsyncPopCtx &ct
 
   int        read_idx = read_idx_.load(std::memory_order_relaxed);
   std::byte *data     = d_buffer_.get() + read_idx * element_size_;
-  ostorage_.bytes     = odesc_.num_bytes();
-  ostorage_.mem_loc   = odesc_.mem_loc;
-  ostorage_.ptr       = data;
+  ostorage_->ptr      = data;
 
-  ctx.outputs[0]      = holoflow::core::TView{
-           .ptr = data,
-           .desc = odesc_,
-           .storage = std::ref(ostorage_),
+  ctx.outputs[0] = holoflow::core::TView{
+      .desc    = odesc_,
+      .storage = ostorage_.get(),
   };
   logger()->trace("[SlidingAverage::try_pop] read_idx={}", read_idx);
   return holoflow::core::OpResult::Ok;

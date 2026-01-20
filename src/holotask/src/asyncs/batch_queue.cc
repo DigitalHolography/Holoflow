@@ -45,7 +45,16 @@ BatchQueue::BatchQueue(const BatchQueueSettings &settings, const holoflow::core:
                        size_t input_size, size_t element_size)
     : settings_(settings), idesc_(idesc), odesc_(odesc), h_buf_(std::move(h_buf)),
       d_buf_(std::move(d_buf)), buf_(buf), nb_slots_(nb_slots), input_size_(input_size),
-      element_size_(element_size) {}
+      element_size_(element_size) {
+  istorage_          = std::make_unique<holoflow::core::Storage>();
+  ostorage_          = std::make_unique<holoflow::core::Storage>();
+  istorage_->mem_loc = idesc_.mem_loc;
+  ostorage_->mem_loc = odesc_.mem_loc;
+  istorage_->bytes   = idesc_.num_bytes();
+  ostorage_->bytes   = odesc_.num_bytes();
+  istorage_->ptr     = nullptr;
+  ostorage_->ptr     = nullptr;
+}
 
 std::optional<holoflow::core::TView> BatchQueue::acquire_input(int index) {
   if (index != 0) {
@@ -58,14 +67,11 @@ std::optional<holoflow::core::TView> BatchQueue::acquire_input(int index) {
 
   size_t     write_idx = write_idx_.load(std::memory_order_relaxed);
   std::byte *data      = buf_ + write_idx * element_size_;
-  istorage_.bytes      = input_size_ * element_size_;
-  istorage_.mem_loc    = idesc_.mem_loc;
-  istorage_.ptr        = data;
+  istorage_->ptr       = data;
 
   return holoflow::core::TView{
-      .ptr    = data,
       .desc    = idesc_,
-      .storage = std::ref(istorage_),
+      .storage = istorage_.get(),
   };
 }
 
@@ -79,6 +85,7 @@ void BatchQueue::release_output(int index) {
   if (next_read_idx == nb_slots_) {
     next_read_idx = 0;
   }
+  ostorage_->ptr = nullptr;
   read_idx_.store(next_read_idx, std::memory_order_release);
 }
 
@@ -88,6 +95,7 @@ holoflow::core::OpResult BatchQueue::try_push(holoflow::core::AsyncPushCtx &) {
   if (next_write_idx >= nb_slots_) {
     next_write_idx = 0;
   }
+  istorage_->ptr = nullptr;
   write_idx_.store(next_write_idx, std::memory_order_release);
   return holoflow::core::OpResult::Ok;
 }
@@ -99,14 +107,11 @@ holoflow::core::OpResult BatchQueue::try_pop(holoflow::core::AsyncPopCtx &ctx) {
 
   size_t     read_idx = read_idx_.load(std::memory_order_relaxed);
   std::byte *data     = buf_ + read_idx * element_size_;
-  ostorage_.bytes     = settings_.output_size * element_size_;
-  ostorage_.mem_loc   = odesc_.mem_loc;
-  ostorage_.ptr       = data;
+  ostorage_->ptr      = data;
 
   ctx.outputs[0] = holoflow::core::TView{
-      .ptr    = data,
       .desc    = odesc_,
-      .storage = std::ref(ostorage_),
+      .storage = ostorage_.get(),
   };
   return holoflow::core::OpResult::Ok;
 }

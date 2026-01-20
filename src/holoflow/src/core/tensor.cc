@@ -109,13 +109,11 @@ void from_json(const nlohmann::json &j, TDesc &desc) {
 }
 
 namespace {
-std::vector<std::size_t>
-make_default_strides(const std::vector<std::size_t>& shape, DType dtype)
-{
+std::vector<std::size_t> make_default_strides(const std::vector<std::size_t> &shape, DType dtype) {
   std::vector<std::size_t> strides(shape.size());
 
   std::size_t stride = size_of(dtype);
-  for (std::size_t i = shape.size(); i-- > 0; ) {
+  for (std::size_t i = shape.size(); i-- > 0;) {
     strides[i] = stride;
     stride *= shape[i];
   }
@@ -125,8 +123,9 @@ make_default_strides(const std::vector<std::size_t>& shape, DType dtype)
 } // namespace
 
 TDesc::TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc)
-    : shape(std::move(shape)), dtype(dtype), mem_loc(mem_loc), strides(make_default_strides(this->shape, this->dtype)) {}
-    
+    : shape(std::move(shape)), dtype(dtype), mem_loc(mem_loc),
+      strides(make_default_strides(this->shape, this->dtype)) {}
+
 TDesc::TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc, std::vector<size_t> strides)
     : shape(std::move(shape)), dtype(dtype), mem_loc(mem_loc), strides(std::move(strides)) {}
 
@@ -154,7 +153,13 @@ size_t TDesc::num_bytes() const {
   return strides[0] * shape[0];
 }
 
-std::byte *TView::data() { return ptr; }
+std::byte *TView::data() {
+  HOLOFLOW_CHECK(storage != nullptr, "TView has null storage");
+  HOLOFLOW_CHECK(storage->ptr != nullptr, "TView has null data pointer");
+  return storage->ptr;
+}
+
+bool TView::is_nullptr() { return storage == nullptr || storage->ptr == nullptr; }
 
 Tensor::Tensor(const TDesc &desc) : desc_(desc), data_(nullptr) {
   switch (desc_.mem_loc) {
@@ -167,8 +172,8 @@ Tensor::Tensor(const TDesc &desc) : desc_(desc), data_(nullptr) {
     data_   = d_data_.get();
     break;
   }
-  
-  storage_ = Storage{desc_.mem_loc, desc_.num_bytes(), data_};
+
+  storage_ = std::make_unique<Storage>(Storage{desc_.mem_loc, desc_.num_bytes(), data_});
 }
 
 void *Tensor::data() noexcept { return data_; }
@@ -177,6 +182,6 @@ const void *Tensor::data() const noexcept { return data_; }
 
 const TDesc &Tensor::desc() const noexcept { return desc_; }
 
-TView Tensor::view() noexcept { return {data_, desc_, std::ref(storage_)}; }
+TView Tensor::view() noexcept { return {desc_, storage_.get()}; }
 
 } // namespace holoflow::core
