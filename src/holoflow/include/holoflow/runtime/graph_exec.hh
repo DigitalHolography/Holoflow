@@ -123,6 +123,8 @@ public:
   [[nodiscard]] std::optional<holoflow_event::Event> ui_try_receive() noexcept;
 
 private:
+  void init_tensor_tables();
+  void bind_resource_tensors();
   void build_event_handles();
   void build_nodes_rts();
   void reset_metrics_state();
@@ -207,7 +209,8 @@ private:
   /// If a TView is {nullptr, {}}, it means the tensor is not currently
   /// available (owned tensor not aqcuired).
   /// They are exclusive to sections, i.e. no sharing between sections.
-  std::vector<core::TView> tviews_;
+  std::vector<core::TView>   tviews_;
+  std::vector<core::Storage> storages_;
 
   std::vector<NodeRt>      node_rts_; ///< Runtime data for each node.
   std::vector<std::string> node_names_;

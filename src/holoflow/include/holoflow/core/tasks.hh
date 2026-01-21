@@ -106,6 +106,13 @@ enum class OpResult : uint8_t {
   Eof,       ///< End of stream.
 };
 
+class IOStorageAccess {
+  virtual ~IOStorageAccess() = default;
+
+  [[nodiscard]] virtual Storage &owned_input_storage(size_t index)  = 0;
+  [[nodiscard]] virtual Storage &owned_output_storage(size_t index) = 0;
+};
+
 /// @brief Abstract base interface for tasks with optional tensor ownership.
 ///
 /// Provides ownership hooks for inputs and outputs. Only indices declared as
@@ -139,11 +146,16 @@ public:
 
   void bind_logger(std::shared_ptr<spdlog::logger> logger);
 
+  void bind_storage_access(IOStorageAccess *storage_access);
+
 protected:
   spdlog::logger *logger();
 
+  [[nodiscard]] IOStorageAccess &storage_access();
+
 private:
-  std::shared_ptr<spdlog::logger> logger_;
+  std::shared_ptr<spdlog::logger> logger_         = nullptr;
+  IOStorageAccess                *storage_access_ = nullptr;
 };
 
 /// @brief Interface for synchronous (blocking) tasks.

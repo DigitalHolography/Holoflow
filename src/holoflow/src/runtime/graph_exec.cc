@@ -69,34 +69,31 @@ rethrow_with_node_context(const holoflow::runtime::GraphPlan             &g,
   }
 }
 
+size_t count_distinct_tids(const GraphPlan &graph) {
+  std::set<int> tids;
+  for (const auto &v : boost::make_iterator_range(boost::vertices(graph))) {
+    const auto &np   = graph[v];
+    const auto tids_ = std::array{std::span{np.in_tids}, std::span{np.out_tids}} | std::views::join;
+
+    for (const auto tid : tids_) {
+      tids.insert(tid);
+    }
+  }
+  return tids.size();
+}
+
 } // namespace
 
 Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
                      ExecResouces &resources, std::chrono::milliseconds metrics_interval)
     : graph_(graph), sections_(sections), res_(resources), metrics_interval_(metrics_interval) {
-  // Count distinct tids
-  int nb_tids = 0;
-  for (const auto &v : boost::make_iterator_range(boost::vertices(graph))) {
-    const auto &np   = graph[v];
-    const auto  tids = std::array{std::span{np.in_tids}, std::span{np.out_tids}} | std::views::join;
-
-    if (!tids.empty()) {
-      int max = std::ranges::max(tids);
-      nb_tids = std::max(nb_tids, max + 1);
-    }
-  }
-
-  tviews_.resize(nb_tids);
-  for (int tid = 0; tid < nb_tids; tid++) {
-    if (resources.tensors.contains(tid)) {
-      tviews_.at(tid) = resources.tensors.at(tid).view();
-    }
-  }
 
   if (metrics_interval_.count() <= 0) {
     metrics_interval_ = std::chrono::milliseconds{1};
   }
 
+  init_tensor_tables();
+  bind_resource_tensors();
   build_event_handles();
   build_nodes_rts();
 }
@@ -182,6 +179,21 @@ bool Scheduler::ui_try_send(const std::string &node_id, nlohmann::json &&data) n
 
 std::optional<holoflow_event::Event> Scheduler::ui_try_receive() noexcept {
   return router_.ui_try_receive();
+}
+
+void Scheduler::init_tensor_tables() {
+  auto nb_tids = count_distinct_tids(graph_);
+  storages_.assign(nb_tids, core::Storage{});
+  tviews_.assign(nb_tids, core::TView{});
+}
+
+void Scheduler::bind_resource_tensors() {
+  for (auto &[tid, tensor] : res_.tensors) {
+    auto v = tensor.view();
+
+    storages_.at(tid) = *v.storage;
+    tviews_.at(tid)   = core::TView{v.desc, &storages_.at(tid)};
+  }
 }
 
 void Scheduler::build_event_handles() {

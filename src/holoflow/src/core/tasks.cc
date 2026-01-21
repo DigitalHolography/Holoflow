@@ -32,9 +32,19 @@ void ITask::bind_logger(std::shared_ptr<spdlog::logger> logger) {
   logger_ = std::move(logger);
 }
 
+void ITask::bind_storage_access(IOStorageAccess *storage_access) {
+  HOLOFLOW_CHECK(storage_access != nullptr, "Cannot bind null storage access to task");
+  storage_access_ = storage_access;
+}
+
 spdlog::logger *ITask::logger() {
   HOLOFLOW_CHECK(logger_, "Logger not bound to task");
   return logger_.get();
+}
+
+[[nodiscard]] IOStorageAccess &ITask::storage_access() {
+  HOLOFLOW_CHECK(storage_access_ != nullptr, "Storage access not bound to task");
+  return *storage_access_;
 }
 
 std::unique_ptr<ISyncTask> ISyncTaskFactory::update(std::unique_ptr<ISyncTask>,
