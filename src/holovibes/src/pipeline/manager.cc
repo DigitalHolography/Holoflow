@@ -400,7 +400,10 @@ void Manager::poll_events() {
 }
 
 void Manager::build_and_run() {
-  using Scheduler = holoflow::runtime::Scheduler;
+  using Scheduler      = holoflow::runtime::Scheduler;
+  using CompilerConfig = holoflow::runtime::Compiler::Config;
+  using Compiler       = holoflow::runtime::Compiler;
+
   stop_metrics_updates();
   stop_event_polling();
   build_graph_spec();
@@ -426,9 +429,15 @@ void Manager::build_and_run() {
   logger()->info("[Manager::build_and_run] Pipeline JSON saved to {}",
                  (log_root / std::format("pipeline_{}.json", date)).string());
 
-  auto prev_output = std::move(compiler_output_);
-  compiler_output_ =
-      holoflow::runtime::Compiler(registry_, log_root).compile(spec_, std::move(prev_output));
+  auto           prev_output = std::move(compiler_output_);
+  CompilerConfig config;
+  config.log_dir             = log_root;
+  config.dump_dot_on_failure = true;
+  config.verbose_tracing     = true;
+  Compiler compiler(registry_, config);
+  compiler_output_ = compiler.compile(spec_, std::move(prev_output));
+  // compiler_output_ =
+  //     holoflow::runtime::Compiler(registry_, log_root).compile(spec_, std::move(prev_output));
 
   auto &graph     = compiler_output_->graph;
   auto &sections  = compiler_output_->sections;
