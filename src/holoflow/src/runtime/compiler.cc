@@ -560,19 +560,49 @@ void Compiler::Impl::instantiate_tasks() {
     const auto &np = g[v];
 
     if (np.infer.kind == core::TaskKind::Sync) {
-      size_t              sid    = node_to_section_map_.at(np.spec.name);
-      auto                stream = out_->resources.streams.at((int)sid).get();
-      core::SyncCreateCtx ctx{.stream = stream};
+      // Sync Node: Simple lookup in the node->section map
+      size_t sid    = node_to_section_map_.at(np.spec.name);
+      auto   stream = out_->resources.streams.at(sid).get();
 
-      auto &factory = registry_.get_sync(np.spec.kind);
-      auto  task    = factory.create(np.infer.input_descs, np.spec.settings, ctx);
-      tasks.emplace(np.spec.name, std::move(task));
+      core::SyncCreateCtx ctx{.stream = stream};
+      auto               &factory = registry_.get_sync(np.spec.kind);
+      tasks.emplace(np.spec.name, factory.create(np.infer.input_descs, np.spec.settings, ctx));
     } else if (np.infer.kind == core::TaskKind::Async) {
-      // Async initialization (Simplified for now)
-      core::AsyncCreateCtx ctx{nullptr, nullptr};
-      auto                &factory = registry_.get_async(np.spec.kind);
-      auto                 task    = factory.create(np.infer.input_descs, np.spec.settings, ctx);
-      tasks.emplace(np.spec.name, std::move(task));
+      // Async Node: Needs streams from both Upstream (Producer) and Downstream (Consumer)
+
+      // 1. Find Producer Stream (from Incoming Edges)
+      void *prod_stream = nullptr;
+      for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
+        auto p = boost::source(e, g);
+        // We only care about Sync predecessors to identify the section
+        if (g[p].infer.kind == core::TaskKind::Sync) {
+          size_t sid  = node_to_section_map_.at(g[p].spec.name);
+          prod_stream = out_->resources.streams.at(sid).get();
+          break; // Found the section; partition logic guarantees all sync inputs form one component
+        }
+      }
+
+      // 2. Find Consumer Stream (from Outgoing Edges)
+      void *cons_stream = nullptr;
+      for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
+        auto s = boost::target(e, g);
+        // We only care about Sync successors to identify the section
+        if (g[s].infer.kind == core::TaskKind::Sync) {
+          size_t sid  = node_to_section_map_.at(g[s].spec.name);
+          cons_stream = out_->resources.streams.at(sid).get();
+          break; // Found the section; partition logic guarantees all sync outputs form one
+                 // component
+        }
+      }
+
+      // 3. Create Context
+      // Note: Cast raw pointers to cudaStream_t if your ctx expects typed streams,
+      // or keep as void* depending on your core::AsyncCreateCtx definition.
+      core::AsyncCreateCtx ctx{.producer_stream = static_cast<cudaStream_t>(prod_stream),
+                               .consumer_stream = static_cast<cudaStream_t>(cons_stream)};
+
+      auto &factory = registry_.get_async(np.spec.kind);
+      tasks.emplace(np.spec.name, factory.create(np.infer.input_descs, np.spec.settings, ctx));
     }
   }
 }
