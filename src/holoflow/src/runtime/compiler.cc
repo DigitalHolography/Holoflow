@@ -79,6 +79,43 @@ private:
 };
 
 // -------------------------------------------------------------------------------------------------
+// Storage Adapter for owning tasks
+// -------------------------------------------------------------------------------------------------
+class TaskStorageAdapter : public core::IOStorageAccess {
+public:
+  TaskStorageAdapter(std::vector<int> in_tids, std::vector<int> out_tids, ExecResouces &resources);
+  [[nodiscard]] core::Storage &owned_input_storage(size_t index) override;
+  [[nodiscard]] core::Storage &owned_output_storage(size_t index) override;
+
+private:
+  std::vector<int> in_tids_;
+  std::vector<int> out_tids_;
+  ExecResouces    &res_;
+};
+
+TaskStorageAdapter::TaskStorageAdapter(std::vector<int> in_tids, std::vector<int> out_tids,
+                                       ExecResouces &resources)
+    : in_tids_(std::move(in_tids)), out_tids_(std::move(out_tids)), res_(resources) {}
+
+core::Storage &TaskStorageAdapter::owned_input_storage(size_t index) {
+  if (index >= in_tids_.size()) {
+    throw std::out_of_range("Input index out of range in TaskStorageAdapter");
+  }
+  size_t tid = in_tids_[index];
+  size_t sid = res_.tid_to_sid.at(tid);
+  return *res_.storages.at(sid);
+}
+
+core::Storage &TaskStorageAdapter::owned_output_storage(size_t index) {
+  if (index >= out_tids_.size()) {
+    throw std::out_of_range("Output index out of range in TaskStorageAdapter");
+  }
+  size_t tid = out_tids_[index];
+  size_t sid = res_.tid_to_sid.at(tid);
+  return *res_.storages.at(sid);
+}
+
+// -------------------------------------------------------------------------------------------------
 // Compiler Declaration (PIMPL)
 // -------------------------------------------------------------------------------------------------
 // The "Pointer to Implementation" (PIMPL) idiom is used here to hide the heavy
@@ -116,11 +153,14 @@ private:
   void build_graph_structure();
   void run_type_inference();
   void assign_tensor_ids();
+  void assign_storage_ids();
   void verify_buffer_consistency();
   void allocate_buffers();
+  void create_storage_adapters();
   void partition_sections();
   void assign_streams();
   void instantiate_tasks();
+  void bind_tasks();
 
   // Generic Pass Runner
   template <typename Func> void run_pass(const char *name, Func &&fn) {
@@ -147,26 +187,24 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
   out_   = std::make_unique<CompilerOutput>();
 
   try {
-    // 1. Validation: Ensure the user input (GraphSpec) is sane.
+    // 1. Structure
     run_pass("Validate Spec", [&] { validate_spec(); });
-
-    // 2. IR Generation: Convert Spec to our internal GraphPlan (Boost Graph).
     run_pass("Build Graph Plan", [&] { build_graph_structure(); });
-
-    // 3. Inference: Propagate types (shapes/formats) from Sources to Sinks.
     run_pass("Type Inference", [&] { run_type_inference(); });
 
-    // 4. Memory Planning: Assign unique IDs to tensors and handle buffer reuse.
-    run_pass("Tensor Allocation", [&] { assign_tensor_ids(); });
-    run_pass("Consistency Check", [&] { verify_buffer_consistency(); });
-    run_pass("Buffer Creation", [&] { allocate_buffers(); });
+    // 2. Memory Planning (The New Logic)
+    run_pass("Tensor IDs", [&] { assign_tensor_ids(); });
+    run_pass("Storage Mapping", [&] { assign_storage_ids(); });
+    run_pass("Buffer Allocation", [&] { allocate_buffers(); });
 
-    // 5. Scheduling: Group nodes into execution "Sections" (subgraphs).
+    // 3. Resource Preparation
+    run_pass("Storage Adapters", [&] { create_storage_adapters(); });
+
+    // 4. Execution Planning
     run_pass("Section Partitioning", [&] { partition_sections(); });
     run_pass("Stream Assignment", [&] { assign_streams(); });
-
-    // 6. Instantiation: Create the actual C++ objects (Tasks).
     run_pass("Task Instantiation", [&] { instantiate_tasks(); });
+    run_pass("Task Binding", [&] { bind_tasks(); });
 
     if (config_.dump_dot_on_failure) {
       dump_graphviz("compilation_success.dot");
@@ -183,6 +221,10 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
 }
 
 void Compiler::Impl::setup_logging() {
+  if (spdlog::get("compiler")) {
+    spdlog::drop("compiler");
+  }
+
   if (!config_.log_dir.empty()) {
     std::filesystem::create_directories(config_.log_dir);
     auto path = config_.log_dir / "compiler.log";
@@ -312,46 +354,91 @@ void Compiler::Impl::run_type_inference() {
 // Pass: Assign Tensor IDs
 // -------------------------------------------------------------------------------------------------
 // Assigns a unique ID to every tensor flowing through edges.
-// Also handles "In-Place" optimizations (e.g., `y = x + 1` where y reuses x's memory).
 void Compiler::Impl::assign_tensor_ids() {
-  auto                                     &g = out_->graph;
-  std::vector<GraphPlan::vertex_descriptor> topo_order;
-  boost::topological_sort(g, std::back_inserter(topo_order));
+  auto &g        = out_->graph;
+  auto &res      = out_->resources;
+  int   next_tid = 0;
 
-  int next_tid = 0;
+  // Topological sort ensures flow direction
+  std::vector<GraphPlan::vertex_descriptor> topo;
+  boost::topological_sort(g, std::back_inserter(topo));
 
-  for (auto v : std::views::reverse(topo_order)) {
+  for (auto v : std::views::reverse(topo)) {
     auto &node = g[v];
 
-    // Collect TIDs from input edges
-    std::vector<int> input_tids(node.infer.input_descs.size(), -1);
+    // A. Inputs: Snapshot TIDs from incoming edges
+    node.in_tids.resize(node.infer.input_descs.size());
     for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
-      const auto &ep             = g[e];
-      input_tids[ep.spec.in_idx] = ep.tid;
-    }
-    node.in_tids = input_tids;
-
-    // Handle Output TIDs
-    size_t n_out = node.infer.output_descs.size();
-    node.out_tids.assign(n_out, -1);
-
-    // Check for In-Place mandates (Output i reuses Input j)
-    std::vector<int> forced_tids(n_out, -1);
-    for (const auto &ip : node.infer.in_place) {
-      forced_tids[ip.out_idx] = input_tids[ip.in_idx];
+      const auto &ep               = g[e];
+      node.in_tids[ep.spec.in_idx] = ep.tid;
+      // Store Logical Description
+      res.tensor_descs[ep.tid] = ep.desc;
     }
 
+    // B. Outputs: Assign NEW Unique TIDs (Static Single Assignment)
+    node.out_tids.resize(node.infer.output_descs.size());
     auto out_edges = boost::out_edges(v, g);
-    for (int i = 0; i < static_cast<int>(n_out); ++i) {
-      // If forced (in-place), reuse input TID. Otherwise, generate new TID.
-      int tid          = (forced_tids[i] != -1) ? forced_tids[i] : next_tid++;
-      node.out_tids[i] = tid;
 
-      // Stamp TID onto all outgoing edges connected to this port
+    for (size_t i = 0; i < node.out_tids.size(); ++i) {
+      int tid               = next_tid++;
+      node.out_tids[i]      = tid;
+      res.tensor_descs[tid] = node.infer.output_descs[i];
+
+      // Stamp TID on outgoing edges
       for (auto e : boost::make_iterator_range(out_edges)) {
-        if (g[e].spec.out_idx == i)
+        if (g[e].spec.out_idx == static_cast<int>(i)) {
           g[e].tid = tid;
+        }
       }
+    }
+  }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Pass: Assign Storage IDs
+// -------------------------------------------------------------------------------------------------
+void Compiler::Impl::assign_storage_ids() {
+  auto &g   = out_->graph;
+  auto &res = out_->resources;
+
+  res.tid_to_sid.clear();
+  int next_sid = 0;
+
+  std::vector<GraphPlan::vertex_descriptor> topo;
+  boost::topological_sort(g, std::back_inserter(topo));
+
+  for (auto v : std::views::reverse(topo)) {
+    auto &node = g[v];
+
+    for (size_t out_idx = 0; out_idx < node.out_tids.size(); ++out_idx) {
+      int out_tid = node.out_tids[out_idx];
+      int sid     = -1;
+
+      // A. Check for In-Place / Aliasing
+      // If this output reuses an input buffer, inherit the SID.
+      for (const auto &ip : node.infer.in_place) {
+        if (ip.out_idx == static_cast<int>(out_idx)) {
+          int in_tid = node.in_tids[ip.in_idx];
+
+          if (res.tid_to_sid.contains(in_tid)) {
+            sid = (int)res.tid_to_sid.at(in_tid);
+          } else {
+            // Should never happen in valid topological order
+            throw CompilerException(
+                std::format("Node '{}': In-place input TID {} has no Storage ID assigned.",
+                            node.spec.name, in_tid));
+          }
+          break;
+        }
+      }
+
+      // B. If no alias found, assign a NEW Storage ID
+      if (sid == -1) {
+        sid = next_sid++;
+      }
+
+      // C. Record Logical -> Physical Mapping
+      res.tid_to_sid[out_tid] = sid;
     }
   }
 }
@@ -383,29 +470,72 @@ void Compiler::Impl::verify_buffer_consistency() {
 }
 
 void Compiler::Impl::allocate_buffers() {
-  std::unordered_set<int> owned_tids;
-  auto                   &g = out_->graph;
+  auto &g   = out_->graph;
+  auto &res = out_->resources;
 
-  // Identify TIDs that are managed manually by Nodes (Internal/Owned buffers)
+  res.memory_blocks.clear();
+  res.storages.clear();
+
+  // A. Identify SIDs that are "Owned" by user tasks (Framework should NOT alloc)
+  std::unordered_set<size_t> user_managed_sids;
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
     const auto &node = g[v];
-    for (size_t i = 0; i < node.in_tids.size(); ++i) {
-      if (node.infer.owned_inputs[i])
-        owned_tids.insert(node.in_tids[i]);
-    }
     for (size_t i = 0; i < node.out_tids.size(); ++i) {
-      if (node.infer.owned_outputs[i])
-        owned_tids.insert(node.out_tids[i]);
+      if (node.infer.owned_outputs[i]) {
+        int    tid = node.out_tids[i];
+        size_t sid = res.tid_to_sid.at(tid);
+        user_managed_sids.insert(sid);
+      }
+    }
+    for (size_t i = 0; i < node.in_tids.size(); ++i) {
+      if (node.infer.owned_inputs[i]) {
+        int    tid = node.in_tids[i];
+        size_t sid = res.tid_to_sid.at(tid);
+        user_managed_sids.insert(sid);
+      }
     }
   }
 
-  // Allocate all other TIDs (Intermediate buffers managed by the framework)
-  out_->resources.tensors.clear();
-  for (auto e : boost::make_iterator_range(boost::edges(g))) {
-    const auto &ep = g[e];
-    if (!owned_tids.contains(ep.tid)) {
-      out_->resources.tensors.try_emplace(ep.tid, core::Tensor(ep.desc));
+  // B. Group TIDs by their SID to find a representative Descriptor
+  // (We just need one valid descriptor per SID to know size/loc)
+  std::map<size_t, size_t> sid_to_rep_tid;
+  for (const auto &[tid, sid] : res.tid_to_sid) {
+    if (!sid_to_rep_tid.count(sid))
+      sid_to_rep_tid[sid] = tid;
+  }
+
+  // C. Create Storage Identities & Physical Blocks
+  for (const auto &[sid, tid] : sid_to_rep_tid) {
+    const auto &desc = res.tensor_descs.at(tid);
+
+    // 1. Create the Stable Identity Object
+    auto storage     = std::make_unique<core::Storage>();
+    storage->mem_loc = desc.mem_loc;
+    storage->bytes   = desc.num_bytes();
+    storage->ptr     = nullptr; // Default to null
+
+    // 2. Allocate Physical Memory (if not user-managed)
+    if (!user_managed_sids.contains(sid)) {
+
+      MemoryBlock block;
+      block.mem_loc    = desc.mem_loc;
+      block.size_bytes = desc.num_bytes();
+
+      if (desc.mem_loc == core::MemLoc::Host) {
+        block.h_data = curaii::make_unique_host_ptr<std::byte>(block.size_bytes);
+      } else {
+        block.d_data = curaii::make_unique_device_ptr<std::byte>(block.size_bytes);
+      }
+
+      // Link Identity -> Physical Pointer
+      storage->ptr = static_cast<std::byte *>(block.get());
+
+      // Store ownership
+      res.memory_blocks.emplace(sid, std::move(block));
     }
+
+    // Store Identity
+    res.storages.emplace(sid, std::move(storage));
   }
 }
 
@@ -552,6 +682,23 @@ void Compiler::Impl::assign_streams() {
   }
 }
 
+void Compiler::Impl::create_storage_adapters() {
+  auto &g   = out_->graph;
+  auto &res = out_->resources;
+
+  res.node_storage_adapters.clear();
+
+  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
+    const auto &np = g[v];
+
+    // Create the adapter specific to this node's TIDs
+    auto adapter = std::make_unique<TaskStorageAdapter>(np.in_tids, np.out_tids, res);
+
+    // Store it keyed by node name for easy retrieval during instantiation
+    res.node_storage_adapters.emplace(np.spec.name, std::move(adapter));
+  }
+}
+
 void Compiler::Impl::instantiate_tasks() {
   auto &g     = out_->graph;
   auto &tasks = out_->resources.tasks;
@@ -607,6 +754,45 @@ void Compiler::Impl::instantiate_tasks() {
   }
 }
 
+std::shared_ptr<spdlog::logger> create_task_logger(const std::string &node_name,
+                                                   const std::string &node_kind) {
+  auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+  sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [thread %t] [%^%l%$] %v");
+  auto logger_name = fmt::format("TaskLogger-{}-{}", node_kind, node_name);
+  auto logger      = std::make_shared<spdlog::logger>(logger_name, sink);
+  logger->set_level(spdlog::default_logger()->level());
+  return logger;
+}
+
+void Compiler::Impl::bind_tasks() {
+  auto &g   = out_->graph;
+  auto &res = out_->resources;
+
+  // Iterate via Graph to ensure we match nodes to tasks correctly
+  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
+    const auto &np = g[v];
+
+    // 1. Retrieve the Task
+    auto it_task = res.tasks.find(np.spec.name);
+    if (it_task == res.tasks.end())
+      continue;
+    core::ITask *task = it_task->second.get();
+
+    // 2. Bind Storage Adapter
+    if (auto it_adapter = res.node_storage_adapters.find(np.spec.name);
+        it_adapter != res.node_storage_adapters.end()) {
+
+      task->bind_storage_access(it_adapter->second.get());
+    }
+
+    // 3. Bind Logger
+    auto logger = create_task_logger(np.spec.name, np.spec.kind);
+    task->bind_logger(std::move(logger));
+
+    // 4. (Future) Bind Event Writers, Profilers, etc.
+  }
+}
+
 // -------------------------------------------------------------------------------------------------
 // Visualization Helpers (Internal)
 // -------------------------------------------------------------------------------------------------
@@ -646,6 +832,9 @@ std::string format_tdesc(const core::TDesc &d) {
   ss << "{\\n";
   ss << "  shape: " << escape_dot_label(nlohmann::json(d.shape).dump()) << ",\\n";
   ss << "  dtype: " << escape_dot_label(nlohmann::json(d.dtype).dump()) << "\\n";
+  ss << "  mem_loc: " << escape_dot_label(nlohmann::json(d.mem_loc).dump()) << "\\n";
+  ss << "  strides: " << escape_dot_label(nlohmann::json(d.strides).dump()) << "\\n";
+  ss << "  offset: " << d.offset << "\\n";
   ss << "}";
   return ss.str();
 }
@@ -657,27 +846,35 @@ std::string format_tdesc(const core::TDesc &d) {
 // -------------------------------------------------------------------------------------------------
 
 void Compiler::Impl::dump_graphviz(const std::string &filename) {
-  if (config_.log_dir.empty())
+  if (config_.log_dir.empty()) {
     return;
+  }
 
   std::ofstream file(config_.log_dir / filename);
-  if (!file.is_open())
+  if (!file.is_open()) {
     return;
+  }
 
   auto &g        = out_->graph;
+  auto &res      = out_->resources; // Need resources for TID->SID lookup
   auto &sections = out_->sections;
 
   file << "digraph GraphPlan {\n";
   file << "  rankdir=LR;\n";
-  file << "  compound=true;\n"; // Allow edges between clusters
+  file << "  compound=true;\n";
   file << "  node [fontname=\"Helvetica\", shape=box, style=filled];\n";
   file << "  edge [fontname=\"Helvetica\", fontsize=10];\n\n";
 
-  // --- Helper: Generate Visual IDs ---
-  // Returns appropriate visual ID for a node based on context (source vs target)
+  // Formats "TID(s:SID)" or just "TID" if SID is missing.
+  auto fmt_id = [&](int tid) -> std::string {
+    if (res.tid_to_sid.contains(tid)) {
+      return std::format("{}(s:{})", tid, res.tid_to_sid.at(tid));
+    }
+    return std::to_string(tid);
+  };
+
   auto get_visual_id = [&](size_t v, bool is_source) -> std::string {
     if (g[v].infer.kind == core::TaskKind::Async) {
-      // Async nodes are split: Source uses the "OUT" half, Target uses the "IN" half
       return is_source ? std::format("v{}_out", v) : std::format("v{}_in", v);
     }
     return std::format("v{}", v);
@@ -687,89 +884,102 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
     const auto &np = g[v];
 
-    // Common Label Generation
     std::ostringstream label_base;
     label_base << (np.spec.name.empty() ? "(unnamed)" : np.spec.name);
 
-    // TIDs display
-    std::string tids_str = "\n[";
-    for (size_t i = 0; i < np.in_tids.size(); ++i)
-      tids_str += (i ? "," : "") + std::to_string(np.in_tids[i]);
-    tids_str += "] -> [";
-    for (size_t i = 0; i < np.out_tids.size(); ++i)
-      tids_str += (i ? "," : "") + std::to_string(np.out_tids[i]);
-    tids_str += "]";
+    // Format Input IDs
+    std::string in_str = "[";
+    for (size_t i = 0; i < np.in_tids.size(); ++i) {
+      in_str += (i ? "," : "") + fmt_id(np.in_tids[i]);
+    }
+    in_str += "]";
+
+    // Format Output IDs (detect aliasing)
+    std::string out_str = "[";
+    for (size_t i = 0; i < np.out_tids.size(); ++i) {
+      const int   out_tid = np.out_tids[i];
+      std::string id_text = fmt_id(out_tid);
+
+      bool is_alias = false;
+      if (res.tid_to_sid.count(out_tid)) {
+        const size_t out_sid = res.tid_to_sid.at(out_tid);
+        for (int in_tid : np.in_tids) {
+          if (res.tid_to_sid.count(in_tid) && res.tid_to_sid.at(in_tid) == out_sid) {
+            is_alias = true;
+            break;
+          }
+        }
+      }
+
+      out_str += (i ? "," : "") + id_text + (is_alias ? "*" : "");
+    }
+    out_str += "]";
+
+    const std::string ids_line = "\nIn: " + in_str + "\nOut: " + out_str;
 
     if (np.infer.kind == core::TaskKind::Async) {
-      // === Split Async Node Definition ===
+      // Async split nodes.
+      // Append "\n" to force left alignment via escape_dot_label.
+      const std::string label_in = label_base.str() + "\n(Producer/Write)" + ids_line + "\n";
 
-      // 1a. Input Half (The "Producer" Task - Writes to buffer)
-      // Visually acts as a Sink in the Upstream section
-      std::string label_in = label_base.str() + "\n(Producer/Write)" + tids_str;
       file << std::format("  v{}_in [label=\"{}\", shape=invhouse, fillcolor=\"#e6f2ff\", "
                           "color=\"#0066cc\", style=\"filled,dashed\"];\n",
                           v, escape_dot_label(label_in));
 
-      // 1b. Output Half (The "Consumer" Task - Reads from buffer)
-      // Visually acts as a Source in the Downstream section
-      std::string label_out = label_base.str() + "\n(Consumer/Read)" + tids_str;
+      const std::string label_out = label_base.str() + "\n(Consumer/Read)" + ids_line + "\n";
+
       file << std::format("  v{}_out [label=\"{}\", shape=house, fillcolor=\"#ffe6e6\", "
                           "color=\"#cc0000\", style=\"filled,dashed\"];\n",
                           v, escape_dot_label(label_out));
 
-      // 1c. The Bridge Edge (Internal Async Synchronization)
       file << std::format("  v{}_in -> v{}_out [style=dotted, color=\"#888888\", penwidth=2, "
                           "arrowh=none, label=\"Async Signal\"];\n",
                           v, v);
-
     } else {
-      // === Standard Sync Node ===
-      std::string label = label_base.str() + "\n(" + np.spec.kind + ")" + tids_str;
+      // Sync nodes.
+      const std::string label = label_base.str() + "\n(" + np.spec.kind + ")" + ids_line + "\n";
+
       file << std::format("  v{} [label=\"{}\", fillcolor=\"#ccffcc\"];\n", v,
                           escape_dot_label(label));
     }
   }
+
   file << "\n";
 
   // --- 2. Define Edges ---
   for (auto e : boost::make_iterator_range(boost::edges(g))) {
-    auto        u  = boost::source(e, g);
-    auto        v  = boost::target(e, g);
+    const auto  u  = boost::source(e, g);
+    const auto  v  = boost::target(e, g);
     const auto &ep = g[e];
 
-    // Map geometric connectivity:
-    // Sync -> Async  becomes  Sync -> Async_IN
-    // Async -> Sync  becomes  Async_OUT -> Sync
-    std::string u_vis = get_visual_id(u, true);  // Source
-    std::string v_vis = get_visual_id(v, false); // Target
+    const std::string u_vis = get_visual_id(u, /*is_source=*/true);
+    const std::string v_vis = get_visual_id(v, /*is_source=*/false);
 
     std::ostringstream edge_lbl;
-    edge_lbl << "tid:" << ep.tid << "\\n" << format_tdesc(ep.desc);
+    edge_lbl << "tid:" << ep.tid;
+    if (res.tid_to_sid.count(ep.tid)) {
+      edge_lbl << " (s:" << res.tid_to_sid.at(ep.tid) << ")";
+    }
+    edge_lbl << "\\n" << format_tdesc(ep.desc);
 
     file << std::format("  {} -> {} [taillabel=\"{}\", headlabel=\"{}\", label=\"{}\"];\n", u_vis,
                         v_vis, ep.spec.out_idx, ep.spec.in_idx, edge_lbl.str());
   }
+
   file << "\n";
 
-  // --- 3. Define Sections (Clusters) ---
+  // --- 3. Define Sections ---
   for (const auto &sec : sections) {
     file << std::format("  subgraph cluster_section_{} {{\n", sec.id);
-    file << std::format("    label=\"Section {} (Stream {})\";\n", sec.id, (void *)sec.stream);
+    file << std::format("    label=\"Section {} (Stream {})\\l\";\n", sec.id, (void *)sec.stream);
     file << "    style=rounded; color=gray; bgcolor=\"#f8f8f8\";\n";
 
-    // A. Sync Nodes (Standard)
     for (auto vd : sec.sync_topo) {
       file << std::format("    v{};\n", vd);
     }
-
-    // B. Async Input Halves (Producers)
-    // These belong to the section that FEEDS the async node (Upstream)
     for (auto vd : sec.async_prod) {
       file << std::format("    v{}_in;\n", vd);
     }
-
-    // C. Async Output Halves (Consumers)
-    // These belong to the section that READS the async node (Downstream)
     for (auto vd : sec.async_cons) {
       file << std::format("    v{}_out;\n", vd);
     }

@@ -276,11 +276,11 @@ static void write_compiled_resources(std::ostringstream &ss, const runtime::Exec
   ss << "\n";
 
   ss << "  // tensors:\n";
-  for (const auto &p : res.tensors) {
-    int                 tid = p.first;
-    const core::Tensor &t   = p.second;
-    ss << "  //   tid=" << tid << " : " << nlohmann::json(t.desc()).dump() << "\n";
-  }
+  // for (const auto &p : res.tensors) {
+  //   int                 tid = p.first;
+  //   const core::Tensor &t   = p.second;
+  //   ss << "  //   tid=" << tid << " : " << nlohmann::json(t.desc()).dump() << "\n";
+  // }
   ss << "\n";
 }
 

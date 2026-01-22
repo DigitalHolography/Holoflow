@@ -61,10 +61,27 @@ using GraphPlan = boost::adjacency_list<boost::vecS,           // OutEdgeList
                                         EdgePlan               // Edge properties
                                         >;
 
+/// Represents a block of memory used during graph execution.
+struct MemoryBlock {
+  core::MemLoc mem_loc;    ///< Memory location (host or device).
+  size_t       size_bytes; ///< Size of the memory block in bytes.
+
+  curaii::unique_host_ptr<std::byte>   h_data; ///< Host memory (if applicable).
+  curaii::unique_device_ptr<std::byte> d_data; ///< Device memory (if applicable).
+
+  void *get(); ///< Returns a mutable pointer to the memory block.
+};
+
 struct ExecResouces {
-  std::map<int, curaii::CudaStream>                   streams; ///< CUDA streams by ID.
-  std::map<std::string, std::unique_ptr<core::ITask>> tasks;   ///< Task instances by ID.
-  std::map<int, core::Tensor>                         tensors; ///< Allocated tensors by ID.
+  std::map<size_t, MemoryBlock>                    memory_blocks; ///< StorageID -> MemoryBlock.
+  std::map<size_t, std::unique_ptr<core::Storage>> storages;      ///< StorageID -> Storage.
+  std::map<size_t, core::TDesc>                    tensor_descs;  ///< TensorID -> TDesc.
+  std::map<size_t, size_t>                         tid_to_sid;    ///< TensorID -> StorageID.
+
+  std::map<std::string, std::unique_ptr<core::IOStorageAccess>> node_storage_adapters;
+  std::map<size_t, curaii::CudaStream>                          streams; ///< CUDA streams by ID.
+  std::map<std::string, std::unique_ptr<core::ITask>>           tasks;   ///< Task instances by ID.
+  // std::map<int, core::Tensor>                         tensors; ///< Allocated tensors by ID.
 };
 
 struct Section {
@@ -123,8 +140,7 @@ public:
   [[nodiscard]] std::optional<holoflow_event::Event> ui_try_receive() noexcept;
 
 private:
-  void init_tensor_tables();
-  void bind_resource_tensors();
+  void init_tviews();
   void build_event_handles();
   void build_nodes_rts();
   void reset_metrics_state();
@@ -209,8 +225,7 @@ private:
   /// If a TView is {nullptr, {}}, it means the tensor is not currently
   /// available (owned tensor not aqcuired).
   /// They are exclusive to sections, i.e. no sharing between sections.
-  std::vector<core::TView>   tviews_;
-  std::vector<core::Storage> storages_;
+  std::vector<core::TView> tviews_;
 
   std::vector<NodeRt>      node_rts_; ///< Runtime data for each node.
   std::vector<std::string> node_names_;

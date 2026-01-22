@@ -124,10 +124,20 @@ std::vector<std::size_t> make_default_strides(const std::vector<std::size_t> &sh
 
 TDesc::TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc)
     : shape(std::move(shape)), dtype(dtype), mem_loc(mem_loc),
-      strides(make_default_strides(this->shape, this->dtype)) {}
+      strides(make_default_strides(this->shape, this->dtype)), offset(0) {}
 
 TDesc::TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc, std::vector<size_t> strides)
-    : shape(std::move(shape)), dtype(dtype), mem_loc(mem_loc), strides(std::move(strides)) {}
+    : shape(std::move(shape)), dtype(dtype), mem_loc(mem_loc), strides(std::move(strides)),
+      offset(0) {}
+
+TDesc::TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc, size_t offset)
+    : shape(std::move(shape)), dtype(dtype), mem_loc(mem_loc),
+      strides(make_default_strides(this->shape, this->dtype)), offset(offset) {}
+
+TDesc::TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc, std::vector<size_t> strides,
+             size_t offset)
+    : shape(std::move(shape)), dtype(dtype), mem_loc(mem_loc), strides(std::move(strides)),
+      offset(offset) {}
 
 size_t TDesc::rank() const noexcept { return shape.size(); }
 

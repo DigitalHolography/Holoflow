@@ -62,14 +62,18 @@ struct Storage {
 
 /// Describes a multi-dimensional array (tensor).
 struct TDesc {
-  std::vector<size_t> shape;   ///< The shape of the tensor (dimensions)
-  DType               dtype;   ///< The data type of the tensor elements
-  MemLoc              mem_loc; ///< The memory location of the tensor
-  std::vector<size_t> strides; ///< The strides of the tensor (in bytes)
+  std::vector<size_t> shape;      ///< The shape of the tensor (dimensions)
+  DType               dtype;      ///< The data type of the tensor elements
+  MemLoc              mem_loc;    ///< The memory location of the tensor
+  std::vector<size_t> strides;    ///< The strides of the tensor (in bytes)
+  size_t              offset = 0; ///< Byte offset from the start of the storage
 
   TDesc() = default;
   TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc);
   TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc, std::vector<size_t> strides);
+  TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc, size_t offset);
+  TDesc(std::vector<size_t> shape, DType dtype, MemLoc mem_loc, std::vector<size_t> strides,
+        size_t offset);
 
   /// Returns the rank (number of dimensions) of the tensor.
   size_t rank() const noexcept;

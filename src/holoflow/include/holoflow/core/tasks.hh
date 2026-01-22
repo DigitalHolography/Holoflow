@@ -107,6 +107,7 @@ enum class OpResult : uint8_t {
 };
 
 class IOStorageAccess {
+public:
   virtual ~IOStorageAccess() = default;
 
   [[nodiscard]] virtual Storage &owned_input_storage(size_t index)  = 0;

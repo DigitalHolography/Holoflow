@@ -84,6 +84,22 @@ size_t count_distinct_tids(const GraphPlan &graph) {
 
 } // namespace
 
+void *MemoryBlock::get() {
+  void *ptr = nullptr;
+
+  switch (mem_loc) {
+  case core::MemLoc::Host:
+    ptr = h_data.get();
+    break;
+  case core::MemLoc::Device:
+    ptr = d_data.get();
+    break;
+  }
+
+  HOLOFLOW_CHECK(ptr != nullptr, "MemoryBlock pointer is null");
+  return ptr;
+}
+
 Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
                      ExecResouces &resources, std::chrono::milliseconds metrics_interval)
     : graph_(graph), sections_(sections), res_(resources), metrics_interval_(metrics_interval) {
@@ -92,8 +108,9 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
     metrics_interval_ = std::chrono::milliseconds{1};
   }
 
-  init_tensor_tables();
-  bind_resource_tensors();
+  // init_tensor_tables();
+  // bind_resource_tensors();
+  init_tviews();
   build_event_handles();
   build_nodes_rts();
 }
@@ -181,20 +198,31 @@ std::optional<holoflow_event::Event> Scheduler::ui_try_receive() noexcept {
   return router_.ui_try_receive();
 }
 
-void Scheduler::init_tensor_tables() {
+void Scheduler::init_tviews() {
   auto nb_tids = count_distinct_tids(graph_);
-  storages_.assign(nb_tids, core::Storage{});
   tviews_.assign(nb_tids, core::TView{});
-}
 
-void Scheduler::bind_resource_tensors() {
-  for (auto &[tid, tensor] : res_.tensors) {
-    auto v = tensor.view();
-
-    storages_.at(tid) = *v.storage;
-    tviews_.at(tid)   = core::TView{v.desc, &storages_.at(tid)};
+  for (auto &[tid, tdesc] : res_.tensor_descs) {
+    auto sid        = res_.tid_to_sid.at(tid);
+    auto storage    = res_.storages.at(sid).get();
+    tviews_.at(tid) = core::TView{tdesc, storage};
   }
 }
+
+// void Scheduler::init_tensor_tables() {
+//   auto nb_tids = count_distinct_tids(graph_);
+//   storages_.assign(nb_tids, core::Storage{});
+//   tviews_.assign(nb_tids, core::TView{});
+// }
+
+// void Scheduler::bind_resource_tensors() {
+// for (auto &[tid, tensor] : res_.tensors) {
+//   auto v = tensor.view();
+
+//   storages_.at(tid) = *v.storage;
+//   tviews_.at(tid)   = core::TView{v.desc, &storages_.at(tid)};
+// }
+// }
 
 void Scheduler::build_event_handles() {
   event_handles_.clear();
@@ -217,11 +245,25 @@ void Scheduler::build_nodes_rts() {
     auto *task          = res_.tasks.at(np.spec.name).get();
     HOLOFLOW_CHECK(task != nullptr, "Task for node {} is null", np.spec.name);
 
+    // Build in_views and out_views
+    std::vector<core::TView> in_views(np.in_tids.size());
+    std::vector<core::TView> out_views(np.out_tids.size());
+
+    for (size_t i = 0; i < np.in_tids.size(); ++i) {
+      int tid     = np.in_tids[i];
+      in_views[i] = tviews_.at(tid);
+    }
+
+    for (size_t i = 0; i < np.out_tids.size(); ++i) {
+      int tid      = np.out_tids[i];
+      out_views[i] = tviews_.at(tid);
+    }
+
     if (auto *st = dynamic_cast<core::ISyncTask *>(task)) {
       SyncRt srt;
       srt.task             = st;
-      srt.in_views         = std::vector<core::TView>(np.in_tids.size());
-      srt.out_views        = std::vector<core::TView>(np.out_tids.size());
+      srt.in_views         = in_views;
+      srt.out_views        = out_views;
       srt.ctx.inputs       = srt.in_views;
       srt.ctx.outputs      = srt.out_views;
       srt.ctx.cancelled    = &stop_;
@@ -231,8 +273,8 @@ void Scheduler::build_nodes_rts() {
     } else if (auto *at = dynamic_cast<core::IAsyncTask *>(task)) {
       AsyncRt art;
       art.task           = at;
-      art.in_views       = std::vector<core::TView>(np.in_tids.size());
-      art.out_views      = std::vector<core::TView>(np.out_tids.size());
+      art.in_views       = in_views;
+      art.out_views      = out_views;
       art.pctx.inputs    = art.in_views;
       art.pctx.cancelled = &stop_;
       art.xctx.outputs   = art.out_views;
@@ -309,24 +351,24 @@ void Scheduler::run_section(int section_id) {
     //   and we have no guarantee that the async producer at the end of this section
     //   will synchronize the stream before pushing data (it may not be cuda-related).
     for (auto v : sec.async_cons) {
-      refresh_views_async_cons(v);
+      // refresh_views_async_cons(v);
       run_async_cons(v);
-      refresh_outputs_async_cons(v);
+      // refresh_outputs_async_cons(v);
     }
     if (stop_.load()) {
       break;
     }
 
     for (auto v : sec.sync_topo) {
-      refresh_views_sync(v);
+      // refresh_views_sync(v);
       run_sync(v);
-      refresh_outputs_sync(v);
+      // refresh_outputs_sync(v);
     }
 
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
     for (auto v : sec.async_prod) {
-      refresh_views_async_prod(v);
+      // refresh_views_async_prod(v);
       run_async_prod(v);
     }
 
@@ -364,7 +406,7 @@ void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v) {
       tview = task->acquire_input(static_cast<int>(i));
     }
 
-    tviews_.at(np.in_tids.at(i)) = tview.value();
+    // tviews_.at(np.in_tids.at(i)) = tview.value();
   }
 }
 
@@ -382,7 +424,7 @@ void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v) {
       continue;
 
     task->release_output(static_cast<int>(i));
-    tviews_.at(np.out_tids.at(i)) = core::TView{};
+    // tviews_.at(np.out_tids.at(i)) = core::TView{};
   }
 }
 
