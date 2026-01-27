@@ -114,6 +114,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<syncs::ReshapeFactory>(registry_, "Reshape");
   reg_sync<syncs::CropFactory>(registry_, "Crop");
   reg_sync<syncs::RotationFactory>(registry_, "Rotation");
+  reg_sync<syncs::TransposeFactory>(registry_, "Transpose");
   // clang-format on
 
   metrics_timer_ = new QTimer(this);

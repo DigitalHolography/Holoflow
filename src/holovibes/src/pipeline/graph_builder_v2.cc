@@ -234,13 +234,14 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   // -------------------------------------------------------------------------------------------------
   {
 
-    auto [M0]                       = unpack<1>(average(S, {2, s_.time_x_begin, s_.time_x_end}));
-    std::tie(M0)                    = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
-    auto [M0_avg]                   = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
+    auto [M0]     = unpack<1>(average(S, {2, s_.time_x_begin, s_.time_x_end}));
+    std::tie(M0)  = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
+    auto [M0_avg] = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
     std::vector<size_t> crop_origin = {0, 10, 0};
     std::vector<size_t> crop_shape  = {1, M0_avg.shape.at(1) - 20, M0_avg.shape.at(2)};
     std::tie(M0_avg)                = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
     std::tie(M0_avg)                = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
+    std::tie(M0_avg)                = unpack<1>(transpose(M0_avg, {}));
     std::tie(M0_avg)                = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
     std::tie(M0_avg)                = unpack<1>(memcpy(M0_avg, {Host}));
     std::tie(M0_avg)                = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
@@ -288,12 +289,14 @@ DEFINE_UNARY_SYNC_NODE (crop,                                   "crop",         
 DEFINE_UNARY_SYNC_NODE (fft_shift,                              "fft_shift",                           "FFTShift",                       holotask::syncs::FFTShiftSettings)
 DEFINE_UNARY_SYNC_NODE (pct_clip,                               "pct_clip",                            "PctClip",                        holotask::syncs::PctClipSettings)
 DEFINE_UNARY_SYNC_NODE (registration,                           "registration",                        "Registration",                   holotask::syncs::RegistrationSettings)
+DEFINE_UNARY_SYNC_NODE (transpose,                              "transpose",                           "Transpose",                      holotask::syncs::TransposeSettings)
 DEFINE_UNARY_SYNC_NODE (xy_raw_display,                         "xy_raw_display",                      "DisplayTensorXYRaw",             tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (xy_processed_display,                   "xy_processed_display",                "DisplayTensorXY",                tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (xz_processed_display,                   "xz_processed_display",                "DisplayTensorXZ",                tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (yz_processed_display,                   "yz_processed_display",                "DisplayTensorYZ",                tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                          "batch_queue",                         "BatchQueue",                     holotask::asyncs::BatchQueueSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                              "slide_avg",                           "SlidingAverage",                 holotask::asyncs::SlidingAverageSettings)
+
 // clang-format on
 
 std::vector<GraphBuilder_v2::TDesc>

@@ -47,6 +47,7 @@
 #include "holotask/syncs/registration.hh"
 #include "holotask/syncs/reshape.hh"
 #include "holotask/syncs/rotation.hh"
+#include "holotask/syncs/transpose.hh"
 #include "holotask/syncs/stft.hh"
 #include "pipeline/settings.hh"
 #include "tasks/sinks/display_tensor.hh"
@@ -159,6 +160,7 @@ private:
   std::vector<TDesc> pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);
   std::vector<TDesc> registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
   std::vector<TDesc> rotation(const TDesc &X, holotask::syncs::RotationSettings s);
+  std::vector<TDesc> transpose(const TDesc &X, holotask::syncs::TransposeSettings s);
   std::vector<TDesc> holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
   // clang-format on
 };
