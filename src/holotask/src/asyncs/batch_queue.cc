@@ -30,6 +30,7 @@ void to_json(nlohmann::json &j, const BatchQueueSettings &bqs) {
       {"target_capacity", bqs.target_capacity},
       {"output_size", bqs.output_size},
       {"output_stride", bqs.output_stride},
+      {"nb_readers", bqs.nb_readers},
   };
 }
 
@@ -37,15 +38,17 @@ void from_json(const nlohmann::json &j, BatchQueueSettings &bqs) {
   j.at("target_capacity").get_to(bqs.target_capacity);
   j.at("output_size").get_to(bqs.output_size);
   j.at("output_stride").get_to(bqs.output_stride);
+  j.at("nb_readers").get_to(bqs.nb_readers);
 }
 
 BatchQueue::BatchQueue(const BatchQueueSettings &settings, const holoflow::core::TDesc &idesc,
-                       const holoflow::core::TDesc &odesc, HostPtr<std::byte> &&h_buf,
+                       const std::vector<holoflow::core::TDesc> &odesc, HostPtr<std::byte> &&h_buf,
                        DevPtr<std::byte> &&d_buf, std::byte *buf, size_t nb_slots,
                        size_t input_size, size_t element_size)
     : settings_(settings), idesc_(idesc), odesc_(odesc), h_buf_(std::move(h_buf)),
       d_buf_(std::move(d_buf)), buf_(buf), nb_slots_(nb_slots), input_size_(input_size),
-      element_size_(element_size) {}
+      element_size_(element_size),
+      read_idx_vector_(std::vector<AlignedAtomicSizeT>(settings.nb_readers)) {}
 
 std::optional<holoflow::core::TView> BatchQueue::acquire_input(int index) {
   if (index != 0) {
@@ -65,16 +68,16 @@ std::optional<holoflow::core::TView> BatchQueue::acquire_input(int index) {
 }
 
 void BatchQueue::release_output(int index) {
-  if (index != 0) {
+  if (index >= settings_.nb_readers) {
     throw std::out_of_range("BatchQueue::release_output: invalid index");
   }
 
-  size_t read_idx      = read_idx_.load(std::memory_order_relaxed);
+  size_t read_idx      = read_idx_vector_[index].value.load(std::memory_order_relaxed);
   size_t next_read_idx = read_idx + settings_.output_stride;
   if (next_read_idx == nb_slots_) {
     next_read_idx = 0;
   }
-  read_idx_.store(next_read_idx, std::memory_order_release);
+  read_idx_vector_[index].value.store(next_read_idx, std::memory_order_release);
 }
 
 holoflow::core::OpResult BatchQueue::try_push(holoflow::core::AsyncPushCtx &) {
@@ -87,33 +90,41 @@ holoflow::core::OpResult BatchQueue::try_push(holoflow::core::AsyncPushCtx &) {
   return holoflow::core::OpResult::Ok;
 }
 
-holoflow::core::OpResult BatchQueue::try_pop(holoflow::core::AsyncPopCtx &ctx) {
-  if (reader_size() < settings_.output_stride) {
+holoflow::core::OpResult BatchQueue::try_pop(holoflow::core::AsyncPopCtx &ctx, size_t idx) {
+  if (reader_size(idx) < settings_.output_stride) {
     return holoflow::core::OpResult::NotReady;
   }
 
-  size_t     read_idx = read_idx_.load(std::memory_order_relaxed);
+  size_t     read_idx = read_idx_vector_[idx].value.load(std::memory_order_relaxed);
   std::byte *data     = buf_ + read_idx * element_size_;
-  ctx.outputs[0]      = holoflow::core::TView{
-           .data = data,
-           .desc = odesc_,
+  ctx.outputs[idx]    = holoflow::core::TView{
+         .data = data,
+         .desc = odesc_[idx],
   };
   return holoflow::core::OpResult::Ok;
 }
 
 size_t BatchQueue::writer_size() const {
-  size_t write_idx = write_idx_.load(std::memory_order_relaxed);
-  size_t read_idx  = read_idx_.load(std::memory_order_acquire);
-  size_t diff      = write_idx - read_idx;
-  if (write_idx < read_idx) {
-    diff += nb_slots_;
+  size_t diff = SIZE_MAX;
+
+  for (const auto &atomic_read_idx : read_idx_vector_) {
+    size_t write_idx  = write_idx_.load(std::memory_order_acquire);
+    size_t read_idx   = atomic_read_idx.value.load(std::memory_order_relaxed);
+    size_t local_diff = write_idx - read_idx;
+    if (write_idx < read_idx) {
+      local_diff += nb_slots_;
+    }
+    if (local_diff < diff) {
+      diff = local_diff;
+    }
   }
+
   return diff;
 }
 
-size_t BatchQueue::reader_size() const {
+size_t BatchQueue::reader_size(size_t idx) const {
   size_t write_idx = write_idx_.load(std::memory_order_acquire);
-  size_t read_idx  = read_idx_.load(std::memory_order_relaxed);
+  size_t read_idx  = read_idx_vector_[idx].value.load(std::memory_order_relaxed);
   size_t diff      = write_idx - read_idx;
   if (write_idx < read_idx) {
     diff += nb_slots_;
@@ -154,14 +165,18 @@ BatchQueueFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(is_factor, "BatchQueue task output stride must be a multiple of output size");
 
   // Success
-  auto odesc     = input_descs[0];
-  odesc.shape[0] = settings.output_size;
+  std::vector<holoflow::core::TDesc> odesc(settings.nb_readers, input_descs[0]);
+
+  for (auto &od : odesc) {
+    od.shape[0] = settings.output_size;
+  }
+
   return holoflow::core::InferResult{
       .input_descs   = {input_descs[0]},
-      .output_descs  = {odesc},
+      .output_descs  = odesc,
       .in_place      = {},
       .owned_inputs  = {true},
-      .owned_outputs = {true},
+      .owned_outputs = std::vector<bool>(settings.nb_readers, true),
       .kind          = holoflow::core::TaskKind::Async,
   };
 }
@@ -208,7 +223,7 @@ BatchQueueFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   }
 
   // Success
-  auto *task = new BatchQueue(settings, input_descs[0], infer.output_descs[0], std::move(h_buf),
+  auto *task = new BatchQueue(settings, input_descs[0], infer.output_descs, std::move(h_buf),
                               std::move(d_buf), buf, nb_slots, input_size, element_size);
   return std::unique_ptr<holoflow::core::IAsyncTask>(task);
 }
@@ -240,7 +255,7 @@ BatchQueueFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
     auto  h_buf = std::move(old_bq->h_buf_);
     auto  d_buf = std::move(old_bq->d_buf_);
     auto  buf   = old_bq->buf_;
-    auto *task  = new BatchQueue(settings, input_descs[0], infer.output_descs[0], std::move(h_buf),
+    auto *task  = new BatchQueue(settings, input_descs[0], infer.output_descs, std::move(h_buf),
                                  std::move(d_buf), buf, nb_slots, input_size, element_size);
     return std::unique_ptr<holoflow::core::IAsyncTask>(task);
   }

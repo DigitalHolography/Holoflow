@@ -41,6 +41,11 @@ struct BatchQueueSettings {
   int target_capacity; // Target capacity of the queue
   int output_size;     // Size of each output batch
   int output_stride;   // Stride between batches
+  int nb_readers;      // Number of concurrent readers
+};
+
+struct alignas(CACHE_LINE_SIZE) AlignedAtomicSizeT {
+  std::atomic<size_t> value;
 };
 
 /// @name JSON serialization
@@ -55,30 +60,30 @@ public:
   std::optional<holoflow::core::TView> acquire_input(int index) override;
   void                                 release_output(int index) override;
   holoflow::core::OpResult             try_push(holoflow::core::AsyncPushCtx &ctx) override;
-  holoflow::core::OpResult             try_pop(holoflow::core::AsyncPopCtx &ctx) override;
+  holoflow::core::OpResult try_pop(holoflow::core::AsyncPopCtx &ctx, size_t idx) override;
 
 private:
   BatchQueue(const BatchQueueSettings &settings, const holoflow::core::TDesc &idesc,
-             const holoflow::core::TDesc &odesc, HostPtr<std::byte> &&h_buf,
+             const std::vector<holoflow::core::TDesc> &odesc, HostPtr<std::byte> &&h_buf,
              DevPtr<std::byte> &&d_buf, std::byte *buf, size_t nb_slots, size_t input_size,
              size_t element_size);
 
   size_t writer_size() const;
-  size_t reader_size() const;
+  size_t reader_size(size_t idx) const;
 
   friend class BatchQueueFactory;
 
-  BatchQueueSettings    settings_;
-  holoflow::core::TDesc idesc_;
-  holoflow::core::TDesc odesc_;
-  HostPtr<std::byte>    h_buf_;
-  DevPtr<std::byte>     d_buf_;
-  std::byte            *buf_;
-  size_t                nb_slots_;
-  size_t                input_size_;
-  size_t                element_size_;
+  BatchQueueSettings                 settings_;
+  holoflow::core::TDesc              idesc_;
+  std::vector<holoflow::core::TDesc> odesc_;
+  HostPtr<std::byte>                 h_buf_;
+  DevPtr<std::byte>                  d_buf_;
+  std::byte                         *buf_;
+  size_t                             nb_slots_;
+  size_t                             input_size_;
+  size_t                             element_size_;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;
-  alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_idx_;
+  std::vector<AlignedAtomicSizeT> read_idx_vector_;
 };
 
 class BatchQueueFactory : public holoflow::core::IAsyncTaskFactory {

@@ -47,7 +47,7 @@ public:
   ~SlidingAverage() override = default;
 
   holoflow::core::OpResult try_push(holoflow::core::AsyncPushCtx &ctx) override;
-  holoflow::core::OpResult try_pop(holoflow::core::AsyncPopCtx &ctx) override;
+  holoflow::core::OpResult try_pop(holoflow::core::AsyncPopCtx &ctx, size_t idx = 0) override;
 
   std::optional<holoflow::core::TView> acquire_input(int index) override;
 

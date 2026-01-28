@@ -66,14 +66,15 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   // Raw record
   if (s_.recording_method == RecordingMethod::RAW) {
     TDesc H_rec;
-    auto  count    = s_.recording_count;
-    auto  batch    = s_.time_window;
-    auto  path     = s_.recording_path.string();
-    auto  settings = settings_to_old_json(s_);
+    auto  count        = s_.recording_count;
+    auto  batch        = s_.time_window;
+    auto  path         = s_.recording_path.string();
+    auto  settings     = settings_to_old_json(s_);
+    std::tie(H, H_rec) = unpack<2>(batched_queue(H, {count, batch, s_.time_window, 2}));
 
-    std::tie(H_rec) = unpack<1>(memcpy(H, {Host}));
-    std::tie(H_rec) = unpack<1>(batched_queue(H_rec, {count, batch, batch}));
     holofile_write(H_rec, {path, count, settings});
+  } else {
+    std::tie(H) = unpack<1>(batched_queue(H, {s_.cpu_out_size, 1, 1, 1}));
   }
 
   // Raw view
@@ -81,9 +82,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto shape  = H.shape;
     shape.at(0) = 1;
 
-    auto [H_disp]     = unpack<1>(memcpy(H, {Host}));
-    auto [H_view]     = unpack<1>(batched_queue(H_disp, {s_.cpu_out_size, 1, 1}));
-    auto [H_reshaped] = unpack<1>(reshape(H_view, {shape}));
+    auto [H_reshaped] = unpack<1>(reshape(H, {shape}));
 
     if (s_.raw_view) {
       xy_raw_display(H_reshaped, {});
@@ -97,7 +96,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   // GPU transfer and conversion to complex32
   if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
     std::tie(H) = unpack<1>(memcpy(H, {Device}));
-    std::tie(H) = unpack<1>(batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window}));
+    std::tie(H) = unpack<1>(batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window, 1}));
   }
   std::tie(H) = unpack<1>(convert(H, {Target::CF32, Strat::Real}));
 
@@ -130,7 +129,8 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   TDesc FH_z;
 
   if (s_.time_method != TimeMethod::NONE) {
-    std::tie(H_z) = unpack<1>(batched_queue(H_z, {s_.gpu_in_size, s_.time_window, s_.time_window}));
+    std::tie(H_z) =
+        unpack<1>(batched_queue(H_z, {s_.gpu_in_size, s_.time_window, s_.time_window, 1}));
   }
 
   if (s_.time_method == TimeMethod::SHORT_TIME_FOURIER) {
@@ -152,7 +152,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   }
 
   if (s_.time_method != TimeMethod::NONE) {
-    std::tie(FH_z) = unpack<1>(batched_queue(FH_z, {128, s_.time_window, s_.time_window}));
+    std::tie(FH_z) = unpack<1>(batched_queue(FH_z, {128, s_.time_window, s_.time_window, 1}));
   }
 
   // -------------------------------------------------------------------------------------------------
@@ -190,9 +190,9 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     }
 
     std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
+    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1, 1}));
     std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
+    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1, 1}));
     xy_processed_display(M0_avg, {});
 
     // XY processed recording
@@ -202,7 +202,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
       auto settings = settings_to_old_json(s_);
 
       auto [M0_rec]    = unpack<1>(memcpy(M0_avg, {Host}));
-      std::tie(M0_rec) = unpack<1>(batched_queue(M0_rec, {s_.cpu_out_size, 1, 1}));
+      std::tie(M0_rec) = unpack<1>(batched_queue(M0_rec, {s_.cpu_out_size, 1, 1, 1}));
       holofile_write(M0_rec, {path.string(), count, settings});
     }
   }
@@ -223,9 +223,9 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [M0_avg]    = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
     std::tie(M0_avg) = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
     std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
+    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1, 1}));
     std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
+    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1, 1}));
     xz_processed_display(M0_avg, {});
   }
 
@@ -241,9 +241,9 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [M0_avg]    = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
     std::tie(M0_avg) = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
     std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
+    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1, 1}));
     std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));
-    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1}));
+    std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.cpu_out_size, 1, 1, 1}));
     yz_processed_display(M0_avg, {});
   }
 

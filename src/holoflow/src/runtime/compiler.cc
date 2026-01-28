@@ -461,55 +461,118 @@ void Compiler::create_tensor_buffers() {
 }
 
 void Compiler::create_sections() {
-  auto is_section_start = [&](GraphPlan::vertex_descriptor v) {
-    return boost::in_degree(v, out_->graph) == 0 ||
-           out_->graph[v].infer.kind == core::TaskKind::Async;
+  auto is_source_node = [&](GraphPlan::vertex_descriptor v) {
+    return boost::in_degree(v, out_->graph) == 0;
   };
 
-  // Find section starts
   std::vector<GraphPlan::vertex_descriptor> starts;
   for (const auto &v : boost::make_iterator_range(boost::vertices(out_->graph))) {
-    if (is_section_start(v)) {
+    if (is_source_node(v)) {
       starts.push_back(v);
     }
   }
 
-  // DFS to build sections
-  auto build_section_dfs = [this](auto self, GraphPlan::vertex_descriptor v, Section &sec,
-                                  bool is_root) -> void {
-    auto &np = out_->graph[v];
-    if (np.infer.kind == core::TaskKind::Sync) {
-      sec.sync_topo.push_back(v);
-      sync_section_map_.try_emplace(np.spec.name, sec.id);
-    } else if (is_root) {
-      sec.async_cons.push_back(v);
-      async_cons_section_map_.try_emplace(np.spec.name, sec.id);
-    } else {
-      sec.async_prod.push_back(v);
-      async_prod_section_map_.try_emplace(np.spec.name, sec.id);
+  int                                              next_section_id = 0;
+  std::unordered_set<GraphPlan::vertex_descriptor> visited;
+  out_->sections.clear();
+
+  std::function<void(GraphPlan::vertex_descriptor, Section &)> build_section_dfs;
+  build_section_dfs = [&](GraphPlan::vertex_descriptor v, Section &sec) -> void {
+    if (visited.count(v)) {
       return;
     }
 
-    //! BUG: Inplace children should be run last in case several children share
-    //! the same inplace input.
+    auto  &np           = out_->graph[v];
+    size_t num_children = boost::out_degree(v, out_->graph);
 
-    for (auto e : boost::make_iterator_range(boost::out_edges(v, out_->graph))) {
-      auto vd = boost::target(e, out_->graph);
-      self(self, vd, sec, false);
+    if (np.infer.kind == core::TaskKind::Sync) {
+      // Sync nodes only go into sync_topo
+      visited.insert(v);
+      sec.sync_topo.push_back(v);
+      sync_section_map_.try_emplace(np.spec.name, sec.id);
+
+      if (num_children > 0) {
+        auto vd = boost::target(*boost::out_edges(v, out_->graph).first, out_->graph);
+        build_section_dfs(vd, sec);
+      }
+    } else {
+      visited.insert(v);
+
+      if (num_children == 0) {
+        sec.async_prod.push_back(v);
+        async_prod_section_map_.try_emplace(np.spec.name, sec.id);
+      } else {
+        sec.async_prod.push_back(v);
+        async_prod_section_map_.try_emplace(np.spec.name, sec.id);
+
+        for (auto e : boost::make_iterator_range(boost::out_edges(v, out_->graph))) {
+          Section new_sec;
+          new_sec.id     = next_section_id++;
+          new_sec.name   = fmt::format("section-{}", new_sec.id);
+          new_sec.stream = 0;
+
+          new_sec.async_cons.push_back(v);
+          async_cons_section_map_.try_emplace(np.spec.name, new_sec.id);
+
+          auto vd = boost::target(e, out_->graph);
+          build_section_dfs(vd, new_sec);
+
+          out_->sections.push_back(std::move(new_sec));
+        }
+      }
     }
   };
 
-  // Build sections
-  int next_section_id = 0;
-  out_->sections.clear();
   for (const auto &v : starts) {
+    if (visited.count(v)) {
+      continue;
+    }
+
     Section sec;
     sec.id     = next_section_id++;
     sec.name   = fmt::format("section-{}", sec.id);
     sec.stream = 0;
 
-    build_section_dfs(build_section_dfs, v, sec, true);
-    out_->sections.push_back(sec);
+    auto &np = out_->graph[v];
+
+    if (np.infer.kind == core::TaskKind::Async) {
+      sec.async_cons.push_back(v);
+      async_cons_section_map_.try_emplace(np.spec.name, sec.id);
+
+      visited.insert(v);
+      size_t num_children = boost::out_degree(v, out_->graph);
+
+      if (num_children > 0) {
+        sec.async_prod.push_back(v);
+        async_prod_section_map_.try_emplace(np.spec.name, sec.id);
+
+        for (auto e : boost::make_iterator_range(boost::out_edges(v, out_->graph))) {
+          Section new_sec;
+          new_sec.id     = next_section_id++;
+          new_sec.name   = fmt::format("section-{}", new_sec.id);
+          new_sec.stream = 0;
+
+          new_sec.async_cons.push_back(v);
+          async_cons_section_map_.try_emplace(np.spec.name, new_sec.id);
+
+          auto vd = boost::target(e, out_->graph);
+          build_section_dfs(vd, new_sec);
+
+          out_->sections.push_back(std::move(new_sec));
+        }
+      } else {
+        sec.async_prod.push_back(v);
+        async_prod_section_map_.try_emplace(np.spec.name, sec.id);
+      }
+
+      out_->sections.push_back(std::move(sec));
+    } else {
+      build_section_dfs(v, sec);
+
+      if (!sec.sync_topo.empty() || !sec.async_cons.empty() || !sec.async_prod.empty()) {
+        out_->sections.push_back(std::move(sec));
+      }
+    }
   }
 }
 

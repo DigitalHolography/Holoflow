@@ -264,7 +264,7 @@ void Scheduler::run_section(int section_id) {
     //   will synchronize the stream before pushing data (it may not be cuda-related).
     for (auto v : sec.async_cons) {
       refresh_views_async_cons(v);
-      run_async_cons(v);
+      run_async_cons(v, section_id);
       refresh_outputs_async_cons(v);
     }
     if (stop_.load()) {
@@ -289,10 +289,10 @@ void Scheduler::run_section(int section_id) {
     // - We do not release owned-outputs of async producers here, as they
     // used only in the next section.
     for (auto v : sec.sync_topo) {
-      release_owned_outputs(v);
+      release_owned_outputs(v, section_id);
     }
     for (auto v : sec.async_cons) {
-      release_owned_outputs(v);
+      release_owned_outputs(v, section_id);
     }
     nvtxRangePop();
   }
@@ -322,21 +322,71 @@ void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v) {
   }
 }
 
-void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v) {
-  const auto  idx        = boost::get(boost::vertex_index, graph_, v);
-  const auto &np         = graph_[v];
-  auto       &nrt        = node_rts_.at(idx);
-  const auto &owned_mask = np.infer.owned_outputs;
-  auto       *task       = std::holds_alternative<SyncRt>(nrt)
-                               ? static_cast<core::ITask *>(std::get<SyncRt>(nrt).task)
-                               : static_cast<core::ITask *>(std::get<AsyncRt>(nrt).task);
+void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v, int section_id) {
+  const auto     idx             = boost::get(boost::vertex_index, graph_, v);
+  const auto    &np              = graph_[v];
+  auto          &nrt             = node_rts_.at(idx);
+  const auto    &owned_mask      = np.infer.owned_outputs;
+  auto          *task            = std::holds_alternative<SyncRt>(nrt)
+                                       ? static_cast<core::ITask *>(std::get<SyncRt>(nrt).task)
+                                       : static_cast<core::ITask *>(std::get<AsyncRt>(nrt).task);
+  const Section *current_section = nullptr;
+  for (const auto &sec : sections_) {
+    if (sec.id == section_id) {
+      current_section = &sec;
+      break;
+    }
+  }
+
+  if (!current_section) {
+    HOLOFLOW_BUG("Could not find current section");
+  }
+
+  // For async nodes, determine which outputs belong to this section
+  std::unordered_set<size_t> outputs_in_section;
+  if (std::holds_alternative<AsyncRt>(nrt)) {
+    const auto [ei, ei_end] = boost::out_edges(v, graph_);
+    for (auto e : boost::make_iterator_range(ei, ei_end)) {
+      const auto &target = boost::target(e, graph_);
+      const auto &edge   = graph_[e];
+
+      // Check if target is in this section
+      bool target_in_section = false;
+      if (std::find(current_section->sync_topo.begin(), current_section->sync_topo.end(), target) !=
+          current_section->sync_topo.end()) {
+        target_in_section = true;
+      } else if (std::find(current_section->async_prod.begin(), current_section->async_prod.end(),
+                           target) != current_section->async_prod.end()) {
+        target_in_section = true;
+      }
+
+      if (target_in_section) {
+        outputs_in_section.insert(edge.spec.out_idx);
+      }
+    }
+  }
 
   for (size_t i = 0; i < owned_mask.size(); i++) {
     if (!owned_mask.at(i))
       continue;
 
-    task->release_output(static_cast<int>(i));
-    tviews_.at(np.out_tids.at(i)) = core::TView{nullptr, core::TDesc{}};
+    if (std::holds_alternative<AsyncRt>(nrt)) {
+      if (outputs_in_section.find(i) == outputs_in_section.end()) {
+        // This output is not consumed by this section, skip it
+        logger()->trace("[Scheduler::release_owned_outputs] Skipping output {} for node '{}' (not "
+                        "in section {})",
+                        i, np.spec.name, section_id);
+        continue;
+      }
+    }
+
+    if (tviews_.at(np.out_tids.at(i)).data != nullptr) {
+      task->release_output(static_cast<int>(i));
+      logger()->trace(
+          "[Scheduler::release_owned_outputs] Released output {} for node '{}' in section {}", i,
+          np.spec.name, section_id);
+      tviews_.at(np.out_tids.at(i)) = core::TView{nullptr, core::TDesc{}};
+    }
   }
 }
 
@@ -431,25 +481,116 @@ void Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
   }
 }
 
-void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
-  using clock     = std::chrono::high_resolution_clock;
-  const auto  idx = boost::get(boost::vertex_index, graph_, v);
-  const auto &np  = graph_[v];
-  auto       &nrt = node_rts_.at(idx);
+void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v, int section_id) {
+  using clock             = std::chrono::high_resolution_clock;
+  const auto idx          = boost::get(boost::vertex_index, graph_, v);
+  const auto [ei, ei_end] = boost::out_edges(v, graph_);
+  const auto &np          = graph_[v];
+  auto       &nrt         = node_rts_.at(idx);
 
   auto is_async = std::holds_alternative<AsyncRt>(nrt);
   HOLOFLOW_CHECK(is_async, "run_async_cons called on a synchronous node");
   auto &art = std::get<AsyncRt>(nrt);
 
-  logger()->trace("[Scheduler::run_async_cons] Executing node '{}'", np.spec.name);
+  logger()->trace("[Scheduler::run_async_cons] Executing node '{}' in section {}", np.spec.name,
+                  section_id);
   auto t0 = clock::now();
-  auto r  = art.task->try_pop(art.xctx);
-  while (r == core::OpResult::NotReady) {
-    if (stop_.load())
-      return;
-    r = art.task->try_pop(art.xctx);
+
+  core::OpResult r = core::OpResult::Ok;
+
+  // Find the current section
+  const Section *current_section = nullptr;
+  for (const auto &sec : sections_) {
+    if (sec.id == section_id) {
+      current_section = &sec;
+      break;
+    }
   }
+
+  if (!current_section) {
+    HOLOFLOW_BUG("Could not find current section");
+  }
+
+  // Collect edges and their output indices that belong to this section
+  std::vector<std::pair<GraphPlan::edge_descriptor, int>> edges_in_section;
+
+  for (auto e : boost::make_iterator_range(ei, ei_end)) {
+    const auto &target = boost::target(e, graph_);
+    const auto &edge   = graph_[e];
+
+    // Check if target is in the CURRENT section
+    bool target_in_section = false;
+
+    // Check if target is in sync_topo
+    if (std::find(current_section->sync_topo.begin(), current_section->sync_topo.end(), target) !=
+        current_section->sync_topo.end()) {
+      target_in_section = true;
+    }
+    // Check if target is in async_prod
+    else if (std::find(current_section->async_prod.begin(), current_section->async_prod.end(),
+                       target) != current_section->async_prod.end()) {
+      target_in_section = true;
+    }
+
+    logger()->trace("[Scheduler::run_async_cons] Edge out_idx {} to target '{}', in_section={}",
+                    edge.spec.out_idx, graph_[target].spec.name, target_in_section);
+
+    // Only process edges whose targets are in the current section
+    if (target_in_section) {
+      edges_in_section.push_back({e, edge.spec.out_idx});
+    }
+  }
+
+  if (edges_in_section.empty()) {
+    logger()->trace("[Scheduler::run_async_cons] No edges in section {} for node '{}'", section_id,
+                    np.spec.name);
+    return;
+  }
+
+  // Prepare local outputs for all possible outputs
+  std::vector<core::TView> local_outputs;
+  local_outputs.resize(art.out_views.size());
+
+  // Build a local AsyncPopCtx
+  core::AsyncPopCtx local_ctx{.outputs   = std::span<core::TView>(local_outputs),
+                              .cancelled = art.xctx.cancelled};
+
+  // Track which output indices we successfully popped
+  std::vector<size_t> popped_output_indices;
+
+  // Wait for and pop each output that belongs to this section
+  for (const auto &[e, out_idx] : edges_in_section) {
+    // Try to pop from this specific output index
+    core::OpResult edge_result = art.task->try_pop(local_ctx, out_idx);
+
+    // Wait for this specific output to be ready
+    while (edge_result == core::OpResult::NotReady) {
+      if (stop_.load()) {
+        return;
+      }
+      std::this_thread::yield();
+
+      edge_result = art.task->try_pop(local_ctx, out_idx);
+    }
+
+    // If any edge fails, store the failure and break
+    if (edge_result != core::OpResult::Ok) {
+      r = edge_result;
+      break;
+    }
+
+    // Track that we successfully popped this output
+    popped_output_indices.push_back(out_idx);
+  }
+
   auto t1 = clock::now();
+
+  if (r == core::OpResult::Ok) {
+    for (size_t out_idx : popped_output_indices) {
+      art.out_views[out_idx]              = local_outputs[out_idx];
+      tviews_.at(np.out_tids.at(out_idx)) = local_outputs[out_idx];
+    }
+  }
 
   switch (r) {
   case core::OpResult::Cancelled:

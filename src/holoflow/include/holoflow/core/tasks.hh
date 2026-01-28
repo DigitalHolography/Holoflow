@@ -199,7 +199,7 @@ public:
   /// Consumer-side retrieval.
   /// Overwrites owned output slots in ctx.outputs.
   /// @returns control-flow result; errors via exceptions.
-  [[nodiscard]] virtual OpResult try_pop(AsyncPopCtx &ctx) = 0;
+  [[nodiscard]] virtual OpResult try_pop(AsyncPopCtx &ctx, size_t idx) = 0;
 };
 
 /// Describes an in-place link between an input and output tensor.

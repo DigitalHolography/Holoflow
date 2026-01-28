@@ -28,9 +28,9 @@
 
 namespace holoflow::test {
 
-inline core::TDesc make_desc(std::initializer_list<size_t> shape = {1},
-                             core::DType dtype                           = core::DType::U8,
-                             core::MemLoc mem_loc                        = core::MemLoc::Host) {
+inline core::TDesc make_desc(std::initializer_list<size_t> shape   = {1},
+                             core::DType                   dtype   = core::DType::U8,
+                             core::MemLoc                  mem_loc = core::MemLoc::Host) {
   return core::TDesc{std::vector<size_t>(shape), dtype, mem_loc};
 }
 
@@ -38,12 +38,11 @@ inline std::vector<core::TDesc> copy_descs(std::span<const core::TDesc> descs) {
   return std::vector<core::TDesc>(descs.begin(), descs.end());
 }
 
-inline core::InferResult make_infer_result(core::TaskKind kind,
-                                           std::vector<core::TDesc> inputs,
-                                           std::vector<core::TDesc> outputs,
-                                           std::vector<bool> owned_inputs  = {},
-                                           std::vector<bool> owned_outputs = {},
-                                           std::vector<core::InPlace> inplace = {}) {
+inline core::InferResult make_infer_result(core::TaskKind kind, std::vector<core::TDesc> inputs,
+                                           std::vector<core::TDesc>   outputs,
+                                           std::vector<bool>          owned_inputs  = {},
+                                           std::vector<bool>          owned_outputs = {},
+                                           std::vector<core::InPlace> inplace       = {}) {
   core::InferResult result;
   result.kind         = kind;
   result.input_descs  = std::move(inputs);
@@ -72,8 +71,8 @@ public:
   const core::SyncCreateCtx &ctx() const noexcept { return ctx_; }
 
   std::optional<core::TView> acquire_input(int) override { return std::nullopt; }
-  void release_output(int) override {}
-  core::OpResult execute(core::SyncCtx &) override { return core::OpResult::Ok; }
+  void                       release_output(int) override {}
+  core::OpResult             execute(core::SyncCtx &) override { return core::OpResult::Ok; }
 
 private:
   core::SyncCreateCtx ctx_;
@@ -86,9 +85,9 @@ public:
   const core::AsyncCreateCtx &ctx() const noexcept { return ctx_; }
 
   std::optional<core::TView> acquire_input(int) override { return std::nullopt; }
-  void release_output(int) override {}
-  core::OpResult try_push(core::AsyncPushCtx &) override { return core::OpResult::Ok; }
-  core::OpResult try_pop(core::AsyncPopCtx &) override { return core::OpResult::Ok; }
+  void                       release_output(int) override {}
+  core::OpResult             try_push(core::AsyncPushCtx &) override { return core::OpResult::Ok; }
+  core::OpResult try_pop(core::AsyncPopCtx &, size_t) override { return core::OpResult::Ok; }
 
 private:
   core::AsyncCreateCtx ctx_;
@@ -96,20 +95,24 @@ private:
 
 struct SyncFactorySpec {
   std::function<core::InferResult(std::span<const core::TDesc>, const nlohmann::json &)> infer;
-  std::function<std::unique_ptr<core::ISyncTask>(std::span<const core::TDesc>, const nlohmann::json &,
-                                                 const core::SyncCreateCtx &)> create;
-  std::function<std::unique_ptr<core::ISyncTask>(std::unique_ptr<core::ISyncTask>,
-                                                 std::span<const core::TDesc>, const nlohmann::json &,
-                                                 const core::SyncCreateCtx &)> update;
+  std::function<std::unique_ptr<core::ISyncTask>(
+      std::span<const core::TDesc>, const nlohmann::json &, const core::SyncCreateCtx &)>
+      create;
+  std::function<std::unique_ptr<core::ISyncTask>(
+      std::unique_ptr<core::ISyncTask>, std::span<const core::TDesc>, const nlohmann::json &,
+      const core::SyncCreateCtx &)>
+      update;
 };
 
 struct AsyncFactorySpec {
   std::function<core::InferResult(std::span<const core::TDesc>, const nlohmann::json &)> infer;
-  std::function<std::unique_ptr<core::IAsyncTask>(std::span<const core::TDesc>, const nlohmann::json &,
-                                                  const core::AsyncCreateCtx &)> create;
-  std::function<std::unique_ptr<core::IAsyncTask>(std::unique_ptr<core::IAsyncTask>,
-                                                  std::span<const core::TDesc>, const nlohmann::json &,
-                                                  const core::AsyncCreateCtx &)> update;
+  std::function<std::unique_ptr<core::IAsyncTask>(
+      std::span<const core::TDesc>, const nlohmann::json &, const core::AsyncCreateCtx &)>
+      create;
+  std::function<std::unique_ptr<core::IAsyncTask>(
+      std::unique_ptr<core::IAsyncTask>, std::span<const core::TDesc>, const nlohmann::json &,
+      const core::AsyncCreateCtx &)>
+      update;
 };
 
 class RecordingSyncFactory : public core::ISyncTaskFactory {
@@ -134,12 +137,12 @@ public:
 
   explicit RecordingSyncFactory(SyncFactorySpec spec = {}) : spec_(std::move(spec)) {}
 
-  const std::vector<InferCall> &infer_calls() const noexcept { return infer_calls_; }
+  const std::vector<InferCall>  &infer_calls() const noexcept { return infer_calls_; }
   const std::vector<CreateCall> &create_calls() const noexcept { return create_calls_; }
   const std::vector<UpdateCall> &update_calls() const noexcept { return update_calls_; }
 
   core::InferResult infer(std::span<const core::TDesc> input_descs,
-                          const nlohmann::json &settings) const override {
+                          const nlohmann::json        &settings) const override {
     infer_calls_.push_back({{input_descs.begin(), input_descs.end()}, settings});
     if (spec_.infer) {
       return spec_.infer(input_descs, settings);
@@ -149,8 +152,8 @@ public:
   }
 
   std::unique_ptr<core::ISyncTask> create(std::span<const core::TDesc> input_descs,
-                                          const nlohmann::json &settings,
-                                          const core::SyncCreateCtx &ctx) const override {
+                                          const nlohmann::json        &settings,
+                                          const core::SyncCreateCtx   &ctx) const override {
     create_calls_.push_back({{input_descs.begin(), input_descs.end()}, settings, ctx});
     if (spec_.create) {
       return spec_.create(input_descs, settings, ctx);
@@ -159,10 +162,11 @@ public:
   }
 
   std::unique_ptr<core::ISyncTask> update(std::unique_ptr<core::ISyncTask> old_task,
-                                          std::span<const core::TDesc> input_descs,
-                                          const nlohmann::json &settings,
-                                          const core::SyncCreateCtx &ctx) const override {
-    update_calls_.push_back({old_task.get(), {input_descs.begin(), input_descs.end()}, settings, ctx});
+                                          std::span<const core::TDesc>     input_descs,
+                                          const nlohmann::json            &settings,
+                                          const core::SyncCreateCtx       &ctx) const override {
+    update_calls_.push_back(
+        {old_task.get(), {input_descs.begin(), input_descs.end()}, settings, ctx});
     if (spec_.update) {
       return spec_.update(std::move(old_task), input_descs, settings, ctx);
     }
@@ -201,12 +205,12 @@ public:
 
   explicit RecordingAsyncFactory(AsyncFactorySpec spec = {}) : spec_(std::move(spec)) {}
 
-  const std::vector<InferCall> &infer_calls() const noexcept { return infer_calls_; }
+  const std::vector<InferCall>  &infer_calls() const noexcept { return infer_calls_; }
   const std::vector<CreateCall> &create_calls() const noexcept { return create_calls_; }
   const std::vector<UpdateCall> &update_calls() const noexcept { return update_calls_; }
 
   core::InferResult infer(std::span<const core::TDesc> input_descs,
-                          const nlohmann::json &settings) const override {
+                          const nlohmann::json        &settings) const override {
     infer_calls_.push_back({{input_descs.begin(), input_descs.end()}, settings});
     if (spec_.infer) {
       return spec_.infer(input_descs, settings);
@@ -216,8 +220,8 @@ public:
   }
 
   std::unique_ptr<core::IAsyncTask> create(std::span<const core::TDesc> input_descs,
-                                           const nlohmann::json &settings,
-                                           const core::AsyncCreateCtx &ctx) const override {
+                                           const nlohmann::json        &settings,
+                                           const core::AsyncCreateCtx  &ctx) const override {
     create_calls_.push_back({{input_descs.begin(), input_descs.end()}, settings, ctx});
     if (spec_.create) {
       return spec_.create(input_descs, settings, ctx);
@@ -226,10 +230,11 @@ public:
   }
 
   std::unique_ptr<core::IAsyncTask> update(std::unique_ptr<core::IAsyncTask> old_task,
-                                           std::span<const core::TDesc> input_descs,
-                                           const nlohmann::json &settings,
-                                           const core::AsyncCreateCtx &ctx) const override {
-    update_calls_.push_back({old_task.get(), {input_descs.begin(), input_descs.end()}, settings, ctx});
+                                           std::span<const core::TDesc>      input_descs,
+                                           const nlohmann::json             &settings,
+                                           const core::AsyncCreateCtx       &ctx) const override {
+    update_calls_.push_back(
+        {old_task.get(), {input_descs.begin(), input_descs.end()}, settings, ctx});
     if (spec_.update) {
       return spec_.update(std::move(old_task), input_descs, settings, ctx);
     }

@@ -151,7 +151,7 @@ private:
   /// This function does not block.
   /// @warning Cleared twiews will be set to {nullptr, {}}, but their
   /// indices in tviews_ remain accessible.
-  void release_owned_outputs(GraphPlan::vertex_descriptor v);
+  void release_owned_outputs(GraphPlan::vertex_descriptor v, int section_id);
 
   /// Refreshes both input and output TViews in the `SyncRt` of the given node
   /// based on the current `tviews_`.
@@ -177,7 +177,7 @@ private:
   /// Executes an asynchronous consumer node.
   /// The output TViews in the `AsyncRt` must be up-to-date before calling this function.
   /// @warning This function must be called on an asynchronous consumer node only.
-  void run_async_cons(GraphPlan::vertex_descriptor v);
+  void run_async_cons(GraphPlan::vertex_descriptor v, int section_id);
 
   /// Executes an asynchronous producer node.
   /// The input TViews in the `AsyncRt` must be up-to-date before calling

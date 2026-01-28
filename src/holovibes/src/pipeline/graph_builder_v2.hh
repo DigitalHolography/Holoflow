@@ -101,7 +101,7 @@ private:
     }
     using T = TDesc;
     return [&]<std::size_t... I>(std::index_sequence<I...>) {
-      return std::tuple<T>(s[I]...);
+      return std::make_tuple(s[I]...);
     }(std::make_index_sequence<N>{});
   }
 

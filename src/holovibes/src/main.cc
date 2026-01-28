@@ -26,7 +26,7 @@
 #include "ui/main_window.hh"
 
 int main(int argc, char **argv) {
-  spdlog::set_level(spdlog::level::info);
+  spdlog::set_level(spdlog::level::trace);
 
   QCoreApplication::setApplicationName("Holovibes");
   QCoreApplication::setApplicationVersion(HOLOVIBES_VERSION_SEMVER2);

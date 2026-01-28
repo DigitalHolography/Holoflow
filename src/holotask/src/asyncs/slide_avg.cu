@@ -156,17 +156,18 @@ holoflow::core::OpResult SlidingAverage::try_push(holoflow::core::AsyncPushCtx &
   return holoflow::core::OpResult::Ok;
 }
 
-holoflow::core::OpResult SlidingAverage::try_pop(holoflow::core::AsyncPopCtx &ctx) {
+holoflow::core::OpResult SlidingAverage::try_pop(holoflow::core::AsyncPopCtx &ctx, size_t idx) {
   if (reader_size() <= settings_.window_size) {
     return holoflow::core::OpResult::NotReady;
   }
 
   int        read_idx = read_idx_.load(std::memory_order_relaxed);
   std::byte *data     = d_buffer_.get() + read_idx * element_size_;
-  ctx.outputs[0]      = holoflow::core::TView{
-           .data = data,
-           .desc = odesc_,
+  ctx.outputs[idx]    = holoflow::core::TView{
+         .data = data,
+         .desc = odesc_,
   };
+
   logger()->trace("[SlidingAverage::try_pop] read_idx={}", read_idx);
   return holoflow::core::OpResult::Ok;
 }
