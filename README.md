@@ -154,7 +154,7 @@ It will generate the installer inside the `build\msvc-multi\` folder.
 ## Documentation
 This project’s documentation is built using **MkDocs** and organized into a structured set of Markdown (`.md`) files.
 
-Link to the [**documentation**](https://www.google.com). <!-- #TODO : Change the link to the real documentation link when it will be up -->
+Link to the [**documentation**](https://digitalholography.github.io/Holoflow/).
 
 ### Build and Run
 > Before building or serving the documentation, ensure that all **required Python dependencies** are installed. If not, you can refer to the Python dependencies section of the README.
