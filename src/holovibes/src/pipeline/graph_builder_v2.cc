@@ -115,6 +115,10 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     std::tie(H_z) = unpack<1>(angular_spectrum(H, {lam, dx, dy, z_prop, std::nullopt}));
   }
 
+  else {
+    H_z = H;
+  }
+
   if (s_.filter_2d) {
     std::tie(H_z) = unpack<1>(filter_2d(H_z, {ri, ro, si, so}));
   }
@@ -258,7 +262,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // Hologram)
     // -------------------------------------------------------------------------------------------------
     auto [FH]      = unpack<1>(rfft(H, {0}));
-    auto [FH_filt] = unpack<1>(slice_copy(FH, {{{111, 222}, {}, {}}}));
+    auto [FH_filt] = unpack<1>(slice_copy(FH, {{{s_.time_z_begin, s_.time_z_end}, {}, {}}}));
 
     // -------------------------------------------------------------------------------------------------
     // Shack-Hartmann processing (FH_filt -> FH_Qin (fresnel lens applied) -> H_sub (subaperture) ->
@@ -268,12 +272,15 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto nx       = S.shape.at(2);
     auto ny       = S.shape.at(1);
     auto [Qin]    = unpack<1>(fresnel_qin({lam, dx, dy, z_prop, nx, ny}));
-    std::tie(Qin) = unpack<1>(reshape(Qin, {{1, Qin.shape.at(0), Qin.shape.at(1)}}));
+    // std::tie(Qin) = unpack<1>(reshape(Qin, {{1, Qin.shape.at(0), Qin.shape.at(1)}}));
     auto [FH_Qin] = unpack<1>(mul(FH_filt, Qin, {}));
 
     auto [FH_sub]         = unpack<1>(slice_copy(FH_Qin, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
     auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
     std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
+
+    // auto [FH_sub_prop] = unpack<1>(slice_copy(FH_Qin, {{{}, {0, subap_h, 1}, {0, subap_w,
+    // 1}}}));
 
     // for (auto sy = 0; sy < nb_subap; ++sy) {
     //   for (auto sx = 0; sx < nb_subap; ++sx) {

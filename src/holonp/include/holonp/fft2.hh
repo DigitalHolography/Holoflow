@@ -29,7 +29,6 @@ template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 namespace holonp {
 
 struct FFT2Settings {
-  // NumPy-like axes selection (default: last two axes).
   std::vector<int> axes;
   FftNorm          norm = FftNorm::Backward;
 };
@@ -42,18 +41,15 @@ public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  FFT2(const FFT2Settings &settings, curaii::CufftHandle &&plan, size_t total_elems, size_t n_fft,
-       holoflow::core::DType input_dtype, cudaStream_t stream, DevPtr<cuFloatComplex> d_tmp);
+  FFT2(const FFT2Settings &settings, curaii::CufftHandle &&plan, size_t n_fft,
+       cudaStream_t stream);
 
   friend class FFT2Factory;
 
-  FFT2Settings           settings_;
-  curaii::CufftHandle    plan_;
-  size_t                 total_elems_;
-  size_t                 n_fft_;
-  holoflow::core::DType  input_dtype_;
-  cudaStream_t           stream_;
-  DevPtr<cuFloatComplex> d_tmp_;
+  FFT2Settings        settings_;
+  curaii::CufftHandle plan_;
+  size_t              n_fft_;
+  cudaStream_t        stream_;
 };
 
 class FFT2Factory : public holoflow::core::ISyncTaskFactory {

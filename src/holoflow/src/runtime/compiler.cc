@@ -520,6 +520,9 @@ void Compiler::Impl::allocate_buffers() {
       MemoryBlock block;
       block.mem_loc    = desc.mem_loc;
       block.size_bytes = desc.num_bytes();
+      
+      logger_->info("Allocating {} bytes for SID {} at {:?} memory", block.size_bytes, sid,
+                    to_string(desc.mem_loc));
 
       if (desc.mem_loc == core::MemLoc::Host) {
         block.h_data = curaii::make_unique_host_ptr<std::byte>(block.size_bytes);
@@ -532,6 +535,10 @@ void Compiler::Impl::allocate_buffers() {
 
       // Store ownership
       res.memory_blocks.emplace(sid, std::move(block));
+    }
+    
+    else {
+      logger_->info("SID {} is user-managed; skipping allocation.", sid);
     }
 
     // Store Identity

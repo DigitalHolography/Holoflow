@@ -166,7 +166,7 @@ size_t TDesc::num_bytes() const {
 std::byte *TView::data() {
   HOLOFLOW_CHECK(storage != nullptr, "TView has null storage");
   HOLOFLOW_CHECK(storage->ptr != nullptr, "TView has null data pointer");
-  return storage->ptr;
+  return storage->ptr + desc.offset;
 }
 
 bool TView::is_nullptr() { return storage == nullptr || storage->ptr == nullptr; }
