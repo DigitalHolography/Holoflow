@@ -255,7 +255,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto subap_h  = S.shape.at(1) / nb_subap;
     auto tmp      = convert(H, {Target::F32, Strat::Modulus});
     auto [H]      = unpack<1>(tmp);
-    // auto [M0_subaps] = unpack<1>(empty({{nb_subap, nb_subap, 1, subap_h, subap_w}}));
+    auto [M0_subaps] = unpack<1>(empty({{nb_subap, nb_subap, 1, subap_h, subap_w}}));
 
     // -------------------------------------------------------------------------------------------------
     // Time-Frequency Analysis (SH -> FH - Frequency Hologram -> FH_filt - Filtered Frequency
@@ -272,35 +272,31 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto nx       = S.shape.at(2);
     auto ny       = S.shape.at(1);
     auto [Qin]    = unpack<1>(fresnel_qin({lam, dx, dy, z_prop, nx, ny}));
-    // std::tie(Qin) = unpack<1>(reshape(Qin, {{1, Qin.shape.at(0), Qin.shape.at(1)}}));
     auto [FH_Qin] = unpack<1>(mul(FH_filt, Qin, {}));
 
     auto [FH_sub]         = unpack<1>(slice_copy(FH_Qin, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
     auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
     std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
 
-    // auto [FH_sub_prop] = unpack<1>(slice_copy(FH_Qin, {{{}, {0, subap_h, 1}, {0, subap_w,
-    // 1}}}));
+    for (auto sy = 0; sy < nb_subap; ++sy) {
+      for (auto sx = 0; sx < nb_subap; ++sx) {
+        auto              y_start = sy * subap_h;
+        auto              y_end   = y_start + subap_h;
+        holonp::SliceItem slice_y{.start = y_start, .stop = y_end, .step = 1};
+        auto              x_start = sx * subap_w;
+        auto              x_end   = x_start + subap_w;
+        holonp::SliceItem slice_x{.start = x_start, .stop = x_end, .step = 1};
 
-    // for (auto sy = 0; sy < nb_subap; ++sy) {
-    //   for (auto sx = 0; sx < nb_subap; ++sx) {
-    //     auto              y_start = sy * subap_h;
-    //     auto              y_end   = y_start + subap_h;
-    //     holonp::SliceItem slice_y{.start = y_start, .stop = y_end, .step = 1};
-    //     auto              x_start = sx * subap_w;
-    //     auto              x_end   = x_start + subap_w;
-    //     holonp::SliceItem slice_x{.start = x_start, .stop = x_end, .step = 1};
-
-    //     auto [FH_sub]         = unpack<1>(slice_copy(FH_Qin, {{{}, slice_y, slice_x}}));
-    //     auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
-    //     std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
-    //     auto [S]              = unpack<1>(abs(FH_sub_prop, {}));
-    //     auto [M0]             = unpack<1>(mean(S, {{0}, true}));
-    //     std::tie(M0)          = unpack<1>(reshape(M0, {{1, 1, 1, M0.shape.at(1),
-    //     M0.shape.at(2)}})); std::tie(M0_subaps)   = unpack<1>(
-    //         slice_assign(M0, M0_subaps, {{{sy, sy + 1, 1}, {sx, sx + 1, 1}, {}, {}, {}}}));
-    //   }
-    // }
+        auto [FH_sub]         = unpack<1>(slice_copy(FH_Qin, {{{}, slice_y, slice_x}}));
+        auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
+        std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
+        auto [S]              = unpack<1>(abs(FH_sub_prop, {}));
+        auto [M0]             = unpack<1>(mean(S, {{0}, true}));
+        std::tie(M0)          = unpack<1>(reshape(M0, {{1, 1, 1, M0.shape.at(1),
+        M0.shape.at(2)}})); std::tie(M0_subaps)   = unpack<1>(
+            slice_assign(M0, M0_subaps, {{{sy, sy + 1, 1}, {sx, sx + 1, 1}, {}, {}, {}}}));
+      }
+    }
 
     auto [S]  = unpack<1>(abs(FH_sub_prop, {}));
     auto [M0] = unpack<1>(mean(S, {{0}, true}));
