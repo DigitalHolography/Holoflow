@@ -38,8 +38,8 @@
 #include "holonp/meshgrid.hh"
 #include "holonp/mul.hh"
 #include "holonp/rfft.hh"
-#include "holonp/slice_assign.hh"
-#include "holonp/slice_copy.hh"
+#include "holonp/assign.hh"
+#include "holonp/slice.hh"
 #include "holonp/transpose.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
@@ -187,8 +187,8 @@ private:
   std::vector<TDesc> transpose(const TDesc &X, holonp::TransposeSettings s);
   std::vector<TDesc> mul(const TDesc &A, const TDesc &B, holonp::MulSettings s);
   std::vector<TDesc> rfft(const TDesc &X, holonp::RFFTSettings s);
-  std::vector<TDesc> slice_assign(const TDesc &X, const TDesc &Y, holonp::SliceAssignSettings s);
-  std::vector<TDesc> slice_copy(const TDesc &X, holonp::SliceCopySettings s);
+  std::vector<TDesc> assign(const TDesc &X, const TDesc &Y, holonp::AssignSettings s);
+  std::vector<TDesc> slice(const TDesc &X, holonp::SliceSettings s);
   std::vector<TDesc> fft(const TDesc &X, holonp::FFTSettings s);
   std::vector<TDesc> fft2(const TDesc &X, holonp::FFT2Settings s);
   std::vector<TDesc> fftshift(const TDesc &X, holonp::FFTShiftSettings s);

@@ -18,33 +18,33 @@
 #include <span>
 #include <vector>
 
-#include "holonp/slice_copy.hh"
+#include "holonp/slice.hh"
 
 namespace holonp {
 
-struct SliceAssignSettings {
+struct AssignSettings {
   // Must have length == write tensor ndim.
   std::vector<SliceItem> slices;
 };
 
-void to_json(nlohmann::json &j, const SliceAssignSettings &s);
-void from_json(const nlohmann::json &j, SliceAssignSettings &s);
+void to_json(nlohmann::json &j, const AssignSettings &s);
+void from_json(const nlohmann::json &j, AssignSettings &s);
 
-class SliceAssign : public holoflow::core::ISyncTask {
+class Assign : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  SliceAssign(const SliceAssignSettings &settings, cudaStream_t stream, size_t ndim,
+  Assign(const AssignSettings &settings, cudaStream_t stream, size_t ndim,
               size_t total_out, HostPtr<std::int64_t> h_dst_strides,
               DevPtr<std::int64_t> d_dst_strides, HostPtr<std::int64_t> h_start,
               DevPtr<std::int64_t> d_start, HostPtr<std::int64_t> h_step,
               DevPtr<std::int64_t> d_step, HostPtr<std::int64_t> h_slice_shape,
               DevPtr<std::int64_t> d_slice_shape);
 
-  friend class SliceAssignFactory;
+  friend class AssignFactory;
 
-  SliceAssignSettings settings_;
+  AssignSettings settings_;
   cudaStream_t        stream_;
 
   size_t ndim_;
@@ -63,7 +63,7 @@ private:
   DevPtr<std::int64_t>  d_slice_shape_;
 };
 
-class SliceAssignFactory : public holoflow::core::ISyncTaskFactory {
+class AssignFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;

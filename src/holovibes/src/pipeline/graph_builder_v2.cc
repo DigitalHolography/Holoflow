@@ -262,7 +262,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // Hologram)
     // -------------------------------------------------------------------------------------------------
     auto [FH]      = unpack<1>(rfft(H, {0}));
-    auto [FH_filt] = unpack<1>(slice_copy(FH, {{{s_.time_z_begin, s_.time_z_end}, {}, {}}}));
+    auto [FH_filt] = unpack<1>(slice(FH, {{{s_.time_z_begin, s_.time_z_end}, {}, {}}}));
 
     // -------------------------------------------------------------------------------------------------
     // Shack-Hartmann processing (FH_filt -> FH_Qin (fresnel lens applied) -> H_sub (subaperture) ->
@@ -274,7 +274,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [Qin]    = unpack<1>(fresnel_qin({lam, dx, dy, z_prop, nx, ny}));
     auto [FH_Qin] = unpack<1>(mul(FH_filt, Qin, {}));
 
-    auto [FH_sub]         = unpack<1>(slice_copy(FH_Qin, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
+    auto [FH_sub]         = unpack<1>(slice(FH_Qin, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
     auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
     std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
 
@@ -287,14 +287,14 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
         auto              x_end   = x_start + subap_w;
         holonp::SliceItem slice_x{.start = x_start, .stop = x_end, .step = 1};
 
-        auto [FH_sub]         = unpack<1>(slice_copy(FH_Qin, {{{}, slice_y, slice_x}}));
+        auto [FH_sub]         = unpack<1>(slice(FH_Qin, {{{}, slice_y, slice_x}}));
         auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
         std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
         auto [S]              = unpack<1>(abs(FH_sub_prop, {}));
         auto [M0]             = unpack<1>(mean(S, {{0}, true}));
-        std::tie(M0)          = unpack<1>(reshape(M0, {{1, 1, 1, M0.shape.at(1),
-        M0.shape.at(2)}})); std::tie(M0_subaps)   = unpack<1>(
-            slice_assign(M0, M0_subaps, {{{sy, sy + 1, 1}, {sx, sx + 1, 1}, {}, {}, {}}}));
+        std::tie(M0) = unpack<1>(reshape(M0, {{1, 1, 1, M0.shape.at(1), M0.shape.at(2)}}));
+        std::tie(M0_subaps) =
+            unpack<1>(assign(M0, M0_subaps, {{{sy, sy + 1, 1}, {sx, sx + 1, 1}, {}, {}, {}}}));
       }
     }
 
@@ -365,7 +365,7 @@ DEFINE_UNARY_SYNC_NODE (shack_hartmann_display,                 "shack_hartmann_
 DEFINE_NARY_SYNC_NODE  (concatenate,                            "concatenate",                         "Concatenate",                    holonp::ConcatenateSettings)
 DEFINE_UNARY_SYNC_NODE (transpose,                              "transpose",                           "Transpose",                      holonp::TransposeSettings)
 DEFINE_UNARY_SYNC_NODE (rfft,                                   "rfft",                                "RFFT",                           holonp::RFFTSettings)
-DEFINE_UNARY_SYNC_NODE (slice_copy,                             "slice_copy",                          "SliceCopy",                      holonp::SliceCopySettings)
+DEFINE_UNARY_SYNC_NODE (slice,                             "slice",                          "Slice",                      holonp::SliceSettings)
 DEFINE_UNARY_SYNC_NODE (fft,                                    "fft",                                 "FFT",                            holonp::FFTSettings)
 DEFINE_UNARY_SYNC_NODE (fft2,                                   "fft2",                                "FFT2",                           holonp::FFT2Settings)
 DEFINE_UNARY_SYNC_NODE (fftshift,                               "fftshift",                            "FFTShiftNp",                     holonp::FFTShiftSettings)
@@ -381,10 +381,10 @@ std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::mul(const TDesc &A, const T
   return make_nary_sync_node("mul", "Mul", "Mul", std::span<const TDesc>{inputs}, s);
 }
 
-std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::slice_assign(const TDesc &X, const TDesc &Y,
-                                                                  holonp::SliceAssignSettings s) {
+std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::assign(const TDesc &X, const TDesc &Y,
+                                                                  holonp::AssignSettings s) {
   std::array<TDesc, 2> inputs{X, Y};
-  return make_nary_sync_node("slice_assign", "SliceAssign", "SliceAssign",
+  return make_nary_sync_node("assign", "Assign", "Assign",
                              std::span<const TDesc>{inputs}, s);
 }
 

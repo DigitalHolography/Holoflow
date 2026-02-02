@@ -27,20 +27,20 @@
 
 #include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
-#include "holonp/slice_copy.hh"
+#include "holonp/slice.hh"
 
 namespace holonp {
 
-struct SliceAssignSettings {
+struct AssignSettings {
   // Must have length == write tensor ndim.
   std::vector<SliceItem> slices;
 };
 
-void to_json(nlohmann::json &j, const SliceAssignSettings &s) {
+void to_json(nlohmann::json &j, const AssignSettings &s) {
   j = nlohmann::json{{"slices", s.slices}};
 }
 
-void from_json(const nlohmann::json &j, SliceAssignSettings &s) { j.at("slices").get_to(s.slices); }
+void from_json(const nlohmann::json &j, AssignSettings &s) { j.at("slices").get_to(s.slices); }
 
 namespace {
 
@@ -48,7 +48,7 @@ constexpr int kMaxNDim = 16;
 
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
-    throw std::invalid_argument("SliceAssign: " + msg);
+    throw std::invalid_argument("Assign: " + msg);
   }
 }
 
@@ -128,7 +128,7 @@ inline std::vector<std::int64_t> make_contig_strides(std::span<const size_t> sha
 // Data-moving basic slice assign for contiguous output.
 // Writes the source tensor into the destination slice in row-major order (linear tid).
 __global__ void
-slice_assign_nd_contig_kernel_u8(const std::uint8_t *__restrict__ src,
+assign_nd_contig_kernel_u8(const std::uint8_t *__restrict__ src,
                                  std::uint8_t *__restrict__ dst, int elem_size, int ndim,
                                  const std::int64_t *__restrict__ dst_strides, // [ndim] (elements)
                                  const std::int64_t *__restrict__ start,       // [ndim]
@@ -168,21 +168,21 @@ slice_assign_nd_contig_kernel_u8(const std::uint8_t *__restrict__ src,
 
 } // namespace
 
-class SliceAssign : public holoflow::core::ISyncTask {
+class Assign : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  SliceAssign(const SliceAssignSettings &settings, cudaStream_t stream, size_t ndim,
+  Assign(const AssignSettings &settings, cudaStream_t stream, size_t ndim,
               size_t total_out, HostPtr<std::int64_t> h_dst_strides,
               DevPtr<std::int64_t> d_dst_strides, HostPtr<std::int64_t> h_start,
               DevPtr<std::int64_t> d_start, HostPtr<std::int64_t> h_step,
               DevPtr<std::int64_t> d_step, HostPtr<std::int64_t> h_slice_shape,
               DevPtr<std::int64_t> d_slice_shape);
 
-  friend class SliceAssignFactory;
+  friend class AssignFactory;
 
-  SliceAssignSettings settings_;
+  AssignSettings settings_;
   cudaStream_t        stream_;
 
   size_t ndim_;
@@ -201,7 +201,7 @@ private:
   DevPtr<std::int64_t>  d_slice_shape_;
 };
 
-class SliceAssignFactory : public holoflow::core::ISyncTaskFactory {
+class AssignFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
@@ -213,7 +213,7 @@ public:
 
 // --------------------- impl ---------------------
 
-SliceAssign::SliceAssign(const SliceAssignSettings &settings, cudaStream_t stream, size_t ndim,
+Assign::Assign(const AssignSettings &settings, cudaStream_t stream, size_t ndim,
                          size_t total_out, HostPtr<std::int64_t> h_dst_strides,
                          DevPtr<std::int64_t> d_dst_strides, HostPtr<std::int64_t> h_start,
                          DevPtr<std::int64_t> d_start, HostPtr<std::int64_t> h_step,
@@ -225,7 +225,7 @@ SliceAssign::SliceAssign(const SliceAssignSettings &settings, cudaStream_t strea
       d_step_(std::move(d_step)), h_slice_shape_(std::move(h_slice_shape)),
       d_slice_shape_(std::move(d_slice_shape)) {}
 
-holoflow::core::OpResult SliceAssign::execute(holoflow::core::SyncCtx &ctx) {
+holoflow::core::OpResult Assign::execute(holoflow::core::SyncCtx &ctx) {
   auto *src_data = ctx.inputs[0].data();
   auto *dst_data = ctx.outputs[0].data();
   const auto &src_desc = ctx.inputs[0].desc;
@@ -236,7 +236,7 @@ holoflow::core::OpResult SliceAssign::execute(holoflow::core::SyncCtx &ctx) {
 
   const int esz = static_cast<int>(size_of(src_desc.dtype));
 
-  slice_assign_nd_contig_kernel_u8<<<grid_size, block_size, 0, stream_>>>(
+  assign_nd_contig_kernel_u8<<<grid_size, block_size, 0, stream_>>>(
       reinterpret_cast<const std::uint8_t *>(src_data), reinterpret_cast<std::uint8_t *>(dst_data),
       esz, static_cast<int>(ndim_), d_dst_strides_.get(), d_start_.get(), d_step_.get(),
       d_slice_shape_.get(), total_i64);
@@ -246,7 +246,7 @@ holoflow::core::OpResult SliceAssign::execute(holoflow::core::SyncCtx &ctx) {
 }
 
 holoflow::core::InferResult
-SliceAssignFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
+AssignFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                           const nlohmann::json                  &jsettings) const {
   check(input_descs.size() == 2, "expected exactly 2 inputs");
   const auto &src_desc = input_descs[0];
@@ -269,7 +269,7 @@ SliceAssignFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(product_shape(src_desc.shape) > 0, "read tensor has zero elements");
   check(product_shape(dst_desc.shape) > 0, "write tensor has zero elements");
 
-  const auto settings = jsettings.get<SliceAssignSettings>();
+  const auto settings = jsettings.get<AssignSettings>();
   const auto nslices  = normalize_and_validate_slices(settings.slices, dst_desc.shape);
 
   // Compute slice shape (the region being written), always in dst rank.
@@ -310,13 +310,13 @@ SliceAssignFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
-SliceAssignFactory::create(std::span<const holoflow::core::TDesc> input_descs,
+AssignFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                            const nlohmann::json                  &jsettings,
                            const holoflow::core::SyncCreateCtx   &ctx) const {
   // Validate and lock semantics via infer.
   (void)this->infer(input_descs, jsettings);
 
-  const auto  settings = jsettings.get<SliceAssignSettings>();
+  const auto  settings = jsettings.get<AssignSettings>();
   const auto &dst_desc = input_descs[1];
 
   const size_t ndim = dst_desc.shape.size();
@@ -360,7 +360,7 @@ SliceAssignFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   const size_t slice_elems = product_shape(slice_shape);
 
-  return std::unique_ptr<holoflow::core::ISyncTask>(new SliceAssign(
+  return std::unique_ptr<holoflow::core::ISyncTask>(new Assign(
       settings, ctx.stream, ndim, slice_elems, std::move(h_dst_strides), std::move(d_dst_strides),
       std::move(h_start), std::move(d_start), std::move(h_step), std::move(d_step),
       std::move(h_slice_shape), std::move(d_slice_shape)));

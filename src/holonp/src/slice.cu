@@ -1,4 +1,4 @@
-#include "holonp/slice_copy.hh"
+#include "holonp/slice.hh"
 
 #include <algorithm>
 #include <numeric>
@@ -31,11 +31,11 @@ void from_json(const nlohmann::json &j, SliceItem &s) {
   j.at("step").get_to(s.step);
 }
 
-void to_json(nlohmann::json &j, const SliceCopySettings &s) {
+void to_json(nlohmann::json &j, const SliceSettings &s) {
   j = nlohmann::json{{"slices", s.slices}};
 }
 
-void from_json(const nlohmann::json &j, SliceCopySettings &s) { j.at("slices").get_to(s.slices); }
+void from_json(const nlohmann::json &j, SliceSettings &s) { j.at("slices").get_to(s.slices); }
 
 namespace {
 
@@ -50,7 +50,7 @@ inline size_t product_shape(std::span<const size_t> shape) {
 
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
-    throw std::invalid_argument("SliceCopy: " + msg);
+    throw std::invalid_argument("Slice: " + msg);
   }
 }
 
@@ -135,13 +135,13 @@ inline std::vector<size_t> ensure_strides(const holoflow::core::TDesc &desc) {
 
 } // namespace
 
-holoflow::core::OpResult SliceCopy::execute(holoflow::core::SyncCtx &ctx) {
+holoflow::core::OpResult Slice::execute(holoflow::core::SyncCtx &ctx) {
   (void)ctx;
   return holoflow::core::OpResult::Ok;
 }
 
 holoflow::core::InferResult
-SliceCopyFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
+SliceFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                         const nlohmann::json                   &jsettings) const {
   check(input_descs.size() == 1, "expected exactly 1 input");
   const auto &idesc = input_descs[0];
@@ -153,7 +153,7 @@ SliceCopyFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   // Get current strides (Byte Strides)
   const auto in_strides = ensure_strides(idesc);
 
-  const auto settings = jsettings.get<SliceCopySettings>();
+  const auto settings = jsettings.get<SliceSettings>();
   const auto nslices  = normalize_and_validate_slices(settings.slices, idesc.shape);
 
   std::vector<size_t> out_shape(static_cast<size_t>(ndim));
@@ -192,12 +192,12 @@ SliceCopyFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
-SliceCopyFactory::create(std::span<const holoflow::core::TDesc> input_descs,
+SliceFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                          const nlohmann::json                   &jsettings,
                          const holoflow::core::SyncCreateCtx    &ctx) const {
   (void) infer(input_descs, jsettings);
   (void) ctx;
-  return std::unique_ptr<holoflow::core::ISyncTask>(new SliceCopy());
+  return std::unique_ptr<holoflow::core::ISyncTask>(new Slice());
 }
 
 } // namespace holonp

@@ -32,29 +32,29 @@ struct SliceItem {
   std::int64_t                step  = 1;
 };
 
-struct SliceCopySettings {
+struct SliceSettings {
   std::vector<SliceItem> slices;
 };
 
 void to_json(nlohmann::json &j, const SliceItem &s);
 void from_json(const nlohmann::json &j, SliceItem &s);
 
-void to_json(nlohmann::json &j, const SliceCopySettings &s);
-void from_json(const nlohmann::json &j, SliceCopySettings &s);
+void to_json(nlohmann::json &j, const SliceSettings &s);
+void from_json(const nlohmann::json &j, SliceSettings &s);
 
 // Creates a view into the tensor without copying data.
-class SliceCopy : public holoflow::core::ISyncTask {
+class Slice : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
   // Constructor is now trivial as no device resources are needed for a view
-  SliceCopy() = default;
+  Slice() = default;
 
-  friend class SliceCopyFactory;
+  friend class SliceFactory;
 };
 
-class SliceCopyFactory : public holoflow::core::ISyncTaskFactory {
+class SliceFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
