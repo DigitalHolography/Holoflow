@@ -29,6 +29,7 @@
 #include "holoflow/core/tasks.hh"
 #include "holonp/abs.hh"
 #include "holonp/arange.hh"
+#include "holonp/assign.hh"
 #include "holonp/concatenate.hh"
 #include "holonp/empty.hh"
 #include "holonp/fft.hh"
@@ -37,8 +38,8 @@
 #include "holonp/mean.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/mul.hh"
+#include "holonp/reshape.hh"
 #include "holonp/rfft.hh"
-#include "holonp/assign.hh"
 #include "holonp/slice.hh"
 #include "holonp/transpose.hh"
 #include "holotask/asyncs/batch_queue.hh"
@@ -60,7 +61,6 @@
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
-#include "holotask/syncs/reshape.hh"
 #include "holotask/syncs/rotation.hh"
 #include "holotask/syncs/stft.hh"
 #include "pipeline/settings.hh"
@@ -166,7 +166,6 @@ private:
   std::vector<TDesc> fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
   std::vector<TDesc> fresnel_qin(holotask::sources::FresnelQinSettings s);
   std::vector<TDesc> angular_spectrum(const TDesc &X, holotask::syncs::AngularSpectrumSettings s);
-  std::vector<TDesc> reshape(const TDesc &X, holotask::syncs::ReshapeSettings s);
   std::vector<TDesc> slide_avg(const TDesc &X, holotask::asyncs::SlidingAverageSettings s);
   std::vector<TDesc> xy_raw_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   std::vector<TDesc> xy_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
@@ -194,6 +193,7 @@ private:
   std::vector<TDesc> fftshift(const TDesc &X, holonp::FFTShiftSettings s);
   std::vector<TDesc> abs(const TDesc &X, holonp::AbsSettings s);
   std::vector<TDesc> mean(const TDesc &X, holonp::MeanSettings s);
+  std::vector<TDesc> reshape(const TDesc &X, holonp::ReshapeSettings s);
   // clang-format on
 };
 

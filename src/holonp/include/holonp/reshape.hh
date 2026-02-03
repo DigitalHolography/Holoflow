@@ -1,4 +1,4 @@
-// Copyright 2025 Digital Holography Foundation
+// Copyright 2026 Digital Holography Foundation
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -24,32 +25,45 @@
 
 namespace holonp {
 
-struct AssignSettings {};
+struct ReshapeSettings {
+  // Target shape. One dimension can be -1 (inferred).
+  std::vector<int64_t> shape;
 
-void to_json(nlohmann::json &j, const AssignSettings &s);
-void from_json(const nlohmann::json &j, AssignSettings &s);
+  // std::nullopt = Auto (View if possible, else Copy)
+  // true         = Force Copy
+  // false        = Force View (raise error if copy needed)
+  std::optional<bool> copy = std::nullopt;
+};
 
-class Assign : public holoflow::core::ISyncTask {
+void to_json(nlohmann::json &j, const ReshapeSettings &s);
+void from_json(const nlohmann::json &j, ReshapeSettings &s);
+
+class Reshape : public holoflow::core::ISyncTask {
 public:
-  Assign(size_t ndim, size_t total_elems, size_t elem_size,
-         curaii::unique_device_ptr<int64_t> d_src_strides,
-         curaii::unique_device_ptr<int64_t> d_dst_strides,
-         curaii::unique_device_ptr<int64_t> d_shape, cudaStream_t stream);
+  // Constructor for the Copy case
+  Reshape(size_t ndim, size_t total_elems, size_t elem_size,
+          curaii::unique_device_ptr<int64_t> d_src_strides,
+          curaii::unique_device_ptr<int64_t> d_src_shape, cudaStream_t stream);
+
+  // Constructor for the View case (No-op)
+  Reshape();
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  size_t       ndim_;
-  size_t       total_elems_;
-  size_t       elem_size_;
-  cudaStream_t stream_;
+  bool is_view_ = false;
+
+  // Copy-only params
+  size_t       ndim_        = 0;
+  size_t       total_elems_ = 0;
+  size_t       elem_size_   = 0;
+  cudaStream_t stream_      = nullptr;
 
   curaii::unique_device_ptr<int64_t> d_src_strides_;
-  curaii::unique_device_ptr<int64_t> d_dst_strides_;
-  curaii::unique_device_ptr<int64_t> d_shape_;
+  curaii::unique_device_ptr<int64_t> d_src_shape_;
 };
 
-class AssignFactory : public holoflow::core::ISyncTaskFactory {
+class ReshapeFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;

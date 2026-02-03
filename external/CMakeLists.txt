@@ -13,56 +13,47 @@
 # limitations under the License.
 
 if(ENABLE_FETCHCONTENT)
+    message(STATUS "Using FetchContent to acquire external dependencies...")
     include(FetchContent)
 
-if(NOT DEFINED FETCHCONTENT_BASE_DIR)
-    set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/.fc")
-endif()
+    set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/.fc" CACHE PATH "Persistent storage for FetchContent" FORCE)
+    file(MAKE_DIRECTORY "${FETCHCONTENT_BASE_DIR}")
+    message(STATUS "FetchContent base directory: ${FETCHCONTENT_BASE_DIR}")
 
-    # spdlog
-    FetchContent_Declare(
-        spdlog
-        GIT_REPOSITORY https://github.com/gabime/spdlog.git
-        GIT_TAG v1.15.3
-    )
+    macro(declare_persistent_dependency NAME REPO TAG)
+        FetchContent_Declare(
+            ${NAME}
+            GIT_REPOSITORY ${REPO}
+            GIT_TAG        ${TAG}
+            GIT_SHALLOW    ON
+            SOURCE_DIR     "${FETCHCONTENT_BASE_DIR}/${NAME}-src"
+            BINARY_DIR     "${FETCHCONTENT_BASE_DIR}/${NAME}-build"
+            SUBBUILD_DIR   "${FETCHCONTENT_BASE_DIR}/${NAME}-subbuild"
+        )
+    endmacro()
+
+    declare_persistent_dependency(spdlog "https://github.com/gabime/spdlog.git" "v1.15.3")
     FetchContent_MakeAvailable(spdlog)
 
-    # gtest
     if(ENABLE_TESTING)
         set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-        FetchContent_Declare(
-            googletest
-            GIT_REPOSITORY https://github.com/google/googletest.git
-            GIT_TAG v1.17.0
-        )
+        declare_persistent_dependency(googletest "https://github.com/google/googletest.git" "v1.17.0")
         FetchContent_MakeAvailable(googletest)
     endif()
 
-    # boost
-    FetchContent_Declare(
-        boost
-        GIT_REPOSITORY https://github.com/boostorg/boost.git
-        GIT_TAG boost-1.89.0
-    )
+    declare_persistent_dependency(boost "https://github.com/boostorg/boost.git" "boost-1.89.0")
     FetchContent_MakeAvailable(boost)
 
-    # nlohmann-json
-    FetchContent_Declare(
-        nlohmann_json
-        GIT_REPOSITORY https://github.com/nlohmann/json.git
-        GIT_TAG v3.12.0
-    )
+    declare_persistent_dependency(nlohmann_json "https://github.com/nlohmann/json.git" "v3.12.0")
     FetchContent_MakeAvailable(nlohmann_json)
 
-    # benchmark
     if(ENABLE_BENCHMARKS)
-        FetchContent_Declare(
-            benchmark
-            GIT_REPOSITORY https://github.com/google/benchmark.git
-            GIT_TAG v1.9.4
-        )
+        declare_persistent_dependency(benchmark "https://github.com/google/benchmark.git" "v1.9.4")
         FetchContent_MakeAvailable(benchmark)
     endif()
+
+    message(STATUS "FetchContent dependencies acquired.")
+
 else()
     find_package(spdlog REQUIRED)
 
@@ -81,6 +72,7 @@ endif()
 
 find_package(TBB REQUIRED)
 find_package(MKL CONFIG REQUIRED)
+
 find_program(MKL_INTEL_THREAD_DLL NAMES mkl_intel_thread.2.dll REQUIRED)
 find_program(MKL_AVX512_DLL NAMES mkl_avx512.2.dll REQUIRED)
 find_program(MKL_DEF_DLL NAMES mkl_def.2.dll REQUIRED)

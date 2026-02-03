@@ -78,12 +78,13 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
   // Raw view
   if (s_.raw_view || s_.view_type == ViewType::RAW) {
-    auto shape  = H.shape;
-    shape.at(0) = 1;
+    int64_t new_z = 1;
+    int64_t new_y = static_cast<int64_t>(H.shape.at(1));
+    int64_t new_x = static_cast<int64_t>(H.shape.at(2));
 
     auto [H_disp]     = unpack<1>(memcpy(H, {Host}));
     auto [H_view]     = unpack<1>(batched_queue(H_disp, {s_.cpu_out_size, 1, 1}));
-    auto [H_reshaped] = unpack<1>(reshape(H_view, {shape}));
+    auto [H_reshaped] = unpack<1>(reshape(H_view, {{new_z, new_y, new_x}, true}));
 
     if (s_.raw_view) {
       xy_raw_display(H_reshaped, {});
@@ -213,9 +214,12 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     {
       std::vector<size_t> crop_origin = {0, 10, 0};
       std::vector<size_t> crop_shape  = {1, S.shape.at(1) - 20, S.shape.at(0)};
+      int64_t             new_z       = 1;
+      int64_t             new_y       = static_cast<int64_t>(S.shape.at(1));
+      int64_t             new_x       = static_cast<int64_t>(S.shape.at(0));
 
       auto [M0]        = unpack<1>(average(S, {1, s_.time_y_begin, s_.time_y_end}));
-      std::tie(M0)     = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
+      std::tie(M0)     = unpack<1>(reshape(M0, {{new_z, new_y, new_x}, true}));
       auto [M0_avg]    = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
       std::tie(M0_avg) = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
       std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
@@ -231,9 +235,12 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     {
       std::vector<size_t> crop_origin = {0, 10, 0};
       std::vector<size_t> crop_shape  = {1, S.shape.at(1) - 20, S.shape.at(0)};
+      int64_t             new_z       = 1;
+      int64_t             new_y       = static_cast<int64_t>(S.shape.at(1));
+      int64_t             new_x       = static_cast<int64_t>(S.shape.at(0));
 
       auto [M0]        = unpack<1>(average(S, {2, s_.time_x_begin, s_.time_x_end}));
-      std::tie(M0)     = unpack<1>(reshape(M0, {{1, M0.shape.at(1), M0.shape.at(0)}}));
+      std::tie(M0)     = unpack<1>(reshape(M0, {{new_z, new_y, new_x}, true}));
       auto [M0_avg]    = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
       std::tie(M0_avg) = unpack<1>(crop(M0_avg, {crop_origin, crop_shape}));
       std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
@@ -250,11 +257,11 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
   if (true) {
     // TODO: start from u8 SH
-    auto nb_subap = 3ULL;
-    auto subap_w  = S.shape.at(2) / nb_subap;
-    auto subap_h  = S.shape.at(1) / nb_subap;
-    auto tmp      = convert(H, {Target::F32, Strat::Modulus});
-    auto [H]      = unpack<1>(tmp);
+    auto nb_subap    = 3ULL;
+    auto subap_w     = S.shape.at(2) / nb_subap;
+    auto subap_h     = S.shape.at(1) / nb_subap;
+    auto tmp         = convert(H, {Target::F32, Strat::Modulus});
+    auto [H]         = unpack<1>(tmp);
     auto [M0_subaps] = unpack<1>(empty({{nb_subap, nb_subap, 1, subap_h, subap_w}}));
 
     // -------------------------------------------------------------------------------------------------
@@ -262,7 +269,8 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // Hologram)
     // -------------------------------------------------------------------------------------------------
     auto [FH]      = unpack<1>(rfft(H, {0}));
-    auto [FH_filt] = unpack<1>(slice(FH, {{{s_.time_z_begin, s_.time_z_end}, {}, {}}}));
+    auto [FH_filt] = unpack<1>(slice(FH, {{holonp::SliceRange{s_.time_z_begin, s_.time_z_end},
+                                           holonp::SliceRange{}, holonp::SliceRange{}}}));
 
     // -------------------------------------------------------------------------------------------------
     // Shack-Hartmann processing (FH_filt -> FH_Qin (fresnel lens applied) -> H_sub (subaperture) ->
@@ -274,29 +282,41 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [Qin]    = unpack<1>(fresnel_qin({lam, dx, dy, z_prop, nx, ny}));
     auto [FH_Qin] = unpack<1>(mul(FH_filt, Qin, {}));
 
-    auto [FH_sub]         = unpack<1>(slice(FH_Qin, {{{}, {0, subap_h, 1}, {0, subap_w, 1}}}));
+    auto [FH_sub] =
+        unpack<1>(slice(FH_Qin, {{holonp::SliceRange{}, holonp::SliceRange{0, subap_h, 1},
+                                  holonp::SliceRange{0, subap_w, 1}}}));
     auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
     std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
 
     for (auto sy = 0; sy < nb_subap; ++sy) {
       for (auto sx = 0; sx < nb_subap; ++sx) {
-        auto              y_start = sy * subap_h;
-        auto              y_end   = y_start + subap_h;
-        holonp::SliceItem slice_y{.start = y_start, .stop = y_end, .step = 1};
-        auto              x_start = sx * subap_w;
-        auto              x_end   = x_start + subap_w;
-        holonp::SliceItem slice_x{.start = x_start, .stop = x_end, .step = 1};
+        auto               y_start = sy * subap_h;
+        auto               y_end   = y_start + subap_h;
+        auto               x_start = sx * subap_w;
+        auto               x_end   = x_start + subap_w;
+        holonp::SliceRange slice_y{y_start, y_end, 1};
+        holonp::SliceRange slice_x{x_start, x_end, 1};
 
         auto [FH_sub]         = unpack<1>(slice(FH_Qin, {{{}, slice_y, slice_x}}));
         auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
         std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
         auto [S]              = unpack<1>(abs(FH_sub_prop, {}));
         auto [M0]             = unpack<1>(mean(S, {{0}, true}));
-        std::tie(M0) = unpack<1>(reshape(M0, {{1, 1, 1, M0.shape.at(1), M0.shape.at(2)}}));
-        std::tie(M0_subaps) =
-            unpack<1>(assign(M0, M0_subaps, {{{sy, sy + 1, 1}, {sx, sx + 1, 1}, {}, {}, {}}}));
+
+        auto [dst_tile] = unpack<1>(
+            slice(M0_subaps,
+                  {{sy, sx, holonp::SliceRange{}, holonp::SliceRange{}, holonp::SliceRange{}}}));
+        (void)unpack<1>(assign(dst_tile, M0, {}));
+        // std::tie(M0_subaps) =
+        //     unpack<1>(assign(M0, M0_subaps, {{{sy, sy + 1, 1}, {sx, sx + 1, 1}, {}, {}, {}}}));
       }
     }
+
+    int64_t new_z                = static_cast<int64_t>(M0_subaps.shape.at(2));
+    int64_t new_y                = nb_subap * static_cast<int64_t>(M0_subaps.shape.at(3));
+    int64_t new_x                = nb_subap * static_cast<int64_t>(M0_subaps.shape.at(4));
+    auto [M0_subaps_combined]    = unpack<1>(transpose(M0_subaps, {{2, 0, 3, 1, 4}}));
+    std::tie(M0_subaps_combined) = unpack<1>(reshape(M0_subaps_combined, {{new_z, new_y, new_x}}));
 
     auto [S]  = unpack<1>(abs(FH_sub_prop, {}));
     auto [M0] = unpack<1>(mean(S, {{0}, true}));
@@ -338,7 +358,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
 // clang-format off
 DEFINE_SOURCE_SYNC_NODE(holofile_read,                          "source",                              "Holofile",                       holotask::sources::HolofileSettings)
-DEFINE_SOURCE_SYNC_NODE(empty,                                 "empty",                               "Empty",                          holonp::EmptySettings)
+DEFINE_SOURCE_SYNC_NODE(empty,                                 "empty",                               "Empty",                           holonp::EmptySettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "ametek_s710_euresys_coaxlink_octo",   "AmetekS710EuresysCoaxlinkOcto",  holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "ametek_s711_euresys_coaxlink_qsfp_+", "AmetekS711EuresysCoaxlinkQSFP+", holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
 DEFINE_SOURCE_SYNC_NODE(fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                     holotask::sources::FresnelQinSettings)
@@ -349,7 +369,7 @@ DEFINE_UNARY_SYNC_NODE (stft,                                   "stft",         
 DEFINE_UNARY_SYNC_NODE (filter_2d,                              "filter_2d",                           "Filter2D",                       holotask::syncs::Filter2DSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_diffraction,                    "fresnel_diffraction",                 "FresnelDiffraction",             holotask::syncs::FresnelDiffractionSettings)
 DEFINE_UNARY_SYNC_NODE (angular_spectrum,                       "angular_spectrum",                    "AngularSpectrum",                holotask::syncs::AngularSpectrumSettings)
-DEFINE_UNARY_SYNC_NODE (reshape,                                "reshape",                             "Reshape",                        holotask::syncs::ReshapeSettings)
+DEFINE_UNARY_SYNC_NODE (reshape,                                "reshape",                             "Reshape",                        holonp::ReshapeSettings)
 DEFINE_UNARY_SYNC_NODE (average,                                "average",                             "Average",                        holotask::syncs::AverageSettings)
 DEFINE_UNARY_SYNC_NODE (convolution,                            "convolution",                         "Convolution",                    holotask::syncs::ConvolutionSettings)
 DEFINE_UNARY_SYNC_NODE (crop,                                   "crop",                                "Crop",                           holotask::syncs::CropSettings)
@@ -365,7 +385,7 @@ DEFINE_UNARY_SYNC_NODE (shack_hartmann_display,                 "shack_hartmann_
 DEFINE_NARY_SYNC_NODE  (concatenate,                            "concatenate",                         "Concatenate",                    holonp::ConcatenateSettings)
 DEFINE_UNARY_SYNC_NODE (transpose,                              "transpose",                           "Transpose",                      holonp::TransposeSettings)
 DEFINE_UNARY_SYNC_NODE (rfft,                                   "rfft",                                "RFFT",                           holonp::RFFTSettings)
-DEFINE_UNARY_SYNC_NODE (slice,                             "slice",                          "Slice",                      holonp::SliceSettings)
+DEFINE_UNARY_SYNC_NODE (slice,                                  "slice",                               "Slice",                          holonp::SliceSettings)
 DEFINE_UNARY_SYNC_NODE (fft,                                    "fft",                                 "FFT",                            holonp::FFTSettings)
 DEFINE_UNARY_SYNC_NODE (fft2,                                   "fft2",                                "FFT2",                           holonp::FFT2Settings)
 DEFINE_UNARY_SYNC_NODE (fftshift,                               "fftshift",                            "FFTShiftNp",                     holonp::FFTShiftSettings)
@@ -382,10 +402,9 @@ std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::mul(const TDesc &A, const T
 }
 
 std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::assign(const TDesc &X, const TDesc &Y,
-                                                                  holonp::AssignSettings s) {
+                                                            holonp::AssignSettings s) {
   std::array<TDesc, 2> inputs{X, Y};
-  return make_nary_sync_node("assign", "Assign", "Assign",
-                             std::span<const TDesc>{inputs}, s);
+  return make_nary_sync_node("assign", "Assign", "Assign", std::span<const TDesc>{inputs}, s);
 }
 
 std::vector<GraphBuilder_v2::TDesc>
@@ -423,6 +442,8 @@ holoflow::core::TDesc GraphBuilder_v2::TDesc::as_core() const {
   t.shape   = shape;
   t.dtype   = dtype;
   t.mem_loc = mem_loc;
+  t.strides = strides;
+  t.offset  = offset;
   return t;
 }
 

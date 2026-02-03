@@ -15,7 +15,9 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <span>
+#include <variant>
 #include <vector>
 
 #include "curaii/cuda.hh"
@@ -26,15 +28,25 @@ template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
 namespace holonp {
 
-struct SliceItem {
+// Represents a range selection (e.g., 0:5:1)
+// Preserves dimensionality.
+struct SliceRange {
   std::optional<std::int64_t> start = std::nullopt;
   std::optional<std::int64_t> stop  = std::nullopt;
   std::int64_t                step  = 1;
 };
 
+// Represents either a SliceRange or a direct Index
+// - SliceRange: keeps dimension (e.g. X[0:1])
+// - int64: drops dimension (e.g. X[0])
+using SliceItem = std::variant<SliceRange, std::int64_t>;
+
 struct SliceSettings {
   std::vector<SliceItem> slices;
 };
+
+void to_json(nlohmann::json &j, const SliceRange &s);
+void from_json(const nlohmann::json &j, SliceRange &s);
 
 void to_json(nlohmann::json &j, const SliceItem &s);
 void from_json(const nlohmann::json &j, SliceItem &s);
@@ -43,12 +55,12 @@ void to_json(nlohmann::json &j, const SliceSettings &s);
 void from_json(const nlohmann::json &j, SliceSettings &s);
 
 // Creates a view into the tensor without copying data.
+// Supports both slicing (sub-views) and integer indexing (dimensionality reduction).
 class Slice : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  // Constructor is now trivial as no device resources are needed for a view
   Slice() = default;
 
   friend class SliceFactory;

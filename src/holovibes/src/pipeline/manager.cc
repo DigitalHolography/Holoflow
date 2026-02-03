@@ -33,6 +33,7 @@
 #include "holoflow/runtime/graph_display.hh"
 #include "holonp/abs.hh"
 #include "holonp/arange.hh"
+#include "holonp/assign.hh"
 #include "holonp/concatenate.hh"
 #include "holonp/empty.hh"
 #include "holonp/fft.hh"
@@ -41,8 +42,8 @@
 #include "holonp/mean.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/mul.hh"
+#include "holonp/reshape.hh"
 #include "holonp/rfft.hh"
-#include "holonp/assign.hh"
 #include "holonp/slice.hh"
 #include "holonp/transpose.hh"
 #include "holotask/asyncs/batch_queue.hh"
@@ -65,7 +66,6 @@
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
-#include "holotask/syncs/reshape.hh"
 #include "holotask/syncs/rotation.hh"
 #include "holotask/syncs/stft.hh"
 #include "logger.hh"
@@ -131,7 +131,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
   reg_sync<syncs::LogFactory>(registry_, "Log");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
-  reg_sync<syncs::ReshapeFactory>(registry_, "Reshape");
+  // reg_sync<syncs::ReshapeFactory>(registry_, "Reshape");
   reg_sync<syncs::CropFactory>(registry_, "Crop");
   reg_sync<syncs::RotationFactory>(registry_, "Rotation");
 
@@ -149,6 +149,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<ConcatenateFactory>(registry_, "Concatenate");
   reg_sync<RFFTFactory>(registry_, "RFFT");
   reg_sync<MulFactory>(registry_, "Mul");
+  reg_sync<ReshapeFactory>(registry_, "Reshape");
   // clang-format on
 
   metrics_timer_ = new QTimer(this);

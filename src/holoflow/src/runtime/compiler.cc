@@ -520,7 +520,7 @@ void Compiler::Impl::allocate_buffers() {
       MemoryBlock block;
       block.mem_loc    = desc.mem_loc;
       block.size_bytes = desc.num_bytes();
-      
+
       logger_->info("Allocating {} bytes for SID {} at {:?} memory", block.size_bytes, sid,
                     to_string(desc.mem_loc));
 
@@ -536,7 +536,7 @@ void Compiler::Impl::allocate_buffers() {
       // Store ownership
       res.memory_blocks.emplace(sid, std::move(block));
     }
-    
+
     else {
       logger_->info("SID {} is user-managed; skipping allocation.", sid);
     }
@@ -675,6 +675,23 @@ void Compiler::Impl::partition_sections() {
       if (g[p].infer.kind == core::TaskKind::Sync) {
         out_->sections[get_section_id(p)].async_prod.push_back(v);
       }
+    }
+  }
+
+  // Log Section Info (and its nodes in topo order)
+  for (const auto &sec : out_->sections) {
+    logger_->info("Section {}: ", sec.name);
+    logger_->info("  Async Consumers:");
+    for (const auto &anode : sec.async_cons) {
+      logger_->info("    - {}", g[anode].spec.name);
+    }
+    logger_->info("  Sync Nodes:");
+    for (const auto &snode : sec.sync_topo) {
+      logger_->info("    - {}", g[snode].spec.name);
+    }
+    logger_->info("  Async Producers:");
+    for (const auto &anode : sec.async_prod) {
+      logger_->info("    - {}", g[anode].spec.name);
     }
   }
 }
