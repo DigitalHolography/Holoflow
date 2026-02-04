@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//      http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -73,8 +73,9 @@ holoflow::core::InferResult AssignFactory::infer(std::span<const holoflow::core:
   if (input_descs.size() != 2)
     throw std::runtime_error("Assign requires 2 inputs");
 
-  const auto &src = input_descs[0];
-  const auto &dst = input_descs[1];
+  // Changed: dst is now input[0], src is input[1]
+  const auto &dst = input_descs[0];
+  const auto &src = input_descs[1];
 
   // Enforce No-Broadcasting: Shapes must be identical
   if (src.shape != dst.shape) {
@@ -86,9 +87,9 @@ holoflow::core::InferResult AssignFactory::infer(std::span<const holoflow::core:
   }
 
   return holoflow::core::InferResult{
-      .input_descs   = {src, dst},
+      .input_descs   = {dst, src}, // Keep consistent with variable names
       .output_descs  = {dst},
-      .in_place      = {{1, 0}},
+      .in_place      = {{0, 0}}, // Changed: Input 0 (dst) is reused as Output 0
       .owned_inputs  = {false, false},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,
@@ -99,8 +100,9 @@ std::unique_ptr<holoflow::core::ISyncTask>
 AssignFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                       const nlohmann::json & /*jsettings*/,
                       const holoflow::core::SyncCreateCtx &ctx) const {
-  const auto  &src  = input_descs[0];
-  const auto  &dst  = input_descs[1];
+  // Changed: dst is now input[0], src is input[1]
+  const auto  &dst  = input_descs[0];
+  const auto  &src  = input_descs[1];
   const size_t ndim = src.shape.size();
 
   std::vector<int64_t> h_src_strides(ndim);
@@ -135,8 +137,10 @@ holoflow::core::OpResult Assign::execute(holoflow::core::SyncCtx &ctx) {
     return holoflow::core::OpResult::Ok;
 
   // TView::data() already accounts for TDesc::offset
-  const std::byte *src_ptr = reinterpret_cast<const std::byte *>(ctx.inputs[0].data());
-  std::byte       *dst_ptr = reinterpret_cast<std::byte *>(ctx.outputs[0].data());
+  // Changed: src is now at input index 1
+  const std::byte *src_ptr = reinterpret_cast<const std::byte *>(ctx.inputs[1].data());
+  // dst is output 0 (which is aliased to input 0 via in_place)
+  std::byte *dst_ptr = reinterpret_cast<std::byte *>(ctx.outputs[0].data());
 
   constexpr int block_size = 256;
   int           grid_size  = static_cast<int>((total_elems_ + block_size - 1) / block_size);

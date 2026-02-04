@@ -257,24 +257,24 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
   if (true) {
     // TODO: start from u8 SH
-    auto nb_subap    = 3ULL;
-    auto subap_w     = S.shape.at(2) / nb_subap;
-    auto subap_h     = S.shape.at(1) / nb_subap;
-    auto tmp         = convert(H, {Target::F32, Strat::Modulus});
-    auto [H]         = unpack<1>(tmp);
-    auto [M0_subaps] = unpack<1>(empty({{nb_subap, nb_subap, 1, subap_h, subap_w}}));
+    auto nb_subap = 3ULL;
+    auto subap_w  = S.shape.at(2) / nb_subap;
+    auto subap_h  = S.shape.at(1) / nb_subap;
+    auto tmp      = convert(H, {Target::F32, Strat::Modulus});
+    auto [H]      = unpack<1>(tmp);
+    auto nb_acc   = 1ULL;
 
     // -------------------------------------------------------------------------------------------------
     // Time-Frequency Analysis (SH -> FH - Frequency Hologram -> FH_filt - Filtered Frequency
     // Hologram)
     // -------------------------------------------------------------------------------------------------
-    auto [FH]      = unpack<1>(rfft(H, {0}));
-    auto [FH_filt] = unpack<1>(slice(FH, {{holonp::SliceRange{s_.time_z_begin, s_.time_z_end},
-                                           holonp::SliceRange{}, holonp::SliceRange{}}}));
+    auto [FH] = unpack<1>(rfft(H, {0}));
+    holonp::SliceRange freq_slice{s_.time_z_begin, s_.time_z_end};
+    auto [FH_filt] = unpack<1>(slice(FH, {{freq_slice, {}, {}}}));
 
     // -------------------------------------------------------------------------------------------------
-    // Shack-Hartmann processing (FH_filt -> FH_Qin (fresnel lens applied) -> H_sub (subaperture) ->
-    // H_sub_prop -> S -> M0 (final display)
+    // Shack-Hartmann processing (FH_filt -> FH_Qin (fresnel lens applied) -> H_sub (subaperture)
+    // -> H_sub_prop -> S -> M0 (final display)
     // -------------------------------------------------------------------------------------------------
 
     auto nx       = S.shape.at(2);
@@ -282,50 +282,51 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [Qin]    = unpack<1>(fresnel_qin({lam, dx, dy, z_prop, nx, ny}));
     auto [FH_Qin] = unpack<1>(mul(FH_filt, Qin, {}));
 
-    auto [FH_sub] =
-        unpack<1>(slice(FH_Qin, {{holonp::SliceRange{}, holonp::SliceRange{0, subap_h, 1},
-                                  holonp::SliceRange{0, subap_w, 1}}}));
-    auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
-    std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
-
+    auto [M0_subaps] = unpack<1>(empty({{nb_subap, nb_subap, nb_acc, subap_h, subap_w}}));
     for (auto sy = 0; sy < nb_subap; ++sy) {
       for (auto sx = 0; sx < nb_subap; ++sx) {
-        auto               y_start = sy * subap_h;
-        auto               y_end   = y_start + subap_h;
-        auto               x_start = sx * subap_w;
-        auto               x_end   = x_start + subap_w;
-        holonp::SliceRange slice_y{y_start, y_end, 1};
-        holonp::SliceRange slice_x{x_start, x_end, 1};
+        for (auto z = 0; z < nb_acc; ++z) {
+          auto               y_start = sy * subap_h;
+          auto               y_end   = y_start + subap_h;
+          auto               x_start = sx * subap_w;
+          auto               x_end   = x_start + subap_w;
+          holonp::SliceRange slice_y{y_start, y_end, 1};
+          holonp::SliceRange slice_x{x_start, x_end, 1};
 
-        auto [FH_sub]         = unpack<1>(slice(FH_Qin, {{{}, slice_y, slice_x}}));
-        auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
-        std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
-        auto [S]              = unpack<1>(abs(FH_sub_prop, {}));
-        auto [M0]             = unpack<1>(mean(S, {{0}, true}));
+          auto [FH_sub]         = unpack<1>(slice(FH_Qin, {{{}, slice_y, slice_x}}));
+          auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
+          std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
+          auto [S]              = unpack<1>(abs(FH_sub_prop, {}));
+          auto [M0]             = unpack<1>(mean(S, {{0}, true}));
+          std::tie(M0) = unpack<1>(reshape(M0, {{(int64_t)subap_h, (int64_t)subap_w}, false}));
 
-        auto [dst_tile] = unpack<1>(
-            slice(M0_subaps,
-                  {{sy, sx, holonp::SliceRange{}, holonp::SliceRange{}, holonp::SliceRange{}}}));
-        (void)unpack<1>(assign(dst_tile, M0, {}));
-        // std::tie(M0_subaps) =
-        //     unpack<1>(assign(M0, M0_subaps, {{{sy, sy + 1, 1}, {sx, sx + 1, 1}, {}, {}, {}}}));
+          auto [dst_tile] = unpack<1>(slice(M0_subaps, {{sy, sx, z, {}, {}}}));
+          (void)unpack<1>(assign(dst_tile, M0, {}));
+        }
       }
     }
 
-    int64_t new_z                = static_cast<int64_t>(M0_subaps.shape.at(2));
-    int64_t new_y                = nb_subap * static_cast<int64_t>(M0_subaps.shape.at(3));
-    int64_t new_x                = nb_subap * static_cast<int64_t>(M0_subaps.shape.at(4));
-    auto [M0_subaps_combined]    = unpack<1>(transpose(M0_subaps, {{2, 0, 3, 1, 4}}));
-    std::tie(M0_subaps_combined) = unpack<1>(reshape(M0_subaps_combined, {{new_z, new_y, new_x}}));
+    std::tie(M0_subaps) = unpack<1>(mean(M0_subaps, {{2}, true}));
 
-    auto [S]  = unpack<1>(abs(FH_sub_prop, {}));
-    auto [M0] = unpack<1>(mean(S, {{0}, true}));
+    auto [M0_sh_disp] = unpack<1>(empty({{1, nb_subap * subap_h, nb_subap * subap_w}}));
+    for (auto sy = 0; sy < nb_subap; ++sy) {
+      for (auto sx = 0; sx < nb_subap; ++sx) {
+        auto               y_start = sy * subap_h;
+        auto               x_start = sx * subap_w;
+        holonp::SliceRange slice_y{y_start, y_start + subap_h, 1};
+        holonp::SliceRange slice_x{x_start, x_start + subap_w, 1};
 
-    std::tie(M0) = unpack<1>(convert(M0, {Target::U8, Strat::Scaled}));
-    std::tie(M0) = unpack<1>(batched_queue(M0, {s_.gpu_out_size, 1, 1}));
-    std::tie(M0) = unpack<1>(memcpy(M0, {Host}));
-    std::tie(M0) = unpack<1>(batched_queue(M0, {s_.cpu_out_size, 1, 1}));
-    shack_hartmann_display(M0, {});
+        auto [src_tile] = unpack<1>(slice(M0_subaps, {{sy, sx, {}, {}, {}}}));
+        auto [dst_tile] = unpack<1>(slice(M0_sh_disp, {{{}, slice_y, slice_x}}));
+        (void)unpack<1>(assign(dst_tile, src_tile, {}));
+      }
+    }
+
+    std::tie(M0_sh_disp) = unpack<1>(convert(M0_sh_disp, {Target::U8, Strat::Scaled}));
+    std::tie(M0_sh_disp) = unpack<1>(batched_queue(M0_sh_disp, {s_.gpu_out_size, 1, 1}));
+    std::tie(M0_sh_disp) = unpack<1>(memcpy(M0_sh_disp, {Host}));
+    std::tie(M0_sh_disp) = unpack<1>(batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1}));
+    shack_hartmann_display(M0_sh_disp, {});
   }
 
   return g_;
