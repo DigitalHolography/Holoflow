@@ -341,7 +341,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   if (true) {
     auto nb_subap = 3ULL;
 
-    // 1. Calculate valid dimensions (Integer division floors the result)
+    // 1. Calculate valid dimensions (integer division floors the result)
     auto subap_w = S.shape.at(2) / nb_subap;
     auto subap_h = S.shape.at(1) / nb_subap;
 
@@ -359,7 +359,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // Temporal FFT
     auto [FH] = unpack<1>(rfft(H_f32, {0}));
 
-    // Filter Frequencies AND Crop Spatially in one go (or sequential slices)
+    // Filter frequencies AND crop spatially in one go (or sequential slices)
     holonp::SliceRange freq_slice{s_.time_z_begin, s_.time_z_end};
     holonp::SliceRange crop_y{0, valid_h};
     holonp::SliceRange crop_x{0, valid_w};
@@ -404,7 +404,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // 5. Reconstruction
     // -------------------------------------------------------------------------------------------------
 
-    // A. Inverse Transpose to restore image order
+    // A. Inverse transpose to restore image order
     auto [M0_ordered] = unpack<1>(transpose(M0_blocked, {{0, 1, 3, 2, 4}}));
 
     // B. Reshape back to 2D (Valid_H, Valid_W)
@@ -413,9 +413,12 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // -------------------------------------------------------------------------------------------------
     // 6. Output
     // -------------------------------------------------------------------------------------------------
+    auto acc  = s_.pp_accumulation;
+    auto size = acc * 2;
 
+    std::tie(M0_sh_disp) = unpack<1>(batched_queue(M0_sh_disp, {size, acc, acc}));
+    std::tie(M0_sh_disp) = unpack<1>(mean(M0_sh_disp, {{0}, true}));
     std::tie(M0_sh_disp) = unpack<1>(convert(M0_sh_disp, {Target::U8, Strat::Scaled}));
-    std::tie(M0_sh_disp) = unpack<1>(batched_queue(M0_sh_disp, {s_.gpu_out_size, 1, 1}));
     std::tie(M0_sh_disp) = unpack<1>(memcpy(M0_sh_disp, {Host}));
     std::tie(M0_sh_disp) = unpack<1>(batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1}));
 
@@ -453,6 +456,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 // clang-format off
 DEFINE_SOURCE_SYNC_NODE(holofile_read,                          "source",                              "Holofile",                       holotask::sources::HolofileSettings)
 DEFINE_SOURCE_SYNC_NODE(empty,                                 "empty",                               "Empty",                           holonp::EmptySettings)
+DEFINE_SOURCE_SYNC_NODE(zeros,                                 "zeros",                               "Zeros",                           holonp::ZerosSettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "ametek_s710_euresys_coaxlink_octo",   "AmetekS710EuresysCoaxlinkOcto",  holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "ametek_s711_euresys_coaxlink_qsfp_+", "AmetekS711EuresysCoaxlinkQSFP+", holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
 DEFINE_SOURCE_SYNC_NODE(fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                     holotask::sources::FresnelQinSettings)
@@ -493,6 +497,18 @@ std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::mul(const TDesc &A, const T
                                                          holonp::MulSettings s) {
   std::array<TDesc, 2> inputs{A, B};
   return make_nary_sync_node("mul", "Mul", "Mul", std::span<const TDesc>{inputs}, s);
+}
+
+std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::add(const TDesc &A, const TDesc &B,
+                                                         holonp::AddSettings s) {
+  std::array<TDesc, 2> inputs{A, B};
+  return make_nary_sync_node("add", "Add", "Add", std::span<const TDesc>{inputs}, s);
+}
+
+std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::div(const TDesc &A, const TDesc &B,
+                                                         holonp::DivSettings s) {
+  std::array<TDesc, 2> inputs{A, B};
+  return make_nary_sync_node("div", "Div", "Div", std::span<const TDesc>{inputs}, s);
 }
 
 std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::assign(const TDesc &X, const TDesc &Y,

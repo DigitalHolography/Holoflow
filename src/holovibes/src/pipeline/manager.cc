@@ -32,9 +32,11 @@
 #include "graph_builder_v2.hh"
 #include "holoflow/runtime/graph_display.hh"
 #include "holonp/abs.hh"
+#include "holonp/add.hh"
 #include "holonp/arange.hh"
 #include "holonp/assign.hh"
 #include "holonp/concatenate.hh"
+#include "holonp/div.hh"
 #include "holonp/empty.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
@@ -46,6 +48,7 @@
 #include "holonp/rfft.hh"
 #include "holonp/slice.hh"
 #include "holonp/transpose.hh"
+#include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/holofile.hh"
@@ -137,6 +140,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
 
   reg_sync<ArangeFactory>(registry_, "Arange");
   reg_sync<EmptyFactory>(registry_, "Empty");
+  reg_sync<ZerosFactory>(registry_, "Zeros");
   reg_sync<MeshgridFactory>(registry_, "Meshgrid");
   reg_sync<TransposeFactory>(registry_, "Transpose");
   reg_sync<SliceFactory>(registry_, "Slice");
@@ -149,6 +153,8 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<ConcatenateFactory>(registry_, "Concatenate");
   reg_sync<RFFTFactory>(registry_, "RFFT");
   reg_sync<MulFactory>(registry_, "Mul");
+  reg_sync<DivFactory>(registry_, "Div");
+  reg_sync<AddFactory>(registry_, "Add");
   reg_sync<ReshapeFactory>(registry_, "Reshape");
   // clang-format on
 

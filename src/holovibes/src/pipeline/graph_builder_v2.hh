@@ -28,9 +28,11 @@
 #include "holoflow/core/registry.hh"
 #include "holoflow/core/tasks.hh"
 #include "holonp/abs.hh"
+#include "holonp/add.hh"
 #include "holonp/arange.hh"
 #include "holonp/assign.hh"
 #include "holonp/concatenate.hh"
+#include "holonp/div.hh"
 #include "holonp/empty.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
@@ -42,6 +44,7 @@
 #include "holonp/rfft.hh"
 #include "holonp/slice.hh"
 #include "holonp/transpose.hh"
+#include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/holofile.hh"
@@ -157,6 +160,7 @@ private:
   // clang-format off
   std::vector<TDesc> holofile_read(holotask::sources::HolofileSettings s);
   std::vector<TDesc> empty(holonp::EmptySettings s);
+  std::vector<TDesc> zeros(holonp::ZerosSettings s);
   std::vector<TDesc> memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);
   std::vector<TDesc> batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
   std::vector<TDesc> convert(const TDesc &X, holotask::syncs::ConversionSettings s);
@@ -184,6 +188,8 @@ private:
   std::vector<TDesc> holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
   std::vector<TDesc> concatenate(std::span<const TDesc> Xs, holonp::ConcatenateSettings s);
   std::vector<TDesc> transpose(const TDesc &X, holonp::TransposeSettings s);
+  std::vector<TDesc> add(const TDesc &A, const TDesc &B, holonp::AddSettings s);
+  std::vector<TDesc> div(const TDesc &A, const TDesc &B, holonp::DivSettings s);
   std::vector<TDesc> mul(const TDesc &A, const TDesc &B, holonp::MulSettings s);
   std::vector<TDesc> rfft(const TDesc &X, holonp::RFFTSettings s);
   std::vector<TDesc> assign(const TDesc &X, const TDesc &Y, holonp::AssignSettings s);
