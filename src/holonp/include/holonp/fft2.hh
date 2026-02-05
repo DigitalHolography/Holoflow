@@ -11,10 +11,11 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//
+
 #pragma once
 
 #include <cuComplex.h>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <span>
 #include <vector>
@@ -23,8 +24,6 @@
 #include "curaii/cufft.hh"
 #include "holoflow/core/tasks.hh"
 #include "holonp/fft_common.hh"
-
-template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 namespace holonp {
 
@@ -42,14 +41,21 @@ public:
 
 private:
   FFT2(const FFT2Settings &settings, curaii::CufftHandle &&plan, size_t n_fft,
-       cudaStream_t stream);
+       size_t inner_batch_size, std::vector<size_t> input_offsets, cudaStream_t stream);
 
   friend class FFT2Factory;
 
   FFT2Settings        settings_;
   curaii::CufftHandle plan_;
-  size_t              n_fft_;
-  cudaStream_t        stream_;
+
+  size_t n_fft_;            // Elements per single FFT
+  size_t inner_batch_size_; // How many FFTs are done per kernel launch
+
+  // Pre-calculated byte offsets for each launch.
+  // If the input is fully contiguous, this contains a single {0}.
+  std::vector<size_t> input_offsets_;
+
+  cudaStream_t stream_;
 };
 
 class FFT2Factory : public holoflow::core::ISyncTaskFactory {

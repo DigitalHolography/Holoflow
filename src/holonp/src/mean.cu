@@ -285,14 +285,13 @@ Mean::Mean(const MeanSettings &settings, cudaStream_t stream, size_t out_ndim, s
       d_red_strides_(std::move(d_red_strides)) {}
 
 holoflow::core::OpResult Mean::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = ctx.inputs[0].data();
-  auto *odata = ctx.outputs[0].data();
+  auto       *idata = ctx.inputs[0].data();
+  auto       *odata = ctx.outputs[0].data();
   const auto &idesc = ctx.inputs[0].desc;
 
   const auto    total_out = total_out_;
   constexpr int block     = 256;
   const int     grid      = static_cast<int>((total_out + block - 1) / block);
-  CUDA_CHECK(cudaDeviceSynchronize());
 
   switch (idesc.dtype) {
   case holoflow::core::DType::U8: {

@@ -4,99 +4,130 @@
 #include <numeric>
 #include <ranges>
 #include <stdexcept>
+#include <vector>
 
 namespace holonp {
+
+// -----------------------------------------------------------------------------
+// JSON Serialization
+// -----------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const TransposeSettings &s) {
   j = nlohmann::json{{"axes", s.axes}};
 }
 
-void from_json(const nlohmann::json &j, TransposeSettings &s) { j.at("axes").get_to(s.axes); }
+void from_json(const nlohmann::json &j, TransposeSettings &s) {
+  if (j.contains("axes"))
+    j.at("axes").get_to(s.axes);
+}
+
+// -----------------------------------------------------------------------------
+// Helpers & Kernels
+// -----------------------------------------------------------------------------
 
 namespace {
 
-constexpr int kMaxNDim = 16;
+constexpr int kKernelMaxNDim = 16; // Hard limit for kernel registers
 
-inline std::vector<int> normalize_and_validate_axes(std::span<const int> axes, int ndim) {
-  if (static_cast<int>(axes.size()) != ndim) {
-    throw std::invalid_argument("Transpose: axes length must match input ndim");
-  }
+inline void check(bool cond, const std::string &msg) {
+  if (!cond)
+    throw std::invalid_argument("Transpose: " + msg);
+}
+
+std::vector<int> normalize_axes(const std::vector<int> &axes, int ndim) {
+  check(static_cast<int>(axes.size()) == ndim, "axes length must match ndim");
 
   std::vector<int> norm;
-  norm.reserve(axes.size());
+  norm.reserve(ndim);
+  std::vector<bool> seen(ndim, false);
 
   for (int a : axes) {
-    if (a < 0) {
+    if (a < 0)
       a += ndim;
-    }
-    if (a < 0 || a >= ndim) {
-      throw std::invalid_argument("Transpose: axis out of range");
-    }
+    check(a >= 0 && a < ndim, "axis out of bounds");
+    check(!seen[a], "duplicate axis in permutation");
+    seen[a] = true;
     norm.push_back(a);
   }
-
-  auto sorted = norm;
-  std::ranges::sort(sorted);
-  for (int i = 0; i < ndim; ++i) {
-    if (sorted[i] != i) {
-      throw std::invalid_argument("Transpose: axes must be a permutation of [0..ndim-1]");
-    }
-  }
-
   return norm;
 }
 
-inline size_t product_shape(std::span<const size_t> shape) {
-  if (shape.empty()) {
-    return 0;
+// Ensure strides exist or create contiguous default
+std::vector<std::int64_t> get_strides_bytes(const holoflow::core::TDesc &desc) {
+  std::vector<std::int64_t> strides(desc.shape.size());
+  if (!desc.strides.empty()) {
+    for (size_t i = 0; i < desc.strides.size(); ++i)
+      strides[i] = static_cast<std::int64_t>(desc.strides[i]);
+  } else {
+    size_t acc = holoflow::core::size_of(desc.dtype);
+    for (size_t i = desc.shape.size(); i-- > 0;) {
+      strides[i] = static_cast<std::int64_t>(acc);
+      acc *= desc.shape[i];
+    }
   }
-  // Prevent silent overflow turning into small totals.
-  // If you want explicit overflow checks, add them here.
-  return std::accumulate(shape.begin(), shape.end(), size_t{1}, std::multiplies<>{});
+  return strides;
 }
 
-// Data-moving generic transpose for contiguous input/output.
-// out is written in row-major order (linear tid).
-__global__ void transpose_nd_contig_kernel_u8(const std::uint8_t *__restrict__ in,
-                                              std::uint8_t *__restrict__ out, int elem_size,
-                                              int ndim,
-                                              const std::int64_t *__restrict__ in_shape, // [ndim]
-                                              const int *__restrict__ axes,              // [ndim]
-                                              std::int64_t total_elems) {
-  const std::int64_t tid =
-      static_cast<std::int64_t>(blockIdx.x) * blockDim.x + static_cast<std::int64_t>(threadIdx.x);
-  if (tid >= total_elems) {
+// General N-Dimensional Transpose Kernel
+// Strategy: Linearize threads over output elements (contiguous).
+// Decompose output index -> coordinates -> recompute input offset using permuted strides.
+// This handles arbitrary input strides and arbitrary permutations.
+//
+// Note: For 2D/3D specific cases, specialized shared-memory tiled kernels are much faster.
+// This generic kernel is a fallback for N-D.
+__global__ void transpose_general_kernel(
+    const std::uint8_t *__restrict__ in, std::uint8_t *__restrict__ out, int elem_size, int ndim,
+    const std::int64_t
+        *__restrict__ in_strides_permuted,        // Stride of the axis mapped to output dim i
+    const std::int64_t *__restrict__ out_shape,   // Shape of output
+    const std::int64_t *__restrict__ out_strides, // Strides of output (computed or dense)
+    std::int64_t total_elems) {
+  const std::int64_t tid = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (tid >= total_elems)
     return;
+
+  // 1. Calculate Multi-Index from Linear Output ID
+  // We traverse the output dimensions to reconstruct coordinates.
+  // While doing so, we simultaneously calculate the Input Offset.
+
+  std::int64_t temp_idx  = tid;
+  std::int64_t in_offset = 0;
+
+  // Unroll manually for small N if needed, or loop.
+  // Using registers for shape/strides is faster than global memory.
+  // We assume ndim <= kKernelMaxNDim (checked in factory).
+
+  // We iterate from dim 0 to ndim-1.
+  // Standard row-major index reconstruction:
+  // coord[i] = temp_idx / stride[i]; temp_idx %= stride[i];
+
+  for (int i = 0; i < ndim; ++i) {
+    // Optim: out_strides should be pre-calculated in bytes or elements.
+    // Here we assume bytes for flexibility or elements?
+    // Let's assume input arrays are Bytes.
+    // But for index calc, we need element strides.
+
+    // Actually, simpler logic:
+    // coord = (tid / out_stride_elem[i]) % out_shape[i]
+    // But division is expensive.
+
+    // Recursive remainder approach:
+    // out_stride[i] is the stride in ELEMENTS for dimension i.
+    // We rely on the caller providing 'out_strides' which are the accumulated products.
+
+    std::int64_t stride = out_strides[i]; // E.g. H*W, W, 1
+    std::int64_t coord  = temp_idx / stride;
+    temp_idx -= coord * stride;
+
+    // Map this coordinate to input memory
+    in_offset += coord * in_strides_permuted[i];
   }
 
-  // Decode tid (out linear) -> out multi-index, then map to input linear offset.
-  // out_shape[k] == in_shape[axes[k]]
-  std::int64_t rem       = tid;
-  std::int64_t in_off_el = 0;
+  // 2. Copy Element
+  const auto *src = in + in_offset; // Strides are in bytes
+  auto       *dst = out + tid * elem_size;
 
-  for (int k = 0; k < ndim; ++k) {
-    // suffix = product(out_shape[k+1..]) = product(in_shape[axes[k+1..]])
-    std::int64_t out_suffix = 1;
-    for (int j = k + 1; j < ndim; ++j) {
-      out_suffix *= in_shape[axes[j]];
-    }
-
-    const std::int64_t out_idx_k = rem / out_suffix;
-    rem -= out_idx_k * out_suffix;
-
-    // Input contiguous stride(in_axis) = product(in_shape[in_axis+1..])
-    const int    in_axis   = axes[k];
-    std::int64_t in_stride = 1;
-    for (int j = in_axis + 1; j < ndim; ++j) {
-      in_stride *= in_shape[j];
-    }
-
-    in_off_el += out_idx_k * in_stride;
-  }
-
-  const auto *src = in + static_cast<size_t>(in_off_el) * static_cast<size_t>(elem_size);
-  auto       *dst = out + static_cast<size_t>(tid) * static_cast<size_t>(elem_size);
-
+  // Vectorized copy if possible, else byte loop
   for (int b = 0; b < elem_size; ++b) {
     dst[b] = src[b];
   }
@@ -104,27 +135,29 @@ __global__ void transpose_nd_contig_kernel_u8(const std::uint8_t *__restrict__ i
 
 } // namespace
 
+// -----------------------------------------------------------------------------
+// Implementation
+// -----------------------------------------------------------------------------
+
 Transpose::Transpose(const TransposeSettings &settings, cudaStream_t stream, size_t ndim,
-                     size_t total, HostPtr<std::int64_t> h_in_shape,
-                     DevPtr<std::int64_t> d_in_shape, HostPtr<int> h_axes, DevPtr<int> d_axes)
-    : settings_(settings), stream_(stream), ndim_(ndim), total_(total),
-      h_in_shape_(std::move(h_in_shape)), d_in_shape_(std::move(d_in_shape)),
-      h_axes_(std::move(h_axes)), d_axes_(std::move(d_axes)) {}
+                     size_t total_elems, DevPtr<std::int64_t> d_in_strides,
+                     DevPtr<std::int64_t> d_out_strides, DevPtr<std::int64_t> d_out_shape)
+    : settings_(settings), stream_(stream), ndim_(ndim), total_elems_(total_elems),
+      d_in_strides_(std::move(d_in_strides)), d_out_strides_(std::move(d_out_strides)),
+      d_out_shape_(std::move(d_out_shape)) {}
 
 holoflow::core::OpResult Transpose::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = ctx.inputs[0].data();
-  auto *odata = ctx.outputs[0].data();
-  const auto &idesc = ctx.inputs[0].desc;
+  auto     *idata     = reinterpret_cast<const std::uint8_t *>(ctx.inputs[0].data());
+  auto     *odata     = reinterpret_cast<std::uint8_t *>(ctx.outputs[0].data());
+  const int elem_size = static_cast<int>(holoflow::core::size_of(ctx.inputs[0].desc.dtype));
 
-  constexpr int block_size = 256;
-  const auto    total_i64  = static_cast<std::int64_t>(total_);
-  const int     grid_size  = static_cast<int>((total_i64 + block_size - 1) / block_size);
+  const int          block_size = 256;
+  const std::int64_t total      = static_cast<std::int64_t>(total_elems_);
+  const int          grid_size  = static_cast<int>((total + block_size - 1) / block_size);
 
-  const int esz = static_cast<int>(size_of(idesc.dtype));
-
-  transpose_nd_contig_kernel_u8<<<grid_size, block_size, 0, stream_>>>(
-      reinterpret_cast<const std::uint8_t *>(idata), reinterpret_cast<std::uint8_t *>(odata), esz,
-      static_cast<int>(ndim_), d_in_shape_.get(), d_axes_.get(), total_i64);
+  transpose_general_kernel<<<grid_size, block_size, 0, stream_>>>(
+      idata, odata, elem_size, static_cast<int>(ndim_), d_in_strides_.get(), d_out_shape_.get(),
+      d_out_strides_.get(), total);
 
   CUDA_CHECK(cudaGetLastError());
   return holoflow::core::OpResult::Ok;
@@ -133,35 +166,24 @@ holoflow::core::OpResult Transpose::execute(holoflow::core::SyncCtx &ctx) {
 holoflow::core::InferResult
 TransposeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                         const nlohmann::json                  &jsettings) const {
-  const auto check = [&](bool condition, const std::string &msg) {
-    if (!condition) {
-      throw std::invalid_argument("TransposeFactory inference error: " + msg);
-    }
-  };
-
-  check(input_descs.size() == 1, "expected exactly 1 input");
+  check(input_descs.size() == 1, "expected 1 input");
   const auto &idesc = input_descs[0];
-
-  check(idesc.mem_loc == holoflow::core::MemLoc::Device, "only Device tensors are supported");
+  check(idesc.mem_loc == holoflow::core::MemLoc::Device, "device memory only");
 
   const int ndim = static_cast<int>(idesc.shape.size());
-  check(ndim > 0, "input ndim must be > 0");
-  check(ndim <= kMaxNDim, "input ndim too large");
+  check(ndim > 0 && ndim <= kKernelMaxNDim,
+        "invalid ndim (max " + std::to_string(kKernelMaxNDim) + ")");
 
-  // Ensure dtype supported by the kernel/copy.
-  (void)size_of(idesc.dtype);
+  auto settings = jsettings.get<TransposeSettings>();
+  auto axes     = normalize_axes(settings.axes, ndim);
 
-  const auto settings = jsettings.get<TransposeSettings>();
-  const auto axes     = normalize_and_validate_axes(settings.axes, ndim);
-
-  holoflow::core::TDesc odesc = idesc;
-  odesc.shape.resize(ndim);
-  for (int k = 0; k < ndim; ++k) {
-    odesc.shape[k] = idesc.shape[static_cast<size_t>(axes[k])];
+  // Calculate Output Shape
+  std::vector<size_t> oshape(ndim);
+  for (int i = 0; i < ndim; ++i) {
+    oshape[i] = idesc.shape[axes[i]];
   }
 
-  // total must be > 0 for execution (consistent with your Arange pattern).
-  check(product_shape(idesc.shape) > 0, "input tensor has zero elements");
+  holoflow::core::TDesc odesc(oshape, idesc.dtype, idesc.mem_loc);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
@@ -177,37 +199,58 @@ std::unique_ptr<holoflow::core::ISyncTask>
 TransposeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                          const nlohmann::json                  &jsettings,
                          const holoflow::core::SyncCreateCtx   &ctx) const {
-  // Infer performs all validation. Also ensures output desc is coherent.
-  (void)this->infer(input_descs, jsettings);
 
-  const auto  settings = jsettings.get<TransposeSettings>();
-  const auto &idesc    = input_descs[0];
+  // 1. Setup
+  const auto  &idesc = input_descs[0];
+  const int    ndim  = static_cast<int>(idesc.shape.size());
+  const size_t total_elems =
+      std::accumulate(idesc.shape.begin(), idesc.shape.end(), size_t{1}, std::multiplies<>{});
 
-  const size_t ndim  = idesc.shape.size();
-  const auto   axes  = normalize_and_validate_axes(settings.axes, static_cast<int>(ndim));
-  const size_t total = product_shape(idesc.shape);
+  auto settings = jsettings.get<TransposeSettings>();
+  auto axes     = normalize_axes(settings.axes, ndim);
 
-  auto h_in_shape = curaii::make_unique_host_ptr<std::int64_t>(ndim);
-  for (size_t i = 0; i < ndim; ++i) {
-    h_in_shape.get()[i] = static_cast<std::int64_t>(idesc.shape[i]);
+  // 2. Prepare Metadata for Kernel
+  // We need:
+  // a. Output Shape (for coordinate reconstruction)
+  // b. Output Strides (element-wise, for division)
+  // c. Input Strides Permuted (byte-wise, for final address calc)
+
+  std::vector<std::int64_t> h_out_shape(ndim);
+  std::vector<std::int64_t> h_out_strides(ndim);     // Element strides
+  std::vector<std::int64_t> h_in_strides_perm(ndim); // Byte strides
+
+  // Get input strides (handle defaults if empty)
+  auto input_strides_bytes = get_strides_bytes(idesc);
+
+  // Calculate Output shape & permuted input strides
+  for (int i = 0; i < ndim; ++i) {
+    h_out_shape[i]       = static_cast<std::int64_t>(idesc.shape[axes[i]]);
+    h_in_strides_perm[i] = input_strides_bytes[axes[i]];
   }
 
-  auto h_axes = curaii::make_unique_host_ptr<int>(ndim);
-  for (size_t i = 0; i < ndim; ++i) {
-    h_axes.get()[i] = axes[i];
+  // Calculate Output Strides (Compact/Contiguous logic)
+  // Row-major: Stride[i] = product(Shape[i+1...])
+  std::int64_t acc = 1;
+  for (int i = ndim - 1; i >= 0; --i) {
+    h_out_strides[i] = acc;
+    acc *= h_out_shape[i];
   }
 
-  auto d_in_shape = curaii::make_unique_device_ptr<std::int64_t>(ndim);
-  auto d_axes     = curaii::make_unique_device_ptr<int>(ndim);
+  // 3. Upload to Device
+  auto d_out_shape   = curaii::make_unique_device_ptr<std::int64_t>(ndim);
+  auto d_out_strides = curaii::make_unique_device_ptr<std::int64_t>(ndim);
+  auto d_in_strides  = curaii::make_unique_device_ptr<std::int64_t>(ndim);
 
-  CUDA_CHECK(cudaMemcpyAsync(d_in_shape.get(), h_in_shape.get(), sizeof(std::int64_t) * ndim,
+  CUDA_CHECK(cudaMemcpyAsync(d_out_shape.get(), h_out_shape.data(), ndim * sizeof(std::int64_t),
                              cudaMemcpyHostToDevice, ctx.stream));
-  CUDA_CHECK(cudaMemcpyAsync(d_axes.get(), h_axes.get(), sizeof(int) * ndim, cudaMemcpyHostToDevice,
-                             ctx.stream));
+  CUDA_CHECK(cudaMemcpyAsync(d_out_strides.get(), h_out_strides.data(), ndim * sizeof(std::int64_t),
+                             cudaMemcpyHostToDevice, ctx.stream));
+  CUDA_CHECK(cudaMemcpyAsync(d_in_strides.get(), h_in_strides_perm.data(),
+                             ndim * sizeof(std::int64_t), cudaMemcpyHostToDevice, ctx.stream));
 
   return std::unique_ptr<holoflow::core::ISyncTask>(
-      new Transpose(settings, ctx.stream, ndim, total, std::move(h_in_shape), std::move(d_in_shape),
-                    std::move(h_axes), std::move(d_axes)));
+      new Transpose(settings, ctx.stream, ndim, total_elems, std::move(d_in_strides),
+                    std::move(d_out_strides), std::move(d_out_shape)));
 }
 
 } // namespace holonp

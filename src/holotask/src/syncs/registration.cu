@@ -196,10 +196,10 @@ holoflow::core::OpResult Registration::execute(holoflow::core::SyncCtx &ctx) {
   }
 
   auto &input_view  = ctx.inputs[0];
-  auto       &output_view = ctx.outputs[0];
+  auto &output_view = ctx.outputs[0];
 
   float *input_data  = reinterpret_cast<float *>(input_view.data());
-  float       *output_data = reinterpret_cast<float *>(output_view.data());
+  float *output_data = reinterpret_cast<float *>(output_view.data());
 
   auto width  = input_desc_.shape.back();
   auto height = input_desc_.shape.size() > 1 ? input_desc_.shape[input_desc_.shape.size() - 2] : 1;
@@ -214,7 +214,6 @@ holoflow::core::OpResult Registration::execute(holoflow::core::SyncCtx &ctx) {
   if (!ref_initialized_) {
     CUDA_CHECK(cudaMemcpyAsync(d_ref_.get(), d_mean_centered_.get(), input_desc_.num_bytes(),
                                cudaMemcpyDeviceToDevice, stream_));
-    cudaDeviceSynchronize();
     ref_initialized_ = true;
   }
 

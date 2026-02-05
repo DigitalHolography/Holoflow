@@ -11,9 +11,11 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//
+
 #pragma once
 
+#include <cstdint>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <span>
 #include <vector>
@@ -27,8 +29,8 @@ template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 namespace holonp {
 
 struct TransposeSettings {
-  // NumPy-like axes permutation. Must have length == input.ndim.
-  // Negative axes are allowed (e.g. -1) and will be normalized.
+  // Permutation of axes. Must have length == input.ndim.
+  // Negative axes are allowed (e.g. -1).
   std::vector<int> axes;
 };
 
@@ -40,21 +42,25 @@ public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  Transpose(const TransposeSettings &settings, cudaStream_t stream, size_t ndim, size_t total,
-            HostPtr<std::int64_t> h_in_shape, DevPtr<std::int64_t> d_in_shape, HostPtr<int> h_axes,
-            DevPtr<int> d_axes);
+  Transpose(const TransposeSettings &settings, cudaStream_t stream, size_t ndim, size_t total_elems,
+            DevPtr<std::int64_t> d_in_strides, DevPtr<std::int64_t> d_out_strides,
+            DevPtr<std::int64_t> d_out_shape);
 
   friend class TransposeFactory;
 
   TransposeSettings settings_;
   cudaStream_t      stream_;
 
-  size_t                ndim_;
-  size_t                total_;
-  HostPtr<std::int64_t> h_in_shape_;
-  DevPtr<std::int64_t>  d_in_shape_;
-  HostPtr<int>          h_axes_;
-  DevPtr<int>           d_axes_;
+  size_t ndim_;
+  size_t total_elems_;
+
+  // Device buffers for kernel configuration
+  // We store strides/shape to avoid expensive index re-calculation
+  // from scratch if possible, though for general N-D transpose,
+  // index reconstruction is often necessary.
+  DevPtr<std::int64_t> d_in_strides_;  // Input strides (permuted)
+  DevPtr<std::int64_t> d_out_strides_; // Output strides (contiguous)
+  DevPtr<std::int64_t> d_out_shape_;   // Output shape
 };
 
 class TransposeFactory : public holoflow::core::ISyncTaskFactory {
