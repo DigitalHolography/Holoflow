@@ -76,6 +76,7 @@ private:
              size_t max_temp_storage_bytes, DevPtr<uint8_t> &&d_max_temp_storage,
              DevPtr<std::byte> &&d_max, cudaStream_t stream);
 
+  void launch_u8_f32_real(holoflow::core::TView in, holoflow::core::TView out);
   void launch_u8_cf32_real(holoflow::core::TView in, holoflow::core::TView out);
   void launch_u16_cf32_real(holoflow::core::TView in, holoflow::core::TView out);
   void launch_f32_u8_scaled(holoflow::core::TView in, holoflow::core::TView out);

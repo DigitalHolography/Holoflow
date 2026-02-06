@@ -35,10 +35,10 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   auto dy     = s_.spacial_pixel_size;
   auto z_prop = s_.spacial_z;
 
-  auto ri = s_.filter_r_inner;
-  auto ro = s_.filter_r_outer;
-  auto si = s_.filter_smooth_inner;
-  auto so = s_.filter_smooth_outer;
+  // auto ri = s_.filter_r_inner;
+  // auto ro = s_.filter_r_outer;
+  // auto si = s_.filter_smooth_inner;
+  // auto so = s_.filter_smooth_outer;
 
   using Target = holotask::syncs::ConversionSettings::Target;
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
@@ -95,84 +95,136 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     }
   }
 
-  // GPU transfer and conversion to complex32
+  // GPU transfer and conversion to f32
   if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
     std::tie(H) = unpack<1>(memcpy(H, {Device}));
     std::tie(H) = unpack<1>(batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window}));
   }
-  std::tie(H) = unpack<1>(convert(H, {Target::CF32, Strat::Real}));
+  std::tie(H) = unpack<1>(convert(H, {Target::F32, Strat::Real}));
 
   // -------------------------------------------------------------------------------------------------
-  // Spacial Propagation (H -> H_z - Propagated Hologram)
+  // Time-Frequency Analysis (H -> FH - Frequency Hologram)
   // -------------------------------------------------------------------------------------------------
 
-  TDesc H_z;
+  TDesc FH;
 
-  if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
-    std::tie(H_z) = unpack<1>(fresnel_diffraction(H, {lam, dx, dy, z_prop}));
+  if (s_.time_method != TimeMethod::NONE) {
+    std::tie(H) = unpack<1>(batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window}));
   }
 
-  else if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
-    std::tie(H_z) = unpack<1>(angular_spectrum(H, {lam, dx, dy, z_prop, std::nullopt}));
+  if (s_.time_method == TimeMethod::SHORT_TIME_FOURIER) {
+    std::tie(FH) = unpack<1>(rfft(H, {0}));
+  }
+
+  else if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
+    throw std::logic_error{"PCA is currently not supported in GraphBuilder_v2"};
   }
 
   else {
-    H_z = H;
+    throw std::logic_error{"No time method is currently not supported in GraphBuilder_v2"};
   }
 
-  if (s_.filter_2d) {
-    std::tie(H_z) = unpack<1>(filter_2d(H_z, {ri, ro, si, so}));
+  // Optimization: If we don't need the full 3D volume for cuts, we can select only the relevant
+  // z-slices here to reduce computation in the spacial propagation and subsequent nodes.
+  if (!s_.view_3d_cuts) {
+    holonp::SliceRange freq_slice{s_.time_z_begin, s_.time_z_end};
+    std::tie(FH) = unpack<1>(slice(FH, {{freq_slice, {}, {}}}));
   }
 
   // -------------------------------------------------------------------------------------------------
-  // Time-Frequency Analysis (H_z -> FH_z - Frequency Hologram)
+  // Spacial Propagation (FH -> FH_z - Propagated Hologram)
   // -------------------------------------------------------------------------------------------------
 
   TDesc FH_z;
 
-  if (s_.time_method != TimeMethod::NONE) {
-    std::tie(H_z) = unpack<1>(batched_queue(H_z, {s_.gpu_in_size, s_.time_window, s_.time_window}));
+  if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
+    std::tie(FH_z) = unpack<1>(fresnel_diffraction(FH, {lam, dx, dy, z_prop}));
   }
 
-  if (s_.time_method == TimeMethod::SHORT_TIME_FOURIER) {
-    // TODO: Enquire about Zoom FFT
-    std::tie(FH_z) = unpack<1>(stft(H_z, {}));
-    std::tie(FH_z) = unpack<1>(memcpy(FH_z, {Device}));
+  else if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
+    throw std::logic_error{"Angular Spectrum is currently not supported in GraphBuilder_v2"};
   }
 
-  else if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
-    // PCA range depends on whether we need the full 3D volume for cuts
-    int pca_min = s_.view_3d_cuts ? 0 : s_.time_z_begin;
-    int pca_max = s_.view_3d_cuts ? s_.time_window : s_.time_z_end;
-
-    std::tie(FH_z) = unpack<1>(pca(H_z, {pca_min, pca_max}));
+  else {
+    throw std::logic_error{"No spacial method is currently not supported in GraphBuilder_v2"};
   }
 
-  // TODO: This costs a lot of memory when time_window is large
-  // if (s_.time_method != TimeMethod::NONE) {
-  //   std::tie(FH_z) =
-  //       unpack<1>(batched_queue(FH_z, {s_.time_window, s_.time_window, s_.time_window}));
+  if (s_.filter_2d) {
+    throw std::logic_error{"2D filtering is currently not supported in GraphBuilder_v2"};
+  }
+
+  // //
+  // -------------------------------------------------------------------------------------------------
+  // // Spacial Propagation (H -> H_z - Propagated Hologram)
+  // //
+  // -------------------------------------------------------------------------------------------------
+
+  // TDesc H_z;
+
+  // if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
+  //   std::tie(H_z) = unpack<1>(fresnel_diffraction(H, {lam, dx, dy, z_prop}));
   // }
-  //
+
+  // else if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
+  //   std::tie(H_z) = unpack<1>(angular_spectrum(H, {lam, dx, dy, z_prop, std::nullopt}));
+  // }
+
+  // else {
+  //   H_z = H;
+  // }
+
+  // if (s_.filter_2d) {
+  //   std::tie(H_z) = unpack<1>(filter_2d(H_z, {ri, ro, si, so}));
+  // }
+
+  // //
+  // -------------------------------------------------------------------------------------------------
+  // // Time-Frequency Analysis (H_z -> FH_z - Frequency Hologram)
+  // //
+  // -------------------------------------------------------------------------------------------------
+
+  // TDesc FH_z;
+
+  // if (s_.time_method != TimeMethod::NONE) {
+  //   std::tie(H_z) = unpack<1>(batched_queue(H_z, {s_.gpu_in_size, s_.time_window,
+  //   s_.time_window}));
+  // }
+
+  // if (s_.time_method == TimeMethod::SHORT_TIME_FOURIER) {
+  //   // TODO: Enquire about Zoom FFT
+  //   std::tie(FH_z) = unpack<1>(stft(H_z, {}));
+  //   std::tie(FH_z) = unpack<1>(memcpy(FH_z, {Device}));
+  // }
+
+  // else if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
+  //   // PCA range depends on whether we need the full 3D volume for cuts
+  //   int pca_min = s_.view_3d_cuts ? 0 : s_.time_z_begin;
+  //   int pca_max = s_.view_3d_cuts ? s_.time_window : s_.time_z_end;
+
+  //   std::tie(FH_z) = unpack<1>(pca(H_z, {pca_min, pca_max}));
+  // }
 
   // -------------------------------------------------------------------------------------------------
   // Spectral Density (FH_z -> S - Spectral Density)
   // -------------------------------------------------------------------------------------------------
-  auto [S] = unpack<1>(convert(FH_z, {Target::F32, Strat::Modulus}));
+  // auto [S] = unpack<1>(convert(FH_z, {Target::F32, Strat::Modulus}));
+  auto [S] = unpack<1>(abs(FH_z, {}));
 
   // -------------------------------------------------------------------------------------------------
   // XY View Processing (S -> M0 - Processed XY View)
   // -------------------------------------------------------------------------------------------------
   {
     // Define accumulation range (act as Time-domain frequency filter)
-    int z0 = (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts)
-                 ? 0
-                 : s_.time_z_begin;
-    int z1 = (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts)
-                 ? (int)S.shape.at(0)
-                 : s_.time_z_end;
+    // int z0 = (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts)
+    //              ? 0
+    //              : s_.time_z_begin;
+    // int z1 = (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts)
+    //              ? (int)S.shape.at(0)
+    //              : s_.time_z_end;
 
-    auto [M0] = unpack<1>(average(S, {0, z0, z1}));
+    // auto [M0] = unpack<1>(average(S, {0, z0, z1}));
+
+    auto [M0] = unpack<1>(mean(S, {{0}, true}));
 
     if (s_.pp_fft_shift) {
       std::tie(M0) = unpack<1>(fft_shift(M0, {.axes = {1, 2}}));
@@ -208,6 +260,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   }
 
   if (s_.view_3d_cuts) {
+    throw std::logic_error{"3D cuts are currently not supported in GraphBuilder_v2"};
     // -------------------------------------------------------------------------------------------------
     // XZ View Processing (S -> M0 - Processed XZ View)
     // -------------------------------------------------------------------------------------------------
@@ -252,89 +305,6 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   }
 
   // -------------------------------------------------------------------------------------------------
-  // Shack-Hartmann View Processing (S -> SH - Shack-Hartmann View)
-  // -------------------------------------------------------------------------------------------------
-
-  //   if (true) {
-  //     // TODO: start from u8 SH
-  //     auto nb_subap = 3ULL;
-  //     auto subap_w  = S.shape.at(2) / nb_subap;
-  //     auto subap_h  = S.shape.at(1) / nb_subap;
-  //     auto tmp      = convert(H, {Target::F32, Strat::Modulus});
-  //     auto [H]      = unpack<1>(tmp);
-  //     auto nb_acc   = 1ULL;
-
-  //     //
-  //     -------------------------------------------------------------------------------------------------
-  //     // Time-Frequency Analysis (SH -> FH - Frequency Hologram -> FH_filt - Filtered Frequency
-  //     // Hologram)
-  //     //
-  //     -------------------------------------------------------------------------------------------------
-  //     auto [FH] = unpack<1>(rfft(H, {0}));
-  //     holonp::SliceRange freq_slice{s_.time_z_begin, s_.time_z_end};
-  //     auto [FH_filt] = unpack<1>(slice(FH, {{freq_slice, {}, {}}}));
-
-  //     //
-  //     -------------------------------------------------------------------------------------------------
-  //     // Shack-Hartmann processing (FH_filt -> FH_Qin (fresnel lens applied) -> H_sub
-  //     (subaperture)
-  //     // -> H_sub_prop -> S -> M0 (final display)
-  //     //
-  //     -------------------------------------------------------------------------------------------------
-
-  //     auto nx       = S.shape.at(2);
-  //     auto ny       = S.shape.at(1);
-  //     auto [Qin]    = unpack<1>(fresnel_qin({lam, dx, dy, z_prop, nx, ny}));
-  //     auto [FH_Qin] = unpack<1>(mul(FH_filt, Qin, {}));
-
-  //     auto [M0_subaps] = unpack<1>(empty({{nb_subap, nb_subap, nb_acc, subap_h, subap_w}}));
-  //     for (auto sy = 0; sy < nb_subap; ++sy) {
-  //       for (auto sx = 0; sx < nb_subap; ++sx) {
-  //         for (auto z = 0; z < nb_acc; ++z) {
-  //           auto               y_start = sy * subap_h;
-  //           auto               y_end   = y_start + subap_h;
-  //           auto               x_start = sx * subap_w;
-  //           auto               x_end   = x_start + subap_w;
-  //           holonp::SliceRange slice_y{y_start, y_end, 1};
-  //           holonp::SliceRange slice_x{x_start, x_end, 1};
-
-  //           auto [FH_sub]         = unpack<1>(slice(FH_Qin, {{{}, slice_y, slice_x}}));
-  //           auto [FH_sub_prop]    = unpack<1>(fft2(FH_sub, {{-2, -1}}));
-  //           std::tie(FH_sub_prop) = unpack<1>(fftshift(FH_sub_prop, {{-2, -1}}));
-  //           auto [S]              = unpack<1>(abs(FH_sub_prop, {}));
-  //           auto [M0]             = unpack<1>(mean(S, {{0}, true}));
-  //           std::tie(M0) = unpack<1>(reshape(M0, {{(int64_t)subap_h, (int64_t)subap_w}, false}));
-
-  //           auto [dst_tile] = unpack<1>(slice(M0_subaps, {{sy, sx, z, {}, {}}}));
-  //           (void)unpack<1>(assign(dst_tile, M0, {}));
-  //         }
-  //       }
-  //     }
-
-  //     std::tie(M0_subaps) = unpack<1>(mean(M0_subaps, {{2}, true}));
-
-  //     auto [M0_sh_disp] = unpack<1>(empty({{1, nb_subap * subap_h, nb_subap * subap_w}}));
-  //     for (auto sy = 0; sy < nb_subap; ++sy) {
-  //       for (auto sx = 0; sx < nb_subap; ++sx) {
-  //         auto               y_start = sy * subap_h;
-  //         auto               x_start = sx * subap_w;
-  //         holonp::SliceRange slice_y{y_start, y_start + subap_h, 1};
-  //         holonp::SliceRange slice_x{x_start, x_start + subap_w, 1};
-
-  //         auto [src_tile] = unpack<1>(slice(M0_subaps, {{sy, sx, {}, {}, {}}}));
-  //         auto [dst_tile] = unpack<1>(slice(M0_sh_disp, {{{}, slice_y, slice_x}}));
-  //         (void)unpack<1>(assign(dst_tile, src_tile, {}));
-  //       }
-  //     }
-
-  //     std::tie(M0_sh_disp) = unpack<1>(convert(M0_sh_disp, {Target::U8, Strat::Scaled}));
-  //     std::tie(M0_sh_disp) = unpack<1>(batched_queue(M0_sh_disp, {s_.gpu_out_size, 1, 1}));
-  //     std::tie(M0_sh_disp) = unpack<1>(memcpy(M0_sh_disp, {Host}));
-  //     std::tie(M0_sh_disp) = unpack<1>(batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1}));
-  //     shack_hartmann_display(M0_sh_disp, {});
-  //   }
-
-  // -------------------------------------------------------------------------------------------------
   // Shack-Hartmann View Processing (Vectorized Spatial with Cropping)
   // -------------------------------------------------------------------------------------------------
 
@@ -349,23 +319,23 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto valid_w = subap_w * nb_subap;
     auto valid_h = subap_h * nb_subap;
 
-    auto tmp     = convert(H, {Target::F32, Strat::Modulus});
-    auto [H_f32] = unpack<1>(tmp);
+    // auto tmp     = convert(H, {Target::F32, Strat::Modulus});
+    // auto [H_f32] = unpack<1>(tmp);
 
     // -------------------------------------------------------------------------------------------------
     // 2. Frequency & Spatial Cropping
     // -------------------------------------------------------------------------------------------------
 
     // Temporal FFT
-    auto [FH] = unpack<1>(rfft(H_f32, {0}));
+    // auto [FH] = unpack<1>(rfft(H_f32, {0}));
 
     // Filter frequencies AND crop spatially in one go (or sequential slices)
-    holonp::SliceRange freq_slice{s_.time_z_begin, s_.time_z_end};
+    // holonp::SliceRange freq_slice{s_.time_z_begin, s_.time_z_end};
     holonp::SliceRange crop_y{0, valid_h};
     holonp::SliceRange crop_x{0, valid_w};
 
     // Apply slice: (Freq_Range, Valid_Y, Valid_X)
-    auto [FH_cropped] = unpack<1>(slice(FH, {{freq_slice, crop_y, crop_x}}));
+    auto [FH_cropped] = unpack<1>(slice(FH, {{{}, crop_y, crop_x}}));
 
     auto n_freq = FH_cropped.shape.at(0);
 

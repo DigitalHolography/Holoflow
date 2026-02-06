@@ -147,6 +147,9 @@ private:
   void        setup_logging();
   ScopedTrace trace_scope(std::string name);
   void        dump_graphviz(const std::string &filename);
+  template <class TaskInterface, class Factory, class Ctx>
+  std::unique_ptr<core::ITask> create_or_update_task(Factory &factory, const NodePlan &np,
+                                                     const Ctx &ctx);
 
   // --- Pass Declarations ---
   void validate_spec();
@@ -723,57 +726,132 @@ void Compiler::Impl::create_storage_adapters() {
   }
 }
 
+template <class To, class From>
+std::unique_ptr<To> dynamic_unique_ptr_cast(std::unique_ptr<From> &&ptr) noexcept {
+  if (auto casted = dynamic_cast<To *>(ptr.get())) {
+    ptr.release();
+    return std::unique_ptr<To>(casted);
+  }
+  return nullptr;
+}
+
+template <class TaskInterface, class Factory, class Ctx>
+std::unique_ptr<core::ITask>
+Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, const Ctx &ctx) {
+  // 1. Check if we have previous state to query
+  std::unique_ptr<core::ITask> *prev_ptr_ref = nullptr;
+  if (prev_ && !prev_->resources.tasks.empty()) {
+    auto &prev_tasks = prev_->resources.tasks;
+    if (auto it = prev_tasks.find(np.spec.name); it != prev_tasks.end()) {
+      prev_ptr_ref = &it->second;
+    }
+  }
+
+  // 2. If no previous task exists, just create new
+  if (!prev_ptr_ref) {
+    return factory.create(np.infer.input_descs, np.spec.settings, ctx);
+  }
+
+  // 3. Verify the Node Kind hasn't changed in the Graph Plan
+  // (We must iterate prev_graph to find the node definition for this name)
+  bool kind_mismatch       = false;
+  bool found_in_prev_graph = false;
+
+  auto [vi, vi_end] = boost::vertices(prev_->graph);
+  for (; vi != vi_end; ++vi) {
+    const NodePlan &prev_node = prev_->graph[*vi];
+    if (prev_node.spec.name == np.spec.name) {
+      found_in_prev_graph = true;
+      if (prev_node.spec.kind != np.spec.kind) {
+        kind_mismatch = true;
+      }
+      break;
+    }
+  }
+
+  // If the node wasn't in the old graph (unlikely if we have a task)
+  // or the kind changed (e.g. "Gaussian" -> "Median"), we must recreate.
+  if (!found_in_prev_graph || kind_mismatch) {
+    return factory.create(np.infer.input_descs, np.spec.settings, ctx);
+  }
+
+  // 4. Attempt to cast the previous task to the specific interface (ISyncTask/IAsyncTask)
+  // assuming dynamic_unique_ptr_cast is available in your utils
+  auto prev_task_typed = dynamic_unique_ptr_cast<TaskInterface>(std::move(*prev_ptr_ref));
+
+  if (!prev_task_typed) {
+    // Fallback safety: Cast failed, create new
+    return factory.create(np.infer.input_descs, np.spec.settings, ctx);
+  }
+
+  // 5. Update existing task
+  return factory.update(std::move(prev_task_typed), np.infer.input_descs, np.spec.settings, ctx);
+}
+
 void Compiler::Impl::instantiate_tasks() {
   auto &g     = out_->graph;
   auto &tasks = out_->resources.tasks;
+
+  // Clear current tasks to be safe, though usually empty at this stage
+  tasks.clear();
 
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
     const auto &np = g[v];
 
     if (np.infer.kind == core::TaskKind::Sync) {
-      // Sync Node: Simple lookup in the node->section map
+      // --- Sync Node Logic ---
       size_t sid    = node_to_section_map_.at(np.spec.name);
       auto   stream = out_->resources.streams.at(sid).get();
 
       core::SyncCreateCtx ctx{.stream = stream};
       auto               &factory = registry_.get_sync(np.spec.kind);
-      tasks.emplace(np.spec.name, factory.create(np.infer.input_descs, np.spec.settings, ctx));
-    } else if (np.infer.kind == core::TaskKind::Async) {
-      // Async Node: Needs streams from both Upstream (Producer) and Downstream (Consumer)
 
-      // 1. Find Producer Stream (from Incoming Edges)
+      // Try to Update, otherwise Create
+      auto task = create_or_update_task<core::ISyncTask>(factory, np, ctx);
+
+      // Bind logger if needed (based on your commented code)
+      // task->bind_logger(create_task_logger(np.spec.name, np.spec.kind));
+
+      tasks.emplace(np.spec.name, std::move(task));
+
+    } else if (np.infer.kind == core::TaskKind::Async) {
+      // --- Async Node Logic ---
+
+      // 1. Find Producer Stream (Incoming Edges)
       void *prod_stream = nullptr;
       for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
         auto p = boost::source(e, g);
-        // We only care about Sync predecessors to identify the section
         if (g[p].infer.kind == core::TaskKind::Sync) {
           size_t sid  = node_to_section_map_.at(g[p].spec.name);
           prod_stream = out_->resources.streams.at(sid).get();
-          break; // Found the section; partition logic guarantees all sync inputs form one component
+          break;
         }
       }
 
-      // 2. Find Consumer Stream (from Outgoing Edges)
+      // 2. Find Consumer Stream (Outgoing Edges)
       void *cons_stream = nullptr;
       for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
         auto s = boost::target(e, g);
-        // We only care about Sync successors to identify the section
         if (g[s].infer.kind == core::TaskKind::Sync) {
           size_t sid  = node_to_section_map_.at(g[s].spec.name);
           cons_stream = out_->resources.streams.at(sid).get();
-          break; // Found the section; partition logic guarantees all sync outputs form one
-                 // component
+          break;
         }
       }
 
       // 3. Create Context
-      // Note: Cast raw pointers to cudaStream_t if your ctx expects typed streams,
-      // or keep as void* depending on your core::AsyncCreateCtx definition.
       core::AsyncCreateCtx ctx{.producer_stream = static_cast<cudaStream_t>(prod_stream),
                                .consumer_stream = static_cast<cudaStream_t>(cons_stream)};
 
       auto &factory = registry_.get_async(np.spec.kind);
-      tasks.emplace(np.spec.name, factory.create(np.infer.input_descs, np.spec.settings, ctx));
+
+      // Try to Update, otherwise Create
+      auto task = create_or_update_task<core::IAsyncTask>(factory, np, ctx);
+
+      // Bind logger if needed
+      // task->bind_logger(create_task_logger(np.spec.name, np.spec.kind));
+
+      tasks.emplace(np.spec.name, std::move(task));
     }
   }
 }

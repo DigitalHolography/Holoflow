@@ -78,6 +78,13 @@ void from_json(const nlohmann::json &j, ConversionSettings &s) {
 
 namespace {
 
+__global__ void u8_f32_real_kernel(const uint8_t *idata, float *odata, int size) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < size) {
+    odata[idx] = static_cast<float>(idata[idx]);
+  }
+}
+
 __global__ void u8_cf32_real_kernel(const uint8_t *idata, cuFloatComplex *odata, int size) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx < size) {
@@ -137,6 +144,17 @@ Conversion::Conversion(const ConversionSettings &settings, size_t min_temp_stora
       max_temp_storage_bytes_(max_temp_storage_bytes),
       d_max_temp_storage_(std::move(d_max_temp_storage)), d_max_(std::move(d_max)),
       stream_(stream) {}
+
+void Conversion::launch_u8_f32_real(holoflow::core::TView in, holoflow::core::TView out) {
+  auto *idata = reinterpret_cast<const uint8_t *>(in.data());
+  auto *odata = reinterpret_cast<float *>(out.data());
+  int   size  = static_cast<int>(in.desc.num_elements());
+
+  const int block_size = 256;
+  const int num_blocks = (size + block_size - 1) / block_size;
+  u8_f32_real_kernel<<<num_blocks, block_size, 0, stream_>>>(idata, odata, size);
+  CUDA_CHECK(cudaGetLastError());
+}
 
 void Conversion::launch_u8_cf32_real(holoflow::core::TView in, holoflow::core::TView out) {
   auto *idata = reinterpret_cast<const uint8_t *>(in.data());
@@ -236,6 +254,7 @@ holoflow::core::OpResult Conversion::execute(holoflow::core::SyncCtx &ctx) {
   using Cfg      = std::tuple<DType, Target, Strategy>;
   using LaunchFn = void (Conversion::*)(holoflow::core::TView, holoflow::core::TView);
   static const std::map<Cfg, LaunchFn> launch_map{
+      {{DType::U8, Target::F32, Strategy::Real}, &Conversion::launch_u8_f32_real},
       {{DType::U8, Target::CF32, Strategy::Real}, &Conversion::launch_u8_cf32_real},
       {{DType::U16, Target::CF32, Strategy::Real}, &Conversion::launch_u16_cf32_real},
       {{DType::F32, Target::U8, Strategy::Scaled}, &Conversion::launch_f32_u8_scaled},
@@ -266,6 +285,7 @@ ConversionFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   using Strategy = ConversionSettings::Strategy;
   using Cfg      = std::tuple<DType, Target, Strategy>;
   std::map<Cfg, DType> cfg_to_dtype{
+      {{DType::U8, Target::F32, Strategy::Real}, DType::F32},
       {{DType::U8, Target::CF32, Strategy::Real}, DType::CF32},
       {{DType::U16, Target::CF32, Strategy::Real}, DType::CF32},
       {{DType::F32, Target::U8, Strategy::Scaled}, DType::U8},
