@@ -32,16 +32,19 @@
 #include "holonp/arange.hh"
 #include "holonp/assign.hh"
 #include "holonp/concatenate.hh"
+#include "holonp/conj.hh"
 #include "holonp/div.hh"
 #include "holonp/empty.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
+#include "holonp/irfft2.hh"
 #include "holonp/mean.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/mul.hh"
 #include "holonp/reshape.hh"
 #include "holonp/rfft.hh"
+#include "holonp/rfft2.hh"
 #include "holonp/slice.hh"
 #include "holonp/transpose.hh"
 #include "holonp/zeros.hh"
@@ -176,6 +179,7 @@ private:
   std::vector<TDesc> xz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   std::vector<TDesc> yz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   std::vector<TDesc> shack_hartmann_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  std::vector<TDesc> shack_hartmann_xcorr_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   std::vector<TDesc> ametek_s710_euresys_coaxlink_octo(holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings s);
   std::vector<TDesc> ametek_s711_euresys_coaxlink_qsfp_plus(holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
   std::vector<TDesc> average(const TDesc &X, holotask::syncs::AverageSettings s);
@@ -192,6 +196,8 @@ private:
   std::vector<TDesc> div(const TDesc &A, const TDesc &B, holonp::DivSettings s);
   std::vector<TDesc> mul(const TDesc &A, const TDesc &B, holonp::MulSettings s);
   std::vector<TDesc> rfft(const TDesc &X, holonp::RFFTSettings s);
+  std::vector<TDesc> rfft2(const TDesc &X, holonp::RFFT2Settings s);
+  std::vector<TDesc> irfft2(const TDesc &X, holonp::IRFFT2Settings s);
   std::vector<TDesc> assign(const TDesc &X, const TDesc &Y, holonp::AssignSettings s);
   std::vector<TDesc> slice(const TDesc &X, holonp::SliceSettings s);
   std::vector<TDesc> fft(const TDesc &X, holonp::FFTSettings s);
@@ -200,6 +206,7 @@ private:
   std::vector<TDesc> abs(const TDesc &X, holonp::AbsSettings s);
   std::vector<TDesc> mean(const TDesc &X, holonp::MeanSettings s);
   std::vector<TDesc> reshape(const TDesc &X, holonp::ReshapeSettings s);
+  std::vector<TDesc> conj(const TDesc &X, holonp::ConjSettings s);
   // clang-format on
 };
 

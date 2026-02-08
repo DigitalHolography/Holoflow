@@ -36,16 +36,19 @@
 #include "holonp/arange.hh"
 #include "holonp/assign.hh"
 #include "holonp/concatenate.hh"
+#include "holonp/conj.hh"
 #include "holonp/div.hh"
 #include "holonp/empty.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
+#include "holonp/irfft2.hh"
 #include "holonp/mean.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/mul.hh"
 #include "holonp/reshape.hh"
 #include "holonp/rfft.hh"
+#include "holonp/rfft2.hh"
 #include "holonp/slice.hh"
 #include "holonp/transpose.hh"
 #include "holonp/zeros.hh"
@@ -100,12 +103,14 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
                  ui::TensorDisplayWidget *xy_raw_widget,
                  ui::TensorDisplayWidget *raw_spectrum_widget,
                  ui::TensorDisplayWidget *processed_spectrum_widget,
-                 ui::TensorDisplayWidget *shack_hartmann_widget)
+                 ui::TensorDisplayWidget *shack_hartmann_widget,
+                 ui::TensorDisplayWidget *shack_hartmann_xcorr_widget)
     : xy_processed_widget_(xy_processed_widget), xz_processed_widget_(xz_processed_widget),
       yz_processed_widget_(yz_processed_widget), xy_raw_widget_(xy_raw_widget),
       raw_spectrum_widget_(raw_spectrum_widget),
       processed_spectrum_widget_(processed_spectrum_widget),
-      shack_hartmann_widget_(shack_hartmann_widget) {
+      shack_hartmann_widget_(shack_hartmann_widget),
+      shack_hartmann_xcorr_widget_(shack_hartmann_xcorr_widget) {
   // clang-format off
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
@@ -116,6 +121,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum", raw_spectrum_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum", processed_spectrum_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann", shack_hartmann_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
@@ -149,9 +155,12 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<FFT2Factory>(registry_, "FFT2");
   reg_sync<FFTShiftFactory>(registry_, "FFTShiftNp");
   reg_sync<AbsFactory>(registry_, "Abs");
+  reg_sync<ConjFactory>(registry_, "Conj");
   reg_sync<MeanFactory>(registry_, "Mean");
   reg_sync<ConcatenateFactory>(registry_, "Concatenate");
   reg_sync<RFFTFactory>(registry_, "RFFT");
+  reg_sync<RFFT2Factory>(registry_, "RFFT2");
+  reg_sync<IRFFT2Factory>(registry_, "IRFFT2");
   reg_sync<MulFactory>(registry_, "Mul");
   reg_sync<DivFactory>(registry_, "Div");
   reg_sync<AddFactory>(registry_, "Add");

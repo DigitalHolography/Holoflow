@@ -15,6 +15,7 @@
 #include "holonp/div.hh"
 
 #include <cuComplex.h>
+#include <type_traits>
 
 namespace holonp {
 
@@ -71,13 +72,40 @@ std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
   return s;
 }
 
+template <typename Scalar>
+__global__ void
+div_kernel_cf32_scalar(const cuFloatComplex *__restrict__ a, const Scalar *__restrict__ b,
+                       cuFloatComplex *__restrict__ out, size_t total_out, size_t ndim,
+                       const size_t *__restrict__ out_shape, const size_t *__restrict__ a_strides,
+                       const size_t *__restrict__ b_strides) {
+  size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= total_out)
+    return;
+
+  size_t a_off = 0, b_off = 0, rem = idx;
+
+  for (int i = int(ndim) - 1; i >= 0; --i) {
+    size_t coord = rem % out_shape[i];
+    rem /= out_shape[i];
+    a_off += coord * a_strides[i];
+    b_off += coord * b_strides[i];
+  }
+
+  cuFloatComplex denom{};
+  denom.x = static_cast<float>(b[b_off]);
+  denom.y = 0.0f;
+
+  out[idx] = cuCdivf(a[a_off], denom);
+}
+
 } // namespace
 
-Div::Div(cudaStream_t stream, holoflow::core::DType dtype, size_t total_out, size_t ndim,
-         DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides)
-    : stream_(stream), dtype_(dtype), total_out_(total_out), ndim_(ndim),
-      d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
-      d_b_strides_(std::move(d_b_strides)) {}
+Div::Div(cudaStream_t stream, holoflow::core::DType a_dtype, holoflow::core::DType b_dtype,
+         holoflow::core::DType out_dtype, size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape,
+         DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides)
+    : stream_(stream), a_dtype_(a_dtype), b_dtype_(b_dtype), out_dtype_(out_dtype),
+      total_out_(total_out), ndim_(ndim), d_out_shape_(std::move(d_out_shape)),
+      d_a_strides_(std::move(d_a_strides)), d_b_strides_(std::move(d_b_strides)) {}
 
 holoflow::core::OpResult Div::execute(holoflow::core::SyncCtx &ctx) {
   if (total_out_ == 0)
@@ -91,36 +119,83 @@ holoflow::core::OpResult Div::execute(holoflow::core::SyncCtx &ctx) {
       (T *)ctx.inputs[0].data(), (T *)ctx.inputs[1].data(), (T *)ctx.outputs[0].data(),            \
       total_out_, ndim_, d_out_shape_.get(), d_a_strides_.get(), d_b_strides_.get())
 
-  switch (dtype_) {
-  case holoflow::core::DType::F32:
-    LAUNCH_TYPE(float);
-    break;
-  case holoflow::core::DType::CF32:
-    LAUNCH_TYPE(cuFloatComplex);
-    break;
-  case holoflow::core::DType::U16:
-    LAUNCH_TYPE(uint16_t);
-    break;
-  case holoflow::core::DType::U8:
-    LAUNCH_TYPE(uint8_t);
-    break;
-  default:
+#define LAUNCH_CF32_SCALAR(ScalarT)                                                                \
+  div_kernel_cf32_scalar<ScalarT><<<grid, block, 0, stream_>>>(                                    \
+      (cuFloatComplex *)ctx.inputs[0].data(), (ScalarT *)ctx.inputs[1].data(),                     \
+      (cuFloatComplex *)ctx.outputs[0].data(), total_out_, ndim_, d_out_shape_.get(),              \
+      d_a_strides_.get(), d_b_strides_.get())
+
+  auto same_types = (a_dtype_ == out_dtype_) && (b_dtype_ == out_dtype_);
+  if (same_types) {
+    switch (out_dtype_) {
+    case holoflow::core::DType::F32:
+      LAUNCH_TYPE(float);
+      break;
+    case holoflow::core::DType::CF32:
+      LAUNCH_TYPE(cuFloatComplex);
+      break;
+    case holoflow::core::DType::U16:
+      LAUNCH_TYPE(uint16_t);
+      break;
+    case holoflow::core::DType::U8:
+      LAUNCH_TYPE(uint8_t);
+      break;
+    default:
+      std::abort();
+    }
+  } else if (a_dtype_ == holoflow::core::DType::CF32 && out_dtype_ == holoflow::core::DType::CF32) {
+    switch (b_dtype_) {
+    case holoflow::core::DType::F32:
+      LAUNCH_CF32_SCALAR(float);
+      break;
+    case holoflow::core::DType::U16:
+      LAUNCH_CF32_SCALAR(uint16_t);
+      break;
+    case holoflow::core::DType::U8:
+      LAUNCH_CF32_SCALAR(uint8_t);
+      break;
+    case holoflow::core::DType::CF32:
+      LAUNCH_TYPE(cuFloatComplex);
+      break;
+    default:
+      std::abort();
+    }
+  } else {
     std::abort();
   }
+
+#undef LAUNCH_TYPE
+#undef LAUNCH_CF32_SCALAR
   return holoflow::core::OpResult::Ok;
 }
 
 holoflow::core::InferResult DivFactory::infer(std::span<const holoflow::core::TDesc> inputs,
                                               const nlohmann::json &) const {
   check(inputs.size() == 2, "expected exactly 2 input tensors");
-  check(inputs[0].dtype == inputs[1].dtype, "input tensor data types must match");
   check(inputs[0].mem_loc == holoflow::core::MemLoc::Device,
         "input tensor 0 must be in device memory");
   check(inputs[1].mem_loc == holoflow::core::MemLoc::Device,
         "input tensor 1 must be in device memory");
 
-  const auto &a = inputs[0], &b = inputs[1];
-  size_t      ndim = std::max(a.shape.size(), b.shape.size());
+  const auto &a        = inputs[0];
+  const auto &b        = inputs[1];
+  auto        dtype_a  = a.dtype;
+  auto        dtype_b  = b.dtype;
+  auto        out_type = dtype_a;
+
+  auto is_scalar_compatible = [](holoflow::core::DType dt) {
+    return dt == holoflow::core::DType::F32 || dt == holoflow::core::DType::U16 ||
+           dt == holoflow::core::DType::U8;
+  };
+
+  if (dtype_a != dtype_b) {
+    check(dtype_a == holoflow::core::DType::CF32 &&
+              (dtype_b == holoflow::core::DType::CF32 || is_scalar_compatible(dtype_b)),
+          "Div: unsupported dtype combination");
+    out_type = holoflow::core::DType::CF32;
+  }
+
+  size_t ndim = std::max(a.shape.size(), b.shape.size());
 
   std::vector<size_t> out_shape(ndim);
   for (size_t i = 0; i < ndim; ++i) {
@@ -129,7 +204,7 @@ holoflow::core::InferResult DivFactory::infer(std::span<const holoflow::core::TD
     out_shape[i] = std::max(ad, bd);
   }
 
-  holoflow::core::TDesc o(out_shape, a.dtype, holoflow::core::MemLoc::Device);
+  holoflow::core::TDesc o(out_shape, out_type, holoflow::core::MemLoc::Device);
 
   return holoflow::core::InferResult{
       .input_descs   = {a, b},
@@ -174,8 +249,12 @@ DivFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann
   CUDA_CHECK(cudaMemcpyAsync(d_a_str.get(), a_strides_h.data(), bytes, h2d, ctx.stream));
   CUDA_CHECK(cudaMemcpyAsync(d_b_str.get(), b_strides_h.data(), bytes, h2d, ctx.stream));
 
-  return std::make_unique<Div>(ctx.stream, inputs[0].dtype, total, ndim, std::move(d_shape),
-                               std::move(d_a_str), std::move(d_b_str));
+  auto dtype_a  = inputs[0].dtype;
+  auto dtype_b  = inputs[1].dtype;
+  auto out_type = res.output_descs[0].dtype;
+
+  return std::make_unique<Div>(ctx.stream, dtype_a, dtype_b, out_type, total, ndim,
+                               std::move(d_shape), std::move(d_a_str), std::move(d_b_str));
 }
 
 } // namespace holonp

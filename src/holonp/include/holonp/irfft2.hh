@@ -19,38 +19,41 @@
 #include <vector>
 
 #include "curaii/cuda.hh"
+#include "curaii/cufft.hh"
 #include "holoflow/core/tasks.hh"
-
-template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+#include "holonp/fft_common.hh"
 
 namespace holonp {
 
-struct DivSettings {};
-void to_json(nlohmann::json &j, const DivSettings &s);
-void from_json(const nlohmann::json &j, DivSettings &s);
+struct IRFFT2Settings {
+  std::vector<int> axes;
+  FftNorm          norm = FftNorm::Backward;
+};
 
-class Div : public holoflow::core::ISyncTask {
+void to_json(nlohmann::json &j, const IRFFT2Settings &s);
+void from_json(const nlohmann::json &j, IRFFT2Settings &s);
+
+class IRFFT2 : public holoflow::core::ISyncTask {
 public:
-  Div(cudaStream_t stream, holoflow::core::DType a_dtype, holoflow::core::DType b_dtype,
-      holoflow::core::DType out_dtype, size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape,
-      DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides);
-
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  cudaStream_t          stream_;
-  holoflow::core::DType a_dtype_;
-  holoflow::core::DType b_dtype_;
-  holoflow::core::DType out_dtype_;
-  size_t                total_out_;
-  size_t                ndim_;
+  IRFFT2(const IRFFT2Settings &settings, curaii::CufftHandle &&plan, size_t n_fft_elems,
+         size_t total_out_elems, std::vector<size_t> input_offsets, size_t output_stride_bytes,
+         cudaStream_t stream);
 
-  DevPtr<size_t> d_out_shape_;
-  DevPtr<size_t> d_a_strides_;
-  DevPtr<size_t> d_b_strides_;
+  friend class IRFFT2Factory;
+
+  IRFFT2Settings      settings_;
+  curaii::CufftHandle plan_;
+  size_t              n_fft_elems_;
+  size_t              total_out_elems_;
+  std::vector<size_t> input_offsets_;
+  size_t              output_stride_bytes_;
+  cudaStream_t        stream_;
 };
 
-class DivFactory : public holoflow::core::ISyncTaskFactory {
+class IRFFT2Factory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;

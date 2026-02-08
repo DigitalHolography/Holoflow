@@ -113,6 +113,7 @@ private:
   TensorDisplayWidget *raw_spectrum_widget_;
   TensorDisplayWidget *processed_spectrum_widget_;
   TensorDisplayWidget *shack_hartmann_widget_;
+  TensorDisplayWidget *shack_hartmann_xcorr_widget_;
 };
 
 } // namespace holovibes::ui
