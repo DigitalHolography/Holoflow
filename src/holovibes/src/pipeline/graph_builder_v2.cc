@@ -35,11 +35,6 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   auto dy     = s_.spacial_pixel_size;
   auto z_prop = s_.spacial_z;
 
-  // auto ri = s_.filter_r_inner;
-  // auto ro = s_.filter_r_outer;
-  // auto si = s_.filter_smooth_inner;
-  // auto so = s_.filter_smooth_outer;
-
   using Target = holotask::syncs::ConversionSettings::Target;
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
   auto Host    = holotask::syncs::MemcpySettings::Target::Host;
@@ -153,77 +148,16 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     throw std::logic_error{"2D filtering is currently not supported in GraphBuilder_v2"};
   }
 
-  // //
-  // -------------------------------------------------------------------------------------------------
-  // // Spacial Propagation (H -> H_z - Propagated Hologram)
-  // //
-  // -------------------------------------------------------------------------------------------------
-
-  // TDesc H_z;
-
-  // if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
-  //   std::tie(H_z) = unpack<1>(fresnel_diffraction(H, {lam, dx, dy, z_prop}));
-  // }
-
-  // else if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
-  //   std::tie(H_z) = unpack<1>(angular_spectrum(H, {lam, dx, dy, z_prop, std::nullopt}));
-  // }
-
-  // else {
-  //   H_z = H;
-  // }
-
-  // if (s_.filter_2d) {
-  //   std::tie(H_z) = unpack<1>(filter_2d(H_z, {ri, ro, si, so}));
-  // }
-
-  // //
-  // -------------------------------------------------------------------------------------------------
-  // // Time-Frequency Analysis (H_z -> FH_z - Frequency Hologram)
-  // //
-  // -------------------------------------------------------------------------------------------------
-
-  // TDesc FH_z;
-
-  // if (s_.time_method != TimeMethod::NONE) {
-  //   std::tie(H_z) = unpack<1>(batched_queue(H_z, {s_.gpu_in_size, s_.time_window,
-  //   s_.time_window}));
-  // }
-
-  // if (s_.time_method == TimeMethod::SHORT_TIME_FOURIER) {
-  //   // TODO: Enquire about Zoom FFT
-  //   std::tie(FH_z) = unpack<1>(stft(H_z, {}));
-  //   std::tie(FH_z) = unpack<1>(memcpy(FH_z, {Device}));
-  // }
-
-  // else if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
-  //   // PCA range depends on whether we need the full 3D volume for cuts
-  //   int pca_min = s_.view_3d_cuts ? 0 : s_.time_z_begin;
-  //   int pca_max = s_.view_3d_cuts ? s_.time_window : s_.time_z_end;
-
-  //   std::tie(FH_z) = unpack<1>(pca(H_z, {pca_min, pca_max}));
-  // }
-
   // -------------------------------------------------------------------------------------------------
   // Spectral Density (FH_z -> S - Spectral Density)
   // -------------------------------------------------------------------------------------------------
-  // auto [S] = unpack<1>(convert(FH_z, {Target::F32, Strat::Modulus}));
+
   auto [S] = unpack<1>(abs(FH_z, {}));
 
   // -------------------------------------------------------------------------------------------------
   // XY View Processing (S -> M0 - Processed XY View)
   // -------------------------------------------------------------------------------------------------
   {
-    // Define accumulation range (act as Time-domain frequency filter)
-    // int z0 = (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts)
-    //              ? 0
-    //              : s_.time_z_begin;
-    // int z1 = (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS && !s_.view_3d_cuts)
-    //              ? (int)S.shape.at(0)
-    //              : s_.time_z_end;
-
-    // auto [M0] = unpack<1>(average(S, {0, z0, z1}));
-
     auto [M0] = unpack<1>(mean(S, {{0}, true}));
 
     if (s_.pp_fft_shift) {
@@ -311,68 +245,52 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   if (true) {
     auto nb_subap = 3ULL;
 
-    // 1. Calculate valid dimensions (integer division floors the result)
-    auto subap_w = S.shape.at(2) / nb_subap;
-    auto subap_h = S.shape.at(1) / nb_subap;
-
-    // The valid "cropped" size that fits the grid perfectly
-    auto valid_w = subap_w * nb_subap;
-    auto valid_h = subap_h * nb_subap;
-
-    // auto tmp     = convert(H, {Target::F32, Strat::Modulus});
-    // auto [H_f32] = unpack<1>(tmp);
-
     // -------------------------------------------------------------------------------------------------
-    // 2. Frequency & Spatial Cropping
+    // Spatial Cropping
     // -------------------------------------------------------------------------------------------------
 
-    // Temporal FFT
-    // auto [FH] = unpack<1>(rfft(H_f32, {0}));
-
-    // Filter frequencies AND crop spatially in one go (or sequential slices)
-    // holonp::SliceRange freq_slice{s_.time_z_begin, s_.time_z_end};
+    auto               subap_w = S.shape.at(2) / nb_subap;
+    auto               subap_h = S.shape.at(1) / nb_subap;
+    auto               valid_w = subap_w * nb_subap;
+    auto               valid_h = subap_h * nb_subap;
     holonp::SliceRange crop_y{0, valid_h};
     holonp::SliceRange crop_x{0, valid_w};
 
-    // Apply slice: (Freq_Range, Valid_Y, Valid_X)
     auto [FH_cropped] = unpack<1>(slice(FH, {{{}, crop_y, crop_x}}));
-
-    auto n_freq = FH_cropped.shape.at(0);
+    auto n_freq       = FH_cropped.shape.at(0);
 
     // -------------------------------------------------------------------------------------------------
-    // 3. Fresnel Lens Application
+    // Fresnel Lens Application
     // -------------------------------------------------------------------------------------------------
 
-    // IMPORTANT: Generate Qin for the CROPPED dimensions, not the original S.shape
     auto [Qin] = unpack<1>(fresnel_qin({lam, dx, dy, z_prop, valid_w, valid_h}));
-
-    // Apply lens
     auto [FH_Qin] = unpack<1>(mul(FH_cropped, Qin, {}));
 
     // -------------------------------------------------------------------------------------------------
-    // 4. Sub-aperture Processing (Vectorized)
+    // Sub-aperture Processing
     // -------------------------------------------------------------------------------------------------
 
-    // A. Reshape to isolate tiles
+    // Reshape to isolate tiles
     // Shape: (Freq, Grid_Y, Tile_Y, Grid_X, Tile_X)
     auto [FH_5d] = unpack<1>(reshape(FH_Qin, {{(int64_t)n_freq, (int64_t)nb_subap, (int64_t)subap_h,
                                                (int64_t)nb_subap, (int64_t)subap_w}}));
 
-    // B. Transpose to group grids
+    // Transpose to group grids
     // Shape: (Freq, Grid_Y, Grid_X, Tile_Y, Tile_X)
     auto [FH_grouped] = unpack<1>(transpose(FH_5d, {{0, 1, 3, 2, 4}}));
 
-    // C. 2D FFT on the last two axes (Tile_Y, Tile_X)
+    // 2D FFT on the last two axes (Tile_Y, Tile_X)
     auto [FH_prop]    = unpack<1>(fft2(FH_grouped, {{-2, -1}}));
     std::tie(FH_prop) = unpack<1>(fftshift(FH_prop, {{-2, -1}}));
 
-    // D. Intensity & Averaging
+    // Intensity & Averaging
     auto [S_vec]      = unpack<1>(abs(FH_prop, {}));
     auto [M0_blocked] = unpack<1>(mean(S_vec, {{0}, true}));
 
     // -------------------------------------------------------------------------------------------------
-    // 5. Averaging
+    // Averaging across batches
     // -------------------------------------------------------------------------------------------------
+    
     auto acc  = s_.pp_accumulation;
     auto size = acc * 2;
 
@@ -380,8 +298,9 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     std::tie(M0_blocked) = unpack<1>(mean(M0_blocked, {{0}, true}));
 
     // -------------------------------------------------------------------------------------------------
-    // 6. Cross Correlation with Reference (Center Tile)
+    // Cross Correlation with Reference (Center Tile)
     // -------------------------------------------------------------------------------------------------
+    
     int64_t sy_ref = nb_subap / 2;
     int64_t sx_ref = nb_subap / 2;
     auto [M0_ref]  = unpack<1>(slice(M0_blocked, {{{}, sy_ref, sx_ref, {}, {}}}));
@@ -395,8 +314,9 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [xcorr]       = unpack<1>(irfft2(F_xcorr, {{-2, -1}}));
 
     // -------------------------------------------------------------------------------------------------
-    // 7. Output
+    // Output
     // -------------------------------------------------------------------------------------------------
+    
     int64_t h = (int64_t)valid_h;
     int64_t w = (int64_t)valid_w;
 
