@@ -11,9 +11,11 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//
+
 #pragma once
 
+#include <cstdint>
+#include <memory>
 #include <nlohmann/json.hpp>
 #include <span>
 #include <vector>
@@ -21,52 +23,56 @@
 #include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
 
-template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
-template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 namespace holonp {
 
+// -----------------------------------------------------------------------------
+// Settings
+// -----------------------------------------------------------------------------
+
 struct MinSettings {
-  // NumPy-like axis selection. Empty => all axes.
-  std::vector<int> axis;
+  std::vector<int> axis; // Empty => reduce all
   bool             keepdims = false;
 };
 
 void to_json(nlohmann::json &j, const MinSettings &s);
 void from_json(const nlohmann::json &j, MinSettings &s);
 
+// -----------------------------------------------------------------------------
+// Task Definition
+// -----------------------------------------------------------------------------
+
 class Min : public holoflow::core::ISyncTask {
 public:
+  Min(const MinSettings &settings, cudaStream_t stream, size_t total_out, size_t total_red,
+      int out_ndim, int red_ndim, DevPtr<size_t> in_strides, DevPtr<size_t> out_strides,
+      DevPtr<int> out_to_in_map, DevPtr<size_t> red_strides, DevPtr<int> red_axes_map);
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  Min(const MinSettings &settings, cudaStream_t stream, size_t out_ndim, size_t red_ndim,
-      std::int64_t total_out, std::int64_t total_red, HostPtr<std::int64_t> h_in_strides,
-      DevPtr<std::int64_t> d_in_strides, HostPtr<std::int64_t> h_out_strides,
-      DevPtr<std::int64_t> d_out_strides, HostPtr<int> h_out_to_in, DevPtr<int> d_out_to_in,
-      HostPtr<int> h_red_axes, DevPtr<int> d_red_axes, HostPtr<std::int64_t> h_red_strides,
-      DevPtr<std::int64_t> d_red_strides);
-  friend class MinFactory;
-
   MinSettings  settings_;
   cudaStream_t stream_;
 
-  size_t       out_ndim_;
-  size_t       red_ndim_;
-  std::int64_t total_out_;
-  std::int64_t total_red_;
+  size_t total_out_;
+  size_t total_red_;
+  int    out_ndim_;
+  int    red_ndim_;
 
-  HostPtr<std::int64_t> h_in_strides_;
-  DevPtr<std::int64_t>  d_in_strides_;
-  HostPtr<std::int64_t> h_out_strides_;
-  DevPtr<std::int64_t>  d_out_strides_;
-  HostPtr<int>          h_out_to_in_;
-  DevPtr<int>           d_out_to_in_;
-  HostPtr<int>          h_red_axes_;
-  DevPtr<int>           d_red_axes_;
-  HostPtr<std::int64_t> h_red_strides_;
-  DevPtr<std::int64_t>  d_red_strides_;
+  // Device-resident tensors for address calculation
+  DevPtr<size_t> d_in_strides_;
+  DevPtr<size_t> d_out_strides_;
+  DevPtr<int>    d_out_to_in_map_;
+  DevPtr<size_t> d_red_strides_;
+  DevPtr<int>    d_red_axes_map_;
+
+  friend class MinFactory;
 };
+
+// -----------------------------------------------------------------------------
+// Factory Definition
+// -----------------------------------------------------------------------------
 
 class MinFactory : public holoflow::core::ISyncTaskFactory {
 public:

@@ -1,465 +1,354 @@
 #include "holonp/max.hh"
 
 #include <algorithm>
-#include <cstdint>
-#include <limits>
-#include <numeric>
-#include <stdexcept>
-
 #include <cuComplex.h>
-
-#include "curaii/cuda.hh"
+#include <numeric>
 
 namespace holonp {
 
+// -----------------------------------------------------------------------------
+// JSON Serialization
+// -----------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const MaxSettings &s) {
-  j = nlohmann::json{{"keepdims", s.keepdims}};
-  if (s.axis.empty()) {
+  j["keepdims"] = s.keepdims;
+  if (s.axis.empty())
     j["axis"] = nullptr;
-  } else if (s.axis.size() == 1) {
+  else if (s.axis.size() == 1)
     j["axis"] = s.axis[0];
-  } else {
+  else
     j["axis"] = s.axis;
-  }
 }
 
 void from_json(const nlohmann::json &j, MaxSettings &s) {
   s.axis.clear();
-  if (j.contains("axis")) {
-    const auto &ja = j.at("axis");
-    if (ja.is_null()) {
-      s.axis.clear();
-    } else if (ja.is_number_integer()) {
-      s.axis = {ja.get<int>()};
-    } else if (ja.is_array()) {
-      ja.get_to(s.axis);
-    } else {
-      throw std::invalid_argument("MaxSettings: axis must be int, array, or null");
-    }
-  } else if (j.contains("axes")) {
-    const auto &ja = j.at("axes");
-    if (ja.is_null()) {
-      s.axis.clear();
-    } else if (ja.is_number_integer()) {
-      s.axis = {ja.get<int>()};
-    } else if (ja.is_array()) {
-      ja.get_to(s.axis);
-    } else {
-      throw std::invalid_argument("MaxSettings: axes must be int, array, or null");
-    }
-  }
+  s.keepdims = j.value("keepdims", false);
 
-  if (j.contains("keepdims")) {
-    j.at("keepdims").get_to(s.keepdims);
-  } else {
-    s.keepdims = false;
-  }
+  const auto parse_axes = [&](const std::string &key) {
+    if (!j.contains(key) || j[key].is_null())
+      return;
+    if (j[key].is_number_integer())
+      s.axis = {j[key].get<int>()};
+    else if (j[key].is_array())
+      j[key].get_to(s.axis);
+    else
+      throw std::invalid_argument("MaxSettings: axis must be int, array, or null");
+  };
+
+  parse_axes("axis");
+  if (s.axis.empty())
+    parse_axes("axes");
 }
 
 namespace {
 
-constexpr int kMaxNDim = 16;
+// -----------------------------------------------------------------------------
+// Helpers & Utilities
+// -----------------------------------------------------------------------------
 
 inline void check(bool cond, const std::string &msg) {
-  if (!cond) {
+  if (!cond)
     throw std::invalid_argument("Max: " + msg);
+}
+
+int get_dtype_size(holoflow::core::DType dt) {
+  using namespace holoflow::core;
+  switch (dt) {
+  case DType::U8:
+    return 1;
+  case DType::U16:
+    return 2;
+  case DType::F32:
+    return 4;
+  case DType::CF32:
+    return 8;
+  default:
+    return 1;
   }
 }
 
-inline size_t num_elements(std::span<const size_t> shape) {
-  constexpr size_t max = std::numeric_limits<size_t>::max();
-  size_t           n   = 1;
-  for (auto d : shape) {
-    if (d == 0) {
-      return 0;
-    }
-    if (n > max / d) {
-      throw std::overflow_error("Max: num_elements overflow");
-    }
-    n *= d;
-  }
-  return n;
-}
-
-inline std::vector<std::int64_t> make_contig_strides(std::span<const size_t> shape) {
-  const int                 ndim = static_cast<int>(shape.size());
-  std::vector<std::int64_t> strides(ndim, 1);
-  std::int64_t              acc = 1;
-  for (int i = ndim - 1; i >= 0; --i) {
+std::vector<size_t> compute_compact_strides(std::span<const size_t> shape) {
+  if (shape.empty())
+    return {};
+  std::vector<size_t> strides(shape.size());
+  size_t              acc = 1;
+  for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
     strides[i] = acc;
-    acc *= static_cast<std::int64_t>(shape[static_cast<size_t>(i)]);
+    acc *= shape[i];
   }
   return strides;
 }
 
-inline std::vector<int> normalize_axes(std::span<const int> axes, int ndim) {
+std::vector<size_t> bytes_to_elements(std::span<const size_t> byte_strides, int itemsize) {
+  std::vector<size_t> elem_strides;
+  elem_strides.reserve(byte_strides.size());
+  for (auto s : byte_strides) {
+    elem_strides.push_back(static_cast<size_t>(s) / static_cast<size_t>(itemsize));
+  }
+  return elem_strides;
+}
+
+std::vector<int> normalize_axes(std::span<const int> axes, int ndim) {
   std::vector<int> out;
   if (axes.empty()) {
-    if (ndim == 0) {
-      return out;
-    }
     out.resize(ndim);
     std::iota(out.begin(), out.end(), 0);
-    return out;
-  }
-
-  out.reserve(axes.size());
-  for (int a : axes) {
-    if (a < 0) {
-      a += ndim;
+  } else {
+    out.reserve(axes.size());
+    for (int a : axes) {
+      int norm = (a < 0) ? a + ndim : a;
+      check(norm >= 0 && norm < ndim, "axis out of range");
+      out.push_back(norm);
     }
-    check(a >= 0 && a < ndim, "axis out of range");
-    out.push_back(a);
+    std::sort(out.begin(), out.end());
+    if (std::unique(out.begin(), out.end()) != out.end()) {
+      throw std::invalid_argument("Max: duplicate axes");
+    }
   }
-
-  std::sort(out.begin(), out.end());
-  auto dup = std::adjacent_find(out.begin(), out.end());
-  check(dup == out.end(), "axes must be unique");
   return out;
 }
 
-struct MaxPlan {
-  std::vector<int>          reduce_axes;
-  std::vector<size_t>       out_shape;
-  std::vector<int>          out_to_in;
-  std::vector<std::int64_t> in_strides;
-  std::vector<std::int64_t> out_strides;
-  std::vector<std::int64_t> red_strides;
-  std::int64_t              total_out = 0;
-  std::int64_t              total_red = 0;
-  int                       out_ndim  = 0;
-  int                       red_ndim  = 0;
-};
-
-MaxPlan build_plan(const MaxSettings &settings, std::span<const size_t> shape) {
-  const int ndim = static_cast<int>(shape.size());
-  check(ndim <= kMaxNDim, "input ndim too large");
-
-  const auto        reduce_axes = normalize_axes(settings.axis, ndim);
-  std::vector<bool> reduce_mask(static_cast<size_t>(ndim), false);
-  for (int a : reduce_axes) {
-    reduce_mask[static_cast<size_t>(a)] = true;
-  }
-
-  MaxPlan plan;
-  plan.reduce_axes = reduce_axes;
-  plan.red_ndim    = static_cast<int>(reduce_axes.size());
-
-  if (settings.keepdims) {
-    plan.out_shape.assign(shape.begin(), shape.end());
-    plan.out_to_in.resize(static_cast<size_t>(ndim));
-    for (int i = 0; i < ndim; ++i) {
-      plan.out_to_in[static_cast<size_t>(i)] = i;
-      if (reduce_mask[static_cast<size_t>(i)]) {
-        plan.out_shape[static_cast<size_t>(i)] = 1;
-      }
-    }
-  } else {
-    plan.out_shape.clear();
-    plan.out_to_in.clear();
-    for (int i = 0; i < ndim; ++i) {
-      if (!reduce_mask[static_cast<size_t>(i)]) {
-        plan.out_shape.push_back(shape[static_cast<size_t>(i)]);
-        plan.out_to_in.push_back(i);
-      }
-    }
-  }
-
-  const auto total_in = num_elements(shape);
-  check(total_in > 0, "input tensor has zero elements");
-
-  size_t total_red = 1;
-  if (!reduce_axes.empty()) {
-    for (int a : reduce_axes) {
-      const auto dim = shape[static_cast<size_t>(a)];
-      if (dim == 0) {
-        total_red = 0;
-        break;
-      }
-      if (total_red > std::numeric_limits<size_t>::max() / dim) {
-        throw std::overflow_error("Max: reduction size overflow");
-      }
-      total_red *= dim;
-    }
-  }
-
-  if (reduce_axes.empty() && ndim == 0) {
-    total_red = 1;
-  }
-
-  check(total_red > 0, "reduction has zero elements");
-
-  const auto total_out = num_elements(plan.out_shape);
-  check(total_out > 0, "output tensor has zero elements");
-
-  check(total_out <= static_cast<size_t>(std::numeric_limits<std::int64_t>::max()),
-        "output size exceeds limits");
-  check(total_red <= static_cast<size_t>(std::numeric_limits<std::int64_t>::max()),
-        "reduction size exceeds limits");
-
-  plan.total_out = static_cast<std::int64_t>(total_out);
-  plan.total_red = static_cast<std::int64_t>(total_red);
-  plan.out_ndim  = static_cast<int>(plan.out_shape.size());
-
-  plan.in_strides  = make_contig_strides(shape);
-  plan.out_strides = make_contig_strides(plan.out_shape);
-
-  plan.red_strides.resize(plan.reduce_axes.size(), 1);
-  std::int64_t acc = 1;
-  for (int i = static_cast<int>(plan.reduce_axes.size()) - 1; i >= 0; --i) {
-    plan.red_strides[static_cast<size_t>(i)] = acc;
-    acc *= static_cast<std::int64_t>(shape[static_cast<size_t>(plan.reduce_axes[i])]);
-  }
-
-  return plan;
-}
+// -----------------------------------------------------------------------------
+// Device Kernels
+// -----------------------------------------------------------------------------
 
 template <typename T> struct MaxTraits {
-  __device__ static bool better(T v, T best) { return v > best; }
+  __device__ static bool is_greater(T a, T b) { return a > b; }
 };
 
-// Match NumPy's lexicographic ordering on complex values (real, then imag).
 template <> struct MaxTraits<cuFloatComplex> {
-  __device__ static bool better(cuFloatComplex v, cuFloatComplex best) {
-    if (v.x > best.x) {
-      return true;
-    }
-    if (v.x < best.x) {
-      return false;
-    }
-    return v.y > best.y;
+  __device__ static bool is_greater(cuFloatComplex a, cuFloatComplex b) {
+    if (a.x != b.x)
+      return a.x > b.x;
+    return a.y > b.y;
   }
 };
 
-template <typename InT>
+template <typename T>
 __global__ void
-max_kernel(const InT *__restrict__ in, InT *out, int out_ndim,
-           const std::int64_t *__restrict__ out_strides, const int *__restrict__ out_to_in,
-           const std::int64_t *__restrict__ in_strides, const int *__restrict__ red_axes,
-           const std::int64_t *__restrict__ red_strides, int red_ndim, std::int64_t total_out,
-           std::int64_t total_red) {
-  const std::int64_t tid =
-      static_cast<std::int64_t>(blockIdx.x) * blockDim.x + static_cast<std::int64_t>(threadIdx.x);
-  if (tid >= total_out) {
+max_kernel(const T *__restrict__ in, T *__restrict__ out, size_t total_out, size_t total_red,
+           int out_ndim, int red_ndim, const size_t *__restrict__ out_strides,
+           const int *__restrict__ out_to_in_map, const size_t *__restrict__ in_strides,
+           const size_t *__restrict__ red_strides, const int *__restrict__ red_axes_map) {
+
+  const size_t tid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (tid >= total_out)
     return;
+
+  // 1. Calculate input offset from output coordinates
+  size_t in_base_offset = 0;
+  size_t temp_tid       = tid;
+
+  for (int i = 0; i < out_ndim; ++i) {
+    size_t stride = out_strides[i];
+    size_t coord  = temp_tid / stride;
+    temp_tid -= coord * stride;
+
+    in_base_offset += coord * in_strides[out_to_in_map[i]];
   }
 
-  std::int64_t rem     = tid;
-  std::int64_t in_base = 0;
-  for (int k = 0; k < out_ndim; ++k) {
-    const std::int64_t stride = out_strides[k];
-    const std::int64_t idx    = (stride > 0) ? (rem / stride) : 0;
-    rem -= idx * stride;
-    const int in_axis = out_to_in[k];
-    in_base += idx * in_strides[in_axis];
-  }
+  // 2. Initialize with the first element of the reduction (r=0)
+  T best_val = in[in_base_offset];
 
-  InT  best{};
-  bool init = false;
-  for (std::int64_t r = 0; r < total_red; ++r) {
-    std::int64_t rem_r  = r;
-    std::int64_t in_off = in_base;
+  // 3. Iterate remaining reduction elements
+  for (size_t r = 1; r < total_red; ++r) {
+    size_t in_offset = in_base_offset;
+    size_t temp_r    = r;
+
     for (int i = 0; i < red_ndim; ++i) {
-      const std::int64_t stride = red_strides[i];
-      const std::int64_t idx    = (stride > 0) ? (rem_r / stride) : 0;
-      rem_r -= idx * stride;
-      in_off += idx * in_strides[red_axes[i]];
+      size_t stride = red_strides[i];
+      size_t coord  = temp_r / stride;
+      temp_r -= coord * stride;
+
+      in_offset += coord * in_strides[red_axes_map[i]];
     }
-    const InT v = in[in_off];
-    if (!init) {
-      best = v;
-      init = true;
-    } else if (MaxTraits<InT>::better(v, best)) {
-      best = v;
+
+    const T val = in[in_offset];
+    if (MaxTraits<T>::is_greater(val, best_val)) {
+      best_val = val;
     }
   }
 
-  out[tid] = best;
+  out[tid] = best_val;
 }
 
 } // namespace
 
-Max::Max(const MaxSettings &settings, cudaStream_t stream, size_t out_ndim, size_t red_ndim,
-         std::int64_t total_out, std::int64_t total_red, HostPtr<std::int64_t> h_in_strides,
-         DevPtr<std::int64_t> d_in_strides, HostPtr<std::int64_t> h_out_strides,
-         DevPtr<std::int64_t> d_out_strides, HostPtr<int> h_out_to_in, DevPtr<int> d_out_to_in,
-         HostPtr<int> h_red_axes, DevPtr<int> d_red_axes, HostPtr<std::int64_t> h_red_strides,
-         DevPtr<std::int64_t> d_red_strides)
-    : settings_(settings), stream_(stream), out_ndim_(out_ndim), red_ndim_(red_ndim),
-      total_out_(total_out), total_red_(total_red), h_in_strides_(std::move(h_in_strides)),
-      d_in_strides_(std::move(d_in_strides)), h_out_strides_(std::move(h_out_strides)),
-      d_out_strides_(std::move(d_out_strides)), h_out_to_in_(std::move(h_out_to_in)),
-      d_out_to_in_(std::move(d_out_to_in)), h_red_axes_(std::move(h_red_axes)),
-      d_red_axes_(std::move(d_red_axes)), h_red_strides_(std::move(h_red_strides)),
-      d_red_strides_(std::move(d_red_strides)) {}
+// -----------------------------------------------------------------------------
+// Max Task Implementation
+// -----------------------------------------------------------------------------
+
+Max::Max(const MaxSettings &settings, cudaStream_t stream, size_t total_out, size_t total_red,
+         int out_ndim, int red_ndim, DevPtr<size_t> in_strides, DevPtr<size_t> out_strides,
+         DevPtr<int> out_to_in_map, DevPtr<size_t> red_strides, DevPtr<int> red_axes_map)
+    : settings_(settings), stream_(stream), total_out_(total_out), total_red_(total_red),
+      out_ndim_(out_ndim), red_ndim_(red_ndim), d_in_strides_(std::move(in_strides)),
+      d_out_strides_(std::move(out_strides)), d_out_to_in_map_(std::move(out_to_in_map)),
+      d_red_strides_(std::move(red_strides)), d_red_axes_map_(std::move(red_axes_map)) {}
 
 holoflow::core::OpResult Max::execute(holoflow::core::SyncCtx &ctx) {
+  const auto &idesc = ctx.inputs[0].desc;
   auto       *idata = ctx.inputs[0].data();
   auto       *odata = ctx.outputs[0].data();
-  const auto &idesc = ctx.inputs[0].desc;
 
-  const auto    total_out = total_out_;
-  constexpr int block     = 256;
-  const int     grid      = static_cast<int>((total_out + block - 1) / block);
+  constexpr int block_size = 256;
+  const int     grid_size  = static_cast<int>((total_out_ + block_size - 1) / block_size);
+
+#define LAUNCH_MAX_KERNEL(Type)                                                                    \
+  max_kernel<<<grid_size, block_size, 0, stream_>>>(                                               \
+      reinterpret_cast<const Type *>(idata), reinterpret_cast<Type *>(odata), total_out_,          \
+      total_red_, out_ndim_, red_ndim_, d_out_strides_.get(), d_out_to_in_map_.get(),              \
+      d_in_strides_.get(), d_red_strides_.get(), d_red_axes_map_.get())
 
   switch (idesc.dtype) {
-  case holoflow::core::DType::U8: {
-    auto *in  = reinterpret_cast<const std::uint8_t *>(idata);
-    auto *out = reinterpret_cast<std::uint8_t *>(odata);
-    max_kernel<<<grid, block, 0, stream_>>>(
-        in, out, static_cast<int>(out_ndim_), d_out_strides_.get(), d_out_to_in_.get(),
-        d_in_strides_.get(), d_red_axes_.get(), d_red_strides_.get(), static_cast<int>(red_ndim_),
-        total_out_, total_red_);
+  case holoflow::core::DType::U8:
+    LAUNCH_MAX_KERNEL(std::uint8_t);
     break;
-  }
-  case holoflow::core::DType::U16: {
-    auto *in  = reinterpret_cast<const std::uint16_t *>(idata);
-    auto *out = reinterpret_cast<std::uint16_t *>(odata);
-    max_kernel<<<grid, block, 0, stream_>>>(
-        in, out, static_cast<int>(out_ndim_), d_out_strides_.get(), d_out_to_in_.get(),
-        d_in_strides_.get(), d_red_axes_.get(), d_red_strides_.get(), static_cast<int>(red_ndim_),
-        total_out_, total_red_);
+  case holoflow::core::DType::U16:
+    LAUNCH_MAX_KERNEL(std::uint16_t);
     break;
-  }
-  case holoflow::core::DType::F32: {
-    auto *in  = reinterpret_cast<const float *>(idata);
-    auto *out = reinterpret_cast<float *>(odata);
-    max_kernel<<<grid, block, 0, stream_>>>(
-        in, out, static_cast<int>(out_ndim_), d_out_strides_.get(), d_out_to_in_.get(),
-        d_in_strides_.get(), d_red_axes_.get(), d_red_strides_.get(), static_cast<int>(red_ndim_),
-        total_out_, total_red_);
+  case holoflow::core::DType::F32:
+    LAUNCH_MAX_KERNEL(float);
     break;
-  }
-  case holoflow::core::DType::CF32: {
-    auto *in  = reinterpret_cast<const cuFloatComplex *>(idata);
-    auto *out = reinterpret_cast<cuFloatComplex *>(odata);
-    max_kernel<<<grid, block, 0, stream_>>>(
-        in, out, static_cast<int>(out_ndim_), d_out_strides_.get(), d_out_to_in_.get(),
-        d_in_strides_.get(), d_red_axes_.get(), d_red_strides_.get(), static_cast<int>(red_ndim_),
-        total_out_, total_red_);
+  case holoflow::core::DType::CF32:
+    LAUNCH_MAX_KERNEL(cuFloatComplex);
     break;
-  }
   default:
     logger()->error("[Max::execute] unsupported dtype");
     std::abort();
   }
 
+#undef LAUNCH_MAX_KERNEL
+
   CUDA_CHECK(cudaGetLastError());
   return holoflow::core::OpResult::Ok;
 }
 
+// -----------------------------------------------------------------------------
+// Factory Implementation
+// -----------------------------------------------------------------------------
+
 holoflow::core::InferResult MaxFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                               const nlohmann::json &jsettings) const {
-  const auto settings = jsettings.get<MaxSettings>();
-
   check(input_descs.size() == 1, "expected exactly 1 input");
-  const auto &idesc = input_descs[0];
+  const auto &idesc    = input_descs[0];
+  const auto  settings = jsettings.get<MaxSettings>();
 
-  check(idesc.mem_loc == holoflow::core::MemLoc::Device, "only Device tensors are supported");
-  check(idesc.dtype == holoflow::core::DType::U8 || idesc.dtype == holoflow::core::DType::U16 ||
-            idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::CF32,
-        "unsupported input dtype");
+  check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be on Device");
 
-  const auto plan = build_plan(settings, idesc.shape);
+  const int  ndim = static_cast<int>(idesc.shape.size());
+  const auto axes = normalize_axes(settings.axis, ndim);
 
-  holoflow::core::TDesc odesc = idesc;
-  odesc.shape                 = plan.out_shape;
+  std::vector<bool> is_reduced(ndim, false);
+  for (int a : axes)
+    is_reduced[a] = true;
 
-  return holoflow::core::InferResult{
-      .input_descs   = {idesc},
-      .output_descs  = {odesc},
-      .in_place      = {},
-      .owned_inputs  = {false},
-      .owned_outputs = {false},
-      .kind          = holoflow::core::TaskKind::Sync,
-  };
+  std::vector<size_t> out_shape;
+  if (settings.keepdims) {
+    out_shape = std::vector<size_t>(idesc.shape.begin(), idesc.shape.end());
+    for (int a : axes)
+      out_shape[a] = 1;
+  } else {
+    out_shape.reserve(ndim - axes.size());
+    for (int i = 0; i < ndim; ++i) {
+      if (!is_reduced[i])
+        out_shape.push_back(idesc.shape[i]);
+    }
+  }
+
+  // Use constructor to default to compact strides
+  holoflow::core::TDesc odesc(out_shape, idesc.dtype, idesc.mem_loc);
+
+  return {.input_descs   = {idesc},
+          .output_descs  = {odesc},
+          .in_place      = {},
+          .owned_inputs  = {false},
+          .owned_outputs = {false},
+          .kind          = holoflow::core::TaskKind::Sync};
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
 MaxFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                    const nlohmann::json                  &jsettings,
                    const holoflow::core::SyncCreateCtx   &ctx) const {
-  const auto infer_res = this->infer(input_descs, jsettings);
-  const auto settings  = jsettings.get<MaxSettings>();
-  (void)infer_res;
 
-  const auto &idesc = input_descs[0];
-  const auto  plan  = build_plan(settings, idesc.shape);
+  const auto  settings = jsettings.get<MaxSettings>();
+  const auto &idesc    = input_descs[0];
+  const int   ndim     = static_cast<int>(idesc.shape.size());
+  const int   itemsize = get_dtype_size(idesc.dtype);
 
-  const size_t ndim     = idesc.shape.size();
-  const size_t out_ndim = static_cast<size_t>(plan.out_ndim);
-  const size_t red_ndim = static_cast<size_t>(plan.red_ndim);
+  const auto        reduce_axes = normalize_axes(settings.axis, ndim);
+  std::vector<bool> is_reduced(ndim, false);
+  for (int a : reduce_axes)
+    is_reduced[a] = true;
 
-  HostPtr<std::int64_t> h_in_strides;
-  DevPtr<std::int64_t>  d_in_strides;
-  if (ndim > 0) {
-    h_in_strides = curaii::make_unique_host_ptr<std::int64_t>(ndim);
-    for (size_t i = 0; i < ndim; ++i) {
-      h_in_strides.get()[i] = plan.in_strides[i];
+  // 1. Output Shape & Map
+  std::vector<size_t> out_shape;
+  std::vector<int>    out_to_in_map;
+
+  if (settings.keepdims) {
+    out_shape = std::vector<size_t>(idesc.shape.begin(), idesc.shape.end());
+    out_to_in_map.resize(ndim);
+    std::iota(out_to_in_map.begin(), out_to_in_map.end(), 0);
+    for (int a : reduce_axes)
+      out_shape[a] = 1;
+  } else {
+    for (int i = 0; i < ndim; ++i) {
+      if (!is_reduced[i]) {
+        out_shape.push_back(idesc.shape[i]);
+        out_to_in_map.push_back(i);
+      }
     }
-    d_in_strides = curaii::make_unique_device_ptr<std::int64_t>(ndim);
-    CUDA_CHECK(cudaMemcpyAsync(d_in_strides.get(), h_in_strides.get(), sizeof(std::int64_t) * ndim,
+  }
+
+  // 2. Strides Setup
+
+  // Input: Convert provided byte strides to element strides (size_t)
+  std::vector<size_t> in_strides_elem;
+  if (idesc.strides.empty()) {
+    in_strides_elem = compute_compact_strides(idesc.shape);
+  } else {
+    in_strides_elem = bytes_to_elements(idesc.strides, itemsize);
+  }
+
+  // Output: We know output is contiguous (enforced in infer)
+  auto out_strides_elem = compute_compact_strides(out_shape);
+
+  // Reduction: Fake stride for iterating linear 'r'
+  std::vector<size_t> red_dims_shape;
+  for (int a : reduce_axes)
+    red_dims_shape.push_back(idesc.shape[a]);
+  auto red_strides_elem = compute_compact_strides(red_dims_shape);
+
+  size_t total_out = 1;
+  for (auto d : out_shape)
+    total_out *= d;
+  size_t total_red = 1;
+  for (auto d : red_dims_shape)
+    total_red *= d;
+
+  // 3. Upload
+  auto upload = [&]<typename T>(const std::vector<T> &host_vec) -> DevPtr<T> {
+    if (host_vec.empty())
+      return nullptr;
+    auto d_ptr = curaii::make_unique_device_ptr<T>(host_vec.size());
+    CUDA_CHECK(cudaMemcpyAsync(d_ptr.get(), host_vec.data(), host_vec.size() * sizeof(T),
                                cudaMemcpyHostToDevice, ctx.stream));
-  }
+    return d_ptr;
+  };
 
-  HostPtr<std::int64_t> h_out_strides;
-  DevPtr<std::int64_t>  d_out_strides;
-  if (out_ndim > 0) {
-    h_out_strides = curaii::make_unique_host_ptr<std::int64_t>(out_ndim);
-    for (size_t i = 0; i < out_ndim; ++i) {
-      h_out_strides.get()[i] = plan.out_strides[i];
-    }
-    d_out_strides = curaii::make_unique_device_ptr<std::int64_t>(out_ndim);
-    CUDA_CHECK(cudaMemcpyAsync(d_out_strides.get(), h_out_strides.get(),
-                               sizeof(std::int64_t) * out_ndim, cudaMemcpyHostToDevice,
-                               ctx.stream));
-  }
-
-  HostPtr<int> h_out_to_in;
-  DevPtr<int>  d_out_to_in;
-  if (out_ndim > 0) {
-    h_out_to_in = curaii::make_unique_host_ptr<int>(out_ndim);
-    for (size_t i = 0; i < out_ndim; ++i) {
-      h_out_to_in.get()[i] = plan.out_to_in[i];
-    }
-    d_out_to_in = curaii::make_unique_device_ptr<int>(out_ndim);
-    CUDA_CHECK(cudaMemcpyAsync(d_out_to_in.get(), h_out_to_in.get(), sizeof(int) * out_ndim,
-                               cudaMemcpyHostToDevice, ctx.stream));
-  }
-
-  HostPtr<int> h_red_axes;
-  DevPtr<int>  d_red_axes;
-  if (red_ndim > 0) {
-    h_red_axes = curaii::make_unique_host_ptr<int>(red_ndim);
-    for (size_t i = 0; i < red_ndim; ++i) {
-      h_red_axes.get()[i] = plan.reduce_axes[i];
-    }
-    d_red_axes = curaii::make_unique_device_ptr<int>(red_ndim);
-    CUDA_CHECK(cudaMemcpyAsync(d_red_axes.get(), h_red_axes.get(), sizeof(int) * red_ndim,
-                               cudaMemcpyHostToDevice, ctx.stream));
-  }
-
-  HostPtr<std::int64_t> h_red_strides;
-  DevPtr<std::int64_t>  d_red_strides;
-  if (red_ndim > 0) {
-    h_red_strides = curaii::make_unique_host_ptr<std::int64_t>(red_ndim);
-    for (size_t i = 0; i < red_ndim; ++i) {
-      h_red_strides.get()[i] = plan.red_strides[i];
-    }
-    d_red_strides = curaii::make_unique_device_ptr<std::int64_t>(red_ndim);
-    CUDA_CHECK(cudaMemcpyAsync(d_red_strides.get(), h_red_strides.get(),
-                               sizeof(std::int64_t) * red_ndim, cudaMemcpyHostToDevice,
-                               ctx.stream));
-  }
+  auto d_in_strides  = upload(in_strides_elem);
+  auto d_out_strides = upload(out_strides_elem);
+  auto d_out_to_in   = upload(out_to_in_map);
+  auto d_red_strides = upload(red_strides_elem);
+  auto d_red_axes    = upload(reduce_axes);
 
   CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
 
-  return std::unique_ptr<holoflow::core::ISyncTask>(
-      new Max(settings, ctx.stream, out_ndim, red_ndim, plan.total_out, plan.total_red,
-              std::move(h_in_strides), std::move(d_in_strides), std::move(h_out_strides),
-              std::move(d_out_strides), std::move(h_out_to_in), std::move(d_out_to_in),
-              std::move(h_red_axes), std::move(d_red_axes), std::move(h_red_strides),
-              std::move(d_red_strides)));
+  return std::make_unique<Max>(
+      settings, ctx.stream, total_out, total_red, static_cast<int>(out_shape.size()),
+      static_cast<int>(reduce_axes.size()), std::move(d_in_strides), std::move(d_out_strides),
+      std::move(d_out_to_in), std::move(d_red_strides), std::move(d_red_axes));
 }
 
 } // namespace holonp

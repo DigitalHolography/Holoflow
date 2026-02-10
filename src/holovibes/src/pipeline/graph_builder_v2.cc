@@ -330,6 +330,10 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // auto [x_m_mn]       = unpack<1>(sub(M0_blocked, mn, {}));
     // auto [M0_scaled]    = unpack<1>(mul(x_m_mn, scale, {}));
     // std::tie(M0_scaled) = unpack<1>(add(M0_scaled, a, {}));
+    //
+    // (void)axis;
+    // auto mn          = a_t;
+    // auto mx          = b_t;
 
     auto rescale = [&](const TDesc &input, const std::vector<int> &axis, float a, float b) {
       auto [a_t]       = unpack<1>(asarray({a}));
