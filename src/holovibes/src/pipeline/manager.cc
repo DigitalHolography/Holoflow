@@ -34,6 +34,7 @@
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
+#include "holonp/argmax.hh"
 #include "holonp/asarray.hh"
 #include "holonp/assign.hh"
 #include "holonp/concatenate.hh"
@@ -166,6 +167,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<MeanFactory>(registry_, "Mean");
   reg_sync<MinFactory>(registry_, "Min");
   reg_sync<MaxFactory>(registry_, "Max");
+  reg_sync<ArgmaxFactory>(registry_, "Argmax");
   reg_sync<ConcatenateFactory>(registry_, "Concatenate");
   reg_sync<RFFTFactory>(registry_, "RFFT");
   reg_sync<RFFT2Factory>(registry_, "RFFT2");

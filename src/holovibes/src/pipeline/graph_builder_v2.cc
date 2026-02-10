@@ -317,24 +317,6 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     int64_t h = (int64_t)valid_h;
     int64_t w = (int64_t)valid_w;
 
-    // auto [a]            = unpack<1>(asarray({0.0f}));
-    // auto [b]            = unpack<1>(asarray({255.0f}));
-    // auto [b_m_a]        = unpack<1>(sub(b, a, {}));
-    // auto [mn]           = unpack<1>(min(M0_blocked, {{-2, -1}, true}));
-    // auto [mx]           = unpack<1>(max(M0_blocked, {{-2, -1}, true}));
-    // auto [denom]        = unpack<1>(sub(mx, mn, {}));
-    // auto [zero]         = unpack<1>(asarray({0.0f}));
-    // auto [mask_zero]    = unpack<1>(equal(denom, zero, {}));
-    // auto [scale]        = unpack<1>(div(b_m_a, denom, {}));
-    // std::tie(scale)     = unpack<1>(where(mask_zero, zero, scale, {}));
-    // auto [x_m_mn]       = unpack<1>(sub(M0_blocked, mn, {}));
-    // auto [M0_scaled]    = unpack<1>(mul(x_m_mn, scale, {}));
-    // std::tie(M0_scaled) = unpack<1>(add(M0_scaled, a, {}));
-    //
-    // (void)axis;
-    // auto mn          = a_t;
-    // auto mx          = b_t;
-
     auto rescale = [&](const TDesc &input, const std::vector<int> &axis, float a, float b) {
       auto [a_t]       = unpack<1>(asarray({a}));
       auto [b_t]       = unpack<1>(asarray({b}));
