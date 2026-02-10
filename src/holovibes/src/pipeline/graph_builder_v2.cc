@@ -103,10 +103,6 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
   TDesc FH;
 
-  if (s_.time_method != TimeMethod::NONE) {
-    std::tie(H) = unpack<1>(batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window}));
-  }
-
   if (s_.time_method == TimeMethod::SHORT_TIME_FOURIER) {
     std::tie(FH) = unpack<1>(rfft(H, {0}));
   }
@@ -263,8 +259,9 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // Fresnel Lens Application
     // -------------------------------------------------------------------------------------------------
 
-    auto [Qin] = unpack<1>(fresnel_qin({lam, dx, dy, z_prop, valid_w, valid_h}));
-    auto [FH_Qin] = unpack<1>(mul(FH_cropped, Qin, {}));
+    auto [z_prop_t] = unpack<1>(asarray({z_prop}));
+    auto [Qin]      = unpack<1>(fresnel_qin(z_prop_t, {lam, dx, dy, valid_w, valid_h}));
+    auto [FH_Qin]   = unpack<1>(mul(FH_cropped, Qin, {}));
 
     // -------------------------------------------------------------------------------------------------
     // Sub-aperture Processing
@@ -290,7 +287,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // -------------------------------------------------------------------------------------------------
     // Averaging across batches
     // -------------------------------------------------------------------------------------------------
-    
+
     auto acc  = s_.pp_accumulation;
     auto size = acc * 2;
 
@@ -300,7 +297,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // -------------------------------------------------------------------------------------------------
     // Cross Correlation with Reference (Center Tile)
     // -------------------------------------------------------------------------------------------------
-    
+
     int64_t sy_ref = nb_subap / 2;
     int64_t sx_ref = nb_subap / 2;
     auto [M0_ref]  = unpack<1>(slice(M0_blocked, {{{}, sy_ref, sx_ref, {}, {}}}));
@@ -316,11 +313,42 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // -------------------------------------------------------------------------------------------------
     // Output
     // -------------------------------------------------------------------------------------------------
-    
+
     int64_t h = (int64_t)valid_h;
     int64_t w = (int64_t)valid_w;
 
-    auto [M0_ordered]    = unpack<1>(transpose(M0_blocked, {{0, 1, 3, 2, 4}}));
+    // auto [a]            = unpack<1>(asarray({0.0f}));
+    // auto [b]            = unpack<1>(asarray({255.0f}));
+    // auto [b_m_a]        = unpack<1>(sub(b, a, {}));
+    // auto [mn]           = unpack<1>(min(M0_blocked, {{-2, -1}, true}));
+    // auto [mx]           = unpack<1>(max(M0_blocked, {{-2, -1}, true}));
+    // auto [denom]        = unpack<1>(sub(mx, mn, {}));
+    // auto [zero]         = unpack<1>(asarray({0.0f}));
+    // auto [mask_zero]    = unpack<1>(equal(denom, zero, {}));
+    // auto [scale]        = unpack<1>(div(b_m_a, denom, {}));
+    // std::tie(scale)     = unpack<1>(where(mask_zero, zero, scale, {}));
+    // auto [x_m_mn]       = unpack<1>(sub(M0_blocked, mn, {}));
+    // auto [M0_scaled]    = unpack<1>(mul(x_m_mn, scale, {}));
+    // std::tie(M0_scaled) = unpack<1>(add(M0_scaled, a, {}));
+
+    auto rescale = [&](const TDesc &input, const std::vector<int> &axis, float a, float b) {
+      auto [a_t]       = unpack<1>(asarray({a}));
+      auto [b_t]       = unpack<1>(asarray({b}));
+      auto [mn]        = unpack<1>(min(input, {axis, true}));
+      auto [mx]        = unpack<1>(max(input, {axis, true}));
+      auto [b_m_a]     = unpack<1>(sub(b_t, a_t, {}));
+      auto [denom]     = unpack<1>(sub(mx, mn, {}));
+      auto [zero]      = unpack<1>(asarray({0.0f}));
+      auto [mask_zero] = unpack<1>(equal(denom, zero, {}));
+      auto [scale]     = unpack<1>(div(b_m_a, denom, {}));
+      std::tie(scale)  = unpack<1>(where(mask_zero, zero, scale, {}));
+      auto [x_m_mn]    = unpack<1>(sub(input, mn, {}));
+      auto [scaled]    = unpack<1>(mul(x_m_mn, scale, {}));
+      return unpack<1>(add(scaled, a_t, {}));
+    };
+
+    auto [M0_scaled]     = rescale(M0_blocked, {-2, -1}, 0.0f, 255.0f);
+    auto [M0_ordered]    = unpack<1>(transpose(M0_scaled, {{0, 1, 3, 2, 4}}));
     auto [M0_sh_disp]    = unpack<1>(reshape(M0_ordered, {{1, h, w}}));
     std::tie(M0_sh_disp) = unpack<1>(convert(M0_sh_disp, {Target::U8, Strat::Scaled}));
     std::tie(M0_sh_disp) = unpack<1>(memcpy(M0_sh_disp, {Host}));
@@ -328,7 +356,8 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     shack_hartmann_display(M0_sh_disp, {});
 
     auto [xcorr_shift]   = unpack<1>(fftshift(xcorr, {{-2, -1}}));
-    auto [xcorr_ordered] = unpack<1>(transpose(xcorr_shift, {{0, 1, 3, 2, 4}}));
+    auto [xcorr_scaled]  = rescale(xcorr_shift, {-2, -1}, 0.0f, 255.0f);
+    auto [xcorr_ordered] = unpack<1>(transpose(xcorr_scaled, {{0, 1, 3, 2, 4}}));
     auto [xcorr_disp]    = unpack<1>(reshape(xcorr_ordered, {{1, h, w}}));
     std::tie(xcorr_disp) = unpack<1>(convert(xcorr_disp, {Target::U8, Strat::Scaled}));
     std::tie(xcorr_disp) = unpack<1>(memcpy(xcorr_disp, {Host}));
@@ -368,9 +397,10 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 DEFINE_SOURCE_SYNC_NODE(holofile_read,                          "source",                              "Holofile",                        holotask::sources::HolofileSettings)
 DEFINE_SOURCE_SYNC_NODE(empty,                                 "empty",                               "Empty",                            holonp::EmptySettings)
 DEFINE_SOURCE_SYNC_NODE(zeros,                                 "zeros",                               "Zeros",                            holonp::ZerosSettings)
+DEFINE_SOURCE_SYNC_NODE(asarray,                               "asarray",                             "AsArray",                          holonp::AsArraySettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "ametek_s710_euresys_coaxlink_octo",   "AmetekS710EuresysCoaxlinkOcto",   holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "ametek_s711_euresys_coaxlink_qsfp_+", "AmetekS711EuresysCoaxlinkQSFP+",  holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
-DEFINE_SOURCE_SYNC_NODE(fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                      holotask::sources::FresnelQinSettings)
+DEFINE_UNARY_SYNC_NODE (fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                      holotask::sources::FresnelQinSettings)
 DEFINE_UNARY_SYNC_NODE (memcpy,                                 "memcpy",                              "Memcpy",                          holotask::syncs::MemcpySettings)
 DEFINE_UNARY_SYNC_NODE (convert,                                "conversion",                          "Conversion",                      holotask::syncs::ConversionSettings)
 DEFINE_UNARY_SYNC_NODE (pca,                                    "pca",                                 "Pca",                             holotask::syncs::PcaSettings)
@@ -404,6 +434,8 @@ DEFINE_UNARY_SYNC_NODE (fft2,                                   "fft2",         
 DEFINE_UNARY_SYNC_NODE (fftshift,                               "fftshift",                            "FFTShiftNp",                      holonp::FFTShiftSettings)
 DEFINE_UNARY_SYNC_NODE (abs,                                    "abs",                                 "Abs",                             holonp::AbsSettings)
 DEFINE_UNARY_SYNC_NODE (mean,                                   "mean",                                "Mean",                            holonp::MeanSettings)
+DEFINE_UNARY_SYNC_NODE (min,                                    "min",                                 "Min",                             holonp::MinSettings)
+DEFINE_UNARY_SYNC_NODE (max,                                    "max",                                 "Max",                             holonp::MaxSettings)
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                          "batch_queue",                         "BatchQueue",                      holotask::asyncs::BatchQueueSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                              "slide_avg",                           "SlidingAverage",                  holotask::asyncs::SlidingAverageSettings)
 // clang-format on
@@ -424,6 +456,24 @@ std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::div(const TDesc &A, const T
                                                          holonp::DivSettings s) {
   std::array<TDesc, 2> inputs{A, B};
   return make_nary_sync_node("div", "Div", "Div", std::span<const TDesc>{inputs}, s);
+}
+
+std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::sub(const TDesc &A, const TDesc &B,
+                                                         holonp::SubSettings s) {
+  std::array<TDesc, 2> inputs{A, B};
+  return make_nary_sync_node("sub", "Sub", "Sub", std::span<const TDesc>{inputs}, s);
+}
+
+std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::equal(const TDesc &A, const TDesc &B,
+                                                           holonp::EqualSettings s) {
+  std::array<TDesc, 2> inputs{A, B};
+  return make_nary_sync_node("equal", "Equal", "Equal", std::span<const TDesc>{inputs}, s);
+}
+
+std::vector<GraphBuilder_v2::TDesc>
+GraphBuilder_v2::where(const TDesc &Cond, const TDesc &X, const TDesc &Y, holonp::WhereSettings s) {
+  std::array<TDesc, 3> inputs{Cond, X, Y};
+  return make_nary_sync_node("where", "Where", "Where", std::span<const TDesc>{inputs}, s);
 }
 
 std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::assign(const TDesc &X, const TDesc &Y,

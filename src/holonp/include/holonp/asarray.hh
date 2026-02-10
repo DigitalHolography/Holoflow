@@ -1,4 +1,4 @@
-// Copyright 2025 Digital Holography Foundation
+// Copyright 2026 Digital Holography Foundation
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,47 +11,38 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
+//
 #pragma once
 
-#include <cuComplex.h>
-#include <cuda_runtime.h>
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <span>
 
-#include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
 
-template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+namespace holonp {
 
-namespace holotask::sources {
-
-struct FresnelQinSettings {
-  float  lambda; ///< Wavelength in meters.
-  float  dx;     ///< Pixel pitch in meters.
-  float  dy;     ///< Pixel pitch in meters.
-  size_t nx;     ///< Number of pixels in x.
-  size_t ny;     ///< Number of pixels in y.
+struct AsArraySettings {
+  double                                value  = 0.0;
+  std::optional<holoflow::core::MemLoc> device = std::nullopt;
 };
 
-void to_json(nlohmann::json &j, const FresnelQinSettings &fqs);
-void from_json(const nlohmann::json &j, FresnelQinSettings &fqs);
+void to_json(nlohmann::json &j, const AsArraySettings &s);
+void from_json(const nlohmann::json &j, AsArraySettings &s);
 
-class FresnelQin : public holoflow::core::ISyncTask {
+class AsArray : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  FresnelQin(const FresnelQinSettings &settings, DevPtr<float> &&d_r2, cudaStream_t stream);
+  AsArray(const AsArraySettings &settings, cudaStream_t stream);
+  friend class AsArrayFactory;
 
-  friend class FresnelQinFactory;
-
-  FresnelQinSettings settings_;
-  DevPtr<float>      d_r2_;
-  cudaStream_t       stream_;
+  AsArraySettings settings_;
+  cudaStream_t    stream_;
 };
 
-class FresnelQinFactory : public holoflow::core::ISyncTaskFactory {
+class AsArrayFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
@@ -61,4 +52,4 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
-} // namespace holotask::sources
+} // namespace holonp

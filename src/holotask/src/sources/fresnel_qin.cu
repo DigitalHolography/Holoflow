@@ -9,8 +9,7 @@ namespace holotask::sources {
 
 void to_json(nlohmann::json &j, const FresnelQinSettings &fqs) {
   j = nlohmann::json{
-      {"lambda", fqs.lambda}, {"dx", fqs.dx}, {"dy", fqs.dy},
-      {"z", fqs.z},           {"nx", fqs.nx}, {"ny", fqs.ny},
+      {"lambda", fqs.lambda}, {"dx", fqs.dx}, {"dy", fqs.dy}, {"nx", fqs.nx}, {"ny", fqs.ny},
   };
 }
 
@@ -18,27 +17,58 @@ void from_json(const nlohmann::json &j, FresnelQinSettings &fqs) {
   j.at("lambda").get_to(fqs.lambda);
   j.at("dx").get_to(fqs.dx);
   j.at("dy").get_to(fqs.dy);
-  j.at("z").get_to(fqs.z);
   j.at("nx").get_to(fqs.nx);
   j.at("ny").get_to(fqs.ny);
 }
 
-FresnelQin::FresnelQin(const FresnelQinSettings &settings, DevPtr<cuFloatComplex> &&d_lens,
+FresnelQin::FresnelQin(const FresnelQinSettings &settings, DevPtr<float> &&d_r2,
                        cudaStream_t stream)
-    : settings_(settings), d_lens_(std::move(d_lens)), stream_(stream) {}
+    : settings_(settings), d_r2_(std::move(d_r2)), stream_(stream) {}
+
+namespace {
+__global__ void quadratic_lens_kernel(const float *r2, const float *z, cuFloatComplex *lens,
+                                      int width, int height, float lambda);
+}
 
 holoflow::core::OpResult FresnelQin::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = d_lens_.get();
+  auto *z_ptr = reinterpret_cast<const float *>(ctx.inputs[0].data());
   auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
-  auto  bytes = settings_.nx * settings_.ny * sizeof(cuFloatComplex);
-  CUDA_CHECK(cudaMemcpyAsync(odata, idata, bytes, cudaMemcpyDeviceToDevice, stream_));
+  int   nx    = static_cast<int>(settings_.nx);
+  int   ny    = static_cast<int>(settings_.ny);
+
+  dim3 block_size(16, 16);
+  dim3 grid_size((nx + block_size.x - 1) / block_size.x, (ny + block_size.y - 1) / block_size.y);
+  quadratic_lens_kernel<<<grid_size, block_size, 0, stream_>>>(d_r2_.get(), z_ptr, odata, nx, ny,
+                                                               settings_.lambda);
+
+  CUDA_CHECK(cudaGetLastError());
   return holoflow::core::OpResult::Ok;
 }
 
 namespace {
 
-__global__ void quadratic_lens_kernel(cuFloatComplex *lens, int width, int height, float lambda,
-                                      float z, float pixel_size) {
+__global__ void quadratic_lens_kernel(const float *r2, const float *z, cuFloatComplex *lens,
+                                      int width, int height, float lambda) {
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  if (col >= width || row >= height)
+    return;
+
+  const int   idx   = row * width + col;
+  const float z_val = z[0];
+  if (z_val == 0.0f) {
+    lens[idx] = make_cuComplex(0.0f, 0.0f);
+    return;
+  }
+
+  float phase     = CUDART_PI_F / (lambda * z_val) * r2[idx];
+  float cos_phase = cosf(phase);
+  float sin_phase = sinf(phase);
+
+  lens[idx] = make_cuComplex(cos_phase, sin_phase);
+}
+
+__global__ void quadratic_r2_kernel(float *r2, int width, int height, float pixel_size) {
   int col = blockIdx.x * blockDim.x + threadIdx.x;
   int row = blockIdx.y * blockDim.y + threadIdx.y;
   if (col >= width || row >= height)
@@ -52,27 +82,20 @@ __global__ void quadratic_lens_kernel(cuFloatComplex *lens, int width, int heigh
   float x = ((col + offset_x) - size / 2.0f) * pixel_size;
   float y = ((row + offset_y) - size / 2.0f) * pixel_size;
 
-  float phase     = CUDART_PI_F / (lambda * z) * (x * x + y * y);
-  float cos_phase = cosf(phase);
-  float sin_phase = sinf(phase);
-
-  lens[row * width + col] = make_cuComplex(cos_phase, sin_phase);
+  r2[row * width + col] = x * x + y * y;
 }
 
-DevPtr<cuFloatComplex> make_quadratic_lens(const FresnelQinSettings &settings) {
-  auto bytes  = settings.nx * settings.ny * sizeof(cuFloatComplex);
-  auto d_lens = curaii::make_unique_device_ptr<cuFloatComplex>(bytes);
-  auto nx     = static_cast<int>(settings.nx);
-  ;
-  auto ny = static_cast<int>(settings.ny);
+DevPtr<float> make_quadratic_r2(const FresnelQinSettings &settings, cudaStream_t stream) {
+  auto nx   = static_cast<int>(settings.nx);
+  auto ny   = static_cast<int>(settings.ny);
+  auto d_r2 = curaii::make_unique_device_ptr<float>(settings.nx * settings.ny, stream);
 
   dim3 block_size(16, 16);
   dim3 grid_size((nx + block_size.x - 1) / block_size.x, (ny + block_size.y - 1) / block_size.y);
-  quadratic_lens_kernel<<<grid_size, block_size>>>(d_lens.get(), nx, ny, settings.lambda,
-                                                   settings.z, settings.dx);
+  quadratic_r2_kernel<<<grid_size, block_size, 0, stream>>>(d_r2.get(), nx, ny, settings.dx);
 
   CUDA_CHECK(cudaGetLastError());
-  return d_lens;
+  return d_r2;
 }
 
 } // namespace
@@ -89,12 +112,16 @@ FresnelQinFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
   auto settings = jsettings.get<FresnelQinSettings>();
 
-  check(input_descs.size() == 0, "expected zero input tensors");
+  check(input_descs.size() == 1, "expected exactly one input tensor (z)");
+  const auto &z_desc = input_descs[0];
+
+  check(z_desc.mem_loc == holoflow::core::MemLoc::Device, "z tensor must be on device");
+  check(z_desc.dtype == holoflow::core::DType::F32, "z tensor must be F32");
+  check(z_desc.num_elements() == 1, "z tensor must be a scalar");
   check(settings.lambda > 0.0f, "wavelength must be positive");
   check(settings.dx > 0.0f, "dx must be positive");
   check(settings.dy > 0.0f, "dy must be positive");
   check(settings.dx == settings.dy, "dx must equal dy");
-  check(settings.z != 0.0f, "propagation distance z must be non-zero");
   check(settings.nx > 0, "nx must be positive");
   check(settings.ny > 0, "ny must be positive");
 
@@ -102,10 +129,10 @@ FresnelQinFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                               holoflow::core::MemLoc::Device);
 
   return holoflow::core::InferResult{
-      .input_descs   = {},
+      .input_descs   = {z_desc},
       .output_descs  = {odesc},
       .in_place      = {},
-      .owned_inputs  = {},
+      .owned_inputs  = {false},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,
   };
@@ -118,8 +145,8 @@ FresnelQinFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto infer    = this->infer(input_descs, jsettings);
   auto settings = jsettings.get<FresnelQinSettings>();
 
-  auto  d_lens = make_quadratic_lens(settings);
-  auto *task   = new FresnelQin(settings, std::move(d_lens), ctx.stream);
+  auto  d_r2 = make_quadratic_r2(settings, ctx.stream);
+  auto *task = new FresnelQin(settings, std::move(d_r2), ctx.stream);
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 

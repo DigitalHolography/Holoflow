@@ -1,4 +1,4 @@
-// Copyright 2025 Digital Holography Foundation
+// Copyright 2026 Digital Holography Foundation
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,44 +14,42 @@
 
 #pragma once
 
-#include <cuComplex.h>
-#include <cuda_runtime.h>
 #include <nlohmann/json.hpp>
 #include <span>
+#include <vector>
 
 #include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
-namespace holotask::sources {
+namespace holonp {
 
-struct FresnelQinSettings {
-  float  lambda; ///< Wavelength in meters.
-  float  dx;     ///< Pixel pitch in meters.
-  float  dy;     ///< Pixel pitch in meters.
-  size_t nx;     ///< Number of pixels in x.
-  size_t ny;     ///< Number of pixels in y.
-};
+struct WhereSettings {};
+void to_json(nlohmann::json &j, const WhereSettings &s);
+void from_json(const nlohmann::json &j, WhereSettings &s);
 
-void to_json(nlohmann::json &j, const FresnelQinSettings &fqs);
-void from_json(const nlohmann::json &j, FresnelQinSettings &fqs);
-
-class FresnelQin : public holoflow::core::ISyncTask {
+class Where : public holoflow::core::ISyncTask {
 public:
+  Where(cudaStream_t stream, holoflow::core::DType out_dtype, size_t total_out, size_t ndim,
+        DevPtr<size_t> d_out_shape, DevPtr<size_t> d_cond_strides, DevPtr<size_t> d_x_strides,
+        DevPtr<size_t> d_y_strides);
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  FresnelQin(const FresnelQinSettings &settings, DevPtr<float> &&d_r2, cudaStream_t stream);
+  cudaStream_t          stream_;
+  holoflow::core::DType out_dtype_;
+  size_t                total_out_;
+  size_t                ndim_;
 
-  friend class FresnelQinFactory;
-
-  FresnelQinSettings settings_;
-  DevPtr<float>      d_r2_;
-  cudaStream_t       stream_;
+  DevPtr<size_t> d_out_shape_;
+  DevPtr<size_t> d_cond_strides_;
+  DevPtr<size_t> d_x_strides_;
+  DevPtr<size_t> d_y_strides_;
 };
 
-class FresnelQinFactory : public holoflow::core::ISyncTaskFactory {
+class WhereFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
@@ -61,4 +59,4 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
-} // namespace holotask::sources
+} // namespace holonp

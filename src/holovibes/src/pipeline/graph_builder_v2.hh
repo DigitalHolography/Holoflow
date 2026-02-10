@@ -30,23 +30,29 @@
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
+#include "holonp/asarray.hh"
 #include "holonp/assign.hh"
 #include "holonp/concatenate.hh"
 #include "holonp/conj.hh"
 #include "holonp/div.hh"
 #include "holonp/empty.hh"
+#include "holonp/equal.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
 #include "holonp/irfft2.hh"
+#include "holonp/max.hh"
 #include "holonp/mean.hh"
 #include "holonp/meshgrid.hh"
+#include "holonp/min.hh"
 #include "holonp/mul.hh"
 #include "holonp/reshape.hh"
 #include "holonp/rfft.hh"
 #include "holonp/rfft2.hh"
 #include "holonp/slice.hh"
+#include "holonp/sub.hh"
 #include "holonp/transpose.hh"
+#include "holonp/where.hh"
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
@@ -164,6 +170,7 @@ private:
   std::vector<TDesc> holofile_read(holotask::sources::HolofileSettings s);
   std::vector<TDesc> empty(holonp::EmptySettings s);
   std::vector<TDesc> zeros(holonp::ZerosSettings s);
+  std::vector<TDesc> asarray(holonp::AsArraySettings s);
   std::vector<TDesc> memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);
   std::vector<TDesc> batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
   std::vector<TDesc> convert(const TDesc &X, holotask::syncs::ConversionSettings s);
@@ -171,7 +178,7 @@ private:
   std::vector<TDesc> stft(const TDesc &X, holotask::syncs::StftSettings s);
   std::vector<TDesc> filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
   std::vector<TDesc> fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
-  std::vector<TDesc> fresnel_qin(holotask::sources::FresnelQinSettings s);
+  std::vector<TDesc> fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
   std::vector<TDesc> angular_spectrum(const TDesc &X, holotask::syncs::AngularSpectrumSettings s);
   std::vector<TDesc> slide_avg(const TDesc &X, holotask::asyncs::SlidingAverageSettings s);
   std::vector<TDesc> xy_raw_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
@@ -195,6 +202,10 @@ private:
   std::vector<TDesc> add(const TDesc &A, const TDesc &B, holonp::AddSettings s);
   std::vector<TDesc> div(const TDesc &A, const TDesc &B, holonp::DivSettings s);
   std::vector<TDesc> mul(const TDesc &A, const TDesc &B, holonp::MulSettings s);
+  std::vector<TDesc> sub(const TDesc &A, const TDesc &B, holonp::SubSettings s);
+  std::vector<TDesc> equal(const TDesc &A, const TDesc &B, holonp::EqualSettings s);
+  std::vector<TDesc> where(const TDesc &Cond, const TDesc &X, const TDesc &Y,
+                           holonp::WhereSettings s);
   std::vector<TDesc> rfft(const TDesc &X, holonp::RFFTSettings s);
   std::vector<TDesc> rfft2(const TDesc &X, holonp::RFFT2Settings s);
   std::vector<TDesc> irfft2(const TDesc &X, holonp::IRFFT2Settings s);
@@ -205,6 +216,8 @@ private:
   std::vector<TDesc> fftshift(const TDesc &X, holonp::FFTShiftSettings s);
   std::vector<TDesc> abs(const TDesc &X, holonp::AbsSettings s);
   std::vector<TDesc> mean(const TDesc &X, holonp::MeanSettings s);
+  std::vector<TDesc> min(const TDesc &X, holonp::MinSettings s);
+  std::vector<TDesc> max(const TDesc &X, holonp::MaxSettings s);
   std::vector<TDesc> reshape(const TDesc &X, holonp::ReshapeSettings s);
   std::vector<TDesc> conj(const TDesc &X, holonp::ConjSettings s);
   // clang-format on
