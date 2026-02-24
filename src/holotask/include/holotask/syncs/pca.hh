@@ -14,66 +14,23 @@
 
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
 #include <memory>
-#include <mkl_lapacke.h>
 #include <nlohmann/json.hpp>
+#include <span>
 
-#include "curaii/cublas.hh"
-#include "curaii/cuda.hh"
-#include "curaii/cusolver.hh"
 #include "holoflow/core/tasks.hh"
-
-template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
-template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
 namespace holotask::syncs {
 
 struct PcaSettings {
   int begin;
   int end;
+
+  int components() const { return end - begin; }
 };
 
 void to_json(nlohmann::json &j, const PcaSettings &settings);
 void from_json(const nlohmann::json &j, PcaSettings &settings);
-
-class Pca : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  Pca(const PcaSettings &settings, curaii::CublasHandle &&cublas_handle,
-      curaii::CusolverDnHandle &&cusolver_handle, curaii::CusolverDnParams &&cusolver_params,
-      DevPtr<cuFloatComplex> &&d_cov, DevPtr<float> &&d_eigvals, DevPtr<int> &&d_info,
-      DevPtr<uint8_t> &&d_workspace, HostPtr<uint8_t> &&h_workspace,
-      HostPtr<lapack_complex_float> &&h_cov, HostPtr<float> &&h_eigvals,
-      HostPtr<lapack_complex_float> &&h_eigvecs, HostPtr<int64_t> &&h_meig,
-      HostPtr<lapack_int> &&h_isuppz, size_t d_workspace_size, size_t h_workspace_size,
-      cudaStream_t stream);
-
-  friend class PcaFactory;
-
-  PcaSettings                   settings_;
-  curaii::CublasHandle          cublas_handle_;
-  curaii::CusolverDnHandle      cusolver_handle_;
-  curaii::CusolverDnParams      cusolver_params_;
-  DevPtr<cuFloatComplex>        d_cov_;
-  DevPtr<float>                 d_eigvals_;
-  DevPtr<int>                   d_info_;
-  DevPtr<uint8_t>               d_workspace_;
-  HostPtr<uint8_t>              h_workspace_;
-  HostPtr<lapack_complex_float> h_cov_;
-  HostPtr<float>                h_eigvals_;
-  HostPtr<lapack_complex_float> h_eigvecs_;
-  HostPtr<int64_t>              h_meig_;
-  HostPtr<lapack_int>           h_isuppz_;
-  size_t                        d_workspace_size_;
-  size_t                        h_workspace_size_;
-  cudaStream_t                  stream_;
-
-  static constexpr int cpu_heuristic_max_ = 32;
-};
 
 class PcaFactory : public holoflow::core::ISyncTaskFactory {
 public:

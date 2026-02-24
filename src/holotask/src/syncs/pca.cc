@@ -17,7 +17,11 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
-#include <string_view>
+
+#include "curaii/cublas.hh"
+#include "curaii/cuda.hh"
+#include "curaii/cusolver.hh"
+#include <mkl_lapacke.h>
 
 #include "bug.hh"
 #include "logger.hh"
@@ -35,7 +39,187 @@ namespace {
     }                                                                                              \
   } while (false)
 
+template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
+template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
+
+// ----------------------------------------------------------------------------
+// Type Traits for Real (float) vs Complex (cuFloatComplex) dispatch
+// ----------------------------------------------------------------------------
+
+template <typename T> struct PcaTraits;
+
+template <> struct PcaTraits<float> {
+  static constexpr auto cuda_type    = CUDA_R_32F;
+  static constexpr auto compute_type = CUBLAS_COMPUTE_32F_FAST_16F;
+  using lapack_type                  = float;
+
+  static float alpha() { return 1.0f; }
+  static float beta() { return 0.0f; }
+
+  static lapack_int eigen(int matrix_layout, char jobz, char range, char uplo, lapack_int n,
+                          lapack_type *a, lapack_int lda, float vl, float vu, lapack_int il,
+                          lapack_int iu, float abstol, lapack_int *m, float *w, lapack_type *z,
+                          lapack_int ldz, lapack_int *isuppz) {
+    return LAPACKE_ssyevr(matrix_layout, jobz, range, uplo, n, a, lda, vl, vu, il, iu, abstol, m, w,
+                          z, ldz, isuppz);
+  }
+};
+
+template <> struct PcaTraits<cuFloatComplex> {
+  static constexpr auto cuda_type    = CUDA_C_32F;
+  static constexpr auto compute_type = CUBLAS_COMPUTE_32F_FAST_16F;
+  using lapack_type                  = lapack_complex_float;
+
+  static cuFloatComplex alpha() { return make_cuFloatComplex(1.0f, 0.0f); }
+  static cuFloatComplex beta() { return make_cuFloatComplex(0.0f, 0.0f); }
+
+  static lapack_int eigen(int matrix_layout, char jobz, char range, char uplo, lapack_int n,
+                          lapack_type *a, lapack_int lda, float vl, float vu, lapack_int il,
+                          lapack_int iu, float abstol, lapack_int *m, float *w, lapack_type *z,
+                          lapack_int ldz, lapack_int *isuppz) {
+    return LAPACKE_cheevr(matrix_layout, jobz, range, uplo, n, a, lda, vl, vu, il, iu, abstol, m, w,
+                          z, ldz, isuppz);
+  }
+};
+
+// ----------------------------------------------------------------------------
+// PCA Task Implementation
+// ----------------------------------------------------------------------------
+
+template <typename T> class PcaTask : public holoflow::core::ISyncTask {
+public:
+  PcaTask(const PcaSettings &settings, const holoflow::core::SyncCreateCtx &ctx, int n_features)
+      : settings_(settings), stream_(ctx.stream), n_features_(n_features) {
+
+    // Initialize handles
+    CUBLAS_CHECK(cublasSetStream(cublas_handle_.get(), stream_));
+    CUSOLVER_CHECK(cusolverDnSetStream(cusolver_handle_.get(), stream_));
+    CUSOLVER_CHECK(cusolverDnSetDeterministicMode(cusolver_handle_.get(),
+                                                  CUSOLVER_ALLOW_NON_DETERMINISTIC_RESULTS));
+
+    const std::size_t num_elems = static_cast<std::size_t>(n_features_) * n_features_;
+
+    // Allocate core buffers
+    d_cov_     = curaii::make_unique_device_ptr<T>(num_elems);
+    d_eigvals_ = curaii::make_unique_device_ptr<float>(n_features_);
+    d_info_    = curaii::make_unique_device_ptr<int>(1);
+    h_meig_    = curaii::make_unique_host_ptr<int64_t>(1);
+
+    // Query and allocate workspace for cuSOLVER
+    CUSOLVER_CHECK(cusolverDnXsyevdx_bufferSize(
+        cusolver_handle_.get(), cusolver_params_.get(), CUSOLVER_EIG_MODE_VECTOR,
+        CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER, n_features_, PcaTraits<T>::cuda_type,
+        d_cov_.get(), n_features_, nullptr, nullptr, static_cast<int64_t>(settings_.begin) + 1,
+        static_cast<int64_t>(settings_.end), h_meig_.get(), CUDA_R_32F, d_eigvals_.get(),
+        PcaTraits<T>::cuda_type, &d_workspace_size_, &h_workspace_size_));
+
+    d_workspace_ = curaii::make_unique_device_ptr<uint8_t>(d_workspace_size_);
+    h_workspace_ = curaii::make_unique_host_ptr<uint8_t>(h_workspace_size_);
+
+    // Allocate CPU buffers for fallback (LAPACKE)
+    h_cov_     = curaii::make_unique_host_ptr<typename PcaTraits<T>::lapack_type>(num_elems);
+    h_eigvals_ = curaii::make_unique_host_ptr<float>(settings_.components());
+    h_eigvecs_ = curaii::make_unique_host_ptr<typename PcaTraits<T>::lapack_type>(num_elems);
+    h_isuppz_  = curaii::make_unique_host_ptr<lapack_int>(2 * n_features_);
+  }
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    auto &iview = ctx.inputs[0];
+    auto &oview = ctx.outputs[0];
+    auto *idata = reinterpret_cast<T *>(iview.data());
+    auto *odata = reinterpret_cast<T *>(oview.data());
+
+    const auto   &idesc      = iview.desc;
+    const int     height     = static_cast<int>(idesc.shape.at(1));
+    const int     width      = static_cast<int>(idesc.shape.at(2));
+    const int     n_samples  = height * width;
+    const int     components = settings_.components();
+    const int64_t il         = static_cast<int64_t>(settings_.begin) + 1;
+    const int64_t iu         = static_cast<int64_t>(settings_.end);
+
+    const T alpha = PcaTraits<T>::alpha();
+    const T beta  = PcaTraits<T>::beta();
+
+    // 1. Compute covariance matrix: $COV = I^H \cdot I$
+    // Yields an (n_features x n_features) matrix representing covariance between features.
+    CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_C, CUBLAS_OP_N, n_features_,
+                              n_features_, n_samples, &alpha, idata, PcaTraits<T>::cuda_type,
+                              n_samples, idata, PcaTraits<T>::cuda_type, n_samples, &beta,
+                              d_cov_.get(), PcaTraits<T>::cuda_type, n_features_,
+                              PcaTraits<T>::compute_type, CUBLAS_GEMM_DEFAULT));
+
+    // 2. Compute eigenvectors
+    if (n_features_ <= cpu_heuristic_max_) {
+      // Use CPU for small problems
+      const std::size_t bytes = static_cast<std::size_t>(n_features_) * n_features_ * sizeof(T);
+      CUDA_CHECK(
+          cudaMemcpyAsync(h_cov_.get(), d_cov_.get(), bytes, cudaMemcpyDeviceToHost, stream_));
+      CUDA_CHECK(cudaStreamSynchronize(stream_));
+
+      lapack_int m = 0;
+      LAPACKE_CHECK(PcaTraits<T>::eigen(LAPACK_COL_MAJOR, 'V', 'I', 'L', n_features_, h_cov_.get(),
+                                        n_features_, 0.0f, 0.0f, il, iu, 0.0f, &m, h_eigvals_.get(),
+                                        h_eigvecs_.get(), n_features_, h_isuppz_.get()));
+
+      HOLOVIBES_CHECK(m == components, "[Pca] unexpected eigenvector count from LAPACKE");
+
+      const std::size_t vec_bytes = static_cast<std::size_t>(n_features_) * components * sizeof(T);
+      CUDA_CHECK(cudaMemcpyAsync(d_cov_.get(), h_eigvecs_.get(), vec_bytes, cudaMemcpyHostToDevice,
+                                 stream_));
+    } else {
+      // Use GPU for large problems
+      float vl = 0.0f, vu = 0.0f;
+      CUSOLVER_CHECK(cusolverDnXsyevdx(
+          cusolver_handle_.get(), cusolver_params_.get(), CUSOLVER_EIG_MODE_VECTOR,
+          CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER, n_features_, PcaTraits<T>::cuda_type,
+          d_cov_.get(), n_features_, &vl, &vu, il, iu, h_meig_.get(), CUDA_R_32F, d_eigvals_.get(),
+          PcaTraits<T>::cuda_type, d_workspace_.get(), d_workspace_size_, h_workspace_.get(),
+          h_workspace_size_, d_info_.get()));
+    }
+
+    // 3. Project data: Multiply input data by the eigenvector matrix
+    T *eigvecs = reinterpret_cast<T *>(d_cov_.get());
+    CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_N, CUBLAS_OP_N, n_samples, components,
+                              n_features_, &alpha, idata, PcaTraits<T>::cuda_type, n_samples,
+                              eigvecs, PcaTraits<T>::cuda_type, n_features_, &beta, odata,
+                              PcaTraits<T>::cuda_type, n_samples, PcaTraits<T>::compute_type,
+                              CUBLAS_GEMM_DEFAULT));
+
+    return holoflow::core::OpResult::Ok;
+  }
+
+private:
+  PcaSettings  settings_;
+  cudaStream_t stream_;
+  int          n_features_;
+
+  curaii::CublasHandle     cublas_handle_;
+  curaii::CusolverDnHandle cusolver_handle_;
+  curaii::CusolverDnParams cusolver_params_;
+
+  DevPtr<T>        d_cov_;
+  DevPtr<float>    d_eigvals_;
+  DevPtr<int>      d_info_;
+  DevPtr<uint8_t>  d_workspace_;
+  HostPtr<uint8_t> h_workspace_;
+
+  HostPtr<typename PcaTraits<T>::lapack_type> h_cov_;
+  HostPtr<float>                              h_eigvals_;
+  HostPtr<typename PcaTraits<T>::lapack_type> h_eigvecs_;
+  HostPtr<int64_t>                            h_meig_;
+  HostPtr<lapack_int>                         h_isuppz_;
+
+  size_t d_workspace_size_{0};
+  size_t h_workspace_size_{0};
+
+  static constexpr int cpu_heuristic_max_ = 32;
+};
+
 } // namespace
+
+// ----------------------------------------------------------------------------
+// JSON Serialization
+// ----------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const PcaSettings &settings) {
   j = nlohmann::json{
@@ -49,96 +233,9 @@ void from_json(const nlohmann::json &j, PcaSettings &settings) {
   j.at("end").get_to(settings.end);
 }
 
-Pca::Pca(const PcaSettings &settings, curaii::CublasHandle &&cublas_handle,
-         curaii::CusolverDnHandle &&cusolver_handle, curaii::CusolverDnParams &&cusolver_params,
-         DevPtr<cuFloatComplex> &&d_cov, DevPtr<float> &&d_eigvals, DevPtr<int> &&d_info,
-         DevPtr<std::uint8_t> &&d_workspace, HostPtr<std::uint8_t> &&h_workspace,
-         HostPtr<lapack_complex_float> &&h_cov, HostPtr<float> &&h_eigvals,
-         HostPtr<lapack_complex_float> &&h_eigvecs, HostPtr<std::int64_t> &&h_meig,
-         HostPtr<lapack_int> &&h_isuppz, std::size_t d_workspace_size, std::size_t h_workspace_size,
-         cudaStream_t stream)
-    : settings_(settings), cublas_handle_(std::move(cublas_handle)),
-      cusolver_handle_(std::move(cusolver_handle)), cusolver_params_(std::move(cusolver_params)),
-      d_cov_(std::move(d_cov)), d_eigvals_(std::move(d_eigvals)), d_info_(std::move(d_info)),
-      d_workspace_(std::move(d_workspace)), h_workspace_(std::move(h_workspace)),
-      h_cov_(std::move(h_cov)), h_eigvals_(std::move(h_eigvals)), h_eigvecs_(std::move(h_eigvecs)),
-      h_meig_(std::move(h_meig)), h_isuppz_(std::move(h_isuppz)),
-      d_workspace_size_(d_workspace_size), h_workspace_size_(h_workspace_size), stream_(stream) {}
-
-holoflow::core::OpResult Pca::execute(holoflow::core::SyncCtx &ctx) {
-  auto &iview = ctx.inputs[0];
-  auto &oview = ctx.outputs[0];
-  auto *idata = reinterpret_cast<cuFloatComplex *>(iview.data());
-  auto *odata = reinterpret_cast<cuFloatComplex *>(oview.data());
-
-  const auto   &idesc      = iview.desc;
-  const int     n_features = static_cast<int>(idesc.shape.at(0));
-  const int     height     = static_cast<int>(idesc.shape.at(1));
-  const int     width      = static_cast<int>(idesc.shape.at(2));
-  const int     n_samples  = height * width;
-  const int     components = static_cast<int>(settings_.end - settings_.begin);
-  const int64_t il         = static_cast<int64_t>(settings_.begin) + 1;
-  const int64_t iu         = static_cast<int64_t>(settings_.end);
-
-  const cuFloatComplex alpha = make_cuFloatComplex(1.0f, 0.0f);
-  const cuFloatComplex beta  = make_cuFloatComplex(0.0f, 0.0f);
-
-  // Compute covariance matrix:
-  // COV = I^H * I, where I is the input data matrix with dimensions
-  // (n_samples x n_features). This operation yields an (n_features x
-  // n_features) Hermitian matrix representing the covariance between each
-  // pair of features (assuming the data has been centered).
-  CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_C, CUBLAS_OP_N, n_features, n_features,
-                            n_samples, &alpha, idata, CUDA_C_32F, n_samples, idata, CUDA_C_32F,
-                            n_samples, &beta, d_cov_.get(), CUDA_C_32F, n_features,
-                            CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
-
-  // Compute eigenvectors:
-  // Perform an eigen decomposition on the covariance matrix to extract both
-  // eigenvalues and eigenvectors.
-  if (n_features <= cpu_heuristic_max_) { // Use CPU for small problems
-    const std::size_t elem_count = static_cast<std::size_t>(n_features) * n_features;
-    auto              bytes      = elem_count * sizeof(cuFloatComplex);
-    auto              kind       = cudaMemcpyDeviceToHost;
-    CUDA_CHECK(cudaMemcpyAsync(h_cov_.get(), d_cov_.get(), bytes, kind, stream_));
-    CUDA_CHECK(cudaStreamSynchronize(stream_));
-
-    lapack_int m = 0;
-    LAPACKE_CHECK(LAPACKE_cheevr(LAPACK_COL_MAJOR, 'V', 'I', 'L', n_features, h_cov_.get(),
-                                 n_features, 0.0f, 0.0f, il, iu, 0.0f, &m, h_eigvals_.get(),
-                                 h_eigvecs_.get(), n_features, h_isuppz_.get()));
-
-    bool success = m == components;
-    HOLOVIBES_CHECK(success, "[Pca] unexpected eigenvector count returned by LAPACKE_cheevr");
-    bytes = static_cast<std::size_t>(n_features) * components * sizeof(cuFloatComplex);
-    kind  = cudaMemcpyHostToDevice;
-    CUDA_CHECK(cudaMemcpyAsync(d_cov_.get(), h_eigvecs_.get(), bytes, kind, stream_));
-  }
-
-  else { // Use GPU for large problems
-    float vl = 0.0f;
-    float vu = 0.0f;
-    CUSOLVER_CHECK(
-        cusolverDnXsyevdx(cusolver_handle_.get(), cusolver_params_.get(), CUSOLVER_EIG_MODE_VECTOR,
-                          CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER, n_features, CUDA_C_32F,
-                          d_cov_.get(), n_features, &vl, &vu, il, iu, h_meig_.get(), CUDA_R_32F,
-                          d_eigvals_.get(), CUDA_C_32F, d_workspace_.get(), d_workspace_size_,
-                          h_workspace_.get(), h_workspace_size_, d_info_.get()));
-  }
-
-  // Project data:
-  // Multiply the input data by the eigenvector matrix
-  // to transform the data into the principal component space. Each row of
-  // the output corresponds to the projection of the original data onto the
-  // new basis defined by the eigenvectors.
-  cuFloatComplex *eigvecs = reinterpret_cast<cuFloatComplex *>(d_cov_.get());
-  CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_N, CUBLAS_OP_N, n_samples, components,
-                            n_features, &alpha, idata, CUDA_C_32F, n_samples, eigvecs, CUDA_C_32F,
-                            n_features, &beta, odata, CUDA_C_32F, n_samples,
-                            CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
-
-  return holoflow::core::OpResult::Ok;
-}
+// ----------------------------------------------------------------------------
+// Factory Methods
+// ----------------------------------------------------------------------------
 
 holoflow::core::InferResult PcaFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                               const nlohmann::json &jsettings) const {
@@ -151,19 +248,19 @@ holoflow::core::InferResult PcaFactory::infer(std::span<const holoflow::core::TD
 
   auto settings = jsettings.get<PcaSettings>();
 
-  // Validate
   check(input_descs.size() == 1, "expected exactly one input");
   const auto &idesc = input_descs[0];
   check(idesc.rank() == 3, "expected input rank 3");
-  check(idesc.dtype == holoflow::core::DType::CF32, "expected input dtype CF32");
+  check(idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::F32,
+        "expected input dtype CF32 or F32");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "expected input in device memory");
   check(settings.begin < settings.end, "expected begin < end");
   check(settings.begin >= 0, "expected begin >= 0");
   check(settings.end <= idesc.shape.at(0), "expected end <= n_features");
 
-  // Success
   auto odesc     = idesc;
-  odesc.shape[0] = settings.end - settings.begin;
+  odesc.shape[0] = settings.components();
+
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
       .output_descs  = {odesc},
@@ -178,51 +275,19 @@ std::unique_ptr<holoflow::core::ISyncTask>
 PcaFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                    const nlohmann::json                  &jsettings,
                    const holoflow::core::SyncCreateCtx   &ctx) const {
-  // Validate
-  this->infer(input_descs, jsettings);
-  auto        settings   = jsettings.get<PcaSettings>();
-  const auto &idesc      = input_descs[0];
-  const int   n_features = static_cast<int>(idesc.shape.at(0));
 
-  // Cov matrix
-  curaii::CublasHandle cublas_handle;
-  CUBLAS_CHECK(cublasSetStream(cublas_handle.get(), ctx.stream));
-  auto num_elems = static_cast<std::size_t>(n_features) * n_features;
-  auto d_cov     = curaii::make_unique_device_ptr<cuFloatComplex>(num_elems);
+  this->infer(input_descs, jsettings); // Validate bounds & types
 
-  // GPU eigenvecs
-  curaii::CusolverDnHandle cusolver_handle;
-  CUSOLVER_CHECK(cusolverDnSetStream(cusolver_handle.get(), ctx.stream));
-  CUSOLVER_CHECK(cusolverDnSetDeterministicMode(cusolver_handle.get(),
-                                                CUSOLVER_ALLOW_NON_DETERMINISTIC_RESULTS));
+  auto        settings = jsettings.get<PcaSettings>();
+  const auto &idesc    = input_descs[0];
+  const int   n_feats  = static_cast<int>(idesc.shape.at(0));
 
-  curaii::CusolverDnParams cusolver_params;
-  auto                     d_eigvals        = curaii::make_unique_device_ptr<float>(n_features);
-  auto                     d_info           = curaii::make_unique_device_ptr<int>(1);
-  auto                     h_meig           = curaii::make_unique_host_ptr<std::int64_t>(1);
-  size_t                   d_workspace_size = 0;
-  size_t                   h_workspace_size = 0;
-  CUSOLVER_CHECK(cusolverDnXsyevdx_bufferSize(
-      cusolver_handle.get(), cusolver_params.get(), CUSOLVER_EIG_MODE_VECTOR, CUSOLVER_EIG_RANGE_I,
-      CUBLAS_FILL_MODE_LOWER, n_features, CUDA_C_32F, d_cov.get(), n_features, nullptr, nullptr,
-      static_cast<int64_t>(settings.begin) + 1, static_cast<int64_t>(settings.end), h_meig.get(),
-      CUDA_R_32F, d_eigvals.get(), CUDA_C_32F, &d_workspace_size, &h_workspace_size));
-  DevPtr<uint8_t>  d_workspace = curaii::make_unique_device_ptr<uint8_t>(d_workspace_size);
-  HostPtr<uint8_t> h_workspace = curaii::make_unique_host_ptr<uint8_t>(h_workspace_size);
-
-  // CPU eigenvecs
-  auto h_cov     = curaii::make_unique_host_ptr<lapack_complex_float>(num_elems);
-  auto h_eigvals = curaii::make_unique_host_ptr<float>(settings.end - settings.begin);
-  auto h_eigvecs = curaii::make_unique_host_ptr<lapack_complex_float>(num_elems);
-  auto h_isuppz  = curaii::make_unique_host_ptr<lapack_int>(2 * n_features);
-
-  // Success
-  auto *task = new Pca(
-      settings, std::move(cublas_handle), std::move(cusolver_handle), std::move(cusolver_params),
-      std::move(d_cov), std::move(d_eigvals), std::move(d_info), std::move(d_workspace),
-      std::move(h_workspace), std::move(h_cov), std::move(h_eigvals), std::move(h_eigvecs),
-      std::move(h_meig), std::move(h_isuppz), d_workspace_size, h_workspace_size, ctx.stream);
-  return std::unique_ptr<holoflow::core::ISyncTask>(task);
+  // Dispatch based on datatype
+  if (idesc.dtype == holoflow::core::DType::F32) {
+    return std::make_unique<PcaTask<float>>(settings, ctx, n_feats);
+  } else {
+    return std::make_unique<PcaTask<cuFloatComplex>>(settings, ctx, n_feats);
+  }
 }
 
 } // namespace holotask::syncs

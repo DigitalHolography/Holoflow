@@ -105,21 +105,37 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
   if (s_.time_method == TimeMethod::SHORT_TIME_FOURIER) {
     std::tie(FH) = unpack<1>(rfft(H, {0}));
+
+    // Optimization: If we don't need the full 3D volume for cuts, we can select only the relevant
+    // z-slices here to reduce computation in the spacial propagation and subsequent nodes.
+    if (!s_.view_3d_cuts) {
+      holonp::SliceRange freq_slice{s_.time_z_begin, s_.time_z_end};
+      std::tie(FH) = unpack<1>(slice(FH, {{freq_slice, {}, {}}}));
+    }
   }
 
   else if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
-    throw std::logic_error{"PCA is currently not supported in GraphBuilder_v2"};
+    auto z0 = 0;
+    auto z1 = static_cast<int>(H.shape.at(0));
+
+    // Optimization: If we don't need the full 3D volume for cuts, we can select only the relevant
+    // components here to reduce computation in the spacial propagation and subsequent nodes.
+    if (!s_.view_3d_cuts) {
+      z0 = s_.time_z_begin;
+      z1 = s_.time_z_end;
+    }
+
+    std::tie(FH) = unpack<1>(pca(H, {z0, z1}));
   }
 
   else {
     throw std::logic_error{"No time method is currently not supported in GraphBuilder_v2"};
   }
 
-  // Optimization: If we don't need the full 3D volume for cuts, we can select only the relevant
-  // z-slices here to reduce computation in the spacial propagation and subsequent nodes.
-  if (!s_.view_3d_cuts) {
-    holonp::SliceRange freq_slice{s_.time_z_begin, s_.time_z_end};
-    std::tie(FH) = unpack<1>(slice(FH, {{freq_slice, {}, {}}}));
+  // Some time methods (e.g. PCA) may yield a F32 output. Convert to CF32 for consistency in
+  // downstream processing and display.
+  if (FH.dtype == holoflow::core::DType::F32) {
+    std::tie(FH) = unpack<1>(convert(FH, {Target::CF32, Strat::Real}));
   }
 
   // -------------------------------------------------------------------------------------------------
@@ -238,7 +254,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   // Shack-Hartmann View Processing (Vectorized Spatial with Cropping)
   // -------------------------------------------------------------------------------------------------
 
-  if (true) {
+  if (false) {
     auto nb_subap = 3ULL;
 
     // -------------------------------------------------------------------------------------------------

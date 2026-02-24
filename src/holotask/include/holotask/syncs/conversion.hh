@@ -81,6 +81,7 @@ private:
   void launch_u16_cf32_real(holoflow::core::TView in, holoflow::core::TView out);
   void launch_f32_u8_scaled(holoflow::core::TView in, holoflow::core::TView out);
   void launch_f32_u16_scaled(holoflow::core::TView in, holoflow::core::TView out);
+  void launch_f32_cf32_real(holoflow::core::TView in, holoflow::core::TView out);
   void launch_cf32_f32_modulus(holoflow::core::TView in, holoflow::core::TView out);
   void launch_cf32_f32_argument(holoflow::core::TView in, holoflow::core::TView out);
 

@@ -119,6 +119,13 @@ __global__ void f32_u16_scaled_kernel(const float *idata, uint16_t *odata, int s
   }
 }
 
+__global__ void f32_cf32_real_kernel(const float *idata, cuFloatComplex *odata, int size) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < size) {
+    odata[idx] = make_cuFloatComplex(idata[idx], 0.0f);
+  }
+}
+
 __global__ void cf32_f32_modulus_kernel(const cuFloatComplex *idata, float *odata, int size) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx < size) {
@@ -175,6 +182,17 @@ void Conversion::launch_u16_cf32_real(holoflow::core::TView in, holoflow::core::
   const int block_size = 256;
   const int num_blocks = (size + block_size - 1) / block_size;
   u16_cf32_real_kernel<<<num_blocks, block_size, 0, stream_>>>(idata, odata, size);
+  CUDA_CHECK(cudaGetLastError());
+}
+
+void Conversion::launch_f32_cf32_real(holoflow::core::TView in, holoflow::core::TView out) {
+  auto *idata = reinterpret_cast<const float *>(in.data());
+  auto *odata = reinterpret_cast<cuFloatComplex *>(out.data());
+  int   size  = static_cast<int>(in.desc.num_elements());
+
+  const int block_size = 256;
+  const int num_blocks = (size + block_size - 1) / block_size;
+  f32_cf32_real_kernel<<<num_blocks, block_size, 0, stream_>>>(idata, odata, size);
   CUDA_CHECK(cudaGetLastError());
 }
 
@@ -259,6 +277,7 @@ holoflow::core::OpResult Conversion::execute(holoflow::core::SyncCtx &ctx) {
       {{DType::U16, Target::CF32, Strategy::Real}, &Conversion::launch_u16_cf32_real},
       {{DType::F32, Target::U8, Strategy::Scaled}, &Conversion::launch_f32_u8_scaled},
       {{DType::F32, Target::U16, Strategy::Scaled}, &Conversion::launch_f32_u16_scaled},
+      {{DType::F32, Target::CF32, Strategy::Real}, &Conversion::launch_f32_cf32_real},
       {{DType::CF32, Target::F32, Strategy::Modulus}, &Conversion::launch_cf32_f32_modulus},
       {{DType::CF32, Target::F32, Strategy::Argument}, &Conversion::launch_cf32_f32_argument},
   };
@@ -290,6 +309,7 @@ ConversionFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
       {{DType::U16, Target::CF32, Strategy::Real}, DType::CF32},
       {{DType::F32, Target::U8, Strategy::Scaled}, DType::U8},
       {{DType::F32, Target::U16, Strategy::Scaled}, DType::U16},
+      {{DType::F32, Target::CF32, Strategy::Real}, DType::CF32},
       {{DType::CF32, Target::F32, Strategy::Modulus}, DType::F32},
       {{DType::CF32, Target::F32, Strategy::Argument}, DType::F32},
   };
