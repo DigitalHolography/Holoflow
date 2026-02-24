@@ -14,6 +14,8 @@
 
 #include "graph_builder_v2.hh"
 
+#include <spdlog/fmt/ranges.h>
+
 #include "bug.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
@@ -131,6 +133,10 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   else {
     throw std::logic_error{"No time method is currently not supported in GraphBuilder_v2"};
   }
+
+  auto output_size   = static_cast<int>(FH.shape.at(0));
+  auto output_stride = output_size;
+  std::tie(FH) = unpack<1>(batched_queue(FH, {s_.pp_accumulation * 2, output_size, output_stride}));
 
   // Some time methods (e.g. PCA) may yield a F32 output. Convert to CF32 for consistency in
   // downstream processing and display.
@@ -293,12 +299,13 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [FH_grouped] = unpack<1>(transpose(FH_5d, {{0, 1, 3, 2, 4}}));
 
     // 2D FFT on the last two axes (Tile_Y, Tile_X)
-    auto [FH_prop]    = unpack<1>(fft2(FH_grouped, {{-2, -1}}));
-    std::tie(FH_prop) = unpack<1>(fftshift(FH_prop, {{-2, -1}}));
+    auto [FH_prop] = unpack<1>(fft2(FH_grouped, {{-2, -1}}));
+    // std::tie(FH_prop) = unpack<1>(fftshift(FH_prop, {{-2, -1}}));
 
     // Intensity & Averaging
-    auto [S_vec]      = unpack<1>(abs(FH_prop, {}));
-    auto [M0_blocked] = unpack<1>(mean(S_vec, {{0}, true}));
+    auto [S_vec]         = unpack<1>(abs(FH_prop, {}));
+    auto [M0_blocked]    = unpack<1>(mean(S_vec, {{0}, true}));
+    std::tie(M0_blocked) = unpack<1>(fftshift(M0_blocked, {{-2, -1}}));
 
     // -------------------------------------------------------------------------------------------------
     // Averaging across batches
@@ -334,6 +341,8 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     int64_t w = (int64_t)valid_w;
 
     auto rescale = [&](const TDesc &input, const std::vector<int> &axis, float a, float b) {
+      logger()->debug("Rescaling with a={} b={} on axes={}", a, b, fmt::join(axis, ","));
+
       auto [a_t]       = unpack<1>(asarray({a}));
       auto [b_t]       = unpack<1>(asarray({b}));
       auto [mn]        = unpack<1>(min(input, {axis, true}));

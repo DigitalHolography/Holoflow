@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cuComplex.h>
+#include <cub/cub.cuh>
 #include <numeric>
 
 namespace holonp {
@@ -109,67 +110,103 @@ std::vector<int> normalize_axes(std::span<const int> axes, int ndim) {
 }
 
 // -----------------------------------------------------------------------------
-// Device Kernels
+// Device Kernels & Functors
 // -----------------------------------------------------------------------------
 
-template <typename T> struct MaxTraits {
-  __device__ static bool is_greater(T a, T b) { return a > b; }
+template <typename T> struct MaxOp {
+  __device__ __forceinline__ T operator()(const T &a, const T &b) const { return (a > b) ? a : b; }
 };
 
-template <> struct MaxTraits<cuFloatComplex> {
-  __device__ static bool is_greater(cuFloatComplex a, cuFloatComplex b) {
+template <> struct MaxOp<cuFloatComplex> {
+  __device__ __forceinline__ cuFloatComplex operator()(const cuFloatComplex &a,
+                                                       const cuFloatComplex &b) const {
     if (a.x != b.x)
-      return a.x > b.x;
-    return a.y > b.y;
+      return a.x > b.x ? a : b;
+    return a.y > b.y ? a : b;
   }
 };
 
-template <typename T>
-__global__ void
-max_kernel(const T *__restrict__ in, T *__restrict__ out, size_t total_out, size_t total_red,
-           int out_ndim, int red_ndim, const size_t *__restrict__ out_strides,
-           const int *__restrict__ out_to_in_map, const size_t *__restrict__ in_strides,
-           const size_t *__restrict__ red_strides, const int *__restrict__ red_axes_map) {
+// Fast-path kernel: No modulo divisions, pure coalesced memory loading.
+template <typename T, int BLOCK_SIZE>
+__global__ void max_kernel_contiguous(const T *__restrict__ in, T *__restrict__ out,
+                                      size_t total_out, size_t total_red, int out_ndim,
+                                      const size_t *__restrict__ out_strides,
+                                      const int *__restrict__ out_to_in_map,
+                                      const size_t *__restrict__ in_strides) {
 
-  const size_t tid = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
-  if (tid >= total_out)
+  const size_t out_idx = blockIdx.x;
+  if (out_idx >= total_out)
     return;
 
-  // 1. Calculate input offset from output coordinates
   size_t in_base_offset = 0;
-  size_t temp_tid       = tid;
-
+  size_t temp           = out_idx;
   for (int i = 0; i < out_ndim; ++i) {
-    size_t stride = out_strides[i];
-    size_t coord  = temp_tid / stride;
-    temp_tid -= coord * stride;
-
+    size_t coord = temp / out_strides[i];
+    temp %= out_strides[i];
     in_base_offset += coord * in_strides[out_to_in_map[i]];
   }
 
-  // 2. Initialize with the first element of the reduction (r=0)
-  T best_val = in[in_base_offset];
+  const T *in_ptr = in + in_base_offset;
 
-  // 3. Iterate remaining reduction elements
-  for (size_t r = 1; r < total_red; ++r) {
-    size_t in_offset = in_base_offset;
-    size_t temp_r    = r;
+  // Idempotent initialization: everyone starts with the 0-th element to safely feed CUB
+  T best_val = in_ptr[0];
 
-    for (int i = 0; i < red_ndim; ++i) {
-      size_t stride = red_strides[i];
-      size_t coord  = temp_r / stride;
-      temp_r -= coord * stride;
-
-      in_offset += coord * in_strides[red_axes_map[i]];
-    }
-
-    const T val = in[in_offset];
-    if (MaxTraits<T>::is_greater(val, best_val)) {
-      best_val = val;
-    }
+  for (size_t r = threadIdx.x; r < total_red; r += BLOCK_SIZE) {
+    best_val = MaxOp<T>()(best_val, in_ptr[r]);
   }
 
-  out[tid] = best_val;
+  using BlockReduce = cub::BlockReduce<T, BLOCK_SIZE>;
+  __shared__ typename BlockReduce::TempStorage temp_storage;
+
+  T block_best = BlockReduce(temp_storage).Reduce(best_val, MaxOp<T>());
+
+  if (threadIdx.x == 0) {
+    out[out_idx] = block_best;
+  }
+}
+
+// Fallback kernel: Arbitrary multidimensional striding.
+template <typename T, int BLOCK_SIZE>
+__global__ void
+max_kernel_strided(const T *__restrict__ in, T *__restrict__ out, size_t total_out,
+                   size_t total_red, int out_ndim, int red_ndim,
+                   const size_t *__restrict__ out_strides, const int *__restrict__ out_to_in_map,
+                   const size_t *__restrict__ in_strides, const size_t *__restrict__ red_strides,
+                   const int *__restrict__ red_axes_map) {
+
+  const size_t out_idx = blockIdx.x;
+  if (out_idx >= total_out)
+    return;
+
+  size_t in_base_offset = 0;
+  size_t temp           = out_idx;
+  for (int i = 0; i < out_ndim; ++i) {
+    size_t coord = temp / out_strides[i];
+    temp %= out_strides[i];
+    in_base_offset += coord * in_strides[out_to_in_map[i]];
+  }
+
+  T best_val = in[in_base_offset];
+
+  for (size_t r = threadIdx.x; r < total_red; r += BLOCK_SIZE) {
+    size_t in_offset = in_base_offset;
+    size_t temp_r    = r;
+    for (int i = 0; i < red_ndim; ++i) {
+      size_t coord = temp_r / red_strides[i];
+      temp_r %= red_strides[i];
+      in_offset += coord * in_strides[red_axes_map[i]];
+    }
+    best_val = MaxOp<T>()(best_val, in[in_offset]);
+  }
+
+  using BlockReduce = cub::BlockReduce<T, BLOCK_SIZE>;
+  __shared__ typename BlockReduce::TempStorage temp_storage;
+
+  T block_best = BlockReduce(temp_storage).Reduce(best_val, MaxOp<T>());
+
+  if (threadIdx.x == 0) {
+    out[out_idx] = block_best;
+  }
 }
 
 } // namespace
@@ -179,26 +216,38 @@ max_kernel(const T *__restrict__ in, T *__restrict__ out, size_t total_out, size
 // -----------------------------------------------------------------------------
 
 Max::Max(const MaxSettings &settings, cudaStream_t stream, size_t total_out, size_t total_red,
-         int out_ndim, int red_ndim, DevPtr<size_t> in_strides, DevPtr<size_t> out_strides,
-         DevPtr<int> out_to_in_map, DevPtr<size_t> red_strides, DevPtr<int> red_axes_map)
+         int out_ndim, int red_ndim, bool is_red_contiguous, DevPtr<size_t> in_strides,
+         DevPtr<size_t> out_strides, DevPtr<int> out_to_in_map, DevPtr<size_t> red_strides,
+         DevPtr<int> red_axes_map)
     : settings_(settings), stream_(stream), total_out_(total_out), total_red_(total_red),
-      out_ndim_(out_ndim), red_ndim_(red_ndim), d_in_strides_(std::move(in_strides)),
-      d_out_strides_(std::move(out_strides)), d_out_to_in_map_(std::move(out_to_in_map)),
-      d_red_strides_(std::move(red_strides)), d_red_axes_map_(std::move(red_axes_map)) {}
+      out_ndim_(out_ndim), red_ndim_(red_ndim), is_red_contiguous_(is_red_contiguous),
+      d_in_strides_(std::move(in_strides)), d_out_strides_(std::move(out_strides)),
+      d_out_to_in_map_(std::move(out_to_in_map)), d_red_strides_(std::move(red_strides)),
+      d_red_axes_map_(std::move(red_axes_map)) {}
 
 holoflow::core::OpResult Max::execute(holoflow::core::SyncCtx &ctx) {
+  if (total_out_ == 0 || total_red_ == 0)
+    return holoflow::core::OpResult::Ok;
+
   const auto &idesc = ctx.inputs[0].desc;
   auto       *idata = ctx.inputs[0].data();
   auto       *odata = ctx.outputs[0].data();
 
+  // 1 Block directly handles 1 output element map
   constexpr int block_size = 256;
-  const int     grid_size  = static_cast<int>((total_out_ + block_size - 1) / block_size);
+  const int     grid_size  = static_cast<int>(total_out_);
 
 #define LAUNCH_MAX_KERNEL(Type)                                                                    \
-  max_kernel<<<grid_size, block_size, 0, stream_>>>(                                               \
-      reinterpret_cast<const Type *>(idata), reinterpret_cast<Type *>(odata), total_out_,          \
-      total_red_, out_ndim_, red_ndim_, d_out_strides_.get(), d_out_to_in_map_.get(),              \
-      d_in_strides_.get(), d_red_strides_.get(), d_red_axes_map_.get())
+  if (is_red_contiguous_) {                                                                        \
+    max_kernel_contiguous<Type, block_size><<<grid_size, block_size, 0, stream_>>>(                \
+        reinterpret_cast<const Type *>(idata), reinterpret_cast<Type *>(odata), total_out_,        \
+        total_red_, out_ndim_, d_out_strides_.get(), d_out_to_in_map_.get(), d_in_strides_.get()); \
+  } else {                                                                                         \
+    max_kernel_strided<Type, block_size><<<grid_size, block_size, 0, stream_>>>(                   \
+        reinterpret_cast<const Type *>(idata), reinterpret_cast<Type *>(odata), total_out_,        \
+        total_red_, out_ndim_, red_ndim_, d_out_strides_.get(), d_out_to_in_map_.get(),            \
+        d_in_strides_.get(), d_red_strides_.get(), d_red_axes_map_.get());                         \
+  }
 
   switch (idesc.dtype) {
   case holoflow::core::DType::U8:
@@ -256,7 +305,6 @@ holoflow::core::InferResult MaxFactory::infer(std::span<const holoflow::core::TD
     }
   }
 
-  // Use constructor to default to compact strides
   holoflow::core::TDesc odesc(out_shape, idesc.dtype, idesc.mem_loc);
 
   return {.input_descs   = {idesc},
@@ -302,8 +350,6 @@ MaxFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   }
 
   // 2. Strides Setup
-
-  // Input: Convert provided byte strides to element strides (size_t)
   std::vector<size_t> in_strides_elem;
   if (idesc.strides.empty()) {
     in_strides_elem = compute_compact_strides(idesc.shape);
@@ -311,10 +357,8 @@ MaxFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     in_strides_elem = bytes_to_elements(idesc.strides, itemsize);
   }
 
-  // Output: We know output is contiguous (enforced in infer)
   auto out_strides_elem = compute_compact_strides(out_shape);
 
-  // Reduction: Fake stride for iterating linear 'r'
   std::vector<size_t> red_dims_shape;
   for (int a : reduce_axes)
     red_dims_shape.push_back(idesc.shape[a]);
@@ -327,7 +371,21 @@ MaxFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   for (auto d : red_dims_shape)
     total_red *= d;
 
-  // 3. Upload
+  // 3. Fast-Path Contiguous Detection
+  bool is_red_contiguous = true;
+  if (!red_dims_shape.empty()) {
+    size_t expected_stride = 1;
+    for (int i = static_cast<int>(reduce_axes.size()) - 1; i >= 0; --i) {
+      int axis = reduce_axes[i];
+      if (in_strides_elem[axis] != expected_stride) {
+        is_red_contiguous = false;
+        break;
+      }
+      expected_stride *= idesc.shape[axis];
+    }
+  }
+
+  // 4. Upload
   auto upload = [&]<typename T>(const std::vector<T> &host_vec) -> DevPtr<T> {
     if (host_vec.empty())
       return nullptr;
@@ -347,8 +405,9 @@ MaxFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   return std::make_unique<Max>(
       settings, ctx.stream, total_out, total_red, static_cast<int>(out_shape.size()),
-      static_cast<int>(reduce_axes.size()), std::move(d_in_strides), std::move(d_out_strides),
-      std::move(d_out_to_in), std::move(d_red_strides), std::move(d_red_axes));
+      static_cast<int>(reduce_axes.size()), is_red_contiguous, std::move(d_in_strides),
+      std::move(d_out_strides), std::move(d_out_to_in), std::move(d_red_strides),
+      std::move(d_red_axes));
 }
 
 } // namespace holonp

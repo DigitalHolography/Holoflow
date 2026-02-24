@@ -198,10 +198,13 @@ BatchQueueFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   size_t element_size = static_cast<int>(input_descs[0].num_bytes() / input_size);
   size_t bytes        = nb_slots * element_size;
 
-  logger()->debug("[BatchQueueFactory::create] Creating BatchQueue with {} slots, input_size={}, "
-                  "element_size={}, "
-                  "total_bytes={}",
-                  nb_slots, input_size, element_size, bytes);
+  logger()->debug(
+      "[BatchQueueFactory::create] Creating BatchQueue with {} slots, capacity={}, input_size={}, "
+      "output_size={}, output_stride={}, "
+      "element_size={}, "
+      "total_bytes={}",
+      nb_slots, settings.target_capacity, input_size, settings.output_size, settings.output_stride,
+      element_size, bytes);
 
   HostPtr<std::byte> h_buf = nullptr;
   DevPtr<std::byte>  d_buf = nullptr;

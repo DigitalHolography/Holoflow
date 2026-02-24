@@ -299,92 +299,175 @@ void Scheduler::run_section(int section_id) {
   const auto &sec    = sections_.at(section_id);
   auto        stream = sec.stream;
 
-  // Nodes in sections are topologically sorted, so we can execute them in order.
-  // However, owned inputs are used as outputs for former nodes, so we need to
-  // acquire them first.
-  // Owned outputs are used as inputs for later nodes, so we need to release
-  // them last.
-
-  // TODO: How to handle end of stream (Eof)? Do we need to propagate it?
-  // Do we need to stop the scheduler when we reach Eof for every node?
-  // Do we need to notify nodes when we reach Eof for their inputs?
-
-  // TODO: How to handle stream synchronization? Should asynchronous tasks
-  // be responsible for synchronizing push-stream before enabling to pop data?
-  // Or should the scheduler be the sole responsible for synchronizing streams?
-
-  // TODO: How to properly collect metrics on given tasks run on cuda streams?
-  // Should we use cuda events?
+  // Define a consistent, professional color palette for your timeline
+  constexpr nvtx3::color color_section{0x555555}; // Dark Gray
+  constexpr nvtx3::color color_acquire{0xFF8C00}; // Dark Orange
+  constexpr nvtx3::color color_async_c{0x1E90FF}; // Dodger Blue
+  constexpr nvtx3::color color_sync{0x32CD32};    // Lime Green
+  constexpr nvtx3::color color_async_p{0x8A2BE2}; // Blue Violet
+  constexpr nvtx3::color color_release{0xFF4500}; // Orange Red
 
   while (!stop_.load()) {
     logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
-    nvtxRangePush(sec.name.c_str());
 
-    // Acquire owned inputs.
-    //
-    // - We do not acquire owned-inputs of async consumers here, as they
-    //   used in the former section only.
-    //
-    // - It is mandatory to check stop_ after acquiring inputs, as
-    //   the scheduler may have been requested to stop while waiting
-    //   for owned inputs to become available. This leads to undefined
-    //   behavior if we proceed to execute nodes after stop_ was set.
-    for (auto v : sec.sync_topo) {
-      acquire_owned_inputs(v);
-    }
-    for (auto v : sec.async_prod) {
-      acquire_owned_inputs(v);
-    }
+    // 1. Outer Section Range
+    // Automatically popped at the end of this while-loop iteration,
+    // safely handling the 'break' statements below.
+    nvtx3::scoped_range section_range{nvtx3::event_attributes{sec.name.c_str(), color_section}};
+
+    // 2. Acquire owned inputs
+    {
+      nvtx3::scoped_range r{nvtx3::event_attributes{"Acquire owned inputs", color_acquire}};
+      for (auto v : sec.sync_topo) {
+        acquire_owned_inputs(v);
+      }
+      for (auto v : sec.async_prod) {
+        acquire_owned_inputs(v);
+      }
+    } // <-- Range automatically pops here
+
     if (stop_.load()) {
-      break;
+      break; // Safe! `section_range` will cleanly pop on its way out.
     }
 
-    // Execute nodes.
-    //
-    // - We know the nodes are topologically sorted within the section, so we
-    //   can execute them in order. The topological order also takes into account
-    //   in-place operations, so inputs or siblings is not changed before they are
-    //   executed.
-    //
-    // - It is mandatory to syncronize the stream before running async producers,
-    //   as async consumers from the next section may depend on work done on this stream,
-    //   and we have no guarantee that the async producer at the end of this section
-    //   will synchronize the stream before pushing data (it may not be cuda-related).
-    for (auto v : sec.async_cons) {
-      // refresh_views_async_cons(v);
-      run_async_cons(v);
-      // refresh_outputs_async_cons(v);
+    // 3. Execute async consumers
+    {
+      nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async consumers", color_async_c}};
+      for (auto v : sec.async_cons) {
+        run_async_cons(v);
+      }
     }
+
     if (stop_.load()) {
-      break;
+      break; // Safe!
     }
 
-    for (auto v : sec.sync_topo) {
-      // refresh_views_sync(v);
-      run_sync(v);
-      // refresh_outputs_sync(v);
+    // 4. Execute sync nodes
+    {
+      nvtx3::scoped_range r{nvtx3::event_attributes{"Execute sync nodes", color_sync}};
+      for (auto v : sec.sync_topo) {
+        run_sync(v);
+      }
+
+      CUDA_CHECK(cudaStreamSynchronize(stream));
     }
 
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    for (auto v : sec.async_prod) {
-      // refresh_views_async_prod(v);
-      run_async_prod(v);
+    // 5. Execute async producers
+    {
+      nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async producers", color_async_p}};
+      for (auto v : sec.async_prod) {
+        run_async_prod(v);
+      }
     }
 
-    // Release owned outputs.
-    //
-    // - We do not release owned-outputs of async producers here, as they
-    // used only in the next section.
-    for (auto v : sec.sync_topo) {
-      release_owned_outputs(v);
+    // 6. Release owned outputs
+    {
+      nvtx3::scoped_range r{nvtx3::event_attributes{"Release owned outputs", color_release}};
+      for (auto v : sec.sync_topo) {
+        release_owned_outputs(v);
+      }
+      for (auto v : sec.async_cons) {
+        release_owned_outputs(v);
+      }
     }
-    for (auto v : sec.async_cons) {
-      release_owned_outputs(v);
-    }
-    nvtxRangePop();
   }
 }
+
+// void Scheduler::run_section(int section_id) {
+//   const auto &sec    = sections_.at(section_id);
+//   auto        stream = sec.stream;
+
+//   // Nodes in sections are topologically sorted, so we can execute them in order.
+//   // However, owned inputs are used as outputs for former nodes, so we need to
+//   // acquire them first.
+//   // Owned outputs are used as inputs for later nodes, so we need to release
+//   // them last.
+
+//   // TODO: How to handle end of stream (Eof)? Do we need to propagate it?
+//   // Do we need to stop the scheduler when we reach Eof for every node?
+//   // Do we need to notify nodes when we reach Eof for their inputs?
+
+//   // TODO: How to handle stream synchronization? Should asynchronous tasks
+//   // be responsible for synchronizing push-stream before enabling to pop data?
+//   // Or should the scheduler be the sole responsible for synchronizing streams?
+
+//   // TODO: How to properly collect metrics on given tasks run on cuda streams?
+//   // Should we use cuda events?
+
+//   while (!stop_.load()) {
+//     logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
+//     nvtxRangePush(sec.name.c_str());
+
+//     // Acquire owned inputs.
+//     //
+//     // - We do not acquire owned-inputs of async consumers here, as they
+//     //   used in the former section only.
+//     //
+//     // - It is mandatory to check stop_ after acquiring inputs, as
+//     //   the scheduler may have been requested to stop while waiting
+//     //   for owned inputs to become available. This leads to undefined
+//     //   behavior if we proceed to execute nodes after stop_ was set.
+//     nvtxRangePush("Acquire owned inputs");
+//     for (auto v : sec.sync_topo) {
+//       acquire_owned_inputs(v);
+//     }
+//     for (auto v : sec.async_prod) {
+//       acquire_owned_inputs(v);
+//     }
+//     nvtxRangePop();
+//     if (stop_.load()) {
+//       break;
+//     }
+
+//     // Execute nodes.
+//     //
+//     // - We know the nodes are topologically sorted within the section, so we
+//     //   can execute them in order. The topological order also takes into account
+//     //   in-place operations, so inputs or siblings is not changed before they are
+//     //   executed.
+//     //
+//     // - It is mandatory to syncronize the stream before running async producers,
+//     //   as async consumers from the next section may depend on work done on this stream,
+//     //   and we have no guarantee that the async producer at the end of this section
+//     //   will synchronize the stream before pushing data (it may not be cuda-related).
+//     nvtxRangePush("Execute async consumers");
+//     for (auto v : sec.async_cons) {
+//       run_async_cons(v);
+//     }
+//     if (stop_.load()) {
+//       break;
+//     }
+//     nvtxRangePop();
+
+//     nvtxRangePush("Execute sync nodes");
+//     for (auto v : sec.sync_topo) {
+//       run_sync(v);
+//     }
+
+//     CUDA_CHECK(cudaStreamSynchronize(stream));
+//     nvtxRangePop();
+
+//     nvtxRangePush("Execute async producers");
+//     for (auto v : sec.async_prod) {
+//       run_async_prod(v);
+//     }
+//     nvtxRangePop();
+
+//     // Release owned outputs.
+//     //
+//     // - We do not release owned-outputs of async producers here, as they
+//     // used only in the next section.
+//     nvtxRangePush("Release owned outputs");
+//     for (auto v : sec.sync_topo) {
+//       release_owned_outputs(v);
+//     }
+//     for (auto v : sec.async_cons) {
+//       release_owned_outputs(v);
+//     }
+//     nvtxRangePop();
+//     nvtxRangePop();
+//   }
+// }
 
 void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v) {
   const auto  idx        = boost::get(boost::vertex_index, graph_, v);

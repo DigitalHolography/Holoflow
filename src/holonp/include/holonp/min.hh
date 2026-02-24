@@ -46,8 +46,9 @@ void from_json(const nlohmann::json &j, MinSettings &s);
 class Min : public holoflow::core::ISyncTask {
 public:
   Min(const MinSettings &settings, cudaStream_t stream, size_t total_out, size_t total_red,
-      int out_ndim, int red_ndim, DevPtr<size_t> in_strides, DevPtr<size_t> out_strides,
-      DevPtr<int> out_to_in_map, DevPtr<size_t> red_strides, DevPtr<int> red_axes_map);
+      int out_ndim, int red_ndim, bool is_red_contiguous, DevPtr<size_t> in_strides,
+      DevPtr<size_t> out_strides, DevPtr<int> out_to_in_map, DevPtr<size_t> red_strides,
+      DevPtr<int> red_axes_map);
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
@@ -59,6 +60,7 @@ private:
   size_t total_red_;
   int    out_ndim_;
   int    red_ndim_;
+  bool   is_red_contiguous_;
 
   // Device-resident tensors for address calculation
   DevPtr<size_t> d_in_strides_;
