@@ -134,9 +134,11 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     throw std::logic_error{"No time method is currently not supported in GraphBuilder_v2"};
   }
 
-  auto output_size   = static_cast<int>(FH.shape.at(0));
-  auto output_stride = output_size;
-  std::tie(FH) = unpack<1>(batched_queue(FH, {s_.pp_accumulation * 2, output_size, output_stride}));
+  int64_t Nz   = static_cast<int64_t>(FH.shape.at(0));
+  int64_t Ny   = static_cast<int64_t>(FH.shape.at(1));
+  int64_t Nx   = static_cast<int64_t>(FH.shape.at(2));
+  std::tie(FH) = unpack<1>(reshape(FH, {{1, Nz, Ny, Nx}, false}));
+  std::tie(FH) = unpack<1>(batched_queue(FH, {s_.pp_accumulation * 2, 1, 1}));
 
   // Some time methods (e.g. PCA) may yield a F32 output. Convert to CF32 for consistency in
   // downstream processing and display.
@@ -176,19 +178,21 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   // XY View Processing (S -> M0 - Processed XY View)
   // -------------------------------------------------------------------------------------------------
   {
-    auto [M0] = unpack<1>(mean(S, {{0}, true}));
+    auto [M0] = unpack<1>(mean(S, {{-3}, false}));
 
     if (s_.pp_fft_shift) {
-      std::tie(M0) = unpack<1>(fft_shift(M0, {.axes = {1, 2}}));
+      std::tie(M0) = unpack<1>(fftshift(M0, {{-2, -1}}));
     }
 
     if (s_.pp_registration) {
+      throw std::logic_error{"Registration is currently not supported in GraphBuilder_v2"};
       std::tie(M0) = unpack<1>(registration(M0, {s_.pp_registration_radius}));
     }
 
     auto [M0_avg] = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
 
     if (s_.pp_convolution) {
+      throw std::logic_error{"Convolution is currently not supported in GraphBuilder_v2"};
       std::tie(M0_avg) =
           unpack<1>(convolution(M0_avg, {s_.pp_convolution_path, s_.pp_convolution_divide}));
     }
@@ -300,7 +304,6 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
     // 2D FFT on the last two axes (Tile_Y, Tile_X)
     auto [FH_prop] = unpack<1>(fft2(FH_grouped, {{-2, -1}}));
-    // std::tie(FH_prop) = unpack<1>(fftshift(FH_prop, {{-2, -1}}));
 
     // Intensity & Averaging
     auto [S_vec]         = unpack<1>(abs(FH_prop, {}));
@@ -341,8 +344,6 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     int64_t w = (int64_t)valid_w;
 
     auto rescale = [&](const TDesc &input, const std::vector<int> &axis, float a, float b) {
-      logger()->debug("Rescaling with a={} b={} on axes={}", a, b, fmt::join(axis, ","));
-
       auto [a_t]       = unpack<1>(asarray({a}));
       auto [b_t]       = unpack<1>(asarray({b}));
       auto [mn]        = unpack<1>(min(input, {axis, true}));
