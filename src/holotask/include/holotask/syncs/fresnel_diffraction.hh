@@ -15,6 +15,8 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
+#include <string>
+#include <vector>
 
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
@@ -25,44 +27,33 @@ template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 namespace holotask::syncs {
 
-/// @brief Settings for the Fresnel diffraction propagation task.
-/// @details
-/// JSON schema (informal):
-/// @code{.json}
-/// {
-///   "lambda": 532e-9,
-///   "dx": 3.45e-6,
-///   "dy": 3.45e-6,
-///   "z": 0.1
-/// }
-/// @endcode
 struct FresnelDiffractionSettings {
-  float lambda; ///< Wavelength in meters.
-  float dx;     ///< Pixel pitch in meters.
-  float dy;     ///< Pixel pitch in meters.
-  float z;      ///< Propagation distance in meters.
+  float            lambda;          ///< Wavelength in meters.
+  float            dx;              ///< Pixel pitch in meters.
+  float            dy;              ///< Pixel pitch in meters.
+  float            z;               ///< Propagation distance in meters.
+  std::vector<int> axes = {-2, -1}; ///< Axes to perform diffraction over.
 };
 
-/// @name JSON serialization
-/// @brief nlohmann::json adapters for @ref FresnelDiffractionSettings.
-/// @{
 void to_json(nlohmann::json &j, const FresnelDiffractionSettings &fds);
 void from_json(const nlohmann::json &j, FresnelDiffractionSettings &fds);
-/// @}
 
 class FresnelDiffraction : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  FresnelDiffraction(const FresnelDiffractionSettings &settings, curaii::CufftHandle &&fft_handle,
+  FresnelDiffraction(const FresnelDiffractionSettings &settings, holoflow::core::TDesc idesc,
+                     curaii::CufftHandle &&fft_handle, bool is_fast,
                      DevPtr<cuFloatComplex> &&d_lens, DevPtr<void> &&d_caller_info,
                      std::vector<char> &&lto);
 
   friend class FresnelDiffractionFactory;
 
   FresnelDiffractionSettings settings_;
+  holoflow::core::TDesc      idesc_;
   curaii::CufftHandle        fft_handle_;
+  bool                       is_fast_;
   DevPtr<cuFloatComplex>     d_lens_;
   DevPtr<void>               d_caller_info_;
   std::vector<char>          lto_;

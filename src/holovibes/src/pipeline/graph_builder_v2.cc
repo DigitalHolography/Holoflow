@@ -151,7 +151,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   TDesc FH_z;
 
   if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
-    std::tie(FH_z) = unpack<1>(fresnel_diffraction(FH, {lam, dx, dy, z_prop}));
+    std::tie(FH_z) = unpack<1>(fresnel_diffraction(FH, {lam, dx, dy, z_prop, {-2, -1}}));
   }
 
   else if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
