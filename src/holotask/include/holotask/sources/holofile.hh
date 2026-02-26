@@ -100,12 +100,15 @@ void from_json(const nlohmann::json &j, HolofileSettings &hs);
 /// - CUDA runtime errors from transfer operations
 class Holofile : public holoflow::core::ISyncTask {
 public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+  std::optional<holoflow::core::TView> acquire_input(int index) override;
+  void                                 release_output(int index) override;
+  holoflow::core::OpResult             execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
   Holofile(const HolofileSettings &settings, holofile::Reader &&reader,
            const holofile::Header &header, int frame_idx, std::byte *buf,
-           HostPtr<std::byte> &&h_buf, DevPtr<std::byte> &&d_buf, cudaStream_t stream);
+           HostPtr<std::byte> &&h_buf, DevPtr<std::byte> &&d_buf, cudaStream_t stream,
+           holoflow::core::TDesc odesc);
 
   friend class HolofileFactory;
 
@@ -114,6 +117,8 @@ private:
   holofile::Reader reader_;    //< Reader.
   holofile::Header header_;    //< Header.
   int              frame_idx_; //< Next frame to read.
+
+  holoflow::core::TDesc odesc_; // Output tensor description (cached from infer).
 
   std::byte         *buf_;   // Non-owning view of the active buffer.
   HostPtr<std::byte> h_buf_; // Owned CPU buffer (if any).
