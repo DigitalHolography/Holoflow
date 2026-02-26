@@ -43,6 +43,7 @@
 #include "holonp/irfft2.hh"
 #include "holonp/max.hh"
 #include "holonp/mean.hh"
+#include "holonp/mean_abs.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/min.hh"
 #include "holonp/mul.hh"
@@ -216,6 +217,7 @@ private:
   std::vector<TDesc> fftshift(const TDesc &X, holonp::FFTShiftSettings s);
   std::vector<TDesc> abs(const TDesc &X, holonp::AbsSettings s);
   std::vector<TDesc> mean(const TDesc &X, holonp::MeanSettings s);
+  std::vector<TDesc> mean_abs(const TDesc &X, holonp::MeanAbsSettings s);
   std::vector<TDesc> min(const TDesc &X, holonp::MinSettings s);
   std::vector<TDesc> max(const TDesc &X, holonp::MaxSettings s);
   std::vector<TDesc> reshape(const TDesc &X, holonp::ReshapeSettings s);

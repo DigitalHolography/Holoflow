@@ -170,16 +170,10 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   }
 
   // -------------------------------------------------------------------------------------------------
-  // Spectral Density (FH_z -> S - Spectral Density)
-  // -------------------------------------------------------------------------------------------------
-
-  auto [S] = unpack<1>(abs(FH_z, {}));
-
-  // -------------------------------------------------------------------------------------------------
-  // XY View Processing (S -> M0 - Processed XY View)
+  // XY View Processing (FH_z -> M0 - Processed XY View)
   // -------------------------------------------------------------------------------------------------
   {
-    auto [M0] = unpack<1>(mean(S, {{-3}, false}));
+    auto [M0] = unpack<1>(mean_abs(FH_z, {{-3}, false}));
 
     if (s_.pp_fft_shift) {
       std::tie(M0) = unpack<1>(fftshift(M0, {{-2, -1}}));
@@ -232,6 +226,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
   if (s_.view_3d_cuts) {
     throw std::logic_error{"3D cuts are currently not supported in GraphBuilder_v2"};
+    auto [S] = unpack<1>(abs(FH_z, {}));
     // -------------------------------------------------------------------------------------------------
     // XZ View Processing (S -> M0 - Processed XZ View)
     // -------------------------------------------------------------------------------------------------
@@ -280,6 +275,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   // -------------------------------------------------------------------------------------------------
 
   if (false) {
+    auto [S]      = unpack<1>(abs(FH_z, {}));
     auto nb_subap = 3ULL;
 
     // -------------------------------------------------------------------------------------------------
@@ -321,8 +317,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [FH_prop] = unpack<1>(fft2(FH_grouped, {{-2, -1}}));
 
     // Intensity & Averaging
-    auto [S_vec]         = unpack<1>(abs(FH_prop, {}));
-    auto [M0_blocked]    = unpack<1>(mean(S_vec, {{0}, true}));
+    auto [M0_blocked]    = unpack<1>(mean_abs(FH_prop, {{0}, true}));
     std::tie(M0_blocked) = unpack<1>(fftshift(M0_blocked, {{-2, -1}}));
 
     // -------------------------------------------------------------------------------------------------
@@ -461,6 +456,7 @@ DEFINE_UNARY_SYNC_NODE (fft2,                                   "fft2",         
 DEFINE_UNARY_SYNC_NODE (fftshift,                               "fftshift",                            "FFTShiftNp",                      holonp::FFTShiftSettings)
 DEFINE_UNARY_SYNC_NODE (abs,                                    "abs",                                 "Abs",                             holonp::AbsSettings)
 DEFINE_UNARY_SYNC_NODE (mean,                                   "mean",                                "Mean",                            holonp::MeanSettings)
+DEFINE_UNARY_SYNC_NODE (mean_abs,                               "mean_abs",                            "MeanAbs",                         holonp::MeanAbsSettings)
 DEFINE_UNARY_SYNC_NODE (min,                                    "min",                                 "Min",                             holonp::MinSettings)
 DEFINE_UNARY_SYNC_NODE (max,                                    "max",                                 "Max",                             holonp::MaxSettings)
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                          "batch_queue",                         "BatchQueue",                      holotask::asyncs::BatchQueueSettings)

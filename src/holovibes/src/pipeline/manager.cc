@@ -48,6 +48,7 @@
 #include "holonp/irfft2.hh"
 #include "holonp/max.hh"
 #include "holonp/mean.hh"
+#include "holonp/mean_abs.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/min.hh"
 #include "holonp/mul.hh"
@@ -165,6 +166,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<AbsFactory>(registry_, "Abs");
   reg_sync<ConjFactory>(registry_, "Conj");
   reg_sync<MeanFactory>(registry_, "Mean");
+  reg_sync<MeanAbsFactory>(registry_, "MeanAbs");
   reg_sync<MinFactory>(registry_, "Min");
   reg_sync<MaxFactory>(registry_, "Max");
   reg_sync<ArgmaxFactory>(registry_, "Argmax");
