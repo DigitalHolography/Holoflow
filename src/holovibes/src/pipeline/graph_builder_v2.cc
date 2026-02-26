@@ -199,6 +199,19 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
           unpack<1>(convolution(M0_avg, {s_.pp_convolution_path, s_.pp_convolution_divide}));
     }
 
+    if (s_.pp_pctclip) {
+      // auto Ny = M0_avg.shape.at(1);
+      // auto Nx = M0_avg.shape.at(2);
+
+      auto cx          = 0.5f;
+      auto cy          = 0.5f;
+      auto rx          = s_.pp_pctclip_radius;
+      auto ry          = s_.pp_pctclip_radius;
+      auto angle       = 0.0f;
+      std::tie(M0_avg) = unpack<1>(
+          pct_clip(M0_avg, {s_.pp_pctclip_lower, s_.pp_pctclip_upper, {cx, cy, rx, ry, angle}}));
+    }
+
     std::tie(M0_avg) = unpack<1>(convert(M0_avg, {Target::U8, Strat::Scaled}));
     std::tie(M0_avg) = unpack<1>(batched_queue(M0_avg, {s_.gpu_out_size, 1, 1}));
     std::tie(M0_avg) = unpack<1>(memcpy(M0_avg, {Host}));

@@ -153,7 +153,7 @@ public:
     // 2. Compute eigenvectors
     if (n_features_ <= cpu_heuristic_max_) {
       // Use CPU for small problems
-      // CUDA_CHECK(cudaStreamSynchronize(stream_));
+      CUDA_CHECK(cudaStreamSynchronize(stream_));
       nvtx3::scoped_range r("CPU eigen decomposition");
       const std::size_t   bytes = static_cast<std::size_t>(n_features_) * n_features_ * sizeof(T);
       CUDA_CHECK(

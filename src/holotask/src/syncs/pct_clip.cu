@@ -76,6 +76,7 @@ holoflow::core::OpResult PctClip::execute(holoflow::core::SyncCtx &ctx) {
                                         d_roi_.get(), d_roi_count_.get(), count, stream_));
   int  h_roi_count;
   auto kind = cudaMemcpyDeviceToHost;
+  CUDA_CHECK(cudaStreamSynchronize(stream_));
   CUDA_CHECK(cudaMemcpyAsync(&h_roi_count, d_roi_count_.get(), sizeof(int), kind, stream_));
   CUDA_CHECK(cudaStreamSynchronize(stream_));
 
@@ -91,6 +92,7 @@ holoflow::core::OpResult PctClip::execute(holoflow::core::SyncCtx &ctx) {
   int    max_idx = static_cast<int>(settings_.max_pct / 100.0f * (h_roi_count - 1));
   float *d_min   = reinterpret_cast<float *>(odata) + min_idx;
   float *d_max   = reinterpret_cast<float *>(odata) + max_idx;
+  CUDA_CHECK(cudaStreamSynchronize(stream_));
   CUDA_CHECK(cudaMemcpyAsync(d_min_.get(), d_min, sizeof(float), kind, stream_));
   CUDA_CHECK(cudaMemcpyAsync(d_max_.get(), d_max, sizeof(float), kind, stream_));
 
