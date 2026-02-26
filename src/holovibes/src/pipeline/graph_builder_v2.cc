@@ -143,9 +143,9 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
   // Some time methods (e.g. PCA) may yield a F32 output. Convert to CF32 for consistency in
   // downstream processing and display.
-  if (FH.dtype == holoflow::core::DType::F32) {
-    std::tie(FH) = unpack<1>(convert(FH, {Target::CF32, Strat::Real}));
-  }
+  // if (FH.dtype == holoflow::core::DType::F32) {
+  //   std::tie(FH) = unpack<1>(convert(FH, {Target::CF32, Strat::Real}));
+  // }
 
   // -------------------------------------------------------------------------------------------------
   // Spacial Propagation (FH -> FH_z - Propagated Hologram)

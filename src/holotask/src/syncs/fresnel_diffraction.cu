@@ -28,16 +28,16 @@ void from_json(const nlohmann::json &j, FresnelDiffractionSettings &fds) {
 
 FresnelDiffraction::FresnelDiffraction(const FresnelDiffractionSettings &settings,
                                        holoflow::core::TDesc             idesc,
-                                       curaii::CufftHandle &&fft_handle, bool is_fast,
+                                       curaii::CufftHandle &&fft_handle, bool is_fast, bool is_real,
                                        DevPtr<cuFloatComplex> &&d_lens,
                                        DevPtr<void> &&d_caller_info, std::vector<char> &&lto)
     : settings_(settings), idesc_(std::move(idesc)), fft_handle_(std::move(fft_handle)),
-      is_fast_(is_fast), d_lens_(std::move(d_lens)), d_caller_info_(std::move(d_caller_info)),
-      lto_(std::move(lto)) {}
+      is_fast_(is_fast), is_real_(is_real), d_lens_(std::move(d_lens)),
+      d_caller_info_(std::move(d_caller_info)), lto_(std::move(lto)) {}
 
 holoflow::core::OpResult FresnelDiffraction::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
-  auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
+  void *idata = ctx.inputs[0].data();
+  void *odata = ctx.outputs[0].data();
   CUFFT_CHECK(cufftXtExec(fft_handle_.get(), idata, odata, CUFFT_FORWARD));
   return holoflow::core::OpResult::Ok;
 }
@@ -103,7 +103,7 @@ std::vector<char> compile_source_to_lto(const std::string &source, const std::st
 }
 
 // Dynamically construct to guarantee only ONE identical symbol is exposed to cuFFT
-std::vector<char> apply_lens_lto(bool is_fast) {
+std::vector<char> apply_lens_lto(bool is_fast, bool is_real) {
   std::string apply_lens_callback = R"(
   #include <cuComplex.h>
 
@@ -116,15 +116,25 @@ std::vector<char> apply_lens_lto(bool is_fast) {
     cuFloatComplex *lens;
   };
 
-  __device__ cuFloatComplex apply_lens_callback(
+  __device__ cuFloatComplex apply_lens_callback2(
       void *data, size_t offset, void *callerInfo, void *sharedPtr) {
     auto *info = (ApplyLensCallerInfo *)callerInfo;
   )";
 
+  if (is_real) {
+    apply_lens_callback += R"(
+    cuFloatComplex val = make_cuComplex(((float *)data)[offset], 0.0f);
+    )";
+  } else {
+    apply_lens_callback += R"(
+    cuFloatComplex val = ((cuFloatComplex *)data)[offset];
+    )";
+  }
+
   if (is_fast) {
     apply_lens_callback += R"(
     size_t lens_idx = offset % info->idist; 
-    return cuCmulf(((cuFloatComplex *)data)[offset], info->lens[lens_idx]);
+    return cuCmulf(val, info->lens[lens_idx]);
   }
   )";
   } else {
@@ -133,12 +143,14 @@ std::vector<char> apply_lens_lto(bool is_fast) {
     size_t row = local_offset / info->stride_h;
     size_t col = (local_offset % info->stride_h) / info->istride;
     size_t lens_idx = row * info->width + col;
-    return cuCmulf(((cuFloatComplex *)data)[offset], info->lens[lens_idx]);
+    return cuCmulf(val, info->lens[lens_idx]);
   }
   )";
   }
 
-  return compile_source_to_lto(apply_lens_callback, "apply_lens_callback.cu");
+  logger()->info("[FresnelDiffraction] Source code for JIT callback:\n{}", apply_lens_callback);
+
+  return compile_source_to_lto(apply_lens_callback, "apply_lens_callback2.cu");
 }
 
 __global__ void quadratic_lens_kernel(cuFloatComplex *lens, int width, int height, float lambda,
@@ -193,7 +205,8 @@ FresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc> input_de
   check(input_descs.size() == 1, "expected exactly one input");
   auto &idesc = input_descs[0];
   check(idesc.rank() >= 2, "input must be a tensor of rank 2 or higher");
-  check(idesc.dtype == holoflow::core::DType::CF32, "input must be complex float32");
+  check(idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::F32,
+        "input must be complex float32 or real float32");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
 
   auto axes = settings.axes.empty() ? std::vector<int>{-2, -1} : settings.axes;
@@ -216,10 +229,25 @@ FresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc> input_de
   check(settings.dy > 0.0f, "dy must be positive");
   check(settings.dx == settings.dy, "dx must equal dy");
 
+  // auto odesc  = idesc;
+  // odesc.dtype = holoflow::core::DType::CF32;
+
+  holoflow::core::TDesc odesc;
+  if (idesc.dtype == holoflow::core::DType::CF32) {
+    odesc = idesc;
+  } else {
+    odesc = holoflow::core::TDesc(idesc.shape, holoflow::core::DType::CF32, idesc.mem_loc);
+  }
+
+  std::vector<holoflow::core::InPlace> in_place;
+  if (idesc.dtype == holoflow::core::DType::CF32) {
+    in_place = {{0, 0}};
+  }
+
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
-      .output_descs  = {idesc},
-      .in_place      = {{0, 0}},
+      .output_descs  = {odesc},
+      .in_place      = in_place,
       .owned_inputs  = {false},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,
@@ -256,12 +284,13 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
       batch *= static_cast<long long int>(idesc.shape[i]);
   }
 
+  bool          is_real   = (idesc.dtype == holoflow::core::DType::F32);
   long long int istride   = 1;
   long long int inembed_1 = W;
   long long int idist     = H * W;
 
   if (!idesc.strides.empty()) {
-    size_t elem_size = sizeof(cuFloatComplex);
+    size_t elem_size = is_real ? sizeof(float) : sizeof(cuFloatComplex);
     istride          = idesc.strides[ax1] / elem_size;
     inembed_1        = (idesc.strides[ax0] / elem_size) / istride;
 
@@ -296,7 +325,7 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
   bool axes_changed   = is_new || (task->settings_.axes != settings.axes);
   bool optics_changed = is_new || (task->settings_.lambda != settings.lambda) ||
                         (task->settings_.z != settings.z) || (task->settings_.dx != settings.dx);
-  bool callback_changed = is_new || (task->is_fast_ != is_fast);
+  bool callback_changed = is_new || (task->is_fast_ != is_fast) || (task->is_real_ != is_real);
 
   bool lens_size_changed = false;
   if (!is_new) {
@@ -321,9 +350,9 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
     auto d_info = curaii::make_unique_device_ptr<ApplyLensCallerInfo>(sizeof(info));
     CUDA_CHECK(
         cudaMemcpyAsync(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice, ctx.stream));
-    auto lto = apply_lens_lto(is_fast);
 
-    // Plan initialization block exactly mirroring standard construction
+    auto lto = apply_lens_lto(is_fast, is_real);
+
     curaii::CufftHandle new_fft_handle;
     CUFFT_CHECK(cufftSetStream(new_fft_handle.get(), ctx.stream));
 
@@ -339,7 +368,7 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
     cudaDataType  executiontype = CUDA_C_32F;
 
     auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
-    CUFFT_CHECK(cufftXtSetJITCallback(new_fft_handle.get(), "apply_lens_callback", lto.data(),
+    CUFFT_CHECK(cufftXtSetJITCallback(new_fft_handle.get(), "apply_lens_callback2", lto.data(),
                                       lto.size(), CUFFT_CB_LD_COMPLEX, &d_info_ptr));
 
     CUFFT_CHECK(cufftXtMakePlanMany(
@@ -348,11 +377,10 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
         static_cast<long long int>(idist), outputtype, static_cast<long long int>(batch),
         &work_size, executiontype));
 
-    task = new FresnelDiffraction(settings, idesc, std::move(new_fft_handle), is_fast,
+    task = new FresnelDiffraction(settings, idesc, std::move(new_fft_handle), is_fast, is_real,
                                   std::move(d_lens), std::move(d_info), std::move(lto));
 
   } else {
-    // Highly optimized update path
     if (optics_changed || lens_size_changed || axes_changed) {
       task->d_lens_ = make_quadratic_lens(W, H, settings);
     }
@@ -370,7 +398,7 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
 
     if (shape_changed || axes_changed || callback_changed) {
       if (callback_changed) {
-        task->lto_ = apply_lens_lto(is_fast);
+        task->lto_ = apply_lens_lto(is_fast, is_real);
       }
 
       curaii::CufftHandle new_fft_handle;
@@ -388,7 +416,7 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
       cudaDataType  executiontype = CUDA_C_32F;
 
       auto *d_info_ptr = reinterpret_cast<void *>(task->d_caller_info_.get());
-      CUFFT_CHECK(cufftXtSetJITCallback(new_fft_handle.get(), "apply_lens_callback",
+      CUFFT_CHECK(cufftXtSetJITCallback(new_fft_handle.get(), "apply_lens_callback2",
                                         task->lto_.data(), task->lto_.size(), CUFFT_CB_LD_COMPLEX,
                                         &d_info_ptr));
 
@@ -404,6 +432,7 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
     task->settings_ = settings;
     task->idesc_    = idesc;
     task->is_fast_  = is_fast;
+    task->is_real_  = is_real;
   }
 
   return std::unique_ptr<holoflow::core::ISyncTask>(task);

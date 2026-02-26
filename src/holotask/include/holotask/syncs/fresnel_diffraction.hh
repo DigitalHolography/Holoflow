@@ -44,7 +44,7 @@ public:
 
 private:
   FresnelDiffraction(const FresnelDiffractionSettings &settings, holoflow::core::TDesc idesc,
-                     curaii::CufftHandle &&fft_handle, bool is_fast,
+                     curaii::CufftHandle &&fft_handle, bool is_fast, bool is_real,
                      DevPtr<cuFloatComplex> &&d_lens, DevPtr<void> &&d_caller_info,
                      std::vector<char> &&lto);
 
@@ -54,6 +54,7 @@ private:
   holoflow::core::TDesc      idesc_;
   curaii::CufftHandle        fft_handle_;
   bool                       is_fast_;
+  bool                       is_real_;
   DevPtr<cuFloatComplex>     d_lens_;
   DevPtr<void>               d_caller_info_;
   std::vector<char>          lto_;
