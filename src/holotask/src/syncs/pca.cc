@@ -15,13 +15,14 @@
 #include "holotask/syncs/pca.hh"
 
 #include <limits>
+#include <mkl_lapacke.h>
+#include <nvtx3/nvtx3.hpp>
 #include <stdexcept>
 #include <string>
 
 #include "curaii/cublas.hh"
 #include "curaii/cuda.hh"
 #include "curaii/cusolver.hh"
-#include <mkl_lapacke.h>
 
 #include "bug.hh"
 #include "logger.hh"
@@ -124,10 +125,11 @@ public:
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    auto &iview = ctx.inputs[0];
-    auto &oview = ctx.outputs[0];
-    auto *idata = reinterpret_cast<T *>(iview.data());
-    auto *odata = reinterpret_cast<T *>(oview.data());
+    nvtx3::scoped_range r("PCA Sync Task");
+    auto               &iview = ctx.inputs[0];
+    auto               &oview = ctx.outputs[0];
+    auto               *idata = reinterpret_cast<T *>(iview.data());
+    auto               *odata = reinterpret_cast<T *>(oview.data());
 
     const auto   &idesc      = iview.desc;
     const int     height     = static_cast<int>(idesc.shape.at(1));
@@ -151,7 +153,9 @@ public:
     // 2. Compute eigenvectors
     if (n_features_ <= cpu_heuristic_max_) {
       // Use CPU for small problems
-      const std::size_t bytes = static_cast<std::size_t>(n_features_) * n_features_ * sizeof(T);
+      // CUDA_CHECK(cudaStreamSynchronize(stream_));
+      nvtx3::scoped_range r("CPU eigen decomposition");
+      const std::size_t   bytes = static_cast<std::size_t>(n_features_) * n_features_ * sizeof(T);
       CUDA_CHECK(
           cudaMemcpyAsync(h_cov_.get(), d_cov_.get(), bytes, cudaMemcpyDeviceToHost, stream_));
       CUDA_CHECK(cudaStreamSynchronize(stream_));
@@ -168,7 +172,8 @@ public:
                                  stream_));
     } else {
       // Use GPU for large problems
-      float vl = 0.0f, vu = 0.0f;
+      nvtx3::scoped_range r("GPU eigen decomposition");
+      float               vl = 0.0f, vu = 0.0f;
       CUSOLVER_CHECK(cusolverDnXsyevdx(
           cusolver_handle_.get(), cusolver_params_.get(), CUSOLVER_EIG_MODE_VECTOR,
           CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER, n_features_, PcaTraits<T>::cuda_type,

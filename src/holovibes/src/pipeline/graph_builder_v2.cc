@@ -134,11 +134,12 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     throw std::logic_error{"No time method is currently not supported in GraphBuilder_v2"};
   }
 
-  int64_t Nz   = static_cast<int64_t>(FH.shape.at(0));
-  int64_t Ny   = static_cast<int64_t>(FH.shape.at(1));
-  int64_t Nx   = static_cast<int64_t>(FH.shape.at(2));
-  std::tie(FH) = unpack<1>(reshape(FH, {{1, Nz, Ny, Nx}, false}));
-  std::tie(FH) = unpack<1>(batched_queue(FH, {s_.pp_accumulation * 2, 1, 1}));
+  int     o_batches = s_.pp_accumulation;
+  int64_t Nz        = static_cast<int64_t>(FH.shape.at(0));
+  int64_t Ny        = static_cast<int64_t>(FH.shape.at(1));
+  int64_t Nx        = static_cast<int64_t>(FH.shape.at(2));
+  std::tie(FH)      = unpack<1>(reshape(FH, {{1, Nz, Ny, Nx}, false}));
+  std::tie(FH)      = unpack<1>(batched_queue(FH, {o_batches * 2, o_batches, o_batches}));
 
   // Some time methods (e.g. PCA) may yield a F32 output. Convert to CF32 for consistency in
   // downstream processing and display.
@@ -189,7 +190,8 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
       std::tie(M0) = unpack<1>(registration(M0, {s_.pp_registration_radius}));
     }
 
-    auto [M0_avg] = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
+    // auto [M0_avg] = unpack<1>(slide_avg(M0, {128, (size_t)s_.pp_accumulation}));
+    auto [M0_avg] = unpack<1>(mean(M0, {{0}, true}));
 
     if (s_.pp_convolution) {
       throw std::logic_error{"Convolution is currently not supported in GraphBuilder_v2"};
