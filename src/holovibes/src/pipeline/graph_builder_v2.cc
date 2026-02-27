@@ -275,15 +275,14 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   // -------------------------------------------------------------------------------------------------
 
   if (true) {
-    auto [S]      = unpack<1>(abs(FH_z, {}));
     auto nb_subap = 3ULL;
 
     // -------------------------------------------------------------------------------------------------
     // Spatial Cropping
     // -------------------------------------------------------------------------------------------------
 
-    auto               subap_w = S.shape.at(3) / nb_subap;
-    auto               subap_h = S.shape.at(2) / nb_subap;
+    auto               subap_w = FH.shape.at(3) / nb_subap;
+    auto               subap_h = FH.shape.at(2) / nb_subap;
     auto               valid_w = subap_w * nb_subap;
     auto               valid_h = subap_h * nb_subap;
     holonp::SliceRange crop_y{0, valid_h};
@@ -306,35 +305,21 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
     // Reshape to isolate tiles
     // Shape: (Batches, Freq, Grid_Y, Tile_Y, Grid_X, Tile_X)
-    logger()->info("FH shape before sub-aperture processing: {}", FH_Qin.shape);
-    logger()->info("FH shape after sub-aperture processing: ({}, {}, {}, {}, {}, {})", o_batches, n_freq, nb_subap, subap_h, nb_subap, subap_w);
-    auto [FH_5d] =
+    auto [FH_6d] =
         unpack<1>(reshape(FH_Qin, {{(int64_t)o_batches, (int64_t)n_freq, (int64_t)nb_subap,
                                     (int64_t)subap_h, (int64_t)nb_subap, (int64_t)subap_w}}));
 
     // Transpose to group grids
-    // Shape: (Freq, Grid_Y, Grid_X, Tile_Y, Tile_X)
-    auto [FH_grouped] = unpack<1>(transpose(FH_5d, {{0, 1, 2, 4, 3, 5}}));
+    // Shape: (Batches, Freq, Grid_Y, Grid_X, Tile_Y, Tile_X)
+    auto [FH_grouped] = unpack<1>(transpose(FH_6d, {{0, 1, 2, 4, 3, 5}}));
 
     // 2D FFT on the last two axes (Tile_Y, Tile_X)
     auto [FH_prop] = unpack<1>(fft2(FH_grouped, {{-2, -1}}));
-
-    logger()->info("FH_prop shape: {}", FH_prop.shape);
 
     // Intensity & Averaging
     auto [M0_blocked]    = unpack<1>(mean_abs(FH_prop, {{1}, false}));
     std::tie(M0_blocked) = unpack<1>(mean(M0_blocked, {{0}, true}));
     std::tie(M0_blocked) = unpack<1>(fftshift(M0_blocked, {{-2, -1}}));
-
-    // -------------------------------------------------------------------------------------------------
-    // Averaging across batches
-    // -------------------------------------------------------------------------------------------------
-
-    // auto acc  = s_.pp_accumulation;
-    // auto size = acc * 2;
-
-    // std::tie(M0_blocked) = unpack<1>(batched_queue(M0_blocked, {size, acc, acc}));
-    // std::tie(M0_blocked) = unpack<1>(mean(M0_blocked, {{0}, true}));
 
     // -------------------------------------------------------------------------------------------------
     // Cross Correlation with Reference (Center Tile)
