@@ -217,7 +217,7 @@ private:
   size_t d_workspace_size_{0};
   size_t h_workspace_size_{0};
 
-  static constexpr int cpu_heuristic_max_ = 32;
+  static constexpr int cpu_heuristic_max_ = 64;
 };
 
 } // namespace

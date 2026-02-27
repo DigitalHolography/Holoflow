@@ -35,27 +35,27 @@ struct FFT2Settings {
 void to_json(nlohmann::json &j, const FFT2Settings &s);
 void from_json(const nlohmann::json &j, FFT2Settings &s);
 
+struct LaunchOffset {
+  size_t in_bytes;
+  size_t out_bytes;
+};
+
 class FFT2 : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
   FFT2(const FFT2Settings &settings, curaii::CufftHandle &&plan, size_t n_fft,
-       size_t inner_batch_size, std::vector<size_t> input_offsets, cudaStream_t stream);
+       std::vector<LaunchOffset> offsets, cudaStream_t stream);
 
   friend class FFT2Factory;
 
   FFT2Settings        settings_;
   curaii::CufftHandle plan_;
 
-  size_t n_fft_;            // Elements per single FFT
-  size_t inner_batch_size_; // How many FFTs are done per kernel launch
-
-  // Pre-calculated byte offsets for each launch.
-  // If the input is fully contiguous, this contains a single {0}.
-  std::vector<size_t> input_offsets_;
-
-  cudaStream_t stream_;
+  size_t                    n_fft_;
+  std::vector<LaunchOffset> offsets_;
+  cudaStream_t              stream_;
 };
 
 class FFT2Factory : public holoflow::core::ISyncTaskFactory {

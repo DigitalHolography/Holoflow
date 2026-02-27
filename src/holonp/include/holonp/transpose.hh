@@ -42,25 +42,12 @@ public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  Transpose(const TransposeSettings &settings, cudaStream_t stream, size_t ndim, size_t total_elems,
-            DevPtr<std::int64_t> d_in_strides, DevPtr<std::int64_t> d_out_strides,
-            DevPtr<std::int64_t> d_out_shape);
+  Transpose(cudaStream_t stream, size_t num_bytes);
 
   friend class TransposeFactory;
 
-  TransposeSettings settings_;
-  cudaStream_t      stream_;
-
-  size_t ndim_;
-  size_t total_elems_;
-
-  // Device buffers for kernel configuration
-  // We store strides/shape to avoid expensive index re-calculation
-  // from scratch if possible, though for general N-D transpose,
-  // index reconstruction is often necessary.
-  DevPtr<std::int64_t> d_in_strides_;  // Input strides (permuted)
-  DevPtr<std::int64_t> d_out_strides_; // Output strides (contiguous)
-  DevPtr<std::int64_t> d_out_shape_;   // Output shape
+  cudaStream_t stream_;
+  size_t       num_bytes_;
 };
 
 class TransposeFactory : public holoflow::core::ISyncTaskFactory {
