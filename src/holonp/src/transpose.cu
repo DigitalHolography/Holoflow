@@ -78,21 +78,12 @@ Transpose::Transpose(cudaStream_t stream, size_t num_bytes)
     : stream_(stream), num_bytes_(num_bytes) {}
 
 holoflow::core::OpResult Transpose::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = reinterpret_cast<const std::uint8_t *>(ctx.inputs[0].data());
-  auto *odata = reinterpret_cast<std::uint8_t *>(ctx.outputs[0].data());
+  (void)ctx;
+  // auto *idata = reinterpret_cast<const std::uint8_t *>(ctx.inputs[0].data());
+  // auto *odata = reinterpret_cast<std::uint8_t *>(ctx.outputs[0].data());
 
   // 1. Short-circuit: The framework respected our in-place request.
   // This is a true zero-cost view transpose.
-  if (idata == odata) {
-    return holoflow::core::OpResult::Ok;
-  }
-
-  // 2. Fallback: The framework allocated a new buffer.
-  // Because infer() returned permuted strides, the output tensor's metadata
-  // expects the exact same physical memory layout as the input.
-  // A flat byte copy is all that is needed.
-  CUDA_CHECK(cudaMemcpyAsync(odata, idata, num_bytes_, cudaMemcpyDeviceToDevice, stream_));
-
   return holoflow::core::OpResult::Ok;
 }
 
@@ -101,7 +92,6 @@ TransposeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                         const nlohmann::json                  &jsettings) const {
   check(input_descs.size() == 1, "expected 1 input");
   const auto &idesc = input_descs[0];
-  check(idesc.mem_loc == holoflow::core::MemLoc::Device, "device memory only");
 
   const int ndim = static_cast<int>(idesc.shape.size());
   check(ndim > 0 && ndim <= kKernelMaxNDim,

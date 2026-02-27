@@ -353,14 +353,25 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     std::tie(M0_sh_disp) = unpack<1>(batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1}));
     shack_hartmann_display(M0_sh_disp, {});
 
-    auto [xcorr_shift]   = unpack<1>(fftshift(xcorr, {{-2, -1}}));
-    auto [xcorr_scaled]  = unpack<1>(normalize(xcorr_shift, {{-2, -1}, 0.0f, 255.0f}));
-    auto [xcorr_ordered] = unpack<1>(transpose(xcorr_scaled, {{0, 1, 3, 2, 4}}));
-    auto [xcorr_disp]    = unpack<1>(reshape(xcorr_ordered, {{1, h, w}}));
-    std::tie(xcorr_disp) = unpack<1>(convert(xcorr_disp, {Target::U8, Strat::Scaled}));
-    std::tie(xcorr_disp) = unpack<1>(memcpy(xcorr_disp, {Host}));
-    std::tie(xcorr_disp) = unpack<1>(batched_queue(xcorr_disp, {s_.cpu_out_size, 1, 1}));
+    auto [xcorr_shifted]      = unpack<1>(fftshift(xcorr, {{-2, -1}}));
+    auto [xcorr_scaled]       = unpack<1>(normalize(xcorr_shifted, {{-2, -1}, 0.0f, 255.0f}));
+    auto [xcorr_u8]           = unpack<1>(convert(xcorr_scaled, {Target::U8, Strat::Scaled}));
+    auto [xcorr_cpu]          = unpack<1>(memcpy(xcorr_u8, {Host}));
+    auto [xcorr_flattened]    = unpack<1>(transpose(xcorr_cpu, {{0, 1, 3, 2, 4}}));
+    std::tie(xcorr_flattened) = unpack<1>(reshape(xcorr_flattened, {{1, h, w}}));
+    auto [xcorr_disp]         = unpack<1>(batched_queue(xcorr_flattened, {s_.cpu_out_size, 1, 1}));
     shack_hartmann_xcorr_display(xcorr_disp, {});
+
+    auto [zernike_coeffs] = unpack<1>(zernike(xcorr_cpu, {{4, 5, 6}}));
+
+    // auto [xcorr_shift]   = unpack<1>(fftshift(xcorr, {{-2, -1}}));
+    // auto [xcorr_scaled]  = unpack<1>(normalize(xcorr_shift, {{-2, -1}, 0.0f, 255.0f}));
+    // auto [xcorr_ordered] = unpack<1>(transpose(xcorr_scaled, {{0, 1, 3, 2, 4}}));
+    // auto [xcorr_disp]    = unpack<1>(reshape(xcorr_ordered, {{1, h, w}}));
+    // std::tie(xcorr_disp) = unpack<1>(convert(xcorr_disp, {Target::U8, Strat::Scaled}));
+    // std::tie(xcorr_disp) = unpack<1>(memcpy(xcorr_disp, {Host}));
+    // std::tie(xcorr_disp) = unpack<1>(batched_queue(xcorr_disp, {s_.cpu_out_size, 1, 1}));
+    // shack_hartmann_xcorr_display(xcorr_disp, {});
   }
 
   return g_;
@@ -416,6 +427,7 @@ DEFINE_UNARY_SYNC_NODE (fft_shift,                              "fft_shift",    
 DEFINE_UNARY_SYNC_NODE (pct_clip,                               "pct_clip",                            "PctClip",                         holotask::syncs::PctClipSettings)
 DEFINE_UNARY_SYNC_NODE (registration,                           "registration",                        "Registration",                    holotask::syncs::RegistrationSettings)
 DEFINE_UNARY_SYNC_NODE (rotation,                               "rotation",                            "Rotation",                        holotask::syncs::RotationSettings)
+DEFINE_UNARY_SYNC_NODE (zernike,                                "zernike",                             "Zernike",                         holotask::syncs::ZernikeSettings)
 DEFINE_UNARY_SYNC_NODE (xy_raw_display,                         "xy_raw_display",                      "DisplayTensorXYRaw",              tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (xy_processed_display,                   "xy_processed_display",                "DisplayTensorXY",                 tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (xz_processed_display,                   "xz_processed_display",                "DisplayTensorXZ",                 tasks::sinks::DisplayTensorSettings)

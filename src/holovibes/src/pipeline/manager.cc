@@ -85,6 +85,7 @@
 #include "holotask/syncs/registration.hh"
 #include "holotask/syncs/rotation.hh"
 #include "holotask/syncs/stft.hh"
+#include "holotask/syncs/zernike.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
 #include "tasks/sinks/display_tensor.hh"
@@ -154,6 +155,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   // reg_sync<syncs::ReshapeFactory>(registry_, "Reshape");
   reg_sync<syncs::CropFactory>(registry_, "Crop");
   reg_sync<syncs::RotationFactory>(registry_, "Rotation");
+  reg_sync<syncs::ZernikeFactory>(registry_, "Zernike");
 
   reg_sync<ArangeFactory>(registry_, "Arange");
   reg_sync<AsArrayFactory>(registry_, "AsArray");
