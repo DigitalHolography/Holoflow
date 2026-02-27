@@ -353,11 +353,13 @@ holoflow::core::InferResult MeanFactory::infer(std::span<const holoflow::core::T
 
   const auto plan = build_plan(settings, idesc.shape);
 
-  holoflow::core::TDesc odesc = idesc;
-  odesc.shape                 = plan.out_shape;
-  if (idesc.dtype != holoflow::core::DType::CF32) {
-    odesc.dtype = holoflow::core::DType::F32;
-  }
+  // holoflow::core::TDesc odesc = idesc;
+  // odesc.shape                 = plan.out_shape;
+  // if (idesc.dtype != holoflow::core::DType::CF32) {
+  //   odesc.dtype = holoflow::core::DType::F32;
+  // }
+  auto odtype = idesc.dtype == holoflow::core::DType::CF32 ? holoflow::core::DType::CF32 : holoflow::core::DType::F32;
+  holoflow::core::TDesc odesc(plan.out_shape, odtype, idesc.mem_loc);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},

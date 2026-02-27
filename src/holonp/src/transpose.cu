@@ -57,12 +57,12 @@ std::vector<std::int64_t> get_strides_bytes(const holoflow::core::TDesc &desc) {
   std::vector<std::int64_t> strides(desc.shape.size());
   if (!desc.strides.empty()) {
     for (size_t i = 0; i < desc.strides.size(); ++i)
-      strides[i] = static_cast<std::int64_t>(desc.strides[i]);
+      strides.at(i) = static_cast<std::int64_t>(desc.strides.at(i));
   } else {
     size_t acc = holoflow::core::size_of(desc.dtype);
     for (size_t i = desc.shape.size(); i-- > 0;) {
-      strides[i] = static_cast<std::int64_t>(acc);
-      acc *= desc.shape[i];
+      strides.at(i) = static_cast<std::int64_t>(acc);
+      acc *= desc.shape.at(i);
     }
   }
   return strides;

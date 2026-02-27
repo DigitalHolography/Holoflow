@@ -14,6 +14,8 @@
 
 #include "holonp/mul.hh"
 #include <cuComplex.h>
+#include <type_traits>
+#include <utility>
 
 namespace holonp {
 
@@ -22,8 +24,46 @@ void from_json(const nlohmann::json &, MulSettings &) {}
 
 namespace {
 
-template <typename T>
-__global__ void mul_kernel(const T *__restrict__ a, const T *__restrict__ b, T *__restrict__ out,
+// Runtime type promotion logic (NumPy style)
+holoflow::core::DType promote_dtype(holoflow::core::DType a, holoflow::core::DType b) {
+  if (a == b)
+    return a;
+  if (a == holoflow::core::DType::CF32 || b == holoflow::core::DType::CF32)
+    return holoflow::core::DType::CF32;
+  if (a == holoflow::core::DType::F32 || b == holoflow::core::DType::F32)
+    return holoflow::core::DType::F32;
+  if (a == holoflow::core::DType::U16 || b == holoflow::core::DType::U16)
+    return holoflow::core::DType::U16;
+  return holoflow::core::DType::U8;
+}
+
+// Compile-time type promotion for C++ types
+template <typename T1, typename T2> struct Promote {
+  using type = decltype(std::declval<T1>() + std::declval<T2>());
+};
+
+// Specializations for cuFloatComplex (as standard C++ doesn't natively add it to reals)
+template <typename T> struct Promote<cuFloatComplex, T> {
+  using type = cuFloatComplex;
+};
+template <typename T> struct Promote<T, cuFloatComplex> {
+  using type = cuFloatComplex;
+};
+template <> struct Promote<cuFloatComplex, cuFloatComplex> {
+  using type = cuFloatComplex;
+};
+
+// Helper to convert scalar reals to complex for mixed-type complex operations
+template <typename T> __device__ inline cuFloatComplex to_complex(T v) {
+  if constexpr (std::is_same_v<T, cuFloatComplex>) {
+    return v;
+  } else {
+    return make_cuFloatComplex(static_cast<float>(v), 0.0f);
+  }
+}
+
+template <typename TA, typename TB, typename TO>
+__global__ void mul_kernel(const TA *__restrict__ a, const TB *__restrict__ b, TO *__restrict__ out,
                            size_t total_out, size_t ndim, const size_t *__restrict__ out_shape,
                            const size_t *__restrict__ a_strides,
                            const size_t *__restrict__ b_strides) {
@@ -40,10 +80,10 @@ __global__ void mul_kernel(const T *__restrict__ a, const T *__restrict__ b, T *
     b_off += coord * b_strides[i];
   }
 
-  if constexpr (std::is_same_v<T, cuFloatComplex>) {
-    out[idx] = cuCmulf(a[a_off], b[b_off]);
+  if constexpr (std::is_same_v<TO, cuFloatComplex>) {
+    out[idx] = cuCmulf(to_complex(a[a_off]), to_complex(b[b_off]));
   } else {
-    out[idx] = a[a_off] * b[b_off];
+    out[idx] = static_cast<TO>(a[a_off]) * static_cast<TO>(b[b_off]);
   }
 }
 
@@ -72,9 +112,10 @@ std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
 
 } // namespace
 
-Mul::Mul(cudaStream_t stream, holoflow::core::DType dtype, size_t total_out, size_t ndim,
-         DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides)
-    : stream_(stream), dtype_(dtype), total_out_(total_out), ndim_(ndim),
+Mul::Mul(cudaStream_t stream, holoflow::core::DType dtype_a, holoflow::core::DType dtype_b,
+         size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides,
+         DevPtr<size_t> d_b_strides)
+    : stream_(stream), dtype_a_(dtype_a), dtype_b_(dtype_b), total_out_(total_out), ndim_(ndim),
       d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
       d_b_strides_(std::move(d_b_strides)) {}
 
@@ -85,34 +126,60 @@ holoflow::core::OpResult Mul::execute(holoflow::core::SyncCtx &ctx) {
   int block = 256;
   int grid  = static_cast<int>((total_out_ + block - 1) / block);
 
-#define LAUNCH_TYPE(T)                                                                             \
-  mul_kernel<T><<<grid, block, 0, stream_>>>(                                                      \
-      (T *)ctx.inputs[0].data(), (T *)ctx.inputs[1].data(), (T *)ctx.outputs[0].data(),            \
-      total_out_, ndim_, d_out_shape_.get(), d_a_strides_.get(), d_b_strides_.get())
+// Double dispatch macros to handle all cross-type combinations
+#define DISPATCH_MUL(TA, TB)                                                                       \
+  do {                                                                                             \
+    using TO = typename Promote<TA, TB>::type;                                                     \
+    mul_kernel<TA, TB, TO><<<grid, block, 0, stream_>>>(                                           \
+        (const TA *)ctx.inputs[0].data(), (const TB *)ctx.inputs[1].data(),                        \
+        (TO *)ctx.outputs[0].data(), total_out_, ndim_, d_out_shape_.get(), d_a_strides_.get(),    \
+        d_b_strides_.get());                                                                       \
+  } while (0)
 
-  switch (dtype_) {
+#define DISPATCH_B(TA)                                                                             \
+  switch (dtype_b_) {                                                                              \
+  case holoflow::core::DType::F32:                                                                 \
+    DISPATCH_MUL(TA, float);                                                                       \
+    break;                                                                                         \
+  case holoflow::core::DType::CF32:                                                                \
+    DISPATCH_MUL(TA, cuFloatComplex);                                                              \
+    break;                                                                                         \
+  case holoflow::core::DType::U16:                                                                 \
+    DISPATCH_MUL(TA, uint16_t);                                                                    \
+    break;                                                                                         \
+  case holoflow::core::DType::U8:                                                                  \
+    DISPATCH_MUL(TA, uint8_t);                                                                     \
+    break;                                                                                         \
+  default:                                                                                         \
+    std::abort();                                                                                  \
+  }
+
+  switch (dtype_a_) {
   case holoflow::core::DType::F32:
-    LAUNCH_TYPE(float);
+    DISPATCH_B(float);
     break;
   case holoflow::core::DType::CF32:
-    LAUNCH_TYPE(cuFloatComplex);
+    DISPATCH_B(cuFloatComplex);
     break;
   case holoflow::core::DType::U16:
-    LAUNCH_TYPE(uint16_t);
+    DISPATCH_B(uint16_t);
     break;
   case holoflow::core::DType::U8:
-    LAUNCH_TYPE(uint8_t);
+    DISPATCH_B(uint8_t);
     break;
   default:
     std::abort();
   }
+
+#undef DISPATCH_B
+#undef DISPATCH_MUL
+
   return holoflow::core::OpResult::Ok;
 }
 
 holoflow::core::InferResult MulFactory::infer(std::span<const holoflow::core::TDesc> inputs,
                                               const nlohmann::json &) const {
   check(inputs.size() == 2, "expected exactly 2 input tensors");
-  check(inputs[0].dtype == inputs[1].dtype, "input tensor data types must match");
   check(inputs[0].mem_loc == holoflow::core::MemLoc::Device,
         "input tensor 0 must be in device memory");
   check(inputs[1].mem_loc == holoflow::core::MemLoc::Device,
@@ -128,7 +195,8 @@ holoflow::core::InferResult MulFactory::infer(std::span<const holoflow::core::TD
     out_shape[i] = std::max(ad, bd);
   }
 
-  holoflow::core::TDesc o(out_shape, a.dtype, holoflow::core::MemLoc::Device);
+  holoflow::core::DType out_dtype = promote_dtype(a.dtype, b.dtype);
+  holoflow::core::TDesc o(out_shape, out_dtype, holoflow::core::MemLoc::Device);
 
   return holoflow::core::InferResult{
       .input_descs   = {a, b},
@@ -173,7 +241,7 @@ MulFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann
   CUDA_CHECK(cudaMemcpyAsync(d_a_str.get(), a_strides_h.data(), bytes, h2d, ctx.stream));
   CUDA_CHECK(cudaMemcpyAsync(d_b_str.get(), b_strides_h.data(), bytes, h2d, ctx.stream));
 
-  return std::make_unique<Mul>(ctx.stream, inputs[0].dtype, total, ndim, std::move(d_shape),
+  return std::make_unique<Mul>(ctx.stream, a.dtype, b.dtype, total, ndim, std::move(d_shape),
                                std::move(d_a_str), std::move(d_b_str));
 }
 

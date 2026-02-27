@@ -274,7 +274,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   // Shack-Hartmann View Processing (Vectorized Spatial with Cropping)
   // -------------------------------------------------------------------------------------------------
 
-  if (false) {
+  if (true) {
     auto [S]      = unpack<1>(abs(FH_z, {}));
     auto nb_subap = 3ULL;
 
@@ -282,15 +282,15 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // Spatial Cropping
     // -------------------------------------------------------------------------------------------------
 
-    auto               subap_w = S.shape.at(2) / nb_subap;
-    auto               subap_h = S.shape.at(1) / nb_subap;
+    auto               subap_w = S.shape.at(3) / nb_subap;
+    auto               subap_h = S.shape.at(2) / nb_subap;
     auto               valid_w = subap_w * nb_subap;
     auto               valid_h = subap_h * nb_subap;
     holonp::SliceRange crop_y{0, valid_h};
     holonp::SliceRange crop_x{0, valid_w};
 
-    auto [FH_cropped] = unpack<1>(slice(FH, {{{}, crop_y, crop_x}}));
-    auto n_freq       = FH_cropped.shape.at(0);
+    auto [FH_cropped] = unpack<1>(slice(FH, {{{}, {}, crop_y, crop_x}}));
+    auto n_freq       = FH_cropped.shape.at(1);
 
     // -------------------------------------------------------------------------------------------------
     // Fresnel Lens Application
@@ -305,46 +305,52 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // -------------------------------------------------------------------------------------------------
 
     // Reshape to isolate tiles
-    // Shape: (Freq, Grid_Y, Tile_Y, Grid_X, Tile_X)
-    auto [FH_5d] = unpack<1>(reshape(FH_Qin, {{(int64_t)n_freq, (int64_t)nb_subap, (int64_t)subap_h,
-                                               (int64_t)nb_subap, (int64_t)subap_w}}));
+    // Shape: (Batches, Freq, Grid_Y, Tile_Y, Grid_X, Tile_X)
+    logger()->info("FH shape before sub-aperture processing: {}", FH_Qin.shape);
+    logger()->info("FH shape after sub-aperture processing: ({}, {}, {}, {}, {}, {})", o_batches, n_freq, nb_subap, subap_h, nb_subap, subap_w);
+    auto [FH_5d] =
+        unpack<1>(reshape(FH_Qin, {{(int64_t)o_batches, (int64_t)n_freq, (int64_t)nb_subap,
+                                    (int64_t)subap_h, (int64_t)nb_subap, (int64_t)subap_w}}));
 
     // Transpose to group grids
     // Shape: (Freq, Grid_Y, Grid_X, Tile_Y, Tile_X)
-    auto [FH_grouped] = unpack<1>(transpose(FH_5d, {{0, 1, 3, 2, 4}}));
+    auto [FH_grouped] = unpack<1>(transpose(FH_5d, {{0, 1, 2, 4, 3, 5}}));
 
     // 2D FFT on the last two axes (Tile_Y, Tile_X)
     auto [FH_prop] = unpack<1>(fft2(FH_grouped, {{-2, -1}}));
 
+    logger()->info("FH_prop shape: {}", FH_prop.shape);
+
     // Intensity & Averaging
-    auto [M0_blocked]    = unpack<1>(mean_abs(FH_prop, {{0}, true}));
+    auto [M0_blocked]    = unpack<1>(mean_abs(FH_prop, {{1}, false}));
+    std::tie(M0_blocked) = unpack<1>(mean(M0_blocked, {{0}, true}));
     std::tie(M0_blocked) = unpack<1>(fftshift(M0_blocked, {{-2, -1}}));
 
     // -------------------------------------------------------------------------------------------------
     // Averaging across batches
     // -------------------------------------------------------------------------------------------------
 
-    auto acc  = s_.pp_accumulation;
-    auto size = acc * 2;
+    // auto acc  = s_.pp_accumulation;
+    // auto size = acc * 2;
 
-    std::tie(M0_blocked) = unpack<1>(batched_queue(M0_blocked, {size, acc, acc}));
-    std::tie(M0_blocked) = unpack<1>(mean(M0_blocked, {{0}, true}));
+    // std::tie(M0_blocked) = unpack<1>(batched_queue(M0_blocked, {size, acc, acc}));
+    // std::tie(M0_blocked) = unpack<1>(mean(M0_blocked, {{0}, true}));
 
     // -------------------------------------------------------------------------------------------------
     // Cross Correlation with Reference (Center Tile)
     // -------------------------------------------------------------------------------------------------
 
-    int64_t sy_ref = nb_subap / 2;
-    int64_t sx_ref = nb_subap / 2;
-    auto [M0_ref]  = unpack<1>(slice(M0_blocked, {{{}, sy_ref, sx_ref, {}, {}}}));
+    // int64_t sy_ref = nb_subap / 2;
+    // int64_t sx_ref = nb_subap / 2;
+    // auto [M0_ref]  = unpack<1>(slice(M0_blocked, {{{}, sy_ref, sx_ref, {}, {}}}));
 
-    auto [F_ref]       = unpack<1>(rfft2(M0_ref, {{-2, -1}}));
-    auto [F_mov]       = unpack<1>(rfft2(M0_blocked, {{-2, -1}}));
-    auto [F_ref_conj]  = unpack<1>(conj(F_ref, {}));
-    auto [F_xcorr]     = unpack<1>(mul(F_mov, F_ref_conj, {}));
-    auto [F_xcorr_abs] = unpack<1>(abs(F_xcorr, {}));
-    std::tie(F_xcorr)  = unpack<1>(div(F_xcorr, F_xcorr_abs, {}));
-    auto [xcorr]       = unpack<1>(irfft2(F_xcorr, {{-2, -1}}));
+    // auto [F_ref]       = unpack<1>(rfft2(M0_ref, {{-2, -1}}));
+    // auto [F_mov]       = unpack<1>(rfft2(M0_blocked, {{-2, -1}}));
+    // auto [F_ref_conj]  = unpack<1>(conj(F_ref, {}));
+    // auto [F_xcorr]     = unpack<1>(mul(F_mov, F_ref_conj, {}));
+    // auto [F_xcorr_abs] = unpack<1>(abs(F_xcorr, {}));
+    // std::tie(F_xcorr)  = unpack<1>(div(F_xcorr, F_xcorr_abs, {}));
+    // auto [xcorr]       = unpack<1>(irfft2(F_xcorr, {{-2, -1}}));
 
     // -------------------------------------------------------------------------------------------------
     // Output
@@ -369,7 +375,10 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
       return unpack<1>(add(scaled, a_t, {}));
     };
 
-    auto [M0_scaled]     = rescale(M0_blocked, {-2, -1}, 0.0f, 255.0f);
+    // auto [M0_scaled]     = rescale(M0_blocked, {-2, -1}, 0.0f, 255.0f);
+    auto M0_scaled = M0_blocked;
+    logger()->info("M0_blocked shape: {}", M0_blocked.shape);
+    logger()->info("M0_blocked strides: {}", M0_blocked.strides);
     auto [M0_ordered]    = unpack<1>(transpose(M0_scaled, {{0, 1, 3, 2, 4}}));
     auto [M0_sh_disp]    = unpack<1>(reshape(M0_ordered, {{1, h, w}}));
     std::tie(M0_sh_disp) = unpack<1>(convert(M0_sh_disp, {Target::U8, Strat::Scaled}));
@@ -377,14 +386,14 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     std::tie(M0_sh_disp) = unpack<1>(batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1}));
     shack_hartmann_display(M0_sh_disp, {});
 
-    auto [xcorr_shift]   = unpack<1>(fftshift(xcorr, {{-2, -1}}));
-    auto [xcorr_scaled]  = rescale(xcorr_shift, {-2, -1}, 0.0f, 255.0f);
-    auto [xcorr_ordered] = unpack<1>(transpose(xcorr_scaled, {{0, 1, 3, 2, 4}}));
-    auto [xcorr_disp]    = unpack<1>(reshape(xcorr_ordered, {{1, h, w}}));
-    std::tie(xcorr_disp) = unpack<1>(convert(xcorr_disp, {Target::U8, Strat::Scaled}));
-    std::tie(xcorr_disp) = unpack<1>(memcpy(xcorr_disp, {Host}));
-    std::tie(xcorr_disp) = unpack<1>(batched_queue(xcorr_disp, {s_.cpu_out_size, 1, 1}));
-    shack_hartmann_xcorr_display(xcorr_disp, {});
+    // auto [xcorr_shift]   = unpack<1>(fftshift(xcorr, {{-2, -1}}));
+    // auto [xcorr_scaled]  = rescale(xcorr_shift, {-2, -1}, 0.0f, 255.0f);
+    // auto [xcorr_ordered] = unpack<1>(transpose(xcorr_scaled, {{0, 1, 3, 2, 4}}));
+    // auto [xcorr_disp]    = unpack<1>(reshape(xcorr_ordered, {{1, h, w}}));
+    // std::tie(xcorr_disp) = unpack<1>(convert(xcorr_disp, {Target::U8, Strat::Scaled}));
+    // std::tie(xcorr_disp) = unpack<1>(memcpy(xcorr_disp, {Host}));
+    // std::tie(xcorr_disp) = unpack<1>(batched_queue(xcorr_disp, {s_.cpu_out_size, 1, 1}));
+    // shack_hartmann_xcorr_display(xcorr_disp, {});
   }
 
   return g_;

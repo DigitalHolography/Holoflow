@@ -31,7 +31,9 @@ void from_json(const nlohmann::json &j, MulSettings &s);
 
 class Mul : public holoflow::core::ISyncTask {
 public:
-    Mul(cudaStream_t stream, holoflow::core::DType dtype, 
+    Mul(cudaStream_t stream, 
+        holoflow::core::DType dtype_a, 
+        holoflow::core::DType dtype_b,
         size_t total_out, size_t ndim,
         DevPtr<size_t> d_out_shape, 
         DevPtr<size_t> d_a_strides, 
@@ -41,7 +43,8 @@ public:
 
 private:
     cudaStream_t stream_;
-    holoflow::core::DType dtype_;
+    holoflow::core::DType dtype_a_;
+    holoflow::core::DType dtype_b_;
     size_t total_out_;
     size_t ndim_;
 

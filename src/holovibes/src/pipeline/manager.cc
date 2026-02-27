@@ -441,25 +441,25 @@ void Manager::build_and_run() {
   build_graph_spec();
 
   // TODO: Proper log path in app data folder
-  using namespace std::chrono;
+  // using namespace std::chrono;
   constexpr const char *LOG_FOLDER_PATH = "logs";
 
   const std::filesystem::path log_root{LOG_FOLDER_PATH};
   std::error_code             log_ec;
   std::filesystem::create_directories(log_root, log_ec);
 
-  auto json = holoflow::core::to_json(spec_);
-  auto dot  = holoflow::core::to_dot(spec_);
-  auto t    = floor<seconds>(system_clock::now());
-  auto date = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
+  // auto json = holoflow::core::to_json(spec_);
+  // auto dot  = holoflow::core::to_dot(spec_);
+  // auto t    = floor<seconds>(system_clock::now());
+  // auto date = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
 
-  const auto pipeline_path = log_root / std::format("pipeline_{}.dot", date);
-  std::ofstream(pipeline_path) << dot;
-  logger()->info("[Manager::build_and_run] Pipeline graph saved to {}", pipeline_path.string());
-  std::ofstream json_file(log_root / std::format("pipeline_{}.json", date));
-  json_file << json.dump(2);
-  logger()->info("[Manager::build_and_run] Pipeline JSON saved to {}",
-                 (log_root / std::format("pipeline_{}.json", date)).string());
+  // const auto pipeline_path = log_root / std::format("pipeline_{}.dot", date);
+  // std::ofstream(pipeline_path) << dot;
+  // logger()->info("[Manager::build_and_run] Pipeline graph saved to {}", pipeline_path.string());
+  // std::ofstream json_file(log_root / std::format("pipeline_{}.json", date));
+  // json_file << json.dump(2);
+  // logger()->info("[Manager::build_and_run] Pipeline JSON saved to {}",
+  //                (log_root / std::format("pipeline_{}.json", date)).string());
 
   auto           prev_output = std::move(compiler_output_);
   CompilerConfig config;
@@ -475,14 +475,14 @@ void Manager::build_and_run() {
   auto &sections  = compiler_output_->sections;
   auto &resources = compiler_output_->resources;
 
-  auto dot_compile = holoflow::runtime::to_dot(*compiler_output_, registry_);
-  t                = floor<seconds>(system_clock::now());
-  date             = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
+  // auto dot_compile = holoflow::runtime::to_dot(*compiler_output_, registry_);
+  // t                = floor<seconds>(system_clock::now());
+  // date             = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
 
-  const auto compiled_path = log_root / std::format("pipeline_compiled_{}.dot", date);
-  std::ofstream(compiled_path) << dot_compile;
-  logger()->info("[Manager::build_and_run] Compiled pipeline graph saved to {}",
-                 compiled_path.string());
+  // const auto compiled_path = log_root / std::format("pipeline_compiled_{}.dot", date);
+  // std::ofstream(compiled_path) << dot_compile;
+  // logger()->info("[Manager::build_and_run] Compiled pipeline graph saved to {}",
+  //                compiled_path.string());
 
   const auto metrics_interval = metrics_timer_
                                     ? std::chrono::milliseconds{metrics_timer_->interval()}
