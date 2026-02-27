@@ -52,6 +52,7 @@
 #include "holonp/meshgrid.hh"
 #include "holonp/min.hh"
 #include "holonp/mul.hh"
+#include "holonp/normalize.hh"
 #include "holonp/reshape.hh"
 #include "holonp/rfft.hh"
 #include "holonp/rfft2.hh"
@@ -169,6 +170,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<MeanAbsFactory>(registry_, "MeanAbs");
   reg_sync<MinFactory>(registry_, "Min");
   reg_sync<MaxFactory>(registry_, "Max");
+  reg_sync<NormalizeFactory>(registry_, "Normalize");
   reg_sync<ArgmaxFactory>(registry_, "Argmax");
   reg_sync<ConcatenateFactory>(registry_, "Concatenate");
   reg_sync<RFFTFactory>(registry_, "RFFT");

@@ -325,17 +325,17 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     // Cross Correlation with Reference (Center Tile)
     // -------------------------------------------------------------------------------------------------
 
-    // int64_t sy_ref = nb_subap / 2;
-    // int64_t sx_ref = nb_subap / 2;
-    // auto [M0_ref]  = unpack<1>(slice(M0_blocked, {{{}, sy_ref, sx_ref, {}, {}}}));
+    int64_t sy_ref = nb_subap / 2;
+    int64_t sx_ref = nb_subap / 2;
+    auto [M0_ref]  = unpack<1>(slice(M0_blocked, {{{}, sy_ref, sx_ref, {}, {}}}));
 
-    // auto [F_ref]       = unpack<1>(rfft2(M0_ref, {{-2, -1}}));
-    // auto [F_mov]       = unpack<1>(rfft2(M0_blocked, {{-2, -1}}));
-    // auto [F_ref_conj]  = unpack<1>(conj(F_ref, {}));
-    // auto [F_xcorr]     = unpack<1>(mul(F_mov, F_ref_conj, {}));
-    // auto [F_xcorr_abs] = unpack<1>(abs(F_xcorr, {}));
-    // std::tie(F_xcorr)  = unpack<1>(div(F_xcorr, F_xcorr_abs, {}));
-    // auto [xcorr]       = unpack<1>(irfft2(F_xcorr, {{-2, -1}}));
+    auto [F_ref]       = unpack<1>(rfft2(M0_ref, {{-2, -1}}));
+    auto [F_mov]       = unpack<1>(rfft2(M0_blocked, {{-2, -1}}));
+    auto [F_ref_conj]  = unpack<1>(conj(F_ref, {}));
+    auto [F_xcorr]     = unpack<1>(mul(F_mov, F_ref_conj, {}));
+    auto [F_xcorr_abs] = unpack<1>(abs(F_xcorr, {}));
+    std::tie(F_xcorr)  = unpack<1>(div(F_xcorr, F_xcorr_abs, {}));
+    auto [xcorr]       = unpack<1>(irfft2(F_xcorr, {{-2, -1}}));
 
     // -------------------------------------------------------------------------------------------------
     // Output
@@ -344,26 +344,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     int64_t h = (int64_t)valid_h;
     int64_t w = (int64_t)valid_w;
 
-    auto rescale = [&](const TDesc &input, const std::vector<int> &axis, float a, float b) {
-      auto [a_t]       = unpack<1>(asarray({a}));
-      auto [b_t]       = unpack<1>(asarray({b}));
-      auto [mn]        = unpack<1>(min(input, {axis, true}));
-      auto [mx]        = unpack<1>(max(input, {axis, true}));
-      auto [b_m_a]     = unpack<1>(sub(b_t, a_t, {}));
-      auto [denom]     = unpack<1>(sub(mx, mn, {}));
-      auto [zero]      = unpack<1>(asarray({0.0f}));
-      auto [mask_zero] = unpack<1>(equal(denom, zero, {}));
-      auto [scale]     = unpack<1>(div(b_m_a, denom, {}));
-      std::tie(scale)  = unpack<1>(where(mask_zero, zero, scale, {}));
-      auto [x_m_mn]    = unpack<1>(sub(input, mn, {}));
-      auto [scaled]    = unpack<1>(mul(x_m_mn, scale, {}));
-      return unpack<1>(add(scaled, a_t, {}));
-    };
-
-    // auto [M0_scaled]     = rescale(M0_blocked, {-2, -1}, 0.0f, 255.0f);
-    auto M0_scaled = M0_blocked;
-    logger()->info("M0_blocked shape: {}", M0_blocked.shape);
-    logger()->info("M0_blocked strides: {}", M0_blocked.strides);
+    auto [M0_scaled]     = unpack<1>(normalize(M0_blocked, {{-2, -1}, 0.0f, 255.0f}));
     auto [M0_ordered]    = unpack<1>(transpose(M0_scaled, {{0, 1, 3, 2, 4}}));
     auto [M0_sh_disp]    = unpack<1>(reshape(M0_ordered, {{1, h, w}}));
     std::tie(M0_sh_disp) = unpack<1>(convert(M0_sh_disp, {Target::U8, Strat::Scaled}));
@@ -371,14 +352,14 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     std::tie(M0_sh_disp) = unpack<1>(batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1}));
     shack_hartmann_display(M0_sh_disp, {});
 
-    // auto [xcorr_shift]   = unpack<1>(fftshift(xcorr, {{-2, -1}}));
-    // auto [xcorr_scaled]  = rescale(xcorr_shift, {-2, -1}, 0.0f, 255.0f);
-    // auto [xcorr_ordered] = unpack<1>(transpose(xcorr_scaled, {{0, 1, 3, 2, 4}}));
-    // auto [xcorr_disp]    = unpack<1>(reshape(xcorr_ordered, {{1, h, w}}));
-    // std::tie(xcorr_disp) = unpack<1>(convert(xcorr_disp, {Target::U8, Strat::Scaled}));
-    // std::tie(xcorr_disp) = unpack<1>(memcpy(xcorr_disp, {Host}));
-    // std::tie(xcorr_disp) = unpack<1>(batched_queue(xcorr_disp, {s_.cpu_out_size, 1, 1}));
-    // shack_hartmann_xcorr_display(xcorr_disp, {});
+    auto [xcorr_shift]   = unpack<1>(fftshift(xcorr, {{-2, -1}}));
+    auto [xcorr_scaled]  = unpack<1>(normalize(xcorr_shift, {{-2, -1}, 0.0f, 255.0f}));
+    auto [xcorr_ordered] = unpack<1>(transpose(xcorr_scaled, {{0, 1, 3, 2, 4}}));
+    auto [xcorr_disp]    = unpack<1>(reshape(xcorr_ordered, {{1, h, w}}));
+    std::tie(xcorr_disp) = unpack<1>(convert(xcorr_disp, {Target::U8, Strat::Scaled}));
+    std::tie(xcorr_disp) = unpack<1>(memcpy(xcorr_disp, {Host}));
+    std::tie(xcorr_disp) = unpack<1>(batched_queue(xcorr_disp, {s_.cpu_out_size, 1, 1}));
+    shack_hartmann_xcorr_display(xcorr_disp, {});
   }
 
   return g_;
@@ -453,6 +434,7 @@ DEFINE_UNARY_SYNC_NODE (mean,                                   "mean",         
 DEFINE_UNARY_SYNC_NODE (mean_abs,                               "mean_abs",                            "MeanAbs",                         holonp::MeanAbsSettings)
 DEFINE_UNARY_SYNC_NODE (min,                                    "min",                                 "Min",                             holonp::MinSettings)
 DEFINE_UNARY_SYNC_NODE (max,                                    "max",                                 "Max",                             holonp::MaxSettings)
+DEFINE_UNARY_SYNC_NODE (normalize,                              "normalize",                           "Normalize",                       holonp::NormalizeSettings)
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                          "batch_queue",                         "BatchQueue",                      holotask::asyncs::BatchQueueSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                              "slide_avg",                           "SlidingAverage",                  holotask::asyncs::SlidingAverageSettings)
 // clang-format on

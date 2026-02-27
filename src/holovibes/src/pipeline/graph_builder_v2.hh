@@ -47,6 +47,7 @@
 #include "holonp/meshgrid.hh"
 #include "holonp/min.hh"
 #include "holonp/mul.hh"
+#include "holonp/normalize.hh"
 #include "holonp/reshape.hh"
 #include "holonp/rfft.hh"
 #include "holonp/rfft2.hh"
@@ -220,6 +221,7 @@ private:
   std::vector<TDesc> mean_abs(const TDesc &X, holonp::MeanAbsSettings s);
   std::vector<TDesc> min(const TDesc &X, holonp::MinSettings s);
   std::vector<TDesc> max(const TDesc &X, holonp::MaxSettings s);
+  std::vector<TDesc> normalize(const TDesc &X, holonp::NormalizeSettings s);
   std::vector<TDesc> reshape(const TDesc &X, holonp::ReshapeSettings s);
   std::vector<TDesc> conj(const TDesc &X, holonp::ConjSettings s);
   // clang-format on
