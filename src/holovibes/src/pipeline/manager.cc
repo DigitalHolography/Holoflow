@@ -36,9 +36,11 @@
 #include "holonp/arange.hh"
 #include "holonp/argmax.hh"
 #include "holonp/asarray.hh"
+#include "holonp/ascontiguousarray.hh"
 #include "holonp/assign.hh"
 #include "holonp/concatenate.hh"
 #include "holonp/conj.hh"
+#include "holonp/copy.hh"
 #include "holonp/div.hh"
 #include "holonp/empty.hh"
 #include "holonp/equal.hh"
@@ -155,6 +157,8 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
 
   reg_sync<ArangeFactory>(registry_, "Arange");
   reg_sync<AsArrayFactory>(registry_, "AsArray");
+  reg_sync<AsContiguousArrayFactory>(registry_, "AsContiguousArray");
+  reg_sync<CopyFactory>(registry_, "Copy");
   reg_sync<EmptyFactory>(registry_, "Empty");
   reg_sync<ZerosFactory>(registry_, "Zeros");
   reg_sync<MeshgridFactory>(registry_, "Meshgrid");

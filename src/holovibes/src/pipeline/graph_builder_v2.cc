@@ -113,6 +113,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     if (!s_.view_3d_cuts) {
       holonp::SliceRange freq_slice{s_.time_z_begin, s_.time_z_end};
       std::tie(FH) = unpack<1>(slice(FH, {{freq_slice, {}, {}}}));
+      std::tie(FH) = unpack<1>(copy(FH, {}));
     }
   }
 
@@ -395,6 +396,8 @@ DEFINE_SOURCE_SYNC_NODE(holofile_read,                          "source",       
 DEFINE_SOURCE_SYNC_NODE(empty,                                 "empty",                               "Empty",                            holonp::EmptySettings)
 DEFINE_SOURCE_SYNC_NODE(zeros,                                 "zeros",                               "Zeros",                            holonp::ZerosSettings)
 DEFINE_SOURCE_SYNC_NODE(asarray,                               "asarray",                             "AsArray",                          holonp::AsArraySettings)
+DEFINE_UNARY_SYNC_NODE (ascontiguousarray,                     "ascontiguousarray",                  "AsContiguousArray",                holonp::AsContiguousArraySettings)
+DEFINE_UNARY_SYNC_NODE (copy,                                  "copy",                                "Copy",                             holonp::CopySettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "ametek_s710_euresys_coaxlink_octo",   "AmetekS710EuresysCoaxlinkOcto",   holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "ametek_s711_euresys_coaxlink_qsfp_+", "AmetekS711EuresysCoaxlinkQSFP+",  holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                      holotask::sources::FresnelQinSettings)

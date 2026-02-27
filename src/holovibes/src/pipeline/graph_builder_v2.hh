@@ -31,9 +31,11 @@
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
 #include "holonp/asarray.hh"
+#include "holonp/ascontiguousarray.hh"
 #include "holonp/assign.hh"
 #include "holonp/concatenate.hh"
 #include "holonp/conj.hh"
+#include "holonp/copy.hh"
 #include "holonp/div.hh"
 #include "holonp/empty.hh"
 #include "holonp/equal.hh"
@@ -173,6 +175,8 @@ private:
   std::vector<TDesc> empty(holonp::EmptySettings s);
   std::vector<TDesc> zeros(holonp::ZerosSettings s);
   std::vector<TDesc> asarray(holonp::AsArraySettings s);
+  std::vector<TDesc> ascontiguousarray(const TDesc &X, holonp::AsContiguousArraySettings s);
+  std::vector<TDesc> copy(const TDesc &X, holonp::CopySettings s);
   std::vector<TDesc> memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);
   std::vector<TDesc> batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
   std::vector<TDesc> convert(const TDesc &X, holotask::syncs::ConversionSettings s);

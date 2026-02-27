@@ -656,14 +656,15 @@ bool MainWindow::validate_inputs() {
 
   bool all_good = true;
 
-  int  batch_size    = render_widget_->get_batch_size();
-  int  time_stride   = render_widget_->get_time_stride();
-  int  time_window   = render_widget_->get_time_window();
-  int  p_frame_start = view_widget_->get_z_origin();
-  int  p_frame_width = view_widget_->get_z_width();
-  int  start_frame   = import_widget_->get_start_index();
-  int  end_frame     = import_widget_->get_end_index();
-  bool is_cam_mode   = import_widget_->is_camera_mode();
+  int  batch_size     = render_widget_->get_batch_size();
+  int  time_stride    = render_widget_->get_time_stride();
+  int  time_window    = render_widget_->get_time_window();
+  int  p_frame_start  = view_widget_->get_z_origin();
+  int  p_frame_width  = view_widget_->get_z_width();
+  int  start_frame    = import_widget_->get_start_index();
+  int  end_frame      = import_widget_->get_end_index();
+  bool is_cam_mode    = import_widget_->is_camera_mode();
+  auto time_transform = render_widget_->get_time_transform();
 
   // time_window divides time_stride
   if (time_window <= 0 || (time_stride % time_window != 0)) {
@@ -672,12 +673,32 @@ bool MainWindow::validate_inputs() {
     render_widget_->mark_time_stride_invalid();
   }
 
+  if (time_transform == "Principal Component Analysis") {
+    if (p_frame_start + p_frame_width > time_window) {
+      all_good = false;
+      render_widget_->mark_time_window_invalid();
+      view_widget_->mark_z_invalid();
+      view_widget_->mark_z_width_invalid();
+    }
+  }
+
+  else if (time_transform == "Short Time Fourier") {
+    if (p_frame_start + p_frame_width > time_window / 2) {
+      all_good = false;
+      render_widget_->mark_time_window_invalid();
+      view_widget_->mark_z_invalid();
+      view_widget_->mark_z_width_invalid();
+    }
+  }
+
   // p_frame_start + p_frame_width <= time_window
-  if (!(p_frame_start + p_frame_width <= time_window)) {
-    all_good = false;
-    render_widget_->mark_time_window_invalid();
-    view_widget_->mark_z_invalid();
-    view_widget_->mark_z_width_invalid();
+  else {
+    if (!(p_frame_start + p_frame_width <= time_window)) {
+      all_good = false;
+      render_widget_->mark_time_window_invalid();
+      view_widget_->mark_z_invalid();
+      view_widget_->mark_z_width_invalid();
+    }
   }
 
   // end_frame > start_frame
@@ -1027,7 +1048,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   }
 
   // --- View Settings ---
-  { view_widget_->set_cuts_3d_enabled(s.view_3d_cuts); }
+  {
+    view_widget_->set_cuts_3d_enabled(s.view_3d_cuts);
+  }
 
   // --- Post-processing Settings ---
   {
