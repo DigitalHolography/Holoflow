@@ -116,13 +116,15 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
                  ui::TensorDisplayWidget *raw_spectrum_widget,
                  ui::TensorDisplayWidget *processed_spectrum_widget,
                  ui::TensorDisplayWidget *shack_hartmann_widget,
-                 ui::TensorDisplayWidget *shack_hartmann_xcorr_widget)
+                 ui::TensorDisplayWidget *shack_hartmann_xcorr_widget,
+                 ui::TensorDisplayWidget *zernike_phase_widget)
     : xy_processed_widget_(xy_processed_widget), xz_processed_widget_(xz_processed_widget),
       yz_processed_widget_(yz_processed_widget), xy_raw_widget_(xy_raw_widget),
       raw_spectrum_widget_(raw_spectrum_widget),
       processed_spectrum_widget_(processed_spectrum_widget),
       shack_hartmann_widget_(shack_hartmann_widget),
-      shack_hartmann_xcorr_widget_(shack_hartmann_xcorr_widget) {
+      shack_hartmann_xcorr_widget_(shack_hartmann_xcorr_widget),
+      zernike_phase_widget_(zernike_phase_widget) {
   // clang-format off
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
@@ -134,6 +136,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum", processed_spectrum_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann", shack_hartmann_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase", zernike_phase_widget_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");

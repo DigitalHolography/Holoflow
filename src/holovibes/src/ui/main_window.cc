@@ -143,6 +143,7 @@ void MainWindow::initialize_display_widgets() {
   processed_spectrum_widget_   = new TensorDisplayWidget(nullptr);
   shack_hartmann_widget_       = new TensorDisplayWidget(nullptr);
   shack_hartmann_xcorr_widget_ = new TensorDisplayWidget(nullptr);
+  zernike_phase_widget_        = new TensorDisplayWidget(nullptr);
 
   xy_raw_widget_->setWindowTitle("XY-Raw");
   xy_processed_widget_->setWindowTitle("XY-Processed");
@@ -152,6 +153,7 @@ void MainWindow::initialize_display_widgets() {
   processed_spectrum_widget_->setWindowTitle("Processed Spectrum");
   shack_hartmann_widget_->setWindowTitle("Shack Hartmann");
   shack_hartmann_xcorr_widget_->setWindowTitle("Shack Hartmann XCorr");
+  zernike_phase_widget_->setWindowTitle("Zernike Phase");
 
   connect(view_widget_, &ViewWidget::cuts_3d_toggled, this, [this](bool checked) {
     if (checked) {
@@ -207,7 +209,7 @@ void MainWindow::initialize_pipeline_manager() {
   pipeline_manager_ =
       new pipeline::Manager(xy_processed_widget_, xz_processed_widget_, yz_processed_widget_,
                             xy_raw_widget_, raw_spectrum_widget_, processed_spectrum_widget_,
-                            shack_hartmann_widget_, shack_hartmann_xcorr_widget_);
+                            shack_hartmann_widget_, shack_hartmann_xcorr_widget_, zernike_phase_widget_);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);
   pipeline_manager_thread_->start();
@@ -377,10 +379,12 @@ void MainWindow::on_start_pipeline_success() {
   xy_raw_widget_->set_fixed_aspect(guess_source_dims());
   shack_hartmann_widget_->set_fixed_aspect(dims);
   shack_hartmann_xcorr_widget_->set_fixed_aspect(dims);
+  zernike_phase_widget_->set_fixed_aspect(dims);
 
   xy_processed_widget_->show();
   shack_hartmann_widget_->show();
   shack_hartmann_xcorr_widget_->show();
+  zernike_phase_widget_->show();
 
   if (view_widget_->is_raw_view_enabled()) {
     xy_raw_widget_->show();
@@ -425,6 +429,7 @@ void MainWindow::on_stop_pipeline_success() {
   processed_spectrum_widget_->hide();
   shack_hartmann_widget_->hide();
   shack_hartmann_xcorr_widget_->hide();
+  zernike_phase_widget_->hide();
 }
 
 void MainWindow::on_stop_pipeline_failure(const QString &error) {

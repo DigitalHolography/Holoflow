@@ -41,7 +41,8 @@ public:
           ui::TensorDisplayWidget *raw_spectrum_widget,
           ui::TensorDisplayWidget *processed_spectrum_widget,
           ui::TensorDisplayWidget *shack_hartmann_widget,
-          ui::TensorDisplayWidget *shack_hartmann_xcorr_widget);
+          ui::TensorDisplayWidget *shack_hartmann_xcorr_widget,
+          ui::TensorDisplayWidget *zernike_phase_widget);
 
   ~Manager() override = default;
 
@@ -91,6 +92,7 @@ private:
   ui::TensorDisplayWidget *processed_spectrum_widget_;
   ui::TensorDisplayWidget *shack_hartmann_widget_;
   ui::TensorDisplayWidget *shack_hartmann_xcorr_widget_;
+  ui::TensorDisplayWidget *zernike_phase_widget_;
 
   // Settings
   Settings s_;

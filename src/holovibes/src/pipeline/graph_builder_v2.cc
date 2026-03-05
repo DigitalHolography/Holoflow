@@ -425,6 +425,7 @@ DEFINE_UNARY_SYNC_NODE (xz_processed_display,                   "xz_processed_di
 DEFINE_UNARY_SYNC_NODE (yz_processed_display,                   "yz_processed_display",                "DisplayTensorYZ",                 tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (shack_hartmann_display,                 "shack_hartmann_display",              "DisplayTensorShackHartmann",      tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (shack_hartmann_xcorr_display,           "shack_hartmann_xcorr_display",        "DisplayTensorShackHartmannXcorr", tasks::sinks::DisplayTensorSettings)
+DEFINE_UNARY_SYNC_NODE (zernike_phase_display,                  "zernike_phase_display",               "DisplayTensorZernikePhase",       tasks::sinks::DisplayTensorSettings)
 DEFINE_NARY_SYNC_NODE  (concatenate,                            "concatenate",                         "Concatenate",                     holonp::ConcatenateSettings)
 DEFINE_UNARY_SYNC_NODE (transpose,                              "transpose",                           "Transpose",                       holonp::TransposeSettings)
 DEFINE_UNARY_SYNC_NODE (conj,                                   "conj",                                "Conj",                            holonp::ConjSettings)
