@@ -79,6 +79,7 @@
 #include "holotask/syncs/registration.hh"
 #include "holotask/syncs/rotation.hh"
 #include "holotask/syncs/stft.hh"
+#include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike.hh"
 #include "holotask/syncs/zernike_phase.hh"
 #include "pipeline/settings.hh"
@@ -205,6 +206,7 @@ private:
   std::vector<TDesc> pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);
   std::vector<TDesc> registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
   std::vector<TDesc> rotation(const TDesc &X, holotask::syncs::RotationSettings s);
+  std::vector<TDesc> wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
   std::vector<TDesc> zernike(const TDesc &X, holotask::syncs::ZernikeSettings s);
   std::vector<TDesc> zernike_phase(const TDesc &X, holotask::syncs::ZernikePhaseSettings s);
   std::vector<TDesc> holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);

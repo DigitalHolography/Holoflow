@@ -364,12 +364,14 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
     int ny = static_cast<int>(FH.shape.at(2));
     int nx = static_cast<int>(FH.shape.at(3));
-    auto [zernike_coeffs] = unpack<1>(zernike(xcorr_cpu, {{4, 5, 6}}));
-    auto [phase]  = unpack<1>(zernike_phase(zernike_coeffs, {{4, 5, 6}, ny, nx}));
+    auto [zernike_coeffs] = unpack<1>(zernike(xcorr_cpu, {{4}, s_.spacial_lambda, s_.spacial_pixel_size, s_.spacial_pixel_size, s_.spacial_z}));
+    auto [phase]  = unpack<1>(zernike_phase(zernike_coeffs, {{4}, ny, nx}));
     std::tie(phase) = unpack<1>(memcpy(phase, {Device}));
-    std::tie(phase) = unpack<1>(normalize(phase, {{-2, -1}, 0.0f, 255.0f}));
-    std::tie(phase) = unpack<1>(convert(phase, {Target::U8, Strat::Scaled}));
+    std::tie(phase) = unpack<1>(wrap2pi(phase, {}));
+    // std::tie(phase) = unpack<1>(normalize(phase, {{-2, -1}, 0.0f, 255.0f}));
+    // std::tie(phase) = unpack<1>(convert(phase, {Target::U8, Strat::Scaled}));
     std::tie(phase) = unpack<1>(memcpy(phase, {Host}));
+    std::tie(phase) = unpack<1>(reshape(phase, {{1, ny, nx}}));
     std::tie(phase) = unpack<1>(batched_queue(phase, {s_.cpu_out_size, 1, 1}));
     zernike_phase_display(phase, {});
   }
@@ -427,6 +429,7 @@ DEFINE_UNARY_SYNC_NODE (fft_shift,                              "fft_shift",    
 DEFINE_UNARY_SYNC_NODE (pct_clip,                               "pct_clip",                            "PctClip",                         holotask::syncs::PctClipSettings)
 DEFINE_UNARY_SYNC_NODE (registration,                           "registration",                        "Registration",                    holotask::syncs::RegistrationSettings)
 DEFINE_UNARY_SYNC_NODE (rotation,                               "rotation",                            "Rotation",                        holotask::syncs::RotationSettings)
+DEFINE_UNARY_SYNC_NODE (wrap2pi,                                "wrap2pi",                             "Wrap2Pi",                         holotask::syncs::Wrap2PiSettings)
 DEFINE_UNARY_SYNC_NODE (zernike,                                "zernike",                             "Zernike",                         holotask::syncs::ZernikeSettings)
 DEFINE_UNARY_SYNC_NODE (zernike_phase,                          "zernike_phase",                       "ZernikePhase",                    holotask::syncs::ZernikePhaseSettings)
 DEFINE_UNARY_SYNC_NODE (xy_raw_display,                         "xy_raw_display",                      "DisplayTensorXYRaw",              tasks::sinks::DisplayTensorSettings)

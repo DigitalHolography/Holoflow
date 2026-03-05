@@ -63,7 +63,7 @@ holoflow::core::OpResult DisplayTensorTask::execute(holoflow::core::SyncCtx &ctx
   auto delta_ms = static_cast<int>(1000 / settings_.refresh_rate_hz);
   next_refresh_ = now + std::chrono::milliseconds(delta_ms);
 
-  auto  &input     = ctx.inputs[0];
+  auto        &input     = ctx.inputs[0];
   const auto  &desc      = input.desc;
   const size_t height    = desc.rank() == 2 ? desc.shape[0] : desc.shape[1];
   const size_t width     = desc.rank() == 2 ? desc.shape[1] : desc.shape[2];
@@ -73,6 +73,14 @@ holoflow::core::OpResult DisplayTensorTask::execute(holoflow::core::SyncCtx &ctx
   switch (desc.dtype) {
   case holoflow::core::DType::U16: {
     byte_count = 2;
+  } break;
+
+  case holoflow::core::DType::U8: {
+    byte_count = 1;
+  } break;
+
+  case holoflow::core::DType::F32: {
+    byte_count = 4;
   } break;
 
   default:
@@ -140,8 +148,9 @@ DisplayTensorFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   const auto &desc         = input_descs[0];
   const bool  is_2d_tensor = desc.rank() == 2 || (desc.rank() == 3 && desc.shape[0] == 1);
   check(is_2d_tensor, "DisplayTensorFactory supports only 2D tensors");
-  check(desc.dtype == holoflow::core::DType::U8 || desc.dtype == holoflow::core::DType::U16,
-        "DisplayTensorFactory supports only u8 or u16 tensors");
+  check(desc.dtype == holoflow::core::DType::U8 || desc.dtype == holoflow::core::DType::U16 ||
+            desc.dtype == holoflow::core::DType::F32,
+        "DisplayTensorFactory supports only u8, u16, or f32 tensors");
 
   // Success
   return holoflow::core::InferResult{

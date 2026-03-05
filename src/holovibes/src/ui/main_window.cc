@@ -155,6 +155,9 @@ void MainWindow::initialize_display_widgets() {
   shack_hartmann_xcorr_widget_->setWindowTitle("Shack Hartmann XCorr");
   zernike_phase_widget_->setWindowTitle("Zernike Phase");
 
+  zernike_phase_widget_->set_colormap(Colormap::Twilight);
+  zernike_phase_widget_->set_value_range(0.0f, 2 * static_cast<float>(M_PI));
+
   connect(view_widget_, &ViewWidget::cuts_3d_toggled, this, [this](bool checked) {
     if (checked) {
       xz_processed_widget_->show();
@@ -379,7 +382,7 @@ void MainWindow::on_start_pipeline_success() {
   xy_raw_widget_->set_fixed_aspect(guess_source_dims());
   shack_hartmann_widget_->set_fixed_aspect(dims);
   shack_hartmann_xcorr_widget_->set_fixed_aspect(dims);
-  zernike_phase_widget_->set_fixed_aspect(dims);
+  zernike_phase_widget_->set_fixed_aspect(guess_source_dims());
 
   xy_processed_widget_->show();
   shack_hartmann_widget_->show();

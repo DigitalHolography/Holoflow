@@ -23,6 +23,7 @@
 #include <QStyleOption>
 #include <cmath>
 #include <cstring>
+#include <vector>
 
 #include "bug.hh"
 #include "logger.hh"
@@ -36,11 +37,27 @@ out vec2 uv;
 void main(){ uv=inUV; gl_Position=vec4(inPos,0.0,1.0); })";
 
 static const char *kFS = R"(#version 330 core
-in vec2 uv; out vec4 frag;
+in vec2 uv; 
+out vec4 frag;
 uniform sampler2D tex;
+uniform sampler2D colormap_tex;
+uniform int use_colormap;
+uniform float vmin;
+uniform float vmax;
+
 void main(){
-  float g = texture(tex, uv).r;
-  frag = vec4(g,g,g,1.0);
+  float raw_val = texture(tex, uv).r;
+  
+  // Normalize the value to 0.0 - 1.0 based on bounds
+  float g = clamp((raw_val - vmin) / (vmax - vmin), 0.0, 1.0);
+
+  if (use_colormap == 1) {
+    // Sample the colormap lookup texture
+    frag = texture(colormap_tex, vec2(g, 0.5));
+  } else {
+    // Standard Grayscale
+    frag = vec4(g, g, g, 1.0);
+  }
 })";
 
 static const char *kReticleVS = R"(#version 330 core
@@ -68,11 +85,6 @@ void TensorDisplayWidget::set_fixed_aspect(std::optional<QSize> size) {
     HOLOVIBES_CHECK(ar > 0.f);
     int h = height();
     int w = int(std::round(h * ar));
-    // if (w > h) {
-    //   h = int(std::round(w / ar));
-    // } else {
-    //   w = int(std::round(h * ar));
-    // }
     resize(w, h);
   }
 }
@@ -108,6 +120,19 @@ void TensorDisplayWidget::closeEvent(QCloseEvent *event) {
   this->hide();
 }
 
+void TensorDisplayWidget::set_colormap(Colormap cmap) {
+  if (cmap_ != cmap) {
+    cmap_ = cmap;
+    update();
+  }
+}
+
+void TensorDisplayWidget::set_value_range(float vmin, float vmax) {
+  vmin_ = vmin;
+  vmax_ = vmax;
+  update();
+}
+
 void TensorDisplayWidget::initializeGL() {
   initializeOpenGLFunctions();
 
@@ -130,35 +155,79 @@ void TensorDisplayWidget::initializeGL() {
   sp->addShaderFromSourceCode(QOpenGLShader::Vertex, kVS);
   sp->addShaderFromSourceCode(QOpenGLShader::Fragment, kFS);
   sp->link();
-  prog_ = sp->programId(); // Qt owns the object; we keep the raw id.
+  prog_ = sp->programId();
+
+  tex_loc_      = glGetUniformLocation(prog_, "tex");
+  cmap_tex_loc_ = glGetUniformLocation(prog_, "colormap_tex");
+  use_cmap_loc_ = glGetUniformLocation(prog_, "use_colormap");
+  vmin_loc_     = glGetUniformLocation(prog_, "vmin");
+  vmax_loc_     = glGetUniformLocation(prog_, "vmax");
 
   glGenTextures(1, &tex_);
   glBindTexture(GL_TEXTURE_2D, tex_);
+  // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+  // glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+  // Swizzle RED to RGB for single-channel base mapping
+  GLint swz[4] = {GL_RED, GL_RED, GL_RED, GL_ONE};
+  glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swz);
+
+  initializeColormaps();
+  initializeReticle();
+}
+
+void TensorDisplayWidget::initializeColormaps() {
+  // Generate a 1D mapping texture for the Twilight Colormap (size 256x1)
+  struct ColorStop {
+    float pos, r, g, b;
+  };
+  const ColorStop stops[]   = {{0.00f, 0.886f, 0.851f, 0.886f}, {0.15f, 0.584f, 0.682f, 0.843f},
+                               {0.30f, 0.341f, 0.443f, 0.690f}, {0.50f, 0.118f, 0.125f, 0.216f},
+                               {0.70f, 0.549f, 0.251f, 0.349f}, {0.85f, 0.784f, 0.522f, 0.584f},
+                               {1.00f, 0.886f, 0.851f, 0.886f}};
+  const int       num_stops = sizeof(stops) / sizeof(ColorStop);
+
+  unsigned char cmap_data[256 * 3];
+  for (int i = 0; i < 256; ++i) {
+    float t   = i / 255.0f;
+    int   idx = 0;
+    while (idx < num_stops - 2 && t > stops[idx + 1].pos)
+      idx++;
+
+    float t0 = stops[idx].pos;
+    float t1 = stops[idx + 1].pos;
+    float f  = (t - t0) / (t1 - t0);
+
+    cmap_data[i * 3 + 0] =
+        static_cast<unsigned char>(255.0f * (stops[idx].r + f * (stops[idx + 1].r - stops[idx].r)));
+    cmap_data[i * 3 + 1] =
+        static_cast<unsigned char>(255.0f * (stops[idx].g + f * (stops[idx + 1].g - stops[idx].g)));
+    cmap_data[i * 3 + 2] =
+        static_cast<unsigned char>(255.0f * (stops[idx].b + f * (stops[idx + 1].b - stops[idx].b)));
+  }
+
+  glGenTextures(1, &colormap_tex_);
+  glBindTexture(GL_TEXTURE_2D, colormap_tex_);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 256, 1, 0, GL_RGB, GL_UNSIGNED_BYTE, cmap_data);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-  // Swizzle RED to RGB for GL_R8 -> grayscale
-  GLint swz[4] = {GL_RED, GL_RED, GL_RED, GL_ONE};
-  glTexParameteriv(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_RGBA, swz);
-
-  // Initialize reticle rendering
-  initializeReticle();
 }
 
 void TensorDisplayWidget::initializeReticle() {
-  // Create shader program for reticle
   reticle_prog_ = glCreateProgram();
 
-  // Vertex shader
   GLuint      vs        = glCreateShader(GL_VERTEX_SHADER);
   const char *vs_source = kReticleVS;
   glShaderSource(vs, 1, &vs_source, nullptr);
   glCompileShader(vs);
   glAttachShader(reticle_prog_, vs);
 
-  // Fragment shader
   GLuint      fs        = glCreateShader(GL_FRAGMENT_SHADER);
   const char *fs_source = kReticleFS;
   glShaderSource(fs, 1, &fs_source, nullptr);
@@ -171,35 +240,47 @@ void TensorDisplayWidget::initializeReticle() {
 
   reticle_color_loc_ = glGetUniformLocation(reticle_prog_, "color");
 
-  // Create VAO and VBO for reticle
   glGenVertexArrays(1, &reticle_vao_);
   glGenBuffers(1, &reticle_vbo_);
 }
 
-void TensorDisplayWidget::ensureTexture(int w, int h) {
-  if (w == img_w_ && h == img_h_)
+void TensorDisplayWidget::ensureTexture(int w, int h, holoflow::core::DType dtype) {
+  if (w == img_w_ && h == img_h_ && dtype == current_dtype_)
     return;
-  img_w_ = w;
-  img_h_ = h;
+
+  img_w_         = w;
+  img_h_         = h;
+  current_dtype_ = dtype;
+
+  GLint  internal_format = GL_R8;
+  GLenum type            = GL_UNSIGNED_BYTE;
+
+  if (dtype == holoflow::core::DType::U16) {
+    internal_format = GL_R16;
+    type            = GL_UNSIGNED_SHORT;
+  } else if (dtype == holoflow::core::DType::F32) { // Assuming F32 exists
+    internal_format = GL_R32F;
+    type            = GL_FLOAT;
+  }
+
   glBindTexture(GL_TEXTURE_2D, tex_);
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, nullptr);
+  glTexImage2D(GL_TEXTURE_2D, 0, internal_format, w, h, 0, GL_RED, type, nullptr);
+
   updateLetterboxViewport();
 }
 
 void TensorDisplayWidget::updateTexture(const void *pixels, int w, int h,
                                         holoflow::core::DType dtype) {
-  ensureTexture(w, h);
+  ensureTexture(w, h, dtype);
   glBindTexture(GL_TEXTURE_2D, tex_);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 
-  switch (dtype) {
-  case holoflow::core::DType::U8: {
+  if (dtype == holoflow::core::DType::U8) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED, GL_UNSIGNED_BYTE, pixels);
-  } break;
-
-  case holoflow::core::DType::U16: {
+  } else if (dtype == holoflow::core::DType::U16) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED, GL_UNSIGNED_SHORT, pixels);
-  } break;
+  } else if (dtype == holoflow::core::DType::F32) {
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED, GL_FLOAT, pixels);
   }
 
   texture_dirty_ = true;
@@ -212,19 +293,20 @@ void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
 
   qsizetype need = qsizetype(w) * qsizetype(h);
 
-  switch (dtype) {
-  case holoflow::core::DType::U16: {
-    need *= qsizetype(2);
-    break;
-  }
+  if (dtype == holoflow::core::DType::U16) {
+    need *= 2;
+  } else if (dtype == holoflow::core::DType::F32) {
+    need *= 4;
   }
 
   if (w <= 0 || h <= 0 || bytes.size() < need)
     return;
-  makeCurrent(); // safe from GUI thread
+
+  makeCurrent();
   updateTexture(reinterpret_cast<const void *>(bytes.constData()), w, h, dtype);
   doneCurrent();
-  update(); // triggers paintGL
+
+  update();
   emit tensorDisplayed();
 }
 
@@ -283,9 +365,7 @@ void TensorDisplayWidget::drawReticle() {
   glUniform4f(reticle_color_loc_, 1.0f, 0.0f, 0.0f, 1.0f); // Red color
 
   glLineWidth(2.0f);
-
   glDrawArrays(GL_LINE_STRIP, 0, segments + 1);
-
   glLineWidth(1.0f);
 }
 
@@ -293,11 +373,29 @@ void TensorDisplayWidget::paintGL() {
   glClear(GL_COLOR_BUFFER_BIT);
   if (img_w_ <= 0 || img_h_ <= 0)
     return;
+
   glUseProgram(prog_);
+
+  // Pass bounds
+  glUniform1f(vmin_loc_, vmin_);
+  glUniform1f(vmax_loc_, vmax_);
+
+  // Bind Main Image Texture
   glActiveTexture(GL_TEXTURE0);
   glBindTexture(GL_TEXTURE_2D, tex_);
+  glUniform1i(tex_loc_, 0);
+
+  // Bind Colormap Texture
+  glActiveTexture(GL_TEXTURE1);
+  glBindTexture(GL_TEXTURE_2D, colormap_tex_);
+  glUniform1i(cmap_tex_loc_, 1);
+
+  // Tell the shader which map we are using
+  glUniform1i(use_cmap_loc_, (cmap_ == Colormap::Twilight) ? 1 : 0);
+
   glBindVertexArray(vao_);
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
   drawReticle();
 }
 

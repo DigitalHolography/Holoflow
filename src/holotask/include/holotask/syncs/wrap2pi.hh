@@ -20,30 +20,25 @@
 
 namespace holotask::syncs {
 
-struct ZernikeSettings {
-  std::vector<int> indexes;
-  float            lambda;          ///< Wavelength in meters.
-  float            dx;              ///< Pixel pitch in meters.
-  float            dy;              ///< Pixel pitch in meters.
-  float            z;               ///< Propagation distance in meters.
-};
+struct Wrap2PiSettings {};
 
-void to_json(nlohmann::json &j, const ZernikeSettings &s);
-void from_json(const nlohmann::json &j, ZernikeSettings &s);
+void to_json(nlohmann::json &j, const Wrap2PiSettings &s);
+void from_json(const nlohmann::json &j, Wrap2PiSettings &s);
 
-class Zernike : public holoflow::core::ISyncTask {
+class Wrap2Pi : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  explicit Zernike(const ZernikeSettings &settings);
+  Wrap2Pi(const Wrap2PiSettings &settings, cudaStream_t stream);
 
-  friend class ZernikeFactory;
+  friend class Wrap2PiFactory;
 
-  ZernikeSettings settings_;
+  Wrap2PiSettings settings_;
+  cudaStream_t    stream_;
 };
 
-class ZernikeFactory : public holoflow::core::ISyncTaskFactory {
+class Wrap2PiFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;

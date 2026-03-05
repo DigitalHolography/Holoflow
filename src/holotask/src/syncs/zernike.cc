@@ -25,10 +25,20 @@
 
 #include "logger.hh"
 
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+
 namespace holotask::syncs {
 
 void to_json(nlohmann::json &j, const ZernikeSettings &s) {
-  j = nlohmann::json{{"indexes", s.indexes}};
+  j = nlohmann::json{
+      {"indexes", s.indexes},
+      {"lambda", s.lambda},
+      {"dx", s.dx},
+      {"dy", s.dy},
+      {"z", s.z}
+  };
 }
 
 void from_json(const nlohmann::json &j, ZernikeSettings &s) {
@@ -38,6 +48,11 @@ void from_json(const nlohmann::json &j, ZernikeSettings &s) {
   } else if (j.contains("indices")) {
     j.at("indices").get_to(s.indexes);
   }
+  
+  j.at("lambda").get_to(s.lambda);
+  j.at("dx").get_to(s.dx);
+  j.at("dy").get_to(s.dy);
+  j.at("z").get_to(s.z);
 }
 
 namespace {
@@ -143,10 +158,12 @@ std::array<float, 3> solve3x3(const float M[3][3], const float b[3]) {
 Zernike::Zernike(const ZernikeSettings &settings) : settings_(settings) {}
 
 holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
-  auto        shifts   = recover_shifts(ctx.inputs[0]);
+  auto       shifts   = recover_shifts(ctx.inputs[0]);
   const auto &desc     = ctx.inputs[0].desc;
-  size_t      nb_sub_y = desc.shape[1];
-  size_t      nb_sub_x = desc.shape[2];
+  size_t     nb_sub_y = desc.shape[1];
+  size_t     nb_sub_x = desc.shape[2];
+  size_t     win_h    = desc.shape[3];
+  size_t     win_w    = desc.shape[4];
 
   float GtG[3][3] = {0};
   float Gts[3]    = {0};
@@ -175,6 +192,21 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
 
   auto coefs = solve3x3(GtG, Gts);
 
+  // --- PHYSICS SCALING TO RADIANS ---
+  // 1. Calculate Pupil Radius from tensor dims and pixel pitch
+  float total_width_m  = nb_sub_x * win_w * settings_.dx;
+  float total_height_m = nb_sub_y * win_h * settings_.dy;
+  float R = std::min(total_width_m, total_height_m) / 2.0f;
+
+  for (int i = 0; i < 3; ++i) {
+      // Convert raw pixel shift into physical path length difference (meters)
+      // We assume dx ~ dy for scaling magnitude.
+      float a_meters = coefs[i] * (settings_.dx / settings_.z) * R;
+
+      // Convert meters to Radians
+      coefs[i] = a_meters * (2.0f * static_cast<float>(M_PI) / settings_.lambda);
+  }
+
   // Map coefficients to requested output indexes
   float *out_ptr = reinterpret_cast<float *>(ctx.outputs[0].data());
   for (size_t i = 0; i < settings_.indexes.size(); ++i) {
@@ -196,6 +228,10 @@ ZernikeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(idesc.mem_loc == holoflow::core::MemLoc::Host, "Input memory location must be Host");
   check(idesc.dtype == holoflow::core::DType::U8, "Input dtype must be U8");
   check(idesc.rank() == 5, "Input rank must be 5");
+
+  check(settings.lambda > 0.0f, "Wavelength must be > 0");
+  check(settings.dx > 0.0f && settings.dy > 0.0f, "Pixel pitch must be > 0");
+  check(settings.z > 0.0f, "Propagation distance z must be > 0");
 
   check(!settings.indexes.empty(), "indexes must not be empty");
   for (int idx : settings.indexes) {
