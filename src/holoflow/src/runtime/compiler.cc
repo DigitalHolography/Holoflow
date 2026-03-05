@@ -666,18 +666,27 @@ void Compiler::Impl::partition_sections() {
       continue;
 
     // Consumers (Output side of Async Node -> Sync Node)
+    std::set<size_t> unique_cons_sections;
     for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
       auto s = boost::target(e, g);
       if (g[s].infer.kind == core::TaskKind::Sync) {
-        out_->sections[get_section_id(s)].async_cons.push_back(v);
+        unique_cons_sections.insert(get_section_id(s));
       }
     }
+    for (size_t sec_id : unique_cons_sections) {
+      out_->sections[sec_id].async_cons.push_back(v);
+    }
+
     // Producers (Input side of Async Node <- Sync Node)
+    std::set<size_t> unique_prod_sections;
     for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
       auto p = boost::source(e, g);
       if (g[p].infer.kind == core::TaskKind::Sync) {
-        out_->sections[get_section_id(p)].async_prod.push_back(v);
+        unique_prod_sections.insert(get_section_id(p));
       }
+    }
+    for (size_t sec_id : unique_prod_sections) {
+      out_->sections[sec_id].async_prod.push_back(v);
     }
   }
 
@@ -697,6 +706,9 @@ void Compiler::Impl::partition_sections() {
       logger_->info("    - {}", g[anode].spec.name);
     }
   }
+
+  logger_->info("Total Sections Created: {}", out_->sections.size());
+  logger_->flush();
 }
 
 void Compiler::Impl::assign_streams() {

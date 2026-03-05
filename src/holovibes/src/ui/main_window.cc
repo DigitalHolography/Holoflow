@@ -816,8 +816,8 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.cpu_in_size  = 4096;
     s.gpu_in_size  = 4096;
     s.cpu_rec_size = 4096;
-    s.cpu_out_size = 32;
-    s.gpu_out_size = 32;
+    s.cpu_out_size = 64;
+    s.gpu_out_size = 64;
   }
 
   // Import Settings
@@ -1048,9 +1048,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   }
 
   // --- View Settings ---
-  {
-    view_widget_->set_cuts_3d_enabled(s.view_3d_cuts);
-  }
+  { view_widget_->set_cuts_3d_enabled(s.view_3d_cuts); }
 
   // --- Post-processing Settings ---
   {

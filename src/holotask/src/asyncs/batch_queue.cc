@@ -56,6 +56,12 @@ std::optional<holoflow::core::TView> BatchQueue::acquire_input(int index) {
     return std::nullopt;
   }
 
+  // if (settings_.target_capacity == 32) {
+  //   logger()->debug(
+  //       "[BatchQueue::acquire_input] reader_size={}, writer_size={}, target_capacity={}",
+  //       reader_size(), writer_size(), settings_.target_capacity);
+  // }
+
   size_t     write_idx = write_idx_.load(std::memory_order_relaxed);
   std::byte *data      = buf_ + write_idx * element_size_;
   auto      &storage   = storage_access().owned_input_storage(0);
@@ -72,6 +78,12 @@ void BatchQueue::release_output(int index) {
     throw std::out_of_range("BatchQueue::release_output: invalid index");
   }
 
+  // if (settings_.target_capacity == 32) {
+  //   logger()->debug(
+  //       "[BatchQueue::release_output] reader_size={}, writer_size={}, target_capacity={}",
+  //       reader_size(), writer_size(), settings_.target_capacity);
+  // }
+
   size_t read_idx      = read_idx_.load(std::memory_order_relaxed);
   size_t next_read_idx = read_idx + settings_.output_stride;
   if (next_read_idx == nb_slots_) {
@@ -83,6 +95,11 @@ void BatchQueue::release_output(int index) {
 }
 
 holoflow::core::OpResult BatchQueue::try_push(holoflow::core::AsyncPushCtx &) {
+  // if (settings_.target_capacity == 32) {
+  //   logger()->debug("[BatchQueue::try_push] reader_size={}, writer_size={}, target_capacity={}",
+  //                   reader_size(), writer_size(), settings_.target_capacity);
+  // }
+
   size_t write_idx      = write_idx_.load(std::memory_order_relaxed);
   size_t next_write_idx = write_idx + input_size_;
   if (next_write_idx >= nb_slots_) {
@@ -98,6 +115,11 @@ holoflow::core::OpResult BatchQueue::try_pop(holoflow::core::AsyncPopCtx &ctx) {
   if (reader_size() < settings_.output_stride) {
     return holoflow::core::OpResult::NotReady;
   }
+
+  // if (settings_.target_capacity == 32) {
+  //   logger()->debug("[BatchQueue::try_pop] reader_size={}, writer_size={}, target_capacity={}",
+  //                   reader_size(), writer_size(), settings_.target_capacity);
+  // }
 
   size_t     read_idx = read_idx_.load(std::memory_order_relaxed);
   std::byte *data     = buf_ + read_idx * element_size_;

@@ -15,13 +15,13 @@
 #include "holotask/syncs/zernike.hh"
 
 #include <algorithm>
+#include <array>
+#include <chrono>
 #include <cmath>
 #include <iostream>
 #include <spdlog/fmt/ranges.h>
 #include <stdexcept>
 #include <vector>
-#include <array>
-#include <chrono>
 
 #include "logger.hh"
 
@@ -50,95 +50,95 @@ inline void check(bool condition, const std::string &msg) {
 }
 
 struct Shift {
-    float dx;
-    float dy;
+  float dx;
+  float dy;
 };
 
-std::vector<Shift> recover_shifts(const holoflow::core::TView& view) {
-    const auto& desc = view.desc;
-    uint8_t* data = reinterpret_cast<uint8_t*>(view.storage->ptr + desc.offset);
+std::vector<Shift> recover_shifts(const holoflow::core::TView &view) {
+  const auto &desc = view.desc;
+  uint8_t    *data = reinterpret_cast<uint8_t *>(view.storage->ptr + desc.offset);
 
-    size_t nb_sub_y = desc.shape[1]; 
-    size_t nb_sub_x = desc.shape[2]; 
-    size_t win_h    = desc.shape[3]; 
-    size_t win_w    = desc.shape[4]; 
+  size_t nb_sub_y = desc.shape[1];
+  size_t nb_sub_x = desc.shape[2];
+  size_t win_h    = desc.shape[3];
+  size_t win_w    = desc.shape[4];
 
-    float center_y = (win_h - 1) / 2.0f;
-    float center_x = (win_w - 1) / 2.0f;
+  float center_y = (win_h - 1) / 2.0f;
+  float center_x = (win_w - 1) / 2.0f;
 
-    std::vector<Shift> shifts;
-    shifts.reserve(nb_sub_y * nb_sub_x);
+  std::vector<Shift> shifts;
+  shifts.reserve(nb_sub_y * nb_sub_x);
 
-    for (size_t sy = 0; sy < nb_sub_y; ++sy) {
-        for (size_t sx = 0; sx < nb_sub_x; ++sx) {
-            uint8_t* subap_ptr = data + (sy * desc.strides[1]) + (sx * desc.strides[2]);
+  for (size_t sy = 0; sy < nb_sub_y; ++sy) {
+    for (size_t sx = 0; sx < nb_sub_x; ++sx) {
+      uint8_t *subap_ptr = data + (sy * desc.strides[1]) + (sx * desc.strides[2]);
 
-            int max_val = -1;
-            int peak_y = 0, peak_x = 0;
+      int max_val = -1;
+      int peak_y = 0, peak_x = 0;
 
-            for (int y = 0; y < (int)win_h; ++y) {
-                for (int x = 0; x < (int)win_w; ++x) {
-                    uint8_t val = subap_ptr[y * desc.strides[3] + x];
-                    if (val > max_val) {
-                        max_val = val;
-                        peak_y = y;
-                        peak_x = x;
-                    }
-                }
-            }
-
-            float sum_val = 0.0f, sum_y = 0.0f, sum_x = 0.0f;
-            int radius = 2; 
-
-            for (int dy = -radius; dy <= radius; ++dy) {
-                for (int dx = -radius; dx <= radius; ++dx) {
-                    int iy = peak_y + dy;
-                    int ix = peak_x + dx;
-                    if (iy >= 0 && iy < (int)win_h && ix >= 0 && ix < (int)win_w) {
-                        float val = static_cast<float>(subap_ptr[iy * desc.strides[3] + ix]);
-                        sum_val += val;
-                        sum_y += val * iy;
-                        sum_x += val * ix;
-                    }
-                }
-            }
-
-            float final_y = (sum_val > 0) ? (sum_y / sum_val) : (float)peak_y;
-            float final_x = (sum_val > 0) ? (sum_x / sum_val) : (float)peak_x;
-            shifts.push_back({final_x - center_x, final_y - center_y});
+      for (int y = 0; y < (int)win_h; ++y) {
+        for (int x = 0; x < (int)win_w; ++x) {
+          uint8_t val = subap_ptr[y * desc.strides[3] + x];
+          if (val > max_val) {
+            max_val = val;
+            peak_y  = y;
+            peak_x  = x;
+          }
         }
+      }
+
+      float sum_val = 0.0f, sum_y = 0.0f, sum_x = 0.0f;
+      int   radius = 2;
+
+      for (int dy = -radius; dy <= radius; ++dy) {
+        for (int dx = -radius; dx <= radius; ++dx) {
+          int iy = peak_y + dy;
+          int ix = peak_x + dx;
+          if (iy >= 0 && iy < (int)win_h && ix >= 0 && ix < (int)win_w) {
+            float val = static_cast<float>(subap_ptr[iy * desc.strides[3] + ix]);
+            sum_val += val;
+            sum_y += val * iy;
+            sum_x += val * ix;
+          }
+        }
+      }
+
+      float final_y = (sum_val > 0) ? (sum_y / sum_val) : (float)peak_y;
+      float final_x = (sum_val > 0) ? (sum_x / sum_val) : (float)peak_x;
+      shifts.push_back({final_x - center_x, final_y - center_y});
     }
-    return shifts;
+  }
+  return shifts;
 }
 
 // Solves 3x3 linear system M*x = b
 std::array<float, 3> solve3x3(const float M[3][3], const float b[3]) {
-    float det = M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) -
-                M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
-                M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
-    if (std::abs(det) < 1e-9f) return {0, 0, 0};
+  float det = M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) -
+              M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
+              M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+  if (std::abs(det) < 1e-9f)
+    return {0, 0, 0};
 
-    float invDet = 1.0f / det;
-    float inv[3][3];
-    inv[0][0] = (M[1][1] * M[2][2] - M[1][2] * M[2][1]) * invDet;
-    inv[0][1] = (M[0][2] * M[2][1] - M[0][1] * M[2][2]) * invDet;
-    inv[0][2] = (M[0][1] * M[1][2] - M[0][2] * M[1][1]) * invDet;
-    inv[1][0] = (M[1][2] * M[2][0] - M[1][0] * M[2][2]) * invDet;
-    inv[1][1] = (M[0][0] * M[2][2] - M[0][2] * M[2][0]) * invDet;
-    inv[1][2] = (M[1][0] * M[0][2] - M[0][0] * M[1][2]) * invDet;
-    inv[2][0] = (M[1][0] * M[2][1] - M[1][1] * M[2][0]) * invDet;
-    inv[2][1] = (M[2][0] * M[0][1] - M[0][0] * M[2][1]) * invDet;
-    inv[2][2] = (M[0][0] * M[1][1] - M[1][0] * M[0][1]) * invDet;
+  float invDet = 1.0f / det;
+  float inv[3][3];
+  inv[0][0] = (M[1][1] * M[2][2] - M[1][2] * M[2][1]) * invDet;
+  inv[0][1] = (M[0][2] * M[2][1] - M[0][1] * M[2][2]) * invDet;
+  inv[0][2] = (M[0][1] * M[1][2] - M[0][2] * M[1][1]) * invDet;
+  inv[1][0] = (M[1][2] * M[2][0] - M[1][0] * M[2][2]) * invDet;
+  inv[1][1] = (M[0][0] * M[2][2] - M[0][2] * M[2][0]) * invDet;
+  inv[1][2] = (M[1][0] * M[0][2] - M[0][0] * M[1][2]) * invDet;
+  inv[2][0] = (M[1][0] * M[2][1] - M[1][1] * M[2][0]) * invDet;
+  inv[2][1] = (M[2][0] * M[0][1] - M[0][0] * M[2][1]) * invDet;
+  inv[2][2] = (M[0][0] * M[1][1] - M[1][0] * M[0][1]) * invDet;
 
-    std::array<float, 3> x_out = {0, 0, 0};
-    for (int i = 0; i < 3; ++i)
-        for (int j = 0; j < 3; ++j)
-            x_out[i] += inv[i][j] * b[j];
-    return x_out;
+  std::array<float, 3> x_out = {0, 0, 0};
+  for (int i = 0; i < 3; ++i)
+    for (int j = 0; j < 3; ++j)
+      x_out[i] += inv[i][j] * b[j];
+  return x_out;
 }
 
 } // namespace
-
 
 Zernike::Zernike(const ZernikeSettings &settings) : settings_(settings) {}
 
@@ -146,27 +146,25 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
 
   // do once per second or so, not critical to be super fast
   static auto last_log_time = std::chrono::steady_clock::now();
-  auto now = std::chrono::steady_clock::now();
+  auto        now           = std::chrono::steady_clock::now();
   if (now - last_log_time > std::chrono::seconds(1)) {
-      logger()->info("Zernike task executing...");
-      last_log_time = now;
-  }
-  else {
+    logger()->info("Zernike task executing...");
+    last_log_time = now;
+  } else {
     return holoflow::core::OpResult::Ok; // Skip execution to reduce log spam
   }
 
   logger()->info("Executing Zernike task with indexes: {}", settings_.indexes);
 
-  
-  auto shifts = recover_shifts(ctx.inputs[0]);
-  const auto& desc = ctx.inputs[0].desc;
-  size_t nb_sub_y = desc.shape[1];
-  size_t nb_sub_x = desc.shape[2];
+  auto        shifts   = recover_shifts(ctx.inputs[0]);
+  const auto &desc     = ctx.inputs[0].desc;
+  size_t      nb_sub_y = desc.shape[1];
+  size_t      nb_sub_x = desc.shape[2];
 
   float GtG[3][3] = {0};
-  float Gts[3] = {0};
-  float sqrt3 = std::sqrt(3.0f);
-  float sqrt6 = std::sqrt(6.0f);
+  float Gts[3]    = {0};
+  float sqrt3     = std::sqrt(3.0f);
+  float sqrt6     = std::sqrt(6.0f);
 
   for (size_t sy = 0; sy < nb_sub_y; ++sy) {
     for (size_t sx = 0; sx < nb_sub_x; ++sx) {
@@ -175,10 +173,10 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
       float y = (static_cast<float>(sy) - 2.0f) / 2.0f;
 
       // Derivatives: index 0->a4, 1->a5, 2->a6
-      float g_dx[3] = { 4.0f * sqrt3 * x, sqrt6 * 2.0f * y,  sqrt6 * 2.0f * x };
-      float g_dy[3] = { 4.0f * sqrt3 * y, sqrt6 * 2.0f * x, -sqrt6 * 2.0f * y };
+      float g_dx[3] = {4.0f * sqrt3 * x, sqrt6 * 2.0f * y, sqrt6 * 2.0f * x};
+      float g_dy[3] = {4.0f * sqrt3 * y, sqrt6 * 2.0f * x, -sqrt6 * 2.0f * y};
 
-      const auto& s = shifts[sy * nb_sub_x + sx];
+      const auto &s = shifts[sy * nb_sub_x + sx];
       for (int i = 0; i < 3; ++i) {
         for (int j = 0; j < 3; ++j) {
           GtG[i][j] += g_dx[i] * g_dx[j] + g_dy[i] * g_dy[j];
@@ -189,14 +187,14 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
   }
 
   auto coefs = solve3x3(GtG, Gts);
-  
+
   // Map coefficients to requested output indexes
-  float* out_ptr = reinterpret_cast<float*>(ctx.outputs[0].data());
+  float *out_ptr = reinterpret_cast<float *>(ctx.outputs[0].data());
   for (size_t i = 0; i < settings_.indexes.size(); ++i) {
-      int idx = settings_.indexes[i];
-      float val = coefs[idx - 4]; // a4 is index 0 in our solver
-      out_ptr[i] = val;
-      logger()->info("Zernike Coefficient a{}: {:.4f}", idx, val);
+    int   idx  = settings_.indexes[i];
+    float val  = coefs[idx - 4]; // a4 is index 0 in our solver
+    out_ptr[i] = val;
+    logger()->info("Zernike Coefficient a{}: {:.4f}", idx, val);
   }
 
   return holoflow::core::OpResult::Ok;

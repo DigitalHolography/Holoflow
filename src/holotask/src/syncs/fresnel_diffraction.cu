@@ -148,8 +148,6 @@ std::vector<char> apply_lens_lto(bool is_fast, bool is_real) {
   )";
   }
 
-  logger()->info("[FresnelDiffraction] Source code for JIT callback:\n{}", apply_lens_callback);
-
   return compile_source_to_lto(apply_lens_callback, "apply_lens_callback2.cu");
 }
 
