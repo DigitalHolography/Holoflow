@@ -80,6 +80,7 @@
 #include "holotask/syncs/rotation.hh"
 #include "holotask/syncs/stft.hh"
 #include "holotask/syncs/zernike.hh"
+#include "holotask/syncs/zernike_phase.hh"
 #include "pipeline/settings.hh"
 #include "tasks/sinks/display_tensor.hh"
 
@@ -205,6 +206,7 @@ private:
   std::vector<TDesc> registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
   std::vector<TDesc> rotation(const TDesc &X, holotask::syncs::RotationSettings s);
   std::vector<TDesc> zernike(const TDesc &X, holotask::syncs::ZernikeSettings s);
+  std::vector<TDesc> zernike_phase(const TDesc &X, holotask::syncs::ZernikePhaseSettings s);
   std::vector<TDesc> holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
   std::vector<TDesc> concatenate(std::span<const TDesc> Xs, holonp::ConcatenateSettings s);
   std::vector<TDesc> transpose(const TDesc &X, holonp::TransposeSettings s);
@@ -213,8 +215,7 @@ private:
   std::vector<TDesc> mul(const TDesc &A, const TDesc &B, holonp::MulSettings s);
   std::vector<TDesc> sub(const TDesc &A, const TDesc &B, holonp::SubSettings s);
   std::vector<TDesc> equal(const TDesc &A, const TDesc &B, holonp::EqualSettings s);
-  std::vector<TDesc> where(const TDesc &Cond, const TDesc &X, const TDesc &Y,
-                           holonp::WhereSettings s);
+  std::vector<TDesc> where(const TDesc &Cond, const TDesc &X, const TDesc &Y, holonp::WhereSettings s);
   std::vector<TDesc> rfft(const TDesc &X, holonp::RFFTSettings s);
   std::vector<TDesc> rfft2(const TDesc &X, holonp::RFFT2Settings s);
   std::vector<TDesc> irfft2(const TDesc &X, holonp::IRFFT2Settings s);

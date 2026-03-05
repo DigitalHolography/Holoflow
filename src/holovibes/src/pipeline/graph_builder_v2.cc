@@ -362,7 +362,16 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [xcorr_disp]         = unpack<1>(batched_queue(xcorr_flattened, {s_.cpu_out_size, 1, 1}));
     shack_hartmann_xcorr_display(xcorr_disp, {});
 
+    int ny = static_cast<int>(FH.shape.at(2));
+    int nx = static_cast<int>(FH.shape.at(3));
     auto [zernike_coeffs] = unpack<1>(zernike(xcorr_cpu, {{4, 5, 6}}));
+    auto [phase]  = unpack<1>(zernike_phase(zernike_coeffs, {{4, 5, 6}, ny, nx}));
+    std::tie(phase) = unpack<1>(memcpy(phase, {Device}));
+    std::tie(phase) = unpack<1>(normalize(phase, {{-2, -1}, 0.0f, 255.0f}));
+    std::tie(phase) = unpack<1>(convert(phase, {Target::U8, Strat::Scaled}));
+    std::tie(phase) = unpack<1>(memcpy(phase, {Host}));
+    std::tie(phase) = unpack<1>(batched_queue(phase, {s_.cpu_out_size, 1, 1}));
+    zernike_phase_display(phase, {});
   }
 
   return g_;
@@ -419,6 +428,7 @@ DEFINE_UNARY_SYNC_NODE (pct_clip,                               "pct_clip",     
 DEFINE_UNARY_SYNC_NODE (registration,                           "registration",                        "Registration",                    holotask::syncs::RegistrationSettings)
 DEFINE_UNARY_SYNC_NODE (rotation,                               "rotation",                            "Rotation",                        holotask::syncs::RotationSettings)
 DEFINE_UNARY_SYNC_NODE (zernike,                                "zernike",                             "Zernike",                         holotask::syncs::ZernikeSettings)
+DEFINE_UNARY_SYNC_NODE (zernike_phase,                          "zernike_phase",                       "ZernikePhase",                    holotask::syncs::ZernikePhaseSettings)
 DEFINE_UNARY_SYNC_NODE (xy_raw_display,                         "xy_raw_display",                      "DisplayTensorXYRaw",              tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (xy_processed_display,                   "xy_processed_display",                "DisplayTensorXY",                 tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (xz_processed_display,                   "xz_processed_display",                "DisplayTensorXZ",                 tasks::sinks::DisplayTensorSettings)

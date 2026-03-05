@@ -143,19 +143,6 @@ std::array<float, 3> solve3x3(const float M[3][3], const float b[3]) {
 Zernike::Zernike(const ZernikeSettings &settings) : settings_(settings) {}
 
 holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
-
-  // do once per second or so, not critical to be super fast
-  static auto last_log_time = std::chrono::steady_clock::now();
-  auto        now           = std::chrono::steady_clock::now();
-  if (now - last_log_time > std::chrono::seconds(1)) {
-    logger()->info("Zernike task executing...");
-    last_log_time = now;
-  } else {
-    return holoflow::core::OpResult::Ok; // Skip execution to reduce log spam
-  }
-
-  logger()->info("Executing Zernike task with indexes: {}", settings_.indexes);
-
   auto        shifts   = recover_shifts(ctx.inputs[0]);
   const auto &desc     = ctx.inputs[0].desc;
   size_t      nb_sub_y = desc.shape[1];
@@ -194,7 +181,6 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
     int   idx  = settings_.indexes[i];
     float val  = coefs[idx - 4]; // a4 is index 0 in our solver
     out_ptr[i] = val;
-    logger()->info("Zernike Coefficient a{}: {:.4f}", idx, val);
   }
 
   return holoflow::core::OpResult::Ok;
