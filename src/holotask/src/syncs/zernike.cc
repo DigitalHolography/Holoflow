@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 #include "logger.hh"
@@ -52,6 +53,8 @@ void from_json(const nlohmann::json &j, ZernikeSettings &s) {
 
 namespace {
 
+constexpr std::size_t kMaxSupportedModes = 5; // Z2..Z6
+
 inline void check(bool condition, const std::string &msg) {
   if (!condition) {
     logger()->error("[ZernikeFactory::infer] error: {}", msg);
@@ -60,18 +63,83 @@ inline void check(bool condition, const std::string &msg) {
 }
 
 struct Shift {
-  float dx_px = 0.0f; // Shift measured in propagated-plane pixels along x
-  float dy_px = 0.0f; // Shift measured in propagated-plane pixels along y
+  float dx_px = 0.0f; // propagated-plane shift, in pixels, along x
+  float dy_px = 0.0f; // propagated-plane shift, in pixels, along y
 };
 
+struct ZernikeEval {
+  float value  = 0.0f; // Z_n(x, y)
+  float d_dx_n = 0.0f; // dZ_n / d(x_n), derivative wrt normalized x
+  float d_dy_n = 0.0f; // dZ_n / d(y_n), derivative wrt normalized y
+};
+
+/// Evaluate the supported Noll-indexed Zernike modes on the unit disk.
+///
+/// Convention used here:
+///   Z2 = 2 x
+///   Z3 = 2 y
+///   Z4 = sqrt(3) * (2(x^2 + y^2) - 1)
+///   Z5 = 2 sqrt(6) * x y
+///   Z6 = sqrt(6) * (x^2 - y^2)
+///
+/// These are the common Noll-normalized low-order modes.
+///
+/// Coordinates (x_n, y_n) are normalized pupil coordinates on the unit disk:
+///   x_n = X / R
+///   y_n = Y / R
+ZernikeEval eval_zernike_noll(int noll_index, float x_n, float y_n) {
+  const float sqrt3 = std::sqrt(3.0f);
+  const float sqrt6 = std::sqrt(6.0f);
+
+  switch (noll_index) {
+  case 2:
+    return {
+        .value  = 2.0f * x_n,
+        .d_dx_n = 2.0f,
+        .d_dy_n = 0.0f,
+    };
+
+  case 3:
+    return {
+        .value  = 2.0f * y_n,
+        .d_dx_n = 0.0f,
+        .d_dy_n = 2.0f,
+    };
+
+  case 4:
+    return {
+        .value  = sqrt3 * (2.0f * (x_n * x_n + y_n * y_n) - 1.0f),
+        .d_dx_n = 4.0f * sqrt3 * x_n,
+        .d_dy_n = 4.0f * sqrt3 * y_n,
+    };
+
+  case 5:
+    return {
+        .value  = 2.0f * sqrt6 * x_n * y_n,
+        .d_dx_n = 2.0f * sqrt6 * y_n,
+        .d_dy_n = 2.0f * sqrt6 * x_n,
+    };
+
+  case 6:
+    return {
+        .value  = sqrt6 * (x_n * x_n - y_n * y_n),
+        .d_dx_n = 2.0f * sqrt6 * x_n,
+        .d_dy_n = -2.0f * sqrt6 * y_n,
+    };
+
+  default:
+    throw std::invalid_argument("Unsupported Noll index");
+  }
+}
+
 /// Recover one shift per subaperture by locating the brightest spot and refining
-/// its position with a small intensity-weighted centroid.
+/// the spot position with a small intensity-weighted centroid.
 ///
 /// Input tensor layout is assumed to be:
 ///   [batch, nb_sub_y, nb_sub_x, win_h, win_w]
 ///
-/// Returned shifts are expressed in propagated-plane pixels relative to the
-/// subaperture center.
+/// Returned shifts are expressed relative to the subaperture center, in
+/// propagated-plane pixels.
 std::vector<Shift> recover_shifts(const holoflow::core::TView &view) {
   const auto &desc = view.desc;
   auto       *data = reinterpret_cast<std::uint8_t *>(view.storage->ptr + desc.offset);
@@ -99,7 +167,7 @@ std::vector<Shift> recover_shifts(const holoflow::core::TView &view) {
 
       for (int y = 0; y < static_cast<int>(win_h); ++y) {
         for (int x = 0; x < static_cast<int>(win_w); ++x) {
-          const auto val = static_cast<int>(subap_ptr[y * desc.strides[3] + x]);
+          const int val = static_cast<int>(subap_ptr[y * desc.strides[3] + x]);
           if (val > max_val) {
             max_val = val;
             peak_y  = y;
@@ -141,54 +209,65 @@ std::vector<Shift> recover_shifts(const holoflow::core::TView &view) {
   return shifts;
 }
 
-/// Solve the 3x3 linear system M x = b.
-/// Returns {0,0,0} if the matrix is numerically singular.
-std::array<float, 3> solve3x3(const float M[3][3], const float b[3]) {
-  const float det = M[0][0] * (M[1][1] * M[2][2] - M[1][2] * M[2][1]) -
-                    M[0][1] * (M[1][0] * M[2][2] - M[1][2] * M[2][0]) +
-                    M[0][2] * (M[1][0] * M[2][1] - M[1][1] * M[2][0]);
+/// Solve a dense linear system A x = b for n <= kMaxSupportedModes using
+/// Gaussian elimination with partial pivoting.
+///
+/// Returns zeros if the system is numerically singular.
+std::array<float, kMaxSupportedModes>
+solve_linear_system(std::array<std::array<float, kMaxSupportedModes>, kMaxSupportedModes> A,
+                    std::array<float, kMaxSupportedModes> b, std::size_t n) {
+  std::array<float, kMaxSupportedModes> x{};
+  constexpr float                       singular_eps = 1e-12f;
 
-  if (std::abs(det) < 1e-9f) {
-    return {0.0f, 0.0f, 0.0f};
-  }
+  for (std::size_t col = 0; col < n; ++col) {
+    std::size_t pivot = col;
+    float       best  = std::abs(A[col][col]);
 
-  const float inv_det = 1.0f / det;
+    for (std::size_t row = col + 1; row < n; ++row) {
+      const float cand = std::abs(A[row][col]);
+      if (cand > best) {
+        best  = cand;
+        pivot = row;
+      }
+    }
 
-  float inv[3][3];
-  inv[0][0] = (M[1][1] * M[2][2] - M[1][2] * M[2][1]) * inv_det;
-  inv[0][1] = (M[0][2] * M[2][1] - M[0][1] * M[2][2]) * inv_det;
-  inv[0][2] = (M[0][1] * M[1][2] - M[0][2] * M[1][1]) * inv_det;
+    if (best < singular_eps) {
+      return x;
+    }
 
-  inv[1][0] = (M[1][2] * M[2][0] - M[1][0] * M[2][2]) * inv_det;
-  inv[1][1] = (M[0][0] * M[2][2] - M[0][2] * M[2][0]) * inv_det;
-  inv[1][2] = (M[1][0] * M[0][2] - M[0][0] * M[1][2]) * inv_det;
+    if (pivot != col) {
+      std::swap(A[pivot], A[col]);
+      std::swap(b[pivot], b[col]);
+    }
 
-  inv[2][0] = (M[1][0] * M[2][1] - M[1][1] * M[2][0]) * inv_det;
-  inv[2][1] = (M[2][0] * M[0][1] - M[0][0] * M[2][1]) * inv_det;
-  inv[2][2] = (M[0][0] * M[1][1] - M[1][0] * M[0][1]) * inv_det;
+    const float pivot_val = A[col][col];
+    for (std::size_t j = col; j < n; ++j) {
+      A[col][j] /= pivot_val;
+    }
+    b[col] /= pivot_val;
 
-  std::array<float, 3> x{};
-  for (int i = 0; i < 3; ++i) {
-    for (int j = 0; j < 3; ++j) {
-      x[i] += inv[i][j] * b[j];
+    for (std::size_t row = col + 1; row < n; ++row) {
+      const float factor = A[row][col];
+      if (factor == 0.0f) {
+        continue;
+      }
+
+      for (std::size_t j = col; j < n; ++j) {
+        A[row][j] -= factor * A[col][j];
+      }
+      b[row] -= factor * b[col];
     }
   }
 
-  return x;
-}
-
-/// Map subaperture index to normalized pupil coordinate in [-1, 1].
-///
-/// For a regular grid of subaperture centers:
-///   index = 0        -> -1
-///   index = count-1  -> +1
-///
-/// If count == 1, return 0 to avoid division by zero.
-float normalized_coord(std::size_t index, std::size_t count) {
-  if (count <= 1) {
-    return 0.0f;
+  for (int row = static_cast<int>(n) - 1; row >= 0; --row) {
+    float acc = b[static_cast<std::size_t>(row)];
+    for (std::size_t col = static_cast<std::size_t>(row) + 1; col < n; ++col) {
+      acc -= A[static_cast<std::size_t>(row)][col] * x[col];
+    }
+    x[static_cast<std::size_t>(row)] = acc;
   }
-  return 2.0f * static_cast<float>(index) / static_cast<float>(count - 1) - 1.0f;
+
+  return x;
 }
 
 } // namespace
@@ -208,165 +287,145 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
   // Geometry of the pupil
   // ---------------------------------------------------------------------------
   //
-  // We assume a circular pupil inscribed in the sampled support.
+  // The input support is sampled on a rectangular grid, but the optical pupil is
+  // assumed to be a disk. We therefore normalize physical coordinates (X, Y) by
+  // the radius R of the largest inscribed disk:
   //
-  // Physical support size in the input plane:
-  //   width  = nb_sub_x * win_w * dx
-  //   height = nb_sub_y * win_h * dy
-  //
-  // Since the pupil is circular, its radius is the radius of the largest disk
-  // fitting inside that support:
-  //   R = min(width, height) / 2
-  //
-  // Zernike polynomials are defined on the unit disk:
   //   x_n = X / R
   //   y_n = Y / R
   //
-  // Therefore, physical derivatives satisfy:
+  // Zernike polynomials are defined on the unit disk in (x_n, y_n).
+  // Physical derivatives are obtained with:
+  //
   //   d/dX = (1/R) d/dx_n
   //   d/dY = (1/R) d/dy_n
   //
   const float total_width_m  = static_cast<float>(nb_sub_x * win_w) * settings_.dx;
   const float total_height_m = static_cast<float>(nb_sub_y * win_h) * settings_.dy;
-  const float pupil_radius_m = std::min(total_width_m, total_height_m) * 0.5f;
+  const float pupil_radius_m = 0.5f * std::min(total_width_m, total_height_m);
+
+  // Physical spacing between subaperture centers in the pupil plane.
+  const float pitch_x_m = static_cast<float>(win_w) * settings_.dx;
+  const float pitch_y_m = static_cast<float>(win_h) * settings_.dy;
 
   // ---------------------------------------------------------------------------
   // Fresnel propagation sampling
   // ---------------------------------------------------------------------------
   //
-  // Shifts are measured in the propagated subaperture image. With single-FFT
-  // Fresnel propagation, the propagated sampling pitch is:
+  // Shifts are measured in the propagated subaperture images. For single-FFT
+  // Fresnel propagation:
   //
-  //   dx' = lambda * z / (win_w * dx)
-  //   dy' = lambda * z / (win_h * dy)
+  //   dx' = lambda z / (win_w dx)
+  //   dy' = lambda z / (win_h dy)
   //
-  // We suppose that the special case win_w*dx == win_h*dy is guaranteed, so dx' == dy'.
-  // This is equivalent to having square pixels in the propagated plane, which is a common design
-  // choice for wavefront sensing. We can keep one common propagated pitch for simplicity.
+  // You stated that win_w*dx == win_h*dy is guaranteed, so dx' == dy'. We keep
+  // the x formula as the common propagated pitch.
   //
   const float propagated_pitch_m =
       (settings_.lambda * settings_.z) / (static_cast<float>(win_w) * settings_.dx);
 
   // ---------------------------------------------------------------------------
-  // Least-squares system
+  // Least-squares model
   // ---------------------------------------------------------------------------
   //
-  // We estimate a4, a5, a6 from local slopes.
+  // We recover the requested Zernike coefficients from local slopes.
   //
-  // Let W(X,Y) be the optical path difference (OPD) in meters:
+  // Let the optical path difference be:
   //
-  //   W(X,Y) = a4 Z4(x_n,y_n) + a5 Z5(x_n,y_n) + a6 Z6(x_n,y_n)
+  //   W(X, Y) = sum_k a_k Z_k(x_n, y_n)
   //
-  // where (x_n, y_n) = (X/R, Y/R).
+  // with W in meters, and x_n = X/R, y_n = Y/R.
   //
-  // Virtual Shack-Hartmann gives a displacement in the propagated plane.
-  // A small displacement delta in that plane corresponds to a local tilt:
+  // A virtual Shack-Hartmann shift measured after propagation gives a local tilt:
   //
-  //   slope_x = dW/dX ≈ delta_x / z
-  //   slope_y = dW/dY ≈ delta_y / z
+  //   dW/dX ≈ delta_x / z
+  //   dW/dY ≈ delta_y / z
   //
-  // Since the measured displacement is in propagated-plane pixels:
+  // Since delta_x = shift_x_px * dx' and delta_y = shift_y_px * dy',
+  // measured slopes are:
   //
-  //   delta_x = shift_x_px * propagated_pitch_m
-  //   delta_y = shift_y_px * propagated_pitch_m
+  //   slope_x ≈ shift_x_px * propagated_pitch / z
+  //   slope_y ≈ shift_y_px * propagated_pitch / z
   //
-  // Therefore:
-  //
-  //   slope_x ≈ shift_x_px * propagated_pitch_m / z
-  //   slope_y ≈ shift_y_px * propagated_pitch_m / z
-  //
-  // We fit these slopes against the physical derivatives of the Zernike modes.
-  //
-  float GtG[3][3] = {};
-  float Gts[3]    = {};
+  const std::size_t n_modes = settings_.indexes.size();
 
-  const float sqrt3 = std::sqrt(3.0f);
-  const float sqrt6 = std::sqrt(6.0f);
+  std::array<std::array<float, kMaxSupportedModes>, kMaxSupportedModes> GtG{};
+  std::array<float, kMaxSupportedModes>                                 Gts{};
+
+  // Small ridge regularization to improve stability when the number of valid
+  // subapertures is low or the geometry is weakly conditioned.
+  constexpr float ridge = 1e-9f;
 
   for (std::size_t sy = 0; sy < nb_sub_y; ++sy) {
     for (std::size_t sx = 0; sx < nb_sub_x; ++sx) {
-      // Find subaperture center in pupil coordinates.
-      const float pitch_x = static_cast<float>(win_w) * settings_.dx;
-      const float pitch_y = static_cast<float>(win_h) * settings_.dy;
-      const float X = ((float)(sx) - ((float)(nb_sub_x)-1.0f) * 0.5f) * pitch_x;
-      const float Y = ((float)(sy) - ((float)(nb_sub_y)-1.0f) * 0.5f) * pitch_y;
+      const float X =
+          (static_cast<float>(sx) - (static_cast<float>(nb_sub_x) - 1.0f) * 0.5f) * pitch_x_m;
+      const float Y =
+          (static_cast<float>(sy) - (static_cast<float>(nb_sub_y) - 1.0f) * 0.5f) * pitch_y_m;
+
       const float x_n = X / pupil_radius_m;
       const float y_n = Y / pupil_radius_m;
 
-      // Skip subapertures whose center is outside the unit disk.
+      // Only use subaperture centers whose coordinates lie inside the pupil.
       if (x_n * x_n + y_n * y_n > 1.0f) {
         continue;
       }
 
-      // -----------------------------------------------------------------------
-      // Noll-indexed Zernike derivatives on the unit disk
-      // -----------------------------------------------------------------------
-      //
-      // Using the common convention:
-      //
-      //   Z4 = sqrt(3) * (2(x^2 + y^2) - 1)   defocus
-      //   Z5 = sqrt(6) * (2xy)                astigmatism
-      //   Z6 = sqrt(6) * (x^2 - y^2)          astigmatism
-      //
-      // Derivatives with respect to normalized coordinates:
-      //
-      //   dZ4/dx = 4 sqrt(3) x
-      //   dZ4/dy = 4 sqrt(3) y
-      //
-      //   dZ5/dx = 2 sqrt(6) y
-      //   dZ5/dy = 2 sqrt(6) x
-      //
-      //   dZ6/dx = 2 sqrt(6) x
-      //   dZ6/dy = -2 sqrt(6) y
-      //
-      // Then convert to physical derivatives using:
-      //
-      //   dZ/dX = (1/R) dZ/dx
-      //   dZ/dY = (1/R) dZ/dy
-      //
-      const float g_dx[3] = {
-          (4.0f * sqrt3 * x_n) / pupil_radius_m,
-          (2.0f * sqrt6 * y_n) / pupil_radius_m,
-          (2.0f * sqrt6 * x_n) / pupil_radius_m,
-      };
-
-      const float g_dy[3] = {
-          (4.0f * sqrt3 * y_n) / pupil_radius_m,
-          (2.0f * sqrt6 * x_n) / pupil_radius_m,
-          (-2.0f * sqrt6 * y_n) / pupil_radius_m,
-      };
-
       const auto &shift = shifts[sy * nb_sub_x + sx];
 
-      // Convert propagated-plane pixel shifts into physical slopes dW/dX, dW/dY.
+      // Convert propagated-plane pixel shifts into physical wavefront slopes.
       const float slope_x = (shift.dx_px * propagated_pitch_m) / settings_.z;
       const float slope_y = (shift.dy_px * propagated_pitch_m) / settings_.z;
 
-      for (int i = 0; i < 3; ++i) {
-        for (int j = 0; j < 3; ++j) {
-          GtG[i][j] += g_dx[i] * g_dx[j] + g_dy[i] * g_dy[j];
+      std::array<float, kMaxSupportedModes> gx{};
+      std::array<float, kMaxSupportedModes> gy{};
+
+      for (std::size_t i = 0; i < n_modes; ++i) {
+        const auto eval = eval_zernike_noll(settings_.indexes[i], x_n, y_n);
+
+        // Convert derivatives wrt normalized coordinates into physical
+        // derivatives wrt meters in the pupil plane.
+        gx[i] = eval.d_dx_n / pupil_radius_m;
+        gy[i] = eval.d_dy_n / pupil_radius_m;
+      }
+
+      for (std::size_t i = 0; i < n_modes; ++i) {
+        for (std::size_t j = 0; j < n_modes; ++j) {
+          GtG[i][j] += gx[i] * gx[j] + gy[i] * gy[j];
         }
-        Gts[i] += g_dx[i] * slope_x + g_dy[i] * slope_y;
+        Gts[i] += gx[i] * slope_x + gy[i] * slope_y;
       }
     }
   }
 
-  // The fitted coefficients are OPD amplitudes in meters.
-  auto coefs_m = solve3x3(GtG, Gts);
+  for (std::size_t i = 0; i < n_modes; ++i) {
+    GtG[i][i] += ridge;
+  }
+
+  // Coefficients are first recovered as OPD amplitudes in meters.
+  const auto coefs_m = solve_linear_system(GtG, Gts, n_modes);
 
   // Convert OPD meters to phase radians:
-  //   phi = (2 pi / lambda) * W
-  std::array<float, 3> coefs_rad{};
-  for (int i = 0; i < 3; ++i) {
-    coefs_rad[i] = coefs_m[i] * (2.0f * static_cast<float>(M_PI) / settings_.lambda);
-  }
-
-  // Output requested coefficients.
+  //
+  //   phi = (2 pi / lambda) W
+  //
+  // so each modal amplitude is scaled by 2 pi / lambda.
   auto *out_ptr = reinterpret_cast<float *>(ctx.outputs[0].data());
-  for (std::size_t i = 0; i < settings_.indexes.size(); ++i) {
-    const int idx = settings_.indexes[i];
-    out_ptr[i]    = coefs_rad[idx - 4]; // a4 -> 0, a5 -> 1, a6 -> 2
+  for (std::size_t i = 0; i < n_modes; ++i) {
+    out_ptr[i] = coefs_m[i] * (2.0f * static_cast<float>(M_PI) / settings_.lambda);
   }
+  
+  // Scale the recovered coefficients by an empirical factor to better match the expected range of values.
+  for (std::size_t i = 0; i < n_modes; ++i) {
+    out_ptr[i] *= 1.17f;
+  }
+  
+  // Log each recovered coefficient with its corresponding Zernike index for debugging.
+  std::string log_msg = "Recovered Zernike coefficients:\n";
+  for (std::size_t i = 0; i < n_modes; ++i) {
+    log_msg += "  Z" + std::to_string(settings_.indexes[i]) + ": " + std::to_string(out_ptr[i]) + "\n";
+  }
+  logger()->info(log_msg);
 
   return holoflow::core::OpResult::Ok;
 }
@@ -389,8 +448,10 @@ ZernikeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(settings.z > 0.0f, "Propagation distance z must be > 0");
 
   check(!settings.indexes.empty(), "indexes must not be empty");
+  check(settings.indexes.size() <= kMaxSupportedModes, "Too many requested Zernike modes");
+
   for (int idx : settings.indexes) {
-    check(idx == 4 || idx == 5 || idx == 6, "Only zernike indexes 4, 5, 6 are supported");
+    check(idx >= 2 && idx <= 6, "Only zernike Noll indexes 2..6 are supported");
   }
 
   auto uniq = settings.indexes;

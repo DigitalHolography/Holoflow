@@ -235,8 +235,8 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
 
     int ny                = static_cast<int>(FH.shape.at(2));
     int nx                = static_cast<int>(FH.shape.at(3));
-    auto [zernike_coeffs] = unpack<1>(zernike(xcorr_cpu, {{4}, lam, dx, dy, z_prop}));
-    auto [phase]          = unpack<1>(zernike_phase(zernike_coeffs, {{4}, ny, nx}));
+    auto [zernike_coeffs] = unpack<1>(zernike(xcorr_cpu, {{2, 3, 4}, lam, dx, dy, z_prop}));
+    auto [phase]          = unpack<1>(zernike_phase(zernike_coeffs, {{2, 3, 4}, ny, nx}));
     std::tie(phase)       = unpack<1>(memcpy(phase, {Device}));
     std::tie(FH)          = unpack<1>(correct_phase(FH, phase, {}));
     std::tie(phase)       = unpack<1>(wrap2pi(phase, {}));
