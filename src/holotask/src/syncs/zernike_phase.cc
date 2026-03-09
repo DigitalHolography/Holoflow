@@ -122,7 +122,7 @@ holoflow::core::OpResult ZernikePhase::execute(holoflow::core::SyncCtx &ctx) {
       const float r2        = x_n * x_n + y_n * y_n;
       float       phase_rad = 0.0f;
 
-      if (r2 <= 1.0f) {
+      if (r2 <= 1.0f || true) {
         for (std::size_t i = 0; i < settings_.indexes.size(); ++i) {
           const int   noll_index = settings_.indexes[i];
           const float z_value    = eval_zernike_noll_value(noll_index, x_n, y_n);

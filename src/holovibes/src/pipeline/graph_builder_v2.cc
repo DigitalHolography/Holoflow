@@ -233,17 +233,26 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [xcorr_disp]         = unpack<1>(batched_queue(xcorr_flattened, {s_.cpu_out_size, 1, 1}));
     shack_hartmann_xcorr_display(xcorr_disp, {});
 
-    int ny = static_cast<int>(FH.shape.at(2));
-    int nx = static_cast<int>(FH.shape.at(3));
-    auto [zernike_coeffs] =
-        unpack<1>(zernike(xcorr_cpu, {s_.autofocus_zernike_orders, lam, dx, dy, z_prop}));
-    auto [phase] = unpack<1>(zernike_phase(zernike_coeffs, {s_.autofocus_zernike_orders, ny, nx}));
-    std::tie(phase) = unpack<1>(memcpy(phase, {Device}));
-    std::tie(FH)    = unpack<1>(correct_phase(FH, phase, {}));
-    std::tie(phase) = unpack<1>(wrap2pi(phase, {}));
-    std::tie(phase) = unpack<1>(reshape(phase, {{1, ny, nx}}));
-    std::tie(phase) = unpack<1>(batched_queue(phase, {s_.cpu_out_size, 1, 1}));
-    zernike_phase_display(phase, {});
+    if (!s_.autofocus_zernike_orders.empty()) {
+      int ny = static_cast<int>(FH.shape.at(2));
+      int nx = static_cast<int>(FH.shape.at(3));
+      auto [zernike_coeffs] =
+          unpack<1>(zernike(xcorr_cpu, {s_.autofocus_zernike_orders, lam, dx, dy, z_prop}));
+      auto [phase] =
+          unpack<1>(zernike_phase(zernike_coeffs, {s_.autofocus_zernike_orders, ny, nx}));
+      std::tie(phase) = unpack<1>(memcpy(phase, {Device}));
+      std::tie(FH)    = unpack<1>(correct_phase(FH, phase, {}));
+      std::tie(phase) = unpack<1>(wrap2pi(phase, {}));
+      std::tie(phase) = unpack<1>(reshape(phase, {{1, ny, nx}}));
+      std::tie(phase) = unpack<1>(batched_queue(phase, {s_.cpu_out_size, 1, 1}));
+      zernike_phase_display(phase, {});
+    }
+    else {
+      size_t ny = FH.shape.at(2);
+      size_t nx = FH.shape.at(3);
+      auto [phase] = unpack<1>(zeros({{1, ny, nx}, holoflow::core::DType::F32}));
+      zernike_phase_display(phase, {});
+    }
   }
 
   // -------------------------------------------------------------------------------------------------
