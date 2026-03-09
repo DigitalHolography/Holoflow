@@ -240,8 +240,9 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
   //   dx' = lambda * z / (win_w * dx)
   //   dy' = lambda * z / (win_h * dy)
   //
-  // You stated that the special case win_w*dx == win_h*dy is guaranteed, so
-  // dx' == dy'. We keep one common propagated pitch.
+  // We suppose that the special case win_w*dx == win_h*dy is guaranteed, so dx' == dy'.
+  // This is equivalent to having square pixels in the propagated plane, which is a common design
+  // choice for wavefront sensing. We can keep one common propagated pitch for simplicity.
   //
   const float propagated_pitch_m =
       (settings_.lambda * settings_.z) / (static_cast<float>(win_w) * settings_.dx);
@@ -284,8 +285,18 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
 
   for (std::size_t sy = 0; sy < nb_sub_y; ++sy) {
     for (std::size_t sx = 0; sx < nb_sub_x; ++sx) {
-      const float x_n = normalized_coord(sx, nb_sub_x);
-      const float y_n = normalized_coord(sy, nb_sub_y);
+      // Find subaperture center in pupil coordinates.
+      const float pitch_x = static_cast<float>(win_w) * settings_.dx;
+      const float pitch_y = static_cast<float>(win_h) * settings_.dy;
+      const float X = ((float)(sx) - ((float)(nb_sub_x)-1.0f) * 0.5f) * pitch_x;
+      const float Y = ((float)(sy) - ((float)(nb_sub_y)-1.0f) * 0.5f) * pitch_y;
+      const float x_n = X / pupil_radius_m;
+      const float y_n = Y / pupil_radius_m;
+
+      // Skip subapertures whose center is outside the unit disk.
+      if (x_n * x_n + y_n * y_n > 1.0f) {
+        continue;
+      }
 
       // -----------------------------------------------------------------------
       // Noll-indexed Zernike derivatives on the unit disk

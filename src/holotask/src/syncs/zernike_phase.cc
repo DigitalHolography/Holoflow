@@ -69,7 +69,6 @@ holoflow::core::OpResult ZernikePhase::execute(holoflow::core::SyncCtx &ctx) {
 
   logger()->info("Generating Zernike phase mask with coefficients: a4={}, a5={}, a6={}", a4, a5,
                  a6);
-  // a4 *= 10.0f; // Scale coefficients for more visible phase (tune as needed)
 
   // 2. Setup output phase mask buffer
   auto &output_view = ctx.outputs[0];
