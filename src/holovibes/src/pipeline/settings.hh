@@ -125,6 +125,7 @@ struct Settings {
   // Auto-focus
   bool  autofocus_enabled;
   int   autofocus_nb_subaps;
+  std::vector<int> autofocus_zernike_orders;
 };
 
 } // namespace holovibes::pipeline

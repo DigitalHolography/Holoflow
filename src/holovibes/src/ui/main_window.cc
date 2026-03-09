@@ -994,8 +994,29 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Auto-Focus Settings
   {
-    s.autofocus_enabled   = render_widget_->autofocus_widget()->is_enabled();
-    s.autofocus_nb_subaps = render_widget_->autofocus_widget()->get_nb_subaps();
+    s.autofocus_enabled        = render_widget_->autofocus_widget()->is_enabled();
+    s.autofocus_nb_subaps      = render_widget_->autofocus_widget()->get_nb_subaps();
+    s.autofocus_zernike_orders = std::vector<int>();
+
+    if (render_widget_->autofocus_widget()->is_z2_enabled()) {
+      s.autofocus_zernike_orders.push_back(2);
+    }
+
+    if (render_widget_->autofocus_widget()->is_z3_enabled()) {
+      s.autofocus_zernike_orders.push_back(3);
+    }
+
+    if (render_widget_->autofocus_widget()->is_z4_enabled()) {
+      s.autofocus_zernike_orders.push_back(4);
+    }
+
+    if (render_widget_->autofocus_widget()->is_z5_enabled()) {
+      s.autofocus_zernike_orders.push_back(5);
+    }
+
+    if (render_widget_->autofocus_widget()->is_z6_enabled()) {
+      s.autofocus_zernike_orders.push_back(6);
+    }
   }
 
   return s;

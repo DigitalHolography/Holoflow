@@ -46,6 +46,19 @@ public:
   void set_z5(double value);
   void set_z6(double value);
 
+  // Per-coefficient enable flags
+  bool is_z2_enabled() const;
+  bool is_z3_enabled() const;
+  bool is_z4_enabled() const;
+  bool is_z5_enabled() const;
+  bool is_z6_enabled() const;
+
+  void set_z2_enabled(bool enabled);
+  void set_z3_enabled(bool enabled);
+  void set_z4_enabled(bool enabled);
+  void set_z5_enabled(bool enabled);
+  void set_z6_enabled(bool enabled);
+
   // Visualization toggles
   bool show_reconstructed_phase() const;
   bool show_shack_hartmann_sensor_view() const;
@@ -58,6 +71,12 @@ public:
   void set_enabled(bool enabled);
 
   // Accessors for external connection/setup if needed
+  QCheckBox *z2_checkbox();
+  QCheckBox *z3_checkbox();
+  QCheckBox *z4_checkbox();
+  QCheckBox *z5_checkbox();
+  QCheckBox *z6_checkbox();
+
   QCheckBox *reconstructed_phase_checkbox();
   QCheckBox *shack_hartmann_sensor_view_checkbox();
   QCheckBox *cross_correlation_view_checkbox();
@@ -72,6 +91,11 @@ private:
   QSpinBox *nb_subaps_spin_;
   QSpinBox *nb_iter_spin_;
 
+  QCheckBox      *z2_checkbox_;
+  QCheckBox      *z3_checkbox_;
+  QCheckBox      *z4_checkbox_;
+  QCheckBox      *z5_checkbox_;
+  QCheckBox      *z6_checkbox_;
   QDoubleSpinBox *z2_spin_;
   QDoubleSpinBox *z3_spin_;
   QDoubleSpinBox *z4_spin_;

@@ -40,14 +40,14 @@ QDoubleSpinBox *create_display_double_spin_box(QWidget *parent, double value, in
   auto *spin_box = new QDoubleSpinBox(parent);
   spin_box->setRange(-1e9, 1e9);
   spin_box->setDecimals(decimals);
-  spin_box->setSingleStep(0.0);
+  spin_box->setButtonSymbols(QAbstractSpinBox::NoButtons);
+  spin_box->setReadOnly(true);
   spin_box->setValue(value);
-  spin_box->setEnabled(false);
   spin_box->setSuffix(" rad");
   return spin_box;
 }
 
-QCheckBox *create_checkbox(QWidget *parent, const QString &text, bool checked = false) {
+QCheckBox *create_checkbox(QWidget *parent, bool checked = false, const QString &text = {}) {
   auto *checkbox = new QCheckBox(text, parent);
   checkbox->setChecked(checked);
   return checkbox;
@@ -80,6 +80,19 @@ void AutoFocusWidget::set_z4(double value) { z4_spin_->setValue(value); }
 void AutoFocusWidget::set_z5(double value) { z5_spin_->setValue(value); }
 void AutoFocusWidget::set_z6(double value) { z6_spin_->setValue(value); }
 
+// Per-coefficient enable flags
+bool AutoFocusWidget::is_z2_enabled() const { return z2_checkbox_->isChecked(); }
+bool AutoFocusWidget::is_z3_enabled() const { return z3_checkbox_->isChecked(); }
+bool AutoFocusWidget::is_z4_enabled() const { return z4_checkbox_->isChecked(); }
+bool AutoFocusWidget::is_z5_enabled() const { return z5_checkbox_->isChecked(); }
+bool AutoFocusWidget::is_z6_enabled() const { return z6_checkbox_->isChecked(); }
+
+void AutoFocusWidget::set_z2_enabled(bool enabled) { z2_checkbox_->setChecked(enabled); }
+void AutoFocusWidget::set_z3_enabled(bool enabled) { z3_checkbox_->setChecked(enabled); }
+void AutoFocusWidget::set_z4_enabled(bool enabled) { z4_checkbox_->setChecked(enabled); }
+void AutoFocusWidget::set_z5_enabled(bool enabled) { z5_checkbox_->setChecked(enabled); }
+void AutoFocusWidget::set_z6_enabled(bool enabled) { z6_checkbox_->setChecked(enabled); }
+
 // Visualization toggles
 bool AutoFocusWidget::show_reconstructed_phase() const {
   return reconstructed_phase_checkbox_->isChecked();
@@ -107,6 +120,13 @@ void AutoFocusWidget::set_show_cross_correlation_view(bool checked) {
 
 void AutoFocusWidget::set_enabled(bool enabled) { setChecked(enabled); }
 
+// Widget accessors
+QCheckBox *AutoFocusWidget::z2_checkbox() { return z2_checkbox_; }
+QCheckBox *AutoFocusWidget::z3_checkbox() { return z3_checkbox_; }
+QCheckBox *AutoFocusWidget::z4_checkbox() { return z4_checkbox_; }
+QCheckBox *AutoFocusWidget::z5_checkbox() { return z5_checkbox_; }
+QCheckBox *AutoFocusWidget::z6_checkbox() { return z6_checkbox_; }
+
 QCheckBox *AutoFocusWidget::reconstructed_phase_checkbox() {
   return reconstructed_phase_checkbox_;
 }
@@ -131,7 +151,20 @@ void AutoFocusWidget::setup_ui() {
 
   const auto add_label_widget_row = [&](const QString &label, QWidget *widget) {
     inner_layout->addWidget(new QLabel(label, content_container_), row, 0);
-    inner_layout->addWidget(widget, row, 1);
+    inner_layout->addWidget(widget, row, 1, 1, 2);
+    ++row;
+  };
+
+  const auto add_zernike_row = [&](const QString &label, QCheckBox *&checkbox,
+                                   QDoubleSpinBox *&spin_box) {
+    inner_layout->addWidget(new QLabel(label, content_container_), row, 0);
+
+    checkbox = create_checkbox(content_container_, false);
+    inner_layout->addWidget(checkbox, row, 1);
+
+    spin_box = create_display_double_spin_box(content_container_, 0.0);
+    inner_layout->addWidget(spin_box, row, 2);
+
     ++row;
   };
 
@@ -145,35 +178,39 @@ void AutoFocusWidget::setup_ui() {
                             "Only one iteration is supported for now.");
   add_label_widget_row("Nb Iter:", nb_iter_spin_);
 
-  z2_spin_ = create_display_double_spin_box(content_container_, 0.0);
-  z3_spin_ = create_display_double_spin_box(content_container_, 0.0);
-  z4_spin_ = create_display_double_spin_box(content_container_, 0.0);
-  z5_spin_ = create_display_double_spin_box(content_container_, 0.0);
-  z6_spin_ = create_display_double_spin_box(content_container_, 0.0);
-
-  add_label_widget_row("Z2 - Tilt X:", z2_spin_);
-  add_label_widget_row("Z3 - Tilt Y:", z3_spin_);
-  add_label_widget_row("Z4 - Defocus:", z4_spin_);
-  add_label_widget_row("Z5 - Astigmatism 45°:", z5_spin_);
-  add_label_widget_row("Z6 - Astigmatism 0°:", z6_spin_);
+  add_zernike_row("Z2 - Tilt X:", z2_checkbox_, z2_spin_);
+  add_zernike_row("Z3 - Tilt Y:", z3_checkbox_, z3_spin_);
+  add_zernike_row("Z4 - Defocus:", z4_checkbox_, z4_spin_);
+  add_zernike_row("Z5 - Astigmatism 45°:", z5_checkbox_, z5_spin_);
+  add_zernike_row("Z6 - Astigmatism 0°:", z6_checkbox_, z6_spin_);
 
   reconstructed_phase_checkbox_ =
-      create_checkbox(content_container_, "Display reconstructed phase");
+      create_checkbox(content_container_, false, "Display reconstructed phase");
   shack_hartmann_sensor_view_checkbox_ =
-      create_checkbox(content_container_, "Display Shack-Hartmann sensor view");
+      create_checkbox(content_container_, false, "Display Shack-Hartmann sensor view");
   cross_correlation_view_checkbox_ =
-      create_checkbox(content_container_, "Display cross-correlation view");
+      create_checkbox(content_container_, false, "Display cross-correlation view");
 
-  inner_layout->addWidget(reconstructed_phase_checkbox_, row++, 0, 1, 2);
-  inner_layout->addWidget(shack_hartmann_sensor_view_checkbox_, row++, 0, 1, 2);
-  inner_layout->addWidget(cross_correlation_view_checkbox_, row++, 0, 1, 2);
+  inner_layout->addWidget(reconstructed_phase_checkbox_, row++, 0, 1, 3);
+  inner_layout->addWidget(shack_hartmann_sensor_view_checkbox_, row++, 0, 1, 3);
+  inner_layout->addWidget(cross_correlation_view_checkbox_, row++, 0, 1, 3);
+
+  inner_layout->setColumnStretch(0, 1);
+  inner_layout->setColumnStretch(1, 0);
+  inner_layout->setColumnStretch(2, 1);
 
   inner_layout->addItem(
-      new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding), row, 0, 1, 2);
+      new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding), row, 0, 1, 3);
 }
 
 void AutoFocusWidget::connect_signals() {
   connect(this, &QGroupBox::toggled, this, &AutoFocusWidget::settings_changed);
+
+  connect(z2_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
+  connect(z3_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
+  connect(z4_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
+  connect(z5_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
+  connect(z6_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
 
   connect(reconstructed_phase_checkbox_, &QCheckBox::toggled, this,
           &AutoFocusWidget::settings_changed);
