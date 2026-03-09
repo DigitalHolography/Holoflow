@@ -18,6 +18,7 @@
 #include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QSpinBox>
+#include <QWidget>
 
 namespace holovibes::ui {
 
@@ -27,25 +28,39 @@ class AutoFocusWidget : public QGroupBox {
 public:
   explicit AutoFocusWidget(QWidget *parent = nullptr);
 
-  // Getters
-  int    get_nb_subaps() const;
-  int    get_max_iter() const;
-  double get_tolerance() const;
-  double get_gain() const;
-  bool   is_enabled() const;
+  // Fixed configuration
+  int  get_nb_subaps() const;
+  int  get_nb_iter() const;
+  bool is_enabled() const;
 
-  // Setters
-  void set_nb_subaps(int value);
-  void set_max_iter(int value);
-  void set_tolerance(double value);
-  void set_gain(double value);
+  // Zernike values in radians
+  double get_z2() const;
+  double get_z3() const;
+  double get_z4() const;
+  double get_z5() const;
+  double get_z6() const;
+
+  void set_z2(double value);
+  void set_z3(double value);
+  void set_z4(double value);
+  void set_z5(double value);
+  void set_z6(double value);
+
+  // Visualization toggles
+  bool show_reconstructed_phase() const;
+  bool show_shack_hartmann_sensor_view() const;
+  bool show_cross_correlation_view() const;
+
+  void set_show_reconstructed_phase(bool checked);
+  void set_show_shack_hartmann_sensor_view(bool checked);
+  void set_show_cross_correlation_view(bool checked);
+
   void set_enabled(bool enabled);
 
-  // Access to widgets for connection setup
-  QSpinBox       *nb_subaps_spin();
-  QSpinBox       *max_iter_spin();
-  QDoubleSpinBox *tolerance_spin();
-  QDoubleSpinBox *gain_spin();
+  // Accessors for external connection/setup if needed
+  QCheckBox *reconstructed_phase_checkbox();
+  QCheckBox *shack_hartmann_sensor_view_checkbox();
+  QCheckBox *cross_correlation_view_checkbox();
 
 signals:
   void settings_changed();
@@ -54,13 +69,20 @@ private:
   void setup_ui();
   void connect_signals();
 
-  void update_visibility(bool enabled);
+  QSpinBox *nb_subaps_spin_;
+  QSpinBox *nb_iter_spin_;
 
-  QSpinBox       *nb_subaps_spin_;
-  QSpinBox       *max_iter_spin_;
-  QDoubleSpinBox *tolerance_spin_;
-  QDoubleSpinBox *gain_spin_;
-  QWidget        *content_container_;
+  QDoubleSpinBox *z2_spin_;
+  QDoubleSpinBox *z3_spin_;
+  QDoubleSpinBox *z4_spin_;
+  QDoubleSpinBox *z5_spin_;
+  QDoubleSpinBox *z6_spin_;
+
+  QCheckBox *reconstructed_phase_checkbox_;
+  QCheckBox *shack_hartmann_sensor_view_checkbox_;
+  QCheckBox *cross_correlation_view_checkbox_;
+
+  QWidget *content_container_;
 };
 
 } // namespace holovibes::ui

@@ -125,9 +125,6 @@ struct Settings {
   // Auto-focus
   bool  autofocus_enabled;
   int   autofocus_nb_subaps;
-  int   autofocus_max_iter;
-  float autofocus_tolerance;
-  float autofocus_gain;
 };
 
 } // namespace holovibes::pipeline
