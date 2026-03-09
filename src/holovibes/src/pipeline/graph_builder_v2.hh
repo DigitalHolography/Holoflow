@@ -69,6 +69,7 @@
 #include "holotask/syncs/average.hh"
 #include "holotask/syncs/conversion.hh"
 #include "holotask/syncs/convolution.hh"
+#include "holotask/syncs/correct_phase.hh"
 #include "holotask/syncs/crop.hh"
 #include "holotask/syncs/fft_shift.hh"
 #include "holotask/syncs/filter2d.hh"
@@ -201,6 +202,7 @@ private:
   std::vector<TDesc> ametek_s711_euresys_coaxlink_qsfp_plus(holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
   std::vector<TDesc> average(const TDesc &X, holotask::syncs::AverageSettings s);
   std::vector<TDesc> convolution(const TDesc &X, holotask::syncs::ConvolutionSettings s);
+  std::vector<TDesc> correct_phase(const TDesc &X, const TDesc &PhaseMask, holotask::syncs::CorrectPhaseSettings s);
   std::vector<TDesc> crop(const TDesc &X, holotask::syncs::CropSettings s);
   std::vector<TDesc> fft_shift(const TDesc &X, holotask::syncs::FFTShiftSettings s);
   std::vector<TDesc> pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);

@@ -128,7 +128,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
       z1 = s_.time_z_end;
     }
 
-    std::tie(FH) = unpack<1>(pca(H, {z0, z1}));
+    std::tie(FH) = unpack<1>(pca(H, {z0, z1, 1}));
   }
 
   else {
@@ -142,11 +142,108 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
   std::tie(FH)      = unpack<1>(reshape(FH, {{1, Nz, Ny, Nx}, false}));
   std::tie(FH)      = unpack<1>(batched_queue(FH, {o_batches * 2, o_batches, o_batches}));
 
-  // Some time methods (e.g. PCA) may yield a F32 output. Convert to CF32 for consistency in
-  // downstream processing and display.
-  // if (FH.dtype == holoflow::core::DType::F32) {
-  //   std::tie(FH) = unpack<1>(convert(FH, {Target::CF32, Strat::Real}));
-  // }
+  // -------------------------------------------------------------------------------------------------
+  // Shack-Hartmann View Processing (Vectorized Spatial with Cropping)
+  // -------------------------------------------------------------------------------------------------
+
+  if (s_.autofocus_enabled) {
+    auto nb_subap = 5ULL;
+
+    // -------------------------------------------------------------------------------------------------
+    // Spatial Cropping
+    // -------------------------------------------------------------------------------------------------
+
+    auto               subap_w = FH.shape.at(3) / nb_subap;
+    auto               subap_h = FH.shape.at(2) / nb_subap;
+    auto               valid_w = subap_w * nb_subap;
+    auto               valid_h = subap_h * nb_subap;
+    holonp::SliceRange crop_y{0, valid_h};
+    holonp::SliceRange crop_x{0, valid_w};
+
+    auto [FH_cropped] = unpack<1>(slice(FH, {{{}, {}, crop_y, crop_x}}));
+    auto n_freq       = FH_cropped.shape.at(1);
+
+    // -------------------------------------------------------------------------------------------------
+    // Fresnel Lens Application
+    // -------------------------------------------------------------------------------------------------
+
+    auto [z_prop_t] = unpack<1>(asarray({z_prop}));
+    auto [Qin]      = unpack<1>(fresnel_qin(z_prop_t, {lam, dx, dy, valid_w, valid_h}));
+    auto [FH_Qin]   = unpack<1>(mul(FH_cropped, Qin, {}));
+
+    // -------------------------------------------------------------------------------------------------
+    // Sub-aperture Processing
+    // -------------------------------------------------------------------------------------------------
+
+    // Reshape to isolate tiles
+    // Shape: (Batches, Freq, Grid_Y, Tile_Y, Grid_X, Tile_X)
+    auto [FH_6d] =
+        unpack<1>(reshape(FH_Qin, {{(int64_t)o_batches, (int64_t)n_freq, (int64_t)nb_subap,
+                                    (int64_t)subap_h, (int64_t)nb_subap, (int64_t)subap_w}}));
+
+    // Transpose to group grids
+    // Shape: (Batches, Freq, Grid_Y, Grid_X, Tile_Y, Tile_X)
+    auto [FH_grouped] = unpack<1>(transpose(FH_6d, {{0, 1, 2, 4, 3, 5}}));
+
+    // 2D FFT on the last two axes (Tile_Y, Tile_X)
+    auto [FH_prop] = unpack<1>(fft2(FH_grouped, {{-2, -1}}));
+
+    // Intensity & Averaging
+    auto [M0_blocked]    = unpack<1>(mean_abs(FH_prop, {{1}, false}));
+    std::tie(M0_blocked) = unpack<1>(mean(M0_blocked, {{0}, true}));
+    std::tie(M0_blocked) = unpack<1>(fftshift(M0_blocked, {{-2, -1}}));
+
+    // -------------------------------------------------------------------------------------------------
+    // Cross Correlation with Reference (Center Tile)
+    // -------------------------------------------------------------------------------------------------
+
+    int64_t sy_ref = nb_subap / 2;
+    int64_t sx_ref = nb_subap / 2;
+    auto [M0_ref]  = unpack<1>(slice(M0_blocked, {{{}, sy_ref, sx_ref, {}, {}}}));
+
+    auto [F_ref]       = unpack<1>(rfft2(M0_ref, {{-2, -1}}));
+    auto [F_mov]       = unpack<1>(rfft2(M0_blocked, {{-2, -1}}));
+    auto [F_ref_conj]  = unpack<1>(conj(F_ref, {}));
+    auto [F_xcorr]     = unpack<1>(mul(F_mov, F_ref_conj, {}));
+    auto [F_xcorr_abs] = unpack<1>(abs(F_xcorr, {}));
+    std::tie(F_xcorr)  = unpack<1>(div(F_xcorr, F_xcorr_abs, {}));
+    auto [xcorr]       = unpack<1>(irfft2(F_xcorr, {{-2, -1}}));
+
+    // -------------------------------------------------------------------------------------------------
+    // Output
+    // -------------------------------------------------------------------------------------------------
+
+    int64_t h = (int64_t)valid_h;
+    int64_t w = (int64_t)valid_w;
+
+    auto [M0_scaled]     = unpack<1>(normalize(M0_blocked, {{-2, -1}, 0.0f, 255.0f}));
+    auto [M0_ordered]    = unpack<1>(transpose(M0_scaled, {{0, 1, 3, 2, 4}}));
+    auto [M0_sh_disp]    = unpack<1>(reshape(M0_ordered, {{1, h, w}}));
+    std::tie(M0_sh_disp) = unpack<1>(convert(M0_sh_disp, {Target::U8, Strat::Scaled}));
+    std::tie(M0_sh_disp) = unpack<1>(memcpy(M0_sh_disp, {Host}));
+    std::tie(M0_sh_disp) = unpack<1>(batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1}));
+    shack_hartmann_display(M0_sh_disp, {});
+
+    auto [xcorr_shifted]      = unpack<1>(fftshift(xcorr, {{-2, -1}}));
+    auto [xcorr_scaled]       = unpack<1>(normalize(xcorr_shifted, {{-2, -1}, 0.0f, 255.0f}));
+    auto [xcorr_u8]           = unpack<1>(convert(xcorr_scaled, {Target::U8, Strat::Scaled}));
+    auto [xcorr_cpu]          = unpack<1>(memcpy(xcorr_u8, {Host}));
+    auto [xcorr_flattened]    = unpack<1>(transpose(xcorr_cpu, {{0, 1, 3, 2, 4}}));
+    std::tie(xcorr_flattened) = unpack<1>(reshape(xcorr_flattened, {{1, h, w}}));
+    auto [xcorr_disp]         = unpack<1>(batched_queue(xcorr_flattened, {s_.cpu_out_size, 1, 1}));
+    shack_hartmann_xcorr_display(xcorr_disp, {});
+
+    int ny                = static_cast<int>(FH.shape.at(2));
+    int nx                = static_cast<int>(FH.shape.at(3));
+    auto [zernike_coeffs] = unpack<1>(zernike(xcorr_cpu, {{4}, lam, dx, dy, z_prop}));
+    auto [phase]          = unpack<1>(zernike_phase(zernike_coeffs, {{4}, ny, nx}));
+    std::tie(phase)       = unpack<1>(memcpy(phase, {Device}));
+    std::tie(FH)          = unpack<1>(correct_phase(FH, phase, {}));
+    std::tie(phase)       = unpack<1>(wrap2pi(phase, {}));
+    std::tie(phase)       = unpack<1>(reshape(phase, {{1, ny, nx}}));
+    std::tie(phase)       = unpack<1>(batched_queue(phase, {s_.cpu_out_size, 1, 1}));
+    zernike_phase_display(phase, {});
+  }
 
   // -------------------------------------------------------------------------------------------------
   // Spacial Propagation (FH -> FH_z - Propagated Hologram)
@@ -271,111 +368,6 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     }
   }
 
-  // -------------------------------------------------------------------------------------------------
-  // Shack-Hartmann View Processing (Vectorized Spatial with Cropping)
-  // -------------------------------------------------------------------------------------------------
-
-  if (true) {
-    auto nb_subap = 5ULL;
-
-    // -------------------------------------------------------------------------------------------------
-    // Spatial Cropping
-    // -------------------------------------------------------------------------------------------------
-
-    auto               subap_w = FH.shape.at(3) / nb_subap;
-    auto               subap_h = FH.shape.at(2) / nb_subap;
-    auto               valid_w = subap_w * nb_subap;
-    auto               valid_h = subap_h * nb_subap;
-    holonp::SliceRange crop_y{0, valid_h};
-    holonp::SliceRange crop_x{0, valid_w};
-
-    auto [FH_cropped] = unpack<1>(slice(FH, {{{}, {}, crop_y, crop_x}}));
-    auto n_freq       = FH_cropped.shape.at(1);
-
-    // -------------------------------------------------------------------------------------------------
-    // Fresnel Lens Application
-    // -------------------------------------------------------------------------------------------------
-
-    auto [z_prop_t] = unpack<1>(asarray({z_prop}));
-    auto [Qin]      = unpack<1>(fresnel_qin(z_prop_t, {lam, dx, dy, valid_w, valid_h}));
-    auto [FH_Qin]   = unpack<1>(mul(FH_cropped, Qin, {}));
-
-    // -------------------------------------------------------------------------------------------------
-    // Sub-aperture Processing
-    // -------------------------------------------------------------------------------------------------
-
-    // Reshape to isolate tiles
-    // Shape: (Batches, Freq, Grid_Y, Tile_Y, Grid_X, Tile_X)
-    auto [FH_6d] =
-        unpack<1>(reshape(FH_Qin, {{(int64_t)o_batches, (int64_t)n_freq, (int64_t)nb_subap,
-                                    (int64_t)subap_h, (int64_t)nb_subap, (int64_t)subap_w}}));
-
-    // Transpose to group grids
-    // Shape: (Batches, Freq, Grid_Y, Grid_X, Tile_Y, Tile_X)
-    auto [FH_grouped] = unpack<1>(transpose(FH_6d, {{0, 1, 2, 4, 3, 5}}));
-
-    // 2D FFT on the last two axes (Tile_Y, Tile_X)
-    auto [FH_prop] = unpack<1>(fft2(FH_grouped, {{-2, -1}}));
-
-    // Intensity & Averaging
-    auto [M0_blocked]    = unpack<1>(mean_abs(FH_prop, {{1}, false}));
-    std::tie(M0_blocked) = unpack<1>(mean(M0_blocked, {{0}, true}));
-    std::tie(M0_blocked) = unpack<1>(fftshift(M0_blocked, {{-2, -1}}));
-
-    // -------------------------------------------------------------------------------------------------
-    // Cross Correlation with Reference (Center Tile)
-    // -------------------------------------------------------------------------------------------------
-
-    int64_t sy_ref = nb_subap / 2;
-    int64_t sx_ref = nb_subap / 2;
-    auto [M0_ref]  = unpack<1>(slice(M0_blocked, {{{}, sy_ref, sx_ref, {}, {}}}));
-
-    auto [F_ref]       = unpack<1>(rfft2(M0_ref, {{-2, -1}}));
-    auto [F_mov]       = unpack<1>(rfft2(M0_blocked, {{-2, -1}}));
-    auto [F_ref_conj]  = unpack<1>(conj(F_ref, {}));
-    auto [F_xcorr]     = unpack<1>(mul(F_mov, F_ref_conj, {}));
-    auto [F_xcorr_abs] = unpack<1>(abs(F_xcorr, {}));
-    std::tie(F_xcorr)  = unpack<1>(div(F_xcorr, F_xcorr_abs, {}));
-    auto [xcorr]       = unpack<1>(irfft2(F_xcorr, {{-2, -1}}));
-
-    // -------------------------------------------------------------------------------------------------
-    // Output
-    // -------------------------------------------------------------------------------------------------
-
-    int64_t h = (int64_t)valid_h;
-    int64_t w = (int64_t)valid_w;
-
-    auto [M0_scaled]     = unpack<1>(normalize(M0_blocked, {{-2, -1}, 0.0f, 255.0f}));
-    auto [M0_ordered]    = unpack<1>(transpose(M0_scaled, {{0, 1, 3, 2, 4}}));
-    auto [M0_sh_disp]    = unpack<1>(reshape(M0_ordered, {{1, h, w}}));
-    std::tie(M0_sh_disp) = unpack<1>(convert(M0_sh_disp, {Target::U8, Strat::Scaled}));
-    std::tie(M0_sh_disp) = unpack<1>(memcpy(M0_sh_disp, {Host}));
-    std::tie(M0_sh_disp) = unpack<1>(batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1}));
-    shack_hartmann_display(M0_sh_disp, {});
-
-    auto [xcorr_shifted]      = unpack<1>(fftshift(xcorr, {{-2, -1}}));
-    auto [xcorr_scaled]       = unpack<1>(normalize(xcorr_shifted, {{-2, -1}, 0.0f, 255.0f}));
-    auto [xcorr_u8]           = unpack<1>(convert(xcorr_scaled, {Target::U8, Strat::Scaled}));
-    auto [xcorr_cpu]          = unpack<1>(memcpy(xcorr_u8, {Host}));
-    auto [xcorr_flattened]    = unpack<1>(transpose(xcorr_cpu, {{0, 1, 3, 2, 4}}));
-    std::tie(xcorr_flattened) = unpack<1>(reshape(xcorr_flattened, {{1, h, w}}));
-    auto [xcorr_disp]         = unpack<1>(batched_queue(xcorr_flattened, {s_.cpu_out_size, 1, 1}));
-    shack_hartmann_xcorr_display(xcorr_disp, {});
-
-    int ny = static_cast<int>(FH.shape.at(2));
-    int nx = static_cast<int>(FH.shape.at(3));
-    auto [zernike_coeffs] = unpack<1>(zernike(xcorr_cpu, {{4}, s_.spacial_lambda, s_.spacial_pixel_size, s_.spacial_pixel_size, s_.spacial_z}));
-    auto [phase]  = unpack<1>(zernike_phase(zernike_coeffs, {{4}, ny, nx}));
-    std::tie(phase) = unpack<1>(memcpy(phase, {Device}));
-    std::tie(phase) = unpack<1>(wrap2pi(phase, {}));
-    // std::tie(phase) = unpack<1>(normalize(phase, {{-2, -1}, 0.0f, 255.0f}));
-    // std::tie(phase) = unpack<1>(convert(phase, {Target::U8, Strat::Scaled}));
-    std::tie(phase) = unpack<1>(memcpy(phase, {Host}));
-    std::tie(phase) = unpack<1>(reshape(phase, {{1, ny, nx}}));
-    std::tie(phase) = unpack<1>(batched_queue(phase, {s_.cpu_out_size, 1, 1}));
-    zernike_phase_display(phase, {});
-  }
-
   return g_;
 }
 
@@ -481,6 +473,14 @@ std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::sub(const TDesc &A, const T
                                                          holonp::SubSettings s) {
   std::array<TDesc, 2> inputs{A, B};
   return make_nary_sync_node("sub", "Sub", "Sub", std::span<const TDesc>{inputs}, s);
+}
+
+std::vector<GraphBuilder_v2::TDesc>
+GraphBuilder_v2::correct_phase(const TDesc &X, const TDesc &PhaseMask,
+                               holotask::syncs::CorrectPhaseSettings s) {
+  std::array<TDesc, 2> inputs{X, PhaseMask};
+  return make_nary_sync_node("correct_phase", "CorrectPhase", "CorrectPhase",
+                             std::span<const TDesc>{inputs}, s);
 }
 
 std::vector<GraphBuilder_v2::TDesc> GraphBuilder_v2::equal(const TDesc &A, const TDesc &B,

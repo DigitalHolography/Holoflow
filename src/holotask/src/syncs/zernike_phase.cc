@@ -15,27 +15,25 @@
 #include "holotask/syncs/zernike_phase.hh"
 
 #include <algorithm>
-#include <string>
 #include <chrono>
 #include <cmath>
+#include <string>
 
 #include "logger.hh"
 
 namespace holotask::syncs {
 
 void to_json(nlohmann::json &j, const ZernikePhaseSettings &s) {
-  j = nlohmann::json{
-      {"indexes", s.indexes},
-      {"ny", s.ny},
-      {"nx", s.nx}
-  };
+  j = nlohmann::json{{"indexes", s.indexes}, {"ny", s.ny}, {"nx", s.nx}};
 }
 
 void from_json(const nlohmann::json &j, ZernikePhaseSettings &s) {
   s.indexes.clear();
-  if (j.contains("indexes")) j.at("indexes").get_to(s.indexes);
-  else if (j.contains("indices")) j.at("indices").get_to(s.indexes);
-  
+  if (j.contains("indexes"))
+    j.at("indexes").get_to(s.indexes);
+  else if (j.contains("indices"))
+    j.at("indices").get_to(s.indexes);
+
   j.at("ny").get_to(s.ny);
   j.at("nx").get_to(s.nx);
 }
@@ -56,26 +54,33 @@ ZernikePhase::ZernikePhase(const ZernikePhaseSettings &settings) : settings_(set
 holoflow::core::OpResult ZernikePhase::execute(holoflow::core::SyncCtx &ctx) {
   // 1. Read input coefficients
   auto &input_view = ctx.inputs[0];
-  auto *in_data = reinterpret_cast<const float *>(input_view.data());
+  auto *in_data    = reinterpret_cast<const float *>(input_view.data());
 
   // Parse coefficients based on requested indexes
   float a4 = 0.0f, a5 = 0.0f, a6 = 0.0f;
   for (size_t i = 0; i < settings_.indexes.size(); ++i) {
-    if (settings_.indexes[i] == 4) a4 = in_data[i];
-    if (settings_.indexes[i] == 5) a5 = in_data[i];
-    if (settings_.indexes[i] == 6) a6 = in_data[i];
+    if (settings_.indexes[i] == 4)
+      a4 = in_data[i];
+    if (settings_.indexes[i] == 5)
+      a5 = in_data[i];
+    if (settings_.indexes[i] == 6)
+      a6 = in_data[i];
   }
+
+  logger()->info("Generating Zernike phase mask with coefficients: a4={}, a5={}, a6={}", a4, a5,
+                 a6);
+  // a4 *= 10.0f; // Scale coefficients for more visible phase (tune as needed)
 
   // 2. Setup output phase mask buffer
   auto &output_view = ctx.outputs[0];
-  auto *out_data = reinterpret_cast<float *>(output_view.data());
+  auto *out_data    = reinterpret_cast<float *>(output_view.data());
 
   int ny = settings_.ny;
   int nx = settings_.nx;
 
   // 3. Geometry Setup (Normalization by shorter dimension)
-  float center_y = (ny - 1) / 2.0f;
-  float center_x = (nx - 1) / 2.0f;
+  float center_y    = (ny - 1) / 2.0f;
+  float center_x    = (nx - 1) / 2.0f;
   float norm_radius = std::min(ny, nx) / 2.0f;
 
   float sqrt3 = std::sqrt(3.0f);
@@ -85,8 +90,8 @@ holoflow::core::OpResult ZernikePhase::execute(holoflow::core::SyncCtx &ctx) {
   for (int y_idx = 0; y_idx < ny; ++y_idx) {
     for (int x_idx = 0; x_idx < nx; ++x_idx) {
       // Normalized coordinates
-      float y = (y_idx - center_y) / norm_radius;
-      float x = (x_idx - center_x) / norm_radius;
+      float y  = (y_idx - center_y) / norm_radius;
+      float x  = (x_idx - center_x) / norm_radius;
       float r2 = x * x + y * y;
 
       // Evaluate Zernike Modes (Noll 4, 5, 6)
@@ -94,8 +99,8 @@ holoflow::core::OpResult ZernikePhase::execute(holoflow::core::SyncCtx &ctx) {
       float z5 = sqrt6 * (2.0f * x * y);
       float z6 = sqrt6 * (x * x - y * y);
 
-      // Sum weighted phase. 
-      // Note: If you want this mask to CORRECT the aberration, you might want 
+      // Sum weighted phase.
+      // Note: If you want this mask to CORRECT the aberration, you might want
       // to store the negative of this sum. Here we generate the exact measured phase.
       float phase = a4 * z4 + a5 * z5 + a6 * z6;
 
@@ -114,8 +119,7 @@ ZernikePhaseFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
   check(input_descs.size() == 1, "ZernikePhase task must have exactly one input");
   const auto &idesc = input_descs[0];
-  check(idesc.mem_loc == holoflow::core::MemLoc::Host,
-        "Input coefficients must be in host memory");
+  check(idesc.mem_loc == holoflow::core::MemLoc::Host, "Input coefficients must be in host memory");
   check(idesc.dtype == holoflow::core::DType::F32, "Input coefficients dtype must be F32");
   check(idesc.rank() == 1, "Input coefficients rank must be 1");
 
@@ -123,7 +127,7 @@ ZernikePhaseFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   for (int idx : settings.indexes) {
     check(idx == 4 || idx == 5 || idx == 6, "Only zernike noll indexes 4, 5, 6 are supported");
   }
-  
+
   check(settings.ny > 0 && settings.nx > 0, "Resolution ny and nx must be greater than 0");
 
   auto uniq = settings.indexes;
@@ -134,9 +138,8 @@ ZernikePhaseFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
         "Input coefficient count must match settings.indexes size");
 
   // Output descriptor is now a 2D F32 tensor mapping to [ny, nx]
-  holoflow::core::TDesc odesc({static_cast<size_t>(settings.ny), static_cast<size_t>(settings.nx)}, 
-                              holoflow::core::DType::F32, 
-                              holoflow::core::MemLoc::Host);
+  holoflow::core::TDesc odesc({static_cast<size_t>(settings.ny), static_cast<size_t>(settings.nx)},
+                              holoflow::core::DType::F32, holoflow::core::MemLoc::Host);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},

@@ -74,6 +74,7 @@
 #include "holotask/syncs/average.hh"
 #include "holotask/syncs/conversion.hh"
 #include "holotask/syncs/convolution.hh"
+#include "holotask/syncs/correct_phase.hh"
 #include "holotask/syncs/crop.hh"
 #include "holotask/syncs/fft_shift.hh"
 #include "holotask/syncs/filter2d.hh"
@@ -152,6 +153,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<syncs::MemcpyFactory>(registry_, "Memcpy");
   reg_sync<syncs::PcaFactory>(registry_, "Pca");
   reg_sync<syncs::PctClipFactory>(registry_, "PctClip");
+  reg_sync<syncs::CorrectPhaseFactory>(registry_, "CorrectPhase");
   reg_sync<syncs::StftFactory>(registry_, "Stft");
   reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");

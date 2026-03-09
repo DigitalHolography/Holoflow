@@ -1,4 +1,4 @@
-// Copyright 2025 Digital Holography Foundation
+// Copyright 2026 Digital Holography Foundation
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -14,26 +14,31 @@
 
 #pragma once
 
-#include <memory>
 #include <nlohmann/json.hpp>
-#include <span>
 
 #include "holoflow/core/tasks.hh"
 
 namespace holotask::syncs {
 
-struct PcaSettings {
-  int begin;
-  int end;
-  int update_rate = 1; // 1 means update every frame, N means every Nth frame
+struct CorrectPhaseSettings {};
 
-  int components() const { return end - begin; }
+void to_json(nlohmann::json &j, const CorrectPhaseSettings &s);
+void from_json(const nlohmann::json &j, CorrectPhaseSettings &s);
+
+class CorrectPhase : public holoflow::core::ISyncTask {
+public:
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+private:
+  CorrectPhase(const CorrectPhaseSettings &settings, cudaStream_t stream);
+
+  friend class CorrectPhaseFactory;
+
+  CorrectPhaseSettings settings_;
+  cudaStream_t         stream_;
 };
 
-void to_json(nlohmann::json &j, const PcaSettings &settings);
-void from_json(const nlohmann::json &j, PcaSettings &settings);
-
-class PcaFactory : public holoflow::core::ISyncTaskFactory {
+class CorrectPhaseFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;

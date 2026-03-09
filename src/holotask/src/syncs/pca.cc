@@ -90,7 +90,7 @@ template <> struct PcaTraits<cuFloatComplex> {
 template <typename T> class PcaTask : public holoflow::core::ISyncTask {
 public:
   PcaTask(const PcaSettings &settings, const holoflow::core::SyncCreateCtx &ctx, int n_features)
-      : settings_(settings), stream_(ctx.stream), n_features_(n_features) {
+      : settings_(settings), stream_(ctx.stream), n_features_(n_features), iteration_count_(0) {
 
     // Initialize handles
     CUBLAS_CHECK(cublasSetStream(cublas_handle_.get(), stream_));
@@ -142,44 +142,49 @@ public:
     const T alpha = PcaTraits<T>::alpha();
     const T beta  = PcaTraits<T>::beta();
 
-    // 1. Compute covariance matrix: $COV = I^H \cdot I$
-    // Yields an (n_features x n_features) matrix representing covariance between features.
-    CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_C, CUBLAS_OP_N, n_features_,
-                              n_features_, n_samples, &alpha, idata, PcaTraits<T>::cuda_type,
-                              n_samples, idata, PcaTraits<T>::cuda_type, n_samples, &beta,
-                              d_cov_.get(), PcaTraits<T>::cuda_type, n_features_,
-                              PcaTraits<T>::compute_type, CUBLAS_GEMM_DEFAULT));
+    bool should_update = (iteration_count_ % settings_.update_rate == 0);
 
-    // 2. Compute eigenvectors
-    if (n_features_ <= cpu_heuristic_max_) {
-      // Use CPU for small problems
-      CUDA_CHECK(cudaStreamSynchronize(stream_));
-      nvtx3::scoped_range r("CPU eigen decomposition");
-      const std::size_t   bytes = static_cast<std::size_t>(n_features_) * n_features_ * sizeof(T);
-      CUDA_CHECK(
-          cudaMemcpyAsync(h_cov_.get(), d_cov_.get(), bytes, cudaMemcpyDeviceToHost, stream_));
-      CUDA_CHECK(cudaStreamSynchronize(stream_));
+    if (should_update) {
+      // 1. Compute covariance matrix: COV = I^H * I
+      // Yields an (n_features x n_features) matrix representing covariance between features.
+      CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_C, CUBLAS_OP_N, n_features_,
+                                n_features_, n_samples, &alpha, idata, PcaTraits<T>::cuda_type,
+                                n_samples, idata, PcaTraits<T>::cuda_type, n_samples, &beta,
+                                d_cov_.get(), PcaTraits<T>::cuda_type, n_features_,
+                                PcaTraits<T>::compute_type, CUBLAS_GEMM_DEFAULT));
 
-      lapack_int m = 0;
-      LAPACKE_CHECK(PcaTraits<T>::eigen(LAPACK_COL_MAJOR, 'V', 'I', 'L', n_features_, h_cov_.get(),
-                                        n_features_, 0.0f, 0.0f, il, iu, 0.0f, &m, h_eigvals_.get(),
-                                        h_eigvecs_.get(), n_features_, h_isuppz_.get()));
+      // 2. Compute eigenvectors
+      if (n_features_ <= cpu_heuristic_max_) {
+        // Use CPU for small problems
+        CUDA_CHECK(cudaStreamSynchronize(stream_));
+        nvtx3::scoped_range r_cpu("CPU eigen decomposition");
+        const std::size_t   bytes = static_cast<std::size_t>(n_features_) * n_features_ * sizeof(T);
+        CUDA_CHECK(
+            cudaMemcpyAsync(h_cov_.get(), d_cov_.get(), bytes, cudaMemcpyDeviceToHost, stream_));
+        CUDA_CHECK(cudaStreamSynchronize(stream_));
 
-      HOLOVIBES_CHECK(m == components, "[Pca] unexpected eigenvector count from LAPACKE");
+        lapack_int m = 0;
+        LAPACKE_CHECK(PcaTraits<T>::eigen(
+            LAPACK_COL_MAJOR, 'V', 'I', 'L', n_features_, h_cov_.get(), n_features_, 0.0f, 0.0f, il,
+            iu, 0.0f, &m, h_eigvals_.get(), h_eigvecs_.get(), n_features_, h_isuppz_.get()));
 
-      const std::size_t vec_bytes = static_cast<std::size_t>(n_features_) * components * sizeof(T);
-      CUDA_CHECK(cudaMemcpyAsync(d_cov_.get(), h_eigvecs_.get(), vec_bytes, cudaMemcpyHostToDevice,
-                                 stream_));
-    } else {
-      // Use GPU for large problems
-      nvtx3::scoped_range r("GPU eigen decomposition");
-      float               vl = 0.0f, vu = 0.0f;
-      CUSOLVER_CHECK(cusolverDnXsyevdx(
-          cusolver_handle_.get(), cusolver_params_.get(), CUSOLVER_EIG_MODE_VECTOR,
-          CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER, n_features_, PcaTraits<T>::cuda_type,
-          d_cov_.get(), n_features_, &vl, &vu, il, iu, h_meig_.get(), CUDA_R_32F, d_eigvals_.get(),
-          PcaTraits<T>::cuda_type, d_workspace_.get(), d_workspace_size_, h_workspace_.get(),
-          h_workspace_size_, d_info_.get()));
+        HOLOVIBES_CHECK(m == components, "[Pca] unexpected eigenvector count from LAPACKE");
+
+        const std::size_t vec_bytes =
+            static_cast<std::size_t>(n_features_) * components * sizeof(T);
+        CUDA_CHECK(cudaMemcpyAsync(d_cov_.get(), h_eigvecs_.get(), vec_bytes,
+                                   cudaMemcpyHostToDevice, stream_));
+      } else {
+        // Use GPU for large problems
+        nvtx3::scoped_range r_gpu("GPU eigen decomposition");
+        float               vl = 0.0f, vu = 0.0f;
+        CUSOLVER_CHECK(cusolverDnXsyevdx(
+            cusolver_handle_.get(), cusolver_params_.get(), CUSOLVER_EIG_MODE_VECTOR,
+            CUSOLVER_EIG_RANGE_I, CUBLAS_FILL_MODE_LOWER, n_features_, PcaTraits<T>::cuda_type,
+            d_cov_.get(), n_features_, &vl, &vu, il, iu, h_meig_.get(), CUDA_R_32F,
+            d_eigvals_.get(), PcaTraits<T>::cuda_type, d_workspace_.get(), d_workspace_size_,
+            h_workspace_.get(), h_workspace_size_, d_info_.get()));
+      }
     }
 
     // 3. Project data: Multiply input data by the eigenvector matrix
@@ -190,6 +195,7 @@ public:
                               PcaTraits<T>::cuda_type, n_samples, PcaTraits<T>::compute_type,
                               CUBLAS_GEMM_DEFAULT));
 
+    iteration_count_++;
     return holoflow::core::OpResult::Ok;
   }
 
@@ -197,6 +203,7 @@ private:
   PcaSettings  settings_;
   cudaStream_t stream_;
   int          n_features_;
+  uint64_t     iteration_count_;
 
   curaii::CublasHandle     cublas_handle_;
   curaii::CusolverDnHandle cusolver_handle_;
@@ -230,12 +237,14 @@ void to_json(nlohmann::json &j, const PcaSettings &settings) {
   j = nlohmann::json{
       {"begin", settings.begin},
       {"end", settings.end},
+      {"update_rate", settings.update_rate},
   };
 }
 
 void from_json(const nlohmann::json &j, PcaSettings &settings) {
   j.at("begin").get_to(settings.begin);
   j.at("end").get_to(settings.end);
+  settings.update_rate = j.value("update_rate", 1);
 }
 
 // ----------------------------------------------------------------------------
@@ -262,6 +271,7 @@ holoflow::core::InferResult PcaFactory::infer(std::span<const holoflow::core::TD
   check(settings.begin < settings.end, "expected begin < end");
   check(settings.begin >= 0, "expected begin >= 0");
   check(settings.end <= idesc.shape.at(0), "expected end <= n_features");
+  check(settings.update_rate >= 1, "expected update_rate >= 1");
 
   auto odesc     = idesc;
   odesc.shape[0] = settings.components();

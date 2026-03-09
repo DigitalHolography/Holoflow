@@ -225,6 +225,8 @@ void ImageRenderingWidget::connect_signals() {
           &ImageRenderingWidget::settings_changed);
   connect(convolution_divide_check_, &QCheckBox::toggled, this,
           &ImageRenderingWidget::settings_changed);
+  connect(autofocus_widget_, &AutoFocusWidget::settings_changed, this,
+          &ImageRenderingWidget::settings_changed);
 }
 
 QStringList ImageRenderingWidget::load_available_kernels() {
