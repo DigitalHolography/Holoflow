@@ -227,16 +227,16 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
     auto [xcorr_shifted]      = unpack<1>(fftshift(xcorr, {{-2, -1}}));
     auto [xcorr_scaled]       = unpack<1>(normalize(xcorr_shifted, {{-2, -1}, 0.0f, 255.0f}));
     auto [xcorr_u8]           = unpack<1>(convert(xcorr_scaled, {Target::U8, Strat::Scaled}));
-    auto [xcorr_cpu]          = unpack<1>(memcpy(xcorr_u8, {Host}));
-    auto [xcorr_flattened]    = unpack<1>(transpose(xcorr_cpu, {{0, 1, 3, 2, 4}}));
+    auto [xcorr_cpu]          = unpack<1>(memcpy(xcorr_scaled, {Host}));
+    auto [xcorr_flattened]    = unpack<1>(transpose(xcorr_u8, {{0, 1, 3, 2, 4}}));
     std::tie(xcorr_flattened) = unpack<1>(reshape(xcorr_flattened, {{1, h, w}}));
     auto [xcorr_disp]         = unpack<1>(batched_queue(xcorr_flattened, {s_.cpu_out_size, 1, 1}));
     shack_hartmann_xcorr_display(xcorr_disp, {});
 
     int ny                = static_cast<int>(FH.shape.at(2));
     int nx                = static_cast<int>(FH.shape.at(3));
-    auto [zernike_coeffs] = unpack<1>(zernike(xcorr_cpu, {{2, 3, 4}, lam, dx, dy, z_prop}));
-    auto [phase]          = unpack<1>(zernike_phase(zernike_coeffs, {{2, 3, 4}, ny, nx}));
+    auto [zernike_coeffs] = unpack<1>(zernike(xcorr_cpu, {{2, 3, 4, 5, 6}, lam, dx, dy, z_prop}));
+    auto [phase]          = unpack<1>(zernike_phase(zernike_coeffs, {{2, 3, 4, 5, 6}, ny, nx}));
     std::tie(phase)       = unpack<1>(memcpy(phase, {Device}));
     std::tie(FH)          = unpack<1>(correct_phase(FH, phase, {}));
     std::tie(phase)       = unpack<1>(wrap2pi(phase, {}));
