@@ -19,6 +19,7 @@
 #include <QGroupBox>
 #include <QSpinBox>
 #include <QWidget>
+#include <vector>
 
 namespace holovibes::ui {
 
@@ -45,6 +46,10 @@ public:
   void set_z4(double value);
   void set_z5(double value);
   void set_z6(double value);
+  void set_zernike_value(int noll_index, double value);
+  void set_zernike_values(const std::vector<int> &noll_indexes,
+                          const std::vector<float> &values);
+  void reset_zernike_values();
 
   // Per-coefficient enable flags
   bool is_z2_enabled() const;

@@ -48,6 +48,7 @@
 #include "holofile/holofile.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
+#include "ui/widgets/tensor_display_widget.hh"
 
 namespace {
 
@@ -210,9 +211,9 @@ void MainWindow::initialize_display_widgets() {
 
 void MainWindow::initialize_pipeline_manager() {
   pipeline_manager_ = new pipeline::Manager(
-      xy_processed_widget_, xz_processed_widget_, yz_processed_widget_, xy_raw_widget_,
-      raw_spectrum_widget_, processed_spectrum_widget_, shack_hartmann_widget_,
-      shack_hartmann_xcorr_widget_, zernike_phase_widget_);
+      render_widget_->autofocus_widget(), xy_processed_widget_, xz_processed_widget_,
+      yz_processed_widget_, xy_raw_widget_, raw_spectrum_widget_, processed_spectrum_widget_,
+      shack_hartmann_widget_, shack_hartmann_xcorr_widget_, zernike_phase_widget_);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);
   pipeline_manager_thread_->start();
@@ -388,6 +389,15 @@ void MainWindow::on_start_pipeline_success() {
 
   auto *autofocus_widget = render_widget_->autofocus_widget();
   if (autofocus_widget->is_enabled()) {
+    const bool has_enabled_zernike = autofocus_widget->is_z2_enabled() ||
+                                     autofocus_widget->is_z3_enabled() ||
+                                     autofocus_widget->is_z4_enabled() ||
+                                     autofocus_widget->is_z5_enabled() ||
+                                     autofocus_widget->is_z6_enabled();
+    if (!has_enabled_zernike) {
+      autofocus_widget->reset_zernike_values();
+    }
+
     if (autofocus_widget->show_shack_hartmann_sensor_view()) {
       shack_hartmann_widget_->show();
     } else {
@@ -409,6 +419,7 @@ void MainWindow::on_start_pipeline_success() {
     shack_hartmann_widget_->hide();
     shack_hartmann_xcorr_widget_->hide();
     zernike_phase_widget_->hide();
+    autofocus_widget->reset_zernike_values();
   }
 
   if (view_widget_->is_raw_view_enabled()) {
@@ -455,6 +466,7 @@ void MainWindow::on_stop_pipeline_success() {
   shack_hartmann_widget_->hide();
   shack_hartmann_xcorr_widget_->hide();
   zernike_phase_widget_->hide();
+  render_widget_->autofocus_widget()->reset_zernike_values();
 }
 
 void MainWindow::on_stop_pipeline_failure(const QString &error) {
@@ -473,6 +485,7 @@ void MainWindow::on_stop_pipeline_failure(const QString &error) {
   yz_processed_widget_->hide();
   raw_spectrum_widget_->hide();
   processed_spectrum_widget_->hide();
+  render_widget_->autofocus_widget()->reset_zernike_values();
 
   show_pipeline_error_popup(error);
 }
@@ -526,6 +539,15 @@ void MainWindow::on_update_pipeline_success() {
 
   auto *autofocus_widget = render_widget_->autofocus_widget();
   if (autofocus_widget->is_enabled()) {
+    const bool has_enabled_zernike = autofocus_widget->is_z2_enabled() ||
+                                     autofocus_widget->is_z3_enabled() ||
+                                     autofocus_widget->is_z4_enabled() ||
+                                     autofocus_widget->is_z5_enabled() ||
+                                     autofocus_widget->is_z6_enabled();
+    if (!has_enabled_zernike) {
+      autofocus_widget->reset_zernike_values();
+    }
+
     if (autofocus_widget->show_shack_hartmann_sensor_view()) {
       shack_hartmann_widget_->show();
     } else {
@@ -547,6 +569,7 @@ void MainWindow::on_update_pipeline_success() {
     shack_hartmann_widget_->hide();
     shack_hartmann_xcorr_widget_->hide();
     zernike_phase_widget_->hide();
+    autofocus_widget->reset_zernike_values();
   }
 }
 

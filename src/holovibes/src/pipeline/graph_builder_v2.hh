@@ -85,6 +85,7 @@
 #include "holotask/syncs/zernike_phase.hh"
 #include "pipeline/settings.hh"
 #include "tasks/sinks/display_tensor.hh"
+#include "tasks/sinks/display_zernike_coefficients.hh"
 
 namespace holovibes::pipeline {
 
@@ -198,6 +199,7 @@ private:
   std::vector<TDesc> shack_hartmann_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   std::vector<TDesc> shack_hartmann_xcorr_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   std::vector<TDesc> zernike_phase_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  std::vector<TDesc> zernike_coefficients_display(const TDesc &X, tasks::sinks::DisplayZernikeCoefficientsSettings s);
   std::vector<TDesc> ametek_s710_euresys_coaxlink_octo(holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings s);
   std::vector<TDesc> ametek_s711_euresys_coaxlink_qsfp_plus(holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
   std::vector<TDesc> average(const TDesc &X, holotask::syncs::AverageSettings s);

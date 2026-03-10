@@ -14,6 +14,8 @@
 
 #include "ui/widgets/auto_focus_widget.hh"
 
+#include <algorithm>
+
 #include <QGridLayout>
 #include <QLabel>
 #include <QSizePolicy>
@@ -79,6 +81,46 @@ void AutoFocusWidget::set_z3(double value) { z3_spin_->setValue(value); }
 void AutoFocusWidget::set_z4(double value) { z4_spin_->setValue(value); }
 void AutoFocusWidget::set_z5(double value) { z5_spin_->setValue(value); }
 void AutoFocusWidget::set_z6(double value) { z6_spin_->setValue(value); }
+
+void AutoFocusWidget::set_zernike_value(int noll_index, double value) {
+  switch (noll_index) {
+  case 2:
+    set_z2(value);
+    break;
+  case 3:
+    set_z3(value);
+    break;
+  case 4:
+    set_z4(value);
+    break;
+  case 5:
+    set_z5(value);
+    break;
+  case 6:
+    set_z6(value);
+    break;
+  default:
+    break;
+  }
+}
+
+void AutoFocusWidget::set_zernike_values(const std::vector<int> &noll_indexes,
+                                         const std::vector<float> &values) {
+  reset_zernike_values();
+
+  const auto count = std::min(noll_indexes.size(), values.size());
+  for (size_t i = 0; i < count; ++i) {
+    set_zernike_value(noll_indexes[i], values[i]);
+  }
+}
+
+void AutoFocusWidget::reset_zernike_values() {
+  set_z2(0.0);
+  set_z3(0.0);
+  set_z4(0.0);
+  set_z5(0.0);
+  set_z6(0.0);
+}
 
 // Per-coefficient enable flags
 bool AutoFocusWidget::is_z2_enabled() const { return z2_checkbox_->isChecked(); }

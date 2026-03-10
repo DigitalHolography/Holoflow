@@ -497,13 +497,6 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx& ctx) {
     out_ptr[i] = coefs_m[i] * (2.0f * static_cast<float>(M_PI) / settings_.lambda);
   }
 
-  std::string log_msg = "Recovered Zernike coefficients [rad]:\n";
-  for (std::size_t i = 0; i < n_modes; ++i) {
-    log_msg += "  Z" + std::to_string(settings_.indexes[i]) + ": "
-            + std::to_string(out_ptr[i]) + "\n";
-  }
-  logger()->info(log_msg);
-
   return holoflow::core::OpResult::Ok;
 }
 

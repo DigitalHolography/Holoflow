@@ -17,6 +17,8 @@
 #include <QObject>
 #include <concepts>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <nlohmann/json.hpp>
 #include <optional>
 
@@ -25,7 +27,11 @@
 #include "holoflow/runtime/compiler.hh"
 #include "holoflow/runtime/graph_exec.hh"
 #include "pipeline/settings.hh"
-#include "ui/widgets/tensor_display_widget.hh"
+
+namespace holovibes::ui {
+class AutoFocusWidget;
+class TensorDisplayWidget;
+} // namespace holovibes::ui
 
 class QTimer;
 
@@ -35,7 +41,7 @@ class Manager : public QObject {
   Q_OBJECT
 
 public:
-  Manager(ui::TensorDisplayWidget *xy_processed_widget,
+  Manager(ui::AutoFocusWidget *autofocus_widget, ui::TensorDisplayWidget *xy_processed_widget,
           ui::TensorDisplayWidget *xz_processed_widget,
           ui::TensorDisplayWidget *yz_processed_widget, ui::TensorDisplayWidget *xy_raw_widget,
           ui::TensorDisplayWidget *raw_spectrum_widget,
@@ -82,6 +88,8 @@ private:
   void reset_graph_spec();
   void guess_optimizations();
   void guess_source_dims();
+
+  ui::AutoFocusWidget *autofocus_widget_;
 
   // External widgets to display tensors
   ui::TensorDisplayWidget *xy_processed_widget_;

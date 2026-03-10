@@ -238,6 +238,7 @@ holoflow::core::GraphSpec GraphBuilder_v2::build() {
       int nx = static_cast<int>(FH.shape.at(3));
       auto [zernike_coeffs] =
           unpack<1>(zernike(xcorr_cpu, {s_.autofocus_zernike_orders, lam, dx, dy, z_prop}));
+      zernike_coefficients_display(zernike_coeffs, {s_.autofocus_zernike_orders});
       auto [phase] =
           unpack<1>(zernike_phase(zernike_coeffs, {s_.autofocus_zernike_orders, ny, nx}));
       std::tie(phase) = unpack<1>(memcpy(phase, {Device}));
@@ -441,6 +442,7 @@ DEFINE_UNARY_SYNC_NODE (yz_processed_display,                   "yz_processed_di
 DEFINE_UNARY_SYNC_NODE (shack_hartmann_display,                 "shack_hartmann_display",              "DisplayTensorShackHartmann",      tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (shack_hartmann_xcorr_display,           "shack_hartmann_xcorr_display",        "DisplayTensorShackHartmannXcorr", tasks::sinks::DisplayTensorSettings)
 DEFINE_UNARY_SYNC_NODE (zernike_phase_display,                  "zernike_phase_display",               "DisplayTensorZernikePhase",       tasks::sinks::DisplayTensorSettings)
+DEFINE_UNARY_SYNC_NODE (zernike_coefficients_display,           "zernike_coefficients_display",        "DisplayZernikeCoefficients",      tasks::sinks::DisplayZernikeCoefficientsSettings)
 DEFINE_NARY_SYNC_NODE  (concatenate,                            "concatenate",                         "Concatenate",                     holonp::ConcatenateSettings)
 DEFINE_UNARY_SYNC_NODE (transpose,                              "transpose",                           "Transpose",                       holonp::TransposeSettings)
 DEFINE_UNARY_SYNC_NODE (conj,                                   "conj",                                "Conj",                            holonp::ConjSettings)

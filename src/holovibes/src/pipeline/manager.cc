@@ -92,6 +92,8 @@
 #include "logger.hh"
 #include "settings_loader.hh"
 #include "tasks/sinks/display_tensor.hh"
+#include "tasks/sinks/display_zernike_coefficients.hh"
+#include "ui/widgets/auto_focus_widget.hh"
 
 using namespace holotask;
 using namespace holonp;
@@ -112,7 +114,8 @@ void reg_async(holoflow::core::Registry &r, std::string_view name, Args &&...arg
 
 } // namespace
 
-Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
+Manager::Manager(ui::AutoFocusWidget *autofocus_widget,
+                 ui::TensorDisplayWidget *xy_processed_widget,
                  ui::TensorDisplayWidget *xz_processed_widget,
                  ui::TensorDisplayWidget *yz_processed_widget,
                  ui::TensorDisplayWidget *xy_raw_widget,
@@ -121,7 +124,8 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
                  ui::TensorDisplayWidget *shack_hartmann_widget,
                  ui::TensorDisplayWidget *shack_hartmann_xcorr_widget,
                  ui::TensorDisplayWidget *zernike_phase_widget)
-    : xy_processed_widget_(xy_processed_widget), xz_processed_widget_(xz_processed_widget),
+    : autofocus_widget_(autofocus_widget), xy_processed_widget_(xy_processed_widget),
+      xz_processed_widget_(xz_processed_widget),
       yz_processed_widget_(yz_processed_widget), xy_raw_widget_(xy_raw_widget),
       raw_spectrum_widget_(raw_spectrum_widget),
       processed_spectrum_widget_(processed_spectrum_widget),
@@ -140,6 +144,7 @@ Manager::Manager(ui::TensorDisplayWidget *xy_processed_widget,
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann", shack_hartmann_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase", zernike_phase_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(registry_, "DisplayZernikeCoefficients", autofocus_widget_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
