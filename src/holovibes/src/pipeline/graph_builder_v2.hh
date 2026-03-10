@@ -117,29 +117,26 @@ private:
     std::vector<Consumer>   consumers;
 
     [[nodiscard]] holoflow::core::TDesc as_core() const;
-
     [[nodiscard]] static TDesc from_core(const holoflow::core::TDesc &base);
   };
 
+  // Pipeline construction stages
+  TDesc build_acquisition();
+  void  build_raw_record(const TDesc& H);
+  bool  build_raw_view(const TDesc& H);
+  TDesc build_preprocessing(TDesc H);
+  TDesc build_time_frequency_analysis(TDesc H);
+  TDesc build_shack_hartmann(TDesc FH);
+  TDesc build_spatial_propagation(const TDesc& FH);
+  void  build_xy_view(const TDesc& FH_z);
+  void  build_3d_cuts(const TDesc& FH_z);
+
+  // Core Template Generators
   [[nodiscard]] static std::vector<holoflow::core::TDesc> to_core_descs(std::span<const TDesc> src);
 
   template <class InferResult>
   [[nodiscard]] static std::vector<TDesc> wrap_infer_outputs(std::string_view node_id, V vertex,
                                                              const InferResult &infer);
-
-  template <std::size_t N, class R>
-    requires std::ranges::contiguous_range<R> &&
-             std::same_as<std::remove_cvref_t<std::ranges::range_value_t<R>>, TDesc>
-  [[nodiscard]] auto unpack(R &&r) {
-    auto s = std::span{r};
-    if (s.size() != N) {
-      throw std::logic_error{"GraphBuilder_v2::unpack size mismatch"};
-    }
-    using T = TDesc;
-    return [&]<std::size_t... I>(std::index_sequence<I...>) {
-      return std::tuple<T>(s[I]...);
-    }(std::make_index_sequence<N>{});
-  }
 
   template <typename SettingsT>
   std::vector<TDesc> make_source_sync_node(std::string_view node_name, std::string_view kind,
@@ -168,81 +165,77 @@ private:
   std::stack<std::string>   scope_;
   size_t                    unique_id_counter_ = 0;
 
-private:
   std::map<LoadMethod, holotask::sources::HolofileSettings::LoadKind> load_method_map_{
       {LoadMethod::READ_LIVE, holotask::sources::HolofileSettings::LoadKind::Live},
       {LoadMethod::LOAD_IN_CPU, holotask::sources::HolofileSettings::LoadKind::CPUCached},
       {LoadMethod::LOAD_IN_GPU, holotask::sources::HolofileSettings::LoadKind::GPUCached},
   };
 
+  // Node declarations
   // clang-format off
-  std::vector<TDesc> holofile_read(holotask::sources::HolofileSettings s);
-  std::vector<TDesc> empty(holonp::EmptySettings s);
-  std::vector<TDesc> zeros(holonp::ZerosSettings s);
-  std::vector<TDesc> asarray(holonp::AsArraySettings s);
-  std::vector<TDesc> ascontiguousarray(const TDesc &X, holonp::AsContiguousArraySettings s);
-  std::vector<TDesc> copy(const TDesc &X, holonp::CopySettings s);
-  std::vector<TDesc> memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);
-  std::vector<TDesc> batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
-  std::vector<TDesc> convert(const TDesc &X, holotask::syncs::ConversionSettings s);
-  std::vector<TDesc> pca(const TDesc &X, holotask::syncs::PcaSettings s);
-  std::vector<TDesc> stft(const TDesc &X, holotask::syncs::StftSettings s);
-  std::vector<TDesc> filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
-  std::vector<TDesc> fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
-  std::vector<TDesc> fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
-  std::vector<TDesc> angular_spectrum(const TDesc &X, holotask::syncs::AngularSpectrumSettings s);
-  std::vector<TDesc> slide_avg(const TDesc &X, holotask::asyncs::SlidingAverageSettings s);
-  std::vector<TDesc> xy_raw_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
-  std::vector<TDesc> xy_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
-  std::vector<TDesc> xz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
-  std::vector<TDesc> yz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
-  std::vector<TDesc> shack_hartmann_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
-  std::vector<TDesc> shack_hartmann_xcorr_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
-  std::vector<TDesc> zernike_phase_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
-  std::vector<TDesc> zernike_coefficients_display(const TDesc &X, tasks::sinks::DisplayZernikeCoefficientsSettings s);
-  std::vector<TDesc> ametek_s710_euresys_coaxlink_octo(holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings s);
-  std::vector<TDesc> ametek_s711_euresys_coaxlink_qsfp_plus(holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
-  std::vector<TDesc> average(const TDesc &X, holotask::syncs::AverageSettings s);
-  std::vector<TDesc> convolution(const TDesc &X, holotask::syncs::ConvolutionSettings s);
-  std::vector<TDesc> correct_phase(const TDesc &X, const TDesc &PhaseMask, holotask::syncs::CorrectPhaseSettings s);
-  std::vector<TDesc> crop(const TDesc &X, holotask::syncs::CropSettings s);
-  std::vector<TDesc> fft_shift(const TDesc &X, holotask::syncs::FFTShiftSettings s);
-  std::vector<TDesc> pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);
-  std::vector<TDesc> registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
-  std::vector<TDesc> rotation(const TDesc &X, holotask::syncs::RotationSettings s);
-  std::vector<TDesc> wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
-  std::vector<TDesc> zernike(const TDesc &X, holotask::syncs::ZernikeSettings s);
-  std::vector<TDesc> zernike_phase(const TDesc &X, holotask::syncs::ZernikePhaseSettings s);
-  std::vector<TDesc> holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
-  std::vector<TDesc> concatenate(std::span<const TDesc> Xs, holonp::ConcatenateSettings s);
-  std::vector<TDesc> transpose(const TDesc &X, holonp::TransposeSettings s);
-  std::vector<TDesc> add(const TDesc &A, const TDesc &B, holonp::AddSettings s);
-  std::vector<TDesc> div(const TDesc &A, const TDesc &B, holonp::DivSettings s);
-  std::vector<TDesc> mul(const TDesc &A, const TDesc &B, holonp::MulSettings s);
-  std::vector<TDesc> sub(const TDesc &A, const TDesc &B, holonp::SubSettings s);
-  std::vector<TDesc> equal(const TDesc &A, const TDesc &B, holonp::EqualSettings s);
-  std::vector<TDesc> where(const TDesc &Cond, const TDesc &X, const TDesc &Y, holonp::WhereSettings s);
-  std::vector<TDesc> rfft(const TDesc &X, holonp::RFFTSettings s);
-  std::vector<TDesc> rfft2(const TDesc &X, holonp::RFFT2Settings s);
-  std::vector<TDesc> irfft2(const TDesc &X, holonp::IRFFT2Settings s);
-  std::vector<TDesc> assign(const TDesc &X, const TDesc &Y, holonp::AssignSettings s);
-  std::vector<TDesc> slice(const TDesc &X, holonp::SliceSettings s);
-  std::vector<TDesc> fft(const TDesc &X, holonp::FFTSettings s);
-  std::vector<TDesc> fft2(const TDesc &X, holonp::FFT2Settings s);
-  std::vector<TDesc> fftshift(const TDesc &X, holonp::FFTShiftSettings s);
-  std::vector<TDesc> abs(const TDesc &X, holonp::AbsSettings s);
-  std::vector<TDesc> mean(const TDesc &X, holonp::MeanSettings s);
-  std::vector<TDesc> mean_abs(const TDesc &X, holonp::MeanAbsSettings s);
-  std::vector<TDesc> min(const TDesc &X, holonp::MinSettings s);
-  std::vector<TDesc> max(const TDesc &X, holonp::MaxSettings s);
-  std::vector<TDesc> normalize(const TDesc &X, holonp::NormalizeSettings s);
-  std::vector<TDesc> reshape(const TDesc &X, holonp::ReshapeSettings s);
-  std::vector<TDesc> conj(const TDesc &X, holonp::ConjSettings s);
+  TDesc holofile_read(holotask::sources::HolofileSettings s);
+  TDesc empty(holonp::EmptySettings s);
+  TDesc zeros(holonp::ZerosSettings s);
+  TDesc asarray(holonp::AsArraySettings s);
+  TDesc ascontiguousarray(const TDesc &X, holonp::AsContiguousArraySettings s);
+  TDesc copy(const TDesc &X, holonp::CopySettings s);
+  TDesc memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);
+  TDesc batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
+  TDesc convert(const TDesc &X, holotask::syncs::ConversionSettings s);
+  TDesc pca(const TDesc &X, holotask::syncs::PcaSettings s);
+  TDesc stft(const TDesc &X, holotask::syncs::StftSettings s);
+  TDesc filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
+  TDesc fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
+  TDesc fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
+  TDesc angular_spectrum(const TDesc &X, holotask::syncs::AngularSpectrumSettings s);
+  TDesc slide_avg(const TDesc &X, holotask::asyncs::SlidingAverageSettings s);
+  void  xy_raw_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  void  xy_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  void  xz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  void  yz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  void  shack_hartmann_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  void  shack_hartmann_xcorr_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  void  zernike_phase_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  void  zernike_coefficients_display(const TDesc &X, tasks::sinks::DisplayZernikeCoefficientsSettings s);
+  void  holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
+  TDesc ametek_s710_euresys_coaxlink_octo(holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings s);
+  TDesc ametek_s711_euresys_coaxlink_qsfp_plus(holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
+  TDesc average(const TDesc &X, holotask::syncs::AverageSettings s);
+  TDesc convolution(const TDesc &X, holotask::syncs::ConvolutionSettings s);
+  TDesc correct_phase(const TDesc &X, const TDesc &PhaseMask, holotask::syncs::CorrectPhaseSettings s);
+  TDesc crop(const TDesc &X, holotask::syncs::CropSettings s);
+  TDesc fft_shift(const TDesc &X, holotask::syncs::FFTShiftSettings s);
+  TDesc pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);
+  TDesc registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
+  TDesc rotation(const TDesc &X, holotask::syncs::RotationSettings s);
+  TDesc wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
+  TDesc zernike(const TDesc &X, holotask::syncs::ZernikeSettings s);
+  TDesc zernike_phase(const TDesc &X, holotask::syncs::ZernikePhaseSettings s);
+  TDesc concatenate(std::span<const TDesc> Xs, holonp::ConcatenateSettings s);
+  TDesc transpose(const TDesc &X, holonp::TransposeSettings s);
+  TDesc add(const TDesc &A, const TDesc &B, holonp::AddSettings s);
+  TDesc div(const TDesc &A, const TDesc &B, holonp::DivSettings s);
+  TDesc mul(const TDesc &A, const TDesc &B, holonp::MulSettings s);
+  TDesc sub(const TDesc &A, const TDesc &B, holonp::SubSettings s);
+  TDesc equal(const TDesc &A, const TDesc &B, holonp::EqualSettings s);
+  TDesc where(const TDesc &Cond, const TDesc &X, const TDesc &Y, holonp::WhereSettings s);
+  TDesc rfft(const TDesc &X, holonp::RFFTSettings s);
+  TDesc rfft2(const TDesc &X, holonp::RFFT2Settings s);
+  TDesc irfft2(const TDesc &X, holonp::IRFFT2Settings s);
+  TDesc assign(const TDesc &X, const TDesc &Y, holonp::AssignSettings s);
+  TDesc slice(const TDesc &X, holonp::SliceSettings s);
+  TDesc fft(const TDesc &X, holonp::FFTSettings s);
+  TDesc fft2(const TDesc &X, holonp::FFT2Settings s);
+  TDesc fftshift(const TDesc &X, holonp::FFTShiftSettings s);
+  TDesc abs(const TDesc &X, holonp::AbsSettings s);
+  TDesc mean(const TDesc &X, holonp::MeanSettings s);
+  TDesc mean_abs(const TDesc &X, holonp::MeanAbsSettings s);
+  TDesc min(const TDesc &X, holonp::MinSettings s);
+  TDesc max(const TDesc &X, holonp::MaxSettings s);
+  TDesc normalize(const TDesc &X, holonp::NormalizeSettings s);
+  TDesc reshape(const TDesc &X, holonp::ReshapeSettings s);
+  TDesc conj(const TDesc &X, holonp::ConjSettings s);
   // clang-format on
 };
 
 } // namespace holovibes::pipeline
-
-#ifndef HOLOVIBES__GRAPH_BUILDER_V2_HXX__INCLUDED
-#include "graph_builder_v2.hh"
-#endif
