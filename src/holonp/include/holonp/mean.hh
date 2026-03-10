@@ -30,6 +30,10 @@ struct MeanSettings {
   // NumPy-like axis selection. Empty => all axes.
   std::vector<int> axis;
   bool             keepdims = false;
+
+  bool operator==(const MeanSettings &other) const {
+    return axis == other.axis && keepdims == other.keepdims;
+  }
 };
 
 void to_json(nlohmann::json &j, const MeanSettings &s);
@@ -39,8 +43,13 @@ class Mean : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
+  const holoflow::core::TDesc& get_idesc() const { return idesc_; }
+  const MeanSettings&          get_settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
+
 private:
-  Mean(const MeanSettings &settings, cudaStream_t stream, size_t out_ndim, size_t red_ndim,
+  Mean(const MeanSettings &settings, const holoflow::core::TDesc &idesc, cudaStream_t stream, 
+       size_t out_ndim, size_t red_ndim,
        std::int64_t total_out, std::int64_t total_red, HostPtr<std::int64_t> h_in_strides,
        DevPtr<std::int64_t> d_in_strides, HostPtr<std::int64_t> h_out_strides,
        DevPtr<std::int64_t> d_out_strides, HostPtr<int> h_out_to_in, DevPtr<int> d_out_to_in,
@@ -48,8 +57,9 @@ private:
        DevPtr<std::int64_t> d_red_strides);
   friend class MeanFactory;
 
-  MeanSettings settings_;
-  cudaStream_t stream_;
+  MeanSettings          settings_;
+  holoflow::core::TDesc idesc_;
+  cudaStream_t          stream_;
 
   size_t       out_ndim_;
   size_t       red_ndim_;
@@ -76,6 +86,12 @@ public:
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc>     input_descs,
+         const nlohmann::json                       &jsettings,
+         const holoflow::core::SyncCreateCtx        &ctx) const override;
 };
 
 } // namespace holonp

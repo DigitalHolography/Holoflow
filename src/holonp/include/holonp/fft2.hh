@@ -30,6 +30,10 @@ namespace holonp {
 struct FFT2Settings {
   std::vector<int> axes;
   FftNorm          norm = FftNorm::Backward;
+
+  bool operator==(const FFT2Settings &other) const {
+    return axes == other.axes && norm == other.norm;
+  }
 };
 
 void to_json(nlohmann::json &j, const FFT2Settings &s);
@@ -44,14 +48,20 @@ class FFT2 : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
+  const holoflow::core::TDesc& get_idesc() const { return idesc_; }
+  const FFT2Settings&          get_settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream);
+
 private:
-  FFT2(const FFT2Settings &settings, curaii::CufftHandle &&plan, size_t n_fft,
+  FFT2(const FFT2Settings &settings, const holoflow::core::TDesc &idesc,
+       curaii::CufftHandle &&plan, size_t n_fft,
        std::vector<LaunchOffset> offsets, cudaStream_t stream);
 
   friend class FFT2Factory;
 
-  FFT2Settings        settings_;
-  curaii::CufftHandle plan_;
+  FFT2Settings          settings_;
+  holoflow::core::TDesc idesc_;
+  curaii::CufftHandle   plan_;
 
   size_t                    n_fft_;
   std::vector<LaunchOffset> offsets_;
@@ -66,6 +76,12 @@ public:
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc>     input_descs,
+         const nlohmann::json                       &jsettings,
+         const holoflow::core::SyncCreateCtx        &ctx) const override;
 };
 
 } // namespace holonp

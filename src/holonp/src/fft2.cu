@@ -105,10 +105,18 @@ __global__ void scale_kernel(cuFloatComplex *__restrict__ data, size_t n, float 
 // FFT2 Implementation
 // -----------------------------------------------------------------------------
 
-FFT2::FFT2(const FFT2Settings &settings, curaii::CufftHandle &&plan, size_t n_fft,
+FFT2::FFT2(const FFT2Settings &settings, const holoflow::core::TDesc &idesc,
+           curaii::CufftHandle &&plan, size_t n_fft,
            std::vector<LaunchOffset> offsets, cudaStream_t stream)
-    : settings_(settings), plan_(std::move(plan)), n_fft_(n_fft), offsets_(std::move(offsets)),
-      stream_(stream) {}
+    : settings_(settings), idesc_(idesc), plan_(std::move(plan)), n_fft_(n_fft), 
+      offsets_(std::move(offsets)), stream_(stream) {}
+
+void FFT2::update_stream(cudaStream_t stream) {
+  if (stream_ != stream) {
+    stream_ = stream;
+    CUFFT_CHECK(cufftSetStream(plan_.get(), stream_));
+  }
+}
 
 holoflow::core::OpResult FFT2::execute(holoflow::core::SyncCtx &ctx) {
   auto *idata_base = reinterpret_cast<uint8_t *>(ctx.inputs[0].data());
@@ -124,10 +132,10 @@ holoflow::core::OpResult FFT2::execute(holoflow::core::SyncCtx &ctx) {
   // Normalization applies to the entire contiguous output buffer at once
   const float scale = get_norm_scale(settings_.norm, n_fft_);
   if (scale != 1.0f) {
-    auto        *odata_full = reinterpret_cast<cuFloatComplex *>(odata_base);
-    const size_t total      = ctx.outputs[0].desc.num_elements();
-    const int    block      = 256;
-    const int    grid       = (int)((total + block - 1) / block);
+    auto         *odata_full = reinterpret_cast<cuFloatComplex *>(odata_base);
+    const size_t total       = ctx.outputs[0].desc.num_elements();
+    const int    block       = 256;
+    const int    grid        = (int)((total + block - 1) / block);
     scale_kernel<<<grid, block, 0, stream_>>>(odata_full, total, scale);
   }
 
@@ -166,7 +174,7 @@ FFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
                     const holoflow::core::SyncCreateCtx   &ctx) const {
 
   const auto   settings  = jsettings.get<FFT2Settings>();
-  const auto  &idesc     = input_descs[0];
+  const auto &idesc     = input_descs[0];
   const int    ndim      = static_cast<int>(idesc.shape.size());
   const size_t elem_size = sizeof(cuFloatComplex);
 
@@ -261,7 +269,36 @@ FFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
       best_group.odist_elem, CUDA_C_32F, static_cast<long long>(best_group.size), &work_size, CUDA_C_32F));
 
   return std::unique_ptr<holoflow::core::ISyncTask>(
-      new FFT2(settings, std::move(plan), n_fft_elems, std::move(offsets), ctx.stream));
+      new FFT2(settings, idesc, std::move(plan), n_fft_elems, std::move(offsets), ctx.stream));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+FFT2Factory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                    std::span<const holoflow::core::TDesc>     input_descs,
+                    const nlohmann::json                       &jsettings,
+                    const holoflow::core::SyncCreateCtx        &ctx) const {
+
+  auto* old_fft = dynamic_cast<FFT2*>(old_task.get());
+  if (old_fft != nullptr && input_descs.size() == 1) {
+    
+    const auto new_settings = jsettings.get<FFT2Settings>();
+    const auto& new_idesc   = input_descs[0];
+    const auto& old_idesc   = old_fft->get_idesc();
+
+    bool can_reuse = (new_settings == old_fft->get_settings()) &&
+                     (new_idesc.shape == old_idesc.shape) &&
+                     (new_idesc.strides == old_idesc.strides) &&
+                     (new_idesc.dtype == old_idesc.dtype) &&
+                     (new_idesc.mem_loc == old_idesc.mem_loc);
+
+    if (can_reuse) {
+      old_fft->update_stream(ctx.stream);
+      return old_task; 
+    }
+  }
+
+  // Fallback: Structural change detected or invalid old task.
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp

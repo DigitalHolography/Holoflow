@@ -31,8 +31,13 @@ class MeanAbs : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
+  const holoflow::core::TDesc& get_idesc() const { return idesc_; }
+  const MeanAbsSettings&       get_settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
+
 private:
-  MeanAbs(const MeanAbsSettings &settings, cudaStream_t stream, size_t out_ndim, size_t red_ndim,
+  MeanAbs(const MeanAbsSettings &settings, const holoflow::core::TDesc &idesc, cudaStream_t stream, 
+          size_t out_ndim, size_t red_ndim,
           std::int64_t total_out, std::int64_t total_red,
           curaii::unique_host_ptr<std::int64_t>   h_in_strides,
           curaii::unique_device_ptr<std::int64_t> d_in_strides,
@@ -44,8 +49,9 @@ private:
           curaii::unique_device_ptr<std::int64_t> d_red_strides);
   friend class MeanAbsFactory;
 
-  MeanAbsSettings settings_;
-  cudaStream_t    stream_;
+  MeanAbsSettings       settings_;
+  holoflow::core::TDesc idesc_;
+  cudaStream_t          stream_;
 
   size_t       out_ndim_;
   size_t       red_ndim_;
@@ -72,6 +78,12 @@ public:
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc>     input_descs,
+         const nlohmann::json                       &jsettings,
+         const holoflow::core::SyncCreateCtx        &ctx) const override;
 };
 
 } // namespace holonp

@@ -32,6 +32,11 @@ struct FresnelQinSettings {
   float  dy;     ///< Pixel pitch in meters.
   size_t nx;     ///< Number of pixels in x.
   size_t ny;     ///< Number of pixels in y.
+
+  bool operator==(const FresnelQinSettings &other) const {
+    return lambda == other.lambda && dx == other.dx && dy == other.dy &&
+           nx == other.nx && ny == other.ny;
+  }
 };
 
 void to_json(nlohmann::json &j, const FresnelQinSettings &fqs);
@@ -41,14 +46,20 @@ class FresnelQin : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
+  const holoflow::core::TDesc& get_idesc() const { return idesc_; }
+  const FresnelQinSettings&    get_settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
+
 private:
-  FresnelQin(const FresnelQinSettings &settings, DevPtr<float> &&d_r2, cudaStream_t stream);
+  FresnelQin(const FresnelQinSettings &settings, const holoflow::core::TDesc &idesc, 
+             DevPtr<float> &&d_r2, cudaStream_t stream);
 
   friend class FresnelQinFactory;
 
-  FresnelQinSettings settings_;
-  DevPtr<float>      d_r2_;
-  cudaStream_t       stream_;
+  FresnelQinSettings    settings_;
+  holoflow::core::TDesc idesc_;
+  DevPtr<float>         d_r2_;
+  cudaStream_t          stream_;
 };
 
 class FresnelQinFactory : public holoflow::core::ISyncTaskFactory {
@@ -59,6 +70,12 @@ public:
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc>     input_descs,
+         const nlohmann::json                       &jsettings,
+         const holoflow::core::SyncCreateCtx        &ctx) const override;
 };
 
 } // namespace holotask::sources

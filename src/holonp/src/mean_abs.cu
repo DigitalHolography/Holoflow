@@ -1,3 +1,17 @@
+// Copyright 2026 Digital Holography Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "holonp/mean_abs.hh"
 
 #include <algorithm>
@@ -221,9 +235,9 @@ mean_abs_kernel(const InT *__restrict__ in, float *__restrict__ out, int out_ndi
 
 } // namespace
 
-MeanAbs::MeanAbs(const MeanAbsSettings &settings, cudaStream_t stream, size_t out_ndim,
-                 size_t red_ndim, std::int64_t total_out, std::int64_t total_red,
-                 curaii::unique_host_ptr<std::int64_t>   h_in_strides,
+MeanAbs::MeanAbs(const MeanAbsSettings &settings, const holoflow::core::TDesc &idesc,
+                 cudaStream_t stream, size_t out_ndim, size_t red_ndim, std::int64_t total_out,
+                 std::int64_t total_red, curaii::unique_host_ptr<std::int64_t> h_in_strides,
                  curaii::unique_device_ptr<std::int64_t> d_in_strides,
                  curaii::unique_host_ptr<std::int64_t>   h_out_strides,
                  curaii::unique_device_ptr<std::int64_t> d_out_strides,
@@ -232,7 +246,7 @@ MeanAbs::MeanAbs(const MeanAbsSettings &settings, cudaStream_t stream, size_t ou
                  curaii::unique_host_ptr<int> h_red_axes, curaii::unique_device_ptr<int> d_red_axes,
                  curaii::unique_host_ptr<std::int64_t>   h_red_strides,
                  curaii::unique_device_ptr<std::int64_t> d_red_strides)
-    : settings_(settings), stream_(stream), out_ndim_(out_ndim), red_ndim_(red_ndim),
+    : settings_(settings), idesc_(idesc), stream_(stream), out_ndim_(out_ndim), red_ndim_(red_ndim),
       total_out_(total_out), total_red_(total_red), h_in_strides_(std::move(h_in_strides)),
       d_in_strides_(std::move(d_in_strides)), h_out_strides_(std::move(h_out_strides)),
       d_out_strides_(std::move(d_out_strides)), h_out_to_in_(std::move(h_out_to_in)),
@@ -400,11 +414,40 @@ MeanAbsFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
 
   return std::unique_ptr<holoflow::core::ISyncTask>(
-      new MeanAbs(settings, ctx.stream, out_ndim, red_ndim, plan.total_out, plan.total_red,
+      new MeanAbs(settings, idesc, ctx.stream, out_ndim, red_ndim, plan.total_out, plan.total_red,
                   std::move(h_in_strides), std::move(d_in_strides), std::move(h_out_strides),
                   std::move(d_out_strides), std::move(h_out_to_in), std::move(d_out_to_in),
                   std::move(h_red_axes), std::move(d_red_axes), std::move(h_red_strides),
                   std::move(d_red_strides)));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+MeanAbsFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                       std::span<const holoflow::core::TDesc>     input_descs,
+                       const nlohmann::json                      &jsettings,
+                       const holoflow::core::SyncCreateCtx       &ctx) const {
+
+  auto *old_mean = dynamic_cast<MeanAbs *>(old_task.get());
+  if (old_mean != nullptr && input_descs.size() == 1) {
+
+    const auto  new_settings = jsettings.get<MeanAbsSettings>();
+    const auto &new_idesc    = input_descs[0];
+    const auto &old_idesc    = old_mean->get_idesc();
+
+    bool can_reuse =
+        (new_settings.axis == old_mean->get_settings().axis) &&
+        (new_settings.keepdims == old_mean->get_settings().keepdims) &&
+        (new_idesc.shape == old_idesc.shape) && (new_idesc.strides == old_idesc.strides) &&
+        (new_idesc.dtype == old_idesc.dtype) && (new_idesc.mem_loc == old_idesc.mem_loc);
+
+    if (can_reuse) {
+      old_mean->update_stream(ctx.stream);
+      return old_task;
+    }
+  }
+
+  // Fallback: Structural change detected or invalid old task.
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp

@@ -21,14 +21,17 @@
 #include <format>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <numeric>
 #include <queue>
 #include <ranges>
 #include <set>
 #include <stack>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
+#include <type_traits>
 
 #include "curaii/cuda.hh"
 #include "holoflow/core/graph_spec.hh"
@@ -52,30 +55,129 @@ public:
 };
 
 // -------------------------------------------------------------------------------------------------
+// Profiling Data Structures
+// -------------------------------------------------------------------------------------------------
+
+struct TraceEvent {
+  std::string name;
+  std::string category;
+  long long   start_us;
+  long long   dur_us;
+  uint32_t    tid;
+};
+
+class CompilationProfiler {
+public:
+  void add_event(std::string name, std::string category, long long start_us, long long dur_us) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    uint32_t tid = static_cast<uint32_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
+    events_.push_back({std::move(name), std::move(category), start_us, dur_us, tid});
+  }
+
+  void log_summary(std::shared_ptr<spdlog::logger> &logger) const {
+    if (!logger || events_.empty())
+      return;
+
+    double total_time_ms = 0.0;
+    for (const auto &ev : events_) {
+      if (ev.name == "Total Compilation") {
+        total_time_ms = ev.dur_us / 1000.0;
+        break;
+      }
+    }
+
+    logger->info("{:=^60}", " Compilation Passes Summary ");
+    logger->info("{:<30} | {:>12} | {:>10}", "Pass Name", "Time (ms)", "% Total");
+    logger->info("{:-^60}", "");
+
+    for (const auto &ev : events_) {
+      if (ev.category != "pass" && ev.name != "Total Compilation")
+        continue;
+
+      double dur_ms  = ev.dur_us / 1000.0;
+      double percent = (total_time_ms > 0) ? (dur_ms / total_time_ms) * 100.0 : 0.0;
+
+      if (ev.name == "Total Compilation") {
+        logger->info("{:-^60}", "");
+      }
+      logger->info("{:<30} | {:>12.3f} | {:>9.2f}%", ev.name, dur_ms, percent);
+    }
+    logger->info("{:=^60}", "");
+  }
+
+  void dump_chrome_tracing(const std::filesystem::path &filepath) const {
+    std::ofstream out(filepath);
+    if (!out.is_open())
+      return;
+
+    out << "[\n";
+    for (size_t i = 0; i < events_.size(); ++i) {
+      const auto &ev = events_[i];
+      out << "  {"
+          << "\"name\": \"" << ev.name << "\", "
+          << "\"cat\": \"" << ev.category << "\", "
+          << "\"ph\": \"X\", "
+          << "\"ts\": " << ev.start_us << ", "
+          << "\"dur\": " << ev.dur_us << ", "
+          << "\"pid\": 1, "
+          << "\"tid\": " << ev.tid << "}";
+      if (i < events_.size() - 1)
+        out << ",";
+      out << "\n";
+    }
+    out << "]\n";
+  }
+
+private:
+  std::vector<TraceEvent> events_;
+  std::mutex              mutex_;
+};
+
+// -------------------------------------------------------------------------------------------------
 // Observability & Scoped Tracer
 // -------------------------------------------------------------------------------------------------
-// This class uses RAII (Resource Acquisition Is Initialization) to automatically log
-// the start and end times of compiler passes.
+
 class ScopedTrace {
 public:
-  using Clock = std::chrono::steady_clock;
+  using Clock       = std::chrono::steady_clock;
+  using SystemClock = std::chrono::system_clock;
 
-  ScopedTrace(std::string name, std::shared_ptr<spdlog::logger> logger)
-      : name_(std::move(name)), logger_(std::move(logger)), start_(Clock::now()) {
-    if (logger_)
+  ScopedTrace(std::string name, std::string category, std::shared_ptr<spdlog::logger> logger,
+              CompilationProfiler *profiler)
+      : name_(std::move(name)), category_(std::move(category)), logger_(std::move(logger)),
+        profiler_(profiler) {
+
+    start_time_ = Clock::now();
+    start_us_   = std::chrono::time_point_cast<std::chrono::microseconds>(SystemClock::now())
+                    .time_since_epoch()
+                    .count();
+
+    if (logger_ && category_ == "pass") {
       logger_->trace(">> Begin Pass: {}", name_);
+    }
   }
 
   ~ScopedTrace() {
-    auto dur = std::chrono::duration<double, std::milli>(Clock::now() - start_).count();
-    if (logger_)
-      logger_->info("<< End Pass:   {} ({:.3f} ms)", name_, dur);
+    auto end_time = Clock::now();
+    auto dur_us =
+        std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_).count();
+
+    if (logger_ && category_ == "pass") {
+      logger_->info("<< End Pass:   {} ({:.3f} ms)", name_, dur_us / 1000.0);
+    }
+
+    if (profiler_) {
+      profiler_->add_event(name_, category_, start_us_, dur_us);
+    }
   }
 
 private:
   std::string                     name_;
+  std::string                     category_;
   std::shared_ptr<spdlog::logger> logger_;
-  Clock::time_point               start_;
+  CompilationProfiler            *profiler_;
+  Clock::time_point               start_time_;
+  long long                       start_us_;
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -118,10 +220,6 @@ core::Storage &TaskStorageAdapter::owned_output_storage(size_t index) {
 // -------------------------------------------------------------------------------------------------
 // Compiler Declaration (PIMPL)
 // -------------------------------------------------------------------------------------------------
-// The "Pointer to Implementation" (PIMPL) idiom is used here to hide the heavy
-// Boost.Graph templates from the public header file. This improves compilation times
-// for users of the Compiler class.
-// See: https://en.cppreference.com/w/cpp/language/pimpl
 
 class Compiler::Impl {
 public:
@@ -135,6 +233,7 @@ private:
   core::Registry                 &registry_;
   Compiler::Config                config_;
   std::shared_ptr<spdlog::logger> logger_;
+  CompilationProfiler             profiler_;
 
   const core::GraphSpec          *gspec_ = nullptr;
   std::unique_ptr<CompilerOutput> prev_;
@@ -145,7 +244,7 @@ private:
 
   // --- Helpers ---
   void        setup_logging();
-  ScopedTrace trace_scope(std::string name);
+  ScopedTrace trace_scope(std::string name, std::string category = "pass");
   void        dump_graphviz(const std::string &filename);
   template <class TaskInterface, class Factory, class Ctx>
   std::unique_ptr<core::ITask> create_or_update_task(Factory &factory, const NodePlan &np,
@@ -167,7 +266,7 @@ private:
 
   // Generic Pass Runner
   template <typename Func> void run_pass(const char *name, Func &&fn) {
-    auto scope = trace_scope(name);
+    auto scope = trace_scope(name, "pass");
     fn();
   }
 };
@@ -183,27 +282,25 @@ Compiler::Impl::Impl(core::Registry &registry, Compiler::Config config)
 
 std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec          &gspec,
                                                     std::unique_ptr<CompilerOutput> prev) {
-  auto total_trace = trace_scope("Total Compilation");
-
   gspec_ = &gspec;
   prev_  = std::move(prev);
   out_   = std::make_unique<CompilerOutput>();
 
+  // Use optional to control exactly when the trace ends without double-destruction
+  std::optional<ScopedTrace> total_trace;
+  total_trace.emplace(trace_scope("Total Compilation", "lifecycle"));
+
   try {
-    // 1. Structure
     run_pass("Validate Spec", [&] { validate_spec(); });
     run_pass("Build Graph Plan", [&] { build_graph_structure(); });
     run_pass("Type Inference", [&] { run_type_inference(); });
 
-    // 2. Memory Planning (The New Logic)
     run_pass("Tensor IDs", [&] { assign_tensor_ids(); });
     run_pass("Storage Mapping", [&] { assign_storage_ids(); });
     run_pass("Buffer Allocation", [&] { allocate_buffers(); });
 
-    // 3. Resource Preparation
     run_pass("Storage Adapters", [&] { create_storage_adapters(); });
 
-    // 4. Execution Planning
     run_pass("Section Partitioning", [&] { partition_sections(); });
     run_pass("Stream Assignment", [&] { assign_streams(); });
     run_pass("Task Instantiation", [&] { instantiate_tasks(); });
@@ -217,7 +314,19 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     if (config_.dump_dot_on_failure) {
       dump_graphviz("compilation_failure.dot");
     }
+
+    total_trace.reset(); // Stop timer before throwing
     throw;
+  }
+
+  // Stop the total compilation timer safely
+  total_trace.reset();
+
+  if (config_.enable_profiling) {
+    profiler_.log_summary(logger_);
+    if (!config_.log_dir.empty()) {
+      profiler_.dump_chrome_tracing(config_.log_dir / config_.trace_filename);
+    }
   }
 
   return std::move(out_);
@@ -238,15 +347,14 @@ void Compiler::Impl::setup_logging() {
   logger_->set_level(config_.verbose_tracing ? spdlog::level::trace : spdlog::level::info);
 }
 
-ScopedTrace Compiler::Impl::trace_scope(std::string name) {
-  return ScopedTrace(std::move(name), logger_);
+ScopedTrace Compiler::Impl::trace_scope(std::string name, std::string category) {
+  return ScopedTrace(std::move(name), std::move(category), logger_,
+                     config_.enable_profiling ? &profiler_ : nullptr);
 }
 
 // -------------------------------------------------------------------------------------------------
 // Pass: Validate Spec
 // -------------------------------------------------------------------------------------------------
-// Checks for basic structural errors: duplicates names, unregistered node types,
-// and multiple edges writing to the same input slot.
 void Compiler::Impl::validate_spec() {
   std::unordered_set<std::string> names;
   std::unordered_set<std::string> edge_dsts;
@@ -264,9 +372,8 @@ void Compiler::Impl::validate_spec() {
 
   auto edges = boost::make_iterator_range(boost::edges(*gspec_));
   for (const auto &e : edges) {
-    const auto &es  = (*gspec_)[e];
-    const auto  dst = (*gspec_)[boost::target(e, *gspec_)];
-    // Key format: "node_name:input_index"
+    const auto &es    = (*gspec_)[e];
+    const auto  dst   = (*gspec_)[boost::target(e, *gspec_)];
     std::string label = std::format("{}:{}", dst.name, es.in_idx);
 
     if (!edge_dsts.insert(label).second) {
@@ -278,22 +385,18 @@ void Compiler::Impl::validate_spec() {
 // -------------------------------------------------------------------------------------------------
 // Pass: Build Graph Structure
 // -------------------------------------------------------------------------------------------------
-// Converts the high-level configuration (GraphSpec) into the runtime representation
-// (GraphPlan), which is a Boost Adjacency List.
 void Compiler::Impl::build_graph_structure() {
   using VSpec = core::GraphSpec::vertex_descriptor;
   using VPlan = GraphPlan::vertex_descriptor;
   std::map<VSpec, VPlan> v_map;
   auto                  &g = out_->graph;
 
-  // 1. Copy Nodes
   for (auto v : boost::make_iterator_range(boost::vertices(*gspec_))) {
     NodePlan np;
     np.spec  = (*gspec_)[v];
     v_map[v] = boost::add_vertex(np, g);
   }
 
-  // 2. Copy Edges
   for (auto e : boost::make_iterator_range(boost::edges(*gspec_))) {
     const auto &es  = (*gspec_)[e];
     const auto  src = v_map.at(boost::source(e, *gspec_));
@@ -307,29 +410,23 @@ void Compiler::Impl::build_graph_structure() {
 // -------------------------------------------------------------------------------------------------
 // Pass: Type Inference
 // -------------------------------------------------------------------------------------------------
-// Propagates data types (e.g., float32 vs int8, image resolution) through the graph.
-// We must process nodes in "Topological Order" (dependencies first) so that when we
-// visit a node, we know exactly what its inputs look like.
-//
-// See: https://en.wikipedia.org/wiki/Topological_sorting
 void Compiler::Impl::run_type_inference() {
   auto                                     &g = out_->graph;
   std::vector<GraphPlan::vertex_descriptor> topo_order;
 
   try {
-    // Boost's topological_sort outputs nodes in reverse topological order (sinks first).
     boost::topological_sort(g, std::back_inserter(topo_order));
   } catch (const boost::not_a_dag &) {
     throw CompilerException("Graph contains a cycle (loop), which is not allowed.");
   }
 
-  // Iterate in reverse (Source -> Sink)
   for (auto v : std::views::reverse(topo_order)) {
-    auto                    &node      = g[v];
+    auto &node       = g[v];
+    auto  node_trace = trace_scope(std::format("Infer: {}", node.spec.name), "detail");
+
     auto                     in_degree = boost::in_degree(v, g);
     std::vector<core::TDesc> input_descs(in_degree);
 
-    // 1. Gather Input Descriptions from incoming edges
     for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
       const auto &edge_plan = g[e];
       if (edge_plan.spec.in_idx >= input_descs.size()) {
@@ -338,11 +435,9 @@ void Compiler::Impl::run_type_inference() {
       input_descs[edge_plan.spec.in_idx] = edge_plan.desc;
     }
 
-    // 2. Call the User-Defined Factory to infer outputs based on inputs
     const auto &factory = registry_.get(node.spec.kind);
     node.infer          = factory.infer(input_descs, node.spec.settings);
 
-    // 3. Propagate Output Descriptions to outgoing edges
     for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
       auto &edge_plan = g[e];
       if (edge_plan.spec.out_idx >= node.infer.output_descs.size()) {
@@ -356,29 +451,24 @@ void Compiler::Impl::run_type_inference() {
 // -------------------------------------------------------------------------------------------------
 // Pass: Assign Tensor IDs
 // -------------------------------------------------------------------------------------------------
-// Assigns a unique ID to every tensor flowing through edges.
 void Compiler::Impl::assign_tensor_ids() {
   auto &g        = out_->graph;
   auto &res      = out_->resources;
   int   next_tid = 0;
 
-  // Topological sort ensures flow direction
   std::vector<GraphPlan::vertex_descriptor> topo;
   boost::topological_sort(g, std::back_inserter(topo));
 
   for (auto v : std::views::reverse(topo)) {
     auto &node = g[v];
 
-    // A. Inputs: Snapshot TIDs from incoming edges
     node.in_tids.resize(node.infer.input_descs.size());
     for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
       const auto &ep               = g[e];
       node.in_tids[ep.spec.in_idx] = ep.tid;
-      // Store Logical Description
-      res.tensor_descs[ep.tid] = ep.desc;
+      res.tensor_descs[ep.tid]     = ep.desc;
     }
 
-    // B. Outputs: Assign NEW Unique TIDs (Static Single Assignment)
     node.out_tids.resize(node.infer.output_descs.size());
     auto out_edges = boost::out_edges(v, g);
 
@@ -387,7 +477,6 @@ void Compiler::Impl::assign_tensor_ids() {
       node.out_tids[i]      = tid;
       res.tensor_descs[tid] = node.infer.output_descs[i];
 
-      // Stamp TID on outgoing edges
       for (auto e : boost::make_iterator_range(out_edges)) {
         if (g[e].spec.out_idx == static_cast<int>(i)) {
           g[e].tid = tid;
@@ -417,8 +506,6 @@ void Compiler::Impl::assign_storage_ids() {
       int out_tid = node.out_tids[out_idx];
       int sid     = -1;
 
-      // A. Check for In-Place / Aliasing
-      // If this output reuses an input buffer, inherit the SID.
       for (const auto &ip : node.infer.in_place) {
         if (ip.out_idx == static_cast<int>(out_idx)) {
           int in_tid = node.in_tids[ip.in_idx];
@@ -426,7 +513,6 @@ void Compiler::Impl::assign_storage_ids() {
           if (res.tid_to_sid.contains(in_tid)) {
             sid = (int)res.tid_to_sid.at(in_tid);
           } else {
-            // Should never happen in valid topological order
             throw CompilerException(
                 std::format("Node '{}': In-place input TID {} has no Storage ID assigned.",
                             node.spec.name, in_tid));
@@ -435,19 +521,15 @@ void Compiler::Impl::assign_storage_ids() {
         }
       }
 
-      // B. If no alias found, assign a NEW Storage ID
       if (sid == -1) {
         sid = next_sid++;
       }
-
-      // C. Record Logical -> Physical Mapping
       res.tid_to_sid[out_tid] = sid;
     }
   }
 }
 
 void Compiler::Impl::verify_buffer_consistency() {
-  // Logic: Ensure a single tensor ID is not "Owned" (created) by multiple nodes simultaneously.
   std::map<int, std::vector<std::string>> owners;
   auto                                   &g = out_->graph;
 
@@ -479,7 +561,6 @@ void Compiler::Impl::allocate_buffers() {
   res.memory_blocks.clear();
   res.storages.clear();
 
-  // A. Identify SIDs that are "Owned" by user tasks (Framework should NOT alloc)
   std::unordered_set<size_t> user_managed_sids;
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
     const auto &node = g[v];
@@ -499,27 +580,22 @@ void Compiler::Impl::allocate_buffers() {
     }
   }
 
-  // B. Group TIDs by their SID to find a representative Descriptor
-  // (We just need one valid descriptor per SID to know size/loc)
   std::map<size_t, size_t> sid_to_rep_tid;
   for (const auto &[tid, sid] : res.tid_to_sid) {
     if (!sid_to_rep_tid.count(sid))
       sid_to_rep_tid[sid] = tid;
   }
 
-  // C. Create Storage Identities & Physical Blocks
   for (const auto &[sid, tid] : sid_to_rep_tid) {
-    const auto &desc = res.tensor_descs.at(tid);
+    auto        alloc_scope = trace_scope(std::format("Alloc SID {}", sid), "detail");
+    const auto &desc        = res.tensor_descs.at(tid);
 
-    // 1. Create the Stable Identity Object
     auto storage     = std::make_unique<core::Storage>();
     storage->mem_loc = desc.mem_loc;
     storage->bytes   = desc.num_bytes();
-    storage->ptr     = nullptr; // Default to null
+    storage->ptr     = nullptr;
 
-    // 2. Allocate Physical Memory (if not user-managed)
     if (!user_managed_sids.contains(sid)) {
-
       MemoryBlock block;
       block.mem_loc    = desc.mem_loc;
       block.size_bytes = desc.num_bytes();
@@ -527,60 +603,45 @@ void Compiler::Impl::allocate_buffers() {
       logger_->info("Allocating {} bytes for SID {} at {:?} memory", block.size_bytes, sid,
                     to_string(desc.mem_loc));
 
-      if (desc.mem_loc == core::MemLoc::Host) {
-        block.h_data = curaii::make_unique_host_ptr<std::byte>(block.size_bytes);
-      } else {
-        block.d_data = curaii::make_unique_device_ptr<std::byte>(block.size_bytes);
-      }
+      // Use a standard scope block to control the RAII timer
+      {
+        auto sys_scope = trace_scope(
+            desc.mem_loc == core::MemLoc::Host ? "Host Malloc" : "Device Malloc", "syscall");
+        if (desc.mem_loc == core::MemLoc::Host) {
+          block.h_data = curaii::make_unique_host_ptr<std::byte>(block.size_bytes);
+        } else {
+          block.d_data = curaii::make_unique_device_ptr<std::byte>(block.size_bytes);
+        }
+      } // sys_scope naturally destructs here!
 
-      // Link Identity -> Physical Pointer
       storage->ptr = static_cast<std::byte *>(block.get());
-
-      // Store ownership
       res.memory_blocks.emplace(sid, std::move(block));
-    }
-
-    else {
+    } else {
       logger_->info("SID {} is user-managed; skipping allocation.", sid);
     }
 
-    // Store Identity
     res.storages.emplace(sid, std::move(storage));
   }
 }
 
 // -------------------------------------------------------------------------------------------------
-// Pass: Section Partitioning (Connected Components)
+// Pass: Section Partitioning
 // -------------------------------------------------------------------------------------------------
-// This method groups "Sync" nodes (CPU/Synchronous) that are connected to each other
-// into "Sections". Each Section will run on a specific CUDA stream.
-//
-// Algorithm: Disjoint-Set Union (DSU) / Union-Find.
-// This is an efficient algorithm to find connected components in a graph.
-// It supports two operations:
-//   1. Find(i): Determine which set element 'i' belongs to.
-//   2. Union(i, j): Merge the sets containing 'i' and 'j'.
-//
-// See: https://en.wikipedia.org/wiki/Disjoint-set_data_structure
 void Compiler::Impl::partition_sections() {
-  //
   auto &g         = out_->graph;
   auto  num_verts = boost::num_vertices(g);
 
-  // Initialize DSU: Each node is its own parent initially.
   std::vector<size_t> parent(num_verts);
   std::iota(parent.begin(), parent.end(), 0);
 
-  // DSU: Find with Path Compression (flattens the tree for O(1) avg lookup)
   auto find = [&](size_t i) {
     while (i != parent[i]) {
-      parent[i] = parent[parent[i]]; // path compression
+      parent[i] = parent[parent[i]];
       i         = parent[i];
     }
     return i;
   };
 
-  // DSU: Unite
   auto unite = [&](size_t i, size_t j) {
     size_t root_i = find(i);
     size_t root_j = find(j);
@@ -588,7 +649,6 @@ void Compiler::Impl::partition_sections() {
       parent[root_i] = root_j;
   };
 
-  // 1. Unite adjacent Sync nodes directly
   for (auto e : boost::make_iterator_range(boost::edges(g))) {
     auto u = boost::source(e, g);
     auto v = boost::target(e, g);
@@ -597,12 +657,8 @@ void Compiler::Impl::partition_sections() {
     }
   }
 
-  // 2. Unite Sync nodes separated by "Walls" (Async nodes).
-  // If an Async node has multiple Sync inputs, those inputs effectively belong to
-  // the same logical execution section (they must be ready before the Async node starts).
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
     if (g[v].infer.kind == core::TaskKind::Async) {
-      // Group all Sync Predecessors
       std::vector<size_t> sync_preds;
       for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
         auto p = boost::source(e, g);
@@ -614,7 +670,6 @@ void Compiler::Impl::partition_sections() {
           unite(sync_preds[0], sync_preds[i]);
       }
 
-      // Group all Sync Successors
       std::vector<size_t> sync_succs;
       for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
         auto s = boost::target(e, g);
@@ -628,7 +683,6 @@ void Compiler::Impl::partition_sections() {
     }
   }
 
-  // 3. Create Sections from DSU Roots
   std::map<size_t, size_t> root_to_section_id;
   out_->sections.clear();
   int next_sec_id = 0;
@@ -646,11 +700,9 @@ void Compiler::Impl::partition_sections() {
     return root_to_section_id[root];
   };
 
-  // 4. Assign Nodes to Sections (Respecting Topological Order)
   std::vector<GraphPlan::vertex_descriptor> topo;
   boost::topological_sort(g, std::back_inserter(topo));
 
-  // Sync Nodes: Add directly to their section's topo list
   for (auto v : std::views::reverse(topo)) {
     auto &np = g[v];
     if (np.infer.kind == core::TaskKind::Sync) {
@@ -660,12 +712,10 @@ void Compiler::Impl::partition_sections() {
     }
   }
 
-  // Async Nodes: Attach as consumers/producers to adjacent sections
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
     if (g[v].infer.kind != core::TaskKind::Async)
       continue;
 
-    // Consumers (Output side of Async Node -> Sync Node)
     std::set<size_t> unique_cons_sections;
     for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
       auto s = boost::target(e, g);
@@ -677,7 +727,6 @@ void Compiler::Impl::partition_sections() {
       out_->sections[sec_id].async_cons.push_back(v);
     }
 
-    // Producers (Input side of Async Node <- Sync Node)
     std::set<size_t> unique_prod_sections;
     for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
       auto p = boost::source(e, g);
@@ -689,32 +738,11 @@ void Compiler::Impl::partition_sections() {
       out_->sections[sec_id].async_prod.push_back(v);
     }
   }
-
-  // Log Section Info (and its nodes in topo order)
-  for (const auto &sec : out_->sections) {
-    logger_->info("Section {}: ", sec.name);
-    logger_->info("  Async Consumers:");
-    for (const auto &anode : sec.async_cons) {
-      logger_->info("    - {}", g[anode].spec.name);
-    }
-    logger_->info("  Sync Nodes:");
-    for (const auto &snode : sec.sync_topo) {
-      logger_->info("    - {}", g[snode].spec.name);
-    }
-    logger_->info("  Async Producers:");
-    for (const auto &anode : sec.async_prod) {
-      logger_->info("    - {}", g[anode].spec.name);
-    }
-  }
-
-  logger_->info("Total Sections Created: {}", out_->sections.size());
-  logger_->flush();
 }
 
 void Compiler::Impl::assign_streams() {
   out_->resources.streams.clear();
   for (auto &sec : out_->sections) {
-    // RAII CudaStream allocation
     curaii::CudaStream stream;
     sec.stream = stream.get();
     out_->resources.streams.emplace(sec.id, std::move(stream));
@@ -728,12 +756,8 @@ void Compiler::Impl::create_storage_adapters() {
   res.node_storage_adapters.clear();
 
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
-    const auto &np = g[v];
-
-    // Create the adapter specific to this node's TIDs
-    auto adapter = std::make_unique<TaskStorageAdapter>(np.in_tids, np.out_tids, res);
-
-    // Store it keyed by node name for easy retrieval during instantiation
+    const auto &np      = g[v];
+    auto        adapter = std::make_unique<TaskStorageAdapter>(np.in_tids, np.out_tids, res);
     res.node_storage_adapters.emplace(np.spec.name, std::move(adapter));
   }
 }
@@ -750,7 +774,47 @@ std::unique_ptr<To> dynamic_unique_ptr_cast(std::unique_ptr<From> &&ptr) noexcep
 template <class TaskInterface, class Factory, class Ctx>
 std::unique_ptr<core::ITask>
 Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, const Ctx &ctx) {
-  // 1. Check if we have previous state to query
+  
+  // 1. Helper to synchronize the correct streams based on Ctx type
+  auto sync_streams = [&]() {
+    if constexpr (std::is_same_v<Ctx, core::SyncCreateCtx>) {
+      if (ctx.stream) {
+        CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
+      } else {
+        logger_->warn("SyncCreateCtx has null stream; skipping synchronization.");
+      }
+    } else if constexpr (std::is_same_v<Ctx, core::AsyncCreateCtx>) {
+      if (ctx.producer_stream) {
+        CUDA_CHECK(cudaStreamSynchronize(ctx.producer_stream));
+      } else {
+        logger_->warn("AsyncCreateCtx has null producer_stream; skipping synchronization.");
+      }
+      if (ctx.consumer_stream) {
+        CUDA_CHECK(cudaStreamSynchronize(ctx.consumer_stream));
+      } else {
+        logger_->warn("AsyncCreateCtx has null consumer_stream; skipping synchronization.");
+      }
+    }
+  };
+
+  // 2. Helper to accurately profile Task Creation
+  auto do_create = [&]() {
+    auto scope = trace_scope(std::format("Create Task: {}", np.spec.name), "detail");
+    auto task = factory.create(np.infer.input_descs, np.spec.settings, ctx);
+    sync_streams();
+    return task; 
+  }; // scope naturally destructs here, capturing the fully synced time
+
+  // 3. Helper to accurately profile Task Updating
+  auto do_update = [&](std::unique_ptr<TaskInterface> prev_task) {
+    auto scope = trace_scope(std::format("Update Task: {}", np.spec.name), "detail");
+    auto task = factory.update(std::move(prev_task), np.infer.input_descs, np.spec.settings, ctx);
+    sync_streams();
+    return task;
+  };
+
+  // --- Main Logic ---
+
   std::unique_ptr<core::ITask> *prev_ptr_ref = nullptr;
   if (prev_ && !prev_->resources.tasks.empty()) {
     auto &prev_tasks = prev_->resources.tasks;
@@ -759,13 +823,10 @@ Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, cons
     }
   }
 
-  // 2. If no previous task exists, just create new
   if (!prev_ptr_ref) {
-    return factory.create(np.infer.input_descs, np.spec.settings, ctx);
+    return do_create();
   }
 
-  // 3. Verify the Node Kind hasn't changed in the Graph Plan
-  // (We must iterate prev_graph to find the node definition for this name)
   bool kind_mismatch       = false;
   bool found_in_prev_graph = false;
 
@@ -781,55 +842,39 @@ Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, cons
     }
   }
 
-  // If the node wasn't in the old graph (unlikely if we have a task)
-  // or the kind changed (e.g. "Gaussian" -> "Median"), we must recreate.
   if (!found_in_prev_graph || kind_mismatch) {
-    return factory.create(np.infer.input_descs, np.spec.settings, ctx);
+    return do_create();
   }
 
-  // 4. Attempt to cast the previous task to the specific interface (ISyncTask/IAsyncTask)
-  // assuming dynamic_unique_ptr_cast is available in your utils
   auto prev_task_typed = dynamic_unique_ptr_cast<TaskInterface>(std::move(*prev_ptr_ref));
 
   if (!prev_task_typed) {
-    // Fallback safety: Cast failed, create new
-    return factory.create(np.infer.input_descs, np.spec.settings, ctx);
+    return do_create();
   }
 
-  // 5. Update existing task
-  return factory.update(std::move(prev_task_typed), np.infer.input_descs, np.spec.settings, ctx);
+  return do_update(std::move(prev_task_typed));
 }
 
 void Compiler::Impl::instantiate_tasks() {
   auto &g     = out_->graph;
   auto &tasks = out_->resources.tasks;
 
-  // Clear current tasks to be safe, though usually empty at this stage
   tasks.clear();
 
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
     const auto &np = g[v];
 
     if (np.infer.kind == core::TaskKind::Sync) {
-      // --- Sync Node Logic ---
       size_t sid    = node_to_section_map_.at(np.spec.name);
       auto   stream = out_->resources.streams.at(sid).get();
 
       core::SyncCreateCtx ctx{.stream = stream};
       auto               &factory = registry_.get_sync(np.spec.kind);
 
-      // Try to Update, otherwise Create
       auto task = create_or_update_task<core::ISyncTask>(factory, np, ctx);
-
-      // Bind logger if needed (based on your commented code)
-      // task->bind_logger(create_task_logger(np.spec.name, np.spec.kind));
-
       tasks.emplace(np.spec.name, std::move(task));
 
     } else if (np.infer.kind == core::TaskKind::Async) {
-      // --- Async Node Logic ---
-
-      // 1. Find Producer Stream (Incoming Edges)
       void *prod_stream = nullptr;
       for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
         auto p = boost::source(e, g);
@@ -840,7 +885,6 @@ void Compiler::Impl::instantiate_tasks() {
         }
       }
 
-      // 2. Find Consumer Stream (Outgoing Edges)
       void *cons_stream = nullptr;
       for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
         auto s = boost::target(e, g);
@@ -851,18 +895,12 @@ void Compiler::Impl::instantiate_tasks() {
         }
       }
 
-      // 3. Create Context
       core::AsyncCreateCtx ctx{.producer_stream = static_cast<cudaStream_t>(prod_stream),
                                .consumer_stream = static_cast<cudaStream_t>(cons_stream)};
 
       auto &factory = registry_.get_async(np.spec.kind);
 
-      // Try to Update, otherwise Create
       auto task = create_or_update_task<core::IAsyncTask>(factory, np, ctx);
-
-      // Bind logger if needed
-      // task->bind_logger(create_task_logger(np.spec.name, np.spec.kind));
-
       tasks.emplace(np.spec.name, std::move(task));
     }
   }
@@ -882,28 +920,21 @@ void Compiler::Impl::bind_tasks() {
   auto &g   = out_->graph;
   auto &res = out_->resources;
 
-  // Iterate via Graph to ensure we match nodes to tasks correctly
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
     const auto &np = g[v];
 
-    // 1. Retrieve the Task
     auto it_task = res.tasks.find(np.spec.name);
     if (it_task == res.tasks.end())
       continue;
     core::ITask *task = it_task->second.get();
 
-    // 2. Bind Storage Adapter
     if (auto it_adapter = res.node_storage_adapters.find(np.spec.name);
         it_adapter != res.node_storage_adapters.end()) {
-
       task->bind_storage_access(it_adapter->second.get());
     }
 
-    // 3. Bind Logger
     auto logger = create_task_logger(np.spec.name, np.spec.kind);
     task->bind_logger(std::move(logger));
-
-    // 4. (Future) Bind Event Writers, Profilers, etc.
   }
 }
 
@@ -913,7 +944,6 @@ void Compiler::Impl::bind_tasks() {
 
 namespace {
 
-// Helper to escape strings for DOT labels
 std::string escape_dot_label(const std::string &s) {
   std::string out;
   out.reserve(s.size());
@@ -938,11 +968,8 @@ std::string escape_dot_label(const std::string &s) {
   return out;
 }
 
-// Helper to format Tensor Description
 std::string format_tdesc(const core::TDesc &d) {
   std::ostringstream ss;
-  // Using simple format to avoid heavy JSON dependency inside visualization if possible,
-  // but matching your JSON style output:
   ss << "{\\n";
   ss << "  shape: " << escape_dot_label(nlohmann::json(d.shape).dump()) << ",\\n";
   ss << "  dtype: " << escape_dot_label(nlohmann::json(d.dtype).dump()) << "\\n";
@@ -970,7 +997,7 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
   }
 
   auto &g        = out_->graph;
-  auto &res      = out_->resources; // Need resources for TID->SID lookup
+  auto &res      = out_->resources;
   auto &sections = out_->sections;
 
   file << "digraph GraphPlan {\n";
@@ -979,7 +1006,6 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
   file << "  node [fontname=\"Helvetica\", shape=box, style=filled];\n";
   file << "  edge [fontname=\"Helvetica\", fontsize=10];\n\n";
 
-  // Formats "TID(s:SID)" or just "TID" if SID is missing.
   auto fmt_id = [&](int tid) -> std::string {
     if (res.tid_to_sid.contains(tid)) {
       return std::format("{}(s:{})", tid, res.tid_to_sid.at(tid));
@@ -994,21 +1020,18 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
     return std::format("v{}", v);
   };
 
-  // --- 1. Define Nodes ---
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
     const auto &np = g[v];
 
     std::ostringstream label_base;
     label_base << (np.spec.name.empty() ? "(unnamed)" : np.spec.name);
 
-    // Format Input IDs
     std::string in_str = "[";
     for (size_t i = 0; i < np.in_tids.size(); ++i) {
       in_str += (i ? "," : "") + fmt_id(np.in_tids[i]);
     }
     in_str += "]";
 
-    // Format Output IDs (detect aliasing)
     std::string out_str = "[";
     for (size_t i = 0; i < np.out_tids.size(); ++i) {
       const int   out_tid = np.out_tids[i];
@@ -1032,16 +1055,12 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
     const std::string ids_line = "\nIn: " + in_str + "\nOut: " + out_str;
 
     if (np.infer.kind == core::TaskKind::Async) {
-      // Async split nodes.
-      // Append "\n" to force left alignment via escape_dot_label.
       const std::string label_in = label_base.str() + "\n(Producer/Write)" + ids_line + "\n";
-
       file << std::format("  v{}_in [label=\"{}\", shape=invhouse, fillcolor=\"#e6f2ff\", "
                           "color=\"#0066cc\", style=\"filled,dashed\"];\n",
                           v, escape_dot_label(label_in));
 
       const std::string label_out = label_base.str() + "\n(Consumer/Read)" + ids_line + "\n";
-
       file << std::format("  v{}_out [label=\"{}\", shape=house, fillcolor=\"#ffe6e6\", "
                           "color=\"#cc0000\", style=\"filled,dashed\"];\n",
                           v, escape_dot_label(label_out));
@@ -1050,9 +1069,7 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
                           "arrowh=none, label=\"Async Signal\"];\n",
                           v, v);
     } else {
-      // Sync nodes.
       const std::string label = label_base.str() + "\n(" + np.spec.kind + ")" + ids_line + "\n";
-
       file << std::format("  v{} [label=\"{}\", fillcolor=\"#ccffcc\"];\n", v,
                           escape_dot_label(label));
     }
@@ -1060,14 +1077,13 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
 
   file << "\n";
 
-  // --- 2. Define Edges ---
   for (auto e : boost::make_iterator_range(boost::edges(g))) {
     const auto  u  = boost::source(e, g);
     const auto  v  = boost::target(e, g);
     const auto &ep = g[e];
 
-    const std::string u_vis = get_visual_id(u, /*is_source=*/true);
-    const std::string v_vis = get_visual_id(v, /*is_source=*/false);
+    const std::string u_vis = get_visual_id(u, true);
+    const std::string v_vis = get_visual_id(v, false);
 
     std::ostringstream edge_lbl;
     edge_lbl << "tid:" << ep.tid;
@@ -1082,7 +1098,6 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
 
   file << "\n";
 
-  // --- 3. Define Sections ---
   for (const auto &sec : sections) {
     file << std::format("  subgraph cluster_section_{} {{\n", sec.id);
     file << std::format("    label=\"Section {} (Stream {})\\l\";\n", sec.id, (void *)sec.stream);

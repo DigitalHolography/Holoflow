@@ -1,3 +1,17 @@
+// Copyright 2025 Digital Holography Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "holotask/sources/fresnel_qin.hh"
 
 #include <math_constants.h>
@@ -21,9 +35,9 @@ void from_json(const nlohmann::json &j, FresnelQinSettings &fqs) {
   j.at("ny").get_to(fqs.ny);
 }
 
-FresnelQin::FresnelQin(const FresnelQinSettings &settings, DevPtr<float> &&d_r2,
-                       cudaStream_t stream)
-    : settings_(settings), d_r2_(std::move(d_r2)), stream_(stream) {}
+FresnelQin::FresnelQin(const FresnelQinSettings &settings, const holoflow::core::TDesc &idesc, 
+                       DevPtr<float> &&d_r2, cudaStream_t stream)
+    : settings_(settings), idesc_(idesc), d_r2_(std::move(d_r2)), stream_(stream) {}
 
 namespace {
 __global__ void quadratic_lens_kernel(const float *r2, const float *z, cuFloatComplex *lens,
@@ -102,7 +116,7 @@ DevPtr<float> make_quadratic_r2(const FresnelQinSettings &settings, cudaStream_t
 
 holoflow::core::InferResult
 FresnelQinFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
-                         const nlohmann::json                  &jsettings) const {
+                         const nlohmann::json                   &jsettings) const {
   const auto check = [&](bool condition, const std::string &msg) {
     if (!condition) {
       logger()->error("[FresnelQinFactory::infer] error: {}", msg);
@@ -146,8 +160,37 @@ FresnelQinFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto settings = jsettings.get<FresnelQinSettings>();
 
   auto  d_r2 = make_quadratic_r2(settings, ctx.stream);
-  auto *task = new FresnelQin(settings, std::move(d_r2), ctx.stream);
+  auto *task = new FresnelQin(settings, input_descs[0], std::move(d_r2), ctx.stream);
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+FresnelQinFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                          std::span<const holoflow::core::TDesc>     input_descs,
+                          const nlohmann::json                       &jsettings,
+                          const holoflow::core::SyncCreateCtx        &ctx) const {
+
+  auto* old_fresnel = dynamic_cast<FresnelQin*>(old_task.get());
+  if (old_fresnel != nullptr && input_descs.size() == 1) {
+    
+    const auto new_settings = jsettings.get<FresnelQinSettings>();
+    const auto& new_idesc   = input_descs[0];
+    const auto& old_idesc   = old_fresnel->get_idesc();
+
+    bool can_reuse = (new_settings == old_fresnel->get_settings()) &&
+                     (new_idesc.shape == old_idesc.shape) &&
+                     (new_idesc.strides == old_idesc.strides) &&
+                     (new_idesc.dtype == old_idesc.dtype) &&
+                     (new_idesc.mem_loc == old_idesc.mem_loc);
+
+    if (can_reuse) {
+      old_fresnel->update_stream(ctx.stream);
+      return old_task; 
+    }
+  }
+
+  // Fallback: Structural change detected or invalid old task.
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holotask::sources

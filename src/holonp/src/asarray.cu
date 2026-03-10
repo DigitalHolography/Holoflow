@@ -202,8 +202,8 @@ AsContiguousArrayFactory::create(std::span<const holoflow::core::TDesc> input_de
     h_shape[i]   = static_cast<std::int64_t>(idesc.shape[i]);
   }
 
-  auto d_strides = curaii::make_unique_device_ptr<std::int64_t>(ndim);
-  auto d_shape   = curaii::make_unique_device_ptr<std::int64_t>(ndim);
+  auto d_strides = curaii::make_unique_device_ptr<std::int64_t>(ndim, ctx.stream);
+  auto d_shape   = curaii::make_unique_device_ptr<std::int64_t>(ndim, ctx.stream);
 
   CUDA_CHECK(cudaMemcpyAsync(d_strides.get(), h_strides.data(), ndim * sizeof(std::int64_t),
                              cudaMemcpyHostToDevice, ctx.stream));

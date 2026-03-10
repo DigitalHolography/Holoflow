@@ -48,6 +48,9 @@ public:
     std::filesystem::path log_dir;
     bool                  dump_dot_on_failure = true;
     bool                  verbose_tracing     = true;
+    // Profiling toggles
+    bool        enable_profiling = true;
+    std::string trace_filename   = "trace_events.json";
   };
 
   explicit Compiler(core::Registry &registry, Config config = {});
