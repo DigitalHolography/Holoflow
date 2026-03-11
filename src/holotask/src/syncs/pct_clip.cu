@@ -1,3 +1,17 @@
+// Copyright 2026 Digital Holography Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "holotask/syncs/pct_clip.hh"
 
 #include <cub/cub.cuh>
@@ -68,7 +82,7 @@ holoflow::core::OpResult PctClip::execute(holoflow::core::SyncCtx &ctx) {
   auto *idata = ctx.inputs[0].data();
   auto *odata = ctx.outputs[0].data();
   auto  idesc = ctx.inputs[0].desc;
-  auto count          = idesc.num_elements();
+  auto  count = idesc.num_elements();
 
   // Filter ROI pixels.
   CUDA_CHECK(cub::DeviceSelect::Flagged(d_select_tmp_.get(), select_tmp_bytes_,

@@ -1,3 +1,17 @@
+// Copyright 2026 Digital Holography Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "holonp/abs.hh"
 
 #include <cmath>
@@ -51,8 +65,8 @@ __global__ void abs_kernel_cf32(const cuFloatComplex *__restrict__ in, float *__
 Abs::Abs(const AbsSettings &settings, cudaStream_t stream) : settings_(settings), stream_(stream) {}
 
 holoflow::core::OpResult Abs::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = ctx.inputs[0].data();
-  auto *odata = ctx.outputs[0].data();
+  auto       *idata = ctx.inputs[0].data();
+  auto       *odata = ctx.outputs[0].data();
   const auto &idesc = ctx.inputs[0].desc;
 
   const auto n = static_cast<std::int64_t>(idesc.num_elements());
@@ -114,7 +128,7 @@ holoflow::core::InferResult AbsFactory::infer(std::span<const holoflow::core::TD
   // if (idesc.dtype == holoflow::core::DType::CF32) {
   //   odesc.dtype = holoflow::core::DType::F32;
   // }
-  // 
+  //
 
   holoflow::core::TDesc odesc(
       idesc.shape,

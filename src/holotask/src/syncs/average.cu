@@ -1,3 +1,17 @@
+// Copyright 2026 Digital Holography Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "holotask/syncs/average.hh"
 
 #include <cuComplex.h>
@@ -151,15 +165,15 @@ Average::Average(const AverageSettings &settings, cudaStream_t stream)
 holoflow::core::OpResult Average::execute(holoflow::core::SyncCtx &ctx) {
   // auto [idata, idesc] = ctx.inputs[0];
   // auto [odata, odesc] = ctx.outputs[0];
-  auto *idata = reinterpret_cast<const std::byte *>(ctx.inputs[0].data());
-  auto *odata = reinterpret_cast<std::byte *>(ctx.outputs[0].data());
-  const auto &idesc = ctx.inputs[0].desc;
-  int  B              = static_cast<int>(idesc.shape.at(0));
-  int  H              = static_cast<int>(idesc.shape.at(1));
-  int  W              = static_cast<int>(idesc.shape.at(2));
-  int  ax             = settings_.axis;
-  int  dtype_idx      = dtype_index(idesc.dtype);
-  auto f              = DISPATCH[ax][dtype_idx];
+  auto       *idata     = reinterpret_cast<const std::byte *>(ctx.inputs[0].data());
+  auto       *odata     = reinterpret_cast<std::byte *>(ctx.outputs[0].data());
+  const auto &idesc     = ctx.inputs[0].desc;
+  int         B         = static_cast<int>(idesc.shape.at(0));
+  int         H         = static_cast<int>(idesc.shape.at(1));
+  int         W         = static_cast<int>(idesc.shape.at(2));
+  int         ax        = settings_.axis;
+  int         dtype_idx = dtype_index(idesc.dtype);
+  auto        f         = DISPATCH[ax][dtype_idx];
   f(stream_, idata, odata, B, H, W, settings_.start, settings_.end);
   CUDA_CHECK(cudaGetLastError());
   return holoflow::core::OpResult::Ok;

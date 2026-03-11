@@ -2,8 +2,8 @@ repos:
   # -------------------------------------------------------------------
   # Add license headers
   # -------------------------------------------------------------------
-  - repo: https://github.com/google/addlicense
-    rev: v1.2.0
+  - repo: https://github.com/JulesGuillou/addlicense
+    rev: "8892756aa8bb17b5955a1cf6d854c8be0ab6cd83"
     hooks:
       - id: addlicense
         name: addlicense

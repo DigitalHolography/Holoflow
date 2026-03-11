@@ -1,21 +1,44 @@
+// Copyright 2026 Digital Holography Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "quiver_widget.hh"
 
 #include <QPainter>
 #include <QtMath>
 
-QuiverWidget::QuiverWidget(QWidget* parent) : QWidget(parent) {
-  setMinimumSize(240, 240);
-}
+QuiverWidget::QuiverWidget(QWidget *parent) : QWidget(parent) { setMinimumSize(240, 240); }
 
 void QuiverWidget::set_arrows(std::vector<Arrow> arrows) {
   arrows_ = std::move(arrows);
   update();
 }
-void QuiverWidget::set_bounds(QRectF b) { bounds_ = b; update(); }
-void QuiverWidget::set_grid_step(QPointF s) { grid_step_ = s; update(); }
-void QuiverWidget::set_arrow_scale(double s) { arrow_scale_ = s; update(); }
+void QuiverWidget::set_bounds(QRectF b) {
+  bounds_ = b;
+  update();
+}
+void QuiverWidget::set_grid_step(QPointF s) {
+  grid_step_ = s;
+  update();
+}
+void QuiverWidget::set_arrow_scale(double s) {
+  arrow_scale_ = s;
+  update();
+}
 void QuiverWidget::set_arrow_head(double len_px, double ang_deg) {
-  head_len_px_ = len_px; head_ang_deg_ = ang_deg; update();
+  head_len_px_  = len_px;
+  head_ang_deg_ = ang_deg;
+  update();
 }
 
 QPointF QuiverWidget::map_to_px(QPointF p) const {
@@ -35,7 +58,7 @@ QPointF QuiverWidget::map_to_px(QPointF p) const {
   return {px, py};
 }
 
-void QuiverWidget::paintEvent(QPaintEvent*) {
+void QuiverWidget::paintEvent(QPaintEvent *) {
   QPainter qp(this);
   qp.setRenderHint(QPainter::Antialiasing, true);
 
@@ -92,7 +115,7 @@ void QuiverWidget::paintEvent(QPaintEvent*) {
 
   const double head_ang = qDegreesToRadians(head_ang_deg_);
 
-  for (const auto& a : arrows_) {
+  for (const auto &a : arrows_) {
     const QPointF p0 = map_to_px(a.pos);
     const QPointF p1 = map_to_px(a.pos + arrow_scale_ * a.vec);
 
@@ -101,10 +124,11 @@ void QuiverWidget::paintEvent(QPaintEvent*) {
     // Arrowhead in pixel space
     const QPointF d = p0 - p1; // direction from tip backwards
     const double  L = std::hypot(d.x(), d.y());
-    if (L < 1e-6) continue;
+    if (L < 1e-6)
+      continue;
 
-    const QPointF u = d / L; // unit vector backwards from tip
-    const auto rot = [&](double ang) {
+    const QPointF u   = d / L; // unit vector backwards from tip
+    const auto    rot = [&](double ang) {
       const double c = std::cos(ang), s = std::sin(ang);
       return QPointF(c * u.x() - s * u.y(), s * u.x() + c * u.y());
     };

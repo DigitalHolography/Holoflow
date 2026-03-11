@@ -1,3 +1,17 @@
+// Copyright 2026 Digital Holography Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "holotask/syncs/fft_shift.hh"
 
 #include <algorithm>
@@ -132,13 +146,13 @@ FFTShift::FFTShift(const FFTShiftSettings &settings, cudaStream_t stream)
     : settings_(settings), stream_(stream) {}
 
 holoflow::core::OpResult FFTShift::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = ctx.inputs[0].data();
-  auto *odata = ctx.outputs[0].data();
-  auto  idesc = ctx.inputs[0].desc;
-  int B               = static_cast<int>(idesc.shape[0]);
-  int H               = static_cast<int>(idesc.shape[1]);
-  int W               = static_cast<int>(idesc.shape[2]);
-  int dt_idx          = dtype_index(idesc.dtype);
+  auto *idata  = ctx.inputs[0].data();
+  auto *odata  = ctx.outputs[0].data();
+  auto  idesc  = ctx.inputs[0].desc;
+  int   B      = static_cast<int>(idesc.shape[0]);
+  int   H      = static_cast<int>(idesc.shape[1]);
+  int   W      = static_cast<int>(idesc.shape[2]);
+  int   dt_idx = dtype_index(idesc.dtype);
   HOLOVIBES_CHECK(dt_idx >= 0, "Unsupported dtype {}", static_cast<int>(idesc.dtype));
 
   std::vector<int> axes = settings_.axes;
