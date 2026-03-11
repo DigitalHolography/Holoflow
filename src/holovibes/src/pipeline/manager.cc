@@ -14,6 +14,7 @@
 
 #include "pipeline/manager.hh"
 
+#include <QStandardPaths>
 #include <QTimer>
 
 #include <algorithm>
@@ -131,6 +132,23 @@ Manager::Manager(ui::AutoFocusWidget     *autofocus_widget,
       shack_hartmann_widget_(shack_hartmann_widget),
       shack_hartmann_xcorr_widget_(shack_hartmann_xcorr_widget),
       zernike_phase_widget_(zernike_phase_widget) {
+
+  register_components();
+
+  // Setup UI metric polling (1 FPS)
+  metrics_timer_ = new QTimer(this);
+  metrics_timer_->setInterval(1000);
+  metrics_timer_->setTimerType(Qt::TimerType::CoarseTimer);
+  connect(metrics_timer_, &QTimer::timeout, this, &Manager::poll_metrics);
+
+  // Setup Event polling (200 FPS for responsive UI feedback)
+  events_timer_ = new QTimer(this);
+  events_timer_->setInterval(5);
+  events_timer_->setTimerType(Qt::TimerType::CoarseTimer);
+  connect(events_timer_, &QTimer::timeout, this, &Manager::poll_events);
+}
+
+void Manager::register_components() {
   // clang-format off
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
@@ -163,13 +181,11 @@ Manager::Manager(ui::AutoFocusWidget     *autofocus_widget,
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
   reg_sync<syncs::LogFactory>(registry_, "Log");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
-  // reg_sync<syncs::ReshapeFactory>(registry_, "Reshape");
   reg_sync<syncs::CropFactory>(registry_, "Crop");
   reg_sync<syncs::RotationFactory>(registry_, "Rotation");
   reg_sync<syncs::Wrap2PiFactory>(registry_, "Wrap2Pi");
   reg_sync<syncs::ZernikeFactory>(registry_, "Zernike");
   reg_sync<syncs::ZernikePhaseFactory>(registry_, "ZernikePhase");
-
   reg_sync<ArangeFactory>(registry_, "Arange");
   reg_sync<AsArrayFactory>(registry_, "AsArray");
   reg_sync<AsContiguousArrayFactory>(registry_, "AsContiguousArray");
@@ -203,16 +219,6 @@ Manager::Manager(ui::AutoFocusWidget     *autofocus_widget,
   reg_sync<WhereFactory>(registry_, "Where");
   reg_sync<ReshapeFactory>(registry_, "Reshape");
   // clang-format on
-
-  metrics_timer_ = new QTimer(this);
-  metrics_timer_->setInterval(1000);
-  metrics_timer_->setTimerType(Qt::TimerType::CoarseTimer);
-  connect(metrics_timer_, &QTimer::timeout, this, [this] { poll_metrics(); });
-
-  events_timer_ = new QTimer(this);
-  events_timer_->setInterval(5);
-  events_timer_->setTimerType(Qt::TimerType::CoarseTimer);
-  connect(events_timer_, &QTimer::timeout, this, [this] { poll_events(); });
 }
 
 void Manager::start_pipeline() {
@@ -220,8 +226,8 @@ void Manager::start_pipeline() {
   std::lock_guard lock(mtx_);
 
   if (scheduler_ && scheduler_->is_running()) {
-    const QString msg = QString("Pipeline is already running");
-    logger()->error("[Manager::start_pipeline] Pipeline is already running");
+    const QString msg = "Pipeline is already running";
+    logger()->error("[Manager::start_pipeline] {}", msg.toStdString());
     emit start_pipeline_failure(msg);
     return;
   }
@@ -232,7 +238,7 @@ void Manager::start_pipeline() {
     emit start_pipeline_success();
   } catch (const std::exception &e) {
     const QString msg = QString("Failed to start pipeline: %1").arg(e.what());
-    logger()->error("[Manager::start_pipeline] Failed to start pipeline: {}", e.what());
+    logger()->error("[Manager::start_pipeline] {}", msg.toStdString());
     emit start_pipeline_failure(msg);
   }
 }
@@ -242,23 +248,26 @@ void Manager::stop_pipeline() {
   std::lock_guard lock(mtx_);
 
   if (!scheduler_ || !scheduler_->is_running()) {
-    const QString msg = QString("Pipeline is not running");
-    logger()->error("[Manager::stop_pipeline] Pipeline is not running");
+    const QString msg = "Pipeline is not running";
+    logger()->error("[Manager::stop_pipeline] {}", msg.toStdString());
     emit stop_pipeline_failure(msg);
     return;
   }
 
   try {
+    // Request an asynchronous stop and block until graph execution concludes safely.
     scheduler_->request_stop();
     scheduler_->wait();
+
     stop_metrics_updates();
     stop_event_polling();
     raw_recording_active_ = false;
+
     logger()->info("[Manager::stop_pipeline] Pipeline stopped successfully");
     emit stop_pipeline_success();
   } catch (const std::exception &e) {
     const QString msg = QString("Failed to stop pipeline: %1").arg(e.what());
-    logger()->error("[Manager::stop_pipeline] Failed to stop pipeline: {}", e.what());
+    logger()->error("[Manager::stop_pipeline] {}", msg.toStdString());
     emit stop_pipeline_failure(msg);
   }
 }
@@ -270,172 +279,140 @@ void Manager::update_pipeline(const Settings &settings) {
   settings_dirty_ = true;
 
   if (!scheduler_ || !scheduler_->is_running()) {
-    logger()->debug("[Manager::update_pipeline] Pipeline is not running, no need to restart");
-    logger()->info("[Manager::update_pipeline] Pipeline settings updated successfully");
+    logger()->debug("[Manager::update_pipeline] Pipeline is not running, updated parameters only.");
     emit update_pipeline_success();
     return;
   }
 
   try {
+    // Seamless restart mechanism
     scheduler_->request_stop();
     scheduler_->wait();
     raw_recording_active_ = false;
+
     build_and_run();
+
     logger()->info("[Manager::update_pipeline] Pipeline updated successfully");
     emit update_pipeline_success();
   } catch (const std::exception &e) {
     const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
-    logger()->error("[Manager::update_pipeline] Failed to update pipeline: {}", e.what());
+    logger()->error("[Manager::update_pipeline] {}", msg.toStdString());
     emit update_pipeline_failure(msg);
   }
 }
 
 void Manager::start_raw_record(std::filesystem::path record_path) {
+  std::lock_guard lock(mtx_);
+  if (!scheduler_ || !scheduler_->is_running()) {
+    emit raw_record_started_failure("Pipeline is not running");
+    return;
+  }
+
+  if (raw_recording_active_) {
+    emit raw_record_started_failure("Recording already in progress");
+    return;
+  }
+
   auto payload = nlohmann::json{
       {"type", "start_recording"},
       {"record_path", record_path},
   };
 
-  std::lock_guard lock(mtx_);
-  if (!scheduler_ || !scheduler_->is_running()) {
-    const QString msg = QString("Pipeline is not running");
-    logger()->error("[Manager::start_raw_record] Pipeline is not running");
-    emit raw_record_started_failure(msg);
-    return;
-  }
-
-  if (raw_recording_active_) {
-    const QString msg = QString("Recording already in progress");
-    logger()->warn("[Manager::start_raw_record] Recording already in progress");
-    emit raw_record_started_failure(msg);
-    return;
-  }
-
+  // Send the recording event to the UI message queue inside the scheduler
   if (!scheduler_->ui_try_send("record", std::move(payload))) {
-    const QString msg = QString("Failed to enqueue start_recording event");
     logger()->error("[Manager::start_raw_record] Failed to enqueue start_recording event");
-    emit raw_record_started_failure(msg);
+    emit raw_record_started_failure("Failed to enqueue start_recording event");
     return;
   }
 
   raw_recording_active_ = true;
-
-  logger()->info("[Manager::start_raw_record] Recording request enqueued");
+  logger()->info("[Manager::start_raw_record] Recording request enqueued to path: {}",
+                 record_path.string());
   emit raw_record_started_success();
 }
 
 void Manager::stop_raw_record() {
   std::lock_guard lock(mtx_);
   if (!scheduler_ || !scheduler_->is_running()) {
-    const QString msg = QString("Pipeline is not running");
-    logger()->error("[Manager::stop_raw_record] Pipeline is not running");
-    emit raw_record_stopped_failure(msg);
+    emit raw_record_stopped_failure("Pipeline is not running");
     return;
   }
 
   if (!raw_recording_active_) {
-    const QString msg = QString("No active recording to stop");
-    logger()->warn("[Manager::stop_raw_record] No active recording to stop");
-    emit raw_record_stopped_failure(msg);
+    emit raw_record_stopped_failure("No active recording to stop");
     return;
   }
 
   nlohmann::json payload{{"type", "stop_recording"}};
   if (!scheduler_->ui_try_send("record", std::move(payload))) {
-    const QString msg = QString("Failed to enqueue stop_recording event");
     logger()->error("[Manager::stop_raw_record] Failed to enqueue stop_recording event");
-    emit raw_record_stopped_failure(msg);
+    emit raw_record_stopped_failure("Failed to enqueue stop_recording event");
     return;
   }
 
-  logger()->info("[Manager::stop_raw_record] Stop request enqueued");
   raw_recording_active_ = false;
+  logger()->info("[Manager::stop_raw_record] Stop request enqueued");
   emit raw_record_stopped_success();
 }
 
+// --- Polling logic ---
 void Manager::start_metrics_updates() {
-  if (!metrics_timer_) {
-    return;
-  }
-  if (!metrics_timer_->isActive()) {
+  if (metrics_timer_ && !metrics_timer_->isActive())
     metrics_timer_->start();
-  }
 }
-
 void Manager::stop_metrics_updates() {
-  if (!metrics_timer_) {
-    return;
-  }
-  if (metrics_timer_->isActive()) {
+  if (metrics_timer_ && metrics_timer_->isActive())
     metrics_timer_->stop();
-  }
   emit metrics_updated(0.0);
 }
 
 void Manager::poll_metrics() {
-  if (!scheduler_ || !scheduler_->is_running()) { // Not running
+  if (!scheduler_ || !scheduler_->is_running()) {
     emit metrics_updated(0.0);
     return;
   }
 
   auto snapshot = scheduler_->metrics();
-
-  if (snapshot.empty()) { // No metrics available
+  if (snapshot.empty()) {
     emit metrics_updated(0.0);
     return;
   }
 
+  // Calculate FPS based on source execution rate and batch size
   HOLOVIBES_CHECK(snapshot.contains("source_0"), "Missing 'source' node metrics");
   double input_fps = snapshot.at("source_0").runs_per_second;
   input_fps *= s_.load_batch;
+
   emit metrics_updated(input_fps);
 }
 
 void Manager::start_event_polling() {
-  if (!events_timer_) {
-    return;
-  }
-  if (!events_timer_->isActive()) {
+  if (events_timer_ && !events_timer_->isActive())
     events_timer_->start();
-  }
 }
-
 void Manager::stop_event_polling() {
-  if (!events_timer_) {
-    return;
-  }
-  if (events_timer_->isActive()) {
+  if (events_timer_ && events_timer_->isActive())
     events_timer_->stop();
-  }
 }
 
 void Manager::poll_events() {
-  if (!scheduler_ || !scheduler_->is_running()) { // Not running
+  if (!scheduler_ || !scheduler_->is_running())
     return;
-  }
 
   while (true) {
     auto event = scheduler_->ui_try_receive();
-    if (!event.has_value()) {
+    if (!event.has_value())
       break;
-    }
 
-    // Handle event
     logger()->info("[Manager::poll_events] Received event from node '{}': {}", event->node_id,
                    event->data.dump());
 
-    std::string type;
-    if (auto it = event->data.find("type"); it != event->data.end() && it->is_string()) {
-      type = it->get<std::string>();
-    }
+    std::string type = event->data.value("type", "");
 
     if (type == "recording_finished") {
-      std::string path_str;
-      if (auto pit = event->data.find("path"); pit != event->data.end() && pit->is_string()) {
-        path_str = pit->get<std::string>();
-      }
+      std::string path_str    = event->data.value("path", "");
+      bool        should_emit = false;
 
-      bool should_emit = false;
       {
         std::lock_guard lock(mtx_);
         if (raw_recording_active_) {
@@ -452,6 +429,7 @@ void Manager::poll_events() {
   }
 }
 
+// --- Graph Building & Execution ---
 void Manager::build_and_run() {
   using Scheduler      = holoflow::runtime::Scheduler;
   using CompilerConfig = holoflow::runtime::Compiler::Config;
@@ -461,61 +439,61 @@ void Manager::build_and_run() {
   stop_event_polling();
   build_graph_spec();
 
-  // TODO: Proper log path in app data folder
-  // using namespace std::chrono;
-  constexpr const char *LOG_FOLDER_PATH = "logs";
+  // Create an OS-appropriate, writable directory for logs (e.g., AppData/Local/Holovibes/logs)
+  const std::filesystem::path log_root = "logs";
 
-  const std::filesystem::path log_root{LOG_FOLDER_PATH};
-  std::error_code             log_ec;
+  std::error_code log_ec;
   std::filesystem::create_directories(log_root, log_ec);
+  if (log_ec) {
+    logger()->warn("[Manager::build_and_run] Failed to create log directory at: {}",
+                   log_root.string());
+  }
 
-  // auto json = holoflow::core::to_json(spec_);
-  // auto dot  = holoflow::core::to_dot(spec_);
-  // auto t    = floor<seconds>(system_clock::now());
-  // auto date = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
+  if (dump_debug_graphs_) {
+    dump_graph_logs(log_root);
+  }
 
-  // const auto pipeline_path = log_root / std::format("pipeline_{}.dot", date);
-  // std::ofstream(pipeline_path) << dot;
-  // logger()->info("[Manager::build_and_run] Pipeline graph saved to {}", pipeline_path.string());
-  // std::ofstream json_file(log_root / std::format("pipeline_{}.json", date));
-  // json_file << json.dump(2);
-  // logger()->info("[Manager::build_and_run] Pipeline JSON saved to {}",
-  //                (log_root / std::format("pipeline_{}.json", date)).string());
-
-  auto           prev_output = std::move(compiler_output_);
   CompilerConfig config;
   config.log_dir             = log_root;
-  config.dump_dot_on_failure = true;
-  config.verbose_tracing     = true;
+  config.dump_dot_on_failure = dump_debug_graphs_;
+  config.verbose_tracing     = dump_debug_graphs_;
+
+  auto     prev_output = std::move(compiler_output_);
   Compiler compiler(registry_, config);
   compiler_output_ = compiler.compile(spec_, std::move(prev_output));
-  // compiler_output_ =
-  //     holoflow::runtime::Compiler(registry_, log_root).compile(spec_, std::move(prev_output));
 
   auto &graph     = compiler_output_->graph;
   auto &sections  = compiler_output_->sections;
   auto &resources = compiler_output_->resources;
 
-  // auto dot_compile = holoflow::runtime::to_dot(*compiler_output_, registry_);
-  // t                = floor<seconds>(system_clock::now());
-  // date             = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
-
-  // const auto compiled_path = log_root / std::format("pipeline_compiled_{}.dot", date);
-  // std::ofstream(compiled_path) << dot_compile;
-  // logger()->info("[Manager::build_and_run] Compiled pipeline graph saved to {}",
-  //                compiled_path.string());
-
   const auto metrics_interval = metrics_timer_
                                     ? std::chrono::milliseconds{metrics_timer_->interval()}
                                     : std::chrono::milliseconds{1000};
 
-  scheduler_ = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval);
-  scheduler_->set_metrics_interval(metrics_interval);
+  scheduler_            = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval);
   raw_recording_active_ = false;
+
   scheduler_->start();
   start_metrics_updates();
   poll_metrics();
   start_event_polling();
+}
+
+void Manager::dump_graph_logs(const std::filesystem::path &log_dir) {
+  using namespace std::chrono;
+
+  auto t    = floor<seconds>(system_clock::now());
+  auto date = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
+
+  // Write original GraphSpec
+  const auto json_path = log_dir / std::format("pipeline_{}.json", date);
+  const auto dot_path  = log_dir / std::format("pipeline_{}.dot", date);
+
+  std::ofstream(dot_path) << holoflow::core::to_dot(spec_);
+  std::ofstream(json_path) << holoflow::core::to_json(spec_).dump(2);
+
+  logger()->info("[Manager::dump_graph_logs] Pre-compile pipeline graphs saved to {}",
+                 log_dir.string());
 }
 
 void Manager::build_graph_spec() {
@@ -525,9 +503,6 @@ void Manager::build_graph_spec() {
   reset_graph_spec();
   guess_optimizations();
   guess_source_dims();
-
-  GraphBuilder builder{spec_, s_, src_width_, src_height_, opti_cpu_stride_, opti_gpu_stride_};
-  builder.build();
 
   GraphBuilder_v2 builder_v2{s_, registry_};
   spec_ = builder_v2.build();
@@ -541,8 +516,10 @@ void Manager::reset_graph_spec() { spec_ = holoflow::core::GraphSpec{}; }
 void Manager::guess_optimizations() {
   bool load_in_gpu     = (s_.load_method == LoadMethod::LOAD_IN_GPU);
   bool stride_multiple = (s_.time_stride % s_.time_window == 0);
-  opti_cpu_stride_     = stride_multiple && !load_in_gpu;
-  opti_gpu_stride_     = (stride_multiple && load_in_gpu) || opti_cpu_stride_;
+
+  opti_cpu_stride_ = stride_multiple && !load_in_gpu;
+  opti_gpu_stride_ = (stride_multiple && load_in_gpu) || opti_cpu_stride_;
+
   // FIXME : disabled for now due to time stride in raw record
   opti_cpu_stride_ = false;
 }
@@ -555,27 +532,21 @@ void Manager::guess_source_dims() {
     return;
   }
 
-  else if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
-    auto cfg_file = std::ifstream(s_.camera_config_path);
+  // Refactored slightly to prevent repetition
+  if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO ||
+      s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
+
+    std::ifstream cfg_file(s_.camera_config_path);
     if (!cfg_file.is_open()) {
       throw std::runtime_error(
           std::format("Could not open camera config file: {}", s_.camera_config_path.string()));
     }
 
-    auto cfg    = nlohmann::json::parse(cfg_file).at("s710");
-    src_width_  = cfg.at("Width").get<int>();
-    src_height_ = cfg.at("Height").get<int>();
-    return;
-  }
+    auto        full_cfg = nlohmann::json::parse(cfg_file);
+    std::string key =
+        (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) ? "s710" : "s711";
 
-  else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
-    auto cfg_file = std::ifstream(s_.camera_config_path);
-    if (!cfg_file.is_open()) {
-      throw std::runtime_error(
-          std::format("Could not open camera config file: {}", s_.camera_config_path.string()));
-    }
-
-    auto cfg    = nlohmann::json::parse(cfg_file).at("s711");
+    auto cfg    = full_cfg.at(key);
     src_width_  = cfg.at("Width").get<int>();
     src_height_ = cfg.at("Height").get<int>();
     return;

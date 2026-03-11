@@ -953,8 +953,6 @@ Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, cons
         logger_->warn("AsyncCreateCtx has null consumer_stream; skipping synchronization.");
       }
     }
-
-    CUDA_CHECK(cudaDeviceSynchronize());
   };
 
   // 2. Helper to accurately profile Task Creation
