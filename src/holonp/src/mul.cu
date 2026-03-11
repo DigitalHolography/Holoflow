@@ -112,12 +112,13 @@ std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
 
 } // namespace
 
-Mul::Mul(cudaStream_t stream, holoflow::core::DType dtype_a, holoflow::core::DType dtype_b,
+Mul::Mul(const MulSettings &settings, std::array<holoflow::core::TDesc, 2> idescs,
+         cudaStream_t stream, holoflow::core::DType dtype_a, holoflow::core::DType dtype_b,
          size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides,
          DevPtr<size_t> d_b_strides)
-    : stream_(stream), dtype_a_(dtype_a), dtype_b_(dtype_b), total_out_(total_out), ndim_(ndim),
-      d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
-      d_b_strides_(std::move(d_b_strides)) {}
+    : settings_(settings), idescs_(std::move(idescs)), stream_(stream), dtype_a_(dtype_a),
+      dtype_b_(dtype_b), total_out_(total_out), ndim_(ndim), d_out_shape_(std::move(d_out_shape)),
+      d_a_strides_(std::move(d_a_strides)), d_b_strides_(std::move(d_b_strides)) {}
 
 holoflow::core::OpResult Mul::execute(holoflow::core::SyncCtx &ctx) {
   if (total_out_ == 0)
@@ -212,10 +213,11 @@ std::unique_ptr<holoflow::core::ISyncTask>
 MulFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &j,
                    const holoflow::core::SyncCreateCtx &ctx) const {
   const auto &a = inputs[0], &b = inputs[1];
-  auto        res   = infer(inputs, j);
-  const auto &odesc = res.output_descs[0];
-  size_t      ndim  = odesc.shape.size();
-  size_t      total = 1;
+  auto        res      = infer(inputs, j);
+  auto        settings = j.get<MulSettings>();
+  const auto &odesc    = res.output_descs[0];
+  size_t      ndim     = odesc.shape.size();
+  size_t      total    = 1;
 
   std::vector<size_t> a_strides_h(ndim), b_strides_h(ndim);
   auto                as_raw = get_elem_strides(a);
@@ -231,9 +233,9 @@ MulFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann
     b_strides_h[i] = map(b.shape, bs_raw);
   }
 
-  auto d_shape = curaii::make_unique_device_ptr<size_t>(ndim);
-  auto d_a_str = curaii::make_unique_device_ptr<size_t>(ndim);
-  auto d_b_str = curaii::make_unique_device_ptr<size_t>(ndim);
+  auto d_shape = curaii::make_unique_device_ptr<size_t>(ndim, ctx.stream);
+  auto d_a_str = curaii::make_unique_device_ptr<size_t>(ndim, ctx.stream);
+  auto d_b_str = curaii::make_unique_device_ptr<size_t>(ndim, ctx.stream);
   auto bytes   = ndim * sizeof(size_t);
   auto h2d     = cudaMemcpyHostToDevice;
 
@@ -241,8 +243,42 @@ MulFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann
   CUDA_CHECK(cudaMemcpyAsync(d_a_str.get(), a_strides_h.data(), bytes, h2d, ctx.stream));
   CUDA_CHECK(cudaMemcpyAsync(d_b_str.get(), b_strides_h.data(), bytes, h2d, ctx.stream));
 
-  return std::make_unique<Mul>(ctx.stream, a.dtype, b.dtype, total, ndim, std::move(d_shape),
-                               std::move(d_a_str), std::move(d_b_str));
+  std::array<holoflow::core::TDesc, 2> idescs = {a, b};
+
+  return std::make_unique<Mul>(settings, idescs, ctx.stream, a.dtype, b.dtype, total, ndim,
+                               std::move(d_shape), std::move(d_a_str), std::move(d_b_str));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+MulFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                   std::span<const holoflow::core::TDesc>     input_descs,
+                   const nlohmann::json                      &jsettings,
+                   const holoflow::core::SyncCreateCtx       &ctx) const {
+
+  auto *old_mul = dynamic_cast<Mul *>(old_task.get());
+  if (old_mul != nullptr && input_descs.size() == 2) {
+
+    const auto  new_settings = jsettings.get<MulSettings>();
+    const auto &old_idescs   = old_mul->get_idescs();
+
+    bool can_reuse = (new_settings == old_mul->get_settings()) &&
+                     (input_descs[0].shape == old_idescs[0].shape) &&
+                     (input_descs[0].strides == old_idescs[0].strides) &&
+                     (input_descs[0].dtype == old_idescs[0].dtype) &&
+                     (input_descs[0].mem_loc == old_idescs[0].mem_loc) &&
+                     (input_descs[1].shape == old_idescs[1].shape) &&
+                     (input_descs[1].strides == old_idescs[1].strides) &&
+                     (input_descs[1].dtype == old_idescs[1].dtype) &&
+                     (input_descs[1].mem_loc == old_idescs[1].mem_loc);
+
+    if (can_reuse) {
+      old_mul->update_stream(ctx.stream);
+      return old_task;
+    }
+  }
+
+  // Fallback: Structural change detected or invalid old task.
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp

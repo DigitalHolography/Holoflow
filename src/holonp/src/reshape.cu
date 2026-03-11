@@ -1,3 +1,17 @@
+// Copyright 2026 Digital Holography Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "holonp/reshape.hh"
 #include <numeric>
 
@@ -181,7 +195,7 @@ ReshapeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   if (!doing_copy) {
     // View mode: Task does nothing at runtime
-    return std::make_unique<Reshape>();
+    return std::make_unique<Reshape>(settings, src);
   }
 
   // Copy mode: Prepare kernel args
@@ -203,8 +217,37 @@ ReshapeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   CUDA_CHECK(
       cudaMemcpyAsync(d_shape.get(), h_shape.data(), bytes, cudaMemcpyHostToDevice, ctx.stream));
 
-  return std::make_unique<Reshape>(ndim, src.num_elements(), holoflow::core::size_of(src.dtype),
-                                   std::move(d_strides), std::move(d_shape), ctx.stream);
+  return std::make_unique<Reshape>(settings, src, ndim, src.num_elements(),
+                                   holoflow::core::size_of(src.dtype), std::move(d_strides),
+                                   std::move(d_shape), ctx.stream);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+ReshapeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                       std::span<const holoflow::core::TDesc>     input_descs,
+                       const nlohmann::json                      &jsettings,
+                       const holoflow::core::SyncCreateCtx       &ctx) const {
+
+  auto *old_reshape = dynamic_cast<Reshape *>(old_task.get());
+  if (old_reshape != nullptr && input_descs.size() == 1) {
+
+    const auto  new_settings = jsettings.get<ReshapeSettings>();
+    const auto &new_idesc    = input_descs[0];
+    const auto &old_idesc    = old_reshape->get_idesc();
+
+    bool can_reuse =
+        (new_settings == old_reshape->get_settings()) && (new_idesc.shape == old_idesc.shape) &&
+        (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
+        (new_idesc.mem_loc == old_idesc.mem_loc);
+
+    if (can_reuse) {
+      old_reshape->update_stream(ctx.stream);
+      return old_task;
+    }
+  }
+
+  // Fallback: Structural change detected or invalid old task.
+  return create(input_descs, jsettings, ctx);
 }
 
 // -----------------------------------------------------------------------------
@@ -212,14 +255,16 @@ ReshapeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 // -----------------------------------------------------------------------------
 
 // View Constructor
-Reshape::Reshape() : is_view_(true) {}
+Reshape::Reshape(const ReshapeSettings &settings, const holoflow::core::TDesc &idesc)
+    : is_view_(true), settings_(settings), idesc_(idesc) {}
 
 // Copy Constructor
-Reshape::Reshape(size_t ndim, size_t total_elems, size_t elem_size,
+Reshape::Reshape(const ReshapeSettings &settings, const holoflow::core::TDesc &idesc, size_t ndim,
+                 size_t total_elems, size_t elem_size,
                  curaii::unique_device_ptr<int64_t> d_src_strides,
                  curaii::unique_device_ptr<int64_t> d_src_shape, cudaStream_t stream)
-    : is_view_(false), ndim_(ndim), total_elems_(total_elems), elem_size_(elem_size),
-      stream_(stream), d_src_strides_(std::move(d_src_strides)),
+    : is_view_(false), settings_(settings), idesc_(idesc), ndim_(ndim), total_elems_(total_elems),
+      elem_size_(elem_size), stream_(stream), d_src_strides_(std::move(d_src_strides)),
       d_src_shape_(std::move(d_src_shape)) {}
 
 holoflow::core::OpResult Reshape::execute(holoflow::core::SyncCtx &ctx) {

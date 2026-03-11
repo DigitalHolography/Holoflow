@@ -33,6 +33,10 @@ struct ReshapeSettings {
   // true         = Force Copy
   // false        = Force View (raise error if copy needed)
   std::optional<bool> copy = std::nullopt;
+
+  bool operator==(const ReshapeSettings &other) const {
+    return shape == other.shape && copy == other.copy;
+  }
 };
 
 void to_json(nlohmann::json &j, const ReshapeSettings &s);
@@ -41,17 +45,23 @@ void from_json(const nlohmann::json &j, ReshapeSettings &s);
 class Reshape : public holoflow::core::ISyncTask {
 public:
   // Constructor for the Copy case
-  Reshape(size_t ndim, size_t total_elems, size_t elem_size,
-          curaii::unique_device_ptr<int64_t> d_src_strides,
+  Reshape(const ReshapeSettings &settings, const holoflow::core::TDesc &idesc, size_t ndim,
+          size_t total_elems, size_t elem_size, curaii::unique_device_ptr<int64_t> d_src_strides,
           curaii::unique_device_ptr<int64_t> d_src_shape, cudaStream_t stream);
 
   // Constructor for the View case (No-op)
-  Reshape();
+  Reshape(const ReshapeSettings &settings, const holoflow::core::TDesc &idesc);
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
+  const holoflow::core::TDesc &get_idesc() const { return idesc_; }
+  const ReshapeSettings       &get_settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
+
 private:
-  bool is_view_ = false;
+  bool                  is_view_ = false;
+  ReshapeSettings       settings_;
+  holoflow::core::TDesc idesc_;
 
   // Copy-only params
   size_t       ndim_        = 0;
@@ -70,6 +80,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

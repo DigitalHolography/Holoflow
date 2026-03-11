@@ -28,6 +28,10 @@ struct PcaSettings {
   int update_rate = 1; // 1 means update every frame, N means every Nth frame
 
   int components() const { return end - begin; }
+
+  bool operator==(const PcaSettings &other) const {
+    return begin == other.begin && end == other.end && update_rate == other.update_rate;
+  }
 };
 
 void to_json(nlohmann::json &j, const PcaSettings &settings);
@@ -40,6 +44,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

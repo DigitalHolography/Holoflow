@@ -31,19 +31,21 @@ void from_json(const nlohmann::json &j, DivSettings &s);
 
 class Div : public holoflow::core::ISyncTask {
 public:
-  Div(cudaStream_t stream, holoflow::core::DType a_dtype, holoflow::core::DType b_dtype,
+  Div(cudaStream_t stream, const std::vector<holoflow::core::TDesc> &idescs,
       holoflow::core::DType out_dtype, size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape,
       DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides);
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
+  const std::vector<holoflow::core::TDesc> &get_idescs() const { return idescs_; }
+  void                                      update_stream(cudaStream_t stream) { stream_ = stream; }
+
 private:
-  cudaStream_t          stream_;
-  holoflow::core::DType a_dtype_;
-  holoflow::core::DType b_dtype_;
-  holoflow::core::DType out_dtype_;
-  size_t                total_out_;
-  size_t                ndim_;
+  cudaStream_t                       stream_;
+  std::vector<holoflow::core::TDesc> idescs_;
+  holoflow::core::DType              out_dtype_;
+  size_t                             total_out_;
+  size_t                             ndim_;
 
   DevPtr<size_t> d_out_shape_;
   DevPtr<size_t> d_a_strides_;
@@ -57,6 +59,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

@@ -89,8 +89,10 @@ template <> struct PcaTraits<cuFloatComplex> {
 
 template <typename T> class PcaTask : public holoflow::core::ISyncTask {
 public:
-  PcaTask(const PcaSettings &settings, const holoflow::core::SyncCreateCtx &ctx, int n_features)
-      : settings_(settings), stream_(ctx.stream), n_features_(n_features), iteration_count_(0) {
+  PcaTask(const PcaSettings &settings, const holoflow::core::TDesc &idesc,
+          const holoflow::core::SyncCreateCtx &ctx, int n_features)
+      : settings_(settings), idesc_(idesc), stream_(ctx.stream), n_features_(n_features),
+        iteration_count_(0) {
 
     // Initialize handles
     CUBLAS_CHECK(cublasSetStream(cublas_handle_.get(), stream_));
@@ -122,6 +124,17 @@ public:
     h_eigvals_ = curaii::make_unique_host_ptr<float>(settings_.components());
     h_eigvecs_ = curaii::make_unique_host_ptr<typename PcaTraits<T>::lapack_type>(num_elems);
     h_isuppz_  = curaii::make_unique_host_ptr<lapack_int>(2 * n_features_);
+  }
+
+  const holoflow::core::TDesc &get_idesc() const { return idesc_; }
+  const PcaSettings           &get_settings() const { return settings_; }
+
+  void update_stream(cudaStream_t stream) {
+    if (stream_ != stream) {
+      stream_ = stream;
+      CUBLAS_CHECK(cublasSetStream(cublas_handle_.get(), stream_));
+      CUSOLVER_CHECK(cusolverDnSetStream(cusolver_handle_.get(), stream_));
+    }
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
@@ -200,10 +213,11 @@ public:
   }
 
 private:
-  PcaSettings  settings_;
-  cudaStream_t stream_;
-  int          n_features_;
-  uint64_t     iteration_count_;
+  PcaSettings           settings_;
+  holoflow::core::TDesc idesc_;
+  cudaStream_t          stream_;
+  int                   n_features_;
+  uint64_t              iteration_count_;
 
   curaii::CublasHandle     cublas_handle_;
   curaii::CusolverDnHandle cusolver_handle_;
@@ -299,10 +313,52 @@ PcaFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   // Dispatch based on datatype
   if (idesc.dtype == holoflow::core::DType::F32) {
-    return std::make_unique<PcaTask<float>>(settings, ctx, n_feats);
+    return std::make_unique<PcaTask<float>>(settings, idesc, ctx, n_feats);
   } else {
-    return std::make_unique<PcaTask<cuFloatComplex>>(settings, ctx, n_feats);
+    return std::make_unique<PcaTask<cuFloatComplex>>(settings, idesc, ctx, n_feats);
   }
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+PcaFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                   std::span<const holoflow::core::TDesc>     input_descs,
+                   const nlohmann::json                      &jsettings,
+                   const holoflow::core::SyncCreateCtx       &ctx) const {
+
+  if (input_descs.size() == 1) {
+    const auto  new_settings = jsettings.get<PcaSettings>();
+    const auto &new_idesc    = input_descs[0];
+
+    // Branch logic based on the expected templated type
+    if (new_idesc.dtype == holoflow::core::DType::F32) {
+      auto *old_pca = dynamic_cast<PcaTask<float> *>(old_task.get());
+      if (old_pca != nullptr) {
+        const auto &old_idesc = old_pca->get_idesc();
+        if ((new_settings == old_pca->get_settings()) && (new_idesc.shape == old_idesc.shape) &&
+            (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
+            (new_idesc.mem_loc == old_idesc.mem_loc)) {
+
+          old_pca->update_stream(ctx.stream);
+          return old_task;
+        }
+      }
+    } else if (new_idesc.dtype == holoflow::core::DType::CF32) {
+      auto *old_pca = dynamic_cast<PcaTask<cuFloatComplex> *>(old_task.get());
+      if (old_pca != nullptr) {
+        const auto &old_idesc = old_pca->get_idesc();
+        if ((new_settings == old_pca->get_settings()) && (new_idesc.shape == old_idesc.shape) &&
+            (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
+            (new_idesc.mem_loc == old_idesc.mem_loc)) {
+
+          old_pca->update_stream(ctx.stream);
+          return old_task;
+        }
+      }
+    }
+  }
+
+  // Fallback: Recreate the task entirely.
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holotask::syncs

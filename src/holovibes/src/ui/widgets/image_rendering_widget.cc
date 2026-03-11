@@ -26,7 +26,8 @@ namespace holovibes::ui {
 
 namespace {
 
-constexpr int kLargeSpinMax = 1024 * 1024;
+// constexpr int kLargeSpinMax = 1024 * 1024;
+constexpr int kLargeSpinMax = std::numeric_limits<int>::max();
 
 QSpinBox *create_spin_box(QWidget *parent, int minimum, int maximum, int value) {
   auto *spin_box = new QSpinBox(parent);

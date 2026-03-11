@@ -31,6 +31,10 @@ struct NormalizeSettings {
   std::vector<int> axes;
   float            lo = 0.0f;
   float            hi = 1.0f;
+
+  bool operator==(const NormalizeSettings &other) const {
+    return axes == other.axes && lo == other.lo && hi == other.hi;
+  }
 };
 
 void to_json(nlohmann::json &j, const NormalizeSettings &s);
@@ -38,17 +42,23 @@ void from_json(const nlohmann::json &j, NormalizeSettings &s);
 
 class Normalize : public holoflow::core::ISyncTask {
 public:
-  Normalize(const NormalizeSettings &settings, cudaStream_t stream, size_t ndim, size_t group_ndim,
-            size_t red_ndim, size_t total_elems, size_t total_groups, size_t total_red,
-            DevPtr<size_t> shape, DevPtr<size_t> in_strides, DevPtr<size_t> out_strides,
-            DevPtr<int> group_axes, DevPtr<size_t> group_strides, DevPtr<int> red_axes,
-            DevPtr<size_t> red_strides, DevPtr<float> group_mins, DevPtr<float> group_maxs);
+  Normalize(const NormalizeSettings &settings, const holoflow::core::TDesc &idesc,
+            cudaStream_t stream, size_t ndim, size_t group_ndim, size_t red_ndim,
+            size_t total_elems, size_t total_groups, size_t total_red, DevPtr<size_t> shape,
+            DevPtr<size_t> in_strides, DevPtr<size_t> out_strides, DevPtr<int> group_axes,
+            DevPtr<size_t> group_strides, DevPtr<int> red_axes, DevPtr<size_t> red_strides,
+            DevPtr<float> group_mins, DevPtr<float> group_maxs);
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
+  const holoflow::core::TDesc &get_idesc() const { return idesc_; }
+  const NormalizeSettings     &get_settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
+
 private:
-  NormalizeSettings settings_;
-  cudaStream_t      stream_;
+  NormalizeSettings     settings_;
+  holoflow::core::TDesc idesc_;
+  cudaStream_t          stream_;
 
   size_t ndim_;
   size_t group_ndim_;
@@ -75,6 +85,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

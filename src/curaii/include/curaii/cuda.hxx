@@ -15,7 +15,9 @@ template <typename T> [[nodiscard]] unique_host_ptr<T> make_unique_host_ptr(size
 template <typename T>
 [[nodiscard]] unique_device_ptr<T> make_unique_device_ptr(size_t count, cudaStream_t stream) {
   T *p = nullptr;
-  CUDA_CHECK(cudaMallocAsync(&p, count * sizeof(T), stream));
+  // CUDA_CHECK(cudaMallocAsync(&p, count * sizeof(T), stream));
+  (void)stream; // Currently unused, but will be needed for async allocations
+  CUDA_CHECK(cudaMalloc(&p, count * sizeof(T)));
   return unique_device_ptr<T>(p);
 }
 

@@ -23,15 +23,16 @@
 #include <iostream>
 #include <mutex>
 #include <numeric>
+#include <nvtx3/nvtx3.hpp>
 #include <queue>
 #include <ranges>
 #include <set>
 #include <stack>
 #include <thread>
+#include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
-#include <type_traits>
 
 #include "curaii/cuda.hh"
 #include "holoflow/core/graph_spec.hh"
@@ -155,6 +156,8 @@ public:
     if (logger_ && category_ == "pass") {
       logger_->trace(">> Begin Pass: {}", name_);
     }
+
+    nvtxRangePush(name_.c_str());
   }
 
   ~ScopedTrace() {
@@ -169,6 +172,8 @@ public:
     if (profiler_) {
       profiler_->add_event(name_, category_, start_us_, dur_us);
     }
+
+    nvtxRangePop();
   }
 
 private:
@@ -307,12 +312,12 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     run_pass("Task Binding", [&] { bind_tasks(); });
 
     if (config_.dump_dot_on_failure) {
-      dump_graphviz("compilation_success.dot");
+      run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_success.dot"); });
     }
   } catch (const std::exception &e) {
     logger_->error("Compilation Failed: {}", e.what());
     if (config_.dump_dot_on_failure) {
-      dump_graphviz("compilation_failure.dot");
+      run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_failure.dot"); });
     }
 
     total_trace.reset(); // Stop timer before throwing
@@ -323,9 +328,12 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
   total_trace.reset();
 
   if (config_.enable_profiling) {
-    profiler_.log_summary(logger_);
+    // profiler_.log_summary(logger_);
+    run_pass("Dump log summary", [&] { profiler_.log_summary(logger_); });
     if (!config_.log_dir.empty()) {
-      profiler_.dump_chrome_tracing(config_.log_dir / config_.trace_filename);
+      // profiler_.dump_chrome_tracing(config_.log_dir / config_.trace_filename);
+      run_pass("Dump Chrome Tracing",
+               [&] { profiler_.dump_chrome_tracing(config_.log_dir / config_.trace_filename); });
     }
   }
 
@@ -554,6 +562,88 @@ void Compiler::Impl::verify_buffer_consistency() {
   }
 }
 
+// void Compiler::Impl::allocate_buffers() {
+//   auto &g   = out_->graph;
+//   auto &res = out_->resources;
+
+//   res.memory_blocks.clear();
+//   res.storages.clear();
+
+//   std::unordered_set<size_t> user_managed_sids;
+//   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
+//     const auto &node = g[v];
+//     for (size_t i = 0; i < node.out_tids.size(); ++i) {
+//       if (node.infer.owned_outputs[i]) {
+//         int    tid = node.out_tids[i];
+//         size_t sid = res.tid_to_sid.at(tid);
+//         user_managed_sids.insert(sid);
+//       }
+//     }
+//     for (size_t i = 0; i < node.in_tids.size(); ++i) {
+//       if (node.infer.owned_inputs[i]) {
+//         int    tid = node.in_tids[i];
+//         size_t sid = res.tid_to_sid.at(tid);
+//         user_managed_sids.insert(sid);
+//       }
+//     }
+//   }
+
+//   std::map<size_t, size_t> sid_to_rep_tid;
+//   for (const auto &[tid, sid] : res.tid_to_sid) {
+//     if (!sid_to_rep_tid.count(sid))
+//       sid_to_rep_tid[sid] = tid;
+//   }
+
+//   for (const auto &[sid, tid] : sid_to_rep_tid) {
+//     auto        alloc_scope = trace_scope(std::format("Alloc SID {}", sid), "detail");
+//     const auto &desc        = res.tensor_descs.at(tid);
+
+//     auto storage     = std::make_unique<core::Storage>();
+//     storage->mem_loc = desc.mem_loc;
+//     storage->bytes   = desc.num_bytes();
+//     storage->ptr     = nullptr;
+
+//     if (!user_managed_sids.contains(sid)) {
+//       MemoryBlock block;
+//       block.mem_loc    = desc.mem_loc;
+//       block.size_bytes = desc.num_bytes();
+
+//       logger_->info("Allocating {} bytes for SID {} at {:?} memory", block.size_bytes, sid,
+//                     to_string(desc.mem_loc));
+
+//       // Use a standard scope block to control the RAII timer
+//       {
+//         auto sys_scope = trace_scope(
+//             desc.mem_loc == core::MemLoc::Host ? "Host Malloc" : "Device Malloc", "syscall");
+//         if (desc.mem_loc == core::MemLoc::Host) {
+//           block.h_data = curaii::make_unique_host_ptr<std::byte>(block.size_bytes);
+//         } else {
+//           block.d_data = curaii::make_unique_device_ptr<std::byte>(block.size_bytes);
+//         }
+//       } // sys_scope naturally destructs here!
+
+//       storage->ptr = static_cast<std::byte *>(block.get());
+//       res.memory_blocks.emplace(sid, std::move(block));
+//     } else {
+//       logger_->info("SID {} is user-managed; skipping allocation.", sid);
+//     }
+
+//     res.storages.emplace(sid, std::move(storage));
+//   }
+
+//   // Temp test, trigger a 1b cuda memcopy to see how it shows up in the profiler
+//   CUDA_CHECK(cudaDeviceSynchronize());
+//   if (res.memory_blocks.size() >= 2) {
+//     auto &block1 = res.memory_blocks.begin()->second;
+//     auto &block2 = std::next(res.memory_blocks.begin())->second;
+//     if (block1.mem_loc == core::MemLoc::Device && block2.mem_loc == core::MemLoc::Device) {
+//       auto sys_scope = trace_scope("Test Memcpy", "syscall");
+//       CUDA_CHECK(cudaMemcpy(block2.get(), block1.get(), 1, cudaMemcpyDeviceToDevice));
+//       CUDA_CHECK(cudaDeviceSynchronize());
+//     }
+//   }
+// }
+
 void Compiler::Impl::allocate_buffers() {
   auto &g   = out_->graph;
   auto &res = out_->resources;
@@ -561,31 +651,40 @@ void Compiler::Impl::allocate_buffers() {
   res.memory_blocks.clear();
   res.storages.clear();
 
+  // 1. Identify user-managed SIDs
   std::unordered_set<size_t> user_managed_sids;
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
     const auto &node = g[v];
     for (size_t i = 0; i < node.out_tids.size(); ++i) {
       if (node.infer.owned_outputs[i]) {
-        int    tid = node.out_tids[i];
-        size_t sid = res.tid_to_sid.at(tid);
-        user_managed_sids.insert(sid);
+        user_managed_sids.insert(res.tid_to_sid.at(node.out_tids[i]));
       }
     }
     for (size_t i = 0; i < node.in_tids.size(); ++i) {
       if (node.infer.owned_inputs[i]) {
-        int    tid = node.in_tids[i];
-        size_t sid = res.tid_to_sid.at(tid);
-        user_managed_sids.insert(sid);
+        user_managed_sids.insert(res.tid_to_sid.at(node.in_tids[i]));
       }
     }
   }
 
+  // 2. Map SID to representative TID
   std::map<size_t, size_t> sid_to_rep_tid;
   for (const auto &[tid, sid] : res.tid_to_sid) {
-    if (!sid_to_rep_tid.count(sid))
+    if (!sid_to_rep_tid.count(sid)) {
       sid_to_rep_tid[sid] = tid;
+    }
   }
 
+  // 3. Build a pool of scavengable blocks from prev_
+  // Key: {MemLoc, size_in_bytes}
+  std::multimap<std::pair<core::MemLoc, size_t>, MemoryBlock> free_blocks;
+  if (prev_) {
+    for (auto &[prev_sid, block] : prev_->resources.memory_blocks) {
+      free_blocks.emplace(std::make_pair(block.mem_loc, block.size_bytes), std::move(block));
+    }
+  }
+
+  // 4. Allocate or Scavenge
   for (const auto &[sid, tid] : sid_to_rep_tid) {
     auto        alloc_scope = trace_scope(std::format("Alloc SID {}", sid), "detail");
     const auto &desc        = res.tensor_descs.at(tid);
@@ -597,22 +696,33 @@ void Compiler::Impl::allocate_buffers() {
 
     if (!user_managed_sids.contains(sid)) {
       MemoryBlock block;
-      block.mem_loc    = desc.mem_loc;
-      block.size_bytes = desc.num_bytes();
+      auto        pool_key = std::make_pair(desc.mem_loc, desc.num_bytes());
+      auto        it       = free_blocks.find(pool_key);
 
-      logger_->info("Allocating {} bytes for SID {} at {:?} memory", block.size_bytes, sid,
-                    to_string(desc.mem_loc));
+      if (it != free_blocks.end()) {
+        // We found an exact match! Scavenge it.
+        logger_->info("Reusing {} bytes for SID {} at {:?} memory", desc.num_bytes(), sid,
+                      to_string(desc.mem_loc));
+        block = std::move(it->second);
+        free_blocks.erase(it);
+      } else {
+        // No match found, allocate fresh memory.
+        block.mem_loc    = desc.mem_loc;
+        block.size_bytes = desc.num_bytes();
 
-      // Use a standard scope block to control the RAII timer
-      {
-        auto sys_scope = trace_scope(
-            desc.mem_loc == core::MemLoc::Host ? "Host Malloc" : "Device Malloc", "syscall");
-        if (desc.mem_loc == core::MemLoc::Host) {
-          block.h_data = curaii::make_unique_host_ptr<std::byte>(block.size_bytes);
-        } else {
-          block.d_data = curaii::make_unique_device_ptr<std::byte>(block.size_bytes);
+        logger_->info("Allocating {} bytes for SID {} at {:?} memory", block.size_bytes, sid,
+                      to_string(desc.mem_loc));
+
+        {
+          auto sys_scope = trace_scope(
+              desc.mem_loc == core::MemLoc::Host ? "Host Malloc" : "Device Malloc", "syscall");
+          if (desc.mem_loc == core::MemLoc::Host) {
+            block.h_data = curaii::make_unique_host_ptr<std::byte>(block.size_bytes);
+          } else {
+            block.d_data = curaii::make_unique_device_ptr<std::byte>(block.size_bytes);
+          }
         }
-      } // sys_scope naturally destructs here!
+      }
 
       storage->ptr = static_cast<std::byte *>(block.get());
       res.memory_blocks.emplace(sid, std::move(block));
@@ -622,6 +732,21 @@ void Compiler::Impl::allocate_buffers() {
 
     res.storages.emplace(sid, std::move(storage));
   }
+
+  // Temp test, trigger a 1b cuda memcopy to see how it shows up in the profiler
+  CUDA_CHECK(cudaDeviceSynchronize());
+  if (res.memory_blocks.size() >= 2) {
+    auto &block1 = res.memory_blocks.begin()->second;
+    auto &block2 = std::next(res.memory_blocks.begin())->second;
+    if (block1.mem_loc == core::MemLoc::Device && block2.mem_loc == core::MemLoc::Device) {
+      auto sys_scope = trace_scope("Test Memcpy", "syscall");
+      CUDA_CHECK(cudaMemcpy(block2.get(), block1.get(), 1, cudaMemcpyDeviceToDevice));
+      CUDA_CHECK(cudaDeviceSynchronize());
+    }
+  }
+
+  // Any blocks left inside `free_blocks` will naturally go out of scope here and
+  // safely deallocate, meaning memory for removed nodes is properly cleaned up.
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -740,12 +865,45 @@ void Compiler::Impl::partition_sections() {
   }
 }
 
+// void Compiler::Impl::assign_streams() {
+//   out_->resources.streams.clear();
+//   for (auto &sec : out_->sections) {
+//     curaii::CudaStream stream;
+//     sec.stream = stream.get();
+//     out_->resources.streams.emplace(sec.id, std::move(stream));
+//   }
+// }
+
 void Compiler::Impl::assign_streams() {
   out_->resources.streams.clear();
-  for (auto &sec : out_->sections) {
-    curaii::CudaStream stream;
-    sec.stream = stream.get();
-    out_->resources.streams.emplace(sec.id, std::move(stream));
+
+  // 1. Only set up the iterators if prev_ actually exists
+  if (prev_) {
+    auto prev_it  = prev_->resources.streams.begin();
+    auto prev_end = prev_->resources.streams.end();
+
+    for (auto &sec : out_->sections) {
+      if (prev_it != prev_end) {
+        // Scavenge an existing stream
+        auto &old_stream = prev_it->second;
+        sec.stream       = old_stream.get();
+
+        out_->resources.streams.emplace(sec.id, std::move(old_stream));
+        ++prev_it;
+      } else {
+        // Fallback: Create a new stream (ran out of old ones)
+        curaii::CudaStream stream;
+        sec.stream = stream.get();
+        out_->resources.streams.emplace(sec.id, std::move(stream));
+      }
+    }
+  } else {
+    // 2. No previous graph at all, just create fresh streams for everything
+    for (auto &sec : out_->sections) {
+      curaii::CudaStream stream;
+      sec.stream = stream.get();
+      out_->resources.streams.emplace(sec.id, std::move(stream));
+    }
   }
 }
 
@@ -774,7 +932,7 @@ std::unique_ptr<To> dynamic_unique_ptr_cast(std::unique_ptr<From> &&ptr) noexcep
 template <class TaskInterface, class Factory, class Ctx>
 std::unique_ptr<core::ITask>
 Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, const Ctx &ctx) {
-  
+
   // 1. Helper to synchronize the correct streams based on Ctx type
   auto sync_streams = [&]() {
     if constexpr (std::is_same_v<Ctx, core::SyncCreateCtx>) {
@@ -795,20 +953,22 @@ Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, cons
         logger_->warn("AsyncCreateCtx has null consumer_stream; skipping synchronization.");
       }
     }
+
+    CUDA_CHECK(cudaDeviceSynchronize());
   };
 
   // 2. Helper to accurately profile Task Creation
   auto do_create = [&]() {
     auto scope = trace_scope(std::format("Create Task: {}", np.spec.name), "detail");
-    auto task = factory.create(np.infer.input_descs, np.spec.settings, ctx);
+    auto task  = factory.create(np.infer.input_descs, np.spec.settings, ctx);
     sync_streams();
-    return task; 
+    return task;
   }; // scope naturally destructs here, capturing the fully synced time
 
   // 3. Helper to accurately profile Task Updating
   auto do_update = [&](std::unique_ptr<TaskInterface> prev_task) {
     auto scope = trace_scope(std::format("Update Task: {}", np.spec.name), "detail");
-    auto task = factory.update(std::move(prev_task), np.infer.input_descs, np.spec.settings, ctx);
+    auto task  = factory.update(std::move(prev_task), np.infer.input_descs, np.spec.settings, ctx);
     sync_streams();
     return task;
   };

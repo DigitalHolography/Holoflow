@@ -100,12 +100,12 @@ div_kernel_cf32_scalar(const cuFloatComplex *__restrict__ a, const Scalar *__res
 
 } // namespace
 
-Div::Div(cudaStream_t stream, holoflow::core::DType a_dtype, holoflow::core::DType b_dtype,
+Div::Div(cudaStream_t stream, const std::vector<holoflow::core::TDesc> &idescs,
          holoflow::core::DType out_dtype, size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape,
          DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides)
-    : stream_(stream), a_dtype_(a_dtype), b_dtype_(b_dtype), out_dtype_(out_dtype),
-      total_out_(total_out), ndim_(ndim), d_out_shape_(std::move(d_out_shape)),
-      d_a_strides_(std::move(d_a_strides)), d_b_strides_(std::move(d_b_strides)) {}
+    : stream_(stream), idescs_(idescs), out_dtype_(out_dtype), total_out_(total_out), ndim_(ndim),
+      d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
+      d_b_strides_(std::move(d_b_strides)) {}
 
 holoflow::core::OpResult Div::execute(holoflow::core::SyncCtx &ctx) {
   if (total_out_ == 0)
@@ -113,6 +113,9 @@ holoflow::core::OpResult Div::execute(holoflow::core::SyncCtx &ctx) {
 
   int block = 256;
   int grid  = static_cast<int>((total_out_ + block - 1) / block);
+
+  const auto a_dtype = idescs_[0].dtype;
+  const auto b_dtype = idescs_[1].dtype;
 
 #define LAUNCH_TYPE(T)                                                                             \
   div_kernel<T><<<grid, block, 0, stream_>>>(                                                      \
@@ -125,7 +128,7 @@ holoflow::core::OpResult Div::execute(holoflow::core::SyncCtx &ctx) {
       (cuFloatComplex *)ctx.outputs[0].data(), total_out_, ndim_, d_out_shape_.get(),              \
       d_a_strides_.get(), d_b_strides_.get())
 
-  auto same_types = (a_dtype_ == out_dtype_) && (b_dtype_ == out_dtype_);
+  auto same_types = (a_dtype == out_dtype_) && (b_dtype == out_dtype_);
   if (same_types) {
     switch (out_dtype_) {
     case holoflow::core::DType::F32:
@@ -143,8 +146,8 @@ holoflow::core::OpResult Div::execute(holoflow::core::SyncCtx &ctx) {
     default:
       std::abort();
     }
-  } else if (a_dtype_ == holoflow::core::DType::CF32 && out_dtype_ == holoflow::core::DType::CF32) {
-    switch (b_dtype_) {
+  } else if (a_dtype == holoflow::core::DType::CF32 && out_dtype_ == holoflow::core::DType::CF32) {
+    switch (b_dtype) {
     case holoflow::core::DType::F32:
       LAUNCH_CF32_SCALAR(float);
       break;
@@ -223,14 +226,13 @@ DivFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann
   auto        res   = infer(inputs, j);
   const auto &odesc = res.output_descs[0];
   size_t      ndim  = odesc.shape.size();
-  size_t      total = 1;
+  size_t      total = odesc.num_elements();
 
   std::vector<size_t> a_strides_h(ndim), b_strides_h(ndim);
   auto                as_raw = get_elem_strides(a);
   auto                bs_raw = get_elem_strides(b);
 
   for (size_t i = 0; i < ndim; ++i) {
-    total *= odesc.shape[i];
     auto map = [&](const auto &shape, const auto &strides) {
       int axis = int(i) - (int(ndim) - int(shape.size()));
       return (axis < 0 || shape[axis] == 1) ? 0 : strides[axis];
@@ -239,22 +241,49 @@ DivFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann
     b_strides_h[i] = map(b.shape, bs_raw);
   }
 
-  auto d_shape = curaii::make_unique_device_ptr<size_t>(ndim);
-  auto d_a_str = curaii::make_unique_device_ptr<size_t>(ndim);
-  auto d_b_str = curaii::make_unique_device_ptr<size_t>(ndim);
+  auto d_shape = curaii::make_unique_device_ptr<size_t>(ndim, ctx.stream);
+  auto d_a_str = curaii::make_unique_device_ptr<size_t>(ndim, ctx.stream);
+  auto d_b_str = curaii::make_unique_device_ptr<size_t>(ndim, ctx.stream);
   auto bytes   = ndim * sizeof(size_t);
-  auto h2d     = cudaMemcpyHostToDevice;
 
-  CUDA_CHECK(cudaMemcpyAsync(d_shape.get(), odesc.shape.data(), bytes, h2d, ctx.stream));
-  CUDA_CHECK(cudaMemcpyAsync(d_a_str.get(), a_strides_h.data(), bytes, h2d, ctx.stream));
-  CUDA_CHECK(cudaMemcpyAsync(d_b_str.get(), b_strides_h.data(), bytes, h2d, ctx.stream));
+  CUDA_CHECK(cudaMemcpyAsync(d_shape.get(), odesc.shape.data(), bytes, cudaMemcpyHostToDevice,
+                             ctx.stream));
+  CUDA_CHECK(cudaMemcpyAsync(d_a_str.get(), a_strides_h.data(), bytes, cudaMemcpyHostToDevice,
+                             ctx.stream));
+  CUDA_CHECK(cudaMemcpyAsync(d_b_str.get(), b_strides_h.data(), bytes, cudaMemcpyHostToDevice,
+                             ctx.stream));
 
-  auto dtype_a  = inputs[0].dtype;
-  auto dtype_b  = inputs[1].dtype;
-  auto out_type = res.output_descs[0].dtype;
+  return std::make_unique<Div>(ctx.stream, std::vector<holoflow::core::TDesc>{inputs[0], inputs[1]},
+                               odesc.dtype, total, ndim, std::move(d_shape), std::move(d_a_str),
+                               std::move(d_b_str));
+}
 
-  return std::make_unique<Div>(ctx.stream, dtype_a, dtype_b, out_type, total, ndim,
-                               std::move(d_shape), std::move(d_a_str), std::move(d_b_str));
+std::unique_ptr<holoflow::core::ISyncTask>
+DivFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                   std::span<const holoflow::core::TDesc>     input_descs,
+                   const nlohmann::json                      &jsettings,
+                   const holoflow::core::SyncCreateCtx       &ctx) const {
+
+  auto *old_div = dynamic_cast<Div *>(old_task.get());
+  if (old_div && input_descs.size() == 2) {
+    const auto &old_idescs = old_div->get_idescs();
+
+    bool match = true;
+    for (size_t i = 0; i < 2; ++i) {
+      if (input_descs[i].shape != old_idescs[i].shape ||
+          input_descs[i].strides != old_idescs[i].strides ||
+          input_descs[i].dtype != old_idescs[i].dtype) {
+        match = false;
+        break;
+      }
+    }
+
+    if (match) {
+      old_div->update_stream(ctx.stream);
+      return old_task;
+    }
+  }
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp

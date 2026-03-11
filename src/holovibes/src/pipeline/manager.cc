@@ -114,7 +114,7 @@ void reg_async(holoflow::core::Registry &r, std::string_view name, Args &&...arg
 
 } // namespace
 
-Manager::Manager(ui::AutoFocusWidget *autofocus_widget,
+Manager::Manager(ui::AutoFocusWidget     *autofocus_widget,
                  ui::TensorDisplayWidget *xy_processed_widget,
                  ui::TensorDisplayWidget *xz_processed_widget,
                  ui::TensorDisplayWidget *yz_processed_widget,
@@ -125,9 +125,8 @@ Manager::Manager(ui::AutoFocusWidget *autofocus_widget,
                  ui::TensorDisplayWidget *shack_hartmann_xcorr_widget,
                  ui::TensorDisplayWidget *zernike_phase_widget)
     : autofocus_widget_(autofocus_widget), xy_processed_widget_(xy_processed_widget),
-      xz_processed_widget_(xz_processed_widget),
-      yz_processed_widget_(yz_processed_widget), xy_raw_widget_(xy_raw_widget),
-      raw_spectrum_widget_(raw_spectrum_widget),
+      xz_processed_widget_(xz_processed_widget), yz_processed_widget_(yz_processed_widget),
+      xy_raw_widget_(xy_raw_widget), raw_spectrum_widget_(raw_spectrum_widget),
       processed_spectrum_widget_(processed_spectrum_widget),
       shack_hartmann_widget_(shack_hartmann_widget),
       shack_hartmann_xcorr_widget_(shack_hartmann_xcorr_widget),

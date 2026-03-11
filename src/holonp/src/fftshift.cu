@@ -1,3 +1,17 @@
+// Copyright 2026 Digital Holography Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "holonp/fftshift.hh"
 
 #include <algorithm>
@@ -107,18 +121,19 @@ __global__ void fftshift_nd_contig_kernel_u8(const std::uint8_t *__restrict__ in
 
 } // namespace
 
-FFTShift::FFTShift(const FFTShiftSettings &settings, cudaStream_t stream, size_t ndim,
-                   size_t total_elems, HostPtr<std::int64_t> h_shape, DevPtr<std::int64_t> d_shape,
+FFTShift::FFTShift(const FFTShiftSettings &settings, const holoflow::core::TDesc &idesc,
+                   cudaStream_t stream, size_t ndim, size_t total_elems,
+                   HostPtr<std::int64_t> h_shape, DevPtr<std::int64_t> d_shape,
                    HostPtr<std::int64_t> h_strides, DevPtr<std::int64_t> d_strides,
                    HostPtr<std::int64_t> h_shifts, DevPtr<std::int64_t> d_shifts)
-    : settings_(settings), stream_(stream), ndim_(ndim), total_elems_(total_elems),
+    : settings_(settings), idesc_(idesc), stream_(stream), ndim_(ndim), total_elems_(total_elems),
       h_shape_(std::move(h_shape)), d_shape_(std::move(d_shape)), h_strides_(std::move(h_strides)),
       d_strides_(std::move(d_strides)), h_shifts_(std::move(h_shifts)),
       d_shifts_(std::move(d_shifts)) {}
 
 holoflow::core::OpResult FFTShift::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = ctx.inputs[0].data();
-  auto *odata = ctx.outputs[0].data();
+  auto       *idata = ctx.inputs[0].data();
+  auto       *odata = ctx.outputs[0].data();
   const auto &idesc = ctx.inputs[0].desc;
 
   constexpr int block_size = 256;
@@ -210,9 +225,37 @@ FFTShiftFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                              cudaMemcpyHostToDevice, ctx.stream));
 
   return std::unique_ptr<holoflow::core::ISyncTask>(
-      new FFTShift(settings, ctx.stream, static_cast<size_t>(ndim), total, std::move(h_shape),
-                   std::move(d_shape), std::move(h_strides), std::move(d_strides),
-                   std::move(h_shifts), std::move(d_shifts)));
+      new FFTShift(settings, idesc, ctx.stream, static_cast<size_t>(ndim), total,
+                   std::move(h_shape), std::move(d_shape), std::move(h_strides),
+                   std::move(d_strides), std::move(h_shifts), std::move(d_shifts)));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+FFTShiftFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                        std::span<const holoflow::core::TDesc>     input_descs,
+                        const nlohmann::json                      &jsettings,
+                        const holoflow::core::SyncCreateCtx       &ctx) const {
+
+  auto *old_fftshift = dynamic_cast<FFTShift *>(old_task.get());
+  if (old_fftshift != nullptr && input_descs.size() == 1) {
+
+    const auto  new_settings = jsettings.get<FFTShiftSettings>();
+    const auto &new_idesc    = input_descs[0];
+    const auto &old_idesc    = old_fftshift->get_idesc();
+
+    bool can_reuse =
+        (new_settings == old_fftshift->get_settings()) && (new_idesc.shape == old_idesc.shape) &&
+        (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
+        (new_idesc.mem_loc == old_idesc.mem_loc);
+
+    if (can_reuse) {
+      old_fftshift->update_stream(ctx.stream);
+      return old_task;
+    }
+  }
+
+  // Fallback: Structural change detected or invalid old task.
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp

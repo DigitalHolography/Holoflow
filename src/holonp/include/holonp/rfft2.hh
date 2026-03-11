@@ -28,6 +28,10 @@ namespace holonp {
 struct RFFT2Settings {
   std::vector<int> axes;
   FftNorm          norm = FftNorm::Backward;
+
+  bool operator==(const RFFT2Settings &other) const {
+    return axes == other.axes && norm == other.norm;
+  }
 };
 
 void to_json(nlohmann::json &j, const RFFT2Settings &s);
@@ -37,20 +41,25 @@ class RFFT2 : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
+  const holoflow::core::TDesc &get_idesc() const { return idesc_; }
+  const RFFT2Settings         &get_settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream);
+
 private:
-  RFFT2(const RFFT2Settings &settings, curaii::CufftHandle &&plan, size_t n_fft_elems,
-        size_t total_out_elems, std::vector<size_t> input_offsets, size_t output_stride_bytes,
-        cudaStream_t stream);
+  RFFT2(const RFFT2Settings &settings, const holoflow::core::TDesc &idesc,
+        curaii::CufftHandle &&plan, size_t n_fft_elems, size_t total_out_elems,
+        std::vector<size_t> input_offsets, size_t output_stride_bytes, cudaStream_t stream);
 
   friend class RFFT2Factory;
 
-  RFFT2Settings       settings_;
-  curaii::CufftHandle plan_;
-  size_t              n_fft_elems_;
-  size_t              total_out_elems_;
-  std::vector<size_t> input_offsets_;
-  size_t              output_stride_bytes_;
-  cudaStream_t        stream_;
+  RFFT2Settings         settings_;
+  holoflow::core::TDesc idesc_;
+  curaii::CufftHandle   plan_;
+  size_t                n_fft_elems_;
+  size_t                total_out_elems_;
+  std::vector<size_t>   input_offsets_;
+  size_t                output_stride_bytes_;
+  cudaStream_t          stream_;
 };
 
 class RFFT2Factory : public holoflow::core::ISyncTaskFactory {
@@ -60,6 +69,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

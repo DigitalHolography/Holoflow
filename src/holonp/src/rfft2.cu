@@ -120,12 +120,19 @@ __global__ void scale_kernel(cuFloatComplex *__restrict__ data, size_t n, float 
 
 } // namespace
 
-RFFT2::RFFT2(const RFFT2Settings &settings, curaii::CufftHandle &&plan, size_t n_fft_elems,
-             size_t total_out_elems, std::vector<size_t> input_offsets, size_t output_stride_bytes,
-             cudaStream_t stream)
-    : settings_(settings), plan_(std::move(plan)), n_fft_elems_(n_fft_elems),
+RFFT2::RFFT2(const RFFT2Settings &settings, const holoflow::core::TDesc &idesc,
+             curaii::CufftHandle &&plan, size_t n_fft_elems, size_t total_out_elems,
+             std::vector<size_t> input_offsets, size_t output_stride_bytes, cudaStream_t stream)
+    : settings_(settings), idesc_(idesc), plan_(std::move(plan)), n_fft_elems_(n_fft_elems),
       total_out_elems_(total_out_elems), input_offsets_(std::move(input_offsets)),
       output_stride_bytes_(output_stride_bytes), stream_(stream) {}
+
+void RFFT2::update_stream(cudaStream_t stream) {
+  if (stream_ != stream) {
+    stream_ = stream;
+    CUFFT_CHECK(cufftSetStream(plan_.get(), stream_));
+  }
+}
 
 holoflow::core::OpResult RFFT2::execute(holoflow::core::SyncCtx &ctx) {
   auto *idata_base = reinterpret_cast<uint8_t *>(ctx.inputs[0].data());
@@ -255,8 +262,36 @@ RFFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
                                   static_cast<long long>(n_out), CUDA_C_32F,
                                   static_cast<long long>(inner_batches), &work_size, CUDA_C_32F));
 
-  return std::unique_ptr<RFFT2>(new RFFT2(settings, std::move(plan), n_fft, total_out,
+  return std::unique_ptr<RFFT2>(new RFFT2(settings, idesc, std::move(plan), n_fft, total_out,
                                           std::move(offsets), output_stride_bytes, ctx.stream));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+RFFT2Factory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                     std::span<const holoflow::core::TDesc>     input_descs,
+                     const nlohmann::json                      &jsettings,
+                     const holoflow::core::SyncCreateCtx       &ctx) const {
+
+  auto *old_rfft = dynamic_cast<RFFT2 *>(old_task.get());
+  if (old_rfft != nullptr && input_descs.size() == 1) {
+
+    const auto  new_settings = jsettings.get<RFFT2Settings>();
+    const auto &new_idesc    = input_descs[0];
+    const auto &old_idesc    = old_rfft->get_idesc();
+
+    bool can_reuse =
+        (new_settings == old_rfft->get_settings()) && (new_idesc.shape == old_idesc.shape) &&
+        (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
+        (new_idesc.mem_loc == old_idesc.mem_loc);
+
+    if (can_reuse) {
+      old_rfft->update_stream(ctx.stream);
+      return old_task;
+    }
+  }
+
+  // Fallback: Structural change detected or invalid old task.
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp
