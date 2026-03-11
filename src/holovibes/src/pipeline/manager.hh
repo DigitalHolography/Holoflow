@@ -129,7 +129,7 @@ private:
   int      src_height_ = 0;
 
   /// @brief Toggles debug dumps of the pipeline (.dot, .json) to disk.
-  bool dump_debug_graphs_ = false;
+  bool dump_debug_graphs_ = true;
 
   /// @brief Mutex to protect state shared between the main UI thread and pipeline callbacks.
   std::mutex mtx_;

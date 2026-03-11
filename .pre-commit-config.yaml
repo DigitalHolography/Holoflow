@@ -14,7 +14,7 @@ repos:
         stages: [ pre-commit ]
 
   # -------------------------------------------------------------------
-  # Check C++ / CUDA formatting
+  # Apply C++ / CUDA formatting
   # -------------------------------------------------------------------
   - repo: local
     hooks:
@@ -25,6 +25,5 @@ repos:
         files: \.(cc|hh|cu|cuh|hxx|cuhxx)$
         args:
           - --style=file
-          - --dry-run
-          - --Werror
+          - -i
         stages: [ pre-commit ]

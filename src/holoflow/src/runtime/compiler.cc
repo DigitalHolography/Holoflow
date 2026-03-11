@@ -321,6 +321,20 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     }
 
     total_trace.reset(); // Stop timer before throwing
+
+    try {
+      CUDA_CHECK(cudaDeviceSynchronize());
+    } catch (const std::exception &cuda_e) {
+      logger_->error("CUDA error during cleanup: {}", cuda_e.what());
+    }
+
+    try {
+      CUDA_CHECK(cudaGetLastError());
+    } catch (const std::exception &cuda_e) {
+      logger_->error("CUDA error during cleanup: {}", cuda_e.what());
+    }
+
+    logger_->flush();
     throw;
   }
 

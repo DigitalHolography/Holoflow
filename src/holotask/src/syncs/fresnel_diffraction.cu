@@ -182,7 +182,6 @@ DevPtr<cuFloatComplex> make_quadratic_lens(int W, int H,
   quadratic_lens_kernel<<<grid_size, block_size>>>(d_lens.get(), W, H, settings.lambda, settings.z,
                                                    settings.dx);
 
-  CUDA_CHECK(cudaGetLastError());
   return d_lens;
 }
 

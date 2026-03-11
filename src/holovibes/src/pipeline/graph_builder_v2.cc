@@ -274,6 +274,7 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
         {1, static_cast<size_t>(ny), static_cast<size_t>(nx)},
         holoflow::core::DType::F32,
     });
+    FH               = correct_phase(FH, empty_phase, {});
     zernike_phase_display(empty_phase, {});
   }
 
@@ -289,8 +290,8 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_spatial_propagation(const TDesc &F
                                        s_.spacial_z,
                                        {-2, -1},
                                    });
-  } 
-  
+  }
+
   else if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
     throw std::logic_error{"Angular Spectrum is currently not supported in GraphBuilder_v2"};
   }

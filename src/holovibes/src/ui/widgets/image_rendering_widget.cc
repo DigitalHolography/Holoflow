@@ -140,6 +140,7 @@ void ImageRenderingWidget::setup_ui() {
   add_combo_row("Image:", image_combo_, QStringList{"Raw", "Processed"});
   add_spin_row("Batch Size:", batch_size_spin_, 1, kLargeSpinMax, 32);
   add_spin_row("Time Stride:", time_stride_spin_, 1, kLargeSpinMax, 32);
+  image_combo_->setCurrentText("Processed");
 
   auto *filter_layout = new QGridLayout();
   filter_2d_check_    = new QCheckBox("Filter 2D", this);

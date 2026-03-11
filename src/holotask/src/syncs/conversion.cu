@@ -339,6 +339,8 @@ std::unique_ptr<holoflow::core::ISyncTask>
 ConversionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                           const nlohmann::json                  &jsettings,
                           const holoflow::core::SyncCreateCtx   &ctx) const {
+  CUDA_CHECK(cudaGetLastError());
+
   // Validate
   auto infer_result = infer(input_descs, jsettings);
   auto settings     = jsettings.get<ConversionSettings>();

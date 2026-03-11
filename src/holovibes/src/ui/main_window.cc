@@ -274,6 +274,7 @@ void MainWindow::connect_import_controls() {
       if (reader.footer().has_value()) {
         auto               footer        = reader.footer().value();
         pipeline::Settings prev_settings = get_pipeline_settings();
+        prev_settings.view_type          = pipeline::ViewType::PROCESSED;
         pipeline::Settings new_settings =
             pipeline::old_json_to_settings(footer.pipeline_settings, prev_settings);
         set_pipeline_settings(new_settings);
@@ -389,11 +390,10 @@ void MainWindow::on_start_pipeline_success() {
 
   auto *autofocus_widget = render_widget_->autofocus_widget();
   if (autofocus_widget->is_enabled()) {
-    const bool has_enabled_zernike = autofocus_widget->is_z2_enabled() ||
-                                     autofocus_widget->is_z3_enabled() ||
-                                     autofocus_widget->is_z4_enabled() ||
-                                     autofocus_widget->is_z5_enabled() ||
-                                     autofocus_widget->is_z6_enabled();
+    const bool has_enabled_zernike =
+        autofocus_widget->is_z2_enabled() || autofocus_widget->is_z3_enabled() ||
+        autofocus_widget->is_z4_enabled() || autofocus_widget->is_z5_enabled() ||
+        autofocus_widget->is_z6_enabled();
     if (!has_enabled_zernike) {
       autofocus_widget->reset_zernike_values();
     }
@@ -539,11 +539,10 @@ void MainWindow::on_update_pipeline_success() {
 
   auto *autofocus_widget = render_widget_->autofocus_widget();
   if (autofocus_widget->is_enabled()) {
-    const bool has_enabled_zernike = autofocus_widget->is_z2_enabled() ||
-                                     autofocus_widget->is_z3_enabled() ||
-                                     autofocus_widget->is_z4_enabled() ||
-                                     autofocus_widget->is_z5_enabled() ||
-                                     autofocus_widget->is_z6_enabled();
+    const bool has_enabled_zernike =
+        autofocus_widget->is_z2_enabled() || autofocus_widget->is_z3_enabled() ||
+        autofocus_widget->is_z4_enabled() || autofocus_widget->is_z5_enabled() ||
+        autofocus_widget->is_z6_enabled();
     if (!has_enabled_zernike) {
       autofocus_widget->reset_zernike_values();
     }
@@ -1148,9 +1147,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   }
 
   // --- View Settings ---
-  {
-    view_widget_->set_cuts_3d_enabled(s.view_3d_cuts);
-  }
+  { view_widget_->set_cuts_3d_enabled(s.view_3d_cuts); }
 
   // --- Post-processing Settings ---
   {

@@ -449,9 +449,10 @@ void Manager::build_and_run() {
                    log_root.string());
   }
 
-  if (dump_debug_graphs_) {
-    dump_graph_logs(log_root);
-  }
+  // TODO: What should be done about this verbose logging?
+  // if (dump_debug_graphs_) {
+  //   dump_graph_logs(log_root);
+  // }
 
   CompilerConfig config;
   config.log_dir             = log_root;

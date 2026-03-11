@@ -35,7 +35,7 @@ void from_json(const nlohmann::json &j, FresnelQinSettings &fqs) {
   j.at("ny").get_to(fqs.ny);
 }
 
-FresnelQin::FresnelQin(const FresnelQinSettings &settings, const holoflow::core::TDesc &idesc, 
+FresnelQin::FresnelQin(const FresnelQinSettings &settings, const holoflow::core::TDesc &idesc,
                        DevPtr<float> &&d_r2, cudaStream_t stream)
     : settings_(settings), idesc_(idesc), d_r2_(std::move(d_r2)), stream_(stream) {}
 
@@ -107,8 +107,6 @@ DevPtr<float> make_quadratic_r2(const FresnelQinSettings &settings, cudaStream_t
   dim3 block_size(16, 16);
   dim3 grid_size((nx + block_size.x - 1) / block_size.x, (ny + block_size.y - 1) / block_size.y);
   quadratic_r2_kernel<<<grid_size, block_size, 0, stream>>>(d_r2.get(), nx, ny, settings.dx);
-
-  CUDA_CHECK(cudaGetLastError());
   return d_r2;
 }
 
@@ -116,7 +114,7 @@ DevPtr<float> make_quadratic_r2(const FresnelQinSettings &settings, cudaStream_t
 
 holoflow::core::InferResult
 FresnelQinFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
-                         const nlohmann::json                   &jsettings) const {
+                         const nlohmann::json                  &jsettings) const {
   const auto check = [&](bool condition, const std::string &msg) {
     if (!condition) {
       logger()->error("[FresnelQinFactory::infer] error: {}", msg);
@@ -167,25 +165,24 @@ FresnelQinFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 std::unique_ptr<holoflow::core::ISyncTask>
 FresnelQinFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                           std::span<const holoflow::core::TDesc>     input_descs,
-                          const nlohmann::json                       &jsettings,
-                          const holoflow::core::SyncCreateCtx        &ctx) const {
+                          const nlohmann::json                      &jsettings,
+                          const holoflow::core::SyncCreateCtx       &ctx) const {
 
-  auto* old_fresnel = dynamic_cast<FresnelQin*>(old_task.get());
+  auto *old_fresnel = dynamic_cast<FresnelQin *>(old_task.get());
   if (old_fresnel != nullptr && input_descs.size() == 1) {
-    
-    const auto new_settings = jsettings.get<FresnelQinSettings>();
-    const auto& new_idesc   = input_descs[0];
-    const auto& old_idesc   = old_fresnel->get_idesc();
 
-    bool can_reuse = (new_settings == old_fresnel->get_settings()) &&
-                     (new_idesc.shape == old_idesc.shape) &&
-                     (new_idesc.strides == old_idesc.strides) &&
-                     (new_idesc.dtype == old_idesc.dtype) &&
-                     (new_idesc.mem_loc == old_idesc.mem_loc);
+    const auto  new_settings = jsettings.get<FresnelQinSettings>();
+    const auto &new_idesc    = input_descs[0];
+    const auto &old_idesc    = old_fresnel->get_idesc();
+
+    bool can_reuse =
+        (new_settings == old_fresnel->get_settings()) && (new_idesc.shape == old_idesc.shape) &&
+        (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
+        (new_idesc.mem_loc == old_idesc.mem_loc);
 
     if (can_reuse) {
       old_fresnel->update_stream(ctx.stream);
-      return old_task; 
+      return old_task;
     }
   }
 
