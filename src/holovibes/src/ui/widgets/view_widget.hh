@@ -66,7 +66,7 @@ public:
   void set_registration_enabled(bool enabled);
   void set_registration_radius(int value);
   void set_pct_enabled(bool enabled);
-  void set_pct_radius(int value);
+  void set_pct_radius(double value);
 
   // Validation
   void clear_validation_styles();

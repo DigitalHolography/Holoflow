@@ -15,30 +15,46 @@
 #pragma once
 
 #include "pipeline/settings.hh"
+
 #include <nlohmann/json.hpp>
+#include <string>
+#include <type_traits>
 
 namespace holovibes::pipeline {
 
 /**
- * @brief Convert new Settings structure to the legacy JSON format.
+ * @brief Convert the new Settings structure to the legacy JSON format.
  */
 nlohmann::json settings_to_old_json(const Settings &settings);
 
 /**
- * @brief Utility function to safely get a value from JSON with a default fallback.
+ * @brief Safely get a value from JSON with a default fallback.
+ *
+ * Returns @p def if:
+ * - the key does not exist
+ * - the value is null
+ * - conversion to T throws
  */
 template <typename T> inline T val(const nlohmann::json &j, const char *key, const T &def) {
-  return j.contains(key) ? j.at(key).get<T>() : def;
+  try {
+    if (!j.is_object() || !j.contains(key) || j.at(key).is_null()) {
+      return def;
+    }
+    return j.at(key).get<T>();
+  } catch (...) {
+    return def;
+  }
 }
 
 inline std::string val(const nlohmann::json &j, const char *key, const char *def) {
-  return j.contains(key) ? j.at(key).get<std::string>() : std::string(def);
+  return val<std::string>(j, key, std::string(def));
 }
 
 /**
  * @brief Convert legacy JSON format to the new Settings structure.
- * @param j The input JSON (old format)
- * @param default_settings A reference Settings object used for missing defaults
+ *
+ * Any field that does not exist in the legacy format falls back to
+ * @p default_settings.
  */
 Settings old_json_to_settings(const nlohmann::json &j, const Settings &default_settings);
 

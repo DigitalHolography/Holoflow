@@ -98,7 +98,7 @@ void ViewWidget::set_registration_enabled(bool enabled) {
 }
 void ViewWidget::set_registration_radius(int value) { registration_radius_->setValue(value); }
 void ViewWidget::set_pct_enabled(bool enabled) { pct_check_->setChecked(enabled); }
-void ViewWidget::set_pct_radius(int value) { pct_radius_->setValue(value); }
+void ViewWidget::set_pct_radius(double value) { pct_radius_->setValue(value); }
 
 // Validation
 void ViewWidget::mark_z_invalid() {

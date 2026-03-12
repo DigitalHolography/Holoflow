@@ -14,225 +14,250 @@
 
 #include "settings_loader.hh"
 
-#include "logger.hh"
-
 namespace holovibes::pipeline {
+namespace {
 
-// Convert new Settings to old JSON format
-nlohmann::json settings_to_old_json(const Settings &settings) {
-  nlohmann::json j;
+using json = nlohmann::json;
 
-  // Advanced section
-  j["compute_settings"]["advanced"]["buffer_size"]["input"]    = settings.gpu_in_size;
-  j["compute_settings"]["advanced"]["buffer_size"]["output"]   = settings.gpu_out_size;
-  j["compute_settings"]["advanced"]["buffer_size"]["record"]   = settings.cpu_rec_size;
-  j["compute_settings"]["advanced"]["filter2d_smooth"]["high"] = settings.filter_smooth_outer;
-  j["compute_settings"]["advanced"]["filter2d_smooth"]["low"]  = settings.filter_smooth_inner;
-  j["compute_settings"]["advanced"]["nb_frames_to_record"]     = settings.recording_count;
-
-  // Image rendering section
-  j["compute_settings"]["image_rendering"]["batch_size"] = settings.load_batch;
-
-  j["compute_settings"]["image_rendering"]["convolution"]["divide"] =
-      settings.pp_convolution_divide;
-  j["compute_settings"]["image_rendering"]["convolution"]["type"] =
-      settings.pp_convolution ? settings.pp_convolution_path : "";
-
-  j["compute_settings"]["image_rendering"]["filter2d"]["enabled"]      = settings.filter_2d;
-  j["compute_settings"]["image_rendering"]["filter2d"]["inner_radius"] = settings.filter_r_inner;
-  j["compute_settings"]["image_rendering"]["filter2d"]["outer_radius"] = settings.filter_r_outer;
-
-  std::string image_mode = "HOLOGRAM";
-  if (settings.spacial_method != SpacialMethod::NONE) {
-    image_mode = "HOLOGRAM";
+[[nodiscard]] const json &child_or_empty(const json &j, const char *key) {
+  static const json kEmpty = json::object();
+  if (!j.is_object() || !j.contains(key) || !j.at(key).is_object()) {
+    return kEmpty;
   }
-  j["compute_settings"]["image_rendering"]["image_mode"]           = image_mode;
-  j["compute_settings"]["image_rendering"]["lambda"]               = settings.spacial_lambda;
-  j["compute_settings"]["image_rendering"]["propagation_distance"] = settings.spacial_z;
+  return j.at(key);
+}
 
-  // Map spacial method
-  std::string space_transform;
-  switch (settings.spacial_method) {
+[[nodiscard]] int read_range_end(const json &node, int begin, int default_end) {
+  constexpr int kMissingWidth = -1;
+  const int     width         = val(node, "width", kMissingWidth);
+  return width == kMissingWidth ? default_end : begin + width;
+}
+
+[[nodiscard]] std::string to_legacy_space_transform(SpacialMethod method) {
+  switch (method) {
   case SpacialMethod::FRESNEL_DIFFRACTION:
-    space_transform = "FRESNELTR";
-    break;
+    return "FRESNELTR";
   case SpacialMethod::ANGULAR_SPECTRUM:
-    space_transform = "ANGULAR";
-    break;
+    return "ANGULAR";
+  case SpacialMethod::NONE:
   default:
-    space_transform = "NONE";
+    return "NONE";
   }
-  j["compute_settings"]["image_rendering"]["space_transformation"] = space_transform;
+}
 
-  // Map time method
-  std::string time_transform;
-  switch (settings.time_method) {
+[[nodiscard]] SpacialMethod from_legacy_space_transform(const std::string &value) {
+  if (value == "FRESNELTR") {
+    return SpacialMethod::FRESNEL_DIFFRACTION;
+  }
+  if (value == "ANGULAR") {
+    return SpacialMethod::ANGULAR_SPECTRUM;
+  }
+  return SpacialMethod::NONE;
+}
+
+[[nodiscard]] std::string to_legacy_time_transform(TimeMethod method) {
+  switch (method) {
   case TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS:
-    time_transform = "PCA";
-    break;
+    return "PCA";
   case TimeMethod::SHORT_TIME_FOURIER:
-    time_transform = "STFT";
-    break;
+    return "STFT";
+  case TimeMethod::NONE:
   default:
-    time_transform = "NONE";
+    return "NONE";
   }
-  j["compute_settings"]["image_rendering"]["time_transformation"]        = time_transform;
-  j["compute_settings"]["image_rendering"]["time_transformation_size"]   = settings.time_window;
-  j["compute_settings"]["image_rendering"]["time_transformation_stride"] = settings.time_stride;
+}
 
-  // View section
-  j["compute_settings"]["view"]["fft_shift"]                            = settings.pp_fft_shift;
-  j["compute_settings"]["view"]["registration"]["registration_enabled"] = settings.pp_registration;
-  j["compute_settings"]["view"]["registration"]["registration_zone"] =
-      settings.pp_registration_radius;
-  j["compute_settings"]["view"]["window"]["filter2d"]["contrast"]["enabled"] = settings.pp_pctclip;
+[[nodiscard]] TimeMethod from_legacy_time_transform(const std::string &value) {
+  if (value == "PCA") {
+    return TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS;
+  }
+  if (value == "STFT") {
+    return TimeMethod::SHORT_TIME_FOURIER;
+  }
+  return TimeMethod::NONE;
+}
 
-  // XY window
-  j["compute_settings"]["view"]["window"]["xy"]["contrast"]["enabled"] = settings.pp_pctclip;
-  j["compute_settings"]["view"]["window"]["xy"]["contrast"]["max"]     = settings.pp_pctclip_upper;
-  j["compute_settings"]["view"]["window"]["xy"]["contrast"]["min"]     = settings.pp_pctclip_lower;
-  j["compute_settings"]["view"]["window"]["xy"]["output_image_accumulation"] =
-      settings.pp_accumulation;
-  j["compute_settings"]["view"]["window"]["xz"]["enabled"] = settings.view_3d_cuts;
-  j["compute_settings"]["view"]["window"]["yz"]["enabled"] = settings.view_3d_cuts;
+void write_advanced(json &j, const Settings &s) {
+  auto &advanced = j["compute_settings"]["advanced"];
 
-  // Coordinate ranges
-  j["compute_settings"]["view"]["x"]["start"] = settings.time_x_begin;
-  j["compute_settings"]["view"]["x"]["width"] = settings.time_x_end - settings.time_x_begin;
-  j["compute_settings"]["view"]["y"]["start"] = settings.time_y_begin;
-  j["compute_settings"]["view"]["y"]["width"] = settings.time_y_end - settings.time_y_begin;
-  j["compute_settings"]["view"]["z"]["start"] = settings.time_z_begin;
-  j["compute_settings"]["view"]["z"]["width"] = settings.time_z_end - settings.time_z_begin;
+  advanced["buffer_size"]["input"]  = s.gpu_in_size;
+  advanced["buffer_size"]["output"] = s.gpu_out_size;
+  advanced["buffer_size"]["record"] = s.cpu_rec_size;
 
-  // Info section
-  j["info"]["contiguous"]       = settings.cpu_rec_size;
-  j["info"]["pixel_pitch"]["x"] = settings.spacial_pixel_size;
-  j["info"]["pixel_pitch"]["y"] = settings.spacial_pixel_size;
+  advanced["filter2d_smooth"]["low"]  = s.filter_smooth_inner;
+  advanced["filter2d_smooth"]["high"] = s.filter_smooth_outer;
+
+  advanced["nb_frames_to_record"] = s.recording_count;
+}
+
+void write_image_rendering(json &j, const Settings &s) {
+  auto &rendering = j["compute_settings"]["image_rendering"];
+
+  rendering["batch_size"] = s.load_batch;
+
+  rendering["convolution"]["divide"] = s.pp_convolution_divide;
+  rendering["convolution"]["type"]   = s.pp_convolution ? s.pp_convolution_path : "";
+
+  rendering["filter2d"]["enabled"]      = s.filter_2d;
+  rendering["filter2d"]["inner_radius"] = s.filter_r_inner;
+  rendering["filter2d"]["outer_radius"] = s.filter_r_outer;
+
+  // Legacy format expects this field even if space transformation is NONE.
+  rendering["image_mode"] = "HOLOGRAM";
+
+  rendering["lambda"]               = s.spacial_lambda;
+  rendering["propagation_distance"] = s.spacial_z;
+
+  rendering["space_transformation"]       = to_legacy_space_transform(s.spacial_method);
+  rendering["time_transformation"]        = to_legacy_time_transform(s.time_method);
+  rendering["time_transformation_size"]   = s.time_window;
+  rendering["time_transformation_stride"] = s.time_stride;
+}
+
+void write_view(json &j, const Settings &s) {
+  auto &view = j["compute_settings"]["view"];
+
+  view["fft_shift"] = s.pp_fft_shift;
+
+  view["registration"]["registration_enabled"] = s.pp_registration;
+  view["registration"]["registration_zone"]    = s.pp_registration_radius;
+
+  view["window"]["filter2d"]["contrast"]["enabled"] = s.pp_pctclip;
+
+  view["window"]["xy"]["contrast"]["enabled"]       = s.pp_pctclip;
+  view["window"]["xy"]["contrast"]["min"]           = s.pp_pctclip_lower;
+  view["window"]["xy"]["contrast"]["max"]           = s.pp_pctclip_upper;
+  view["window"]["xy"]["output_image_accumulation"] = s.pp_accumulation;
+
+  view["window"]["xz"]["enabled"] = s.view_3d_cuts;
+  view["window"]["yz"]["enabled"] = s.view_3d_cuts;
+
+  view["x"]["start"] = s.time_x_begin;
+  view["x"]["width"] = s.time_x_end - s.time_x_begin;
+
+  view["y"]["start"] = s.time_y_begin;
+  view["y"]["width"] = s.time_y_end - s.time_y_begin;
+
+  view["z"]["start"] = s.time_z_begin;
+  view["z"]["width"] = s.time_z_end - s.time_z_begin;
+}
+
+void write_info(json &j, const Settings &s) {
+  auto &info = j["info"];
+
+  info["contiguous"]       = s.cpu_rec_size;
+  info["pixel_pitch"]["x"] = s.spacial_pixel_size;
+  info["pixel_pitch"]["y"] = s.spacial_pixel_size;
+}
+
+void read_advanced(Settings &s, const json &advanced) {
+  const auto &buffer_size = child_or_empty(advanced, "buffer_size");
+  const auto &smooth      = child_or_empty(advanced, "filter2d_smooth");
+
+  s.gpu_in_size  = val(buffer_size, "input", s.gpu_in_size);
+  s.gpu_out_size = val(buffer_size, "output", s.gpu_out_size);
+  s.cpu_rec_size = val(buffer_size, "record", s.cpu_rec_size);
+
+  s.filter_smooth_inner = val(smooth, "low", s.filter_smooth_inner);
+  s.filter_smooth_outer = val(smooth, "high", s.filter_smooth_outer);
+
+  s.recording_count = val(advanced, "nb_frames_to_record", s.recording_count);
+}
+
+void read_image_rendering(Settings &s, const json &rendering) {
+  s.load_batch = val(rendering, "batch_size", s.load_batch);
+
+  s.spacial_method = from_legacy_space_transform(val(rendering, "space_transformation", "NONE"));
+  s.spacial_lambda = val(rendering, "lambda", s.spacial_lambda);
+  s.spacial_z      = val(rendering, "propagation_distance", s.spacial_z);
+
+  s.time_method = from_legacy_time_transform(val(rendering, "time_transformation", "NONE"));
+  s.time_window = val(rendering, "time_transformation_size", s.time_window);
+  s.time_stride = val(rendering, "time_transformation_stride", s.time_stride);
+
+  const auto &filter2d = child_or_empty(rendering, "filter2d");
+  s.filter_2d          = val(filter2d, "enabled", s.filter_2d);
+  s.filter_r_inner     = val(filter2d, "inner_radius", s.filter_r_inner);
+  s.filter_r_outer     = val(filter2d, "outer_radius", s.filter_r_outer);
+
+  const auto &convolution = child_or_empty(rendering, "convolution");
+  s.pp_convolution_path   = val(convolution, "type", s.pp_convolution_path);
+  s.pp_convolution        = !s.pp_convolution_path.empty();
+  s.pp_convolution_divide = val(convolution, "divide", s.pp_convolution_divide);
+}
+
+void read_view_ranges(Settings &s, const json &view) {
+  const auto &x = child_or_empty(view, "x");
+  const auto &y = child_or_empty(view, "y");
+  const auto &z = child_or_empty(view, "z");
+
+  s.time_x_begin = val(x, "start", s.time_x_begin);
+  s.time_y_begin = val(y, "start", s.time_y_begin);
+  s.time_z_begin = val(z, "start", s.time_z_begin);
+
+  s.time_x_end = read_range_end(x, s.time_x_begin, s.time_x_end);
+  s.time_y_end = read_range_end(y, s.time_y_begin, s.time_y_end);
+  s.time_z_end = read_range_end(z, s.time_z_begin, s.time_z_end);
+}
+
+void read_view(Settings &s, const json &view) {
+  s.pp_fft_shift = val(view, "fft_shift", s.pp_fft_shift);
+
+  const auto &window = child_or_empty(view, "window");
+  const auto &xy     = child_or_empty(window, "xy");
+  const auto &xz     = child_or_empty(window, "xz");
+  const auto &yz     = child_or_empty(window, "yz");
+
+  s.view_3d_cuts = val(xz, "enabled", s.view_3d_cuts) || val(yz, "enabled", s.view_3d_cuts);
+
+  s.pp_accumulation = val(xy, "output_image_accumulation", s.pp_accumulation);
+
+  const auto &contrast = child_or_empty(xy, "contrast");
+  s.pp_pctclip         = val(contrast, "enabled", s.pp_pctclip);
+  s.pp_pctclip_lower   = val(contrast, "min", s.pp_pctclip_lower);
+  s.pp_pctclip_upper   = val(contrast, "max", s.pp_pctclip_upper);
+
+  const auto &registration = child_or_empty(view, "registration");
+  s.pp_registration        = val(registration, "registration_enabled", s.pp_registration);
+  s.pp_registration_radius = val(registration, "registration_zone", s.pp_registration_radius);
+
+  const auto &reticle = child_or_empty(view, "reticle");
+  s.pp_pctclip_radius = val(reticle, "scale", s.pp_pctclip_radius);
+
+  read_view_ranges(s, view);
+}
+
+void read_info(Settings &s, const json &info) {
+  const auto &pixel_pitch = child_or_empty(info, "pixel_pitch");
+  s.spacial_pixel_size    = val(pixel_pitch, "x", s.spacial_pixel_size);
+}
+
+} // namespace
+
+nlohmann::json settings_to_old_json(const Settings &settings) {
+  json j = json::object();
+
+  write_advanced(j, settings);
+  write_image_rendering(j, settings);
+  write_view(j, settings);
+  write_info(j, settings);
 
   return j;
 }
 
 Settings old_json_to_settings(const nlohmann::json &j, const Settings &default_settings) {
-  Settings settings{};
+  Settings settings = default_settings;
 
-  // Shortcuts for readability
-  const auto &compute =
-      j.contains("compute_settings") ? j.at("compute_settings") : nlohmann::json{};
-  const auto &adv  = compute.value("advanced", nlohmann::json{});
-  const auto &buf  = adv.value("buffer_size", nlohmann::json{});
-  const auto &rend = compute.value("image_rendering", nlohmann::json{});
-  const auto &view = compute.value("view", nlohmann::json{});
-  const auto &info = j.value("info", nlohmann::json{});
+  const auto &compute   = child_or_empty(j, "compute_settings");
+  const auto &advanced  = child_or_empty(compute, "advanced");
+  const auto &rendering = child_or_empty(compute, "image_rendering");
+  const auto &view      = child_or_empty(compute, "view");
+  const auto &info      = child_or_empty(j, "info");
 
-  // --- Advanced ---
-  settings.cpu_in_size  = default_settings.cpu_in_size;
-  settings.gpu_in_size  = val(buf, "input", default_settings.gpu_in_size);
-  settings.cpu_rec_size = val(buf, "record", default_settings.cpu_rec_size);
-  settings.cpu_out_size = default_settings.cpu_out_size;
-  settings.gpu_out_size = val(buf, "output", default_settings.gpu_out_size);
-
-  // --- Import ---
-  settings.import_source = default_settings.import_source;
-  settings.load_path     = default_settings.load_path;
-  settings.load_method   = default_settings.load_method;
-  settings.load_begin    = default_settings.load_begin;
-  settings.load_end      = default_settings.load_end;
-  settings.load_batch    = val(rend, "batch_size", default_settings.load_batch);
-  logger()->info("Using load batch size: {}", settings.load_batch);
-  logger()->warn("batch size : {}", rend["batch_size"].get<int>());
-  settings.camera_config_path = default_settings.camera_config_path;
-
-  // --- Spatial ---
-  {
-    std::string space_transform = val(rend, "space_transformation", "");
-    if (space_transform == "FRESNELTR")
-      settings.spacial_method = SpacialMethod::FRESNEL_DIFFRACTION;
-    else if (space_transform == "ANGULAR")
-      settings.spacial_method = SpacialMethod::ANGULAR_SPECTRUM;
-    else
-      settings.spacial_method = SpacialMethod::NONE;
-  }
-
-  settings.spacial_lambda = val(rend, "lambda", default_settings.spacial_lambda);
-  settings.spacial_z      = val(rend, "propagation_distance", default_settings.spacial_z);
-  settings.spacial_pixel_size =
-      val(info.value("pixel_pitch", nlohmann::json{}), "x", default_settings.spacial_pixel_size);
-
-  // --- Filter ---
-  const auto &f2d         = rend.value("filter2d", nlohmann::json{});
-  settings.filter_2d      = val(f2d, "enabled", default_settings.filter_2d);
-  settings.filter_r_inner = val(f2d, "inner_radius", default_settings.filter_r_inner);
-  settings.filter_r_outer = val(f2d, "outer_radius", default_settings.filter_r_outer);
-
-  const auto &smooth           = adv.value("filter2d_smooth", nlohmann::json{});
-  settings.filter_smooth_inner = val(smooth, "low", default_settings.filter_smooth_inner);
-  settings.filter_smooth_outer = val(smooth, "high", default_settings.filter_smooth_outer);
-
-  // --- Temporal ---
-  {
-    std::string time_transform = val(rend, "time_transformation", "");
-    if (time_transform == "PCA")
-      settings.time_method = TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS;
-    else if (time_transform == "STFT")
-      settings.time_method = TimeMethod::SHORT_TIME_FOURIER;
-    else
-      settings.time_method = TimeMethod::NONE;
-  }
-
-  settings.time_window = val(rend, "time_transformation_size", default_settings.time_window);
-  settings.time_stride = val(rend, "time_transformation_stride", default_settings.time_stride);
-
-  const auto &xview     = view.value("x", nlohmann::json{});
-  const auto &yview     = view.value("y", nlohmann::json{});
-  const auto &zview     = view.value("z", nlohmann::json{});
-  settings.time_x_begin = val(xview, "start", default_settings.time_x_begin);
-  settings.time_y_begin = val(yview, "start", default_settings.time_y_begin);
-  settings.time_z_begin = val(zview, "start", default_settings.time_z_begin);
-  const auto x_width    = val(xview, "width", -42);
-  settings.time_x_end =
-      x_width == -42 ? default_settings.time_x_end : settings.time_x_begin + x_width;
-  const auto y_width = val(yview, "width", -42);
-  settings.time_y_end =
-      y_width == -42 ? default_settings.time_y_end : settings.time_y_begin + y_width;
-  const auto z_width = val(zview, "width", -42);
-  settings.time_z_end =
-      z_width == -42 ? default_settings.time_z_end : settings.time_z_begin + z_width;
-
-  // --- View ---
-  const auto &win       = view.value("window", nlohmann::json{});
-  const auto &xz        = win.value("xz", nlohmann::json{});
-  const auto &yz        = win.value("yz", nlohmann::json{});
-  settings.view_3d_cuts = val(xz, "enabled", false) || val(yz, "enabled", false);
-
-  // --- Post-processing ---
-  const auto &xy           = win.value("xy", nlohmann::json{});
-  settings.pp_fps          = default_settings.pp_fps;
-  settings.pp_fft_shift    = val(view, "fft_shift", default_settings.pp_fft_shift);
-  settings.pp_accumulation = val(xy, "output_image_accumulation", default_settings.pp_accumulation);
-
-  const auto &conv               = rend.value("convolution", nlohmann::json{});
-  std::string conv_type          = val(conv, "type", default_settings.pp_convolution_path);
-  settings.pp_convolution        = !conv_type.empty();
-  settings.pp_convolution_path   = conv_type;
-  settings.pp_convolution_divide = val(conv, "divide", default_settings.pp_convolution_divide);
-
-  const auto &contrast      = xy.value("contrast", nlohmann::json{});
-  settings.pp_pctclip       = val(contrast, "enabled", default_settings.pp_pctclip);
-  settings.pp_pctclip_lower = val(contrast, "min", default_settings.pp_pctclip_lower);
-  settings.pp_pctclip_upper = val(contrast, "max", default_settings.pp_pctclip_upper);
-
-  const auto &reticle        = view.value("reticle", nlohmann::json{});
-  settings.pp_pctclip_radius = val(reticle, "scale", default_settings.pp_pctclip_radius);
-
-  const auto &reg          = view.value("registration", nlohmann::json{});
-  settings.pp_registration = val(reg, "registration_enabled", default_settings.pp_registration);
-  settings.pp_registration_radius =
-      val(reg, "registration_zone", default_settings.pp_registration_radius);
-
-  // --- Recording ---
-  settings.recording_method = default_settings.recording_method;
-  settings.recording_path   = default_settings.recording_path;
-  settings.recording_count  = val(adv, "nb_frames_to_record", default_settings.recording_count);
+  read_advanced(settings, advanced);
+  read_image_rendering(settings, rendering);
+  read_view(settings, view);
+  read_info(settings, info);
 
   return settings;
 }
