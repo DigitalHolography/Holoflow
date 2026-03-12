@@ -14,6 +14,7 @@
 
 #include "holotask/sources/holofile.hh"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -54,8 +55,7 @@ void from_json(const nlohmann::json &j, HolofileSettings::LoadKind &lk) {
 void to_json(nlohmann::json &j, const HolofileSettings &hs) {
   j = nlohmann::json{
       {"path", hs.path},           {"load_kind", hs.load_kind},   {"start_frame", hs.start_frame},
-      {"end_frame", hs.end_frame}, {"batch_size", hs.batch_size},
-  };
+      {"end_frame", hs.end_frame}, {"batch_size", hs.batch_size}, {"keep_cursor", hs.keep_cursor}};
 }
 
 void from_json(const nlohmann::json &j, HolofileSettings &hs) {
@@ -64,6 +64,7 @@ void from_json(const nlohmann::json &j, HolofileSettings &hs) {
   j.at("start_frame").get_to(hs.start_frame);
   j.at("end_frame").get_to(hs.end_frame);
   j.at("batch_size").get_to(hs.batch_size);
+  hs.keep_cursor = j.value("keep_cursor", true);
 }
 
 namespace {
@@ -121,7 +122,6 @@ holoflow::core::OpResult Holofile::execute(holoflow::core::SyncCtx &ctx) {
   size_t pixels_per_frame = header_.frame_width * header_.frame_height;
   size_t bits_per_frame   = pixels_per_frame * header_.bits_per_pixel;
   size_t bytes_per_frame  = bits_per_frame / 8;
-  // size_t bytes_per_batch  = settings_.batch_size * bytes_per_frame;
 
   // Loop back to start when EOF would be bypassed when reading next batch.
   if (frame_idx_ + settings_.batch_size > settings_.end_frame) {
@@ -132,13 +132,10 @@ holoflow::core::OpResult Holofile::execute(holoflow::core::SyncCtx &ctx) {
   }
 
   // Read frames into buffer.
-
   if (settings_.load_kind == HolofileSettings::LoadKind::Live) {
     auto *odata = reinterpret_cast<uint8_t *>(ctx.outputs[0].data());
     reader_.read_frames(odata, settings_.batch_size);
-  }
-
-  else {
+  } else {
     std::byte *data    = buf_ + frame_idx_ * bytes_per_frame;
     auto      &storage = storage_access().owned_output_storage(0);
     storage.ptr        = data;
@@ -148,20 +145,6 @@ holoflow::core::OpResult Holofile::execute(holoflow::core::SyncCtx &ctx) {
         .storage = &storage,
     };
   }
-
-  // switch (settings_.load_kind) {
-  // case HolofileSettings::LoadKind::Live:
-  //   reader_.read_frames(odata, settings_.batch_size);
-  //   break;
-
-  // case HolofileSettings::LoadKind::CPUCached:
-  //   mt_memcpy(odata, buf_ + frame_idx_ * bytes_per_frame, bytes_per_batch);
-  //   break;
-
-  // case HolofileSettings::LoadKind::GPUCached:
-  //   CUDA_CHECK(cudaMemcpyAsync(odata, buf_ + frame_idx_ * bytes_per_frame, bytes_per_batch,
-  //                              cudaMemcpyDeviceToDevice, stream_));
-  // }
 
   frame_idx_ += settings_.batch_size;
   return holoflow::core::OpResult::Ok;
@@ -271,7 +254,7 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     reader.read_frames(reinterpret_cast<uint8_t *>(temp_buf.get()), frames_to_load);
     CUDA_CHECK(cudaMemcpyAsync(d_buf.get(), temp_buf.get(), bytes_to_load, cudaMemcpyHostToDevice,
                                ctx.stream));
-    CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
+    // Stream sync removed here!
   } break;
   }
 
@@ -292,32 +275,51 @@ HolofileFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   auto old_holofile = dynamic_cast<Holofile *>(old_task.get());
   HOLOVIBES_CHECK(old_holofile != nullptr, "old_task is not a Holofile instance");
 
-  // Update
-  bool same_cfg = (old_holofile->settings_.path == settings.path) &&
-                  (old_holofile->settings_.load_kind == settings.load_kind) &&
-                  (old_holofile->settings_.start_frame == settings.start_frame) &&
-                  (old_holofile->settings_.end_frame == settings.end_frame) &&
-                  (old_holofile->settings_.batch_size == settings.batch_size);
+  bool is_live     = settings.load_kind == HolofileSettings::LoadKind::Live;
+  bool path_same   = (old_holofile->settings_.path == settings.path);
+  bool kind_same   = (old_holofile->settings_.load_kind == settings.load_kind);
+  bool start_same  = (old_holofile->settings_.start_frame == settings.start_frame);
+  bool end_same    = (old_holofile->settings_.end_frame == settings.end_frame);
+  bool bounds_same = start_same && end_same;
+  bool can_reuse   = path_same && kind_same && (is_live || bounds_same);
 
-  bool reuse_buf = same_cfg && settings.load_kind != HolofileSettings::LoadKind::Live;
-
-  if (reuse_buf) {
-    logger()->debug("[HolofileFactory::update] Reusing existing Holofile task");
-    auto reader = std::move(old_holofile->reader_);
-    auto header = reader.header();
-    auto buf    = old_holofile->buf_;
-    auto h_buf  = std::move(old_holofile->h_buf_);
-    auto d_buf  = std::move(old_holofile->d_buf_);
-    reader.seek(settings.start_frame);
-    int   frame_idx = settings.start_frame;
-    auto *task = new Holofile(settings, std::move(reader), header, frame_idx, buf, std::move(h_buf),
-                              std::move(d_buf), ctx.stream, old_holofile->odesc_);
-    return std::unique_ptr<holoflow::core::ISyncTask>(task);
+  if (!can_reuse) {
+    logger()->debug(
+        "[HolofileFactory::update] Cannot reuse existing task (path_same={}, kind_same={}, "
+        "bounds_same={})",
+        path_same, kind_same, bounds_same);
+    return this->create(input_descs, jsettings, ctx);
   }
 
-  // Fallback to recreate
-  logger()->debug("[HolofileFactory::update] Recreating Holofile task");
-  return this->create(input_descs, jsettings, ctx);
+  logger()->debug("[HolofileFactory::update] Reusing existing Holofile task");
+
+  // Transfer ownership of heavy resources
+  auto reader = std::move(old_holofile->reader_);
+  auto header = reader.header();
+  auto buf    = old_holofile->buf_;
+  auto h_buf  = std::move(old_holofile->h_buf_);
+  auto d_buf  = std::move(old_holofile->d_buf_);
+
+  // Resolve cursor index
+  int frame_idx = settings.start_frame;
+  if (settings.keep_cursor) {
+    frame_idx = old_holofile->frame_idx_;
+    // Clamp just in case the bounds were shrunk past the current cursor
+    if (frame_idx < settings.start_frame || frame_idx >= settings.end_frame) {
+      frame_idx = settings.start_frame;
+    }
+  }
+
+  if (is_live && frame_idx != old_holofile->frame_idx_) {
+    logger()->debug(
+        "[HolofileFactory::update] Seeking reader from frame {} to {} due to cursor change",
+        old_holofile->frame_idx_, frame_idx);
+    reader.seek(frame_idx);
+  }
+
+  auto *task = new Holofile(settings, std::move(reader), header, frame_idx, buf, std::move(h_buf),
+                            std::move(d_buf), ctx.stream, infer.output_descs[0]);
+  return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }
 
 } // namespace holotask::sources

@@ -45,7 +45,8 @@ namespace holotask::sources {
 ///   "load_kind": "Live|CPUCached|GPUCached",
 ///   "start_frame": 0,
 ///   "end_frame": 1024,
-///   "batch_size": 8
+///   "batch_size": 8,
+///   "keep_cursor": true
 /// }
 /// @endcode
 struct HolofileSettings {
@@ -74,6 +75,10 @@ struct HolofileSettings {
   /// Number of frames per output tensor.
   /// Must satisfy `batch_size > 0 <= (end_frame - start_frame)`.
   int batch_size;
+
+  /// Whether to maintain the current reading offset across pipeline updates.
+  /// If false, the cursor resets to start_frame upon update.
+  bool keep_cursor = true;
 };
 
 /// @name JSON serialization

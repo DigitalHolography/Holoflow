@@ -76,6 +76,7 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_acquisition() {
         s_.load_begin,
         s_.load_end,
         s_.load_batch,
+        true,
     });
   } else if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
     return ametek_s710_euresys_coaxlink_octo({cam_path});
