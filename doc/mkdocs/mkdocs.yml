@@ -34,9 +34,17 @@ nav:
 
   - Holoflow:
     - Overview: holoflow/index.md
+    - Architecture: holoflow/architecture.md
     - Concepts:
-      - Graph Model: holoflow/concepts/graph.md
-      - Tasks: holoflow/concepts/tasks.md
+      - Graph And Data Model: holoflow/concepts/graph.md
+      - Task Model: holoflow/concepts/tasks.md
+      - Tensors And Storage: holoflow/concepts/tensors.md
+    - Runtime:
+      - Compiler: holoflow/runtime/compiler.md
+      - Scheduler: holoflow/runtime/scheduler.md
+    - Guides:
+      - Authoring Tasks: holoflow/guides/authoring.md
+      - Inspection And Debugging: holoflow/guides/inspection.md
   - Curaii: curaii/index.md
   - Holofile: holofile/index.md
 
