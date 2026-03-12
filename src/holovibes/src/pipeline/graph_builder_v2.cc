@@ -187,6 +187,7 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
   auto n_freq     = FH_cropped.shape.at(1);
   auto Qin        = fresnel_qin(asarray({z_prop}), {lam, dx, dy, valid_w, valid_h});
   auto FH_Qin     = mul(FH_cropped, Qin, {});
+  // auto FH_Qin = convert(FH_cropped, {Target::CF32, Strat::Real});
 
   // Organize into sub-aperture groups:
   // (accumulation, freq, subap_y, subap_x, subap_h, subap_w)
