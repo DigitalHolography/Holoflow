@@ -20,6 +20,11 @@
     "z": {
       "type": "number",
       "description": "Propagation distance in meters. Can be positive or negative."
+    },
+    "skip_phase_shift": {
+      "type": "boolean",
+      "default": true,
+      "description": "When true, omit the output-plane quadratic phase factor after the FFT. When false, multiply the FFT result by exp(i*pi*(x^2+y^2)/(lambda*z))."
     }
   },
   "required": [
@@ -33,7 +38,8 @@
       "lambda": 5.32e-7,
       "dx": 3.45e-6,
       "dy": 3.45e-6,
-      "z": 0.10
+      "z": 0.10,
+      "skip_phase_shift": true
     }
   ]
 }

@@ -70,6 +70,7 @@
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
+#include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
 #include "holotask/syncs/angular_spectrum.hh"
 #include "holotask/syncs/average.hh"
@@ -167,6 +168,7 @@ void Manager::register_components() {
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
   reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS711EuresysCoaxlinkQSFP+");
   reg_sync<sources::FresnelQinFactory>(registry_, "FresnelQin");
+  reg_sync<sources::FresnelQoutFactory>(registry_, "FresnelQout");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
   reg_sync<syncs::AverageFactory>(registry_, "Average");
   reg_sync<syncs::ConversionFactory>(registry_, "Conversion");

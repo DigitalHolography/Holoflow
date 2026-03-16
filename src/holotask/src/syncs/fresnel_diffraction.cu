@@ -24,7 +24,12 @@ namespace holotask::syncs {
 
 void to_json(nlohmann::json &j, const FresnelDiffractionSettings &fds) {
   j = nlohmann::json{
-      {"lambda", fds.lambda}, {"dx", fds.dx}, {"dy", fds.dy}, {"z", fds.z}, {"axes", fds.axes},
+      {"lambda", fds.lambda},
+      {"dx", fds.dx},
+      {"dy", fds.dy},
+      {"z", fds.z},
+      {"axes", fds.axes},
+      {"skip_phase_shift", fds.skip_phase_shift},
   };
 }
 
@@ -38,21 +43,46 @@ void from_json(const nlohmann::json &j, FresnelDiffractionSettings &fds) {
   } else {
     fds.axes = {-2, -1};
   }
+  if (j.contains("skip_phase_shift")) {
+    j.at("skip_phase_shift").get_to(fds.skip_phase_shift);
+  } else {
+    fds.skip_phase_shift = true;
+  }
 }
 
 FresnelDiffraction::FresnelDiffraction(const FresnelDiffractionSettings &settings,
                                        holoflow::core::TDesc             idesc,
                                        curaii::CufftHandle &&fft_handle, bool is_fast, bool is_real,
-                                       DevPtr<cuFloatComplex> &&d_lens,
+                                       cudaStream_t stream, DevPtr<cuFloatComplex> &&d_lens,
                                        DevPtr<void> &&d_caller_info, std::vector<char> &&lto)
     : settings_(settings), idesc_(std::move(idesc)), fft_handle_(std::move(fft_handle)),
-      is_fast_(is_fast), is_real_(is_real), d_lens_(std::move(d_lens)),
+      is_fast_(is_fast), is_real_(is_real), stream_(stream), height_(0), width_(0), batch_(0),
+      idist_(0), stride_h_(0), istride_(0), d_lens_(std::move(d_lens)),
       d_caller_info_(std::move(d_caller_info)), lto_(std::move(lto)) {}
+
+namespace {
+__global__ void apply_output_phase_shift_kernel(cuFloatComplex *output, const cuFloatComplex *lens,
+                                                long long int batch, int height, int width,
+                                                long long int idist, long long int stride_h,
+                                                long long int istride);
+}
 
 holoflow::core::OpResult FresnelDiffraction::execute(holoflow::core::SyncCtx &ctx) {
   void *idata = ctx.inputs[0].data();
   void *odata = ctx.outputs[0].data();
   CUFFT_CHECK(cufftXtExec(fft_handle_.get(), idata, odata, CUFFT_FORWARD));
+
+  if (!settings_.skip_phase_shift) {
+    constexpr int block_size = 256;
+    auto          total      = batch_ * static_cast<long long int>(height_) *
+                          static_cast<long long int>(width_);
+    int grid_size = static_cast<int>((total + block_size - 1) / block_size);
+    apply_output_phase_shift_kernel<<<grid_size, block_size, 0, stream_>>>(
+        reinterpret_cast<cuFloatComplex *>(odata), d_lens_.get(), batch_, height_, width_, idist_,
+        stride_h_, istride_);
+    CUDA_CHECK(cudaGetLastError());
+  }
+
   return holoflow::core::OpResult::Ok;
 }
 
@@ -67,6 +97,28 @@ struct ApplyLensCallerInfo {
   unsigned long long istride;
   cuFloatComplex    *lens;
 };
+
+__global__ void apply_output_phase_shift_kernel(cuFloatComplex *output, const cuFloatComplex *lens,
+                                                long long int batch, int height, int width,
+                                                long long int idist, long long int stride_h,
+                                                long long int istride) {
+  long long int linear_idx =
+      static_cast<long long int>(blockIdx.x) * blockDim.x + threadIdx.x;
+  long long int plane_size = static_cast<long long int>(height) * width;
+  long long int total_size = batch * plane_size;
+  if (linear_idx >= total_size)
+    return;
+
+  long long int batch_idx = linear_idx / plane_size;
+  long long int local_idx = linear_idx % plane_size;
+  int           row       = static_cast<int>(local_idx / width);
+  int           col       = static_cast<int>(local_idx % width);
+  long long int out_idx   = batch_idx * idist + static_cast<long long int>(row) * stride_h +
+                          static_cast<long long int>(col) * istride;
+
+  output[out_idx] =
+      cuCmulf(output[out_idx], lens[static_cast<long long int>(row) * width + col]);
+}
 
 std::string get_compute_arch() {
   int device{};
@@ -327,6 +379,7 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
     task = dynamic_cast<FresnelDiffraction *>(old_task.release());
     HOLOVIBES_CHECK(task != nullptr, "old_task is not a FresnelDiffraction");
     CUFFT_CHECK(cufftSetStream(task->fft_handle_.get(), ctx.stream));
+    task->stream_ = ctx.stream;
   }
 
   bool is_new = (task == nullptr);
@@ -389,7 +442,8 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
         &work_size, executiontype));
 
     task = new FresnelDiffraction(settings, idesc, std::move(new_fft_handle), is_fast, is_real,
-                                  std::move(d_lens), std::move(d_info), std::move(lto));
+                                  ctx.stream, std::move(d_lens), std::move(d_info),
+                                  std::move(lto));
 
   } else {
     if (optics_changed || lens_size_changed || axes_changed) {
@@ -445,6 +499,13 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
     task->is_fast_  = is_fast;
     task->is_real_  = is_real;
   }
+
+  task->height_   = H;
+  task->width_    = W;
+  task->batch_    = batch;
+  task->idist_    = idist;
+  task->stride_h_ = inembed_1 * istride;
+  task->istride_  = istride;
 
   return std::unique_ptr<holoflow::core::ISyncTask>(task);
 }

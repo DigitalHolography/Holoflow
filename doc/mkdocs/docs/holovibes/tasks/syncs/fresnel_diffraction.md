@@ -5,7 +5,13 @@ $$
 U_z(f_x, f_y) \propto \mathcal{F}\left\{ U_0(x, y) \cdot \exp\!\left(i \frac{\pi}{\lambda z} (x^2 + y^2)\right) \right\}.
 $$
 
-The proportionality constant and output-plane chirp that appear in the analytical Fresnel integral are intentionally omitted. Positive `z` propagates the field forward, negative `z` back-propagates it. 
+By default, `skip_phase_shift=true`, so the output-plane quadratic phase factor is omitted to preserve the current behavior. When `skip_phase_shift=false`, the task multiplies the FFT result by
+
+$$
+\exp\!\left(i \frac{\pi}{\lambda z} (x^2 + y^2)\right)
+$$
+
+after the FFT. The global prefactor from the analytical Fresnel integral is still omitted. Positive `z` propagates the field forward, negative `z` back-propagates it.
 
 See [Wikipedia](https://en.wikipedia.org/wiki/Fresnel_diffraction) for more details on the Fresnel diffraction integral.
 
@@ -22,7 +28,7 @@ This task expects a single complex tensor of shape `(B, H, W)`:
 The dtype must be `complex32` (`CF32`) and the tensor must reside in device memory.
 
 ## Outputs
-One output tensor is produced with the same shape `(B, H, W)`, dtype `complex32`, and device memory location as the input. The data contains the Fresnel-propagated field samples at distance `z` up to a global complex scaling factor.
+One output tensor is produced with the same shape `(B, H, W)`, dtype `complex32`, and device memory location as the input. The data contains the Fresnel-propagated field samples at distance `z`, with the optional output-plane quadratic phase term controlled by `skip_phase_shift`, up to a global complex scaling factor.
 
 ## Inplace
 This task has an inplace relationship between its input and output.

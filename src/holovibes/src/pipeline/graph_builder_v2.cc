@@ -187,7 +187,6 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
   auto n_freq     = FH_cropped.shape.at(1);
   auto Qin        = fresnel_qin(asarray({z_prop}), {lam, dx, dy, valid_w, valid_h});
   auto FH_Qin     = mul(FH_cropped, Qin, {});
-  // auto FH_Qin = convert(FH_cropped, {Target::CF32, Strat::Real});
 
   // Organize into sub-aperture groups:
   // (accumulation, freq, subap_y, subap_x, subap_h, subap_w)
@@ -200,7 +199,7 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
                                    (int64_t)subap_w,
                                }});
   auto FH_grouped = transpose(FH_6d, {{0, 1, 2, 4, 3, 5}});
-
+  
   // Sub-aperture Processing
   auto FH_prop = fft2(FH_grouped, {{-2, -1}});
   auto M0      = mean_abs(FH_prop, {{1}, false});
@@ -531,6 +530,7 @@ DEFINE_UNARY_SYNC_NODE (copy,                                   "copy",         
 DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "ametek_s710_euresys_coaxlink_octo",   "AmetekS710EuresysCoaxlinkOcto",   holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "ametek_s711_euresys_coaxlink_qsfp_+", "AmetekS711EuresysCoaxlinkQSFP+",  holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                      holotask::sources::FresnelQinSettings)
+DEFINE_UNARY_SYNC_NODE (fresnel_qout,                           "fresnel_qout",                        "FresnelQout",                     holotask::sources::FresnelQoutSettings)
 DEFINE_UNARY_SYNC_NODE (memcpy,                                 "memcpy",                              "Memcpy",                          holotask::syncs::MemcpySettings)
 DEFINE_UNARY_SYNC_NODE (convert,                                "conversion",                          "Conversion",                      holotask::syncs::ConversionSettings)
 DEFINE_UNARY_SYNC_NODE (pca,                                    "pca",                                 "Pca",                             holotask::syncs::PcaSettings)

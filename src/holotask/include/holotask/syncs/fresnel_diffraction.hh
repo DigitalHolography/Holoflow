@@ -28,11 +28,12 @@ template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 namespace holotask::syncs {
 
 struct FresnelDiffractionSettings {
-  float            lambda;          ///< Wavelength in meters.
-  float            dx;              ///< Pixel pitch in meters.
-  float            dy;              ///< Pixel pitch in meters.
-  float            z;               ///< Propagation distance in meters.
-  std::vector<int> axes = {-2, -1}; ///< Axes to perform diffraction over.
+  float            lambda;                  ///< Wavelength in meters.
+  float            dx;                      ///< Pixel pitch in meters.
+  float            dy;                      ///< Pixel pitch in meters.
+  float            z;                       ///< Propagation distance in meters.
+  std::vector<int> axes             = {-2, -1}; ///< Axes to perform diffraction over.
+  bool             skip_phase_shift = true; ///< Omit the output-plane quadratic phase term.
 };
 
 void to_json(nlohmann::json &j, const FresnelDiffractionSettings &fds);
@@ -45,7 +46,8 @@ public:
 private:
   FresnelDiffraction(const FresnelDiffractionSettings &settings, holoflow::core::TDesc idesc,
                      curaii::CufftHandle &&fft_handle, bool is_fast, bool is_real,
-                     DevPtr<cuFloatComplex> &&d_lens, DevPtr<void> &&d_caller_info,
+                     cudaStream_t stream, DevPtr<cuFloatComplex> &&d_lens,
+                     DevPtr<void> &&d_caller_info,
                      std::vector<char> &&lto);
 
   friend class FresnelDiffractionFactory;
@@ -55,6 +57,13 @@ private:
   curaii::CufftHandle        fft_handle_;
   bool                       is_fast_;
   bool                       is_real_;
+  cudaStream_t               stream_;
+  int                        height_;
+  int                        width_;
+  long long int              batch_;
+  long long int              idist_;
+  long long int              stride_h_;
+  long long int              istride_;
   DevPtr<cuFloatComplex>     d_lens_;
   DevPtr<void>               d_caller_info_;
   std::vector<char>          lto_;

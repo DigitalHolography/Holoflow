@@ -64,6 +64,7 @@
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
+#include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
 #include "holotask/syncs/angular_spectrum.hh"
 #include "holotask/syncs/average.hh"
@@ -187,6 +188,7 @@ private:
   TDesc filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
   TDesc fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
   TDesc fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
+  TDesc fresnel_qout(const TDesc &Z, holotask::sources::FresnelQoutSettings s);
   TDesc angular_spectrum(const TDesc &X, holotask::syncs::AngularSpectrumSettings s);
   TDesc slide_avg(const TDesc &X, holotask::asyncs::SlidingAverageSettings s);
   void  xy_raw_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
