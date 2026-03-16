@@ -292,9 +292,6 @@ FresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc> input_de
   check(settings.dy > 0.0f, "dy must be positive");
   check(settings.dx == settings.dy, "dx must equal dy");
 
-  // auto odesc  = idesc;
-  // odesc.dtype = holoflow::core::DType::CF32;
-
   holoflow::core::TDesc odesc;
   if (idesc.dtype == holoflow::core::DType::CF32) {
     odesc = idesc;
