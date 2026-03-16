@@ -185,41 +185,41 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
 
   auto FH_cropped = slice(FH, {{{}, {}, y_crop, x_crop}});
   auto n_freq     = FH_cropped.shape.at(1);
-  auto Qin        = fresnel_qin(asarray({z_prop}), {lam, dx, dy, valid_w, valid_h});
-  auto FH_Qin     = mul(FH_cropped, Qin, {});
 
   // Organize into sub-aperture groups:
   // (accumulation, freq, subap_y, subap_x, subap_h, subap_w)
-  auto FH_6d      = reshape(FH_Qin, {{
-                                   (int64_t)s_.pp_accumulation,
-                                   (int64_t)n_freq,
-                                   (int64_t)nb_subap,
-                                   (int64_t)subap_h,
-                                   (int64_t)nb_subap,
-                                   (int64_t)subap_w,
-                               }});
+  auto FH_6d      = reshape(FH_cropped, {{
+                                       (int64_t)s_.pp_accumulation,
+                                       (int64_t)n_freq,
+                                       (int64_t)nb_subap,
+                                       (int64_t)subap_h,
+                                       (int64_t)nb_subap,
+                                       (int64_t)subap_w,
+                                   }});
   auto FH_grouped = transpose(FH_6d, {{0, 1, 2, 4, 3, 5}});
-  
+
   // Sub-aperture Processing
-  auto FH_prop = fft2(FH_grouped, {{-2, -1}});
-  auto M0      = mean_abs(FH_prop, {{1}, false});
-  M0           = mean(M0, {{0}, true});
-  M0           = fftshift(M0, {{-2, -1}});
+  // clang-format off
+  auto ramps   = shack_hartmann_phase_ramps({subap_w, subap_h, dx, dy, nb_subap, nb_subap, z_prop, lam});
+  FH_grouped   = mul(FH_grouped, ramps, {});
+  auto FH_prop = fresnel_diffraction(FH_grouped, {lam, dx, dy, z_prop, {-2, -1}});
+  // clang-format on
+
+  auto M0 = mean_abs(FH_prop, {{1}, false});
+  M0      = mean(M0, {{0}, true});
+  M0      = fftshift(M0, {{-2, -1}});
 
   // Cross Correlation with Reference
-  int64_t sy_ref = nb_subap / 2;
-  int64_t sx_ref = nb_subap / 2;
-  auto    M0_ref = slice(M0, {{{}, sy_ref, sx_ref, {}, {}}});
-
-  auto F_mov      = rfft2(M0, {{-2, -1}});
-  auto F_ref      = rfft2(M0_ref, {{-2, -1}});
-  auto F_ref_conj = conj(F_ref, {});
-
-  auto F_xcorr     = mul(F_mov, F_ref_conj, {});
-  auto F_xcorr_abs = abs(F_xcorr, {});
-  F_xcorr          = div(F_xcorr, F_xcorr_abs, {});
-
-  auto xcorr = irfft2(F_xcorr, {{-2, -1}});
+  int64_t sy_ref      = nb_subap / 2;
+  int64_t sx_ref      = nb_subap / 2;
+  auto    M0_ref      = slice(M0, {{{}, sy_ref, sx_ref, {}, {}}});
+  auto    F_mov       = rfft2(M0, {{-2, -1}});
+  auto    F_ref       = rfft2(M0_ref, {{-2, -1}});
+  auto    F_ref_conj  = conj(F_ref, {});
+  auto    F_xcorr     = mul(F_mov, F_ref_conj, {});
+  auto    F_xcorr_abs = abs(F_xcorr, {});
+  F_xcorr             = div(F_xcorr, F_xcorr_abs, {});
+  auto xcorr          = irfft2(F_xcorr, {{-2, -1}});
 
   // Shack-Hartmann Output Processing
   int64_t h = static_cast<int64_t>(valid_h);
@@ -531,6 +531,7 @@ DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "ametek_s710_eur
 DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "ametek_s711_euresys_coaxlink_qsfp_+", "AmetekS711EuresysCoaxlinkQSFP+",  holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                      holotask::sources::FresnelQinSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_qout,                           "fresnel_qout",                        "FresnelQout",                     holotask::sources::FresnelQoutSettings)
+DEFINE_SOURCE_SYNC_NODE(shack_hartmann_phase_ramps,             "shack_hartmann_phase_ramps",          "ShackHartmannPhaseRamps",         holotask::syncs::ShackHartmannPhaseRampsSettings)
 DEFINE_UNARY_SYNC_NODE (memcpy,                                 "memcpy",                              "Memcpy",                          holotask::syncs::MemcpySettings)
 DEFINE_UNARY_SYNC_NODE (convert,                                "conversion",                          "Conversion",                      holotask::syncs::ConversionSettings)
 DEFINE_UNARY_SYNC_NODE (pca,                                    "pca",                                 "Pca",                             holotask::syncs::PcaSettings)

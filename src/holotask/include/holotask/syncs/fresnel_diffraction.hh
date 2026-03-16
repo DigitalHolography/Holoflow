@@ -34,19 +34,35 @@ struct FresnelDiffractionSettings {
   float            z;                       ///< Propagation distance in meters.
   std::vector<int> axes             = {-2, -1}; ///< Axes to perform diffraction over.
   bool             skip_phase_shift = true; ///< Omit the output-plane quadratic phase term.
+
+  bool operator==(const FresnelDiffractionSettings &other) const {
+    return lambda == other.lambda && dx == other.dx && dy == other.dy && z == other.z &&
+           axes == other.axes && skip_phase_shift == other.skip_phase_shift;
+  }
 };
 
 void to_json(nlohmann::json &j, const FresnelDiffractionSettings &fds);
 void from_json(const nlohmann::json &j, FresnelDiffractionSettings &fds);
 
+struct LaunchOffset {
+  size_t in_bytes;
+  size_t out_bytes;
+};
+
 class FresnelDiffraction : public holoflow::core::ISyncTask {
 public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
+  const holoflow::core::TDesc      &get_idesc() const { return idesc_; }
+  const FresnelDiffractionSettings &get_settings() const { return settings_; }
+  void                              update_stream(cudaStream_t stream);
+
 private:
   FresnelDiffraction(const FresnelDiffractionSettings &settings, holoflow::core::TDesc idesc,
-                     curaii::CufftHandle &&fft_handle, bool is_fast, bool is_real,
-                     cudaStream_t stream, DevPtr<cuFloatComplex> &&d_lens,
+                     curaii::CufftHandle &&fft_handle, std::vector<LaunchOffset> offsets,
+                     size_t inner_batch, int height, int width, long long out_idist,
+                     long long out_stride_h, long long out_istride, cudaStream_t stream,
+                     DevPtr<cuFloatComplex> &&d_lens,
                      DevPtr<void> &&d_caller_info,
                      std::vector<char> &&lto);
 
@@ -55,15 +71,15 @@ private:
   FresnelDiffractionSettings settings_;
   holoflow::core::TDesc      idesc_;
   curaii::CufftHandle        fft_handle_;
-  bool                       is_fast_;
-  bool                       is_real_;
+
+  std::vector<LaunchOffset> offsets_;
+  size_t                   inner_batch_;
   cudaStream_t               stream_;
   int                        height_;
   int                        width_;
-  long long int              batch_;
-  long long int              idist_;
-  long long int              stride_h_;
-  long long int              istride_;
+  long long int              out_idist_;
+  long long int              out_stride_h_;
+  long long int              out_istride_;
   DevPtr<cuFloatComplex>     d_lens_;
   DevPtr<void>               d_caller_info_;
   std::vector<char>          lto_;

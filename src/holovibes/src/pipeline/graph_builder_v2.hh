@@ -80,6 +80,7 @@
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
 #include "holotask/syncs/rotation.hh"
+#include "holotask/syncs/shack_hartmann_phase_ramps.hh"
 #include "holotask/syncs/stft.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike.hh"
@@ -189,6 +190,7 @@ private:
   TDesc fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
   TDesc fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
   TDesc fresnel_qout(const TDesc &Z, holotask::sources::FresnelQoutSettings s);
+  TDesc shack_hartmann_phase_ramps(holotask::syncs::ShackHartmannPhaseRampsSettings s);
   TDesc angular_spectrum(const TDesc &X, holotask::syncs::AngularSpectrumSettings s);
   TDesc slide_avg(const TDesc &X, holotask::asyncs::SlidingAverageSettings s);
   void  xy_raw_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
