@@ -33,17 +33,13 @@
 
 namespace holotask::syncs {
 
-void to_json(nlohmann::json& j, const ZernikeSettings& s) {
+void to_json(nlohmann::json &j, const ZernikeSettings &s) {
   j = nlohmann::json{
-      {"indexes", s.indexes},
-      {"lambda", s.lambda},
-      {"dx", s.dx},
-      {"dy", s.dy},
-      {"z", s.z},
+      {"indexes", s.indexes}, {"lambda", s.lambda}, {"dx", s.dx}, {"dy", s.dy}, {"z", s.z},
   };
 }
 
-void from_json(const nlohmann::json& j, ZernikeSettings& s) {
+void from_json(const nlohmann::json &j, ZernikeSettings &s) {
   s.indexes.clear();
 
   if (j.contains("indexes")) {
@@ -60,9 +56,9 @@ void from_json(const nlohmann::json& j, ZernikeSettings& s) {
 
 namespace {
 
-constexpr std::size_t kMaxSupportedModes = 5; // Noll indices 2..6
+constexpr std::size_t kMaxSupportedModes = 9; // Noll indices 2..10
 
-inline void check(bool condition, const std::string& msg) {
+inline void check(bool condition, const std::string &msg) {
   if (!condition) {
     logger()->error("[ZernikeFactory::infer] error: {}", msg);
     throw std::invalid_argument("ZernikeFactory inference error: " + msg);
@@ -88,6 +84,10 @@ struct ZernikeEval {
 ///   Z4: defocus
 ///   Z5: oblique astigmatism
 ///   Z6: vertical astigmatism
+///   Z7: vertical trefoil
+///   Z8: vertical coma
+///   Z9: horizontal coma
+///   Z10: oblique trefoil
 ///
 /// The coordinates (x_n, y_n) are normalized by the pupil radius:
 ///   x_n = X / R
@@ -99,45 +99,74 @@ struct ZernikeEval {
 ZernikeEval eval_zernike_noll(int noll_index, float x_n, float y_n) {
   const float sqrt3 = std::sqrt(3.0f);
   const float sqrt6 = std::sqrt(6.0f);
+  const float sqrt8 = std::sqrt(8.0f);
 
   switch (noll_index) {
-    case 2:
-      return {
-          .value  = 2.0f * x_n,
-          .d_dx_n = 2.0f,
-          .d_dy_n = 0.0f,
-      };
+  case 2:
+    return {
+        .value  = 2.0f * x_n,
+        .d_dx_n = 2.0f,
+        .d_dy_n = 0.0f,
+    };
 
-    case 3:
-      return {
-          .value  = 2.0f * y_n,
-          .d_dx_n = 0.0f,
-          .d_dy_n = 2.0f,
-      };
+  case 3:
+    return {
+        .value  = 2.0f * y_n,
+        .d_dx_n = 0.0f,
+        .d_dy_n = 2.0f,
+    };
 
-    case 4:
-      return {
-          .value  = sqrt3 * (2.0f * (x_n * x_n + y_n * y_n) - 1.0f),
-          .d_dx_n = 4.0f * sqrt3 * x_n,
-          .d_dy_n = 4.0f * sqrt3 * y_n,
-      };
+  case 4:
+    return {
+        .value  = sqrt3 * (2.0f * (x_n * x_n + y_n * y_n) - 1.0f),
+        .d_dx_n = 4.0f * sqrt3 * x_n,
+        .d_dy_n = 4.0f * sqrt3 * y_n,
+    };
 
-    case 5:
-      return {
-          .value  = 2.0f * sqrt6 * x_n * y_n,
-          .d_dx_n = 2.0f * sqrt6 * y_n,
-          .d_dy_n = 2.0f * sqrt6 * x_n,
-      };
+  case 5:
+    return {
+        .value  = 2.0f * sqrt6 * x_n * y_n,
+        .d_dx_n = 2.0f * sqrt6 * y_n,
+        .d_dy_n = 2.0f * sqrt6 * x_n,
+    };
 
-    case 6:
-      return {
-          .value  = sqrt6 * (x_n * x_n - y_n * y_n),
-          .d_dx_n = 2.0f * sqrt6 * x_n,
-          .d_dy_n = -2.0f * sqrt6 * y_n,
-      };
+  case 6:
+    return {
+        .value  = sqrt6 * (x_n * x_n - y_n * y_n),
+        .d_dx_n = 2.0f * sqrt6 * x_n,
+        .d_dy_n = -2.0f * sqrt6 * y_n,
+    };
 
-    default:
-      throw std::invalid_argument("Unsupported Noll index");
+  case 7:
+    return {
+        .value  = sqrt8 * y_n * (3.0f * x_n * x_n - y_n * y_n),
+        .d_dx_n = 6.0f * sqrt8 * x_n * y_n,
+        .d_dy_n = 3.0f * sqrt8 * (x_n * x_n - y_n * y_n),
+    };
+
+  case 8:
+    return {
+        .value  = sqrt8 * y_n * (3.0f * x_n * x_n + 3.0f * y_n * y_n - 2.0f),
+        .d_dx_n = 6.0f * sqrt8 * x_n * y_n,
+        .d_dy_n = sqrt8 * (3.0f * x_n * x_n + 9.0f * y_n * y_n - 2.0f),
+    };
+
+  case 9:
+    return {
+        .value  = sqrt8 * x_n * (3.0f * x_n * x_n + 3.0f * y_n * y_n - 2.0f),
+        .d_dx_n = sqrt8 * (9.0f * x_n * x_n + 3.0f * y_n * y_n - 2.0f),
+        .d_dy_n = 6.0f * sqrt8 * x_n * y_n,
+    };
+
+  case 10:
+    return {
+        .value  = sqrt8 * x_n * (x_n * x_n - 3.0f * y_n * y_n),
+        .d_dx_n = 3.0f * sqrt8 * (x_n * x_n - y_n * y_n),
+        .d_dy_n = -6.0f * sqrt8 * x_n * y_n,
+    };
+
+  default:
+    throw std::invalid_argument("Unsupported Noll index");
   }
 }
 
@@ -146,9 +175,10 @@ ZernikeEval eval_zernike_noll(int noll_index, float x_n, float y_n) {
 /// `base` points to the first sample of the 1D line.
 /// `index` is the logical sample index along the line.
 /// `stride_bytes` is the byte stride between two consecutive logical samples.
-float load_strided_1d(const float* base, int index, std::ptrdiff_t stride_bytes) {
-  const auto* ptr = reinterpret_cast<const float*>(
-      reinterpret_cast<const std::uint8_t*>(base) + static_cast<std::ptrdiff_t>(index) * stride_bytes);
+float load_strided_1d(const float *base, int index, std::ptrdiff_t stride_bytes) {
+  const auto *ptr =
+      reinterpret_cast<const float *>(reinterpret_cast<const std::uint8_t *>(base) +
+                                      static_cast<std::ptrdiff_t>(index) * stride_bytes);
   return *ptr;
 }
 
@@ -170,17 +200,17 @@ float load_strided_1d(const float* base, int index, std::ptrdiff_t stride_bytes)
 /// locally smooth near its maximum.
 ///
 /// Border peaks or nearly flat curvature fall back to the integer location.
-float parabolic_peak_1d(const float* line, int peak_idx, int size, std::ptrdiff_t stride_bytes) {
+float parabolic_peak_1d(const float *line, int peak_idx, int size, std::ptrdiff_t stride_bytes) {
   if (peak_idx <= 0 || peak_idx >= size - 1) {
     return static_cast<float>(peak_idx);
   }
 
   const float v_m = load_strided_1d(line, peak_idx - 1, stride_bytes);
-  const float v_0 = load_strided_1d(line, peak_idx,     stride_bytes);
+  const float v_0 = load_strided_1d(line, peak_idx, stride_bytes);
   const float v_p = load_strided_1d(line, peak_idx + 1, stride_bytes);
 
-  const float denom = v_m - 2.0f * v_0 + v_p;
-  constexpr float kEps = 1e-9f;
+  const float     denom = v_m - 2.0f * v_0 + v_p;
+  constexpr float kEps  = 1e-9f;
 
   if (std::abs(denom) <= kEps) {
     return static_cast<float>(peak_idx);
@@ -194,14 +224,11 @@ float parabolic_peak_1d(const float* line, int peak_idx, int size, std::ptrdiff_
 ///
 /// The subaperture tensor is assumed to have shape [win_h, win_w] and to be
 /// addressed using desc.strides[3] and desc.strides[4].
-const float* subap_value_ptr(const float* subap_base,
-                             int y,
-                             int x,
-                             const holoflow::core::TDesc& desc) {
-  return reinterpret_cast<const float*>(
-      reinterpret_cast<const std::uint8_t*>(subap_base)
-      + static_cast<std::ptrdiff_t>(y) * desc.strides[3]
-      + static_cast<std::ptrdiff_t>(x) * desc.strides[4]);
+const float *subap_value_ptr(const float *subap_base, int y, int x,
+                             const holoflow::core::TDesc &desc) {
+  return reinterpret_cast<const float *>(reinterpret_cast<const std::uint8_t *>(subap_base) +
+                                         static_cast<std::ptrdiff_t>(y) * desc.strides[3] +
+                                         static_cast<std::ptrdiff_t>(x) * desc.strides[4]);
 }
 
 /// Input tensor layout:
@@ -213,9 +240,9 @@ const float* subap_value_ptr(const float* subap_base,
 ///
 /// Returned shifts are relative to the center of the propagated subaperture,
 /// in propagated-plane pixels.
-std::vector<ShiftPx> recover_spot_shifts(const holoflow::core::TView& view) {
-  const auto& desc = view.desc;
-  auto* data = reinterpret_cast<float*>(view.storage->ptr + desc.offset);
+std::vector<ShiftPx> recover_spot_shifts(const holoflow::core::TView &view) {
+  const auto &desc = view.desc;
+  auto       *data = reinterpret_cast<float *>(view.storage->ptr + desc.offset);
 
   const auto nb_sub_y = static_cast<std::size_t>(desc.shape[1]);
   const auto nb_sub_x = static_cast<std::size_t>(desc.shape[2]);
@@ -230,35 +257,35 @@ std::vector<ShiftPx> recover_spot_shifts(const holoflow::core::TView& view) {
 
   for (std::size_t sy = 0; sy < nb_sub_y; ++sy) {
     for (std::size_t sx = 0; sx < nb_sub_x; ++sx) {
-      auto* subap_base = reinterpret_cast<float*>(
-          reinterpret_cast<std::uint8_t*>(data)
-          + static_cast<std::ptrdiff_t>(sy) * desc.strides[1]
-          + static_cast<std::ptrdiff_t>(sx) * desc.strides[2]);
+      auto *subap_base =
+          reinterpret_cast<float *>(reinterpret_cast<std::uint8_t *>(data) +
+                                    static_cast<std::ptrdiff_t>(sy) * desc.strides[1] +
+                                    static_cast<std::ptrdiff_t>(sx) * desc.strides[2]);
 
       float best_value = -std::numeric_limits<float>::infinity();
-      int peak_y = 0;
-      int peak_x = 0;
+      int   peak_y     = 0;
+      int   peak_x     = 0;
 
       for (int y = 0; y < static_cast<int>(win_h); ++y) {
         for (int x = 0; x < static_cast<int>(win_w); ++x) {
           const float value = *subap_value_ptr(subap_base, y, x, desc);
           if (value > best_value) {
             best_value = value;
-            peak_y = y;
-            peak_x = x;
+            peak_y     = y;
+            peak_x     = x;
           }
         }
       }
 
       // Column through the discrete peak: vary y, keep x fixed.
-      const auto* peak_column = reinterpret_cast<const float*>(
-          reinterpret_cast<const std::uint8_t*>(subap_base)
-          + static_cast<std::ptrdiff_t>(peak_x) * desc.strides[4]);
+      const auto *peak_column =
+          reinterpret_cast<const float *>(reinterpret_cast<const std::uint8_t *>(subap_base) +
+                                          static_cast<std::ptrdiff_t>(peak_x) * desc.strides[4]);
 
       // Row through the discrete peak: vary x, keep y fixed.
-      const auto* peak_row = reinterpret_cast<const float*>(
-          reinterpret_cast<const std::uint8_t*>(subap_base)
-          + static_cast<std::ptrdiff_t>(peak_y) * desc.strides[3]);
+      const auto *peak_row =
+          reinterpret_cast<const float *>(reinterpret_cast<const std::uint8_t *>(subap_base) +
+                                          static_cast<std::ptrdiff_t>(peak_y) * desc.strides[3]);
 
       const float refined_y =
           parabolic_peak_1d(peak_column, peak_y, static_cast<int>(win_h), desc.strides[3]);
@@ -283,19 +310,18 @@ std::vector<ShiftPx> recover_spot_shifts(const holoflow::core::TView& view) {
 /// Since we only support 5 modes max, a fixed-size stack array is sufficient.
 std::array<float, kMaxSupportedModes>
 solve_linear_system(std::array<std::array<float, kMaxSupportedModes>, kMaxSupportedModes> A,
-                    std::array<float, kMaxSupportedModes> b,
-                    std::size_t n) {
+                    std::array<float, kMaxSupportedModes> b, std::size_t n) {
   std::array<float, kMaxSupportedModes> x{};
-  constexpr float kSingularEps = 1e-12f;
+  constexpr float                       kSingularEps = 1e-12f;
 
   for (std::size_t col = 0; col < n; ++col) {
     std::size_t pivot = col;
-    float best = std::abs(A[col][col]);
+    float       best  = std::abs(A[col][col]);
 
     for (std::size_t row = col + 1; row < n; ++row) {
       const float candidate = std::abs(A[row][col]);
       if (candidate > best) {
-        best = candidate;
+        best  = candidate;
         pivot = row;
       }
     }
@@ -341,16 +367,16 @@ solve_linear_system(std::array<std::array<float, kMaxSupportedModes>, kMaxSuppor
 
 } // namespace
 
-Zernike::Zernike(const ZernikeSettings& settings) : settings_(settings) {}
+Zernike::Zernike(const ZernikeSettings &settings) : settings_(settings) {}
 
-holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx& ctx) {
+holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
   const auto shifts = recover_spot_shifts(ctx.inputs[0]);
 
-  const auto& desc = ctx.inputs[0].desc;
-  const auto nb_sub_y = static_cast<std::size_t>(desc.shape[1]);
-  const auto nb_sub_x = static_cast<std::size_t>(desc.shape[2]);
-  const auto win_h    = static_cast<std::size_t>(desc.shape[3]);
-  const auto win_w    = static_cast<std::size_t>(desc.shape[4]);
+  const auto &desc     = ctx.inputs[0].desc;
+  const auto  nb_sub_y = static_cast<std::size_t>(desc.shape[1]);
+  const auto  nb_sub_x = static_cast<std::size_t>(desc.shape[2]);
+  const auto  win_h    = static_cast<std::size_t>(desc.shape[3]);
+  const auto  win_w    = static_cast<std::size_t>(desc.shape[4]);
 
   // Physical pitch between neighboring subaperture centers in the pupil plane.
   //
@@ -385,11 +411,11 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx& ctx) {
   //
   // Reference:
   //   https://en.wikipedia.org/wiki/Fresnel_diffraction
-  const float dx_out = (settings_.lambda * settings_.z)
-                     / (static_cast<float>(win_w) * settings_.dx);
+  const float dx_out =
+      (settings_.lambda * settings_.z) / (static_cast<float>(win_w) * settings_.dx);
 
-  const float dy_out = (settings_.lambda * settings_.z)
-                     / (static_cast<float>(win_h) * settings_.dy);
+  const float dy_out =
+      (settings_.lambda * settings_.z) / (static_cast<float>(win_h) * settings_.dy);
 
   const std::size_t n_modes = settings_.indexes.size();
 
@@ -406,7 +432,7 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx& ctx) {
   //
   //   (G^T G) a = G^T s
   std::array<std::array<float, kMaxSupportedModes>, kMaxSupportedModes> GtG{};
-  std::array<float, kMaxSupportedModes> Gts{};
+  std::array<float, kMaxSupportedModes>                                 Gts{};
 
   constexpr float ridge = 1e-9f;
 
@@ -427,7 +453,7 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx& ctx) {
         continue;
       }
 
-      const auto& shift = shifts[sy * nb_sub_x + sx];
+      const auto &shift = shifts[sy * nb_sub_x + sx];
 
       // Convert spot displacement to wavefront slope.
       //
@@ -492,7 +518,7 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx& ctx) {
   //   phi = (2π / λ) * W
   //
   // where W is the wavefront / OPD coefficient in meters.
-  auto* out_ptr = reinterpret_cast<float*>(ctx.outputs[0].data());
+  auto *out_ptr = reinterpret_cast<float *>(ctx.outputs[0].data());
   for (std::size_t i = 0; i < n_modes; ++i) {
     out_ptr[i] = coefs_m[i] * (2.0f * static_cast<float>(M_PI) / settings_.lambda);
   }
@@ -502,12 +528,12 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx& ctx) {
 
 holoflow::core::InferResult
 ZernikeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
-                      const nlohmann::json& jsettings) const {
+                      const nlohmann::json                  &jsettings) const {
   const auto settings = jsettings.get<ZernikeSettings>();
 
   check(input_descs.size() == 1, "Zernike task must have exactly one input");
 
-  const auto& idesc = input_descs[0];
+  const auto &idesc = input_descs[0];
   check(idesc.mem_loc == holoflow::core::MemLoc::Host, "Input memory location must be Host");
   check(idesc.dtype == holoflow::core::DType::F32, "Input dtype must be F32");
   check(idesc.rank() == 5, "Input rank must be 5");
@@ -521,7 +547,7 @@ ZernikeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(settings.indexes.size() <= kMaxSupportedModes, "Too many requested Zernike modes");
 
   for (int idx : settings.indexes) {
-    check(idx >= 2 && idx <= 6, "Only Noll indexes 2..6 are supported");
+    check(idx >= 2 && idx <= 10, "Only Noll indexes 2..10 are supported");
   }
 
   auto unique_indexes = settings.indexes;
@@ -529,10 +555,8 @@ ZernikeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(std::adjacent_find(unique_indexes.begin(), unique_indexes.end()) == unique_indexes.end(),
         "indexes must be unique");
 
-  holoflow::core::TDesc output_desc(
-      {settings.indexes.size()},
-      holoflow::core::DType::F32,
-      holoflow::core::MemLoc::Host);
+  holoflow::core::TDesc output_desc({settings.indexes.size()}, holoflow::core::DType::F32,
+                                    holoflow::core::MemLoc::Host);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
@@ -546,8 +570,8 @@ ZernikeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
 std::unique_ptr<holoflow::core::ISyncTask>
 ZernikeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
-                       const nlohmann::json& jsettings,
-                       const holoflow::core::SyncCreateCtx& ctx) const {
+                       const nlohmann::json                  &jsettings,
+                       const holoflow::core::SyncCreateCtx   &ctx) const {
   (void)ctx;
   infer(input_descs, jsettings);
 

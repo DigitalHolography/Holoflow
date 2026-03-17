@@ -393,7 +393,9 @@ void MainWindow::on_start_pipeline_success() {
     const bool has_enabled_zernike =
         autofocus_widget->is_z2_enabled() || autofocus_widget->is_z3_enabled() ||
         autofocus_widget->is_z4_enabled() || autofocus_widget->is_z5_enabled() ||
-        autofocus_widget->is_z6_enabled();
+        autofocus_widget->is_z6_enabled() || autofocus_widget->is_z7_enabled() ||
+        autofocus_widget->is_z8_enabled() || autofocus_widget->is_z9_enabled() ||
+        autofocus_widget->is_z10_enabled();
     if (!has_enabled_zernike) {
       autofocus_widget->reset_zernike_values();
     }
@@ -542,7 +544,9 @@ void MainWindow::on_update_pipeline_success() {
     const bool has_enabled_zernike =
         autofocus_widget->is_z2_enabled() || autofocus_widget->is_z3_enabled() ||
         autofocus_widget->is_z4_enabled() || autofocus_widget->is_z5_enabled() ||
-        autofocus_widget->is_z6_enabled();
+        autofocus_widget->is_z6_enabled() || autofocus_widget->is_z7_enabled() ||
+        autofocus_widget->is_z8_enabled() || autofocus_widget->is_z9_enabled() ||
+        autofocus_widget->is_z10_enabled();
     if (!has_enabled_zernike) {
       autofocus_widget->reset_zernike_values();
     }
@@ -1039,6 +1043,22 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     if (render_widget_->autofocus_widget()->is_z6_enabled()) {
       s.autofocus_zernike_orders.push_back(6);
     }
+
+    if (render_widget_->autofocus_widget()->is_z7_enabled()) {
+      s.autofocus_zernike_orders.push_back(7);
+    }
+
+    if (render_widget_->autofocus_widget()->is_z8_enabled()) {
+      s.autofocus_zernike_orders.push_back(8);
+    }
+
+    if (render_widget_->autofocus_widget()->is_z9_enabled()) {
+      s.autofocus_zernike_orders.push_back(9);
+    }
+
+    if (render_widget_->autofocus_widget()->is_z10_enabled()) {
+      s.autofocus_zernike_orders.push_back(10);
+    }
   }
 
   return s;
@@ -1147,7 +1167,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   }
 
   // --- View Settings ---
-  { view_widget_->set_cuts_3d_enabled(s.view_3d_cuts); }
+  {
+    view_widget_->set_cuts_3d_enabled(s.view_3d_cuts);
+  }
 
   // --- Post-processing Settings ---
   {

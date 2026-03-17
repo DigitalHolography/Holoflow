@@ -13,7 +13,7 @@
 # limitations under the License.
 
 function(project_options)
-    cmake_parse_arguments(OP "ENABLE_IPO;ENABLE_WARNINGS;ENABLE_WARNINGS_AS_ERRORS" "" "" ${ARGN})
+    cmake_parse_arguments(OP "" "ENABLE_IPO;ENABLE_WARNINGS;ENABLE_WARNINGS_AS_ERRORS" "" ${ARGN})
 
     add_library(project_options INTERFACE)
 

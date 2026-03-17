@@ -40,15 +40,22 @@ public:
   double get_z4() const;
   double get_z5() const;
   double get_z6() const;
+  double get_z7() const;
+  double get_z8() const;
+  double get_z9() const;
+  double get_z10() const;
 
   void set_z2(double value);
   void set_z3(double value);
   void set_z4(double value);
   void set_z5(double value);
   void set_z6(double value);
+  void set_z7(double value);
+  void set_z8(double value);
+  void set_z9(double value);
+  void set_z10(double value);
   void set_zernike_value(int noll_index, double value);
-  void set_zernike_values(const std::vector<int> &noll_indexes,
-                          const std::vector<float> &values);
+  void set_zernike_values(const std::vector<int> &noll_indexes, const std::vector<float> &values);
   void reset_zernike_values();
 
   // Per-coefficient enable flags
@@ -57,12 +64,20 @@ public:
   bool is_z4_enabled() const;
   bool is_z5_enabled() const;
   bool is_z6_enabled() const;
+  bool is_z7_enabled() const;
+  bool is_z8_enabled() const;
+  bool is_z9_enabled() const;
+  bool is_z10_enabled() const;
 
   void set_z2_enabled(bool enabled);
   void set_z3_enabled(bool enabled);
   void set_z4_enabled(bool enabled);
   void set_z5_enabled(bool enabled);
   void set_z6_enabled(bool enabled);
+  void set_z7_enabled(bool enabled);
+  void set_z8_enabled(bool enabled);
+  void set_z9_enabled(bool enabled);
+  void set_z10_enabled(bool enabled);
 
   // Visualization toggles
   bool show_reconstructed_phase() const;
@@ -81,6 +96,10 @@ public:
   QCheckBox *z4_checkbox();
   QCheckBox *z5_checkbox();
   QCheckBox *z6_checkbox();
+  QCheckBox *z7_checkbox();
+  QCheckBox *z8_checkbox();
+  QCheckBox *z9_checkbox();
+  QCheckBox *z10_checkbox();
 
   QCheckBox *reconstructed_phase_checkbox();
   QCheckBox *shack_hartmann_sensor_view_checkbox();
@@ -101,11 +120,19 @@ private:
   QCheckBox      *z4_checkbox_;
   QCheckBox      *z5_checkbox_;
   QCheckBox      *z6_checkbox_;
+  QCheckBox      *z7_checkbox_;
+  QCheckBox      *z8_checkbox_;
+  QCheckBox      *z9_checkbox_;
+  QCheckBox      *z10_checkbox_;
   QDoubleSpinBox *z2_spin_;
   QDoubleSpinBox *z3_spin_;
   QDoubleSpinBox *z4_spin_;
   QDoubleSpinBox *z5_spin_;
   QDoubleSpinBox *z6_spin_;
+  QDoubleSpinBox *z7_spin_;
+  QDoubleSpinBox *z8_spin_;
+  QDoubleSpinBox *z9_spin_;
+  QDoubleSpinBox *z10_spin_;
 
   QCheckBox *reconstructed_phase_checkbox_;
   QCheckBox *shack_hartmann_sensor_view_checkbox_;

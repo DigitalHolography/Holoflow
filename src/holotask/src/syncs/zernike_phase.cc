@@ -56,6 +56,7 @@ inline void check(bool condition, const std::string &msg) {
 float eval_zernike_noll_value(int noll_index, float x_n, float y_n) {
   const float sqrt3 = std::sqrt(3.0f);
   const float sqrt6 = std::sqrt(6.0f);
+  const float sqrt8 = std::sqrt(8.0f);
 
   switch (noll_index) {
   case 2:
@@ -72,6 +73,18 @@ float eval_zernike_noll_value(int noll_index, float x_n, float y_n) {
 
   case 6:
     return sqrt6 * (x_n * x_n - y_n * y_n);
+
+  case 7:
+    return sqrt8 * y_n * (3.0f * x_n * x_n - y_n * y_n);
+
+  case 8:
+    return sqrt8 * y_n * (3.0f * x_n * x_n + 3.0f * y_n * y_n - 2.0f);
+
+  case 9:
+    return sqrt8 * x_n * (3.0f * x_n * x_n + 3.0f * y_n * y_n - 2.0f);
+
+  case 10:
+    return sqrt8 * x_n * (x_n * x_n - 3.0f * y_n * y_n);
 
   default:
     throw std::invalid_argument("Unsupported Noll index");
@@ -152,7 +165,7 @@ ZernikePhaseFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
   check(!settings.indexes.empty(), "indexes must not be empty");
   for (int idx : settings.indexes) {
-    check(idx >= 2 && idx <= 6, "Only zernike Noll indexes 2..6 are supported");
+    check(idx >= 2 && idx <= 10, "Only zernike Noll indexes 2..10 are supported");
   }
 
   auto uniq = settings.indexes;
