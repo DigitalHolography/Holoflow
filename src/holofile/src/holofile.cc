@@ -168,7 +168,7 @@ void Reader::seek(std::size_t frame_index) {
   size_t bytes_per_frame  = bits_per_frame / 8;
 
   size_t offset = sizeof(header_) + frame_index * bytes_per_frame;
-  if (fseek(file_.get(), static_cast<long>(offset), SEEK_SET) != 0) {
+  if (_fseeki64(file_.get(), static_cast<int64_t>(offset), SEEK_SET) != 0) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to seek:");
   }
