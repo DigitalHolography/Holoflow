@@ -537,6 +537,8 @@ ZernikeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(idesc.mem_loc == holoflow::core::MemLoc::Host, "Input memory location must be Host");
   check(idesc.dtype == holoflow::core::DType::F32, "Input dtype must be F32");
   check(idesc.rank() == 5, "Input rank must be 5");
+  check(idesc.shape[1] == idesc.shape[2], "Input subaperture grid must be square");
+  check((idesc.shape[1] % 2) == 1, "Input subaperture grid size must be odd");
 
   check(settings.lambda > 0.0f, "Wavelength must be > 0");
   check(settings.dx > 0.0f, "Pixel pitch dx must be > 0");

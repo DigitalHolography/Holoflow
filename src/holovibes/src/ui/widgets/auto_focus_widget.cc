@@ -18,6 +18,7 @@
 
 #include <QGridLayout>
 #include <QLabel>
+#include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSpacerItem>
 #include <QVBoxLayout>
@@ -26,14 +27,26 @@ namespace holovibes::ui {
 
 namespace {
 
-constexpr int kFixedNbSubaps = 5;
-constexpr int kFixedNbIter   = 1;
+constexpr int kDefaultNbSubaps = 5;
+constexpr int kMinNbSubaps     = 3;
+constexpr int kMaxNbSubaps     = 99;
+constexpr int kFixedNbIter     = 1;
 
 QSpinBox *create_fixed_spin_box(QWidget *parent, int value, const QString &tooltip) {
   auto *spin_box = new QSpinBox(parent);
   spin_box->setRange(value, value);
   spin_box->setValue(value);
   spin_box->setEnabled(false);
+  spin_box->setToolTip(tooltip);
+  return spin_box;
+}
+
+QSpinBox *create_odd_spin_box(QWidget *parent, int value, int min_value, int max_value,
+                              const QString &tooltip) {
+  auto *spin_box = new QSpinBox(parent);
+  spin_box->setRange(min_value, max_value);
+  spin_box->setSingleStep(2);
+  spin_box->setValue(value);
   spin_box->setToolTip(tooltip);
   return spin_box;
 }
@@ -64,7 +77,7 @@ AutoFocusWidget::AutoFocusWidget(QWidget *parent) : QGroupBox("Auto Focus", pare
   setChecked(false);
 }
 
-// Fixed configuration
+// Configuration
 int  AutoFocusWidget::get_nb_subaps() const { return nb_subaps_spin_->value(); }
 int  AutoFocusWidget::get_nb_iter() const { return nb_iter_spin_->value(); }
 bool AutoFocusWidget::is_enabled() const { return isChecked(); }
@@ -244,8 +257,9 @@ void AutoFocusWidget::setup_ui() {
     ++row;
   };
 
-  nb_subaps_spin_ = create_fixed_spin_box(content_container_, kFixedNbSubaps,
-                                          "Only 5 subapertures are supported for now.");
+  nb_subaps_spin_ =
+      create_odd_spin_box(content_container_, kDefaultNbSubaps, kMinNbSubaps, kMaxNbSubaps,
+                          "Choose an odd number of subapertures per dimension.");
   add_label_widget_row("Nb Subaps:", nb_subaps_spin_);
 
   nb_iter_spin_ = create_fixed_spin_box(content_container_, kFixedNbIter,
@@ -284,6 +298,16 @@ void AutoFocusWidget::setup_ui() {
 
 void AutoFocusWidget::connect_signals() {
   connect(this, &QGroupBox::toggled, this, &AutoFocusWidget::settings_changed);
+
+  connect(nb_subaps_spin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
+    if ((value % 2) == 0) {
+      const int      corrected = value < nb_subaps_spin_->maximum() ? value + 1 : value - 1;
+      QSignalBlocker blocker(nb_subaps_spin_);
+      nb_subaps_spin_->setValue(corrected);
+    }
+
+    emit settings_changed();
+  });
 
   connect(z2_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
   connect(z3_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);

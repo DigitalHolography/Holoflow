@@ -163,7 +163,14 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_time_frequency_analysis(TDesc H) {
 }
 
 GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
-  auto nb_subap = 5ULL;
+  if (s_.autofocus_nb_subaps <= 0) {
+    throw std::invalid_argument("autofocus_nb_subaps must be positive");
+  }
+  if ((s_.autofocus_nb_subaps % 2) == 0) {
+    throw std::invalid_argument("autofocus_nb_subaps must be odd");
+  }
+
+  auto nb_subap = static_cast<size_t>(s_.autofocus_nb_subaps);
   auto lam      = s_.spacial_lambda;
   auto dx       = s_.spacial_pixel_size;
   auto dy       = s_.spacial_pixel_size;
@@ -177,6 +184,9 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
   // Spatial Cropping & Fresnel Lens Application
   auto subap_w = FH.shape.at(3) / nb_subap;
   auto subap_h = FH.shape.at(2) / nb_subap;
+  if (subap_w == 0 || subap_h == 0) {
+    throw std::invalid_argument("autofocus_nb_subaps is too large for the current frame size");
+  }
   auto valid_w = subap_w * nb_subap;
   auto valid_h = subap_h * nb_subap;
 
@@ -232,6 +242,9 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
   M0_sh_disp      = memcpy(M0_sh_disp, {Host});
   M0_sh_disp      = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
   shack_hartmann_display(M0_sh_disp, {});
+
+  h = static_cast<int64_t>(xcorr.shape.at(3) * nb_subap);
+  w = static_cast<int64_t>(xcorr.shape.at(4) * nb_subap);
 
   auto xcorr_flattened = fftshift(xcorr, {{-2, -1}});
   xcorr_flattened      = normalize(xcorr_flattened, {{-2, -1}, 0.0f, 255.0f});
