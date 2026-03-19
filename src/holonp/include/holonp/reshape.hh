@@ -59,11 +59,11 @@ public:
   void                         update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
-  bool                  is_view_ = false;
+  bool                  is_view_;
   ReshapeSettings       settings_;
   holoflow::core::TDesc idesc_;
 
-  // Copy-only params
+  // Copy-only parameters
   size_t       ndim_        = 0;
   size_t       total_elems_ = 0;
   size_t       elem_size_   = 0;

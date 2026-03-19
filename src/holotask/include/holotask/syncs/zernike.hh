@@ -22,10 +22,10 @@ namespace holotask::syncs {
 
 struct ZernikeSettings {
   std::vector<int> indexes;
-  float            lambda;          ///< Wavelength in meters.
-  float            dx;              ///< Pixel pitch in meters.
-  float            dy;              ///< Pixel pitch in meters.
-  float            z;               ///< Propagation distance in meters.
+  float            lambda; ///< Wavelength in meters.
+  float            dx;     ///< Pixel pitch in meters.
+  float            dy;     ///< Pixel pitch in meters.
+  float            z;      ///< Propagation distance in meters.
 };
 
 void to_json(nlohmann::json &j, const ZernikeSettings &s);
@@ -36,11 +36,12 @@ public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
 private:
-  explicit Zernike(const ZernikeSettings &settings);
+  explicit Zernike(const ZernikeSettings &settings, cudaStream_t stream);
 
   friend class ZernikeFactory;
 
   ZernikeSettings settings_;
+  cudaStream_t    stream_;
 };
 
 class ZernikeFactory : public holoflow::core::ISyncTaskFactory {

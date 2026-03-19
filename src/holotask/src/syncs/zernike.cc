@@ -367,9 +367,11 @@ solve_linear_system(std::array<std::array<float, kMaxSupportedModes>, kMaxSuppor
 
 } // namespace
 
-Zernike::Zernike(const ZernikeSettings &settings) : settings_(settings) {}
+Zernike::Zernike(const ZernikeSettings &settings, cudaStream_t stream)
+    : settings_(settings), stream_(stream) {}
 
 holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
+  CUDA_CHECK(cudaStreamSynchronize(stream_));
   const auto shifts = recover_spot_shifts(ctx.inputs[0]);
 
   const auto &desc     = ctx.inputs[0].desc;
@@ -436,6 +438,9 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
 
   constexpr float ridge = 1e-9f;
 
+  size_t kept_subaps    = 0;
+  size_t skipped_subaps = 0;
+
   for (std::size_t sy = 0; sy < nb_sub_y; ++sy) {
     for (std::size_t sx = 0; sx < nb_sub_x; ++sx) {
       auto sx_f       = static_cast<float>(sx);
@@ -453,8 +458,11 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
 
       // Ignore subapertures outside the inscribed circular pupil.
       if (x_n * x_n + y_n * y_n > 1.0f) {
+        skipped_subaps++;
         continue;
       }
+
+      kept_subaps++;
 
       const auto &shift = shifts[sy * nb_sub_x + sx];
 
@@ -514,6 +522,8 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
       }
     }
   }
+
+  logger()->info("Kept {} subapertures, skipped {} outside the pupil", kept_subaps, skipped_subaps);
 
   // Small Tikhonov-style diagonal regularization to improve conditioning.
   for (std::size_t i = 0; i < n_modes; ++i) {
@@ -588,7 +598,7 @@ ZernikeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   infer(input_descs, jsettings);
 
   const auto settings = jsettings.get<ZernikeSettings>();
-  return std::unique_ptr<holoflow::core::ISyncTask>(new Zernike(settings));
+  return std::unique_ptr<holoflow::core::ISyncTask>(new Zernike(settings, ctx.stream));
 }
 
 } // namespace holotask::syncs

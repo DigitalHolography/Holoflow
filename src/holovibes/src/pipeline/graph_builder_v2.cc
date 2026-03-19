@@ -199,25 +199,21 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
   // Organize into sub-aperture groups:
   // (accumulation, freq, subap_y, subap_x, subap_h, subap_w)
   auto FH_6d      = reshape(FH_cropped, {{
-                                       (int64_t)s_.pp_accumulation,
-                                       (int64_t)n_freq,
-                                       (int64_t)nb_subap,
-                                       (int64_t)subap_h,
-                                       (int64_t)nb_subap,
-                                       (int64_t)subap_w,
-                                   }});
+                                        (int64_t)s_.pp_accumulation,
+                                        (int64_t)n_freq,
+                                        (int64_t)nb_subap,
+                                        (int64_t)subap_h,
+                                        (int64_t)nb_subap,
+                                        (int64_t)subap_w,
+                                    },
+                                         false});
   auto FH_grouped = transpose(FH_6d, {{0, 1, 2, 4, 3, 5}});
 
   // Sub-aperture Processing
-  // clang-format off
-  // auto ramps   = shack_hartmann_phase_ramps({subap_w, subap_h, dx, dy, nb_subap, nb_subap, z_prop, lam});
-  // FH_grouped   = mul(FH_grouped, ramps, {});
   auto FH_prop = fresnel_diffraction(FH_grouped, {lam, dx, dy, z_prop, {-2, -1}});
-  // clang-format on
-
-  auto M0 = mean_abs(FH_prop, {{1}, false});
-  M0      = mean(M0, {{0}, true});
-  M0      = fftshift(M0, {{-2, -1}});
+  auto M0      = mean_abs(FH_prop, {{1}, false});
+  M0           = mean(M0, {{0}, true});
+  M0           = fftshift(M0, {{-2, -1}});
 
   // Cross Correlation with Reference
   int64_t sy_ref      = nb_subap / 2;
@@ -261,13 +257,10 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
     xcorr_zernike      = normalize(xcorr_zernike, {{-2, -1}, 0.0f, 255.0f});
     xcorr_zernike      = memcpy(xcorr_zernike, {Host});
 
-    auto zernike_coeffs = zernike(xcorr_zernike, {
-                                                     s_.autofocus_zernike_orders,
-                                                     lam,
-                                                     dx,
-                                                     dy,
-                                                     z_prop,
-                                                 });
+    holotask::syncs::ZernikeSettings zernike_settings{
+        s_.autofocus_zernike_orders, lam, dx, dy, z_prop,
+    };
+    auto zernike_coeffs = zernike(xcorr_zernike, zernike_settings);
     zernike_coefficients_display(zernike_coeffs, {s_.autofocus_zernike_orders});
 
     auto phase     = zernike_phase(zernike_coeffs, {s_.autofocus_zernike_orders, ny, nx});
@@ -282,10 +275,9 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
 
   // When no Zernike orders are specified, still display an empty phase map for consistency
   else {
-    auto empty_phase = zeros({
-        {1, static_cast<size_t>(ny), static_cast<size_t>(nx)},
-        holoflow::core::DType::F32,
-    });
+    auto ny          = static_cast<size_t>(FH.shape.at(2));
+    auto nx          = static_cast<size_t>(FH.shape.at(3));
+    auto empty_phase = zeros({{1, ny, nx}, holoflow::core::DType::F32});
     FH               = correct_phase(FH, empty_phase, {});
     zernike_phase_display(empty_phase, {});
   }

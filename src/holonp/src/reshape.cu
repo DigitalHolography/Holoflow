@@ -14,23 +14,13 @@
 
 #include "holonp/reshape.hh"
 #include <numeric>
+#include <stdexcept>
 
 namespace holonp {
 
 namespace {
 
-// Checks if a tensor is C-contiguous (row-major without gaps)
-bool is_c_contiguous(const holoflow::core::TDesc &desc) {
-  size_t stride = holoflow::core::size_of(desc.dtype);
-  for (size_t i = desc.shape.size(); i-- > 0;) {
-    if (desc.strides[i] != stride)
-      return false;
-    stride *= desc.shape[i];
-  }
-  return true;
-}
-
-// Resolves -1 in target shape and validates element count
+// Resolves -1 in target shape and validates the total element count
 std::vector<size_t> resolve_shape(const std::vector<int64_t> &target_shape, size_t total_elems) {
   std::vector<size_t> result;
   result.reserve(target_shape.size());
@@ -41,8 +31,9 @@ std::vector<size_t> resolve_shape(const std::vector<int64_t> &target_shape, size
   for (size_t i = 0; i < target_shape.size(); ++i) {
     int64_t dim = target_shape[i];
     if (dim == -1) {
-      if (unknown_idx != -1)
+      if (unknown_idx != -1) {
         throw std::invalid_argument("Reshape: Only one dimension can be -1");
+      }
       unknown_idx = static_cast<int64_t>(i);
     } else if (dim < 0) {
       throw std::invalid_argument("Reshape: Dimensions cannot be negative (except -1)");
@@ -53,24 +44,119 @@ std::vector<size_t> resolve_shape(const std::vector<int64_t> &target_shape, size
   }
 
   if (unknown_idx != -1) {
-    if (total_elems % known_product != 0) {
+    if (known_product == 0 || total_elems % known_product != 0) {
       throw std::invalid_argument("Reshape: Total elements must be divisible by known dimensions");
     }
-    size_t missing = total_elems / known_product;
-    result.insert(result.begin() + unknown_idx, missing);
-  } else {
-    if (known_product != total_elems) {
-      throw std::invalid_argument("Reshape: Total elements mismatch");
-    }
+    result.insert(result.begin() + unknown_idx, total_elems / known_product);
+  } else if (known_product != total_elems) {
+    throw std::invalid_argument("Reshape: Total elements mismatch between input and target shape");
   }
+
   return result;
 }
 
-// "Compaction" kernel: Reads strided data, writes contiguous data (row-major)
+// Determines if a reshape can be done as a view by computing the new strides.
+// Returns std::nullopt if the required layout changes force a copy.
+std::optional<std::vector<size_t>> compute_view_strides(const std::vector<size_t> &old_shape,
+                                                        const std::vector<size_t> &old_strides,
+                                                        const std::vector<size_t> &new_shape) {
+
+  // Edge case: Empty tensor. Just return standard C-contiguous strides.
+  size_t numel = 1;
+  for (auto s : old_shape)
+    numel *= s;
+  if (numel == 0) {
+    std::vector<size_t> new_strides(new_shape.size(), 1);
+    size_t              current_stride = 1;
+    for (size_t i = new_shape.size(); i > 0; --i) {
+      new_strides[i - 1] = current_stride;
+      // Use max(1, ...) so preceding dims don't get a 0 stride
+      current_stride *= std::max<size_t>(1, new_shape[i - 1]);
+    }
+    return new_strides;
+  }
+
+  std::vector<size_t> new_strides(new_shape.size(), 0);
+  size_t              o_idx = 0;
+  size_t              n_idx = 0;
+
+  while (n_idx < new_shape.size() || o_idx < old_shape.size()) {
+    size_t o_end  = o_idx;
+    size_t n_end  = n_idx;
+    size_t o_prod = 1;
+    size_t n_prod = 1;
+
+    // Advance to at least 1 element from each side
+    if (o_end < old_shape.size())
+      o_prod *= old_shape[o_end++];
+    if (n_end < new_shape.size())
+      n_prod *= new_shape[n_end++];
+
+    // Expand the chunks until the element counts match
+    while (o_prod != n_prod) {
+      if (o_prod < n_prod) {
+        if (o_end == old_shape.size())
+          return std::nullopt;
+        o_prod *= old_shape[o_end++];
+      } else {
+        if (n_end == new_shape.size())
+          return std::nullopt;
+        n_prod *= new_shape[n_end++];
+      }
+    }
+
+    // Verify contiguity of the old chunk.
+    if (o_idx < o_end) {
+      for (size_t i = o_idx; i + 1 < o_end; ++i) {
+        if (old_shape[i] == 1)
+          continue; // Size-1 dimensions don't affect contiguity
+
+        size_t next_idx = i + 1;
+        while (next_idx < o_end && old_shape[next_idx] == 1) {
+          next_idx++;
+        }
+
+        if (next_idx < o_end) {
+          if (old_strides[i] != old_shape[next_idx] * old_strides[next_idx]) {
+            return std::nullopt; // The chunk is not contiguous, requires copy
+          }
+        }
+      }
+    }
+
+    // Determine the base stride for the new chunk.
+    size_t current_stride = 1;
+    if (o_idx < o_end) {
+      current_stride = old_strides[o_end - 1];
+      // Search backwards to use the innermost non-1 dimension for a reliable base stride
+      for (size_t i = o_end; i > o_idx; --i) {
+        if (old_shape[i - 1] != 1) {
+          current_stride = old_strides[i - 1];
+          break;
+        }
+      }
+    }
+
+    // Map the computed strides cleanly to the new chunk from right to left.
+    // This naturally sets the correct stride for any new size-1 dimensions.
+    for (size_t i = n_end; i > n_idx; --i) {
+      new_strides[i - 1] = current_stride;
+      current_stride *= new_shape[i - 1];
+    }
+
+    o_idx = o_end;
+    n_idx = n_end;
+  }
+
+  return new_strides;
+}
+
+// Reads N-dimensional strided data and writes it linearly to contiguous memory.
 __global__ void reshape_copy_kernel(const std::byte *__restrict__ src, std::byte *__restrict__ dst,
                                     const int64_t *__restrict__ src_strides,
                                     const int64_t *__restrict__ src_shape, int ndim, int elem_size,
                                     int64_t total_elems) {
+
   const int64_t tid = blockIdx.x * blockDim.x + threadIdx.x;
   if (tid >= total_elems)
     return;
@@ -78,8 +164,6 @@ __global__ void reshape_copy_kernel(const std::byte *__restrict__ src, std::byte
   int64_t rem     = tid;
   int64_t src_off = 0;
 
-  // Since destination is C-contiguous, 'tid' maps directly to the linear sequence
-  // of elements. We just need to find where that element lives in the source.
   for (int i = ndim - 1; i >= 0; --i) {
     int64_t idx = rem % src_shape[i];
     rem /= src_shape[i];
@@ -87,7 +171,7 @@ __global__ void reshape_copy_kernel(const std::byte *__restrict__ src, std::byte
   }
 
   const std::byte *s_ptr = src + src_off;
-  std::byte       *d_ptr = dst + (tid * elem_size); // dst is contiguous
+  std::byte       *d_ptr = dst + (tid * elem_size);
 
   for (int b = 0; b < elem_size; ++b) {
     d_ptr[b] = s_ptr[b];
@@ -98,11 +182,10 @@ __global__ void reshape_copy_kernel(const std::byte *__restrict__ src, std::byte
 
 void to_json(nlohmann::json &j, const ReshapeSettings &s) {
   j = nlohmann::json{{"shape", s.shape}};
-  if (s.copy.has_value()) {
+  if (s.copy.has_value())
     j["copy"] = s.copy.value();
-  } else {
+  else
     j["copy"] = nullptr;
-  }
 }
 
 void from_json(const nlohmann::json &j, ReshapeSettings &s) {
@@ -120,49 +203,40 @@ void from_json(const nlohmann::json &j, ReshapeSettings &s) {
 holoflow::core::InferResult
 ReshapeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                       const nlohmann::json                  &jsettings) const {
-  if (input_descs.size() != 1)
-    throw std::runtime_error("Reshape requires 1 input");
+
+  if (input_descs.size() != 1) {
+    throw std::runtime_error("Reshape requires exactly 1 input");
+  }
 
   const auto &src      = input_descs[0];
   auto        settings = jsettings.get<ReshapeSettings>();
 
-  // 1. Resolve Output Shape
-  auto out_shape = resolve_shape(settings.shape, src.num_elements());
+  auto out_shape    = resolve_shape(settings.shape, src.num_elements());
+  auto view_strides = compute_view_strides(src.shape, src.strides, out_shape);
 
-  // 2. Determine if Copy is needed
-  //    To return a view with order='C', the input must currently be C-contiguous.
-  bool src_is_contig = is_c_contiguous(src);
-  bool must_copy     = false;
-
+  // Decide if we must copy
+  bool must_copy = false;
   if (settings.copy.has_value()) {
-    if (*settings.copy == true) {
-      must_copy = true; // User forced copy
-    } else {
-      // User forced View (copy=false)
-      if (!src_is_contig) {
-        throw std::invalid_argument("Reshape: copy=false but array is not C-contiguous");
-      }
-      must_copy = false;
+    must_copy = *settings.copy;
+    if (!must_copy && !view_strides.has_value()) {
+      throw std::invalid_argument(
+          "Reshape: copy=false requested, but tensor layout prevents a view.");
     }
   } else {
-    // Auto (copy=nullopt): Copy only if we can't view
-    must_copy = !src_is_contig;
+    must_copy = !view_strides.has_value();
   }
 
   holoflow::core::TDesc                out_desc;
   std::vector<holoflow::core::InPlace> in_place;
 
   if (must_copy) {
-    // New allocation, default C-strides (calculated by TDesc ctor)
     out_desc = holoflow::core::TDesc(out_shape, src.dtype, src.mem_loc);
-    in_place = {}; // No in-place possible
+    in_place = {};
   } else {
-    // View: Point to same data, new shape, default C-strides (valid because src is contig)
-    out_desc       = src; // Copy pointer/offset
-    out_desc.shape = out_shape;
-    // Recalculate strides for the new shape assuming C-order
-    out_desc = holoflow::core::TDesc(out_shape, src.dtype, src.mem_loc, src.offset);
-    in_place = {{0, 0}}; // Input 0 reused for Output 0
+    out_desc         = src;
+    out_desc.shape   = out_shape;
+    out_desc.strides = view_strides.value(); // Apply the freshly computed strides
+    in_place         = {{0, 0}};
   }
 
   return {.input_descs   = {src},
@@ -180,25 +254,20 @@ std::unique_ptr<holoflow::core::ISyncTask>
 ReshapeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                        const nlohmann::json                  &jsettings,
                        const holoflow::core::SyncCreateCtx   &ctx) const {
+
   const auto &src      = input_descs[0];
   auto        settings = jsettings.get<ReshapeSettings>();
 
-  bool src_is_contig = is_c_contiguous(src);
-  bool doing_copy    = false;
+  auto resolved_shape = resolve_shape(settings.shape, src.num_elements());
+  auto view_strides   = compute_view_strides(src.shape, src.strides, resolved_shape);
 
-  if (settings.copy.has_value()) {
-    doing_copy = *settings.copy;
-    // Validation already done in infer
-  } else {
-    doing_copy = !src_is_contig;
-  }
+  bool doing_copy = settings.copy.value_or(!view_strides.has_value());
 
   if (!doing_copy) {
-    // View mode: Task does nothing at runtime
     return std::make_unique<Reshape>(settings, src);
   }
 
-  // Copy mode: Prepare kernel args
+  // Copy mode: Prepare kernel arguments
   size_t               ndim = src.shape.size();
   std::vector<int64_t> h_strides(ndim);
   std::vector<int64_t> h_shape(ndim);
@@ -208,10 +277,10 @@ ReshapeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     h_shape[i]   = static_cast<int64_t>(src.shape[i]);
   }
 
-  auto d_strides = curaii::make_unique_device_ptr<int64_t>(ndim);
-  auto d_shape   = curaii::make_unique_device_ptr<int64_t>(ndim);
+  auto   d_strides = curaii::make_unique_device_ptr<int64_t>(ndim);
+  auto   d_shape   = curaii::make_unique_device_ptr<int64_t>(ndim);
+  size_t bytes     = ndim * sizeof(int64_t);
 
-  size_t bytes = ndim * sizeof(int64_t);
   CUDA_CHECK(cudaMemcpyAsync(d_strides.get(), h_strides.data(), bytes, cudaMemcpyHostToDevice,
                              ctx.stream));
   CUDA_CHECK(
@@ -229,8 +298,8 @@ ReshapeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                        const holoflow::core::SyncCreateCtx       &ctx) const {
 
   auto *old_reshape = dynamic_cast<Reshape *>(old_task.get());
-  if (old_reshape != nullptr && input_descs.size() == 1) {
 
+  if (old_reshape != nullptr && input_descs.size() == 1) {
     const auto  new_settings = jsettings.get<ReshapeSettings>();
     const auto &new_idesc    = input_descs[0];
     const auto &old_idesc    = old_reshape->get_idesc();
@@ -246,7 +315,6 @@ ReshapeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     }
   }
 
-  // Fallback: Structural change detected or invalid old task.
   return create(input_descs, jsettings, ctx);
 }
 
@@ -268,15 +336,9 @@ Reshape::Reshape(const ReshapeSettings &settings, const holoflow::core::TDesc &i
       d_src_shape_(std::move(d_src_shape)) {}
 
 holoflow::core::OpResult Reshape::execute(holoflow::core::SyncCtx &ctx) {
-  if (is_view_) {
-    // The framework has already wired the output TView to point to the input's buffer
-    // (via the TDesc returned in Infer). We don't need to move bytes.
+  if (is_view_ || total_elems_ == 0) {
     return holoflow::core::OpResult::Ok;
   }
-
-  // Copy Execution
-  if (total_elems_ == 0)
-    return holoflow::core::OpResult::Ok;
 
   const std::byte *src_ptr = reinterpret_cast<const std::byte *>(ctx.inputs[0].data());
   std::byte       *dst_ptr = reinterpret_cast<std::byte *>(ctx.outputs[0].data());
