@@ -438,11 +438,14 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
 
   for (std::size_t sy = 0; sy < nb_sub_y; ++sy) {
     for (std::size_t sx = 0; sx < nb_sub_x; ++sx) {
+      auto sx_f       = static_cast<float>(sx);
+      auto sy_f       = static_cast<float>(sy);
+      auto nb_sub_x_f = static_cast<float>(nb_sub_x);
+      auto nb_sub_y_f = static_cast<float>(nb_sub_y);
+
       // Physical coordinates of the current subaperture center in the pupil plane.
-      const float X =
-          (static_cast<float>(sx) - (static_cast<float>(nb_sub_x) - 1.0f) * 0.5f) * pitch_x_m;
-      const float Y =
-          (static_cast<float>(sy) - (static_cast<float>(nb_sub_y) - 1.0f) * 0.5f) * pitch_y_m;
+      const float X = (sx_f - (nb_sub_x_f - 1.0f) * 0.5f) * pitch_x_m;
+      const float Y = (sy_f - (nb_sub_y_f - 1.0f) * 0.5f) * pitch_y_m;
 
       // Normalized pupil coordinates.
       const float x_n = X / pupil_radius_m;
@@ -460,13 +463,13 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
       // In geometric optics / Shack-Hartmann style reasoning, a local wavefront
       // tilt θ causes a lateral shift:
       //
-      //   delta_x ≈ z * θ_x
-      //   delta_y ≈ z * θ_y
+      //   delta_x = z * θ_x
+      //   delta_y = z * θ_y
       //
       // so:
       //
-      //   θ_x ≈ delta_x / z
-      //   θ_y ≈ delta_y / z
+      //   θ_x = delta_x / z
+      //   θ_y = delta_y / z
       //
       // Here delta_x and delta_y are measured in the propagated plane, hence:
       //
@@ -474,8 +477,15 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
       //   delta_y = shift.dy * dy_out
       //
       // The resulting slopes are dimensionless (meters / meter).
-      const float slope_x = (shift.dx * dx_out) / settings_.z;
-      const float slope_y = (shift.dy * dy_out) / settings_.z;
+      float slope_x = (shift.dx * dx_out) / settings_.z;
+      float slope_y = (shift.dy * dy_out) / settings_.z;
+
+      // A phase ramp is induced on subapertures (execpt the center one) because there is a small
+      // propagation angle.
+      const float slope_ramp_x = X / settings_.z;
+      const float slope_ramp_y = Y / settings_.z;
+      slope_x += slope_ramp_x;
+      slope_y += slope_ramp_y;
 
       std::array<float, kMaxSupportedModes> gx{};
       std::array<float, kMaxSupportedModes> gy{};

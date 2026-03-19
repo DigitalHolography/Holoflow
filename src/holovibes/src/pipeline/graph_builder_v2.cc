@@ -210,8 +210,8 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
 
   // Sub-aperture Processing
   // clang-format off
-  auto ramps   = shack_hartmann_phase_ramps({subap_w, subap_h, dx, dy, nb_subap, nb_subap, z_prop, lam});
-  FH_grouped   = mul(FH_grouped, ramps, {});
+  // auto ramps   = shack_hartmann_phase_ramps({subap_w, subap_h, dx, dy, nb_subap, nb_subap, z_prop, lam});
+  // FH_grouped   = mul(FH_grouped, ramps, {});
   auto FH_prop = fresnel_diffraction(FH_grouped, {lam, dx, dy, z_prop, {-2, -1}});
   // clang-format on
 
@@ -232,20 +232,18 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
   auto xcorr          = irfft2(F_xcorr, {{-2, -1}});
 
   // Shack-Hartmann Output Processing
-  int64_t h = static_cast<int64_t>(valid_h);
-  int64_t w = static_cast<int64_t>(valid_w);
-
-  auto M0_sh_disp = normalize(M0, {{-2, -1}, 0.0f, 255.0f});
-  M0_sh_disp      = transpose(M0_sh_disp, {{0, 1, 3, 2, 4}});
-  M0_sh_disp      = reshape(M0_sh_disp, {{1, h, w}});
-  M0_sh_disp      = convert(M0_sh_disp, {Target::U8, Strat::Scaled});
-  M0_sh_disp      = memcpy(M0_sh_disp, {Host});
-  M0_sh_disp      = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
+  int64_t h          = static_cast<int64_t>(valid_h);
+  int64_t w          = static_cast<int64_t>(valid_w);
+  auto    M0_sh_disp = normalize(M0, {{-2, -1}, 0.0f, 255.0f});
+  M0_sh_disp         = transpose(M0_sh_disp, {{0, 1, 3, 2, 4}});
+  M0_sh_disp         = reshape(M0_sh_disp, {{1, h, w}});
+  M0_sh_disp         = convert(M0_sh_disp, {Target::U8, Strat::Scaled});
+  M0_sh_disp         = memcpy(M0_sh_disp, {Host});
+  M0_sh_disp         = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
   shack_hartmann_display(M0_sh_disp, {});
 
-  h = static_cast<int64_t>(xcorr.shape.at(3) * nb_subap);
-  w = static_cast<int64_t>(xcorr.shape.at(4) * nb_subap);
-
+  h                    = static_cast<int64_t>(xcorr.shape.at(3) * nb_subap);
+  w                    = static_cast<int64_t>(xcorr.shape.at(4) * nb_subap);
   auto xcorr_flattened = fftshift(xcorr, {{-2, -1}});
   xcorr_flattened      = normalize(xcorr_flattened, {{-2, -1}, 0.0f, 255.0f});
   xcorr_flattened      = convert(xcorr_flattened, {Target::U8, Strat::Scaled});
