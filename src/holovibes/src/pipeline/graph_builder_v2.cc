@@ -210,6 +210,7 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
   auto FH_grouped = transpose(FH_6d, {{0, 1, 2, 4, 3, 5}});
 
   // Sub-aperture Processing
+  FH_grouped   = ascontiguousarray(FH_grouped, {});
   auto FH_prop = fresnel_diffraction(FH_grouped, {lam, dx, dy, z_prop, {-2, -1}});
   auto M0      = mean_abs(FH_prop, {{1}, false});
   M0           = mean(M0, {{0}, true});
@@ -258,9 +259,10 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
     xcorr_zernike      = memcpy(xcorr_zernike, {Host});
 
     holotask::syncs::ZernikeSettings zernike_settings{
-        s_.autofocus_zernike_orders, lam, dx, dy, z_prop,
+        s_.autofocus_zernike_orders, lam, dx, dy, z_prop, 1, 1,
     };
     auto zernike_coeffs = zernike(xcorr_zernike, zernike_settings);
+    zernike_coeffs      = slice(zernike_coeffs, {{0, 0, {}}}); // Remove batch dimension
     zernike_coefficients_display(zernike_coeffs, {s_.autofocus_zernike_orders});
 
     auto phase     = zernike_phase(zernike_coeffs, {s_.autofocus_zernike_orders, ny, nx});

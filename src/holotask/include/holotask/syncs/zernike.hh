@@ -15,6 +15,7 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
+#include <vector>
 
 #include "holoflow/core/tasks.hh"
 
@@ -26,6 +27,8 @@ struct ZernikeSettings {
   float            dx;     ///< Pixel pitch in meters.
   float            dy;     ///< Pixel pitch in meters.
   float            z;      ///< Propagation distance in meters.
+  size_t           ny = 1; ///< Number of grid regions along Y (default 1).
+  size_t           nx = 1; ///< Number of grid regions along X (default 1).
 };
 
 void to_json(nlohmann::json &j, const ZernikeSettings &s);
