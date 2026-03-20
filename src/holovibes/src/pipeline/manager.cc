@@ -42,6 +42,7 @@
 #include "holonp/concatenate.hh"
 #include "holonp/conj.hh"
 #include "holonp/copy.hh"
+#include "holonp/cross_correlation2.hh"
 #include "holonp/div.hh"
 #include "holonp/empty.hh"
 #include "holonp/equal.hh"
@@ -215,6 +216,7 @@ void Manager::register_components() {
   reg_sync<RFFTFactory>(registry_, "RFFT");
   reg_sync<RFFT2Factory>(registry_, "RFFT2");
   reg_sync<IRFFT2Factory>(registry_, "IRFFT2");
+  reg_sync<CrossCorrelation2Factory>(registry_, "CrossCorrelation2");
   reg_sync<MulFactory>(registry_, "Mul");
   reg_sync<SubFactory>(registry_, "Sub");
   reg_sync<DivFactory>(registry_, "Div");

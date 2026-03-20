@@ -36,6 +36,7 @@
 #include "holonp/concatenate.hh"
 #include "holonp/conj.hh"
 #include "holonp/copy.hh"
+#include "holonp/cross_correlation2.hh"
 #include "holonp/div.hh"
 #include "holonp/empty.hh"
 #include "holonp/equal.hh"
@@ -119,19 +120,19 @@ private:
     std::vector<Consumer>   consumers;
 
     [[nodiscard]] holoflow::core::TDesc as_core() const;
-    [[nodiscard]] static TDesc from_core(const holoflow::core::TDesc &base);
+    [[nodiscard]] static TDesc          from_core(const holoflow::core::TDesc &base);
   };
 
   // Pipeline construction stages
   TDesc build_acquisition();
-  void  build_raw_record(const TDesc& H);
-  bool  build_raw_view(const TDesc& H);
+  void  build_raw_record(const TDesc &H);
+  bool  build_raw_view(const TDesc &H);
   TDesc build_preprocessing(TDesc H);
   TDesc build_time_frequency_analysis(TDesc H);
   TDesc build_shack_hartmann(TDesc FH);
-  TDesc build_spatial_propagation(const TDesc& FH);
-  void  build_xy_view(const TDesc& FH_z);
-  void  build_3d_cuts(const TDesc& FH_z);
+  TDesc build_spatial_propagation(const TDesc &FH);
+  void  build_xy_view(const TDesc &FH_z);
+  void  build_3d_cuts(const TDesc &FH_z);
 
   // Core Template Generators
   [[nodiscard]] static std::vector<holoflow::core::TDesc> to_core_descs(std::span<const TDesc> src);
@@ -226,6 +227,8 @@ private:
   TDesc rfft(const TDesc &X, holonp::RFFTSettings s);
   TDesc rfft2(const TDesc &X, holonp::RFFT2Settings s);
   TDesc irfft2(const TDesc &X, holonp::IRFFT2Settings s);
+  TDesc cross_correlation2(const TDesc &Moving, const TDesc &Reference,
+                           holonp::CrossCorrelation2Settings s);
   TDesc assign(const TDesc &X, const TDesc &Y, holonp::AssignSettings s);
   TDesc slice(const TDesc &X, holonp::SliceSettings s);
   TDesc fft(const TDesc &X, holonp::FFTSettings s);

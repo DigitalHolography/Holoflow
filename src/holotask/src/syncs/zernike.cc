@@ -201,8 +201,8 @@ std::vector<ShiftPx> recover_spot_shifts(const holoflow::core::TView &view) {
   const auto win_h    = static_cast<std::size_t>(desc.shape[3]);
   const auto win_w    = static_cast<std::size_t>(desc.shape[4]);
 
-  const float center_y = (static_cast<float>(win_h) - 0.0f) * 0.5f;
-  const float center_x = (static_cast<float>(win_w) - 0.0f) * 0.5f;
+  const float center_y = (static_cast<float>(win_h / 2));
+  const float center_x = (static_cast<float>(win_w / 2));
 
   std::vector<ShiftPx> shifts;
   shifts.reserve(nb_sub_y * nb_sub_x);
@@ -487,10 +487,10 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
       // directly on the optical axis, a spherical wave component is naturally
       // introduced. We must add this purely geometric tilt back into our slope
       // calculation so the recovered Zernikes correctly represent the deviation.
-      const float slope_ramp_x = (X - local_center_X) / settings_.z;
-      const float slope_ramp_y = (Y - local_center_Y) / settings_.z;
-      slope_x += slope_ramp_x;
-      slope_y += slope_ramp_y;
+      // const float slope_ramp_x = (X - local_center_X) / settings_.z;
+      // const float slope_ramp_y = (Y - local_center_Y) / settings_.z;
+      // slope_x += slope_ramp_x;
+      // slope_y += slope_ramp_y;
 
       std::array<float, kMaxSupportedModes> gx{};
       std::array<float, kMaxSupportedModes> gy{};
@@ -550,12 +550,25 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
   }
 
   // Log each recovered Zernike coefficient for the each region for debugging/analysis purposes.
+  // for (std::size_t r = 0; r < num_regions; ++r) {
+  //   std::string coef_str;
+  //   for (std::size_t i = 0; i < n_modes; ++i) {
+  //     coef_str += fmt::format("Z{}: {:.4e} rad, ", settings_.indexes[i], out_ptr[r * n_modes +
+  //     i]);
+  //   }
+  //   logger()->info("Region ({}, {}): {}", r % nx, r / nx, coef_str);
+  // }
+
+  // Log each recovered Zernike coefficient diff from center region for debugging/analysis purposes.
+  size_t center_region_idx = (ny / 2) * nx + (nx / 2);
   for (std::size_t r = 0; r < num_regions; ++r) {
     std::string coef_str;
     for (std::size_t i = 0; i < n_modes; ++i) {
-      coef_str += fmt::format("Z{}: {:.4e} rad, ", settings_.indexes[i], out_ptr[r * n_modes + i]);
+      float center_coef = out_ptr[center_region_idx * n_modes + i];
+      float coef_diff   = out_ptr[r * n_modes + i] - center_coef;
+      coef_str += fmt::format("Z{}: {:.4e} rad, ", settings_.indexes[i], coef_diff);
     }
-    logger()->info("Region ({}, {}): {}", r % nx, r / nx, coef_str);
+    logger()->info("Region ({}, {}): Coeff diff from center region: {}", r % nx, r / nx, coef_str);
   }
 
   return holoflow::core::OpResult::Ok;

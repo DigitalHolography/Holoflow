@@ -208,25 +208,41 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::build_shack_hartmann(TDesc FH) {
                                     },
                                          false});
   auto FH_grouped = transpose(FH_6d, {{0, 1, 2, 4, 3, 5}});
+  FH_grouped      = ascontiguousarray(FH_grouped, {});
 
   // Sub-aperture Processing
-  FH_grouped   = ascontiguousarray(FH_grouped, {});
+  // Subapetures have an angle of propagation induced by parallax effects, which manifests as a
+  // shift of the focal spot in the Shack-Hartmann image. To accurately recover this shift, we need
+  // to apply a corrective phase ramp to each subaperture before propagation. This is
+  // equivalent to applying a Fresnel lens that focuses at the expected focal plane, thus ensuring
+  // the focal spot is well-defined and can be precisely localized via cross-correlation.
+  auto ramps   = shack_hartmann_phase_ramps({
+      subap_w,
+      subap_h,
+      dx,
+      dy,
+      nb_subap,
+      nb_subap,
+      z_prop,
+      lam,
+  });
+  FH_grouped   = mul(FH_grouped, ramps, {});
   auto FH_prop = fresnel_diffraction(FH_grouped, {lam, dx, dy, z_prop, {-2, -1}});
   auto M0      = mean_abs(FH_prop, {{1}, false});
   M0           = mean(M0, {{0}, true});
   M0           = fftshift(M0, {{-2, -1}});
 
   // Cross Correlation with Reference
-  int64_t sy_ref      = nb_subap / 2;
-  int64_t sx_ref      = nb_subap / 2;
-  auto    M0_ref      = slice(M0, {{{}, sy_ref, sx_ref, {}, {}}});
-  auto    F_mov       = rfft2(M0, {{-2, -1}});
-  auto    F_ref       = rfft2(M0_ref, {{-2, -1}});
-  auto    F_ref_conj  = conj(F_ref, {});
-  auto    F_xcorr     = mul(F_mov, F_ref_conj, {});
-  auto    F_xcorr_abs = abs(F_xcorr, {});
-  F_xcorr             = div(F_xcorr, F_xcorr_abs, {});
-  auto xcorr          = irfft2(F_xcorr, {{-2, -1}});
+  int64_t sy_ref = nb_subap / 2;
+  int64_t sx_ref = nb_subap / 2;
+  auto    M0_ref = slice(M0, {{{}, sy_ref, sx_ref, {}, {}}});
+  auto    xcorr =
+      cross_correlation2(M0, M0_ref,
+                         {
+                             {-2, -1},
+                             holonp::FftNorm::Backward,
+                             {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f},
+                         });
 
   // Shack-Hartmann Output Processing
   int64_t h          = static_cast<int64_t>(valid_h);
@@ -589,6 +605,15 @@ GraphBuilder_v2::TDesc GraphBuilder_v2::mul(const TDesc &A, const TDesc &B, holo
   std::array<TDesc, 2> inputs{A, B};
   return std::move(
       make_nary_sync_node("mul", "Mul", "Mul", std::span<const TDesc>{inputs}, s).at(0));
+}
+
+GraphBuilder_v2::TDesc GraphBuilder_v2::cross_correlation2(const TDesc &Moving,
+                                                           const TDesc &Reference,
+                                                           holonp::CrossCorrelation2Settings s) {
+  std::array<TDesc, 2> inputs{Moving, Reference};
+  return std::move(make_nary_sync_node("cross_correlation2", "CrossCorrelation2",
+                                       "CrossCorrelation2", std::span<const TDesc>{inputs}, s)
+                       .at(0));
 }
 
 GraphBuilder_v2::TDesc GraphBuilder_v2::add(const TDesc &A, const TDesc &B, holonp::AddSettings s) {
