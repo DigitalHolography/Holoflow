@@ -3,3 +3,6 @@ build/
 .fc/
 *.dot
 logs/
+graphify-out/
+.claude/
+CLAUDE.md
