@@ -30,7 +30,6 @@
 
 #include "bug.hh"
 #include "graph_builder.hh"
-#include "graph_builder_v2.hh"
 #include "holoflow/runtime/graph_display.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
@@ -511,8 +510,8 @@ void Manager::build_graph_spec() {
   guess_optimizations();
   guess_source_dims();
 
-  GraphBuilder_v2 builder_v2{s_, registry_};
-  spec_ = builder_v2.build();
+  GraphBuilder builder{s_, registry_};
+  spec_ = builder.build();
 
   settings_dirty_ = false;
   logger()->debug("[Manager::build_graph_spec] Graph spec built successfully");

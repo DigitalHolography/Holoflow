@@ -14,19 +14,8 @@
 
 #pragma once
 
-#include <array>
-#include <map>
-#include <optional>
-#include <ranges>
-#include <span>
-#include <stack>
-#include <stdexcept>
-#include <string>
-#include <type_traits>
+#include "graph_builder_tracer.hh"
 
-#include "holoflow/core/graph_spec.hh"
-#include "holoflow/core/registry.hh"
-#include "holoflow/core/tasks.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
@@ -86,95 +75,18 @@
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike.hh"
 #include "holotask/syncs/zernike_phase.hh"
-#include "pipeline/settings.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
 
 namespace holovibes::pipeline {
 
-class GraphBuilder_v2 {
-public:
-  GraphBuilder_v2(const Settings &settings, holoflow::core::Registry &registry);
+// GraphBuilderTasks extends the tracer with strongly-typed wrappers for every
+// task kind available in the registry. Each method registers one node in the
+// graph and returns a traced output descriptor (or void for sink nodes).
+class GraphBuilderTasks : public GraphBuilderTracer {
+protected:
+  using GraphBuilderTracer::GraphBuilderTracer;
 
-  holoflow::core::GraphSpec build();
-
-private:
-  using V      = holoflow::core::GraphSpec::vertex_descriptor;
-  using NodeId = std::string;
-
-  class TDesc : public holoflow::core::TDesc {
-  public:
-    struct Producer {
-      NodeId node_id;
-      int    out_idx;
-      V      vertex;
-    };
-
-    struct Consumer {
-      NodeId node_id;
-      int    in_idx;
-      V      vertex;
-    };
-
-    std::optional<Producer> producer;
-    std::vector<Consumer>   consumers;
-
-    [[nodiscard]] holoflow::core::TDesc as_core() const;
-    [[nodiscard]] static TDesc          from_core(const holoflow::core::TDesc &base);
-  };
-
-  // Pipeline construction stages
-  TDesc build_acquisition();
-  void  build_raw_record(const TDesc &H);
-  bool  build_raw_view(const TDesc &H);
-  TDesc build_preprocessing(TDesc H);
-  TDesc build_time_frequency_analysis(TDesc H);
-  TDesc build_shack_hartmann(TDesc FH);
-  TDesc build_spatial_propagation(const TDesc &FH);
-  void  build_xy_view(const TDesc &FH_z);
-  void  build_3d_cuts(const TDesc &FH_z);
-
-  // Core Template Generators
-  [[nodiscard]] static std::vector<holoflow::core::TDesc> to_core_descs(std::span<const TDesc> src);
-
-  template <class InferResult>
-  [[nodiscard]] static std::vector<TDesc> wrap_infer_outputs(std::string_view node_id, V vertex,
-                                                             const InferResult &infer);
-
-  template <typename SettingsT>
-  std::vector<TDesc> make_source_sync_node(std::string_view node_name, std::string_view kind,
-                                           std::string_view reg_key, const SettingsT &s,
-                                           bool debug = true);
-
-  template <typename SettingsT>
-  std::vector<TDesc> make_unary_sync_node(std::string_view node_name, std::string_view kind,
-                                          std::string_view reg_key, const TDesc &X,
-                                          const SettingsT &s, bool debug = true);
-
-  template <typename SettingsT>
-  std::vector<TDesc> make_nary_sync_node(std::string_view node_name, std::string_view kind,
-                                         std::string_view reg_key, std::span<const TDesc> inputs,
-                                         const SettingsT &s, bool debug = true);
-
-  template <typename SettingsT>
-  std::vector<TDesc> make_unary_async_node(std::string_view node_name, std::string_view kind,
-                                           std::string_view reg_key, const TDesc &X,
-                                           const SettingsT &s, bool debug = true);
-
-  Settings                  s_;
-  holoflow::core::Registry &reg_;
-
-  holoflow::core::GraphSpec g_;
-  std::stack<std::string>   scope_;
-  size_t                    unique_id_counter_ = 0;
-
-  std::map<LoadMethod, holotask::sources::HolofileSettings::LoadKind> load_method_map_{
-      {LoadMethod::READ_LIVE, holotask::sources::HolofileSettings::LoadKind::Live},
-      {LoadMethod::LOAD_IN_CPU, holotask::sources::HolofileSettings::LoadKind::CPUCached},
-      {LoadMethod::LOAD_IN_GPU, holotask::sources::HolofileSettings::LoadKind::GPUCached},
-  };
-
-  // Node declarations
   // clang-format off
   TDesc holofile_read(holotask::sources::HolofileSettings s);
   TDesc empty(holonp::EmptySettings s);
@@ -227,8 +139,7 @@ private:
   TDesc rfft(const TDesc &X, holonp::RFFTSettings s);
   TDesc rfft2(const TDesc &X, holonp::RFFT2Settings s);
   TDesc irfft2(const TDesc &X, holonp::IRFFT2Settings s);
-  TDesc cross_correlation2(const TDesc &Moving, const TDesc &Reference,
-                           holonp::CrossCorrelation2Settings s);
+  TDesc cross_correlation2(const TDesc &Moving, const TDesc &Reference, holonp::CrossCorrelation2Settings s);
   TDesc assign(const TDesc &X, const TDesc &Y, holonp::AssignSettings s);
   TDesc slice(const TDesc &X, holonp::SliceSettings s);
   TDesc fft(const TDesc &X, holonp::FFTSettings s);
