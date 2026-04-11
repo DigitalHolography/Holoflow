@@ -347,43 +347,93 @@ GraphBuilder::TDesc GraphBuilder::build_spatial_propagation(const TDesc &FH) {
   throw std::logic_error{"Spacial method is currently not supported in GraphBuilder"};
 }
 
+GraphBuilder::TDesc GraphBuilder::build_freq_weights() {
+  auto N  = static_cast<double>(s_.time_window);
+  auto fs = 37e3;
+  auto df = fs / N;
+  auto f0 = s_.time_z_begin * df;
+  auto f1 = s_.time_z_end * df;
+
+  TDesc freqs;
+  if (s_.view_3d_cuts) {
+    throw std::logic_error{"Frequency weights are not supported when 3D cuts are enabled"};
+  }
+
+  else if (s_.time_method == TimeMethod::FFT) {
+    // Concatenation: positive [time_z_begin, time_z_end) then negative [N-time_z_end,
+    // N-time_z_begin)
+    auto freqs_pos = arange({f0, f1, df, holoflow::core::DType::F32});
+    auto freqs_neg = arange({f0 - fs, f1 - fs, df, holoflow::core::DType::F32});
+    freqs          = concatenate(std::array<TDesc, 2>{freqs_pos, freqs_neg}, {0});
+  }
+
+  else if (s_.time_method == TimeMethod::RFFT ||
+           s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
+    freqs = arange({f0, f1, df, holoflow::core::DType::F32});
+  }
+
+  return freqs;
+}
+
 void GraphBuilder::build_xy_view(const TDesc &FH_z) {
   using Target = holotask::syncs::ConversionSettings::Target;
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
   auto Host    = holotask::syncs::MemcpySettings::Target::Host;
 
-  auto M0 = mean_abs(FH_z, {{-3}, false});
+  // Compute spectral moment image: [1, H, W]
+  TDesc result;
+
+  if (s_.moment_type == MomentType::M0) {
+    result = mean_abs(FH_z, {{-3}, true}); // [B, 1, H, W]
+  }
+
+  else if (s_.moment_type == MomentType::M1) {
+    auto n_freq   = static_cast<int64_t>(FH_z.shape.at(1));
+    auto abs_S    = abs(FH_z, {});                                      // [B, F, H, W]
+    auto freqs    = reshape(build_freq_weights(), {{1, n_freq, 1, 1}}); // [1, F, 1, 1]
+    auto weighted = mul(freqs, abs_S, {});                              // [B, F, H, W]
+    result        = mean(weighted, {{-3}, true});                       // [B, 1, H, W]
+  }
+
+  else if (s_.moment_type == MomentType::M2) {
+    auto n_freq   = static_cast<int64_t>(FH_z.shape.at(1));
+    auto abs_S    = abs(FH_z, {});                                      // [B, F, H, W]
+    auto freqs    = reshape(build_freq_weights(), {{1, n_freq, 1, 1}}); // [1, F, 1, 1]
+    freqs         = mul(freqs, freqs, {});                              // [1, F, 1, 1]
+    auto weighted = mul(freqs, abs_S, {});                              // [B, F, H, W]
+    result        = mean(weighted, {{-3}, true});                       // [B, 1, H, W]
+  }
 
   if (s_.pp_fft_shift) {
-    M0 = fftshift(M0, {{-2, -1}});
+    result = fftshift(result, {{-2, -1}});
   }
 
   if (s_.pp_registration) {
     throw std::logic_error{"Registration is currently not supported"};
   }
 
-  auto M0_avg = mean(M0, {{0}, true});
+  result = mean(result, {{0}, false}); // [1, H, W]
 
   if (s_.pp_convolution) {
     throw std::logic_error{"Convolution is currently not supported"};
   }
 
   if (s_.pp_pctclip) {
-    M0_avg = pct_clip(M0_avg, {s_.pp_pctclip_lower,
+    result = pct_clip(result, {s_.pp_pctclip_lower,
                                s_.pp_pctclip_upper,
                                {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f}});
   }
 
-  M0_avg = convert(M0_avg, {Target::U8, Strat::Scaled});
-  M0_avg = batched_queue(M0_avg, {s_.gpu_out_size, 1, 1});
-  M0_avg = memcpy(M0_avg, {Host});
-  M0_avg = batched_queue(M0_avg, {s_.cpu_out_size, 1, 1});
-  xy_processed_display(M0_avg, {});
+  result = convert(result, {Target::U8, Strat::Scaled});
+  result = batched_queue(result, {s_.gpu_out_size, 1, 1});
+  result = memcpy(result, {Host});
+  result = batched_queue(result, {s_.cpu_out_size, 1, 1});
+  xy_processed_display(result, {});
 
   if (s_.recording_method == RecordingMethod::PROCESSED) {
-    auto M0_rec = memcpy(M0_avg, {Host});
-    M0_rec      = batched_queue(M0_rec, {s_.cpu_out_size, 1, 1});
-    holofile_write(M0_rec,
+    auto result_rec = memcpy(result, {Host});
+    result_rec      = batched_queue(result_rec, {s_.cpu_out_size, 1, 1});
+    holofile_write(result_rec,
                    {s_.recording_path.string(), s_.recording_count, settings_to_old_json(s_)});
   }
 }

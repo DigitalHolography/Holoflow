@@ -48,6 +48,7 @@ DEFINE_SOURCE_SYNC_NODE(holofile_read,                          "source",       
 DEFINE_SOURCE_SYNC_NODE(empty,                                  "empty",                               "Empty",                           holonp::EmptySettings)
 DEFINE_SOURCE_SYNC_NODE(zeros,                                  "zeros",                               "Zeros",                           holonp::ZerosSettings)
 DEFINE_SOURCE_SYNC_NODE(asarray,                                "asarray",                             "AsArray",                         holonp::AsArraySettings)
+DEFINE_SOURCE_SYNC_NODE(arange,                                 "arange",                              "Arange",                          holonp::ArangeSettings)
 DEFINE_UNARY_SYNC_NODE (ascontiguousarray,                      "ascontiguousarray",                   "AsContiguousArray",               holonp::AsContiguousArraySettings)
 DEFINE_UNARY_SYNC_NODE (copy,                                   "copy",                                "Copy",                            holonp::CopySettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "ametek_s710_euresys_coaxlink_octo",   "AmetekS710EuresysCoaxlinkOcto",   holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)

@@ -92,6 +92,7 @@ protected:
   TDesc empty(holonp::EmptySettings s);
   TDesc zeros(holonp::ZerosSettings s);
   TDesc asarray(holonp::AsArraySettings s);
+  TDesc arange(holonp::ArangeSettings s);
   TDesc ascontiguousarray(const TDesc &X, holonp::AsContiguousArraySettings s);
   TDesc copy(const TDesc &X, holonp::CopySettings s);
   TDesc memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);

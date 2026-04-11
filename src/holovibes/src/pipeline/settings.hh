@@ -56,6 +56,12 @@ enum class ViewType {
   RAW,
 };
 
+enum class MomentType {
+  M0,
+  M1,
+  M2,
+};
+
 struct Settings {
   // Advanced
   int cpu_in_size;
@@ -98,11 +104,12 @@ struct Settings {
   int        time_z_end;
 
   // View
-  bool     view_3d_cuts;
-  bool     raw_view;
-  ViewType view_type;
-  bool     view_raw_spectrum;
-  bool     view_processed_spectrum;
+  bool       view_3d_cuts;
+  bool       raw_view;
+  ViewType   view_type;
+  MomentType moment_type;
+  bool       view_raw_spectrum;
+  bool       view_processed_spectrum;
 
   // Post-processing
   int         pp_fps;

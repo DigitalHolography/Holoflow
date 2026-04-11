@@ -43,6 +43,7 @@ private:
   TDesc build_spatial_propagation(const TDesc &FH);
   void  build_xy_view(const TDesc &FH_z);
   void  build_3d_cuts(const TDesc &FH_z);
+  TDesc build_freq_weights();
 
   Settings s_;
 

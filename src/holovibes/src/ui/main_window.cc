@@ -977,8 +977,14 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // View Settings
   {
+    std::map<std::string, MomentType> moment_from_str{
+        {"M0", MomentType::M0},
+        {"M1", MomentType::M1},
+        {"M2", MomentType::M2},
+    };
     s.view_3d_cuts            = view_widget_->is_cuts_3d_enabled();
     s.raw_view                = view_widget_->is_raw_view_enabled();
+    s.moment_type             = moment_from_str.at(view_widget_->get_image_type().toStdString());
     s.view_raw_spectrum       = true;
     s.view_processed_spectrum = true;
   }

@@ -158,7 +158,7 @@ void ViewWidget::setup_ui() {
     ++row;
   };
 
-  add_combo_row("Image Type:", image_type_combo_, QStringList{"Magnitude", "Phase"});
+  add_combo_row("Image Type:", image_type_combo_, QStringList{"M0", "M1", "M2"});
 
   cuts_3d_check_ = new QCheckBox("3D Cuts", this);
   layout->addWidget(cuts_3d_check_, row, 0);
