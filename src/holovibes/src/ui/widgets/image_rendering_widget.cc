@@ -154,7 +154,7 @@ void ImageRenderingWidget::setup_ui() {
 
   auto space_transforms = QStringList{"None", "Fresnel Diffraction", "Angular Spectrum"};
   add_combo_row("Space Transform:", space_transform_combo_, space_transforms);
-  auto time_transforms = QStringList{"None", "Short Time Fourier", "Principal Component Analysis"};
+  auto time_transforms = QStringList{"None", "RFFT", "FFT", "Principal Component Analysis"};
   add_combo_row("Time Transform:", time_transform_combo_, time_transforms);
   add_spin_row("Time Window:", time_window_spin_, 1, kLargeSpinMax, 32);
   add_spin_row("Lambda (nm):", lambda_spin_, 1, kLargeSpinMax, 852);

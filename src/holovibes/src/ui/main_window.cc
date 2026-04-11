@@ -960,7 +960,8 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     std::map<std::string, TimeMethod> method_from_str{
         {"None", TimeMethod::NONE},
         {"Principal Component Analysis", TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS},
-        {"Short Time Fourier", TimeMethod::SHORT_TIME_FOURIER},
+        {"RFFT", TimeMethod::RFFT},
+        {"FFT", TimeMethod::FFT},
     };
     s.time_window  = render_widget_->get_time_window();
     s.time_stride  = render_widget_->get_time_stride();
@@ -1147,8 +1148,11 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     case TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS:
       method = "Principal Component Analysis";
       break;
-    case TimeMethod::SHORT_TIME_FOURIER:
-      method = "Short Time Fourier";
+    case TimeMethod::RFFT:
+      method = "RFFT";
+      break;
+    case TimeMethod::FFT:
+      method = "FFT";
       break;
     default:
       method = "None";
@@ -1167,9 +1171,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   }
 
   // --- View Settings ---
-  {
-    view_widget_->set_cuts_3d_enabled(s.view_3d_cuts);
-  }
+  { view_widget_->set_cuts_3d_enabled(s.view_3d_cuts); }
 
   // --- Post-processing Settings ---
   {

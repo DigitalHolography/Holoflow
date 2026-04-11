@@ -59,8 +59,10 @@ using json = nlohmann::json;
   switch (method) {
   case TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS:
     return "PCA";
-  case TimeMethod::SHORT_TIME_FOURIER:
-    return "STFT";
+  case TimeMethod::RFFT:
+    return "RFFT";
+  case TimeMethod::FFT:
+    return "FFT";
   case TimeMethod::NONE:
   default:
     return "NONE";
@@ -71,8 +73,11 @@ using json = nlohmann::json;
   if (value == "PCA") {
     return TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS;
   }
-  if (value == "STFT") {
-    return TimeMethod::SHORT_TIME_FOURIER;
+  if (value == "RFFT" || value == "STFT") { // "STFT" kept for backward compatibility
+    return TimeMethod::RFFT;
+  }
+  if (value == "FFT") {
+    return TimeMethod::FFT;
   }
   return TimeMethod::NONE;
 }

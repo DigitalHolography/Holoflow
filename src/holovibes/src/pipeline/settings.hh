@@ -41,7 +41,8 @@ enum class SpacialMethod {
 enum class TimeMethod {
   NONE,
   PRINCIPAL_COMPONENT_ANALYSIS,
-  SHORT_TIME_FOURIER,
+  RFFT,
+  FFT,
 };
 
 enum class RecordingMethod {
@@ -123,8 +124,8 @@ struct Settings {
   int                   recording_count;
 
   // Auto-focus
-  bool  autofocus_enabled;
-  int   autofocus_nb_subaps;
+  bool             autofocus_enabled;
+  int              autofocus_nb_subaps;
   std::vector<int> autofocus_zernike_orders;
 };
 

@@ -14,6 +14,7 @@
 
 #include "graph_builder.hh"
 
+#include <array>
 #include <spdlog/fmt/ranges.h>
 
 #include "bug.hh"
@@ -137,13 +138,34 @@ GraphBuilder::TDesc GraphBuilder::build_preprocessing(TDesc H) {
 
 GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
   TDesc FH;
-  if (s_.time_method == TimeMethod::SHORT_TIME_FOURIER) {
+  if (s_.time_method == TimeMethod::RFFT) {
     FH = rfft(H, {0});
 
     // Optimization: slice relevant components early
     if (!s_.view_3d_cuts) {
       FH = slice(FH, {{holonp::SliceRange{s_.time_z_begin, s_.time_z_end}, {}, {}}});
       FH = copy(FH, {});
+    }
+  }
+
+  else if (s_.time_method == TimeMethod::FFT) {
+    FH = fft(H, {0});
+
+    // Optimization: slice relevant components early, including the symmetric negative band
+    if (!s_.view_3d_cuts) {
+      auto N = static_cast<int64_t>(H.shape.at(0));
+
+      // Positive frequencies: [s_.time_z_begin, s_.time_z_end)
+      auto pos_range = holonp::SliceRange{s_.time_z_begin, s_.time_z_end};
+      auto FH_pos    = slice(FH, {{pos_range, {}, {}}});
+      FH_pos         = copy(FH_pos, {});
+
+      // Negative frequencies: [N - s_.time_z_end, N - s_.time_z_begin)
+      auto neg_range = holonp::SliceRange{N - s_.time_z_end, N - s_.time_z_begin};
+      auto FH_neg    = slice(FH, {{neg_range, {}, {}}});
+      FH_neg         = copy(FH_neg, {});
+
+      FH = concatenate(std::array<TDesc, 2>{FH_pos, FH_neg}, {0});
     }
   }
 

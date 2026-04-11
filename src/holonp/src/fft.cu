@@ -159,8 +159,11 @@ holoflow::core::InferResult FFTFactory::infer(std::span<const holoflow::core::TD
   const auto total = product_shape(idesc.shape);
   check(total > 0, "input tensor has zero elements");
 
-  holoflow::core::TDesc odesc = idesc;
-  odesc.dtype                 = holoflow::core::DType::CF32;
+  // holoflow::core::TDesc odesc = idesc;
+  // odesc.dtype                 = holoflow::core::DType::CF32;
+
+  holoflow::core::TDesc odesc(idesc.shape, holoflow::core::DType::CF32,
+                              holoflow::core::MemLoc::Device);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
