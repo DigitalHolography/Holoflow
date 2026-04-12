@@ -74,13 +74,9 @@ struct BatchGroup {
   std::vector<int> dims;
 };
 
+// Minimized CallerInfo struct. All dimensions are injected via macros.
 struct ApplyLensCallerInfo {
-  unsigned int       width;
-  unsigned int       _padding;
-  unsigned long long idist;
-  unsigned long long stride_h;
-  unsigned long long istride;
-  cuFloatComplex    *lens;
+  cuFloatComplex *lens;
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -255,17 +251,20 @@ std::vector<char> compile_source_to_lto(const std::string &source, const std::st
   }
 }
 
-std::vector<char> apply_lens_lto(bool is_fast, bool is_real) {
+std::vector<char> apply_lens_lto(bool is_fast, bool is_real, unsigned int width,
+                                 unsigned long long idist, unsigned long long stride_h,
+                                 unsigned long long istride) {
+  // Inject compile-time constants for the NVRTC compiler
+  std::string src = "#define WIDTH " + std::to_string(width) + "u\n" + "#define IDIST " +
+                    std::to_string(idist) + "ull\n" + "#define STRIDE_H " +
+                    std::to_string(stride_h) + "ull\n" + "#define ISTRIDE " +
+                    std::to_string(istride) + "ull\n";
+
   // Common header — struct definition shared with the host side.
-  std::string src = R"(
+  src += R"(
 #include <cuComplex.h>
 
 struct ApplyLensCallerInfo {
-  unsigned int       width;
-  unsigned int       _padding;
-  unsigned long long idist;
-  unsigned long long stride_h;
-  unsigned long long istride;
   cuFloatComplex    *lens;
 };
 
@@ -281,19 +280,19 @@ __device__ cuFloatComplex apply_lens_callback2(
     src += "  cuFloatComplex val = ((cuFloatComplex *)data)[offset];\n";
   }
 
-  // Index into the lens — fast (contiguous) or general strided path.
+  // Index into the lens — fast (contiguous) or general strided path using macros
   if (is_fast) {
     src += R"(
-  size_t lens_idx = offset % info->idist;
+  size_t lens_idx = offset % IDIST;
   return cuCmulf(val, info->lens[lens_idx]);
 }
 )";
   } else {
     src += R"(
-  size_t local_offset = offset % info->idist;
-  size_t row          = local_offset / info->stride_h;
-  size_t col          = (local_offset % info->stride_h) / info->istride;
-  size_t lens_idx     = row * info->width + col;
+  size_t local_offset = offset % IDIST;
+  size_t row          = local_offset / STRIDE_H;
+  size_t col          = (local_offset % STRIDE_H) / ISTRIDE;
+  size_t lens_idx     = row * WIDTH + col;
   return cuCmulf(val, info->lens[lens_idx]);
 }
 )";
@@ -533,16 +532,14 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
 
   // -- JIT callback -------------------------------------------------------------------------------
   bool is_fast = (in_istride == 1 && inembed_h == W);
-  auto lto     = apply_lens_lto(is_fast, is_real);
+  auto lto     = apply_lens_lto(is_fast, is_real, static_cast<unsigned int>(W),
+                                static_cast<unsigned long long>(best_group.in_idist),
+                                static_cast<unsigned long long>(in_stride_h),
+                                static_cast<unsigned long long>(in_istride));
   auto d_lens  = make_quadratic_lens(W, H, settings);
 
   ApplyLensCallerInfo info{
-      .width    = static_cast<unsigned int>(W),
-      ._padding = 0,
-      .idist    = static_cast<unsigned long long>(best_group.in_idist),
-      .stride_h = static_cast<unsigned long long>(in_stride_h),
-      .istride  = static_cast<unsigned long long>(in_istride),
-      .lens     = d_lens.get(),
+      .lens = d_lens.get(),
   };
   auto d_info = curaii::make_unique_device_ptr<ApplyLensCallerInfo>(1);
   auto e = cudaMemcpyAsync(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice, ctx.stream);

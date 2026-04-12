@@ -218,9 +218,15 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
   auto               valid_h = subap_h * nb_subap;
   holonp::SliceRange x_crop{0, valid_w};
   holonp::SliceRange y_crop{0, valid_h};
-  auto               FH_cropped = slice(FH, {{{}, {}, y_crop, x_crop}});
-  FH_cropped                    = copy(FH_cropped, {}); // Ensure contiguous layout for Fresnel
-  FH_cropped = convert(FH_cropped, {Target::CF32, Strat::Real}); // Ensure complex type for Fresnel
+  (void)x_crop;
+  (void)y_crop;
+  // auto               FH_cropped = slice(FH, {{{}, {}, y_crop, x_crop}});
+
+  auto FH_cropped = FH;
+
+  // FH_cropped                    = copy(FH_cropped, {}); // Ensure contiguous layout for Fresnel
+  // FH_cropped = convert(FH_cropped, {Target::CF32, Strat::Real}); // Ensure complex type for
+  // Fresnel
 
   // 2. Sub-aperture Processing via Short-Time Fresnel
   // This replaces the 6D reshape, transpose, phase ramp generation, and fresnel_diffraction.
@@ -254,8 +260,8 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
   M0_sh_disp         = transpose(M0_sh_disp, {{0, 1, 3, 2, 4}});
   M0_sh_disp         = reshape(M0_sh_disp, {{1, h, w}});
   M0_sh_disp         = convert(M0_sh_disp, {Target::U8, Strat::Scaled});
-  M0_sh_disp         = memcpy(M0_sh_disp, {Host});
-  M0_sh_disp         = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
+  // M0_sh_disp         = memcpy(M0_sh_disp, {Host});
+  // M0_sh_disp         = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
   shack_hartmann_display(M0_sh_disp, {});
 
   h                    = static_cast<int64_t>(xcorr.shape.at(3) * nb_subap);
@@ -407,8 +413,8 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
 
   result = convert(result, {Target::U8, Strat::Scaled});
   result = batched_queue(result, {s_.gpu_out_size, 1, 1});
-  result = memcpy(result, {Host});
-  result = batched_queue(result, {s_.cpu_out_size, 1, 1});
+  // result = memcpy(result, {Host});
+  // result = batched_queue(result, {s_.cpu_out_size, 1, 1});
   xy_processed_display(result, {});
 
   if (s_.recording_method == RecordingMethod::PROCESSED) {

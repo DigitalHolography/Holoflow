@@ -80,22 +80,9 @@ struct LaunchOffset {
 };
 
 // Caller-info struct embedded verbatim into the NVRTC source string.
-// Alignment note: all 4-byte fields come first, then the 8-byte field, then floats.
+// Minimized to just the pointer. All structure params are macro-injected.
 struct STFTCallerInfo {
-  unsigned int       win_w;
-  unsigned int       win_h;
-  unsigned int       nx_win;
-  unsigned int       ny_win;
-  unsigned int       stride_x;
-  unsigned int       stride_y;
-  unsigned int       field_W;
-  unsigned int       _pad;        // keeps field_idist 8-byte aligned
-  unsigned long long field_idist; // elements between consecutive batch items in the original field
-  float              dx;
-  float              dy;
-  float              pi_over_lz; // π / (λ * z)
-  float              x_origin;   // physical x-coord of pixel index 0 in the chosen frame
-  float              y_origin;   // physical y-coord of pixel index 0 in the chosen frame
+  cuFloatComplex *precomputed_lens;
 };
 
 // Shared header for both callback variants.
@@ -103,28 +90,22 @@ constexpr const char *k_stft_callback_header = R"(
 #include <cuComplex.h>
 
 struct STFTCallerInfo {
-  unsigned int win_w, win_h, nx_win, ny_win;
-  unsigned int stride_x, stride_y, field_W, _pad;
-  unsigned long long field_idist;
-  float dx, dy, pi_over_lz, x_origin, y_origin;
+  cuFloatComplex *precomputed_lens;
 };
 
-// Decode a flat cuFFT offset into window grid and local pixel coordinates.
-// offset = (b_inner * ny_win * nx_win + gy * nx_win + gx) * win_h * win_w + j * win_w + i
-__device__ __forceinline__ void stft_decode(
-    const STFTCallerInfo *info, size_t offset,
-    unsigned long long &b, unsigned int &gx, unsigned int &gy,
+// Decode a flat cuFFT offset using 32-bit macro math to prevent register spills and dynamic division
+__device__ __forceinline__ void stft_decode_32bit(
+    unsigned int offset,
+    unsigned int &b, unsigned int &gx, unsigned int &gy,
     unsigned int &i,  unsigned int &j)
 {
-  unsigned long long tile  = (unsigned long long)info->win_w * info->win_h;
-  unsigned long long grid  = (unsigned long long)info->nx_win * info->ny_win;
-  unsigned long long lf    = offset % tile;
-  i  = (unsigned int)(lf % info->win_w);
-  j  = (unsigned int)(lf / info->win_w);
-  unsigned long long sf = (offset / tile) % grid;
-  gx = (unsigned int)(sf % info->nx_win);
-  gy = (unsigned int)(sf / info->nx_win);
-  b  = offset / (tile * grid);
+  unsigned int lf = offset % TILE;
+  i  = lf % WIN_W;
+  j  = lf / WIN_W;
+  unsigned int sf = (offset / TILE) % GRID;
+  gx = sf % NX_WIN;
+  gy = sf / NX_WIN;
+  b  = offset / (TILE * GRID);
 }
 )";
 
@@ -136,12 +117,13 @@ __device__ cuFloatComplex )";
     void *data, size_t offset, void *callerInfo, void *sharedPtr)
 {
     auto *info = (STFTCallerInfo *)callerInfo;
-    unsigned long long b; unsigned int gx, gy, i, j;
-    stft_decode(info, offset, b, gx, gy, i, j);
+    unsigned int b, gx, gy, i, j;
+    stft_decode_32bit((unsigned int)offset, b, gx, gy, i, j);
 
-    unsigned long long src = b * info->field_idist
-                             + (unsigned long long)(gy * info->stride_y + j) * info->field_W
-                             + (unsigned long long)(gx * info->stride_x + i);
+    // Use MACROS for all layout calculations
+    unsigned long long src = b * FIELD_IDIST
+                             + (unsigned long long)(gy * STRIDE_Y + j) * FIELD_W
+                             + (unsigned long long)(gx * STRIDE_X + i);
 )";
 
   // The Magic Cast: Handle real vs complex loads
@@ -154,22 +136,14 @@ __device__ cuFloatComplex )";
   // Phase applications
   if (is_global) {
     src += R"(
-    // Phase: pi/lz * (x_global^2 + y_global^2)
-    float x = (float)(gx * info->stride_x + i) * info->dx + info->x_origin;
-    float y = (float)(gy * info->stride_y + j) * info->dy + info->y_origin;
-    float s, c;
-    sincosf(info->pi_over_lz * (x * x + y * y), &s, &c);
-    return cuCmulf(val, make_cuComplex(c, s));
+    unsigned int global_idx = (gy * STRIDE_Y + j) * FIELD_W + (gx * STRIDE_X + i);
+    return cuCmulf(val, info->precomputed_lens[global_idx]);
 }
 )";
   } else {
     src += R"(
-    // Phase: pi/lz * (x_local^2 + y_local^2)
-    float x = (float)i * info->dx + info->x_origin;
-    float y = (float)j * info->dy + info->y_origin;
-    float s, c;
-    sincosf(info->pi_over_lz * (x * x + y * y), &s, &c);
-    return cuCmulf(val, make_cuComplex(c, s));
+    unsigned int local_idx = j * WIN_W + i;
+    return cuCmulf(val, info->precomputed_lens[local_idx]);
 }
 )";
   }
@@ -223,9 +197,28 @@ std::vector<char> compile_lto(const std::string &src, const std::string &name) {
   }
 }
 
-std::vector<char> build_stft_lto(bool is_global, bool is_real) {
-  std::string src = k_stft_callback_header;
+std::vector<char> build_stft_lto(bool is_global, bool is_real, unsigned int win_w,
+                                 unsigned int win_h, unsigned int nx_win, unsigned int ny_win,
+                                 unsigned int stride_x, unsigned int stride_y, unsigned int field_W,
+                                 unsigned long long field_idist) {
+
+  // clang-format off
+  std::string src =
+      "#define WIN_W "                 + std::to_string(win_w)       + "u\n"   +
+      "#define WIN_H "                 + std::to_string(win_h)       + "u\n"   +
+      "#define NX_WIN "                + std::to_string(nx_win)      + "u\n"   +
+      "#define NY_WIN "                + std::to_string(ny_win)      + "u\n"   +
+      "#define STRIDE_X "              + std::to_string(stride_x)    + "u\n"   +
+      "#define STRIDE_Y "              + std::to_string(stride_y)    + "u\n"   +
+      "#define FIELD_W "               + std::to_string(field_W)     + "u\n"   +
+      "#define FIELD_IDIST "           + std::to_string(field_idist) + "ull\n" +
+      "#define TILE (WIN_W * WIN_H)\n"                                         + 
+      "#define GRID (NX_WIN * NY_WIN)\n";
+  // clang-format on
+
+  src += k_stft_callback_header;
   src += get_stft_load_body(is_global, is_real);
+
   const char *name = is_global ? "stft_load_global.cu" : "stft_load_local.cu";
   logger()->debug("[ShortTimeFresnelDiffraction] Source for {} callback:\n{}", name, src);
   return compile_lto(src, name);
@@ -311,6 +304,35 @@ void gen_offsets(const std::vector<size_t> &shape, const std::vector<size_t> &in
 }
 
 // -------------------------------------------------------------------------------------------------
+// Input-plane quadratic phase kernel (for the JIT callback to read from)
+// -------------------------------------------------------------------------------------------------
+
+__global__ void stft_input_phase_kernel(cuFloatComplex *lens, int width, int height, float dx,
+                                        float dy, float x_origin, float y_origin,
+                                        float pi_over_lz) {
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  if (col >= width || row >= height)
+    return;
+  float x = col * dx + x_origin;
+  float y = row * dy + y_origin;
+  float s, c;
+  sincosf(pi_over_lz * (x * x + y * y), &s, &c);
+  lens[row * width + col] = make_cuComplex(c, s);
+}
+
+DevPtr<cuFloatComplex> make_input_lens(int width, int height, float dx, float dy, float x_origin,
+                                       float y_origin, float lambda, float z, cudaStream_t stream) {
+  auto  d = curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(width) * height);
+  dim3  block(16, 16);
+  dim3  grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+  float pi_over_lz = CUDART_PI_F / (lambda * z);
+  stft_input_phase_kernel<<<grid, block, 0, stream>>>(d.get(), width, height, dx, dy, x_origin,
+                                                      y_origin, pi_over_lz);
+  return d;
+}
+
+// -------------------------------------------------------------------------------------------------
 // Output-plane quadratic phase kernel  (identical to fresnel_diffraction.cu)
 // -------------------------------------------------------------------------------------------------
 
@@ -341,7 +363,6 @@ DevPtr<cuFloatComplex> make_win_lens(int win_w, int win_h, float lambda, float z
 
   // Host-side fill (small lens) — for large windows a kernel would be better, but consistency
   // with fresnel_diffraction.cu (which uses a kernel) is maintained by calling the same pattern.
-  // Here we use a simple thrust-free approach via a temporary host vector.
   std::vector<cuFloatComplex> h(static_cast<size_t>(win_w) * win_h);
   for (int row = 0; row < win_h; ++row) {
     for (int col = 0; col < win_w; ++col) {
@@ -399,7 +420,8 @@ struct ShortTimeFresnelDiffraction::Impl {
 
   // Device resources
   cudaStream_t           stream;
-  DevPtr<cuFloatComplex> d_win_lens; // output-plane quadratic lens [win_h, win_w]
+  DevPtr<cuFloatComplex> d_win_lens;   // output-plane quadratic lens [win_h, win_w]
+  DevPtr<cuFloatComplex> d_input_lens; // input phase shift (local or global)
   DevPtr<void>           d_caller_info;
   std::vector<char>      lto;
 };
@@ -562,9 +584,9 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
   const long long out_stride_h  = static_cast<long long>(win_w);
   const long long out_istride   = 1LL;
 
-  // -- Caller-info struct -----------------------------------------------------------------------
-  // Physical coordinate of pixel 0 in x/y, in the chosen phase frame.
+  // -- Caller-info struct & Precomputation ------------------------------------------------------
   float x_origin, y_origin;
+  int   input_lens_w, input_lens_h;
   if (s.phase_ref == STFDPhaseReference::LOCAL) {
     // Frame: window centered. Convention identical to make_quadratic_lens in FresnelDiffraction.
     int loc_size  = win_w > win_h ? win_w : win_h;
@@ -572,6 +594,8 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
     int loc_off_y = (loc_size - win_h) / 2;
     x_origin      = (loc_off_x - loc_size / 2.0f) * s.dx;
     y_origin      = (loc_off_y - loc_size / 2.0f) * s.dy;
+    input_lens_w  = win_w;
+    input_lens_h  = win_h;
   } else {
     // Frame: full field centered. Same convention: largest dimension sets the scale.
     int glo_size  = W > H ? W : H;
@@ -579,23 +603,15 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
     int glo_off_y = (glo_size - H) / 2;
     x_origin      = (glo_off_x - glo_size / 2.0f) * s.dx;
     y_origin      = (glo_off_y - glo_size / 2.0f) * s.dy;
+    input_lens_w  = W;
+    input_lens_h  = H;
   }
 
+  auto d_input_lens = make_input_lens(input_lens_w, input_lens_h, s.dx, s.dy, x_origin, y_origin,
+                                      s.lambda, s.z, ctx.stream);
+
   STFTCallerInfo info{
-      .win_w       = static_cast<unsigned>(win_w),
-      .win_h       = static_cast<unsigned>(win_h),
-      .nx_win      = static_cast<unsigned>(nx_win),
-      .ny_win      = static_cast<unsigned>(ny_win),
-      .stride_x    = static_cast<unsigned>(s.stride_x),
-      .stride_y    = static_cast<unsigned>(s.stride_y),
-      .field_W     = static_cast<unsigned>(W),
-      ._pad        = 0,
-      .field_idist = static_cast<unsigned long long>(group.in_idist),
-      .dx          = s.dx,
-      .dy          = s.dy,
-      .pi_over_lz  = CUDART_PI_F / (s.lambda * s.z),
-      .x_origin    = x_origin,
-      .y_origin    = y_origin,
+      .precomputed_lens = d_input_lens.get(),
   };
   auto d_info = curaii::make_unique_device_ptr<STFTCallerInfo>(1);
   CUDA_CHECK(
@@ -603,7 +619,12 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
 
   // -- LTO compilation --------------------------------------------------------------------------
   bool is_global = (s.phase_ref == STFDPhaseReference::GLOBAL);
-  auto lto       = build_stft_lto(is_global, is_real);
+  // Pass all layout parameters directly to the JIT builder to bake them as macros
+  auto lto =
+      build_stft_lto(is_global, is_real, static_cast<unsigned>(win_w), static_cast<unsigned>(win_h),
+                     static_cast<unsigned>(nx_win), static_cast<unsigned>(ny_win),
+                     static_cast<unsigned>(s.stride_x), static_cast<unsigned>(s.stride_y),
+                     static_cast<unsigned>(W), static_cast<unsigned long long>(group.in_idist));
 
   // -- Window-lens for output phase shift -------------------------------------------------------
   auto d_win_lens = make_win_lens(win_w, win_h, s.lambda, s.z, s.dx);
@@ -648,6 +669,7 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
       .out_istride   = out_istride,
       .stream        = ctx.stream,
       .d_win_lens    = std::move(d_win_lens),
+      .d_input_lens  = std::move(d_input_lens),
       .d_caller_info = std::move(d_info),
       .lto           = std::move(lto),
   });
