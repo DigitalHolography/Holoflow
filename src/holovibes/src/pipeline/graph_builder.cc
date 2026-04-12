@@ -261,7 +261,7 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
   M0_sh_disp         = reshape(M0_sh_disp, {{1, h, w}});
   M0_sh_disp         = convert(M0_sh_disp, {Target::U8, Strat::Scaled});
   // M0_sh_disp         = memcpy(M0_sh_disp, {Host});
-  // M0_sh_disp         = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
+  M0_sh_disp = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
   shack_hartmann_display(M0_sh_disp, {});
 
   h                    = static_cast<int64_t>(xcorr.shape.at(3) * nb_subap);
@@ -281,6 +281,7 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
   if (!s_.autofocus_zernike_orders.empty()) {
     auto xcorr_zernike = fftshift(xcorr, {{-2, -1}});
     xcorr_zernike      = normalize(xcorr_zernike, {{-2, -1}, 0.0f, 255.0f});
+    xcorr_zernike      = cuda_stream_synchronize(xcorr_zernike, {});
     xcorr_zernike      = memcpy(xcorr_zernike, {Host});
 
     holotask::syncs::ZernikeSettings zernike_settings{

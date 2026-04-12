@@ -63,6 +63,7 @@
 #include "holotask/syncs/convolution.hh"
 #include "holotask/syncs/correct_phase.hh"
 #include "holotask/syncs/crop.hh"
+#include "holotask/syncs/cuda_stream_synchronize.hh"
 #include "holotask/syncs/fft_shift.hh"
 #include "holotask/syncs/filter2d.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
@@ -112,6 +113,7 @@ protected:
   TDesc short_time_fresnel_diffraction(const TDesc &X, holotask::syncs::ShortTimeFresnelDiffractionSettings s);
   TDesc unfold2d(const TDesc &X, holonp::Unfold2DSettings s);
   TDesc angular_spectrum(const TDesc &X, holotask::syncs::AngularSpectrumSettings s);
+  TDesc cuda_stream_synchronize(const TDesc &X, holotask::syncs::CudaStreamSynchronizeSettings s);
   TDesc slide_avg(const TDesc &X, holotask::asyncs::SlidingAverageSettings s);
   void  xy_raw_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  xy_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);

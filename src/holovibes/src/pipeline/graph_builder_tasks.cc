@@ -66,6 +66,7 @@ DEFINE_UNARY_SYNC_NODE (stft,                                   "stft",         
 DEFINE_UNARY_SYNC_NODE (filter_2d,                              "filter_2d",                           "Filter2D",                        holotask::syncs::Filter2DSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_diffraction,                    "fresnel_diffraction",                 "FresnelDiffraction",              holotask::syncs::FresnelDiffractionSettings)
 DEFINE_UNARY_SYNC_NODE (angular_spectrum,                       "angular_spectrum",                    "AngularSpectrum",                 holotask::syncs::AngularSpectrumSettings)
+DEFINE_UNARY_SYNC_NODE (cuda_stream_synchronize,                "cuda_stream_synchronize",             "CudaStreamSynchronize",           holotask::syncs::CudaStreamSynchronizeSettings)
 DEFINE_UNARY_SYNC_NODE (reshape,                                "reshape",                             "Reshape",                         holonp::ReshapeSettings)
 DEFINE_UNARY_SYNC_NODE (average,                                "average",                             "Average",                         holotask::syncs::AverageSettings)
 DEFINE_UNARY_SYNC_NODE (convolution,                            "convolution",                         "Convolution",                     holotask::syncs::ConvolutionSettings)

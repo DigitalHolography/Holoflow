@@ -79,6 +79,7 @@
 #include "holotask/syncs/convolution.hh"
 #include "holotask/syncs/correct_phase.hh"
 #include "holotask/syncs/crop.hh"
+#include "holotask/syncs/cuda_stream_synchronize.hh"
 #include "holotask/syncs/fft_shift.hh"
 #include "holotask/syncs/filter2d.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
@@ -174,6 +175,7 @@ void Manager::register_components() {
   reg_sync<sources::FresnelQinFactory>(registry_, "FresnelQin");
   reg_sync<sources::FresnelQoutFactory>(registry_, "FresnelQout");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
+  reg_sync<syncs::CudaStreamSynchronizeFactory>(registry_, "CudaStreamSynchronize");
   reg_sync<syncs::AverageFactory>(registry_, "Average");
   reg_sync<syncs::ConversionFactory>(registry_, "Conversion");
   reg_sync<syncs::FFTShiftFactory>(registry_, "FFTShift");

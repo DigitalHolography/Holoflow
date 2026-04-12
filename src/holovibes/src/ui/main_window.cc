@@ -924,8 +924,11 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       s.load_end      = static_cast<size_t>(import_widget_->get_end_index());
       QString method  = import_widget_->get_load_method();
       s.load_method   = method_from_str.at(method.toStdString());
-      // s.load_batch    = render_widget_->get_batch_size();
-      s.load_batch = 4;
+      if (render_widget_->get_time_transform() == "Principal Component Analysis") {
+        s.load_batch = 4;
+      } else {
+        s.load_batch = render_widget_->get_batch_size();
+      }
     } else {
       QString source       = import_widget_->get_camera_type();
       s.import_source      = source_from_str.at(source.toStdString());
