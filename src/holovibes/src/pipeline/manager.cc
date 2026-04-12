@@ -62,6 +62,7 @@
 #include "holonp/slice.hh"
 #include "holonp/sub.hh"
 #include "holonp/transpose.hh"
+#include "holonp/unfold2d.hh"
 #include "holonp/where.hh"
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
@@ -88,6 +89,8 @@
 #include "holotask/syncs/registration.hh"
 #include "holotask/syncs/rotation.hh"
 #include "holotask/syncs/shack_hartmann_phase_ramps.hh"
+#include "holotask/syncs/short_time_fresnel_diffraction.hh"
+#include "holotask/syncs/short_time_fresnel_phase_ramps.hh"
 #include "holotask/syncs/stft.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike.hh"
@@ -187,6 +190,9 @@ void Manager::register_components() {
   reg_sync<syncs::CropFactory>(registry_, "Crop");
   reg_sync<syncs::RotationFactory>(registry_, "Rotation");
   reg_sync<syncs::ShackHartmannPhaseRampsFactory>(registry_, "ShackHartmannPhaseRamps");
+  reg_sync<syncs::ShortTimeFresnelDiffractionFactory>(registry_, "ShortTimeFresnelDiffraction");
+  reg_sync<syncs::ShortTimeFresnelPhaseRampsFactory>(registry_, "ShortTimeFresnelPhaseRamps");
+  reg_sync<Unfold2DFactory>(registry_, "Unfold2D");
   reg_sync<syncs::Wrap2PiFactory>(registry_, "Wrap2Pi");
   reg_sync<syncs::ZernikeFactory>(registry_, "Zernike");
   reg_sync<syncs::ZernikePhaseFactory>(registry_, "ZernikePhase");

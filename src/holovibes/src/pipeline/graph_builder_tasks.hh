@@ -46,6 +46,7 @@
 #include "holonp/slice.hh"
 #include "holonp/sub.hh"
 #include "holonp/transpose.hh"
+#include "holonp/unfold2d.hh"
 #include "holonp/where.hh"
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
@@ -71,6 +72,8 @@
 #include "holotask/syncs/registration.hh"
 #include "holotask/syncs/rotation.hh"
 #include "holotask/syncs/shack_hartmann_phase_ramps.hh"
+#include "holotask/syncs/short_time_fresnel_diffraction.hh"
+#include "holotask/syncs/short_time_fresnel_phase_ramps.hh"
 #include "holotask/syncs/stft.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike.hh"
@@ -105,6 +108,9 @@ protected:
   TDesc fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
   TDesc fresnel_qout(const TDesc &Z, holotask::sources::FresnelQoutSettings s);
   TDesc shack_hartmann_phase_ramps(holotask::syncs::ShackHartmannPhaseRampsSettings s);
+  TDesc short_time_fresnel_phase_ramps(holotask::syncs::ShortTimeFresnelPhaseSettings s);
+  TDesc short_time_fresnel_diffraction(const TDesc &X, holotask::syncs::ShortTimeFresnelDiffractionSettings s);
+  TDesc unfold2d(const TDesc &X, holonp::Unfold2DSettings s);
   TDesc angular_spectrum(const TDesc &X, holotask::syncs::AngularSpectrumSettings s);
   TDesc slide_avg(const TDesc &X, holotask::asyncs::SlidingAverageSettings s);
   void  xy_raw_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);

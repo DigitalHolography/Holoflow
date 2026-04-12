@@ -207,56 +207,33 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
   auto Host    = holotask::syncs::MemcpySettings::Target::Host;
   auto Device  = holotask::syncs::MemcpySettings::Target::Device;
 
-  // Spatial Cropping & Fresnel Lens Application
+  // 1. Spatial Cropping (keep this to ensure perfect divisibility)
   auto subap_w = FH.shape.at(3) / nb_subap;
   auto subap_h = FH.shape.at(2) / nb_subap;
   if (subap_w == 0 || subap_h == 0) {
     throw std::invalid_argument("autofocus_nb_subaps is too large for the current frame size");
   }
-  auto valid_w = subap_w * nb_subap;
-  auto valid_h = subap_h * nb_subap;
 
+  auto               valid_w = subap_w * nb_subap;
+  auto               valid_h = subap_h * nb_subap;
   holonp::SliceRange x_crop{0, valid_w};
   holonp::SliceRange y_crop{0, valid_h};
+  auto               FH_cropped = slice(FH, {{{}, {}, y_crop, x_crop}});
+  FH_cropped                    = copy(FH_cropped, {}); // Ensure contiguous layout for Fresnel
+  FH_cropped = convert(FH_cropped, {Target::CF32, Strat::Real}); // Ensure complex type for Fresnel
 
-  auto FH_cropped = slice(FH, {{{}, {}, y_crop, x_crop}});
-  auto n_freq     = FH_cropped.shape.at(1);
-
-  // Organize into sub-aperture groups:
-  // (accumulation, freq, subap_y, subap_x, subap_h, subap_w)
-  auto FH_6d      = reshape(FH_cropped, {{
-                                        (int64_t)s_.pp_accumulation,
-                                        (int64_t)n_freq,
-                                        (int64_t)nb_subap,
-                                        (int64_t)subap_h,
-                                        (int64_t)nb_subap,
-                                        (int64_t)subap_w,
-                                    },
-                                         false});
-  auto FH_grouped = transpose(FH_6d, {{0, 1, 2, 4, 3, 5}});
-  FH_grouped      = ascontiguousarray(FH_grouped, {});
-
-  // Sub-aperture Processing
-  // Subapetures have an angle of propagation induced by parallax effects, which manifests as a
-  // shift of the focal spot in the Shack-Hartmann image. To accurately recover this shift, we need
-  // to apply a corrective phase ramp to each subaperture before propagation. This is
-  // equivalent to applying a Fresnel lens that focuses at the expected focal plane, thus ensuring
-  // the focal spot is well-defined and can be precisely localized via cross-correlation.
-  auto ramps   = shack_hartmann_phase_ramps({
-      subap_w,
-      subap_h,
-      dx,
-      dy,
-      nb_subap,
-      nb_subap,
-      z_prop,
-      lam,
-  });
-  FH_grouped   = mul(FH_grouped, ramps, {});
-  auto FH_prop = fresnel_diffraction(FH_grouped, {lam, dx, dy, z_prop, {-2, -1}});
-  auto M0      = mean_abs(FH_prop, {{1}, false});
-  M0           = mean(M0, {{0}, true});
-  M0           = fftshift(M0, {{-2, -1}});
+  // 2. Sub-aperture Processing via Short-Time Fresnel
+  // This replaces the 6D reshape, transpose, phase ramp generation, and fresnel_diffraction.
+  // We use stride == subap size for non-overlapping Shack-Hartmann windows.
+  auto FH_prop = short_time_fresnel_diffraction(
+      FH_cropped, subap_w, subap_h, // window dimensions
+      subap_w, subap_h,             // strides (non-overlapping)
+      lam, dx, dy, z_prop,
+      PhaseReference::GLOBAL // applies the necessary off-axis phase correction
+  );
+  auto M0 = mean_abs(FH_prop, {{1}, false});
+  M0      = mean(M0, {{0}, true});
+  M0      = fftshift(M0, {{-2, -1}});
 
   // Cross Correlation with Reference
   int64_t sy_ref = nb_subap / 2;
@@ -327,6 +304,13 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
   }
 
   return FH;
+}
+
+GraphBuilder::TDesc GraphBuilder::short_time_fresnel_diffraction(
+    const TDesc &field, size_t win_w, size_t win_h, size_t stride_x, size_t stride_y, float lam,
+    float dx, float dy, float z_prop, PhaseReference phase_ref, bool skip_phase_shift) {
+  return GraphBuilderTasks::short_time_fresnel_diffraction(
+      field, {lam, dx, dy, z_prop, win_h, win_w, stride_y, stride_x, phase_ref, skip_phase_shift});
 }
 
 GraphBuilder::TDesc GraphBuilder::build_spatial_propagation(const TDesc &FH) {
