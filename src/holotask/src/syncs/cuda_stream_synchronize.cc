@@ -47,7 +47,7 @@ CudaStreamSynchronizeFactory::infer(std::span<const holoflow::core::TDesc> input
   return holoflow::core::InferResult{
       .input_descs   = {input_descs[0]},
       .output_descs  = {input_descs[0]},
-      .in_place      = {},
+      .in_place      = {{0, 0}},
       .owned_inputs  = {false},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,
