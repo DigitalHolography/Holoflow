@@ -16,7 +16,6 @@
 
 #include <algorithm>
 #include <cstdlib>
-#include <limits>
 #include <ranges>
 #include <string>
 #include <vector>
@@ -26,10 +25,20 @@
 #include "bug.hh"
 #include "logger.hh"
 
+#include "curaii/cuda.hh"
+#include "curaii/cufft.hh"
+#include "curaii/nvrtc.hh"
+
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+
 namespace holotask::syncs {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const FresnelDiffractionSettings &fds) {
-  j = nlohmann::json{
+  j = {
       {"lambda", fds.lambda}, {"dx", fds.dx},     {"dy", fds.dy},
       {"z", fds.z},           {"axes", fds.axes}, {"skip_phase_shift", fds.skip_phase_shift},
   };
@@ -40,19 +49,30 @@ void from_json(const nlohmann::json &j, FresnelDiffractionSettings &fds) {
   j.at("dx").get_to(fds.dx);
   j.at("dy").get_to(fds.dy);
   j.at("z").get_to(fds.z);
-  if (j.contains("axes")) {
+
+  if (j.contains("axes"))
     j.at("axes").get_to(fds.axes);
-  } else {
-    fds.axes = {-2, -1};
-  }
-  if (j.contains("skip_phase_shift")) {
+  if (j.contains("skip_phase_shift"))
     j.at("skip_phase_shift").get_to(fds.skip_phase_shift);
-  } else {
-    fds.skip_phase_shift = true;
-  }
 }
 
+// -------------------------------------------------------------------------------------------------
+// Private implementation types
+// -------------------------------------------------------------------------------------------------
+
 namespace {
+
+struct LaunchOffset {
+  size_t in_bytes;
+  size_t out_bytes;
+};
+
+struct BatchGroup {
+  size_t           size      = 1;
+  long long int    in_idist  = 0;
+  long long int    out_idist = 0;
+  std::vector<int> dims;
+};
 
 struct ApplyLensCallerInfo {
   unsigned int       width;
@@ -63,12 +83,9 @@ struct ApplyLensCallerInfo {
   cuFloatComplex    *lens;
 };
 
-struct BatchGroup {
-  size_t           size      = 1;
-  long long int    in_idist  = 0;
-  long long int    out_idist = 0;
-  std::vector<int> dims;
-};
+// -------------------------------------------------------------------------------------------------
+// Validation
+// -------------------------------------------------------------------------------------------------
 
 void check(bool condition, const std::string &msg) {
   if (!condition) {
@@ -76,6 +93,10 @@ void check(bool condition, const std::string &msg) {
     throw std::invalid_argument("FresnelDiffractionFactory inference error: " + msg);
   }
 }
+
+// -------------------------------------------------------------------------------------------------
+// Stride / axis helpers
+// -------------------------------------------------------------------------------------------------
 
 std::vector<size_t> get_strides_bytes(const holoflow::core::TDesc &desc) {
   if (!desc.strides.empty())
@@ -100,6 +121,10 @@ std::pair<int, int> normalize_axes(const FresnelDiffractionSettings &settings, i
   check(ax0 != ax1, "axes must be distinct");
   return {ax0, ax1};
 }
+
+// -------------------------------------------------------------------------------------------------
+// Launch offset enumeration
+// -------------------------------------------------------------------------------------------------
 
 void generate_offsets_recursive(const std::vector<size_t> &shape,
                                 const std::vector<size_t> &in_strides,
@@ -136,43 +161,40 @@ BatchGroup select_best_batch_group(const std::vector<size_t> &shape,
   if (outer_dims.empty())
     return best;
 
-  auto sorted_outer_dims = outer_dims;
-  std::sort(sorted_outer_dims.begin(), sorted_outer_dims.end(),
+  auto sorted = outer_dims;
+  std::sort(sorted.begin(), sorted.end(),
             [&](int lhs, int rhs) { return in_strides_bytes[lhs] < in_strides_bytes[rhs]; });
 
-  for (size_t start = 0; start < sorted_outer_dims.size(); ++start) {
+  for (size_t start = 0; start < sorted.size(); ++start) {
+    int dim = sorted[start];
+
     BatchGroup current;
-    int        dim = sorted_outer_dims[start];
     current.size      = shape[dim];
     current.in_idist  = static_cast<long long int>(in_strides_bytes[dim] / in_elem_size);
     current.out_idist = static_cast<long long int>(out_strides_bytes[dim] / out_elem_size);
-
-    // FIX: Prevent batching if the dimension is interleaved inside the spatial dimensions
-    if (current.in_idist < default_in_idist || current.out_idist < default_out_idist) {
-      continue;
-    }
-
     current.dims.push_back(dim);
+
+    // Skip dimensions interleaved inside the spatial ones.
+    if (current.in_idist < default_in_idist || current.out_idist < default_out_idist)
+      continue;
 
     if (current.size > best.size)
       best = current;
 
-    size_t current_size = current.size;
-    for (size_t next_idx = start + 1; next_idx < sorted_outer_dims.size(); ++next_idx) {
-      int           next_dim      = sorted_outer_dims[next_idx];
-      long long int next_in_idist =
-          static_cast<long long int>(in_strides_bytes[next_dim] / in_elem_size);
-      long long int next_out_idist =
-          static_cast<long long int>(out_strides_bytes[next_dim] / out_elem_size);
+    size_t accumulated = current.size;
+    for (size_t next = start + 1; next < sorted.size(); ++next) {
+      int           nd  = sorted[next];
+      long long int nii = static_cast<long long int>(in_strides_bytes[nd] / in_elem_size);
+      long long int noi = static_cast<long long int>(out_strides_bytes[nd] / out_elem_size);
 
-      if (next_in_idist != current.in_idist * static_cast<long long int>(current_size) ||
-          next_out_idist != current.out_idist * static_cast<long long int>(current_size)) {
+      bool contiguous_in  = (nii == current.in_idist * static_cast<long long int>(accumulated));
+      bool contiguous_out = (noi == current.out_idist * static_cast<long long int>(accumulated));
+      if (!contiguous_in || !contiguous_out)
         break;
-      }
 
-      current_size *= shape[next_dim];
-      current.size = current_size;
-      current.dims.push_back(next_dim);
+      accumulated *= shape[nd];
+      current.size = accumulated;
+      current.dims.push_back(nd);
 
       if (current.size > best.size)
         best = current;
@@ -181,6 +203,10 @@ BatchGroup select_best_batch_group(const std::vector<size_t> &shape,
 
   return best;
 }
+
+// -------------------------------------------------------------------------------------------------
+// NVRTC / JIT-callback compilation
+// -------------------------------------------------------------------------------------------------
 
 std::string get_compute_arch() {
   int device{};
@@ -193,10 +219,9 @@ std::string get_compute_arch() {
 std::vector<std::string> get_nvrtc_args() {
   auto CUDA_PATH = std::getenv("CUDA_PATH");
   HOLOVIBES_CHECK(CUDA_PATH != nullptr, "CUDA_PATH environment variable not set");
-  std::string cuda_path{CUDA_PATH};
 
   return {
-      "-I" + cuda_path + "/include",
+      "-I" + std::string{CUDA_PATH} + "/include",
       "-arch=" + get_compute_arch(),
       "--std=c++20",
       "--relocatable-device-code=true",
@@ -208,7 +233,8 @@ std::vector<std::string> get_nvrtc_args() {
 std::vector<char> compile_source_to_lto(const std::string &source, const std::string &name) {
   auto                 args_string = get_nvrtc_args();
   curaii::NvrtcProgram prog(source.c_str(), name.c_str(), 0, nullptr, nullptr);
-  std::vector<char *>  args;
+
+  std::vector<char *> args;
   std::ranges::transform(args_string, std::back_inserter(args),
                          [](const std::string &s) { return const_cast<char *>(s.c_str()); });
 
@@ -230,52 +256,55 @@ std::vector<char> compile_source_to_lto(const std::string &source, const std::st
 }
 
 std::vector<char> apply_lens_lto(bool is_fast, bool is_real) {
-  std::string apply_lens_callback = R"(
-  #include <cuComplex.h>
+  // Common header — struct definition shared with the host side.
+  std::string src = R"(
+#include <cuComplex.h>
 
-  struct ApplyLensCallerInfo {
-    unsigned int width;
-    unsigned int _padding;
-    unsigned long long idist;
-    unsigned long long stride_h;
-    unsigned long long istride;
-    cuFloatComplex *lens;
-  };
+struct ApplyLensCallerInfo {
+  unsigned int       width;
+  unsigned int       _padding;
+  unsigned long long idist;
+  unsigned long long stride_h;
+  unsigned long long istride;
+  cuFloatComplex    *lens;
+};
 
-  __device__ cuFloatComplex apply_lens_callback2(
-      void *data, size_t offset, void *callerInfo, void *sharedPtr) {
-    auto *info = (ApplyLensCallerInfo *)callerInfo;
-  )";
+__device__ cuFloatComplex apply_lens_callback2(
+    void *data, size_t offset, void *callerInfo, void *sharedPtr) {
+  auto *info = (ApplyLensCallerInfo *)callerInfo;
+)";
 
+  // Load sample — real or complex input.
   if (is_real) {
-    apply_lens_callback += R"(
-    cuFloatComplex val = make_cuComplex(((float *)data)[offset], 0.0f);
-    )";
+    src += "  cuFloatComplex val = make_cuComplex(((float *)data)[offset], 0.0f);\n";
   } else {
-    apply_lens_callback += R"(
-    cuFloatComplex val = ((cuFloatComplex *)data)[offset];
-    )";
+    src += "  cuFloatComplex val = ((cuFloatComplex *)data)[offset];\n";
   }
 
+  // Index into the lens — fast (contiguous) or general strided path.
   if (is_fast) {
-    apply_lens_callback += R"(
-    size_t lens_idx = offset % info->idist;
-    return cuCmulf(val, info->lens[lens_idx]);
-  }
-  )";
+    src += R"(
+  size_t lens_idx = offset % info->idist;
+  return cuCmulf(val, info->lens[lens_idx]);
+}
+)";
   } else {
-    apply_lens_callback += R"(
-    size_t local_offset = offset % info->idist;
-    size_t row = local_offset / info->stride_h;
-    size_t col = (local_offset % info->stride_h) / info->istride;
-    size_t lens_idx = row * info->width + col;
-    return cuCmulf(val, info->lens[lens_idx]);
-  }
-  )";
+    src += R"(
+  size_t local_offset = offset % info->idist;
+  size_t row          = local_offset / info->stride_h;
+  size_t col          = (local_offset % info->stride_h) / info->istride;
+  size_t lens_idx     = row * info->width + col;
+  return cuCmulf(val, info->lens[lens_idx]);
+}
+)";
   }
 
-  return compile_source_to_lto(apply_lens_callback, "apply_lens_callback2.cu");
+  return compile_source_to_lto(src, "apply_lens_callback2.cu");
 }
+
+// -------------------------------------------------------------------------------------------------
+// Device kernels
+// -------------------------------------------------------------------------------------------------
 
 __global__ void quadratic_lens_kernel(cuFloatComplex *lens, int width, int height, float lambda,
                                       float z, float pixel_size) {
@@ -284,12 +313,11 @@ __global__ void quadratic_lens_kernel(cuFloatComplex *lens, int width, int heigh
   if (col >= width || row >= height)
     return;
 
-  int size     = width > height ? width : height;
-  int offset_x = (size - width) / 2;
-  int offset_y = (size - height) / 2;
-
-  float x = ((col + offset_x) - size / 2.0f) * pixel_size;
-  float y = ((row + offset_y) - size / 2.0f) * pixel_size;
+  int   size     = width > height ? width : height;
+  int   offset_x = (size - width) / 2;
+  int   offset_y = (size - height) / 2;
+  float x        = ((col + offset_x) - size / 2.0f) * pixel_size;
+  float y        = ((row + offset_y) - size / 2.0f) * pixel_size;
 
   float phase             = CUDART_PI_F / (lambda * z) * (x * x + y * y);
   lens[row * width + col] = make_cuComplex(cosf(phase), sinf(phase));
@@ -299,11 +327,10 @@ DevPtr<cuFloatComplex> make_quadratic_lens(int width, int height,
                                            const FresnelDiffractionSettings &settings) {
   auto d_lens = curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(width) * height);
 
-  dim3 block_size(16, 16);
-  dim3 grid_size((width + block_size.x - 1) / block_size.x,
-                 (height + block_size.y - 1) / block_size.y);
-  quadratic_lens_kernel<<<grid_size, block_size>>>(d_lens.get(), width, height, settings.lambda,
-                                                   settings.z, settings.dx);
+  dim3 block(16, 16);
+  dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
+  quadratic_lens_kernel<<<grid, block>>>(d_lens.get(), width, height, settings.lambda, settings.z,
+                                         settings.dx);
   return d_lens;
 }
 
@@ -332,42 +359,71 @@ __global__ void apply_output_phase_shift_kernel(cuFloatComplex *output, const cu
 
 } // namespace
 
-FresnelDiffraction::FresnelDiffraction(const FresnelDiffractionSettings &settings,
-                                       holoflow::core::TDesc             idesc,
-                                       curaii::CufftHandle             &&fft_handle,
-                                       std::vector<LaunchOffset> offsets, size_t inner_batch,
-                                       int height, int width, long long out_idist,
-                                       long long out_stride_h, long long out_istride,
-                                       cudaStream_t stream, DevPtr<cuFloatComplex> &&d_lens,
-                                       DevPtr<void> &&d_caller_info, std::vector<char> &&lto)
-    : settings_(settings), idesc_(std::move(idesc)), fft_handle_(std::move(fft_handle)),
-      offsets_(std::move(offsets)), inner_batch_(inner_batch), stream_(stream), height_(height),
-      width_(width), out_idist_(out_idist), out_stride_h_(out_stride_h), out_istride_(out_istride),
-      d_lens_(std::move(d_lens)), d_caller_info_(std::move(d_caller_info)), lto_(std::move(lto)) {}
+// -------------------------------------------------------------------------------------------------
+// FresnelDiffraction::Impl
+// -------------------------------------------------------------------------------------------------
+
+struct FresnelDiffraction::Impl {
+  // -- Configuration ------------------------------------------------------------------------------
+  FresnelDiffractionSettings settings;
+  holoflow::core::TDesc      idesc;
+  curaii::CufftHandle        fft_handle;
+
+  // -- Launch geometry ----------------------------------------------------------------------------
+  std::vector<LaunchOffset> offsets;
+  size_t                    inner_batch;
+  int                       height;
+  int                       width;
+  long long int             out_idist;
+  long long int             out_stride_h;
+  long long int             out_istride;
+
+  // -- Device resources ---------------------------------------------------------------------------
+  cudaStream_t           stream;
+  DevPtr<cuFloatComplex> d_lens;
+  DevPtr<void>           d_caller_info;
+  std::vector<char>      lto;
+};
+
+// -------------------------------------------------------------------------------------------------
+// FresnelDiffraction
+// -------------------------------------------------------------------------------------------------
+
+FresnelDiffraction::FresnelDiffraction(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+
+FresnelDiffraction::~FresnelDiffraction() = default;
+
+const holoflow::core::TDesc &FresnelDiffraction::get_idesc() const { return impl_->idesc; }
+
+const FresnelDiffractionSettings &FresnelDiffraction::get_settings() const {
+  return impl_->settings;
+}
 
 void FresnelDiffraction::update_stream(cudaStream_t stream) {
-  if (stream_ != stream) {
-    stream_ = stream;
-    CUFFT_CHECK(cufftSetStream(fft_handle_.get(), stream_));
+  if (impl_->stream != stream) {
+    impl_->stream = stream;
+    CUFFT_CHECK(cufftSetStream(impl_->fft_handle.get(), stream));
   }
 }
 
 holoflow::core::OpResult FresnelDiffraction::execute(holoflow::core::SyncCtx &ctx) {
+  auto &im = *impl_;
+
   auto *idata_base = reinterpret_cast<uint8_t *>(ctx.inputs[0].data());
   auto *odata_base = reinterpret_cast<uint8_t *>(ctx.outputs[0].data());
 
-  for (const auto &offset : offsets_) {
+  for (const auto &offset : im.offsets) {
     auto *in_ptr  = idata_base + offset.in_bytes;
     auto *out_ptr = reinterpret_cast<cuFloatComplex *>(odata_base + offset.out_bytes);
-    CUFFT_CHECK(cufftXtExec(fft_handle_.get(), in_ptr, out_ptr, CUFFT_FORWARD));
+    CUFFT_CHECK(cufftXtExec(im.fft_handle.get(), in_ptr, out_ptr, CUFFT_FORWARD));
 
-    if (!settings_.skip_phase_shift) {
+    if (!im.settings.skip_phase_shift) {
       constexpr int block_size = 256;
-      auto          total      = inner_batch_ * static_cast<size_t>(height_) * width_;
+      auto          total      = im.inner_batch * static_cast<size_t>(im.height) * im.width;
       int           grid_size  = static_cast<int>((total + block_size - 1) / block_size);
-      apply_output_phase_shift_kernel<<<grid_size, block_size, 0, stream_>>>(
-          out_ptr, d_lens_.get(), inner_batch_, height_, width_, out_idist_, out_stride_h_,
-          out_istride_);
+      apply_output_phase_shift_kernel<<<grid_size, block_size, 0, im.stream>>>(
+          out_ptr, im.d_lens.get(), im.inner_batch, im.height, im.width, im.out_idist,
+          im.out_stride_h, im.out_istride);
     }
   }
 
@@ -375,45 +431,41 @@ holoflow::core::OpResult FresnelDiffraction::execute(holoflow::core::SyncCtx &ct
   return holoflow::core::OpResult::Ok;
 }
 
+// -------------------------------------------------------------------------------------------------
+// FresnelDiffractionFactory
+// -------------------------------------------------------------------------------------------------
+
 holoflow::core::InferResult
 FresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                  const nlohmann::json                  &jsettings) const {
   auto settings = jsettings.get<FresnelDiffractionSettings>();
 
+  // clang-format off
   check(input_descs.size() == 1, "expected exactly one input");
   const auto &idesc = input_descs[0];
   check(idesc.rank() >= 2, "input must be a tensor of rank 2 or higher");
-  check(idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::F32,
-        "input must be complex float32 or real float32");
+  check(idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::F32, "input must be complex float32 or real float32");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
 
   auto [ax0, ax1] = normalize_axes(settings, static_cast<int>(idesc.rank()));
   auto in_strides = get_strides_bytes(idesc);
-  check(
-      in_strides[ax0] % in_strides[ax1] == 0,
-      "stride of ax0 (H) must be a multiple of stride of ax1 (W) for cuFFT to run without copying");
+  check(in_strides[ax0] % in_strides[ax1] == 0, "stride of ax0 (H) must be a multiple of stride of ax1 (W) for cuFFT to run without copying");
 
   check(settings.lambda > 0.0f, "wavelength must be positive");
   check(settings.dx > 0.0f, "dx must be positive");
   check(settings.dy > 0.0f, "dy must be positive");
   check(settings.dx == settings.dy, "dx must equal dy");
+  // clang-format on
 
-  holoflow::core::TDesc odesc;
-  if (idesc.dtype == holoflow::core::DType::CF32) {
-    odesc = idesc;
-  } else {
-    odesc = holoflow::core::TDesc(idesc.shape, holoflow::core::DType::CF32, idesc.mem_loc);
-  }
-
-  std::vector<holoflow::core::InPlace> in_place;
-  // if (idesc.dtype == holoflow::core::DType::CF32) {
-  //   in_place = {{0, 0}};
-  // }
+  holoflow::core::TDesc odesc =
+      (idesc.dtype == holoflow::core::DType::CF32)
+          ? idesc
+          : holoflow::core::TDesc(idesc.shape, holoflow::core::DType::CF32, idesc.mem_loc);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
       .output_descs  = {odesc},
-      .in_place      = in_place,
+      .in_place      = {},
       .owned_inputs  = {false},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,
@@ -440,12 +492,12 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
 
   auto in_strides_bytes  = get_strides_bytes(idesc);
   auto out_strides_bytes = get_strides_bytes(odesc);
-
   check(in_strides_bytes[ax0] % in_strides_bytes[ax1] == 0,
         "input strides for the selected axes are incompatible");
   check(out_strides_bytes[ax0] % out_strides_bytes[ax1] == 0,
         "output strides for the selected axes are incompatible");
 
+  // -- Stride geometry ----------------------------------------------------------------------------
   long long int in_istride   = static_cast<long long int>(in_strides_bytes[ax1] / in_elem_size);
   long long int in_stride_h  = static_cast<long long int>(in_strides_bytes[ax0] / in_elem_size);
   long long int inembed_h    = in_stride_h / in_istride;
@@ -456,13 +508,12 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
   long long int onembed_h     = out_stride_h / out_istride;
   long long int transform_out = out_stride_h * H;
 
+  // -- Batch group selection ----------------------------------------------------------------------
   std::vector<int> outer_dims;
   outer_dims.reserve(static_cast<size_t>(rank) - 2);
-  for (int i = 0; i < rank; ++i) {
-    if (i != ax0 && i != ax1) {
+  for (int i = 0; i < rank; ++i)
+    if (i != ax0 && i != ax1)
       outer_dims.push_back(i);
-    }
-  }
 
   auto best_group =
       select_best_batch_group(idesc.shape, in_strides_bytes, out_strides_bytes, outer_dims,
@@ -470,20 +521,20 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
 
   std::vector<int> launch_dims;
   launch_dims.reserve(outer_dims.size());
-  for (int dim : outer_dims) {
-    if (std::find(best_group.dims.begin(), best_group.dims.end(), dim) == best_group.dims.end()) {
+  for (int dim : outer_dims)
+    if (std::find(best_group.dims.begin(), best_group.dims.end(), dim) == best_group.dims.end())
       launch_dims.push_back(dim);
-    }
-  }
 
   std::vector<LaunchOffset> offsets;
   generate_offsets_recursive(idesc.shape, in_strides_bytes, out_strides_bytes, launch_dims, 0, 0, 0,
                              offsets);
-  if (offsets.empty()) {
+  if (offsets.empty())
     offsets.push_back({0, 0});
-  }
 
-  auto d_lens = make_quadratic_lens(W, H, settings);
+  // -- JIT callback -------------------------------------------------------------------------------
+  bool is_fast = (in_istride == 1 && inembed_h == W);
+  auto lto     = apply_lens_lto(is_fast, is_real);
+  auto d_lens  = make_quadratic_lens(W, H, settings);
 
   ApplyLensCallerInfo info{
       .width    = static_cast<unsigned int>(W),
@@ -493,38 +544,49 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
       .istride  = static_cast<unsigned long long>(in_istride),
       .lens     = d_lens.get(),
   };
-
   auto d_info = curaii::make_unique_device_ptr<ApplyLensCallerInfo>(1);
-  CUDA_CHECK(
-      cudaMemcpyAsync(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice, ctx.stream));
+  auto e = cudaMemcpyAsync(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice, ctx.stream);
+  CUDA_CHECK(e);
 
-  bool is_fast = (in_istride == 1 && inembed_h == W);
-  auto lto     = apply_lens_lto(is_fast, is_real);
-
+  // -- cuFFT plan ---------------------------------------------------------------------------------
   curaii::CufftHandle plan;
   CUFFT_CHECK(cufftSetStream(plan.get(), ctx.stream));
-
-  size_t        work_size     = 0;
-  long long int n[2]          = {static_cast<long long int>(H), static_cast<long long int>(W)};
-  long long int inembed[2]    = {static_cast<long long int>(H), inembed_h};
-  long long int onembed[2]    = {static_cast<long long int>(H), onembed_h};
-  cudaDataType  inputtype     = CUDA_C_32F;
-  cudaDataType  outputtype    = CUDA_C_32F;
-  cudaDataType  executiontype = CUDA_C_32F;
 
   auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
   CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "apply_lens_callback2", lto.data(), lto.size(),
                                     CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+
+  size_t        work_size     = 0;
+  long long int n[2]          = {H, W};
+  long long int inembed[2]    = {H, inembed_h};
+  long long int onembed[2]    = {H, onembed_h};
+  cudaDataType  inputtype     = CUDA_C_32F;
+  cudaDataType  outputtype    = CUDA_C_32F;
+  cudaDataType  executiontype = CUDA_C_32F;
 
   CUFFT_CHECK(cufftXtMakePlanMany(plan.get(), 2, n, inembed, in_istride, best_group.in_idist,
                                   inputtype, onembed, out_istride, best_group.out_idist, outputtype,
                                   static_cast<long long int>(best_group.size), &work_size,
                                   executiontype));
 
-  return std::unique_ptr<holoflow::core::ISyncTask>(
-      new FresnelDiffraction(settings, idesc, std::move(plan), std::move(offsets), best_group.size,
-                             H, W, best_group.out_idist, out_stride_h, out_istride, ctx.stream,
-                             std::move(d_lens), std::move(d_info), std::move(lto)));
+  auto impl = std::make_unique<FresnelDiffraction::Impl>(FresnelDiffraction::Impl{
+      .settings      = settings,
+      .idesc         = idesc,
+      .fft_handle    = std::move(plan),
+      .offsets       = std::move(offsets),
+      .inner_batch   = best_group.size,
+      .height        = H,
+      .width         = W,
+      .out_idist     = best_group.out_idist,
+      .out_stride_h  = out_stride_h,
+      .out_istride   = out_istride,
+      .stream        = ctx.stream,
+      .d_lens        = std::move(d_lens),
+      .d_caller_info = std::move(d_info),
+      .lto           = std::move(lto),
+  });
+
+  return std::make_unique<FresnelDiffraction>(std::move(impl));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -533,20 +595,24 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
                                   const nlohmann::json                      &jsettings,
                                   const holoflow::core::SyncCreateCtx       &ctx) const {
   auto *old_fresnel = dynamic_cast<FresnelDiffraction *>(old_task.get());
-  if (old_fresnel != nullptr && input_descs.size() == 1) {
-    const auto &new_idesc = input_descs[0];
-    const auto &old_idesc = old_fresnel->get_idesc();
-    auto        settings  = jsettings.get<FresnelDiffractionSettings>();
+  if (old_fresnel == nullptr || input_descs.size() != 1) {
+    return create(input_descs, jsettings, ctx);
+  }
 
-    bool can_reuse =
-        (settings == old_fresnel->get_settings()) && (new_idesc.shape == old_idesc.shape) &&
-        (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
-        (new_idesc.mem_loc == old_idesc.mem_loc);
+  const auto &new_idesc = input_descs[0];
+  const auto &old_idesc = old_fresnel->get_idesc();
+  auto        settings  = jsettings.get<FresnelDiffractionSettings>();
 
-    if (can_reuse) {
-      old_fresnel->update_stream(ctx.stream);
-      return old_task;
-    }
+  bool same_settings = settings == old_fresnel->get_settings();
+  bool same_shape    = (new_idesc.shape == old_idesc.shape);
+  bool same_strides  = (new_idesc.strides == old_idesc.strides);
+  bool same_dtype    = (new_idesc.dtype == old_idesc.dtype);
+  bool same_mem_loc  = (new_idesc.mem_loc == old_idesc.mem_loc);
+  bool can_reuse     = same_settings && same_shape && same_strides && same_dtype && same_mem_loc;
+
+  if (can_reuse) {
+    old_fresnel->update_stream(ctx.stream);
+    return old_task;
   }
 
   return create(input_descs, jsettings, ctx);

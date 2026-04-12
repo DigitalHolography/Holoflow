@@ -14,76 +14,58 @@
 
 #pragma once
 
-#include <nlohmann/json.hpp>
-#include <string>
+#include <memory>
 #include <vector>
 
-#include "curaii/cuda.hh"
-#include "curaii/cufft.hh"
-#include "curaii/nvrtc.hh"
-#include "holoflow/core/tasks.hh"
+#include <nlohmann/json.hpp>
 
-template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+#include "holoflow/core/tasks.hh"
 
 namespace holotask::syncs {
 
-struct FresnelDiffractionSettings {
-  float            lambda;                  ///< Wavelength in meters.
-  float            dx;                      ///< Pixel pitch in meters.
-  float            dy;                      ///< Pixel pitch in meters.
-  float            z;                       ///< Propagation distance in meters.
-  std::vector<int> axes             = {-2, -1}; ///< Axes to perform diffraction over.
-  bool             skip_phase_shift = true; ///< Omit the output-plane quadratic phase term.
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
 
-  bool operator==(const FresnelDiffractionSettings &other) const {
-    return lambda == other.lambda && dx == other.dx && dy == other.dy && z == other.z &&
-           axes == other.axes && skip_phase_shift == other.skip_phase_shift;
-  }
+struct FresnelDiffractionSettings {
+  float            lambda;                      ///< Wavelength [m].
+  float            dx;                          ///< Pixel pitch, horizontal [m].
+  float            dy;                          ///< Pixel pitch, vertical [m].
+  float            z;                           ///< Propagation distance [m].
+  std::vector<int> axes             = {-2, -1}; ///< Spatial axes (H, W).
+  bool             skip_phase_shift = true;     ///< Omit output-plane quadratic phase.
+
+  bool operator==(const FresnelDiffractionSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const FresnelDiffractionSettings &fds);
 void from_json(const nlohmann::json &j, FresnelDiffractionSettings &fds);
 
-struct LaunchOffset {
-  size_t in_bytes;
-  size_t out_bytes;
-};
+// -------------------------------------------------------------------------------------------------
+// Task
+// -------------------------------------------------------------------------------------------------
 
 class FresnelDiffraction : public holoflow::core::ISyncTask {
 public:
+  struct Impl;
+
+  explicit FresnelDiffraction(std::unique_ptr<Impl> impl);
+  ~FresnelDiffraction() override;
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
-  const holoflow::core::TDesc      &get_idesc() const { return idesc_; }
-  const FresnelDiffractionSettings &get_settings() const { return settings_; }
-  void                              update_stream(cudaStream_t stream);
+  const holoflow::core::TDesc      &get_idesc() const;
+  const FresnelDiffractionSettings &get_settings() const;
+
+  void update_stream(cudaStream_t stream);
 
 private:
-  FresnelDiffraction(const FresnelDiffractionSettings &settings, holoflow::core::TDesc idesc,
-                     curaii::CufftHandle &&fft_handle, std::vector<LaunchOffset> offsets,
-                     size_t inner_batch, int height, int width, long long out_idist,
-                     long long out_stride_h, long long out_istride, cudaStream_t stream,
-                     DevPtr<cuFloatComplex> &&d_lens,
-                     DevPtr<void> &&d_caller_info,
-                     std::vector<char> &&lto);
-
-  friend class FresnelDiffractionFactory;
-
-  FresnelDiffractionSettings settings_;
-  holoflow::core::TDesc      idesc_;
-  curaii::CufftHandle        fft_handle_;
-
-  std::vector<LaunchOffset> offsets_;
-  size_t                   inner_batch_;
-  cudaStream_t               stream_;
-  int                        height_;
-  int                        width_;
-  long long int              out_idist_;
-  long long int              out_stride_h_;
-  long long int              out_istride_;
-  DevPtr<cuFloatComplex>     d_lens_;
-  DevPtr<void>               d_caller_info_;
-  std::vector<char>          lto_;
+  std::unique_ptr<Impl> impl_;
 };
+
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class FresnelDiffractionFactory : public holoflow::core::ISyncTaskFactory {
 public:

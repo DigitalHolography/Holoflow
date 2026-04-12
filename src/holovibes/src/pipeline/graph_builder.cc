@@ -360,8 +360,6 @@ GraphBuilder::TDesc GraphBuilder::build_freq_weights() {
   }
 
   else if (s_.time_method == TimeMethod::FFT) {
-    // Concatenation: positive [time_z_begin, time_z_end) then negative [N-time_z_end,
-    // N-time_z_begin)
     auto freqs_pos = arange({f0, f1, df, holoflow::core::DType::F32});
     auto freqs_neg = arange({f0 - fs, f1 - fs, df, holoflow::core::DType::F32});
     freqs          = concatenate(std::array<TDesc, 2>{freqs_pos, freqs_neg}, {0});
@@ -380,28 +378,27 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
   auto Host    = holotask::syncs::MemcpySettings::Target::Host;
 
-  // Compute spectral moment image: [1, H, W]
   TDesc result;
 
   if (s_.moment_type == MomentType::M0) {
-    result = mean_abs(FH_z, {{-3}, true}); // [B, 1, H, W]
+    result = mean_abs(FH_z, {{-3}, true});
   }
 
   else if (s_.moment_type == MomentType::M1) {
     auto n_freq   = static_cast<int64_t>(FH_z.shape.at(1));
-    auto abs_S    = abs(FH_z, {});                                      // [B, F, H, W]
-    auto freqs    = reshape(build_freq_weights(), {{1, n_freq, 1, 1}}); // [1, F, 1, 1]
-    auto weighted = mul(freqs, abs_S, {});                              // [B, F, H, W]
-    result        = mean(weighted, {{-3}, true});                       // [B, 1, H, W]
+    auto abs_S    = abs(FH_z, {});
+    auto freqs    = reshape(build_freq_weights(), {{1, n_freq, 1, 1}});
+    auto weighted = mul(freqs, abs_S, {});
+    result        = mean(weighted, {{-3}, true});
   }
 
   else if (s_.moment_type == MomentType::M2) {
     auto n_freq   = static_cast<int64_t>(FH_z.shape.at(1));
-    auto abs_S    = abs(FH_z, {});                                      // [B, F, H, W]
-    auto freqs    = reshape(build_freq_weights(), {{1, n_freq, 1, 1}}); // [1, F, 1, 1]
-    freqs         = mul(freqs, freqs, {});                              // [1, F, 1, 1]
-    auto weighted = mul(freqs, abs_S, {});                              // [B, F, H, W]
-    result        = mean(weighted, {{-3}, true});                       // [B, 1, H, W]
+    auto abs_S    = abs(FH_z, {});
+    auto freqs    = reshape(build_freq_weights(), {{1, n_freq, 1, 1}});
+    freqs         = mul(freqs, freqs, {});
+    auto weighted = mul(freqs, abs_S, {});
+    result        = mean(weighted, {{-3}, true});
   }
 
   if (s_.pp_fft_shift) {
