@@ -966,16 +966,17 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"RFFT", TimeMethod::RFFT},
         {"FFT", TimeMethod::FFT},
     };
-    s.time_window  = render_widget_->get_time_window();
-    s.time_stride  = render_widget_->get_time_stride();
-    QString method = render_widget_->get_time_transform();
-    s.time_method  = method_from_str.at(method.toStdString());
-    s.time_x_begin = view_widget_->get_x_origin();
-    s.time_x_end   = s.time_x_begin + view_widget_->get_x_width();
-    s.time_y_begin = view_widget_->get_y_origin();
-    s.time_y_end   = s.time_y_begin + view_widget_->get_y_width();
-    s.time_z_begin = view_widget_->get_z_origin();
-    s.time_z_end   = s.time_z_begin + view_widget_->get_z_width();
+    s.time_window       = render_widget_->get_time_window();
+    s.time_stride       = render_widget_->get_time_stride();
+    s.time_accumulation = 4; // TODO: expose in UI
+    QString method      = render_widget_->get_time_transform();
+    s.time_method       = method_from_str.at(method.toStdString());
+    s.time_x_begin      = view_widget_->get_x_origin();
+    s.time_x_end        = s.time_x_begin + view_widget_->get_x_width();
+    s.time_y_begin      = view_widget_->get_y_origin();
+    s.time_y_end        = s.time_y_begin + view_widget_->get_y_width();
+    s.time_z_begin      = view_widget_->get_z_origin();
+    s.time_z_end        = s.time_z_begin + view_widget_->get_z_width();
   }
 
   // View Settings

@@ -322,6 +322,15 @@ holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
   // for each subaperture in the propagated plane.
   auto shifts = recover_spot_shifts(ctx.inputs[0]);
 
+  // Display the shifts for debugging
+  for (std::size_t sy = 0; sy < static_cast<std::size_t>(ctx.inputs[0].desc.shape[1]); ++sy) {
+    for (std::size_t sx = 0; sx < static_cast<std::size_t>(ctx.inputs[0].desc.shape[2]); ++sx) {
+      const auto &shift = shifts[sy * static_cast<std::size_t>(ctx.inputs[0].desc.shape[2]) + sx];
+      logger()->debug("Subaperture ({}, {}): Shift (dx: {:.3f} px, dy: {:.3f} px)", sx, sy,
+                      shift.dx, shift.dy);
+    }
+  }
+
   const auto &desc     = ctx.inputs[0].desc;
   const auto  nb_sub_y = static_cast<std::size_t>(desc.shape[1]);
   const auto  nb_sub_x = static_cast<std::size_t>(desc.shape[2]);

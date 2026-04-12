@@ -137,42 +137,57 @@ GraphBuilder::TDesc GraphBuilder::build_preprocessing(TDesc H) {
 }
 
 GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
+  // H enters as [T, Hy, Hx] (F32).
+  // We first accumulate N_pre such windows into a batch, producing [N_pre, T, Hy, Hx].
+  // Time-frequency analysis then operates along axis 1 (the T dimension).
+  // The output is [N_pre, Nz, Hy, Hx], which feeds directly into the post-TFA queue.
+
+  int     N_pre = 4;
+  int64_t T     = static_cast<int64_t>(H.shape.at(0));
+  int64_t Hy    = static_cast<int64_t>(H.shape.at(1));
+  int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
+
+  H = reshape(H, {{1, T, Hy, Hx}, false});
+  H = batched_queue(H, {N_pre * 2, N_pre, N_pre}); // → [N_pre, T, Hy, Hx]
+
   TDesc FH;
   if (s_.time_method == TimeMethod::RFFT) {
-    FH = rfft(H, {0});
+    FH = rfft(H, {1}); // axis 1 = T dimension
 
-    // Optimization: slice relevant components early
+    // Optimization: slice relevant frequency components early
     if (!s_.view_3d_cuts) {
-      FH = slice(FH, {{holonp::SliceRange{s_.time_z_begin, s_.time_z_end}, {}, {}}});
+      FH = slice(FH, {{{}, holonp::SliceRange{s_.time_z_begin, s_.time_z_end}, {}, {}}});
       FH = copy(FH, {});
     }
   }
 
   else if (s_.time_method == TimeMethod::FFT) {
-    FH = fft(H, {0});
+    FH = fft(H, {1}); // axis 1 = T dimension
 
     // Optimization: slice relevant components early, including the symmetric negative band
     if (!s_.view_3d_cuts) {
-      auto N = static_cast<int64_t>(H.shape.at(0));
+      auto N = T; // number of FFT points along the time axis
 
       // Positive frequencies: [s_.time_z_begin, s_.time_z_end)
       auto pos_range = holonp::SliceRange{s_.time_z_begin, s_.time_z_end};
-      auto FH_pos    = slice(FH, {{pos_range, {}, {}}});
+      auto FH_pos    = slice(FH, {{{}, pos_range, {}, {}}});
       FH_pos         = copy(FH_pos, {});
 
       // Negative frequencies: [N - s_.time_z_end, N - s_.time_z_begin)
       auto neg_range = holonp::SliceRange{N - s_.time_z_end, N - s_.time_z_begin};
-      auto FH_neg    = slice(FH, {{neg_range, {}, {}}});
+      auto FH_neg    = slice(FH, {{{}, neg_range, {}, {}}});
       FH_neg         = copy(FH_neg, {});
 
-      FH = concatenate(std::array<TDesc, 2>{FH_pos, FH_neg}, {0});
+      FH = concatenate(std::array<TDesc, 2>{FH_pos, FH_neg}, {1}); // concat along freq axis
     }
   }
 
   else if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
-    // Optimization: slice relevant components early
+    // PCA natively supports arbitrary leading batch dimensions (rank >= 3).
+    // Input H: [N_pre, T, Hy, Hx] — the feature axis is shape[-3] = T.
+    // Output FH: [N_pre, Nz, Hy, Hx] where Nz = z1 - z0.
     int z0 = s_.view_3d_cuts ? 0 : s_.time_z_begin;
-    int z1 = s_.view_3d_cuts ? static_cast<int>(H.shape.at(0)) : s_.time_z_end;
+    int z1 = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
     FH     = pca(H, {z0, z1, 1});
   }
 
@@ -180,11 +195,7 @@ GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
     throw std::logic_error{"Time method is currently not supported in GraphBuilder"};
   }
 
-  int64_t Nz = static_cast<int64_t>(FH.shape.at(0));
-  int64_t Ny = static_cast<int64_t>(FH.shape.at(1));
-  int64_t Nx = static_cast<int64_t>(FH.shape.at(2));
-
-  FH = reshape(FH, {{1, Nz, Ny, Nx}, false});
+  // FH is [N_pre, Nz, Hy, Hx] — accumulate pp_accumulation such batches for post-processing.
   return batched_queue(FH, {s_.pp_accumulation * 2, s_.pp_accumulation, s_.pp_accumulation});
 }
 
@@ -252,6 +263,8 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
                              holonp::FftNorm::Backward,
                              {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f},
                          });
+  xcorr = fftshift(xcorr, {{-2, -1}});
+  xcorr = normalize(xcorr, {{-2, -1}, 0.0f, 255.0f});
 
   // Shack-Hartmann Output Processing
   int64_t h          = static_cast<int64_t>(valid_h);
@@ -260,35 +273,29 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
   M0_sh_disp         = transpose(M0_sh_disp, {{0, 1, 3, 2, 4}});
   M0_sh_disp         = reshape(M0_sh_disp, {{1, h, w}});
   M0_sh_disp         = convert(M0_sh_disp, {Target::U8, Strat::Scaled});
-  // M0_sh_disp         = memcpy(M0_sh_disp, {Host});
-  M0_sh_disp = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
+  M0_sh_disp         = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
   shack_hartmann_display(M0_sh_disp, {});
 
   h                    = static_cast<int64_t>(xcorr.shape.at(3) * nb_subap);
   w                    = static_cast<int64_t>(xcorr.shape.at(4) * nb_subap);
-  auto xcorr_flattened = fftshift(xcorr, {{-2, -1}});
-  xcorr_flattened      = normalize(xcorr_flattened, {{-2, -1}, 0.0f, 255.0f});
-  xcorr_flattened      = convert(xcorr_flattened, {Target::U8, Strat::Scaled});
+  auto xcorr_flattened = convert(xcorr, {Target::U8, Strat::Scaled});
   xcorr_flattened      = transpose(xcorr_flattened, {{0, 1, 3, 2, 4}});
   xcorr_flattened      = reshape(xcorr_flattened, {{1, h, w}});
   xcorr_flattened      = batched_queue(xcorr_flattened, {s_.cpu_out_size, 1, 1});
   shack_hartmann_xcorr_display(xcorr_flattened, {});
 
   // Zernike & Phase Correction
-  int ny = static_cast<int>(FH.shape.at(2));
-  int nx = static_cast<int>(FH.shape.at(3));
-
   if (!s_.autofocus_zernike_orders.empty()) {
-    auto xcorr_zernike = fftshift(xcorr, {{-2, -1}});
-    xcorr_zernike      = normalize(xcorr_zernike, {{-2, -1}, 0.0f, 255.0f});
-    xcorr_zernike      = cuda_stream_synchronize(xcorr_zernike, {});
-    xcorr_zernike      = memcpy(xcorr_zernike, {Host});
+    int ny             = static_cast<int>(FH.shape.at(2));
+    int nx             = static_cast<int>(FH.shape.at(3));
+    xcorr              = cuda_stream_synchronize(xcorr, {});
+    auto xcorr_zernike = memcpy(xcorr, {Host});
 
     holotask::syncs::ZernikeSettings zernike_settings{
         s_.autofocus_zernike_orders, lam, dx, dy, z_prop, 1, 1,
     };
     auto zernike_coeffs = zernike(xcorr_zernike, zernike_settings);
-    zernike_coeffs      = slice(zernike_coeffs, {{0, 0, {}}}); // Remove batch dimension
+    zernike_coeffs      = slice(zernike_coeffs, {{0, 0, {}}});
     zernike_coefficients_display(zernike_coeffs, {s_.autofocus_zernike_orders});
 
     auto phase     = zernike_phase(zernike_coeffs, {s_.autofocus_zernike_orders, ny, nx});

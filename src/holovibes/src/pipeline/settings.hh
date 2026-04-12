@@ -96,6 +96,7 @@ struct Settings {
   TimeMethod time_method;
   int        time_window;
   int        time_stride;
+  int        time_accumulation; // number of temporal windows batched before time-freq analysis
   int        time_x_begin;
   int        time_x_end;
   int        time_y_begin;
