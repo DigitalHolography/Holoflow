@@ -128,53 +128,53 @@ __device__ __forceinline__ void stft_decode(
 }
 )";
 
-// LOCAL callback — lens centered on the window (same as classic fresnel_diffraction).
-constexpr const char *k_stft_load_local_body = R"(
-__device__ cuFloatComplex stft_load_local(
+std::string get_stft_load_body(bool is_global, bool is_real) {
+  std::string src = R"(
+__device__ cuFloatComplex )";
+  src += is_global ? "stft_load_global" : "stft_load_local";
+  src += R"((
     void *data, size_t offset, void *callerInfo, void *sharedPtr)
 {
-  auto *info = (STFTCallerInfo *)callerInfo;
-  unsigned long long b; unsigned int gx, gy, i, j;
-  stft_decode(info, offset, b, gx, gy, i, j);
+    auto *info = (STFTCallerInfo *)callerInfo;
+    unsigned long long b; unsigned int gx, gy, i, j;
+    stft_decode(info, offset, b, gx, gy, i, j);
 
-  unsigned long long src = b * info->field_idist
-                         + (unsigned long long)(gy * info->stride_y + j) * info->field_W
-                         + (unsigned long long)(gx * info->stride_x + i);
-  cuFloatComplex val = ((cuFloatComplex *)data)[src];
-
-  // Phase: π/(λz) * (x_local² + y_local²), window centered.
-  float x = (float)i * info->dx + info->x_origin;
-  float y = (float)j * info->dy + info->y_origin;
-  float s, c;
-  sincosf(info->pi_over_lz * (x * x + y * y), &s, &c);
-  return cuCmulf(val, make_cuComplex(c, s));
-}
+    unsigned long long src = b * info->field_idist
+                             + (unsigned long long)(gy * info->stride_y + j) * info->field_W
+                             + (unsigned long long)(gx * info->stride_x + i);
 )";
 
-// GLOBAL callback — lens evaluated at global field coordinates.
-// Combined phase = π/(λz) * (x_global² + y_global²) which is the standard global quadratic lens.
-constexpr const char *k_stft_load_global_body = R"(
-__device__ cuFloatComplex stft_load_global(
-    void *data, size_t offset, void *callerInfo, void *sharedPtr)
-{
-  auto *info = (STFTCallerInfo *)callerInfo;
-  unsigned long long b; unsigned int gx, gy, i, j;
-  stft_decode(info, offset, b, gx, gy, i, j);
+  // The Magic Cast: Handle real vs complex loads
+  if (is_real) {
+    src += "    cuFloatComplex val = make_cuComplex(((float *)data)[src], 0.0f);\n";
+  } else {
+    src += "    cuFloatComplex val = ((cuFloatComplex *)data)[src];\n";
+  }
 
-  unsigned long long src = b * info->field_idist
-                         + (unsigned long long)(gy * info->stride_y + j) * info->field_W
-                         + (unsigned long long)(gx * info->stride_x + i);
-  cuFloatComplex val = ((cuFloatComplex *)data)[src];
-
-  // Phase: π/(λz) * (x_global² + y_global²).
-  // x_origin encodes the physical coordinate of global pixel index 0.
-  float x = (float)(gx * info->stride_x + i) * info->dx + info->x_origin;
-  float y = (float)(gy * info->stride_y + j) * info->dy + info->y_origin;
-  float s, c;
-  sincosf(info->pi_over_lz * (x * x + y * y), &s, &c);
-  return cuCmulf(val, make_cuComplex(c, s));
+  // Phase applications
+  if (is_global) {
+    src += R"(
+    // Phase: pi/lz * (x_global^2 + y_global^2)
+    float x = (float)(gx * info->stride_x + i) * info->dx + info->x_origin;
+    float y = (float)(gy * info->stride_y + j) * info->dy + info->y_origin;
+    float s, c;
+    sincosf(info->pi_over_lz * (x * x + y * y), &s, &c);
+    return cuCmulf(val, make_cuComplex(c, s));
 }
 )";
+  } else {
+    src += R"(
+    // Phase: pi/lz * (x_local^2 + y_local^2)
+    float x = (float)i * info->dx + info->x_origin;
+    float y = (float)j * info->dy + info->y_origin;
+    float s, c;
+    sincosf(info->pi_over_lz * (x * x + y * y), &s, &c);
+    return cuCmulf(val, make_cuComplex(c, s));
+}
+)";
+  }
+  return src;
+}
 
 // -------------------------------------------------------------------------------------------------
 // NVRTC helpers  (mirrors fresnel_diffraction.cu)
@@ -199,6 +199,7 @@ std::vector<char> compile_lto(const std::string &src, const std::string &name) {
       "--relocatable-device-code=true",
       "-default-device",
       "-dlto",
+      "--generate-line-info",
   };
 
   curaii::NvrtcProgram prog(src.c_str(), name.c_str(), 0, nullptr, nullptr);
@@ -222,10 +223,11 @@ std::vector<char> compile_lto(const std::string &src, const std::string &name) {
   }
 }
 
-std::vector<char> build_stft_lto(bool is_global) {
+std::vector<char> build_stft_lto(bool is_global, bool is_real) {
   std::string src = k_stft_callback_header;
-  src += is_global ? k_stft_load_global_body : k_stft_load_local_body;
+  src += get_stft_load_body(is_global, is_real);
   const char *name = is_global ? "stft_load_global.cu" : "stft_load_local.cu";
+  logger()->debug("[ShortTimeFresnelDiffraction] Source for {} callback:\n{}", name, src);
   return compile_lto(src, name);
 }
 
@@ -459,10 +461,11 @@ ShortTimeFresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc>
                                           const nlohmann::json                  &jsettings) const {
   auto s = jsettings.get<ShortTimeFresnelDiffractionSettings>();
 
+  // clang-format off
   check(input_descs.size() == 1, "expected exactly one input");
   const auto &id = input_descs[0];
   check(id.rank() >= 2, "input must be rank ≥ 2");
-  check(id.dtype == holoflow::core::DType::CF32, "input must be CF32");
+  check(id.dtype == holoflow::core::DType::CF32 || id.dtype == holoflow::core::DType::F32, "input must be CF32 or F32");
   check(id.mem_loc == holoflow::core::MemLoc::Device, "input must be on device");
   check(s.lambda > 0.f, "lambda must be positive");
   check(s.dx > 0.f, "dx must be positive");
@@ -480,12 +483,12 @@ ShortTimeFresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc>
   const size_t ny_win = (H - s.win_h) / s.stride_y + 1;
   const size_t nx_win = (W - s.win_w) / s.stride_x + 1;
 
-  // Output: replace the two spatial dims with [ny_win, nx_win, win_h, win_w].
   std::vector<size_t> out_shape(id.shape.begin(), id.shape.end() - 2);
   out_shape.push_back(ny_win);
   out_shape.push_back(nx_win);
   out_shape.push_back(s.win_h);
   out_shape.push_back(s.win_w);
+  // clang-format on
 
   holoflow::core::TDesc odesc(out_shape, holoflow::core::DType::CF32,
                               holoflow::core::MemLoc::Device);
@@ -521,7 +524,9 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
   const size_t ny_win = (H - win_h) / s.stride_y + 1;
   const size_t nx_win = (W - win_w) / s.stride_x + 1;
 
-  constexpr size_t esz = sizeof(cuFloatComplex);
+  const bool   is_real = (idesc.dtype == holoflow::core::DType::F32);
+  const size_t in_esz  = is_real ? sizeof(float) : sizeof(cuFloatComplex);
+  const size_t out_esz = sizeof(cuFloatComplex);
 
   auto in_sb  = strides_bytes(idesc);
   auto out_sb = strides_bytes(odesc);
@@ -535,11 +540,11 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
 
   // Per-field memory span in the original field (real input side).
   // Per-field output span: all window data for one field.
-  const long long def_in_idist  = static_cast<long long>(in_sb[ax0] / esz) * H;
+  const long long def_in_idist  = static_cast<long long>(in_sb[ax0] / in_esz) * H;
   const long long def_out_idist = static_cast<long long>(ny_win * nx_win * win_h * win_w);
 
-  auto group = select_batch_group(idesc.shape, in_sb, out_sb, outer_dims, esz, esz, def_in_idist,
-                                  def_out_idist);
+  auto group = select_batch_group(idesc.shape, in_sb, out_sb, outer_dims, in_esz, out_esz,
+                                  def_in_idist, def_out_idist);
 
   // Dims not folded into the inner batch → one cufftXtExec per combination.
   std::vector<int> launch_dims;
@@ -598,7 +603,7 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
 
   // -- LTO compilation --------------------------------------------------------------------------
   bool is_global = (s.phase_ref == STFDPhaseReference::GLOBAL);
-  auto lto       = build_stft_lto(is_global);
+  auto lto       = build_stft_lto(is_global, is_real);
 
   // -- Window-lens for output phase shift -------------------------------------------------------
   auto d_win_lens = make_win_lens(win_w, win_h, s.lambda, s.z, s.dx);
@@ -625,6 +630,8 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
                                   CUDA_C_32F,                              // input (virtual)
                                   onembed, 1LL, out_win_idist, CUDA_C_32F, // output (real)
                                   batch, &work_size, CUDA_C_32F));
+
+  logger()->debug("[ShortTimeFresnelDiffractionFactory] Settings: \n{}\n", jsettings.dump(2));
 
   auto impl = std::make_unique<ShortTimeFresnelDiffraction::Impl>(ShortTimeFresnelDiffraction::Impl{
       .settings      = s,
