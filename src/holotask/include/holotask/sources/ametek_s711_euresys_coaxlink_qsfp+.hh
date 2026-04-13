@@ -14,45 +14,28 @@
 
 #pragma once
 
-#ifdef HOLOTASK_HAS_EGRABBER
-#define NOMINMAX
-#include <EGrabber.h>
 #include <nlohmann/json.hpp>
 
-#include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
-
-template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
 namespace holotask::sources {
 
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 struct AmetekS711EuresysCoaxlinkQSFPSettings {
-  std::string cfg_path;
+  std::string cfg_path; ///< Path to JSON configuration file for Phantom S711.
+
+  bool operator==(const AmetekS711EuresysCoaxlinkQSFPSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const AmetekS711EuresysCoaxlinkQSFPSettings &s);
 void from_json(const nlohmann::json &j, AmetekS711EuresysCoaxlinkQSFPSettings &s);
 
-class AmetekS711EuresysCoaxlinkQSFP : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  AmetekS711EuresysCoaxlinkQSFP(const AmetekS711EuresysCoaxlinkQSFPSettings &settings,
-                                HostPtr<uint8_t>                           &&buffers,
-                                std::unique_ptr<Euresys::EGenTL>           &&gentl,
-                                std::unique_ptr<Euresys::EGrabber<>>       &&grabber,
-                                nlohmann::json                              &cfg);
-
-  friend class AmetekS711EuresysCoaxlinkQSFPFactory;
-
-  AmetekS711EuresysCoaxlinkQSFPSettings settings_;
-  HostPtr<uint8_t>                      buffers_;
-  std::unique_ptr<Euresys::EGenTL>      gentl_;
-  std::unique_ptr<Euresys::EGrabber<>>  grabber_;
-  bool                                  running_;
-  nlohmann::json                        cfg_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class AmetekS711EuresysCoaxlinkQSFPFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -70,32 +53,3 @@ public:
 };
 
 } // namespace holotask::sources
-
-#else
-
-#include <nlohmann/json.hpp>
-
-#include "holoflow/core/tasks.hh"
-
-namespace holotask::sources {
-
-struct AmetekS711EuresysCoaxlinkQSFPSettings {
-  std::string cfg_path;
-};
-
-void to_json(nlohmann::json &j, const AmetekS711EuresysCoaxlinkQSFPSettings &s);
-void from_json(const nlohmann::json &j, AmetekS711EuresysCoaxlinkQSFPSettings &s);
-
-class AmetekS711EuresysCoaxlinkQSFPFactory : public holoflow::core::ISyncTaskFactory {
-public:
-  holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
-                                    const nlohmann::json &jsettings) const override;
-
-  std::unique_ptr<holoflow::core::ISyncTask>
-  create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
-         const holoflow::core::SyncCreateCtx &ctx) const override;
-};
-
-} // namespace holotask::sources
-
-#endif

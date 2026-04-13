@@ -12,8 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#ifdef HOLOTASK_HAS_EGRABBER
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
+
+#ifdef HOLOTASK_HAS_EGRABBER
 
 #include <EGrabber.h>
 #include <EuresysGenapiErrorFormats.h>
@@ -24,76 +25,41 @@
 #include <sstream>
 
 #include "bug.hh"
+#include "curaii/cuda.hh"
 #include "logger.hh"
+
+template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
 namespace holotask::sources {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const AmetekS710EuresysCoaxlinkOctoSettings &s) {
-  j = nlohmann::json{
-      {"cfg_path", s.cfg_path},
-  };
+  j = nlohmann::json{{"cfg_path", s.cfg_path}};
 }
 
 void from_json(const nlohmann::json &j, AmetekS710EuresysCoaxlinkOctoSettings &s) {
   j.at("cfg_path").get_to(s.cfg_path);
 }
 
-AmetekS710EuresysCoaxlinkOcto::AmetekS710EuresysCoaxlinkOcto(
-    const AmetekS710EuresysCoaxlinkOctoSettings &settings, HostPtr<uint8_t> &&buffers,
-    std::unique_ptr<Euresys::EGenTL> &&gentl, std::unique_ptr<Euresys::EGrabber<>> &&grabber,
-    nlohmann::json &cfg)
-    : settings_(settings), buffers_(std::move(buffers)), gentl_(std::move(gentl)),
-      grabber_(std::move(grabber)), running_(false), cfg_(cfg) {
-  HOLOVIBES_CHECK(grabber_ != nullptr);
-  HOLOVIBES_CHECK(gentl_ != nullptr);
-  HOLOVIBES_CHECK(buffers_ != nullptr);
-}
-
-holoflow::core::OpResult AmetekS710EuresysCoaxlinkOcto::execute(holoflow::core::SyncCtx &ctx) {
-  using namespace Euresys;
-  constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
-  constexpr auto TIMESTAMP = GenTL::BUFFER_INFO_TIMESTAMP;
-
-  if (!running_) {
-    grabber_->start();
-    running_ = true;
-  }
-
-  while (!ctx.cancelled->load()) {
-    try {
-
-      auto buffer    = ScopedBuffer(*grabber_, 1000);
-      auto delivered = buffer.getInfo<uint64_t>(DELIVERED);
-      auto ts        = buffer.getInfo<uint64_t>(TIMESTAMP);
-
-      logger()->trace("[AmetekS710EuresysCoaxlinkOcto] Acquired buffer with {} parts, timestamp {}",
-                      delivered, ts);
-
-      const auto *idata = buffer.getInfo<void *>(GenTL::BUFFER_INFO_BASE);
-      auto       *odata = ctx.outputs[0].data();
-      std::memcpy(odata, idata, ctx.outputs[0].desc.num_bytes());
-      return holoflow::core::OpResult::Ok;
-    } catch (const Euresys::genapi_error &err) {
-      logger()->error("[AmetekS710EuresysCoaxlinkOcto] GenApi error while acquiring buffer: {}",
-                      err.what());
-    } catch (const Euresys::gentl_error &err) {
-      logger()->error("[AmetekS710EuresysCoaxlinkOcto] GenTL error while acquiring buffer: {}",
-                      err.what());
-    } catch (const std::exception &err) {
-      logger()->error("[AmetekS710EuresysCoaxlinkOcto] Error while acquiring buffer: {}",
-                      err.what());
-    }
-  }
-  return holoflow::core::OpResult::Cancelled;
-}
+// -------------------------------------------------------------------------------------------------
+// Private implementation types
+// -------------------------------------------------------------------------------------------------
 
 namespace {
 
+void check(bool condition, const std::string &msg) {
+  if (!condition) {
+    logger()->error("[AmetekS710EuresysCoaxlinkOctoFactory] error: {}", msg);
+    throw std::invalid_argument("AmetekS710EuresysCoaxlinkOctoFactory error: " + msg);
+  }
+}
+
 std::string format_genapi_error(const Euresys::genapi_error &err) {
   std::ostringstream oss;
-
-  oss << "GenApi error: code=" << err.genapi_error_code << " (" << err.genapi_error_code
-      << "), what=\"" << err.what() << "\"";
+  oss << "GenApi error: code=" << err.genapi_error_code << ", what=\"" << err.what() << "\"";
 
   size_t count = err.parameter_count();
   if (count > 0) {
@@ -146,71 +112,74 @@ std::optional<Euresys::EGrabberCameraInfo> find_camera(Euresys::EGenTL   &gentl,
 void configure_grabber(Euresys::EGrabberCameraInfo &info, const nlohmann::json &cfg) {
   using namespace Euresys;
 
-  // Utilies to deduce configuration
+  // Bank mapping: 2-grabber vs 4-grabber configurations
   const std::map<std::size_t, std::string> banks_map = {
       {2, "Banks_AB"},
       {4, "Banks_ABCD"},
   };
 
-  // Retrieve configuration parameters
-  const std::size_t width                        = cfg.at("Width");
-  const std::size_t height                       = cfg.at("Height");
-  const std::size_t nb_grabbers                  = info.grabbers.size();
-  const std::string pixel_format                 = cfg.at("PixelFormat");
-  const std::string trigger_source               = cfg.at("TriggerSource");
-  const std::string trigger_mode                 = cfg.at("TriggerMode");
-  const std::size_t stripe_height                = height / nb_grabbers;
-  const std::size_t stripe_pitch                 = height;
-  const std::size_t block_height                 = stripe_height;
-  const std::string camera_control_method        = "RC";
-  const std::size_t exposure_time                = cfg.at("ExposureTime");
-  const std::size_t cycle_min_period             = cfg.at("CycleMinimumPeriod");
-  const std::string gain_selector                = cfg.at("GainSelector");
-  const float       gain                         = cfg.at("Gain");
-  const std::string balance_white_marker         = cfg.at("BalanceWhiteMarker");
-  const std::string flat_field_correction        = cfg.at("FlatFieldCorrection");
-  const std::size_t buffer_part_count            = cfg.at("BufferPartCount");
-  const std::string banks                        = banks_map.at(nb_grabbers);
-  const std::string exposure_readout_overlap     = "True";
-  const std::string error_selector               = "All";
-  const std::string stripe_arrangement           = "Geometry_1X_2YM";
-  const std::string statistics_sampling_selector = "LastSecond";
-  const std::string lut_configuration            = "M_10x8";
+  // Extract configuration parameters
+  const auto width                 = cfg.at("Width").get<std::size_t>();
+  const auto height                = cfg.at("Height").get<std::size_t>();
+  const auto nb_grabbers           = info.grabbers.size();
+  const auto pixel_format          = cfg.at("PixelFormat").get<std::string>();
+  const auto trigger_source        = cfg.at("TriggerSource").get<std::string>();
+  const auto trigger_mode          = cfg.at("TriggerMode").get<std::string>();
+  const auto exposure_time         = cfg.at("ExposureTime").get<std::size_t>();
+  const auto cycle_min_period      = cfg.at("CycleMinimumPeriod").get<std::size_t>();
+  const auto gain_selector         = cfg.at("GainSelector").get<std::string>();
+  const auto gain                  = cfg.at("Gain").get<float>();
+  const auto balance_white_marker  = cfg.at("BalanceWhiteMarker").get<std::string>();
+  const auto flat_field_correction = cfg.at("FlatFieldCorrection").get<std::string>();
+  const auto buffer_part_count     = cfg.at("BufferPartCount").get<std::size_t>();
+
+  // Computed parameters
+  const auto stripe_height            = height / nb_grabbers;
+  const auto stripe_pitch             = height;
+  const auto block_height             = stripe_height;
+  const auto camera_control_method    = "RC";
+  const auto exposure_readout_overlap = "True";
+  const auto error_selector           = "All";
+  const auto stripe_arrangement       = "Geometry_1X_2YM";
+  const auto statistics_sampling_sel  = "LastSecond";
+  const auto lut_configuration        = "M_10x8";
+  const auto banks                    = banks_map.at(nb_grabbers);
 
   try {
     // Device-level master configuration
-    auto g = EGrabber(info);
-    g.execute<DeviceModule>("DeviceReset");
-    g.setString<RemoteModule>("Banks", banks);
-    g.setString<DeviceModule>("CameraControlMethod", camera_control_method);
+    auto g = Euresys::EGrabber(info);
+    g.execute<Euresys::DeviceModule>("DeviceReset");
+    g.setString<Euresys::RemoteModule>("Banks", banks);
+    g.setString<Euresys::DeviceModule>("CameraControlMethod", camera_control_method);
+
     if (trigger_source == "SWTRIGGER") {
-      g.setString<DeviceModule>("ErrorSelector", error_selector);
-      g.setInteger<DeviceModule>("CycleMinimumPeriod", cycle_min_period);
-      g.setString<DeviceModule>("ExposureReadoutOverlap", exposure_readout_overlap);
+      g.setString<Euresys::DeviceModule>("ErrorSelector", error_selector);
+      g.setInteger<Euresys::DeviceModule>("CycleMinimumPeriod", cycle_min_period);
+      g.setString<Euresys::DeviceModule>("ExposureReadoutOverlap", exposure_readout_overlap);
     }
 
     // Remote configuration
-    g.setInteger<RemoteModule>("Width", width);
-    g.setInteger<RemoteModule>("Height", height / nb_grabbers);
-    g.setString<RemoteModule>("PixelFormat", pixel_format);
-    g.setString<RemoteModule>("TriggerMode", trigger_mode);
-    g.setString<RemoteModule>("TriggerSource", trigger_source);
-    g.setInteger<RemoteModule>("ExposureTime", exposure_time);
-    g.setString<RemoteModule>("BalanceWhiteMarker", balance_white_marker);
-    g.setString<RemoteModule>("GainSelector", gain_selector);
-    g.setFloat<RemoteModule>("Gain", gain);
-    g.setString<RemoteModule>("FlatFieldCorrection", flat_field_correction);
+    g.setInteger<Euresys::RemoteModule>("Width", width);
+    g.setInteger<Euresys::RemoteModule>("Height", height / nb_grabbers);
+    g.setString<Euresys::RemoteModule>("PixelFormat", pixel_format);
+    g.setString<Euresys::RemoteModule>("TriggerMode", trigger_mode);
+    g.setString<Euresys::RemoteModule>("TriggerSource", trigger_source);
+    g.setInteger<Euresys::RemoteModule>("ExposureTime", exposure_time);
+    g.setString<Euresys::RemoteModule>("BalanceWhiteMarker", balance_white_marker);
+    g.setString<Euresys::RemoteModule>("GainSelector", gain_selector);
+    g.setFloat<Euresys::RemoteModule>("Gain", gain);
+    g.setString<Euresys::RemoteModule>("FlatFieldCorrection", flat_field_correction);
 
     // Stream configuration
-    g.setString<StreamModule>("StripeArrangement", stripe_arrangement);
-    g.setInteger<StreamModule>("LinePitch", width);
-    g.setInteger<StreamModule>("LineWidth", width);
-    g.setInteger<StreamModule>("StripeHeight", stripe_height);
-    g.setInteger<StreamModule>("StripePitch", stripe_pitch);
-    g.setInteger<StreamModule>("BlockHeight", block_height);
-    g.setString<StreamModule>("LUTConfiguration", lut_configuration);
-    g.setInteger<StreamModule>("BufferPartCount", buffer_part_count);
-    g.setString<StreamModule>("StatisticsSamplingSelector", statistics_sampling_selector);
+    g.setString<Euresys::StreamModule>("StripeArrangement", stripe_arrangement);
+    g.setInteger<Euresys::StreamModule>("LinePitch", width);
+    g.setInteger<Euresys::StreamModule>("LineWidth", width);
+    g.setInteger<Euresys::StreamModule>("StripeHeight", stripe_height);
+    g.setInteger<Euresys::StreamModule>("StripePitch", stripe_pitch);
+    g.setInteger<Euresys::StreamModule>("BlockHeight", block_height);
+    g.setString<Euresys::StreamModule>("LUTConfiguration", lut_configuration);
+    g.setInteger<Euresys::StreamModule>("BufferPartCount", buffer_part_count);
+    g.setString<Euresys::StreamModule>("StatisticsSamplingSelector", statistics_sampling_sel);
   } catch (const Euresys::genapi_error &e) {
     throw std::runtime_error(format_genapi_error(e));
   }
@@ -221,7 +190,7 @@ HostPtr<uint8_t> allocate_buffers(Euresys::EGrabber<> &g, std::size_t nb_buffers
   const auto size    = buffer_size * nb_buffers;
   auto       buffers = curaii::make_unique_host_ptr<uint8_t>(size);
 
-  for (int buf_idx = 0; buf_idx < nb_buffers; ++buf_idx) {
+  for (size_t buf_idx = 0; buf_idx < nb_buffers; ++buf_idx) {
     auto *buff_ptr = buffers.get() + buf_idx * buffer_size;
     auto  memory   = Euresys::UserMemory(buff_ptr, buffer_size);
     g.announceAndQueue(memory);
@@ -232,41 +201,106 @@ HostPtr<uint8_t> allocate_buffers(Euresys::EGrabber<> &g, std::size_t nb_buffers
 
 } // namespace
 
+// -------------------------------------------------------------------------------------------------
+// Task implementation (private)
+// -------------------------------------------------------------------------------------------------
+
+class AmetekS710EuresysCoaxlinkOcto : public holoflow::core::ISyncTask {
+public:
+  AmetekS710EuresysCoaxlinkOcto(const AmetekS710EuresysCoaxlinkOctoSettings &settings,
+                                HostPtr<uint8_t>                           &&buffers,
+                                std::unique_ptr<Euresys::EGenTL>           &&gentl,
+                                std::unique_ptr<Euresys::EGrabber<>>       &&grabber,
+                                const nlohmann::json                        &cfg)
+      : settings_(settings), buffers_(std::move(buffers)), gentl_(std::move(gentl)),
+        grabber_(std::move(grabber)), running_(false), cfg_(cfg) {
+    HOLOVIBES_CHECK(grabber_ != nullptr);
+    HOLOVIBES_CHECK(gentl_ != nullptr);
+    HOLOVIBES_CHECK(buffers_ != nullptr);
+  }
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    using namespace Euresys;
+    constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
+    constexpr auto TIMESTAMP = GenTL::BUFFER_INFO_TIMESTAMP;
+
+    if (!running_) {
+      grabber_->start();
+      running_ = true;
+    }
+
+    while (!ctx.cancelled->load()) {
+      try {
+        auto buffer    = ScopedBuffer(*grabber_, 1000);
+        auto delivered = buffer.getInfo<uint64_t>(DELIVERED);
+        auto ts        = buffer.getInfo<uint64_t>(TIMESTAMP);
+
+        logger()->trace(
+            "[AmetekS710EuresysCoaxlinkOcto::execute] buffer with {} parts, timestamp {}",
+            delivered, ts);
+
+        const auto *idata = buffer.getInfo<void *>(GenTL::BUFFER_INFO_BASE);
+        auto       *odata = ctx.outputs[0].data();
+        std::memcpy(odata, idata, ctx.outputs[0].desc.num_bytes());
+        return holoflow::core::OpResult::Ok;
+      } catch (const Euresys::genapi_error &err) {
+        logger()->error("[AmetekS710EuresysCoaxlinkOcto::execute] GenApi error: {}", err.what());
+      } catch (const Euresys::gentl_error &err) {
+        logger()->error("[AmetekS710EuresysCoaxlinkOcto::execute] GenTL error: {}", err.what());
+      } catch (const std::exception &err) {
+        logger()->error("[AmetekS710EuresysCoaxlinkOcto::execute] error: {}", err.what());
+      }
+    }
+    return holoflow::core::OpResult::Cancelled;
+  }
+
+  // Expose config for update() comparison
+  const nlohmann::json &get_cfg() const { return cfg_; }
+
+private:
+  AmetekS710EuresysCoaxlinkOctoSettings settings_;
+  HostPtr<uint8_t>                      buffers_;
+  std::unique_ptr<Euresys::EGenTL>      gentl_;
+  std::unique_ptr<Euresys::EGrabber<>>  grabber_;
+  bool                                  running_;
+  nlohmann::json                        cfg_;
+};
+
+// -------------------------------------------------------------------------------------------------
+// Factory implementation
+// -------------------------------------------------------------------------------------------------
+
 holoflow::core::InferResult
 AmetekS710EuresysCoaxlinkOctoFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                             const nlohmann::json &jsettings) const {
-  const auto check = [&](bool condition, const std::string &msg) {
-    if (!condition) {
-      logger()->error("[AmetekS710EuresysCoaxlinkOctoFactory::infer] error: {}", msg);
-      throw std::invalid_argument("AmetekS710EuresysCoaxlinkOctoFactory inference error: " + msg);
-    }
-  };
+  // clang-format off
+  check(input_descs.size() == 0, "expected zero input tensors");
 
-  std::map<std::string, holoflow::core::DType> dtypes = {
+  auto settings = jsettings.get<AmetekS710EuresysCoaxlinkOctoSettings>();
+  check(!settings.cfg_path.empty(), "cfg_path is empty");
+
+  std::ifstream cfg_file(settings.cfg_path);
+  check(cfg_file.is_open(), std::format("could not open config file: {}", settings.cfg_path));
+
+  auto        cfg    = nlohmann::json::parse(cfg_file).at("s710");
+  std::string format = cfg.at("PixelFormat");
+  // clang-format on
+
+  static const std::map<std::string, holoflow::core::DType> dtypes = {
       {"Mono8", holoflow::core::DType::U8},
       {"Mono16", holoflow::core::DType::U16},
   };
 
-  auto settings = jsettings.get<AmetekS710EuresysCoaxlinkOctoSettings>();
+  check(dtypes.contains(format), "unsupported PixelFormat: " + format);
 
-  // Validate
-  check(input_descs.size() == 0, "Expected zero input tensors");
-  check(!settings.cfg_path.empty(), "cfg_path is empty");
-  std::ifstream cfg_file(settings.cfg_path);
-  auto          error = std::strerror(errno);
-  auto error_msg      = std::format("Could not open config file: {}, {}", settings.cfg_path, error);
-  check(cfg_file.is_open(), error_msg);
-  auto        cfg    = nlohmann::json::parse(cfg_file).at("s710");
-  std::string format = cfg.at("PixelFormat");
-  check(dtypes.contains(format), "Unsupported PixelFormat: " + format);
+  const auto batch_size = cfg.at("BufferPartCount").get<size_t>();
+  const auto height     = cfg.at("Height").get<size_t>();
+  const auto width      = cfg.at("Width").get<size_t>();
+  const auto dtype      = dtypes.at(format);
+  const auto loc        = holoflow::core::MemLoc::Host;
 
-  // Success
-  size_t                width      = cfg.at("Width");
-  size_t                height     = cfg.at("Height");
-  size_t                batch_size = cfg.at("BufferPartCount");
-  holoflow::core::DType dtype      = dtypes.at(format);
-  auto                  loc        = holoflow::core::MemLoc::Host;
   holoflow::core::TDesc odesc({batch_size, height, width}, dtype, loc);
+
   return holoflow::core::InferResult{
       .input_descs   = {},
       .output_descs  = {odesc},
@@ -283,8 +317,6 @@ AmetekS710EuresysCoaxlinkOctoFactory::create(std::span<const holoflow::core::TDe
                                              const holoflow::core::SyncCreateCtx   &ctx) const {
   (void)ctx;
 
-  // Validate
-  auto infer    = this->infer(input_descs, jsettings);
   auto settings = jsettings.get<AmetekS710EuresysCoaxlinkOctoSettings>();
   auto cfg_file = std::ifstream(settings.cfg_path);
   auto cfg      = nlohmann::json::parse(cfg_file).at("s710");
@@ -293,20 +325,16 @@ AmetekS710EuresysCoaxlinkOctoFactory::create(std::span<const holoflow::core::TDe
   auto gentl       = std::make_unique<Euresys::EGenTL>();
   auto camera_info = find_camera(*gentl, "Phantom S710");
 
-  if (!camera_info.has_value()) {
-    logger()->error("[AmetekS710EuresysCoaxlinkOctoFactory::create] Could not find Phantom S710");
-    throw std::runtime_error("Could not find Phantom S710 camera");
-  }
+  check(camera_info.has_value(), "could not find Phantom S710 camera");
 
   configure_grabber(*camera_info, cfg);
-  auto grabber     = std::make_unique<Euresys::EGrabber<>>(*camera_info);
-  auto buffer_size = infer.output_descs[0].num_bytes();
-  auto buffers     = allocate_buffers(*grabber, cfg.at("BufferPartCount"), buffer_size);
+  auto grabber      = std::make_unique<Euresys::EGrabber<>>(*camera_info);
+  auto infer_result = this->infer(input_descs, jsettings);
+  auto buffer_size  = infer_result.output_descs[0].num_bytes();
+  auto buffers      = allocate_buffers(*grabber, cfg.at("BufferPartCount"), buffer_size);
 
-  // Success
-  auto *task = new AmetekS710EuresysCoaxlinkOcto(settings, std::move(buffers), std::move(gentl),
-                                                 std::move(grabber), cfg);
-  return std::unique_ptr<holoflow::core::ISyncTask>(task);
+  return std::make_unique<AmetekS710EuresysCoaxlinkOcto>(settings, std::move(buffers),
+                                                         std::move(gentl), std::move(grabber), cfg);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -316,37 +344,32 @@ AmetekS710EuresysCoaxlinkOctoFactory::update(std::unique_ptr<holoflow::core::ISy
                                              const holoflow::core::SyncCreateCtx       &ctx) const {
   (void)ctx;
 
-  // Validate
-  auto infer    = this->infer(input_descs, jsettings);
+  auto *old = dynamic_cast<AmetekS710EuresysCoaxlinkOcto *>(old_task.get());
+  if (old == nullptr || input_descs.size() != 0) {
+    return create(input_descs, jsettings, ctx);
+  }
+
   auto settings = jsettings.get<AmetekS710EuresysCoaxlinkOctoSettings>();
   auto cfg_file = std::ifstream(settings.cfg_path);
   auto cfg      = nlohmann::json::parse(cfg_file).at("s710");
 
-  auto *old = dynamic_cast<AmetekS710EuresysCoaxlinkOcto *>(old_task.get());
-  HOLOVIBES_CHECK(old != nullptr, "Old task is not of type AmetekS710EuresysCoaxlinkOcto");
-  auto old_cfg = old->cfg_;
-
-  auto same_cfg = cfg == old_cfg;
-  if (same_cfg) {
-    return old_task;
-  } else {
-    old_task.reset();
-    return create(input_descs, jsettings, ctx);
+  if (cfg == old->get_cfg()) {
+    return old_task; // Reuse if config unchanged
   }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holotask::sources
 
 #else
 
-#include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
+#include <stdexcept>
 
 namespace holotask::sources {
 
 void to_json(nlohmann::json &j, const AmetekS710EuresysCoaxlinkOctoSettings &s) {
-  j = nlohmann::json{
-      {"cfg_path", s.cfg_path},
-  };
+  j = nlohmann::json{{"cfg_path", s.cfg_path}};
 }
 
 void from_json(const nlohmann::json &j, AmetekS710EuresysCoaxlinkOctoSettings &s) {
@@ -356,14 +379,20 @@ void from_json(const nlohmann::json &j, AmetekS710EuresysCoaxlinkOctoSettings &s
 holoflow::core::InferResult
 AmetekS710EuresysCoaxlinkOctoFactory::infer(std::span<const holoflow::core::TDesc>,
                                             const nlohmann::json &) const {
-  throw std::logic_error("holotask library was built without Egrabber support");
+  throw std::logic_error("holotask library was built without EGrabber support");
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
 AmetekS710EuresysCoaxlinkOctoFactory::create(std::span<const holoflow::core::TDesc>,
                                              const nlohmann::json &,
                                              const holoflow::core::SyncCreateCtx &) const {
-  throw std::logic_error("holotask library was built without Egrabber support");
+  throw std::logic_error("holotask library was built without EGrabber support");
+}
+
+std::unique_ptr<holoflow::core::ISyncTask> AmetekS710EuresysCoaxlinkOctoFactory::update(
+    std::unique_ptr<holoflow::core::ISyncTask>, std::span<const holoflow::core::TDesc>,
+    const nlohmann::json &, const holoflow::core::SyncCreateCtx &) const {
+  throw std::logic_error("holotask library was built without EGrabber support");
 }
 
 } // namespace holotask::sources
