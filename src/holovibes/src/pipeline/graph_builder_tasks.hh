@@ -58,7 +58,6 @@
 #include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
 #include "holotask/syncs/angular_spectrum.hh"
-#include "holotask/syncs/average.hh"
 #include "holotask/syncs/conversion.hh"
 #include "holotask/syncs/convolution.hh"
 #include "holotask/syncs/correct_phase.hh"
@@ -72,9 +71,7 @@
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
 #include "holotask/syncs/rotation.hh"
-#include "holotask/syncs/shack_hartmann_phase_ramps.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
-#include "holotask/syncs/short_time_fresnel_phase_ramps.hh"
 #include "holotask/syncs/stft.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike.hh"
@@ -108,8 +105,6 @@ protected:
   TDesc fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
   TDesc fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
   TDesc fresnel_qout(const TDesc &Z, holotask::sources::FresnelQoutSettings s);
-  TDesc shack_hartmann_phase_ramps(holotask::syncs::ShackHartmannPhaseRampsSettings s);
-  TDesc short_time_fresnel_phase_ramps(holotask::syncs::ShortTimeFresnelPhaseSettings s);
   TDesc short_time_fresnel_diffraction(const TDesc &X, holotask::syncs::ShortTimeFresnelDiffractionSettings s);
   TDesc unfold2d(const TDesc &X, holonp::Unfold2DSettings s);
   TDesc angular_spectrum(const TDesc &X, holotask::syncs::AngularSpectrumSettings s);
@@ -126,7 +121,6 @@ protected:
   void  holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
   TDesc ametek_s710_euresys_coaxlink_octo(holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings s);
   TDesc ametek_s711_euresys_coaxlink_qsfp_plus(holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
-  TDesc average(const TDesc &X, holotask::syncs::AverageSettings s);
   TDesc convolution(const TDesc &X, holotask::syncs::ConvolutionSettings s);
   TDesc correct_phase(const TDesc &X, const TDesc &PhaseMask, holotask::syncs::CorrectPhaseSettings s);
   TDesc crop(const TDesc &X, holotask::syncs::CropSettings s);
