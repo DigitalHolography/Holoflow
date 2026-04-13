@@ -17,38 +17,24 @@
 /// @details
 /// - **Inputs:** none
 /// - **Outputs:** `[batch_size, height, width]` tensor of `u8` or `u16`
-/// - **Settings:** @ref holovibes::tasks::sources::HolofileSettings
+/// - **Settings:** @ref holotask::sources::HolofileSettings
 /// - **Failure modes:** Propagates I/O errors, JSON errors, CUDA transfer errors.
 
 #pragma once
 
-#include <cstddef>
-#include <memory>
-#include <nlohmann/json.hpp>
 #include <string>
 
-#include "curaii/cuda.hh"
-#include "holofile/holofile.hh"
-#include "holoflow/core/tasks.hh"
+#include <nlohmann/json.hpp>
 
-template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
-template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
+#include "holoflow/core/tasks.hh"
 
 namespace holotask::sources {
 
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 /// @brief Settings for the HoloFile reader task.
-/// @details
-/// JSON schema (informal):
-/// @code{.json}
-/// {
-///   "path": "string",
-///   "load_kind": "Live|CPUCached|GPUCached",
-///   "start_frame": 0,
-///   "end_frame": 1024,
-///   "batch_size": 8,
-///   "keep_cursor": true
-/// }
-/// @endcode
 struct HolofileSettings {
   /// @brief Loading strategy.
   enum class LoadKind {
@@ -57,80 +43,24 @@ struct HolofileSettings {
     GPUCached  ///< Preload all frames into GPU memory.
   };
 
-  /// Path to the HoloFile.
-  std::string path;
+  std::string path;               ///< Path to the HoloFile.
+  LoadKind    load_kind;          ///< Loading strategy.
+  int         start_frame;        ///< First frame to read (inclusive).
+  int         end_frame;          ///< Last frame to read (exclusive).
+  int         batch_size;         ///< Number of frames per output tensor.
+  bool        keep_cursor = true; ///< Maintain cursor across updates.
 
-  /// Loading strategy.
-  /// See @ref LoadKind.
-  LoadKind load_kind;
-
-  /// First frame to read (inclusive).
-  /// Must satisfy `0 <= start_frame < end_frame`.
-  int start_frame;
-
-  /// Last frame to read (exclusive).
-  /// Must satisfy `start_frame < end_frame <= total_frames`.
-  int end_frame;
-
-  /// Number of frames per output tensor.
-  /// Must satisfy `batch_size > 0 <= (end_frame - start_frame)`.
-  int batch_size;
-
-  /// Whether to maintain the current reading offset across pipeline updates.
-  /// If false, the cursor resets to start_frame upon update.
-  bool keep_cursor = true;
+  bool operator==(const HolofileSettings &) const = default;
 };
 
-/// @name JSON serialization
-/// @brief nlohmann::json adapters for @ref HolofileSettings and @ref HolofileSettings::LoadKind.
-/// @{
 void to_json(nlohmann::json &j, const HolofileSettings::LoadKind &lk);
 void from_json(const nlohmann::json &j, HolofileSettings::LoadKind &lk);
 void to_json(nlohmann::json &j, const HolofileSettings &hs);
 void from_json(const nlohmann::json &j, HolofileSettings &hs);
-/// @}
 
-/// @brief Synchronous task that reads frames from a HoloFile into a tensor.
-/// @details
-/// Output tensor layout: `[batch_size, height, width]`
-/// with element type chosen from file bit depth.
-/// On each `execute`, advances the internal frame cursor by `batch_size`.
-///
-/// @par CUDA
-/// Uses the stream provided by the runtime in @ref SyncCtx to perform H2D/D2D copies
-/// for `GPUCached` and for upload of host batches. The stream is not owned.
-///
-/// @par Errors
-/// - `holofile::Exception` and derived types on I/O issues
-/// - CUDA runtime errors from transfer operations
-class Holofile : public holoflow::core::ISyncTask {
-public:
-  std::optional<holoflow::core::TView> acquire_input(int index) override;
-  void                                 release_output(int index) override;
-  holoflow::core::OpResult             execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  Holofile(const HolofileSettings &settings, holofile::Reader &&reader,
-           const holofile::Header &header, int frame_idx, std::byte *buf,
-           HostPtr<std::byte> &&h_buf, DevPtr<std::byte> &&d_buf, cudaStream_t stream,
-           holoflow::core::TDesc odesc);
-
-  friend class HolofileFactory;
-
-  HolofileSettings settings_; //< Settings.
-
-  holofile::Reader reader_;    //< Reader.
-  holofile::Header header_;    //< Header.
-  int              frame_idx_; //< Next frame to read.
-
-  holoflow::core::TDesc odesc_; // Output tensor description (cached from infer).
-
-  std::byte         *buf_;   // Non-owning view of the active buffer.
-  HostPtr<std::byte> h_buf_; // Owned CPU buffer (if any).
-  DevPtr<std::byte>  d_buf_; // Owned GPU buffer (if any).
-
-  cudaStream_t stream_; // Stream for GPU transfers.
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 /// @brief Factory for HoloFile reader tasks.
 class HolofileFactory : public holoflow::core::ISyncTaskFactory {
