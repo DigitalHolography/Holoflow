@@ -30,6 +30,7 @@
 
 #include "bug.hh"
 #include "graph_builder.hh"
+#include "holofile/holofile.hh"
 #include "holoflow/runtime/graph_display.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"

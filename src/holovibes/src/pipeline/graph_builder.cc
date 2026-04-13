@@ -93,12 +93,17 @@ GraphBuilder::TDesc GraphBuilder::build_acquisition() {
 }
 
 void GraphBuilder::build_raw_record(const TDesc &H) {
-  auto Host = holotask::syncs::MemcpySettings::Target::Host;
+  // auto Host = holotask::syncs::MemcpySettings::Target::Host;
 
-  auto H_rec = memcpy(H, {Host});
-  H_rec      = batched_queue(H_rec, {s_.recording_count, s_.time_window, s_.time_window});
+  // auto H_rec = memcpy(H, {Host});
+  // H_rec      = batched_queue(H_rec, {s_.recording_count, s_.time_window, s_.time_window});
 
-  holofile_write(H_rec, {s_.recording_path.string(), s_.recording_count, settings_to_old_json(s_)});
+  holofile_write(H, {
+                        s_.recording_path.string(),
+                        s_.recording_count,
+                        settings_to_old_json(s_),
+                        true,
+                    });
 }
 
 bool GraphBuilder::build_raw_view(const TDesc &H) {
