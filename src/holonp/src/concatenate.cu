@@ -197,8 +197,8 @@ holoflow::core::OpResult Concatenate::execute(holoflow::core::SyncCtx &ctx) {
     std::abort();
   }
 
-  auto *odata = ctx.outputs[0].data();
-  const auto odesc = ctx.outputs[0].desc;
+  auto      *odata     = ctx.outputs[0].data();
+  const auto odesc     = ctx.outputs[0].desc;
   const auto total_out = static_cast<std::int64_t>(odesc.num_elements());
   if (total_out <= 0) {
     return holoflow::core::OpResult::Ok;
@@ -264,8 +264,10 @@ ConcatenateFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   const auto settings = jsettings.get<ConcatenateSettings>();
   const auto plan     = build_plan(settings, input_descs);
 
-  holoflow::core::TDesc odesc = input_descs[0];
-  odesc.shape                 = plan.out_shape;
+  // holoflow::core::TDesc odesc = input_descs[0];
+  // odesc.shape                 = plan.out_shape;
+  auto                  oshape = plan.out_shape;
+  holoflow::core::TDesc odesc(oshape, input_descs[0].dtype, input_descs[0].mem_loc);
 
   return holoflow::core::InferResult{
       .input_descs   = {input_descs.begin(), input_descs.end()},
