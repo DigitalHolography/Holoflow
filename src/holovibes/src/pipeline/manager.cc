@@ -77,19 +77,14 @@
 #include "holotask/syncs/conversion.hh"
 #include "holotask/syncs/convolution.hh"
 #include "holotask/syncs/correct_phase.hh"
-#include "holotask/syncs/crop.hh"
 #include "holotask/syncs/cuda_stream_synchronize.hh"
-#include "holotask/syncs/fft_shift.hh"
 #include "holotask/syncs/filter2d.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
-#include "holotask/syncs/log.hh"
 #include "holotask/syncs/memcpy.hh"
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
-#include "holotask/syncs/rotation.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
-#include "holotask/syncs/stft.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike.hh"
 #include "holotask/syncs/zernike_phase.hh"
@@ -174,19 +169,14 @@ void Manager::register_components() {
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
   reg_sync<syncs::CudaStreamSynchronizeFactory>(registry_, "CudaStreamSynchronize");
   reg_sync<syncs::ConversionFactory>(registry_, "Conversion");
-  reg_sync<syncs::FFTShiftFactory>(registry_, "FFTShift");
   reg_sync<syncs::FresnelDiffractionFactory>(registry_, "FresnelDiffraction");
   reg_sync<syncs::MemcpyFactory>(registry_, "Memcpy");
   reg_sync<syncs::PcaFactory>(registry_, "Pca");
   reg_sync<syncs::PctClipFactory>(registry_, "PctClip");
   reg_sync<syncs::CorrectPhaseFactory>(registry_, "CorrectPhase");
-  reg_sync<syncs::StftFactory>(registry_, "Stft");
   reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
-  reg_sync<syncs::LogFactory>(registry_, "Log");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
-  reg_sync<syncs::CropFactory>(registry_, "Crop");
-  reg_sync<syncs::RotationFactory>(registry_, "Rotation");
   reg_sync<syncs::ShortTimeFresnelDiffractionFactory>(registry_, "ShortTimeFresnelDiffraction");
   reg_sync<Unfold2DFactory>(registry_, "Unfold2D");
   reg_sync<syncs::Wrap2PiFactory>(registry_, "Wrap2Pi");

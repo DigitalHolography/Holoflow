@@ -61,18 +61,14 @@
 #include "holotask/syncs/conversion.hh"
 #include "holotask/syncs/convolution.hh"
 #include "holotask/syncs/correct_phase.hh"
-#include "holotask/syncs/crop.hh"
 #include "holotask/syncs/cuda_stream_synchronize.hh"
-#include "holotask/syncs/fft_shift.hh"
 #include "holotask/syncs/filter2d.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
 #include "holotask/syncs/memcpy.hh"
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
-#include "holotask/syncs/rotation.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
-#include "holotask/syncs/stft.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike.hh"
 #include "holotask/syncs/zernike_phase.hh"
@@ -100,7 +96,6 @@ protected:
   TDesc batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
   TDesc convert(const TDesc &X, holotask::syncs::ConversionSettings s);
   TDesc pca(const TDesc &X, holotask::syncs::PcaSettings s);
-  TDesc stft(const TDesc &X, holotask::syncs::StftSettings s);
   TDesc filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
   TDesc fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
   TDesc fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
@@ -123,11 +118,8 @@ protected:
   TDesc ametek_s711_euresys_coaxlink_qsfp_plus(holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
   TDesc convolution(const TDesc &X, holotask::syncs::ConvolutionSettings s);
   TDesc correct_phase(const TDesc &X, const TDesc &PhaseMask, holotask::syncs::CorrectPhaseSettings s);
-  TDesc crop(const TDesc &X, holotask::syncs::CropSettings s);
-  TDesc fft_shift(const TDesc &X, holotask::syncs::FFTShiftSettings s);
   TDesc pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);
   TDesc registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
-  TDesc rotation(const TDesc &X, holotask::syncs::RotationSettings s);
   TDesc wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
   TDesc zernike(const TDesc &X, holotask::syncs::ZernikeSettings s);
   TDesc zernike_phase(const TDesc &X, holotask::syncs::ZernikePhaseSettings s);
