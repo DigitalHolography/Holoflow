@@ -14,7 +14,6 @@
 
 #pragma once
 
-#include <memory>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -40,28 +39,6 @@ struct FresnelDiffractionSettings {
 
 void to_json(nlohmann::json &j, const FresnelDiffractionSettings &fds);
 void from_json(const nlohmann::json &j, FresnelDiffractionSettings &fds);
-
-// -------------------------------------------------------------------------------------------------
-// Task
-// -------------------------------------------------------------------------------------------------
-
-class FresnelDiffraction : public holoflow::core::ISyncTask {
-public:
-  struct Impl;
-
-  explicit FresnelDiffraction(std::unique_ptr<Impl> impl);
-  ~FresnelDiffraction() override;
-
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-  const holoflow::core::TDesc      &get_idesc() const;
-  const FresnelDiffractionSettings &get_settings() const;
-
-  void update_stream(cudaStream_t stream);
-
-private:
-  std::unique_ptr<Impl> impl_;
-};
 
 // -------------------------------------------------------------------------------------------------
 // Factory

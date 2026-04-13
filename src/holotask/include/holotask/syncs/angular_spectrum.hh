@@ -14,35 +14,19 @@
 
 #pragma once
 
-#include <nlohmann/json.hpp>
 #include <optional>
 
-#include "curaii/cuda.hh"
-#include "curaii/cufft.hh"
-#include "curaii/nvrtc.hh"
-#include "holoflow/core/tasks.hh"
+#include <nlohmann/json.hpp>
 
-template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+#include "holoflow/core/tasks.hh"
 
 namespace holotask::syncs {
 
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 /// @brief Settings for the angular spectrum propagation task.
-/// @details
-/// JSON schema (informal):
-/// @code{.json}
-/// {
-///   "lambda": 532e-9,
-///   "dx": 3.45e-6,
-///   "dy": 3.45e-6,
-///   "z": 0.1,
-///   "filter": None | {
-///     "r_inner": 100,
-///     "r_outer": 200,
-///     "s_inner": 20,
-///     "s_outer": 40
-///   }
-/// }
-/// @endcode
 struct AngularSpectrumSettings {
   /// @brief Optional bandlimiting filter.
   struct Filter {
@@ -50,43 +34,27 @@ struct AngularSpectrumSettings {
     int r_outer; ///< Outer radius in pixels.
     int s_inner; ///< Inner slope in pixels.
     int s_outer; ///< Outer slope in pixels.
+
+    bool operator==(const Filter &) const = default;
   };
 
-  float                 lambda; ///< Wavelength in meters.
-  float                 dx;     ///< Pixel pitch in meters.
-  float                 dy;     ///< Pixel pitch in meters.
-  float                 z;      ///< Propagation distance in meters.
+  float                 lambda; ///< Wavelength [m].
+  float                 dx;     ///< Pixel pitch, horizontal [m].
+  float                 dy;     ///< Pixel pitch, vertical [m].
+  float                 z;      ///< Propagation distance [m].
   std::optional<Filter> filter; ///< Optional bandlimiting filter.
+
+  bool operator==(const AngularSpectrumSettings &) const = default;
 };
 
-/// @name JSON serialization
-/// @brief nlohmann::json adapters for @ref AngularSpectrumSettings and @ref
-/// AngularSpectrumSettings::Filter.
-/// @{
 void to_json(nlohmann::json &j, const AngularSpectrumSettings::Filter &f);
 void from_json(const nlohmann::json &j, AngularSpectrumSettings::Filter &f);
 void to_json(nlohmann::json &j, const AngularSpectrumSettings &as);
 void from_json(const nlohmann::json &j, AngularSpectrumSettings &as);
-/// @}
 
-class AngularSpectrum : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  AngularSpectrum(const AngularSpectrumSettings &settings, curaii::CufftHandle &&fwd_plan,
-                  curaii::CufftHandle &&inv_plan, DevPtr<cuFloatComplex> &&d_lens,
-                  DevPtr<void> &&d_caller_info, std::vector<char> &&lto);
-
-  friend class AngularSpectrumFactory;
-
-  AngularSpectrumSettings settings_;
-  curaii::CufftHandle     fwd_plan_;
-  curaii::CufftHandle     inv_plan_;
-  DevPtr<cuFloatComplex>  d_lens_;
-  DevPtr<void>            d_caller_info_;
-  std::vector<char>       lto_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class AngularSpectrumFactory : public holoflow::core::ISyncTaskFactory {
 public:

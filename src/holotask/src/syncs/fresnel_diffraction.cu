@@ -356,13 +356,12 @@ __global__ void apply_output_phase_shift_kernel(cuFloatComplex *output, const cu
       cuCmulf(output[out_idx], lens[static_cast<unsigned long long>(row) * width + col]);
 }
 
-} // namespace
-
 // -------------------------------------------------------------------------------------------------
-// FresnelDiffraction::Impl
+// FresnelDiffraction task implementation (private to this translation unit)
 // -------------------------------------------------------------------------------------------------
 
-struct FresnelDiffraction::Impl {
+class FresnelDiffraction : public holoflow::core::ISyncTask {
+public:
   // -- Configuration ------------------------------------------------------------------------------
   FresnelDiffractionSettings settings;
   holoflow::core::TDesc      idesc;
@@ -382,53 +381,41 @@ struct FresnelDiffraction::Impl {
   DevPtr<cuFloatComplex> d_lens;
   DevPtr<void>           d_caller_info;
   std::vector<char>      lto;
-};
 
-// -------------------------------------------------------------------------------------------------
-// FresnelDiffraction
-// -------------------------------------------------------------------------------------------------
+  // -- ISyncTask interface ------------------------------------------------------------------------
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    auto *idata_base = reinterpret_cast<uint8_t *>(ctx.inputs[0].data());
+    auto *odata_base = reinterpret_cast<uint8_t *>(ctx.outputs[0].data());
 
-FresnelDiffraction::FresnelDiffraction(std::unique_ptr<Impl> impl) : impl_(std::move(impl)) {}
+    for (const auto &offset : offsets) {
+      auto *in_ptr  = idata_base + offset.in_bytes;
+      auto *out_ptr = reinterpret_cast<cuFloatComplex *>(odata_base + offset.out_bytes);
+      CUFFT_CHECK(cufftXtExec(fft_handle.get(), in_ptr, out_ptr, CUFFT_FORWARD));
 
-FresnelDiffraction::~FresnelDiffraction() = default;
+      if (!settings.skip_phase_shift) {
+        constexpr int block_size = 256;
+        auto          total      = inner_batch * static_cast<size_t>(height) * width;
+        int           grid_size  = static_cast<int>((total + block_size - 1) / block_size);
+        apply_output_phase_shift_kernel<<<grid_size, block_size, 0, stream>>>(
+            out_ptr, d_lens.get(), inner_batch, height, width, out_idist, out_stride_h,
+            out_istride);
+      }
+    }
 
-const holoflow::core::TDesc &FresnelDiffraction::get_idesc() const { return impl_->idesc; }
-
-const FresnelDiffractionSettings &FresnelDiffraction::get_settings() const {
-  return impl_->settings;
-}
-
-void FresnelDiffraction::update_stream(cudaStream_t stream) {
-  if (impl_->stream != stream) {
-    impl_->stream = stream;
-    CUFFT_CHECK(cufftSetStream(impl_->fft_handle.get(), stream));
+    CUDA_CHECK(cudaGetLastError());
+    return holoflow::core::OpResult::Ok;
   }
-}
 
-holoflow::core::OpResult FresnelDiffraction::execute(holoflow::core::SyncCtx &ctx) {
-  auto &im = *impl_;
-
-  auto *idata_base = reinterpret_cast<uint8_t *>(ctx.inputs[0].data());
-  auto *odata_base = reinterpret_cast<uint8_t *>(ctx.outputs[0].data());
-
-  for (const auto &offset : im.offsets) {
-    auto *in_ptr  = idata_base + offset.in_bytes;
-    auto *out_ptr = reinterpret_cast<cuFloatComplex *>(odata_base + offset.out_bytes);
-    CUFFT_CHECK(cufftXtExec(im.fft_handle.get(), in_ptr, out_ptr, CUFFT_FORWARD));
-
-    if (!im.settings.skip_phase_shift) {
-      constexpr int block_size = 256;
-      auto          total      = im.inner_batch * static_cast<size_t>(im.height) * im.width;
-      int           grid_size  = static_cast<int>((total + block_size - 1) / block_size);
-      apply_output_phase_shift_kernel<<<grid_size, block_size, 0, im.stream>>>(
-          out_ptr, im.d_lens.get(), im.inner_batch, im.height, im.width, im.out_idist,
-          im.out_stride_h, im.out_istride);
+  // -- Update utilities ---------------------------------------------------------------------------
+  void update_stream(cudaStream_t new_stream) {
+    if (stream != new_stream) {
+      stream = new_stream;
+      CUFFT_CHECK(cufftSetStream(fft_handle.get(), new_stream));
     }
   }
+};
 
-  CUDA_CHECK(cudaGetLastError());
-  return holoflow::core::OpResult::Ok;
-}
+} // namespace
 
 // -------------------------------------------------------------------------------------------------
 // FresnelDiffractionFactory
@@ -566,24 +553,23 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
                                   static_cast<long long int>(best_group.size), &work_size,
                                   executiontype));
 
-  auto impl = std::make_unique<FresnelDiffraction::Impl>(FresnelDiffraction::Impl{
-      .settings      = settings,
-      .idesc         = idesc,
-      .fft_handle    = std::move(plan),
-      .offsets       = std::move(offsets),
-      .inner_batch   = best_group.size,
-      .height        = H,
-      .width         = W,
-      .out_idist     = best_group.out_idist,
-      .out_stride_h  = out_stride_h,
-      .out_istride   = out_istride,
-      .stream        = ctx.stream,
-      .d_lens        = std::move(d_lens),
-      .d_caller_info = std::move(d_info),
-      .lto           = std::move(lto),
-  });
+  auto task           = std::make_unique<FresnelDiffraction>();
+  task->settings      = settings;
+  task->idesc         = idesc;
+  task->fft_handle    = std::move(plan);
+  task->offsets       = std::move(offsets);
+  task->inner_batch   = best_group.size;
+  task->height        = H;
+  task->width         = W;
+  task->out_idist     = best_group.out_idist;
+  task->out_stride_h  = out_stride_h;
+  task->out_istride   = out_istride;
+  task->stream        = ctx.stream;
+  task->d_lens        = std::move(d_lens);
+  task->d_caller_info = std::move(d_info);
+  task->lto           = std::move(lto);
 
-  return std::make_unique<FresnelDiffraction>(std::move(impl));
+  return task;
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -597,10 +583,10 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
   }
 
   const auto &new_idesc = input_descs[0];
-  const auto &old_idesc = old_fresnel->get_idesc();
+  const auto &old_idesc = old_fresnel->idesc;
   auto        settings  = jsettings.get<FresnelDiffractionSettings>();
 
-  bool same_settings = settings == old_fresnel->get_settings();
+  bool same_settings = settings == old_fresnel->settings;
   bool same_shape    = (new_idesc.shape == old_idesc.shape);
   bool same_strides  = (new_idesc.strides == old_idesc.strides);
   bool same_dtype    = (new_idesc.dtype == old_idesc.dtype);
