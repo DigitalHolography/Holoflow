@@ -133,11 +133,16 @@ void configure_grabber(Euresys::EGrabberCameraInfo &info, const nlohmann::json &
   const auto balance_white_marker  = cfg.at("BalanceWhiteMarker").get<std::string>();
   const auto flat_field_correction = cfg.at("FlatFieldCorrection").get<std::string>();
   const auto buffer_part_count     = cfg.at("BufferPartCount").get<std::size_t>();
+  const auto offsets               = cfg.at("Offsets").get<std::vector<std::size_t>>();
+
+  check(offsets.size() == nb_grabbers, "Offsets array size must match number of grabbers");
 
   // Computed parameters
   const auto stripe_height            = height / nb_grabbers;
-  const auto stripe_pitch             = height;
+  const auto stripe_pitch             = stripe_height * nb_grabbers;
   const auto block_height             = stripe_height;
+  const auto bytes_per_pixel          = cfg.at("BytesPerPixel").get<std::size_t>();
+  const auto line_pitch               = width * bytes_per_pixel;
   const auto camera_control_method    = "RC";
   const auto exposure_readout_overlap = "True";
   const auto error_selector           = "All";
@@ -147,40 +152,45 @@ void configure_grabber(Euresys::EGrabberCameraInfo &info, const nlohmann::json &
   const auto banks                    = banks_map.at(nb_grabbers);
 
   try {
-    // Device-level master configuration
-    auto g = Euresys::EGrabber(info);
-    g.execute<Euresys::DeviceModule>("DeviceReset");
-    g.setString<Euresys::RemoteModule>("Banks", banks);
-    g.setString<Euresys::DeviceModule>("CameraControlMethod", camera_control_method);
+    auto g = EGrabber(info);
+    g.execute<DeviceModule>("DeviceReset");
 
+    // ---- RemoteModule: targets the camera, shared across all grabbers ----
+    g.setString<RemoteModule>("Banks", banks);
+    g.setInteger<RemoteModule>("Width", width);
+    g.setInteger<RemoteModule>("Height", height / nb_grabbers);
+    g.setString<RemoteModule>("PixelFormat", pixel_format);
+    g.setString<RemoteModule>("TriggerMode", trigger_mode);
+    g.setString<RemoteModule>("TriggerSource", trigger_source);
+    g.setInteger<RemoteModule>("ExposureTime", exposure_time);
+    g.setString<RemoteModule>("BalanceWhiteMarker", balance_white_marker);
+    g.setString<RemoteModule>("GainSelector", gain_selector);
+    g.setFloat<RemoteModule>("Gain", gain);
+    g.setString<RemoteModule>("FlatFieldCorrection", flat_field_correction);
+
+    // ---- DeviceModule: master grabber only (camera control signals) ----
+    g.setString<DeviceModule>("CameraControlMethod", camera_control_method);
     if (trigger_source == "SWTRIGGER") {
-      g.setString<Euresys::DeviceModule>("ErrorSelector", error_selector);
-      g.setInteger<Euresys::DeviceModule>("CycleMinimumPeriod", cycle_min_period);
-      g.setString<Euresys::DeviceModule>("ExposureReadoutOverlap", exposure_readout_overlap);
+      g.setString<DeviceModule>("ErrorSelector", error_selector);
+      g.setInteger<DeviceModule>("CycleMinimumPeriod", cycle_min_period);
+      g.setString<DeviceModule>("ExposureReadoutOverlap", exposure_readout_overlap);
     }
 
-    // Remote configuration
-    g.setInteger<Euresys::RemoteModule>("Width", width);
-    g.setInteger<Euresys::RemoteModule>("Height", height / nb_grabbers);
-    g.setString<Euresys::RemoteModule>("PixelFormat", pixel_format);
-    g.setString<Euresys::RemoteModule>("TriggerMode", trigger_mode);
-    g.setString<Euresys::RemoteModule>("TriggerSource", trigger_source);
-    g.setInteger<Euresys::RemoteModule>("ExposureTime", exposure_time);
-    g.setString<Euresys::RemoteModule>("BalanceWhiteMarker", balance_white_marker);
-    g.setString<Euresys::RemoteModule>("GainSelector", gain_selector);
-    g.setFloat<Euresys::RemoteModule>("Gain", gain);
-    g.setString<Euresys::RemoteModule>("FlatFieldCorrection", flat_field_correction);
+    // ---- StreamModule: per-grabber DMA engine ----
+    for (std::size_t i = 0; i < nb_grabbers; ++i) {
+      auto gi = EGrabber(info.grabbers[i]);
+      gi.setString<StreamModule>("StripeArrangement", stripe_arrangement);
+      gi.setInteger<StreamModule>("LinePitch", line_pitch);
+      gi.setInteger<StreamModule>("LineWidth", line_pitch);
+      gi.setInteger<StreamModule>("StripeHeight", stripe_height);
+      gi.setInteger<StreamModule>("StripePitch", stripe_pitch);
+      gi.setInteger<StreamModule>("BlockHeight", block_height);
+      gi.setString<StreamModule>("LUTConfiguration", lut_configuration);
+      gi.setInteger<StreamModule>("BufferPartCount", buffer_part_count);
+      gi.setString<StreamModule>("StatisticsSamplingSelector", statistics_sampling_sel);
+      gi.setInteger<StreamModule>("StripeOffset", offsets[i]);
+    }
 
-    // Stream configuration
-    g.setString<Euresys::StreamModule>("StripeArrangement", stripe_arrangement);
-    g.setInteger<Euresys::StreamModule>("LinePitch", width);
-    g.setInteger<Euresys::StreamModule>("LineWidth", width);
-    g.setInteger<Euresys::StreamModule>("StripeHeight", stripe_height);
-    g.setInteger<Euresys::StreamModule>("StripePitch", stripe_pitch);
-    g.setInteger<Euresys::StreamModule>("BlockHeight", block_height);
-    g.setString<Euresys::StreamModule>("LUTConfiguration", lut_configuration);
-    g.setInteger<Euresys::StreamModule>("BufferPartCount", buffer_part_count);
-    g.setString<Euresys::StreamModule>("StatisticsSamplingSelector", statistics_sampling_sel);
   } catch (const Euresys::genapi_error &e) {
     throw std::runtime_error(format_genapi_error(e));
   }
@@ -200,7 +210,9 @@ HostPtr<uint8_t> allocate_buffers(Euresys::EGrabber<> &g, std::size_t nb_buffers
     auto *buff_ptr = buffers.get() + buf_idx * buffer_size;
     auto  memory   = Euresys::UserMemory(buff_ptr, buffer_size);
     g.announceAndQueue(memory);
-    logger()->debug("[AmetekS711EuresysCoaxlinkQSFPFactory] announced and queued buffer {} at address {}", buf_idx, static_cast<void *>(buff_ptr));
+    logger()->debug(
+        "[AmetekS711EuresysCoaxlinkQSFPFactory] announced and queued buffer {} at address {}",
+        buf_idx, static_cast<void *>(buff_ptr));
   }
 
   return buffers;
