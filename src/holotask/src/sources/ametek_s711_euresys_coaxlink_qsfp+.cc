@@ -111,6 +111,7 @@ std::optional<Euresys::EGrabberCameraInfo> find_camera(Euresys::EGenTL   &gentl,
 
 void configure_grabber(Euresys::EGrabberCameraInfo &info, const nlohmann::json &cfg) {
   using namespace Euresys;
+  logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] configuring grabber");
 
   // Bank mapping: 2-grabber vs 4-grabber configurations
   const std::map<std::size_t, std::string> banks_map = {
@@ -190,6 +191,8 @@ void configure_grabber(Euresys::EGrabberCameraInfo &info, const nlohmann::json &
 // queues each buffer immediately so the camera can start filling them.
 HostPtr<uint8_t> allocate_buffers(Euresys::EGrabber<> &g, std::size_t nb_buffers,
                                   std::size_t buffer_size) {
+  logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] allocating {} buffers of size {} bytes",
+                 nb_buffers, buffer_size);
   const auto size    = buffer_size * nb_buffers;
   auto       buffers = curaii::make_unique_host_ptr<uint8_t>(size);
 
@@ -197,6 +200,7 @@ HostPtr<uint8_t> allocate_buffers(Euresys::EGrabber<> &g, std::size_t nb_buffers
     auto *buff_ptr = buffers.get() + buf_idx * buffer_size;
     auto  memory   = Euresys::UserMemory(buff_ptr, buffer_size);
     g.announceAndQueue(memory);
+    logger()->debug("[AmetekS711EuresysCoaxlinkQSFPFactory] announced and queued buffer {} at address {}", buf_idx, static_cast<void *>(buff_ptr));
   }
 
   return buffers;
@@ -386,7 +390,7 @@ AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDe
   auto grabber      = std::make_unique<Euresys::EGrabber<>>(*camera_info);
   auto infer_result = this->infer(input_descs, jsettings);
   auto buffer_size  = infer_result.output_descs[0].num_bytes();
-  auto nb_buffers   = cfg.at("BufferPartCount").get<std::size_t>();
+  auto nb_buffers   = cfg.at("NbBuffers").get<std::size_t>();
   auto buffers      = allocate_buffers(*grabber, nb_buffers, buffer_size);
 
   return std::make_unique<AmetekS711EuresysCoaxlinkQSFP>(
