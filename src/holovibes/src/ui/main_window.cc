@@ -497,8 +497,13 @@ void MainWindow::on_metrics_updated(double input_fps) {
     input_fps = 0.0;
   }
 
-  const QString text = QStringLiteral("%1 fps").arg(QString::number(input_fps, 'f', 1));
-  monitor_widget_->set_input_throughput_fps(text);
+
+    int fps = static_cast<int>(input_fps);
+
+    const QString text = QString("%1 fps")
+        .arg(fps, 6, 10, QChar('0'));
+
+    monitor_widget_->set_input_throughput_fps(text);
 
   monitor_widget_->set_gpu_load("N/A");
   monitor_widget_->set_cpu_load("N/A");
@@ -914,7 +919,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     };
     std::map<std::string, ImportSource> source_from_str{
         {"Ametek S710 Euresys Coaxlink Octo", ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO},
-        {"Ametek S711 Euresys Coaxlink Octo", ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP},
+        {"Ametek S711 Euresys Coaxlink QSFP+", ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP},
     };
 
     if (!import_widget_->is_camera_mode()) {

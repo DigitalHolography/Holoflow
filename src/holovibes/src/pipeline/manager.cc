@@ -136,7 +136,7 @@ Manager::Manager(ui::AutoFocusWidget     *autofocus_widget,
 
   // Setup UI metric polling (1 FPS)
   metrics_timer_ = new QTimer(this);
-  metrics_timer_->setInterval(1000);
+  metrics_timer_->setInterval(100);
   metrics_timer_->setTimerType(Qt::TimerType::CoarseTimer);
   connect(metrics_timer_, &QTimer::timeout, this, &Manager::poll_metrics);
 

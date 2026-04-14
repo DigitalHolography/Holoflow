@@ -24,6 +24,7 @@
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
+#include <omp.h>
 
 #include "bug.hh"
 #include "curaii/cuda.hh"
@@ -61,6 +62,30 @@ void from_json(const nlohmann::json &j, HolofileSettings &hs) {
 // -------------------------------------------------------------------------------------------------
 
 namespace {
+
+void mt_memcpy(void *dst, const void *src, const std::size_t n) {
+  constexpr int NUM_THREADS = 2;
+  auto         *dst_bytes   = static_cast<std::uint8_t *>(dst);
+  const auto   *src_bytes   = static_cast<const std::uint8_t *>(src);
+
+  const std::size_t chunk_size = n / NUM_THREADS;
+  const std::size_t remainder  = n % NUM_THREADS;
+
+#pragma omp parallel num_threads(NUM_THREADS)
+  {
+    const int         tid       = omp_get_thread_num();
+    const std::size_t offset    = tid * chunk_size;
+    std::size_t       this_size = chunk_size;
+
+    if (tid == NUM_THREADS - 1) {
+      this_size += remainder;
+    }
+
+    if (this_size > 0) {
+      std::memcpy(dst_bytes + offset, src_bytes + offset, this_size);
+    }
+  }
+}
 
 struct RecordingGeometry {
   uint8_t  bits_per_pixel;
@@ -142,11 +167,11 @@ public:
       const auto *idata      = reinterpret_cast<const uint8_t *>(ctx.inputs[0].data());
 
       auto start = std::chrono::steady_clock::now();
-      std::memcpy(ring_.get() + static_cast<size_t>(frames_buffered_) * frame_byte_size_, idata,
+      mt_memcpy(ring_.get() + static_cast<size_t>(frames_buffered_) * frame_byte_size_, idata,
                   static_cast<size_t>(to_copy) * frame_byte_size_);
       auto end         = std::chrono::steady_clock::now();
       auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
-      logger()->info("[HolofileWriter] Buffered {} frames ({} us)", to_copy, duration_us);
+      logger()->trace("[HolofileWriter] Buffered {} frames ({} us)", to_copy, duration_us);
       frames_buffered_ += to_copy;
     }
 

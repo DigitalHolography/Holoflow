@@ -36,19 +36,23 @@ GraphBuilder::GraphBuilder(const Settings &settings, holoflow::core::Registry &r
 
 holoflow::core::GraphSpec GraphBuilder::build() {
   TDesc H = build_acquisition();
-
-  if (s_.recording_method == RecordingMethod::RAW) {
-    build_raw_record(H);
-  }
+  TDesc H_raw = H;
 
   if (s_.raw_view || s_.view_type == ViewType::RAW) {
     bool should_exit = build_raw_view(H);
     if (should_exit) {
+      if (s_.recording_method == RecordingMethod::RAW) {
+        build_raw_record(H);
+      }
       return g_;
     }
   }
 
   H = build_preprocessing(H);
+
+  if (s_.recording_method == RecordingMethod::RAW) {
+    build_raw_record(H_raw);
+  }
 
   TDesc FH = build_time_frequency_analysis(H);
 
