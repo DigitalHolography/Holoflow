@@ -185,6 +185,9 @@ void configure_grabber(Euresys::EGrabberCameraInfo &info, const nlohmann::json &
   }
 }
 
+// Allocate nb_buffers pinned host buffers of buffer_size bytes each, announce
+// them all to the grabber, and return the backing allocation.  The grabber
+// queues each buffer immediately so the camera can start filling them.
 HostPtr<uint8_t> allocate_buffers(Euresys::EGrabber<> &g, std::size_t nb_buffers,
                                   std::size_t buffer_size) {
   const auto size    = buffer_size * nb_buffers;
@@ -211,18 +214,47 @@ public:
                                 HostPtr<uint8_t>                           &&buffers,
                                 std::unique_ptr<Euresys::EGenTL>           &&gentl,
                                 std::unique_ptr<Euresys::EGrabber<>>       &&grabber,
-                                const nlohmann::json                        &cfg)
+                                std::size_t buffer_size, const nlohmann::json &cfg)
       : settings_(settings), buffers_(std::move(buffers)), gentl_(std::move(gentl)),
-        grabber_(std::move(grabber)), running_(false), cfg_(cfg) {
+        grabber_(std::move(grabber)), buffer_size_(buffer_size), running_(false), cfg_(cfg),
+        pending_data_(std::nullopt) {
     HOLOVIBES_CHECK(grabber_ != nullptr);
     HOLOVIBES_CHECK(gentl_ != nullptr);
     HOLOVIBES_CHECK(buffers_ != nullptr);
+  }
+
+  // ------------------------------------------------------------------------------------------------
+  // ISyncTask interface
+  // ------------------------------------------------------------------------------------------------
+
+  std::optional<holoflow::core::TView> acquire_input(int index) override {
+    (void)index;
+    throw std::out_of_range("AmetekS711EuresysCoaxlinkQSFP task has no inputs");
+  }
+
+  // Called by the framework after the downstream consumer is done with output 0.
+  // We re-queue the buffer so the grabber can DMA the next frame into it.
+  void release_output(int index) override {
+    if (index != 0) {
+      throw std::out_of_range("AmetekS711EuresysCoaxlinkQSFP task has only one output at index 0");
+    }
+    if (!pending_data_.has_value()) {
+      throw std::logic_error("release_output called with no pending buffer");
+    }
+
+    // Reconstruct a Buffer from the stored NewBufferData and push it back to the grabber's
+    // input FIFO so the camera can DMA the next frame into it.
+    Euresys::Buffer(*pending_data_).push(*grabber_);
+    pending_data_.reset();
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     using namespace Euresys;
     constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
     constexpr auto TIMESTAMP = GenTL::BUFFER_INFO_TIMESTAMP;
+
+    HOLOVIBES_CHECK(!pending_data_.has_value(),
+                    "execute called while previous buffer is still held");
 
     if (!running_) {
       grabber_->start();
@@ -231,18 +263,36 @@ public:
 
     while (!ctx.cancelled->load()) {
       try {
-        auto buffer    = ScopedBuffer(*grabber_, 1000);
-        auto delivered = buffer.getInfo<uint64_t>(DELIVERED);
-        auto ts        = buffer.getInfo<uint64_t>(TIMESTAMP);
+        // pop() returns NewBufferData without re-queuing. We wrap it in a
+        // temporary Buffer only for the getInfo queries, then store the
+        // NewBufferData so release_output can push it back later.
+        auto data   = grabber_->pop(1000);
+        auto buffer = Buffer(data);
+
+        auto delivered = buffer.getInfo<uint64_t>(*grabber_, DELIVERED);
+        auto ts        = buffer.getInfo<uint64_t>(*grabber_, TIMESTAMP);
 
         logger()->trace(
             "[AmetekS711EuresysCoaxlinkQSFP::execute] buffer with {} parts, timestamp {}",
             delivered, ts);
 
-        const auto *idata = buffer.getInfo<void *>(GenTL::BUFFER_INFO_BASE);
-        auto       *odata = ctx.outputs[0].data();
-        std::memcpy(odata, idata, ctx.outputs[0].desc.num_bytes());
+        // buffer.getInfo<std::byte *>(...) produces a linker error.
+        auto *frame_data_v = buffer.getInfo<void *>(*grabber_, GenTL::BUFFER_INFO_BASE);
+        auto *frame_data   = static_cast<std::byte *>(frame_data_v);
+
+        // Point the output tensor directly at the DMA'd memory — no memcpy.
+        auto &storage = storage_access().owned_output_storage(0);
+        storage.ptr   = frame_data;
+
+        ctx.outputs[0] = holoflow::core::TView{
+            .desc    = ctx.outputs[0].desc,
+            .storage = &storage,
+        };
+
+        // Keep the NewBufferData alive so release_output can push the buffer back.
+        pending_data_ = data;
         return holoflow::core::OpResult::Ok;
+
       } catch (const Euresys::genapi_error &err) {
         logger()->error("[AmetekS711EuresysCoaxlinkQSFP::execute] GenApi error: {}", err.what());
       } catch (const Euresys::gentl_error &err) {
@@ -262,8 +312,13 @@ private:
   HostPtr<uint8_t>                      buffers_;
   std::unique_ptr<Euresys::EGenTL>      gentl_;
   std::unique_ptr<Euresys::EGrabber<>>  grabber_;
+  std::size_t                           buffer_size_;
   bool                                  running_;
   nlohmann::json                        cfg_;
+
+  // Holds the NewBufferData of the frame currently exposed as output 0.
+  // Cleared in release_output() after pushing the buffer back to the grabber.
+  std::optional<Euresys::NewBufferData> pending_data_;
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -306,7 +361,7 @@ AmetekS711EuresysCoaxlinkQSFPFactory::infer(std::span<const holoflow::core::TDes
       .output_descs  = {odesc},
       .in_place      = {},
       .owned_inputs  = {},
-      .owned_outputs = {false},
+      .owned_outputs = {true},
       .kind          = holoflow::core::TaskKind::Sync,
   };
 }
@@ -331,10 +386,11 @@ AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDe
   auto grabber      = std::make_unique<Euresys::EGrabber<>>(*camera_info);
   auto infer_result = this->infer(input_descs, jsettings);
   auto buffer_size  = infer_result.output_descs[0].num_bytes();
-  auto buffers      = allocate_buffers(*grabber, cfg.at("BufferPartCount"), buffer_size);
+  auto nb_buffers   = cfg.at("BufferPartCount").get<std::size_t>();
+  auto buffers      = allocate_buffers(*grabber, nb_buffers, buffer_size);
 
-  return std::make_unique<AmetekS711EuresysCoaxlinkQSFP>(settings, std::move(buffers),
-                                                         std::move(gentl), std::move(grabber), cfg);
+  return std::make_unique<AmetekS711EuresysCoaxlinkQSFP>(
+      settings, std::move(buffers), std::move(gentl), std::move(grabber), buffer_size, cfg);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
