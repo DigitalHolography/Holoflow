@@ -938,7 +938,16 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       QString source       = import_widget_->get_camera_type();
       s.import_source      = source_from_str.at(source.toStdString());
       s.camera_config_path = get_selected_camera_config_path();
-      s.load_batch         = 64;
+      nlohmann::json cfg_json;
+      {
+        std::ifstream cfg_file(s.camera_config_path);
+        if (!cfg_file.is_open()) {
+          throw std::runtime_error(std::format("Could not open camera config file"));
+        }
+        cfg_json = nlohmann::json::parse(cfg_file);
+      }
+      s.load_batch         = cfg_json.contains("s711") ? cfg_json.at("s711").at("BufferPartCount").get<int>()
+                                                      : cfg_json.at("s710").at("BufferPartCount").get<int>();
     }
   }
 
