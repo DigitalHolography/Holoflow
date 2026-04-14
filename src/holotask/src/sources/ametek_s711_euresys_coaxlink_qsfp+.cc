@@ -119,6 +119,11 @@ void configure_grabber(Euresys::EGrabberCameraInfo &info, const nlohmann::json &
       {4, "Banks_ABCD"},
   };
 
+  const std::map<std::string, size_t> pixel_format_map = {
+      {"Mono8", 1},
+      {"Mono16", 2}, 
+  };
+
   // Extract configuration parameters
   const auto width                 = cfg.at("Width").get<std::size_t>();
   const auto height                = cfg.at("Height").get<std::size_t>();
@@ -141,7 +146,7 @@ void configure_grabber(Euresys::EGrabberCameraInfo &info, const nlohmann::json &
   const auto stripe_height            = height / nb_grabbers;
   const auto stripe_pitch             = stripe_height * nb_grabbers;
   const auto block_height             = stripe_height;
-  const auto bytes_per_pixel          = cfg.at("BytesPerPixel").get<std::size_t>();
+  const auto bytes_per_pixel          = pixel_format_map.at(pixel_format);
   const auto line_pitch               = width * bytes_per_pixel;
   const auto camera_control_method    = "RC";
   const auto exposure_readout_overlap = "True";
@@ -209,6 +214,7 @@ HostPtr<uint8_t> allocate_buffers(Euresys::EGrabber<> &g, std::size_t nb_buffers
   for (size_t buf_idx = 0; buf_idx < nb_buffers; ++buf_idx) {
     auto *buff_ptr = buffers.get() + buf_idx * buffer_size;
     auto  memory   = Euresys::UserMemory(buff_ptr, buffer_size);
+
     g.announceAndQueue(memory);
     logger()->debug(
         "[AmetekS711EuresysCoaxlinkQSFPFactory] announced and queued buffer {} at address {}",
