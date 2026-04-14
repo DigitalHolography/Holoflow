@@ -115,10 +115,13 @@ bool GraphBuilder::build_raw_view(const TDesc &H) {
 
   int64_t new_y = static_cast<int64_t>(H.shape.at(1));
   int64_t new_x = static_cast<int64_t>(H.shape.at(2));
+  (void)new_y;
+  (void)new_x;
 
   auto H_disp     = memcpy(H, {Host});
   auto H_view     = batched_queue(H_disp, {s_.cpu_out_size, 1, 1});
-  auto H_reshaped = reshape(H_view, {{1, new_y, new_x}, true});
+  auto H_reshaped = H_view;
+  // auto H_reshaped = reshape(H_view, {{1, new_y, new_x}, true});
 
   if (s_.raw_view) {
     xy_raw_display(H_reshaped, {});
