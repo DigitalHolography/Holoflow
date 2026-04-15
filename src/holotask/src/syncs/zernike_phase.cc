@@ -53,6 +53,21 @@ inline void check(bool condition, const std::string &msg) {
   }
 }
 
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  if (desc.shape.size() != desc.strides.size()) {
+    return false;
+  }
+
+  size_t expected = holoflow::core::size_of(desc.dtype);
+  for (size_t i = desc.shape.size(); i-- > 0;) {
+    if (desc.strides[i] != expected) {
+      return false;
+    }
+    expected *= desc.shape[i];
+  }
+  return true;
+}
+
 float eval_zernike_noll_value(int noll_index, float x_n, float y_n) {
   const float sqrt3 = std::sqrt(3.0f);
   const float sqrt6 = std::sqrt(6.0f);
@@ -93,63 +108,58 @@ float eval_zernike_noll_value(int noll_index, float x_n, float y_n) {
 
 } // namespace
 
-ZernikePhase::ZernikePhase(const ZernikePhaseSettings &settings) : settings_(settings) {}
+// -------------------------------------------------------------------------------------------------
+// ZernikePhase task implementation
+// -------------------------------------------------------------------------------------------------
 
-holoflow::core::OpResult ZernikePhase::execute(holoflow::core::SyncCtx &ctx) {
-  const auto *in_data  = reinterpret_cast<const float *>(ctx.inputs[0].data());
-  auto       *out_data = reinterpret_cast<float *>(ctx.outputs[0].data());
+class ZernikePhase : public holoflow::core::ISyncTask {
+public:
+  explicit ZernikePhase(ZernikePhaseSettings settings) : settings_(std::move(settings)) {}
 
-  const int ny = settings_.ny;
-  const int nx = settings_.nx;
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    const auto *in_data  = reinterpret_cast<const float *>(ctx.inputs[0].data());
+    auto       *out_data = reinterpret_cast<float *>(ctx.outputs[0].data());
 
-  // ---------------------------------------------------------------------------
-  // Phase-mask geometry
-  // ---------------------------------------------------------------------------
-  //
-  // We build the phase on a rectangular sampling grid, but the Zernike basis is
-  // defined on the unit disk. Therefore:
-  //
-  //   x_n = (x - x_center) / R
-  //   y_n = (y - y_center) / R
-  //
-  // where R is the radius of the largest inscribed disk in the image support.
-  //
-  // The input coefficients are assumed to be phase amplitudes in radians.
-  // Therefore the reconstructed phase is simply:
-  //
-  //   phi(x_n, y_n) = sum_k a_k Z_k(x_n, y_n)
-  //
-  // with phi expressed in radians.
-  //
-  const float center_y     = (static_cast<float>(ny) - 1.0f) * 0.5f;
-  const float center_x     = (static_cast<float>(nx) - 1.0f) * 0.5f;
-  const float pupil_radius = 0.5f * static_cast<float>(std::min(ny, nx));
+    const int ny = settings_.ny;
+    const int nx = settings_.nx;
 
-  // Outside the pupil, the phase is set to zero. This gives a mask naturally
-  // restricted to the circular aperture.
-  for (int y_idx = 0; y_idx < ny; ++y_idx) {
-    for (int x_idx = 0; x_idx < nx; ++x_idx) {
-      const float x_n = (static_cast<float>(x_idx) - center_x) / pupil_radius;
-      const float y_n = (static_cast<float>(y_idx) - center_y) / pupil_radius;
+    const float center_y     = (static_cast<float>(ny) - 1.0f) * 0.5f;
+    const float center_x     = (static_cast<float>(nx) - 1.0f) * 0.5f;
+    const float pupil_radius = 0.5f * static_cast<float>(std::min(ny, nx));
 
-      const float r2        = x_n * x_n + y_n * y_n;
-      float       phase_rad = 0.0f;
+    for (int y_idx = 0; y_idx < ny; ++y_idx) {
+      for (int x_idx = 0; x_idx < nx; ++x_idx) {
+        const float x_n = (static_cast<float>(x_idx) - center_x) / pupil_radius;
+        const float y_n = (static_cast<float>(y_idx) - center_y) / pupil_radius;
 
-      if (r2 <= 1.0f || true) {
-        for (std::size_t i = 0; i < settings_.indexes.size(); ++i) {
-          const int   noll_index = settings_.indexes[i];
-          const float z_value    = eval_zernike_noll_value(noll_index, x_n, y_n);
-          phase_rad += in_data[i] * z_value;
+        const float r2        = x_n * x_n + y_n * y_n;
+        float       phase_rad = 0.0f;
+
+        if (r2 <= 1.0f || true) {
+          for (std::size_t i = 0; i < settings_.indexes.size(); ++i) {
+            const int   noll_index = settings_.indexes[i];
+            const float z_value    = eval_zernike_noll_value(noll_index, x_n, y_n);
+            phase_rad += in_data[i] * z_value;
+          }
         }
-      }
 
-      out_data[static_cast<std::size_t>(y_idx) * static_cast<std::size_t>(nx) +
-               static_cast<std::size_t>(x_idx)] = phase_rad;
+        out_data[static_cast<std::size_t>(y_idx) * static_cast<std::size_t>(nx) +
+                 static_cast<std::size_t>(x_idx)] = phase_rad;
+      }
     }
+
+    return holoflow::core::OpResult::Ok;
   }
 
-  return holoflow::core::OpResult::Ok;
-}
+  const ZernikePhaseSettings &settings() const { return settings_; }
+
+private:
+  ZernikePhaseSettings settings_;
+};
+
+// -------------------------------------------------------------------------------------------------
+// ZernikePhaseFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult
 ZernikePhaseFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
@@ -162,6 +172,7 @@ ZernikePhaseFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(idesc.mem_loc == holoflow::core::MemLoc::Host, "Input coefficients must be in host memory");
   check(idesc.dtype == holoflow::core::DType::F32, "Input coefficients dtype must be F32");
   check(idesc.rank() == 1, "Input coefficients rank must be 1");
+  check(is_c_contiguous(idesc), "Input coefficients must be C-contiguous");
 
   check(!settings.indexes.empty(), "indexes must not be empty");
   for (int idx : settings.indexes) {
@@ -195,10 +206,31 @@ ZernikePhaseFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                             const nlohmann::json                  &jsettings,
                             const holoflow::core::SyncCreateCtx   &ctx) const {
   (void)ctx;
-  infer(input_descs, jsettings);
+  (void)infer(input_descs, jsettings);
 
   const auto settings = jsettings.get<ZernikePhaseSettings>();
-  return std::unique_ptr<holoflow::core::ISyncTask>(new ZernikePhase(settings));
+  return std::make_unique<ZernikePhase>(settings);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+ZernikePhaseFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                            std::span<const holoflow::core::TDesc>     input_descs,
+                            const nlohmann::json                      &jsettings,
+                            const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)ctx;
+  (void)infer(input_descs, jsettings);
+
+  auto *old_zernike_phase = dynamic_cast<ZernikePhase *>(old_task.get());
+  if (old_zernike_phase == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  const auto settings = jsettings.get<ZernikePhaseSettings>();
+  if (settings == old_zernike_phase->settings()) {
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holotask::syncs

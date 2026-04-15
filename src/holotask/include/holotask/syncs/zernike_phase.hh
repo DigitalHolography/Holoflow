@@ -21,26 +21,24 @@
 
 namespace holotask::syncs {
 
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 struct ZernikePhaseSettings {
   std::vector<int> indexes;
-  int ny; // Height of the output phase mask
-  int nx; // Width of the output phase mask
+  int              ny;
+  int              nx;
+
+  bool operator==(const ZernikePhaseSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const ZernikePhaseSettings &s);
 void from_json(const nlohmann::json &j, ZernikePhaseSettings &s);
 
-class ZernikePhase : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  explicit ZernikePhase(const ZernikePhaseSettings &settings);
-
-  friend class ZernikePhaseFactory;
-
-  ZernikePhaseSettings settings_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class ZernikePhaseFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -49,6 +47,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

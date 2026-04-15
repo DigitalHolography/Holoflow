@@ -15,60 +15,30 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
-#include <optional>
 
-#include "curaii/cuda.hh"
-#include "curaii/cufft.hh"
-#include "curaii/nvrtc.hh"
 #include "holoflow/core/tasks.hh"
-
-template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 namespace holotask::syncs {
 
-/// @brief Settings for the 2D filter task.
-/// @details
-/// JSON schema (informal):
-/// @code{.json}
-/// {
-///   "r_inner": 100,
-///   "r_outer": 200,
-///   "s_inner": 20,
-///   "s_outer": 40
-/// }
-/// @endcode
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 struct Filter2DSettings {
-  int r_inner; ///< Inner radius in pixels.
-  int r_outer; ///< Outer radius in pixels.
-  int s_inner; ///< Inner slope in pixels.
-  int s_outer; ///< Outer slope in pixels.
+  int r_inner;
+  int r_outer;
+  int s_inner;
+  int s_outer;
+
+  bool operator==(const Filter2DSettings &) const = default;
 };
 
-/// @name JSON serialization
-/// @brief nlohmann::json adapters for @ref Filter2DSettings.
-/// @{
 void to_json(nlohmann::json &j, const Filter2DSettings &f);
 void from_json(const nlohmann::json &j, Filter2DSettings &f);
-/// @}
 
-class Filter2D : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  Filter2D(const Filter2DSettings &settings, curaii::CufftHandle &&fwd_plan,
-           curaii::CufftHandle &&inv_plan, DevPtr<cuFloatComplex> &&d_filter,
-           DevPtr<void> &&d_caller_info, std::vector<char> &&lto);
-
-  friend class Filter2DFactory;
-
-  Filter2DSettings       settings_;
-  curaii::CufftHandle    fwd_plan_;
-  curaii::CufftHandle    inv_plan_;
-  DevPtr<cuFloatComplex> d_filter_;
-  DevPtr<void>           d_caller_info_;
-  std::vector<char>      lto_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class Filter2DFactory : public holoflow::core::ISyncTaskFactory {
 public:

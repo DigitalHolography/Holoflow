@@ -16,16 +16,24 @@
 
 #include <cub/cub.cuh>
 
+#include <stdexcept>
+#include <string>
+#include <utility>
+
 #include "bug.hh"
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
-#include "holoflow/core/tasks.hh"
 #include "logger.hh"
 
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+
 using curaii::make_unique_device_ptr;
-using curaii::make_unique_host_ptr;
 
 namespace holotask::syncs {
+
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const RegistrationSettings &s) {
   j = nlohmann::json{{"radius", s.radius}};
@@ -36,6 +44,28 @@ void from_json(const nlohmann::json &j, RegistrationSettings &s) {
 }
 
 namespace {
+
+void check(bool condition, const std::string &message) {
+  if (!condition) {
+    logger()->error("[RegistrationFactory::infer] error: {}", message);
+    throw std::invalid_argument("RegistrationFactory inference error: " + message);
+  }
+}
+
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  if (desc.shape.size() != desc.strides.size()) {
+    return false;
+  }
+
+  size_t expected = holoflow::core::size_of(desc.dtype);
+  for (size_t i = desc.shape.size(); i-- > 0;) {
+    if (desc.strides[i] != expected) {
+      return false;
+    }
+    expected *= desc.shape[i];
+  }
+  return true;
+}
 
 __global__ void cf32_conjugate_kernel(cuFloatComplex *odata, const cuFloatComplex *idata,
                                       int size) {
@@ -139,18 +169,6 @@ __global__ void f32_sub_mean_kernel(float *odata, const float *idata, int count,
   odata[idx] = idata[idx] - mean;
 }
 
-__global__ void f32_ellipse_mask_kernel(float *odata, const float *idata, int width, int height,
-                                        float radius) {
-  const int x = blockIdx.x * blockDim.x + threadIdx.x;
-  const int y = blockIdx.y * blockDim.y + threadIdx.y;
-  if (x >= width || y >= height)
-    return;
-
-  const bool   inside = in_ellipse(x, y, width, height, radius);
-  const size_t idx    = static_cast<size_t>(y) * width + static_cast<size_t>(x);
-  odata[idx]          = inside ? idata[idx] : 0.0f;
-}
-
 __global__ void ellipse_mask_kernel(uint8_t *oroi, int width, int height, float radius) {
   const int x = blockIdx.x * blockDim.x + threadIdx.x;
   const int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -178,225 +196,247 @@ __global__ void extract_3x3_kernel(float *d_output, const float *d_input, int pe
 
 } // namespace
 
-Registration::Registration(RegistrationSettings settings, const holoflow::core::TDesc &input_desc,
-                           const holoflow::core::TDesc &output_desc, cudaStream_t stream,
-                           DevPtr<float> d_mean_centered, bool ref_initialized, size_t freq_size,
-                           curaii::CufftHandle r2c_handle, curaii::CufftHandle c2r_handle,
-                           DevPtr<float> d_ref, DevPtr<float> d_xcorr,
-                           DevPtr<cuFloatComplex> d_freq1, DevPtr<cuFloatComplex> d_freq2,
-                           size_t sum_tmp_bytes, DevPtr<uint8_t> d_sum_tmp, DevPtr<float> d_sum,
-                           size_t amax_tmp_bytes, DevPtr<uint8_t> d_amax_tmp, DevPtr<float> d_max,
-                           DevPtr<int64_t> d_max_idx, size_t select_tmp_bytes,
-                           DevPtr<uint8_t> d_select_tmp, DevPtr<int> d_select_count,
-                           DevPtr<uint8_t> d_select_roi, DevPtr<float> d_selected)
-    : settings_(std::move(settings)), input_desc_(input_desc), output_desc_(output_desc),
-      stream_(stream), d_mean_centered_(std::move(d_mean_centered)),
-      ref_initialized_(ref_initialized), freq_size_(freq_size), r2c_handle_(std::move(r2c_handle)),
-      c2r_handle_(std::move(c2r_handle)), d_ref_(std::move(d_ref)), d_xcorr_(std::move(d_xcorr)),
-      d_freq1_(std::move(d_freq1)), d_freq2_(std::move(d_freq2)), sum_tmp_bytes_(sum_tmp_bytes),
-      d_sum_tmp_(std::move(d_sum_tmp)), d_sum_(std::move(d_sum)), amax_tmp_bytes_(amax_tmp_bytes),
-      d_amax_tmp_(std::move(d_amax_tmp)), d_max_(std::move(d_max)),
-      d_max_idx_(std::move(d_max_idx)), select_tmp_bytes_(select_tmp_bytes),
-      d_select_tmp_(std::move(d_select_tmp)), d_select_count_(std::move(d_select_count)),
-      d_select_roi_(std::move(d_select_roi)), d_selected_(std::move(d_selected)) {}
+// -------------------------------------------------------------------------------------------------
+// Registration task implementation
+// -------------------------------------------------------------------------------------------------
 
-holoflow::core::OpResult Registration::execute(holoflow::core::SyncCtx &ctx) {
-  if (ctx.cancelled && ctx.cancelled->load(std::memory_order_acquire)) {
-    return holoflow::core::OpResult::Cancelled;
+class Registration : public holoflow::core::ISyncTask {
+public:
+  Registration(RegistrationSettings settings, holoflow::core::TDesc input_desc,
+               holoflow::core::TDesc output_desc, cudaStream_t stream, DevPtr<float> d_mean_centered,
+               bool ref_initialized, size_t freq_size, curaii::CufftHandle r2c_handle,
+               curaii::CufftHandle c2r_handle, DevPtr<float> d_ref, DevPtr<float> d_xcorr,
+               DevPtr<cuFloatComplex> d_freq1, DevPtr<cuFloatComplex> d_freq2, size_t sum_tmp_bytes,
+               DevPtr<uint8_t> d_sum_tmp, DevPtr<float> d_sum, size_t amax_tmp_bytes,
+               DevPtr<uint8_t> d_amax_tmp, DevPtr<float> d_max, DevPtr<int64_t> d_max_idx,
+               size_t select_tmp_bytes, DevPtr<uint8_t> d_select_tmp, DevPtr<int> d_select_count,
+               DevPtr<uint8_t> d_select_roi, DevPtr<float> d_selected)
+      : settings_(std::move(settings)), input_desc_(std::move(input_desc)),
+        output_desc_(std::move(output_desc)), stream_(stream),
+        d_mean_centered_(std::move(d_mean_centered)), ref_initialized_(ref_initialized),
+        freq_size_(freq_size), r2c_handle_(std::move(r2c_handle)),
+        c2r_handle_(std::move(c2r_handle)), d_ref_(std::move(d_ref)),
+        d_xcorr_(std::move(d_xcorr)), d_freq1_(std::move(d_freq1)), d_freq2_(std::move(d_freq2)),
+        sum_tmp_bytes_(sum_tmp_bytes), d_sum_tmp_(std::move(d_sum_tmp)),
+        d_sum_(std::move(d_sum)), amax_tmp_bytes_(amax_tmp_bytes),
+        d_amax_tmp_(std::move(d_amax_tmp)), d_max_(std::move(d_max)),
+        d_max_idx_(std::move(d_max_idx)), select_tmp_bytes_(select_tmp_bytes),
+        d_select_tmp_(std::move(d_select_tmp)), d_select_count_(std::move(d_select_count)),
+        d_select_roi_(std::move(d_select_roi)), d_selected_(std::move(d_selected)) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    if (ctx.cancelled && ctx.cancelled->load(std::memory_order_acquire)) {
+      return holoflow::core::OpResult::Cancelled;
+    }
+
+    if (ctx.inputs.empty() || ctx.outputs.empty()) {
+      return holoflow::core::OpResult::NotReady;
+    }
+
+    auto &input_view  = ctx.inputs[0];
+    auto &output_view = ctx.outputs[0];
+
+    float *input_data  = reinterpret_cast<float *>(input_view.data());
+    float *output_data = reinterpret_cast<float *>(output_view.data());
+
+    const auto width  = input_desc_.shape.back();
+    const auto height = input_desc_.shape[input_desc_.shape.size() - 2];
+    const auto batch  = input_desc_.rank() == 3 ? input_desc_.shape[0] : 1;
+
+    center_mean(d_mean_centered_.get(), input_data, batch, height, width);
+
+    if (!ref_initialized_) {
+      CUDA_CHECK(cudaMemcpyAsync(d_ref_.get(), d_mean_centered_.get(), input_desc_.num_bytes(),
+                                 cudaMemcpyDeviceToDevice, stream_));
+      ref_initialized_ = true;
+    }
+
+    xcorr(d_xcorr_.get(), d_mean_centered_.get());
+    auto [shift_x, shift_y] = get_shifts_subpixel(d_xcorr_.get(), width, height);
+
+    apply_shifts(output_data, input_data, shift_x, shift_y, batch, height, width);
+    return holoflow::core::OpResult::Ok;
   }
 
-  if (ctx.inputs.empty() || ctx.outputs.empty()) {
-    return holoflow::core::OpResult::NotReady;
+  void update_stream(cudaStream_t stream) {
+    stream_ = stream;
+    CUFFT_CHECK(cufftSetStream(r2c_handle_.get(), stream_));
+    CUFFT_CHECK(cufftSetStream(c2r_handle_.get(), stream_));
   }
 
-  auto &input_view  = ctx.inputs[0];
-  auto &output_view = ctx.outputs[0];
+  const RegistrationSettings &settings() const { return settings_; }
+  const holoflow::core::TDesc &input_desc() const { return input_desc_; }
 
-  float *input_data  = reinterpret_cast<float *>(input_view.data());
-  float *output_data = reinterpret_cast<float *>(output_view.data());
+private:
+  void xcorr(float *odata, const float *idata) {
+    auto *idata_nc = const_cast<float *>(idata);
+    CUFFT_CHECK(cufftExecR2C(r2c_handle_.get(), idata_nc, d_freq1_.get()));
+    CUFFT_CHECK(cufftExecR2C(r2c_handle_.get(), d_ref_.get(), d_freq2_.get()));
 
-  auto width  = input_desc_.shape.back();
-  auto height = input_desc_.shape.size() > 1 ? input_desc_.shape[input_desc_.shape.size() - 2] : 1;
-  auto batch  = input_desc_.shape.size() > 2 ? input_desc_.shape[input_desc_.shape.size() - 3] : 1;
+    int block_size = 256;
+    int grid_size  = (static_cast<int>(freq_size_) + block_size - 1) / block_size;
 
-  if (batch != 1) {
-    return holoflow::core::OpResult::NotReady;
+    cf32_conjugate_kernel<<<grid_size, block_size, 0, stream_>>>(d_freq2_.get(), d_freq2_.get(),
+                                                                 static_cast<int>(freq_size_));
+    cf32_hadamard_kernel<<<grid_size, block_size, 0, stream_>>>(d_freq1_.get(), d_freq2_.get(),
+                                                                d_freq1_.get(),
+                                                                static_cast<int>(freq_size_));
+    cf32_normalize_kernel<<<grid_size, block_size, 0, stream_>>>(d_freq1_.get(),
+                                                                 static_cast<int>(freq_size_));
+
+    CUFFT_CHECK(cufftExecC2R(c2r_handle_.get(), d_freq1_.get(), odata));
+    CUDA_CHECK(cudaGetLastError());
   }
 
-  center_mean(d_mean_centered_.get(), input_data, batch, height, width);
+  void center_mean(float *odata, const float *idata, std::size_t b, std::size_t h, std::size_t w) {
+    if (b != 1) {
+      return;
+    }
 
-  if (!ref_initialized_) {
-    CUDA_CHECK(cudaMemcpyAsync(d_ref_.get(), d_mean_centered_.get(), input_desc_.num_bytes(),
-                               cudaMemcpyDeviceToDevice, stream_));
-    ref_initialized_ = true;
+    const size_t num_pixels = w * h;
+    CUDA_CHECK(cudaMemsetAsync(d_selected_.get(), 0, num_pixels * sizeof(float), stream_));
+
+    CUDA_CHECK(cub::DeviceSelect::Flagged(d_select_tmp_.get(), select_tmp_bytes_, idata,
+                                          d_select_roi_.get(), d_selected_.get(),
+                                          d_select_count_.get(), num_pixels, stream_));
+
+    int select_count = 0;
+    CUDA_CHECK(cudaMemcpyAsync(&select_count, d_select_count_.get(), sizeof(int),
+                               cudaMemcpyDeviceToHost, stream_));
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
+    if (select_count == 0) {
+      return;
+    }
+
+    CUDA_CHECK(cub::DeviceReduce::Sum(d_sum_tmp_.get(), sum_tmp_bytes_, d_selected_.get(),
+                                      d_sum_.get(), select_count, stream_));
+
+    float sum_val = 0.0f;
+    CUDA_CHECK(cudaMemcpyAsync(&sum_val, d_sum_.get(), sizeof(float), cudaMemcpyDeviceToHost,
+                               stream_));
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
+
+    float mean = sum_val / static_cast<float>(select_count);
+    constexpr int block_dim = 256;
+    const size_t  grid_dim  = (num_pixels + block_dim - 1) / block_dim;
+
+    f32_sub_mean_kernel<<<static_cast<unsigned int>(grid_dim), block_dim, 0, stream_>>>(
+        odata, idata, static_cast<int>(num_pixels), mean);
+    CUDA_CHECK(cudaGetLastError());
   }
 
-  xcorr(d_xcorr_.get(), d_mean_centered_.get());
-  auto [shift_x, shift_y] = get_shifts_subpixel(d_xcorr_.get(), width, height);
+  std::pair<int64_t, int64_t> get_shifts(float *xcorr, std::size_t b, std::size_t h,
+                                         std::size_t w) {
+    if (b != 1) {
+      return {0, 0};
+    }
 
-  apply_shifts(output_data, input_data, shift_x, shift_y, batch, height, width);
+    CUDA_CHECK(cub::DeviceReduce::ArgMax(d_amax_tmp_.get(), amax_tmp_bytes_, xcorr, d_max_.get(),
+                                         d_max_idx_.get(), w * h, stream_));
 
-  return holoflow::core::OpResult::Ok;
-}
+    int64_t h_max_idx = 0;
+    CUDA_CHECK(cudaMemcpyAsync(&h_max_idx, d_max_idx_.get(), sizeof(int64_t), cudaMemcpyDeviceToHost,
+                               stream_));
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
 
-void Registration::xcorr(float *odata, const float *idata) {
-  auto *idata_nc = const_cast<float *>(idata);
-  CUFFT_CHECK(cufftExecR2C(r2c_handle_.get(), idata_nc, d_freq1_.get()));
-  CUFFT_CHECK(cufftExecR2C(r2c_handle_.get(), d_ref_.get(), d_freq2_.get()));
+    int64_t x = h_max_idx % static_cast<int64_t>(w);
+    int64_t y = h_max_idx / static_cast<int64_t>(w);
 
-  int block_size = 256;
-  int grid_size  = (freq_size_ + block_size - 1) / block_size;
+    int half_h = static_cast<int>(h) / 2;
+    int half_w = static_cast<int>(w) / 2;
+    int dy = (y < half_h) ? static_cast<int>(y) : static_cast<int>(y) - static_cast<int>(h);
+    int dx = (x < half_w) ? static_cast<int>(x) : static_cast<int>(x) - static_cast<int>(w);
 
-  cf32_conjugate_kernel<<<grid_size, block_size, 0, stream_>>>(d_freq2_.get(), d_freq2_.get(),
-                                                               static_cast<int>(freq_size_));
+    return {dx, dy};
+  }
 
-  cf32_hadamard_kernel<<<grid_size, block_size, 0, stream_>>>(
-      d_freq1_.get(), d_freq2_.get(), d_freq1_.get(), static_cast<int>(freq_size_));
+  std::pair<float, float> get_shifts_subpixel(float *xcorr, std::size_t w, std::size_t h) {
+    auto [shift_x, shift_y] = get_shifts(xcorr, 1, h, w);
 
-  cf32_normalize_kernel<<<grid_size, block_size, 0, stream_>>>(d_freq1_.get(),
-                                                               static_cast<int>(freq_size_));
+    int peak_x = static_cast<int>((shift_x < 0) ? shift_x + static_cast<int64_t>(w) : shift_x);
+    int peak_y = static_cast<int>((shift_y < 0) ? shift_y + static_cast<int64_t>(h) : shift_y);
 
-  CUFFT_CHECK(cufftExecC2R(c2r_handle_.get(), d_freq1_.get(), odata));
-  CUDA_CHECK(cudaGetLastError());
-}
+    float *d_samples = nullptr;
+    float  h_samples[9];
+    CUDA_CHECK(cudaMalloc(&d_samples, 9 * sizeof(float)));
 
-void Registration::mask_circle(float *odata, const float *idata, std::size_t b, std::size_t h,
-                               std::size_t w) {
-  if (b != 1)
-    return;
+    dim3 block_size(3, 3);
+    extract_3x3_kernel<<<1, block_size, 0, stream_>>>(d_samples, xcorr, peak_x, peak_y,
+                                                      static_cast<int>(w), static_cast<int>(h));
+    CUDA_CHECK(cudaGetLastError());
+    CUDA_CHECK(cudaMemcpyAsync(h_samples, d_samples, 9 * sizeof(float), cudaMemcpyDeviceToHost,
+                               stream_));
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
+    CUDA_CHECK(cudaFree(d_samples));
 
-  dim3 block_size(16, 16);
-  dim3 grid_size((w + block_size.x - 1) / block_size.x, (h + block_size.y - 1) / block_size.y);
+    float refined_dx = (h_samples[5] - h_samples[3]) /
+                       (2.0f * (h_samples[3] + h_samples[5] - 2.0f * h_samples[4] + 1e-12f));
+    float refined_dy = (h_samples[7] - h_samples[1]) /
+                       (2.0f * (h_samples[1] + h_samples[7] - 2.0f * h_samples[4] + 1e-12f));
 
-  f32_ellipse_mask_kernel<<<grid_size, block_size, 0, stream_>>>(
-      odata, idata, static_cast<int>(w), static_cast<int>(h), settings_.radius);
-}
+    return {shift_x + refined_dx, shift_y + refined_dy};
+  }
 
-void Registration::center_mean(float *odata, const float *idata, std::size_t b, std::size_t h,
-                               std::size_t w) {
-  if (b != 1)
-    return;
+  void apply_shifts(float *odata, const float *idata, float shift_x, float shift_y, std::size_t b,
+                    std::size_t h, std::size_t w) {
+    if (b != 1) {
+      return;
+    }
 
-  const size_t num_pixels = w * h;
+    dim3 block_size(16, 16);
+    dim3 grid_size((w + block_size.x - 1) / block_size.x, (h + block_size.y - 1) / block_size.y);
+    f32_shift_subpixel_kernel<<<grid_size, block_size, 0, stream_>>>(
+        odata, idata, shift_x, shift_y, static_cast<int>(w), static_cast<int>(h));
+  }
 
-  CUDA_CHECK(cudaMemsetAsync(d_selected_.get(), 0, num_pixels * sizeof(float), stream_));
+  RegistrationSettings  settings_;
+  holoflow::core::TDesc input_desc_;
+  holoflow::core::TDesc output_desc_;
+  cudaStream_t          stream_;
+  DevPtr<float>         d_mean_centered_;
+  bool                  ref_initialized_;
+  size_t                freq_size_;
+  curaii::CufftHandle   r2c_handle_;
+  curaii::CufftHandle   c2r_handle_;
+  DevPtr<float>         d_ref_;
+  DevPtr<float>         d_xcorr_;
+  DevPtr<cuFloatComplex> d_freq1_;
+  DevPtr<cuFloatComplex> d_freq2_;
+  size_t                sum_tmp_bytes_;
+  DevPtr<uint8_t>       d_sum_tmp_;
+  DevPtr<float>         d_sum_;
+  size_t                amax_tmp_bytes_;
+  DevPtr<uint8_t>       d_amax_tmp_;
+  DevPtr<float>         d_max_;
+  DevPtr<int64_t>       d_max_idx_;
+  size_t                select_tmp_bytes_;
+  DevPtr<uint8_t>       d_select_tmp_;
+  DevPtr<int>           d_select_count_;
+  DevPtr<uint8_t>       d_select_roi_;
+  DevPtr<float>         d_selected_;
+};
 
-  CUDA_CHECK(cub::DeviceSelect::Flagged(d_select_tmp_.get(), select_tmp_bytes_, idata,
-                                        d_select_roi_.get(), d_selected_.get(),
-                                        d_select_count_.get(), num_pixels, stream_));
-
-  int select_count = 0;
-  CUDA_CHECK(cudaMemcpyAsync(&select_count, d_select_count_.get(), sizeof(int),
-                             cudaMemcpyDeviceToHost, stream_));
-  CUDA_CHECK(cudaStreamSynchronize(stream_));
-
-  if (select_count == 0)
-    return;
-
-  CUDA_CHECK(cub::DeviceReduce::Sum(d_sum_tmp_.get(), sum_tmp_bytes_, d_selected_.get(),
-                                    d_sum_.get(), select_count, stream_));
-
-  float sum_val = 0.0f;
-  CUDA_CHECK(
-      cudaMemcpyAsync(&sum_val, d_sum_.get(), sizeof(float), cudaMemcpyDeviceToHost, stream_));
-  CUDA_CHECK(cudaStreamSynchronize(stream_));
-
-  float mean = sum_val / static_cast<float>(select_count);
-
-  const int    block_dim = 256;
-  const size_t grid_dim  = (num_pixels + block_dim - 1) / block_dim;
-
-  f32_sub_mean_kernel<<<static_cast<unsigned int>(grid_dim), block_dim, 0, stream_>>>(
-      odata, idata, static_cast<int>(num_pixels), mean);
-
-  CUDA_CHECK(cudaGetLastError());
-}
-
-std::pair<int64_t, int64_t> Registration::get_shifts(float *xcorr, std::size_t b, std::size_t h,
-                                                     std::size_t w) {
-  if (b != 1)
-    return {0, 0};
-
-  CUDA_CHECK(cub::DeviceReduce::ArgMax(d_amax_tmp_.get(), amax_tmp_bytes_, xcorr, d_max_.get(),
-                                       d_max_idx_.get(), w * h, stream_));
-
-  int64_t h_max_idx = 0;
-  CUDA_CHECK(cudaMemcpyAsync(&h_max_idx, d_max_idx_.get(), sizeof(int64_t), cudaMemcpyDeviceToHost,
-                             stream_));
-  CUDA_CHECK(cudaStreamSynchronize(stream_));
-
-  int64_t x = h_max_idx % w;
-  int64_t y = h_max_idx / w;
-
-  int half_h = static_cast<int>(h) / 2;
-  int half_w = static_cast<int>(w) / 2;
-
-  int dy = (y < half_h) ? static_cast<int>(y) : static_cast<int>(y) - static_cast<int>(h);
-  int dx = (x < half_w) ? static_cast<int>(x) : static_cast<int>(x) - static_cast<int>(w);
-
-  return {dx, dy};
-}
-
-void Registration::apply_shifts(float *odata, const float *idata, float shift_x, float shift_y,
-                                std::size_t b, std::size_t h, std::size_t w) {
-  if (b != 1)
-    return;
-
-  dim3 block_size(16, 16);
-  dim3 grid_size((w + block_size.x - 1) / block_size.x, (h + block_size.y - 1) / block_size.y);
-
-  f32_shift_subpixel_kernel<<<grid_size, block_size, 0, stream_>>>(
-      odata, idata, shift_x, shift_y, static_cast<int>(w), static_cast<int>(h));
-}
-
-std::pair<float, float> Registration::get_shifts_subpixel(float *xcorr, std::size_t w,
-                                                          std::size_t h) {
-  auto [shift_x, shift_y] = get_shifts(xcorr, 1, h, w);
-
-  int peak_x = static_cast<int>((shift_x < 0) ? shift_x + w : shift_x);
-  int peak_y = static_cast<int>((shift_y < 0) ? shift_y + h : shift_y);
-
-  float *d_samples;
-  float  h_samples[9];
-  CUDA_CHECK(cudaMalloc(&d_samples, 9 * sizeof(float)));
-
-  dim3 block_size(3, 3);
-  extract_3x3_kernel<<<1, block_size, 0, stream_>>>(d_samples, xcorr, peak_x, peak_y,
-                                                    static_cast<int>(w), static_cast<int>(h));
-  CUDA_CHECK(cudaGetLastError());
-
-  CUDA_CHECK(
-      cudaMemcpyAsync(h_samples, d_samples, 9 * sizeof(float), cudaMemcpyDeviceToHost, stream_));
-  CUDA_CHECK(cudaStreamSynchronize(stream_));
-  CUDA_CHECK(cudaFree(d_samples));
-
-  float refined_dx = (h_samples[5] - h_samples[3]) /
-                     (2.0f * (h_samples[3] + h_samples[5] - 2.0f * h_samples[4] + 1e-12f));
-  float refined_dy = (h_samples[7] - h_samples[1]) /
-                     (2.0f * (h_samples[1] + h_samples[7] - 2.0f * h_samples[4] + 1e-12f));
-
-  return {shift_x + refined_dx, shift_y + refined_dy};
-}
+// -------------------------------------------------------------------------------------------------
+// RegistrationFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult
 RegistrationFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                            const nlohmann::json                  &jsettings) const {
-  const auto check = [](bool condition, const char *message) {
-    if (!condition) {
-      throw std::invalid_argument(message);
-    }
-  };
-
   check(!input_descs.empty(), "No input descriptors provided");
   check(input_descs.size() == 1, "Registration expects exactly one input");
 
   const auto &input_desc = input_descs[0];
-  auto        settings   = jsettings.get<RegistrationSettings>();
+  const auto  settings   = jsettings.get<RegistrationSettings>();
 
-  check(input_desc.rank() >= 2, "Input must have at least 2 dimensions");
+  check(input_desc.rank() == 2 || input_desc.rank() == 3, "Input must be rank 2 or 3");
   check(input_desc.dtype == holoflow::core::DType::F32, "Input must be F32 type");
   check(input_desc.mem_loc == holoflow::core::MemLoc::Device, "Input must be in device memory");
   check(settings.radius >= 0.0f && settings.radius <= 1.0f, "radius not in [0, 1]");
+  check(is_c_contiguous(input_desc), "Input must be C-contiguous");
+  if (input_desc.rank() == 3) {
+    check(input_desc.shape[0] == 1, "Only batch size 1 is supported");
+  }
 
   holoflow::core::TDesc output_desc = input_desc;
 
@@ -420,13 +460,11 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   const auto &input_desc = input_descs[0];
 
-  const auto H = input_desc.shape.size() > 1 ? input_desc.shape[input_desc.shape.size() - 2] : 1;
+  const auto H = input_desc.shape[input_desc.shape.size() - 2];
   const auto W = input_desc.shape.back();
 
-  // Center mean
   auto d_mean_centered = make_unique_device_ptr<float>(W * H);
 
-  // Cross correlation
   bool   ref_initialized = false;
   size_t freq_size       = H * W;
 
@@ -447,7 +485,6 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto d_freq1 = make_unique_device_ptr<cuFloatComplex>(freq_size);
   auto d_freq2 = make_unique_device_ptr<cuFloatComplex>(freq_size);
 
-  // CUB argmax
   size_t amax_tmp_bytes = 0;
   auto   d_max          = make_unique_device_ptr<float>(1);
   auto   d_max_idx      = make_unique_device_ptr<int64_t>(1);
@@ -455,7 +492,6 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                        d_max.get(), d_max_idx.get(), W * H, ctx.stream));
   auto d_amax_tmp = make_unique_device_ptr<uint8_t>(amax_tmp_bytes);
 
-  // CUB select
   size_t select_tmp_bytes = 0;
   auto   d_select_count   = make_unique_device_ptr<int>(1);
   auto   d_select_roi     = make_unique_device_ptr<uint8_t>(W * H);
@@ -474,7 +510,6 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                         d_selected.get(), d_select_count.get(), W * H, ctx.stream));
   auto d_select_tmp = make_unique_device_ptr<uint8_t>(select_tmp_bytes);
 
-  // CUB sum
   CUDA_CHECK(cub::DeviceSelect::Flagged(d_select_tmp.get(), select_tmp_bytes, d_mean_centered.get(),
                                         d_select_roi.get(), d_selected.get(), d_select_count.get(),
                                         W * H, ctx.stream));
@@ -490,14 +525,42 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                     d_sum.get(), select_count, ctx.stream));
   auto d_sum_tmp = make_unique_device_ptr<uint8_t>(sum_tmp_bytes);
 
-  // Assemble task
-  return std::unique_ptr<holoflow::core::ISyncTask>(new Registration(
+  return std::make_unique<Registration>(
       settings, input_desc, result.output_descs[0], ctx.stream, std::move(d_mean_centered),
       ref_initialized, freq_size, std::move(r2c_handle), std::move(c2r_handle), std::move(d_ref),
       std::move(d_xcorr), std::move(d_freq1), std::move(d_freq2), sum_tmp_bytes,
       std::move(d_sum_tmp), std::move(d_sum), amax_tmp_bytes, std::move(d_amax_tmp),
       std::move(d_max), std::move(d_max_idx), select_tmp_bytes, std::move(d_select_tmp),
-      std::move(d_select_count), std::move(d_select_roi), std::move(d_selected)));
+      std::move(d_select_count), std::move(d_select_roi), std::move(d_selected));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+RegistrationFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                            std::span<const holoflow::core::TDesc>     input_descs,
+                            const nlohmann::json                      &jsettings,
+                            const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_registration = dynamic_cast<Registration *>(old_task.get());
+  if (old_registration == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  const auto &new_input_desc = input_descs[0];
+  const auto &old_input_desc = old_registration->input_desc();
+  const auto  settings       = jsettings.get<RegistrationSettings>();
+  const bool  can_reuse      = settings == old_registration->settings() &&
+                          new_input_desc.shape == old_input_desc.shape &&
+                          new_input_desc.strides == old_input_desc.strides &&
+                          new_input_desc.dtype == old_input_desc.dtype &&
+                          new_input_desc.mem_loc == old_input_desc.mem_loc;
+
+  if (can_reuse) {
+    old_registration->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holotask::syncs

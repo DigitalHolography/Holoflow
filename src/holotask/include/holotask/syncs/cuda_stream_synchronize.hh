@@ -20,28 +20,20 @@
 
 namespace holotask::syncs {
 
-/// @brief Settings for the cuda_stream_synchronize task.
-/// @details No configurable options — the task always calls cudaStreamSynchronize on the
-/// pipeline stream and forwards the input tensor unchanged.
-struct CudaStreamSynchronizeSettings {};
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
 
-/// @name JSON serialization
-/// @{
+struct CudaStreamSynchronizeSettings {
+  bool operator==(const CudaStreamSynchronizeSettings &) const = default;
+};
+
 void to_json(nlohmann::json &j, const CudaStreamSynchronizeSettings &s);
 void from_json(const nlohmann::json &j, CudaStreamSynchronizeSettings &s);
-/// @}
 
-class CudaStreamSynchronize : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  CudaStreamSynchronize(cudaStream_t stream);
-
-  friend class CudaStreamSynchronizeFactory;
-
-  cudaStream_t stream_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class CudaStreamSynchronizeFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -50,6 +42,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

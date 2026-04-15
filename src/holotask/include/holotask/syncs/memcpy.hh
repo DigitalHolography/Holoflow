@@ -20,45 +20,29 @@
 
 namespace holotask::syncs {
 
-/// @brief Settings for the memcpy task.
-/// @details
-/// JSON schema (informal):
-/// @code{.json}
-/// {
-///   "target": "Host|Device"
-/// }
-/// @endcode
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 struct MemcpySettings {
-  /// @brief Target memory location for the copy operation.
   enum class Target {
-    Host,  // Copy to host memory
-    Device // Copy to device memory
+    Host,
+    Device
   };
 
-  Target target; // Destination memory location
+  Target target;
+
+  bool operator==(const MemcpySettings &) const = default;
 };
 
-/// @name JSON serialization
-/// @brief nlohmann::json adapters for @ref MemcpySettings and @ref MemcpySettings::Target.
-/// @{
 void to_json(nlohmann::json &j, const MemcpySettings::Target &t);
 void from_json(const nlohmann::json &j, MemcpySettings::Target &t);
 void to_json(nlohmann::json &j, const MemcpySettings &ms);
 void from_json(const nlohmann::json &j, MemcpySettings &ms);
-/// @}
 
-class Memcpy : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  Memcpy(const MemcpySettings &settings, cudaStream_t stream);
-
-  friend class MemcpyFactory;
-
-  MemcpySettings settings_;
-  cudaStream_t   stream_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class MemcpyFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -67,6 +51,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

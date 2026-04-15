@@ -20,23 +20,20 @@
 
 namespace holotask::syncs {
 
-struct CorrectPhaseSettings {};
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
+struct CorrectPhaseSettings {
+  bool operator==(const CorrectPhaseSettings &) const = default;
+};
 
 void to_json(nlohmann::json &j, const CorrectPhaseSettings &s);
 void from_json(const nlohmann::json &j, CorrectPhaseSettings &s);
 
-class CorrectPhase : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  CorrectPhase(const CorrectPhaseSettings &settings, cudaStream_t stream);
-
-  friend class CorrectPhaseFactory;
-
-  CorrectPhaseSettings settings_;
-  cudaStream_t         stream_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class CorrectPhaseFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -45,6 +42,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

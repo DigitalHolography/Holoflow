@@ -312,276 +312,201 @@ solve_linear_system(std::array<std::array<float, kMaxSupportedModes>, kMaxSuppor
 
 } // namespace
 
-Zernike::Zernike(const ZernikeSettings &settings, cudaStream_t stream)
-    : settings_(settings), stream_(stream) {}
+// -------------------------------------------------------------------------------------------------
+// Zernike task implementation
+// -------------------------------------------------------------------------------------------------
 
-holoflow::core::OpResult Zernike::execute(holoflow::core::SyncCtx &ctx) {
-  CUDA_CHECK(cudaStreamSynchronize(stream_));
+class Zernike : public holoflow::core::ISyncTask {
+public:
+  explicit Zernike(ZernikeSettings settings, cudaStream_t stream)
+      : settings_(std::move(settings)), stream_(stream) {}
 
-  // recover_spot_shifts calculates the local displacement of the focal spot
-  // for each subaperture in the propagated plane.
-  auto shifts = recover_spot_shifts(ctx.inputs[0]);
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
 
-  // Display the shifts for debugging
-  for (std::size_t sy = 0; sy < static_cast<std::size_t>(ctx.inputs[0].desc.shape[1]); ++sy) {
-    for (std::size_t sx = 0; sx < static_cast<std::size_t>(ctx.inputs[0].desc.shape[2]); ++sx) {
-      const auto &shift = shifts[sy * static_cast<std::size_t>(ctx.inputs[0].desc.shape[2]) + sx];
-      logger()->debug("Subaperture ({}, {}): Shift (dx: {:.3f} px, dy: {:.3f} px)", sx, sy,
-                      shift.dx, shift.dy);
+    auto shifts = recover_spot_shifts(ctx.inputs[0]);
+
+    for (std::size_t sy = 0; sy < static_cast<std::size_t>(ctx.inputs[0].desc.shape[1]); ++sy) {
+      for (std::size_t sx = 0; sx < static_cast<std::size_t>(ctx.inputs[0].desc.shape[2]); ++sx) {
+        const auto &shift =
+            shifts[sy * static_cast<std::size_t>(ctx.inputs[0].desc.shape[2]) + sx];
+        logger()->debug("Subaperture ({}, {}): Shift (dx: {:.3f} px, dy: {:.3f} px)", sx, sy,
+                        shift.dx, shift.dy);
+      }
     }
-  }
 
-  const auto &desc     = ctx.inputs[0].desc;
-  const auto  nb_sub_y = static_cast<std::size_t>(desc.shape[1]);
-  const auto  nb_sub_x = static_cast<std::size_t>(desc.shape[2]);
-  const auto  win_h    = static_cast<std::size_t>(desc.shape[3]);
-  const auto  win_w    = static_cast<std::size_t>(desc.shape[4]);
+    const auto &desc     = ctx.inputs[0].desc;
+    const auto  nb_sub_y = static_cast<std::size_t>(desc.shape[1]);
+    const auto  nb_sub_x = static_cast<std::size_t>(desc.shape[2]);
+    const auto  win_h    = static_cast<std::size_t>(desc.shape[3]);
+    const auto  win_w    = static_cast<std::size_t>(desc.shape[4]);
 
-  const float pitch_x_m = static_cast<float>(win_w) * settings_.dx;
-  const float pitch_y_m = static_cast<float>(win_h) * settings_.dy;
+    const float pitch_x_m = static_cast<float>(win_w) * settings_.dx;
+    const float pitch_y_m = static_cast<float>(win_h) * settings_.dy;
 
-  const float total_width_m  = static_cast<float>(nb_sub_x) * pitch_x_m;
-  const float total_height_m = static_cast<float>(nb_sub_y) * pitch_y_m;
+    const float total_width_m  = static_cast<float>(nb_sub_x) * pitch_x_m;
+    const float total_height_m = static_cast<float>(nb_sub_y) * pitch_y_m;
 
-  const std::size_t n_modes     = settings_.indexes.size();
-  const size_t      ny          = settings_.ny;
-  const size_t      nx          = settings_.nx;
-  const std::size_t num_regions = static_cast<std::size_t>(ny * nx);
+    const std::size_t n_modes     = settings_.indexes.size();
+    const size_t      ny          = settings_.ny;
+    const size_t      nx          = settings_.nx;
+    const std::size_t num_regions = static_cast<std::size_t>(ny * nx);
 
-  // --------------------------------------------------------------------------
-  // OPTION A: LOCAL ZERNIKES (Mini-Pupils)
-  // --------------------------------------------------------------------------
-  // Instead of normalizing the entire sensor into a single unit disk, we break
-  // the field into 'nx * ny' individual regions. Each region acts as its own
-  // independent miniature optical system with its own local center and local radius.
-  // This preserves Zernike orthogonality, preventing crosstalk between modes
-  // (like Tilt masquerading as Defocus on the edges of a global pupil).
-  const float region_w       = total_width_m / static_cast<float>(nx);
-  const float region_h       = total_height_m / static_cast<float>(ny);
-  const float local_radius_m = 0.5f * std::min(region_w, region_h);
+    const float region_w       = total_width_m / static_cast<float>(nx);
+    const float region_h       = total_height_m / static_cast<float>(ny);
+    const float local_radius_m = 0.5f * std::min(region_w, region_h);
 
-  // We still need the global radius to filter out subapertures that fall completely
-  // outside the physical circular aperture of the lens/sensor assembly.
-  const float global_pupil_radius_m = 0.5f * std::min(total_width_m, total_height_m);
+    const float global_pupil_radius_m = 0.5f * std::min(total_width_m, total_height_m);
 
-  // Output spatial sampling pitch in the propagated plane, resulting from
-  // a discrete 1-FFT Fresnel propagation:
-  //      dx_out = (lambda * z) / (N_x * dx_in)
-  const float dx_out =
-      (settings_.lambda * settings_.z) / (static_cast<float>(win_w) * settings_.dx);
+    const float dx_out =
+        (settings_.lambda * settings_.z) / (static_cast<float>(win_w) * settings_.dx);
+    const float dy_out =
+        (settings_.lambda * settings_.z) / (static_cast<float>(win_h) * settings_.dy);
 
-  const float dy_out =
-      (settings_.lambda * settings_.z) / (static_cast<float>(win_h) * settings_.dy);
+    for (std::size_t ry = 0; ry < ny; ++ry) {
+      for (std::size_t rx = 0; rx < nx; ++rx) {
+        std::size_t center_sx = (rx * nb_sub_x / nx) + (nb_sub_x / nx) / 2;
+        std::size_t center_sy = (ry * nb_sub_y / ny) + (nb_sub_y / ny) / 2;
 
-  // 2. OPTIONAL: Subtract Local Reference
-  // For each region, find its center subaperture and subtract its shift
-  // from all subapertures in that region.
-  for (std::size_t ry = 0; ry < ny; ++ry) {
-    for (std::size_t rx = 0; rx < nx; ++rx) {
+        center_sx = std::min(center_sx, nb_sub_x - 1);
+        center_sy = std::min(center_sy, nb_sub_y - 1);
 
-      // Calculate the index of the center subaperture for this specific region
-      std::size_t center_sx = (rx * nb_sub_x / nx) + (nb_sub_x / nx) / 2;
-      std::size_t center_sy = (ry * nb_sub_y / ny) + (nb_sub_y / ny) / 2;
+        ShiftPx ref_shift = shifts[center_sy * nb_sub_x + center_sx];
+        logger()->debug("Region ({}, {}): Reference subaperture at ({}, {}) with shift (dx: {:.3f} "
+                        "px, dy: {:.3f} px)",
+                        rx, ry, center_sx, center_sy, ref_shift.dx, ref_shift.dy);
 
-      // Clamp just to be safe
-      center_sx = std::min(center_sx, nb_sub_x - 1);
-      center_sy = std::min(center_sy, nb_sub_y - 1);
+        for (std::size_t sy = 0; sy < nb_sub_y; ++sy) {
+          for (std::size_t sx = 0; sx < nb_sub_x; ++sx) {
+            std::size_t current_rx = std::min(static_cast<std::size_t>(sx * nx / nb_sub_x),
+                                              static_cast<std::size_t>(nx - 1));
+            std::size_t current_ry = std::min(static_cast<std::size_t>(sy * ny / nb_sub_y),
+                                              static_cast<std::size_t>(ny - 1));
 
-      ShiftPx ref_shift = shifts[center_sy * nb_sub_x + center_sx];
-      logger()->debug("Region ({}, {}): Reference subaperture at ({}, {}) with shift (dx: {:.3f} "
-                      "px, dy: {:.3f} px)",
-                      rx, ry, center_sx, center_sy, ref_shift.dx, ref_shift.dy);
-
-      // Loop over all subapertures and subtract this reference if they belong to this region
-      for (std::size_t sy = 0; sy < nb_sub_y; ++sy) {
-        for (std::size_t sx = 0; sx < nb_sub_x; ++sx) {
-          std::size_t current_rx = std::min(static_cast<std::size_t>(sx * nx / nb_sub_x),
-                                            static_cast<std::size_t>(nx - 1));
-          std::size_t current_ry = std::min(static_cast<std::size_t>(sy * ny / nb_sub_y),
-                                            static_cast<std::size_t>(ny - 1));
-
-          if (current_rx == rx && current_ry == ry) {
-            shifts[sy * nb_sub_x + sx].dx -= ref_shift.dx;
-            shifts[sy * nb_sub_x + sx].dy -= ref_shift.dy;
+            if (current_rx == rx && current_ry == ry) {
+              shifts[sy * nb_sub_x + sx].dx -= ref_shift.dx;
+              shifts[sy * nb_sub_x + sx].dy -= ref_shift.dy;
+            }
           }
         }
       }
     }
-  }
 
-  // --------------------------------------------------------------------------
-  // LEAST SQUARES FORMULATION
-  // --------------------------------------------------------------------------
-  // We seek the coefficient vector 'a' that minimizes the squared error
-  // between the measured slopes 's' and the modeled slopes (G * a).
-  // E = || s - G * a ||^2
-  // Setting dE/da = 0 yields the normal equations:
-  //      (G^T G) * a = G^T * s
-  std::vector<std::array<std::array<float, kMaxSupportedModes>, kMaxSupportedModes>> GtG(
-      num_regions);
-  std::vector<std::array<float, kMaxSupportedModes>> Gts(num_regions);
+    std::vector<std::array<std::array<float, kMaxSupportedModes>, kMaxSupportedModes>> GtG(
+        num_regions);
+    std::vector<std::array<float, kMaxSupportedModes>> Gts(num_regions);
 
-  for (std::size_t r = 0; r < num_regions; ++r) {
-    for (std::size_t i = 0; i < kMaxSupportedModes; ++i) {
-      Gts[r][i] = 0.0f;
-      for (std::size_t j = 0; j < kMaxSupportedModes; ++j) {
-        GtG[r][i][j] = 0.0f;
-      }
-    }
-  }
-
-  // Tikhonov Regularization term. Added to the diagonal of G^T G to ensure
-  // the matrix is well-conditioned and invertible.
-  constexpr float ridge = 1e-9f;
-
-  size_t kept_subaps    = 0;
-  size_t skipped_subaps = 0;
-
-  for (std::size_t sy = 0; sy < nb_sub_y; ++sy) {
-    for (std::size_t sx = 0; sx < nb_sub_x; ++sx) {
-      auto sx_f       = static_cast<float>(sx);
-      auto sy_f       = static_cast<float>(sy);
-      auto nb_sub_x_f = static_cast<float>(nb_sub_x);
-      auto nb_sub_y_f = static_cast<float>(nb_sub_y);
-
-      // Global physical coordinates (meters) from center of full aperture.
-      const float X = (sx_f - (nb_sub_x_f - 1.0f) * 0.5f) * pitch_x_m;
-      const float Y = (sy_f - (nb_sub_y_f - 1.0f) * 0.5f) * pitch_y_m;
-
-      // Filter against the global circular pupil bounds to avoid corner
-      // artifacts outside the true optical aperture.
-      const float x_n_global = X / global_pupil_radius_m;
-      const float y_n_global = Y / global_pupil_radius_m;
-
-      if (x_n_global * x_n_global + y_n_global * y_n_global > 1.0f) {
-        skipped_subaps++;
-        continue;
-      }
-
-      kept_subaps++;
-
-      // Determine which sub-region grid index this subaperture belongs to.
-      // Clamped to ensure edge pixels don't cause an out-of-bounds error.
-      std::size_t rx =
-          std::min(static_cast<std::size_t>(sx * nx / nb_sub_x), static_cast<std::size_t>(nx - 1));
-      std::size_t ry =
-          std::min(static_cast<std::size_t>(sy * ny / nb_sub_y), static_cast<std::size_t>(ny - 1));
-      std::size_t region_idx = ry * nx + rx;
-
-      // ----------------------------------------------------------------------
-      // LOCAL NORMALIZATION (OPTION A)
-      // ----------------------------------------------------------------------
-      // Calculate the physical center of THIS specific region
-      const float local_center_X =
-          (static_cast<float>(rx) + 0.5f) * region_w - (total_width_m * 0.5f);
-      const float local_center_Y =
-          (static_cast<float>(ry) + 0.5f) * region_h - (total_height_m * 0.5f);
-
-      // Normalize coordinates relative to the LOCAL patch's center and radius.
-      // This ensures the local polynomials map safely to the unit disk [-1, 1].
-      const float x_n_local = (X - local_center_X) / local_radius_m;
-      const float y_n_local = (Y - local_center_Y) / local_radius_m;
-
-      const auto &shift = shifts[sy * nb_sub_x + sx];
-
-      // ----------------------------------------------------------------------
-      // GEOMETRIC OPTICS & SLOPES
-      // ----------------------------------------------------------------------
-      // Converting pixel shift to physical displacement:
-      // Delta x = shift.dx * dx_out
-      float slope_x = (shift.dx * dx_out) / settings_.z;
-      float slope_y = (shift.dy * dy_out) / settings_.z;
-
-      // Compensation Ramp: Because off-axis subapertures are not centered
-      // directly on the optical axis, a spherical wave component is naturally
-      // introduced. We must add this purely geometric tilt back into our slope
-      // calculation so the recovered Zernikes correctly represent the deviation.
-      // const float slope_ramp_x = (X - local_center_X) / settings_.z;
-      // const float slope_ramp_y = (Y - local_center_Y) / settings_.z;
-      // slope_x += slope_ramp_x;
-      // slope_y += slope_ramp_y;
-
-      std::array<float, kMaxSupportedModes> gx{};
-      std::array<float, kMaxSupportedModes> gy{};
-
-      for (std::size_t i = 0; i < n_modes; ++i) {
-        // eval_zernike_noll provides partial derivatives with respect to the
-        // *locally normalized* coordinates (x_n_local, y_n_local).
-        const auto eval = eval_zernike_noll(settings_.indexes[i], x_n_local, y_n_local);
-
-        // --------------------------------------------------------------------
-        // CHAIN RULE FOR DERIVATIVES
-        // --------------------------------------------------------------------
-        // To relate modeled Zernike derivatives to physical measured slopes,
-        // we must convert dZ/dx_n_local to physical dZ/dX.
-        // Given x_n_local = (X - c) / R_local, by the chain rule:
-        //      dZ/dX = (dZ/dx_n_local) * (dx_n_local/dX)
-        //      dZ/dX = (dZ/dx_n_local) * (1 / R_local)
-        gx[i] = eval.d_dx_n / local_radius_m;
-        gy[i] = eval.d_dy_n / local_radius_m;
-      }
-
-      // Accumulate the normal equations for this specific sub-region.
-      // GtG_ij = Sum_k ( dZ_i/dx * dZ_j/dx + dZ_i/dy * dZ_j/dy )
-      // Gts_i  = Sum_k ( dZ_i/dx * slope_x + dZ_i/dy * slope_y )
-      for (std::size_t i = 0; i < n_modes; ++i) {
-        for (std::size_t j = 0; j < n_modes; ++j) {
-          GtG[region_idx][i][j] += gx[i] * gx[j] + gy[i] * gy[j];
+    for (std::size_t r = 0; r < num_regions; ++r) {
+      for (std::size_t i = 0; i < kMaxSupportedModes; ++i) {
+        Gts[r][i] = 0.0f;
+        for (std::size_t j = 0; j < kMaxSupportedModes; ++j) {
+          GtG[r][i][j] = 0.0f;
         }
-        Gts[region_idx][i] += gx[i] * slope_x + gy[i] * slope_y;
       }
     }
-  }
 
-  logger()->info("Kept {} subapertures, skipped {} outside the global pupil", kept_subaps,
-                 skipped_subaps);
+    constexpr float ridge = 1e-9f;
+    size_t          kept_subaps    = 0;
+    size_t          skipped_subaps = 0;
 
-  auto *out_ptr = reinterpret_cast<float *>(ctx.outputs[0].data());
+    for (std::size_t sy = 0; sy < nb_sub_y; ++sy) {
+      for (std::size_t sx = 0; sx < nb_sub_x; ++sx) {
+        auto sx_f       = static_cast<float>(sx);
+        auto sy_f       = static_cast<float>(sy);
+        auto nb_sub_x_f = static_cast<float>(nb_sub_x);
+        auto nb_sub_y_f = static_cast<float>(nb_sub_y);
 
-  // Solve the linear system (GtG * a = Gts) for each region independently.
-  for (std::size_t r = 0; r < num_regions; ++r) {
-    for (std::size_t i = 0; i < n_modes; ++i) {
-      GtG[r][i][i] += ridge; // Apply Tikhonov regularization
+        const float X = (sx_f - (nb_sub_x_f - 1.0f) * 0.5f) * pitch_x_m;
+        const float Y = (sy_f - (nb_sub_y_f - 1.0f) * 0.5f) * pitch_y_m;
+
+        const float x_n_global = X / global_pupil_radius_m;
+        const float y_n_global = Y / global_pupil_radius_m;
+
+        if (x_n_global * x_n_global + y_n_global * y_n_global > 1.0f) {
+          skipped_subaps++;
+          continue;
+        }
+
+        kept_subaps++;
+
+        std::size_t rx = std::min(static_cast<std::size_t>(sx * nx / nb_sub_x),
+                                  static_cast<std::size_t>(nx - 1));
+        std::size_t ry = std::min(static_cast<std::size_t>(sy * ny / nb_sub_y),
+                                  static_cast<std::size_t>(ny - 1));
+        std::size_t region_idx = ry * nx + rx;
+
+        const float local_center_X =
+            (static_cast<float>(rx) + 0.5f) * region_w - (total_width_m * 0.5f);
+        const float local_center_Y =
+            (static_cast<float>(ry) + 0.5f) * region_h - (total_height_m * 0.5f);
+
+        const float x_n_local = (X - local_center_X) / local_radius_m;
+        const float y_n_local = (Y - local_center_Y) / local_radius_m;
+
+        const auto &shift = shifts[sy * nb_sub_x + sx];
+        float slope_x = (shift.dx * dx_out) / settings_.z;
+        float slope_y = (shift.dy * dy_out) / settings_.z;
+
+        std::array<float, kMaxSupportedModes> gx{};
+        std::array<float, kMaxSupportedModes> gy{};
+
+        for (std::size_t i = 0; i < n_modes; ++i) {
+          const auto eval = eval_zernike_noll(settings_.indexes[i], x_n_local, y_n_local);
+          gx[i]           = eval.d_dx_n / local_radius_m;
+          gy[i]           = eval.d_dy_n / local_radius_m;
+        }
+
+        for (std::size_t i = 0; i < n_modes; ++i) {
+          for (std::size_t j = 0; j < n_modes; ++j) {
+            GtG[region_idx][i][j] += gx[i] * gx[j] + gy[i] * gy[j];
+          }
+          Gts[region_idx][i] += gx[i] * slope_x + gy[i] * slope_y;
+        }
+      }
     }
 
-    // Recover Optical Path Difference (OPD) amplitude coefficients in meters.
-    const auto coefs_m = solve_linear_system(GtG[r], Gts[r], n_modes);
+    logger()->info("Kept {} subapertures, skipped {} outside the global pupil", kept_subaps,
+                   skipped_subaps);
 
-    // ------------------------------------------------------------------------
-    // OPD TO PHASE CONVERSION
-    // ------------------------------------------------------------------------
-    // Finally, we convert the physical OPD amplitude [meters] into a phase
-    // delay [radians] for downstream holographic interference tasks.
-    //      phi = (2 * pi / lambda) * OPD
-    for (std::size_t i = 0; i < n_modes; ++i) {
-      out_ptr[r * n_modes + i] = coefs_m[i] * (2.0f * static_cast<float>(M_PI) / settings_.lambda);
+    auto *out_ptr = reinterpret_cast<float *>(ctx.outputs[0].data());
+    for (std::size_t r = 0; r < num_regions; ++r) {
+      for (std::size_t i = 0; i < n_modes; ++i) {
+        GtG[r][i][i] += ridge;
+      }
+
+      const auto coefs_m = solve_linear_system(GtG[r], Gts[r], n_modes);
+      for (std::size_t i = 0; i < n_modes; ++i) {
+        out_ptr[r * n_modes + i] =
+            coefs_m[i] * (2.0f * static_cast<float>(M_PI) / settings_.lambda);
+      }
     }
+
+    size_t center_region_idx = (ny / 2) * nx + (nx / 2);
+    for (std::size_t r = 0; r < num_regions; ++r) {
+      std::string coef_str;
+      for (std::size_t i = 0; i < n_modes; ++i) {
+        float center_coef = out_ptr[center_region_idx * n_modes + i];
+        float coef_diff   = out_ptr[r * n_modes + i] - center_coef;
+        coef_str += fmt::format("Z{}: {:.4e} rad, ", settings_.indexes[i], coef_diff);
+      }
+      logger()->info("Region ({}, {}): Coeff diff from center region: {}", r % nx, r / nx,
+                     coef_str);
+    }
+
+    return holoflow::core::OpResult::Ok;
   }
 
-  // Log each recovered Zernike coefficient for the each region for debugging/analysis purposes.
-  // for (std::size_t r = 0; r < num_regions; ++r) {
-  //   std::string coef_str;
-  //   for (std::size_t i = 0; i < n_modes; ++i) {
-  //     coef_str += fmt::format("Z{}: {:.4e} rad, ", settings_.indexes[i], out_ptr[r * n_modes +
-  //     i]);
-  //   }
-  //   logger()->info("Region ({}, {}): {}", r % nx, r / nx, coef_str);
-  // }
+  void update_stream(cudaStream_t stream) { stream_ = stream; }
+  const ZernikeSettings &settings() const { return settings_; }
 
-  // Log each recovered Zernike coefficient diff from center region for debugging/analysis purposes.
-  size_t center_region_idx = (ny / 2) * nx + (nx / 2);
-  for (std::size_t r = 0; r < num_regions; ++r) {
-    std::string coef_str;
-    for (std::size_t i = 0; i < n_modes; ++i) {
-      float center_coef = out_ptr[center_region_idx * n_modes + i];
-      float coef_diff   = out_ptr[r * n_modes + i] - center_coef;
-      coef_str += fmt::format("Z{}: {:.4e} rad, ", settings_.indexes[i], coef_diff);
-    }
-    logger()->info("Region ({}, {}): Coeff diff from center region: {}", r % nx, r / nx, coef_str);
-  }
+private:
+  ZernikeSettings settings_;
+  cudaStream_t    stream_;
+};
 
-  return holoflow::core::OpResult::Ok;
-}
+// -------------------------------------------------------------------------------------------------
+// ZernikeFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult
 ZernikeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
@@ -594,6 +519,7 @@ ZernikeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(idesc.mem_loc == holoflow::core::MemLoc::Host, "Input memory location must be Host");
   check(idesc.dtype == holoflow::core::DType::F32, "Input dtype must be F32");
   check(idesc.rank() == 5, "Input rank must be 5");
+  check(idesc.shape[0] == 1, "Only batch size 1 is supported");
   check(idesc.shape[1] == idesc.shape[2], "Input subaperture grid must be square");
   check((idesc.shape[1] % 2) == 1, "Input subaperture grid size must be odd");
 
@@ -635,11 +561,31 @@ std::unique_ptr<holoflow::core::ISyncTask>
 ZernikeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                        const nlohmann::json                  &jsettings,
                        const holoflow::core::SyncCreateCtx   &ctx) const {
-  (void)ctx;
-  infer(input_descs, jsettings);
+  (void)infer(input_descs, jsettings);
 
   const auto settings = jsettings.get<ZernikeSettings>();
-  return std::unique_ptr<holoflow::core::ISyncTask>(new Zernike(settings, ctx.stream));
+  return std::make_unique<Zernike>(settings, ctx.stream);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+ZernikeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                       std::span<const holoflow::core::TDesc>     input_descs,
+                       const nlohmann::json                      &jsettings,
+                       const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_zernike = dynamic_cast<Zernike *>(old_task.get());
+  if (old_zernike == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  const auto settings = jsettings.get<ZernikeSettings>();
+  if (settings == old_zernike->settings()) {
+    old_zernike->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holotask::syncs

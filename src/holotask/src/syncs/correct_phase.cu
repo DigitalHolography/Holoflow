@@ -16,18 +16,35 @@
 
 #include <cuComplex.h>
 
+#include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "curaii/cuda.hh"
 #include "logger.hh"
 
 namespace holotask::syncs {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const CorrectPhaseSettings &) { j = nlohmann::json::object(); }
 
 void from_json(const nlohmann::json &, CorrectPhaseSettings &) {}
 
 namespace {
+
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
+
+void check(bool condition, const std::string &msg) {
+  if (!condition) {
+    logger()->error("[CorrectPhaseFactory::infer] error: {}", msg);
+    throw std::invalid_argument("CorrectPhaseFactory inference error: " + msg);
+  }
+}
 
 size_t leading_image_count(const holoflow::core::TDesc &desc) {
   size_t count = 1;
@@ -37,7 +54,25 @@ size_t leading_image_count(const holoflow::core::TDesc &desc) {
   return count;
 }
 
-// Fixed: Reads F32 Intensity, Writes CF32 Complex Field
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  if (desc.shape.size() != desc.strides.size()) {
+    return false;
+  }
+
+  size_t expected = holoflow::core::size_of(desc.dtype);
+  for (size_t i = desc.shape.size(); i-- > 0;) {
+    if (desc.strides[i] != expected) {
+      return false;
+    }
+    expected *= desc.shape[i];
+  }
+  return true;
+}
+
+// -------------------------------------------------------------------------------------------------
+// Device kernels
+// -------------------------------------------------------------------------------------------------
+
 __global__ void correct_phase_f32_to_cf32_kernel(const float *input, const float *phase_mask,
                                                  cuFloatComplex *output, int total_size,
                                                  int plane_size) {
@@ -70,51 +105,60 @@ __global__ void correct_phase_cf32_kernel(const cuFloatComplex *input, const flo
   }
 }
 
-} // namespace
+// -------------------------------------------------------------------------------------------------
+// CorrectPhase task implementation
+// -------------------------------------------------------------------------------------------------
 
-CorrectPhase::CorrectPhase(const CorrectPhaseSettings &settings, cudaStream_t stream)
-    : settings_(settings), stream_(stream) {}
+class CorrectPhase : public holoflow::core::ISyncTask {
+public:
+  CorrectPhase(CorrectPhaseSettings settings, cudaStream_t stream)
+      : settings_(std::move(settings)), stream_(stream) {}
 
-holoflow::core::OpResult CorrectPhase::execute(holoflow::core::SyncCtx &ctx) {
-  const auto &idesc      = ctx.inputs[0].desc;
-  const int   total_size = static_cast<int>(idesc.num_elements());
-  const int   plane_size =
-      static_cast<int>(idesc.shape[idesc.rank() - 2] * idesc.shape[idesc.rank() - 1]);
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    const auto &idesc      = ctx.inputs[0].desc;
+    const int   total_size = static_cast<int>(idesc.num_elements());
+    const int   plane_size =
+        static_cast<int>(idesc.shape[idesc.rank() - 2] * idesc.shape[idesc.rank() - 1]);
 
-  constexpr int block_size = 256;
-  const int     grid_size  = (total_size + block_size - 1) / block_size;
+    constexpr int block_size = 256;
+    const int     grid_size  = (total_size + block_size - 1) / block_size;
 
-  auto *phase_mask = reinterpret_cast<const float *>(ctx.inputs[1].data());
+    auto *phase_mask = reinterpret_cast<const float *>(ctx.inputs[1].data());
+    auto *output     = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
 
-  // The output is ALWAYS CF32 now
-  auto *output = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
+    if (idesc.dtype == holoflow::core::DType::F32) {
+      auto *input = reinterpret_cast<const float *>(ctx.inputs[0].data());
+      correct_phase_f32_to_cf32_kernel<<<grid_size, block_size, 0, stream_>>>(
+          input, phase_mask, output, total_size, plane_size);
+    } else {
+      auto *input = reinterpret_cast<const cuFloatComplex *>(ctx.inputs[0].data());
+      correct_phase_cf32_kernel<<<grid_size, block_size, 0, stream_>>>(input, phase_mask, output,
+                                                                       total_size, plane_size);
+    }
 
-  if (idesc.dtype == holoflow::core::DType::F32) {
-    auto *input = reinterpret_cast<const float *>(ctx.inputs[0].data());
-    correct_phase_f32_to_cf32_kernel<<<grid_size, block_size, 0, stream_>>>(
-        input, phase_mask, output, total_size, plane_size);
-  } else {
-    auto *input = reinterpret_cast<const cuFloatComplex *>(ctx.inputs[0].data());
-    correct_phase_cf32_kernel<<<grid_size, block_size, 0, stream_>>>(input, phase_mask, output,
-                                                                     total_size, plane_size);
+    CUDA_CHECK(cudaGetLastError());
+    return holoflow::core::OpResult::Ok;
   }
 
-  CUDA_CHECK(cudaGetLastError());
-  return holoflow::core::OpResult::Ok;
-}
+  void update_stream(cudaStream_t stream) { stream_ = stream; }
+
+  const CorrectPhaseSettings &settings() const { return settings_; }
+
+private:
+  CorrectPhaseSettings settings_;
+  cudaStream_t         stream_;
+};
+
+} // namespace
+
+// -------------------------------------------------------------------------------------------------
+// CorrectPhaseFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult
 CorrectPhaseFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                            const nlohmann::json                  &jsettings) const {
-  const auto check = [&](bool condition, const std::string &msg) {
-    if (!condition) {
-      logger()->error("[CorrectPhaseFactory::infer] error: {}", msg);
-      throw std::invalid_argument("CorrectPhaseFactory inference error: " + msg);
-    }
-  };
-
-  auto settings = jsettings.get<CorrectPhaseSettings>();
-  (void)settings;
+  (void)jsettings.get<CorrectPhaseSettings>();
 
   check(input_descs.size() == 2, "expected exactly two inputs");
 
@@ -133,9 +177,9 @@ CorrectPhaseFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(idesc.shape[idesc.rank() - 1] == mdesc.shape[mdesc.rank() - 1],
         "phase mask width must match input width");
   check(leading_image_count(mdesc) == 1, "phase mask must contain exactly one image");
+  check(is_c_contiguous(idesc), "input must be C-contiguous");
+  check(is_c_contiguous(mdesc), "phase mask must be C-contiguous");
 
-  // Fixed: The output is always CF32, so we create a new descriptor with the input's shape
-  // but explicitly setting the CF32 dtype.
   holoflow::core::TDesc odesc(idesc.shape, holoflow::core::DType::CF32, idesc.mem_loc);
 
   return holoflow::core::InferResult{
@@ -152,11 +196,31 @@ std::unique_ptr<holoflow::core::ISyncTask>
 CorrectPhaseFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                             const nlohmann::json                  &jsettings,
                             const holoflow::core::SyncCreateCtx   &ctx) const {
-  infer(input_descs, jsettings);
+  (void)infer(input_descs, jsettings);
   auto settings = jsettings.get<CorrectPhaseSettings>();
 
-  auto *task = new CorrectPhase(settings, ctx.stream);
-  return std::unique_ptr<holoflow::core::ISyncTask>(task);
+  return std::make_unique<CorrectPhase>(settings, ctx.stream);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+CorrectPhaseFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                            std::span<const holoflow::core::TDesc>     input_descs,
+                            const nlohmann::json                      &jsettings,
+                            const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_correct_phase = dynamic_cast<CorrectPhase *>(old_task.get());
+  if (old_correct_phase == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  const auto settings = jsettings.get<CorrectPhaseSettings>();
+  if (settings == old_correct_phase->settings()) {
+    old_correct_phase->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holotask::syncs

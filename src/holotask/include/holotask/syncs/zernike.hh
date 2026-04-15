@@ -21,31 +21,28 @@
 
 namespace holotask::syncs {
 
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 struct ZernikeSettings {
   std::vector<int> indexes;
-  float            lambda; ///< Wavelength in meters.
-  float            dx;     ///< Pixel pitch in meters.
-  float            dy;     ///< Pixel pitch in meters.
-  float            z;      ///< Propagation distance in meters.
-  size_t           ny = 1; ///< Number of grid regions along Y (default 1).
-  size_t           nx = 1; ///< Number of grid regions along X (default 1).
+  float            lambda;
+  float            dx;
+  float            dy;
+  float            z;
+  size_t           ny = 1;
+  size_t           nx = 1;
+
+  bool operator==(const ZernikeSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const ZernikeSettings &s);
 void from_json(const nlohmann::json &j, ZernikeSettings &s);
 
-class Zernike : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  explicit Zernike(const ZernikeSettings &settings, cudaStream_t stream);
-
-  friend class ZernikeFactory;
-
-  ZernikeSettings settings_;
-  cudaStream_t    stream_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class ZernikeFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -54,6 +51,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

@@ -14,12 +14,29 @@
 
 #include "holotask/syncs/filter2d.hh"
 
+#include <cstdlib>
+#include <ranges>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include <math_constants.h>
 
 #include "bug.hh"
 #include "logger.hh"
 
+#include "curaii/cuda.hh"
+#include "curaii/cufft.hh"
+#include "curaii/nvrtc.hh"
+
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+
 namespace holotask::syncs {
+
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const Filter2DSettings &f) {
   j = nlohmann::json{
@@ -40,11 +57,34 @@ void from_json(const nlohmann::json &j, Filter2DSettings &f) {
 namespace {
 
 struct ApplyFilterCallerInfo {
-  int             width;
-  int             height;
-  int             batch;
   cuFloatComplex *filter;
 };
+
+void check(bool condition, const std::string &msg) {
+  if (!condition) {
+    logger()->error("[Filter2DFactory::infer] error: {}", msg);
+    throw std::invalid_argument("Filter2DFactory inference error: " + msg);
+  }
+}
+
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  if (desc.shape.size() != desc.strides.size()) {
+    return false;
+  }
+
+  size_t expected = holoflow::core::size_of(desc.dtype);
+  for (size_t i = desc.shape.size(); i-- > 0;) {
+    if (desc.strides[i] != expected) {
+      return false;
+    }
+    expected *= desc.shape[i];
+  }
+  return true;
+}
+
+// -------------------------------------------------------------------------------------------------
+// NVRTC / JIT-callback compilation
+// -------------------------------------------------------------------------------------------------
 
 std::string get_compute_arch() {
   int device{};
@@ -57,23 +97,22 @@ std::string get_compute_arch() {
 std::vector<std::string> get_nvrtc_args() {
   auto CUDA_PATH = std::getenv("CUDA_PATH");
   HOLOVIBES_CHECK(CUDA_PATH != nullptr, "CUDA_PATH environment variable not set");
-  std::string cuda_path{CUDA_PATH};
 
-  std::vector<std::string> args{
-      "-I" + cuda_path + "/include",
+  return {
+      "-I" + std::string{CUDA_PATH} + "/include",
       "-arch=" + get_compute_arch(),
       "--std=c++20",
       "--relocatable-device-code=true",
       "-default-device",
       "-dlto",
   };
-  return args;
 }
 
 std::vector<char> compile_source_to_lto(const std::string &source, const std::string &name) {
   auto                 args_string = get_nvrtc_args();
   curaii::NvrtcProgram prog(source.c_str(), name.c_str(), 0, nullptr, nullptr);
-  std::vector<char *>  args;
+
+  std::vector<char *> args;
   std::ranges::transform(args_string, std::back_inserter(args),
                          [](const std::string &s) { return const_cast<char *>(s.c_str()); });
 
@@ -94,31 +133,33 @@ std::vector<char> compile_source_to_lto(const std::string &source, const std::st
   }
 }
 
-std::vector<char> apply_filter_lto() {
-  std::string apply_filter_callback = R"(
-  #include <cuComplex.h>
+std::vector<char> apply_filter_lto(int width, int height) {
+  std::string src = "#define WIDTH " + std::to_string(width) + "\n" + "#define HEIGHT " +
+                    std::to_string(height) + "\n";
 
-  struct ApplyFilterCallerInfo {
-    int             width;
-    int             height;
-    int             batch;
-    cuFloatComplex *filter;
-  };
+  src += R"(
+#include <cuComplex.h>
 
-  __device__ cuFloatComplex apply_filter_callback(
-      void *data, size_t offset, void *callerInfo, void *sharedPtr) {
-    auto  *info       = (ApplyFilterCallerInfo *)callerInfo;
-    size_t filter_idx = offset % (info->width * info->height);
-    auto  *filter     = info->filter;
-    auto   val        = ((cuFloatComplex *)data)[offset];
-    auto   filter_val = filter[filter_idx];
+struct ApplyFilterCallerInfo {
+  cuFloatComplex *filter;
+};
 
-    return cuCmulf(val, filter_val);
-  }
-  )";
+__device__ cuFloatComplex apply_filter_callback(
+    void *data, size_t offset, void *callerInfo, void *sharedPtr) {
+  auto  *info       = (ApplyFilterCallerInfo *)callerInfo;
+  size_t filter_idx = offset % (WIDTH * HEIGHT);
+  auto   val        = ((cuFloatComplex *)data)[offset];
 
-  return compile_source_to_lto(apply_filter_callback, "apply_filter_callback.cu");
+  return cuCmulf(val, info->filter[filter_idx]);
 }
+)";
+
+  return compile_source_to_lto(src, "apply_filter_callback.cu");
+}
+
+// -------------------------------------------------------------------------------------------------
+// Device kernels
+// -------------------------------------------------------------------------------------------------
 
 __global__ void apply_filter_2d_kernel(cuFloatComplex *filter, const uint32_t width,
                                        const uint32_t height, const uint32_t r_inner,
@@ -146,12 +187,14 @@ __global__ void apply_filter_2d_kernel(cuFloatComplex *filter, const uint32_t wi
   } else if (dist < f_r_outer + f_smooth_outer) {
     a = cosf((dist - f_r_outer) / f_smooth_outer * CUDART_PI_F / 2);
   }
+
   float b = 0.0f;
   if (dist < f_r_inner) {
     b = 1.0f;
   } else if (dist < f_r_inner + f_smooth_inner) {
     b = cosf((dist - f_r_inner) / f_smooth_inner * CUDART_PI_F / 2);
   }
+
   filter[idx].x = a * (1 - b);
   filter[idx].y = a * (1 - b);
 }
@@ -162,92 +205,113 @@ __global__ void swap_corners_kernel(cuFloatComplex *in, cuFloatComplex *out, int
   int y = blockIdx.y * blockDim.y + threadIdx.y;
   int z = blockIdx.z * blockDim.z + threadIdx.z;
 
-  int width_half  = width / 2;
-  int height_half = height / 2;
+  const int width_half  = width / 2;
+  const int height_half = height / 2;
 
   if (x >= width_half || y >= height_half || z >= batch_size) {
     return;
   }
 
-  int             batch_offset = z * width * height;
+  const int       batch_offset = z * width * height;
   cuFloatComplex *in_frame     = in + batch_offset;
   cuFloatComplex *out_frame    = out + batch_offset;
 
-  // --- Swap top-left with bottom-right ---
-  int top_left_idx     = x + y * width;
-  int bottom_right_idx = (x + width_half) + (y + height_half) * width;
+  const int top_left_idx     = x + y * width;
+  const int bottom_right_idx = (x + width_half) + (y + height_half) * width;
 
   cuFloatComplex tmp          = in_frame[top_left_idx];
   out_frame[top_left_idx]     = in_frame[bottom_right_idx];
   out_frame[bottom_right_idx] = tmp;
 
-  // --- Swap top-right with bottom-left ---
-  int top_right_idx   = (x + width_half) + y * width;
-  int bottom_left_idx = x + (y + height_half) * width;
+  const int top_right_idx   = (x + width_half) + y * width;
+  const int bottom_left_idx = x + (y + height_half) * width;
 
   tmp                        = in_frame[top_right_idx];
   out_frame[top_right_idx]   = in_frame[bottom_left_idx];
   out_frame[bottom_left_idx] = tmp;
 }
 
-DevPtr<cuFloatComplex> make_filter(int W, int H, const Filter2DSettings &settings) {
-  auto bytes    = W * H * sizeof(cuFloatComplex);
-  auto d_filter = curaii::make_unique_device_ptr<cuFloatComplex>(bytes);
+DevPtr<cuFloatComplex> make_filter(int width, int height, const Filter2DSettings &settings) {
+  auto d_filter = curaii::make_unique_device_ptr<cuFloatComplex>(
+      static_cast<size_t>(width) * height);
 
   dim3 block_size(16, 16);
-  dim3 grid_size((W + block_size.x - 1) / block_size.x, (H + block_size.y - 1) / block_size.y);
+  dim3 grid_size((width + block_size.x - 1) / block_size.x,
+                 (height + block_size.y - 1) / block_size.y);
 
-  CUDA_CHECK(cudaMemset(d_filter.get(), 0, bytes));
+  CUDA_CHECK(cudaMemset(d_filter.get(), 0, static_cast<size_t>(width) * height * sizeof(cuFloatComplex)));
 
-  apply_filter_2d_kernel<<<grid_size, block_size>>>(
-      d_filter.get(), W, H, settings.r_inner, settings.r_outer, settings.s_inner, settings.s_outer);
+  apply_filter_2d_kernel<<<grid_size, block_size>>>(d_filter.get(), width, height, settings.r_inner,
+                                                    settings.r_outer, settings.s_inner,
+                                                    settings.s_outer);
 
-  swap_corners_kernel<<<grid_size, block_size>>>(d_filter.get(), d_filter.get(), W, H, 1);
+  swap_corners_kernel<<<grid_size, block_size>>>(d_filter.get(), d_filter.get(), width, height, 1);
   CUDA_CHECK(cudaPeekAtLastError());
   return d_filter;
 }
 
+// -------------------------------------------------------------------------------------------------
+// Filter2D task implementation
+// -------------------------------------------------------------------------------------------------
+
+class Filter2D : public holoflow::core::ISyncTask {
+public:
+  Filter2D(Filter2DSettings settings, holoflow::core::TDesc idesc, curaii::CufftHandle &&fwd_plan,
+           curaii::CufftHandle &&inv_plan, DevPtr<cuFloatComplex> &&d_filter,
+           DevPtr<void> &&d_caller_info, std::vector<char> &&lto)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)),
+        fwd_plan_(std::move(fwd_plan)), inv_plan_(std::move(inv_plan)),
+        d_filter_(std::move(d_filter)), d_caller_info_(std::move(d_caller_info)),
+        lto_(std::move(lto)) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
+    auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
+    CUFFT_CHECK(cufftXtExec(fwd_plan_.get(), idata, idata, CUFFT_FORWARD));
+    CUFFT_CHECK(cufftXtExec(inv_plan_.get(), idata, odata, CUFFT_INVERSE));
+    return holoflow::core::OpResult::Ok;
+  }
+
+  void update_stream(cudaStream_t stream) {
+    CUFFT_CHECK(cufftSetStream(fwd_plan_.get(), stream));
+    CUFFT_CHECK(cufftSetStream(inv_plan_.get(), stream));
+  }
+
+  const Filter2DSettings &settings() const { return settings_; }
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+
+private:
+  Filter2DSettings       settings_;
+  holoflow::core::TDesc  idesc_;
+  curaii::CufftHandle    fwd_plan_;
+  curaii::CufftHandle    inv_plan_;
+  DevPtr<cuFloatComplex> d_filter_;
+  DevPtr<void>           d_caller_info_;
+  std::vector<char>      lto_;
+};
+
 } // namespace
 
-Filter2D::Filter2D(const Filter2DSettings &settings, curaii::CufftHandle &&fwd_plan,
-                   curaii::CufftHandle &&inv_plan, DevPtr<cuFloatComplex> &&d_filter,
-                   DevPtr<void> &&d_caller_info, std::vector<char> &&lto)
-    : settings_(settings), fwd_plan_(std::move(fwd_plan)), inv_plan_(std::move(inv_plan)),
-      d_filter_(std::move(d_filter)), d_caller_info_(std::move(d_caller_info)),
-      lto_(std::move(lto)) {}
-
-holoflow::core::OpResult Filter2D::execute(holoflow::core::SyncCtx &ctx) {
-  auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
-  auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
-  CUFFT_CHECK(cufftXtExec(fwd_plan_.get(), idata, idata, CUFFT_FORWARD));
-  CUFFT_CHECK(cufftXtExec(inv_plan_.get(), idata, odata, CUFFT_INVERSE));
-  return holoflow::core::OpResult::Ok;
-}
+// -------------------------------------------------------------------------------------------------
+// Filter2DFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult
 Filter2DFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                        const nlohmann::json                  &jsettings) const {
-  const auto check = [&](bool condition, const std::string &msg) {
-    if (!condition) {
-      logger()->error("[Filter2DFactory::infer] error: {}", msg);
-      throw std::invalid_argument("Filter2DFactory inference error: " + msg);
-    }
-  };
+  const auto settings = jsettings.get<Filter2DSettings>();
 
-  auto settings = jsettings.get<Filter2DSettings>();
-
-  // Validate
   check(input_descs.size() == 1, "expected exactly one input");
-  auto &idesc = input_descs[0];
+  const auto &idesc = input_descs[0];
   check(idesc.rank() == 3, "input must be a 3D tensor");
   check(idesc.dtype == holoflow::core::DType::CF32, "input must be complex float32");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
+  check(is_c_contiguous(idesc), "input must be C-contiguous");
   check(settings.r_inner >= 0, "r_inner must be non-negative");
   check(settings.r_outer >= 0, "r_outer must be non-negative");
   check(settings.s_inner >= 0, "s_inner must be non-negative");
   check(settings.s_outer >= 0, "s_outer must be non-negative");
 
-  // Success
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
       .output_descs  = {idesc},
@@ -262,36 +326,37 @@ std::unique_ptr<holoflow::core::ISyncTask>
 Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                         const nlohmann::json                  &jsettings,
                         const holoflow::core::SyncCreateCtx   &ctx) const {
-  // Validate
-  auto  infer    = this->infer(input_descs, jsettings);
-  auto  settings = jsettings.get<Filter2DSettings>();
-  auto &idesc    = input_descs[0];
+  (void)this->infer(input_descs, jsettings);
+  const auto settings = jsettings.get<Filter2DSettings>();
+  const auto &idesc   = input_descs[0];
 
-  const int B = static_cast<int>(idesc.shape[0]);
-  const int H = static_cast<int>(idesc.shape[1]);
-  const int W = static_cast<int>(idesc.shape[2]);
+  const int batch_size = static_cast<int>(idesc.shape[0]);
+  const int height     = static_cast<int>(idesc.shape[1]);
+  const int width      = static_cast<int>(idesc.shape[2]);
 
-  // Create filter
-  auto                  d_filter = make_filter(W, H, settings);
-  ApplyFilterCallerInfo info{W, H, B, d_filter.get()};
-  auto d_info = curaii::make_unique_device_ptr<ApplyFilterCallerInfo>(sizeof(info));
-  CUDA_CHECK(cudaMemcpy(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice));
-  auto lto = apply_filter_lto();
+  auto d_filter = make_filter(width, height, settings);
 
-  // FFT plans
-  int           rank          = 2;
-  long long int n[2]          = {H, W};
-  long long int inembed[2]    = {H, W};
-  int           istride       = 1;
-  int           idist         = H * W;
-  cudaDataType  inputtype     = CUDA_C_32F;
-  long long int onembed[2]    = {H, W};
-  int           ostride       = 1;
-  int           odist         = H * W;
-  cudaDataType  outputtype    = CUDA_C_32F;
-  int           batch         = B;
+  ApplyFilterCallerInfo info{
+      .filter = d_filter.get(),
+  };
+  auto d_info = curaii::make_unique_device_ptr<ApplyFilterCallerInfo>(1);
+  CUDA_CHECK(cudaMemcpyAsync(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice, ctx.stream));
+
+  auto lto = apply_filter_lto(width, height);
+
+  constexpr int rank = 2;
+  long long int n[2]       = {height, width};
+  long long int inembed[2] = {height, width};
+  long long int onembed[2] = {height, width};
+  constexpr int istride       = 1;
+  const int     idist         = height * width;
+  constexpr int ostride       = 1;
+  const int     odist         = height * width;
+  const int     batch         = batch_size;
   size_t        work_size     = 0;
-  cudaDataType  executiontype = CUDA_C_32F;
+  auto          inputtype     = CUDA_C_32F;
+  auto          outputtype    = CUDA_C_32F;
+  auto          executiontype = CUDA_C_32F;
 
   curaii::CufftHandle fwd_plan;
   curaii::CufftHandle inv_plan;
@@ -310,10 +375,8 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                   onembed, ostride, odist, outputtype, batch, &work_size,
                                   executiontype));
 
-  // Success
-  auto *task = new Filter2D(settings, std::move(fwd_plan), std::move(inv_plan), std::move(d_filter),
-                            std::move(d_info), std::move(lto));
-  return std::unique_ptr<holoflow::core::ISyncTask>(task);
+  return std::make_unique<Filter2D>(settings, idesc, std::move(fwd_plan), std::move(inv_plan),
+                                    std::move(d_filter), std::move(d_info), std::move(lto));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -321,60 +384,28 @@ Filter2DFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                         std::span<const holoflow::core::TDesc>     input_descs,
                         const nlohmann::json                      &jsettings,
                         const holoflow::core::SyncCreateCtx       &ctx) const {
-  // Validate
-  auto infer      = this->infer(input_descs, jsettings);
-  auto settings   = jsettings.get<Filter2DSettings>();
-  auto old_filter = dynamic_cast<Filter2D *>(old_task.get());
-  HOLOVIBES_CHECK(old_filter != nullptr, "old_task is not a Filter2D");
-  auto &idesc = input_descs[0];
+  (void)this->infer(input_descs, jsettings);
 
-  const int B = static_cast<int>(idesc.shape[0]);
-  const int H = static_cast<int>(idesc.shape[1]);
-  const int W = static_cast<int>(idesc.shape[2]);
+  auto *old_filter = dynamic_cast<Filter2D *>(old_task.get());
+  if (old_filter == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
 
-  // Create filter
-  auto                  d_filter = make_filter(W, H, settings);
-  ApplyFilterCallerInfo info{W, H, B, d_filter.get()};
-  auto d_info = curaii::make_unique_device_ptr<ApplyFilterCallerInfo>(sizeof(info));
-  CUDA_CHECK(cudaMemcpy(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice));
-  auto lto = std::move(old_filter->lto_);
+  const auto &new_idesc = input_descs[0];
+  const auto &old_idesc = old_filter->idesc();
+  const auto  settings  = jsettings.get<Filter2DSettings>();
+  const bool  can_reuse = settings == old_filter->settings() &&
+                         new_idesc.shape == old_idesc.shape &&
+                         new_idesc.strides == old_idesc.strides &&
+                         new_idesc.dtype == old_idesc.dtype &&
+                         new_idesc.mem_loc == old_idesc.mem_loc;
 
-  // FFT plans
-  int           rank          = 2;
-  long long int n[2]          = {H, W};
-  long long int inembed[2]    = {H, W};
-  int           istride       = 1;
-  int           idist         = H * W;
-  cudaDataType  inputtype     = CUDA_C_32F;
-  long long int onembed[2]    = {H, W};
-  int           ostride       = 1;
-  int           odist         = H * W;
-  cudaDataType  outputtype    = CUDA_C_32F;
-  int           batch         = B;
-  size_t        work_size     = 0;
-  cudaDataType  executiontype = CUDA_C_32F;
+  if (can_reuse) {
+    old_filter->update_stream(ctx.stream);
+    return old_task;
+  }
 
-  curaii::CufftHandle fwd_plan;
-  curaii::CufftHandle inv_plan;
-  CUFFT_CHECK(cufftSetStream(fwd_plan.get(), ctx.stream));
-  CUFFT_CHECK(cufftSetStream(inv_plan.get(), ctx.stream));
-
-  auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
-  CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_filter_callback", lto.data(), lto.size(),
-                                    CUFFT_CB_LD_COMPLEX, &d_info_ptr));
-
-  CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, inputtype,
-                                  onembed, ostride, odist, outputtype, batch, &work_size,
-                                  executiontype));
-
-  CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank, n, inembed, istride, idist, inputtype,
-                                  onembed, ostride, odist, outputtype, batch, &work_size,
-                                  executiontype));
-
-  // Success
-  auto *task = new Filter2D(settings, std::move(fwd_plan), std::move(inv_plan), std::move(d_filter),
-                            std::move(d_info), std::move(lto));
-  return std::unique_ptr<holoflow::core::ISyncTask>(task);
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holotask::syncs

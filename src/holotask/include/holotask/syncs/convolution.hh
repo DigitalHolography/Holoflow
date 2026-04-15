@@ -13,95 +13,36 @@
 // limitations under the License.
 #pragma once
 
-#include <filesystem>
-#include <memory>
 #include <nlohmann/json.hpp>
-#include <span>
 #include <string>
-#include <vector>
 
-#include "curaii/cuda.hh"
-#include "curaii/cufft.hh"
-#include "curaii/nvrtc.hh"
 #include "holoflow/core/tasks.hh"
-
-template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 namespace holotask::syncs {
 
-struct ComplexMultiplyCallerInfo {
-  int           size;
-  cufftComplex *freq_kernel;
-  float         scale;
-};
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
 
-struct FFTConvolutionData {
-  unsigned int padded_width;
-  unsigned int padded_height;
-
-  DevPtr<cufftComplex>              d_padded_input;
-  DevPtr<cufftComplex>              d_padded_kernel;
-  DevPtr<cufftComplex>              d_freq_input;
-  DevPtr<cufftComplex>              d_freq_kernel;
-  DevPtr<ComplexMultiplyCallerInfo> d_callback_info;
-  curaii::CufftHandle               inv_plan;
-  curaii::CufftHandle               fft_plan;
-};
-
-/// @brief Settings for convolution task
 struct ConvolutionSettings {
   std::string kernel_file;
   bool        divide;
+
+  bool operator==(const ConvolutionSettings &) const = default;
 };
 
-/// @name JSON serialization
-/// @{
 void to_json(nlohmann::json &j, const ConvolutionSettings &s);
 void from_json(const nlohmann::json &j, ConvolutionSettings &s);
-/// @}
 
-/// @brief 2D convolution task for image processing using FFT
-class Convolution : public holoflow::core::ISyncTask {
-public:
-  ~Convolution() override = default;
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
-  /// @brief Execute convolution operation
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  Convolution(ConvolutionSettings settings, const holoflow::core::TDesc &input_desc,
-              const holoflow::core::TDesc &output_desc, cudaStream_t stream,
-              DevPtr<float> &&d_kernel, const int kernel_width, const int kernel_height,
-              std::filesystem::file_time_type kernel_last_write_time);
-
-  friend class ConvolutionFactory;
-
-  ConvolutionSettings   settings_;
-  holoflow::core::TDesc input_desc_;
-  holoflow::core::TDesc output_desc_;
-  cudaStream_t          stream_;
-  DevPtr<float>         d_kernel_;
-  const int             kernel_width_;
-  const int             kernel_height_;
-  std::vector<char>     lto_;
-
-  std::filesystem::file_time_type kernel_last_write_time_;
-
-  mutable std::unique_ptr<FFTConvolutionData> fft_data_;
-
-  void create_fft_data();
-};
-
-/// @brief Factory for creating Convolution tasks
 class ConvolutionFactory : public holoflow::core::ISyncTaskFactory {
 public:
-  ~ConvolutionFactory() override = default;
-
-  /// @brief Infer task metadata and requirements
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
 
-  /// @brief Create a new Convolution task instance
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;

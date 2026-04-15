@@ -14,34 +14,62 @@
 
 #include "holotask/syncs/cuda_stream_synchronize.hh"
 
+#include <stdexcept>
+#include <string>
+
 #include "bug.hh"
 #include "logger.hh"
 
 namespace holotask::syncs {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const CudaStreamSynchronizeSettings &) { j = nlohmann::json{}; }
 
 void from_json(const nlohmann::json &, CudaStreamSynchronizeSettings &) {}
 
-CudaStreamSynchronize::CudaStreamSynchronize(cudaStream_t stream) : stream_(stream) {}
+namespace {
 
-holoflow::core::OpResult CudaStreamSynchronize::execute(holoflow::core::SyncCtx &ctx) {
-  (void)ctx;
-  CUDA_CHECK(cudaStreamSynchronize(stream_));
-  return holoflow::core::OpResult::Ok;
+void check(bool condition, const std::string &msg) {
+  if (!condition) {
+    logger()->error("[CudaStreamSynchronizeFactory::infer] error: {}", msg);
+    throw std::invalid_argument("CudaStreamSynchronizeFactory inference error: " + msg);
+  }
 }
+
+// -------------------------------------------------------------------------------------------------
+// CudaStreamSynchronize task implementation
+// -------------------------------------------------------------------------------------------------
+
+class CudaStreamSynchronize : public holoflow::core::ISyncTask {
+public:
+  explicit CudaStreamSynchronize(cudaStream_t stream) : stream_(stream) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    (void)ctx;
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
+    return holoflow::core::OpResult::Ok;
+  };
+
+  void update_stream(cudaStream_t stream) { stream_ = stream; }
+  cudaStream_t stream() const { return stream_; }
+
+private:
+  cudaStream_t stream_;
+};
+
+} // namespace
+
+// -------------------------------------------------------------------------------------------------
+// CudaStreamSynchronizeFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult
 CudaStreamSynchronizeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json                  &jsettings) const {
-  const auto check = [&](bool condition, const std::string &msg) {
-    if (!condition) {
-      logger()->error("[CudaStreamSynchronizeFactory::infer] error: {}", msg);
-      throw std::invalid_argument("CudaStreamSynchronizeFactory inference error: " + msg);
-    }
-  };
-
-  (void)jsettings;
+  (void)jsettings.get<CudaStreamSynchronizeSettings>();
   check(input_descs.size() == 1, "CudaStreamSynchronize task must have exactly one input");
 
   return holoflow::core::InferResult{
@@ -58,8 +86,24 @@ std::unique_ptr<holoflow::core::ISyncTask>
 CudaStreamSynchronizeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                      const nlohmann::json                  &jsettings,
                                      const holoflow::core::SyncCreateCtx   &ctx) const {
-  this->infer(input_descs, jsettings);
-  return std::unique_ptr<holoflow::core::ISyncTask>(new CudaStreamSynchronize(ctx.stream));
+  (void)this->infer(input_descs, jsettings);
+  return std::make_unique<CudaStreamSynchronize>(ctx.stream);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+CudaStreamSynchronizeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                                     std::span<const holoflow::core::TDesc>     input_descs,
+                                     const nlohmann::json                      &jsettings,
+                                     const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)this->infer(input_descs, jsettings);
+
+  auto *old_sync = dynamic_cast<CudaStreamSynchronize *>(old_task.get());
+  if (old_sync == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  old_sync->update_stream(ctx.stream);
+  return old_task;
 }
 
 } // namespace holotask::syncs

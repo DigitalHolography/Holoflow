@@ -14,25 +14,36 @@
 
 #include "holotask/syncs/memcpy.hh"
 
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <map>
 #include <omp.h>
+#include <stdexcept>
+#include <string>
+#include <utility>
 
 #include "bug.hh"
 #include "logger.hh"
 
 namespace holotask::syncs {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const MemcpySettings::Target &t) {
-  std::map<MemcpySettings::Target, std::string> t_to_str = {
+  static const std::map<MemcpySettings::Target, std::string> t_to_str = {
       {MemcpySettings::Target::Host, "Host"},
       {MemcpySettings::Target::Device, "Device"},
   };
 
   HOLOVIBES_CHECK(t_to_str.contains(t), "Invalid Target enum value");
-  j = t_to_str[t];
+  j = t_to_str.at(t);
 }
 
 void from_json(const nlohmann::json &j, MemcpySettings::Target &t) {
-  std::map<std::string, MemcpySettings::Target> str_to_t = {
+  static const std::map<std::string, MemcpySettings::Target> str_to_t = {
       {"Host", MemcpySettings::Target::Host},
       {"Device", MemcpySettings::Target::Device},
   };
@@ -41,7 +52,7 @@ void from_json(const nlohmann::json &j, MemcpySettings::Target &t) {
   if (!str_to_t.contains(key)) {
     throw std::invalid_argument("Invalid Target string: " + key);
   }
-  t = str_to_t[key];
+  t = str_to_t.at(key);
 }
 
 void to_json(nlohmann::json &j, const MemcpySettings &ms) {
@@ -53,6 +64,13 @@ void to_json(nlohmann::json &j, const MemcpySettings &ms) {
 void from_json(const nlohmann::json &j, MemcpySettings &ms) { j.at("target").get_to(ms.target); }
 
 namespace {
+
+void check(bool condition, const std::string &msg) {
+  if (!condition) {
+    logger()->error("[MemcpyFactory::infer] error: {}", msg);
+    throw std::invalid_argument("MemcpyFactory inference error: " + msg);
+  }
+}
 
 void mt_memcpy(void *dst, const void *src, const std::size_t n) {
   constexpr int NUM_THREADS = 2;
@@ -80,48 +98,56 @@ void mt_memcpy(void *dst, const void *src, const std::size_t n) {
 
 } // namespace
 
-Memcpy::Memcpy(const MemcpySettings &settings, cudaStream_t stream)
-    : settings_(settings), stream_(stream) {}
+// -------------------------------------------------------------------------------------------------
+// Memcpy task implementation
+// -------------------------------------------------------------------------------------------------
 
-holoflow::core::OpResult Memcpy::execute(holoflow::core::SyncCtx &ctx) {
-  auto *src       = ctx.inputs[0].data();
-  auto *dst       = ctx.outputs[0].data();
-  auto  n         = ctx.outputs[0].desc.num_bytes();
-  auto  copy_desc = std::make_pair(ctx.inputs[0].desc.mem_loc, settings_.target);
-  using CopyDesc  = std::pair<holoflow::core::MemLoc, MemcpySettings::Target>;
-  const std::map<CopyDesc, cudaMemcpyKind> copy_map = {
-      {{holoflow::core::MemLoc::Host, MemcpySettings::Target::Host}, cudaMemcpyHostToHost},
-      {{holoflow::core::MemLoc::Host, MemcpySettings::Target::Device}, cudaMemcpyHostToDevice},
-      {{holoflow::core::MemLoc::Device, MemcpySettings::Target::Host}, cudaMemcpyDeviceToHost},
-      {{holoflow::core::MemLoc::Device, MemcpySettings::Target::Device}, cudaMemcpyDeviceToDevice},
-  };
+class Memcpy : public holoflow::core::ISyncTask {
+public:
+  explicit Memcpy(MemcpySettings settings, cudaStream_t stream)
+      : settings_(std::move(settings)), stream_(stream) {}
 
-  HOLOVIBES_CHECK(copy_map.contains(copy_desc), "Invalid memory copy descriptor");
-  auto kind = copy_map.at(copy_desc);
-  if (kind == cudaMemcpyHostToHost) {
-    mt_memcpy(dst, src, n);
-  } else {
-    CUDA_CHECK(cudaMemcpyAsync(dst, src, n, kind, stream_));
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    auto *src       = ctx.inputs[0].data();
+    auto *dst       = ctx.outputs[0].data();
+    auto  n         = ctx.outputs[0].desc.num_bytes();
+    auto  copy_desc = std::make_pair(ctx.inputs[0].desc.mem_loc, settings_.target);
+    using CopyDesc  = std::pair<holoflow::core::MemLoc, MemcpySettings::Target>;
+    static const std::map<CopyDesc, cudaMemcpyKind> copy_map = {
+        {{holoflow::core::MemLoc::Host, MemcpySettings::Target::Host}, cudaMemcpyHostToHost},
+        {{holoflow::core::MemLoc::Host, MemcpySettings::Target::Device}, cudaMemcpyHostToDevice},
+        {{holoflow::core::MemLoc::Device, MemcpySettings::Target::Host}, cudaMemcpyDeviceToHost},
+        {{holoflow::core::MemLoc::Device, MemcpySettings::Target::Device}, cudaMemcpyDeviceToDevice},
+    };
+
+    HOLOVIBES_CHECK(copy_map.contains(copy_desc), "Invalid memory copy descriptor");
+    const auto kind = copy_map.at(copy_desc);
+    if (kind == cudaMemcpyHostToHost) {
+      mt_memcpy(dst, src, n);
+    } else {
+      CUDA_CHECK(cudaMemcpyAsync(dst, src, n, kind, stream_));
+    }
+
+    return holoflow::core::OpResult::Ok;
   }
 
-  return holoflow::core::OpResult::Ok;
-}
+  void update_stream(cudaStream_t stream) { stream_ = stream; }
+  const MemcpySettings &settings() const { return settings_; }
+
+private:
+  MemcpySettings settings_;
+  cudaStream_t   stream_;
+};
+
+// -------------------------------------------------------------------------------------------------
+// MemcpyFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult MemcpyFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                                  const nlohmann::json &jsettings) const {
-  const auto check = [&](bool condition, const std::string &msg) {
-    if (!condition) {
-      logger()->error("[MemcpyFactory::infer] error: {}", msg);
-      throw std::invalid_argument("MemcpyFactory inference error: " + msg);
-    }
-  };
-
-  auto settings = jsettings.get<MemcpySettings>();
-
-  // Validate
+  const auto settings = jsettings.get<MemcpySettings>();
   check(input_descs.size() == 1, "Memcpy task must have exactly one input");
 
-  // Success
   holoflow::core::TDesc out_desc = input_descs[0];
   out_desc.mem_loc               = settings.target == MemcpySettings::Target::Device
                                        ? holoflow::core::MemLoc::Device
@@ -141,13 +167,31 @@ std::unique_ptr<holoflow::core::ISyncTask>
 MemcpyFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                       const nlohmann::json                  &jsettings,
                       const holoflow::core::SyncCreateCtx   &ctx) const {
-  // Validate
-  this->infer(input_descs, jsettings);
-  auto settings = jsettings.get<MemcpySettings>();
+  (void)this->infer(input_descs, jsettings);
+  const auto settings = jsettings.get<MemcpySettings>();
 
-  // Success
-  auto *task = new Memcpy(settings, ctx.stream);
-  return std::unique_ptr<holoflow::core::ISyncTask>(task);
+  return std::make_unique<Memcpy>(settings, ctx.stream);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+MemcpyFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                      std::span<const holoflow::core::TDesc>     input_descs,
+                      const nlohmann::json                      &jsettings,
+                      const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)this->infer(input_descs, jsettings);
+
+  auto *old_memcpy = dynamic_cast<Memcpy *>(old_task.get());
+  if (old_memcpy == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  const auto settings = jsettings.get<MemcpySettings>();
+  if (settings == old_memcpy->settings()) {
+    old_memcpy->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holotask::syncs

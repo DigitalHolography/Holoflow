@@ -20,23 +20,20 @@
 
 namespace holotask::syncs {
 
-struct Wrap2PiSettings {};
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
+struct Wrap2PiSettings {
+  bool operator==(const Wrap2PiSettings &) const = default;
+};
 
 void to_json(nlohmann::json &j, const Wrap2PiSettings &s);
 void from_json(const nlohmann::json &j, Wrap2PiSettings &s);
 
-class Wrap2Pi : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  Wrap2Pi(const Wrap2PiSettings &settings, cudaStream_t stream);
-
-  friend class Wrap2PiFactory;
-
-  Wrap2PiSettings settings_;
-  cudaStream_t    stream_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class Wrap2PiFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -45,6 +42,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
