@@ -74,10 +74,33 @@ namespace {
 
 constexpr int kMaxNDim = 16;
 
+template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
+template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
+
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("Mean: " + msg);
   }
+}
+
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  if (desc.shape.size() != desc.strides.size()) {
+    return false;
+  }
+
+  size_t expected = holoflow::core::size_of(desc.dtype);
+  for (size_t i = desc.shape.size(); i-- > 0;) {
+    if (desc.strides[i] != expected) {
+      return false;
+    }
+    expected *= desc.shape[i];
+  }
+  return true;
+}
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
 }
 
 inline size_t num_elements(std::span<const size_t> shape) {
@@ -282,22 +305,50 @@ mean_kernel(const InT *__restrict__ in, typename MeanTraits<InT>::Out *out, int 
   out[tid] = MeanTraits<InT>::finish(sum, static_cast<float>(total_red));
 }
 
-} // namespace
+class Mean : public holoflow::core::ISyncTask {
+public:
+  Mean(MeanSettings settings, holoflow::core::TDesc idesc, cudaStream_t stream, size_t out_ndim,
+       size_t red_ndim, std::int64_t total_out, std::int64_t total_red,
+       HostPtr<std::int64_t> h_in_strides, DevPtr<std::int64_t> d_in_strides,
+       HostPtr<std::int64_t> h_out_strides, DevPtr<std::int64_t> d_out_strides,
+       HostPtr<int> h_out_to_in, DevPtr<int> d_out_to_in, HostPtr<int> h_red_axes,
+       DevPtr<int> d_red_axes, HostPtr<std::int64_t> h_red_strides,
+       DevPtr<std::int64_t> d_red_strides)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), stream_(stream),
+        out_ndim_(out_ndim), red_ndim_(red_ndim), total_out_(total_out), total_red_(total_red),
+        h_in_strides_(std::move(h_in_strides)), d_in_strides_(std::move(d_in_strides)),
+        h_out_strides_(std::move(h_out_strides)), d_out_strides_(std::move(d_out_strides)),
+        h_out_to_in_(std::move(h_out_to_in)), d_out_to_in_(std::move(d_out_to_in)),
+        h_red_axes_(std::move(h_red_axes)), d_red_axes_(std::move(d_red_axes)),
+        h_red_strides_(std::move(h_red_strides)), d_red_strides_(std::move(d_red_strides)) {}
 
-Mean::Mean(const MeanSettings &settings, const holoflow::core::TDesc &idesc, cudaStream_t stream, 
-           size_t out_ndim, size_t red_ndim,
-           std::int64_t total_out, std::int64_t total_red, HostPtr<std::int64_t> h_in_strides,
-           DevPtr<std::int64_t> d_in_strides, HostPtr<std::int64_t> h_out_strides,
-           DevPtr<std::int64_t> d_out_strides, HostPtr<int> h_out_to_in, DevPtr<int> d_out_to_in,
-           HostPtr<int> h_red_axes, DevPtr<int> d_red_axes, HostPtr<std::int64_t> h_red_strides,
-           DevPtr<std::int64_t> d_red_strides)
-    : settings_(settings), idesc_(idesc), stream_(stream), out_ndim_(out_ndim), red_ndim_(red_ndim),
-      total_out_(total_out), total_red_(total_red), h_in_strides_(std::move(h_in_strides)),
-      d_in_strides_(std::move(d_in_strides)), h_out_strides_(std::move(h_out_strides)),
-      d_out_strides_(std::move(d_out_strides)), h_out_to_in_(std::move(h_out_to_in)),
-      d_out_to_in_(std::move(d_out_to_in)), h_red_axes_(std::move(h_red_axes)),
-      d_red_axes_(std::move(d_red_axes)), h_red_strides_(std::move(h_red_strides)),
-      d_red_strides_(std::move(d_red_strides)) {}
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  const MeanSettings          &settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  MeanSettings          settings_;
+  holoflow::core::TDesc idesc_;
+  cudaStream_t          stream_;
+  size_t                out_ndim_;
+  size_t                red_ndim_;
+  std::int64_t          total_out_;
+  std::int64_t          total_red_;
+  HostPtr<std::int64_t> h_in_strides_;
+  DevPtr<std::int64_t>  d_in_strides_;
+  HostPtr<std::int64_t> h_out_strides_;
+  DevPtr<std::int64_t>  d_out_strides_;
+  HostPtr<int>          h_out_to_in_;
+  DevPtr<int>           d_out_to_in_;
+  HostPtr<int>          h_red_axes_;
+  DevPtr<int>           d_red_axes_;
+  HostPtr<std::int64_t> h_red_strides_;
+  DevPtr<std::int64_t>  d_red_strides_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Mean::execute(holoflow::core::SyncCtx &ctx) {
   auto       *idata = ctx.inputs[0].data();
@@ -362,6 +413,7 @@ holoflow::core::InferResult MeanFactory::infer(std::span<const holoflow::core::T
   const auto &idesc = input_descs[0];
 
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "only Device tensors are supported");
+  check(is_c_contiguous(idesc), "input must be C-contiguous");
   check(idesc.dtype == holoflow::core::DType::U8 || idesc.dtype == holoflow::core::DType::U16 ||
             idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::CF32,
         "unsupported input dtype");
@@ -385,9 +437,8 @@ std::unique_ptr<holoflow::core::ISyncTask>
 MeanFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                     const nlohmann::json                  &jsettings,
                     const holoflow::core::SyncCreateCtx   &ctx) const {
-  const auto infer_res = this->infer(input_descs, jsettings);
-  const auto settings  = jsettings.get<MeanSettings>();
-  (void)infer_res;
+  (void)infer(input_descs, jsettings);
+  const auto settings = jsettings.get<MeanSettings>();
 
   const auto &idesc = input_descs[0];
   const auto  plan  = build_plan(settings, idesc.shape);
@@ -474,18 +525,16 @@ MeanFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                     const nlohmann::json                       &jsettings,
                     const holoflow::core::SyncCreateCtx        &ctx) const {
 
+  (void)infer(input_descs, jsettings);
+
   auto* old_mean = dynamic_cast<Mean*>(old_task.get());
   if (old_mean != nullptr && input_descs.size() == 1) {
     
     const auto new_settings = jsettings.get<MeanSettings>();
     const auto& new_idesc   = input_descs[0];
-    const auto& old_idesc   = old_mean->get_idesc();
+    const auto& old_idesc   = old_mean->idesc();
 
-    bool can_reuse = (new_settings == old_mean->get_settings()) &&
-                     (new_idesc.shape == old_idesc.shape) &&
-                     (new_idesc.strides == old_idesc.strides) &&
-                     (new_idesc.dtype == old_idesc.dtype) &&
-                     (new_idesc.mem_loc == old_idesc.mem_loc);
+    bool can_reuse = (new_settings == old_mean->settings()) && same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_mean->update_stream(ctx.stream);
