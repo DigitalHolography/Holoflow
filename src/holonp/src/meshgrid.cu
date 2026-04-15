@@ -23,6 +23,10 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const MeshgridSettings &s) {
   j = nlohmann::json{
       {"indexing", (s.indexing == MeshgridIndexing::XY ? "xy" : "ij")},
@@ -64,6 +68,10 @@ void from_json(const nlohmann::json &j, MeshgridSettings &s) {
 }
 
 namespace {
+
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
 
 static constexpr int kMaxRank = 8;
 
@@ -166,10 +174,26 @@ inline void free_dims_and_strides(DeviceDims &dd, cudaStream_t stream) {
   dd = {};
 }
 
-} // namespace
+// -------------------------------------------------------------------------------------------------
+// Meshgrid task implementation
+// -------------------------------------------------------------------------------------------------
 
-Meshgrid::Meshgrid(const MeshgridSettings &settings, cudaStream_t stream)
-    : settings_(settings), stream_(stream) {}
+class Meshgrid : public holoflow::core::ISyncTask {
+public:
+  explicit Meshgrid(MeshgridSettings settings, cudaStream_t stream)
+      : settings_(std::move(settings)), stream_(stream) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const MeshgridSettings &settings() const { return settings_; }
+  void                    update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  MeshgridSettings settings_;
+  cudaStream_t     stream_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Meshgrid::execute(holoflow::core::SyncCtx &ctx) {
   const int n = static_cast<int>(ctx.inputs.size());
@@ -254,6 +278,10 @@ holoflow::core::OpResult Meshgrid::execute(holoflow::core::SyncCtx &ctx) {
   return holoflow::core::OpResult::Ok;
 }
 
+// -------------------------------------------------------------------------------------------------
+// MeshgridFactory
+// -------------------------------------------------------------------------------------------------
+
 holoflow::core::InferResult
 MeshgridFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                        const nlohmann::json                  &jsettings) const {
@@ -289,6 +317,8 @@ MeshgridFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
     check(td.mem_loc == memloc, "all inputs must share the same mem_loc");
     check(td.dtype == dtype, "all inputs must share the same dtype");
     check(td.shape.size() == 1, "all inputs must be 1-D vectors");
+    holoflow::core::TDesc contiguous(td.shape, td.dtype, td.mem_loc, td.offset);
+    check(td.strides == contiguous.strides, "all inputs must be contiguous");
     lens.push_back(static_cast<std::int64_t>(td.shape[0]));
   }
 
@@ -322,7 +352,28 @@ MeshgridFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                         const holoflow::core::SyncCreateCtx   &ctx) const {
   (void)this->infer(input_descs, jsettings);
   const auto settings = jsettings.get<MeshgridSettings>();
-  return std::unique_ptr<holoflow::core::ISyncTask>(new Meshgrid(settings, ctx.stream));
+  return std::make_unique<Meshgrid>(settings, ctx.stream);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+MeshgridFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                        std::span<const holoflow::core::TDesc>     input_descs,
+                        const nlohmann::json                      &jsettings,
+                        const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_meshgrid = dynamic_cast<Meshgrid *>(old_task.get());
+  if (old_meshgrid == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  const auto settings = jsettings.get<MeshgridSettings>();
+  if (settings == old_meshgrid->settings()) {
+    old_meshgrid->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp

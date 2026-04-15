@@ -19,11 +19,13 @@
 #include <span>
 #include <vector>
 
-#include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
-#include "holoflow/core/tensor.hh"
 
 namespace holonp {
+
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
 
 struct ReshapeSettings {
   // Target shape. One dimension can be -1 (inferred).
@@ -34,44 +36,15 @@ struct ReshapeSettings {
   // false        = Force View (raise error if copy needed)
   std::optional<bool> copy = std::nullopt;
 
-  bool operator==(const ReshapeSettings &other) const {
-    return shape == other.shape && copy == other.copy;
-  }
+  bool operator==(const ReshapeSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const ReshapeSettings &s);
 void from_json(const nlohmann::json &j, ReshapeSettings &s);
 
-class Reshape : public holoflow::core::ISyncTask {
-public:
-  // Constructor for the Copy case
-  Reshape(const ReshapeSettings &settings, const holoflow::core::TDesc &idesc, size_t ndim,
-          size_t total_elems, size_t elem_size, curaii::unique_device_ptr<int64_t> d_src_strides,
-          curaii::unique_device_ptr<int64_t> d_src_shape, cudaStream_t stream);
-
-  // Constructor for the View case (No-op)
-  Reshape(const ReshapeSettings &settings, const holoflow::core::TDesc &idesc);
-
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-  const holoflow::core::TDesc &get_idesc() const { return idesc_; }
-  const ReshapeSettings       &get_settings() const { return settings_; }
-  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
-
-private:
-  bool                  is_view_;
-  ReshapeSettings       settings_;
-  holoflow::core::TDesc idesc_;
-
-  // Copy-only parameters
-  size_t       ndim_        = 0;
-  size_t       total_elems_ = 0;
-  size_t       elem_size_   = 0;
-  cudaStream_t stream_      = nullptr;
-
-  curaii::unique_device_ptr<int64_t> d_src_strides_;
-  curaii::unique_device_ptr<int64_t> d_src_shape_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class ReshapeFactory : public holoflow::core::ISyncTaskFactory {
 public:

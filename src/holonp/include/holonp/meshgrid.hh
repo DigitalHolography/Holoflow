@@ -14,12 +14,9 @@
 
 #pragma once
 
-#include <cstdint>
-#include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <span>
-#include <string>
 #include <vector>
 
 #include "holoflow/core/tasks.hh"
@@ -28,26 +25,24 @@ namespace holonp {
 
 enum class MeshgridIndexing { XY, IJ };
 
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 struct MeshgridSettings {
   MeshgridIndexing    indexing = MeshgridIndexing::XY;
   std::optional<bool> copy     = std::nullopt; // numpy default: true
   std::optional<bool> sparse   = std::nullopt; // numpy default: false
+
+  bool operator==(const MeshgridSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const MeshgridSettings &s);
 void from_json(const nlohmann::json &j, MeshgridSettings &s);
 
-class Meshgrid : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  Meshgrid(const MeshgridSettings &settings, cudaStream_t stream);
-  friend class MeshgridFactory;
-
-  MeshgridSettings settings_;
-  cudaStream_t     stream_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class MeshgridFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -56,6 +51,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

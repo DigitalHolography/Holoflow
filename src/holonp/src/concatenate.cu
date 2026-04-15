@@ -26,6 +26,10 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const ConcatenateSettings &s) {
   if (s.axis.has_value()) {
     j = nlohmann::json{{"axis", *s.axis}};
@@ -50,6 +54,10 @@ void from_json(const nlohmann::json &j, ConcatenateSettings &s) {
 }
 
 namespace {
+
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
 
 constexpr std::int64_t kMaxI64 = std::numeric_limits<std::int64_t>::max();
 
@@ -104,6 +112,8 @@ ConcatPlan build_plan(const ConcatenateSettings             &settings,
   for (const auto &desc : input_descs) {
     check(desc.mem_loc == mem_loc, "all inputs must share the same mem_loc");
     check(desc.dtype == dtype, "all inputs must share the same dtype");
+    holoflow::core::TDesc contiguous(desc.shape, desc.dtype, desc.mem_loc, desc.offset);
+    check(desc.strides == contiguous.strides, "all inputs must be contiguous");
   }
 
   ConcatPlan plan;
@@ -183,13 +193,39 @@ __global__ void concat_kernel(const T *__restrict__ in, T *__restrict__ out, std
   out[out_idx] = in[tid];
 }
 
-} // namespace
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
+}
 
-Concatenate::Concatenate(const ConcatenateSettings &settings, cudaStream_t stream,
-                         std::int64_t inner, std::int64_t out_axis_dim,
-                         std::vector<ConcatenateInputPlan> inputs)
-    : settings_(settings), stream_(stream), inner_(inner), out_axis_dim_(out_axis_dim),
-      inputs_(std::move(inputs)) {}
+// -------------------------------------------------------------------------------------------------
+// Concatenate task implementation
+// -------------------------------------------------------------------------------------------------
+
+class Concatenate : public holoflow::core::ISyncTask {
+public:
+  Concatenate(ConcatenateSettings settings, cudaStream_t stream, std::int64_t inner,
+              std::int64_t out_axis_dim, std::vector<ConcatenateInputPlan> inputs,
+              std::vector<holoflow::core::TDesc> input_descs)
+      : settings_(std::move(settings)), stream_(stream), inner_(inner), out_axis_dim_(out_axis_dim),
+        inputs_(std::move(inputs)), input_descs_(std::move(input_descs)) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const ConcatenateSettings &settings() const { return settings_; }
+  const std::vector<holoflow::core::TDesc> &input_descs() const { return input_descs_; }
+  void update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  ConcatenateSettings               settings_;
+  cudaStream_t                      stream_;
+  std::int64_t                      inner_;
+  std::int64_t                      out_axis_dim_;
+  std::vector<ConcatenateInputPlan> inputs_;
+  std::vector<holoflow::core::TDesc> input_descs_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Concatenate::execute(holoflow::core::SyncCtx &ctx) {
   if (ctx.outputs.size() != 1 || ctx.inputs.size() != inputs_.size()) {
@@ -258,14 +294,16 @@ holoflow::core::OpResult Concatenate::execute(holoflow::core::SyncCtx &ctx) {
   return holoflow::core::OpResult::Ok;
 }
 
+// -------------------------------------------------------------------------------------------------
+// ConcatenateFactory
+// -------------------------------------------------------------------------------------------------
+
 holoflow::core::InferResult
 ConcatenateFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                           const nlohmann::json                  &jsettings) const {
   const auto settings = jsettings.get<ConcatenateSettings>();
   const auto plan     = build_plan(settings, input_descs);
 
-  // holoflow::core::TDesc odesc = input_descs[0];
-  // odesc.shape                 = plan.out_shape;
   auto                  oshape = plan.out_shape;
   holoflow::core::TDesc odesc(oshape, input_descs[0].dtype, input_descs[0].mem_loc);
 
@@ -286,8 +324,36 @@ ConcatenateFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const auto settings = jsettings.get<ConcatenateSettings>();
   auto       plan     = build_plan(settings, input_descs);
 
-  return std::unique_ptr<holoflow::core::ISyncTask>(
-      new Concatenate(settings, ctx.stream, plan.inner, plan.out_axis_dim, std::move(plan.inputs)));
+  return std::make_unique<Concatenate>(settings, ctx.stream, plan.inner, plan.out_axis_dim,
+                                       std::move(plan.inputs),
+                                       std::vector<holoflow::core::TDesc>(input_descs.begin(),
+                                                                          input_descs.end()));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+ConcatenateFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                           std::span<const holoflow::core::TDesc>     input_descs,
+                           const nlohmann::json                      &jsettings,
+                           const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_concat = dynamic_cast<Concatenate *>(old_task.get());
+  if (old_concat == nullptr || input_descs.size() != old_concat->input_descs().size()) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  const auto settings = jsettings.get<ConcatenateSettings>();
+  bool same_inputs = settings == old_concat->settings();
+  for (size_t i = 0; same_inputs && i < input_descs.size(); ++i) {
+    same_inputs = same_desc(input_descs[i], old_concat->input_descs()[i]);
+  }
+
+  if (same_inputs) {
+    old_concat->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp

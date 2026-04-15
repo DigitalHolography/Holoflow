@@ -22,9 +22,9 @@
 
 namespace holonp {
 
-// -----------------------------------------------------------------------------
-// JSON Serialization
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const TransposeSettings &s) {
   j = nlohmann::json{{"axes", s.axes}};
@@ -35,11 +35,11 @@ void from_json(const nlohmann::json &j, TransposeSettings &s) {
     j.at("axes").get_to(s.axes);
 }
 
-// -----------------------------------------------------------------------------
-// Helpers
-// -----------------------------------------------------------------------------
-
 namespace {
+
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
 
 constexpr int kKernelMaxNDim = 16;
 
@@ -82,14 +82,22 @@ std::vector<size_t> get_strides_bytes(const holoflow::core::TDesc &desc) {
   return strides;
 }
 
+// -------------------------------------------------------------------------------------------------
+// Transpose task implementation
+// -------------------------------------------------------------------------------------------------
+
+class Transpose : public holoflow::core::ISyncTask {
+public:
+  explicit Transpose(cudaStream_t stream) : stream_(stream) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+  void                     update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  cudaStream_t stream_;
+};
+
 } // namespace
-
-// -----------------------------------------------------------------------------
-// Implementation
-// -----------------------------------------------------------------------------
-
-Transpose::Transpose(cudaStream_t stream, size_t num_bytes)
-    : stream_(stream), num_bytes_(num_bytes) {}
 
 holoflow::core::OpResult Transpose::execute(holoflow::core::SyncCtx &ctx) {
   (void)ctx;
@@ -100,6 +108,10 @@ holoflow::core::OpResult Transpose::execute(holoflow::core::SyncCtx &ctx) {
   // This is a true zero-cost view transpose.
   return holoflow::core::OpResult::Ok;
 }
+
+// -------------------------------------------------------------------------------------------------
+// TransposeFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult
 TransposeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
@@ -142,13 +154,24 @@ std::unique_ptr<holoflow::core::ISyncTask>
 TransposeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                          const nlohmann::json                  &jsettings,
                          const holoflow::core::SyncCreateCtx   &ctx) const {
-  (void)jsettings;
-  const auto &idesc = input_descs[0];
+  (void)infer(input_descs, jsettings);
+  return std::make_unique<Transpose>(ctx.stream);
+}
 
-  // We only need the total byte size to handle the memcpy fallback if aliasing fails.
-  size_t num_bytes = idesc.num_bytes();
+std::unique_ptr<holoflow::core::ISyncTask>
+TransposeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                         std::span<const holoflow::core::TDesc>     input_descs,
+                         const nlohmann::json                      &jsettings,
+                         const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
 
-  return std::unique_ptr<holoflow::core::ISyncTask>(new Transpose(ctx.stream, num_bytes));
+  auto *old_transpose = dynamic_cast<Transpose *>(old_task.get());
+  if (old_transpose == nullptr || input_descs.size() != 1) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  old_transpose->update_stream(ctx.stream);
+  return old_task;
 }
 
 } // namespace holonp

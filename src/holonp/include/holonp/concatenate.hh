@@ -11,7 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//
+
 #pragma once
 
 #include <cstdint>
@@ -24,9 +24,15 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 struct ConcatenateSettings {
   // NumPy-like axis selection. null => flatten inputs before concatenation.
   std::optional<int> axis = 0;
+
+  bool operator==(const ConcatenateSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const ConcatenateSettings &s);
@@ -38,21 +44,9 @@ struct ConcatenateInputPlan {
   std::int64_t axis_offset = 0;
 };
 
-class Concatenate : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  Concatenate(const ConcatenateSettings &settings, cudaStream_t stream, std::int64_t inner,
-              std::int64_t out_axis_dim, std::vector<ConcatenateInputPlan> inputs);
-  friend class ConcatenateFactory;
-
-  ConcatenateSettings               settings_;
-  cudaStream_t                      stream_;
-  std::int64_t                      inner_;
-  std::int64_t                      out_axis_dim_;
-  std::vector<ConcatenateInputPlan> inputs_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class ConcatenateFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -61,6 +55,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

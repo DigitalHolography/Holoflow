@@ -13,12 +13,19 @@
 // limitations under the License.
 
 #include "holonp/reshape.hh"
+
+#include "curaii/cuda.hh"
+
 #include <numeric>
 #include <stdexcept>
 
 namespace holonp {
 
 namespace {
+
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
 
 // Resolves -1 in target shape and validates the total element count
 std::vector<size_t> resolve_shape(const std::vector<int64_t> &target_shape, size_t total_elems) {
@@ -178,7 +185,50 @@ __global__ void reshape_copy_kernel(const std::byte *__restrict__ src, std::byte
   }
 }
 
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
+}
+
+// -------------------------------------------------------------------------------------------------
+// Reshape task implementation
+// -------------------------------------------------------------------------------------------------
+
+class Reshape : public holoflow::core::ISyncTask {
+public:
+  Reshape(ReshapeSettings settings, holoflow::core::TDesc idesc, size_t ndim, size_t total_elems,
+          size_t elem_size, curaii::unique_device_ptr<int64_t> d_src_strides,
+          curaii::unique_device_ptr<int64_t> d_src_shape, cudaStream_t stream)
+      : is_view_(false), settings_(std::move(settings)), idesc_(std::move(idesc)), ndim_(ndim),
+        total_elems_(total_elems), elem_size_(elem_size), stream_(stream),
+        d_src_strides_(std::move(d_src_strides)), d_src_shape_(std::move(d_src_shape)) {}
+
+  Reshape(ReshapeSettings settings, holoflow::core::TDesc idesc)
+      : is_view_(true), settings_(std::move(settings)), idesc_(std::move(idesc)) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  const ReshapeSettings       &settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  bool                  is_view_;
+  ReshapeSettings       settings_;
+  holoflow::core::TDesc idesc_;
+  size_t                ndim_        = 0;
+  size_t                total_elems_ = 0;
+  size_t                elem_size_   = 0;
+  cudaStream_t          stream_      = nullptr;
+  curaii::unique_device_ptr<int64_t> d_src_strides_;
+  curaii::unique_device_ptr<int64_t> d_src_shape_;
+};
+
 } // namespace
+
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const ReshapeSettings &s) {
   j = nlohmann::json{{"shape", s.shape}};
@@ -197,9 +247,9 @@ void from_json(const nlohmann::json &j, ReshapeSettings &s) {
   }
 }
 
-// -----------------------------------------------------------------------------
-// Factory: Infer
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
+// ReshapeFactory
+// -------------------------------------------------------------------------------------------------
 holoflow::core::InferResult
 ReshapeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                       const nlohmann::json                  &jsettings) const {
@@ -247,9 +297,6 @@ ReshapeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
           .kind          = holoflow::core::TaskKind::Sync};
 }
 
-// -----------------------------------------------------------------------------
-// Factory: Create
-// -----------------------------------------------------------------------------
 std::unique_ptr<holoflow::core::ISyncTask>
 ReshapeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                        const nlohmann::json                  &jsettings,
@@ -302,12 +349,10 @@ ReshapeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   if (old_reshape != nullptr && input_descs.size() == 1) {
     const auto  new_settings = jsettings.get<ReshapeSettings>();
     const auto &new_idesc    = input_descs[0];
-    const auto &old_idesc    = old_reshape->get_idesc();
+    const auto &old_idesc    = old_reshape->idesc();
 
     bool can_reuse =
-        (new_settings == old_reshape->get_settings()) && (new_idesc.shape == old_idesc.shape) &&
-        (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
-        (new_idesc.mem_loc == old_idesc.mem_loc);
+        (new_settings == old_reshape->settings()) && same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_reshape->update_stream(ctx.stream);
@@ -317,23 +362,6 @@ ReshapeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 
   return create(input_descs, jsettings, ctx);
 }
-
-// -----------------------------------------------------------------------------
-// Task Execution
-// -----------------------------------------------------------------------------
-
-// View Constructor
-Reshape::Reshape(const ReshapeSettings &settings, const holoflow::core::TDesc &idesc)
-    : is_view_(true), settings_(settings), idesc_(idesc) {}
-
-// Copy Constructor
-Reshape::Reshape(const ReshapeSettings &settings, const holoflow::core::TDesc &idesc, size_t ndim,
-                 size_t total_elems, size_t elem_size,
-                 curaii::unique_device_ptr<int64_t> d_src_strides,
-                 curaii::unique_device_ptr<int64_t> d_src_shape, cudaStream_t stream)
-    : is_view_(false), settings_(settings), idesc_(idesc), ndim_(ndim), total_elems_(total_elems),
-      elem_size_(elem_size), stream_(stream), d_src_strides_(std::move(d_src_strides)),
-      d_src_shape_(std::move(d_src_shape)) {}
 
 holoflow::core::OpResult Reshape::execute(holoflow::core::SyncCtx &ctx) {
   if (is_view_ || total_elems_ == 0) {

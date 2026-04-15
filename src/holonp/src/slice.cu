@@ -22,7 +22,9 @@
 
 namespace holonp {
 
-// --- JSON Serialization: SliceRange ---
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const SliceRange &s) {
   j = nlohmann::json{
@@ -49,8 +51,6 @@ void from_json(const nlohmann::json &j, SliceRange &s) {
   s.step = j.value("step", 1);
 }
 
-// --- JSON Serialization: SliceItem (Variant) ---
-
 void to_json(nlohmann::json &j, const SliceItem &s) {
   std::visit(
       [&](auto &&arg) {
@@ -74,8 +74,6 @@ void from_json(const nlohmann::json &j, SliceItem &s) {
   }
 }
 
-// --- JSON Serialization: SliceSettings ---
-
 void to_json(nlohmann::json &j, const SliceSettings &s) {
   j = nlohmann::json{{"slices", s.slices}};
 }
@@ -83,6 +81,10 @@ void to_json(nlohmann::json &j, const SliceSettings &s) {
 void from_json(const nlohmann::json &j, SliceSettings &s) { j.at("slices").get_to(s.slices); }
 
 namespace {
+
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
 
 constexpr int kMaxNDim = 16;
 
@@ -163,12 +165,25 @@ inline std::vector<size_t> ensure_strides(const holoflow::core::TDesc &desc) {
   return strides;
 }
 
+// -------------------------------------------------------------------------------------------------
+// Slice task implementation
+// -------------------------------------------------------------------------------------------------
+
+class Slice : public holoflow::core::ISyncTask {
+public:
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+};
+
 } // namespace
 
 holoflow::core::OpResult Slice::execute(holoflow::core::SyncCtx &ctx) {
   (void)ctx;
   return holoflow::core::OpResult::Ok;
 }
+
+// -------------------------------------------------------------------------------------------------
+// SliceFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult SliceFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                                 const nlohmann::json &jsettings) const {
@@ -243,7 +258,23 @@ SliceFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                      const holoflow::core::SyncCreateCtx   &ctx) const {
   (void)infer(input_descs, jsettings);
   (void)ctx;
-  return std::unique_ptr<holoflow::core::ISyncTask>(new Slice());
+  return std::make_unique<Slice>();
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+SliceFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                     std::span<const holoflow::core::TDesc>     input_descs,
+                     const nlohmann::json                      &jsettings,
+                     const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)ctx;
+  (void)infer(input_descs, jsettings);
+
+  auto *old_slice = dynamic_cast<Slice *>(old_task.get());
+  if (old_slice == nullptr || input_descs.size() != 1) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  return old_task;
 }
 
 } // namespace holonp

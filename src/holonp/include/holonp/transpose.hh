@@ -15,40 +15,32 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
 #include <nlohmann/json.hpp>
 #include <span>
 #include <vector>
 
-#include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
 
-template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
-template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
-
 namespace holonp {
+
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
 
 struct TransposeSettings {
   // Permutation of axes. Must have length == input.ndim.
   // Negative axes are allowed (e.g. -1).
   std::vector<int> axes;
+
+  bool operator==(const TransposeSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const TransposeSettings &s);
 void from_json(const nlohmann::json &j, TransposeSettings &s);
 
-class Transpose : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  Transpose(cudaStream_t stream, size_t num_bytes);
-
-  friend class TransposeFactory;
-
-  cudaStream_t stream_;
-  size_t       num_bytes_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class TransposeFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -57,6 +49,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

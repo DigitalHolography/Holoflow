@@ -14,19 +14,20 @@
 
 #pragma once
 
+#include <cstdint>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <span>
 #include <variant>
 #include <vector>
 
-#include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
 
-template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
-template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
-
 namespace holonp {
+
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
 
 // Represents a range selection (e.g., 0:5:1)
 // Preserves dimensionality.
@@ -34,6 +35,8 @@ struct SliceRange {
   std::optional<std::int64_t> start = std::nullopt;
   std::optional<std::int64_t> stop  = std::nullopt;
   std::int64_t                step  = 1;
+
+  bool operator==(const SliceRange &) const = default;
 };
 
 // Represents either a SliceRange or a direct Index
@@ -43,6 +46,8 @@ using SliceItem = std::variant<SliceRange, std::int64_t>;
 
 struct SliceSettings {
   std::vector<SliceItem> slices;
+
+  bool operator==(const SliceSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const SliceRange &s);
@@ -54,17 +59,9 @@ void from_json(const nlohmann::json &j, SliceItem &s);
 void to_json(nlohmann::json &j, const SliceSettings &s);
 void from_json(const nlohmann::json &j, SliceSettings &s);
 
-// Creates a view into the tensor without copying data.
-// Supports both slicing (sub-views) and integer indexing (dimensionality reduction).
-class Slice : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  Slice() = default;
-
-  friend class SliceFactory;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class SliceFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -73,6 +70,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
