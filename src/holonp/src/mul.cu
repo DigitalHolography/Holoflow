@@ -13,7 +13,9 @@
 // limitations under the License.
 
 #include "holonp/mul.hh"
+
 #include <cuComplex.h>
+#include <array>
 #include <type_traits>
 #include <utility>
 
@@ -23,6 +25,8 @@ void to_json(nlohmann::json &j, const MulSettings &) { j = nlohmann::json::objec
 void from_json(const nlohmann::json &, MulSettings &) {}
 
 namespace {
+
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 // Runtime type promotion logic (NumPy style)
 holoflow::core::DType promote_dtype(holoflow::core::DType a, holoflow::core::DType b) {
@@ -93,6 +97,11 @@ inline void check(bool cond, const std::string &msg) {
   }
 }
 
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
+}
+
 std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
   size_t esize = holoflow::core::size_of(d.dtype);
   if (!d.strides.empty()) {
@@ -110,15 +119,36 @@ std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
   return s;
 }
 
-} // namespace
+class Mul : public holoflow::core::ISyncTask {
+public:
+  Mul(MulSettings settings, std::array<holoflow::core::TDesc, 2> idescs, cudaStream_t stream,
+      holoflow::core::DType dtype_a, holoflow::core::DType dtype_b, size_t total_out, size_t ndim,
+      DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides)
+      : settings_(std::move(settings)), idescs_(std::move(idescs)), stream_(stream),
+        dtype_a_(dtype_a), dtype_b_(dtype_b), total_out_(total_out), ndim_(ndim),
+        d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
+        d_b_strides_(std::move(d_b_strides)) {}
 
-Mul::Mul(const MulSettings &settings, std::array<holoflow::core::TDesc, 2> idescs,
-         cudaStream_t stream, holoflow::core::DType dtype_a, holoflow::core::DType dtype_b,
-         size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides,
-         DevPtr<size_t> d_b_strides)
-    : settings_(settings), idescs_(std::move(idescs)), stream_(stream), dtype_a_(dtype_a),
-      dtype_b_(dtype_b), total_out_(total_out), ndim_(ndim), d_out_shape_(std::move(d_out_shape)),
-      d_a_strides_(std::move(d_a_strides)), d_b_strides_(std::move(d_b_strides)) {}
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const std::array<holoflow::core::TDesc, 2> &idescs() const { return idescs_; }
+  const MulSettings                          &settings() const { return settings_; }
+  void                                        update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  MulSettings                          settings_;
+  std::array<holoflow::core::TDesc, 2> idescs_;
+  cudaStream_t                         stream_;
+  holoflow::core::DType                dtype_a_;
+  holoflow::core::DType                dtype_b_;
+  size_t                               total_out_;
+  size_t                               ndim_;
+  DevPtr<size_t>                       d_out_shape_;
+  DevPtr<size_t>                       d_a_strides_;
+  DevPtr<size_t>                       d_b_strides_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Mul::execute(holoflow::core::SyncCtx &ctx) {
   if (total_out_ == 0)
@@ -212,6 +242,8 @@ holoflow::core::InferResult MulFactory::infer(std::span<const holoflow::core::TD
 std::unique_ptr<holoflow::core::ISyncTask>
 MulFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &j,
                    const holoflow::core::SyncCreateCtx &ctx) const {
+  (void)infer(inputs, j);
+
   const auto &a = inputs[0], &b = inputs[1];
   auto        res      = infer(inputs, j);
   auto        settings = j.get<MulSettings>();
@@ -257,19 +289,12 @@ MulFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 
   auto *old_mul = dynamic_cast<Mul *>(old_task.get());
   if (old_mul != nullptr && input_descs.size() == 2) {
-
     const auto  new_settings = jsettings.get<MulSettings>();
-    const auto &old_idescs   = old_mul->get_idescs();
+    const auto &old_idescs   = old_mul->idescs();
 
-    bool can_reuse = (new_settings == old_mul->get_settings()) &&
-                     (input_descs[0].shape == old_idescs[0].shape) &&
-                     (input_descs[0].strides == old_idescs[0].strides) &&
-                     (input_descs[0].dtype == old_idescs[0].dtype) &&
-                     (input_descs[0].mem_loc == old_idescs[0].mem_loc) &&
-                     (input_descs[1].shape == old_idescs[1].shape) &&
-                     (input_descs[1].strides == old_idescs[1].strides) &&
-                     (input_descs[1].dtype == old_idescs[1].dtype) &&
-                     (input_descs[1].mem_loc == old_idescs[1].mem_loc);
+    bool can_reuse = (new_settings == old_mul->settings()) &&
+                     same_desc(input_descs[0], old_idescs[0]) &&
+                     same_desc(input_descs[1], old_idescs[1]);
 
     if (can_reuse) {
       old_mul->update_stream(ctx.stream);

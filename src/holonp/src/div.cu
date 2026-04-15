@@ -16,6 +16,7 @@
 
 #include <cuComplex.h>
 #include <type_traits>
+#include <vector>
 
 namespace holonp {
 
@@ -23,6 +24,8 @@ void to_json(nlohmann::json &j, const DivSettings &) { j = nlohmann::json::objec
 void from_json(const nlohmann::json &, DivSettings &) {}
 
 namespace {
+
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 template <typename T>
 __global__ void div_kernel(const T *__restrict__ a, const T *__restrict__ b, T *__restrict__ out,
@@ -53,6 +56,11 @@ inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("Div: " + msg);
   }
+}
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
 }
 
 std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
@@ -98,14 +106,32 @@ div_kernel_cf32_scalar(const cuFloatComplex *__restrict__ a, const Scalar *__res
   out[idx] = cuCdivf(a[a_off], denom);
 }
 
-} // namespace
+class Div : public holoflow::core::ISyncTask {
+public:
+  Div(cudaStream_t stream, std::vector<holoflow::core::TDesc> idescs,
+      holoflow::core::DType out_dtype, size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape,
+      DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides)
+      : stream_(stream), idescs_(std::move(idescs)), out_dtype_(out_dtype), total_out_(total_out),
+        ndim_(ndim), d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
+        d_b_strides_(std::move(d_b_strides)) {}
 
-Div::Div(cudaStream_t stream, const std::vector<holoflow::core::TDesc> &idescs,
-         holoflow::core::DType out_dtype, size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape,
-         DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides)
-    : stream_(stream), idescs_(idescs), out_dtype_(out_dtype), total_out_(total_out), ndim_(ndim),
-      d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
-      d_b_strides_(std::move(d_b_strides)) {}
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const std::vector<holoflow::core::TDesc> &idescs() const { return idescs_; }
+  void                                      update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  cudaStream_t                       stream_;
+  std::vector<holoflow::core::TDesc> idescs_;
+  holoflow::core::DType              out_dtype_;
+  size_t                             total_out_;
+  size_t                             ndim_;
+  DevPtr<size_t>                     d_out_shape_;
+  DevPtr<size_t>                     d_a_strides_;
+  DevPtr<size_t>                     d_b_strides_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Div::execute(holoflow::core::SyncCtx &ctx) {
   if (total_out_ == 0)
@@ -222,6 +248,8 @@ holoflow::core::InferResult DivFactory::infer(std::span<const holoflow::core::TD
 std::unique_ptr<holoflow::core::ISyncTask>
 DivFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &j,
                    const holoflow::core::SyncCreateCtx &ctx) const {
+  (void)infer(inputs, j);
+
   const auto &a = inputs[0], &b = inputs[1];
   auto        res   = infer(inputs, j);
   const auto &odesc = res.output_descs[0];
@@ -266,19 +294,8 @@ DivFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 
   auto *old_div = dynamic_cast<Div *>(old_task.get());
   if (old_div && input_descs.size() == 2) {
-    const auto &old_idescs = old_div->get_idescs();
-
-    bool match = true;
-    for (size_t i = 0; i < 2; ++i) {
-      if (input_descs[i].shape != old_idescs[i].shape ||
-          input_descs[i].strides != old_idescs[i].strides ||
-          input_descs[i].dtype != old_idescs[i].dtype) {
-        match = false;
-        break;
-      }
-    }
-
-    if (match) {
+    const auto &old_idescs = old_div->idescs();
+    if (same_desc(input_descs[0], old_idescs[0]) && same_desc(input_descs[1], old_idescs[1])) {
       old_div->update_stream(ctx.stream);
       return old_task;
     }

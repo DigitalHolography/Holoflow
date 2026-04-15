@@ -61,10 +61,17 @@ void from_json(const nlohmann::json &j, NormalizeSettings &s) {
 
 namespace {
 
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("Normalize: " + msg);
   }
+}
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
 }
 
 int get_dtype_size(holoflow::core::DType dt) {
@@ -295,21 +302,50 @@ NormalizePlan build_plan(const holoflow::core::TDesc &idesc, const NormalizeSett
   return plan;
 }
 
-} // namespace
+class Normalize : public holoflow::core::ISyncTask {
+public:
+  Normalize(NormalizeSettings settings, holoflow::core::TDesc idesc, cudaStream_t stream,
+            size_t ndim, size_t group_ndim, size_t red_ndim, size_t total_elems,
+            size_t total_groups, size_t total_red, DevPtr<size_t> shape,
+            DevPtr<size_t> in_strides, DevPtr<size_t> out_strides, DevPtr<int> group_axes,
+            DevPtr<size_t> group_strides, DevPtr<int> red_axes, DevPtr<size_t> red_strides,
+            DevPtr<float> group_mins, DevPtr<float> group_maxs)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), stream_(stream), ndim_(ndim),
+        group_ndim_(group_ndim), red_ndim_(red_ndim), total_elems_(total_elems),
+        total_groups_(total_groups), total_red_(total_red), d_shape_(std::move(shape)),
+        d_in_strides_(std::move(in_strides)), d_out_strides_(std::move(out_strides)),
+        d_group_axes_(std::move(group_axes)), d_group_strides_(std::move(group_strides)),
+        d_red_axes_(std::move(red_axes)), d_red_strides_(std::move(red_strides)),
+        d_group_mins_(std::move(group_mins)), d_group_maxs_(std::move(group_maxs)) {}
 
-Normalize::Normalize(const NormalizeSettings &settings, const holoflow::core::TDesc &idesc,
-                     cudaStream_t stream, size_t ndim, size_t group_ndim, size_t red_ndim,
-                     size_t total_elems, size_t total_groups, size_t total_red,
-                     DevPtr<size_t> shape, DevPtr<size_t> in_strides, DevPtr<size_t> out_strides,
-                     DevPtr<int> group_axes, DevPtr<size_t> group_strides, DevPtr<int> red_axes,
-                     DevPtr<size_t> red_strides, DevPtr<float> group_mins, DevPtr<float> group_maxs)
-    : settings_(settings), idesc_(idesc), stream_(stream), ndim_(ndim), group_ndim_(group_ndim),
-      red_ndim_(red_ndim), total_elems_(total_elems), total_groups_(total_groups),
-      total_red_(total_red), d_shape_(std::move(shape)), d_in_strides_(std::move(in_strides)),
-      d_out_strides_(std::move(out_strides)), d_group_axes_(std::move(group_axes)),
-      d_group_strides_(std::move(group_strides)), d_red_axes_(std::move(red_axes)),
-      d_red_strides_(std::move(red_strides)), d_group_mins_(std::move(group_mins)),
-      d_group_maxs_(std::move(group_maxs)) {}
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const NormalizeSettings     &settings() const { return settings_; }
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  NormalizeSettings     settings_;
+  holoflow::core::TDesc idesc_;
+  cudaStream_t          stream_;
+  size_t                ndim_;
+  size_t                group_ndim_;
+  size_t                red_ndim_;
+  size_t                total_elems_;
+  size_t                total_groups_;
+  size_t                total_red_;
+  DevPtr<size_t>        d_shape_;
+  DevPtr<size_t>        d_in_strides_;
+  DevPtr<size_t>        d_out_strides_;
+  DevPtr<int>           d_group_axes_;
+  DevPtr<size_t>        d_group_strides_;
+  DevPtr<int>           d_red_axes_;
+  DevPtr<size_t>        d_red_strides_;
+  DevPtr<float>         d_group_mins_;
+  DevPtr<float>         d_group_maxs_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Normalize::execute(holoflow::core::SyncCtx &ctx) {
   auto       *idata = ctx.inputs[0].data();
@@ -381,6 +417,8 @@ std::unique_ptr<holoflow::core::ISyncTask>
 NormalizeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                          const nlohmann::json                  &jsettings,
                          const holoflow::core::SyncCreateCtx   &ctx) const {
+  (void)infer(input_descs, jsettings);
+
   const auto  settings = jsettings.get<NormalizeSettings>();
   const auto &idesc    = input_descs[0];
   const auto  plan     = build_plan(idesc, settings);
@@ -436,12 +474,9 @@ NormalizeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 
     const auto  new_settings = jsettings.get<NormalizeSettings>();
     const auto &new_idesc    = input_descs[0];
-    const auto &old_idesc    = old_norm->get_idesc();
+    const auto &old_idesc    = old_norm->idesc();
 
-    bool can_reuse =
-        (new_settings == old_norm->get_settings()) && (new_idesc.shape == old_idesc.shape) &&
-        (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
-        (new_idesc.mem_loc == old_idesc.mem_loc);
+    bool can_reuse = (new_settings == old_norm->settings()) && same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_norm->update_stream(ctx.stream);

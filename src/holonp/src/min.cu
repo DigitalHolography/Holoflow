@@ -57,13 +57,20 @@ void from_json(const nlohmann::json &j, MinSettings &s) {
 
 namespace {
 
-// -----------------------------------------------------------------------------
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+
+// -------------------------------------------------------------------------------------------------
 // Helpers & Utilities
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 inline void check(bool cond, const std::string &msg) {
   if (!cond)
     throw std::invalid_argument("Min: " + msg);
+}
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
 }
 
 int get_dtype_size(holoflow::core::DType dt) {
@@ -123,9 +130,9 @@ std::vector<int> normalize_axes(std::span<const int> axes, int ndim) {
   return out;
 }
 
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 // Device Kernels & Functors
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 template <typename T> struct MinOp {
   __device__ __forceinline__ T operator()(const T &a, const T &b) const { return (a < b) ? a : b; }
@@ -223,21 +230,49 @@ min_kernel_strided(const T *__restrict__ in, T *__restrict__ out, size_t total_o
   }
 }
 
+// -------------------------------------------------------------------------------------------------
+// Task implementation
+// -------------------------------------------------------------------------------------------------
+
+class Min : public holoflow::core::ISyncTask {
+public:
+  Min(MinSettings settings, holoflow::core::TDesc idesc, cudaStream_t stream, size_t total_out,
+      size_t total_red, int out_ndim, int red_ndim, bool is_red_contiguous,
+      DevPtr<size_t> in_strides, DevPtr<size_t> out_strides, DevPtr<int> out_to_in_map,
+      DevPtr<size_t> red_strides, DevPtr<int> red_axes_map)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), stream_(stream),
+        total_out_(total_out), total_red_(total_red), out_ndim_(out_ndim), red_ndim_(red_ndim),
+        is_red_contiguous_(is_red_contiguous), d_in_strides_(std::move(in_strides)),
+        d_out_strides_(std::move(out_strides)), d_out_to_in_map_(std::move(out_to_in_map)),
+        d_red_strides_(std::move(red_strides)), d_red_axes_map_(std::move(red_axes_map)) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const MinSettings           &settings() const { return settings_; }
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  MinSettings            settings_;
+  holoflow::core::TDesc  idesc_;
+  cudaStream_t           stream_;
+  size_t                 total_out_;
+  size_t                 total_red_;
+  int                    out_ndim_;
+  int                    red_ndim_;
+  bool                   is_red_contiguous_;
+  DevPtr<size_t>         d_in_strides_;
+  DevPtr<size_t>         d_out_strides_;
+  DevPtr<int>            d_out_to_in_map_;
+  DevPtr<size_t>         d_red_strides_;
+  DevPtr<int>            d_red_axes_map_;
+};
+
 } // namespace
 
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 // Min Task Implementation
-// -----------------------------------------------------------------------------
-
-Min::Min(const MinSettings &settings, cudaStream_t stream, size_t total_out, size_t total_red,
-         int out_ndim, int red_ndim, bool is_red_contiguous, DevPtr<size_t> in_strides,
-         DevPtr<size_t> out_strides, DevPtr<int> out_to_in_map, DevPtr<size_t> red_strides,
-         DevPtr<int> red_axes_map)
-    : settings_(settings), stream_(stream), total_out_(total_out), total_red_(total_red),
-      out_ndim_(out_ndim), red_ndim_(red_ndim), is_red_contiguous_(is_red_contiguous),
-      d_in_strides_(std::move(in_strides)), d_out_strides_(std::move(out_strides)),
-      d_out_to_in_map_(std::move(out_to_in_map)), d_red_strides_(std::move(red_strides)),
-      d_red_axes_map_(std::move(red_axes_map)) {}
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::OpResult Min::execute(holoflow::core::SyncCtx &ctx) {
   if (total_out_ == 0 || total_red_ == 0)
@@ -287,9 +322,9 @@ holoflow::core::OpResult Min::execute(holoflow::core::SyncCtx &ctx) {
   return holoflow::core::OpResult::Ok;
 }
 
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 // Factory Implementation
-// -----------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult MinFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                               const nlohmann::json &jsettings) const {
@@ -333,6 +368,7 @@ std::unique_ptr<holoflow::core::ISyncTask>
 MinFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                    const nlohmann::json                  &jsettings,
                    const holoflow::core::SyncCreateCtx   &ctx) const {
+  (void)infer(input_descs, jsettings);
 
   const auto  settings = jsettings.get<MinSettings>();
   const auto &idesc    = input_descs[0];
@@ -418,10 +454,29 @@ MinFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
 
   return std::make_unique<Min>(
-      settings, ctx.stream, total_out, total_red, static_cast<int>(out_shape.size()),
+      settings, idesc, ctx.stream, total_out, total_red, static_cast<int>(out_shape.size()),
       static_cast<int>(reduce_axes.size()), is_red_contiguous, std::move(d_in_strides),
       std::move(d_out_strides), std::move(d_out_to_in), std::move(d_red_strides),
       std::move(d_red_axes));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+MinFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                   std::span<const holoflow::core::TDesc>     input_descs,
+                   const nlohmann::json                      &jsettings,
+                   const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_min = dynamic_cast<Min *>(old_task.get());
+  if (old_min != nullptr && input_descs.size() == 1) {
+    const auto settings = jsettings.get<MinSettings>();
+    if (settings == old_min->settings() && same_desc(input_descs[0], old_min->idesc())) {
+      old_min->update_stream(ctx.stream);
+      return old_task;
+    }
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp
