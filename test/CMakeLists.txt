@@ -13,3 +13,5 @@
 # limitations under the License.
 
 enable_testing()
+
+add_subdirectory(holonp)
