@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "holonp/mean_abs.hh"
+#include "holotask/syncs/mean_abs.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -26,7 +26,26 @@
 
 #include "curaii/cuda.hh"
 
-namespace holonp {
+namespace holotask::syncs {
+
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
+void to_json(nlohmann::json &j, const MeanAbsSettings &s) {
+  j = nlohmann::json{{"axis", s.axis}, {"keepdims", s.keepdims}};
+}
+
+void from_json(const nlohmann::json &j, MeanAbsSettings &s) {
+  if (j.contains("axis"))
+    j.at("axis").get_to(s.axis);
+  else
+    s.axis.clear();
+  if (j.contains("keepdims"))
+    j.at("keepdims").get_to(s.keepdims);
+  else
+    s.keepdims = false;
+}
 
 namespace {
 
@@ -493,4 +512,4 @@ MeanAbsFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   return create(input_descs, jsettings, ctx);
 }
 
-} // namespace holonp
+} // namespace holotask::syncs

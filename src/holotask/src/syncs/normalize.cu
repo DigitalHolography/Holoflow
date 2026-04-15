@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "holonp/normalize.hh"
+#include "holotask/syncs/normalize.hh"
 
 #include <algorithm>
 #include <cfloat>
@@ -21,7 +21,7 @@
 #include <numeric>
 #include <stdexcept>
 
-namespace holonp {
+namespace holotask::syncs {
 
 void to_json(nlohmann::json &j, const NormalizeSettings &s) {
   j = nlohmann::json{{"lo", s.lo}, {"hi", s.hi}};
@@ -488,4 +488,4 @@ NormalizeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   return create(input_descs, jsettings, ctx);
 }
 
-} // namespace holonp
+} // namespace holotask::syncs

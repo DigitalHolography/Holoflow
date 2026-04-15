@@ -14,7 +14,14 @@
 
 #pragma once
 
-#include "holonp/mean.hh"
+#include <nlohmann/json.hpp>
+#include <span>
+#include <vector>
+
+#include "curaii/cuda.hh"
+#include "holoflow/core/tasks.hh"
+
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 namespace holonp {
 
@@ -22,13 +29,15 @@ namespace holonp {
 // Settings
 // -------------------------------------------------------------------------------------------------
 
-using MeanAbsSettings = MeanSettings;
+struct SubtractSettings {};
+void to_json(nlohmann::json &j, const SubtractSettings &s);
+void from_json(const nlohmann::json &j, SubtractSettings &s);
 
 // -------------------------------------------------------------------------------------------------
 // Factory
 // -------------------------------------------------------------------------------------------------
 
-class MeanAbsFactory : public holoflow::core::ISyncTaskFactory {
+class SubtractFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;

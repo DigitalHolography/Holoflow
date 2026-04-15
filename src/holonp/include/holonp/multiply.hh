@@ -25,18 +25,18 @@ namespace holonp {
 // Settings
 // -------------------------------------------------------------------------------------------------
 
-struct MulSettings {
-  bool operator==(const MulSettings &) const = default;
+struct MultiplySettings {
+  bool operator==(const MultiplySettings &) const = default;
 };
 
-void to_json(nlohmann::json &j, const MulSettings &s);
-void from_json(const nlohmann::json &j, MulSettings &s);
+void to_json(nlohmann::json &j, const MultiplySettings &s);
+void from_json(const nlohmann::json &j, MultiplySettings &s);
 
 // -------------------------------------------------------------------------------------------------
 // Factory
 // -------------------------------------------------------------------------------------------------
 
-class MulFactory : public holoflow::core::ISyncTaskFactory {
+class MultiplyFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;

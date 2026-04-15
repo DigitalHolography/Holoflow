@@ -18,26 +18,51 @@
 #include <span>
 #include <vector>
 
-#include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
 
-template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
-
-namespace holonp {
+namespace holotask::syncs {
 
 // -------------------------------------------------------------------------------------------------
 // Settings
 // -------------------------------------------------------------------------------------------------
 
-struct SubSettings {};
-void to_json(nlohmann::json &j, const SubSettings &s);
-void from_json(const nlohmann::json &j, SubSettings &s);
+enum class FftNorm {
+  Backward,
+  Forward,
+  Ortho,
+};
+
+void to_json(nlohmann::json &j, FftNorm norm);
+void from_json(const nlohmann::json &j, FftNorm &norm);
+
+struct CrossCorrelation2Settings {
+  struct Ellipse {
+    float cx    = 0.5f;
+    float cy    = 0.5f;
+    float rx    = 0.5f;
+    float ry    = 0.5f;
+    float angle = 0.0f;
+
+    bool operator==(const Ellipse &) const = default;
+  };
+
+  std::vector<int> axes;
+  FftNorm          norm = FftNorm::Backward;
+  Ellipse          roi;
+
+  bool operator==(const CrossCorrelation2Settings &) const = default;
+};
+
+void to_json(nlohmann::json &j, const CrossCorrelation2Settings::Ellipse &e);
+void from_json(const nlohmann::json &j, CrossCorrelation2Settings::Ellipse &e);
+void to_json(nlohmann::json &j, const CrossCorrelation2Settings &s);
+void from_json(const nlohmann::json &j, CrossCorrelation2Settings &s);
 
 // -------------------------------------------------------------------------------------------------
 // Factory
 // -------------------------------------------------------------------------------------------------
 
-class SubFactory : public holoflow::core::ISyncTaskFactory {
+class CrossCorrelation2Factory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
@@ -52,4 +77,4 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
-} // namespace holonp
+} // namespace holotask::syncs

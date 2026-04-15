@@ -16,58 +16,25 @@
 
 #include <nlohmann/json.hpp>
 #include <span>
-#include <vector>
 
 #include "holoflow/core/tasks.hh"
 
 namespace holonp {
 
-#ifndef HOLONP_FFT_NORM_DECLARED
-#define HOLONP_FFT_NORM_DECLARED
-
-enum class FftNorm {
-  Backward,
-  Forward,
-  Ortho,
-};
-
-void to_json(nlohmann::json &j, FftNorm norm);
-void from_json(const nlohmann::json &j, FftNorm &norm);
-
-#endif
-
 // -------------------------------------------------------------------------------------------------
 // Settings
 // -------------------------------------------------------------------------------------------------
 
-struct CrossCorrelation2Settings {
-  struct Ellipse {
-    float cx    = 0.5f;
-    float cy    = 0.5f;
-    float rx    = 0.5f;
-    float ry    = 0.5f;
-    float angle = 0.0f;
+struct DivideSettings {};
 
-    bool operator==(const Ellipse &) const = default;
-  };
-
-  std::vector<int> axes;
-  FftNorm          norm = FftNorm::Backward;
-  Ellipse          roi;
-
-  bool operator==(const CrossCorrelation2Settings &) const = default;
-};
-
-void to_json(nlohmann::json &j, const CrossCorrelation2Settings::Ellipse &e);
-void from_json(const nlohmann::json &j, CrossCorrelation2Settings::Ellipse &e);
-void to_json(nlohmann::json &j, const CrossCorrelation2Settings &s);
-void from_json(const nlohmann::json &j, CrossCorrelation2Settings &s);
+void to_json(nlohmann::json &j, const DivideSettings &s);
+void from_json(const nlohmann::json &j, DivideSettings &s);
 
 // -------------------------------------------------------------------------------------------------
 // Factory
 // -------------------------------------------------------------------------------------------------
 
-class CrossCorrelation2Factory : public holoflow::core::ISyncTaskFactory {
+class DivideFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "holonp/mul.hh"
+#include "holonp/multiply.hh"
 
 #include <array>
 #include <cuComplex.h>
@@ -21,8 +21,8 @@
 
 namespace holonp {
 
-void to_json(nlohmann::json &j, const MulSettings &) { j = nlohmann::json::object(); }
-void from_json(const nlohmann::json &, MulSettings &) {}
+void to_json(nlohmann::json &j, const MultiplySettings &) { j = nlohmann::json::object(); }
+void from_json(const nlohmann::json &, MultiplySettings &) {}
 
 namespace {
 
@@ -67,10 +67,10 @@ template <typename T> __device__ inline cuFloatComplex to_complex(T v) {
 }
 
 template <typename TA, typename TB, typename TO>
-__global__ void mul_kernel(const TA *__restrict__ a, const TB *__restrict__ b, TO *__restrict__ out,
-                           size_t total_out, size_t ndim, const size_t *__restrict__ out_shape,
-                           const size_t *__restrict__ a_strides,
-                           const size_t *__restrict__ b_strides) {
+__global__ void
+multiply_kernel(const TA *__restrict__ a, const TB *__restrict__ b, TO *__restrict__ out,
+                size_t total_out, size_t ndim, const size_t *__restrict__ out_shape,
+                const size_t *__restrict__ a_strides, const size_t *__restrict__ b_strides) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= total_out)
     return;
@@ -93,7 +93,7 @@ __global__ void mul_kernel(const TA *__restrict__ a, const TB *__restrict__ b, T
 
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
-    throw std::invalid_argument("Mul: " + msg);
+    throw std::invalid_argument("Multiply: " + msg);
   }
 }
 
@@ -119,11 +119,12 @@ std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
   return s;
 }
 
-class Mul : public holoflow::core::ISyncTask {
+class Multiply : public holoflow::core::ISyncTask {
 public:
-  Mul(MulSettings settings, std::array<holoflow::core::TDesc, 2> idescs, cudaStream_t stream,
-      holoflow::core::DType dtype_a, holoflow::core::DType dtype_b, size_t total_out, size_t ndim,
-      DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides)
+  Multiply(MultiplySettings settings, std::array<holoflow::core::TDesc, 2> idescs,
+           cudaStream_t stream, holoflow::core::DType dtype_a, holoflow::core::DType dtype_b,
+           size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides,
+           DevPtr<size_t> d_b_strides)
       : settings_(std::move(settings)), idescs_(std::move(idescs)), stream_(stream),
         dtype_a_(dtype_a), dtype_b_(dtype_b), total_out_(total_out), ndim_(ndim),
         d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
@@ -132,11 +133,11 @@ public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
   const std::array<holoflow::core::TDesc, 2> &idescs() const { return idescs_; }
-  const MulSettings                          &settings() const { return settings_; }
+  const MultiplySettings                     &settings() const { return settings_; }
   void update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
-  MulSettings                          settings_;
+  MultiplySettings                     settings_;
   std::array<holoflow::core::TDesc, 2> idescs_;
   cudaStream_t                         stream_;
   holoflow::core::DType                dtype_a_;
@@ -150,7 +151,7 @@ private:
 
 } // namespace
 
-holoflow::core::OpResult Mul::execute(holoflow::core::SyncCtx &ctx) {
+holoflow::core::OpResult Multiply::execute(holoflow::core::SyncCtx &ctx) {
   if (total_out_ == 0)
     return holoflow::core::OpResult::Ok;
 
@@ -161,7 +162,7 @@ holoflow::core::OpResult Mul::execute(holoflow::core::SyncCtx &ctx) {
 #define DISPATCH_MUL(TA, TB)                                                                       \
   do {                                                                                             \
     using TO = typename Promote<TA, TB>::type;                                                     \
-    mul_kernel<TA, TB, TO><<<grid, block, 0, stream_>>>(                                           \
+    multiply_kernel<TA, TB, TO><<<grid, block, 0, stream_>>>(                                      \
         (const TA *)ctx.inputs[0].data(), (const TB *)ctx.inputs[1].data(),                        \
         (TO *)ctx.outputs[0].data(), total_out_, ndim_, d_out_shape_.get(), d_a_strides_.get(),    \
         d_b_strides_.get());                                                                       \
@@ -208,8 +209,8 @@ holoflow::core::OpResult Mul::execute(holoflow::core::SyncCtx &ctx) {
   return holoflow::core::OpResult::Ok;
 }
 
-holoflow::core::InferResult MulFactory::infer(std::span<const holoflow::core::TDesc> inputs,
-                                              const nlohmann::json &) const {
+holoflow::core::InferResult MultiplyFactory::infer(std::span<const holoflow::core::TDesc> inputs,
+                                                   const nlohmann::json &) const {
   check(inputs.size() == 2, "expected exactly 2 input tensors");
   check(inputs[0].mem_loc == holoflow::core::MemLoc::Device,
         "input tensor 0 must be in device memory");
@@ -240,13 +241,13 @@ holoflow::core::InferResult MulFactory::infer(std::span<const holoflow::core::TD
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
-MulFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &j,
-                   const holoflow::core::SyncCreateCtx &ctx) const {
+MultiplyFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &j,
+                        const holoflow::core::SyncCreateCtx &ctx) const {
   (void)infer(inputs, j);
 
   const auto &a = inputs[0], &b = inputs[1];
   auto        res      = infer(inputs, j);
-  auto        settings = j.get<MulSettings>();
+  auto        settings = j.get<MultiplySettings>();
   const auto &odesc    = res.output_descs[0];
   size_t      ndim     = odesc.shape.size();
   size_t      total    = 1;
@@ -277,19 +278,19 @@ MulFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann
 
   std::array<holoflow::core::TDesc, 2> idescs = {a, b};
 
-  return std::make_unique<Mul>(settings, idescs, ctx.stream, a.dtype, b.dtype, total, ndim,
-                               std::move(d_shape), std::move(d_a_str), std::move(d_b_str));
+  return std::make_unique<Multiply>(settings, idescs, ctx.stream, a.dtype, b.dtype, total, ndim,
+                                    std::move(d_shape), std::move(d_a_str), std::move(d_b_str));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
-MulFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
-                   std::span<const holoflow::core::TDesc>     input_descs,
-                   const nlohmann::json                      &jsettings,
-                   const holoflow::core::SyncCreateCtx       &ctx) const {
+MultiplyFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                        std::span<const holoflow::core::TDesc>     input_descs,
+                        const nlohmann::json                      &jsettings,
+                        const holoflow::core::SyncCreateCtx       &ctx) const {
 
-  auto *old_mul = dynamic_cast<Mul *>(old_task.get());
+  auto *old_mul = dynamic_cast<Multiply *>(old_task.get());
   if (old_mul != nullptr && input_descs.size() == 2) {
-    const auto  new_settings = jsettings.get<MulSettings>();
+    const auto  new_settings = jsettings.get<MultiplySettings>();
     const auto &old_idescs   = old_mul->idescs();
 
     bool can_reuse = (new_settings == old_mul->settings()) &&

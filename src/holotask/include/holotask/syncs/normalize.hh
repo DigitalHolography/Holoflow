@@ -20,7 +20,7 @@
 
 #include "holoflow/core/tasks.hh"
 
-namespace holonp {
+namespace holotask::syncs {
 
 // -------------------------------------------------------------------------------------------------
 // Settings
@@ -56,4 +56,4 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
-} // namespace holonp
+} // namespace holotask::syncs

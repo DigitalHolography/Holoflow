@@ -16,25 +16,31 @@
 
 #include <nlohmann/json.hpp>
 #include <span>
+#include <vector>
 
 #include "holoflow/core/tasks.hh"
 
-namespace holonp {
+namespace holotask::syncs {
 
 // -------------------------------------------------------------------------------------------------
 // Settings
 // -------------------------------------------------------------------------------------------------
 
-struct DivSettings {};
+struct MeanAbsSettings {
+  std::vector<int> axis;
+  bool             keepdims = false;
 
-void to_json(nlohmann::json &j, const DivSettings &s);
-void from_json(const nlohmann::json &j, DivSettings &s);
+  bool operator==(const MeanAbsSettings &) const = default;
+};
+
+void to_json(nlohmann::json &j, const MeanAbsSettings &s);
+void from_json(const nlohmann::json &j, MeanAbsSettings &s);
 
 // -------------------------------------------------------------------------------------------------
 // Factory
 // -------------------------------------------------------------------------------------------------
 
-class DivFactory : public holoflow::core::ISyncTaskFactory {
+class MeanAbsFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
@@ -49,4 +55,4 @@ public:
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
-} // namespace holonp
+} // namespace holotask::syncs

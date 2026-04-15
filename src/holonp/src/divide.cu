@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "holonp/div.hh"
+#include "holonp/divide.hh"
 
 #include <cuComplex.h>
 #include <type_traits>
@@ -20,18 +20,18 @@
 
 namespace holonp {
 
-void to_json(nlohmann::json &j, const DivSettings &) { j = nlohmann::json::object(); }
-void from_json(const nlohmann::json &, DivSettings &) {}
+void to_json(nlohmann::json &j, const DivideSettings &) { j = nlohmann::json::object(); }
+void from_json(const nlohmann::json &, DivideSettings &) {}
 
 namespace {
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 template <typename T>
-__global__ void div_kernel(const T *__restrict__ a, const T *__restrict__ b, T *__restrict__ out,
-                           size_t total_out, size_t ndim, const size_t *__restrict__ out_shape,
-                           const size_t *__restrict__ a_strides,
-                           const size_t *__restrict__ b_strides) {
+__global__ void divide_kernel(const T *__restrict__ a, const T *__restrict__ b, T *__restrict__ out,
+                              size_t total_out, size_t ndim, const size_t *__restrict__ out_shape,
+                              const size_t *__restrict__ a_strides,
+                              const size_t *__restrict__ b_strides) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= total_out)
     return;
@@ -54,7 +54,7 @@ __global__ void div_kernel(const T *__restrict__ a, const T *__restrict__ b, T *
 
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
-    throw std::invalid_argument("Div: " + msg);
+    throw std::invalid_argument("Divide: " + msg);
   }
 }
 
@@ -81,11 +81,12 @@ std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
 }
 
 template <typename Scalar>
-__global__ void
-div_kernel_cf32_scalar(const cuFloatComplex *__restrict__ a, const Scalar *__restrict__ b,
-                       cuFloatComplex *__restrict__ out, size_t total_out, size_t ndim,
-                       const size_t *__restrict__ out_shape, const size_t *__restrict__ a_strides,
-                       const size_t *__restrict__ b_strides) {
+__global__ void divide_kernel_cf32_scalar(const cuFloatComplex *__restrict__ a,
+                                          const Scalar *__restrict__ b,
+                                          cuFloatComplex *__restrict__ out, size_t total_out,
+                                          size_t ndim, const size_t *__restrict__ out_shape,
+                                          const size_t *__restrict__ a_strides,
+                                          const size_t *__restrict__ b_strides) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= total_out)
     return;
@@ -106,11 +107,11 @@ div_kernel_cf32_scalar(const cuFloatComplex *__restrict__ a, const Scalar *__res
   out[idx] = cuCdivf(a[a_off], denom);
 }
 
-class Div : public holoflow::core::ISyncTask {
+class Divide : public holoflow::core::ISyncTask {
 public:
-  Div(cudaStream_t stream, std::vector<holoflow::core::TDesc> idescs,
-      holoflow::core::DType out_dtype, size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape,
-      DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides)
+  Divide(cudaStream_t stream, std::vector<holoflow::core::TDesc> idescs,
+         holoflow::core::DType out_dtype, size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape,
+         DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides)
       : stream_(stream), idescs_(std::move(idescs)), out_dtype_(out_dtype), total_out_(total_out),
         ndim_(ndim), d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
         d_b_strides_(std::move(d_b_strides)) {}
@@ -133,7 +134,7 @@ private:
 
 } // namespace
 
-holoflow::core::OpResult Div::execute(holoflow::core::SyncCtx &ctx) {
+holoflow::core::OpResult Divide::execute(holoflow::core::SyncCtx &ctx) {
   if (total_out_ == 0)
     return holoflow::core::OpResult::Ok;
 
@@ -144,12 +145,12 @@ holoflow::core::OpResult Div::execute(holoflow::core::SyncCtx &ctx) {
   const auto b_dtype = idescs_[1].dtype;
 
 #define LAUNCH_TYPE(T)                                                                             \
-  div_kernel<T><<<grid, block, 0, stream_>>>(                                                      \
+  divide_kernel<T><<<grid, block, 0, stream_>>>(                                                   \
       (T *)ctx.inputs[0].data(), (T *)ctx.inputs[1].data(), (T *)ctx.outputs[0].data(),            \
       total_out_, ndim_, d_out_shape_.get(), d_a_strides_.get(), d_b_strides_.get())
 
 #define LAUNCH_CF32_SCALAR(ScalarT)                                                                \
-  div_kernel_cf32_scalar<ScalarT><<<grid, block, 0, stream_>>>(                                    \
+  divide_kernel_cf32_scalar<ScalarT><<<grid, block, 0, stream_>>>(                                 \
       (cuFloatComplex *)ctx.inputs[0].data(), (ScalarT *)ctx.inputs[1].data(),                     \
       (cuFloatComplex *)ctx.outputs[0].data(), total_out_, ndim_, d_out_shape_.get(),              \
       d_a_strides_.get(), d_b_strides_.get())
@@ -198,8 +199,8 @@ holoflow::core::OpResult Div::execute(holoflow::core::SyncCtx &ctx) {
   return holoflow::core::OpResult::Ok;
 }
 
-holoflow::core::InferResult DivFactory::infer(std::span<const holoflow::core::TDesc> inputs,
-                                              const nlohmann::json &) const {
+holoflow::core::InferResult DivideFactory::infer(std::span<const holoflow::core::TDesc> inputs,
+                                                 const nlohmann::json &) const {
   check(inputs.size() == 2, "expected exactly 2 input tensors");
   check(inputs[0].mem_loc == holoflow::core::MemLoc::Device,
         "input tensor 0 must be in device memory");
@@ -220,7 +221,7 @@ holoflow::core::InferResult DivFactory::infer(std::span<const holoflow::core::TD
   if (dtype_a != dtype_b) {
     check(dtype_a == holoflow::core::DType::CF32 &&
               (dtype_b == holoflow::core::DType::CF32 || is_scalar_compatible(dtype_b)),
-          "Div: unsupported dtype combination");
+          "Divide: unsupported dtype combination");
     out_type = holoflow::core::DType::CF32;
   }
 
@@ -246,8 +247,8 @@ holoflow::core::InferResult DivFactory::infer(std::span<const holoflow::core::TD
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
-DivFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &j,
-                   const holoflow::core::SyncCreateCtx &ctx) const {
+DivideFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &j,
+                      const holoflow::core::SyncCreateCtx &ctx) const {
   (void)infer(inputs, j);
 
   const auto &a = inputs[0], &b = inputs[1];
@@ -281,22 +282,22 @@ DivFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann
   CUDA_CHECK(cudaMemcpyAsync(d_b_str.get(), b_strides_h.data(), bytes, cudaMemcpyHostToDevice,
                              ctx.stream));
 
-  return std::make_unique<Div>(ctx.stream, std::vector<holoflow::core::TDesc>{inputs[0], inputs[1]},
-                               odesc.dtype, total, ndim, std::move(d_shape), std::move(d_a_str),
-                               std::move(d_b_str));
+  return std::make_unique<Divide>(
+      ctx.stream, std::vector<holoflow::core::TDesc>{inputs[0], inputs[1]}, odesc.dtype, total,
+      ndim, std::move(d_shape), std::move(d_a_str), std::move(d_b_str));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
-DivFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
-                   std::span<const holoflow::core::TDesc>     input_descs,
-                   const nlohmann::json                      &jsettings,
-                   const holoflow::core::SyncCreateCtx       &ctx) const {
+DivideFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                      std::span<const holoflow::core::TDesc>     input_descs,
+                      const nlohmann::json                      &jsettings,
+                      const holoflow::core::SyncCreateCtx       &ctx) const {
 
-  auto *old_div = dynamic_cast<Div *>(old_task.get());
-  if (old_div && input_descs.size() == 2) {
-    const auto &old_idescs = old_div->idescs();
+  auto *old_divide = dynamic_cast<Divide *>(old_task.get());
+  if (old_divide && input_descs.size() == 2) {
+    const auto &old_idescs = old_divide->idescs();
     if (same_desc(input_descs[0], old_idescs[0]) && same_desc(input_descs[1], old_idescs[1])) {
-      old_div->update_stream(ctx.stream);
+      old_divide->update_stream(ctx.stream);
       return old_task;
     }
   }

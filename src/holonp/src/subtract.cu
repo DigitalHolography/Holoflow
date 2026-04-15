@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "holonp/sub.hh"
+#include "holonp/subtract.hh"
 
 #include <cuComplex.h>
 #include <type_traits>
@@ -23,8 +23,8 @@ namespace holonp {
 // JSON serialization
 // -------------------------------------------------------------------------------------------------
 
-void to_json(nlohmann::json &j, const SubSettings &) { j = nlohmann::json::object(); }
-void from_json(const nlohmann::json &, SubSettings &) {}
+void to_json(nlohmann::json &j, const SubtractSettings &) { j = nlohmann::json::object(); }
+void from_json(const nlohmann::json &, SubtractSettings &) {}
 
 namespace {
 
@@ -33,10 +33,10 @@ namespace {
 // -------------------------------------------------------------------------------------------------
 
 template <typename T>
-__global__ void sub_kernel(const T *__restrict__ a, const T *__restrict__ b, T *__restrict__ out,
-                           size_t total_out, size_t ndim, const size_t *__restrict__ out_shape,
-                           const size_t *__restrict__ a_strides,
-                           const size_t *__restrict__ b_strides) {
+__global__ void
+subtract_kernel(const T *__restrict__ a, const T *__restrict__ b, T *__restrict__ out,
+                size_t total_out, size_t ndim, const size_t *__restrict__ out_shape,
+                const size_t *__restrict__ a_strides, const size_t *__restrict__ b_strides) {
   size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= total_out)
     return;
@@ -59,7 +59,7 @@ __global__ void sub_kernel(const T *__restrict__ a, const T *__restrict__ b, T *
 
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
-    throw std::invalid_argument("Sub: " + msg);
+    throw std::invalid_argument("Subtract: " + msg);
   }
 }
 
@@ -86,14 +86,14 @@ bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// Sub task implementation
+// Subtract task implementation
 // -------------------------------------------------------------------------------------------------
 
-class Sub : public holoflow::core::ISyncTask {
+class Subtract : public holoflow::core::ISyncTask {
 public:
-  Sub(cudaStream_t stream, holoflow::core::DType dtype, size_t total_out, size_t ndim,
-      DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides,
-      std::vector<holoflow::core::TDesc> input_descs)
+  Subtract(cudaStream_t stream, holoflow::core::DType dtype, size_t total_out, size_t ndim,
+           DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides,
+           std::vector<holoflow::core::TDesc> input_descs)
       : stream_(stream), dtype_(dtype), total_out_(total_out), ndim_(ndim),
         d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
         d_b_strides_(std::move(d_b_strides)), input_descs_(std::move(input_descs)) {}
@@ -116,7 +116,7 @@ private:
 
 } // namespace
 
-holoflow::core::OpResult Sub::execute(holoflow::core::SyncCtx &ctx) {
+holoflow::core::OpResult Subtract::execute(holoflow::core::SyncCtx &ctx) {
   if (total_out_ == 0)
     return holoflow::core::OpResult::Ok;
 
@@ -124,7 +124,7 @@ holoflow::core::OpResult Sub::execute(holoflow::core::SyncCtx &ctx) {
   int grid  = static_cast<int>((total_out_ + block - 1) / block);
 
 #define LAUNCH_TYPE(T)                                                                             \
-  sub_kernel<T><<<grid, block, 0, stream_>>>(                                                      \
+  subtract_kernel<T><<<grid, block, 0, stream_>>>(                                                 \
       (T *)ctx.inputs[0].data(), (T *)ctx.inputs[1].data(), (T *)ctx.outputs[0].data(),            \
       total_out_, ndim_, d_out_shape_.get(), d_a_strides_.get(), d_b_strides_.get())
 
@@ -148,11 +148,11 @@ holoflow::core::OpResult Sub::execute(holoflow::core::SyncCtx &ctx) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// SubFactory
+// SubtractFactory
 // -------------------------------------------------------------------------------------------------
 
-holoflow::core::InferResult SubFactory::infer(std::span<const holoflow::core::TDesc> inputs,
-                                              const nlohmann::json &) const {
+holoflow::core::InferResult SubtractFactory::infer(std::span<const holoflow::core::TDesc> inputs,
+                                                   const nlohmann::json &) const {
   check(inputs.size() == 2, "expected exactly 2 input tensors");
   check(inputs[0].dtype == inputs[1].dtype, "input tensor data types must match");
   check(inputs[0].mem_loc == holoflow::core::MemLoc::Device,
@@ -183,8 +183,8 @@ holoflow::core::InferResult SubFactory::infer(std::span<const holoflow::core::TD
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
-SubFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &j,
-                   const holoflow::core::SyncCreateCtx &ctx) const {
+SubtractFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &j,
+                        const holoflow::core::SyncCreateCtx &ctx) const {
   const auto &a = inputs[0], &b = inputs[1];
   auto        res   = infer(inputs, j);
   const auto &odesc = res.output_descs[0];
@@ -215,19 +215,19 @@ SubFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann
   CUDA_CHECK(cudaMemcpyAsync(d_a_str.get(), a_strides_h.data(), bytes, h2d, ctx.stream));
   CUDA_CHECK(cudaMemcpyAsync(d_b_str.get(), b_strides_h.data(), bytes, h2d, ctx.stream));
 
-  return std::make_unique<Sub>(ctx.stream, inputs[0].dtype, total, ndim, std::move(d_shape),
-                               std::move(d_a_str), std::move(d_b_str),
-                               std::vector<holoflow::core::TDesc>(inputs.begin(), inputs.end()));
+  return std::make_unique<Subtract>(
+      ctx.stream, inputs[0].dtype, total, ndim, std::move(d_shape), std::move(d_a_str),
+      std::move(d_b_str), std::vector<holoflow::core::TDesc>(inputs.begin(), inputs.end()));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
-SubFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
-                   std::span<const holoflow::core::TDesc>     input_descs,
-                   const nlohmann::json                      &jsettings,
-                   const holoflow::core::SyncCreateCtx       &ctx) const {
+SubtractFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                        std::span<const holoflow::core::TDesc>     input_descs,
+                        const nlohmann::json                      &jsettings,
+                        const holoflow::core::SyncCreateCtx       &ctx) const {
   (void)infer(input_descs, jsettings);
 
-  auto *old_sub = dynamic_cast<Sub *>(old_task.get());
+  auto *old_sub = dynamic_cast<Subtract *>(old_task.get());
   if (old_sub == nullptr || input_descs.size() != 2 || old_sub->input_descs().size() != 2) {
     return create(input_descs, jsettings, ctx);
   }

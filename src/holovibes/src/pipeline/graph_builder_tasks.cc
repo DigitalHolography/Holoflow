@@ -56,7 +56,7 @@ DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "source", "Amete
 DEFINE_UNARY_SYNC_NODE (fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                      holotask::sources::FresnelQinSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_qout,                           "fresnel_qout",                        "FresnelQout",                     holotask::sources::FresnelQoutSettings)
 DEFINE_UNARY_SYNC_NODE (short_time_fresnel_diffraction,         "short_time_fresnel_diffraction",      "ShortTimeFresnelDiffraction",      holotask::syncs::ShortTimeFresnelDiffractionSettings)
-DEFINE_UNARY_SYNC_NODE (unfold2d,                               "unfold2d",                            "Unfold2D",                         holonp::Unfold2DSettings)
+DEFINE_UNARY_SYNC_NODE (unfold2d,                               "unfold2d",                            "Unfold2D",                         holotask::syncs::Unfold2DSettings)
 DEFINE_UNARY_SYNC_NODE (memcpy,                                 "memcpy",                              "Memcpy",                          holotask::syncs::MemcpySettings)
 DEFINE_UNARY_SYNC_NODE (convert,                                "conversion",                          "Conversion",                      holotask::syncs::ConversionSettings)
 DEFINE_UNARY_SYNC_NODE (pca,                                    "pca",                                 "Pca",                             holotask::syncs::PcaSettings)
@@ -93,24 +93,25 @@ DEFINE_UNARY_SYNC_NODE (fft2,                         "fft2",                   
 DEFINE_UNARY_SYNC_NODE (fftshift,                     "fftshift",                     "FFTShiftNp",                      holonp::FFTShiftSettings)
 DEFINE_UNARY_SYNC_NODE (abs,                          "abs",                          "Abs",                             holonp::AbsSettings)
 DEFINE_UNARY_SYNC_NODE (mean,                         "mean",                         "Mean",                            holonp::MeanSettings)
-DEFINE_UNARY_SYNC_NODE (mean_abs,                     "mean_abs",                     "MeanAbs",                         holonp::MeanAbsSettings)
+DEFINE_UNARY_SYNC_NODE (mean_abs,                     "mean_abs",                     "MeanAbs",                         holotask::syncs::MeanAbsSettings)
 DEFINE_UNARY_SYNC_NODE (min,                          "min",                          "Min",                             holonp::MinSettings)
 DEFINE_UNARY_SYNC_NODE (max,                          "max",                          "Max",                             holonp::MaxSettings)
-DEFINE_UNARY_SYNC_NODE (normalize,                    "normalize",                    "Normalize",                       holonp::NormalizeSettings)
+DEFINE_UNARY_SYNC_NODE (normalize,                    "normalize",                    "Normalize",                       holotask::syncs::NormalizeSettings)
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                "batch_queue",                  "BatchQueue",                      holotask::asyncs::BatchQueueSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                    "slide_avg",                    "SlidingAverage",                  holotask::asyncs::SlidingAverageSettings)
 // clang-format on
 
-GraphBuilderTasks::TDesc GraphBuilderTasks::mul(const TDesc &A, const TDesc &B,
-                                                holonp::MulSettings s) {
+GraphBuilderTasks::TDesc GraphBuilderTasks::multiply(const TDesc &A, const TDesc &B,
+                                                     holonp::MultiplySettings s) {
   std::array<TDesc, 2> inputs{A, B};
   return std::move(
-      make_nary_sync_node("mul", "Mul", "Mul", std::span<const TDesc>{inputs}, s).at(0));
+      make_nary_sync_node("multiply", "Multiply", "Multiply", std::span<const TDesc>{inputs}, s)
+          .at(0));
 }
 
 GraphBuilderTasks::TDesc
 GraphBuilderTasks::cross_correlation2(const TDesc &Moving, const TDesc &Reference,
-                                      holonp::CrossCorrelation2Settings s) {
+                                      holotask::syncs::CrossCorrelation2Settings s) {
   std::array<TDesc, 2> inputs{Moving, Reference};
   return std::move(make_nary_sync_node("cross_correlation2", "CrossCorrelation2",
                                        "CrossCorrelation2", std::span<const TDesc>{inputs}, s)
@@ -124,18 +125,19 @@ GraphBuilderTasks::TDesc GraphBuilderTasks::add(const TDesc &A, const TDesc &B,
       make_nary_sync_node("add", "Add", "Add", std::span<const TDesc>{inputs}, s).at(0));
 }
 
-GraphBuilderTasks::TDesc GraphBuilderTasks::div(const TDesc &A, const TDesc &B,
-                                                holonp::DivSettings s) {
+GraphBuilderTasks::TDesc GraphBuilderTasks::divide(const TDesc &A, const TDesc &B,
+                                                   holonp::DivideSettings s) {
   std::array<TDesc, 2> inputs{A, B};
   return std::move(
-      make_nary_sync_node("div", "Div", "Div", std::span<const TDesc>{inputs}, s).at(0));
+      make_nary_sync_node("divide", "Divide", "Divide", std::span<const TDesc>{inputs}, s).at(0));
 }
 
-GraphBuilderTasks::TDesc GraphBuilderTasks::sub(const TDesc &A, const TDesc &B,
-                                                holonp::SubSettings s) {
+GraphBuilderTasks::TDesc GraphBuilderTasks::subtract(const TDesc &A, const TDesc &B,
+                                                     holonp::SubtractSettings s) {
   std::array<TDesc, 2> inputs{A, B};
   return std::move(
-      make_nary_sync_node("sub", "Sub", "Sub", std::span<const TDesc>{inputs}, s).at(0));
+      make_nary_sync_node("subtract", "Subtract", "Subtract", std::span<const TDesc>{inputs}, s)
+          .at(0));
 }
 
 GraphBuilderTasks::TDesc GraphBuilderTasks::correct_phase(const TDesc &X, const TDesc &PhaseMask,
@@ -158,13 +160,6 @@ GraphBuilderTasks::TDesc GraphBuilderTasks::where(const TDesc &Cond, const TDesc
   std::array<TDesc, 3> inputs{Cond, X, Y};
   return std::move(
       make_nary_sync_node("where", "Where", "Where", std::span<const TDesc>{inputs}, s).at(0));
-}
-
-GraphBuilderTasks::TDesc GraphBuilderTasks::assign(const TDesc &X, const TDesc &Y,
-                                                   holonp::AssignSettings s) {
-  std::array<TDesc, 2> inputs{X, Y};
-  return std::move(
-      make_nary_sync_node("assign", "Assign", "Assign", std::span<const TDesc>{inputs}, s).at(0));
 }
 
 void GraphBuilderTasks::holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s) {

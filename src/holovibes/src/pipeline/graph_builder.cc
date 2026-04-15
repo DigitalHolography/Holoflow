@@ -272,7 +272,7 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
       cross_correlation2(M0, M0_ref,
                          {
                              {-2, -1},
-                             holonp::FftNorm::Backward,
+                             holotask::syncs::FftNorm::Backward,
                              {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f},
                          });
   xcorr = fftshift(xcorr, {{-2, -1}});
@@ -398,7 +398,7 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
     auto n_freq   = static_cast<int64_t>(FH_z.shape.at(1));
     auto abs_S    = abs(FH_z, {});
     auto freqs    = reshape(build_freq_weights(), {{1, n_freq, 1, 1}});
-    auto weighted = mul(freqs, abs_S, {});
+    auto weighted = multiply(freqs, abs_S, {});
     result        = mean(weighted, {{-3}, true});
   }
 
@@ -406,8 +406,8 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
     auto n_freq   = static_cast<int64_t>(FH_z.shape.at(1));
     auto abs_S    = abs(FH_z, {});
     auto freqs    = reshape(build_freq_weights(), {{1, n_freq, 1, 1}});
-    freqs         = mul(freqs, freqs, {});
-    auto weighted = mul(freqs, abs_S, {});
+    freqs         = multiply(freqs, freqs, {});
+    auto weighted = multiply(freqs, abs_S, {});
     result        = mean(weighted, {{-3}, true});
   }
 

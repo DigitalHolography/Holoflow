@@ -12,13 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "holonp/unfold2d.hh"
+#include "holotask/syncs/unfold2d.hh"
 
 #include <stdexcept>
 
 #include "curaii/cuda.hh"
 
-namespace holonp {
+namespace holotask::syncs {
 
 namespace {
 
@@ -218,4 +218,4 @@ Unfold2DFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   return create(input_descs, jsettings, ctx);
 }
 
-} // namespace holonp
+} // namespace holotask::syncs

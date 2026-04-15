@@ -38,12 +38,10 @@
 #include "holonp/argmax.hh"
 #include "holonp/asarray.hh"
 #include "holonp/ascontiguousarray.hh"
-#include "holonp/assign.hh"
 #include "holonp/concatenate.hh"
 #include "holonp/conj.hh"
 #include "holonp/copy.hh"
-#include "holonp/cross_correlation2.hh"
-#include "holonp/div.hh"
+#include "holonp/divide.hh"
 #include "holonp/empty.hh"
 #include "holonp/equal.hh"
 #include "holonp/fft.hh"
@@ -52,18 +50,15 @@
 #include "holonp/irfft2.hh"
 #include "holonp/max.hh"
 #include "holonp/mean.hh"
-#include "holonp/mean_abs.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/min.hh"
-#include "holonp/mul.hh"
-#include "holonp/normalize.hh"
+#include "holonp/multiply.hh"
 #include "holonp/reshape.hh"
 #include "holonp/rfft.hh"
 #include "holonp/rfft2.hh"
 #include "holonp/slice.hh"
-#include "holonp/sub.hh"
+#include "holonp/subtract.hh"
 #include "holonp/transpose.hh"
-#include "holonp/unfold2d.hh"
 #include "holonp/where.hh"
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
@@ -78,14 +73,18 @@
 #include "holotask/syncs/conversion.hh"
 #include "holotask/syncs/convolution.hh"
 #include "holotask/syncs/correct_phase.hh"
+#include "holotask/syncs/cross_correlation2.hh"
 #include "holotask/syncs/cuda_stream_synchronize.hh"
 #include "holotask/syncs/filter2d.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
+#include "holotask/syncs/mean_abs.hh"
 #include "holotask/syncs/memcpy.hh"
+#include "holotask/syncs/normalize.hh"
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
+#include "holotask/syncs/unfold2d.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike.hh"
 #include "holotask/syncs/zernike_phase.hh"
@@ -179,7 +178,7 @@ void Manager::register_components() {
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
   reg_sync<syncs::ShortTimeFresnelDiffractionFactory>(registry_, "ShortTimeFresnelDiffraction");
-  reg_sync<Unfold2DFactory>(registry_, "Unfold2D");
+  reg_sync<syncs::Unfold2DFactory>(registry_, "Unfold2D");
   reg_sync<syncs::Wrap2PiFactory>(registry_, "Wrap2Pi");
   reg_sync<syncs::ZernikeFactory>(registry_, "Zernike");
   reg_sync<syncs::ZernikePhaseFactory>(registry_, "ZernikePhase");
@@ -192,26 +191,25 @@ void Manager::register_components() {
   reg_sync<MeshgridFactory>(registry_, "Meshgrid");
   reg_sync<TransposeFactory>(registry_, "Transpose");
   reg_sync<SliceFactory>(registry_, "Slice");
-  reg_sync<AssignFactory>(registry_, "Assign");
   reg_sync<FFTFactory>(registry_, "FFT");
   reg_sync<FFT2Factory>(registry_, "FFT2");
   reg_sync<FFTShiftFactory>(registry_, "FFTShiftNp");
   reg_sync<AbsFactory>(registry_, "Abs");
   reg_sync<ConjFactory>(registry_, "Conj");
   reg_sync<MeanFactory>(registry_, "Mean");
-  reg_sync<MeanAbsFactory>(registry_, "MeanAbs");
+  reg_sync<syncs::MeanAbsFactory>(registry_, "MeanAbs");
   reg_sync<MinFactory>(registry_, "Min");
   reg_sync<MaxFactory>(registry_, "Max");
-  reg_sync<NormalizeFactory>(registry_, "Normalize");
+  reg_sync<syncs::NormalizeFactory>(registry_, "Normalize");
   reg_sync<ArgmaxFactory>(registry_, "Argmax");
   reg_sync<ConcatenateFactory>(registry_, "Concatenate");
   reg_sync<RFFTFactory>(registry_, "RFFT");
   reg_sync<RFFT2Factory>(registry_, "RFFT2");
   reg_sync<IRFFT2Factory>(registry_, "IRFFT2");
-  reg_sync<CrossCorrelation2Factory>(registry_, "CrossCorrelation2");
-  reg_sync<MulFactory>(registry_, "Mul");
-  reg_sync<SubFactory>(registry_, "Sub");
-  reg_sync<DivFactory>(registry_, "Div");
+  reg_sync<syncs::CrossCorrelation2Factory>(registry_, "CrossCorrelation2");
+  reg_sync<MultiplyFactory>(registry_, "Multiply");
+  reg_sync<SubtractFactory>(registry_, "Subtract");
+  reg_sync<DivideFactory>(registry_, "Divide");
   reg_sync<AddFactory>(registry_, "Add");
   reg_sync<EqualFactory>(registry_, "Equal");
   reg_sync<WhereFactory>(registry_, "Where");

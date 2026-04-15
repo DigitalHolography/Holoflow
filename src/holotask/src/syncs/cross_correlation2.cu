@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "holonp/cross_correlation2.hh"
+#include "holotask/syncs/cross_correlation2.hh"
 
 #include <array>
 #include <cmath>
@@ -26,7 +26,38 @@
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
 
-namespace holonp {
+namespace holotask::syncs {
+
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
+void to_json(nlohmann::json &j, FftNorm norm) {
+  switch (norm) {
+  case FftNorm::Backward:
+    j = "backward";
+    break;
+  case FftNorm::Forward:
+    j = "forward";
+    break;
+  case FftNorm::Ortho:
+    j = "ortho";
+    break;
+  default:
+    j = "backward";
+    break;
+  }
+}
+
+void from_json(const nlohmann::json &j, FftNorm &norm) {
+  const auto s = j.get<std::string>();
+  if (s == "forward")
+    norm = FftNorm::Forward;
+  else if (s == "ortho")
+    norm = FftNorm::Ortho;
+  else
+    norm = FftNorm::Backward;
+}
 
 void to_json(nlohmann::json &j, const CrossCorrelation2Settings::Ellipse &e) {
   j = nlohmann::json{
@@ -750,4 +781,4 @@ CrossCorrelation2Factory::update(std::unique_ptr<holoflow::core::ISyncTask> old_
   return create(input_descs, jsettings, ctx);
 }
 
-} // namespace holonp
+} // namespace holotask::syncs
