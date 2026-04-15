@@ -15,7 +15,9 @@
 #include "display_zernike_coefficients.hh"
 
 #include <QMetaObject>
+#include <QPointer>
 
+#include <chrono>
 #include <cstring>
 #include <stdexcept>
 #include <utility>
@@ -26,6 +28,63 @@
 #include "ui/widgets/auto_focus_widget.hh"
 
 namespace holovibes::tasks::sinks {
+
+namespace {
+
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
+
+void check(bool condition, const std::string &msg) {
+  if (!condition) {
+    logger()->error("[DisplayZernikeCoefficientsFactory] {}", msg);
+    throw std::invalid_argument("DisplayZernikeCoefficientsFactory: " + msg);
+  }
+}
+
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  size_t expected = size_of(desc.dtype);
+  for (size_t i = desc.rank(); i-- > 0;) {
+    if (desc.strides[i] != expected)
+      return false;
+    expected *= desc.shape[i];
+  }
+  return true;
+}
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc;
+}
+
+// -------------------------------------------------------------------------------------------------
+// DisplayZernikeCoefficientsTask
+// -------------------------------------------------------------------------------------------------
+
+class DisplayZernikeCoefficientsTask : public holoflow::core::ISyncTask {
+public:
+  DisplayZernikeCoefficientsTask(DisplayZernikeCoefficientsSettings       settings,
+                                 holoflow::core::TDesc                    idesc,
+                                 QPointer<holovibes::ui::AutoFocusWidget> widget,
+                                 cudaStream_t                             stream);
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const holoflow::core::TDesc              &idesc() const;
+  const DisplayZernikeCoefficientsSettings &settings() const;
+  void                                      update_stream(cudaStream_t stream);
+
+private:
+  void dispatch_to_ui(std::vector<float> values);
+
+  DisplayZernikeCoefficientsSettings       settings_;
+  holoflow::core::TDesc                    idesc_;
+  std::chrono::steady_clock::time_point    next_refresh_;
+  QPointer<holovibes::ui::AutoFocusWidget> widget_;
+  cudaStream_t                             stream_;
+};
+
+} // namespace
 
 void to_json(nlohmann::json &j, const DisplayZernikeCoefficientsSettings &settings) {
   j = nlohmann::json{
@@ -40,10 +99,17 @@ void from_json(const nlohmann::json &j, DisplayZernikeCoefficientsSettings &sett
 }
 
 DisplayZernikeCoefficientsTask::DisplayZernikeCoefficientsTask(
-    DisplayZernikeCoefficientsSettings settings, QPointer<holovibes::ui::AutoFocusWidget> widget,
-    cudaStream_t stream)
-    : settings_(std::move(settings)), next_refresh_(std::chrono::steady_clock::now()),
-      widget_(std::move(widget)), stream_(stream) {}
+    DisplayZernikeCoefficientsSettings settings, holoflow::core::TDesc idesc,
+    QPointer<holovibes::ui::AutoFocusWidget> widget, cudaStream_t stream)
+    : settings_(std::move(settings)), idesc_(std::move(idesc)),
+      next_refresh_(std::chrono::steady_clock::now()), widget_(std::move(widget)), stream_(stream) {
+}
+
+const holoflow::core::TDesc &DisplayZernikeCoefficientsTask::idesc() const { return idesc_; }
+const DisplayZernikeCoefficientsSettings &DisplayZernikeCoefficientsTask::settings() const {
+  return settings_;
+}
+void DisplayZernikeCoefficientsTask::update_stream(cudaStream_t stream) { stream_ = stream; }
 
 holoflow::core::OpResult DisplayZernikeCoefficientsTask::execute(holoflow::core::SyncCtx &ctx) {
   if (widget_.isNull()) {
@@ -79,11 +145,11 @@ holoflow::core::OpResult DisplayZernikeCoefficientsTask::execute(holoflow::core:
     throw std::logic_error("Unsupported memory location for zernike coefficient display");
   }
 
-  dispatchToUi(std::move(values));
+  dispatch_to_ui(std::move(values));
   return holoflow::core::OpResult::Ok;
 }
 
-void DisplayZernikeCoefficientsTask::dispatchToUi(std::vector<float> values) {
+void DisplayZernikeCoefficientsTask::dispatch_to_ui(std::vector<float> values) {
   if (widget_.isNull()) {
     logger()->warn("[DisplayZernikeCoefficientsTask::dispatchToUi] target widget is not available");
     return;
@@ -111,22 +177,16 @@ DisplayZernikeCoefficientsFactory::DisplayZernikeCoefficientsFactory(
 
 holoflow::core::InferResult
 DisplayZernikeCoefficientsFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
-                                         const nlohmann::json &jsettings) const {
+                                         const nlohmann::json                  &jsettings) const {
   const auto settings = jsettings.get<DisplayZernikeCoefficientsSettings>();
-  const auto check    = [&](bool condition, const std::string &msg) {
-    if (!condition) {
-      logger()->error("[DisplayZernikeCoefficientsFactory::infer] error: {}", msg);
-      throw std::invalid_argument("DisplayZernikeCoefficientsFactory inference error: " + msg);
-    }
-  };
+  check(settings.refresh_rate_hz > 0.0f, "refresh_rate_hz must be positive");
 
-  check(input_descs.size() == 1,
-        "DisplayZernikeCoefficientsFactory expects exactly one input descriptor");
+  check(input_descs.size() == 1, "expected exactly one input descriptor");
 
   const auto &desc = input_descs[0];
-  check(desc.rank() == 1, "DisplayZernikeCoefficientsFactory supports only rank-1 tensors");
-  check(desc.dtype == holoflow::core::DType::F32,
-        "DisplayZernikeCoefficientsFactory supports only F32 tensors");
+  check(desc.rank() == 1, "supports only rank-1 tensors");
+  check(desc.dtype == holoflow::core::DType::F32, "supports only F32 tensors");
+  check(is_c_contiguous(desc), "input must be C-contiguous");
   check(desc.shape[0] == settings.indexes.size(),
         "Input coefficient count must match configured indexes size");
 
@@ -142,11 +202,31 @@ DisplayZernikeCoefficientsFactory::infer(std::span<const holoflow::core::TDesc> 
 
 std::unique_ptr<holoflow::core::ISyncTask>
 DisplayZernikeCoefficientsFactory::create(std::span<const holoflow::core::TDesc> input_descs,
-                                          const nlohmann::json &jsettings,
-                                          const holoflow::core::SyncCreateCtx &ctx) const {
+                                          const nlohmann::json                  &jsettings,
+                                          const holoflow::core::SyncCreateCtx   &ctx) const {
   auto settings = jsettings.get<DisplayZernikeCoefficientsSettings>();
   infer(input_descs, jsettings);
-  return std::make_unique<DisplayZernikeCoefficientsTask>(std::move(settings), widget_, ctx.stream);
+  return std::make_unique<DisplayZernikeCoefficientsTask>(std::move(settings), input_descs[0],
+                                                          widget_, ctx.stream);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+DisplayZernikeCoefficientsFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                                          std::span<const holoflow::core::TDesc>     input_descs,
+                                          const nlohmann::json                      &jsettings,
+                                          const holoflow::core::SyncCreateCtx       &ctx) const {
+  auto *old = dynamic_cast<DisplayZernikeCoefficientsTask *>(old_task.get());
+  if (old == nullptr)
+    return create(input_descs, jsettings, ctx);
+
+  infer(input_descs, jsettings);
+  auto settings = jsettings.get<DisplayZernikeCoefficientsSettings>();
+  if (settings == old->settings() && same_desc(input_descs[0], old->idesc())) {
+    old->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holovibes::tasks::sinks

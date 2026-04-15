@@ -15,8 +15,10 @@
 #include "display_tensor.hh"
 
 #include <QMetaObject>
+#include <QPointer>
 #include <QtGlobal>
 
+#include <chrono>
 #include <cstring>
 #include <limits>
 #include <stdexcept>
@@ -34,6 +36,61 @@
 
 namespace holovibes::tasks::sinks {
 
+namespace {
+
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
+
+void check(bool condition, const std::string &msg) {
+  if (!condition) {
+    logger()->error("[DisplayTensorFactory] {}", msg);
+    throw std::invalid_argument("DisplayTensorFactory: " + msg);
+  }
+}
+
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  size_t expected = size_of(desc.dtype);
+  for (size_t i = desc.rank(); i-- > 0;) {
+    if (desc.strides[i] != expected)
+      return false;
+    expected *= desc.shape[i];
+  }
+  return true;
+}
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc;
+}
+
+// -------------------------------------------------------------------------------------------------
+// DisplayTensorTask
+// -------------------------------------------------------------------------------------------------
+
+class DisplayTensorTask : public holoflow::core::ISyncTask {
+public:
+  DisplayTensorTask(DisplayTensorSettings settings, holoflow::core::TDesc idesc,
+                    QPointer<holovibes::ui::TensorDisplayWidget> widget, cudaStream_t stream);
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const holoflow::core::TDesc &idesc() const;
+  const DisplayTensorSettings &settings() const;
+  void                         update_stream(cudaStream_t stream);
+
+private:
+  void dispatch_to_ui(QByteArray payload, int width, int height, holoflow::core::DType dtype);
+
+  DisplayTensorSettings                        settings_;
+  holoflow::core::TDesc                        idesc_;
+  std::chrono::steady_clock::time_point        next_refresh_;
+  QPointer<holovibes::ui::TensorDisplayWidget> widget_;
+  cudaStream_t                                 stream_;
+};
+
+} // namespace
+
 void to_json(nlohmann::json &j, const DisplayTensorSettings &ds) {
   j = nlohmann::json{
       {"refresh_rate_hz", ds.refresh_rate_hz},
@@ -44,11 +101,16 @@ void from_json(const nlohmann::json &j, DisplayTensorSettings &ds) {
   j.at("refresh_rate_hz").get_to(ds.refresh_rate_hz);
 }
 
-DisplayTensorTask::DisplayTensorTask(DisplayTensorSettings                        settings,
+DisplayTensorTask::DisplayTensorTask(DisplayTensorSettings settings, holoflow::core::TDesc idesc,
                                      QPointer<holovibes::ui::TensorDisplayWidget> widget,
                                      cudaStream_t                                 stream)
-    : settings_(std::move(settings)), next_refresh_(std::chrono::steady_clock::now()),
-      widget_(std::move(widget)), stream_(stream) {}
+    : settings_(std::move(settings)), idesc_(std::move(idesc)),
+      next_refresh_(std::chrono::steady_clock::now()), widget_(std::move(widget)), stream_(stream) {
+}
+
+const holoflow::core::TDesc &DisplayTensorTask::idesc() const { return idesc_; }
+const DisplayTensorSettings &DisplayTensorTask::settings() const { return settings_; }
+void DisplayTensorTask::update_stream(cudaStream_t stream) { stream_ = stream; }
 
 holoflow::core::OpResult DisplayTensorTask::execute(holoflow::core::SyncCtx &ctx) {
   if (widget_.isNull()) {
@@ -104,12 +166,12 @@ holoflow::core::OpResult DisplayTensorTask::execute(holoflow::core::SyncCtx &ctx
   }
 
   CUDA_CHECK(cudaStreamSynchronize(stream_));
-  dispatchToUi(std::move(payload), static_cast<int>(width), static_cast<int>(height), desc.dtype);
+  dispatch_to_ui(std::move(payload), static_cast<int>(width), static_cast<int>(height), desc.dtype);
   return holoflow::core::OpResult::Ok;
 }
 
-void DisplayTensorTask::dispatchToUi(QByteArray payload, int width, int height,
-                                     holoflow::core::DType dtype) {
+void DisplayTensorTask::dispatch_to_ui(QByteArray payload, int width, int height,
+                                       holoflow::core::DType dtype) {
   if (widget_.isNull()) {
     logger()->warn("[DisplayTensorTask::dispatchToUi] target widget is not available");
     return;
@@ -135,24 +197,18 @@ DisplayTensorFactory::DisplayTensorFactory(holovibes::ui::TensorDisplayWidget *w
 
 holoflow::core::InferResult
 DisplayTensorFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
-                            const nlohmann::json &) const {
-  const auto check = [&](bool condition, const std::string &msg) {
-    if (!condition) {
-      logger()->error("[DisplayTensorFactory::infer] error: {}", msg);
-      throw std::invalid_argument("DisplayTensorFactory inference error: " + msg);
-    }
-  };
-
-  // Validate
-  check(input_descs.size() == 1, "DisplayTensorFactory expects exactly one input descriptor");
+                            const nlohmann::json                  &jsettings) const {
+  auto settings = jsettings.get<DisplayTensorSettings>();
+  check(settings.refresh_rate_hz > 0.0f, "refresh_rate_hz must be positive");
+  check(input_descs.size() == 1, "expected exactly one input descriptor");
   const auto &desc         = input_descs[0];
   const bool  is_2d_tensor = desc.rank() == 2 || (desc.rank() == 3 && desc.shape[0] == 1);
-  check(is_2d_tensor, "DisplayTensorFactory supports only 2D tensors");
+  check(is_2d_tensor, "supports only rank-2 tensors or rank-3 tensors with batch size 1");
   check(desc.dtype == holoflow::core::DType::U8 || desc.dtype == holoflow::core::DType::U16 ||
             desc.dtype == holoflow::core::DType::F32,
-        "DisplayTensorFactory supports only u8, u16, or f32 tensors");
+        "supports only U8, U16, or F32 tensors");
+  check(is_c_contiguous(desc), "input must be C-contiguous");
 
-  // Success
   return holoflow::core::InferResult{
       .input_descs   = {desc},
       .output_descs  = {},
@@ -169,8 +225,27 @@ DisplayTensorFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                              const holoflow::core::SyncCreateCtx   &ctx) const {
   auto settings = jsettings.get<DisplayTensorSettings>();
   infer(input_descs, jsettings);
-  auto *task = new DisplayTensorTask(settings, widget_, ctx.stream);
-  return std::unique_ptr<holoflow::core::ISyncTask>(task);
+  return std::make_unique<DisplayTensorTask>(std::move(settings), input_descs[0], widget_,
+                                             ctx.stream);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+DisplayTensorFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                             std::span<const holoflow::core::TDesc>     input_descs,
+                             const nlohmann::json                      &jsettings,
+                             const holoflow::core::SyncCreateCtx       &ctx) const {
+  auto *old = dynamic_cast<DisplayTensorTask *>(old_task.get());
+  if (old == nullptr)
+    return create(input_descs, jsettings, ctx);
+
+  infer(input_descs, jsettings);
+  auto settings = jsettings.get<DisplayTensorSettings>();
+  if (settings == old->settings() && same_desc(input_descs[0], old->idesc())) {
+    old->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holovibes::tasks::sinks

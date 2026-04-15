@@ -14,12 +14,9 @@
 
 #pragma once
 
-#include <QPointer>
-#include <chrono>
-#include <memory>
-#include <nlohmann/json.hpp>
-#include <span>
 #include <vector>
+
+#include <nlohmann/json.hpp>
 
 #include "holoflow/core/tasks.hh"
 
@@ -29,30 +26,23 @@ class AutoFocusWidget;
 
 namespace holovibes::tasks::sinks {
 
+// -------------------------------------------------------------------------------------------------
+// DisplayZernikeCoefficientsSettings
+// -------------------------------------------------------------------------------------------------
+
 struct DisplayZernikeCoefficientsSettings {
   std::vector<int> indexes;
   float            refresh_rate_hz = 30.0f;
+
+  bool operator==(const DisplayZernikeCoefficientsSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const DisplayZernikeCoefficientsSettings &settings);
 void from_json(const nlohmann::json &j, DisplayZernikeCoefficientsSettings &settings);
 
-class DisplayZernikeCoefficientsTask : public holoflow::core::ISyncTask {
-public:
-  explicit DisplayZernikeCoefficientsTask(DisplayZernikeCoefficientsSettings settings,
-                                          QPointer<holovibes::ui::AutoFocusWidget> widget,
-                                          cudaStream_t stream);
-
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  void dispatchToUi(std::vector<float> values);
-
-  DisplayZernikeCoefficientsSettings          settings_;
-  std::chrono::steady_clock::time_point       next_refresh_;
-  QPointer<holovibes::ui::AutoFocusWidget>    widget_;
-  cudaStream_t                                stream_;
-};
+// -------------------------------------------------------------------------------------------------
+// DisplayZernikeCoefficientsFactory
+// -------------------------------------------------------------------------------------------------
 
 class DisplayZernikeCoefficientsFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -63,6 +53,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 
 private:
