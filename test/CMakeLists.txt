@@ -12,6 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# enable_testing()
-# add_subdirectory(holoflow)
-# add_subdirectory(holotask)
+enable_testing()

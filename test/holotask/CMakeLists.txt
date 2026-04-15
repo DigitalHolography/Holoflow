@@ -11,23 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-set(TARGET holotask_test)
-
-file(GLOB_RECURSE HOLOTASK_TEST_SOURCES 
-    ${CMAKE_CURRENT_SOURCE_DIR}/*.cc
-)
-
-add_executable(${TARGET} 
-    ${HOLOTASK_TEST_SOURCES}
-)
-
-target_link_libraries(${TARGET}
-PRIVATE
-    project_options
-    holotask
-    gtest_main
-)
-
-include(GoogleTest)
-gtest_discover_tests(${TARGET})

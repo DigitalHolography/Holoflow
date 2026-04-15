@@ -11,31 +11,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-set(TARGET holoflow_test)
-
-file(GLOB_RECURSE HOLOFLOW_TEST_SOURCES 
-    ${CMAKE_CURRENT_SOURCE_DIR}/*.cc
-)
-
-add_executable(${TARGET} 
-    ${HOLOFLOW_TEST_SOURCES}
-)
-
-target_link_libraries(${TARGET}
-PRIVATE
-    project_options
-    holoflow
-    holotask
-    gtest_main
-)
-
-target_compile_definitions(${TARGET}
-PRIVATE
-    HOLOFLOW_TESTDATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/testdata"
-)
-
-include(GoogleTest)
-gtest_discover_tests(${TARGET}
-    DISCOVERY_MODE PRE_TEST
-)
