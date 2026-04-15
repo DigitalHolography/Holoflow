@@ -16,9 +16,31 @@
 
 #include <stdexcept>
 
+#include "curaii/cuda.hh"
+
 namespace holonp {
 
 namespace {
+
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  if (desc.shape.size() != desc.strides.size()) {
+    return false;
+  }
+
+  size_t expected = holoflow::core::size_of(desc.dtype);
+  for (size_t i = desc.shape.size(); i-- > 0;) {
+    if (desc.strides[i] != expected) {
+      return false;
+    }
+    expected *= desc.shape[i];
+  }
+  return true;
+}
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
+}
 
 // One thread per output element.
 // Output layout (C-contiguous): [batch, ny_win, nx_win, win_h, win_w] * elem_size bytes
@@ -82,6 +104,31 @@ UnfoldDims compute_dims(const holoflow::core::TDesc &src, const Unfold2DSettings
   return {batch, H, W, ny_win, nx_win};
 }
 
+class Unfold2D : public holoflow::core::ISyncTask {
+public:
+  Unfold2D(Unfold2DSettings settings, holoflow::core::TDesc idesc, size_t batch, size_t H, size_t W,
+           size_t ny_win, size_t nx_win, size_t elem_size, cudaStream_t stream)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), batch_(batch), H_(H), W_(W),
+        ny_win_(ny_win), nx_win_(nx_win), elem_size_(elem_size), stream_(stream) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const Unfold2DSettings      &settings() const { return settings_; }
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  void                         update_stream(cudaStream_t s) { stream_ = s; }
+
+private:
+  Unfold2DSettings      settings_;
+  holoflow::core::TDesc idesc_;
+  size_t                batch_;
+  size_t                H_;
+  size_t                W_;
+  size_t                ny_win_;
+  size_t                nx_win_;
+  size_t                elem_size_;
+  cudaStream_t          stream_;
+};
+
 } // namespace
 
 void to_json(nlohmann::json &j, const Unfold2DSettings &s) {
@@ -95,12 +142,6 @@ void from_json(const nlohmann::json &j, Unfold2DSettings &s) {
   j.at("stride_y").get_to(s.stride_y);
   j.at("stride_x").get_to(s.stride_x);
 }
-
-Unfold2D::Unfold2D(const Unfold2DSettings &settings, const holoflow::core::TDesc &idesc,
-                   size_t batch, size_t H, size_t W, size_t ny_win, size_t nx_win, size_t elem_size,
-                   cudaStream_t stream)
-    : settings_(settings), idesc_(idesc), batch_(batch), H_(H), W_(W), ny_win_(ny_win),
-      nx_win_(nx_win), elem_size_(elem_size), stream_(stream) {}
 
 holoflow::core::OpResult Unfold2D::execute(holoflow::core::SyncCtx &ctx) {
   const auto *src = reinterpret_cast<const std::byte *>(ctx.inputs[0].data());
@@ -126,6 +167,8 @@ Unfold2DFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
   const auto &src      = input_descs[0];
   const auto  settings = jsettings.get<Unfold2DSettings>();
+  if (!is_c_contiguous(src))
+    throw std::invalid_argument("Unfold2D: input must be C-contiguous");
   const auto  dims     = compute_dims(src, settings);
 
   // Build output shape: replace last two dims (H, W) with (ny_win, nx_win, win_h, win_w)
@@ -149,6 +192,7 @@ std::unique_ptr<holoflow::core::ISyncTask>
 Unfold2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                         const nlohmann::json                  &jsettings,
                         const holoflow::core::SyncCreateCtx   &ctx) const {
+  (void)infer(input_descs, jsettings);
   const auto &src      = input_descs[0];
   const auto  settings = jsettings.get<Unfold2DSettings>();
   const auto  dims     = compute_dims(src, settings);
@@ -163,10 +207,10 @@ Unfold2DFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                         const nlohmann::json                      &jsettings,
                         const holoflow::core::SyncCreateCtx       &ctx) const {
   auto *old = dynamic_cast<Unfold2D *>(old_task.get());
-  if (old != nullptr) {
+  if (old != nullptr && input_descs.size() == 1) {
+    (void)infer(input_descs, jsettings);
     const auto settings = jsettings.get<Unfold2DSettings>();
-    if (settings == old->get_settings() && input_descs[0].shape == old->get_idesc().shape &&
-        input_descs[0].dtype == old->get_idesc().dtype) {
+    if (settings == old->settings() && same_desc(input_descs[0], old->idesc())) {
       old->update_stream(ctx.stream);
       return old_task;
     }

@@ -23,6 +23,9 @@
 #include <cuComplex.h>
 #include <math_constants.h>
 
+#include "curaii/cuda.hh"
+#include "curaii/cufft.hh"
+
 namespace holonp {
 
 void to_json(nlohmann::json &j, const CrossCorrelation2Settings::Ellipse &e) {
@@ -63,9 +66,16 @@ void from_json(const nlohmann::json &j, CrossCorrelation2Settings &s) {
 
 namespace {
 
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+
 inline void check(bool cond, const std::string &msg) {
   if (!cond)
     throw std::invalid_argument("CrossCorrelation2: " + msg);
+}
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
 }
 
 inline int normalize_axis(int axis, int ndim) {
@@ -138,6 +148,14 @@ size_t product(const std::vector<size_t> &shape, size_t start, size_t end) {
   return result;
 }
 
+struct TensorLayout {
+  std::vector<size_t> offsets;
+  size_t              inner_batches;
+  long long           idist;
+  int                 istride;
+  int                 inembed_w;
+};
+
 TensorLayout get_tensor_layout(const holoflow::core::TDesc &idesc) {
   const int    ndim  = static_cast<int>(idesc.shape.size());
   const size_t esize = holoflow::core::size_of(idesc.dtype);
@@ -187,7 +205,6 @@ TensorLayout get_tensor_layout(const holoflow::core::TDesc &idesc) {
 
   return {offsets, inner_batches, idist, istride, inembed_w};
 }
-
 struct ForwardPlanInfo {
   curaii::CufftHandle plan;
   std::vector<size_t> input_offsets;
@@ -441,31 +458,68 @@ __global__ void extract_real_and_scale_kernel(const cuFloatComplex *__restrict__
   }
 }
 
-} // namespace
+class CrossCorrelation2 : public holoflow::core::ISyncTask {
+public:
+  CrossCorrelation2(CrossCorrelation2Settings settings, holoflow::core::TDesc moving_desc,
+                    holoflow::core::TDesc reference_desc, holoflow::core::TDesc moving_freq_desc,
+                    curaii::CufftHandle &&moving_fwd_plan,
+                    curaii::CufftHandle &&reference_fwd_plan,
+                    curaii::CufftHandle &&inverse_plan, TensorLayout moving_layout,
+                    TensorLayout reference_layout, size_t h, size_t w, size_t freq_elems_per_batch,
+                    size_t total_moving_freq_elems, size_t total_out_elems,
+                    DevPtr<cuFloatComplex> d_moving_spatial,
+                    DevPtr<cuFloatComplex> d_reference_spatial, DevPtr<float> d_moving_means,
+                    DevPtr<float> d_reference_means, DevPtr<cuFloatComplex> d_moving_freq,
+                    DevPtr<cuFloatComplex> d_reference_freq, DevPtr<size_t> d_reference_batch_map,
+                    cudaStream_t stream)
+      : settings_(std::move(settings)), moving_desc_(std::move(moving_desc)),
+        reference_desc_(std::move(reference_desc)), moving_freq_desc_(std::move(moving_freq_desc)),
+        moving_fwd_plan_(std::move(moving_fwd_plan)),
+        reference_fwd_plan_(std::move(reference_fwd_plan)), inverse_plan_(std::move(inverse_plan)),
+        moving_layout_(std::move(moving_layout)), reference_layout_(std::move(reference_layout)),
+        h_(h), w_(w), freq_elems_per_batch_(freq_elems_per_batch),
+        total_moving_freq_elems_(total_moving_freq_elems), total_out_elems_(total_out_elems),
+        d_moving_spatial_(std::move(d_moving_spatial)),
+        d_reference_spatial_(std::move(d_reference_spatial)),
+        d_moving_means_(std::move(d_moving_means)),
+        d_reference_means_(std::move(d_reference_means)),
+        d_moving_freq_(std::move(d_moving_freq)),
+        d_reference_freq_(std::move(d_reference_freq)),
+        d_reference_batch_map_(std::move(d_reference_batch_map)), stream_(stream) {}
 
-CrossCorrelation2::CrossCorrelation2(
-    CrossCorrelation2Settings settings, holoflow::core::TDesc moving_desc,
-    holoflow::core::TDesc reference_desc, holoflow::core::TDesc moving_freq_desc,
-    curaii::CufftHandle &&moving_fwd_plan, curaii::CufftHandle &&reference_fwd_plan,
-    curaii::CufftHandle &&inverse_plan, TensorLayout moving_layout, TensorLayout reference_layout,
-    size_t h, size_t w, size_t freq_elems_per_batch, size_t total_moving_freq_elems,
-    size_t total_out_elems, DevPtr<cuFloatComplex> d_moving_spatial,
-    DevPtr<cuFloatComplex> d_reference_spatial, DevPtr<float> d_moving_means,
-    DevPtr<float> d_reference_means, DevPtr<cuFloatComplex> d_moving_freq,
-    DevPtr<cuFloatComplex> d_reference_freq, DevPtr<size_t> d_reference_batch_map,
-    cudaStream_t stream)
-    : settings_(std::move(settings)), moving_desc_(std::move(moving_desc)),
-      reference_desc_(std::move(reference_desc)), moving_freq_desc_(std::move(moving_freq_desc)),
-      moving_fwd_plan_(std::move(moving_fwd_plan)),
-      reference_fwd_plan_(std::move(reference_fwd_plan)), inverse_plan_(std::move(inverse_plan)),
-      moving_layout_(std::move(moving_layout)), reference_layout_(std::move(reference_layout)),
-      h_(h), w_(w), freq_elems_per_batch_(freq_elems_per_batch),
-      total_moving_freq_elems_(total_moving_freq_elems), total_out_elems_(total_out_elems),
-      d_moving_spatial_(std::move(d_moving_spatial)),
-      d_reference_spatial_(std::move(d_reference_spatial)),
-      d_moving_means_(std::move(d_moving_means)), d_reference_means_(std::move(d_reference_means)),
-      d_moving_freq_(std::move(d_moving_freq)), d_reference_freq_(std::move(d_reference_freq)),
-      d_reference_batch_map_(std::move(d_reference_batch_map)), stream_(stream) {}
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const CrossCorrelation2Settings &settings() const { return settings_; }
+  const holoflow::core::TDesc     &moving_desc() const { return moving_desc_; }
+  const holoflow::core::TDesc     &reference_desc() const { return reference_desc_; }
+  void                             update_stream(cudaStream_t stream);
+
+private:
+  CrossCorrelation2Settings settings_;
+  holoflow::core::TDesc     moving_desc_;
+  holoflow::core::TDesc     reference_desc_;
+  holoflow::core::TDesc     moving_freq_desc_;
+  curaii::CufftHandle       moving_fwd_plan_;
+  curaii::CufftHandle       reference_fwd_plan_;
+  curaii::CufftHandle       inverse_plan_;
+  TensorLayout              moving_layout_;
+  TensorLayout              reference_layout_;
+  size_t                    h_;
+  size_t                    w_;
+  size_t                    freq_elems_per_batch_;
+  size_t                    total_moving_freq_elems_;
+  size_t                    total_out_elems_;
+  DevPtr<cuFloatComplex>    d_moving_spatial_;
+  DevPtr<cuFloatComplex>    d_reference_spatial_;
+  DevPtr<float>             d_moving_means_;
+  DevPtr<float>             d_reference_means_;
+  DevPtr<cuFloatComplex>    d_moving_freq_;
+  DevPtr<cuFloatComplex>    d_reference_freq_;
+  DevPtr<size_t>            d_reference_batch_map_;
+  cudaStream_t              stream_;
+};
+
+} // namespace
 
 void CrossCorrelation2::update_stream(cudaStream_t stream) {
   if (stream_ != stream) {
@@ -680,19 +734,14 @@ CrossCorrelation2Factory::update(std::unique_ptr<holoflow::core::ISyncTask> old_
   auto *old_xcorr = dynamic_cast<CrossCorrelation2 *>(old_task.get());
   if (old_xcorr != nullptr && input_descs.size() == 2) {
     const auto  new_settings  = jsettings.get<CrossCorrelation2Settings>();
-    const auto &old_moving    = old_xcorr->get_moving_desc();
-    const auto &old_reference = old_xcorr->get_reference_desc();
+    const auto &old_moving    = old_xcorr->moving_desc();
+    const auto &old_reference = old_xcorr->reference_desc();
     const auto &new_moving    = input_descs[0];
     const auto &new_reference = input_descs[1];
 
-    const bool can_reuse =
-        (new_settings == old_xcorr->get_settings()) && (new_moving.shape == old_moving.shape) &&
-        (new_moving.strides == old_moving.strides) && (new_moving.dtype == old_moving.dtype) &&
-        (new_moving.mem_loc == old_moving.mem_loc) &&
-        (new_reference.shape == old_reference.shape) &&
-        (new_reference.strides == old_reference.strides) &&
-        (new_reference.dtype == old_reference.dtype) &&
-        (new_reference.mem_loc == old_reference.mem_loc);
+    const bool can_reuse = (new_settings == old_xcorr->settings()) &&
+                           same_desc(new_moving, old_moving) &&
+                           same_desc(new_reference, old_reference);
 
     if (can_reuse) {
       old_xcorr->update_stream(ctx.stream);
