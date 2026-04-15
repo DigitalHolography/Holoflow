@@ -14,21 +14,24 @@
 
 #include "holotask/asyncs/slide_avg.hh"
 
-#include "bug.hh"
-#include "curaii/cuda.hh"
-#include "holoflow/core/tasks.hh"
-#include "logger.hh"
-
 #include <cub/cub.cuh>
 #include <math_constants.h>
+#include <optional>
+#include <span>
 
 #include "bug.hh"
 #include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
+#include "holoflow/core/tensor.hh"
 #include "logger.hh"
-#include <span>
+
+#ifndef CACHE_LINE_SIZE
+#define CACHE_LINE_SIZE 64
+#endif
 
 namespace holotask::asyncs {
+
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 void to_json(nlohmann::json &j, const SlidingAverageSettings &s) {
   j = nlohmann::json{{"target_capacity", s.target_capacity}, {"window_size", s.window_size}};
@@ -40,6 +43,55 @@ void from_json(const nlohmann::json &j, SlidingAverageSettings &s) {
 }
 
 namespace {
+
+class SlidingAverage : public holoflow::core::IAsyncTask {
+public:
+  SlidingAverage(SlidingAverageSettings settings, holoflow::core::TDesc idesc,
+                 holoflow::core::TDesc odesc, cudaStream_t producer_stream,
+                 cudaStream_t consumer_stream, size_t nb_slots, size_t element_size,
+                 DevPtr<std::byte> &&d_buffer, DevPtr<float> &&d_running_avg)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), odesc_(std::move(odesc)),
+        producer_stream_(producer_stream), consumer_stream_(consumer_stream), nb_slots_(nb_slots),
+        element_size_(element_size), d_buffer_(std::move(d_buffer)),
+        d_running_avg_(std::move(d_running_avg)), avg_idx_(nb_slots - settings_.window_size),
+        write_idx_(0), read_idx_(nb_slots - 1) {}
+
+  ~SlidingAverage() override = default;
+
+  holoflow::core::OpResult try_push(holoflow::core::AsyncPushCtx &ctx) override;
+  holoflow::core::OpResult try_pop(holoflow::core::AsyncPopCtx &ctx) override;
+  std::optional<holoflow::core::TView> acquire_input(int index) override;
+  void                                 release_output(int index) override;
+
+  void update_streams(cudaStream_t producer_stream, cudaStream_t consumer_stream) {
+    producer_stream_ = producer_stream;
+    consumer_stream_ = consumer_stream;
+  }
+  const SlidingAverageSettings &settings() const { return settings_; }
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+
+private:
+  int writer_size() const;
+  int reader_size() const;
+
+  SlidingAverageSettings settings_;
+  holoflow::core::TDesc  idesc_;
+  holoflow::core::TDesc  odesc_;
+  cudaStream_t           producer_stream_;
+  cudaStream_t           consumer_stream_;
+  size_t                 nb_slots_;
+  size_t                 element_size_;
+  DevPtr<std::byte>      d_buffer_;
+  DevPtr<float>          d_running_avg_;
+  alignas(CACHE_LINE_SIZE) std::atomic<size_t> avg_idx_;
+  alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;
+  alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_idx_;
+};
+
+bool is_contiguous(const holoflow::core::TDesc &desc) {
+  holoflow::core::TDesc contiguous(desc.shape, desc.dtype, desc.mem_loc, desc.offset);
+  return desc.strides == contiguous.strides;
+}
 
 __global__ void f32_add_avg_kernel(const float *idata, float *odata, int nx, int ny, int avg_size) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -66,16 +118,6 @@ __global__ void f32_sub_avg_kernel(const float *idata, float *odata, int nx, int
 }
 
 } // namespace
-
-SlidingAverage::SlidingAverage(SlidingAverageSettings settings, const holoflow::core::TDesc &idesc,
-                               holoflow::core::TDesc &odesc, cudaStream_t producer_stream,
-                               cudaStream_t consumer_stream, size_t nb_slots, size_t element_size,
-                               DevPtr<std::byte> &&d_buffer, DevPtr<float> &&d_running_avg)
-    : settings_(std::move(settings)), idesc_(idesc), odesc_(odesc),
-      producer_stream_(producer_stream), consumer_stream_(consumer_stream), nb_slots_(nb_slots),
-      element_size_(element_size), d_buffer_(std::move(d_buffer)),
-      d_running_avg_(std::move(d_running_avg)), avg_idx_(nb_slots - settings.window_size),
-      write_idx_(0), read_idx_(nb_slots - 1) {}
 
 int SlidingAverage::writer_size() const {
   int write_idx = write_idx_.load(std::memory_order_relaxed);
@@ -214,6 +256,7 @@ SlidingAverageFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(idesc.rank() == 3, "input must be 3D");
   check(idesc.shape[0] == 1, "input batch size must be 1");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
+  check(is_contiguous(idesc), "input must be contiguous");
   check(settings.target_capacity > 0, "target_capacity must be greater or equal than zero");
   check(settings.window_size > 0, "window_size must be greater or equal than zero");
 
@@ -252,10 +295,10 @@ SlidingAverageFactory::create(std::span<const holoflow::core::TDesc> input_descs
   CUDA_CHECK(cudaStreamSynchronize(ctx.producer_stream));
 
   // Success
-  auto task = new SlidingAverage(settings, idesc, result.output_descs[0], ctx.producer_stream,
-                                 ctx.consumer_stream, nb_slots, element_size, std::move(d_buffer),
-                                 std::move(d_running_avg));
-  return std::unique_ptr<holoflow::core::IAsyncTask>(task);
+  return std::make_unique<SlidingAverage>(settings, idesc, result.output_descs[0],
+                                          ctx.producer_stream, ctx.consumer_stream, nb_slots,
+                                          element_size, std::move(d_buffer),
+                                          std::move(d_running_avg));
 }
 
 std::unique_ptr<holoflow::core::IAsyncTask>
@@ -263,6 +306,22 @@ SlidingAverageFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_ta
                               std::span<const holoflow::core::TDesc>      input_descs,
                               const nlohmann::json                       &jsettings,
                               const holoflow::core::AsyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_slide_avg = dynamic_cast<SlidingAverage *>(old_task.get());
+  if (old_slide_avg == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  const auto  settings = jsettings.get<SlidingAverageSettings>();
+  const auto &idesc    = input_descs[0];
+  if (settings == old_slide_avg->settings() && idesc.shape == old_slide_avg->idesc().shape &&
+      idesc.strides == old_slide_avg->idesc().strides && idesc.dtype == old_slide_avg->idesc().dtype &&
+      idesc.mem_loc == old_slide_avg->idesc().mem_loc && idesc.offset == old_slide_avg->idesc().offset) {
+    old_slide_avg->update_streams(ctx.producer_stream, ctx.consumer_stream);
+    return old_task;
+  }
+
   return create(input_descs, jsettings, ctx);
 }
 

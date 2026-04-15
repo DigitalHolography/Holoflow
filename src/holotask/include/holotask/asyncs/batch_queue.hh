@@ -15,71 +15,30 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
-#include <optional>
+#include <span>
 
-#include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
-#include "holoflow/core/tensor.hh"
-
-#ifndef CACHE_LINE_SIZE
-#define CACHE_LINE_SIZE 64
-#endif
-
-#if defined(_MSC_VER)
-#if !defined(__clang__)
-#pragma warning(push)
-#pragma warning(disable : 4324)
-#endif
-#endif
-
-template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
-template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
 namespace holotask::asyncs {
+
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
 
 struct BatchQueueSettings {
   int target_capacity; // Target capacity of the queue
   int output_size;     // Size of each output batch
   int output_stride;   // Stride between batches
+
+  bool operator==(const BatchQueueSettings &) const = default;
 };
 
-/// @name JSON serialization
-/// @brief JSON serialization for @ref BatchQueueSettings.
-/// @{
 void to_json(nlohmann::json &j, const BatchQueueSettings &bqs);
 void from_json(const nlohmann::json &j, BatchQueueSettings &bqs);
-/// @}
 
-class BatchQueue : public holoflow::core::IAsyncTask {
-public:
-  std::optional<holoflow::core::TView> acquire_input(int index) override;
-  void                                 release_output(int index) override;
-  holoflow::core::OpResult             try_push(holoflow::core::AsyncPushCtx &ctx) override;
-  holoflow::core::OpResult             try_pop(holoflow::core::AsyncPopCtx &ctx) override;
-
-private:
-  BatchQueue(const BatchQueueSettings &settings, const holoflow::core::TDesc &idesc,
-             const holoflow::core::TDesc &odesc, HostPtr<std::byte> &&h_buf,
-             DevPtr<std::byte> &&d_buf, std::byte *buf, size_t nb_slots, size_t input_size,
-             size_t element_size);
-
-  size_t writer_size() const;
-  size_t reader_size() const;
-
-  friend class BatchQueueFactory;
-
-  BatchQueueSettings    settings_;
-  holoflow::core::TDesc idesc_;
-  holoflow::core::TDesc odesc_;
-  HostPtr<std::byte>    h_buf_;
-  DevPtr<std::byte>     d_buf_;
-  std::byte            *buf_;
-  size_t                nb_slots_;
-  size_t                input_size_;
-  size_t                element_size_;
-  alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;
-  alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_idx_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class BatchQueueFactory : public holoflow::core::IAsyncTaskFactory {
 public:
@@ -97,9 +56,3 @@ public:
 };
 
 } // namespace holotask::asyncs
-
-#if defined(_MSC_VER)
-#if !defined(__clang__)
-#pragma warning(pop)
-#endif
-#endif
