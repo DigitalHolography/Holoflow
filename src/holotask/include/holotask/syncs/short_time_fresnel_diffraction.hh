@@ -14,7 +14,6 @@
 
 #pragma once
 
-#include <memory>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -23,36 +22,22 @@
 
 namespace holotask::syncs {
 
-// Which coordinate frame is used for the quadratic Fresnel lens applied to each window.
-enum class STFDPhaseReference {
-  // LOCAL — treat each window as an independent on-axis field.  The lens is the standard
-  // quadratic lens centered on the window, identical to fresnel_diffraction applied per window.
-  LOCAL,
+// -------------------------------------------------------------------------------------------------
+// STFDPhaseReference
+// -------------------------------------------------------------------------------------------------
 
-  // GLOBAL — equivalent to applying a single global quadratic lens to the entire field BEFORE
-  // sliding-window extraction.  For window at grid position (gx, gy), the combined phase reduces
-  // to  π/(λz) * (x_global² + y_global²)  where (x_global, y_global) are the physical coordinates
-  // of each pixel in the original field frame.  This is the correct model for plenoptic / tilted-
-  // beam propagation (Shack-Hartmann generalisation with arbitrary overlap).
+enum class STFDPhaseReference {
+  LOCAL,
   GLOBAL,
 };
 
 NLOHMANN_JSON_SERIALIZE_ENUM(STFDPhaseReference, {{STFDPhaseReference::LOCAL, "LOCAL"},
                                                   {STFDPhaseReference::GLOBAL, "GLOBAL"}})
 
-// Sliding-window Fresnel diffraction (Short-Time Fresnel Transform).
-//
-// Input:  [..., H, W]  (CF32, device)
-// Output: [..., ny_win, nx_win, win_h, win_w]  (CF32, device)
-//
-// where  ny_win = (H - win_h) / stride_y + 1
-//        nx_win = (W - win_w) / stride_x + 1
-//
-// Implemented as a single fused CUDA operation:
-//   • No intermediate "unfolded" buffer — windows are gathered directly from the original field
-//     via a cuFFT JIT load callback.
-//   • The callback simultaneously applies the appropriate quadratic lens (LOCAL or GLOBAL).
-//   • Batch dimensions are folded into the cuFFT plan for maximum GPU occupancy.
+// -------------------------------------------------------------------------------------------------
+// ShortTimeFresnelDiffractionSettings
+// -------------------------------------------------------------------------------------------------
+
 struct ShortTimeFresnelDiffractionSettings {
   float              lambda;
   float              dx;
@@ -72,23 +57,9 @@ struct ShortTimeFresnelDiffractionSettings {
 void to_json(nlohmann::json &j, const ShortTimeFresnelDiffractionSettings &s);
 void from_json(const nlohmann::json &j, ShortTimeFresnelDiffractionSettings &s);
 
-class ShortTimeFresnelDiffraction : public holoflow::core::ISyncTask {
-public:
-  struct Impl;
-
-  explicit ShortTimeFresnelDiffraction(std::unique_ptr<Impl> impl);
-  ~ShortTimeFresnelDiffraction() override;
-
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-  const holoflow::core::TDesc               &get_idesc() const;
-  const ShortTimeFresnelDiffractionSettings &get_settings() const;
-
-  void update_stream(cudaStream_t stream);
-
-private:
-  std::unique_ptr<Impl> impl_;
-};
+// -------------------------------------------------------------------------------------------------
+// ShortTimeFresnelDiffractionFactory
+// -------------------------------------------------------------------------------------------------
 
 class ShortTimeFresnelDiffractionFactory : public holoflow::core::ISyncTaskFactory {
 public:

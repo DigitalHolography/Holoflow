@@ -343,12 +343,12 @@ __global__ void stft_output_phase_kernel(cuFloatComplex *output, const cuFloatCo
   auto total = static_cast<unsigned long long>(batch) * height * width;
   if (lid >= total)
     return;
-  auto b   = lid / (static_cast<unsigned long long>(height) * width);
-  auto loc = lid % (static_cast<unsigned long long>(height) * width);
-  auto row = static_cast<int>(loc / width);
-  auto col = static_cast<int>(loc % width);
-  auto idx = b * idist + static_cast<unsigned long long>(row) * stride_h +
-             static_cast<unsigned long long>(col) * istride;
+  auto b      = lid / (static_cast<unsigned long long>(height) * width);
+  auto loc    = lid % (static_cast<unsigned long long>(height) * width);
+  auto row    = static_cast<int>(loc / width);
+  auto col    = static_cast<int>(loc % width);
+  auto idx    = b * idist + static_cast<unsigned long long>(row) * stride_h +
+                static_cast<unsigned long long>(col) * istride;
   output[idx] = cuCmulf(output[idx], lens[static_cast<unsigned long long>(row) * width + col]);
 }
 
@@ -398,13 +398,28 @@ std::pair<int, int> normalize_axes(const ShortTimeFresnelDiffractionSettings &s,
   return {ax0, ax1};
 }
 
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  size_t expected = size_of(desc.dtype);
+  for (size_t i = desc.rank(); i-- > 0;) {
+    if (desc.strides[i] != expected)
+      return false;
+    expected *= desc.shape[i];
+  }
+  return true;
+}
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc;
+}
+
 } // namespace
 
 // -------------------------------------------------------------------------------------------------
-// Impl
+// ShortTimeFresnelDiffractionImpl
 // -------------------------------------------------------------------------------------------------
 
-struct ShortTimeFresnelDiffraction::Impl {
+struct ShortTimeFresnelDiffractionImpl {
   ShortTimeFresnelDiffractionSettings settings;
   holoflow::core::TDesc               idesc;
   curaii::CufftHandle                 fft_handle;
@@ -430,13 +445,29 @@ struct ShortTimeFresnelDiffraction::Impl {
 // ShortTimeFresnelDiffraction
 // -------------------------------------------------------------------------------------------------
 
-ShortTimeFresnelDiffraction::ShortTimeFresnelDiffraction(std::unique_ptr<Impl> impl)
+class ShortTimeFresnelDiffraction : public holoflow::core::ISyncTask {
+public:
+  explicit ShortTimeFresnelDiffraction(std::unique_ptr<ShortTimeFresnelDiffractionImpl> impl);
+  ~ShortTimeFresnelDiffraction() override;
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const holoflow::core::TDesc               &idesc() const;
+  const ShortTimeFresnelDiffractionSettings &settings() const;
+  void                                       update_stream(cudaStream_t stream);
+
+private:
+  std::unique_ptr<ShortTimeFresnelDiffractionImpl> impl_;
+};
+
+ShortTimeFresnelDiffraction::ShortTimeFresnelDiffraction(
+    std::unique_ptr<ShortTimeFresnelDiffractionImpl> impl)
     : impl_(std::move(impl)) {}
 
 ShortTimeFresnelDiffraction::~ShortTimeFresnelDiffraction() = default;
 
-const holoflow::core::TDesc &ShortTimeFresnelDiffraction::get_idesc() const { return impl_->idesc; }
-const ShortTimeFresnelDiffractionSettings &ShortTimeFresnelDiffraction::get_settings() const {
+const holoflow::core::TDesc &ShortTimeFresnelDiffraction::idesc() const { return impl_->idesc; }
+const ShortTimeFresnelDiffractionSettings &ShortTimeFresnelDiffraction::settings() const {
   return impl_->settings;
 }
 
@@ -489,6 +520,7 @@ ShortTimeFresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc>
   check(id.rank() >= 2, "input must be rank ≥ 2");
   check(id.dtype == holoflow::core::DType::CF32 || id.dtype == holoflow::core::DType::F32, "input must be CF32 or F32");
   check(id.mem_loc == holoflow::core::MemLoc::Device, "input must be on device");
+  check(is_c_contiguous(id), "input must be C-contiguous");
   check(s.lambda > 0.f, "lambda must be positive");
   check(s.dx > 0.f, "dx must be positive");
   check(s.dy > 0.f, "dy must be positive");
@@ -498,6 +530,8 @@ ShortTimeFresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc>
   check(s.stride_y >= 1 && s.stride_x >= 1, "strides must be ≥ 1");
 
   auto [ax0, ax1] = normalize_axes(s, static_cast<int>(id.rank()));
+  check(ax0 == static_cast<int>(id.rank()) - 2 && ax1 == static_cast<int>(id.rank()) - 1,
+        "only trailing axes (-2, -1) are supported");
   const size_t H  = id.shape[ax0];
   const size_t W  = id.shape[ax1];
   check(s.win_h <= H && s.win_w <= W, "window dimensions exceed field size");
@@ -654,7 +688,7 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
 
   logger()->debug("[ShortTimeFresnelDiffractionFactory] Settings: \n{}\n", jsettings.dump(2));
 
-  auto impl = std::make_unique<ShortTimeFresnelDiffraction::Impl>(ShortTimeFresnelDiffraction::Impl{
+  auto impl = std::make_unique<ShortTimeFresnelDiffractionImpl>(ShortTimeFresnelDiffractionImpl{
       .settings      = s,
       .idesc         = idesc,
       .fft_handle    = std::move(plan),
@@ -687,16 +721,17 @@ ShortTimeFresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISync
                                            const nlohmann::json                      &jsettings,
                                            const holoflow::core::SyncCreateCtx       &ctx) const {
   auto *old = dynamic_cast<ShortTimeFresnelDiffraction *>(old_task.get());
-  if (old == nullptr || input_descs.size() != 1)
+  if (old == nullptr)
     return create(input_descs, jsettings, ctx);
 
+  auto inf = infer(input_descs, jsettings);
+  (void)inf;
+
   const auto &nid = input_descs[0];
-  const auto &oid = old->get_idesc();
+  const auto &oid = old->idesc();
   auto        s   = jsettings.get<ShortTimeFresnelDiffractionSettings>();
 
-  bool reusable = (s == old->get_settings()) && (nid.shape == oid.shape) &&
-                  (nid.strides == oid.strides) && (nid.dtype == oid.dtype) &&
-                  (nid.mem_loc == oid.mem_loc);
+  bool reusable = (s == old->settings()) && same_desc(nid, oid);
 
   if (reusable) {
     old->update_stream(ctx.stream);
