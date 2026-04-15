@@ -21,22 +21,18 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 struct ConjSettings {};
 
 void to_json(nlohmann::json &j, const ConjSettings &s);
 void from_json(const nlohmann::json &j, ConjSettings &s);
 
-class Conj : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  Conj(const ConjSettings &settings, cudaStream_t stream);
-  friend class ConjFactory;
-
-  ConjSettings settings_;
-  cudaStream_t stream_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class ConjFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -45,6 +41,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

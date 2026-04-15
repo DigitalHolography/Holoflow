@@ -23,15 +23,28 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const ConjSettings &) { j = nlohmann::json::object(); }
 void from_json(const nlohmann::json &, ConjSettings &) {}
 
 namespace {
 
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
+
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("Conj: " + msg);
   }
+}
+
+bool is_contiguous(const holoflow::core::TDesc &desc) {
+  holoflow::core::TDesc contiguous(desc.shape, desc.dtype, desc.mem_loc, desc.offset);
+  return desc.strides == contiguous.strides;
 }
 
 template <typename T>
@@ -51,10 +64,25 @@ __global__ void conj_cf32_kernel(const cuFloatComplex *__restrict__ in,
   }
 }
 
-} // namespace
+// -------------------------------------------------------------------------------------------------
+// Conj task implementation
+// -------------------------------------------------------------------------------------------------
 
-Conj::Conj(const ConjSettings &settings, cudaStream_t stream)
-    : settings_(settings), stream_(stream) {}
+class Conj : public holoflow::core::ISyncTask {
+public:
+  explicit Conj(ConjSettings settings, cudaStream_t stream)
+      : settings_(std::move(settings)), stream_(stream) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  void                update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  ConjSettings settings_;
+  cudaStream_t stream_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Conj::execute(holoflow::core::SyncCtx &ctx) {
   auto       *idata = ctx.inputs[0].data();
@@ -102,6 +130,10 @@ holoflow::core::OpResult Conj::execute(holoflow::core::SyncCtx &ctx) {
   return holoflow::core::OpResult::Ok;
 }
 
+// -------------------------------------------------------------------------------------------------
+// ConjFactory
+// -------------------------------------------------------------------------------------------------
+
 holoflow::core::InferResult ConjFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                                const nlohmann::json &jsettings) const {
   (void)jsettings;
@@ -113,6 +145,7 @@ holoflow::core::InferResult ConjFactory::infer(std::span<const holoflow::core::T
   check(idesc.dtype == holoflow::core::DType::U8 || idesc.dtype == holoflow::core::DType::U16 ||
             idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::CF32,
         "unsupported input dtype");
+  check(is_contiguous(idesc), "input tensor must be contiguous");
 
   holoflow::core::TDesc odesc = idesc;
 
@@ -130,11 +163,26 @@ std::unique_ptr<holoflow::core::ISyncTask>
 ConjFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                     const nlohmann::json                  &jsettings,
                     const holoflow::core::SyncCreateCtx   &ctx) const {
-  const auto infer_res = this->infer(input_descs, jsettings);
-  (void)infer_res;
+  (void)infer(input_descs, jsettings);
 
   const auto settings = jsettings.get<ConjSettings>();
-  return std::unique_ptr<holoflow::core::ISyncTask>(new Conj(settings, ctx.stream));
+  return std::make_unique<Conj>(settings, ctx.stream);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+ConjFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                    std::span<const holoflow::core::TDesc>     input_descs,
+                    const nlohmann::json                      &jsettings,
+                    const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_conj = dynamic_cast<Conj *>(old_task.get());
+  if (old_conj == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  old_conj->update_stream(ctx.stream);
+  return old_task;
 }
 
 } // namespace holonp

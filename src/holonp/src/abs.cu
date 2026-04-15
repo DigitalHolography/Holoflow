@@ -24,16 +24,29 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const AbsSettings &) { j = nlohmann::json::object(); }
 
 void from_json(const nlohmann::json &, AbsSettings &) {}
 
 namespace {
 
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
+
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("Abs: " + msg);
   }
+}
+
+bool is_contiguous(const holoflow::core::TDesc &desc) {
+  holoflow::core::TDesc contiguous(desc.shape, desc.dtype, desc.mem_loc, desc.offset);
+  return desc.strides == contiguous.strides;
 }
 
 template <typename T> __device__ T abs_val(T v) { return v < 0 ? -v : v; }
@@ -60,9 +73,25 @@ __global__ void abs_kernel_cf32(const cuFloatComplex *__restrict__ in, float *__
   }
 }
 
-} // namespace
+// -------------------------------------------------------------------------------------------------
+// Abs task implementation
+// -------------------------------------------------------------------------------------------------
 
-Abs::Abs(const AbsSettings &settings, cudaStream_t stream) : settings_(settings), stream_(stream) {}
+class Abs : public holoflow::core::ISyncTask {
+public:
+  explicit Abs(AbsSettings settings, cudaStream_t stream)
+      : settings_(std::move(settings)), stream_(stream) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  void               update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  AbsSettings  settings_;
+  cudaStream_t stream_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Abs::execute(holoflow::core::SyncCtx &ctx) {
   auto       *idata = ctx.inputs[0].data();
@@ -111,6 +140,10 @@ holoflow::core::OpResult Abs::execute(holoflow::core::SyncCtx &ctx) {
   return holoflow::core::OpResult::Ok;
 }
 
+// -------------------------------------------------------------------------------------------------
+// AbsFactory
+// -------------------------------------------------------------------------------------------------
+
 holoflow::core::InferResult AbsFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                               const nlohmann::json &jsettings) const {
   (void)jsettings;
@@ -123,12 +156,7 @@ holoflow::core::InferResult AbsFactory::infer(std::span<const holoflow::core::TD
             idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::CF32,
         "unsupported input dtype");
   check(idesc.num_elements() > 0, "input tensor has zero elements");
-
-  // holoflow::core::TDesc odesc = idesc;
-  // if (idesc.dtype == holoflow::core::DType::CF32) {
-  //   odesc.dtype = holoflow::core::DType::F32;
-  // }
-  //
+  check(is_contiguous(idesc), "input tensor must be contiguous");
 
   holoflow::core::TDesc odesc(
       idesc.shape,
@@ -149,11 +177,26 @@ std::unique_ptr<holoflow::core::ISyncTask>
 AbsFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                    const nlohmann::json                  &jsettings,
                    const holoflow::core::SyncCreateCtx   &ctx) const {
-  const auto infer_res = this->infer(input_descs, jsettings);
-  (void)infer_res;
+  (void)infer(input_descs, jsettings);
 
   const auto settings = jsettings.get<AbsSettings>();
-  return std::unique_ptr<holoflow::core::ISyncTask>(new Abs(settings, ctx.stream));
+  return std::make_unique<Abs>(settings, ctx.stream);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+AbsFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                   std::span<const holoflow::core::TDesc>     input_descs,
+                   const nlohmann::json                      &jsettings,
+                   const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_abs = dynamic_cast<Abs *>(old_task.get());
+  if (old_abs == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  old_abs->update_stream(ctx.stream);
+  return old_task;
 }
 
 } // namespace holonp

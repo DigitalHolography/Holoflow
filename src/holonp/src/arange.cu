@@ -18,6 +18,10 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const ArangeSettings &s) {
   j = nlohmann::json{{"start", s.start}, {"stop", s.stop}, {"step", s.step}};
 
@@ -50,6 +54,10 @@ void from_json(const nlohmann::json &j, ArangeSettings &s) {
 
 namespace {
 
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
+
 template <class T>
 __global__ void arange_kernel_scalar(T *out, std::int64_t n, double start, double step) {
   const std::int64_t idx = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -67,10 +75,49 @@ __global__ void arange_kernel_cf32(cuFloatComplex *out, std::int64_t n, double s
   }
 }
 
-} // namespace
+size_t arange_len(double start, double stop, double step) {
+  const bool forward = step > 0.0;
+  if (forward && stop <= start) {
+    return 0;
+  } else if (!forward && stop >= start) {
+    return 0;
+  }
 
-Arange::Arange(const ArangeSettings &settings, cudaStream_t stream)
-    : settings_(settings), stream_(stream) {}
+  const double span = stop - start;
+  const double n_d  = std::ceil(span / step);
+
+  if (!std::isfinite(n_d) || n_d <= 0.0) {
+    throw std::invalid_argument("Arange: invalid resulting length");
+  }
+
+  const double max_u64 = static_cast<double>(std::numeric_limits<size_t>::max());
+  if (n_d > max_u64) {
+    throw std::invalid_argument("Arange: resulting length too large");
+  }
+
+  return static_cast<std::int64_t>(n_d);
+}
+
+// -------------------------------------------------------------------------------------------------
+// Arange task implementation
+// -------------------------------------------------------------------------------------------------
+
+class Arange : public holoflow::core::ISyncTask {
+public:
+  explicit Arange(ArangeSettings settings, cudaStream_t stream)
+      : settings_(std::move(settings)), stream_(stream) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const ArangeSettings &settings() const { return settings_; }
+  void                  update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  ArangeSettings settings_;
+  cudaStream_t   stream_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Arange::execute(holoflow::core::SyncCtx &ctx) {
   auto      *odata = ctx.outputs[0].data();
@@ -120,32 +167,9 @@ holoflow::core::OpResult Arange::execute(holoflow::core::SyncCtx &ctx) {
   return holoflow::core::OpResult::Ok;
 }
 
-namespace {
-
-size_t arange_len(double start, double stop, double step) {
-  const bool forward = step > 0.0;
-  if (forward && stop <= start) {
-    return 0;
-  } else if (!forward && stop >= start) {
-    return 0;
-  }
-
-  const double span = stop - start;
-  const double n_d  = std::ceil(span / step);
-
-  if (!std::isfinite(n_d) || n_d <= 0.0) {
-    throw std::invalid_argument("Arange: invalid resulting length");
-  }
-
-  const double max_u64 = static_cast<double>(std::numeric_limits<size_t>::max());
-  if (n_d > max_u64) {
-    throw std::invalid_argument("Arange: resulting length too large");
-  }
-
-  return static_cast<std::int64_t>(n_d);
-}
-
-} // namespace
+// -------------------------------------------------------------------------------------------------
+// ArangeFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult ArangeFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                                  const nlohmann::json &jsettings) const {
@@ -181,12 +205,31 @@ std::unique_ptr<holoflow::core::ISyncTask>
 ArangeFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                       const nlohmann::json                  &jsettings,
                       const holoflow::core::SyncCreateCtx   &ctx) const {
-  auto infer    = this->infer(input_descs, jsettings);
+  (void)infer(input_descs, jsettings);
   auto settings = jsettings.get<ArangeSettings>();
-  (void)infer;
 
-  auto *task = new Arange(settings, ctx.stream);
-  return std::unique_ptr<holoflow::core::ISyncTask>(task);
+  return std::make_unique<Arange>(settings, ctx.stream);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+ArangeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                      std::span<const holoflow::core::TDesc>     input_descs,
+                      const nlohmann::json                      &jsettings,
+                      const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_arange = dynamic_cast<Arange *>(old_task.get());
+  if (old_arange == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  const auto settings = jsettings.get<ArangeSettings>();
+  if (settings == old_arange->settings()) {
+    old_arange->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp

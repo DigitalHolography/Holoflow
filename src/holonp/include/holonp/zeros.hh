@@ -25,30 +25,25 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 struct ZerosSettings {
   std::vector<size_t>                   shape{};
   std::optional<holoflow::core::DType>  dtype  = std::nullopt;
   std::string                           order  = "C";
   std::optional<holoflow::core::MemLoc> device = std::nullopt;
+
+  bool operator==(const ZerosSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const ZerosSettings &s);
 void from_json(const nlohmann::json &j, ZerosSettings &s);
 
-class Zeros : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  Zeros(const ZerosSettings &settings, holoflow::core::DType dtype, size_t total_elems,
-        cudaStream_t stream);
-  friend class ZerosFactory;
-
-  ZerosSettings         settings_;
-  holoflow::core::DType dtype_;
-  size_t                total_elems_;
-  cudaStream_t          stream_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class ZerosFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -57,6 +52,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

@@ -18,6 +18,10 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const EmptySettings &s) {
   j = nlohmann::json{
       {"shape", s.shape},
@@ -56,20 +60,42 @@ void from_json(const nlohmann::json &j, EmptySettings &s) {
 
 namespace {
 
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
+
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("EmptyFactory inference error: " + msg);
   }
 }
 
-} // namespace
+// -------------------------------------------------------------------------------------------------
+// Empty task implementation
+// -------------------------------------------------------------------------------------------------
 
-Empty::Empty(const EmptySettings &settings) : settings_(settings) {}
+class Empty : public holoflow::core::ISyncTask {
+public:
+  explicit Empty(EmptySettings settings) : settings_(std::move(settings)) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const EmptySettings &settings() const { return settings_; }
+
+private:
+  EmptySettings settings_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Empty::execute(holoflow::core::SyncCtx &ctx) {
   (void)ctx;
   return holoflow::core::OpResult::Ok;
 }
+
+// -------------------------------------------------------------------------------------------------
+// EmptyFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult EmptyFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                                 const nlohmann::json &jsettings) const {
@@ -97,12 +123,32 @@ std::unique_ptr<holoflow::core::ISyncTask>
 EmptyFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                      const nlohmann::json                  &jsettings,
                      const holoflow::core::SyncCreateCtx   &ctx) const {
-  auto infer    = this->infer(input_descs, jsettings);
+  (void)infer(input_descs, jsettings);
   auto settings = jsettings.get<EmptySettings>();
-  (void)infer;
   (void)ctx;
 
-  return std::unique_ptr<holoflow::core::ISyncTask>(new Empty(settings));
+  return std::make_unique<Empty>(settings);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+EmptyFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                     std::span<const holoflow::core::TDesc>     input_descs,
+                     const nlohmann::json                      &jsettings,
+                     const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+  (void)ctx;
+
+  auto *old_empty = dynamic_cast<Empty *>(old_task.get());
+  if (old_empty == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  const auto settings = jsettings.get<EmptySettings>();
+  if (settings == old_empty->settings()) {
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp

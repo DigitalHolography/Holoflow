@@ -18,6 +18,10 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const ZerosSettings &s) {
   j = nlohmann::json{
       {"shape", s.shape},
@@ -56,6 +60,10 @@ void from_json(const nlohmann::json &j, ZerosSettings &s) {
 
 namespace {
 
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
+
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("ZerosFactory inference error: " + msg);
@@ -70,11 +78,29 @@ size_t total_elements(const std::vector<size_t> &shape) {
   return total;
 }
 
-} // namespace
+// -------------------------------------------------------------------------------------------------
+// Zeros task implementation
+// -------------------------------------------------------------------------------------------------
 
-Zeros::Zeros(const ZerosSettings &settings, holoflow::core::DType dtype, size_t total_elems,
-             cudaStream_t stream)
-    : settings_(settings), dtype_(dtype), total_elems_(total_elems), stream_(stream) {}
+class Zeros : public holoflow::core::ISyncTask {
+public:
+  Zeros(ZerosSettings settings, holoflow::core::DType dtype, size_t total_elems,
+        cudaStream_t stream)
+      : settings_(std::move(settings)), dtype_(dtype), total_elems_(total_elems), stream_(stream) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const ZerosSettings &settings() const { return settings_; }
+  void                 update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  ZerosSettings         settings_;
+  holoflow::core::DType dtype_;
+  size_t                total_elems_;
+  cudaStream_t          stream_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Zeros::execute(holoflow::core::SyncCtx &ctx) {
   auto bytes = total_elems_ * holoflow::core::size_of(dtype_);
@@ -84,6 +110,10 @@ holoflow::core::OpResult Zeros::execute(holoflow::core::SyncCtx &ctx) {
   CUDA_CHECK(cudaMemsetAsync(ctx.outputs[0].data(), 0, bytes, stream_));
   return holoflow::core::OpResult::Ok;
 }
+
+// -------------------------------------------------------------------------------------------------
+// ZerosFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult ZerosFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                                 const nlohmann::json &jsettings) const {
@@ -111,13 +141,33 @@ std::unique_ptr<holoflow::core::ISyncTask>
 ZerosFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                      const nlohmann::json                  &jsettings,
                      const holoflow::core::SyncCreateCtx   &ctx) const {
-  auto infer    = this->infer(input_descs, jsettings);
+  (void)infer(input_descs, jsettings);
   auto settings = jsettings.get<ZerosSettings>();
   auto dtype    = settings.dtype.value_or(holoflow::core::DType::F32);
-  (void)infer;
 
   auto total = total_elements(settings.shape);
-  return std::unique_ptr<holoflow::core::ISyncTask>(new Zeros(settings, dtype, total, ctx.stream));
+  return std::make_unique<Zeros>(settings, dtype, total, ctx.stream);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+ZerosFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                     std::span<const holoflow::core::TDesc>     input_descs,
+                     const nlohmann::json                      &jsettings,
+                     const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_zeros = dynamic_cast<Zeros *>(old_task.get());
+  if (old_zeros == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  const auto settings = jsettings.get<ZerosSettings>();
+  if (settings == old_zeros->settings()) {
+    old_zeros->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp
