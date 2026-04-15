@@ -14,10 +14,14 @@
 
 #include "holonp/fft.hh"
 
+#include <cuComplex.h>
 #include <cmath>
 #include <limits>
 #include <numeric>
 #include <stdexcept>
+
+#include "curaii/cuda.hh"
+#include "curaii/cufft.hh"
 
 namespace holonp {
 
@@ -46,10 +50,32 @@ namespace {
 
 constexpr int kMaxNDim = 16;
 
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("FFT: " + msg);
   }
+}
+
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  if (desc.shape.size() != desc.strides.size()) {
+    return false;
+  }
+
+  size_t expected = holoflow::core::size_of(desc.dtype);
+  for (size_t i = desc.shape.size(); i-- > 0;) {
+    if (desc.strides[i] != expected) {
+      return false;
+    }
+    expected *= desc.shape[i];
+  }
+  return true;
+}
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
 }
 
 inline size_t product_shape(std::span<const size_t> shape) {
@@ -95,14 +121,41 @@ __global__ void scale_cf32_kernel(cuFloatComplex *__restrict__ data, std::int64_
   }
 }
 
-} // namespace
+class FFT : public holoflow::core::ISyncTask {
+public:
+  FFT(FFTSettings settings, holoflow::core::TDesc idesc, curaii::CufftHandle &&plan,
+      size_t total_elems, size_t n_fft, size_t exec_count, size_t exec_stride,
+      holoflow::core::DType input_dtype, cudaStream_t stream, DevPtr<cuFloatComplex> d_tmp)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), plan_(std::move(plan)),
+        total_elems_(total_elems), n_fft_(n_fft), exec_count_(exec_count),
+        exec_stride_(exec_stride), input_dtype_(input_dtype), stream_(stream),
+        d_tmp_(std::move(d_tmp)) {}
 
-FFT::FFT(const FFTSettings &settings, curaii::CufftHandle &&plan, size_t total_elems, size_t n_fft,
-         size_t exec_count, size_t exec_stride, holoflow::core::DType input_dtype,
-         cudaStream_t stream, DevPtr<cuFloatComplex> d_tmp)
-    : settings_(settings), plan_(std::move(plan)), total_elems_(total_elems), n_fft_(n_fft),
-      exec_count_(exec_count), exec_stride_(exec_stride), input_dtype_(input_dtype),
-      stream_(stream), d_tmp_(std::move(d_tmp)) {}
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const FFTSettings           &settings() const { return settings_; }
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  void update_stream(cudaStream_t stream) {
+    if (stream_ != stream) {
+      stream_ = stream;
+      CUFFT_CHECK(cufftSetStream(plan_.get(), stream_));
+    }
+  }
+
+private:
+  FFTSettings            settings_;
+  holoflow::core::TDesc  idesc_;
+  curaii::CufftHandle    plan_;
+  size_t                 total_elems_;
+  size_t                 n_fft_;
+  size_t                 exec_count_;
+  size_t                 exec_stride_;
+  holoflow::core::DType  input_dtype_;
+  cudaStream_t           stream_;
+  DevPtr<cuFloatComplex> d_tmp_;
+};
+
+} // namespace
 
 holoflow::core::OpResult FFT::execute(holoflow::core::SyncCtx &ctx) {
   auto *idata = ctx.inputs[0].data();
@@ -146,6 +199,7 @@ holoflow::core::InferResult FFTFactory::infer(std::span<const holoflow::core::TD
   const auto &idesc = input_descs[0];
 
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "only Device tensors are supported");
+  check(is_c_contiguous(idesc), "input must be C-contiguous");
   check(idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::CF32,
         "input dtype must be F32 or CF32");
 
@@ -179,9 +233,8 @@ std::unique_ptr<holoflow::core::ISyncTask>
 FFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                    const nlohmann::json                  &jsettings,
                    const holoflow::core::SyncCreateCtx   &ctx) const {
-  const auto infer_res = this->infer(input_descs, jsettings);
-  const auto settings  = jsettings.get<FFTSettings>();
-  (void)infer_res;
+  (void)infer(input_descs, jsettings);
+  const auto settings = jsettings.get<FFTSettings>();
 
   const auto &idesc = input_descs[0];
   const auto  total = product_shape(idesc.shape);
@@ -249,9 +302,29 @@ FFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     d_tmp = curaii::make_unique_device_ptr<cuFloatComplex>(total, ctx.stream);
   }
 
-  return std::unique_ptr<holoflow::core::ISyncTask>(new FFT(settings, std::move(plan), total, n_fft,
-                                                            exec_count, exec_stride, idesc.dtype,
-                                                            ctx.stream, std::move(d_tmp)));
+  return std::unique_ptr<holoflow::core::ISyncTask>(new FFT(settings, idesc, std::move(plan), total,
+                                                            n_fft, exec_count, exec_stride,
+                                                            idesc.dtype, ctx.stream,
+                                                            std::move(d_tmp)));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+FFTFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                   std::span<const holoflow::core::TDesc>     input_descs,
+                   const nlohmann::json                      &jsettings,
+                   const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_fft = dynamic_cast<FFT *>(old_task.get());
+  if (old_fft != nullptr && input_descs.size() == 1) {
+    const auto settings = jsettings.get<FFTSettings>();
+    if (settings == old_fft->settings() && same_desc(input_descs[0], old_fft->idesc())) {
+      old_fft->update_stream(ctx.stream);
+      return old_task;
+    }
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp

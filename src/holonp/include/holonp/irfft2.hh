@@ -18,49 +18,28 @@
 #include <span>
 #include <vector>
 
-#include "curaii/cuda.hh"
-#include "curaii/cufft.hh"
 #include "holoflow/core/tasks.hh"
 #include "holonp/fft_common.hh"
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 struct IRFFT2Settings {
   std::vector<int> axes;
   FftNorm          norm = FftNorm::Backward;
 
-  bool operator==(const IRFFT2Settings &other) const {
-    return axes == other.axes && norm == other.norm;
-  }
+  bool operator==(const IRFFT2Settings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const IRFFT2Settings &s);
 void from_json(const nlohmann::json &j, IRFFT2Settings &s);
 
-class IRFFT2 : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-  const holoflow::core::TDesc &get_idesc() const { return idesc_; }
-  const IRFFT2Settings        &get_settings() const { return settings_; }
-  void                         update_stream(cudaStream_t stream);
-
-private:
-  IRFFT2(const IRFFT2Settings &settings, const holoflow::core::TDesc &idesc,
-         curaii::CufftHandle &&plan, size_t n_fft_elems, size_t total_out_elems,
-         std::vector<size_t> input_offsets, size_t output_stride_bytes, cudaStream_t stream);
-
-  friend class IRFFT2Factory;
-
-  IRFFT2Settings        settings_;
-  holoflow::core::TDesc idesc_;
-  curaii::CufftHandle   plan_;
-  size_t                n_fft_elems_;
-  size_t                total_out_elems_;
-  std::vector<size_t>   input_offsets_;
-  size_t                output_stride_bytes_;
-  cudaStream_t          stream_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class IRFFT2Factory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -73,8 +52,9 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
-         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
-         const holoflow::core::SyncCreateCtx &ctx) const override;
+         std::span<const holoflow::core::TDesc>     input_descs,
+         const nlohmann::json                      &jsettings,
+         const holoflow::core::SyncCreateCtx      &ctx) const override;
 };
 
 } // namespace holonp

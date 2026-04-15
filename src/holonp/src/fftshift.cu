@@ -19,6 +19,8 @@
 #include <ranges>
 #include <stdexcept>
 
+#include "curaii/cuda.hh"
+
 namespace holonp {
 
 void to_json(nlohmann::json &j, const FFTShiftSettings &s) { j = nlohmann::json{{"axes", s.axes}}; }
@@ -35,10 +37,33 @@ namespace {
 
 constexpr int kMaxNDim = 16;
 
+template <typename T> using DevPtr  = curaii::unique_device_ptr<T>;
+template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
+
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("FFTShift: " + msg);
   }
+}
+
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  if (desc.shape.size() != desc.strides.size()) {
+    return false;
+  }
+
+  size_t expected = holoflow::core::size_of(desc.dtype);
+  for (size_t i = desc.shape.size(); i-- > 0;) {
+    if (desc.strides[i] != expected) {
+      return false;
+    }
+    expected *= desc.shape[i];
+  }
+  return true;
+}
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
 }
 
 inline size_t product_shape(std::span<const size_t> shape) {
@@ -119,17 +144,39 @@ __global__ void fftshift_nd_contig_kernel_u8(const std::uint8_t *__restrict__ in
   }
 }
 
-} // namespace
+class FFTShift : public holoflow::core::ISyncTask {
+public:
+  FFTShift(FFTShiftSettings settings, holoflow::core::TDesc idesc, cudaStream_t stream,
+           size_t ndim, size_t total_elems, HostPtr<std::int64_t> h_shape,
+           DevPtr<std::int64_t> d_shape, HostPtr<std::int64_t> h_strides,
+           DevPtr<std::int64_t> d_strides, HostPtr<std::int64_t> h_shifts,
+           DevPtr<std::int64_t> d_shifts)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), stream_(stream), ndim_(ndim),
+        total_elems_(total_elems), h_shape_(std::move(h_shape)), d_shape_(std::move(d_shape)),
+        h_strides_(std::move(h_strides)), d_strides_(std::move(d_strides)),
+        h_shifts_(std::move(h_shifts)), d_shifts_(std::move(d_shifts)) {}
 
-FFTShift::FFTShift(const FFTShiftSettings &settings, const holoflow::core::TDesc &idesc,
-                   cudaStream_t stream, size_t ndim, size_t total_elems,
-                   HostPtr<std::int64_t> h_shape, DevPtr<std::int64_t> d_shape,
-                   HostPtr<std::int64_t> h_strides, DevPtr<std::int64_t> d_strides,
-                   HostPtr<std::int64_t> h_shifts, DevPtr<std::int64_t> d_shifts)
-    : settings_(settings), idesc_(idesc), stream_(stream), ndim_(ndim), total_elems_(total_elems),
-      h_shape_(std::move(h_shape)), d_shape_(std::move(d_shape)), h_strides_(std::move(h_strides)),
-      d_strides_(std::move(d_strides)), h_shifts_(std::move(h_shifts)),
-      d_shifts_(std::move(d_shifts)) {}
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  const FFTShiftSettings      &settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  FFTShiftSettings      settings_;
+  holoflow::core::TDesc idesc_;
+  cudaStream_t          stream_;
+  size_t                ndim_;
+  size_t                total_elems_;
+  HostPtr<std::int64_t> h_shape_;
+  DevPtr<std::int64_t>  d_shape_;
+  HostPtr<std::int64_t> h_strides_;
+  DevPtr<std::int64_t>  d_strides_;
+  HostPtr<std::int64_t> h_shifts_;
+  DevPtr<std::int64_t>  d_shifts_;
+};
+
+} // namespace
 
 holoflow::core::OpResult FFTShift::execute(holoflow::core::SyncCtx &ctx) {
   auto       *idata = ctx.inputs[0].data();
@@ -159,6 +206,7 @@ FFTShiftFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   const auto &idesc = input_descs[0];
 
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "only Device tensors are supported");
+  check(is_c_contiguous(idesc), "input must be C-contiguous");
 
   const int ndim = static_cast<int>(idesc.shape.size());
   check(ndim > 0, "input ndim must be > 0");
@@ -184,9 +232,8 @@ std::unique_ptr<holoflow::core::ISyncTask>
 FFTShiftFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                         const nlohmann::json                  &jsettings,
                         const holoflow::core::SyncCreateCtx   &ctx) const {
-  const auto infer_res = this->infer(input_descs, jsettings);
-  const auto settings  = jsettings.get<FFTShiftSettings>();
-  (void)infer_res;
+  (void)infer(input_descs, jsettings);
+  const auto settings = jsettings.get<FFTShiftSettings>();
 
   const auto &idesc = input_descs[0];
   const int   ndim  = static_cast<int>(idesc.shape.size());
@@ -241,12 +288,10 @@ FFTShiftFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 
     const auto  new_settings = jsettings.get<FFTShiftSettings>();
     const auto &new_idesc    = input_descs[0];
-    const auto &old_idesc    = old_fftshift->get_idesc();
+    const auto &old_idesc    = old_fftshift->idesc();
 
-    bool can_reuse =
-        (new_settings == old_fftshift->get_settings()) && (new_idesc.shape == old_idesc.shape) &&
-        (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
-        (new_idesc.mem_loc == old_idesc.mem_loc);
+    bool can_reuse = (new_settings == old_fftshift->settings()) &&
+                     same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_fftshift->update_stream(ctx.stream);

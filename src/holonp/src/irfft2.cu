@@ -25,6 +25,9 @@
 
 #include <cuComplex.h>
 
+#include "curaii/cuda.hh"
+#include "curaii/cufft.hh"
+
 namespace holonp {
 
 void to_json(nlohmann::json &j, const IRFFT2Settings &s) {
@@ -43,6 +46,11 @@ void from_json(const nlohmann::json &j, IRFFT2Settings &s) {
 }
 
 namespace {
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
+}
 
 inline void check(bool cond, const std::string &msg) {
   if (!cond)
@@ -116,14 +124,34 @@ __global__ void scale_kernel(float *__restrict__ data, size_t n, float scale) {
   }
 }
 
-} // namespace
+class IRFFT2 : public holoflow::core::ISyncTask {
+public:
+  IRFFT2(IRFFT2Settings settings, holoflow::core::TDesc idesc, curaii::CufftHandle &&plan,
+         size_t n_fft_elems, size_t total_out_elems, std::vector<size_t> input_offsets,
+         size_t output_stride_bytes, cudaStream_t stream)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), plan_(std::move(plan)),
+        n_fft_elems_(n_fft_elems), total_out_elems_(total_out_elems),
+        input_offsets_(std::move(input_offsets)), output_stride_bytes_(output_stride_bytes),
+        stream_(stream) {}
 
-IRFFT2::IRFFT2(const IRFFT2Settings &settings, const holoflow::core::TDesc &idesc,
-               curaii::CufftHandle &&plan, size_t n_fft_elems, size_t total_out_elems,
-               std::vector<size_t> input_offsets, size_t output_stride_bytes, cudaStream_t stream)
-    : settings_(settings), idesc_(idesc), plan_(std::move(plan)), n_fft_elems_(n_fft_elems),
-      total_out_elems_(total_out_elems), input_offsets_(std::move(input_offsets)),
-      output_stride_bytes_(output_stride_bytes), stream_(stream) {}
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  const IRFFT2Settings        &settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream);
+
+private:
+  IRFFT2Settings        settings_;
+  holoflow::core::TDesc idesc_;
+  curaii::CufftHandle   plan_;
+  size_t                n_fft_elems_;
+  size_t                total_out_elems_;
+  std::vector<size_t>   input_offsets_;
+  size_t                output_stride_bytes_;
+  cudaStream_t          stream_;
+};
+
+} // namespace
 
 void IRFFT2::update_stream(cudaStream_t stream) {
   if (stream_ != stream) {
@@ -277,12 +305,9 @@ IRFFT2Factory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 
     const auto  new_settings = jsettings.get<IRFFT2Settings>();
     const auto &new_idesc    = input_descs[0];
-    const auto &old_idesc    = old_irfft->get_idesc();
+    const auto &old_idesc    = old_irfft->idesc();
 
-    bool can_reuse =
-        (new_settings == old_irfft->get_settings()) && (new_idesc.shape == old_idesc.shape) &&
-        (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
-        (new_idesc.mem_loc == old_idesc.mem_loc);
+    bool can_reuse = (new_settings == old_irfft->settings()) && same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_irfft->update_stream(ctx.stream);

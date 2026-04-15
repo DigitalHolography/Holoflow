@@ -14,11 +14,15 @@
 
 #include "holonp/fft2.hh"
 
+#include <cuComplex.h>
 #include <algorithm>
 #include <cmath>
 #include <numeric>
 #include <stdexcept>
 #include <vector>
+
+#include "curaii/cuda.hh"
+#include "curaii/cufft.hh"
 
 namespace holonp {
 
@@ -46,6 +50,16 @@ void from_json(const nlohmann::json &j, FFT2Settings &s) {
 // -----------------------------------------------------------------------------
 
 namespace {
+
+struct LaunchOffset {
+  size_t in_bytes;
+  size_t out_bytes;
+};
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
+}
 
 inline void check(bool cond, const std::string &msg) {
   if (!cond)
@@ -99,17 +113,33 @@ __global__ void scale_kernel(cuFloatComplex *__restrict__ data, size_t n, float 
   }
 }
 
+class FFT2 : public holoflow::core::ISyncTask {
+public:
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  FFT2(FFT2Settings settings, holoflow::core::TDesc idesc, curaii::CufftHandle &&plan, size_t n_fft,
+       std::vector<LaunchOffset> offsets, cudaStream_t stream)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), plan_(std::move(plan)),
+        n_fft_(n_fft), offsets_(std::move(offsets)), stream_(stream) {}
+
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  const FFT2Settings          &settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream);
+
+private:
+  FFT2Settings             settings_;
+  holoflow::core::TDesc    idesc_;
+  curaii::CufftHandle      plan_;
+  size_t                   n_fft_;
+  std::vector<LaunchOffset> offsets_;
+  cudaStream_t             stream_;
+};
+
 } // namespace
 
 // -----------------------------------------------------------------------------
 // FFT2 Implementation
 // -----------------------------------------------------------------------------
-
-FFT2::FFT2(const FFT2Settings &settings, const holoflow::core::TDesc &idesc,
-           curaii::CufftHandle &&plan, size_t n_fft,
-           std::vector<LaunchOffset> offsets, cudaStream_t stream)
-    : settings_(settings), idesc_(idesc), plan_(std::move(plan)), n_fft_(n_fft), 
-      offsets_(std::move(offsets)), stream_(stream) {}
 
 void FFT2::update_stream(cudaStream_t stream) {
   if (stream_ != stream) {
@@ -283,13 +313,9 @@ FFT2Factory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     
     const auto new_settings = jsettings.get<FFT2Settings>();
     const auto& new_idesc   = input_descs[0];
-    const auto& old_idesc   = old_fft->get_idesc();
+    const auto& old_idesc   = old_fft->idesc();
 
-    bool can_reuse = (new_settings == old_fft->get_settings()) &&
-                     (new_idesc.shape == old_idesc.shape) &&
-                     (new_idesc.strides == old_idesc.strides) &&
-                     (new_idesc.dtype == old_idesc.dtype) &&
-                     (new_idesc.mem_loc == old_idesc.mem_loc);
+    bool can_reuse = (new_settings == old_fft->settings()) && same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_fft->update_stream(ctx.stream);

@@ -22,6 +22,7 @@
 #include <cuComplex.h>
 
 #include "curaii/cuda.hh"
+#include "curaii/cufft.hh"
 
 namespace holonp {
 
@@ -54,6 +55,26 @@ inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("RFFT: " + msg);
   }
+}
+
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  if (desc.shape.size() != desc.strides.size()) {
+    return false;
+  }
+
+  size_t expected = holoflow::core::size_of(desc.dtype);
+  for (size_t i = desc.shape.size(); i-- > 0;) {
+    if (desc.strides[i] != expected) {
+      return false;
+    }
+    expected *= desc.shape[i];
+  }
+  return true;
+}
+
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
 }
 
 inline size_t product_shape(std::span<const size_t> shape) {
@@ -90,13 +111,39 @@ __global__ void scale_cf32_kernel(cuFloatComplex *__restrict__ data, std::int64_
   }
 }
 
-} // namespace
+class RFFT : public holoflow::core::ISyncTask {
+public:
+  RFFT(RFFTSettings settings, holoflow::core::TDesc idesc, curaii::CufftHandle &&plan,
+       size_t total_out, size_t n_fft, size_t exec_count, size_t exec_in_stride,
+       size_t exec_out_stride, cudaStream_t stream)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), plan_(std::move(plan)),
+        total_out_(total_out), n_fft_(n_fft), exec_count_(exec_count),
+        exec_in_stride_(exec_in_stride), exec_out_stride_(exec_out_stride), stream_(stream) {}
 
-RFFT::RFFT(const RFFTSettings &settings, curaii::CufftHandle &&plan, size_t total_out, size_t n_fft,
-           size_t exec_count, size_t exec_in_stride, size_t exec_out_stride, cudaStream_t stream)
-    : settings_(settings), plan_(std::move(plan)), total_out_(total_out), n_fft_(n_fft),
-      exec_count_(exec_count), exec_in_stride_(exec_in_stride), exec_out_stride_(exec_out_stride),
-      stream_(stream) {}
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const RFFTSettings          &settings() const { return settings_; }
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  void update_stream(cudaStream_t stream) {
+    if (stream_ != stream) {
+      stream_ = stream;
+      CUFFT_CHECK(cufftSetStream(plan_.get(), stream_));
+    }
+  }
+
+private:
+  RFFTSettings           settings_;
+  holoflow::core::TDesc  idesc_;
+  curaii::CufftHandle    plan_;
+  size_t                 total_out_;
+  size_t                 n_fft_;
+  size_t                 exec_count_;
+  size_t                 exec_in_stride_;
+  size_t                 exec_out_stride_;
+  cudaStream_t           stream_;
+};
+
+} // namespace
 
 holoflow::core::OpResult RFFT::execute(holoflow::core::SyncCtx &ctx) {
   auto *idata = ctx.inputs[0].data();
@@ -131,6 +178,7 @@ holoflow::core::InferResult RFFTFactory::infer(std::span<const holoflow::core::T
   const auto &idesc = input_descs[0];
 
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "only Device tensors are supported");
+  check(is_c_contiguous(idesc), "input must be C-contiguous");
   check(idesc.dtype == holoflow::core::DType::F32, "input dtype must be F32");
 
   const int ndim = static_cast<int>(idesc.shape.size());
@@ -169,9 +217,8 @@ std::unique_ptr<holoflow::core::ISyncTask>
 RFFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                     const nlohmann::json                  &jsettings,
                     const holoflow::core::SyncCreateCtx   &ctx) const {
-  const auto infer_res = this->infer(input_descs, jsettings);
-  const auto settings  = jsettings.get<RFFTSettings>();
-  (void)infer_res;
+  (void)infer(input_descs, jsettings);
+  const auto settings = jsettings.get<RFFTSettings>();
 
   const auto &idesc    = input_descs[0];
   const auto  total_in = product_shape(idesc.shape);
@@ -243,9 +290,29 @@ RFFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   const size_t total_out = (total_in / n_fft) * n_out;
 
-  return std::unique_ptr<holoflow::core::ISyncTask>(new RFFT(settings, std::move(plan), total_out,
-                                                             n_fft, exec_count, exec_in_stride,
-                                                             exec_out_stride, ctx.stream));
+  return std::unique_ptr<holoflow::core::ISyncTask>(new RFFT(settings, idesc, std::move(plan),
+                                                             total_out, n_fft, exec_count,
+                                                             exec_in_stride, exec_out_stride,
+                                                             ctx.stream));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+RFFTFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                    std::span<const holoflow::core::TDesc>     input_descs,
+                    const nlohmann::json                      &jsettings,
+                    const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_rfft = dynamic_cast<RFFT *>(old_task.get());
+  if (old_rfft != nullptr && input_descs.size() == 1) {
+    const auto settings = jsettings.get<RFFTSettings>();
+    if (settings == old_rfft->settings() && same_desc(input_descs[0], old_rfft->idesc())) {
+      old_rfft->update_stream(ctx.stream);
+      return old_task;
+    }
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp
