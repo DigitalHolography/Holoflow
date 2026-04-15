@@ -18,9 +18,22 @@
 #include <span>
 
 #include "holoflow/core/tasks.hh"
-#include "holonp/fft_common.hh"
 
 namespace holonp {
+
+#ifndef HOLONP_FFT_NORM_DECLARED
+#define HOLONP_FFT_NORM_DECLARED
+
+enum class FftNorm {
+  Backward,
+  Forward,
+  Ortho,
+};
+
+void to_json(nlohmann::json &j, FftNorm norm);
+void from_json(const nlohmann::json &j, FftNorm &norm);
+
+#endif
 
 // -------------------------------------------------------------------------------------------------
 // Settings

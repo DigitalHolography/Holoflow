@@ -11,23 +11,19 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-//
-#pragma once
 
-#include <nlohmann/json.hpp>
+#include "utils/fft_common.hh"
+
 #include <stdexcept>
 #include <string>
-#include <string_view>
 
 namespace holonp {
 
-enum class FftNorm {
-  Backward,
-  Forward,
-  Ortho,
-};
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
 
-inline std::string_view to_string(FftNorm norm) noexcept {
+std::string_view fft_norm_to_string(FftNorm norm) noexcept {
   switch (norm) {
   case FftNorm::Backward:
     return "backward";
@@ -40,9 +36,13 @@ inline std::string_view to_string(FftNorm norm) noexcept {
   }
 }
 
-inline void to_json(nlohmann::json &j, FftNorm norm) { j = std::string(to_string(norm)); }
+// -------------------------------------------------------------------------------------------------
+// JSON
+// -------------------------------------------------------------------------------------------------
 
-inline void from_json(const nlohmann::json &j, FftNorm &norm) {
+void to_json(nlohmann::json &j, FftNorm norm) { j = std::string(fft_norm_to_string(norm)); }
+
+void from_json(const nlohmann::json &j, FftNorm &norm) {
   if (j.is_null()) {
     norm = FftNorm::Backward;
     return;
