@@ -14,12 +14,16 @@
 
 #include "holotask/sources/fresnel_qout.hh"
 
+#include <cuComplex.h>
 #include <math_constants.h>
 
 #include "bug.hh"
+#include "curaii/cuda.hh"
 #include "logger.hh"
 
 namespace holotask::sources {
+
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 void to_json(nlohmann::json &j, const FresnelQoutSettings &fqs) {
   j = nlohmann::json{
@@ -35,15 +39,32 @@ void from_json(const nlohmann::json &j, FresnelQoutSettings &fqs) {
   j.at("ny").get_to(fqs.ny);
 }
 
-FresnelQout::FresnelQout(const FresnelQoutSettings &settings, const holoflow::core::TDesc &idesc,
-                         DevPtr<float> &&d_r2, cudaStream_t stream)
-    : settings_(settings), idesc_(idesc), d_r2_(std::move(d_r2)), stream_(stream) {}
-
 namespace {
+
+class FresnelQout : public holoflow::core::ISyncTask {
+public:
+  FresnelQout(FresnelQoutSettings settings, holoflow::core::TDesc idesc, DevPtr<float> &&d_r2,
+              cudaStream_t stream)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), d_r2_(std::move(d_r2)),
+        stream_(stream) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  const FresnelQoutSettings   &settings() const { return settings_; }
+  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  FresnelQoutSettings   settings_;
+  holoflow::core::TDesc idesc_;
+  DevPtr<float>         d_r2_;
+  cudaStream_t          stream_;
+};
+
 __global__ void quadratic_phase_shift_kernel(const float *r2, const float *z, cuFloatComplex *qout,
                                              int width, int height, float lambda);
 __global__ void quadratic_r2_kernel(float *r2, int width, int height, float dx, float dy);
-}
+} // namespace
 
 holoflow::core::OpResult FresnelQout::execute(holoflow::core::SyncCtx &ctx) {
   auto *z_ptr = reinterpret_cast<const float *>(ctx.inputs[0].data());
@@ -157,12 +178,11 @@ std::unique_ptr<holoflow::core::ISyncTask>
 FresnelQoutFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                            const nlohmann::json                  &jsettings,
                            const holoflow::core::SyncCreateCtx   &ctx) const {
-  auto infer    = this->infer(input_descs, jsettings);
+  (void)infer(input_descs, jsettings);
   auto settings = jsettings.get<FresnelQoutSettings>();
 
-  auto  d_r2 = make_quadratic_r2(settings, ctx.stream);
-  auto *task = new FresnelQout(settings, input_descs[0], std::move(d_r2), ctx.stream);
-  return std::unique_ptr<holoflow::core::ISyncTask>(task);
+  auto d_r2 = make_quadratic_r2(settings, ctx.stream);
+  return std::make_unique<FresnelQout>(settings, input_descs[0], std::move(d_r2), ctx.stream);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -170,21 +190,24 @@ FresnelQoutFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                            std::span<const holoflow::core::TDesc>     input_descs,
                            const nlohmann::json                      &jsettings,
                            const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
   auto *old_fresnel = dynamic_cast<FresnelQout *>(old_task.get());
-  if (old_fresnel != nullptr && input_descs.size() == 1) {
-    const auto  new_settings = jsettings.get<FresnelQoutSettings>();
-    const auto &new_idesc    = input_descs[0];
-    const auto &old_idesc    = old_fresnel->get_idesc();
+  if (old_fresnel == nullptr) {
+    return create(input_descs, jsettings, ctx);
+  }
 
-    bool can_reuse =
-        (new_settings == old_fresnel->get_settings()) && (new_idesc.shape == old_idesc.shape) &&
-        (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
-        (new_idesc.mem_loc == old_idesc.mem_loc);
+  const auto  new_settings = jsettings.get<FresnelQoutSettings>();
+  const auto &new_idesc    = input_descs[0];
+  const auto &old_idesc    = old_fresnel->idesc();
 
-    if (can_reuse) {
-      old_fresnel->update_stream(ctx.stream);
-      return old_task;
-    }
+  const bool can_reuse =
+      (new_settings == old_fresnel->settings()) && (new_idesc.shape == old_idesc.shape) &&
+      (new_idesc.strides == old_idesc.strides) && (new_idesc.dtype == old_idesc.dtype) &&
+      (new_idesc.mem_loc == old_idesc.mem_loc) && (new_idesc.offset == old_idesc.offset);
+  if (can_reuse) {
+    old_fresnel->update_stream(ctx.stream);
+    return old_task;
   }
 
   return create(input_descs, jsettings, ctx);

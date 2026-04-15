@@ -14,53 +14,34 @@
 
 #pragma once
 
-#include <cuComplex.h>
-#include <cuda_runtime.h>
+#include <cstddef>
 #include <nlohmann/json.hpp>
 #include <span>
 
-#include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
-
-template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 namespace holotask::sources {
 
-struct FresnelQinSettings {
-  float  lambda; ///< Wavelength in meters.
-  float  dx;     ///< Pixel pitch in meters.
-  float  dy;     ///< Pixel pitch in meters.
-  size_t nx;     ///< Number of pixels in x.
-  size_t ny;     ///< Number of pixels in y.
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
 
-  bool operator==(const FresnelQinSettings &other) const {
-    return lambda == other.lambda && dx == other.dx && dy == other.dy &&
-           nx == other.nx && ny == other.ny;
-  }
+struct FresnelQinSettings {
+  float  lambda;
+  float  dx;
+  float  dy;
+  size_t nx;
+  size_t ny;
+
+  bool operator==(const FresnelQinSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const FresnelQinSettings &fqs);
 void from_json(const nlohmann::json &j, FresnelQinSettings &fqs);
 
-class FresnelQin : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-  const holoflow::core::TDesc& get_idesc() const { return idesc_; }
-  const FresnelQinSettings&    get_settings() const { return settings_; }
-  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
-
-private:
-  FresnelQin(const FresnelQinSettings &settings, const holoflow::core::TDesc &idesc, 
-             DevPtr<float> &&d_r2, cudaStream_t stream);
-
-  friend class FresnelQinFactory;
-
-  FresnelQinSettings    settings_;
-  holoflow::core::TDesc idesc_;
-  DevPtr<float>         d_r2_;
-  cudaStream_t          stream_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class FresnelQinFactory : public holoflow::core::ISyncTaskFactory {
 public:
