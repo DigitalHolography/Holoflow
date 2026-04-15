@@ -253,19 +253,19 @@ public:
   void                         update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
-  MinSettings            settings_;
-  holoflow::core::TDesc  idesc_;
-  cudaStream_t           stream_;
-  size_t                 total_out_;
-  size_t                 total_red_;
-  int                    out_ndim_;
-  int                    red_ndim_;
-  bool                   is_red_contiguous_;
-  DevPtr<size_t>         d_in_strides_;
-  DevPtr<size_t>         d_out_strides_;
-  DevPtr<int>            d_out_to_in_map_;
-  DevPtr<size_t>         d_red_strides_;
-  DevPtr<int>            d_red_axes_map_;
+  MinSettings           settings_;
+  holoflow::core::TDesc idesc_;
+  cudaStream_t          stream_;
+  size_t                total_out_;
+  size_t                total_red_;
+  int                   out_ndim_;
+  int                   red_ndim_;
+  bool                  is_red_contiguous_;
+  DevPtr<size_t>        d_in_strides_;
+  DevPtr<size_t>        d_out_strides_;
+  DevPtr<int>           d_out_to_in_map_;
+  DevPtr<size_t>        d_red_strides_;
+  DevPtr<int>           d_red_axes_map_;
 };
 
 } // namespace

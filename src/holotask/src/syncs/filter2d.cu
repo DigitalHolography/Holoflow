@@ -232,14 +232,15 @@ __global__ void swap_corners_kernel(cuFloatComplex *in, cuFloatComplex *out, int
 }
 
 DevPtr<cuFloatComplex> make_filter(int width, int height, const Filter2DSettings &settings) {
-  auto d_filter = curaii::make_unique_device_ptr<cuFloatComplex>(
-      static_cast<size_t>(width) * height);
+  auto d_filter =
+      curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(width) * height);
 
   dim3 block_size(16, 16);
   dim3 grid_size((width + block_size.x - 1) / block_size.x,
                  (height + block_size.y - 1) / block_size.y);
 
-  CUDA_CHECK(cudaMemset(d_filter.get(), 0, static_cast<size_t>(width) * height * sizeof(cuFloatComplex)));
+  CUDA_CHECK(
+      cudaMemset(d_filter.get(), 0, static_cast<size_t>(width) * height * sizeof(cuFloatComplex)));
 
   apply_filter_2d_kernel<<<grid_size, block_size>>>(d_filter.get(), width, height, settings.r_inner,
                                                     settings.r_outer, settings.s_inner,
@@ -259,10 +260,9 @@ public:
   Filter2D(Filter2DSettings settings, holoflow::core::TDesc idesc, curaii::CufftHandle &&fwd_plan,
            curaii::CufftHandle &&inv_plan, DevPtr<cuFloatComplex> &&d_filter,
            DevPtr<void> &&d_caller_info, std::vector<char> &&lto)
-      : settings_(std::move(settings)), idesc_(std::move(idesc)),
-        fwd_plan_(std::move(fwd_plan)), inv_plan_(std::move(inv_plan)),
-        d_filter_(std::move(d_filter)), d_caller_info_(std::move(d_caller_info)),
-        lto_(std::move(lto)) {}
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), fwd_plan_(std::move(fwd_plan)),
+        inv_plan_(std::move(inv_plan)), d_filter_(std::move(d_filter)),
+        d_caller_info_(std::move(d_caller_info)), lto_(std::move(lto)) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
@@ -277,7 +277,7 @@ public:
     CUFFT_CHECK(cufftSetStream(inv_plan_.get(), stream));
   }
 
-  const Filter2DSettings &settings() const { return settings_; }
+  const Filter2DSettings      &settings() const { return settings_; }
   const holoflow::core::TDesc &idesc() const { return idesc_; }
 
 private:
@@ -327,8 +327,8 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                         const nlohmann::json                  &jsettings,
                         const holoflow::core::SyncCreateCtx   &ctx) const {
   (void)this->infer(input_descs, jsettings);
-  const auto settings = jsettings.get<Filter2DSettings>();
-  const auto &idesc   = input_descs[0];
+  const auto  settings = jsettings.get<Filter2DSettings>();
+  const auto &idesc    = input_descs[0];
 
   const int batch_size = static_cast<int>(idesc.shape[0]);
   const int height     = static_cast<int>(idesc.shape[1]);
@@ -340,14 +340,15 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
       .filter = d_filter.get(),
   };
   auto d_info = curaii::make_unique_device_ptr<ApplyFilterCallerInfo>(1);
-  CUDA_CHECK(cudaMemcpyAsync(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice, ctx.stream));
+  CUDA_CHECK(
+      cudaMemcpyAsync(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice, ctx.stream));
 
   auto lto = apply_filter_lto(width, height);
 
-  constexpr int rank = 2;
-  long long int n[2]       = {height, width};
-  long long int inembed[2] = {height, width};
-  long long int onembed[2] = {height, width};
+  constexpr int rank          = 2;
+  long long int n[2]          = {height, width};
+  long long int inembed[2]    = {height, width};
+  long long int onembed[2]    = {height, width};
   constexpr int istride       = 1;
   const int     idist         = height * width;
   constexpr int ostride       = 1;
@@ -394,8 +395,7 @@ Filter2DFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   const auto &new_idesc = input_descs[0];
   const auto &old_idesc = old_filter->idesc();
   const auto  settings  = jsettings.get<Filter2DSettings>();
-  const bool  can_reuse = settings == old_filter->settings() &&
-                         new_idesc.shape == old_idesc.shape &&
+  const bool can_reuse = settings == old_filter->settings() && new_idesc.shape == old_idesc.shape &&
                          new_idesc.strides == old_idesc.strides &&
                          new_idesc.dtype == old_idesc.dtype &&
                          new_idesc.mem_loc == old_idesc.mem_loc;

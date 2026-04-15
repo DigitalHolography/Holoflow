@@ -78,10 +78,10 @@ public:
   void                                      update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
-  size_t       ndim_;
-  size_t       total_elems_;
-  size_t       elem_size_;
-  cudaStream_t stream_;
+  size_t                             ndim_;
+  size_t                             total_elems_;
+  size_t                             elem_size_;
+  cudaStream_t                       stream_;
   curaii::unique_device_ptr<int64_t> d_src_strides_;
   curaii::unique_device_ptr<int64_t> d_dst_strides_;
   curaii::unique_device_ptr<int64_t> d_shape_;
@@ -164,11 +164,10 @@ AssignFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   CUDA_CHECK(
       cudaMemcpyAsync(d_shape.get(), h_shape.data(), bytes, cudaMemcpyHostToDevice, ctx.stream));
 
-  return std::make_unique<Assign>(ndim, src.num_elements(), holoflow::core::size_of(src.dtype),
-                                  std::move(d_src_strides), std::move(d_dst_strides),
-                                  std::move(d_shape), ctx.stream,
-                                  std::vector<holoflow::core::TDesc>(input_descs.begin(),
-                                                                     input_descs.end()));
+  return std::make_unique<Assign>(
+      ndim, src.num_elements(), holoflow::core::size_of(src.dtype), std::move(d_src_strides),
+      std::move(d_dst_strides), std::move(d_shape), ctx.stream,
+      std::vector<holoflow::core::TDesc>(input_descs.begin(), input_descs.end()));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -197,7 +196,7 @@ holoflow::core::OpResult Assign::execute(holoflow::core::SyncCtx &ctx) {
     return holoflow::core::OpResult::Ok;
 
   const std::byte *src_ptr = reinterpret_cast<const std::byte *>(ctx.inputs[1].data());
-  std::byte *dst_ptr = reinterpret_cast<std::byte *>(ctx.outputs[0].data());
+  std::byte       *dst_ptr = reinterpret_cast<std::byte *>(ctx.outputs[0].data());
 
   constexpr int block_size = 256;
   int           grid_size  = static_cast<int>((total_elems_ + block_size - 1) / block_size);

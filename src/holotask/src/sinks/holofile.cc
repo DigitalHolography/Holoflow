@@ -21,10 +21,10 @@
 #include <cstdio>
 #include <cstring>
 #include <memory>
+#include <omp.h>
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
-#include <omp.h>
 
 #include "bug.hh"
 #include "curaii/cuda.hh"
@@ -168,7 +168,7 @@ public:
 
       auto start = std::chrono::steady_clock::now();
       mt_memcpy(ring_.get() + static_cast<size_t>(frames_buffered_) * frame_byte_size_, idata,
-                  static_cast<size_t>(to_copy) * frame_byte_size_);
+                static_cast<size_t>(to_copy) * frame_byte_size_);
       auto end         = std::chrono::steady_clock::now();
       auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       logger()->trace("[HolofileWriter] Buffered {} frames ({} us)", to_copy, duration_us);

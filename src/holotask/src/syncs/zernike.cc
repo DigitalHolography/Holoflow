@@ -328,8 +328,7 @@ public:
 
     for (std::size_t sy = 0; sy < static_cast<std::size_t>(ctx.inputs[0].desc.shape[1]); ++sy) {
       for (std::size_t sx = 0; sx < static_cast<std::size_t>(ctx.inputs[0].desc.shape[2]); ++sx) {
-        const auto &shift =
-            shifts[sy * static_cast<std::size_t>(ctx.inputs[0].desc.shape[2]) + sx];
+        const auto &shift = shifts[sy * static_cast<std::size_t>(ctx.inputs[0].desc.shape[2]) + sx];
         logger()->debug("Subaperture ({}, {}): Shift (dx: {:.3f} px, dy: {:.3f} px)", sx, sy,
                         shift.dx, shift.dy);
       }
@@ -405,7 +404,7 @@ public:
       }
     }
 
-    constexpr float ridge = 1e-9f;
+    constexpr float ridge          = 1e-9f;
     size_t          kept_subaps    = 0;
     size_t          skipped_subaps = 0;
 
@@ -429,10 +428,10 @@ public:
 
         kept_subaps++;
 
-        std::size_t rx = std::min(static_cast<std::size_t>(sx * nx / nb_sub_x),
-                                  static_cast<std::size_t>(nx - 1));
-        std::size_t ry = std::min(static_cast<std::size_t>(sy * ny / nb_sub_y),
-                                  static_cast<std::size_t>(ny - 1));
+        std::size_t rx         = std::min(static_cast<std::size_t>(sx * nx / nb_sub_x),
+                                          static_cast<std::size_t>(nx - 1));
+        std::size_t ry         = std::min(static_cast<std::size_t>(sy * ny / nb_sub_y),
+                                          static_cast<std::size_t>(ny - 1));
         std::size_t region_idx = ry * nx + rx;
 
         const float local_center_X =
@@ -443,9 +442,9 @@ public:
         const float x_n_local = (X - local_center_X) / local_radius_m;
         const float y_n_local = (Y - local_center_Y) / local_radius_m;
 
-        const auto &shift = shifts[sy * nb_sub_x + sx];
-        float slope_x = (shift.dx * dx_out) / settings_.z;
-        float slope_y = (shift.dy * dy_out) / settings_.z;
+        const auto &shift   = shifts[sy * nb_sub_x + sx];
+        float       slope_x = (shift.dx * dx_out) / settings_.z;
+        float       slope_y = (shift.dy * dy_out) / settings_.z;
 
         std::array<float, kMaxSupportedModes> gx{};
         std::array<float, kMaxSupportedModes> gy{};
@@ -496,7 +495,7 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
-  void update_stream(cudaStream_t stream) { stream_ = stream; }
+  void                   update_stream(cudaStream_t stream) { stream_ = stream; }
   const ZernikeSettings &settings() const { return settings_; }
 
 private:

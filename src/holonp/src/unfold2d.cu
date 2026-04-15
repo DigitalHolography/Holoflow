@@ -169,7 +169,7 @@ Unfold2DFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   const auto  settings = jsettings.get<Unfold2DSettings>();
   if (!is_c_contiguous(src))
     throw std::invalid_argument("Unfold2D: input must be C-contiguous");
-  const auto  dims     = compute_dims(src, settings);
+  const auto dims = compute_dims(src, settings);
 
   // Build output shape: replace last two dims (H, W) with (ny_win, nx_win, win_h, win_w)
   std::vector<size_t> out_shape(src.shape.begin(), src.shape.end() - 2);

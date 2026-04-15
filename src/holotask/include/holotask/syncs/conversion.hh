@@ -32,12 +32,7 @@ struct ConversionSettings {
     CF32,
   };
 
-  enum class Strategy {
-    Real,
-    Scaled,
-    Modulus,
-    Argument
-  };
+  enum class Strategy { Real, Scaled, Modulus, Argument };
 
   Target   target;
   Strategy strategy;

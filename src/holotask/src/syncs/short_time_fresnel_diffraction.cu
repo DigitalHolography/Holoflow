@@ -343,12 +343,12 @@ __global__ void stft_output_phase_kernel(cuFloatComplex *output, const cuFloatCo
   auto total = static_cast<unsigned long long>(batch) * height * width;
   if (lid >= total)
     return;
-  auto b      = lid / (static_cast<unsigned long long>(height) * width);
-  auto loc    = lid % (static_cast<unsigned long long>(height) * width);
-  auto row    = static_cast<int>(loc / width);
-  auto col    = static_cast<int>(loc % width);
-  auto idx    = b * idist + static_cast<unsigned long long>(row) * stride_h +
-                static_cast<unsigned long long>(col) * istride;
+  auto b   = lid / (static_cast<unsigned long long>(height) * width);
+  auto loc = lid % (static_cast<unsigned long long>(height) * width);
+  auto row = static_cast<int>(loc / width);
+  auto col = static_cast<int>(loc % width);
+  auto idx = b * idist + static_cast<unsigned long long>(row) * stride_h +
+             static_cast<unsigned long long>(col) * istride;
   output[idx] = cuCmulf(output[idx], lens[static_cast<unsigned long long>(row) * width + col]);
 }
 

@@ -74,8 +74,8 @@ holoflow::core::OpResult FresnelQout::execute(holoflow::core::SyncCtx &ctx) {
 
   dim3 block_size(16, 16);
   dim3 grid_size((nx + block_size.x - 1) / block_size.x, (ny + block_size.y - 1) / block_size.y);
-  quadratic_phase_shift_kernel<<<grid_size, block_size, 0, stream_>>>(d_r2_.get(), z_ptr, odata,
-                                                                       nx, ny, settings_.lambda);
+  quadratic_phase_shift_kernel<<<grid_size, block_size, 0, stream_>>>(d_r2_.get(), z_ptr, odata, nx,
+                                                                      ny, settings_.lambda);
 
   CUDA_CHECK(cudaGetLastError());
   return holoflow::core::OpResult::Ok;
@@ -131,7 +131,7 @@ DevPtr<float> make_quadratic_r2(const FresnelQoutSettings &settings, cudaStream_
   dim3 block_size(16, 16);
   dim3 grid_size((nx + block_size.x - 1) / block_size.x, (ny + block_size.y - 1) / block_size.y);
   quadratic_r2_kernel<<<grid_size, block_size, 0, stream>>>(d_r2.get(), nx, ny, settings.dx,
-                                                             settings.dy);
+                                                            settings.dy);
   return d_r2;
 }
 

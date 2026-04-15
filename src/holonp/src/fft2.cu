@@ -14,9 +14,9 @@
 
 #include "holonp/fft2.hh"
 
-#include <cuComplex.h>
 #include <algorithm>
 #include <cmath>
+#include <cuComplex.h>
 #include <numeric>
 #include <stdexcept>
 #include <vector>
@@ -127,12 +127,12 @@ public:
   void                         update_stream(cudaStream_t stream);
 
 private:
-  FFT2Settings             settings_;
-  holoflow::core::TDesc    idesc_;
-  curaii::CufftHandle      plan_;
-  size_t                   n_fft_;
+  FFT2Settings              settings_;
+  holoflow::core::TDesc     idesc_;
+  curaii::CufftHandle       plan_;
+  size_t                    n_fft_;
   std::vector<LaunchOffset> offsets_;
-  cudaStream_t             stream_;
+  cudaStream_t              stream_;
 };
 
 } // namespace
@@ -162,10 +162,10 @@ holoflow::core::OpResult FFT2::execute(holoflow::core::SyncCtx &ctx) {
   // Normalization applies to the entire contiguous output buffer at once
   const float scale = get_norm_scale(settings_.norm, n_fft_);
   if (scale != 1.0f) {
-    auto         *odata_full = reinterpret_cast<cuFloatComplex *>(odata_base);
-    const size_t total       = ctx.outputs[0].desc.num_elements();
-    const int    block       = 256;
-    const int    grid        = (int)((total + block - 1) / block);
+    auto        *odata_full = reinterpret_cast<cuFloatComplex *>(odata_base);
+    const size_t total      = ctx.outputs[0].desc.num_elements();
+    const int    block      = 256;
+    const int    grid       = (int)((total + block - 1) / block);
     scale_kernel<<<grid, block, 0, stream_>>>(odata_full, total, scale);
   }
 
@@ -204,7 +204,7 @@ FFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
                     const holoflow::core::SyncCreateCtx   &ctx) const {
 
   const auto   settings  = jsettings.get<FFT2Settings>();
-  const auto &idesc     = input_descs[0];
+  const auto  &idesc     = input_descs[0];
   const int    ndim      = static_cast<int>(idesc.shape.size());
   const size_t elem_size = sizeof(cuFloatComplex);
 
@@ -216,7 +216,7 @@ FFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   // Output is physically dense
   std::vector<size_t> out_strides_bytes(ndim);
-  size_t acc = elem_size;
+  size_t              acc = elem_size;
   for (int i = ndim - 1; i >= 0; --i) {
     out_strides_bytes[i] = acc;
     acc *= idesc.shape[i];
@@ -227,8 +227,9 @@ FFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
         "FFT2: Last two dimensions must have compatible strides (H stride % W stride == 0)");
   }
 
-  const long long istride   = static_cast<long long>(in_strides_bytes[ndim - 1] / elem_size);
-  const long long inembed_h = static_cast<long long>(in_strides_bytes[ndim - 2] / in_strides_bytes[ndim - 1]);
+  const long long istride = static_cast<long long>(in_strides_bytes[ndim - 1] / elem_size);
+  const long long inembed_h =
+      static_cast<long long>(in_strides_bytes[ndim - 2] / in_strides_bytes[ndim - 1]);
 
   // 1. Group contiguous batch dimensions
   struct BatchGroup {
@@ -241,22 +242,24 @@ FFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   std::vector<BatchGroup> groups;
   if (ndim > 2) {
-    int end = ndim - 3;
+    int end   = ndim - 3;
     int start = end;
     for (int i = ndim - 4; i >= 0; --i) {
       if (in_strides_bytes[i] == in_strides_bytes[i + 1] * idesc.shape[i + 1]) {
         start = i;
       } else {
         size_t size = 1;
-        for (int d = start; d <= end; ++d) size *= idesc.shape[d];
+        for (int d = start; d <= end; ++d)
+          size *= idesc.shape[d];
         groups.push_back({size, static_cast<long long>(in_strides_bytes[end] / elem_size),
                           static_cast<long long>(out_strides_bytes[end] / elem_size), start, end});
-        end = i;
+        end   = i;
         start = i;
       }
     }
     size_t size = 1;
-    for (int d = start; d <= end; ++d) size *= idesc.shape[d];
+    for (int d = start; d <= end; ++d)
+      size *= idesc.shape[d];
     groups.push_back({size, static_cast<long long>(in_strides_bytes[end] / elem_size),
                       static_cast<long long>(out_strides_bytes[end] / elem_size), start, end});
   }
@@ -294,9 +297,9 @@ FFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
   long long inembed[2] = {0, inembed_h};
   long long onembed[2] = {static_cast<long long>(h), static_cast<long long>(w)};
 
-  CUFFT_CHECK(cufftXtMakePlanMany(
-      plan.get(), 2, n, inembed, istride, best_group.idist_elem, CUDA_C_32F, onembed, 1,
-      best_group.odist_elem, CUDA_C_32F, static_cast<long long>(best_group.size), &work_size, CUDA_C_32F));
+  CUFFT_CHECK(cufftXtMakePlanMany(plan.get(), 2, n, inembed, istride, best_group.idist_elem,
+                                  CUDA_C_32F, onembed, 1, best_group.odist_elem, CUDA_C_32F,
+                                  static_cast<long long>(best_group.size), &work_size, CUDA_C_32F));
 
   return std::unique_ptr<holoflow::core::ISyncTask>(
       new FFT2(settings, idesc, std::move(plan), n_fft_elems, std::move(offsets), ctx.stream));
@@ -305,21 +308,21 @@ FFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
 std::unique_ptr<holoflow::core::ISyncTask>
 FFT2Factory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                     std::span<const holoflow::core::TDesc>     input_descs,
-                    const nlohmann::json                       &jsettings,
-                    const holoflow::core::SyncCreateCtx        &ctx) const {
+                    const nlohmann::json                      &jsettings,
+                    const holoflow::core::SyncCreateCtx       &ctx) const {
 
-  auto* old_fft = dynamic_cast<FFT2*>(old_task.get());
+  auto *old_fft = dynamic_cast<FFT2 *>(old_task.get());
   if (old_fft != nullptr && input_descs.size() == 1) {
-    
-    const auto new_settings = jsettings.get<FFT2Settings>();
-    const auto& new_idesc   = input_descs[0];
-    const auto& old_idesc   = old_fft->idesc();
+
+    const auto  new_settings = jsettings.get<FFT2Settings>();
+    const auto &new_idesc    = input_descs[0];
+    const auto &old_idesc    = old_fft->idesc();
 
     bool can_reuse = (new_settings == old_fft->settings()) && same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_fft->update_stream(ctx.stream);
-      return old_task; 
+      return old_task;
     }
   }
 

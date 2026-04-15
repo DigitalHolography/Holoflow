@@ -213,13 +213,13 @@ public:
   void                         update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
-  bool                  is_view_;
-  ReshapeSettings       settings_;
-  holoflow::core::TDesc idesc_;
-  size_t                ndim_        = 0;
-  size_t                total_elems_ = 0;
-  size_t                elem_size_   = 0;
-  cudaStream_t          stream_      = nullptr;
+  bool                               is_view_;
+  ReshapeSettings                    settings_;
+  holoflow::core::TDesc              idesc_;
+  size_t                             ndim_        = 0;
+  size_t                             total_elems_ = 0;
+  size_t                             elem_size_   = 0;
+  cudaStream_t                       stream_      = nullptr;
   curaii::unique_device_ptr<int64_t> d_src_strides_;
   curaii::unique_device_ptr<int64_t> d_src_shape_;
 };
@@ -351,8 +351,7 @@ ReshapeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     const auto &new_idesc    = input_descs[0];
     const auto &old_idesc    = old_reshape->idesc();
 
-    bool can_reuse =
-        (new_settings == old_reshape->settings()) && same_desc(new_idesc, old_idesc);
+    bool can_reuse = (new_settings == old_reshape->settings()) && same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_reshape->update_stream(ctx.stream);

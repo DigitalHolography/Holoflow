@@ -104,13 +104,13 @@ public:
   void                                      update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
-  cudaStream_t          stream_;
-  holoflow::core::DType dtype_;
-  size_t                total_out_;
-  size_t                ndim_;
-  DevPtr<size_t>        d_out_shape_;
-  DevPtr<size_t>        d_a_strides_;
-  DevPtr<size_t>        d_b_strides_;
+  cudaStream_t                       stream_;
+  holoflow::core::DType              dtype_;
+  size_t                             total_out_;
+  size_t                             ndim_;
+  DevPtr<size_t>                     d_out_shape_;
+  DevPtr<size_t>                     d_a_strides_;
+  DevPtr<size_t>                     d_b_strides_;
   std::vector<holoflow::core::TDesc> input_descs_;
 };
 

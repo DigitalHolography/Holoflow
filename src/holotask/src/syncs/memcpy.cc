@@ -117,7 +117,8 @@ public:
         {{holoflow::core::MemLoc::Host, MemcpySettings::Target::Host}, cudaMemcpyHostToHost},
         {{holoflow::core::MemLoc::Host, MemcpySettings::Target::Device}, cudaMemcpyHostToDevice},
         {{holoflow::core::MemLoc::Device, MemcpySettings::Target::Host}, cudaMemcpyDeviceToHost},
-        {{holoflow::core::MemLoc::Device, MemcpySettings::Target::Device}, cudaMemcpyDeviceToDevice},
+        {{holoflow::core::MemLoc::Device, MemcpySettings::Target::Device},
+         cudaMemcpyDeviceToDevice},
     };
 
     HOLOVIBES_CHECK(copy_map.contains(copy_desc), "Invalid memory copy descriptor");
@@ -131,7 +132,7 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
-  void update_stream(cudaStream_t stream) { stream_ = stream; }
+  void                  update_stream(cudaStream_t stream) { stream_ = stream; }
   const MemcpySettings &settings() const { return settings_; }
 
 private:

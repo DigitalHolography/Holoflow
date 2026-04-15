@@ -14,8 +14,8 @@
 
 #include "holonp/mul.hh"
 
-#include <cuComplex.h>
 #include <array>
+#include <cuComplex.h>
 #include <type_traits>
 #include <utility>
 
@@ -133,7 +133,7 @@ public:
 
   const std::array<holoflow::core::TDesc, 2> &idescs() const { return idescs_; }
   const MulSettings                          &settings() const { return settings_; }
-  void                                        update_stream(cudaStream_t stream) { stream_ = stream; }
+  void update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
   MulSettings                          settings_;

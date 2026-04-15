@@ -306,10 +306,10 @@ class Normalize : public holoflow::core::ISyncTask {
 public:
   Normalize(NormalizeSettings settings, holoflow::core::TDesc idesc, cudaStream_t stream,
             size_t ndim, size_t group_ndim, size_t red_ndim, size_t total_elems,
-            size_t total_groups, size_t total_red, DevPtr<size_t> shape,
-            DevPtr<size_t> in_strides, DevPtr<size_t> out_strides, DevPtr<int> group_axes,
-            DevPtr<size_t> group_strides, DevPtr<int> red_axes, DevPtr<size_t> red_strides,
-            DevPtr<float> group_mins, DevPtr<float> group_maxs)
+            size_t total_groups, size_t total_red, DevPtr<size_t> shape, DevPtr<size_t> in_strides,
+            DevPtr<size_t> out_strides, DevPtr<int> group_axes, DevPtr<size_t> group_strides,
+            DevPtr<int> red_axes, DevPtr<size_t> red_strides, DevPtr<float> group_mins,
+            DevPtr<float> group_maxs)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), stream_(stream), ndim_(ndim),
         group_ndim_(group_ndim), red_ndim_(red_ndim), total_elems_(total_elems),
         total_groups_(total_groups), total_red_(total_red), d_shape_(std::move(shape)),

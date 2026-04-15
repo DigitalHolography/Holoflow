@@ -420,7 +420,8 @@ holoflow::core::InferResult MeanFactory::infer(std::span<const holoflow::core::T
 
   const auto plan = build_plan(settings, idesc.shape);
 
-  auto odtype = idesc.dtype == holoflow::core::DType::CF32 ? holoflow::core::DType::CF32 : holoflow::core::DType::F32;
+  auto odtype = idesc.dtype == holoflow::core::DType::CF32 ? holoflow::core::DType::CF32
+                                                           : holoflow::core::DType::F32;
   holoflow::core::TDesc odesc(plan.out_shape, odtype, idesc.mem_loc);
 
   return holoflow::core::InferResult{
@@ -522,23 +523,23 @@ MeanFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 std::unique_ptr<holoflow::core::ISyncTask>
 MeanFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                     std::span<const holoflow::core::TDesc>     input_descs,
-                    const nlohmann::json                       &jsettings,
-                    const holoflow::core::SyncCreateCtx        &ctx) const {
+                    const nlohmann::json                      &jsettings,
+                    const holoflow::core::SyncCreateCtx       &ctx) const {
 
   (void)infer(input_descs, jsettings);
 
-  auto* old_mean = dynamic_cast<Mean*>(old_task.get());
+  auto *old_mean = dynamic_cast<Mean *>(old_task.get());
   if (old_mean != nullptr && input_descs.size() == 1) {
-    
-    const auto new_settings = jsettings.get<MeanSettings>();
-    const auto& new_idesc   = input_descs[0];
-    const auto& old_idesc   = old_mean->idesc();
+
+    const auto  new_settings = jsettings.get<MeanSettings>();
+    const auto &new_idesc    = input_descs[0];
+    const auto &old_idesc    = old_mean->idesc();
 
     bool can_reuse = (new_settings == old_mean->settings()) && same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_mean->update_stream(ctx.stream);
-      return old_task; 
+      return old_task;
     }
   }
 

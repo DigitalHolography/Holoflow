@@ -203,9 +203,9 @@ argmax_kernel(const T *__restrict__ in, IdxT *__restrict__ out, size_t total_out
 class Argmax : public holoflow::core::ISyncTask {
 public:
   Argmax(ArgmaxSettings settings, holoflow::core::TDesc idesc, cudaStream_t stream,
-         size_t total_out, size_t total_red, int out_ndim, int red_ndim,
-         DevPtr<size_t> in_strides, DevPtr<size_t> out_strides, DevPtr<int> out_to_in_map,
-         DevPtr<size_t> red_strides, DevPtr<int> red_axes_map)
+         size_t total_out, size_t total_red, int out_ndim, int red_ndim, DevPtr<size_t> in_strides,
+         DevPtr<size_t> out_strides, DevPtr<int> out_to_in_map, DevPtr<size_t> red_strides,
+         DevPtr<int> red_axes_map)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), stream_(stream),
         total_out_(total_out), total_red_(total_red), out_ndim_(out_ndim), red_ndim_(red_ndim),
         d_in_strides_(std::move(in_strides)), d_out_strides_(std::move(out_strides)),

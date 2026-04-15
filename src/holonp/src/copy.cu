@@ -41,8 +41,8 @@ __global__ void copy_kernel(const std::byte *__restrict__ src, std::byte *__rest
                             const std::int64_t *__restrict__ src_strides,
                             const std::int64_t *__restrict__ src_shape, int ndim, int elem_size,
                             std::int64_t total_elems) {
-  const std::int64_t tid = static_cast<std::int64_t>(blockIdx.x) * blockDim.x +
-                           static_cast<std::int64_t>(threadIdx.x);
+  const std::int64_t tid =
+      static_cast<std::int64_t>(blockIdx.x) * blockDim.x + static_cast<std::int64_t>(threadIdx.x);
   if (tid >= total_elems) {
     return;
   }
@@ -83,13 +83,13 @@ public:
   void                         update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
-  size_t                       ndim_        = 0;
-  size_t                       total_elems_ = 0;
-  size_t                       elem_size_   = 0;
-  cudaStream_t                 stream_      = static_cast<cudaStream_t>(0);
+  size_t                                  ndim_        = 0;
+  size_t                                  total_elems_ = 0;
+  size_t                                  elem_size_   = 0;
+  cudaStream_t                            stream_      = static_cast<cudaStream_t>(0);
   curaii::unique_device_ptr<std::int64_t> d_src_strides_;
   curaii::unique_device_ptr<std::int64_t> d_src_shape_;
-  holoflow::core::TDesc        idesc_;
+  holoflow::core::TDesc                   idesc_;
 };
 
 } // namespace
@@ -107,7 +107,7 @@ void from_json(const nlohmann::json &, CopySettings &) {}
 // -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult CopyFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
-                                               const nlohmann::json                  &jsettings) const {
+                                               const nlohmann::json &jsettings) const {
   (void)jsettings.get<CopySettings>();
 
   check(input_descs.size() == 1, "expected exactly 1 input");
@@ -183,8 +183,7 @@ holoflow::core::OpResult Copy::execute(holoflow::core::SyncCtx &ctx) {
   std::byte       *dst = reinterpret_cast<std::byte *>(ctx.outputs[0].data());
 
   constexpr int block = 256;
-  const int     grid =
-      static_cast<int>((static_cast<std::int64_t>(total_elems_) + block - 1) / block);
+  const int grid = static_cast<int>((static_cast<std::int64_t>(total_elems_) + block - 1) / block);
 
   copy_kernel<<<grid, block, 0, stream_>>>(src, dst, d_src_strides_.get(), d_src_shape_.get(),
                                            static_cast<int>(ndim_), static_cast<int>(elem_size_),

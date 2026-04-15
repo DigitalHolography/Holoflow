@@ -93,7 +93,7 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
-  void update_stream(cudaStream_t stream) { stream_ = stream; }
+  void                   update_stream(cudaStream_t stream) { stream_ = stream; }
   const Wrap2PiSettings &settings() const { return settings_; }
 
 private:

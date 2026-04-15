@@ -53,7 +53,7 @@ public:
     return holoflow::core::OpResult::Ok;
   };
 
-  void update_stream(cudaStream_t stream) { stream_ = stream; }
+  void         update_stream(cudaStream_t stream) { stream_ = stream; }
   cudaStream_t stream() const { return stream_; }
 
 private:

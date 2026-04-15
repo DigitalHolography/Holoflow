@@ -212,16 +212,16 @@ public:
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
-  const ConcatenateSettings &settings() const { return settings_; }
+  const ConcatenateSettings                &settings() const { return settings_; }
   const std::vector<holoflow::core::TDesc> &input_descs() const { return input_descs_; }
-  void update_stream(cudaStream_t stream) { stream_ = stream; }
+  void                                      update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
-  ConcatenateSettings               settings_;
-  cudaStream_t                      stream_;
-  std::int64_t                      inner_;
-  std::int64_t                      out_axis_dim_;
-  std::vector<ConcatenateInputPlan> inputs_;
+  ConcatenateSettings                settings_;
+  cudaStream_t                       stream_;
+  std::int64_t                       inner_;
+  std::int64_t                       out_axis_dim_;
+  std::vector<ConcatenateInputPlan>  inputs_;
   std::vector<holoflow::core::TDesc> input_descs_;
 };
 
@@ -324,10 +324,9 @@ ConcatenateFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const auto settings = jsettings.get<ConcatenateSettings>();
   auto       plan     = build_plan(settings, input_descs);
 
-  return std::make_unique<Concatenate>(settings, ctx.stream, plan.inner, plan.out_axis_dim,
-                                       std::move(plan.inputs),
-                                       std::vector<holoflow::core::TDesc>(input_descs.begin(),
-                                                                          input_descs.end()));
+  return std::make_unique<Concatenate>(
+      settings, ctx.stream, plan.inner, plan.out_axis_dim, std::move(plan.inputs),
+      std::vector<holoflow::core::TDesc>(input_descs.begin(), input_descs.end()));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -342,8 +341,8 @@ ConcatenateFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     return create(input_descs, jsettings, ctx);
   }
 
-  const auto settings = jsettings.get<ConcatenateSettings>();
-  bool same_inputs = settings == old_concat->settings();
+  const auto settings    = jsettings.get<ConcatenateSettings>();
+  bool       same_inputs = settings == old_concat->settings();
   for (size_t i = 0; same_inputs && i < input_descs.size(); ++i) {
     same_inputs = same_desc(input_descs[i], old_concat->input_descs()[i]);
   }

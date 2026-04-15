@@ -75,7 +75,7 @@ public:
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
-  void                update_stream(cudaStream_t stream) { stream_ = stream; }
+  void update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
   ConjSettings settings_;

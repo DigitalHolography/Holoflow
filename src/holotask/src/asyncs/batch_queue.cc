@@ -291,7 +291,7 @@ BatchQueueFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
   size_t element_size = static_cast<int>(input_descs[0].num_bytes() / input_size);
   size_t bytes        = nb_slots * element_size;
   bool   same_buffer  = (bytes == old_bq->nb_slots() * old_bq->element_size()) &&
-                        (input_descs[0].mem_loc == old_bq->idesc().mem_loc);
+                     (input_descs[0].mem_loc == old_bq->idesc().mem_loc);
 
   if (same_buffer) {
     logger()->debug("[BatchQueueFactory::update] Reusing existing BatchQueue task");

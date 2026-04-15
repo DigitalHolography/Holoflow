@@ -121,7 +121,7 @@ void configure_grabber(Euresys::EGrabberCameraInfo &info, const nlohmann::json &
 
   const std::map<std::string, size_t> pixel_format_map = {
       {"Mono8", 1},
-      {"Mono16", 2}, 
+      {"Mono16", 2},
   };
 
   // Extract configuration parameters

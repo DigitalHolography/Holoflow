@@ -25,10 +25,7 @@ namespace holotask::syncs {
 // -------------------------------------------------------------------------------------------------
 
 struct MemcpySettings {
-  enum class Target {
-    Host,
-    Device
-  };
+  enum class Target { Host, Device };
 
   Target target;
 

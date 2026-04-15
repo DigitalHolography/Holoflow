@@ -45,9 +45,8 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
-         std::span<const holoflow::core::TDesc>     input_descs,
-         const nlohmann::json                      &jsettings,
-         const holoflow::core::SyncCreateCtx      &ctx) const override;
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
 } // namespace holonp

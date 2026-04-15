@@ -146,11 +146,10 @@ __global__ void fftshift_nd_contig_kernel_u8(const std::uint8_t *__restrict__ in
 
 class FFTShift : public holoflow::core::ISyncTask {
 public:
-  FFTShift(FFTShiftSettings settings, holoflow::core::TDesc idesc, cudaStream_t stream,
-           size_t ndim, size_t total_elems, HostPtr<std::int64_t> h_shape,
-           DevPtr<std::int64_t> d_shape, HostPtr<std::int64_t> h_strides,
-           DevPtr<std::int64_t> d_strides, HostPtr<std::int64_t> h_shifts,
-           DevPtr<std::int64_t> d_shifts)
+  FFTShift(FFTShiftSettings settings, holoflow::core::TDesc idesc, cudaStream_t stream, size_t ndim,
+           size_t total_elems, HostPtr<std::int64_t> h_shape, DevPtr<std::int64_t> d_shape,
+           HostPtr<std::int64_t> h_strides, DevPtr<std::int64_t> d_strides,
+           HostPtr<std::int64_t> h_shifts, DevPtr<std::int64_t> d_shifts)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), stream_(stream), ndim_(ndim),
         total_elems_(total_elems), h_shape_(std::move(h_shape)), d_shape_(std::move(d_shape)),
         h_strides_(std::move(h_strides)), d_strides_(std::move(d_strides)),
@@ -290,8 +289,7 @@ FFTShiftFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     const auto &new_idesc    = input_descs[0];
     const auto &old_idesc    = old_fftshift->idesc();
 
-    bool can_reuse = (new_settings == old_fftshift->settings()) &&
-                     same_desc(new_idesc, old_idesc);
+    bool can_reuse = (new_settings == old_fftshift->settings()) && same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_fftshift->update_stream(ctx.stream);

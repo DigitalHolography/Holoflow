@@ -223,10 +223,10 @@ __global__ void cf32_f32_argument_kernel(const cuFloatComplex *idata, float *oda
 
 class Conversion : public holoflow::core::ISyncTask {
 public:
-  Conversion(ConversionSettings settings, holoflow::core::TDesc idesc, size_t min_temp_storage_bytes,
-             DevPtr<uint8_t> &&d_min_temp_storage, DevPtr<std::byte> &&d_min,
-             size_t max_temp_storage_bytes, DevPtr<uint8_t> &&d_max_temp_storage,
-             DevPtr<std::byte> &&d_max, cudaStream_t stream)
+  Conversion(ConversionSettings settings, holoflow::core::TDesc idesc,
+             size_t min_temp_storage_bytes, DevPtr<uint8_t> &&d_min_temp_storage,
+             DevPtr<std::byte> &&d_min, size_t max_temp_storage_bytes,
+             DevPtr<uint8_t> &&d_max_temp_storage, DevPtr<std::byte> &&d_max, cudaStream_t stream)
       : settings_(std::move(settings)), idesc_(std::move(idesc)),
         min_temp_storage_bytes_(min_temp_storage_bytes),
         d_min_temp_storage_(std::move(d_min_temp_storage)), d_min_(std::move(d_min)),
@@ -259,7 +259,7 @@ public:
 
   void update_stream(cudaStream_t stream) { stream_ = stream; }
 
-  const ConversionSettings &settings() const { return settings_; }
+  const ConversionSettings    &settings() const { return settings_; }
   const holoflow::core::TDesc &idesc() const { return idesc_; }
 
 private:
@@ -307,8 +307,10 @@ private:
     uint8_t *d_max_storage     = d_max_temp_storage_.get();
     float   *d_min             = reinterpret_cast<float *>(d_min_.get());
     float   *d_max             = reinterpret_cast<float *>(d_max_.get());
-    CUDA_CHECK(cub::DeviceReduce::Min(d_min_storage, min_storage_bytes, idata, d_min, size, stream_));
-    CUDA_CHECK(cub::DeviceReduce::Max(d_max_storage, max_storage_bytes, idata, d_max, size, stream_));
+    CUDA_CHECK(
+        cub::DeviceReduce::Min(d_min_storage, min_storage_bytes, idata, d_min, size, stream_));
+    CUDA_CHECK(
+        cub::DeviceReduce::Max(d_max_storage, max_storage_bytes, idata, d_max, size, stream_));
 
     const int block_size = 256;
     const int num_blocks = (size + block_size - 1) / block_size;
@@ -327,8 +329,10 @@ private:
     uint8_t *d_max_storage     = d_max_temp_storage_.get();
     float   *d_min             = reinterpret_cast<float *>(d_min_.get());
     float   *d_max             = reinterpret_cast<float *>(d_max_.get());
-    CUDA_CHECK(cub::DeviceReduce::Min(d_min_storage, min_storage_bytes, idata, d_min, size, stream_));
-    CUDA_CHECK(cub::DeviceReduce::Max(d_max_storage, max_storage_bytes, idata, d_max, size, stream_));
+    CUDA_CHECK(
+        cub::DeviceReduce::Min(d_min_storage, min_storage_bytes, idata, d_min, size, stream_));
+    CUDA_CHECK(
+        cub::DeviceReduce::Max(d_max_storage, max_storage_bytes, idata, d_max, size, stream_));
 
     const int block_size = 256;
     const int num_blocks = (size + block_size - 1) / block_size;
@@ -369,15 +373,15 @@ private:
     CUDA_CHECK(cudaGetLastError());
   }
 
-  ConversionSettings settings_;
+  ConversionSettings    settings_;
   holoflow::core::TDesc idesc_;
-  size_t             min_temp_storage_bytes_;
-  DevPtr<uint8_t>    d_min_temp_storage_;
-  DevPtr<std::byte>  d_min_;
-  size_t             max_temp_storage_bytes_;
-  DevPtr<uint8_t>    d_max_temp_storage_;
-  DevPtr<std::byte>  d_max_;
-  cudaStream_t       stream_;
+  size_t                min_temp_storage_bytes_;
+  DevPtr<uint8_t>       d_min_temp_storage_;
+  DevPtr<std::byte>     d_min_;
+  size_t                max_temp_storage_bytes_;
+  DevPtr<uint8_t>       d_max_temp_storage_;
+  DevPtr<std::byte>     d_max_;
+  cudaStream_t          stream_;
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -439,8 +443,8 @@ ConversionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   }
 
   return std::make_unique<Conversion>(settings, idesc, min_storage_bytes, std::move(d_min_storage),
-                                      std::move(d_min), max_storage_bytes,
-                                      std::move(d_max_storage), std::move(d_max), ctx.stream);
+                                      std::move(d_min), max_storage_bytes, std::move(d_max_storage),
+                                      std::move(d_max), ctx.stream);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -458,11 +462,10 @@ ConversionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   const auto &new_idesc = input_descs[0];
   const auto &old_idesc = old_conversion->idesc();
   const auto  settings  = jsettings.get<ConversionSettings>();
-  const bool  can_reuse = settings == old_conversion->settings() &&
-                         new_idesc.shape == old_idesc.shape &&
-                         new_idesc.strides == old_idesc.strides &&
-                         new_idesc.dtype == old_idesc.dtype &&
-                         new_idesc.mem_loc == old_idesc.mem_loc;
+  const bool  can_reuse =
+      settings == old_conversion->settings() && new_idesc.shape == old_idesc.shape &&
+      new_idesc.strides == old_idesc.strides && new_idesc.dtype == old_idesc.dtype &&
+      new_idesc.mem_loc == old_idesc.mem_loc;
 
   if (can_reuse) {
     old_conversion->update_stream(ctx.stream);

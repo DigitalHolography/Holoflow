@@ -462,8 +462,7 @@ class CrossCorrelation2 : public holoflow::core::ISyncTask {
 public:
   CrossCorrelation2(CrossCorrelation2Settings settings, holoflow::core::TDesc moving_desc,
                     holoflow::core::TDesc reference_desc, holoflow::core::TDesc moving_freq_desc,
-                    curaii::CufftHandle &&moving_fwd_plan,
-                    curaii::CufftHandle &&reference_fwd_plan,
+                    curaii::CufftHandle &&moving_fwd_plan, curaii::CufftHandle &&reference_fwd_plan,
                     curaii::CufftHandle &&inverse_plan, TensorLayout moving_layout,
                     TensorLayout reference_layout, size_t h, size_t w, size_t freq_elems_per_batch,
                     size_t total_moving_freq_elems, size_t total_out_elems,
@@ -482,8 +481,7 @@ public:
         d_moving_spatial_(std::move(d_moving_spatial)),
         d_reference_spatial_(std::move(d_reference_spatial)),
         d_moving_means_(std::move(d_moving_means)),
-        d_reference_means_(std::move(d_reference_means)),
-        d_moving_freq_(std::move(d_moving_freq)),
+        d_reference_means_(std::move(d_reference_means)), d_moving_freq_(std::move(d_moving_freq)),
         d_reference_freq_(std::move(d_reference_freq)),
         d_reference_batch_map_(std::move(d_reference_batch_map)), stream_(stream) {}
 

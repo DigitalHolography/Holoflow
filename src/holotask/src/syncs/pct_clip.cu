@@ -35,11 +35,7 @@ namespace holotask::syncs {
 
 void to_json(nlohmann::json &j, const PctClipSettings::Ellipse &e) {
   j = nlohmann::json{
-      {"cx", e.cx},
-      {"cy", e.cy},
-      {"rx", e.rx},
-      {"ry", e.ry},
-      {"angle", e.angle},
+      {"cx", e.cx}, {"cy", e.cy}, {"rx", e.rx}, {"ry", e.ry}, {"angle", e.angle},
   };
 }
 
@@ -161,8 +157,8 @@ public:
 
     int h_roi_count = 0;
     CUDA_CHECK(cudaStreamSynchronize(stream_));
-    CUDA_CHECK(cudaMemcpyAsync(&h_roi_count, d_roi_count_.get(), sizeof(int), cudaMemcpyDeviceToHost,
-                               stream_));
+    CUDA_CHECK(cudaMemcpyAsync(&h_roi_count, d_roi_count_.get(), sizeof(int),
+                               cudaMemcpyDeviceToHost, stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_));
 
     CUDA_CHECK(cub::DeviceRadixSort::SortKeys(d_sort_tmp_.get(), sort_tmp_bytes_, d_roi_.get(),
@@ -176,8 +172,10 @@ public:
     float    *d_max   = odata + max_idx;
 
     CUDA_CHECK(cudaStreamSynchronize(stream_));
-    CUDA_CHECK(cudaMemcpyAsync(d_min_.get(), d_min, sizeof(float), cudaMemcpyDeviceToDevice, stream_));
-    CUDA_CHECK(cudaMemcpyAsync(d_max_.get(), d_max, sizeof(float), cudaMemcpyDeviceToDevice, stream_));
+    CUDA_CHECK(
+        cudaMemcpyAsync(d_min_.get(), d_min, sizeof(float), cudaMemcpyDeviceToDevice, stream_));
+    CUDA_CHECK(
+        cudaMemcpyAsync(d_max_.get(), d_max, sizeof(float), cudaMemcpyDeviceToDevice, stream_));
 
     constexpr int block_size = 256;
     const int     grid_size  = (count + block_size - 1) / block_size;
@@ -190,22 +188,22 @@ public:
 
   void update_stream(cudaStream_t stream) { stream_ = stream; }
 
-  const PctClipSettings &settings() const { return settings_; }
+  const PctClipSettings       &settings() const { return settings_; }
   const holoflow::core::TDesc &idesc() const { return idesc_; }
 
 private:
-  PctClipSettings settings_;
+  PctClipSettings       settings_;
   holoflow::core::TDesc idesc_;
-  DevPtr<float>   d_min_;
-  DevPtr<float>   d_max_;
-  DevPtr<uint8_t> d_roi_mask_;
-  size_t          sort_tmp_bytes_;
-  DevPtr<uint8_t> d_sort_tmp_;
-  size_t          select_tmp_bytes_;
-  DevPtr<uint8_t> d_select_tmp_;
-  DevPtr<float>   d_roi_;
-  DevPtr<int>     d_roi_count_;
-  cudaStream_t    stream_;
+  DevPtr<float>         d_min_;
+  DevPtr<float>         d_max_;
+  DevPtr<uint8_t>       d_roi_mask_;
+  size_t                sort_tmp_bytes_;
+  DevPtr<uint8_t>       d_sort_tmp_;
+  size_t                select_tmp_bytes_;
+  DevPtr<uint8_t>       d_select_tmp_;
+  DevPtr<float>         d_roi_;
+  DevPtr<int>           d_roi_count_;
+  cudaStream_t          stream_;
 };
 
 } // namespace
@@ -257,13 +255,13 @@ PctClipFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   using curaii::make_unique_device_ptr;
 
   (void)this->infer(input_descs, jsettings);
-  const auto settings = jsettings.get<PctClipSettings>();
-  const auto &idesc   = input_descs[0];
+  const auto  settings = jsettings.get<PctClipSettings>();
+  const auto &idesc    = input_descs[0];
 
-  const int depth = static_cast<int>(idesc.shape[0]);
+  const int depth  = static_cast<int>(idesc.shape[0]);
   const int height = static_cast<int>(idesc.shape[1]);
-  const int width = static_cast<int>(idesc.shape[2]);
-  const int count = static_cast<int>(idesc.num_elements());
+  const int width  = static_cast<int>(idesc.shape[2]);
+  const int count  = static_cast<int>(idesc.num_elements());
 
   auto d_min      = make_unique_device_ptr<float>(1);
   auto d_max      = make_unique_device_ptr<float>(1);
@@ -271,13 +269,14 @@ PctClipFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   size_t sort_tmp_bytes = 0;
   CUDA_CHECK(cub::DeviceRadixSort::SortKeys(nullptr, sort_tmp_bytes, static_cast<float *>(nullptr),
-                                            static_cast<float *>(nullptr), count, 0, 32, ctx.stream));
+                                            static_cast<float *>(nullptr), count, 0, 32,
+                                            ctx.stream));
   auto d_sort_tmp = make_unique_device_ptr<uint8_t>(sort_tmp_bytes);
 
   size_t select_tmp_bytes = 0;
-  CUDA_CHECK(cub::DeviceSelect::Flagged(nullptr, select_tmp_bytes, static_cast<float *>(nullptr),
-                                        static_cast<uint8_t *>(nullptr), static_cast<float *>(nullptr),
-                                        static_cast<int *>(nullptr), count, ctx.stream));
+  CUDA_CHECK(cub::DeviceSelect::Flagged(
+      nullptr, select_tmp_bytes, static_cast<float *>(nullptr), static_cast<uint8_t *>(nullptr),
+      static_cast<float *>(nullptr), static_cast<int *>(nullptr), count, ctx.stream));
   auto d_select_tmp = make_unique_device_ptr<uint8_t>(select_tmp_bytes);
   auto d_roi_count  = make_unique_device_ptr<int>(1);
   auto d_roi        = make_unique_device_ptr<float>(count);
@@ -289,10 +288,10 @@ PctClipFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   roi_mask_kernel<<<grid_size, block_size, 0, ctx.stream>>>(d_roi_mask.get(), width, height, depth,
                                                             settings.roi);
 
-  return std::make_unique<PctClip>(
-      settings, idesc, std::move(d_min), std::move(d_max), std::move(d_roi_mask), sort_tmp_bytes,
-      std::move(d_sort_tmp), select_tmp_bytes, std::move(d_select_tmp), std::move(d_roi),
-      std::move(d_roi_count), ctx.stream);
+  return std::make_unique<PctClip>(settings, idesc, std::move(d_min), std::move(d_max),
+                                   std::move(d_roi_mask), sort_tmp_bytes, std::move(d_sort_tmp),
+                                   select_tmp_bytes, std::move(d_select_tmp), std::move(d_roi),
+                                   std::move(d_roi_count), ctx.stream);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -310,11 +309,10 @@ PctClipFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   const auto &new_idesc = input_descs[0];
   const auto &old_idesc = old_pct_clip->idesc();
   const auto  settings  = jsettings.get<PctClipSettings>();
-  const bool  can_reuse = settings == old_pct_clip->settings() &&
-                         new_idesc.shape == old_idesc.shape &&
-                         new_idesc.strides == old_idesc.strides &&
-                         new_idesc.dtype == old_idesc.dtype &&
-                         new_idesc.mem_loc == old_idesc.mem_loc;
+  const bool  can_reuse =
+      settings == old_pct_clip->settings() && new_idesc.shape == old_idesc.shape &&
+      new_idesc.strides == old_idesc.strides && new_idesc.dtype == old_idesc.dtype &&
+      new_idesc.mem_loc == old_idesc.mem_loc;
 
   if (can_reuse) {
     old_pct_clip->update_stream(ctx.stream);

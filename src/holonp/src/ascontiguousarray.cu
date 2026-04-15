@@ -56,8 +56,8 @@ __global__ void copy_kernel(const std::byte *__restrict__ src, std::byte *__rest
                             const std::int64_t *__restrict__ src_strides,
                             const std::int64_t *__restrict__ src_shape, int ndim, int elem_size,
                             std::int64_t total_elems) {
-  const std::int64_t tid = static_cast<std::int64_t>(blockIdx.x) * blockDim.x +
-                           static_cast<std::int64_t>(threadIdx.x);
+  const std::int64_t tid =
+      static_cast<std::int64_t>(blockIdx.x) * blockDim.x + static_cast<std::int64_t>(threadIdx.x);
   if (tid >= total_elems) {
     return;
   }
@@ -101,12 +101,12 @@ public:
   void                         update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
-  bool                         is_noop_ = true;
-  holoflow::core::TDesc        idesc_;
-  size_t                       ndim_        = 0;
-  size_t                       total_elems_ = 0;
-  size_t                       elem_size_   = 0;
-  cudaStream_t                 stream_      = static_cast<cudaStream_t>(0);
+  bool                                    is_noop_ = true;
+  holoflow::core::TDesc                   idesc_;
+  size_t                                  ndim_        = 0;
+  size_t                                  total_elems_ = 0;
+  size_t                                  elem_size_   = 0;
+  cudaStream_t                            stream_      = static_cast<cudaStream_t>(0);
   curaii::unique_device_ptr<std::int64_t> d_src_strides_;
   curaii::unique_device_ptr<std::int64_t> d_src_shape_;
 };
@@ -178,10 +178,9 @@ AsContiguousArrayFactory::create(std::span<const holoflow::core::TDesc> input_de
   CUDA_CHECK(cudaMemcpyAsync(d_shape.get(), h_shape.data(), ndim * sizeof(std::int64_t),
                              cudaMemcpyHostToDevice, ctx.stream));
 
-  return std::make_unique<AsContiguousArray>(ndim, idesc.num_elements(),
-                                             holoflow::core::size_of(idesc.dtype),
-                                             std::move(d_strides), std::move(d_shape), ctx.stream,
-                                             idesc);
+  return std::make_unique<AsContiguousArray>(
+      ndim, idesc.num_elements(), holoflow::core::size_of(idesc.dtype), std::move(d_strides),
+      std::move(d_shape), ctx.stream, idesc);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -197,7 +196,8 @@ AsContiguousArrayFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_
   }
 
   const auto &idesc = input_descs[0];
-  if (same_desc(idesc, old_task_ptr->idesc()) && old_task_ptr->is_noop() == is_c_contiguous(idesc)) {
+  if (same_desc(idesc, old_task_ptr->idesc()) &&
+      old_task_ptr->is_noop() == is_c_contiguous(idesc)) {
     old_task_ptr->update_stream(ctx.stream);
     return old_task;
   }
@@ -214,8 +214,7 @@ holoflow::core::OpResult AsContiguousArray::execute(holoflow::core::SyncCtx &ctx
   std::byte       *dst = reinterpret_cast<std::byte *>(ctx.outputs[0].data());
 
   constexpr int block = 256;
-  const int     grid =
-      static_cast<int>((static_cast<std::int64_t>(total_elems_) + block - 1) / block);
+  const int grid = static_cast<int>((static_cast<std::int64_t>(total_elems_) + block - 1) / block);
 
   copy_kernel<<<grid, block, 0, stream_>>>(src, dst, d_src_strides_.get(), d_src_shape_.get(),
                                            static_cast<int>(ndim_), static_cast<int>(elem_size_),

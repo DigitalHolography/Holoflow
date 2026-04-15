@@ -229,8 +229,8 @@ holoflow::core::OpResult Meshgrid::execute(holoflow::core::SyncCtx &ctx) {
   const auto dtype = odesc0.dtype;
 
   for (int k = 0; k < n; ++k) {
-    auto *idata = ctx.inputs[k].data();
-    auto *odata = ctx.outputs[k].data();
+    auto       *idata = ctx.inputs[k].data();
+    auto       *odata = ctx.outputs[k].data();
     const auto &idesc = ctx.inputs[k].desc;
 
     const auto in_len = static_cast<std::int64_t>(idesc.num_elements());

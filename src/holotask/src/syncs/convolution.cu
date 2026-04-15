@@ -312,11 +312,13 @@ public:
 
     CUDA_CHECK(cudaGetLastError());
 
-    const int freq_size = static_cast<int>(fft_data_->padded_width * fft_data_->padded_height);
-    const float scale   = 1.0f / static_cast<float>(fft_data_->padded_width * fft_data_->padded_height);
+    const int   freq_size = static_cast<int>(fft_data_->padded_width * fft_data_->padded_height);
+    const float scale =
+        1.0f / static_cast<float>(fft_data_->padded_width * fft_data_->padded_height);
 
     const ComplexMultiplyCallerInfo info{freq_size, fft_data_->d_freq_kernel.get(), scale};
-    CUDA_CHECK(cudaMemcpy(fft_data_->d_callback_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice));
+    CUDA_CHECK(
+        cudaMemcpy(fft_data_->d_callback_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice));
 
     cufftExecC2C(fft_data_->fft_plan.get(), fft_data_->d_padded_input.get(),
                  fft_data_->d_freq_input.get(), CUFFT_FORWARD);
@@ -331,9 +333,9 @@ public:
         fft_data_->padded_width);
 
     if (settings_.divide) {
-      const int num_elements = static_cast<int>(output_width * output_height);
-      constexpr int threads  = 256;
-      const int blocks       = (num_elements + threads - 1) / threads;
+      const int     num_elements = static_cast<int>(output_width * output_height);
+      constexpr int threads      = 256;
+      const int     blocks       = (num_elements + threads - 1) / threads;
 
       divide_kernel<<<blocks, threads, 0, stream_>>>(input_data, output_data, output_data,
                                                      num_elements);
@@ -349,11 +351,12 @@ public:
     const auto input_width  = static_cast<unsigned int>(input_desc_.shape.back());
     const auto input_height = static_cast<unsigned int>(input_desc_.shape[input_desc_.rank() - 2]);
 
-    fft_data_ = std::make_unique<FFTConvolutionData>();
+    fft_data_                = std::make_unique<FFTConvolutionData>();
     fft_data_->padded_width  = input_width;
     fft_data_->padded_height = input_height;
 
-    const size_t padded_size = static_cast<size_t>(fft_data_->padded_width) * fft_data_->padded_height;
+    const size_t padded_size =
+        static_cast<size_t>(fft_data_->padded_width) * fft_data_->padded_height;
     fft_data_->d_padded_input  = curaii::make_unique_device_ptr<cufftComplex>(padded_size);
     fft_data_->d_padded_kernel = curaii::make_unique_device_ptr<cufftComplex>(padded_size);
     fft_data_->d_freq_input    = curaii::make_unique_device_ptr<cufftComplex>(padded_size);
@@ -377,25 +380,25 @@ public:
     CUFFT_CHECK(cufftSetStream(fft_data_->inv_plan.get(), stream_));
   }
 
-  const ConvolutionSettings &settings() const { return settings_; }
-  const holoflow::core::TDesc &input_desc() const { return input_desc_; }
+  const ConvolutionSettings             &settings() const { return settings_; }
+  const holoflow::core::TDesc           &input_desc() const { return input_desc_; }
   const std::filesystem::file_time_type &kernel_last_write_time() const {
     return kernel_last_write_time_;
   }
-  std::vector<char> &lto() { return lto_; }
+  std::vector<char>  &lto() { return lto_; }
   FFTConvolutionData &fft_data() { return *fft_data_; }
-  cudaStream_t stream() const { return stream_; }
+  cudaStream_t        stream() const { return stream_; }
 
 private:
-  ConvolutionSettings                settings_;
-  holoflow::core::TDesc              input_desc_;
-  holoflow::core::TDesc              output_desc_;
-  cudaStream_t                       stream_;
-  DevPtr<float>                      d_kernel_;
-  int                                kernel_width_;
-  int                                kernel_height_;
-  std::vector<char>                  lto_;
-  std::filesystem::file_time_type    kernel_last_write_time_;
+  ConvolutionSettings                 settings_;
+  holoflow::core::TDesc               input_desc_;
+  holoflow::core::TDesc               output_desc_;
+  cudaStream_t                        stream_;
+  DevPtr<float>                       d_kernel_;
+  int                                 kernel_width_;
+  int                                 kernel_height_;
+  std::vector<char>                   lto_;
+  std::filesystem::file_time_type     kernel_last_write_time_;
   std::unique_ptr<FFTConvolutionData> fft_data_;
 };
 
@@ -435,11 +438,11 @@ std::unique_ptr<holoflow::core::ISyncTask>
 ConvolutionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                            const nlohmann::json                  &jsettings,
                            const holoflow::core::SyncCreateCtx   &ctx) const {
-  const auto infer_res       = infer(input_descs, jsettings);
-  const auto settings        = jsettings.get<ConvolutionSettings>();
-  const auto &input_desc     = input_descs[0];
-  const auto parsed_kernel   = load_kernel(settings.kernel_file);
-  const auto last_write_time = std::filesystem::last_write_time(settings.kernel_file);
+  const auto  infer_res       = infer(input_descs, jsettings);
+  const auto  settings        = jsettings.get<ConvolutionSettings>();
+  const auto &input_desc      = input_descs[0];
+  const auto  parsed_kernel   = load_kernel(settings.kernel_file);
+  const auto  last_write_time = std::filesystem::last_write_time(settings.kernel_file);
 
   auto d_kernel = curaii::make_unique_device_ptr<float>(parsed_kernel.values.size());
   CUDA_CHECK(cudaMemcpyAsync(d_kernel.get(), parsed_kernel.values.data(),
@@ -447,22 +450,23 @@ ConvolutionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                              ctx.stream));
   CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
 
-  auto task = std::make_unique<Convolution>(
-      settings, input_desc, infer_res.output_descs[0], ctx.stream, std::move(d_kernel),
-      parsed_kernel.width, parsed_kernel.height, last_write_time);
+  auto task = std::make_unique<Convolution>(settings, input_desc, infer_res.output_descs[0],
+                                            ctx.stream, std::move(d_kernel), parsed_kernel.width,
+                                            parsed_kernel.height, last_write_time);
 
   task->create_fft_data();
   task->lto() = complex_multiply_callback_lto();
 
-  constexpr int rank = 2;
+  constexpr int rank       = 2;
   long long int n[2]       = {static_cast<long long>(task->fft_data().padded_height),
                               static_cast<long long>(task->fft_data().padded_width)};
   long long int inembed[2] = {static_cast<long long>(task->fft_data().padded_height),
                               static_cast<long long>(task->fft_data().padded_width)};
   long long int onembed[2] = {static_cast<long long>(task->fft_data().padded_height),
                               static_cast<long long>(task->fft_data().padded_width)};
-  constexpr int istride       = 1;
-  const int     idist         = static_cast<int>(task->fft_data().padded_height * task->fft_data().padded_width);
+  constexpr int istride    = 1;
+  const int     idist =
+      static_cast<int>(task->fft_data().padded_height * task->fft_data().padded_width);
   constexpr int ostride       = 1;
   const int     odist         = idist;
   constexpr int batch         = 1;
@@ -510,12 +514,11 @@ ConvolutionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   const auto &old_input_desc     = old_conv->input_desc();
   const auto  current_write_time = std::filesystem::last_write_time(settings.kernel_file);
   const bool  kernel_changed     = current_write_time != old_conv->kernel_last_write_time();
-  const bool  can_reuse          = !kernel_changed &&
-                          settings == old_conv->settings() &&
-                          new_input_desc.shape == old_input_desc.shape &&
-                          new_input_desc.strides == old_input_desc.strides &&
-                          new_input_desc.dtype == old_input_desc.dtype &&
-                          new_input_desc.mem_loc == old_input_desc.mem_loc;
+  const bool  can_reuse          = !kernel_changed && settings == old_conv->settings() &&
+                         new_input_desc.shape == old_input_desc.shape &&
+                         new_input_desc.strides == old_input_desc.strides &&
+                         new_input_desc.dtype == old_input_desc.dtype &&
+                         new_input_desc.mem_loc == old_input_desc.mem_loc;
 
   if (can_reuse) {
     old_conv->update_stream(ctx.stream);

@@ -58,8 +58,8 @@ public:
 
   ~SlidingAverage() override = default;
 
-  holoflow::core::OpResult try_push(holoflow::core::AsyncPushCtx &ctx) override;
-  holoflow::core::OpResult try_pop(holoflow::core::AsyncPopCtx &ctx) override;
+  holoflow::core::OpResult             try_push(holoflow::core::AsyncPushCtx &ctx) override;
+  holoflow::core::OpResult             try_pop(holoflow::core::AsyncPopCtx &ctx) override;
   std::optional<holoflow::core::TView> acquire_input(int index) override;
   void                                 release_output(int index) override;
 
@@ -68,7 +68,7 @@ public:
     consumer_stream_ = consumer_stream;
   }
   const SlidingAverageSettings &settings() const { return settings_; }
-  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  const holoflow::core::TDesc  &idesc() const { return idesc_; }
 
 private:
   int writer_size() const;
@@ -295,10 +295,9 @@ SlidingAverageFactory::create(std::span<const holoflow::core::TDesc> input_descs
   CUDA_CHECK(cudaStreamSynchronize(ctx.producer_stream));
 
   // Success
-  return std::make_unique<SlidingAverage>(settings, idesc, result.output_descs[0],
-                                          ctx.producer_stream, ctx.consumer_stream, nb_slots,
-                                          element_size, std::move(d_buffer),
-                                          std::move(d_running_avg));
+  return std::make_unique<SlidingAverage>(
+      settings, idesc, result.output_descs[0], ctx.producer_stream, ctx.consumer_stream, nb_slots,
+      element_size, std::move(d_buffer), std::move(d_running_avg));
 }
 
 std::unique_ptr<holoflow::core::IAsyncTask>
@@ -316,8 +315,10 @@ SlidingAverageFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_ta
   const auto  settings = jsettings.get<SlidingAverageSettings>();
   const auto &idesc    = input_descs[0];
   if (settings == old_slide_avg->settings() && idesc.shape == old_slide_avg->idesc().shape &&
-      idesc.strides == old_slide_avg->idesc().strides && idesc.dtype == old_slide_avg->idesc().dtype &&
-      idesc.mem_loc == old_slide_avg->idesc().mem_loc && idesc.offset == old_slide_avg->idesc().offset) {
+      idesc.strides == old_slide_avg->idesc().strides &&
+      idesc.dtype == old_slide_avg->idesc().dtype &&
+      idesc.mem_loc == old_slide_avg->idesc().mem_loc &&
+      idesc.offset == old_slide_avg->idesc().offset) {
     old_slide_avg->update_streams(ctx.producer_stream, ctx.consumer_stream);
     return old_task;
   }

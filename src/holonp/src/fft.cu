@@ -14,8 +14,8 @@
 
 #include "holonp/fft.hh"
 
-#include <cuComplex.h>
 #include <cmath>
+#include <cuComplex.h>
 #include <limits>
 #include <numeric>
 #include <stdexcept>
@@ -135,7 +135,7 @@ public:
 
   const FFTSettings           &settings() const { return settings_; }
   const holoflow::core::TDesc &idesc() const { return idesc_; }
-  void update_stream(cudaStream_t stream) {
+  void                         update_stream(cudaStream_t stream) {
     if (stream_ != stream) {
       stream_ = stream;
       CUFFT_CHECK(cufftSetStream(plan_.get(), stream_));
@@ -302,10 +302,9 @@ FFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     d_tmp = curaii::make_unique_device_ptr<cuFloatComplex>(total, ctx.stream);
   }
 
-  return std::unique_ptr<holoflow::core::ISyncTask>(new FFT(settings, idesc, std::move(plan), total,
-                                                            n_fft, exec_count, exec_stride,
-                                                            idesc.dtype, ctx.stream,
-                                                            std::move(d_tmp)));
+  return std::unique_ptr<holoflow::core::ISyncTask>(
+      new FFT(settings, idesc, std::move(plan), total, n_fft, exec_count, exec_stride, idesc.dtype,
+              ctx.stream, std::move(d_tmp)));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>

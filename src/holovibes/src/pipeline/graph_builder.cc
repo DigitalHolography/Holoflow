@@ -35,7 +35,7 @@ GraphBuilder::GraphBuilder(const Settings &settings, holoflow::core::Registry &r
 // -------------------------------------------------------------------------------------------------
 
 holoflow::core::GraphSpec GraphBuilder::build() {
-  TDesc H = build_acquisition();
+  TDesc H     = build_acquisition();
   TDesc H_raw = H;
 
   if (s_.raw_view || s_.view_type == ViewType::RAW) {

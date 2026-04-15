@@ -497,13 +497,11 @@ void MainWindow::on_metrics_updated(double input_fps) {
     input_fps = 0.0;
   }
 
+  int fps = static_cast<int>(input_fps);
 
-    int fps = static_cast<int>(input_fps);
+  const QString text = QString("%1 fps").arg(fps, 6, 10, QChar('0'));
 
-    const QString text = QString("%1 fps")
-        .arg(fps, 6, 10, QChar('0'));
-
-    monitor_widget_->set_input_throughput_fps(text);
+  monitor_widget_->set_input_throughput_fps(text);
 
   monitor_widget_->set_gpu_load("N/A");
   monitor_widget_->set_cpu_load("N/A");
@@ -946,8 +944,9 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         }
         cfg_json = nlohmann::json::parse(cfg_file);
       }
-      s.load_batch         = cfg_json.contains("s711") ? cfg_json.at("s711").at("BufferPartCount").get<int>()
-                                                      : cfg_json.at("s710").at("BufferPartCount").get<int>();
+      s.load_batch = cfg_json.contains("s711")
+                         ? cfg_json.at("s711").at("BufferPartCount").get<int>()
+                         : cfg_json.at("s710").at("BufferPartCount").get<int>();
     }
   }
 
@@ -1195,7 +1194,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   }
 
   // --- View Settings ---
-  { view_widget_->set_cuts_3d_enabled(s.view_3d_cuts); }
+  {
+    view_widget_->set_cuts_3d_enabled(s.view_3d_cuts);
+  }
 
   // --- Post-processing Settings ---
   {

@@ -124,7 +124,7 @@ public:
 
   const RFFTSettings          &settings() const { return settings_; }
   const holoflow::core::TDesc &idesc() const { return idesc_; }
-  void update_stream(cudaStream_t stream) {
+  void                         update_stream(cudaStream_t stream) {
     if (stream_ != stream) {
       stream_ = stream;
       CUFFT_CHECK(cufftSetStream(plan_.get(), stream_));
@@ -132,15 +132,15 @@ public:
   }
 
 private:
-  RFFTSettings           settings_;
-  holoflow::core::TDesc  idesc_;
-  curaii::CufftHandle    plan_;
-  size_t                 total_out_;
-  size_t                 n_fft_;
-  size_t                 exec_count_;
-  size_t                 exec_in_stride_;
-  size_t                 exec_out_stride_;
-  cudaStream_t           stream_;
+  RFFTSettings          settings_;
+  holoflow::core::TDesc idesc_;
+  curaii::CufftHandle   plan_;
+  size_t                total_out_;
+  size_t                n_fft_;
+  size_t                exec_count_;
+  size_t                exec_in_stride_;
+  size_t                exec_out_stride_;
+  cudaStream_t          stream_;
 };
 
 } // namespace
@@ -197,11 +197,12 @@ holoflow::core::InferResult RFFTFactory::infer(std::span<const holoflow::core::T
   // holoflow::core::TDesc odesc            = idesc;
   // odesc.dtype                            = holoflow::core::DType::CF32;
   // odesc.shape[static_cast<size_t>(axis)] = n_fft / 2 + 1;
-  // 
+  //
 
-  auto odesc_shape = idesc.shape;
+  auto odesc_shape                       = idesc.shape;
   odesc_shape[static_cast<size_t>(axis)] = n_fft / 2 + 1;
-  holoflow::core::TDesc odesc(odesc_shape, holoflow::core::DType::CF32, holoflow::core::MemLoc::Device);
+  holoflow::core::TDesc odesc(odesc_shape, holoflow::core::DType::CF32,
+                              holoflow::core::MemLoc::Device);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
@@ -290,10 +291,9 @@ RFFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   const size_t total_out = (total_in / n_fft) * n_out;
 
-  return std::unique_ptr<holoflow::core::ISyncTask>(new RFFT(settings, idesc, std::move(plan),
-                                                             total_out, n_fft, exec_count,
-                                                             exec_in_stride, exec_out_stride,
-                                                             ctx.stream));
+  return std::unique_ptr<holoflow::core::ISyncTask>(
+      new RFFT(settings, idesc, std::move(plan), total_out, n_fft, exec_count, exec_in_stride,
+               exec_out_stride, ctx.stream));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>

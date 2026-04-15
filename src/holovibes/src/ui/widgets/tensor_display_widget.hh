@@ -29,10 +29,7 @@
 namespace holovibes::ui {
 
 /// Available colormaps for tensor visualization
-enum class Colormap {
-  Grayscale,
-  Twilight
-};
+enum class Colormap { Grayscale, Twilight };
 
 /// Widget that renders a 2D tensor as an image (with optional colormaps and float support).
 class TensorDisplayWidget : public QOpenGLWidget, protected QOpenGLExtraFunctions {
@@ -44,7 +41,7 @@ public:
   void set_fixed_aspect(std::optional<QSize> size);
   void set_reticle_enabled(bool enabled);
   void set_reticle_radius(double radius);
-  
+
   /// Set the active colormap
   void set_colormap(Colormap cmap);
 
@@ -77,33 +74,33 @@ private:
   void  initializeColormaps();
   void  drawReticle();
 
-  GLuint tex_               = 0;
-  GLuint vao_               = 0;
-  GLuint vbo_               = 0;
-  GLuint prog_              = 0;
-  
+  GLuint tex_  = 0;
+  GLuint vao_  = 0;
+  GLuint vbo_  = 0;
+  GLuint prog_ = 0;
+
   GLuint reticle_vao_       = 0;
   GLuint reticle_vbo_       = 0;
   GLuint reticle_prog_      = 0;
   GLint  reticle_color_loc_ = -1;
-  
-  GLuint colormap_tex_      = 0;
-  GLint  tex_loc_           = -1;
-  GLint  cmap_tex_loc_      = -1;
-  GLint  use_cmap_loc_      = -1;
-  GLint  vmin_loc_          = -1;
-  GLint  vmax_loc_          = -1;
-  
-  int    img_w_ = 0, img_h_ = 0;
-  bool   texture_dirty_ = false;
+
+  GLuint colormap_tex_ = 0;
+  GLint  tex_loc_      = -1;
+  GLint  cmap_tex_loc_ = -1;
+  GLint  use_cmap_loc_ = -1;
+  GLint  vmin_loc_     = -1;
+  GLint  vmax_loc_     = -1;
+
+  int  img_w_ = 0, img_h_ = 0;
+  bool texture_dirty_ = false;
 
   bool   reticle_enabled_ = false;
   double reticle_radius_  = 1.0;
-  
+
   Colormap cmap_ = Colormap::Grayscale;
-  float vmin_ = 0.0f;
-  float vmax_ = 1.0f;
-  
+  float    vmin_ = 0.0f;
+  float    vmax_ = 1.0f;
+
   // Track current dtype to reallocate texture format if it changes
   holoflow::core::DType current_dtype_ = holoflow::core::DType::U8;
 
