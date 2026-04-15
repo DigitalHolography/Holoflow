@@ -19,10 +19,18 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const SubSettings &) { j = nlohmann::json::object(); }
 void from_json(const nlohmann::json &, SubSettings &) {}
 
 namespace {
+
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
 
 template <typename T>
 __global__ void sub_kernel(const T *__restrict__ a, const T *__restrict__ b, T *__restrict__ out,
@@ -72,13 +80,41 @@ std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
   return s;
 }
 
-} // namespace
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
+}
 
-Sub::Sub(cudaStream_t stream, holoflow::core::DType dtype, size_t total_out, size_t ndim,
-         DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides)
-    : stream_(stream), dtype_(dtype), total_out_(total_out), ndim_(ndim),
-      d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
-      d_b_strides_(std::move(d_b_strides)) {}
+// -------------------------------------------------------------------------------------------------
+// Sub task implementation
+// -------------------------------------------------------------------------------------------------
+
+class Sub : public holoflow::core::ISyncTask {
+public:
+  Sub(cudaStream_t stream, holoflow::core::DType dtype, size_t total_out, size_t ndim,
+      DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides, DevPtr<size_t> d_b_strides,
+      std::vector<holoflow::core::TDesc> input_descs)
+      : stream_(stream), dtype_(dtype), total_out_(total_out), ndim_(ndim),
+        d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
+        d_b_strides_(std::move(d_b_strides)), input_descs_(std::move(input_descs)) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const std::vector<holoflow::core::TDesc> &input_descs() const { return input_descs_; }
+  void                                      update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  cudaStream_t          stream_;
+  holoflow::core::DType dtype_;
+  size_t                total_out_;
+  size_t                ndim_;
+  DevPtr<size_t>        d_out_shape_;
+  DevPtr<size_t>        d_a_strides_;
+  DevPtr<size_t>        d_b_strides_;
+  std::vector<holoflow::core::TDesc> input_descs_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Sub::execute(holoflow::core::SyncCtx &ctx) {
   if (total_out_ == 0)
@@ -110,6 +146,10 @@ holoflow::core::OpResult Sub::execute(holoflow::core::SyncCtx &ctx) {
   }
   return holoflow::core::OpResult::Ok;
 }
+
+// -------------------------------------------------------------------------------------------------
+// SubFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult SubFactory::infer(std::span<const holoflow::core::TDesc> inputs,
                                               const nlohmann::json &) const {
@@ -176,7 +216,29 @@ SubFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohmann
   CUDA_CHECK(cudaMemcpyAsync(d_b_str.get(), b_strides_h.data(), bytes, h2d, ctx.stream));
 
   return std::make_unique<Sub>(ctx.stream, inputs[0].dtype, total, ndim, std::move(d_shape),
-                               std::move(d_a_str), std::move(d_b_str));
+                               std::move(d_a_str), std::move(d_b_str),
+                               std::vector<holoflow::core::TDesc>(inputs.begin(), inputs.end()));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+SubFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                   std::span<const holoflow::core::TDesc>     input_descs,
+                   const nlohmann::json                      &jsettings,
+                   const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_sub = dynamic_cast<Sub *>(old_task.get());
+  if (old_sub == nullptr || input_descs.size() != 2 || old_sub->input_descs().size() != 2) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  if (same_desc(input_descs[0], old_sub->input_descs()[0]) &&
+      same_desc(input_descs[1], old_sub->input_descs()[1])) {
+    old_sub->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp

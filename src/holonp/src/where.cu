@@ -19,10 +19,18 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// JSON serialization
+// -------------------------------------------------------------------------------------------------
+
 void to_json(nlohmann::json &j, const WhereSettings &) { j = nlohmann::json::object(); }
 void from_json(const nlohmann::json &, WhereSettings &) {}
 
 namespace {
+
+// -------------------------------------------------------------------------------------------------
+// Helpers
+// -------------------------------------------------------------------------------------------------
 
 template <typename T>
 __global__ void
@@ -71,14 +79,43 @@ std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
   return s;
 }
 
-} // namespace
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
+}
 
-Where::Where(cudaStream_t stream, holoflow::core::DType out_dtype, size_t total_out, size_t ndim,
-             DevPtr<size_t> d_out_shape, DevPtr<size_t> d_cond_strides, DevPtr<size_t> d_x_strides,
-             DevPtr<size_t> d_y_strides)
-    : stream_(stream), out_dtype_(out_dtype), total_out_(total_out), ndim_(ndim),
-      d_out_shape_(std::move(d_out_shape)), d_cond_strides_(std::move(d_cond_strides)),
-      d_x_strides_(std::move(d_x_strides)), d_y_strides_(std::move(d_y_strides)) {}
+// -------------------------------------------------------------------------------------------------
+// Where task implementation
+// -------------------------------------------------------------------------------------------------
+
+class Where : public holoflow::core::ISyncTask {
+public:
+  Where(cudaStream_t stream, holoflow::core::DType out_dtype, size_t total_out, size_t ndim,
+        DevPtr<size_t> d_out_shape, DevPtr<size_t> d_cond_strides, DevPtr<size_t> d_x_strides,
+        DevPtr<size_t> d_y_strides, std::vector<holoflow::core::TDesc> input_descs)
+      : stream_(stream), out_dtype_(out_dtype), total_out_(total_out), ndim_(ndim),
+        d_out_shape_(std::move(d_out_shape)), d_cond_strides_(std::move(d_cond_strides)),
+        d_x_strides_(std::move(d_x_strides)), d_y_strides_(std::move(d_y_strides)),
+        input_descs_(std::move(input_descs)) {}
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+
+  const std::vector<holoflow::core::TDesc> &input_descs() const { return input_descs_; }
+  void                                      update_stream(cudaStream_t stream) { stream_ = stream; }
+
+private:
+  cudaStream_t          stream_;
+  holoflow::core::DType out_dtype_;
+  size_t                total_out_;
+  size_t                ndim_;
+  DevPtr<size_t>        d_out_shape_;
+  DevPtr<size_t>        d_cond_strides_;
+  DevPtr<size_t>        d_x_strides_;
+  DevPtr<size_t>        d_y_strides_;
+  std::vector<holoflow::core::TDesc> input_descs_;
+};
+
+} // namespace
 
 holoflow::core::OpResult Where::execute(holoflow::core::SyncCtx &ctx) {
   if (total_out_ == 0)
@@ -111,6 +148,10 @@ holoflow::core::OpResult Where::execute(holoflow::core::SyncCtx &ctx) {
   }
   return holoflow::core::OpResult::Ok;
 }
+
+// -------------------------------------------------------------------------------------------------
+// WhereFactory
+// -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult WhereFactory::infer(std::span<const holoflow::core::TDesc> inputs,
                                                 const nlohmann::json &) const {
@@ -190,7 +231,30 @@ WhereFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohma
   CUDA_CHECK(cudaMemcpyAsync(d_y_str.get(), y_strides_h.data(), bytes, h2d, ctx.stream));
 
   return std::make_unique<Where>(ctx.stream, odesc.dtype, total, ndim, std::move(d_shape),
-                                 std::move(d_c_str), std::move(d_x_str), std::move(d_y_str));
+                                 std::move(d_c_str), std::move(d_x_str), std::move(d_y_str),
+                                 std::vector<holoflow::core::TDesc>(inputs.begin(), inputs.end()));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+WhereFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                     std::span<const holoflow::core::TDesc>     input_descs,
+                     const nlohmann::json                      &jsettings,
+                     const holoflow::core::SyncCreateCtx       &ctx) const {
+  (void)infer(input_descs, jsettings);
+
+  auto *old_where = dynamic_cast<Where *>(old_task.get());
+  if (old_where == nullptr || input_descs.size() != 3 || old_where->input_descs().size() != 3) {
+    return create(input_descs, jsettings, ctx);
+  }
+
+  if (same_desc(input_descs[0], old_where->input_descs()[0]) &&
+      same_desc(input_descs[1], old_where->input_descs()[1]) &&
+      same_desc(input_descs[2], old_where->input_descs()[2])) {
+    old_where->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holonp

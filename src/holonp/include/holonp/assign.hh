@@ -24,30 +24,18 @@
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 struct AssignSettings {};
 
 void to_json(nlohmann::json &j, const AssignSettings &s);
 void from_json(const nlohmann::json &j, AssignSettings &s);
 
-class Assign : public holoflow::core::ISyncTask {
-public:
-  Assign(size_t ndim, size_t total_elems, size_t elem_size,
-         curaii::unique_device_ptr<int64_t> d_src_strides,
-         curaii::unique_device_ptr<int64_t> d_dst_strides,
-         curaii::unique_device_ptr<int64_t> d_shape, cudaStream_t stream);
-
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  size_t       ndim_;
-  size_t       total_elems_;
-  size_t       elem_size_;
-  cudaStream_t stream_;
-
-  curaii::unique_device_ptr<int64_t> d_src_strides_;
-  curaii::unique_device_ptr<int64_t> d_dst_strides_;
-  curaii::unique_device_ptr<int64_t> d_shape_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class AssignFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -56,6 +44,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 

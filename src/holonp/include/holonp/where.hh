@@ -25,29 +25,17 @@ template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 namespace holonp {
 
+// -------------------------------------------------------------------------------------------------
+// Settings
+// -------------------------------------------------------------------------------------------------
+
 struct WhereSettings {};
 void to_json(nlohmann::json &j, const WhereSettings &s);
 void from_json(const nlohmann::json &j, WhereSettings &s);
 
-class Where : public holoflow::core::ISyncTask {
-public:
-  Where(cudaStream_t stream, holoflow::core::DType out_dtype, size_t total_out, size_t ndim,
-        DevPtr<size_t> d_out_shape, DevPtr<size_t> d_cond_strides, DevPtr<size_t> d_x_strides,
-        DevPtr<size_t> d_y_strides);
-
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
-
-private:
-  cudaStream_t          stream_;
-  holoflow::core::DType out_dtype_;
-  size_t                total_out_;
-  size_t                ndim_;
-
-  DevPtr<size_t> d_out_shape_;
-  DevPtr<size_t> d_cond_strides_;
-  DevPtr<size_t> d_x_strides_;
-  DevPtr<size_t> d_y_strides_;
-};
+// -------------------------------------------------------------------------------------------------
+// Factory
+// -------------------------------------------------------------------------------------------------
 
 class WhereFactory : public holoflow::core::ISyncTaskFactory {
 public:
@@ -56,6 +44,11 @@ public:
 
   std::unique_ptr<holoflow::core::ISyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
 };
 
