@@ -139,11 +139,17 @@ def _op_arange(inputs, settings):
     return [result]
 
 
+def _op_asarray(inputs, settings):
+    value = float(settings["value"])
+    return [np.array([value], dtype=np.float32)]
+
+
 _DISPATCH = {
     "abs":    _op_abs,
     "add":    _op_add,
     "argmax": _op_argmax,
     "arange": _op_arange,
+    "asarray": _op_asarray,
 }
 
 

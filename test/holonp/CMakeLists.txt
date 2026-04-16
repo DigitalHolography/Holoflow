@@ -21,6 +21,7 @@ set(SOURCES
     add_test.cu
     arange_test.cu
     argmax_test.cu
+    asarray_test.cu
     support/tensor_test_buffer.cc
     support/sync_task_runner.cc
     support/python_oracle.cc
