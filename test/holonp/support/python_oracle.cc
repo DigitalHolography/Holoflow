@@ -80,6 +80,9 @@ OracleOutput invoke_oracle(const OracleInput &input, const std::filesystem::path
     manifest["inputs"].push_back(entry);
   }
 
+  // Op-specific settings (may be an empty object for ops that need none).
+  manifest["settings"] = input.settings;
+
   // List expected output payload filenames.
   nlohmann::json out_payloads = nlohmann::json::array();
   for (size_t i = 0; i < input.n_outputs; ++i) {

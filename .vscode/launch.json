@@ -14,8 +14,8 @@
       "type": "cppvsdbg",
       "request": "launch",
       "name": "Run tests",
-      "program": "${workspaceFolder}/build/msvc-multi/Debug/holoflow_test.exe",
-      "args": [],
+      "program": "${workspaceFolder}/build/msvc-multi/Debug/holonp_test.exe",
+      "args": ["--gtest_filter=ArgmaxOracleTest.F32Flat2D"],
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,
     }

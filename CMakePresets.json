@@ -59,6 +59,14 @@
             "output": {
                 "outputOnFailure": true
             }
+        },
+        {
+            "name": "test-RelWithDebInfo",
+            "configurePreset": "msvc-multi",
+            "configuration": "RelWithDebInfo",
+            "output": {
+                "outputOnFailure": true
+            }
         }
     ]
 }

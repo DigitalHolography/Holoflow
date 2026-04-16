@@ -291,6 +291,7 @@ holoflow::core::InferResult ArgmaxFactory::infer(std::span<const holoflow::core:
   const auto  settings = jsettings.get<ArgmaxSettings>();
 
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be on Device");
+  check(idesc.rank() > 1 || settings.keepdims, "1D reduction must keepdims to avoid scalar output");
 
   const int  ndim = static_cast<int>(idesc.shape.size());
   const auto axes = normalize_axes(settings.axis, ndim);

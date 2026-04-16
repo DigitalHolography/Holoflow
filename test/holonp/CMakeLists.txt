@@ -18,6 +18,9 @@ set(TARGET holonp_test)
 # linker correctly resolves device code from the holonp static library.
 set(SOURCES
     abs_test.cu
+    add_test.cu
+    arange_test.cu
+    argmax_test.cu
     support/tensor_test_buffer.cc
     support/sync_task_runner.cc
     support/python_oracle.cc

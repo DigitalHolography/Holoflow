@@ -19,6 +19,8 @@
 #include <string>
 #include <vector>
 
+#include <nlohmann/json.hpp>
+
 #include "holoflow/core/tensor.hh"
 
 namespace holonp_test {
@@ -40,6 +42,8 @@ struct OracleInput {
   size_t                              n_outputs = 1; ///< How many output files to collect
   std::vector<holoflow::core::TDesc>  input_descs;
   std::vector<std::vector<std::byte>> input_bytes; ///< Dense logical bytes per input tensor
+  nlohmann::json                      settings =
+      nlohmann::json::object(); ///< Op-specific settings passed verbatim to the oracle
 };
 
 struct OracleOutput {

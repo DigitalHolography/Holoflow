@@ -71,7 +71,7 @@ def _write_output(workdir, fname, arr):
 # Operator implementations
 # -------------------------------------------------------------------------------------------------
 
-def _op_abs(inputs):
+def _op_abs(inputs, settings):
     x = inputs[0]
     if x.dtype == np.complex64:
         result = np.abs(x).astype(np.float32)
@@ -80,8 +80,39 @@ def _op_abs(inputs):
     return [result]
 
 
+def _op_add(inputs, settings):
+    return [inputs[0] + inputs[1]]
+
+
+def _op_argmax(inputs, settings):
+    x = inputs[0]
+    raw_axis = settings.get("axis")   # None (JSON null), int, or list
+    keepdims = settings.get("keepdims", False)
+
+    if raw_axis is None:
+        # Global argmax: return flat index of the maximum element.
+        flat_idx = int(np.argmax(x.ravel()))
+        if keepdims:
+            result = np.full([1] * x.ndim, flat_idx, dtype=np.uint16)
+        else:
+            result = np.array(flat_idx, dtype=np.uint16)
+    elif isinstance(raw_axis, int):
+        axis = raw_axis if raw_axis >= 0 else raw_axis + x.ndim
+        idx = np.argmax(x, axis=axis)
+        if keepdims:
+            result = np.expand_dims(idx, axis=axis).astype(np.uint16)
+        else:
+            result = idx.astype(np.uint16)
+    else:
+        raise NotImplementedError(f"Multi-axis argmax oracle not supported (axis={raw_axis!r})")
+
+    return [result]
+
+
 _DISPATCH = {
-    "abs": _op_abs,
+    "abs":    _op_abs,
+    "add":    _op_add,
+    "argmax": _op_argmax,
 }
 
 
@@ -104,7 +135,8 @@ def main():
         sys.exit(1)
 
     inputs = [_read_input(workdir, d) for d in manifest["inputs"]]
-    outputs = _DISPATCH[op](inputs)
+    settings = manifest.get("settings", {})
+    outputs = _DISPATCH[op](inputs, settings)
     out_names = manifest["output_payloads"]
 
     if len(outputs) != len(out_names):
