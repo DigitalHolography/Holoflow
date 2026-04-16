@@ -29,6 +29,14 @@ cmake --preset msvc-multi
 cmake --build --preset build-Release
 ````
 
+## Test workflow
+
+Use this command to run tests:
+
+```bash
+ctest --preset test-Release
+```
+
 ## What agents should do by default
 
 Agents should generally:
