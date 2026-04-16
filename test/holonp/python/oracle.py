@@ -55,10 +55,21 @@ def _read_input(workdir, desc):
     shape = tuple(int(d) for d in desc["shape"])
     np_dtype = _DTYPE_MAP[desc["dtype"]]
     raw = (workdir / desc["payload"]).read_bytes()
-    arr = np.frombuffer(raw, dtype=np_dtype)
-    if shape:
-        arr = arr.reshape(shape)
-    return arr.copy()
+    dense_size = int(np.prod(shape)) * np.dtype(np_dtype).itemsize if shape else 0
+
+    # Backward-compatible path: dense logical payload (existing tests).
+    if len(raw) == dense_size:
+        arr = np.frombuffer(raw, dtype=np_dtype)
+        if shape:
+            arr = arr.reshape(shape)
+        return arr.copy()
+
+    # Strided backing-store path: payload includes row/plane padding.
+    strides = tuple(int(s) for s in desc["strides"])
+    offset = int(desc.get("offset", 0))
+    if not shape:
+        return np.array([], dtype=np_dtype)
+    return np.ndarray(shape=shape, dtype=np_dtype, buffer=raw, offset=offset, strides=strides).copy()
 
 
 def _write_output(workdir, fname, arr):
@@ -144,12 +155,17 @@ def _op_asarray(inputs, settings):
     return [np.array([value], dtype=np.float32)]
 
 
+def _op_ascontiguousarray(inputs, settings):
+    return [np.ascontiguousarray(inputs[0])]
+
+
 _DISPATCH = {
     "abs":    _op_abs,
     "add":    _op_add,
     "argmax": _op_argmax,
     "arange": _op_arange,
     "asarray": _op_asarray,
+    "ascontiguousarray": _op_ascontiguousarray,
 }
 
 
