@@ -78,11 +78,6 @@ static void expect_eq_u16(const std::vector<std::byte>     &actual,
     EXPECT_EQ(a[i], expected[i]) << "at index " << i;
 }
 
-// Brute-force flat argmax for F32 (used in manual cross-checks).
-static std::uint16_t flat_argmax_f32(const std::vector<float> &v) {
-  return static_cast<std::uint16_t>(std::max_element(v.begin(), v.end()) - v.begin());
-}
-
 // Brute-force flat argmax for CF32 using the same lexicographic ordering as the kernel
 // (compare real parts first, then imaginary parts on a tie).
 struct CF32 {
@@ -107,45 +102,24 @@ protected:
   holonp::ArgmaxFactory factory;
 };
 
-TEST_F(ArgmaxInferTest, FlatReduceF32) {
+TEST_F(ArgmaxInferTest, RejectsRank0OutputForFlatReduceF32) {
   const std::vector<TDesc> in = {device_desc({4}, DType::F32)};
-  const auto               r  = factory.infer(in, jsettings_all());
-
-  EXPECT_EQ(r.kind, TaskKind::Sync);
-  ASSERT_EQ(r.input_descs.size(), 1u);
-  ASSERT_EQ(r.output_descs.size(), 1u);
-  EXPECT_TRUE(r.output_descs[0].shape.empty()); // scalar
-  EXPECT_EQ(r.output_descs[0].dtype, DType::U16);
-  EXPECT_EQ(r.output_descs[0].mem_loc, MemLoc::Device);
-  ASSERT_EQ(r.owned_inputs.size(), 1u);
-  EXPECT_EQ(r.owned_inputs[0], false);
-  ASSERT_EQ(r.owned_outputs.size(), 1u);
-  EXPECT_EQ(r.owned_outputs[0], false);
-  EXPECT_TRUE(r.in_place.empty());
+  EXPECT_THROW(factory.infer(in, jsettings_all()), std::invalid_argument);
 }
 
-TEST_F(ArgmaxInferTest, FlatReduceU8) {
+TEST_F(ArgmaxInferTest, RejectsRank0OutputForFlatReduceU8) {
   const std::vector<TDesc> in = {device_desc({8}, DType::U8)};
-  const auto               r  = factory.infer(in, jsettings_all());
-
-  EXPECT_TRUE(r.output_descs[0].shape.empty());
-  EXPECT_EQ(r.output_descs[0].dtype, DType::U16);
+  EXPECT_THROW(factory.infer(in, jsettings_all()), std::invalid_argument);
 }
 
-TEST_F(ArgmaxInferTest, FlatReduceU16) {
+TEST_F(ArgmaxInferTest, RejectsRank0OutputForFlatReduceU16) {
   const std::vector<TDesc> in = {device_desc({6}, DType::U16)};
-  const auto               r  = factory.infer(in, jsettings_all());
-
-  EXPECT_TRUE(r.output_descs[0].shape.empty());
-  EXPECT_EQ(r.output_descs[0].dtype, DType::U16);
+  EXPECT_THROW(factory.infer(in, jsettings_all()), std::invalid_argument);
 }
 
-TEST_F(ArgmaxInferTest, FlatReduceCF32) {
+TEST_F(ArgmaxInferTest, RejectsRank0OutputForFlatReduceCF32) {
   const std::vector<TDesc> in = {device_desc({5}, DType::CF32)};
-  const auto               r  = factory.infer(in, jsettings_all());
-
-  EXPECT_TRUE(r.output_descs[0].shape.empty());
-  EXPECT_EQ(r.output_descs[0].dtype, DType::U16);
+  EXPECT_THROW(factory.infer(in, jsettings_all()), std::invalid_argument);
 }
 
 TEST_F(ArgmaxInferTest, Axis0of2D) {
@@ -200,6 +174,16 @@ TEST_F(ArgmaxInferTest, MultiAxisReduction) {
   EXPECT_EQ(r.output_descs[0].dtype, DType::U16);
 }
 
+TEST_F(ArgmaxInferTest, RejectsRank0OutputWhenReducingAllAxesOf2D) {
+  const std::vector<TDesc> in = {device_desc({3, 4}, DType::F32)};
+  EXPECT_THROW(factory.infer(in, jsettings_all()), std::invalid_argument);
+}
+
+TEST_F(ArgmaxInferTest, RejectsRank0OutputWhenReducingAllAxesExplicitly) {
+  const std::vector<TDesc> in = {device_desc({2, 3, 4}, DType::F32)};
+  EXPECT_THROW(factory.infer(in, jsettings_axes({0, 1, 2})), std::invalid_argument);
+}
+
 TEST_F(ArgmaxInferTest, RejectsZeroInputs) {
   EXPECT_THROW(factory.infer({}, jsettings_all()), std::invalid_argument);
 }
@@ -239,7 +223,7 @@ TEST_F(ArgmaxInferTest, RejectsZeroElementReduction) {
 TEST_F(ArgmaxInferTest, RejectsReductionTooLarge) {
   // 70000 elements exceeds U16 max (65535)
   const std::vector<TDesc> in = {device_desc({70000}, DType::F32)};
-  EXPECT_THROW(factory.infer(in, jsettings_all()), std::invalid_argument);
+  EXPECT_THROW(factory.infer(in, jsettings_all(/*keepdims=*/true)), std::invalid_argument);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -281,17 +265,6 @@ protected:
   }
 };
 
-TEST_F(ArgmaxOracleTest, F32Flat1D) {
-  // Flat argmax of a 1-D F32 array.
-  check(DType::F32, {5}, std::vector<float>{1.0f, 4.0f, 2.0f, 5.0f, 3.0f}, jsettings_all());
-}
-
-TEST_F(ArgmaxOracleTest, F32Flat2D) {
-  // Global argmax of a 2-D F32 array (result is flat index).
-  check(DType::F32, {2, 3}, std::vector<float>{1.0f, 9.0f, 3.0f, 4.0f, 2.0f, 7.0f},
-        jsettings_all());
-}
-
 TEST_F(ArgmaxOracleTest, F32Axis0) {
   // Column-wise argmax: (3,4), axis=0 → {4}
   check(DType::F32, {3, 4},
@@ -318,14 +291,6 @@ TEST_F(ArgmaxOracleTest, F32NegativeAxis) {
         jsettings_axis(-1));
 }
 
-TEST_F(ArgmaxOracleTest, U8Flat) {
-  check(DType::U8, {6}, std::vector<std::uint8_t>{10, 50, 30, 200, 100, 150}, jsettings_all());
-}
-
-TEST_F(ArgmaxOracleTest, U16Flat) {
-  check(DType::U16, {5}, std::vector<std::uint16_t>{100, 500, 300, 1000, 200}, jsettings_all());
-}
-
 TEST_F(ArgmaxOracleTest, F32KeepDimsAllAxes) {
   // (3,4) with keepdims → output shape {1,1}
   check(DType::F32, {3, 4},
@@ -340,21 +305,60 @@ TEST_F(ArgmaxOracleTest, F32KeepDimsAxis1) {
         jsettings_axis(1, /*keepdims=*/true));
 }
 
-TEST_F(ArgmaxOracleTest, CF32FlatManual) {
-  // numpy does not support argmax on complex arrays, so compute the expected
-  // value manually using the same lexicographic rule as the kernel.
-  // Input: (1+0j), (3+1j), (3+0j), (-2+5j) → max is index 1 (real=3, imag=1)
+TEST_F(ArgmaxOracleTest, RejectsRank0OutputForF32Flat1D) {
+  const TDesc              idesc       = device_desc({5}, DType::F32);
+  const auto               ibytes      = as_bytes(std::vector<float>{1.0f, 4.0f, 2.0f, 5.0f, 3.0f});
+  const std::vector<TDesc> input_descs = {idesc};
+  const std::vector<std::vector<std::byte>> input_data = {ibytes};
+
+  EXPECT_THROW(
+      (void)holonp_test::run_sync_factory(factory, input_descs, input_data, jsettings_all()),
+      std::invalid_argument);
+}
+
+TEST_F(ArgmaxOracleTest, RejectsRank0OutputForF32Flat2D) {
+  const TDesc idesc  = device_desc({2, 3}, DType::F32);
+  const auto  ibytes = as_bytes(std::vector<float>{1.0f, 9.0f, 3.0f, 4.0f, 2.0f, 7.0f});
+  const std::vector<TDesc>                  input_descs = {idesc};
+  const std::vector<std::vector<std::byte>> input_data  = {ibytes};
+
+  EXPECT_THROW(
+      (void)holonp_test::run_sync_factory(factory, input_descs, input_data, jsettings_all()),
+      std::invalid_argument);
+}
+
+TEST_F(ArgmaxOracleTest, RejectsRank0OutputForU8Flat) {
+  const TDesc              idesc  = device_desc({6}, DType::U8);
+  const auto               ibytes = as_bytes(std::vector<std::uint8_t>{10, 50, 30, 200, 100, 150});
+  const std::vector<TDesc> input_descs                 = {idesc};
+  const std::vector<std::vector<std::byte>> input_data = {ibytes};
+
+  EXPECT_THROW(
+      (void)holonp_test::run_sync_factory(factory, input_descs, input_data, jsettings_all()),
+      std::invalid_argument);
+}
+
+TEST_F(ArgmaxOracleTest, RejectsRank0OutputForU16Flat) {
+  const TDesc              idesc  = device_desc({5}, DType::U16);
+  const auto               ibytes = as_bytes(std::vector<std::uint16_t>{100, 500, 300, 1000, 200});
+  const std::vector<TDesc> input_descs                 = {idesc};
+  const std::vector<std::vector<std::byte>> input_data = {ibytes};
+
+  EXPECT_THROW(
+      (void)holonp_test::run_sync_factory(factory, input_descs, input_data, jsettings_all()),
+      std::invalid_argument);
+}
+
+TEST_F(ArgmaxOracleTest, RejectsRank0OutputForCF32FlatManual) {
   const std::vector<CF32>  data        = {{1.f, 0.f}, {3.f, 1.f}, {3.f, 0.f}, {-2.f, 5.f}};
   const TDesc              idesc       = device_desc({4}, DType::CF32);
   const auto               ibytes      = as_bytes(data);
   const std::vector<TDesc> input_descs = {idesc};
   const std::vector<std::vector<std::byte>> input_data = {ibytes};
 
-  const auto run = holonp_test::run_sync_factory(factory, input_descs, input_data, jsettings_all());
-
-  ASSERT_EQ(run.output_bytes.size(), 1u);
-  const std::uint16_t expected = flat_argmax_cf32(data);
-  expect_eq_u16(run.output_bytes[0], {expected});
+  EXPECT_THROW(
+      (void)holonp_test::run_sync_factory(factory, input_descs, input_data, jsettings_all()),
+      std::invalid_argument);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -366,8 +370,7 @@ protected:
   holonp::ArgmaxFactory factory;
 };
 
-TEST_F(ArgmaxUpdateTest, ReusesArgmaxTask) {
-  // update() with the same settings and descriptor should reuse the task.
+TEST_F(ArgmaxUpdateTest, RejectsRank0OutputInsteadOfReusingTask) {
   const std::vector<float>                  data        = {1.0f, 4.0f, 2.0f, 3.0f};
   const TDesc                               idesc       = device_desc({4}, DType::F32);
   const auto                                ibytes      = as_bytes(data);
@@ -375,10 +378,9 @@ TEST_F(ArgmaxUpdateTest, ReusesArgmaxTask) {
   const std::vector<std::vector<std::byte>> input_data  = {ibytes};
   const nlohmann::json                      settings    = jsettings_all();
 
-  const auto run = holonp_test::run_sync_factory_update(factory, input_descs, input_data, settings);
-
-  ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_eq_u16(run.output_bytes[0], {flat_argmax_f32(data)});
+  EXPECT_THROW(
+      (void)holonp_test::run_sync_factory_update(factory, input_descs, input_data, settings),
+      std::invalid_argument);
 }
 
 TEST_F(ArgmaxUpdateTest, RecreatesOnChangedAxis) {
@@ -422,15 +424,15 @@ TEST_F(ArgmaxUpdateTest, RecreatesOnChangedAxis) {
   expect_eq_u16(out_buf.download(), {1u, 2u});
 }
 
-TEST_F(ArgmaxUpdateTest, RecreatesOnWrongTaskType) {
-  // Passing a non-Argmax ISyncTask to update() must trigger the create path.
+TEST_F(ArgmaxUpdateTest, RejectsRank0OutputWhenUpdatingWrongTaskType) {
+  // Passing a non-Argmax ISyncTask to update() must still reject invalid rank-0 output
+  // configurations.
   struct FakeTask : holoflow::core::ISyncTask {
     holoflow::core::OpResult execute(holoflow::core::SyncCtx &) override {
       return holoflow::core::OpResult::Ok;
     }
   };
 
-  const std::vector<float> data     = {3.0f, 1.0f, 4.0f, 1.0f, 5.0f};
   const TDesc              idesc    = device_desc({5}, DType::F32);
   const std::vector<TDesc> descs    = {idesc};
   const nlohmann::json     settings = jsettings_all();
@@ -439,29 +441,7 @@ TEST_F(ArgmaxUpdateTest, RecreatesOnWrongTaskType) {
   const holoflow::core::SyncCreateCtx create_ctx{stream.get()};
 
   auto fake = std::unique_ptr<holoflow::core::ISyncTask>(new FakeTask{});
-  auto task = factory.update(std::move(fake), descs, settings, create_ctx);
 
-  const auto infer = factory.infer(descs, settings);
-
-  holonp_test::TensorTestBuffer in_buf(idesc);
-  in_buf.upload(as_bytes(data));
-  holonp_test::TensorTestBuffer out_buf(infer.output_descs[0]);
-
-  auto                    iv = in_buf.view();
-  auto                    ov = out_buf.view();
-  std::atomic<bool>       cancelled{false};
-  holoflow::core::SyncCtx exec_ctx{
-      .inputs       = {&iv, 1},
-      .outputs      = {&ov, 1},
-      .cancelled    = &cancelled,
-      .event_writer = nullptr,
-      .event_reader = nullptr,
-  };
-
-  task->bind_logger(spdlog::default_logger());
-  EXPECT_NO_THROW((void)task->execute(exec_ctx));
-  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
-
-  // [3, 1, 4, 1, 5] → flat argmax = 4
-  expect_eq_u16(out_buf.download(), {4u});
+  EXPECT_THROW((void)factory.update(std::move(fake), descs, settings, create_ctx),
+               std::invalid_argument);
 }

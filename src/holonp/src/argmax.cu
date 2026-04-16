@@ -291,7 +291,6 @@ holoflow::core::InferResult ArgmaxFactory::infer(std::span<const holoflow::core:
   const auto  settings = jsettings.get<ArgmaxSettings>();
 
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be on Device");
-  check(idesc.rank() > 1 || settings.keepdims, "1D reduction must keepdims to avoid scalar output");
 
   const int  ndim = static_cast<int>(idesc.shape.size());
   const auto axes = normalize_axes(settings.axis, ndim);
@@ -318,9 +317,10 @@ holoflow::core::InferResult ArgmaxFactory::infer(std::span<const holoflow::core:
   for (int a : axes) {
     total_red *= idesc.shape[static_cast<size_t>(a)];
   }
+  constexpr size_t max_u16 = static_cast<size_t>(std::numeric_limits<std::uint16_t>::max());
   check(total_red > 0, "reduction has zero elements");
-  check(total_red <= static_cast<size_t>(std::numeric_limits<std::uint16_t>::max()),
-        "reduction size exceeds U16 index range");
+  check(total_red <= max_u16, "reduction size exceeds U16 index range");
+  check(out_shape.size() > 0, "output shape cannot be empty");
 
   // Use constructor to default to compact strides
   // Fixed Output DType: U16
