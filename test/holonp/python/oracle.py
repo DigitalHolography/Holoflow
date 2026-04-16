@@ -159,6 +159,15 @@ def _op_ascontiguousarray(inputs, settings):
     return [np.ascontiguousarray(inputs[0])]
 
 
+def _op_conj(inputs, settings):
+    return [np.conjugate(inputs[0])]
+
+
+def _op_concatenate(inputs, settings):
+    axis = settings.get("axis", 0)
+    return [np.concatenate(inputs, axis=axis)]
+
+
 _DISPATCH = {
     "abs":    _op_abs,
     "add":    _op_add,
@@ -166,6 +175,8 @@ _DISPATCH = {
     "arange": _op_arange,
     "asarray": _op_asarray,
     "ascontiguousarray": _op_ascontiguousarray,
+    "conj": _op_conj,
+    "concatenate": _op_concatenate,
 }
 
 
