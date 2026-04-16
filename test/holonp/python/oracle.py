@@ -168,6 +168,174 @@ def _op_concatenate(inputs, settings):
     return [np.concatenate(inputs, axis=axis)]
 
 
+def _op_copy(inputs, settings):
+    return [np.ascontiguousarray(inputs[0])]
+
+
+def _op_subtract(inputs, settings):
+    return [inputs[0] - inputs[1]]
+
+
+def _promote_multiply(a_dtype, b_dtype):
+    if a_dtype == b_dtype:
+        return a_dtype
+    if a_dtype == np.complex64 or b_dtype == np.complex64:
+        return np.complex64
+    if a_dtype == np.float32 or b_dtype == np.float32:
+        return np.float32
+    if a_dtype == np.uint16 or b_dtype == np.uint16:
+        return np.uint16
+    return np.uint8
+
+
+def _op_multiply(inputs, settings):
+    a, b = inputs[0], inputs[1]
+    out_dtype = _promote_multiply(a.dtype.type, b.dtype.type)
+    return [(a * b).astype(out_dtype)]
+
+
+def _op_divide(inputs, settings):
+    a, b = inputs[0], inputs[1]
+    if a.dtype == b.dtype:
+        if a.dtype == np.uint8 or a.dtype == np.uint16:
+            return [np.floor_divide(a, b).astype(a.dtype)]
+        return [(a / b).astype(a.dtype)]
+    if a.dtype == np.complex64 and (b.dtype == np.float32 or b.dtype == np.uint16 or b.dtype == np.uint8):
+        return [(a / b).astype(np.complex64)]
+    raise NotImplementedError(f"Unsupported divide dtype combination: {a.dtype} / {b.dtype}")
+
+
+def _op_equal(inputs, settings):
+    return [np.equal(inputs[0], inputs[1]).astype(np.uint8)]
+
+
+def _op_zeros(inputs, settings):
+    shape = tuple(int(d) for d in settings["shape"])
+    dtype_name = settings.get("dtype", "F32")
+    return [np.zeros(shape, dtype=_DTYPE_MAP[dtype_name])]
+
+
+def _op_reshape(inputs, settings):
+    x = inputs[0]
+    shape = [int(d) for d in settings["shape"]]
+    return [np.reshape(x, shape)]
+
+
+def _op_transpose(inputs, settings):
+    x = inputs[0]
+    axes = settings.get("axes")
+    if axes is None:
+        return [np.transpose(x)]
+    return [np.transpose(x, axes=tuple(int(a) for a in axes))]
+
+
+def _op_where(inputs, settings):
+    cond, x, y = inputs
+    return [np.where(cond != 0, x, y)]
+
+def _op_min(inputs, settings):
+    x = inputs[0]
+    axis = settings.get("axis", None)
+    keepdims = settings.get("keepdims", False)
+    return [np.min(x, axis=axis, keepdims=keepdims)]
+
+
+def _op_max(inputs, settings):
+    x = inputs[0]
+    axis = settings.get("axis", None)
+    keepdims = settings.get("keepdims", False)
+    return [np.max(x, axis=axis, keepdims=keepdims)]
+
+
+def _op_mean(inputs, settings):
+    x = inputs[0]
+    axis = settings.get("axis", None)
+    keepdims = settings.get("keepdims", False)
+    result = np.mean(x, axis=axis, keepdims=keepdims)
+    if x.dtype == np.complex64:
+        return [result.astype(np.complex64)]
+    return [result.astype(np.float32)]
+
+
+def _op_meshgrid(inputs, settings):
+    indexing = settings.get("indexing", "xy")
+    copy = settings.get("copy", True)
+    sparse = settings.get("sparse", False)
+    return list(np.meshgrid(*inputs, indexing=indexing, copy=copy, sparse=sparse))
+
+
+def _op_slice(inputs, settings):
+    x = inputs[0]
+    slices = []
+    for item in settings["slices"]:
+        if isinstance(item, int):
+            slices.append(item)
+        else:
+            start = item.get("start", None)
+            stop = item.get("stop", None)
+            step = item.get("step", 1)
+            slices.append(slice(start, stop, step))
+    return [x[tuple(slices)]]
+
+def _numpy_norm(settings):
+    norm = settings.get("norm", "backward")
+    if isinstance(norm, str):
+        return norm
+    # Defensive fallback in case enums arrive as integers.
+    if norm == 0:
+        return "backward"
+    if norm == 1:
+        return "forward"
+    if norm == 2:
+        return "ortho"
+    return "backward"
+
+
+def _op_fft(inputs, settings):
+    x = inputs[0]
+    axis = int(settings.get("axis", -1))
+    norm = _numpy_norm(settings)
+    return [np.fft.fft(x, axis=axis, norm=norm).astype(np.complex64)]
+
+
+def _op_fft2(inputs, settings):
+    x = inputs[0]
+    axes = settings.get("axes", None)
+    axes = None if axes is None else tuple(int(a) for a in axes)
+    norm = _numpy_norm(settings)
+    return [np.fft.fft2(x, axes=axes, norm=norm).astype(np.complex64)]
+
+
+def _op_rfft(inputs, settings):
+    x = inputs[0]
+    axis = int(settings.get("axis", -1))
+    norm = _numpy_norm(settings)
+    return [np.fft.rfft(x, axis=axis, norm=norm).astype(np.complex64)]
+
+
+def _op_rfft2(inputs, settings):
+    x = inputs[0]
+    axes = settings.get("axes", None)
+    axes = None if axes is None else tuple(int(a) for a in axes)
+    norm = _numpy_norm(settings)
+    return [np.fft.rfft2(x, axes=axes, norm=norm).astype(np.complex64)]
+
+
+def _op_irfft2(inputs, settings):
+    x = inputs[0]
+    axes = settings.get("axes", None)
+    axes = None if axes is None else tuple(int(a) for a in axes)
+    norm = _numpy_norm(settings)
+    return [np.fft.irfft2(x, axes=axes, norm=norm).astype(np.float32)]
+
+
+def _op_fftshift(inputs, settings):
+    x = inputs[0]
+    axes = settings.get("axes", None)
+    axes = None if axes is None else tuple(int(a) for a in axes)
+    return [np.fft.fftshift(x, axes=axes)]
+
+
 _DISPATCH = {
     "abs":    _op_abs,
     "add":    _op_add,
@@ -177,6 +345,26 @@ _DISPATCH = {
     "ascontiguousarray": _op_ascontiguousarray,
     "conj": _op_conj,
     "concatenate": _op_concatenate,
+    "copy": _op_copy,
+    "subtract": _op_subtract,
+    "multiply": _op_multiply,
+    "divide": _op_divide,
+    "equal": _op_equal,
+    "zeros": _op_zeros,
+    "reshape": _op_reshape,
+    "transpose": _op_transpose,
+    "where": _op_where,
+    "min": _op_min,
+    "max": _op_max,
+    "mean": _op_mean,
+    "meshgrid": _op_meshgrid,
+    "slice": _op_slice,
+    "fft": _op_fft,
+    "fft2": _op_fft2,
+    "rfft": _op_rfft,
+    "rfft2": _op_rfft2,
+    "irfft2": _op_irfft2,
+    "fftshift": _op_fftshift,
 }
 
 
