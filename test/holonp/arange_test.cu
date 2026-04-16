@@ -17,7 +17,8 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
-#include <cstring>
+#include <filesystem>
+#include <string>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -28,6 +29,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/arange.hh"
 
+#include "python_oracle.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -35,6 +37,9 @@ using holoflow::core::DType;
 using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
+
+// Absolute path to oracle.py, baked in at compile time.
+static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 // -------------------------------------------------------------------------------------------------
 // Helpers
@@ -53,62 +58,61 @@ static nlohmann::json make_jsettings(double start, double stop, double step,
   return j;
 }
 
-// Compute the number of elements the kernel will produce (mirrors arange_len in the .cu).
-static size_t expected_len(double start, double stop, double step) {
-  if (step > 0.0 && stop <= start)
-    return 0;
-  if (step < 0.0 && stop >= start)
-    return 0;
-  return static_cast<size_t>(std::ceil((stop - start) / step));
-}
+// Element-wise comparison: exact for integer types, toleranced for F32/CF32.
+static void expect_near_oracle(const std::vector<std::byte> &actual,
+                               const std::vector<std::byte> &expected, DType dtype,
+                               float rtol = 1e-5f) {
+  ASSERT_EQ(actual.size(), expected.size());
+  const size_t n = actual.size() / holoflow::core::size_of(dtype);
 
-// Build the expected F32 output using the same arithmetic as the kernel:
-//   v[i] = float(start + step * double(i))
-static std::vector<float> expected_f32(double start, double step, size_t n) {
-  std::vector<float> out(n);
-  for (size_t i = 0; i < n; ++i)
-    out[i] = static_cast<float>(start + step * static_cast<double>(i));
-  return out;
-}
-
-template <typename T> static std::vector<T> expected_scalar(double start, double step, size_t n) {
-  std::vector<T> out(n);
-  for (size_t i = 0; i < n; ++i)
-    out[i] = static_cast<T>(start + step * static_cast<double>(i));
-  return out;
-}
-
-// Compare actual bytes against an expected float vector, element-wise with relative tolerance.
-static void expect_near_f32(const std::vector<std::byte> &actual,
-                            const std::vector<float> &expected, float rtol = 1e-5f) {
-  ASSERT_EQ(actual.size(), expected.size() * sizeof(float));
-  const auto *a = reinterpret_cast<const float *>(actual.data());
-  for (size_t i = 0; i < expected.size(); ++i) {
-    const float tol = rtol * std::max(std::abs(expected[i]), 1.0f);
-    EXPECT_NEAR(a[i], expected[i], tol) << "at index " << i;
+  switch (dtype) {
+  case DType::U8: {
+    const auto *a = reinterpret_cast<const std::uint8_t *>(actual.data());
+    const auto *e = reinterpret_cast<const std::uint8_t *>(expected.data());
+    for (size_t i = 0; i < n; ++i)
+      EXPECT_EQ(a[i], e[i]) << "at index " << i;
+    break;
+  }
+  case DType::U16: {
+    const auto *a = reinterpret_cast<const std::uint16_t *>(actual.data());
+    const auto *e = reinterpret_cast<const std::uint16_t *>(expected.data());
+    for (size_t i = 0; i < n; ++i)
+      EXPECT_EQ(a[i], e[i]) << "at index " << i;
+    break;
+  }
+  case DType::F32: {
+    const auto *a = reinterpret_cast<const float *>(actual.data());
+    const auto *e = reinterpret_cast<const float *>(expected.data());
+    for (size_t i = 0; i < n; ++i) {
+      const float tol = rtol * std::max(std::abs(e[i]), 1.0f);
+      EXPECT_NEAR(a[i], e[i], tol) << "at index " << i;
+    }
+    break;
+  }
+  case DType::CF32: {
+    // CF32 stores interleaved (real, imag) float pairs; compare each component.
+    const size_t n_floats = actual.size() / sizeof(float);
+    const auto  *a        = reinterpret_cast<const float *>(actual.data());
+    const auto  *e        = reinterpret_cast<const float *>(expected.data());
+    for (size_t i = 0; i < n_floats; ++i) {
+      const float tol = rtol * std::max(std::abs(e[i]), 1.0f);
+      EXPECT_NEAR(a[i], e[i], tol) << "at float component " << i;
+    }
+    break;
+  }
   }
 }
 
-// For CF32: kernel stores (float(v), 0.0f) pairs. Compare real parts against the F32 sequence,
-// and imaginary parts against zero.
-static void expect_near_cf32(const std::vector<std::byte> &actual,
-                             const std::vector<float> &expected_reals, float rtol = 1e-5f) {
-  ASSERT_EQ(actual.size(), expected_reals.size() * 2 * sizeof(float));
-  const auto *a = reinterpret_cast<const float *>(actual.data());
-  for (size_t i = 0; i < expected_reals.size(); ++i) {
-    const float tol = rtol * std::max(std::abs(expected_reals[i]), 1.0f);
-    EXPECT_NEAR(a[2 * i], expected_reals[i], tol) << "real part at index " << i;
-    EXPECT_NEAR(a[2 * i + 1], 0.0f, tol) << "imag part at index " << i;
-  }
-}
+static void expect_matches_oracle(const std::vector<std::byte> &actual, DType dtype,
+                                  const nlohmann::json &settings) {
+  holonp_test::OracleInput oi;
+  oi.op        = "arange";
+  oi.n_outputs = 1;
+  oi.settings  = settings;
 
-template <typename T>
-static void expect_eq_integer(const std::vector<std::byte> &actual,
-                              const std::vector<T>         &expected) {
-  ASSERT_EQ(actual.size(), expected.size() * sizeof(T));
-  const auto *a = reinterpret_cast<const T *>(actual.data());
-  for (size_t i = 0; i < expected.size(); ++i)
-    EXPECT_EQ(a[i], expected[i]) << "at index " << i;
+  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  ASSERT_EQ(oracle.output_bytes.size(), 1u);
+  expect_near_oracle(actual, oracle.output_bytes[0], dtype);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -203,7 +207,7 @@ TEST_F(ArangeInferTest, RejectsHostDevice) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// ArangeFactory: execution tests (direct expected-value comparison, no oracle needed)
+// ArangeFactory: execution tests via NumPy oracle
 // -------------------------------------------------------------------------------------------------
 
 class ArangeExecuteTest : public ::testing::Test {
@@ -219,7 +223,7 @@ TEST_F(ArangeExecuteTest, F32Simple) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_near_f32(run.output_bytes[0], expected_f32(0.0, 1.0, 4));
+  expect_matches_oracle(run.output_bytes[0], DType::F32, j);
 }
 
 TEST_F(ArangeExecuteTest, F32FractionalStep) {
@@ -228,7 +232,7 @@ TEST_F(ArangeExecuteTest, F32FractionalStep) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_near_f32(run.output_bytes[0], expected_f32(0.0, 0.25, 4));
+  expect_matches_oracle(run.output_bytes[0], DType::F32, j);
 }
 
 TEST_F(ArangeExecuteTest, F32NegativeStep) {
@@ -237,7 +241,7 @@ TEST_F(ArangeExecuteTest, F32NegativeStep) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_near_f32(run.output_bytes[0], expected_f32(4.0, -1.0, 4));
+  expect_matches_oracle(run.output_bytes[0], DType::F32, j);
 }
 
 TEST_F(ArangeExecuteTest, F32NonZeroStart) {
@@ -246,7 +250,7 @@ TEST_F(ArangeExecuteTest, F32NonZeroStart) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_near_f32(run.output_bytes[0], expected_f32(2.0, 2.0, 3));
+  expect_matches_oracle(run.output_bytes[0], DType::F32, j);
 }
 
 TEST_F(ArangeExecuteTest, U8Simple) {
@@ -255,7 +259,7 @@ TEST_F(ArangeExecuteTest, U8Simple) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_eq_integer<std::uint8_t>(run.output_bytes[0], expected_scalar<std::uint8_t>(0.0, 1.0, 5));
+  expect_matches_oracle(run.output_bytes[0], DType::U8, j);
 }
 
 TEST_F(ArangeExecuteTest, U16Simple) {
@@ -264,8 +268,7 @@ TEST_F(ArangeExecuteTest, U16Simple) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_eq_integer<std::uint16_t>(run.output_bytes[0],
-                                   expected_scalar<std::uint16_t>(100.0, 100.0, 3));
+  expect_matches_oracle(run.output_bytes[0], DType::U16, j);
 }
 
 TEST_F(ArangeExecuteTest, CF32Simple) {
@@ -274,7 +277,7 @@ TEST_F(ArangeExecuteTest, CF32Simple) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_near_cf32(run.output_bytes[0], expected_f32(0.0, 1.0, 4));
+  expect_matches_oracle(run.output_bytes[0], DType::CF32, j);
 }
 
 TEST_F(ArangeExecuteTest, CF32FractionalStep) {
@@ -283,7 +286,7 @@ TEST_F(ArangeExecuteTest, CF32FractionalStep) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_near_cf32(run.output_bytes[0], expected_f32(0.0, 0.5, 4));
+  expect_matches_oracle(run.output_bytes[0], DType::CF32, j);
 }
 
 TEST_F(ArangeExecuteTest, OutputDescMatchesInfer) {
@@ -313,7 +316,7 @@ TEST_F(ArangeUpdateTest, ReusesArangeTask) {
   const auto run = holonp_test::run_sync_factory_update(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_near_f32(run.output_bytes[0], expected_f32(0.0, 1.0, 4));
+  expect_matches_oracle(run.output_bytes[0], DType::F32, j);
 }
 
 TEST_F(ArangeUpdateTest, RecreatesOnChangedSettings) {
@@ -333,11 +336,11 @@ TEST_F(ArangeUpdateTest, RecreatesOnChangedSettings) {
   auto                          ov = out_buf.view();
   std::atomic<bool>             cancelled{false};
   holoflow::core::SyncCtx       exec_ctx{
-      .inputs       = {},
-      .outputs      = {&ov, 1},
-      .cancelled    = &cancelled,
-      .event_writer = nullptr,
-      .event_reader = nullptr,
+            .inputs       = {},
+            .outputs      = {&ov, 1},
+            .cancelled    = &cancelled,
+            .event_writer = nullptr,
+            .event_reader = nullptr,
   };
 
   task->bind_logger(spdlog::default_logger());
@@ -345,8 +348,7 @@ TEST_F(ArangeUpdateTest, RecreatesOnChangedSettings) {
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
   const auto actual = out_buf.download();
-  // Expected: 10.0, 11.0, 12.0
-  expect_near_f32(actual, expected_f32(10.0, 1.0, 3));
+  expect_matches_oracle(actual, DType::F32, j_new);
 }
 
 TEST_F(ArangeUpdateTest, RecreatesOnWrongTaskType) {
@@ -370,11 +372,11 @@ TEST_F(ArangeUpdateTest, RecreatesOnWrongTaskType) {
   auto                          ov = out_buf.view();
   std::atomic<bool>             cancelled{false};
   holoflow::core::SyncCtx       exec_ctx{
-      .inputs       = {},
-      .outputs      = {&ov, 1},
-      .cancelled    = &cancelled,
-      .event_writer = nullptr,
-      .event_reader = nullptr,
+            .inputs       = {},
+            .outputs      = {&ov, 1},
+            .cancelled    = &cancelled,
+            .event_writer = nullptr,
+            .event_reader = nullptr,
   };
 
   task->bind_logger(spdlog::default_logger());
@@ -382,6 +384,5 @@ TEST_F(ArangeUpdateTest, RecreatesOnWrongTaskType) {
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
   const auto actual = out_buf.download();
-  // Expected: 0.0, 1.0, 2.0
-  expect_near_f32(actual, expected_f32(0.0, 1.0, 3));
+  expect_matches_oracle(actual, DType::F32, j);
 }

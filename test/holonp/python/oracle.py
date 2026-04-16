@@ -109,10 +109,41 @@ def _op_argmax(inputs, settings):
     return [result]
 
 
+def _arange_len(start, stop, step):
+    forward = step > 0.0
+    if forward and stop <= start:
+        return 0
+    if (not forward) and stop >= start:
+        return 0
+    n = int(np.ceil((stop - start) / step))
+    if n <= 0:
+        raise ValueError("Arange: invalid resulting length")
+    return n
+
+
+def _op_arange(inputs, settings):
+    start = float(settings["start"])
+    stop = float(settings["stop"])
+    step = float(settings["step"])
+    if step == 0.0:
+        raise ValueError("Arange: step must be non-zero")
+
+    dtype_name = settings.get("dtype", "F32")
+    n = _arange_len(start, stop, step)
+    values = start + step * np.arange(n, dtype=np.float64)
+
+    if dtype_name == "CF32":
+        result = values.astype(np.float32).astype(np.complex64)
+    else:
+        result = values.astype(_DTYPE_MAP[dtype_name])
+    return [result]
+
+
 _DISPATCH = {
     "abs":    _op_abs,
     "add":    _op_add,
     "argmax": _op_argmax,
+    "arange": _op_arange,
 }
 
 
