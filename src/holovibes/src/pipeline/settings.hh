@@ -69,6 +69,7 @@ struct Settings {
   int cpu_rec_size;
   int cpu_out_size;
   int gpu_out_size;
+  int time_accumulation;
 
   // Import
   ImportSource          import_source;
@@ -79,30 +80,31 @@ struct Settings {
   int                   load_batch;
   std::filesystem::path camera_config_path;
 
-  // Spacial
+  // Spacial Propagation
   SpacialMethod spacial_method;
   float         spacial_lambda;
   float         spacial_z;
   float         spacial_pixel_size;
 
-  // Filter
+  // Spatial Filter
   bool filter_2d;
   int  filter_r_inner;
   int  filter_r_outer;
   int  filter_smooth_inner;
   int  filter_smooth_outer;
 
-  // Temporal
+  // Temporal Filter
   TimeMethod time_method;
   int        time_window;
   int        time_stride;
-  int        time_accumulation; // number of temporal windows batched before time-freq analysis
-  int        time_x_begin;
-  int        time_x_end;
-  int        time_y_begin;
-  int        time_y_end;
-  int        time_z_begin;
-  int        time_z_end;
+
+  // Cuts views
+  int time_x_begin;
+  int time_x_end;
+  int time_y_begin;
+  int time_y_end;
+  int time_z_begin;
+  int time_z_end;
 
   // View
   bool       view_3d_cuts;

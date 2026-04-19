@@ -382,11 +382,11 @@ TEST_F(AddUpdateTest, RecreatesOnWrongTaskType) {
   std::array<holoflow::core::TView, 2> in_views = {va, vb};
   std::atomic<bool>                    cancelled{false};
   holoflow::core::SyncCtx              ctx{
-      .inputs       = {in_views.data(), in_views.size()},
-      .outputs      = {&ov, 1},
-      .cancelled    = &cancelled,
-      .event_writer = nullptr,
-      .event_reader = nullptr,
+                   .inputs       = {in_views.data(), in_views.size()},
+                   .outputs      = {&ov, 1},
+                   .cancelled    = &cancelled,
+                   .event_writer = nullptr,
+                   .event_reader = nullptr,
   };
 
   task->bind_logger(spdlog::default_logger());
