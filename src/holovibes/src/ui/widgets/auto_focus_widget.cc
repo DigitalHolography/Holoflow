@@ -234,6 +234,8 @@ QCheckBox *AutoFocusWidget::cross_correlation_view_checkbox() {
   return cross_correlation_view_checkbox_;
 }
 
+QSpinBox *AutoFocusWidget::nb_subaps_spin() { return nb_subaps_spin_; }
+
 void AutoFocusWidget::setup_ui() {
   content_container_ = new QWidget(this);
 

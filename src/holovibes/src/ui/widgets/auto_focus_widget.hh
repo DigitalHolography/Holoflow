@@ -107,6 +107,7 @@ public:
   QCheckBox *reconstructed_phase_checkbox();
   QCheckBox *shack_hartmann_sensor_view_checkbox();
   QCheckBox *cross_correlation_view_checkbox();
+  QSpinBox  *nb_subaps_spin();
 
 signals:
   void settings_changed();

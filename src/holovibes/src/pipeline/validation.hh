@@ -15,6 +15,7 @@
 #pragma once
 
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -59,8 +60,9 @@ struct ValidationIssue {
 struct ValidationResult {
   std::vector<ValidationIssue> issues;
 
-  [[nodiscard]] bool ok() const;
-  [[nodiscard]] bool has_errors() const;
+  [[nodiscard]] bool                                 ok() const;
+  [[nodiscard]] bool                                 has_errors() const;
+  [[nodiscard]] std::vector<const ValidationIssue *> issues_for(SettingsField field) const;
 };
 
 struct ValidationContext {

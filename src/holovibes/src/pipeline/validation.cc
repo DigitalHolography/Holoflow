@@ -61,6 +61,21 @@ bool ValidationResult::has_errors() const {
   return false;
 }
 
+std::vector<const ValidationIssue *> ValidationResult::issues_for(SettingsField field) const {
+  std::vector<const ValidationIssue *> matches;
+
+  for (const auto &issue : issues) {
+    for (const auto issue_field : issue.fields) {
+      if (issue_field == field) {
+        matches.push_back(&issue);
+        break;
+      }
+    }
+  }
+
+  return matches;
+}
+
 ValidationResult validate_settings(const Settings &settings, const ValidationContext &context) {
   ValidationResult result;
 

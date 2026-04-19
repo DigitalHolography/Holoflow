@@ -40,6 +40,7 @@
 #include <QStringList>
 #include <QThread>
 #include <QVBoxLayout>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <optional>
@@ -75,6 +76,49 @@ QComboBox *create_combo_box(QWidget *parent, const QStringList &items) {
   auto *combo_box = new QComboBox(parent);
   combo_box->addItems(items);
   return combo_box;
+}
+
+struct FieldBinding {
+  holovibes::pipeline::SettingsField field;
+  QWidget                           *widget;
+};
+
+QString to_qstring(holovibes::pipeline::ValidationSeverity severity) {
+  switch (severity) {
+  case holovibes::pipeline::ValidationSeverity::Warning:
+    return "Warning";
+  case holovibes::pipeline::ValidationSeverity::Error:
+    return "Error";
+  }
+
+  HOLOVIBES_UNREACHABLE();
+}
+
+QString build_field_tooltip(const holovibes::pipeline::FieldHelp                        &help,
+                            std::span<const holovibes::pipeline::ValidationIssue *const> issues) {
+  QStringList lines;
+  lines << QString::fromStdString(help.title);
+  lines << "";
+  lines << QString::fromStdString(help.description);
+
+  if (!help.constraints.empty()) {
+    lines << "";
+    lines << "Constraints:";
+    for (const auto *constraint : help.constraints) {
+      lines << QString("- %1").arg(constraint);
+    }
+  }
+
+  if (!issues.empty()) {
+    lines << "";
+    lines << "Current issues:";
+    for (const auto *issue : issues) {
+      lines << QString("- %1: %2")
+                   .arg(to_qstring(issue->severity), QString::fromStdString(issue->message));
+    }
+  }
+
+  return lines.join('\n');
 }
 
 } // namespace
@@ -742,6 +786,7 @@ bool MainWindow::validate_inputs() {
 
   pipeline::Settings settings = get_pipeline_settings();
   const auto result = pipeline::validate_settings(settings, build_validation_context(settings));
+  refresh_validation_tooltips(result);
   apply_validation_result(result);
   return result.ok();
 }
@@ -811,6 +856,41 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
         break;
       }
     }
+  }
+}
+
+void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &result) {
+  using pipeline::SettingsField;
+
+  const std::array bindings = {
+      FieldBinding{SettingsField::LoadPath, import_widget_->file_line_edit()},
+      FieldBinding{SettingsField::CameraConfigPath, import_widget_->camera_config_combo()},
+      FieldBinding{SettingsField::LoadBegin, import_widget_->start_index_spin()},
+      FieldBinding{SettingsField::LoadEnd, import_widget_->end_index_spin()},
+      FieldBinding{SettingsField::LoadBatch, render_widget_->batch_size_spin()},
+      FieldBinding{SettingsField::SpacialMethod, render_widget_->space_transform_combo()},
+      FieldBinding{SettingsField::TimeMethod, render_widget_->time_transform_combo()},
+      FieldBinding{SettingsField::TimeWindow, render_widget_->time_window_spin()},
+      FieldBinding{SettingsField::TimeStride, render_widget_->time_stride_spin()},
+      FieldBinding{SettingsField::TimeZBegin, view_widget_->z_spin()},
+      FieldBinding{SettingsField::TimeZEnd, view_widget_->z_width_spin()},
+      FieldBinding{SettingsField::View3DCuts, view_widget_->cuts_3d_check()},
+      FieldBinding{SettingsField::ViewRawSpectrum, view_widget_->raw_spectrum_view_check()},
+      FieldBinding{SettingsField::ViewProcessedSpectrum,
+                   view_widget_->process_spectrum_view_check()},
+      FieldBinding{SettingsField::PpConvolution, render_widget_->convolution_combo()},
+      FieldBinding{SettingsField::PpRegistration, view_widget_->registration_check()},
+      FieldBinding{SettingsField::RecordingPath, export_widget_->file_line_edit()},
+      FieldBinding{SettingsField::RecordingCount, export_widget_->frames_spin()},
+      FieldBinding{SettingsField::AutofocusNbSubaps,
+                   render_widget_->autofocus_widget()->nb_subaps_spin()},
+  };
+
+  for (const auto &binding : bindings) {
+    const auto  issues  = result.issues_for(binding.field);
+    const auto &help    = pipeline::get_field_help(binding.field);
+    const auto  tooltip = build_field_tooltip(help, std::span{issues});
+    binding.widget->setToolTip(tooltip);
   }
 }
 

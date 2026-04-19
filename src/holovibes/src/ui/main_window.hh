@@ -29,6 +29,7 @@
 #include <QWidget>
 #include <optional>
 
+#include "pipeline/field_help.hh"
 #include "pipeline/manager.hh"
 #include "pipeline/settings.hh"
 #include "pipeline/validation.hh"
@@ -77,6 +78,7 @@ private:
 
   bool                        validate_inputs();
   void                        apply_validation_result(const pipeline::ValidationResult &result);
+  void                        refresh_validation_tooltips(const pipeline::ValidationResult &result);
   pipeline::ValidationContext build_validation_context(const pipeline::Settings &settings) const;
   void                        setup_validation_connections();
   void                        setup_update_connections();
