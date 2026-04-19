@@ -101,6 +101,15 @@ void ImageRenderingWidget::mark_time_stride_invalid() {
 void ImageRenderingWidget::mark_time_window_invalid() {
   time_window_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
 }
+void ImageRenderingWidget::mark_space_transform_invalid() {
+  space_transform_combo_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+}
+void ImageRenderingWidget::mark_time_transform_invalid() {
+  time_transform_combo_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+}
+void ImageRenderingWidget::mark_convolution_invalid() {
+  convolution_combo_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+}
 
 QComboBox *ImageRenderingWidget::image_combo() { return image_combo_; }
 QSpinBox  *ImageRenderingWidget::batch_size_spin() { return batch_size_spin_; }
@@ -254,6 +263,9 @@ void ImageRenderingWidget::clear_validation_styles() {
   batch_size_spin_->setStyleSheet("");
   time_stride_spin_->setStyleSheet("");
   time_window_spin_->setStyleSheet("");
+  space_transform_combo_->setStyleSheet("");
+  time_transform_combo_->setStyleSheet("");
+  convolution_combo_->setStyleSheet("");
 }
 
 } // namespace holovibes::ui

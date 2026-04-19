@@ -64,6 +64,9 @@ public:
   void mark_batch_size_invalid();
   void mark_time_stride_invalid();
   void mark_time_window_invalid();
+  void mark_space_transform_invalid();
+  void mark_time_transform_invalid();
+  void mark_convolution_invalid();
 
   // Access to widgets for connection setup
   QComboBox       *image_combo();

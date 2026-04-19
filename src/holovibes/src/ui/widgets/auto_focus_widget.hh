@@ -90,6 +90,9 @@ public:
 
   void set_enabled(bool enabled);
 
+  void clear_validation_styles();
+  void mark_nb_subaps_invalid();
+
   // Accessors for external connection/setup if needed
   QCheckBox *z2_checkbox();
   QCheckBox *z3_checkbox();

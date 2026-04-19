@@ -734,99 +734,124 @@ void MainWindow::on_raw_record_stopped_failure(const QString &error) {
 }
 
 bool MainWindow::validate_inputs() {
-  const QString style_fail = QStringLiteral("background-color: rgba(255, 0, 0, 50);");
-
-  // Clear all styles up front
   import_widget_->clear_validation_styles();
   export_widget_->clear_validation_styles();
   render_widget_->clear_validation_styles();
   view_widget_->clear_validation_styles();
+  render_widget_->autofocus_widget()->clear_validation_styles();
 
-  bool all_good = true;
+  pipeline::Settings settings = get_pipeline_settings();
+  const auto result = pipeline::validate_settings(settings, build_validation_context(settings));
+  apply_validation_result(result);
+  return result.ok();
+}
 
-  int  batch_size     = render_widget_->get_batch_size();
-  int  time_stride    = render_widget_->get_time_stride();
-  int  time_window    = render_widget_->get_time_window();
-  int  p_frame_start  = view_widget_->get_z_origin();
-  int  p_frame_width  = view_widget_->get_z_width();
-  int  start_frame    = import_widget_->get_start_index();
-  int  end_frame      = import_widget_->get_end_index();
-  bool is_cam_mode    = import_widget_->is_camera_mode();
-  auto time_transform = render_widget_->get_time_transform();
+void MainWindow::apply_validation_result(const pipeline::ValidationResult &result) {
+  using pipeline::SettingsField;
 
-  // time_window divides time_stride
-  if (time_window <= 0 || (time_stride % time_window != 0)) {
-    all_good = false;
-    render_widget_->mark_time_window_invalid();
-    render_widget_->mark_time_stride_invalid();
+  for (const auto &issue : result.issues) {
+    for (const auto field : issue.fields) {
+      switch (field) {
+      case SettingsField::LoadPath:
+        import_widget_->mark_file_invalid();
+        break;
+      case SettingsField::CameraConfigPath:
+        import_widget_->mark_camera_config_invalid();
+        break;
+      case SettingsField::LoadBegin:
+        import_widget_->mark_start_index_invalid();
+        break;
+      case SettingsField::LoadEnd:
+        import_widget_->mark_end_index_invalid();
+        break;
+      case SettingsField::LoadBatch:
+        render_widget_->mark_batch_size_invalid();
+        break;
+      case SettingsField::SpacialMethod:
+        render_widget_->mark_space_transform_invalid();
+        break;
+      case SettingsField::TimeMethod:
+        render_widget_->mark_time_transform_invalid();
+        break;
+      case SettingsField::TimeWindow:
+        render_widget_->mark_time_window_invalid();
+        break;
+      case SettingsField::TimeStride:
+        render_widget_->mark_time_stride_invalid();
+        break;
+      case SettingsField::TimeZBegin:
+        view_widget_->mark_z_invalid();
+        break;
+      case SettingsField::TimeZEnd:
+        view_widget_->mark_z_width_invalid();
+        break;
+      case SettingsField::View3DCuts:
+        view_widget_->mark_cuts_3d_invalid();
+        break;
+      case SettingsField::ViewRawSpectrum:
+        view_widget_->mark_raw_spectrum_invalid();
+        break;
+      case SettingsField::ViewProcessedSpectrum:
+        view_widget_->mark_processed_spectrum_invalid();
+        break;
+      case SettingsField::PpConvolution:
+        render_widget_->mark_convolution_invalid();
+        break;
+      case SettingsField::PpRegistration:
+        view_widget_->mark_registration_invalid();
+        break;
+      case SettingsField::RecordingPath:
+        export_widget_->mark_file_invalid();
+        break;
+      case SettingsField::RecordingCount:
+        export_widget_->mark_frames_invalid();
+        break;
+      case SettingsField::AutofocusNbSubaps:
+        render_widget_->autofocus_widget()->mark_nb_subaps_invalid();
+        break;
+      }
+    }
   }
+}
 
-  if (time_transform == "Principal Component Analysis") {
-    if (p_frame_start + p_frame_width > time_window) {
-      all_good = false;
-      render_widget_->mark_time_window_invalid();
-      view_widget_->mark_z_invalid();
-      view_widget_->mark_z_width_invalid();
+pipeline::ValidationContext
+MainWindow::build_validation_context(const pipeline::Settings &settings) const {
+  pipeline::ValidationContext context;
+
+  if (settings.import_source == pipeline::ImportSource::HOLOFILE) {
+    context.load_path_exists =
+        !settings.load_path.empty() && std::filesystem::exists(settings.load_path);
+
+    if (context.load_path_exists) {
+      try {
+        auto header                = holofile::Reader(settings.load_path.string()).header();
+        context.source_width       = static_cast<int>(header.frame_width);
+        context.source_height      = static_cast<int>(header.frame_height);
+        context.source_frame_count = static_cast<int>(header.frame_count);
+      } catch (...) {
+        context.load_path_exists = false;
+      }
+    }
+  } else {
+    context.camera_config_exists = !settings.camera_config_path.empty() &&
+                                   std::filesystem::exists(settings.camera_config_path);
+
+    if (context.camera_config_exists) {
+      try {
+        std::ifstream cfg_file(settings.camera_config_path);
+        auto          cfg_json = nlohmann::json::parse(cfg_file);
+        const auto   &cfg = cfg_json.contains("s711") ? cfg_json.at("s711") : cfg_json.at("s710");
+
+        context.source_width        = cfg.at("Width").get<int>();
+        context.source_height       = cfg.at("Height").get<int>();
+        context.camera_config_valid = true;
+      } catch (...) {
+        context.camera_config_valid = false;
+      }
     }
   }
 
-  else if (time_transform == "Short Time Fourier") {
-    if (p_frame_start + p_frame_width > time_window / 2) {
-      all_good = false;
-      render_widget_->mark_time_window_invalid();
-      view_widget_->mark_z_invalid();
-      view_widget_->mark_z_width_invalid();
-    }
-  }
-
-  // p_frame_start + p_frame_width <= time_window
-  else {
-    if (!(p_frame_start + p_frame_width <= time_window)) {
-      all_good = false;
-      render_widget_->mark_time_window_invalid();
-      view_widget_->mark_z_invalid();
-      view_widget_->mark_z_width_invalid();
-    }
-  }
-
-  // end_frame > start_frame
-  if (!(is_cam_mode || end_frame > start_frame)) {
-    all_good = false;
-    import_widget_->mark_start_index_invalid();
-    import_widget_->mark_end_index_invalid();
-  }
-
-  // time_stride <= end_frame - start_frame
-  if (!(is_cam_mode || time_stride <= (end_frame - start_frame))) {
-    all_good = false;
-    import_widget_->mark_start_index_invalid();
-    import_widget_->mark_end_index_invalid();
-    render_widget_->mark_time_stride_invalid();
-  }
-
-  // import path non-empty
-  if (!is_cam_mode && import_widget_->get_file_path().isEmpty()) {
-    all_good = false;
-    import_widget_->mark_file_invalid();
-  }
-
-  // export path non-empty
-  if (export_widget_->get_file_path().isEmpty()) {
-    all_good = false;
-    export_widget_->mark_file_invalid();
-  }
-
-  // if exporting frames, ensure divisible by batch_size
-  if (export_widget_->is_frame_count_enabled()) {
-    int frame_count = export_widget_->get_frame_count() % batch_size;
-    if (frame_count != 0) {
-      all_good = false;
-      export_widget_->mark_frames_invalid();
-      render_widget_->mark_batch_size_invalid();
-    }
-  }
-
-  return all_good;
+  return context;
 }
 
 void MainWindow::setup_validation_connections() {
@@ -936,17 +961,18 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       QString source       = import_widget_->get_camera_type();
       s.import_source      = source_from_str.at(source.toStdString());
       s.camera_config_path = get_selected_camera_config_path();
-      nlohmann::json cfg_json;
-      {
-        std::ifstream cfg_file(s.camera_config_path);
-        if (!cfg_file.is_open()) {
-          throw std::runtime_error(std::format("Could not open camera config file"));
+      s.load_batch         = 1;
+
+      std::ifstream cfg_file(s.camera_config_path);
+      if (cfg_file.is_open()) {
+        try {
+          auto cfg_json = nlohmann::json::parse(cfg_file);
+          s.load_batch  = cfg_json.contains("s711")
+                              ? cfg_json.at("s711").at("BufferPartCount").get<int>()
+                              : cfg_json.at("s710").at("BufferPartCount").get<int>();
+        } catch (...) {
         }
-        cfg_json = nlohmann::json::parse(cfg_file);
       }
-      s.load_batch = cfg_json.contains("s711")
-                         ? cfg_json.at("s711").at("BufferPartCount").get<int>()
-                         : cfg_json.at("s710").at("BufferPartCount").get<int>();
     }
   }
 

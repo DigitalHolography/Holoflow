@@ -107,6 +107,18 @@ void ViewWidget::mark_z_invalid() {
 void ViewWidget::mark_z_width_invalid() {
   z_width_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
 }
+void ViewWidget::mark_cuts_3d_invalid() {
+  cuts_3d_check_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+}
+void ViewWidget::mark_raw_spectrum_invalid() {
+  raw_spectrum_view_check_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+}
+void ViewWidget::mark_processed_spectrum_invalid() {
+  process_spectrum_view_check_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+}
+void ViewWidget::mark_registration_invalid() {
+  registration_check_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+}
 
 // Access to widgets for connection setup
 QComboBox      *ViewWidget::image_type_combo() { return image_type_combo_; }
@@ -283,6 +295,10 @@ void ViewWidget::connect_signals() {
 void ViewWidget::clear_validation_styles() {
   z_spin_->setStyleSheet("");
   z_width_spin_->setStyleSheet("");
+  cuts_3d_check_->setStyleSheet("");
+  raw_spectrum_view_check_->setStyleSheet("");
+  process_spectrum_view_check_->setStyleSheet("");
+  registration_check_->setStyleSheet("");
 }
 
 } // namespace holovibes::ui

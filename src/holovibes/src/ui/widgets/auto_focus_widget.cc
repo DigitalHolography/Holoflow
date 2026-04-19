@@ -207,6 +207,12 @@ void AutoFocusWidget::set_show_cross_correlation_view(bool checked) {
 
 void AutoFocusWidget::set_enabled(bool enabled) { setChecked(enabled); }
 
+void AutoFocusWidget::clear_validation_styles() { nb_subaps_spin_->setStyleSheet(""); }
+
+void AutoFocusWidget::mark_nb_subaps_invalid() {
+  nb_subaps_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+}
+
 // Widget accessors
 QCheckBox *AutoFocusWidget::z2_checkbox() { return z2_checkbox_; }
 QCheckBox *AutoFocusWidget::z3_checkbox() { return z3_checkbox_; }

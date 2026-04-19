@@ -72,6 +72,10 @@ public:
   void clear_validation_styles();
   void mark_z_invalid();
   void mark_z_width_invalid();
+  void mark_cuts_3d_invalid();
+  void mark_raw_spectrum_invalid();
+  void mark_processed_spectrum_invalid();
+  void mark_registration_invalid();
 
   // Access to widgets for connection setup
   QComboBox      *image_type_combo();

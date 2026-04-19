@@ -31,6 +31,7 @@
 
 #include "pipeline/manager.hh"
 #include "pipeline/settings.hh"
+#include "pipeline/validation.hh"
 #include "ui/widgets/export_widget.hh"
 #include "ui/widgets/image_rendering_widget.hh"
 #include "ui/widgets/import_widget.hh"
@@ -74,10 +75,12 @@ private:
   void on_update_pipeline_success();
   void on_update_pipeline_failure(const QString &error);
 
-  bool validate_inputs();
-  void setup_validation_connections();
-  void setup_update_connections();
-  void update_if_running();
+  bool                        validate_inputs();
+  void                        apply_validation_result(const pipeline::ValidationResult &result);
+  pipeline::ValidationContext build_validation_context(const pipeline::Settings &settings) const;
+  void                        setup_validation_connections();
+  void                        setup_update_connections();
+  void                        update_if_running();
 
   QSize              guess_source_dims();
   pipeline::Settings get_pipeline_settings();
