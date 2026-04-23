@@ -76,6 +76,7 @@ constexpr auto kRegistrationConstraints      = std::to_array<const char *>({
 });
 constexpr auto kRecordingPathConstraints     = std::to_array<const char *>({
     "Required when recording is enabled.",
+    "The parent directory must exist and be writable.",
 });
 constexpr auto kRecordingCountConstraints    = std::to_array<const char *>({
     "Must be strictly positive.",

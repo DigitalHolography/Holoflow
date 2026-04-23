@@ -931,6 +931,10 @@ MainWindow::build_validation_context(const pipeline::Settings &settings) const {
     }
   }
 
+  if (settings.recording_method != pipeline::RecordingMethod::NONE) {
+    context.recording_path_error = pipeline::validate_recording_path(settings.recording_path);
+  }
+
   return context;
 }
 

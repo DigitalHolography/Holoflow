@@ -14,7 +14,11 @@
 
 #include "pipeline/validation.hh"
 
+#include <cerrno>
+#include <cstdio>
+#include <filesystem>
 #include <format>
+#include <system_error>
 
 namespace holovibes::pipeline {
 
@@ -74,6 +78,63 @@ std::vector<const ValidationIssue *> ValidationResult::issues_for(SettingsField 
   }
 
   return matches;
+}
+
+std::optional<std::string> validate_recording_path(const std::filesystem::path &record_path) {
+  if (record_path.empty()) {
+    return std::string{"Recording path is empty."};
+  }
+
+  std::error_code       ec;
+  std::filesystem::path directory = record_path.parent_path();
+  const std::string     path_str  = record_path.string();
+
+  if (directory.empty()) {
+    directory = std::filesystem::current_path(ec);
+    if (ec) {
+      return std::format("Failed to resolve the current recording directory: {}.", ec.message());
+    }
+  }
+
+  if (!std::filesystem::exists(directory, ec)) {
+    if (ec) {
+      return std::format("Failed to inspect recording directory \"{}\": {}.", directory.string(),
+                         ec.message());
+    }
+
+    return std::format("Recording directory does not exist: {}.", directory.string());
+  }
+
+  if (!std::filesystem::is_directory(directory, ec)) {
+    if (ec) {
+      return std::format("Failed to inspect recording directory \"{}\": {}.", directory.string(),
+                         ec.message());
+    }
+
+    return std::format("Recording destination is not a directory: {}.", directory.string());
+  }
+
+  if (record_path.filename().empty()) {
+    return std::string{"Recording path must include a file name."};
+  }
+
+  FILE *fp = nullptr;
+  if (fopen_s(&fp, path_str.c_str(), "wb") != 0 || !fp) {
+    std::error_code open_ec(errno, std::generic_category());
+    return std::format("Cannot write recording file \"{}\": {}.", record_path.string(),
+                       open_ec.message());
+  }
+
+  std::fclose(fp);
+
+  if (std::remove(path_str.c_str()) != 0) {
+    std::error_code remove_ec(errno, std::generic_category());
+    return std::format(
+        "Recording file probe succeeded, but cleanup failed for \"{}\": {}.",
+        record_path.string(), remove_ec.message());
+  }
+
+  return std::nullopt;
 }
 
 ValidationResult validate_settings(const Settings &settings, const ValidationContext &context) {
@@ -195,6 +256,9 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     if (settings.recording_path.empty()) {
       add_issue(result, ValidationSeverity::Error, "recording_path_empty",
                 "A recording output path must be selected.", {SettingsField::RecordingPath});
+    } else if (context.recording_path_error.has_value()) {
+      add_issue(result, ValidationSeverity::Error, "recording_path_invalid",
+                *context.recording_path_error, {SettingsField::RecordingPath});
     }
 
     if (settings.recording_count <= 0) {

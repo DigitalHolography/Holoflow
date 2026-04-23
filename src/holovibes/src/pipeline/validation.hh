@@ -69,10 +69,13 @@ struct ValidationContext {
   bool               load_path_exists     = false;
   bool               camera_config_exists = false;
   bool               camera_config_valid  = false;
+  std::optional<std::string> recording_path_error;
   std::optional<int> source_width;
   std::optional<int> source_height;
   std::optional<int> source_frame_count;
 };
+
+std::optional<std::string> validate_recording_path(const std::filesystem::path &record_path);
 
 ValidationResult validate_settings(const Settings &settings, const ValidationContext &context);
 
