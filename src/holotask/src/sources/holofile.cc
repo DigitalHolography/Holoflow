@@ -15,10 +15,12 @@
 #include "holotask/sources/holofile.hh"
 
 #include <algorithm>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <map>
 #include <omp.h>
+#include <thread>
 
 #include "bug.hh"
 #include "logger.hh"
@@ -62,9 +64,17 @@ void from_json(const nlohmann::json &j, HolofileSettings::LoadKind &lk) {
 
 void to_json(nlohmann::json &j, const HolofileSettings &hs) {
   j = {
-      {"path", hs.path},           {"load_kind", hs.load_kind},   {"start_frame", hs.start_frame},
-      {"end_frame", hs.end_frame}, {"batch_size", hs.batch_size}, {"keep_cursor", hs.keep_cursor},
+      {"path", hs.path},
+      {"load_kind", hs.load_kind},
+      {"start_frame", hs.start_frame},
+      {"end_frame", hs.end_frame},
+      {"batch_size", hs.batch_size},
+      {"keep_cursor", hs.keep_cursor},
   };
+
+  if (hs.max_fps.has_value()) {
+    j["max_fps"] = *hs.max_fps;
+  }
 }
 
 void from_json(const nlohmann::json &j, HolofileSettings &hs) {
@@ -73,6 +83,10 @@ void from_json(const nlohmann::json &j, HolofileSettings &hs) {
   j.at("start_frame").get_to(hs.start_frame);
   j.at("end_frame").get_to(hs.end_frame);
   j.at("batch_size").get_to(hs.batch_size);
+  hs.max_fps = std::nullopt;
+  if (j.contains("max_fps") && !j.at("max_fps").is_null()) {
+    hs.max_fps = j.at("max_fps").get<int>();
+  }
   hs.keep_cursor = j.value("keep_cursor", true);
 }
 
@@ -119,12 +133,15 @@ void mt_memcpy(void *dst, const void *src, const std::size_t n) {
 
 class Holofile : public holoflow::core::ISyncTask {
 public:
+  using Clock = std::chrono::steady_clock;
+
   // -- Configuration ------------------------------------------------------------------------------
   HolofileSettings                  settings;
   std::unique_ptr<holofile::Reader> reader;
   holofile::Header                  header;
   int                               frame_idx;
   holoflow::core::TDesc             odesc;
+  std::optional<Clock::time_point>  next_batch_start;
 
   // -- Buffers ------------------------------------------------------------------------------------
   std::byte         *buf;   // Non-owning view of the active buffer
@@ -132,6 +149,38 @@ public:
   DevPtr<std::byte>  d_buf; // Owned GPU buffer (if any)
 
   cudaStream_t stream; // Stream for GPU transfers
+
+  [[nodiscard]] bool pace_before_batch(holoflow::core::SyncCtx &ctx) {
+    if (!settings.max_fps.has_value()) {
+      next_batch_start.reset();
+      return true;
+    }
+
+    auto batch_period = std::chrono::duration_cast<Clock::duration>(
+        std::chrono::duration<double>(static_cast<double>(settings.batch_size) / *settings.max_fps));
+
+    if (batch_period <= Clock::duration::zero()) {
+      batch_period = Clock::duration{1};
+    }
+
+    if (!next_batch_start.has_value()) {
+      next_batch_start = Clock::now();
+    }
+
+    while (Clock::now() < *next_batch_start) {
+      if (ctx.cancelled != nullptr && ctx.cancelled->load(std::memory_order_relaxed)) {
+        return false;
+      }
+
+      std::this_thread::yield();
+    }
+
+    do {
+      *next_batch_start += batch_period;
+    } while (*next_batch_start < Clock::now());
+
+    return true;
+  }
 
   // -- ISyncTask interface ------------------------------------------------------------------------
   std::optional<holoflow::core::TView> acquire_input(int index) override {
@@ -150,6 +199,10 @@ public:
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    if (!pace_before_batch(ctx)) {
+      return holoflow::core::OpResult::Cancelled;
+    }
+
     size_t pixels_per_frame = header.frame_width * header.frame_height;
     size_t bits_per_frame   = pixels_per_frame * header.bits_per_pixel;
     size_t bytes_per_frame  = bits_per_frame / 8;
@@ -204,6 +257,7 @@ HolofileFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(input_descs.size() == 0, "Holofile task must have no inputs");
   check(settings.start_frame < settings.end_frame, "Invalid frame range");
   check(settings.batch_size > 0, "Batch size must be positive");
+  check(!settings.max_fps.has_value() || *settings.max_fps > 0, "max_fps must be positive when provided");
   check(settings.end_frame <= static_cast<int>(header.frame_count), "end_frame exceeds total frames in file");
   check(settings.batch_size <= (settings.end_frame - settings.start_frame), "Batch size exceeds available frames");
   check(bpp_to_dtype.contains(header.bits_per_pixel), "Unsupported bits_per_pixel: " + std::to_string(header.bits_per_pixel));
@@ -298,6 +352,7 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   task->h_buf     = std::move(h_buf);
   task->d_buf     = std::move(d_buf);
   task->stream    = ctx.stream;
+  task->next_batch_start.reset();
 
   return task;
 }
@@ -320,6 +375,9 @@ HolofileFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   bool kind_same   = (old_holofile->settings.load_kind == settings.load_kind);
   bool start_same  = (old_holofile->settings.start_frame == settings.start_frame);
   bool end_same    = (old_holofile->settings.end_frame == settings.end_frame);
+  bool batch_same  = (old_holofile->settings.batch_size == settings.batch_size);
+  bool fps_same    = (old_holofile->settings.max_fps == settings.max_fps);
+  bool pace_same   = batch_same && fps_same;
   bool bounds_same = start_same && end_same;
   bool can_reuse   = path_same && kind_same && (is_live || bounds_same);
 
@@ -368,6 +426,7 @@ HolofileFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   task->h_buf     = std::move(h_buf);
   task->d_buf     = std::move(d_buf);
   task->stream    = ctx.stream;
+  task->next_batch_start = pace_same ? old_holofile->next_batch_start : std::nullopt;
 
   return task;
 }

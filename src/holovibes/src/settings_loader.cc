@@ -93,6 +93,10 @@ void write_advanced(json &j, const Settings &s) {
   advanced["filter2d_smooth"]["high"] = s.filter_smooth_outer;
 
   advanced["nb_frames_to_record"] = s.recording_count;
+
+  if (s.load_fps_limit.has_value()) {
+    advanced["input_fps_limit"] = *s.load_fps_limit;
+  }
 }
 
 void write_image_rendering(json &j, const Settings &s) {
@@ -167,6 +171,10 @@ void read_advanced(Settings &s, const json &advanced) {
   s.filter_smooth_outer = val(smooth, "high", s.filter_smooth_outer);
 
   s.recording_count = val(advanced, "nb_frames_to_record", s.recording_count);
+
+  const int input_fps_limit = val(advanced, "input_fps_limit", 0);
+  s.load_fps_limit          = input_fps_limit > 0 ? std::optional<int>{input_fps_limit}
+                                                  : std::nullopt;
 }
 
 void read_image_rendering(Settings &s, const json &rendering) {

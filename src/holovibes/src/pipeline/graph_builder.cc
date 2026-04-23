@@ -80,12 +80,13 @@ GraphBuilder::TDesc GraphBuilder::build_acquisition() {
 
   if (s_.import_source == ImportSource::HOLOFILE) {
     return holofile_read({
-        s_.load_path.string(),
-        load_method_map_.at(s_.load_method),
-        s_.load_begin,
-        s_.load_end,
-        s_.load_batch,
-        false,
+        .path        = s_.load_path.string(),
+        .load_kind   = load_method_map_.at(s_.load_method),
+        .start_frame = s_.load_begin,
+        .end_frame   = s_.load_end,
+        .batch_size  = s_.load_batch,
+        .max_fps     = s_.load_fps_limit,
+        .keep_cursor = false,
     });
   } else if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
     return ametek_s710_euresys_coaxlink_octo({cam_path});

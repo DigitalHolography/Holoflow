@@ -1,6 +1,6 @@
 # Holofile Source Task
 
-This task reads data from a `.holo` file and outputs it as a tensor. When the end of the file is reached, it loops back to the beginning. The task can be configured to load data in different ways, such as loading all frames into memory at once or loading frames on-the-fly. The file specified must exist and be a valid `.holo` file during the task's validation phase and execution.
+This task reads data from a `.holo` file and outputs it as a tensor. When the end of the file is reached, it loops back to the beginning. The task can be configured to load data in different ways, such as loading all frames into memory at once or loading frames on-the-fly. The file specified must exist and be a valid `.holo` file during the task's validation phase and execution. An optional `max_fps` setting can be used to throttle playback; if it is omitted, frames are emitted as fast as possible.
 
 ## Inputs
 This task does not have any inputs.

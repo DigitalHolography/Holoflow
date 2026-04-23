@@ -22,6 +22,7 @@
 
 #pragma once
 
+#include <optional>
 #include <string>
 
 #include <nlohmann/json.hpp>
@@ -48,6 +49,7 @@ struct HolofileSettings {
   int         start_frame;        ///< First frame to read (inclusive).
   int         end_frame;          ///< Last frame to read (exclusive).
   int         batch_size;         ///< Number of frames per output tensor.
+  std::optional<int> max_fps;     ///< Optional playback cap in frames per second.
   bool        keep_cursor = true; ///< Maintain cursor across updates.
 
   bool operator==(const HolofileSettings &) const = default;

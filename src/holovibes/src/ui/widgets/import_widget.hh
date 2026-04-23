@@ -21,6 +21,7 @@
 #include <QPushButton>
 #include <QSpinBox>
 #include <QStringList>
+#include <optional>
 
 class QStackedLayout;
 
@@ -35,7 +36,7 @@ public:
   // Getters for settings
   bool    is_camera_mode() const;
   QString get_file_path() const;
-  int     get_fps() const;
+  std::optional<int> get_fps_limit() const;
   int     get_start_index() const;
   int     get_end_index() const;
   QString get_load_method() const;
@@ -44,6 +45,7 @@ public:
 
   // Setters
   void set_file_path(const QString &path);
+  void set_fps_limit(std::optional<int> value);
   void set_start_index(int value);
   void set_end_index(int value);
   void set_end_index_range(int min, int max);
@@ -59,6 +61,7 @@ public:
   // Style management for validation
   void clear_validation_styles();
   void mark_file_invalid();
+  void mark_fps_invalid();
   void mark_start_index_invalid();
   void mark_end_index_invalid();
   void mark_camera_config_invalid();

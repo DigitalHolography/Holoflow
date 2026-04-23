@@ -78,6 +78,7 @@ struct Settings {
   int                   load_begin;
   int                   load_end;
   int                   load_batch;
+  std::optional<int>    load_fps_limit;
   std::filesystem::path camera_config_path;
 
   // Spacial Propagation

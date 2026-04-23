@@ -53,13 +53,20 @@ ImportWidget::ImportWidget(QWidget *parent) : QGroupBox("Import", parent) {
 
 bool    ImportWidget::is_camera_mode() const { return cam_check_->isChecked(); }
 QString ImportWidget::get_file_path() const { return file_line_edit_->text(); }
-int     ImportWidget::get_fps() const { return fps_spin_->value(); }
+std::optional<int> ImportWidget::get_fps_limit() const {
+  if (fps_spin_->value() <= 0) {
+    return std::nullopt;
+  }
+
+  return fps_spin_->value();
+}
 int     ImportWidget::get_start_index() const { return start_index_spin_->value(); }
 int     ImportWidget::get_end_index() const { return end_index_spin_->value(); }
 QString ImportWidget::get_load_method() const { return load_method_combo_->currentText(); }
 QString ImportWidget::get_camera_type() const { return camera_combo_->currentText(); }
 QString ImportWidget::get_camera_config() const { return camera_config_combo_->currentText(); }
 
+void ImportWidget::set_fps_limit(std::optional<int> value) { fps_spin_->setValue(value.value_or(0)); }
 void ImportWidget::set_start_index(int value) { start_index_spin_->setValue(value); }
 void ImportWidget::set_end_index(int value) { end_index_spin_->setValue(value); }
 void ImportWidget::set_end_index_range(int min, int max) { end_index_spin_->setRange(min, max); }
@@ -75,6 +82,9 @@ bool ImportWidget::is_stop_enabled() const { return stop_button_->isEnabled(); }
 
 void ImportWidget::mark_file_invalid() {
   file_line_edit_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+}
+void ImportWidget::mark_fps_invalid() {
+  fps_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
 }
 void ImportWidget::mark_start_index_invalid() {
   start_index_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
@@ -172,7 +182,9 @@ QWidget *ImportWidget::create_file_page() {
     ++row;
   };
 
-  add_spin_row("Input FPS", fps_spin_, 1, 999999, 30000);
+  add_spin_row("Input FPS Limit", fps_spin_, 0, 999999, 0);
+  fps_spin_->setSpecialValueText("Unlimited");
+  fps_spin_->setToolTip("Set to Unlimited to read the holofile as fast as possible.");
   add_spin_row("Start Index", start_index_spin_, 0, 999999, 1);
   add_spin_row("End Index", end_index_spin_, 1, 999999, 60);
 
@@ -229,6 +241,7 @@ void ImportWidget::set_file_path(const QString &path) { file_line_edit_->setText
 
 void ImportWidget::clear_validation_styles() {
   file_line_edit_->setStyleSheet("");
+  fps_spin_->setStyleSheet("");
   start_index_spin_->setStyleSheet("");
   end_index_spin_->setStyleSheet("");
   camera_config_combo_->setStyleSheet("");

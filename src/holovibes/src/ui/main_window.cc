@@ -1034,6 +1034,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       s.load_path     = import_widget_->get_file_path().toStdString();
       s.load_begin    = static_cast<size_t>(import_widget_->get_start_index());
       s.load_end      = static_cast<size_t>(import_widget_->get_end_index());
+      s.load_fps_limit = import_widget_->get_fps_limit();
       QString method  = import_widget_->get_load_method();
       s.load_method   = method_from_str.at(method.toStdString());
       if (render_widget_->get_time_transform() == "Principal Component Analysis") {
@@ -1046,6 +1047,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       s.import_source      = source_from_str.at(source.toStdString());
       s.camera_config_path = get_selected_camera_config_path();
       s.load_batch         = 1;
+      s.load_fps_limit     = std::nullopt;
 
       std::ifstream cfg_file(s.camera_config_path);
       if (cfg_file.is_open()) {
@@ -1212,6 +1214,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     if (s.import_source == ImportSource::HOLOFILE) {
       import_widget_->set_camera_mode(false);
       import_widget_->set_file_path(QString::fromStdString(s.load_path.string()));
+      import_widget_->set_fps_limit(s.load_fps_limit);
       import_widget_->set_start_index(static_cast<int>(s.load_begin));
       import_widget_->set_end_index(static_cast<int>(s.load_end));
 
@@ -1233,6 +1236,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
       import_widget_->set_load_method(method);
     } else {
       import_widget_->set_camera_mode(true);
+      import_widget_->set_fps_limit(std::nullopt);
 
       QString source;
       switch (s.import_source) {
