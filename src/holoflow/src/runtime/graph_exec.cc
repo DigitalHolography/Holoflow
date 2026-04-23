@@ -82,6 +82,19 @@ size_t count_distinct_tids(const GraphPlan &graph) {
   return tids.size();
 }
 
+[[noreturn]] inline void log_and_abort_current_exception(std::string_view thread_name) {
+  try {
+    throw;
+  } catch (const std::exception &e) {
+    logger()->critical("[{}] Fatal runtime exception:\n{}", thread_name, e.what());
+  } catch (...) {
+    logger()->critical("[{}] Fatal runtime exception: <non-std exception>", thread_name);
+  }
+
+  logger()->flush();
+  std::abort();
+}
+
 } // namespace
 
 void *MemoryBlock::get() {
@@ -287,12 +300,17 @@ void Scheduler::build_nodes_rts() {
 }
 
 void Scheduler::run_router() {
-  logger()->info("[Scheduler::run_router] Starting event router");
-  while (!stop_.load()) {
-    router_.tick();
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  try {
+    logger()->info("[Scheduler::run_router] Starting event router");
+    while (!stop_.load()) {
+      router_.tick();
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    logger()->info("[Scheduler::run_router] Event router stopped");
+  } catch (...) {
+    stop_.store(true);
+    log_and_abort_current_exception("Scheduler::run_router");
   }
-  logger()->info("[Scheduler::run_router] Event router stopped");
 }
 
 void Scheduler::run_section(int section_id) {
@@ -307,69 +325,103 @@ void Scheduler::run_section(int section_id) {
   constexpr nvtx3::color color_async_p{0x8A2BE2}; // Blue Violet
   constexpr nvtx3::color color_release{0xFF4500}; // Orange Red
 
-  while (!stop_.load()) {
-    logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
+  try {
+    while (!stop_.load()) {
+      logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
 
-    // 1. Outer Section Range
-    // Automatically popped at the end of this while-loop iteration,
-    // safely handling the 'break' statements below.
-    nvtx3::scoped_range section_range{nvtx3::event_attributes{sec.name.c_str(), color_section}};
+      // 1. Outer Section Range
+      // Automatically popped at the end of this while-loop iteration,
+      // safely handling the 'break' statements below.
+      nvtx3::scoped_range section_range{nvtx3::event_attributes{sec.name.c_str(), color_section}};
 
-    // 2. Acquire owned inputs
-    {
-      nvtx3::scoped_range r{nvtx3::event_attributes{"Acquire owned inputs", color_acquire}};
-      for (auto v : sec.sync_topo) {
-        acquire_owned_inputs(v);
+      // 2. Acquire owned inputs
+      {
+        nvtx3::scoped_range r{nvtx3::event_attributes{"Acquire owned inputs", color_acquire}};
+        for (auto v : sec.sync_topo) {
+          try {
+            acquire_owned_inputs(v);
+          } catch (...) {
+            rethrow_with_node_context(graph_, v, "acquire_owned_inputs", section_id, sec.name);
+          }
+        }
+        for (auto v : sec.async_prod) {
+          try {
+            acquire_owned_inputs(v);
+          } catch (...) {
+            rethrow_with_node_context(graph_, v, "acquire_owned_inputs", section_id, sec.name);
+          }
+        }
+      } // <-- Range automatically pops here
+
+      if (stop_.load()) {
+        break; // Safe! `section_range` will cleanly pop on its way out.
       }
-      for (auto v : sec.async_prod) {
-        acquire_owned_inputs(v);
-      }
-    } // <-- Range automatically pops here
 
-    if (stop_.load()) {
-      break; // Safe! `section_range` will cleanly pop on its way out.
+      // 3. Execute async consumers
+      {
+        nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async consumers", color_async_c}};
+        for (auto v : sec.async_cons) {
+          try {
+            run_async_cons(v);
+          } catch (...) {
+            rethrow_with_node_context(graph_, v, "execute_async_consumer", section_id, sec.name);
+          }
+        }
+      }
+
+      if (stop_.load()) {
+        break; // Safe!
+      }
+
+      // 4. Execute sync nodes
+      {
+        nvtx3::scoped_range r{nvtx3::event_attributes{"Execute sync nodes", color_sync}};
+        for (auto v : sec.sync_topo) {
+          try {
+            run_sync(v);
+          } catch (...) {
+            rethrow_with_node_context(graph_, v, "execute_sync", section_id, sec.name);
+          }
+        }
+
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+      }
+
+      // 5. Execute async producers
+      {
+        nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async producers", color_async_p}};
+        for (auto v : sec.async_prod) {
+          try {
+            run_async_prod(v);
+          } catch (...) {
+            rethrow_with_node_context(graph_, v, "execute_async_producer", section_id, sec.name);
+          }
+        }
+      }
+
+      // 6. Release owned outputs
+      {
+        nvtx3::scoped_range r{nvtx3::event_attributes{"Release owned outputs", color_release}};
+        for (auto v : sec.sync_topo) {
+          try {
+            release_owned_outputs(v);
+          } catch (...) {
+            rethrow_with_node_context(graph_, v, "release_owned_outputs", section_id, sec.name);
+          }
+        }
+        for (auto v : sec.async_cons) {
+          try {
+            release_owned_outputs(v);
+          } catch (...) {
+            rethrow_with_node_context(graph_, v, "release_owned_outputs", section_id, sec.name);
+          }
+        }
+      }
     }
-
-    // 3. Execute async consumers
-    {
-      nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async consumers", color_async_c}};
-      for (auto v : sec.async_cons) {
-        run_async_cons(v);
-      }
-    }
-
-    if (stop_.load()) {
-      break; // Safe!
-    }
-
-    // 4. Execute sync nodes
-    {
-      nvtx3::scoped_range r{nvtx3::event_attributes{"Execute sync nodes", color_sync}};
-      for (auto v : sec.sync_topo) {
-        run_sync(v);
-      }
-
-      CUDA_CHECK(cudaStreamSynchronize(stream));
-    }
-
-    // 5. Execute async producers
-    {
-      nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async producers", color_async_p}};
-      for (auto v : sec.async_prod) {
-        run_async_prod(v);
-      }
-    }
-
-    // 6. Release owned outputs
-    {
-      nvtx3::scoped_range r{nvtx3::event_attributes{"Release owned outputs", color_release}};
-      for (auto v : sec.sync_topo) {
-        release_owned_outputs(v);
-      }
-      for (auto v : sec.async_cons) {
-        release_owned_outputs(v);
-      }
-    }
+  } catch (...) {
+    stop_.store(true);
+    log_and_abort_current_exception(std::format("Scheduler::run_section section={} id={}", sec.name,
+                                                section_id));
   }
 }
 
