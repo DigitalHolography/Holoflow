@@ -15,6 +15,7 @@
 #include "holotask/sinks/holofile.hh"
 
 // #include <Windows.h>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -23,6 +24,7 @@
 #include <memory>
 #include <omp.h>
 #include <span>
+#include <system_error>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -179,10 +181,16 @@ public:
     if (frames_buffered_ >= settings_.count) {
       logger()->info("[HolofileWriter] Frame buffer full ({} frames); flushing to disk...",
                      settings_.count);
-      flush_to_disk();
-      emit_finished_event(ctx);
-      logger()->info("[HolofileWriter] Recording complete: {} frames written to {}",
-                     frames_buffered_, settings_.path);
+      try {
+        flush_to_disk();
+        emit_finished_event(ctx);
+        logger()->info("[HolofileWriter] Recording complete: {} frames written to {}",
+                       frames_buffered_, settings_.path);
+      } catch (const std::exception &e) {
+        logger()->error("[HolofileWriter] Failed to finalize recording at {}: {}", settings_.path,
+                        e.what());
+        emit_failed_event(ctx, e.what());
+      }
       reset();
     }
 
@@ -211,23 +219,51 @@ private:
       HOLOVIBES_CHECK(event->direction == holoflow_event::EventDirection::ToNode,
                       "Unexpected event direction");
 
-      const auto type = event->data["type"].get<std::string>();
-      settings_.path  = event->data["record_path"].get<std::string>();
+      const auto type = event->data.at("type").get<std::string>();
 
       if (type == "start_recording") {
-        HOLOVIBES_CHECK(!recording_, "Received start_recording while already recording");
-        HOLOVIBES_CHECK(!settings_.path.empty(), "Cannot start recording: empty path");
-        HOLOVIBES_CHECK(settings_.count > 0,
-                        "Cannot start recording: count must be positive (got {})", settings_.count);
+        if (recording_) {
+          logger()->error("[HolofileWriter] Ignoring duplicate start_recording event");
+          emit_failed_event(ctx, "Recording already in progress");
+          continue;
+        }
+
+        const auto record_path = event->data.value("record_path", std::string{});
+        if (record_path.empty()) {
+          logger()->error("[HolofileWriter] Rejecting start_recording event with empty path");
+          emit_failed_event(ctx, "Cannot start recording: empty path");
+          continue;
+        }
+
+        if (settings_.count <= 0) {
+          const auto message =
+              "Cannot start recording: invalid frame count (" + std::to_string(settings_.count) +
+              ")";
+          logger()->error("[HolofileWriter] {}", message);
+          emit_failed_event(ctx, message);
+          continue;
+        }
+
+        settings_.path   = record_path;
         frames_buffered_ = 0;
         recording_       = true;
 
       } else if (type == "stop_recording") {
-        HOLOVIBES_CHECK(recording_, "Received stop_recording while not recording");
-        recording_         = false;
-        frames_buffered_   = 0;
-        const bool removed = std::remove(settings_.path.c_str()) == 0;
-        HOLOVIBES_CHECK(removed, "Failed to delete incomplete recording at {}", settings_.path);
+        if (!recording_) {
+          logger()->warn("[HolofileWriter] Ignoring stop_recording event while idle");
+          continue;
+        }
+
+        recording_       = false;
+        frames_buffered_ = 0;
+
+        if (!settings_.path.empty() && std::remove(settings_.path.c_str()) != 0 && errno != ENOENT) {
+          std::error_code ec(errno, std::generic_category());
+          logger()->error("[HolofileWriter] Failed to remove incomplete recording at {}: {}",
+                          settings_.path, ec.message());
+          emit_failed_event(ctx, "Failed to remove incomplete recording at " + settings_.path +
+                                     ": " + ec.message());
+        }
 
       } else {
         HOLOVIBES_BUG("Unknown event type: {}", type);
@@ -249,6 +285,22 @@ private:
     };
     HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
                     "Failed to emit recording_finished event");
+  }
+
+  void emit_failed_event(holoflow::core::SyncCtx &ctx, const std::string &message) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "recording_failed"},
+                {"path", settings_.path},
+                {"message", message},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit recording_failed event");
   }
 
   void reset() {

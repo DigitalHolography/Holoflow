@@ -18,7 +18,9 @@
 #include <QTimer>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -100,6 +102,66 @@ using namespace holonp;
 namespace holovibes::pipeline {
 
 namespace {
+
+std::optional<QString> validate_record_path(const std::filesystem::path &record_path) {
+  if (record_path.empty()) {
+    return QString("Recording path is empty");
+  }
+
+  std::error_code       ec;
+  std::filesystem::path directory = record_path.parent_path();
+  const std::string     path_str  = record_path.string();
+
+  if (directory.empty()) {
+    directory = std::filesystem::current_path(ec);
+    if (ec) {
+      return QString("Failed to resolve the current directory for recording: %1")
+          .arg(QString::fromStdString(ec.message()));
+    }
+  }
+
+  if (!std::filesystem::exists(directory, ec)) {
+    if (ec) {
+      return QString("Failed to inspect recording directory \"%1\": %2")
+          .arg(QString::fromStdString(directory.string()), QString::fromStdString(ec.message()));
+    }
+
+    return QString("Recording directory does not exist: %1")
+        .arg(QString::fromStdString(directory.string()));
+  }
+
+  if (!std::filesystem::is_directory(directory, ec)) {
+    if (ec) {
+      return QString("Failed to inspect recording directory \"%1\": %2")
+          .arg(QString::fromStdString(directory.string()), QString::fromStdString(ec.message()));
+    }
+
+    return QString("Recording destination is not a directory: %1")
+        .arg(QString::fromStdString(directory.string()));
+  }
+
+  if (record_path.filename().empty()) {
+    return QString("Recording path must include a file name");
+  }
+
+  FILE *fp = nullptr;
+  if (fopen_s(&fp, path_str.c_str(), "wb") != 0 || !fp) {
+    std::error_code open_ec(errno, std::generic_category());
+    return QString("Cannot write recording file \"%1\": %2")
+        .arg(QString::fromStdString(record_path.string()), QString::fromStdString(open_ec.message()));
+  }
+
+  std::fclose(fp);
+
+  if (std::remove(path_str.c_str()) != 0) {
+    std::error_code remove_ec(errno, std::generic_category());
+    return QString("Recording path \"%1\" is writable, but the temporary probe file could not be removed: %2")
+        .arg(QString::fromStdString(record_path.string()),
+             QString::fromStdString(remove_ec.message()));
+  }
+
+  return std::nullopt;
+}
 
 template <class F, class... Args>
 void reg_sync(holoflow::core::Registry &r, std::string_view name, Args &&...args) {
@@ -309,6 +371,13 @@ void Manager::start_raw_record(std::filesystem::path record_path) {
     return;
   }
 
+  if (const auto error = validate_record_path(record_path); error.has_value()) {
+    logger()->error("[Manager::start_raw_record] Invalid recording path '{}': {}",
+                    record_path.string(), error->toStdString());
+    emit raw_record_started_failure(*error);
+    return;
+  }
+
   auto payload = nlohmann::json{
       {"type", "start_recording"},
       {"record_path", record_path},
@@ -420,6 +489,25 @@ void Manager::poll_events() {
       if (should_emit) {
         logger()->info("[Manager::poll_events] Recording finished successfully at {}", path_str);
         emit raw_record_stopped_success();
+      }
+    } else if (type == "recording_failed") {
+      const std::string message =
+          event->data.value("message", std::string{"Recording failed for an unknown reason"});
+      const std::string path_str = event->data.value("path", std::string{});
+      bool              should_emit{false};
+
+      {
+        std::lock_guard lock(mtx_);
+        if (raw_recording_active_) {
+          raw_recording_active_ = false;
+          should_emit           = true;
+        }
+      }
+
+      logger()->error("[Manager::poll_events] Recording failed at '{}': {}", path_str, message);
+
+      if (should_emit) {
+        emit raw_record_stopped_failure(QString::fromStdString(message));
       }
     }
   }
