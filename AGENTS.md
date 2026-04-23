@@ -46,6 +46,7 @@ Agents should generally:
 * ensure the project still builds when the task requires code changes
 * update relevant documentation or comments when behavior changes
 * match existing repository conventions
+* use Conventional Commits for git commit messages (for example: `fix: handle invalid recording paths`)
 
 ## What agents should avoid
 
