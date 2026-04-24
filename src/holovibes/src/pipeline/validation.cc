@@ -234,9 +234,18 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 {SettingsField::TimeMethod});
     }
 
-    if (settings.spacial_method != SpacialMethod::FRESNEL_DIFFRACTION) {
+    const bool supported_spacial_method =
+        settings.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION ||
+        settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM;
+    if (!supported_spacial_method) {
       add_issue(result, ValidationSeverity::Error, "spacial_method_unsupported",
-                "Only Fresnel Diffraction is currently supported for processed view mode.",
+                "Fresnel Diffraction or Angular Spectrum must be selected for processed view mode.",
+                {SettingsField::SpacialMethod});
+    }
+
+    if (settings.autofocus_enabled && settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
+      add_issue(result, ValidationSeverity::Error, "spacial_method_autofocus_unsupported",
+                "Angular Spectrum is not supported when Auto Focus is enabled.",
                 {SettingsField::SpacialMethod});
     }
 

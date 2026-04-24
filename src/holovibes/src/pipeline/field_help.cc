@@ -52,7 +52,8 @@ constexpr auto kFilter2DOuterConstraints     = std::to_array<const char *>({
     "Must be greater than or equal to the inner radius when Filter 2D is enabled.",
 });
 constexpr auto kSpacialMethodConstraints     = std::to_array<const char *>({
-    "Processed mode currently supports Fresnel Diffraction only.",
+    "Processed mode supports Fresnel Diffraction and Angular Spectrum.",
+    "Angular Spectrum is disabled when Auto Focus is enabled.",
 });
 constexpr auto kTimeMethodConstraints        = std::to_array<const char *>({
     "Processed mode requires a time transform.",

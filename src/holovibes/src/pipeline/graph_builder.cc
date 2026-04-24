@@ -66,10 +66,6 @@ holoflow::core::GraphSpec GraphBuilder::build() {
 
   TDesc FH_z = build_spatial_propagation(FH);
 
-  // if (s_.filter_2d) {
-  //   FH_z = build_spatial_filter(FH_z);
-  // }
-
   build_xy_view(FH_z);
 
   if (s_.view_3d_cuts) {
@@ -360,7 +356,17 @@ GraphBuilder::TDesc GraphBuilder::build_spatial_propagation(const TDesc &FH) {
   }
 
   else if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
-    throw std::logic_error{"Angular Spectrum is currently not supported in GraphBuilder"};
+    if (s_.autofocus_enabled) {
+      throw std::logic_error{"Angular Spectrum is not supported with Shack-Hartmann autofocus"};
+    }
+
+    return angular_spectrum(FH, {
+                                    s_.spacial_lambda,
+                                    s_.spacial_pixel_size,
+                                    s_.spacial_pixel_size,
+                                    s_.spacial_z,
+                                    std::nullopt,
+                                });
   }
 
   throw std::logic_error{"Spacial method is currently not supported in GraphBuilder"};

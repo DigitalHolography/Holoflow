@@ -15,6 +15,7 @@
 set(TARGET holotask_test)
 
 set(SOURCES
+    angular_spectrum_test.cu
     filter2d_test.cu
     ../holonp/support/tensor_test_buffer.cc
     ../holonp/support/sync_task_runner.cc

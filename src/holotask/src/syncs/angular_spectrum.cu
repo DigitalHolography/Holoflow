@@ -99,6 +99,21 @@ void check(bool condition, const std::string &msg) {
   }
 }
 
+bool is_c_contiguous(const holoflow::core::TDesc &desc) {
+  if (desc.shape.size() != desc.strides.size()) {
+    return false;
+  }
+
+  size_t expected = holoflow::core::size_of(desc.dtype);
+  for (size_t i = desc.shape.size(); i-- > 0;) {
+    if (desc.strides[i] != expected) {
+      return false;
+    }
+    expected *= desc.shape[i];
+  }
+  return true;
+}
+
 // -------------------------------------------------------------------------------------------------
 // NVRTC / JIT-callback compilation
 // -------------------------------------------------------------------------------------------------
@@ -150,10 +165,29 @@ std::vector<char> compile_source_to_lto(const std::string &source, const std::st
   }
 }
 
-std::vector<char> apply_lens_lto(int width, int height, int batch) {
-  // Inject compile-time constants for the NVRTC compiler
-  std::string src = "#define WIDTH " + std::to_string(width) + "\n" + "#define HEIGHT " +
-                    std::to_string(height) + "\n" + "#define BATCH " + std::to_string(batch) + "\n";
+std::vector<char> load_input_lto(bool is_real) {
+  std::string src =
+      "#define ANGULAR_SPECTRUM_INPUT_IS_REAL " + std::to_string(is_real ? 1 : 0) + "\n";
+
+  src += R"(
+#include <cuComplex.h>
+
+__device__ cuFloatComplex load_angular_spectrum_input_callback(
+    void *data, size_t offset, void *callerInfo, void *sharedPtr) {
+#if ANGULAR_SPECTRUM_INPUT_IS_REAL
+  return make_cuComplex(((float *)data)[offset], 0.0f);
+#else
+  return ((cuFloatComplex *)data)[offset];
+#endif
+}
+)";
+
+  return compile_source_to_lto(src, "load_angular_spectrum_input_callback.cu");
+}
+
+std::vector<char> apply_lens_lto(int width, int height) {
+  std::string src = "#define WIDTH " + std::to_string(width) + "ull\n" + "#define HEIGHT " +
+                    std::to_string(height) + "ull\n" + "#define LENS_SIZE (WIDTH * HEIGHT)\n";
 
   // Common header — struct definition shared with the host side
   src += R"(
@@ -166,7 +200,7 @@ struct ApplyLensCallerInfo {
 __device__ cuFloatComplex apply_lens_callback(
     void *data, size_t offset, void *callerInfo, void *sharedPtr) {
   auto  *info     = (ApplyLensCallerInfo *)callerInfo;
-  size_t lens_idx = offset % (WIDTH * HEIGHT);
+  size_t lens_idx = offset % LENS_SIZE;
   auto   val      = ((cuFloatComplex *)data)[offset];
 
   return cuCmulf(val, info->lens[lens_idx]);
@@ -321,14 +355,23 @@ public:
   // -- Device resources ---------------------------------------------------------------------------
   DevPtr<cuFloatComplex> d_lens;
   DevPtr<void>           d_caller_info;
-  std::vector<char>      lto;
+  std::vector<char>      load_lto;
+  std::vector<char>      lens_lto;
 
   // -- ISyncTask interface ------------------------------------------------------------------------
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
     auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
-    CUFFT_CHECK(cufftXtExec(fwd_plan.get(), idata, idata, CUFFT_FORWARD));
-    CUFFT_CHECK(cufftXtExec(inv_plan.get(), idata, odata, CUFFT_INVERSE));
+
+    if (idesc.dtype == holoflow::core::DType::F32) {
+      auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data());
+      CUFFT_CHECK(cufftXtExec(fwd_plan.get(), idata, odata, CUFFT_FORWARD));
+      CUFFT_CHECK(cufftXtExec(inv_plan.get(), odata, odata, CUFFT_INVERSE));
+    } else {
+      auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
+      CUFFT_CHECK(cufftXtExec(fwd_plan.get(), idata, idata, CUFFT_FORWARD));
+      CUFFT_CHECK(cufftXtExec(inv_plan.get(), idata, odata, CUFFT_INVERSE));
+    }
+
     return holoflow::core::OpResult::Ok;
   }
 
@@ -353,19 +396,29 @@ AngularSpectrumFactory::infer(std::span<const holoflow::core::TDesc> input_descs
   // clang-format off
   check(input_descs.size() == 1, "expected exactly one input");
   const auto &idesc = input_descs[0];
-  check(idesc.rank() == 3, "input must be a 3D tensor");
-  check(idesc.dtype == holoflow::core::DType::CF32, "input must be complex float32");
+  check(idesc.rank() >= 2, "input must be a tensor of rank 2 or higher");
+  check(idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::F32, "input must be complex float32 or real float32");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
+  check(is_c_contiguous(idesc), "input must be C-contiguous");
   check(settings.lambda > 0.0f, "wavelength must be positive");
   check(settings.dx > 0.0f, "dx must be positive");
   check(settings.dy > 0.0f, "dy must be positive");
   check(settings.dx == settings.dy, "dx must equal dy");
   // clang-format on
 
+  holoflow::core::TDesc odesc =
+      idesc.dtype == holoflow::core::DType::CF32
+          ? idesc
+          : holoflow::core::TDesc(idesc.shape, holoflow::core::DType::CF32, idesc.mem_loc);
+  std::vector<holoflow::core::InPlace> in_place;
+  if (idesc.dtype == holoflow::core::DType::CF32) {
+    in_place.push_back({0, 0});
+  }
+
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
-      .output_descs  = {idesc},
-      .in_place      = {{0, 0}},
+      .output_descs  = {odesc},
+      .in_place      = std::move(in_place),
       .owned_inputs  = {false},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,
@@ -376,17 +429,24 @@ std::unique_ptr<holoflow::core::ISyncTask>
 AngularSpectrumFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                const nlohmann::json                  &jsettings,
                                const holoflow::core::SyncCreateCtx   &ctx) const {
-  auto        infer    = this->infer(input_descs, jsettings);
-  auto        settings = jsettings.get<AngularSpectrumSettings>();
-  const auto &idesc    = input_descs[0];
+  auto        infer       = this->infer(input_descs, jsettings);
+  auto        settings    = jsettings.get<AngularSpectrumSettings>();
+  const auto &idesc       = input_descs[0];
+  const auto  tensor_rank = idesc.rank();
+  const bool  is_real     = idesc.dtype == holoflow::core::DType::F32;
+  (void)infer;
 
-  const int B = static_cast<int>(idesc.shape[0]);
-  const int H = static_cast<int>(idesc.shape[1]);
-  const int W = static_cast<int>(idesc.shape[2]);
+  int B = 1;
+  for (size_t i = 0; i + 2 < tensor_rank; ++i) {
+    B *= static_cast<int>(idesc.shape[i]);
+  }
+  const int H = static_cast<int>(idesc.shape[tensor_rank - 2]);
+  const int W = static_cast<int>(idesc.shape[tensor_rank - 1]);
 
   // -- JIT callback -------------------------------------------------------------------------------
-  auto lto    = apply_lens_lto(W, H, B);
-  auto d_lens = make_spectral_lens(W, H, settings);
+  auto load_lto = is_real ? load_input_lto(true) : std::vector<char>{};
+  auto lens_lto = apply_lens_lto(W, H);
+  auto d_lens   = make_spectral_lens(W, H, settings);
 
   ApplyLensCallerInfo info{
       .lens = d_lens.get(),
@@ -416,8 +476,13 @@ AngularSpectrumFactory::create(std::span<const holoflow::core::TDesc> input_desc
   CUFFT_CHECK(cufftSetStream(inv_plan.get(), ctx.stream));
 
   auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
-  CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_lens_callback", lto.data(), lto.size(),
-                                    CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+  if (is_real) {
+    CUFFT_CHECK(cufftXtSetJITCallback(fwd_plan.get(), "load_angular_spectrum_input_callback",
+                                      load_lto.data(), load_lto.size(), CUFFT_CB_LD_COMPLEX,
+                                      nullptr));
+  }
+  CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_lens_callback", lens_lto.data(),
+                                    lens_lto.size(), CUFFT_CB_LD_COMPLEX, &d_info_ptr));
 
   CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, inputtype,
                                   onembed, ostride, odist, outputtype, batch, &work_size,
@@ -435,7 +500,8 @@ AngularSpectrumFactory::create(std::span<const holoflow::core::TDesc> input_desc
   task->inv_plan      = std::move(inv_plan);
   task->d_lens        = std::move(d_lens);
   task->d_caller_info = std::move(d_info);
-  task->lto           = std::move(lto);
+  task->load_lto      = std::move(load_lto);
+  task->lens_lto      = std::move(lens_lto);
 
   return task;
 }

@@ -95,6 +95,7 @@ private:
   void        setup_ui();
   void        connect_signals();
   QStringList load_available_kernels();
+  void        set_angular_spectrum_enabled(bool enabled);
 
   QComboBox       *image_combo_;
   QSpinBox        *batch_size_spin_;

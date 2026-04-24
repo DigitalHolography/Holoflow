@@ -20,6 +20,7 @@
 #include <QGridLayout>
 #include <QLabel>
 #include <QSpacerItem>
+#include <QStandardItemModel>
 #include <QStandardPaths>
 
 namespace holovibes::ui {
@@ -245,8 +246,27 @@ void ImageRenderingWidget::connect_signals() {
           &ImageRenderingWidget::settings_changed);
   connect(convolution_divide_check_, &QCheckBox::toggled, this,
           &ImageRenderingWidget::settings_changed);
-  connect(autofocus_widget_, &AutoFocusWidget::settings_changed, this,
-          &ImageRenderingWidget::settings_changed);
+  connect(autofocus_widget_, &AutoFocusWidget::settings_changed, this, [this]() {
+    set_angular_spectrum_enabled(!autofocus_widget_->is_enabled());
+    emit settings_changed();
+  });
+}
+
+void ImageRenderingWidget::set_angular_spectrum_enabled(bool enabled) {
+  constexpr auto kAngularSpectrum = "Angular Spectrum";
+  constexpr auto kFresnel         = "Fresnel Diffraction";
+
+  const int index = space_transform_combo_->findText(kAngularSpectrum);
+  auto     *model = qobject_cast<QStandardItemModel *>(space_transform_combo_->model());
+  if (index >= 0 && model != nullptr) {
+    if (auto *item = model->item(index); item != nullptr) {
+      item->setEnabled(enabled);
+    }
+  }
+
+  if (!enabled && space_transform_combo_->currentText() == kAngularSpectrum) {
+    space_transform_combo_->setCurrentText(kFresnel);
+  }
 }
 
 QStringList ImageRenderingWidget::load_available_kernels() {
