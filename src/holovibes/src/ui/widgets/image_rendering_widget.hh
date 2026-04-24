@@ -63,6 +63,9 @@ public:
   void clear_validation_styles();
   void mark_batch_size_invalid();
   void mark_time_stride_invalid();
+  void mark_filter_2d_invalid();
+  void mark_filter_inner_invalid();
+  void mark_filter_outer_invalid();
   void mark_time_window_invalid();
   void mark_space_transform_invalid();
   void mark_time_transform_invalid();

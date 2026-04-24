@@ -129,9 +129,8 @@ std::optional<std::string> validate_recording_path(const std::filesystem::path &
 
   if (std::remove(path_str.c_str()) != 0) {
     std::error_code remove_ec(errno, std::generic_category());
-    return std::format(
-        "Recording file probe succeeded, but cleanup failed for \"{}\": {}.",
-        record_path.string(), remove_ec.message());
+    return std::format("Recording file probe succeeded, but cleanup failed for \"{}\": {}.",
+                       record_path.string(), remove_ec.message());
   }
 
   return std::nullopt;
@@ -198,6 +197,27 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     add_issue(result, ValidationSeverity::Error, "time_stride_not_multiple",
               "Time stride must be a multiple of the time window.",
               {SettingsField::TimeWindow, SettingsField::TimeStride});
+  }
+
+  if (settings.filter_2d) {
+    if (settings.filter_r_inner < 0) {
+      add_issue(result, ValidationSeverity::Error, "filter_2d_inner_negative",
+                "Filter 2D inner radius must be non-negative.",
+                {SettingsField::Filter2DInnerRadius});
+    }
+
+    if (settings.filter_r_outer < 0) {
+      add_issue(result, ValidationSeverity::Error, "filter_2d_outer_negative",
+                "Filter 2D outer radius must be non-negative.",
+                {SettingsField::Filter2DOuterRadius});
+    }
+
+    if (settings.filter_r_inner >= 0 && settings.filter_r_outer >= 0 &&
+        settings.filter_r_outer < settings.filter_r_inner) {
+      add_issue(result, ValidationSeverity::Error, "filter_2d_radius_order",
+                "Filter 2D outer radius must be greater than or equal to the inner radius.",
+                {SettingsField::Filter2DInnerRadius, SettingsField::Filter2DOuterRadius});
+    }
   }
 
   if (settings.import_source == ImportSource::HOLOFILE && settings.load_end > settings.load_begin &&

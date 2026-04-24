@@ -98,6 +98,15 @@ void ImageRenderingWidget::mark_batch_size_invalid() {
 void ImageRenderingWidget::mark_time_stride_invalid() {
   time_stride_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
 }
+void ImageRenderingWidget::mark_filter_2d_invalid() {
+  filter_2d_check_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+}
+void ImageRenderingWidget::mark_filter_inner_invalid() {
+  filter_2d_inner_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+}
+void ImageRenderingWidget::mark_filter_outer_invalid() {
+  filter_2d_outer_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+}
 void ImageRenderingWidget::mark_time_window_invalid() {
   time_window_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
 }
@@ -262,6 +271,9 @@ QStringList ImageRenderingWidget::load_available_kernels() {
 void ImageRenderingWidget::clear_validation_styles() {
   batch_size_spin_->setStyleSheet("");
   time_stride_spin_->setStyleSheet("");
+  filter_2d_check_->setStyleSheet("");
+  filter_2d_inner_spin_->setStyleSheet("");
+  filter_2d_outer_spin_->setStyleSheet("");
   time_window_spin_->setStyleSheet("");
   space_transform_combo_->setStyleSheet("");
   time_transform_combo_->setStyleSheet("");

@@ -62,6 +62,10 @@ holoflow::core::GraphSpec GraphBuilder::build() {
 
   TDesc FH_z = build_spatial_propagation(FH);
 
+  if (s_.filter_2d) {
+    FH_z = build_spatial_filter(FH_z);
+  }
+
   build_xy_view(FH_z);
 
   if (s_.view_3d_cuts) {
@@ -356,6 +360,16 @@ GraphBuilder::TDesc GraphBuilder::build_spatial_propagation(const TDesc &FH) {
   }
 
   throw std::logic_error{"Spacial method is currently not supported in GraphBuilder"};
+}
+
+GraphBuilder::TDesc GraphBuilder::build_spatial_filter(const TDesc &FH_z) {
+  HOLOVIBES_CHECK(s_.filter_2d);
+  return filter_2d(FH_z, {
+                             s_.filter_r_inner,
+                             s_.filter_r_outer,
+                             s_.filter_smooth_inner,
+                             s_.filter_smooth_outer,
+                         });
 }
 
 GraphBuilder::TDesc GraphBuilder::build_freq_weights() {

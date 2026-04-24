@@ -303,7 +303,7 @@ Filter2DFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
   check(input_descs.size() == 1, "expected exactly one input");
   const auto &idesc = input_descs[0];
-  check(idesc.rank() == 3, "input must be a 3D tensor");
+  check(idesc.rank() >= 2, "input must be a tensor of rank 2 or higher");
   check(idesc.dtype == holoflow::core::DType::CF32, "input must be complex float32");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
   check(is_c_contiguous(idesc), "input must be C-contiguous");
@@ -327,12 +327,16 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                         const nlohmann::json                  &jsettings,
                         const holoflow::core::SyncCreateCtx   &ctx) const {
   (void)this->infer(input_descs, jsettings);
-  const auto  settings = jsettings.get<Filter2DSettings>();
-  const auto &idesc    = input_descs[0];
+  const auto  settings    = jsettings.get<Filter2DSettings>();
+  const auto &idesc       = input_descs[0];
+  const auto  tensor_rank = idesc.rank();
 
-  const int batch_size = static_cast<int>(idesc.shape[0]);
-  const int height     = static_cast<int>(idesc.shape[1]);
-  const int width      = static_cast<int>(idesc.shape[2]);
+  int batch_size = 1;
+  for (size_t i = 0; i + 2 < tensor_rank; ++i) {
+    batch_size *= static_cast<int>(idesc.shape[i]);
+  }
+  const int height = static_cast<int>(idesc.shape[tensor_rank - 2]);
+  const int width  = static_cast<int>(idesc.shape[tensor_rank - 1]);
 
   auto d_filter = make_filter(width, height, settings);
 

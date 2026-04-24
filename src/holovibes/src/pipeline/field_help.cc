@@ -39,6 +39,18 @@ constexpr auto kLoadBatchConstraints         = std::to_array<const char *>({
     "Must be strictly positive.",
     "Used as the recording batch size for raw recording.",
 });
+constexpr auto kFilter2DConstraints          = std::to_array<const char *>({
+    "Applies to processed images after spatial propagation.",
+    "Uses the inner and outer radii as pixel distances in the spatial-frequency plane.",
+});
+constexpr auto kFilter2DInnerConstraints     = std::to_array<const char *>({
+    "Must be non-negative.",
+    "Must not exceed the outer radius when Filter 2D is enabled.",
+});
+constexpr auto kFilter2DOuterConstraints     = std::to_array<const char *>({
+    "Must be non-negative.",
+    "Must be greater than or equal to the inner radius when Filter 2D is enabled.",
+});
 constexpr auto kSpacialMethodConstraints     = std::to_array<const char *>({
     "Processed mode currently supports Fresnel Diffraction only.",
 });
@@ -100,6 +112,15 @@ const FieldHelp kFieldHelp[] = {
      kLoadEndConstraints},
     {SettingsField::LoadBatch, "Batch Size",
      "Number of frames acquired or loaded together by the source stage.", kLoadBatchConstraints},
+    {SettingsField::Filter2D, "Filter 2D",
+     "Enables radial frequency-domain filtering of the propagated complex field.",
+     kFilter2DConstraints},
+    {SettingsField::Filter2DInnerRadius, "Filter 2D Inner Radius",
+     "Inner cutoff radius in pixels. Frequencies inside this radius are attenuated.",
+     kFilter2DInnerConstraints},
+    {SettingsField::Filter2DOuterRadius, "Filter 2D Outer Radius",
+     "Outer cutoff radius in pixels. Frequencies outside this radius are attenuated.",
+     kFilter2DOuterConstraints},
     {SettingsField::SpacialMethod, "Space Transform",
      "Spatial propagation method applied after temporal analysis.", kSpacialMethodConstraints},
     {SettingsField::TimeMethod, "Time Transform",

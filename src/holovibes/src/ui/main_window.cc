@@ -812,6 +812,15 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::LoadBatch:
         render_widget_->mark_batch_size_invalid();
         break;
+      case SettingsField::Filter2D:
+        render_widget_->mark_filter_2d_invalid();
+        break;
+      case SettingsField::Filter2DInnerRadius:
+        render_widget_->mark_filter_inner_invalid();
+        break;
+      case SettingsField::Filter2DOuterRadius:
+        render_widget_->mark_filter_outer_invalid();
+        break;
       case SettingsField::SpacialMethod:
         render_widget_->mark_space_transform_invalid();
         break;
@@ -868,6 +877,9 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
       FieldBinding{SettingsField::LoadBegin, import_widget_->start_index_spin()},
       FieldBinding{SettingsField::LoadEnd, import_widget_->end_index_spin()},
       FieldBinding{SettingsField::LoadBatch, render_widget_->batch_size_spin()},
+      FieldBinding{SettingsField::Filter2D, render_widget_->filter_2d_check()},
+      FieldBinding{SettingsField::Filter2DInnerRadius, render_widget_->filter_2d_inner_spin()},
+      FieldBinding{SettingsField::Filter2DOuterRadius, render_widget_->filter_2d_outer_spin()},
       FieldBinding{SettingsField::SpacialMethod, render_widget_->space_transform_combo()},
       FieldBinding{SettingsField::TimeMethod, render_widget_->time_transform_combo()},
       FieldBinding{SettingsField::TimeWindow, render_widget_->time_window_spin()},
@@ -1030,13 +1042,13 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     };
 
     if (!import_widget_->is_camera_mode()) {
-      s.import_source = ImportSource::HOLOFILE;
-      s.load_path     = import_widget_->get_file_path().toStdString();
-      s.load_begin    = static_cast<size_t>(import_widget_->get_start_index());
-      s.load_end      = static_cast<size_t>(import_widget_->get_end_index());
+      s.import_source  = ImportSource::HOLOFILE;
+      s.load_path      = import_widget_->get_file_path().toStdString();
+      s.load_begin     = static_cast<size_t>(import_widget_->get_start_index());
+      s.load_end       = static_cast<size_t>(import_widget_->get_end_index());
       s.load_fps_limit = import_widget_->get_fps_limit();
-      QString method  = import_widget_->get_load_method();
-      s.load_method   = method_from_str.at(method.toStdString());
+      QString method   = import_widget_->get_load_method();
+      s.load_method    = method_from_str.at(method.toStdString());
       if (render_widget_->get_time_transform() == "Principal Component Analysis") {
         s.load_batch = 32;
       } else {
