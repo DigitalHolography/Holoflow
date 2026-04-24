@@ -11,3 +11,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+set(TARGET holotask_test)
+
+set(SOURCES
+    filter2d_test.cu
+    ../holonp/support/tensor_test_buffer.cc
+    ../holonp/support/sync_task_runner.cc
+)
+
+add_executable(${TARGET} ${SOURCES})
+
+target_include_directories(${TARGET}
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../holonp/support
+)
+
+target_link_libraries(${TARGET}
+    PRIVATE
+    holotask
+    GTest::gtest_main
+)
+
+include(GoogleTest)
+gtest_discover_tests(${TARGET})

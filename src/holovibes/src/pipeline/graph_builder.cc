@@ -60,11 +60,15 @@ holoflow::core::GraphSpec GraphBuilder::build() {
     FH = build_shack_hartmann(FH);
   }
 
+  if (s_.filter_2d) {
+    FH = build_spatial_filter(FH);
+  }
+
   TDesc FH_z = build_spatial_propagation(FH);
 
-  if (s_.filter_2d) {
-    FH_z = build_spatial_filter(FH_z);
-  }
+  // if (s_.filter_2d) {
+  //   FH_z = build_spatial_filter(FH_z);
+  // }
 
   build_xy_view(FH_z);
 

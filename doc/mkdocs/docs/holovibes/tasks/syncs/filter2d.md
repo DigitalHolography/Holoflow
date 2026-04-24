@@ -1,5 +1,5 @@
 # Filter 2D Sync Task
-The **Filter 2D** sync task constructs and applies a radial frequency-domain filter to complex (CF32) images on the GPU. The task builds a per-frame complex filter (CUFFT callback) from the provided radii and smoothing parameters, shifts corners (FFT quadrant swap), and uses an FFT-based pipeline (forward FFT → multiply by filter → inverse FFT) to filter each input frame.
+The **Filter 2D** sync task constructs and applies a radial frequency-domain filter to real (F32) or complex (CF32) images on the GPU. The task builds a per-frame complex filter (CUFFT callback) from the provided radii and smoothing parameters, shifts corners (FFT quadrant swap), and uses an FFT-based pipeline (forward FFT → multiply by filter → inverse FFT) to filter each input frame.
 
 Supported filter behaviors (depending on how `r_inner`, `r_outer`, `s_inner`, and `s_outer` are selected):
 
@@ -18,17 +18,17 @@ This task consumes a single input tensor.
 
 The input requirements (as enforced by `Filter2DFactory::infer`) are:
 
-- The tensor **must** be 3D with shape `(B, H, W)` (batch, height, width).
-- The dtype **must** be `complex32` (CF32).
+- The tensor **must** have rank 2 or higher. The filter is applied over the last two dimensions.
+- The dtype **must** be `float32` (F32) or `complex32` (CF32).
 - The tensor **must** reside in device (GPU) memory.
 
 ## Outputs
-This task produces one output tensor with the same shape and dtype as the input (the filter is applied in-place relative to shape/dtype but the implementation may use intermediate buffers).
+This task produces one output tensor with the same shape as the input. Complex input keeps dtype `complex32` and supports in-place execution; real input produces `complex32` output.
 
 The memory location of the output tensor is device memory.
 
 ## Inplace
-This task supports in-place operation for the tensor shapes used (the infer result returns an in-place pair), however the implementation constructs FFT plans and may use device buffers; the net effect is that the output has the same shape and dtype as the input.
+This task supports in-place operation for complex input. Real input is not in-place because the output is complex.
 
 ## Ownership
 This task does not own any inputs or outputs.

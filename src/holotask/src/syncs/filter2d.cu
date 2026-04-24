@@ -133,9 +133,28 @@ std::vector<char> compile_source_to_lto(const std::string &source, const std::st
   }
 }
 
+std::vector<char> load_input_lto(bool is_real) {
+  std::string src = "#define FILTER2D_INPUT_IS_REAL " + std::to_string(is_real ? 1 : 0) + "\n";
+
+  src += R"(
+#include <cuComplex.h>
+
+__device__ cuFloatComplex load_filter2d_input_callback(
+    void *data, size_t offset, void *callerInfo, void *sharedPtr) {
+#if FILTER2D_INPUT_IS_REAL
+  return make_cuComplex(((float *)data)[offset], 0.0f);
+#else
+  return ((cuFloatComplex *)data)[offset];
+#endif
+}
+)";
+
+  return compile_source_to_lto(src, "load_filter2d_input_callback.cu");
+}
+
 std::vector<char> apply_filter_lto(int width, int height) {
-  std::string src = "#define WIDTH " + std::to_string(width) + "\n" + "#define HEIGHT " +
-                    std::to_string(height) + "\n";
+  std::string src = "#define WIDTH " + std::to_string(width) + "ull\n" + "#define HEIGHT " +
+                    std::to_string(height) + "ull\n" + "#define FILTER_SIZE (WIDTH * HEIGHT)\n";
 
   src += R"(
 #include <cuComplex.h>
@@ -147,7 +166,7 @@ struct ApplyFilterCallerInfo {
 __device__ cuFloatComplex apply_filter_callback(
     void *data, size_t offset, void *callerInfo, void *sharedPtr) {
   auto  *info       = (ApplyFilterCallerInfo *)callerInfo;
-  size_t filter_idx = offset % (WIDTH * HEIGHT);
+  size_t filter_idx = offset % FILTER_SIZE;
   auto   val        = ((cuFloatComplex *)data)[offset];
 
   return cuCmulf(val, info->filter[filter_idx]);
@@ -259,16 +278,26 @@ class Filter2D : public holoflow::core::ISyncTask {
 public:
   Filter2D(Filter2DSettings settings, holoflow::core::TDesc idesc, curaii::CufftHandle &&fwd_plan,
            curaii::CufftHandle &&inv_plan, DevPtr<cuFloatComplex> &&d_filter,
-           DevPtr<void> &&d_caller_info, std::vector<char> &&lto)
+           DevPtr<void> &&d_caller_info, std::vector<char> &&load_lto,
+           std::vector<char> &&filter_lto)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), fwd_plan_(std::move(fwd_plan)),
         inv_plan_(std::move(inv_plan)), d_filter_(std::move(d_filter)),
-        d_caller_info_(std::move(d_caller_info)), lto_(std::move(lto)) {}
+        d_caller_info_(std::move(d_caller_info)), load_lto_(std::move(load_lto)),
+        filter_lto_(std::move(filter_lto)) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
     auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
-    CUFFT_CHECK(cufftXtExec(fwd_plan_.get(), idata, idata, CUFFT_FORWARD));
-    CUFFT_CHECK(cufftXtExec(inv_plan_.get(), idata, odata, CUFFT_INVERSE));
+
+    if (idesc_.dtype == holoflow::core::DType::F32) {
+      auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data());
+      CUFFT_CHECK(cufftXtExec(fwd_plan_.get(), idata, odata, CUFFT_FORWARD));
+      CUFFT_CHECK(cufftXtExec(inv_plan_.get(), odata, odata, CUFFT_INVERSE));
+    } else {
+      auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
+      CUFFT_CHECK(cufftXtExec(fwd_plan_.get(), idata, idata, CUFFT_FORWARD));
+      CUFFT_CHECK(cufftXtExec(inv_plan_.get(), idata, odata, CUFFT_INVERSE));
+    }
+
     return holoflow::core::OpResult::Ok;
   }
 
@@ -287,7 +316,8 @@ private:
   curaii::CufftHandle    inv_plan_;
   DevPtr<cuFloatComplex> d_filter_;
   DevPtr<void>           d_caller_info_;
-  std::vector<char>      lto_;
+  std::vector<char>      load_lto_;
+  std::vector<char>      filter_lto_;
 };
 
 } // namespace
@@ -304,7 +334,8 @@ Filter2DFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(input_descs.size() == 1, "expected exactly one input");
   const auto &idesc = input_descs[0];
   check(idesc.rank() >= 2, "input must be a tensor of rank 2 or higher");
-  check(idesc.dtype == holoflow::core::DType::CF32, "input must be complex float32");
+  check(idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::F32,
+        "input must be complex float32 or real float32");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
   check(is_c_contiguous(idesc), "input must be C-contiguous");
   check(settings.r_inner >= 0, "r_inner must be non-negative");
@@ -312,10 +343,19 @@ Filter2DFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(settings.s_inner >= 0, "s_inner must be non-negative");
   check(settings.s_outer >= 0, "s_outer must be non-negative");
 
+  holoflow::core::TDesc odesc =
+      idesc.dtype == holoflow::core::DType::CF32
+          ? idesc
+          : holoflow::core::TDesc(idesc.shape, holoflow::core::DType::CF32, idesc.mem_loc);
+  std::vector<holoflow::core::InPlace> in_place;
+  if (idesc.dtype == holoflow::core::DType::CF32) {
+    in_place.push_back({0, 0});
+  }
+
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
-      .output_descs  = {idesc},
-      .in_place      = {{0, 0}},
+      .output_descs  = {odesc},
+      .in_place      = std::move(in_place),
       .owned_inputs  = {false},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,
@@ -330,6 +370,7 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const auto  settings    = jsettings.get<Filter2DSettings>();
   const auto &idesc       = input_descs[0];
   const auto  tensor_rank = idesc.rank();
+  const bool  is_real     = idesc.dtype == holoflow::core::DType::F32;
 
   int batch_size = 1;
   for (size_t i = 0; i + 2 < tensor_rank; ++i) {
@@ -347,7 +388,8 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   CUDA_CHECK(
       cudaMemcpyAsync(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice, ctx.stream));
 
-  auto lto = apply_filter_lto(width, height);
+  auto load_lto   = is_real ? load_input_lto(true) : std::vector<char>{};
+  auto filter_lto = apply_filter_lto(width, height);
 
   constexpr int rank          = 2;
   long long int n[2]          = {height, width};
@@ -369,8 +411,13 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   CUFFT_CHECK(cufftSetStream(inv_plan.get(), ctx.stream));
 
   auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
-  CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_filter_callback", lto.data(), lto.size(),
-                                    CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+  if (is_real) {
+    CUFFT_CHECK(cufftXtSetJITCallback(fwd_plan.get(), "load_filter2d_input_callback",
+                                      load_lto.data(), load_lto.size(), CUFFT_CB_LD_COMPLEX,
+                                      nullptr));
+  }
+  CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_filter_callback", filter_lto.data(),
+                                    filter_lto.size(), CUFFT_CB_LD_COMPLEX, &d_info_ptr));
 
   CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, inputtype,
                                   onembed, ostride, odist, outputtype, batch, &work_size,
@@ -381,7 +428,8 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                   executiontype));
 
   return std::make_unique<Filter2D>(settings, idesc, std::move(fwd_plan), std::move(inv_plan),
-                                    std::move(d_filter), std::move(d_info), std::move(lto));
+                                    std::move(d_filter), std::move(d_info), std::move(load_lto),
+                                    std::move(filter_lto));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
