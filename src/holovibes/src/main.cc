@@ -24,6 +24,7 @@
 #include "logger.hh"
 #include "spdlog/common.h"
 #include "ui/main_window.hh"
+#include "ui/theme.hh"
 #include "ui/widgets/quiver_widget.hh"
 
 #include "holonp/arange.hh"
@@ -43,10 +44,12 @@ int main(int argc, char **argv) {
 
   spdlog::info("ArangeSettings as JSON: {}", j.dump(2));
 
+  QCoreApplication::setOrganizationName("Digital Holography Foundation");
   QCoreApplication::setApplicationName("Holovibes");
   QCoreApplication::setApplicationVersion(HOLOVIBES_VERSION_SEMVER2);
   holovibes::utils::setupAppData();
   QApplication app(argc, argv);
+  holovibes::ui::apply_dark_clinical_theme(app);
 
   holovibes::ui::MainWindow main_window;
   app.setWindowIcon(QIcon(":/resources/holovibes/assets/holovibes_logo.png"));

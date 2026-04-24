@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "ui/widgets/view_widget.hh"
+#include "ui/widgets/validation_style.hh"
 
 #include <QGridLayout>
 #include <QLabel>
@@ -101,24 +102,14 @@ void ViewWidget::set_pct_enabled(bool enabled) { pct_check_->setChecked(enabled)
 void ViewWidget::set_pct_radius(double value) { pct_radius_->setValue(value); }
 
 // Validation
-void ViewWidget::mark_z_invalid() {
-  z_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
-void ViewWidget::mark_z_width_invalid() {
-  z_width_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
-void ViewWidget::mark_cuts_3d_invalid() {
-  cuts_3d_check_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
-void ViewWidget::mark_raw_spectrum_invalid() {
-  raw_spectrum_view_check_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
+void ViewWidget::mark_z_invalid() { mark_validation_error(z_spin_); }
+void ViewWidget::mark_z_width_invalid() { mark_validation_error(z_width_spin_); }
+void ViewWidget::mark_cuts_3d_invalid() { mark_validation_error(cuts_3d_check_); }
+void ViewWidget::mark_raw_spectrum_invalid() { mark_validation_error(raw_spectrum_view_check_); }
 void ViewWidget::mark_processed_spectrum_invalid() {
-  process_spectrum_view_check_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+  mark_validation_error(process_spectrum_view_check_);
 }
-void ViewWidget::mark_registration_invalid() {
-  registration_check_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
+void ViewWidget::mark_registration_invalid() { mark_validation_error(registration_check_); }
 
 // Access to widgets for connection setup
 QComboBox      *ViewWidget::image_type_combo() { return image_type_combo_; }
@@ -293,12 +284,12 @@ void ViewWidget::connect_signals() {
 }
 
 void ViewWidget::clear_validation_styles() {
-  z_spin_->setStyleSheet("");
-  z_width_spin_->setStyleSheet("");
-  cuts_3d_check_->setStyleSheet("");
-  raw_spectrum_view_check_->setStyleSheet("");
-  process_spectrum_view_check_->setStyleSheet("");
-  registration_check_->setStyleSheet("");
+  clear_validation_error(z_spin_);
+  clear_validation_error(z_width_spin_);
+  clear_validation_error(cuts_3d_check_);
+  clear_validation_error(raw_spectrum_view_check_);
+  clear_validation_error(process_spectrum_view_check_);
+  clear_validation_error(registration_check_);
 }
 
 } // namespace holovibes::ui

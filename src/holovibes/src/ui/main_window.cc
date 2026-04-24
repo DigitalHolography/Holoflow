@@ -17,12 +17,14 @@
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
+#include <QDateTime>
 #include <QDir>
 #include <QDirIterator>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
 #include <QFileDialog>
 #include <QFileInfoList>
+#include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -32,14 +34,20 @@
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QScrollArea>
+#include <QSettings>
+#include <QSignalBlocker>
 #include <QSlider>
 #include <QSpacerItem>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QStackedLayout>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QThread>
 #include <QVBoxLayout>
+#include <algorithm>
 #include <array>
 #include <filesystem>
 #include <fstream>
@@ -121,14 +129,29 @@ QString build_field_tooltip(const holovibes::pipeline::FieldHelp                
   return lines.join('\n');
 }
 
+void restore_combo_text(QSettings &settings, const char *key, QComboBox *combo_box) {
+  const QString text = settings.value(key).toString();
+  if (text.isEmpty()) {
+    return;
+  }
+
+  const int index = combo_box->findText(text);
+  if (index >= 0) {
+    combo_box->setCurrentIndex(index);
+  }
+}
+
 } // namespace
 
 namespace holovibes::ui {
 
-MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent), session_id_(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")) {
   setup_menu_bar();
   setup_main_layout();
   initialize_display_widgets();
+  restore_persistent_state();
+  configure_unsupported_features();
   initialize_pipeline_manager();
 
   connect_manager_signals();
@@ -138,6 +161,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
   setup_update_connections();
 
   validate_inputs();
+  refresh_command_bar();
   configure_window();
 }
 
@@ -153,87 +177,717 @@ void MainWindow::setup_main_layout() {
   auto *central_widget = new QWidget(this);
   setCentralWidget(central_widget);
 
-  auto *main_layout = new QHBoxLayout(central_widget);
-  main_layout->setSpacing(16);
+  auto *main_layout = new QVBoxLayout(central_widget);
+  main_layout->setContentsMargins(12, 12, 12, 12);
+  main_layout->setSpacing(8);
 
-  auto *left_panel_layout = new QHBoxLayout();
-  left_panel_layout->setSpacing(12);
+  auto *session_bar = new QFrame(central_widget);
+  session_bar->setObjectName("sessionBar");
+  auto *session_layout = new QHBoxLayout(session_bar);
+  session_layout->setContentsMargins(12, 8, 12, 8);
+  session_layout->setSpacing(8);
 
-  // Create widget instances
+  auto *patient_label = new QLabel("Patient", session_bar);
+  patient_line_edit_  = new QLineEdit(session_bar);
+  patient_line_edit_->setObjectName("patientField");
+  patient_line_edit_->setText("PATIENT");
+  patient_line_edit_->setPlaceholderText("PATIENT");
+  patient_line_edit_->setMinimumWidth(180);
+  patient_line_edit_->setMaximumWidth(260);
+
+  auto *eye_label = new QLabel("Eye", session_bar);
+  eye_side_combo_ = create_combo_box(session_bar, QStringList{"NA", "OD", "OS", "OU"});
+  eye_side_combo_->setObjectName("eyeSideField");
+  eye_side_combo_->setToolTip(
+      "Eye side used in recording file names. OD: right eye, OS: left eye, OU: both eyes, NA: not "
+      "specified.");
+
+  auto *session_label  = new QLabel("Session", session_bar);
+  session_value_label_ = new QLabel(session_id_, session_bar);
+  session_value_label_->setObjectName("sessionValue");
+
+  auto *next_acquisition_label = new QLabel("Next Acquisition", session_bar);
+  acquisition_value_label_     = new QLabel(acquisition_label(next_acquisition_id_), session_bar);
+  acquisition_value_label_->setObjectName("sessionValue");
+
+  session_layout->addWidget(patient_label);
+  session_layout->addWidget(patient_line_edit_);
+  session_layout->addSpacing(8);
+  session_layout->addWidget(eye_label);
+  session_layout->addWidget(eye_side_combo_);
+  session_layout->addSpacing(16);
+  session_layout->addWidget(session_label);
+  session_layout->addWidget(session_value_label_);
+  session_layout->addSpacing(16);
+  session_layout->addWidget(next_acquisition_label);
+  session_layout->addWidget(acquisition_value_label_);
+  session_layout->addStretch(1);
+  main_layout->addWidget(session_bar);
+
   render_widget_ = new ImageRenderingWidget(this);
   view_widget_   = new ViewWidget(this);
   import_widget_ = new ImportWidget(this);
   export_widget_ = new ExportWidget(this);
 
-  auto *import_export_layout = new QVBoxLayout();
-  import_export_layout->setSpacing(12);
-  import_export_layout->addWidget(import_widget_);
-  import_export_layout->addWidget(export_widget_);
+  auto *command_bar = new QFrame(central_widget);
+  command_bar->setObjectName("commandBar");
+  auto *command_layout = new QHBoxLayout(command_bar);
+  command_layout->setContentsMargins(12, 8, 12, 8);
+  command_layout->setSpacing(8);
 
-  left_panel_layout->addWidget(render_widget_);
-  left_panel_layout->addWidget(view_widget_);
-  left_panel_layout->addLayout(import_export_layout);
+  start_command_button_       = new QPushButton("Start", command_bar);
+  stop_command_button_        = new QPushButton("Stop", command_bar);
+  record_command_button_      = new QPushButton("Record", command_bar);
+  stop_record_command_button_ = new QPushButton("Stop Rec", command_bar);
+  start_command_button_->setObjectName("primaryCommand");
+  record_command_button_->setObjectName("recordCommand");
+
+  command_layout->addWidget(start_command_button_);
+  command_layout->addWidget(stop_command_button_);
+  command_layout->addSpacing(8);
+  command_layout->addWidget(record_command_button_);
+  command_layout->addWidget(stop_record_command_button_);
+  command_layout->addSpacing(16);
+
+  auto add_status_field = [&](const QString &label, QLabel *&value_label) {
+    auto *name_label = new QLabel(label, command_bar);
+    name_label->setObjectName("commandLabel");
+    value_label = new QLabel(command_bar);
+    value_label->setObjectName("commandValue");
+    command_layout->addWidget(name_label);
+    command_layout->addWidget(value_label);
+    command_layout->addSpacing(12);
+  };
+
+  add_status_field("Status", pipeline_status_label_);
+  add_status_field("Source", source_status_label_);
+  add_status_field("View", view_status_label_);
+  add_status_field("FPS", fps_status_label_);
+  add_status_field("Recording", recording_status_label_);
+  command_layout->addStretch(1);
+  main_layout->addWidget(command_bar);
+
+  connect(start_command_button_, &QPushButton::clicked, this, &MainWindow::on_import_start_clicked);
+  connect(stop_command_button_, &QPushButton::clicked, this, &MainWindow::on_import_stop_clicked);
+  connect(record_command_button_, &QPushButton::clicked, this,
+          &MainWindow::on_export_record_clicked);
+  connect(stop_record_command_button_, &QPushButton::clicked, this,
+          &MainWindow::on_export_stop_clicked);
+
+  main_splitter_ = new QSplitter(Qt::Horizontal, central_widget);
+  main_splitter_->setChildrenCollapsible(false);
+  main_layout->addWidget(main_splitter_);
+
+  auto *controls_content = new QWidget(main_splitter_);
+  auto *controls_layout  = new QVBoxLayout(controls_content);
+  controls_layout->setContentsMargins(0, 0, 0, 0);
+  controls_layout->setSpacing(12);
+
+  controls_layout->addWidget(import_widget_);
+  controls_layout->addWidget(render_widget_);
+  controls_layout->addWidget(view_widget_);
+  controls_layout->addWidget(export_widget_);
+  controls_layout->addStretch(1);
+
+  auto *controls_scroll = new QScrollArea(main_splitter_);
+  controls_scroll->setWidgetResizable(true);
+  controls_scroll->setFrameShape(QFrame::NoFrame);
+  controls_scroll->setMinimumWidth(340);
+  controls_scroll->setWidget(controls_content);
+
+  display_workspace_   = new QWidget(main_splitter_);
+  auto *display_layout = new QVBoxLayout(display_workspace_);
+  display_layout->setContentsMargins(8, 0, 8, 0);
+  display_layout->setSpacing(8);
 
   monitor_widget_ = new SystemMonitorWidget(this);
-  main_layout->addLayout(left_panel_layout);
-  main_layout->addWidget(monitor_widget_, 0, Qt::AlignTop);
+  monitor_widget_->setMinimumWidth(280);
+
+  main_splitter_->addWidget(controls_scroll);
+  main_splitter_->addWidget(display_workspace_);
+  main_splitter_->addWidget(monitor_widget_);
+  main_splitter_->setStretchFactor(0, 0);
+  main_splitter_->setStretchFactor(1, 1);
+  main_splitter_->setStretchFactor(2, 0);
+  main_splitter_->setSizes({360, 780, 300});
+
+  connect(patient_line_edit_, &QLineEdit::textChanged, this,
+          &MainWindow::update_recording_path_preview);
+  connect(eye_side_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+          [this](int) { update_recording_path_preview(); });
+}
+
+QGroupBox *MainWindow::create_display_panel(const QString &title, TensorDisplayWidget *widget) {
+  auto *panel = new QGroupBox(title, display_workspace_);
+  panel->setObjectName("displayPanel");
+
+  auto *layout = new QVBoxLayout(panel);
+  layout->setContentsMargins(8, 8, 8, 8);
+  layout->setSpacing(0);
+  layout->addWidget(widget);
+
+  widget->setParent(panel);
+  widget->show();
+  panel->hide();
+  return panel;
+}
+
+QGroupBox *MainWindow::display_panel_for(TensorDisplayWidget *widget) const {
+  if (widget == xy_processed_widget_) {
+    return xy_processed_panel_;
+  }
+  if (widget == xz_processed_widget_) {
+    return xz_processed_panel_;
+  }
+  if (widget == yz_processed_widget_) {
+    return yz_processed_panel_;
+  }
+  if (widget == xy_raw_widget_) {
+    return xy_raw_panel_;
+  }
+  if (widget == raw_spectrum_widget_) {
+    return raw_spectrum_panel_;
+  }
+  if (widget == processed_spectrum_widget_) {
+    return processed_spectrum_panel_;
+  }
+  if (widget == shack_hartmann_widget_) {
+    return shack_hartmann_panel_;
+  }
+  if (widget == shack_hartmann_xcorr_widget_) {
+    return shack_hartmann_xcorr_panel_;
+  }
+  if (widget == zernike_phase_widget_) {
+    return zernike_phase_panel_;
+  }
+
+  return nullptr;
+}
+
+void MainWindow::set_display_title(TensorDisplayWidget *widget, const QString &title) {
+  if (widget != nullptr) {
+    widget->setWindowTitle(title);
+  }
+
+  if (auto *panel = display_panel_for(widget); panel != nullptr) {
+    panel->setTitle(title);
+  }
+}
+
+void MainWindow::set_display_visible(TensorDisplayWidget *widget, bool visible) {
+  if (widget == nullptr) {
+    return;
+  }
+
+  if (auto *panel = display_panel_for(widget); panel != nullptr) {
+    panel->setVisible(visible);
+  }
+
+  widget->setVisible(visible);
+  refresh_secondary_display_visibility();
+}
+
+void MainWindow::refresh_secondary_display_visibility() {
+  if (secondary_display_container_ == nullptr) {
+    return;
+  }
+
+  const bool any_secondary_visible =
+      (xy_raw_panel_ != nullptr && !xy_raw_panel_->isHidden()) ||
+      (raw_spectrum_panel_ != nullptr && !raw_spectrum_panel_->isHidden()) ||
+      (processed_spectrum_panel_ != nullptr && !processed_spectrum_panel_->isHidden()) ||
+      (shack_hartmann_panel_ != nullptr && !shack_hartmann_panel_->isHidden()) ||
+      (shack_hartmann_xcorr_panel_ != nullptr && !shack_hartmann_xcorr_panel_->isHidden()) ||
+      (zernike_phase_panel_ != nullptr && !zernike_phase_panel_->isHidden()) ||
+      (xz_processed_panel_ != nullptr && !xz_processed_panel_->isHidden()) ||
+      (yz_processed_panel_ != nullptr && !yz_processed_panel_->isHidden());
+
+  secondary_display_container_->setVisible(any_secondary_visible);
+}
+
+QString MainWindow::sanitize_recording_token(const QString &value) const {
+  QString token = value.trimmed();
+  if (token.isEmpty()) {
+    token = "PATIENT";
+  }
+
+  token.replace(QRegularExpression(R"(\s+)"), "_");
+  token.remove(QRegularExpression(R"([^A-Za-z0-9_-])"));
+  token = token.left(64);
+
+  if (token.isEmpty()) {
+    token = "PATIENT";
+  }
+
+  return token;
+}
+
+QString MainWindow::recording_file_name(int acquisition_id) const {
+  const QString patient = sanitize_recording_token(patient_line_edit_->text());
+  const QString eye     = sanitize_recording_token(eye_side_combo_->currentText());
+  return QString("%1_%2_%3_%4.holo")
+      .arg(patient, eye, session_id_, acquisition_label(acquisition_id));
+}
+
+QString MainWindow::acquisition_label(int acquisition_id) const {
+  return QString("AQ%1").arg(std::max(acquisition_id, 1), 3, 10, QChar('0'));
+}
+
+void MainWindow::update_acquisition_label() {
+  if (acquisition_value_label_ != nullptr) {
+    acquisition_value_label_->setText(acquisition_label(next_acquisition_id_));
+  }
+}
+
+void MainWindow::update_recording_path_preview() {
+  if (export_widget_ == nullptr) {
+    return;
+  }
+
+  QFileInfo info(export_widget_->get_file_path());
+  QString   directory = info.absolutePath();
+  if (directory.isEmpty() || directory == ".") {
+    directory = QDir::currentPath();
+  }
+
+  export_widget_->set_file_path(
+      QDir(directory).filePath(recording_file_name(next_acquisition_id_)));
+  update_acquisition_label();
+  refresh_command_bar();
+}
+
+void MainWindow::set_status_label(QLabel *label, const QString &text, const QString &color) {
+  if (label == nullptr) {
+    return;
+  }
+
+  label->setText(text);
+  label->setStyleSheet(QString("color: %1; font-weight: 600;").arg(color));
+}
+
+void MainWindow::configure_unsupported_features() {
+  if (view_widget_ == nullptr || render_widget_ == nullptr) {
+    return;
+  }
+
+  const QString cuts_tooltip =
+      tr("Visible for planned support. The current pipeline does not generate XZ/YZ 3D cuts yet.");
+  const QString registration_tooltip =
+      tr("Visible for planned support. The current pipeline does not support registration yet.");
+  const QString convolution_tooltip =
+      tr("Visible for planned support. The current pipeline does not support convolution kernels "
+         "yet.");
+
+  {
+    QSignalBlocker blocker(view_widget_->cuts_3d_check());
+    view_widget_->set_cuts_3d_enabled(false);
+  }
+  view_widget_->cuts_3d_check()->setEnabled(false);
+  view_widget_->cuts_3d_check()->setToolTip(cuts_tooltip);
+  view_widget_->x_spin()->setEnabled(false);
+  view_widget_->x_width_spin()->setEnabled(false);
+  view_widget_->y_spin()->setEnabled(false);
+  view_widget_->y_width_spin()->setEnabled(false);
+  set_display_visible(xz_processed_widget_, false);
+  set_display_visible(yz_processed_widget_, false);
+
+  {
+    QSignalBlocker blocker(view_widget_->registration_check());
+    view_widget_->set_registration_enabled(false);
+  }
+  view_widget_->registration_check()->setEnabled(false);
+  view_widget_->registration_check()->setToolTip(registration_tooltip);
+  view_widget_->registration_radius()->setEnabled(false);
+  view_widget_->registration_radius()->setToolTip(registration_tooltip);
+
+  {
+    QSignalBlocker blocker(render_widget_->convolution_combo());
+    render_widget_->set_convolution(QStringLiteral("None"));
+  }
+  {
+    QSignalBlocker blocker(render_widget_->convolution_divide_check());
+    render_widget_->set_convolution_divide(false);
+  }
+  render_widget_->convolution_combo()->setEnabled(false);
+  render_widget_->convolution_combo()->setToolTip(convolution_tooltip);
+  render_widget_->convolution_divide_check()->setEnabled(false);
+  render_widget_->convolution_divide_check()->setToolTip(convolution_tooltip);
+}
+
+void MainWindow::refresh_command_bar() {
+  if (start_command_button_ == nullptr || import_widget_ == nullptr || render_widget_ == nullptr ||
+      view_widget_ == nullptr || export_widget_ == nullptr) {
+    return;
+  }
+
+  start_command_button_->setEnabled(import_widget_->start_button()->isEnabled());
+  stop_command_button_->setEnabled(import_widget_->stop_button()->isEnabled());
+  record_command_button_->setEnabled(export_widget_->record_button()->isEnabled());
+  stop_record_command_button_->setEnabled(export_widget_->stop_button()->isEnabled());
+
+  if (pipeline_running_) {
+    set_status_label(pipeline_status_label_, "Live", "#3FB950");
+  } else if (update_in_progress_) {
+    set_status_label(pipeline_status_label_, "Updating", "#D29922");
+  } else {
+    set_status_label(pipeline_status_label_, "Idle", "#A7B0BA");
+  }
+
+  QString source_text;
+  if (import_widget_->is_camera_mode()) {
+    source_text = import_widget_->get_camera_type();
+  } else {
+    const QFileInfo file_info(import_widget_->get_file_path());
+    source_text = file_info.fileName().isEmpty() ? QStringLiteral("File") : file_info.fileName();
+  }
+  source_status_label_->setText(source_text);
+
+  view_status_label_->setText(
+      QString("%1 %2").arg(render_widget_->get_image_mode(), view_widget_->get_image_type()));
+
+  if (!pipeline_running_) {
+    fps_status_label_->setText("--");
+  }
+
+  if (export_in_progress_) {
+    set_status_label(recording_status_label_, "Recording", "#DA3633");
+  } else if (export_widget_->isChecked()) {
+    set_status_label(recording_status_label_, "Armed", "#D29922");
+  } else {
+    set_status_label(recording_status_label_, "Off", "#A7B0BA");
+  }
+}
+
+void MainWindow::save_persistent_state() {
+  QSettings settings;
+
+  settings.beginGroup("main_window");
+  settings.setValue("geometry", saveGeometry());
+  if (main_splitter_ != nullptr) {
+    settings.setValue("splitter_state", main_splitter_->saveState());
+  }
+  settings.endGroup();
+
+  settings.beginGroup("session");
+  settings.setValue("patient", patient_line_edit_->text());
+  settings.setValue("eye_side", eye_side_combo_->currentText());
+  settings.endGroup();
+
+  settings.beginGroup("import");
+  settings.setValue("camera_mode", import_widget_->is_camera_mode());
+  settings.setValue("file_path", import_widget_->get_file_path());
+  settings.setValue("fps_limit", import_widget_->get_fps_limit().value_or(0));
+  settings.setValue("start_index", import_widget_->get_start_index());
+  settings.setValue("end_index", import_widget_->get_end_index());
+  settings.setValue("load_method", import_widget_->get_load_method());
+  settings.setValue("camera_type", import_widget_->get_camera_type());
+  settings.setValue("camera_config", import_widget_->get_camera_config());
+  settings.endGroup();
+
+  settings.beginGroup("rendering");
+  settings.setValue("image_mode", render_widget_->get_image_mode());
+  settings.setValue("batch_size", render_widget_->get_batch_size());
+  settings.setValue("time_stride", render_widget_->get_time_stride());
+  settings.setValue("filter_2d", render_widget_->is_filter_2d_enabled());
+  settings.setValue("filter_inner", render_widget_->get_filter_inner());
+  settings.setValue("filter_outer", render_widget_->get_filter_outer());
+  settings.setValue("space_transform", render_widget_->get_space_transform());
+  settings.setValue("time_transform", render_widget_->get_time_transform());
+  settings.setValue("time_window", render_widget_->get_time_window());
+  settings.setValue("lambda_nm", render_widget_->get_lambda());
+  settings.setValue("focus_mm", render_widget_->get_focus());
+  settings.setValue("convolution", render_widget_->get_convolution());
+  settings.setValue("convolution_divide", render_widget_->is_convolution_divide());
+  settings.endGroup();
+
+  settings.beginGroup("view");
+  settings.setValue("image_type", view_widget_->get_image_type());
+  settings.setValue("cuts_3d", view_widget_->is_cuts_3d_enabled());
+  settings.setValue("fft_shift", view_widget_->is_fft_shift_enabled());
+  settings.setValue("raw_view", view_widget_->is_raw_view_enabled());
+  settings.setValue("raw_spectrum", view_widget_->is_raw_spectrum_view_enabled());
+  settings.setValue("processed_spectrum", view_widget_->is_process_spectrum_view_enabled());
+  settings.setValue("x_origin", view_widget_->get_x_origin());
+  settings.setValue("x_width", view_widget_->get_x_width());
+  settings.setValue("y_origin", view_widget_->get_y_origin());
+  settings.setValue("y_width", view_widget_->get_y_width());
+  settings.setValue("z_origin", view_widget_->get_z_origin());
+  settings.setValue("z_width", view_widget_->get_z_width());
+  settings.setValue("view_kind", view_widget_->get_view_kind());
+  settings.setValue("accumulation", view_widget_->get_accumulation());
+  settings.setValue("range_start", view_widget_->get_range_start());
+  settings.setValue("range_end", view_widget_->get_range_end());
+  settings.setValue("registration", view_widget_->is_registration_enabled());
+  settings.setValue("registration_radius", view_widget_->get_registration_radius());
+  settings.setValue("reticle", view_widget_->is_reticle_enabled());
+  settings.setValue("reticle_radius", view_widget_->get_reticle_radius());
+  settings.setValue("pct", view_widget_->is_pct_enabled());
+  settings.setValue("pct_radius", view_widget_->get_pct_radius());
+  settings.endGroup();
+
+  settings.beginGroup("export");
+  settings.setValue("enabled", export_widget_->isChecked());
+  settings.setValue("image_type", export_widget_->get_image_type());
+  settings.setValue("file_path", export_widget_->get_file_path());
+  settings.setValue("tag", export_widget_->get_tag());
+  settings.setValue("frame_count_enabled", export_widget_->is_frame_count_enabled());
+  settings.setValue("frame_count", export_widget_->get_frame_count());
+  settings.endGroup();
+
+  auto *autofocus = render_widget_->autofocus_widget();
+  settings.beginGroup("autofocus");
+  settings.setValue("enabled", autofocus->is_enabled());
+  settings.setValue("nb_subaps", autofocus->get_nb_subaps());
+  settings.setValue("z2_enabled", autofocus->is_z2_enabled());
+  settings.setValue("z3_enabled", autofocus->is_z3_enabled());
+  settings.setValue("z4_enabled", autofocus->is_z4_enabled());
+  settings.setValue("z5_enabled", autofocus->is_z5_enabled());
+  settings.setValue("z6_enabled", autofocus->is_z6_enabled());
+  settings.setValue("z7_enabled", autofocus->is_z7_enabled());
+  settings.setValue("z8_enabled", autofocus->is_z8_enabled());
+  settings.setValue("z9_enabled", autofocus->is_z9_enabled());
+  settings.setValue("z10_enabled", autofocus->is_z10_enabled());
+  settings.setValue("show_phase", autofocus->show_reconstructed_phase());
+  settings.setValue("show_shack_hartmann", autofocus->show_shack_hartmann_sensor_view());
+  settings.setValue("show_xcorr", autofocus->show_cross_correlation_view());
+  settings.endGroup();
+
+  settings.sync();
+}
+
+void MainWindow::restore_persistent_state() {
+  QSettings settings;
+
+  settings.beginGroup("main_window");
+  if (settings.contains("geometry")) {
+    geometry_restored_ = restoreGeometry(settings.value("geometry").toByteArray());
+  }
+  if (main_splitter_ != nullptr && settings.contains("splitter_state")) {
+    main_splitter_->restoreState(settings.value("splitter_state").toByteArray());
+  }
+  settings.endGroup();
+
+  settings.beginGroup("session");
+  patient_line_edit_->setText(settings.value("patient", patient_line_edit_->text()).toString());
+  restore_combo_text(settings, "eye_side", eye_side_combo_);
+  settings.endGroup();
+
+  settings.beginGroup("import");
+  import_widget_->set_camera_mode(
+      settings.value("camera_mode", import_widget_->is_camera_mode()).toBool());
+  import_widget_->set_file_path(
+      settings.value("file_path", import_widget_->get_file_path()).toString());
+  import_widget_->set_fps_limit(settings.value("fps_limit", 0).toInt());
+  import_widget_->set_start_index(
+      settings.value("start_index", import_widget_->get_start_index()).toInt());
+  import_widget_->set_end_index(
+      settings.value("end_index", import_widget_->get_end_index()).toInt());
+  restore_combo_text(settings, "load_method", import_widget_->load_method_combo());
+  restore_combo_text(settings, "camera_type", import_widget_->camera_combo());
+  restore_combo_text(settings, "camera_config", import_widget_->camera_config_combo());
+  settings.endGroup();
+
+  settings.beginGroup("rendering");
+  restore_combo_text(settings, "image_mode", render_widget_->image_combo());
+  render_widget_->set_batch_size(
+      settings.value("batch_size", render_widget_->get_batch_size()).toInt());
+  render_widget_->set_time_stride(
+      settings.value("time_stride", render_widget_->get_time_stride()).toInt());
+  render_widget_->set_filter_2d_enabled(
+      settings.value("filter_2d", render_widget_->is_filter_2d_enabled()).toBool());
+  render_widget_->set_filter_inner(
+      settings.value("filter_inner", render_widget_->get_filter_inner()).toInt());
+  render_widget_->set_filter_outer(
+      settings.value("filter_outer", render_widget_->get_filter_outer()).toInt());
+  restore_combo_text(settings, "space_transform", render_widget_->space_transform_combo());
+  restore_combo_text(settings, "time_transform", render_widget_->time_transform_combo());
+  render_widget_->set_time_window(
+      settings.value("time_window", render_widget_->get_time_window()).toInt());
+  render_widget_->set_lambda(settings.value("lambda_nm", render_widget_->get_lambda()).toInt());
+  render_widget_->set_focus(settings.value("focus_mm", render_widget_->get_focus()).toInt());
+  restore_combo_text(settings, "convolution", render_widget_->convolution_combo());
+  render_widget_->set_convolution_divide(
+      settings.value("convolution_divide", render_widget_->is_convolution_divide()).toBool());
+  settings.endGroup();
+
+  settings.beginGroup("view");
+  restore_combo_text(settings, "image_type", view_widget_->image_type_combo());
+  view_widget_->set_cuts_3d_enabled(
+      settings.value("cuts_3d", view_widget_->is_cuts_3d_enabled()).toBool());
+  view_widget_->set_fft_shift_enabled(
+      settings.value("fft_shift", view_widget_->is_fft_shift_enabled()).toBool());
+  view_widget_->raw_view_check()->setChecked(
+      settings.value("raw_view", view_widget_->is_raw_view_enabled()).toBool());
+  view_widget_->raw_spectrum_view_check()->setChecked(
+      settings.value("raw_spectrum", view_widget_->is_raw_spectrum_view_enabled()).toBool());
+  view_widget_->process_spectrum_view_check()->setChecked(
+      settings.value("processed_spectrum", view_widget_->is_process_spectrum_view_enabled())
+          .toBool());
+  view_widget_->set_x_origin(settings.value("x_origin", view_widget_->get_x_origin()).toInt());
+  view_widget_->set_x_width(settings.value("x_width", view_widget_->get_x_width()).toInt());
+  view_widget_->set_y_origin(settings.value("y_origin", view_widget_->get_y_origin()).toInt());
+  view_widget_->set_y_width(settings.value("y_width", view_widget_->get_y_width()).toInt());
+  view_widget_->set_z_origin(settings.value("z_origin", view_widget_->get_z_origin()).toInt());
+  view_widget_->set_z_width(settings.value("z_width", view_widget_->get_z_width()).toInt());
+  restore_combo_text(settings, "view_kind", view_widget_->kind_combo());
+  view_widget_->set_accumulation(
+      settings.value("accumulation", view_widget_->get_accumulation()).toInt());
+  view_widget_->range_start_spin()->setValue(
+      settings.value("range_start", view_widget_->get_range_start()).toInt());
+  view_widget_->range_end_spin()->setValue(
+      settings.value("range_end", view_widget_->get_range_end()).toInt());
+  view_widget_->set_registration_enabled(
+      settings.value("registration", view_widget_->is_registration_enabled()).toBool());
+  view_widget_->registration_radius()->setValue(
+      settings.value("registration_radius", view_widget_->get_registration_radius()).toDouble());
+  view_widget_->reticle_check()->setChecked(
+      settings.value("reticle", view_widget_->is_reticle_enabled()).toBool());
+  view_widget_->reticle_radius()->setValue(
+      settings.value("reticle_radius", view_widget_->get_reticle_radius()).toDouble());
+  view_widget_->set_pct_enabled(settings.value("pct", view_widget_->is_pct_enabled()).toBool());
+  view_widget_->set_pct_radius(
+      settings.value("pct_radius", view_widget_->get_pct_radius()).toDouble());
+  settings.endGroup();
+
+  settings.beginGroup("export");
+  export_widget_->setChecked(settings.value("enabled", export_widget_->isChecked()).toBool());
+  restore_combo_text(settings, "image_type", export_widget_->image_type_combo());
+  export_widget_->set_file_path(
+      settings.value("file_path", export_widget_->get_file_path()).toString());
+  restore_combo_text(settings, "tag", export_widget_->tag_combo());
+  export_widget_->frames_check()->setChecked(
+      settings.value("frame_count_enabled", export_widget_->is_frame_count_enabled()).toBool());
+  export_widget_->set_frame_count(
+      settings.value("frame_count", export_widget_->get_frame_count()).toInt());
+  settings.endGroup();
+
+  auto *autofocus = render_widget_->autofocus_widget();
+  settings.beginGroup("autofocus");
+  autofocus->nb_subaps_spin()->setValue(
+      settings.value("nb_subaps", autofocus->get_nb_subaps()).toInt());
+  autofocus->set_z2_enabled(settings.value("z2_enabled", autofocus->is_z2_enabled()).toBool());
+  autofocus->set_z3_enabled(settings.value("z3_enabled", autofocus->is_z3_enabled()).toBool());
+  autofocus->set_z4_enabled(settings.value("z4_enabled", autofocus->is_z4_enabled()).toBool());
+  autofocus->set_z5_enabled(settings.value("z5_enabled", autofocus->is_z5_enabled()).toBool());
+  autofocus->set_z6_enabled(settings.value("z6_enabled", autofocus->is_z6_enabled()).toBool());
+  autofocus->set_z7_enabled(settings.value("z7_enabled", autofocus->is_z7_enabled()).toBool());
+  autofocus->set_z8_enabled(settings.value("z8_enabled", autofocus->is_z8_enabled()).toBool());
+  autofocus->set_z9_enabled(settings.value("z9_enabled", autofocus->is_z9_enabled()).toBool());
+  autofocus->set_z10_enabled(settings.value("z10_enabled", autofocus->is_z10_enabled()).toBool());
+  autofocus->set_show_reconstructed_phase(
+      settings.value("show_phase", autofocus->show_reconstructed_phase()).toBool());
+  autofocus->set_show_shack_hartmann_sensor_view(
+      settings.value("show_shack_hartmann", autofocus->show_shack_hartmann_sensor_view()).toBool());
+  autofocus->set_show_cross_correlation_view(
+      settings.value("show_xcorr", autofocus->show_cross_correlation_view()).toBool());
+  autofocus->set_enabled(settings.value("enabled", autofocus->is_enabled()).toBool());
+  settings.endGroup();
+
+  update_recording_path_preview();
 }
 
 void MainWindow::initialize_display_widgets() {
-  xy_raw_widget_               = new TensorDisplayWidget(nullptr);
-  xy_processed_widget_         = new TensorDisplayWidget(nullptr);
-  xz_processed_widget_         = new TensorDisplayWidget(nullptr);
-  yz_processed_widget_         = new TensorDisplayWidget(nullptr);
-  raw_spectrum_widget_         = new TensorDisplayWidget(nullptr);
-  processed_spectrum_widget_   = new TensorDisplayWidget(nullptr);
-  shack_hartmann_widget_       = new TensorDisplayWidget(nullptr);
-  shack_hartmann_xcorr_widget_ = new TensorDisplayWidget(nullptr);
-  zernike_phase_widget_        = new TensorDisplayWidget(nullptr);
+  xy_raw_widget_               = new TensorDisplayWidget(display_workspace_);
+  xy_processed_widget_         = new TensorDisplayWidget(display_workspace_);
+  xz_processed_widget_         = new TensorDisplayWidget(display_workspace_);
+  yz_processed_widget_         = new TensorDisplayWidget(display_workspace_);
+  raw_spectrum_widget_         = new TensorDisplayWidget(display_workspace_);
+  processed_spectrum_widget_   = new TensorDisplayWidget(display_workspace_);
+  shack_hartmann_widget_       = new TensorDisplayWidget(display_workspace_);
+  shack_hartmann_xcorr_widget_ = new TensorDisplayWidget(display_workspace_);
+  zernike_phase_widget_        = new TensorDisplayWidget(display_workspace_);
 
-  xy_raw_widget_->setWindowTitle("XY-Raw");
-  xy_processed_widget_->setWindowTitle("XY-Processed");
-  xz_processed_widget_->setWindowTitle("XZ-Processed");
-  yz_processed_widget_->setWindowTitle("YZ-Processed");
-  raw_spectrum_widget_->setWindowTitle("Raw Spectrum");
-  processed_spectrum_widget_->setWindowTitle("Processed Spectrum");
-  shack_hartmann_widget_->setWindowTitle("Shack Hartmann");
-  shack_hartmann_xcorr_widget_->setWindowTitle("Shack Hartmann XCorr");
-  zernike_phase_widget_->setWindowTitle("Zernike Phase");
+  set_display_title(xy_raw_widget_, "XY-Raw");
+  set_display_title(xy_processed_widget_, "XY-Processed");
+  set_display_title(xz_processed_widget_, "XZ-Processed");
+  set_display_title(yz_processed_widget_, "YZ-Processed");
+  set_display_title(raw_spectrum_widget_, "Raw Spectrum");
+  set_display_title(processed_spectrum_widget_, "Processed Spectrum");
+  set_display_title(shack_hartmann_widget_, "Shack Hartmann");
+  set_display_title(shack_hartmann_xcorr_widget_, "Shack Hartmann XCorr");
+  set_display_title(zernike_phase_widget_, "Zernike Phase");
 
   zernike_phase_widget_->set_colormap(Colormap::Twilight);
   zernike_phase_widget_->set_value_range(0.0f, 2 * static_cast<float>(M_PI));
 
+  auto *display_layout = static_cast<QVBoxLayout *>(display_workspace_->layout());
+
+  xy_processed_panel_ = create_display_panel("XY-Processed", xy_processed_widget_);
+  display_layout->addWidget(xy_processed_panel_, 3);
+
+  secondary_display_container_ = new QWidget(display_workspace_);
+  auto *secondary_layout       = new QGridLayout(secondary_display_container_);
+  secondary_layout->setContentsMargins(0, 0, 0, 0);
+  secondary_layout->setSpacing(8);
+
+  xy_raw_panel_       = create_display_panel("XY-Raw", xy_raw_widget_);
+  raw_spectrum_panel_ = create_display_panel("Raw Spectrum", raw_spectrum_widget_);
+  processed_spectrum_panel_ =
+      create_display_panel("Processed Spectrum", processed_spectrum_widget_);
+  zernike_phase_panel_  = create_display_panel("Zernike Phase", zernike_phase_widget_);
+  shack_hartmann_panel_ = create_display_panel("Shack Hartmann", shack_hartmann_widget_);
+  shack_hartmann_xcorr_panel_ =
+      create_display_panel("Shack Hartmann XCorr", shack_hartmann_xcorr_widget_);
+  xz_processed_panel_ = create_display_panel("XZ-Processed", xz_processed_widget_);
+  yz_processed_panel_ = create_display_panel("YZ-Processed", yz_processed_widget_);
+
+  secondary_layout->addWidget(xy_raw_panel_, 0, 0);
+  secondary_layout->addWidget(raw_spectrum_panel_, 0, 1);
+  secondary_layout->addWidget(processed_spectrum_panel_, 0, 2);
+  secondary_layout->addWidget(zernike_phase_panel_, 0, 3);
+  secondary_layout->addWidget(shack_hartmann_panel_, 1, 0);
+  secondary_layout->addWidget(shack_hartmann_xcorr_panel_, 1, 1);
+  secondary_layout->addWidget(xz_processed_panel_, 1, 2);
+  secondary_layout->addWidget(yz_processed_panel_, 1, 3);
+  secondary_layout->setColumnStretch(0, 1);
+  secondary_layout->setColumnStretch(1, 1);
+  secondary_layout->setColumnStretch(2, 1);
+  secondary_layout->setColumnStretch(3, 1);
+  secondary_layout->setRowStretch(0, 1);
+  secondary_layout->setRowStretch(1, 1);
+
+  display_layout->addWidget(secondary_display_container_, 2);
+  set_display_visible(xy_processed_widget_, false);
+  set_display_visible(xy_raw_widget_, false);
+  set_display_visible(raw_spectrum_widget_, false);
+  set_display_visible(processed_spectrum_widget_, false);
+  set_display_visible(zernike_phase_widget_, false);
+  set_display_visible(shack_hartmann_widget_, false);
+  set_display_visible(shack_hartmann_xcorr_widget_, false);
+  set_display_visible(xz_processed_widget_, false);
+  set_display_visible(yz_processed_widget_, false);
+
   connect(view_widget_, &ViewWidget::cuts_3d_toggled, this, [this](bool checked) {
     if (checked) {
-      xz_processed_widget_->show();
-      yz_processed_widget_->show();
+      set_display_visible(xz_processed_widget_, true);
+      set_display_visible(yz_processed_widget_, true);
     } else {
-      xz_processed_widget_->hide();
-      yz_processed_widget_->hide();
+      set_display_visible(xz_processed_widget_, false);
+      set_display_visible(yz_processed_widget_, false);
     }
   });
 
   connect(view_widget_, &ViewWidget::raw_view_toggled, this, [this](bool checked) {
     if (pipeline_running_ && checked) {
-      xy_raw_widget_->show();
+      set_display_visible(xy_raw_widget_, true);
     } else {
-      xy_raw_widget_->hide();
+      set_display_visible(xy_raw_widget_, false);
     }
   });
 
   connect(view_widget_, &ViewWidget::raw_spectrum_view_toggled, this, [this](bool checked) {
     if (pipeline_running_ && checked) {
-      raw_spectrum_widget_->show();
+      set_display_visible(raw_spectrum_widget_, true);
     } else {
-      raw_spectrum_widget_->hide();
+      set_display_visible(raw_spectrum_widget_, false);
     }
   });
 
   connect(view_widget_, &ViewWidget::process_spectrum_view_toggled, this, [this](bool checked) {
     if (pipeline_running_ && checked) {
-      processed_spectrum_widget_->show();
+      set_display_visible(processed_spectrum_widget_, true);
     } else {
-      processed_spectrum_widget_->hide();
+      set_display_visible(processed_spectrum_widget_, false);
     }
   });
 
@@ -335,34 +989,32 @@ void MainWindow::connect_export_controls() {
           &MainWindow::on_export_record_clicked);
   connect(export_widget_, &ExportWidget::stop_clicked, this, &MainWindow::on_export_stop_clicked);
   connect(export_widget_, &ExportWidget::browse_clicked, this, [=]() {
-    QString file = QFileDialog::getSaveFileName(this, tr("Select File"));
-    if (!file.isEmpty()) {
-      QFileInfo info(file);
-      QString   dirPath  = info.absolutePath();
-      QString   baseName = info.completeBaseName();
+    QFileInfo current_info(export_widget_->get_file_path());
+    QString   initial_directory = current_info.absolutePath();
+    if (initial_directory.isEmpty() || initial_directory == ".") {
+      initial_directory = QDir::currentPath();
+    }
 
-      QRegularExpression      autoPattern(R"(^\d{6}_(.*?)$)");
-      QRegularExpressionMatch match = autoPattern.match(baseName);
-      if (match.hasMatch())
-        baseName = match.captured(1);
-
-      QString cleanedFileName = baseName + ".holo";
-
-      QString finalDisplayPath =
-          dirPath.isEmpty() ? cleanedFileName : dirPath + "/" + cleanedFileName;
-
-      export_widget_->set_file_path(finalDisplayPath);
+    QString directory = QFileDialog::getExistingDirectory(this, tr("Select Recording Directory"),
+                                                          initial_directory);
+    if (!directory.isEmpty()) {
+      export_widget_->set_file_path(
+          QDir(directory).filePath(recording_file_name(next_acquisition_id_)));
     }
   });
 }
 
 void MainWindow::configure_window() {
   setWindowTitle("Holovibes");
-  setFixedSize(minimumSizeHint());
-  show();
+
+  const QSize default_size = minimumSizeHint().expandedTo(QSize(1280, 800));
+  setMinimumSize(minimumSizeHint());
+  if (!geometry_restored_) {
+    resize(default_size);
+  }
 }
 
-std::filesystem::path MainWindow::makeRecordingPath(const QString &userText) const {
+std::filesystem::path MainWindow::makeRecordingPath(const QString &userText) {
   namespace fs = std::filesystem;
 
   QFileInfo info(userText);
@@ -370,24 +1022,20 @@ std::filesystem::path MainWindow::makeRecordingPath(const QString &userText) con
   fs::path dir = info.absolutePath().isEmpty() ? fs::current_path()
                                                : fs::path(info.absolutePath().toStdString());
 
-  QString baseName = info.completeBaseName();
-
-  // Ensure .holo extension
-  QString extension = ".holo";
-
-  // Date prefix
-  QString datePrefix = QDate::currentDate().toString("yyMMdd") + "_";
-
-  // Candidate file
-  QString  finalFileName = datePrefix + baseName + extension;
-  fs::path candidate     = dir / finalFileName.toStdString();
+  int      acquisition_id = next_acquisition_id_;
+  QString  finalFileName  = recording_file_name(acquisition_id);
+  fs::path candidate      = dir / finalFileName.toStdString();
 
   // Add suffix if needed
-  int counter = 1;
   while (fs::exists(candidate)) {
-    finalFileName = datePrefix + baseName + QString("_%1").arg(counter++) + extension;
+    ++acquisition_id;
+    finalFileName = recording_file_name(acquisition_id);
     candidate     = dir / finalFileName.toStdString();
   }
+
+  pending_recording_acquisition_id_ = acquisition_id;
+  QSignalBlocker blocker(export_widget_->file_line_edit());
+  export_widget_->set_file_path(QString::fromStdString(candidate.string()));
 
   logger()->info("[MainWindow::makeRecordingPath] Generated recording path: {}",
                  candidate.string());
@@ -413,9 +1061,9 @@ void MainWindow::on_start_pipeline_success() {
   export_widget_->set_stop_enabled(export_in_progress_);
 
   if (render_widget_->get_image_mode() == "Raw") {
-    xy_processed_widget_->setWindowTitle("XY-Raw");
+    set_display_title(xy_processed_widget_, "XY-Raw");
   } else {
-    xy_processed_widget_->setWindowTitle("XY-Processed");
+    set_display_title(xy_processed_widget_, "XY-Processed");
   }
 
   auto dims = guess_source_dims();
@@ -430,7 +1078,7 @@ void MainWindow::on_start_pipeline_success() {
   shack_hartmann_xcorr_widget_->set_fixed_aspect(dims);
   zernike_phase_widget_->set_fixed_aspect(guess_source_dims());
 
-  xy_processed_widget_->show();
+  set_display_visible(xy_processed_widget_, true);
 
   auto *autofocus_widget = render_widget_->autofocus_widget();
   if (autofocus_widget->is_enabled()) {
@@ -445,40 +1093,41 @@ void MainWindow::on_start_pipeline_success() {
     }
 
     if (autofocus_widget->show_shack_hartmann_sensor_view()) {
-      shack_hartmann_widget_->show();
+      set_display_visible(shack_hartmann_widget_, true);
     } else {
-      shack_hartmann_widget_->hide();
+      set_display_visible(shack_hartmann_widget_, false);
     }
 
     if (autofocus_widget->show_cross_correlation_view()) {
-      shack_hartmann_xcorr_widget_->show();
+      set_display_visible(shack_hartmann_xcorr_widget_, true);
     } else {
-      shack_hartmann_xcorr_widget_->hide();
+      set_display_visible(shack_hartmann_xcorr_widget_, false);
     }
 
     if (autofocus_widget->show_reconstructed_phase()) {
-      zernike_phase_widget_->show();
+      set_display_visible(zernike_phase_widget_, true);
     } else {
-      zernike_phase_widget_->hide();
+      set_display_visible(zernike_phase_widget_, false);
     }
   } else {
-    shack_hartmann_widget_->hide();
-    shack_hartmann_xcorr_widget_->hide();
-    zernike_phase_widget_->hide();
+    set_display_visible(shack_hartmann_widget_, false);
+    set_display_visible(shack_hartmann_xcorr_widget_, false);
+    set_display_visible(zernike_phase_widget_, false);
     autofocus_widget->reset_zernike_values();
   }
 
   if (view_widget_->is_raw_view_enabled()) {
-    xy_raw_widget_->show();
+    set_display_visible(xy_raw_widget_, true);
   }
 
   if (view_widget_->is_raw_spectrum_view_enabled()) {
-    raw_spectrum_widget_->show();
+    set_display_visible(raw_spectrum_widget_, true);
   }
 
   if (view_widget_->is_process_spectrum_view_enabled()) {
-    processed_spectrum_widget_->show();
+    set_display_visible(processed_spectrum_widget_, true);
   }
+  refresh_command_bar();
 }
 
 void MainWindow::on_start_pipeline_failure(const QString &error) {
@@ -489,6 +1138,7 @@ void MainWindow::on_start_pipeline_failure(const QString &error) {
   import_widget_->set_stop_enabled(false);
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
+  refresh_command_bar();
 
   show_pipeline_error_popup(tr("An error occurred while starting the pipeline:\n%1").arg(error));
 }
@@ -503,16 +1153,17 @@ void MainWindow::on_stop_pipeline_success() {
   export_widget_->set_stop_enabled(false);
   on_metrics_updated(0.0);
 
-  xy_raw_widget_->hide();
-  xy_processed_widget_->hide();
-  xz_processed_widget_->hide();
-  yz_processed_widget_->hide();
-  raw_spectrum_widget_->hide();
-  processed_spectrum_widget_->hide();
-  shack_hartmann_widget_->hide();
-  shack_hartmann_xcorr_widget_->hide();
-  zernike_phase_widget_->hide();
+  set_display_visible(xy_raw_widget_, false);
+  set_display_visible(xy_processed_widget_, false);
+  set_display_visible(xz_processed_widget_, false);
+  set_display_visible(yz_processed_widget_, false);
+  set_display_visible(raw_spectrum_widget_, false);
+  set_display_visible(processed_spectrum_widget_, false);
+  set_display_visible(shack_hartmann_widget_, false);
+  set_display_visible(shack_hartmann_xcorr_widget_, false);
+  set_display_visible(zernike_phase_widget_, false);
   render_widget_->autofocus_widget()->reset_zernike_values();
+  refresh_command_bar();
 }
 
 void MainWindow::on_stop_pipeline_failure(const QString &error) {
@@ -525,13 +1176,17 @@ void MainWindow::on_stop_pipeline_failure(const QString &error) {
   export_widget_->set_stop_enabled(false);
   on_metrics_updated(0.0);
 
-  xy_raw_widget_->hide();
-  xy_processed_widget_->hide();
-  xz_processed_widget_->hide();
-  yz_processed_widget_->hide();
-  raw_spectrum_widget_->hide();
-  processed_spectrum_widget_->hide();
+  set_display_visible(xy_raw_widget_, false);
+  set_display_visible(xy_processed_widget_, false);
+  set_display_visible(xz_processed_widget_, false);
+  set_display_visible(yz_processed_widget_, false);
+  set_display_visible(raw_spectrum_widget_, false);
+  set_display_visible(processed_spectrum_widget_, false);
+  set_display_visible(shack_hartmann_widget_, false);
+  set_display_visible(shack_hartmann_xcorr_widget_, false);
+  set_display_visible(zernike_phase_widget_, false);
   render_widget_->autofocus_widget()->reset_zernike_values();
+  refresh_command_bar();
 
   show_pipeline_error_popup(error);
 }
@@ -545,6 +1200,9 @@ void MainWindow::on_metrics_updated(double input_fps) {
 
   const QString text = QString("%1 fps").arg(fps, 6, 10, QChar('0'));
 
+  if (fps_status_label_ != nullptr) {
+    fps_status_label_->setText(text);
+  }
   monitor_widget_->set_input_throughput_fps(text);
 
   monitor_widget_->set_gpu_load("N/A");
@@ -556,6 +1214,7 @@ void MainWindow::on_metrics_updated(double input_fps) {
   monitor_widget_->set_vram_usage("N/A");
   monitor_widget_->set_dropped_frames("N/A");
   monitor_widget_->set_pipeline_latency("N/A");
+  refresh_command_bar();
 }
 
 void MainWindow::on_update_pipeline_success() {
@@ -566,9 +1225,9 @@ void MainWindow::on_update_pipeline_success() {
   export_widget_->set_stop_enabled(export_in_progress_);
 
   if (render_widget_->get_image_mode() == "Raw") {
-    xy_processed_widget_->setWindowTitle("XY-Raw");
+    set_display_title(xy_processed_widget_, "XY-Raw");
   } else {
-    xy_processed_widget_->setWindowTitle("XY-Processed");
+    set_display_title(xy_processed_widget_, "XY-Processed");
   }
 
   auto dims = guess_source_dims();
@@ -579,7 +1238,7 @@ void MainWindow::on_update_pipeline_success() {
   }
   xy_processed_widget_->set_fixed_aspect(dims);
   if (view_widget_->is_raw_view_enabled()) {
-    xy_raw_widget_->show();
+    set_display_visible(xy_raw_widget_, true);
   }
 
   shack_hartmann_widget_->set_fixed_aspect(dims);
@@ -599,28 +1258,29 @@ void MainWindow::on_update_pipeline_success() {
     }
 
     if (autofocus_widget->show_shack_hartmann_sensor_view()) {
-      shack_hartmann_widget_->show();
+      set_display_visible(shack_hartmann_widget_, true);
     } else {
-      shack_hartmann_widget_->hide();
+      set_display_visible(shack_hartmann_widget_, false);
     }
 
     if (autofocus_widget->show_cross_correlation_view()) {
-      shack_hartmann_xcorr_widget_->show();
+      set_display_visible(shack_hartmann_xcorr_widget_, true);
     } else {
-      shack_hartmann_xcorr_widget_->hide();
+      set_display_visible(shack_hartmann_xcorr_widget_, false);
     }
 
     if (autofocus_widget->show_reconstructed_phase()) {
-      zernike_phase_widget_->show();
+      set_display_visible(zernike_phase_widget_, true);
     } else {
-      zernike_phase_widget_->hide();
+      set_display_visible(zernike_phase_widget_, false);
     }
   } else {
-    shack_hartmann_widget_->hide();
-    shack_hartmann_xcorr_widget_->hide();
-    zernike_phase_widget_->hide();
+    set_display_visible(shack_hartmann_widget_, false);
+    set_display_visible(shack_hartmann_xcorr_widget_, false);
+    set_display_visible(zernike_phase_widget_, false);
     autofocus_widget->reset_zernike_values();
   }
+  refresh_command_bar();
 }
 
 void MainWindow::on_update_pipeline_failure(const QString &error) {
@@ -632,46 +1292,23 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   export_in_progress_ = false;
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
+  refresh_command_bar();
 
   show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
-  if (xy_processed_widget_) {
-    if (xy_processed_widget_->isVisible())
-      xy_processed_widget_->hide();
-    xy_processed_widget_->deleteLater();
-  }
+  save_persistent_state();
 
-  if (xz_processed_widget_) {
-    if (xz_processed_widget_->isVisible())
-      xz_processed_widget_->hide();
-    xz_processed_widget_->deleteLater();
-  }
-
-  if (yz_processed_widget_) {
-    if (yz_processed_widget_->isVisible())
-      yz_processed_widget_->hide();
-    yz_processed_widget_->deleteLater();
-  }
-
-  if (xy_raw_widget_) {
-    if (xy_raw_widget_->isVisible())
-      xy_raw_widget_->hide();
-    xy_raw_widget_->deleteLater();
-  }
-
-  if (raw_spectrum_widget_) {
-    if (raw_spectrum_widget_->isVisible())
-      raw_spectrum_widget_->hide();
-    raw_spectrum_widget_->deleteLater();
-  }
-
-  if (processed_spectrum_widget_) {
-    if (processed_spectrum_widget_->isVisible())
-      processed_spectrum_widget_->hide();
-    processed_spectrum_widget_->deleteLater();
-  }
+  set_display_visible(xy_processed_widget_, false);
+  set_display_visible(xz_processed_widget_, false);
+  set_display_visible(yz_processed_widget_, false);
+  set_display_visible(xy_raw_widget_, false);
+  set_display_visible(raw_spectrum_widget_, false);
+  set_display_visible(processed_spectrum_widget_, false);
+  set_display_visible(shack_hartmann_widget_, false);
+  set_display_visible(shack_hartmann_xcorr_widget_, false);
+  set_display_visible(zernike_phase_widget_, false);
 
   if (pipeline_manager_ && import_widget_->is_stop_enabled()) {
     pipeline_manager_->stop_pipeline();
@@ -694,6 +1331,7 @@ void MainWindow::on_import_start_clicked() {
   }
 
   import_widget_->set_start_enabled(false);
+  refresh_command_bar();
   pipeline::Settings settings = get_pipeline_settings();
   auto               update   = [=]() { pipeline_manager_->update_pipeline(settings); };
   auto               start    = [=]() { pipeline_manager_->start_pipeline(); };
@@ -704,6 +1342,7 @@ void MainWindow::on_import_start_clicked() {
 void MainWindow::on_import_stop_clicked() {
   HOLOVIBES_CHECK(pipeline_running_);
   import_widget_->set_stop_enabled(false);
+  refresh_command_bar();
   auto stop = [=]() { pipeline_manager_->stop_pipeline(); };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, stop, Qt::QueuedConnection));
 }
@@ -726,6 +1365,7 @@ void MainWindow::on_export_record_clicked() {
 
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
+  refresh_command_bar();
 
   std::filesystem::path record_path = makeRecordingPath(export_widget_->get_file_path());
   std::optional<size_t> frame_count;
@@ -744,6 +1384,7 @@ void MainWindow::on_export_stop_clicked() {
   }
 
   export_widget_->set_record_enabled(false);
+  refresh_command_bar();
   auto stop = [mgr = pipeline_manager_]() { mgr->stop_raw_record(); };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, stop, Qt::QueuedConnection));
 }
@@ -753,13 +1394,16 @@ void MainWindow::on_raw_record_started_success() {
   export_in_progress_ = true;
   export_widget_->set_stop_enabled(true);
   export_widget_->set_record_enabled(false);
+  refresh_command_bar();
 }
 
 void MainWindow::on_raw_record_started_failure(const QString &error) {
   logger()->error("[MainWindow::on_raw_record_started_failure]");
   export_in_progress_ = false;
+  pending_recording_acquisition_id_.reset();
   export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(false);
+  refresh_command_bar();
 
   show_pipeline_error_popup(tr("An error occurred while starting raw recording:\n%1").arg(error));
 }
@@ -767,13 +1411,20 @@ void MainWindow::on_raw_record_started_failure(const QString &error) {
 void MainWindow::on_raw_record_stopped_success() {
   logger()->info("[MainWindow::on_raw_record_stopped_success]");
   export_in_progress_ = false;
+  if (pending_recording_acquisition_id_.has_value()) {
+    next_acquisition_id_ = std::max(next_acquisition_id_, *pending_recording_acquisition_id_ + 1);
+    pending_recording_acquisition_id_.reset();
+    update_recording_path_preview();
+  }
   export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(false);
+  refresh_command_bar();
 }
 
 void MainWindow::on_raw_record_stopped_failure(const QString &error) {
   logger()->error("[MainWindow::on_raw_record_stopped_failure]");
   export_widget_->set_stop_enabled(pipeline_running_);
+  refresh_command_bar();
   show_pipeline_error_popup(tr("An error occurred while stopping raw recording:\n%1").arg(error));
 }
 
@@ -783,11 +1434,13 @@ bool MainWindow::validate_inputs() {
   render_widget_->clear_validation_styles();
   view_widget_->clear_validation_styles();
   render_widget_->autofocus_widget()->clear_validation_styles();
+  configure_unsupported_features();
 
   pipeline::Settings settings = get_pipeline_settings();
   const auto result = pipeline::validate_settings(settings, build_validation_context(settings));
   refresh_validation_tooltips(result);
   apply_validation_result(result);
+  configure_unsupported_features();
   return result.ok();
 }
 
@@ -958,6 +1611,12 @@ void MainWindow::setup_validation_connections() {
   connect(export_widget_, &ExportWidget::settings_changed, this, cb);
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this, cb);
   connect(view_widget_, &ViewWidget::settings_changed, this, cb);
+
+  connect(import_widget_, &ImportWidget::settings_changed, this, &MainWindow::refresh_command_bar);
+  connect(export_widget_, &ExportWidget::settings_changed, this, &MainWindow::refresh_command_bar);
+  connect(render_widget_, &ImageRenderingWidget::settings_changed, this,
+          &MainWindow::refresh_command_bar);
+  connect(view_widget_, &ViewWidget::settings_changed, this, &MainWindow::refresh_command_bar);
 }
 
 void MainWindow::setup_update_connections() {
@@ -984,6 +1643,7 @@ void MainWindow::update_if_running() {
 
   update_in_progress_ = true;
   import_widget_->set_start_enabled(false);
+  refresh_command_bar();
   pipeline::Settings settings = get_pipeline_settings();
   auto               update   = [=]() { pipeline_manager_->update_pipeline(settings); };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
@@ -1350,6 +2010,8 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     export_widget_->set_frame_count(static_cast<int>(s.recording_count));
     // recording_method not exposed (always RAW in get_pipeline_settings)
   }
+
+  configure_unsupported_features();
 }
 
 std::string MainWindow::get_selected_camera_config_path() {

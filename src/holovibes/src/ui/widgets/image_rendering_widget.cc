@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "ui/widgets/image_rendering_widget.hh"
+#include "ui/widgets/validation_style.hh"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -93,33 +94,23 @@ void ImageRenderingWidget::set_convolution_divide(bool enabled) {
   convolution_divide_check_->setChecked(enabled);
 }
 
-void ImageRenderingWidget::mark_batch_size_invalid() {
-  batch_size_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
-void ImageRenderingWidget::mark_time_stride_invalid() {
-  time_stride_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
-void ImageRenderingWidget::mark_filter_2d_invalid() {
-  filter_2d_check_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
+void ImageRenderingWidget::mark_batch_size_invalid() { mark_validation_error(batch_size_spin_); }
+void ImageRenderingWidget::mark_time_stride_invalid() { mark_validation_error(time_stride_spin_); }
+void ImageRenderingWidget::mark_filter_2d_invalid() { mark_validation_error(filter_2d_check_); }
 void ImageRenderingWidget::mark_filter_inner_invalid() {
-  filter_2d_inner_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+  mark_validation_error(filter_2d_inner_spin_);
 }
 void ImageRenderingWidget::mark_filter_outer_invalid() {
-  filter_2d_outer_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+  mark_validation_error(filter_2d_outer_spin_);
 }
-void ImageRenderingWidget::mark_time_window_invalid() {
-  time_window_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
+void ImageRenderingWidget::mark_time_window_invalid() { mark_validation_error(time_window_spin_); }
 void ImageRenderingWidget::mark_space_transform_invalid() {
-  space_transform_combo_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+  mark_validation_error(space_transform_combo_);
 }
 void ImageRenderingWidget::mark_time_transform_invalid() {
-  time_transform_combo_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
+  mark_validation_error(time_transform_combo_);
 }
-void ImageRenderingWidget::mark_convolution_invalid() {
-  convolution_combo_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
+void ImageRenderingWidget::mark_convolution_invalid() { mark_validation_error(convolution_combo_); }
 
 QComboBox *ImageRenderingWidget::image_combo() { return image_combo_; }
 QSpinBox  *ImageRenderingWidget::batch_size_spin() { return batch_size_spin_; }
@@ -289,15 +280,15 @@ QStringList ImageRenderingWidget::load_available_kernels() {
 }
 
 void ImageRenderingWidget::clear_validation_styles() {
-  batch_size_spin_->setStyleSheet("");
-  time_stride_spin_->setStyleSheet("");
-  filter_2d_check_->setStyleSheet("");
-  filter_2d_inner_spin_->setStyleSheet("");
-  filter_2d_outer_spin_->setStyleSheet("");
-  time_window_spin_->setStyleSheet("");
-  space_transform_combo_->setStyleSheet("");
-  time_transform_combo_->setStyleSheet("");
-  convolution_combo_->setStyleSheet("");
+  clear_validation_error(batch_size_spin_);
+  clear_validation_error(time_stride_spin_);
+  clear_validation_error(filter_2d_check_);
+  clear_validation_error(filter_2d_inner_spin_);
+  clear_validation_error(filter_2d_outer_spin_);
+  clear_validation_error(time_window_spin_);
+  clear_validation_error(space_transform_combo_);
+  clear_validation_error(time_transform_combo_);
+  clear_validation_error(convolution_combo_);
 }
 
 } // namespace holovibes::ui

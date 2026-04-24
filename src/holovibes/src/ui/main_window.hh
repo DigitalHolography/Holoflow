@@ -39,6 +39,8 @@
 #include "ui/widgets/system_monitor_widget.hh"
 #include "ui/widgets/view_widget.hh"
 
+class QSplitter;
+
 namespace holovibes::ui {
 
 class MainWindow : public QMainWindow {
@@ -97,14 +99,34 @@ private:
   void connect_export_controls();
   void configure_window();
 
-  std::filesystem::path makeRecordingPath(const QString &userText) const;
+  QGroupBox *create_display_panel(const QString &title, TensorDisplayWidget *widget);
+  QGroupBox *display_panel_for(TensorDisplayWidget *widget) const;
+  void       set_display_title(TensorDisplayWidget *widget, const QString &title);
+  void       set_display_visible(TensorDisplayWidget *widget, bool visible);
+  void       refresh_secondary_display_visibility();
+  void       configure_unsupported_features();
+  void       save_persistent_state();
+  void       restore_persistent_state();
+  QString    sanitize_recording_token(const QString &value) const;
+  QString    recording_file_name(int acquisition_id) const;
+  QString    acquisition_label(int acquisition_id) const;
+  void       update_acquisition_label();
+  void       update_recording_path_preview();
+  void       refresh_command_bar();
+  void       set_status_label(QLabel *label, const QString &text, const QString &color);
+
+  std::filesystem::path makeRecordingPath(const QString &userText);
   QStringList           load_available_camera_configs();
   std::string           get_selected_camera_config_path();
 
   // Current state
-  bool update_in_progress_ = false;
-  bool pipeline_running_   = false;
-  bool export_in_progress_ = false;
+  bool               update_in_progress_ = false;
+  bool               pipeline_running_   = false;
+  bool               export_in_progress_ = false;
+  bool               geometry_restored_  = false;
+  QString            session_id_;
+  int                next_acquisition_id_ = 1;
+  std::optional<int> pending_recording_acquisition_id_;
 
   // Workers
   pipeline::Manager *pipeline_manager_;
@@ -120,6 +142,33 @@ private:
   TensorDisplayWidget *shack_hartmann_widget_;
   TensorDisplayWidget *shack_hartmann_xcorr_widget_;
   TensorDisplayWidget *zernike_phase_widget_;
+
+  // Embedded display panels
+  QSplitter   *main_splitter_               = nullptr;
+  QLineEdit   *patient_line_edit_           = nullptr;
+  QComboBox   *eye_side_combo_              = nullptr;
+  QLabel      *session_value_label_         = nullptr;
+  QLabel      *acquisition_value_label_     = nullptr;
+  QPushButton *start_command_button_        = nullptr;
+  QPushButton *stop_command_button_         = nullptr;
+  QPushButton *record_command_button_       = nullptr;
+  QPushButton *stop_record_command_button_  = nullptr;
+  QLabel      *pipeline_status_label_       = nullptr;
+  QLabel      *source_status_label_         = nullptr;
+  QLabel      *view_status_label_           = nullptr;
+  QLabel      *fps_status_label_            = nullptr;
+  QLabel      *recording_status_label_      = nullptr;
+  QWidget     *display_workspace_           = nullptr;
+  QWidget     *secondary_display_container_ = nullptr;
+  QGroupBox   *xy_processed_panel_          = nullptr;
+  QGroupBox   *xz_processed_panel_          = nullptr;
+  QGroupBox   *yz_processed_panel_          = nullptr;
+  QGroupBox   *xy_raw_panel_                = nullptr;
+  QGroupBox   *raw_spectrum_panel_          = nullptr;
+  QGroupBox   *processed_spectrum_panel_    = nullptr;
+  QGroupBox   *shack_hartmann_panel_        = nullptr;
+  QGroupBox   *shack_hartmann_xcorr_panel_  = nullptr;
+  QGroupBox   *zernike_phase_panel_         = nullptr;
 };
 
 } // namespace holovibes::ui

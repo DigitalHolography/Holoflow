@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "ui/widgets/import_widget.hh"
+#include "ui/widgets/validation_style.hh"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -51,8 +52,8 @@ ImportWidget::ImportWidget(QWidget *parent) : QGroupBox("Import", parent) {
   connect_signals();
 }
 
-bool    ImportWidget::is_camera_mode() const { return cam_check_->isChecked(); }
-QString ImportWidget::get_file_path() const { return file_line_edit_->text(); }
+bool               ImportWidget::is_camera_mode() const { return cam_check_->isChecked(); }
+QString            ImportWidget::get_file_path() const { return file_line_edit_->text(); }
 std::optional<int> ImportWidget::get_fps_limit() const {
   if (fps_spin_->value() <= 0) {
     return std::nullopt;
@@ -66,7 +67,9 @@ QString ImportWidget::get_load_method() const { return load_method_combo_->curre
 QString ImportWidget::get_camera_type() const { return camera_combo_->currentText(); }
 QString ImportWidget::get_camera_config() const { return camera_config_combo_->currentText(); }
 
-void ImportWidget::set_fps_limit(std::optional<int> value) { fps_spin_->setValue(value.value_or(0)); }
+void ImportWidget::set_fps_limit(std::optional<int> value) {
+  fps_spin_->setValue(value.value_or(0));
+}
 void ImportWidget::set_start_index(int value) { start_index_spin_->setValue(value); }
 void ImportWidget::set_end_index(int value) { end_index_spin_->setValue(value); }
 void ImportWidget::set_end_index_range(int min, int max) { end_index_spin_->setRange(min, max); }
@@ -80,21 +83,11 @@ void ImportWidget::set_start_enabled(bool enabled) { start_button_->setEnabled(e
 void ImportWidget::set_stop_enabled(bool enabled) { stop_button_->setEnabled(enabled); }
 bool ImportWidget::is_stop_enabled() const { return stop_button_->isEnabled(); }
 
-void ImportWidget::mark_file_invalid() {
-  file_line_edit_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
-void ImportWidget::mark_fps_invalid() {
-  fps_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
-void ImportWidget::mark_start_index_invalid() {
-  start_index_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
-void ImportWidget::mark_end_index_invalid() {
-  end_index_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
-void ImportWidget::mark_camera_config_invalid() {
-  camera_config_combo_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
+void ImportWidget::mark_file_invalid() { mark_validation_error(file_line_edit_); }
+void ImportWidget::mark_fps_invalid() { mark_validation_error(fps_spin_); }
+void ImportWidget::mark_start_index_invalid() { mark_validation_error(start_index_spin_); }
+void ImportWidget::mark_end_index_invalid() { mark_validation_error(end_index_spin_); }
+void ImportWidget::mark_camera_config_invalid() { mark_validation_error(camera_config_combo_); }
 
 QLineEdit   *ImportWidget::file_line_edit() { return file_line_edit_; }
 QPushButton *ImportWidget::browse_button() { return browse_button_; }
@@ -240,11 +233,11 @@ QStringList ImportWidget::load_available_camera_configs() {
 void ImportWidget::set_file_path(const QString &path) { file_line_edit_->setText(path); }
 
 void ImportWidget::clear_validation_styles() {
-  file_line_edit_->setStyleSheet("");
-  fps_spin_->setStyleSheet("");
-  start_index_spin_->setStyleSheet("");
-  end_index_spin_->setStyleSheet("");
-  camera_config_combo_->setStyleSheet("");
+  clear_validation_error(file_line_edit_);
+  clear_validation_error(fps_spin_);
+  clear_validation_error(start_index_spin_);
+  clear_validation_error(end_index_spin_);
+  clear_validation_error(camera_config_combo_);
 }
 
 } // namespace holovibes::ui

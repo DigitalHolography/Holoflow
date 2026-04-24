@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "ui/widgets/export_widget.hh"
+#include "ui/widgets/validation_style.hh"
 
 #include <QGridLayout>
 #include <QHBoxLayout>
@@ -58,12 +59,8 @@ void ExportWidget::set_image_type(const QString &type) { image_type_combo_->setC
 void ExportWidget::set_record_enabled(bool enabled) { record_button_->setEnabled(enabled); }
 void ExportWidget::set_stop_enabled(bool enabled) { stop_button_->setEnabled(enabled); }
 
-void ExportWidget::mark_file_invalid() {
-  file_line_edit_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
-void ExportWidget::mark_frames_invalid() {
-  frames_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
+void ExportWidget::mark_file_invalid() { mark_validation_error(file_line_edit_); }
+void ExportWidget::mark_frames_invalid() { mark_validation_error(frames_spin_); }
 
 QComboBox   *ExportWidget::image_type_combo() { return image_type_combo_; }
 QLineEdit   *ExportWidget::file_line_edit() { return file_line_edit_; }
@@ -140,8 +137,8 @@ void ExportWidget::connect_signals() {
 }
 
 void ExportWidget::clear_validation_styles() {
-  file_line_edit_->setStyleSheet("");
-  frames_spin_->setStyleSheet("");
+  clear_validation_error(file_line_edit_);
+  clear_validation_error(frames_spin_);
 }
 
 } // namespace holovibes::ui

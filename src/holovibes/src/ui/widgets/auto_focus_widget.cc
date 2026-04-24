@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "ui/widgets/auto_focus_widget.hh"
+#include "ui/widgets/validation_style.hh"
 
 #include <algorithm>
 
@@ -207,11 +208,9 @@ void AutoFocusWidget::set_show_cross_correlation_view(bool checked) {
 
 void AutoFocusWidget::set_enabled(bool enabled) { setChecked(enabled); }
 
-void AutoFocusWidget::clear_validation_styles() { nb_subaps_spin_->setStyleSheet(""); }
+void AutoFocusWidget::clear_validation_styles() { clear_validation_error(nb_subaps_spin_); }
 
-void AutoFocusWidget::mark_nb_subaps_invalid() {
-  nb_subaps_spin_->setStyleSheet("background-color: rgba(255, 0, 0, 50);");
-}
+void AutoFocusWidget::mark_nb_subaps_invalid() { mark_validation_error(nb_subaps_spin_); }
 
 // Widget accessors
 QCheckBox *AutoFocusWidget::z2_checkbox() { return z2_checkbox_; }
