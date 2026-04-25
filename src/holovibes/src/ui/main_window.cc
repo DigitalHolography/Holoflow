@@ -75,6 +75,7 @@ namespace {
 
 constexpr int  kLargeSpinMax             = 1024 * 1024;
 constexpr int  kTopBarHeight             = 30;
+constexpr int  kEmptySecondaryDropHeight = 72;
 constexpr auto kDisplayPanelMimeType     = "application/x-holovibes-display-panel";
 constexpr auto kDisplayPanelIdProperty   = "displayPanelId";
 constexpr auto kDisplayPanelMainProperty = "displayPanelInMain";
@@ -158,8 +159,23 @@ void restore_combo_text(QSettings &settings, const char *key, QComboBox *combo_b
 }
 
 void clear_layout(QLayout *layout) {
+  auto     *grid_layout = qobject_cast<QGridLayout *>(layout);
+  const int rows        = grid_layout != nullptr ? grid_layout->rowCount() : 0;
+  const int columns     = grid_layout != nullptr ? grid_layout->columnCount() : 0;
+
   while (auto *item = layout->takeAt(0)) {
     delete item;
+  }
+
+  if (grid_layout != nullptr) {
+    for (int row = 0; row < rows; ++row) {
+      grid_layout->setRowStretch(row, 0);
+      grid_layout->setRowMinimumHeight(row, 0);
+    }
+    for (int column = 0; column < columns; ++column) {
+      grid_layout->setColumnStretch(column, 0);
+      grid_layout->setColumnMinimumWidth(column, 0);
+    }
   }
 }
 
@@ -523,12 +539,14 @@ void MainWindow::setup_main_layout() {
   main_layout->addWidget(main_splitter_, 1);
 
   auto *controls_content = new QWidget(main_splitter_);
+  controls_content->setObjectName("controlsContent");
   controls_content->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
   auto *controls_layout = new QHBoxLayout(controls_content);
   controls_layout->setContentsMargins(0, 0, 0, 0);
   controls_layout->setSpacing(12);
 
   auto *acquisition_column = new QWidget(controls_content);
+  acquisition_column->setObjectName("controlsColumn");
   auto *acquisition_layout = new QVBoxLayout(acquisition_column);
   acquisition_layout->setContentsMargins(0, 0, 0, 0);
   acquisition_layout->setSpacing(12);
@@ -539,6 +557,7 @@ void MainWindow::setup_main_layout() {
   acquisition_layout->addStretch(1);
 
   auto *processing_column = new QWidget(controls_content);
+  processing_column->setObjectName("controlsColumn");
   auto *processing_layout = new QVBoxLayout(processing_column);
   processing_layout->setContentsMargins(0, 0, 0, 0);
   processing_layout->setSpacing(12);
@@ -546,10 +565,18 @@ void MainWindow::setup_main_layout() {
   processing_layout->addWidget(render_widget_->autofocus_widget());
   processing_layout->addStretch(1);
 
+  auto *controls_divider = new QFrame(controls_content);
+  controls_divider->setObjectName("controlsColumnDivider");
+  controls_divider->setFixedWidth(1);
+  controls_divider->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+
   controls_layout->addWidget(acquisition_column);
+  controls_layout->addWidget(controls_divider);
   controls_layout->addWidget(processing_column);
 
   auto *controls_scroll = new QScrollArea(main_splitter_);
+  controls_scroll->setObjectName("controlsScrollArea");
+  controls_scroll->viewport()->setObjectName("controlsScrollViewport");
   controls_scroll->setWidgetResizable(true);
   controls_scroll->setFrameShape(QFrame::NoFrame);
   controls_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
@@ -561,12 +588,14 @@ void MainWindow::setup_main_layout() {
   controls_scroll->setFixedWidth(controls_width);
   controls_scroll->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
 
-  display_workspace_   = new QWidget(main_splitter_);
+  display_workspace_ = new QWidget(main_splitter_);
+  display_workspace_->setObjectName("displayWorkspace");
   auto *display_layout = new QVBoxLayout(display_workspace_);
   display_layout->setContentsMargins(8, 0, 8, 0);
   display_layout->setSpacing(8);
 
   monitor_widget_ = new SystemMonitorWidget(this);
+  monitor_widget_->setObjectName("systemMonitorPanel");
   monitor_widget_->setMinimumWidth(280);
 
   main_splitter_->addWidget(controls_scroll);
@@ -677,7 +706,26 @@ void MainWindow::set_display_visible(TensorDisplayWidget *widget, bool visible) 
   }
 
   widget->setVisible(visible);
-  refresh_secondary_display_visibility();
+  if (display_layout_update_depth_ > 0) {
+    display_layout_dirty_ = true;
+    return;
+  }
+
+  relayout_display_panels();
+}
+
+void MainWindow::begin_display_layout_update() { ++display_layout_update_depth_; }
+
+void MainWindow::end_display_layout_update() {
+  if (display_layout_update_depth_ <= 0) {
+    return;
+  }
+
+  --display_layout_update_depth_;
+  if (display_layout_update_depth_ == 0 && display_layout_dirty_) {
+    display_layout_dirty_ = false;
+    relayout_display_panels();
+  }
 }
 
 void MainWindow::move_display_panel(const QString &display_id, DisplayPanelZone zone) {
@@ -728,6 +776,10 @@ void MainWindow::relayout_display_panels() {
       continue;
     }
 
+    if (panel->isHidden()) {
+      continue;
+    }
+
     if (is_display_panel_in_main(panel)) {
       main_panels << panel;
     } else {
@@ -764,14 +816,29 @@ void MainWindow::refresh_secondary_display_visibility() {
   }
 
   bool any_secondary_visible = false;
+  int  visible_main_count    = 0;
   for (auto *panel : display_panels()) {
-    if (panel != nullptr && !is_display_panel_in_main(panel) && !panel->isHidden()) {
+    if (panel == nullptr || panel->isHidden()) {
+      continue;
+    }
+
+    if (is_display_panel_in_main(panel)) {
+      ++visible_main_count;
+    } else {
       any_secondary_visible = true;
-      break;
     }
   }
 
-  secondary_display_container_->setVisible(any_secondary_visible);
+  const bool keep_drop_target_visible = !any_secondary_visible && visible_main_count > 1;
+  if (any_secondary_visible) {
+    secondary_display_container_->setMinimumHeight(0);
+    secondary_display_container_->setMaximumHeight(QWIDGETSIZE_MAX);
+  } else if (keep_drop_target_visible) {
+    secondary_display_container_->setMinimumHeight(kEmptySecondaryDropHeight);
+    secondary_display_container_->setMaximumHeight(kEmptySecondaryDropHeight);
+  }
+
+  secondary_display_container_->setVisible(any_secondary_visible || keep_drop_target_visible);
 }
 
 QString MainWindow::sanitize_recording_token(const QString &value) const {
@@ -1231,6 +1298,7 @@ void MainWindow::initialize_display_widgets() {
   relayout_display_panels();
 
   display_layout->addWidget(secondary_display_container_, 2);
+  begin_display_layout_update();
   set_display_visible(xy_processed_widget_, false);
   set_display_visible(xy_raw_widget_, false);
   set_display_visible(raw_spectrum_widget_, false);
@@ -1240,6 +1308,7 @@ void MainWindow::initialize_display_widgets() {
   set_display_visible(shack_hartmann_xcorr_widget_, false);
   set_display_visible(xz_processed_widget_, false);
   set_display_visible(yz_processed_widget_, false);
+  end_display_layout_update();
 
   connect(view_widget_, &ViewWidget::cuts_3d_toggled, this, [this](bool checked) {
     if (checked) {
@@ -1463,6 +1532,7 @@ void MainWindow::on_start_pipeline_success() {
   shack_hartmann_xcorr_widget_->set_fixed_aspect(dims);
   zernike_phase_widget_->set_fixed_aspect(guess_source_dims());
 
+  begin_display_layout_update();
   set_display_visible(xy_processed_widget_, true);
 
   auto *autofocus_widget = render_widget_->autofocus_widget();
@@ -1512,6 +1582,7 @@ void MainWindow::on_start_pipeline_success() {
   if (view_widget_->is_process_spectrum_view_enabled()) {
     set_display_visible(processed_spectrum_widget_, true);
   }
+  end_display_layout_update();
   refresh_command_bar();
 }
 
@@ -1538,6 +1609,7 @@ void MainWindow::on_stop_pipeline_success() {
   export_widget_->set_stop_enabled(false);
   on_metrics_updated(0.0);
 
+  begin_display_layout_update();
   set_display_visible(xy_raw_widget_, false);
   set_display_visible(xy_processed_widget_, false);
   set_display_visible(xz_processed_widget_, false);
@@ -1547,6 +1619,7 @@ void MainWindow::on_stop_pipeline_success() {
   set_display_visible(shack_hartmann_widget_, false);
   set_display_visible(shack_hartmann_xcorr_widget_, false);
   set_display_visible(zernike_phase_widget_, false);
+  end_display_layout_update();
   render_widget_->autofocus_widget()->reset_zernike_values();
   refresh_command_bar();
 }
@@ -1561,6 +1634,7 @@ void MainWindow::on_stop_pipeline_failure(const QString &error) {
   export_widget_->set_stop_enabled(false);
   on_metrics_updated(0.0);
 
+  begin_display_layout_update();
   set_display_visible(xy_raw_widget_, false);
   set_display_visible(xy_processed_widget_, false);
   set_display_visible(xz_processed_widget_, false);
@@ -1570,6 +1644,7 @@ void MainWindow::on_stop_pipeline_failure(const QString &error) {
   set_display_visible(shack_hartmann_widget_, false);
   set_display_visible(shack_hartmann_xcorr_widget_, false);
   set_display_visible(zernike_phase_widget_, false);
+  end_display_layout_update();
   render_widget_->autofocus_widget()->reset_zernike_values();
   refresh_command_bar();
 
@@ -1622,6 +1697,7 @@ void MainWindow::on_update_pipeline_success() {
     dims = QSize(dims.width(), dims.width());
   }
   xy_processed_widget_->set_fixed_aspect(dims);
+  begin_display_layout_update();
   if (view_widget_->is_raw_view_enabled()) {
     set_display_visible(xy_raw_widget_, true);
   }
@@ -1665,6 +1741,7 @@ void MainWindow::on_update_pipeline_success() {
     set_display_visible(zernike_phase_widget_, false);
     autofocus_widget->reset_zernike_values();
   }
+  end_display_layout_update();
   refresh_command_bar();
 }
 
@@ -1685,6 +1762,7 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
 void MainWindow::closeEvent(QCloseEvent *event) {
   save_persistent_state();
 
+  begin_display_layout_update();
   set_display_visible(xy_processed_widget_, false);
   set_display_visible(xz_processed_widget_, false);
   set_display_visible(yz_processed_widget_, false);
@@ -1694,6 +1772,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
   set_display_visible(shack_hartmann_widget_, false);
   set_display_visible(shack_hartmann_xcorr_widget_, false);
   set_display_visible(zernike_phase_widget_, false);
+  end_display_layout_update();
 
   if (pipeline_manager_ && import_widget_->is_stop_enabled()) {
     pipeline_manager_->stop_pipeline();

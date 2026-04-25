@@ -265,7 +265,7 @@ void TensorDisplayWidget::updateTexture(const void *pixels, int w, int h,
 
 void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
                                         holoflow::core::DType dtype) {
-  if (!isVisible())
+  if (!isVisible() || !isValid())
     return;
 
   qsizetype need = qsizetype(w) * qsizetype(h);

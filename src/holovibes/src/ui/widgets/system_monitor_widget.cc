@@ -21,7 +21,7 @@
 
 namespace holovibes::ui {
 
-SystemMonitorWidget::SystemMonitorWidget(QWidget *parent) : QGroupBox("System Monitor", parent) {
+SystemMonitorWidget::SystemMonitorWidget(QWidget *parent) : QGroupBox("SYSTEM MONITOR", parent) {
   setup_ui();
 }
 
@@ -50,9 +50,14 @@ void SystemMonitorWidget::set_pipeline_latency(const QString &text) {
 
 void SystemMonitorWidget::setup_ui() {
   auto *layout = new QVBoxLayout(this);
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setSpacing(8);
 
   // Line metrics
   auto *metrics_layout = new QGridLayout();
+  metrics_layout->setContentsMargins(0, 0, 0, 0);
+  metrics_layout->setHorizontalSpacing(8);
+  metrics_layout->setVerticalSpacing(4);
   metrics_layout->setColumnStretch(1, 1);
 
   auto add_metric_row = [&](int row, const QString &label, QLabel **value_label,
@@ -77,9 +82,11 @@ void SystemMonitorWidget::setup_ui() {
   layout->addLayout(metrics_layout);
 
   // Queue metrics
-  auto *queue_group   = new QGroupBox("Queues", this);
-  auto *queue_layout  = new QVBoxLayout(queue_group);
-  auto  configure_bar = [&](QProgressBar **bar, const QString &title, int value, int maximum) {
+  auto *queue_group  = new QGroupBox("QUEUES", this);
+  auto *queue_layout = new QVBoxLayout(queue_group);
+  queue_layout->setContentsMargins(0, 0, 0, 0);
+  queue_layout->setSpacing(6);
+  auto configure_bar = [&](QProgressBar **bar, const QString &title, int value, int maximum) {
     queue_layout->addWidget(new QLabel(title, queue_group));
     *bar = new QProgressBar(queue_group);
     (*bar)->setRange(0, maximum);

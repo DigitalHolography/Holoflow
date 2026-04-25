@@ -109,6 +109,8 @@ private:
   QGroupBox                 *display_panel_for_id(const QString &display_id) const;
   void                       set_display_title(TensorDisplayWidget *widget, const QString &title);
   void                       set_display_visible(TensorDisplayWidget *widget, bool visible);
+  void                       begin_display_layout_update();
+  void                       end_display_layout_update();
   void                       move_display_panel(const QString &display_id, DisplayPanelZone zone);
   void                       set_display_panel_zone(QGroupBox *panel, DisplayPanelZone zone);
   bool                       is_display_panel_in_main(QGroupBox *panel) const;
@@ -131,10 +133,12 @@ private:
   std::string           get_selected_camera_config_path();
 
   // Current state
-  bool               update_in_progress_ = false;
-  bool               pipeline_running_   = false;
-  bool               export_in_progress_ = false;
-  bool               geometry_restored_  = false;
+  bool               update_in_progress_          = false;
+  bool               pipeline_running_            = false;
+  bool               export_in_progress_          = false;
+  bool               geometry_restored_           = false;
+  int                display_layout_update_depth_ = 0;
+  bool               display_layout_dirty_        = false;
   QString            session_id_;
   int                next_acquisition_id_ = 1;
   std::optional<int> pending_recording_acquisition_id_;

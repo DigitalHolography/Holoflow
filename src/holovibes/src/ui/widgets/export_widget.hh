@@ -35,11 +35,13 @@ public:
   QString get_tag() const;
   bool    is_frame_count_enabled() const;
   int     get_frame_count() const;
+  bool    isChecked() const;
 
   // Setters
   void set_file_path(const QString &path);
   void set_frame_count(int count);
   void set_image_type(const QString &type);
+  void setChecked(bool checked);
 
   // Control button state
   void set_record_enabled(bool enabled);
@@ -71,7 +73,10 @@ signals:
 private:
   void setup_ui();
   void connect_signals();
+  void set_export_controls_enabled(bool enabled);
 
+  QCheckBox   *enable_check_;
+  QWidget     *content_container_;
   QComboBox   *image_type_combo_;
   QLineEdit   *file_line_edit_;
   QPushButton *browse_button_;

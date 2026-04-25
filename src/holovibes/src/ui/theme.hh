@@ -48,7 +48,7 @@ inline void apply_dark_clinical_theme(QApplication &app) {
 
   app.setStyleSheet(QStringLiteral(R"(
 QWidget {
-  background-color: #101215;
+  background-color: #13181E;
   color: #E6EAF0;
   font-size: 13px;
 }
@@ -91,9 +91,10 @@ QMenu::item:selected {
 }
 
 QFrame#sessionBar {
-  background-color: #171A1F;
-  border: 1px solid #2C333A;
-  border-radius: 4px;
+  background-color: #11161B;
+  border: none;
+  border-bottom: 1px solid #2C333A;
+  border-radius: 0;
 }
 
 QFrame#sessionBar QLabel {
@@ -118,9 +119,10 @@ QComboBox#eyeSideField {
 }
 
 QFrame#commandBar {
-  background-color: #171A1F;
-  border: 1px solid #2C333A;
-  border-radius: 4px;
+  background-color: #13181E;
+  border: none;
+  border-bottom: 1px solid #2C333A;
+  border-radius: 0;
 }
 
 QFrame#commandBar QLabel#commandLabel {
@@ -168,21 +170,50 @@ QPushButton#recordCommand:disabled {
   border-color: #30363D;
 }
 
+QWidget#controlsContent,
+QWidget#controlsColumn,
+QWidget#controlsScrollViewport,
+QScrollArea#controlsScrollArea,
+QGroupBox#systemMonitorPanel {
+  background-color: #13181E;
+}
+
+QWidget#displayWorkspace {
+  background-color: #101215;
+}
+
+QFrame#mainDisplayZone,
+QFrame#secondaryDisplayZone {
+  background-color: #101215;
+}
+
+QFrame#controlsColumnDivider {
+  background-color: #2C333A;
+}
+
+QSplitter::handle {
+  background-color: #20262D;
+}
+
 QGroupBox {
-  background-color: #171A1F;
-  border: 1px solid #2C333A;
-  border-radius: 6px;
-  margin-top: 18px;
-  padding: 12px;
+  background: transparent;
+  border: none;
+  border-top: 1px solid #2C333A;
+  border-radius: 0;
+  margin-top: 16px;
+  padding: 8px 0 0 0;
 }
 
 QGroupBox::title {
   subcontrol-origin: margin;
   subcontrol-position: top left;
-  left: 10px;
-  padding: 0 4px;
-  color: #E6EAF0;
-  font-weight: 600;
+  left: 0;
+  padding: 0 8px 0 7px;
+  background-color: #13181E;
+  border-left: 2px solid #2DA6A1;
+  color: #D8DEE6;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 QGroupBox:disabled,
@@ -205,6 +236,8 @@ QGroupBox#displayPanel[dragActive="true"] {
 
 QGroupBox#displayPanel::title {
   color: #A7B0BA;
+  background-color: #050608;
+  border-left: none;
   font-weight: 600;
 }
 
@@ -235,8 +268,8 @@ QComboBox {
   color: #E6EAF0;
   border: 1px solid #2C333A;
   border-radius: 4px;
-  min-height: 24px;
-  padding: 3px 7px;
+  min-height: 20px;
+  padding: 1px 6px;
   selection-background-color: #2DA6A1;
   selection-color: #050608;
 }
@@ -285,7 +318,7 @@ QComboBox:disabled {
 }
 
 QComboBox::drop-down {
-  width: 24px;
+  width: 20px;
   border-left: 1px solid #2C333A;
 }
 
@@ -302,8 +335,8 @@ QPushButton {
   color: #E6EAF0;
   border: 1px solid #3A424B;
   border-radius: 4px;
-  min-height: 26px;
-  padding: 4px 12px;
+  min-height: 22px;
+  padding: 2px 10px;
 }
 
 QPushButton:hover {

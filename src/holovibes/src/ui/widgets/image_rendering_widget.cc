@@ -19,6 +19,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QGridLayout>
+#include <QHBoxLayout>
 #include <QLabel>
 #include <QSpacerItem>
 #include <QStandardItemModel>
@@ -46,7 +47,7 @@ QComboBox *create_combo_box(QWidget *parent, const QStringList &items) {
 
 } // namespace
 
-ImageRenderingWidget::ImageRenderingWidget(QWidget *parent) : QGroupBox("Image Rendering", parent) {
+ImageRenderingWidget::ImageRenderingWidget(QWidget *parent) : QGroupBox("IMAGE RENDERING", parent) {
   setup_ui();
   connect_signals();
 }
@@ -130,7 +131,11 @@ AutoFocusWidget *ImageRenderingWidget::autofocus_widget() { return autofocus_wid
 
 void ImageRenderingWidget::setup_ui() {
   auto *layout = new QGridLayout(this);
-  int   row    = 0;
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setHorizontalSpacing(6);
+  layout->setVerticalSpacing(4);
+  layout->setColumnStretch(1, 1);
+  int row = 0;
 
   auto add_combo_row = [&](const QString &label, QComboBox *&combo, const QStringList &items) {
     layout->addWidget(new QLabel(label, this), row, 0);
@@ -152,14 +157,18 @@ void ImageRenderingWidget::setup_ui() {
   add_spin_row("Time Stride:", time_stride_spin_, 1, kLargeSpinMax, 32);
   image_combo_->setCurrentText("Processed");
 
-  auto *filter_layout = new QGridLayout();
-  filter_2d_check_    = new QCheckBox("Filter 2D", this);
-  filter_layout->addWidget(filter_2d_check_, 0, 0);
-  filter_2d_inner_spin_ = create_spin_box(this, 0, kLargeSpinMax, 0);
-  filter_layout->addWidget(filter_2d_inner_spin_, 0, 1);
-  filter_2d_outer_spin_ = create_spin_box(this, 0, kLargeSpinMax, 1024);
-  filter_layout->addWidget(filter_2d_outer_spin_, 0, 2);
-  layout->addLayout(filter_layout, row, 0, 1, 2);
+  filter_2d_check_ = new QCheckBox("Filter 2D", this);
+  layout->addWidget(filter_2d_check_, row, 0);
+
+  auto *filter_controls = new QWidget(this);
+  auto *filter_layout   = new QHBoxLayout(filter_controls);
+  filter_layout->setContentsMargins(0, 0, 0, 0);
+  filter_layout->setSpacing(6);
+  filter_2d_inner_spin_ = create_spin_box(filter_controls, 0, kLargeSpinMax, 0);
+  filter_layout->addWidget(filter_2d_inner_spin_);
+  filter_2d_outer_spin_ = create_spin_box(filter_controls, 0, kLargeSpinMax, 1024);
+  filter_layout->addWidget(filter_2d_outer_spin_);
+  layout->addWidget(filter_controls, row, 1);
   ++row;
 
   auto space_transforms = QStringList{"None", "Fresnel Diffraction", "Angular Spectrum"};

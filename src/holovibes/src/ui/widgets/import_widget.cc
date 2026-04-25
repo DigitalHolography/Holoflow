@@ -47,7 +47,7 @@ constexpr int kLargeSpinMax = 1024 * 1024;
 
 } // namespace
 
-ImportWidget::ImportWidget(QWidget *parent) : QGroupBox("Import", parent) {
+ImportWidget::ImportWidget(QWidget *parent) : QGroupBox("IMPORT", parent) {
   setup_ui();
   connect_signals();
 }
@@ -103,6 +103,8 @@ QComboBox   *ImportWidget::camera_config_combo() { return camera_config_combo_; 
 
 void ImportWidget::setup_ui() {
   auto *main_layout = new QVBoxLayout(this);
+  main_layout->setContentsMargins(0, 0, 0, 0);
+  main_layout->setSpacing(6);
 
   cam_check_ = new QCheckBox("Use Camera", this);
   main_layout->addWidget(cam_check_);
@@ -155,7 +157,10 @@ void ImportWidget::connect_signals() {
 QWidget *ImportWidget::create_file_page() {
   auto *page = new QWidget(this);
   auto *grid = new QGridLayout(page);
-  int   row  = 0;
+  grid->setContentsMargins(0, 0, 0, 0);
+  grid->setHorizontalSpacing(6);
+  grid->setVerticalSpacing(4);
+  int row = 0;
 
   file_line_edit_ = new QLineEdit(page);
   file_line_edit_->setPlaceholderText("Select File");
@@ -194,7 +199,10 @@ QWidget *ImportWidget::create_file_page() {
 QWidget *ImportWidget::create_camera_page() {
   auto *page = new QWidget(this);
   auto *grid = new QGridLayout(page);
-  int   row  = 0;
+  grid->setContentsMargins(0, 0, 0, 0);
+  grid->setHorizontalSpacing(6);
+  grid->setVerticalSpacing(4);
+  int row = 0;
 
   grid->addWidget(new QLabel("Camera", page), row, 0);
   camera_combo_ = create_combo_box(

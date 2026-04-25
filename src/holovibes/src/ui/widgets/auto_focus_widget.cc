@@ -71,17 +71,16 @@ QCheckBox *create_checkbox(QWidget *parent, bool checked = false, const QString 
 
 } // namespace
 
-AutoFocusWidget::AutoFocusWidget(QWidget *parent) : QGroupBox("Auto Focus", parent) {
-  setCheckable(true);
+AutoFocusWidget::AutoFocusWidget(QWidget *parent) : QGroupBox("AUTO FOCUS", parent) {
   setup_ui();
   connect_signals();
-  setChecked(false);
+  set_enabled(false);
 }
 
 // Configuration
 int  AutoFocusWidget::get_nb_subaps() const { return nb_subaps_spin_->value(); }
 int  AutoFocusWidget::get_nb_iter() const { return nb_iter_spin_->value(); }
-bool AutoFocusWidget::is_enabled() const { return isChecked(); }
+bool AutoFocusWidget::is_enabled() const { return enable_check_->isChecked(); }
 
 // Zernike values
 double AutoFocusWidget::get_z2() const { return z2_spin_->value(); }
@@ -206,7 +205,10 @@ void AutoFocusWidget::set_show_cross_correlation_view(bool checked) {
   cross_correlation_view_checkbox_->setChecked(checked);
 }
 
-void AutoFocusWidget::set_enabled(bool enabled) { setChecked(enabled); }
+void AutoFocusWidget::set_enabled(bool enabled) {
+  enable_check_->setChecked(enabled);
+  set_controls_enabled(enabled);
+}
 
 void AutoFocusWidget::clear_validation_styles() { clear_validation_error(nb_subaps_spin_); }
 
@@ -236,13 +238,20 @@ QCheckBox *AutoFocusWidget::cross_correlation_view_checkbox() {
 QSpinBox *AutoFocusWidget::nb_subaps_spin() { return nb_subaps_spin_; }
 
 void AutoFocusWidget::setup_ui() {
-  content_container_ = new QWidget(this);
-
   auto *outer_layout = new QVBoxLayout(this);
-  auto *inner_layout = new QGridLayout(content_container_);
+  outer_layout->setContentsMargins(0, 0, 0, 0);
+  outer_layout->setSpacing(6);
 
+  enable_check_ = create_checkbox(this, false, "Enable auto focus");
+  outer_layout->addWidget(enable_check_);
+
+  content_container_ = new QWidget(this);
   outer_layout->addWidget(content_container_);
 
+  auto *inner_layout = new QGridLayout(content_container_);
+  inner_layout->setContentsMargins(0, 0, 0, 0);
+  inner_layout->setHorizontalSpacing(6);
+  inner_layout->setVerticalSpacing(4);
   int row = 0;
 
   const auto add_label_widget_row = [&](const QString &label, QWidget *widget) {
@@ -304,7 +313,10 @@ void AutoFocusWidget::setup_ui() {
 }
 
 void AutoFocusWidget::connect_signals() {
-  connect(this, &QGroupBox::toggled, this, &AutoFocusWidget::settings_changed);
+  connect(enable_check_, &QCheckBox::toggled, this, [this](bool enabled) {
+    set_controls_enabled(enabled);
+    emit settings_changed();
+  });
 
   connect(nb_subaps_spin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
     if ((value % 2) == 0) {
@@ -333,6 +345,10 @@ void AutoFocusWidget::connect_signals() {
           &AutoFocusWidget::settings_changed);
   connect(cross_correlation_view_checkbox_, &QCheckBox::toggled, this,
           &AutoFocusWidget::settings_changed);
+}
+
+void AutoFocusWidget::set_controls_enabled(bool enabled) {
+  content_container_->setEnabled(enabled);
 }
 
 } // namespace holovibes::ui

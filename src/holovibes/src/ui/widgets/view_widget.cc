@@ -51,7 +51,7 @@ QComboBox *create_combo_box(QWidget *parent, const QStringList &items) {
 
 } // namespace
 
-ViewWidget::ViewWidget(QWidget *parent) : QGroupBox("View", parent) {
+ViewWidget::ViewWidget(QWidget *parent) : QGroupBox("VIEW", parent) {
   setup_ui();
   connect_signals();
 }
@@ -145,7 +145,10 @@ void ViewWidget::update_3d_cut_controls(bool enabled) {
 
 void ViewWidget::setup_ui() {
   auto *layout = new QGridLayout(this);
-  int   row    = 0;
+  layout->setContentsMargins(0, 0, 0, 0);
+  layout->setHorizontalSpacing(6);
+  layout->setVerticalSpacing(4);
+  int row = 0;
 
   auto add_combo_row = [&](const QString &label, QComboBox *&combo, const QStringList &items) {
     layout->addWidget(new QLabel(label, this), row, 0);
@@ -174,9 +177,12 @@ void ViewWidget::setup_ui() {
   layout->addWidget(process_spectrum_view_check_, row, 1);
   ++row;
 
-  auto *axes_layout  = new QGridLayout();
-  int   axis_row     = 0;
-  auto  add_axis_row = [&](const QString &axis, QSpinBox *&origin_spin, QSpinBox *&width_spin) {
+  auto *axes_layout = new QGridLayout();
+  axes_layout->setContentsMargins(0, 0, 0, 0);
+  axes_layout->setHorizontalSpacing(6);
+  axes_layout->setVerticalSpacing(4);
+  int  axis_row     = 0;
+  auto add_axis_row = [&](const QString &axis, QSpinBox *&origin_spin, QSpinBox *&width_spin) {
     axes_layout->addWidget(new QLabel(axis + ":", this), axis_row, 0);
     origin_spin = create_spin_box(this, 0, kLargeSpinMax, 0);
     axes_layout->addWidget(origin_spin, axis_row, 1);
@@ -197,8 +203,11 @@ void ViewWidget::setup_ui() {
   layout->addItem(new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding), row, 0, 1,
                   2);
 
-  post_processing_group_ = new QGroupBox("Post Processing", this);
+  post_processing_group_ = new QGroupBox("POST PROCESSING", this);
   auto *post_layout      = new QGridLayout(post_processing_group_);
+  post_layout->setContentsMargins(0, 0, 0, 0);
+  post_layout->setHorizontalSpacing(6);
+  post_layout->setVerticalSpacing(4);
 
   post_layout->addWidget(new QLabel("Accumulation:", post_processing_group_), 0, 0);
   accumulation_spin_ = create_spin_box(post_processing_group_, 1, kLargeSpinMax, 1);

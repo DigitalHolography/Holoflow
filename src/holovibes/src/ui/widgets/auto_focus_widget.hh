@@ -115,9 +115,11 @@ signals:
 private:
   void setup_ui();
   void connect_signals();
+  void set_controls_enabled(bool enabled);
 
-  QSpinBox *nb_subaps_spin_;
-  QSpinBox *nb_iter_spin_;
+  QCheckBox *enable_check_;
+  QSpinBox  *nb_subaps_spin_;
+  QSpinBox  *nb_iter_spin_;
 
   QCheckBox      *z2_checkbox_;
   QCheckBox      *z3_checkbox_;
