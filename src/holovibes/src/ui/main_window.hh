@@ -27,6 +27,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QWidget>
+#include <array>
 #include <optional>
 
 #include "pipeline/field_help.hh"
@@ -40,6 +41,7 @@
 #include "ui/widgets/view_widget.hh"
 
 class QSplitter;
+class QGridLayout;
 
 namespace holovibes::ui {
 
@@ -64,6 +66,8 @@ private slots:
   void on_raw_record_stopped_failure(const QString &error);
 
 private:
+  enum class DisplayPanelZone { Main, Secondary };
+
   ImportWidget         *import_widget_;
   ExportWidget         *export_widget_;
   ImageRenderingWidget *render_widget_;
@@ -90,7 +94,6 @@ private:
   pipeline::Settings get_pipeline_settings();
   void               set_pipeline_settings(const pipeline::Settings &s);
 
-  void setup_menu_bar();
   void setup_main_layout();
   void initialize_display_widgets();
   void initialize_pipeline_manager();
@@ -99,21 +102,29 @@ private:
   void connect_export_controls();
   void configure_window();
 
-  QGroupBox *create_display_panel(const QString &title, TensorDisplayWidget *widget);
-  QGroupBox *display_panel_for(TensorDisplayWidget *widget) const;
-  void       set_display_title(TensorDisplayWidget *widget, const QString &title);
-  void       set_display_visible(TensorDisplayWidget *widget, bool visible);
-  void       refresh_secondary_display_visibility();
-  void       configure_unsupported_features();
-  void       save_persistent_state();
-  void       restore_persistent_state();
-  QString    sanitize_recording_token(const QString &value) const;
-  QString    recording_file_name(int acquisition_id) const;
-  QString    acquisition_label(int acquisition_id) const;
-  void       update_acquisition_label();
-  void       update_recording_path_preview();
-  void       refresh_command_bar();
-  void       set_status_label(QLabel *label, const QString &text, const QString &color);
+  QGroupBox                 *create_display_panel(const QString &title, const QString &display_id,
+                                                  TensorDisplayWidget *widget);
+  std::array<QGroupBox *, 9> display_panels() const;
+  QGroupBox                 *display_panel_for(TensorDisplayWidget *widget) const;
+  QGroupBox                 *display_panel_for_id(const QString &display_id) const;
+  void                       set_display_title(TensorDisplayWidget *widget, const QString &title);
+  void                       set_display_visible(TensorDisplayWidget *widget, bool visible);
+  void                       move_display_panel(const QString &display_id, DisplayPanelZone zone);
+  void                       set_display_panel_zone(QGroupBox *panel, DisplayPanelZone zone);
+  bool                       is_display_panel_in_main(QGroupBox *panel) const;
+  QStringList                main_display_panel_ids() const;
+  void                       relayout_display_panels();
+  void                       refresh_secondary_display_visibility();
+  void                       configure_unsupported_features();
+  void                       save_persistent_state();
+  void                       restore_persistent_state();
+  QString                    sanitize_recording_token(const QString &value) const;
+  QString                    recording_file_name(int acquisition_id) const;
+  QString                    acquisition_label(int acquisition_id) const;
+  void                       update_acquisition_label();
+  void                       update_recording_path_preview();
+  void                       refresh_command_bar();
+  void set_status_label(QLabel *label, const QString &text, const QString &color);
 
   std::filesystem::path makeRecordingPath(const QString &userText);
   QStringList           load_available_camera_configs();
@@ -159,7 +170,10 @@ private:
   QLabel      *fps_status_label_            = nullptr;
   QLabel      *recording_status_label_      = nullptr;
   QWidget     *display_workspace_           = nullptr;
+  QWidget     *main_display_container_      = nullptr;
   QWidget     *secondary_display_container_ = nullptr;
+  QGridLayout *main_display_layout_         = nullptr;
+  QGridLayout *secondary_display_layout_    = nullptr;
   QGroupBox   *xy_processed_panel_          = nullptr;
   QGroupBox   *xz_processed_panel_          = nullptr;
   QGroupBox   *yz_processed_panel_          = nullptr;

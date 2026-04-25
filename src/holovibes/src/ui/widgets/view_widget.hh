@@ -84,6 +84,7 @@ public:
   QCheckBox      *raw_view_check();
   QCheckBox      *raw_spectrum_view_check();
   QCheckBox      *process_spectrum_view_check();
+  QGroupBox      *post_processing_group();
   QSpinBox       *x_spin();
   QSpinBox       *x_width_spin();
   QSpinBox       *y_spin();
@@ -130,6 +131,7 @@ private:
   QSpinBox       *z_spin_;
   QSpinBox       *z_width_spin_;
   QComboBox      *kind_combo_;
+  QGroupBox      *post_processing_group_;
   QSpinBox       *accumulation_spin_;
   QSpinBox       *range_start_spin_;
   QSpinBox       *range_end_spin_;

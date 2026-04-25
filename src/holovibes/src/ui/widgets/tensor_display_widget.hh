@@ -63,8 +63,6 @@ protected:
   bool hasHeightForWidth() const override;
   int  heightForWidth(int w) const override;
 
-  void resizeEvent(QResizeEvent *event) override;
-
 private:
   void  ensureTexture(int w, int h, holoflow::core::DType dtype);
   void  updateTexture(const void *data, int w, int h, holoflow::core::DType dtype);

@@ -93,11 +93,12 @@ QMenu::item:selected {
 QFrame#sessionBar {
   background-color: #171A1F;
   border: 1px solid #2C333A;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
 QFrame#sessionBar QLabel {
   color: #A7B0BA;
+  font-size: 12px;
 }
 
 QFrame#sessionBar QLabel#sessionValue {
@@ -119,16 +120,18 @@ QComboBox#eyeSideField {
 QFrame#commandBar {
   background-color: #171A1F;
   border: 1px solid #2C333A;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
 QFrame#commandBar QLabel#commandLabel {
   color: #6F7A86;
+  font-size: 12px;
 }
 
 QFrame#commandBar QLabel#commandValue {
   color: #E6EAF0;
   font-weight: 600;
+  font-size: 12px;
 }
 
 QPushButton#primaryCommand {
@@ -196,6 +199,10 @@ QGroupBox#displayPanel {
   padding: 8px;
 }
 
+QGroupBox#displayPanel[dragActive="true"] {
+  border-color: #2DA6A1;
+}
+
 QGroupBox#displayPanel::title {
   color: #A7B0BA;
   font-weight: 600;
@@ -203,6 +210,17 @@ QGroupBox#displayPanel::title {
 
 QGroupBox#displayPanel QOpenGLWidget {
   background-color: #050608;
+}
+
+QFrame#displayViewport {
+  background-color: #050608;
+  border: none;
+}
+
+QFrame#displayViewport[dragActive="true"],
+QFrame#mainDisplayZone[dragActive="true"],
+QFrame#secondaryDisplayZone[dragActive="true"] {
+  border: 1px solid #2DA6A1;
 }
 
 QLabel {
@@ -233,6 +251,12 @@ QComboBox:focus {
 QLineEdit:read-only {
   color: #A7B0BA;
   background-color: #15191E;
+}
+
+QFrame#sessionBar QLineEdit,
+QFrame#sessionBar QComboBox {
+  min-height: 20px;
+  padding: 1px 6px;
 }
 
 QLineEdit[validationState="error"],
@@ -296,6 +320,11 @@ QPushButton:disabled {
   color: #6F7A86;
   background-color: #171A1F;
   border-color: #30363D;
+}
+
+QFrame#commandBar QPushButton {
+  min-height: 20px;
+  padding: 1px 8px;
 }
 
 QCheckBox {

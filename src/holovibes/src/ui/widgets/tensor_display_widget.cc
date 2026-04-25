@@ -21,6 +21,7 @@
 #include <QPaintEvent>
 #include <QPainter>
 #include <QStyleOption>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -71,7 +72,7 @@ void main(){ frag = color; })";
 
 TensorDisplayWidget::TensorDisplayWidget(QWidget *p) : QOpenGLWidget(p) {
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  setMinimumSize(160, 120);
+  setMinimumSize(0, 0);
 }
 
 void TensorDisplayWidget::set_fixed_aspect(std::optional<QSize> size) {
@@ -79,31 +80,6 @@ void TensorDisplayWidget::set_fixed_aspect(std::optional<QSize> size) {
   HOLOVIBES_CHECK(!size || size->height() > 0);
   fixed_aspect_size_ = size;
   updateGeometry();
-
-  if (fixed_aspect_size_) {
-    float ar = float(fixed_aspect_size_->width()) / float(fixed_aspect_size_->height());
-    HOLOVIBES_CHECK(ar > 0.f);
-    int h = height();
-    int w = int(std::round(h * ar));
-    resize(w, h);
-  }
-}
-
-void TensorDisplayWidget::resizeEvent(QResizeEvent *event) {
-  if (fixed_aspect_size_) {
-    float ar = float(fixed_aspect_size_->width()) / float(fixed_aspect_size_->height());
-    HOLOVIBES_CHECK(ar > 0.f);
-    int h = event->size().height();
-    int w = event->size().width();
-    if (w > h) {
-      h = int(std::round(w / ar));
-    } else {
-      w = int(std::round(h * ar));
-    }
-    resize(w, h);
-  }
-
-  QOpenGLWidget::resizeEvent(event);
 }
 
 bool TensorDisplayWidget::hasHeightForWidth() const { return fixed_aspect_size_.has_value(); }
@@ -135,6 +111,7 @@ void TensorDisplayWidget::set_value_range(float vmin, float vmax) {
 
 void TensorDisplayWidget::initializeGL() {
   initializeOpenGLFunctions();
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
   // Quad: pos(x,y), uv
   const float quad[] = {
@@ -313,21 +290,27 @@ void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
 void TensorDisplayWidget::resizeGL(int, int) { updateLetterboxViewport(); }
 
 void TensorDisplayWidget::updateLetterboxViewport() {
-  if (img_w_ <= 0 || img_h_ <= 0) {
-    glViewport(0, 0, width(), height());
+  const int widget_w = std::max(0, width());
+  const int widget_h = std::max(0, height());
+  if (img_w_ <= 0 || img_h_ <= 0 || widget_w <= 0 || widget_h <= 0) {
+    glViewport(0, 0, widget_w, widget_h);
     return;
   }
-  const float wnd = float(width()) / float(height());
-  const float img = float(img_w_) / float(img_h_);
+
+  const int aspect_w = fixed_aspect_size_ ? fixed_aspect_size_->width() : img_w_;
+  const int aspect_h = fixed_aspect_size_ ? fixed_aspect_size_->height() : img_h_;
+
+  const float wnd = float(widget_w) / float(widget_h);
+  const float img = float(aspect_w) / float(aspect_h);
   if (wnd > img) {
-    int h = height();
+    int h = widget_h;
     int w = int(img * h);
-    int x = (width() - w) / 2;
+    int x = (widget_w - w) / 2;
     glViewport(x, 0, w, h);
   } else {
-    int w = width();
+    int w = widget_w;
     int h = int(w / img);
-    int y = (height() - h) / 2;
+    int y = (widget_h - h) / 2;
     glViewport(0, y, w, h);
   }
 }
@@ -373,6 +356,8 @@ void TensorDisplayWidget::paintGL() {
   glClear(GL_COLOR_BUFFER_BIT);
   if (img_w_ <= 0 || img_h_ <= 0)
     return;
+
+  updateLetterboxViewport();
 
   glUseProgram(prog_);
 

@@ -14,6 +14,7 @@
 
 #include "ui/main_window.hh"
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -22,6 +23,12 @@
 #include <QDirIterator>
 #include <QDockWidget>
 #include <QDoubleSpinBox>
+#include <QDrag>
+#include <QDragEnterEvent>
+#include <QDragLeaveEvent>
+#include <QDragMoveEvent>
+#include <QDropEvent>
+#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfoList>
 #include <QFrame>
@@ -30,14 +37,18 @@
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMenuBar>
 #include <QMessageBox>
+#include <QMimeData>
+#include <QMouseEvent>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QResizeEvent>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QSettings>
 #include <QSignalBlocker>
+#include <QSizePolicy>
 #include <QSlider>
 #include <QSpacerItem>
 #include <QSpinBox>
@@ -51,6 +62,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <optional>
 
 #include "bug.hh"
@@ -61,7 +73,11 @@
 
 namespace {
 
-constexpr int kLargeSpinMax = 1024 * 1024;
+constexpr int  kLargeSpinMax             = 1024 * 1024;
+constexpr int  kTopBarHeight             = 30;
+constexpr auto kDisplayPanelMimeType     = "application/x-holovibes-display-panel";
+constexpr auto kDisplayPanelIdProperty   = "displayPanelId";
+constexpr auto kDisplayPanelMainProperty = "displayPanelInMain";
 
 QSpinBox *create_spin_box(QWidget *parent, int minimum, int maximum, int value) {
   auto *spin_box = new QSpinBox(parent);
@@ -141,13 +157,245 @@ void restore_combo_text(QSettings &settings, const char *key, QComboBox *combo_b
   }
 }
 
+void clear_layout(QLayout *layout) {
+  while (auto *item = layout->takeAt(0)) {
+    delete item;
+  }
+}
+
+void repolish(QWidget *widget) {
+  widget->style()->unpolish(widget);
+  widget->style()->polish(widget);
+  widget->update();
+}
+
+void set_drag_active(QWidget *widget, bool active) {
+  widget->setProperty("dragActive", active);
+  repolish(widget);
+}
+
+void start_display_panel_drag(QWidget *source, const QString &display_id) {
+  auto *mime_data = new QMimeData();
+  mime_data->setData(kDisplayPanelMimeType, display_id.toUtf8());
+
+  auto *drag = new QDrag(source);
+  drag->setMimeData(mime_data);
+  drag->exec(Qt::MoveAction);
+}
+
+bool accepts_display_panel_drag(QDragEnterEvent *event) {
+  if (!event->mimeData()->hasFormat(kDisplayPanelMimeType)) {
+    return false;
+  }
+
+  event->acceptProposedAction();
+  return true;
+}
+
+bool accepts_display_panel_drag(QDragMoveEvent *event) {
+  if (!event->mimeData()->hasFormat(kDisplayPanelMimeType)) {
+    return false;
+  }
+
+  event->acceptProposedAction();
+  return true;
+}
+
+QString dropped_display_panel_id(QDropEvent *event) {
+  if (!event->mimeData()->hasFormat(kDisplayPanelMimeType)) {
+    return {};
+  }
+
+  event->acceptProposedAction();
+  return QString::fromUtf8(event->mimeData()->data(kDisplayPanelMimeType));
+}
+
+class DraggableDisplayPanel : public QGroupBox {
+public:
+  using DropHandler = std::function<void(const QString &, bool)>;
+
+  DraggableDisplayPanel(const QString &title, const QString &display_id, DropHandler drop_handler,
+                        QWidget *parent)
+      : QGroupBox(title, parent), display_id_(display_id), drop_handler_(std::move(drop_handler)) {
+    setObjectName("displayPanel");
+    setAcceptDrops(true);
+    setProperty(kDisplayPanelIdProperty, display_id_);
+    setProperty(kDisplayPanelMainProperty, false);
+  }
+
+protected:
+  void mousePressEvent(QMouseEvent *event) override {
+    if (event->button() == Qt::LeftButton) {
+      drag_start_pos_ = event->pos();
+    }
+
+    QGroupBox::mousePressEvent(event);
+  }
+
+  void mouseMoveEvent(QMouseEvent *event) override {
+    if ((event->buttons() & Qt::LeftButton) != 0 &&
+        (event->pos() - drag_start_pos_).manhattanLength() >= QApplication::startDragDistance()) {
+      start_display_panel_drag(this, display_id_);
+      return;
+    }
+
+    QGroupBox::mouseMoveEvent(event);
+  }
+
+  void dragEnterEvent(QDragEnterEvent *event) override {
+    if (accepts_display_panel_drag(event)) {
+      set_drag_active(this, true);
+    }
+  }
+
+  void dragMoveEvent(QDragMoveEvent *event) override { accepts_display_panel_drag(event); }
+
+  void dragLeaveEvent(QDragLeaveEvent *event) override {
+    set_drag_active(this, false);
+    QGroupBox::dragLeaveEvent(event);
+  }
+
+  void dropEvent(QDropEvent *event) override {
+    const QString dropped_id = dropped_display_panel_id(event);
+    set_drag_active(this, false);
+    if (dropped_id.isEmpty() || dropped_id == display_id_) {
+      return;
+    }
+
+    drop_handler_(dropped_id, property(kDisplayPanelMainProperty).toBool());
+  }
+
+private:
+  QString     display_id_;
+  DropHandler drop_handler_;
+  QPoint      drag_start_pos_;
+};
+
+class SquareDisplayViewport : public QFrame {
+public:
+  using DropHandler = DraggableDisplayPanel::DropHandler;
+
+  SquareDisplayViewport(holovibes::ui::TensorDisplayWidget *display, const QString &display_id,
+                        DropHandler drop_handler, QWidget *parent)
+      : QFrame(parent), display_(display), display_id_(display_id),
+        drop_handler_(std::move(drop_handler)) {
+    setObjectName("displayViewport");
+    setAcceptDrops(true);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    setMinimumSize(0, 0);
+
+    display_->setParent(this);
+    display_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    display_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+    display_->setMinimumSize(0, 0);
+    display_->show();
+  }
+
+protected:
+  void mousePressEvent(QMouseEvent *event) override {
+    if (event->button() == Qt::LeftButton) {
+      drag_start_pos_ = event->pos();
+    }
+
+    QFrame::mousePressEvent(event);
+  }
+
+  void mouseMoveEvent(QMouseEvent *event) override {
+    if ((event->buttons() & Qt::LeftButton) != 0 &&
+        (event->pos() - drag_start_pos_).manhattanLength() >= QApplication::startDragDistance()) {
+      start_display_panel_drag(this, display_id_);
+      return;
+    }
+
+    QFrame::mouseMoveEvent(event);
+  }
+
+  void resizeEvent(QResizeEvent *event) override {
+    QFrame::resizeEvent(event);
+
+    const int side = std::max(0, std::min(width(), height()));
+    const int x    = (width() - side) / 2;
+    const int y    = (height() - side) / 2;
+    display_->setGeometry(x, y, side, side);
+  }
+
+  void dragEnterEvent(QDragEnterEvent *event) override {
+    if (accepts_display_panel_drag(event)) {
+      set_drag_active(this, true);
+    }
+  }
+
+  void dragMoveEvent(QDragMoveEvent *event) override { accepts_display_panel_drag(event); }
+
+  void dragLeaveEvent(QDragLeaveEvent *event) override {
+    set_drag_active(this, false);
+    QFrame::dragLeaveEvent(event);
+  }
+
+  void dropEvent(QDropEvent *event) override {
+    const QString dropped_id = dropped_display_panel_id(event);
+    set_drag_active(this, false);
+    if (dropped_id.isEmpty() || dropped_id == display_id_) {
+      return;
+    }
+
+    auto *panel = qobject_cast<QWidget *>(parent());
+    if (panel == nullptr) {
+      return;
+    }
+
+    drop_handler_(dropped_id, panel->property(kDisplayPanelMainProperty).toBool());
+  }
+
+private:
+  holovibes::ui::TensorDisplayWidget *display_;
+  QString                             display_id_;
+  DropHandler                         drop_handler_;
+  QPoint                              drag_start_pos_;
+};
+
+class DisplayDropZone : public QFrame {
+public:
+  using DropHandler = std::function<void(const QString &)>;
+
+  explicit DisplayDropZone(DropHandler drop_handler, QWidget *parent)
+      : QFrame(parent), drop_handler_(std::move(drop_handler)) {
+    setAcceptDrops(true);
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+  }
+
+protected:
+  void dragEnterEvent(QDragEnterEvent *event) override {
+    if (accepts_display_panel_drag(event)) {
+      set_drag_active(this, true);
+    }
+  }
+
+  void dragMoveEvent(QDragMoveEvent *event) override { accepts_display_panel_drag(event); }
+
+  void dragLeaveEvent(QDragLeaveEvent *event) override {
+    set_drag_active(this, false);
+    QFrame::dragLeaveEvent(event);
+  }
+
+  void dropEvent(QDropEvent *event) override {
+    const QString dropped_id = dropped_display_panel_id(event);
+    set_drag_active(this, false);
+    if (!dropped_id.isEmpty()) {
+      drop_handler_(dropped_id);
+    }
+  }
+
+private:
+  DropHandler drop_handler_;
+};
+
 } // namespace
 
 namespace holovibes::ui {
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent), session_id_(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")) {
-  setup_menu_bar();
   setup_main_layout();
   initialize_display_widgets();
   restore_persistent_state();
@@ -165,27 +413,21 @@ MainWindow::MainWindow(QWidget *parent)
   configure_window();
 }
 
-void MainWindow::setup_menu_bar() {
-  auto *bar = menuBar();
-  bar->addMenu("&File");
-  bar->addMenu("&View");
-  bar->addMenu("&Camera");
-  bar->addMenu("&Theme");
-}
-
 void MainWindow::setup_main_layout() {
   auto *central_widget = new QWidget(this);
   setCentralWidget(central_widget);
 
   auto *main_layout = new QVBoxLayout(central_widget);
-  main_layout->setContentsMargins(12, 12, 12, 12);
-  main_layout->setSpacing(8);
+  main_layout->setContentsMargins(8, 6, 8, 8);
+  main_layout->setSpacing(4);
 
   auto *session_bar = new QFrame(central_widget);
   session_bar->setObjectName("sessionBar");
+  session_bar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  session_bar->setFixedHeight(kTopBarHeight);
   auto *session_layout = new QHBoxLayout(session_bar);
-  session_layout->setContentsMargins(12, 8, 12, 8);
-  session_layout->setSpacing(8);
+  session_layout->setContentsMargins(8, 2, 8, 2);
+  session_layout->setSpacing(6);
 
   auto *patient_label = new QLabel("Patient", session_bar);
   patient_line_edit_  = new QLineEdit(session_bar);
@@ -222,7 +464,7 @@ void MainWindow::setup_main_layout() {
   session_layout->addWidget(next_acquisition_label);
   session_layout->addWidget(acquisition_value_label_);
   session_layout->addStretch(1);
-  main_layout->addWidget(session_bar);
+  main_layout->addWidget(session_bar, 0);
 
   render_widget_ = new ImageRenderingWidget(this);
   view_widget_   = new ViewWidget(this);
@@ -231,9 +473,11 @@ void MainWindow::setup_main_layout() {
 
   auto *command_bar = new QFrame(central_widget);
   command_bar->setObjectName("commandBar");
+  command_bar->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+  command_bar->setFixedHeight(kTopBarHeight);
   auto *command_layout = new QHBoxLayout(command_bar);
-  command_layout->setContentsMargins(12, 8, 12, 8);
-  command_layout->setSpacing(8);
+  command_layout->setContentsMargins(8, 2, 8, 2);
+  command_layout->setSpacing(6);
 
   start_command_button_       = new QPushButton("Start", command_bar);
   stop_command_button_        = new QPushButton("Stop", command_bar);
@@ -265,7 +509,7 @@ void MainWindow::setup_main_layout() {
   add_status_field("FPS", fps_status_label_);
   add_status_field("Recording", recording_status_label_);
   command_layout->addStretch(1);
-  main_layout->addWidget(command_bar);
+  main_layout->addWidget(command_bar, 0);
 
   connect(start_command_button_, &QPushButton::clicked, this, &MainWindow::on_import_start_clicked);
   connect(stop_command_button_, &QPushButton::clicked, this, &MainWindow::on_import_stop_clicked);
@@ -276,24 +520,46 @@ void MainWindow::setup_main_layout() {
 
   main_splitter_ = new QSplitter(Qt::Horizontal, central_widget);
   main_splitter_->setChildrenCollapsible(false);
-  main_layout->addWidget(main_splitter_);
+  main_layout->addWidget(main_splitter_, 1);
 
   auto *controls_content = new QWidget(main_splitter_);
-  auto *controls_layout  = new QVBoxLayout(controls_content);
+  controls_content->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+  auto *controls_layout = new QHBoxLayout(controls_content);
   controls_layout->setContentsMargins(0, 0, 0, 0);
   controls_layout->setSpacing(12);
 
-  controls_layout->addWidget(import_widget_);
-  controls_layout->addWidget(render_widget_);
-  controls_layout->addWidget(view_widget_);
-  controls_layout->addWidget(export_widget_);
-  controls_layout->addStretch(1);
+  auto *acquisition_column = new QWidget(controls_content);
+  auto *acquisition_layout = new QVBoxLayout(acquisition_column);
+  acquisition_layout->setContentsMargins(0, 0, 0, 0);
+  acquisition_layout->setSpacing(12);
+  acquisition_layout->addWidget(import_widget_);
+  acquisition_layout->addWidget(export_widget_);
+  acquisition_layout->addWidget(view_widget_);
+  acquisition_layout->addWidget(view_widget_->post_processing_group());
+  acquisition_layout->addStretch(1);
+
+  auto *processing_column = new QWidget(controls_content);
+  auto *processing_layout = new QVBoxLayout(processing_column);
+  processing_layout->setContentsMargins(0, 0, 0, 0);
+  processing_layout->setSpacing(12);
+  processing_layout->addWidget(render_widget_);
+  processing_layout->addWidget(render_widget_->autofocus_widget());
+  processing_layout->addStretch(1);
+
+  controls_layout->addWidget(acquisition_column);
+  controls_layout->addWidget(processing_column);
 
   auto *controls_scroll = new QScrollArea(main_splitter_);
   controls_scroll->setWidgetResizable(true);
   controls_scroll->setFrameShape(QFrame::NoFrame);
-  controls_scroll->setMinimumWidth(340);
+  controls_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   controls_scroll->setWidget(controls_content);
+  const int controls_width =
+      std::max(controls_content->sizeHint().width() +
+                   controls_scroll->verticalScrollBar()->sizeHint().width() + 12,
+               430);
+  controls_scroll->setFixedWidth(controls_width);
+  controls_scroll->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
 
   display_workspace_   = new QWidget(main_splitter_);
   auto *display_layout = new QVBoxLayout(display_workspace_);
@@ -309,7 +575,7 @@ void MainWindow::setup_main_layout() {
   main_splitter_->setStretchFactor(0, 0);
   main_splitter_->setStretchFactor(1, 1);
   main_splitter_->setStretchFactor(2, 0);
-  main_splitter_->setSizes({360, 780, 300});
+  main_splitter_->setSizes({controls_width, 780, 300});
 
   connect(patient_line_edit_, &QLineEdit::textChanged, this,
           &MainWindow::update_recording_path_preview);
@@ -317,19 +583,36 @@ void MainWindow::setup_main_layout() {
           [this](int) { update_recording_path_preview(); });
 }
 
-QGroupBox *MainWindow::create_display_panel(const QString &title, TensorDisplayWidget *widget) {
-  auto *panel = new QGroupBox(title, display_workspace_);
-  panel->setObjectName("displayPanel");
+QGroupBox *MainWindow::create_display_panel(const QString &title, const QString &display_id,
+                                            TensorDisplayWidget *widget) {
+  auto *panel = new DraggableDisplayPanel(
+      title, display_id,
+      [this](const QString &dropped_id, bool target_main) {
+        move_display_panel(dropped_id,
+                           target_main ? DisplayPanelZone::Main : DisplayPanelZone::Secondary);
+      },
+      display_workspace_);
 
   auto *layout = new QVBoxLayout(panel);
-  layout->setContentsMargins(8, 8, 8, 8);
+  layout->setContentsMargins(6, 6, 6, 6);
   layout->setSpacing(0);
-  layout->addWidget(widget);
+  layout->addWidget(new SquareDisplayViewport(
+      widget, display_id,
+      [this](const QString &dropped_id, bool target_main) {
+        move_display_panel(dropped_id,
+                           target_main ? DisplayPanelZone::Main : DisplayPanelZone::Secondary);
+      },
+      panel));
 
-  widget->setParent(panel);
   widget->show();
   panel->hide();
   return panel;
+}
+
+std::array<QGroupBox *, 9> MainWindow::display_panels() const {
+  return {xy_processed_panel_,         xy_raw_panel_,        raw_spectrum_panel_,
+          processed_spectrum_panel_,   zernike_phase_panel_, shack_hartmann_panel_,
+          shack_hartmann_xcorr_panel_, xz_processed_panel_,  yz_processed_panel_};
 }
 
 QGroupBox *MainWindow::display_panel_for(TensorDisplayWidget *widget) const {
@@ -364,6 +647,16 @@ QGroupBox *MainWindow::display_panel_for(TensorDisplayWidget *widget) const {
   return nullptr;
 }
 
+QGroupBox *MainWindow::display_panel_for_id(const QString &display_id) const {
+  for (auto *panel : display_panels()) {
+    if (panel != nullptr && panel->property(kDisplayPanelIdProperty).toString() == display_id) {
+      return panel;
+    }
+  }
+
+  return nullptr;
+}
+
 void MainWindow::set_display_title(TensorDisplayWidget *widget, const QString &title) {
   if (widget != nullptr) {
     widget->setWindowTitle(title);
@@ -387,20 +680,96 @@ void MainWindow::set_display_visible(TensorDisplayWidget *widget, bool visible) 
   refresh_secondary_display_visibility();
 }
 
+void MainWindow::move_display_panel(const QString &display_id, DisplayPanelZone zone) {
+  auto *panel = display_panel_for_id(display_id);
+  if (panel == nullptr) {
+    return;
+  }
+
+  set_display_panel_zone(panel, zone);
+  relayout_display_panels();
+}
+
+void MainWindow::set_display_panel_zone(QGroupBox *panel, DisplayPanelZone zone) {
+  if (panel == nullptr) {
+    return;
+  }
+
+  panel->setProperty(kDisplayPanelMainProperty, zone == DisplayPanelZone::Main);
+}
+
+bool MainWindow::is_display_panel_in_main(QGroupBox *panel) const {
+  return panel != nullptr && panel->property(kDisplayPanelMainProperty).toBool();
+}
+
+QStringList MainWindow::main_display_panel_ids() const {
+  QStringList ids;
+  for (auto *panel : display_panels()) {
+    if (is_display_panel_in_main(panel)) {
+      ids << panel->property(kDisplayPanelIdProperty).toString();
+    }
+  }
+
+  return ids;
+}
+
+void MainWindow::relayout_display_panels() {
+  if (main_display_layout_ == nullptr || secondary_display_layout_ == nullptr) {
+    return;
+  }
+
+  clear_layout(main_display_layout_);
+  clear_layout(secondary_display_layout_);
+
+  QList<QGroupBox *> main_panels;
+  QList<QGroupBox *> secondary_panels;
+  for (auto *panel : display_panels()) {
+    if (panel == nullptr) {
+      continue;
+    }
+
+    if (is_display_panel_in_main(panel)) {
+      main_panels << panel;
+    } else {
+      secondary_panels << panel;
+    }
+  }
+
+  auto add_panels = [](QGridLayout *layout, const QList<QGroupBox *> &panels, int columns) {
+    const int clamped_columns = std::max(1, columns);
+    for (int i = 0; i < panels.size(); ++i) {
+      layout->addWidget(panels[i], i / clamped_columns, i % clamped_columns);
+    }
+
+    for (int column = 0; column < clamped_columns; ++column) {
+      layout->setColumnStretch(column, 1);
+    }
+
+    const int panel_count = static_cast<int>(panels.size());
+    const int rows        = std::max(1, (panel_count + clamped_columns - 1) / clamped_columns);
+    for (int row = 0; row < rows; ++row) {
+      layout->setRowStretch(row, 1);
+    }
+  };
+
+  const int main_columns = main_panels.size() <= 1 ? 1 : (main_panels.size() <= 4 ? 2 : 3);
+  add_panels(main_display_layout_, main_panels, main_columns);
+  add_panels(secondary_display_layout_, secondary_panels, 4);
+  refresh_secondary_display_visibility();
+}
+
 void MainWindow::refresh_secondary_display_visibility() {
   if (secondary_display_container_ == nullptr) {
     return;
   }
 
-  const bool any_secondary_visible =
-      (xy_raw_panel_ != nullptr && !xy_raw_panel_->isHidden()) ||
-      (raw_spectrum_panel_ != nullptr && !raw_spectrum_panel_->isHidden()) ||
-      (processed_spectrum_panel_ != nullptr && !processed_spectrum_panel_->isHidden()) ||
-      (shack_hartmann_panel_ != nullptr && !shack_hartmann_panel_->isHidden()) ||
-      (shack_hartmann_xcorr_panel_ != nullptr && !shack_hartmann_xcorr_panel_->isHidden()) ||
-      (zernike_phase_panel_ != nullptr && !zernike_phase_panel_->isHidden()) ||
-      (xz_processed_panel_ != nullptr && !xz_processed_panel_->isHidden()) ||
-      (yz_processed_panel_ != nullptr && !yz_processed_panel_->isHidden());
+  bool any_secondary_visible = false;
+  for (auto *panel : display_panels()) {
+    if (panel != nullptr && !is_display_panel_in_main(panel) && !panel->isHidden()) {
+      any_secondary_visible = true;
+      break;
+    }
+  }
 
   secondary_display_container_->setVisible(any_secondary_visible);
 }
@@ -566,6 +935,7 @@ void MainWindow::save_persistent_state() {
   if (main_splitter_ != nullptr) {
     settings.setValue("splitter_state", main_splitter_->saveState());
   }
+  settings.setValue("main_display_panels", main_display_panel_ids());
   settings.endGroup();
 
   settings.beginGroup("session");
@@ -664,6 +1034,18 @@ void MainWindow::restore_persistent_state() {
   }
   if (main_splitter_ != nullptr && settings.contains("splitter_state")) {
     main_splitter_->restoreState(settings.value("splitter_state").toByteArray());
+  }
+  if (settings.contains("main_display_panels")) {
+    const QStringList main_panel_ids = settings.value("main_display_panels").toStringList();
+    for (auto *panel : display_panels()) {
+      set_display_panel_zone(panel, DisplayPanelZone::Secondary);
+    }
+    for (const auto &display_id : main_panel_ids) {
+      if (auto *panel = display_panel_for_id(display_id); panel != nullptr) {
+        set_display_panel_zone(panel, DisplayPanelZone::Main);
+      }
+    }
+    relayout_display_panels();
   }
   settings.endGroup();
 
@@ -812,39 +1194,41 @@ void MainWindow::initialize_display_widgets() {
 
   auto *display_layout = static_cast<QVBoxLayout *>(display_workspace_->layout());
 
-  xy_processed_panel_ = create_display_panel("XY-Processed", xy_processed_widget_);
-  display_layout->addWidget(xy_processed_panel_, 3);
+  main_display_container_ = new DisplayDropZone(
+      [this](const QString &display_id) { move_display_panel(display_id, DisplayPanelZone::Main); },
+      display_workspace_);
+  main_display_container_->setObjectName("mainDisplayZone");
+  main_display_layout_ = new QGridLayout(main_display_container_);
+  main_display_layout_->setContentsMargins(0, 0, 0, 0);
+  main_display_layout_->setSpacing(8);
+  display_layout->addWidget(main_display_container_, 3);
 
-  secondary_display_container_ = new QWidget(display_workspace_);
-  auto *secondary_layout       = new QGridLayout(secondary_display_container_);
-  secondary_layout->setContentsMargins(0, 0, 0, 0);
-  secondary_layout->setSpacing(8);
+  secondary_display_container_ = new DisplayDropZone(
+      [this](const QString &display_id) {
+        move_display_panel(display_id, DisplayPanelZone::Secondary);
+      },
+      display_workspace_);
+  secondary_display_container_->setObjectName("secondaryDisplayZone");
+  secondary_display_layout_ = new QGridLayout(secondary_display_container_);
+  secondary_display_layout_->setContentsMargins(0, 0, 0, 0);
+  secondary_display_layout_->setSpacing(8);
 
-  xy_raw_panel_       = create_display_panel("XY-Raw", xy_raw_widget_);
-  raw_spectrum_panel_ = create_display_panel("Raw Spectrum", raw_spectrum_widget_);
+  xy_processed_panel_ = create_display_panel("XY-Processed", "xy_processed", xy_processed_widget_);
+  xy_raw_panel_       = create_display_panel("XY-Raw", "xy_raw", xy_raw_widget_);
+  raw_spectrum_panel_ = create_display_panel("Raw Spectrum", "raw_spectrum", raw_spectrum_widget_);
   processed_spectrum_panel_ =
-      create_display_panel("Processed Spectrum", processed_spectrum_widget_);
-  zernike_phase_panel_  = create_display_panel("Zernike Phase", zernike_phase_widget_);
-  shack_hartmann_panel_ = create_display_panel("Shack Hartmann", shack_hartmann_widget_);
-  shack_hartmann_xcorr_panel_ =
-      create_display_panel("Shack Hartmann XCorr", shack_hartmann_xcorr_widget_);
-  xz_processed_panel_ = create_display_panel("XZ-Processed", xz_processed_widget_);
-  yz_processed_panel_ = create_display_panel("YZ-Processed", yz_processed_widget_);
+      create_display_panel("Processed Spectrum", "processed_spectrum", processed_spectrum_widget_);
+  zernike_phase_panel_ =
+      create_display_panel("Zernike Phase", "zernike_phase", zernike_phase_widget_);
+  shack_hartmann_panel_ =
+      create_display_panel("Shack Hartmann", "shack_hartmann", shack_hartmann_widget_);
+  shack_hartmann_xcorr_panel_ = create_display_panel("Shack Hartmann XCorr", "shack_hartmann_xcorr",
+                                                     shack_hartmann_xcorr_widget_);
+  xz_processed_panel_ = create_display_panel("XZ-Processed", "xz_processed", xz_processed_widget_);
+  yz_processed_panel_ = create_display_panel("YZ-Processed", "yz_processed", yz_processed_widget_);
 
-  secondary_layout->addWidget(xy_raw_panel_, 0, 0);
-  secondary_layout->addWidget(raw_spectrum_panel_, 0, 1);
-  secondary_layout->addWidget(processed_spectrum_panel_, 0, 2);
-  secondary_layout->addWidget(zernike_phase_panel_, 0, 3);
-  secondary_layout->addWidget(shack_hartmann_panel_, 1, 0);
-  secondary_layout->addWidget(shack_hartmann_xcorr_panel_, 1, 1);
-  secondary_layout->addWidget(xz_processed_panel_, 1, 2);
-  secondary_layout->addWidget(yz_processed_panel_, 1, 3);
-  secondary_layout->setColumnStretch(0, 1);
-  secondary_layout->setColumnStretch(1, 1);
-  secondary_layout->setColumnStretch(2, 1);
-  secondary_layout->setColumnStretch(3, 1);
-  secondary_layout->setRowStretch(0, 1);
-  secondary_layout->setRowStretch(1, 1);
+  set_display_panel_zone(xy_processed_panel_, DisplayPanelZone::Main);
+  relayout_display_panels();
 
   display_layout->addWidget(secondary_display_container_, 2);
   set_display_visible(xy_processed_widget_, false);
@@ -1007,8 +1391,9 @@ void MainWindow::connect_export_controls() {
 void MainWindow::configure_window() {
   setWindowTitle("Holovibes");
 
-  const QSize default_size = minimumSizeHint().expandedTo(QSize(1280, 800));
-  setMinimumSize(minimumSizeHint());
+  const QSize minimum_size(960, 640);
+  const QSize default_size = minimum_size.expandedTo(QSize(1280, 800));
+  setMinimumSize(minimum_size);
   if (!geometry_restored_) {
     resize(default_size);
   }

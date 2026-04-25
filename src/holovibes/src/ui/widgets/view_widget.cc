@@ -118,6 +118,7 @@ QCheckBox      *ViewWidget::fft_shift_check() { return fft_shift_check_; }
 QCheckBox      *ViewWidget::raw_view_check() { return raw_view_check_; }
 QCheckBox      *ViewWidget::raw_spectrum_view_check() { return raw_spectrum_view_check_; }
 QCheckBox      *ViewWidget::process_spectrum_view_check() { return process_spectrum_view_check_; }
+QGroupBox      *ViewWidget::post_processing_group() { return post_processing_group_; }
 QSpinBox       *ViewWidget::x_spin() { return x_spin_; }
 QSpinBox       *ViewWidget::x_width_spin() { return x_width_spin_; }
 QSpinBox       *ViewWidget::y_spin() { return y_spin_; }
@@ -150,14 +151,6 @@ void ViewWidget::setup_ui() {
     layout->addWidget(new QLabel(label, this), row, 0);
     combo = create_combo_box(this, items);
     layout->addWidget(combo, row, 1);
-    ++row;
-  };
-
-  auto add_spin_row = [&](const QString &label, QSpinBox *&spin, int minimum, int maximum,
-                          int value) {
-    layout->addWidget(new QLabel(label, this), row, 0);
-    spin = create_spin_box(this, minimum, maximum, value);
-    layout->addWidget(spin, row, 1);
     ++row;
   };
 
@@ -200,40 +193,38 @@ void ViewWidget::setup_ui() {
   ++row;
 
   add_combo_row("View Kind:", kind_combo_, QStringList{"XY", "XZ", "YZ"});
-  add_spin_row("Output image accumulation:", accumulation_spin_, 1, kLargeSpinMax, 1);
-
-  auto *brightness_group = new QGroupBox("Brightness/Contrast", this);
-  brightness_group->setCheckable(true);
-  brightness_group->setChecked(true);
-  auto *bright_layout = new QGridLayout(brightness_group);
-
-  auto *range_layout = new QGridLayout();
-  range_layout->addWidget(new QLabel("Range:", brightness_group), 0, 0);
-  range_start_spin_ = create_spin_box(brightness_group, 1, kLargeSpinMax, 0);
-  range_layout->addWidget(range_start_spin_, 0, 1);
-  range_end_spin_ = create_spin_box(brightness_group, 1, kLargeSpinMax, 255);
-  range_layout->addWidget(range_end_spin_, 0, 2);
-  bright_layout->addLayout(range_layout, 1, 0, 1, 2);
-
-  reticle_check_ = new QCheckBox("Display reticle", brightness_group);
-  bright_layout->addWidget(reticle_check_, 2, 0);
-  reticle_radius_ = create_double_spin_box(brightness_group, 0.05, 1.0, 0.05, 1.0);
-  bright_layout->addWidget(reticle_radius_, 2, 1);
-  pct_check_ = new QCheckBox("PCT", brightness_group);
-  bright_layout->addWidget(pct_check_, 3, 0);
-  pct_radius_ = create_double_spin_box(brightness_group, 0.05, 1.0, 0.05, 1.0);
-  bright_layout->addWidget(pct_radius_, 3, 1);
-
-  registration_check_ = new QCheckBox("Registration", brightness_group);
-  bright_layout->addWidget(registration_check_, 4, 0);
-  registration_radius_ = create_double_spin_box(brightness_group, 0.05, 1.0, 0.05, 1.0);
-  bright_layout->addWidget(registration_radius_, 4, 1);
-
-  layout->addWidget(brightness_group, row, 0, 1, 2);
-  ++row;
 
   layout->addItem(new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding), row, 0, 1,
                   2);
+
+  post_processing_group_ = new QGroupBox("Post Processing", this);
+  auto *post_layout      = new QGridLayout(post_processing_group_);
+
+  post_layout->addWidget(new QLabel("Accumulation:", post_processing_group_), 0, 0);
+  accumulation_spin_ = create_spin_box(post_processing_group_, 1, kLargeSpinMax, 1);
+  post_layout->addWidget(accumulation_spin_, 0, 1);
+
+  post_layout->addWidget(new QLabel("Range:", post_processing_group_), 1, 0);
+  range_start_spin_ = create_spin_box(post_processing_group_, 1, kLargeSpinMax, 0);
+  post_layout->addWidget(range_start_spin_, 1, 1);
+  range_end_spin_ = create_spin_box(post_processing_group_, 1, kLargeSpinMax, 255);
+  post_layout->addWidget(range_end_spin_, 1, 2);
+
+  reticle_check_ = new QCheckBox("Display reticle", post_processing_group_);
+  post_layout->addWidget(reticle_check_, 2, 0);
+  reticle_radius_ = create_double_spin_box(post_processing_group_, 0.05, 1.0, 0.05, 1.0);
+  post_layout->addWidget(reticle_radius_, 2, 1, 1, 2);
+
+  pct_check_ = new QCheckBox("PCT", post_processing_group_);
+  post_layout->addWidget(pct_check_, 3, 0);
+  pct_radius_ = create_double_spin_box(post_processing_group_, 0.05, 1.0, 0.05, 1.0);
+  post_layout->addWidget(pct_radius_, 3, 1, 1, 2);
+
+  registration_check_ = new QCheckBox("Registration", post_processing_group_);
+  post_layout->addWidget(registration_check_, 4, 0);
+  registration_radius_ = create_double_spin_box(post_processing_group_, 0.05, 1.0, 0.05, 1.0);
+  post_layout->addWidget(registration_radius_, 4, 1, 1, 2);
+
   update_3d_cut_controls(cuts_3d_check_->isChecked());
 }
 

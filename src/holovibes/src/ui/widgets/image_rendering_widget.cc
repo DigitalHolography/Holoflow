@@ -177,8 +177,6 @@ void ImageRenderingWidget::setup_ui() {
   ++row;
 
   autofocus_widget_ = new AutoFocusWidget(this);
-  layout->addWidget(autofocus_widget_, row, 0, 1, 2);
-  ++row;
 
   layout->addWidget(new QLabel("Convolution:", this), row, 0, 1, 2);
   ++row;
