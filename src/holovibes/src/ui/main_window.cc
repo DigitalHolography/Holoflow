@@ -56,6 +56,7 @@
 #include <QStackedLayout>
 #include <QStandardPaths>
 #include <QStringList>
+#include <QStyle>
 #include <QThread>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -892,13 +893,16 @@ void MainWindow::update_recording_path_preview() {
   refresh_command_bar();
 }
 
-void MainWindow::set_status_label(QLabel *label, const QString &text, const QString &color) {
+void MainWindow::set_status_label(QLabel *label, const QString &text, const char *tone) {
   if (label == nullptr) {
     return;
   }
 
   label->setText(text);
-  label->setStyleSheet(QString("color: %1; font-weight: 600;").arg(color));
+  label->setProperty("statusTone", QString::fromLatin1(tone));
+  label->style()->unpolish(label);
+  label->style()->polish(label);
+  label->update();
 }
 
 void MainWindow::configure_unsupported_features() {
@@ -962,11 +966,11 @@ void MainWindow::refresh_command_bar() {
   stop_record_command_button_->setEnabled(export_widget_->stop_button()->isEnabled());
 
   if (pipeline_running_) {
-    set_status_label(pipeline_status_label_, "Live", "#3FB950");
+    set_status_label(pipeline_status_label_, "Live", "success");
   } else if (update_in_progress_) {
-    set_status_label(pipeline_status_label_, "Updating", "#D29922");
+    set_status_label(pipeline_status_label_, "Updating", "warning");
   } else {
-    set_status_label(pipeline_status_label_, "Idle", "#A7B0BA");
+    set_status_label(pipeline_status_label_, "Idle", "muted");
   }
 
   QString source_text;
@@ -986,11 +990,11 @@ void MainWindow::refresh_command_bar() {
   }
 
   if (export_in_progress_) {
-    set_status_label(recording_status_label_, "Recording", "#DA3633");
+    set_status_label(recording_status_label_, "Recording", "danger");
   } else if (export_widget_->isChecked()) {
-    set_status_label(recording_status_label_, "Armed", "#D29922");
+    set_status_label(recording_status_label_, "Armed", "warning");
   } else {
-    set_status_label(recording_status_label_, "Off", "#A7B0BA");
+    set_status_label(recording_status_label_, "Off", "muted");
   }
 }
 

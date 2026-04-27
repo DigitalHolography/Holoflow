@@ -1,0 +1,453 @@
+/*
+ * Copyright 2026 Digital Holography Foundation
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+QWidget {
+  background-color: @PANEL@;
+  color: @TEXT@;
+  font-size: 13px;
+}
+
+QMainWindow,
+QDialog,
+QMessageBox {
+  background-color: @WINDOW@;
+}
+
+QMenuBar {
+  background-color: @SURFACE@;
+  border-bottom: 1px solid @BORDER@;
+  padding: 2px 6px;
+}
+
+QMenuBar::item {
+  background: transparent;
+  padding: 5px 10px;
+  border-radius: 4px;
+}
+
+QMenuBar::item:selected {
+  background-color: @SURFACE_ALT@;
+}
+
+QMenu {
+  background-color: @SURFACE_ALT@;
+  border: 1px solid @BORDER@;
+  padding: 4px;
+}
+
+QMenu::item {
+  padding: 6px 24px;
+  border-radius: 3px;
+}
+
+QMenu::item:selected {
+  background-color: @ACCENT_DARK@;
+}
+
+QFrame#sessionBar {
+  background-color: @PANEL_DARK@;
+  border: none;
+  border-bottom: 1px solid @BORDER@;
+  border-radius: 0;
+}
+
+QFrame#sessionBar QLabel {
+  color: @TEXT_MUTED@;
+  font-size: 12px;
+}
+
+QFrame#sessionBar QLabel#sessionValue {
+  color: @TEXT@;
+  font-weight: 600;
+}
+
+QLineEdit#patientField {
+  background-color: @FIELD@;
+  font-weight: 600;
+}
+
+QComboBox#eyeSideField {
+  background-color: @FIELD@;
+  font-weight: 600;
+  min-width: 64px;
+}
+
+QFrame#commandBar {
+  background-color: @PANEL@;
+  border: none;
+  border-bottom: 1px solid @BORDER@;
+  border-radius: 0;
+}
+
+QFrame#commandBar QLabel#commandLabel {
+  color: @DISABLED@;
+  font-size: 12px;
+}
+
+QFrame#commandBar QLabel#commandValue {
+  color: @TEXT@;
+  font-weight: 600;
+  font-size: 12px;
+}
+
+QFrame#commandBar QLabel#commandValue[statusTone="success"] {
+  color: @STATUS_SUCCESS@;
+}
+
+QFrame#commandBar QLabel#commandValue[statusTone="warning"] {
+  color: @STATUS_WARNING@;
+}
+
+QFrame#commandBar QLabel#commandValue[statusTone="danger"] {
+  color: @DANGER_BORDER@;
+}
+
+QFrame#commandBar QLabel#commandValue[statusTone="muted"] {
+  color: @TEXT_MUTED@;
+}
+
+QPushButton#primaryCommand {
+  background-color: @ACCENT@;
+  border-color: @ACCENT@;
+  color: @HIGHLIGHTED_TEXT@;
+  font-weight: 600;
+}
+
+QPushButton#primaryCommand:hover {
+  background-color: @ACCENT_HOVER@;
+  border-color: @ACCENT_HOVER@;
+}
+
+QPushButton#primaryCommand:disabled {
+  color: @DISABLED@;
+  background-color: @SURFACE@;
+  border-color: @SCROLL@;
+}
+
+QPushButton#recordCommand {
+  border-color: @DANGER_BORDER@;
+  color: @DANGER@;
+  font-weight: 600;
+}
+
+QPushButton#recordCommand:hover {
+  background-color: @DANGER_BG@;
+}
+
+QPushButton#recordCommand:disabled {
+  color: @DISABLED@;
+  background-color: @SURFACE@;
+  border-color: @SCROLL@;
+}
+
+QWidget#controlsContent,
+QWidget#controlsColumn,
+QWidget#controlsScrollViewport,
+QScrollArea#controlsScrollArea,
+QGroupBox#systemMonitorPanel {
+  background-color: @PANEL@;
+}
+
+QWidget#controlsColumn QWidget,
+QGroupBox#systemMonitorPanel QWidget {
+  background-color: transparent;
+}
+
+QWidget#controlsColumn QLabel,
+QWidget#controlsColumn QCheckBox,
+QGroupBox#systemMonitorPanel QLabel,
+QGroupBox#systemMonitorPanel QCheckBox {
+  color: @TEXT_SETTING@;
+}
+
+QWidget#controlsColumn QLineEdit,
+QWidget#controlsColumn QSpinBox,
+QWidget#controlsColumn QDoubleSpinBox,
+QWidget#controlsColumn QComboBox {
+  color: @TEXT_SETTING@;
+}
+
+QWidget#displayWorkspace {
+  background-color: @WINDOW@;
+}
+
+QFrame#mainDisplayZone,
+QFrame#secondaryDisplayZone {
+  background-color: @WINDOW@;
+}
+
+QFrame#controlsColumnDivider {
+  background-color: @BORDER@;
+}
+
+QSplitter::handle {
+  background-color: @BORDER@;
+}
+
+QGroupBox {
+  background: transparent;
+  border: none;
+  border-top: 1px solid @BORDER@;
+  border-radius: 0;
+  margin-top: 16px;
+  padding: 8px 8px 0 8px;
+}
+
+QGroupBox::title {
+  subcontrol-origin: margin;
+  subcontrol-position: top left;
+  left: 0;
+  padding: 0 8px 0 7px;
+  background-color: @PANEL@;
+  border-left: 2px solid @ACCENT@;
+  color: @TEXT_HEADER@;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+QGroupBox:disabled,
+QGroupBox:disabled::title {
+  color: @DISABLED@;
+  border-color: @SCROLL@;
+}
+
+QGroupBox#displayPanel {
+  background-color: @DISPLAY@;
+  border: 1px solid @BORDER@;
+  border-radius: 4px;
+  margin-top: 18px;
+  padding: 8px;
+}
+
+QGroupBox#displayPanel[dragActive="true"] {
+  border-color: @ACCENT@;
+}
+
+QGroupBox#displayPanel::title {
+  color: @TEXT_MUTED@;
+  background-color: @DISPLAY@;
+  border-left: none;
+  font-weight: 600;
+}
+
+QGroupBox#displayPanel QOpenGLWidget {
+  background-color: @DISPLAY@;
+}
+
+QFrame#displayViewport {
+  background-color: @DISPLAY@;
+  border: none;
+}
+
+QFrame#displayViewport[dragActive="true"],
+QFrame#mainDisplayZone[dragActive="true"],
+QFrame#secondaryDisplayZone[dragActive="true"] {
+  border: 1px solid @ACCENT@;
+}
+
+QLabel {
+  background: transparent;
+}
+
+QLineEdit,
+QSpinBox,
+QDoubleSpinBox,
+QComboBox {
+  background-color: @FIELD@;
+  color: @TEXT@;
+  border: 1px solid @BORDER@;
+  border-radius: 4px;
+  min-height: 20px;
+  padding: 1px 6px;
+  selection-background-color: @ACCENT@;
+  selection-color: @HIGHLIGHTED_TEXT@;
+}
+
+QLineEdit:focus,
+QSpinBox:focus,
+QDoubleSpinBox:focus,
+QComboBox:focus {
+  border-color: @ACCENT@;
+}
+
+QLineEdit:read-only {
+  color: @TEXT_MUTED@;
+  background-color: @FIELD_READONLY@;
+}
+
+QFrame#sessionBar QLineEdit,
+QFrame#sessionBar QComboBox {
+  min-height: 20px;
+  padding: 1px 6px;
+}
+
+QLineEdit[validationState="error"],
+QSpinBox[validationState="error"],
+QDoubleSpinBox[validationState="error"],
+QComboBox[validationState="error"] {
+  color: @ERROR_TEXT@;
+  background-color: @ERROR_BG@;
+  border-color: @DANGER@;
+}
+
+QLineEdit[validationState="error"]:focus,
+QSpinBox[validationState="error"]:focus,
+QDoubleSpinBox[validationState="error"]:focus,
+QComboBox[validationState="error"]:focus {
+  border-color: @ERROR_FOCUS@;
+}
+
+QLineEdit:disabled,
+QSpinBox:disabled,
+QDoubleSpinBox:disabled,
+QComboBox:disabled {
+  color: @DISABLED@;
+  background-color: @SURFACE@;
+  border-color: @SCROLL@;
+}
+
+QComboBox::drop-down {
+  width: 20px;
+  border-left: 1px solid @BORDER@;
+}
+
+QComboBox QAbstractItemView {
+  background-color: @SURFACE_ALT@;
+  color: @TEXT@;
+  border: 1px solid @BORDER@;
+  selection-background-color: @ACCENT_DARK@;
+  selection-color: @TEXT@;
+}
+
+QPushButton {
+  background-color: @SURFACE_ALT@;
+  color: @TEXT@;
+  border: 1px solid @BORDER_STRONG@;
+  border-radius: 4px;
+  min-height: 22px;
+  padding: 2px 10px;
+}
+
+QPushButton:hover {
+  background-color: @BUTTON_HOVER@;
+  border-color: @BORDER_HOVER@;
+}
+
+QPushButton:pressed {
+  background-color: @ACCENT_DARK@;
+  border-color: @ACCENT@;
+}
+
+QPushButton:disabled {
+  color: @DISABLED@;
+  background-color: @SURFACE@;
+  border-color: @SCROLL@;
+}
+
+QFrame#commandBar QPushButton {
+  min-height: 20px;
+  padding: 1px 8px;
+}
+
+QCheckBox {
+  background: transparent;
+  spacing: 7px;
+}
+
+QCheckBox:disabled {
+  color: @DISABLED@;
+}
+
+QCheckBox[validationState="error"] {
+  color: @ERROR_CHECK@;
+}
+
+QCheckBox::indicator {
+  width: 14px;
+  height: 14px;
+  border: 1px solid @BORDER_STRONG@;
+  border-radius: 3px;
+  background-color: @FIELD@;
+}
+
+QCheckBox::indicator:checked {
+  background-color: @ACCENT@;
+  border-color: @ACCENT@;
+}
+
+QCheckBox[validationState="error"]::indicator {
+  background-color: @ERROR_BG@;
+  border-color: @DANGER@;
+}
+
+QCheckBox::indicator:disabled {
+  background-color: @SURFACE@;
+  border-color: @SCROLL@;
+}
+
+QSlider::groove:horizontal {
+  height: 4px;
+  border-radius: 2px;
+  background-color: @SCROLL@;
+}
+
+QSlider::handle:horizontal {
+  width: 14px;
+  margin: -5px 0;
+  border-radius: 7px;
+  background-color: @ACCENT@;
+}
+
+QProgressBar {
+  background-color: @FIELD@;
+  color: @TEXT@;
+  border: 1px solid @BORDER@;
+  border-radius: 4px;
+  min-height: 18px;
+  text-align: center;
+}
+
+QProgressBar::chunk {
+  background-color: @ACCENT@;
+  border-radius: 3px;
+}
+
+QToolTip {
+  background-color: @SURFACE_ALT@;
+  color: @TEXT@;
+  border: 1px solid @BORDER@;
+  padding: 6px;
+}
+
+QScrollBar:vertical,
+QScrollBar:horizontal {
+  background-color: @WINDOW@;
+  border: none;
+  margin: 0;
+}
+
+QScrollBar::handle:vertical,
+QScrollBar::handle:horizontal {
+  background-color: @SCROLL@;
+  border-radius: 4px;
+  min-height: 24px;
+  min-width: 24px;
+}
+
+QScrollBar::handle:vertical:hover,
+QScrollBar::handle:horizontal:hover {
+  background-color: @BORDER_STRONG@;
+}

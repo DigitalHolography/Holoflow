@@ -126,7 +126,7 @@ private:
   void                       update_acquisition_label();
   void                       update_recording_path_preview();
   void                       refresh_command_bar();
-  void set_status_label(QLabel *label, const QString &text, const QString &color);
+  void                       set_status_label(QLabel *label, const QString &text, const char *tone);
 
   std::filesystem::path makeRecordingPath(const QString &userText);
   QStringList           load_available_camera_configs();
