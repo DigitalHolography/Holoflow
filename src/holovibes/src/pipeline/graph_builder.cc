@@ -56,12 +56,12 @@ holoflow::core::GraphSpec GraphBuilder::build() {
 
   TDesc FH = build_time_frequency_analysis(H);
 
-  if (s_.autofocus_enabled) {
-    FH = build_shack_hartmann(FH);
-  }
-
   if (s_.filter_2d) {
     FH = build_spatial_filter(FH);
+  }
+
+  if (s_.autofocus_enabled) {
+    FH = build_shack_hartmann(FH);
   }
 
   TDesc FH_z = build_spatial_propagation(FH);
@@ -242,32 +242,20 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
     throw std::invalid_argument("autofocus_nb_subaps is too large for the current frame size");
   }
 
-  auto               valid_w = subap_w * nb_subap;
-  auto               valid_h = subap_h * nb_subap;
-  holonp::SliceRange x_crop{0, valid_w};
-  holonp::SliceRange y_crop{0, valid_h};
-  (void)x_crop;
-  (void)y_crop;
-  // auto               FH_cropped = slice(FH, {{{}, {}, y_crop, x_crop}});
-
-  auto FH_cropped = FH;
-
-  // FH_cropped                    = copy(FH_cropped, {}); // Ensure contiguous layout for Fresnel
-  // FH_cropped = convert(FH_cropped, {Target::CF32, Strat::Real}); // Ensure complex type for
-  // Fresnel
-
   // 2. Sub-aperture Processing via Short-Time Fresnel
-  // This replaces the 6D reshape, transpose, phase ramp generation, and fresnel_diffraction.
   // We use stride == subap size for non-overlapping Shack-Hartmann windows.
   auto FH_prop = short_time_fresnel_diffraction(
-      FH_cropped, subap_w, subap_h, // window dimensions
-      subap_w, subap_h,             // strides (non-overlapping)
-      lam, dx, dy, z_prop,
+      FH, subap_w, subap_h,  // window dimensions
+      subap_w, subap_h,      // strides (non-overlapping)
+      lam, dx, dy, z_prop,   // reconstruction parameters
       PhaseReference::GLOBAL // applies the necessary off-axis phase correction
   );
   auto M0 = mean_abs(FH_prop, {{1}, false});
   M0      = mean(M0, {{0}, true});
   M0      = fftshift(M0, {{-2, -1}});
+
+  // result = flatfield(result, {s_.pp_flatfield_sigma});
+  M0 = flatfield(M0, {6.0f});
 
   // Cross Correlation with Reference
   int64_t sy_ref = nb_subap / 2;
@@ -284,8 +272,8 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
   xcorr = normalize(xcorr, {{-2, -1}, 0.0f, 255.0f});
 
   // Shack-Hartmann Output Processing
-  int64_t h          = static_cast<int64_t>(valid_h);
-  int64_t w          = static_cast<int64_t>(valid_w);
+  int64_t h          = static_cast<int64_t>(subap_h * nb_subap);
+  int64_t w          = static_cast<int64_t>(subap_w * nb_subap);
   auto    M0_sh_disp = normalize(M0, {{-2, -1}, 0.0f, 255.0f});
   M0_sh_disp         = transpose(M0_sh_disp, {{0, 1, 3, 2, 4}});
   M0_sh_disp         = reshape(M0_sh_disp, {{1, h, w}});
@@ -439,6 +427,7 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
   if (s_.pp_fft_shift) {
     result = fftshift(result, {{-2, -1}});
   }
+  result = flatfield(result, {s_.pp_flatfield_sigma});
 
   if (s_.pp_registration) {
     throw std::logic_error{"Registration is currently not supported"};

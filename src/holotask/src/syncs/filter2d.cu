@@ -133,28 +133,10 @@ std::vector<char> compile_source_to_lto(const std::string &source, const std::st
   }
 }
 
-std::vector<char> load_input_lto(bool is_real) {
-  std::string src = "#define FILTER2D_INPUT_IS_REAL " + std::to_string(is_real ? 1 : 0) + "\n";
-
-  src += R"(
-#include <cuComplex.h>
-
-__device__ cuFloatComplex load_filter2d_input_callback(
-    void *data, size_t offset, void *callerInfo, void *sharedPtr) {
-#if FILTER2D_INPUT_IS_REAL
-  return make_cuComplex(((float *)data)[offset], 0.0f);
-#else
-  return ((cuFloatComplex *)data)[offset];
-#endif
-}
-)";
-
-  return compile_source_to_lto(src, "load_filter2d_input_callback.cu");
-}
-
-std::vector<char> apply_filter_lto(int width, int height) {
-  std::string src = "#define WIDTH " + std::to_string(width) + "ull\n" + "#define HEIGHT " +
-                    std::to_string(height) + "ull\n" + "#define FILTER_SIZE (WIDTH * HEIGHT)\n";
+std::vector<char> apply_filter_lto(int filter_width, int height) {
+  std::string src = "#define FILTER_WIDTH " + std::to_string(filter_width) + "ull\n" +
+                    "#define HEIGHT " + std::to_string(height) + "ull\n" +
+                    "#define FILTER_SIZE (FILTER_WIDTH * HEIGHT)\n";
 
   src += R"(
 #include <cuComplex.h>
@@ -218,6 +200,45 @@ __global__ void apply_filter_2d_kernel(cuFloatComplex *filter, const uint32_t wi
   filter[idx].y = a * (1 - b);
 }
 
+__global__ void apply_filter_2d_r2c_kernel(cuFloatComplex *filter, const uint32_t width,
+                                           const uint32_t height, const uint32_t filter_width,
+                                           const uint32_t r_inner, const uint32_t r_outer,
+                                           const uint32_t smooth_inner,
+                                           const uint32_t smooth_outer) {
+  const uint32_t x = blockIdx.x * blockDim.x + threadIdx.x;
+  const uint32_t y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= filter_width || y >= height) {
+    return;
+  }
+
+  const int freq_y =
+      y <= height / 2 ? static_cast<int>(y) : static_cast<int>(y) - static_cast<int>(height);
+  const float r_x  = static_cast<float>(x);
+  const float r_y  = static_cast<float>(freq_y);
+  const float dist = hypotf(r_x, r_y);
+
+  const float f_r_inner      = static_cast<float>(r_inner);
+  const float f_r_outer      = static_cast<float>(r_outer);
+  const float f_smooth_inner = static_cast<float>(smooth_inner);
+  const float f_smooth_outer = static_cast<float>(smooth_outer);
+
+  float a = 0.0f;
+  if (dist < f_r_outer) {
+    a = 1.0f;
+  } else if (f_smooth_outer > 0.0f && dist < f_r_outer + f_smooth_outer) {
+    a = cosf((dist - f_r_outer) / f_smooth_outer * CUDART_PI_F / 2);
+  }
+
+  float b = 0.0f;
+  if (dist < f_r_inner) {
+    b = 1.0f;
+  } else if (f_smooth_inner > 0.0f && dist < f_r_inner + f_smooth_inner) {
+    b = cosf((dist - f_r_inner) / f_smooth_inner * CUDART_PI_F / 2);
+  }
+
+  filter[y * filter_width + x] = make_cuComplex(a * (1 - b), 0.0f);
+}
+
 __global__ void swap_corners_kernel(cuFloatComplex *in, cuFloatComplex *out, int width, int height,
                                     int batch_size) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -250,22 +271,31 @@ __global__ void swap_corners_kernel(cuFloatComplex *in, cuFloatComplex *out, int
   out_frame[bottom_left_idx] = tmp;
 }
 
-DevPtr<cuFloatComplex> make_filter(int width, int height, const Filter2DSettings &settings) {
-  auto d_filter =
-      curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(width) * height);
+DevPtr<cuFloatComplex> make_filter(int width, int height, const Filter2DSettings &settings,
+                                   bool r2c) {
+  const int filter_width = r2c ? width / 2 + 1 : width;
+  auto      d_filter =
+      curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(filter_width) * height);
 
   dim3 block_size(16, 16);
-  dim3 grid_size((width + block_size.x - 1) / block_size.x,
+  dim3 grid_size((filter_width + block_size.x - 1) / block_size.x,
                  (height + block_size.y - 1) / block_size.y);
 
-  CUDA_CHECK(
-      cudaMemset(d_filter.get(), 0, static_cast<size_t>(width) * height * sizeof(cuFloatComplex)));
+  CUDA_CHECK(cudaMemset(d_filter.get(), 0,
+                        static_cast<size_t>(filter_width) * height * sizeof(cuFloatComplex)));
 
-  apply_filter_2d_kernel<<<grid_size, block_size>>>(d_filter.get(), width, height, settings.r_inner,
-                                                    settings.r_outer, settings.s_inner,
-                                                    settings.s_outer);
+  if (r2c) {
+    apply_filter_2d_r2c_kernel<<<grid_size, block_size>>>(
+        d_filter.get(), width, height, filter_width, settings.r_inner, settings.r_outer,
+        settings.s_inner, settings.s_outer);
+  } else {
+    apply_filter_2d_kernel<<<grid_size, block_size>>>(d_filter.get(), width, height,
+                                                      settings.r_inner, settings.r_outer,
+                                                      settings.s_inner, settings.s_outer);
+    swap_corners_kernel<<<grid_size, block_size>>>(d_filter.get(), d_filter.get(), width, height,
+                                                   1);
+  }
 
-  swap_corners_kernel<<<grid_size, block_size>>>(d_filter.get(), d_filter.get(), width, height, 1);
   CUDA_CHECK(cudaPeekAtLastError());
   return d_filter;
 }
@@ -278,21 +308,21 @@ class Filter2D : public holoflow::core::ISyncTask {
 public:
   Filter2D(Filter2DSettings settings, holoflow::core::TDesc idesc, curaii::CufftHandle &&fwd_plan,
            curaii::CufftHandle &&inv_plan, DevPtr<cuFloatComplex> &&d_filter,
-           DevPtr<void> &&d_caller_info, std::vector<char> &&load_lto,
+           DevPtr<cuFloatComplex> &&d_spectrum, DevPtr<void> &&d_caller_info,
            std::vector<char> &&filter_lto)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), fwd_plan_(std::move(fwd_plan)),
         inv_plan_(std::move(inv_plan)), d_filter_(std::move(d_filter)),
-        d_caller_info_(std::move(d_caller_info)), load_lto_(std::move(load_lto)),
+        d_spectrum_(std::move(d_spectrum)), d_caller_info_(std::move(d_caller_info)),
         filter_lto_(std::move(filter_lto)) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
-
     if (idesc_.dtype == holoflow::core::DType::F32) {
       auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data());
-      CUFFT_CHECK(cufftXtExec(fwd_plan_.get(), idata, odata, CUFFT_FORWARD));
-      CUFFT_CHECK(cufftXtExec(inv_plan_.get(), odata, odata, CUFFT_INVERSE));
+      auto *odata = reinterpret_cast<float *>(ctx.outputs[0].data());
+      CUFFT_CHECK(cufftXtExec(fwd_plan_.get(), idata, d_spectrum_.get(), CUFFT_FORWARD));
+      CUFFT_CHECK(cufftXtExec(inv_plan_.get(), d_spectrum_.get(), odata, CUFFT_INVERSE));
     } else {
+      auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
       auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
       CUFFT_CHECK(cufftXtExec(fwd_plan_.get(), idata, idata, CUFFT_FORWARD));
       CUFFT_CHECK(cufftXtExec(inv_plan_.get(), idata, odata, CUFFT_INVERSE));
@@ -315,8 +345,8 @@ private:
   curaii::CufftHandle    fwd_plan_;
   curaii::CufftHandle    inv_plan_;
   DevPtr<cuFloatComplex> d_filter_;
+  DevPtr<cuFloatComplex> d_spectrum_;
   DevPtr<void>           d_caller_info_;
-  std::vector<char>      load_lto_;
   std::vector<char>      filter_lto_;
 };
 
@@ -343,10 +373,7 @@ Filter2DFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(settings.s_inner >= 0, "s_inner must be non-negative");
   check(settings.s_outer >= 0, "s_outer must be non-negative");
 
-  holoflow::core::TDesc odesc =
-      idesc.dtype == holoflow::core::DType::CF32
-          ? idesc
-          : holoflow::core::TDesc(idesc.shape, holoflow::core::DType::CF32, idesc.mem_loc);
+  holoflow::core::TDesc                odesc = idesc;
   std::vector<holoflow::core::InPlace> in_place;
   if (idesc.dtype == holoflow::core::DType::CF32) {
     in_place.push_back({0, 0});
@@ -379,7 +406,13 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const int height = static_cast<int>(idesc.shape[tensor_rank - 2]);
   const int width  = static_cast<int>(idesc.shape[tensor_rank - 1]);
 
-  auto d_filter = make_filter(width, height, settings);
+  const int              filter_width = is_real ? width / 2 + 1 : width;
+  auto                   d_filter     = make_filter(width, height, settings, is_real);
+  DevPtr<cuFloatComplex> d_spectrum;
+  if (is_real) {
+    d_spectrum = curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(batch_size) *
+                                                                height * filter_width);
+  }
 
   ApplyFilterCallerInfo info{
       .filter = d_filter.get(),
@@ -388,22 +421,20 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   CUDA_CHECK(
       cudaMemcpyAsync(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice, ctx.stream));
 
-  auto load_lto   = is_real ? load_input_lto(true) : std::vector<char>{};
-  auto filter_lto = apply_filter_lto(width, height);
+  auto filter_lto = apply_filter_lto(filter_width, height);
 
-  constexpr int rank          = 2;
-  long long int n[2]          = {height, width};
-  long long int inembed[2]    = {height, width};
-  long long int onembed[2]    = {height, width};
-  constexpr int istride       = 1;
-  const int     idist         = height * width;
-  constexpr int ostride       = 1;
-  const int     odist         = height * width;
-  const int     batch         = batch_size;
-  size_t        work_size     = 0;
-  auto          inputtype     = CUDA_C_32F;
-  auto          outputtype    = CUDA_C_32F;
-  auto          executiontype = CUDA_C_32F;
+  constexpr int rank              = 2;
+  long long int n[2]              = {height, width};
+  long long int inembed[2]        = {height, width};
+  long long int onembed[2]        = {height, width};
+  constexpr int istride           = 1;
+  const int     idist             = height * width;
+  constexpr int ostride           = 1;
+  const int     odist             = height * width;
+  const int     spectrum_dist     = height * filter_width;
+  long long int spectrum_embed[2] = {height, filter_width};
+  const int     batch             = batch_size;
+  size_t        work_size         = 0;
 
   curaii::CufftHandle fwd_plan;
   curaii::CufftHandle inv_plan;
@@ -411,24 +442,29 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   CUFFT_CHECK(cufftSetStream(inv_plan.get(), ctx.stream));
 
   auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
-  if (is_real) {
-    CUFFT_CHECK(cufftXtSetJITCallback(fwd_plan.get(), "load_filter2d_input_callback",
-                                      load_lto.data(), load_lto.size(), CUFFT_CB_LD_COMPLEX,
-                                      nullptr));
-  }
   CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_filter_callback", filter_lto.data(),
                                     filter_lto.size(), CUFFT_CB_LD_COMPLEX, &d_info_ptr));
 
-  CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, inputtype,
-                                  onembed, ostride, odist, outputtype, batch, &work_size,
-                                  executiontype));
+  if (is_real) {
+    CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, CUDA_R_32F,
+                                    spectrum_embed, ostride, spectrum_dist, CUDA_C_32F, batch,
+                                    &work_size, CUDA_C_32F));
 
-  CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank, n, inembed, istride, idist, inputtype,
-                                  onembed, ostride, odist, outputtype, batch, &work_size,
-                                  executiontype));
+    CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank, n, spectrum_embed, istride, spectrum_dist,
+                                    CUDA_C_32F, onembed, ostride, odist, CUDA_R_32F, batch,
+                                    &work_size, CUDA_C_32F));
+  } else {
+    CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, CUDA_C_32F,
+                                    onembed, ostride, odist, CUDA_C_32F, batch, &work_size,
+                                    CUDA_C_32F));
+
+    CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank, n, inembed, istride, idist, CUDA_C_32F,
+                                    onembed, ostride, odist, CUDA_C_32F, batch, &work_size,
+                                    CUDA_C_32F));
+  }
 
   return std::make_unique<Filter2D>(settings, idesc, std::move(fwd_plan), std::move(inv_plan),
-                                    std::move(d_filter), std::move(d_info), std::move(load_lto),
+                                    std::move(d_filter), std::move(d_spectrum), std::move(d_info),
                                     std::move(filter_lto));
 }
 

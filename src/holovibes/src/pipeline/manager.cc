@@ -76,6 +76,7 @@
 #include "holotask/syncs/cross_correlation2.hh"
 #include "holotask/syncs/cuda_stream_synchronize.hh"
 #include "holotask/syncs/filter2d.hh"
+#include "holotask/syncs/flatfield.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
 #include "holotask/syncs/mean_abs.hh"
 #include "holotask/syncs/memcpy.hh"
@@ -89,8 +90,8 @@
 #include "holotask/syncs/zernike.hh"
 #include "holotask/syncs/zernike_phase.hh"
 #include "logger.hh"
-#include "settings_loader.hh"
 #include "pipeline/validation.hh"
+#include "settings_loader.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
 #include "ui/widgets/auto_focus_widget.hh"
@@ -176,6 +177,7 @@ void Manager::register_components() {
   reg_sync<syncs::PctClipFactory>(registry_, "PctClip");
   reg_sync<syncs::CorrectPhaseFactory>(registry_, "CorrectPhase");
   reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");
+  reg_sync<syncs::FlatfieldFactory>(registry_, "Flatfield");
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
   reg_sync<syncs::ShortTimeFresnelDiffractionFactory>(registry_, "ShortTimeFresnelDiffraction");

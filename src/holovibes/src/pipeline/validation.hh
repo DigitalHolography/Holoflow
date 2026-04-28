@@ -46,6 +46,7 @@ enum class SettingsField {
   View3DCuts,
   ViewRawSpectrum,
   ViewProcessedSpectrum,
+  PpFlatfieldSigma,
   PpConvolution,
   PpRegistration,
   RecordingPath,

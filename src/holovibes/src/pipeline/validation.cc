@@ -261,6 +261,11 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 {SettingsField::PpRegistration});
     }
 
+    if (settings.pp_flatfield_sigma <= 0.0f) {
+      add_issue(result, ValidationSeverity::Error, "pp_flatfield_sigma_non_positive",
+                "Flatfield sigma must be strictly positive.", {SettingsField::PpFlatfieldSigma});
+    }
+
     if (settings.pp_convolution) {
       add_issue(result, ValidationSeverity::Error, "pp_convolution_unsupported",
                 "Convolution is not currently supported by the pipeline.",

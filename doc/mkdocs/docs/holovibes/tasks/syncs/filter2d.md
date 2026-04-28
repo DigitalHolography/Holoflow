@@ -1,5 +1,5 @@
 # Filter 2D Sync Task
-The **Filter 2D** sync task constructs and applies a radial frequency-domain filter to real (F32) or complex (CF32) images on the GPU. The task builds a per-frame complex filter (CUFFT callback) from the provided radii and smoothing parameters, shifts corners (FFT quadrant swap), and uses an FFT-based pipeline (forward FFT → multiply by filter → inverse FFT) to filter each input frame.
+The **Filter 2D** sync task constructs and applies a radial frequency-domain filter to real (F32) or complex (CF32) images on the GPU. The task builds a per-frame frequency mask from the provided radii and smoothing parameters, and uses an FFT-based pipeline (forward FFT → multiply by filter in a CUFFT callback → inverse FFT) to filter each input frame. Real input uses an R2C → mask → C2R path with a compact half-spectrum mask, so its output remains real.
 
 Supported filter behaviors (depending on how `r_inner`, `r_outer`, `s_inner`, and `s_outer` are selected):
 
@@ -23,12 +23,12 @@ The input requirements (as enforced by `Filter2DFactory::infer`) are:
 - The tensor **must** reside in device (GPU) memory.
 
 ## Outputs
-This task produces one output tensor with the same shape as the input. Complex input keeps dtype `complex32` and supports in-place execution; real input produces `complex32` output.
+This task produces one output tensor with the same shape as the input. Complex input keeps dtype `complex32` and supports in-place execution; real input keeps dtype `float32`.
 
 The memory location of the output tensor is device memory.
 
 ## Inplace
-This task supports in-place operation for complex input. Real input is not in-place because the output is complex.
+This task supports in-place operation for complex input. Real input is not in-place because the R2C/C2R implementation uses an internal half-spectrum work buffer.
 
 ## Ownership
 This task does not own any inputs or outputs.

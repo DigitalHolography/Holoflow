@@ -1056,6 +1056,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("z_width", view_widget_->get_z_width());
   settings.setValue("view_kind", view_widget_->get_view_kind());
   settings.setValue("accumulation", view_widget_->get_accumulation());
+  settings.setValue("flatfield_sigma", view_widget_->get_flatfield_sigma());
   settings.setValue("range_start", view_widget_->get_range_start());
   settings.setValue("range_end", view_widget_->get_range_end());
   settings.setValue("registration", view_widget_->is_registration_enabled());
@@ -1185,6 +1186,8 @@ void MainWindow::restore_persistent_state() {
   restore_combo_text(settings, "view_kind", view_widget_->kind_combo());
   view_widget_->set_accumulation(
       settings.value("accumulation", view_widget_->get_accumulation()).toInt());
+  view_widget_->set_flatfield_sigma(
+      settings.value("flatfield_sigma", view_widget_->get_flatfield_sigma()).toDouble());
   view_widget_->range_start_spin()->setValue(
       settings.value("range_start", view_widget_->get_range_start()).toInt());
   view_widget_->range_end_spin()->setValue(
@@ -1969,6 +1972,9 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::ViewProcessedSpectrum:
         view_widget_->mark_processed_spectrum_invalid();
         break;
+      case SettingsField::PpFlatfieldSigma:
+        view_widget_->mark_flatfield_sigma_invalid();
+        break;
       case SettingsField::PpConvolution:
         render_widget_->mark_convolution_invalid();
         break;
@@ -2011,6 +2017,7 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
       FieldBinding{SettingsField::ViewRawSpectrum, view_widget_->raw_spectrum_view_check()},
       FieldBinding{SettingsField::ViewProcessedSpectrum,
                    view_widget_->process_spectrum_view_check()},
+      FieldBinding{SettingsField::PpFlatfieldSigma, view_widget_->flatfield_sigma()},
       FieldBinding{SettingsField::PpConvolution, render_widget_->convolution_combo()},
       FieldBinding{SettingsField::PpRegistration, view_widget_->registration_check()},
       FieldBinding{SettingsField::RecordingPath, export_widget_->file_line_edit()},
@@ -2264,10 +2271,11 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     QString     appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
     QString     convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels/";
     std::string kernel_path             = convolutionsKernelsPath.toStdString() +
-                              render_widget_->get_convolution().toStdString() + ".json";
+                                          render_widget_->get_convolution().toStdString() + ".json";
 
     s.pp_fps                 = 60;
     s.pp_fft_shift           = view_widget_->is_fft_shift_enabled();
+    s.pp_flatfield_sigma     = static_cast<float>(view_widget_->get_flatfield_sigma());
     s.pp_accumulation        = static_cast<size_t>(view_widget_->get_accumulation());
     s.pp_convolution         = render_widget_->get_convolution() != "None";
     s.pp_convolution_path    = kernel_path;
@@ -2455,6 +2463,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   // --- Post-processing Settings ---
   {
     view_widget_->set_fft_shift_enabled(s.pp_fft_shift);
+    view_widget_->set_flatfield_sigma(s.pp_flatfield_sigma);
     view_widget_->set_accumulation(static_cast<int>(s.pp_accumulation));
     render_widget_->set_convolution_divide(s.pp_convolution_divide);
 

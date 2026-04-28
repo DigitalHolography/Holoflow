@@ -16,13 +16,14 @@
 
 #include <cmath>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
 
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
-#include "holotask/syncs/filter2d.hh"
+#include "holotask/syncs/flatfield.hh"
 
 #include "sync_task_runner.hh"
 
@@ -43,17 +44,12 @@ template <typename T> std::vector<std::byte> as_bytes(const std::vector<T> &v) {
   return out;
 }
 
-nlohmann::json all_pass_settings() {
-  return holotask::syncs::Filter2DSettings{
-      .r_inner = 0,
-      .r_outer = 100,
-      .s_inner = 0,
-      .s_outer = 0,
-  };
+nlohmann::json settings(float sigma = 1.0f) {
+  return holotask::syncs::FlatfieldSettings{.sigma = sigma};
 }
 
 void expect_f32_near(const std::vector<std::byte> &actual, const std::vector<float> &expected,
-                     float atol = 1e-3f) {
+                     float atol = 1e-4f) {
   ASSERT_EQ(actual.size(), expected.size() * sizeof(float));
   const auto *a = reinterpret_cast<const float *>(actual.data());
   for (size_t i = 0; i < expected.size(); ++i) {
@@ -63,51 +59,41 @@ void expect_f32_near(const std::vector<std::byte> &actual, const std::vector<flo
 
 } // namespace
 
-class Filter2DInferTest : public ::testing::Test {
+class FlatfieldInferTest : public ::testing::Test {
 protected:
-  holotask::syncs::Filter2DFactory factory;
+  holotask::syncs::FlatfieldFactory factory;
 };
 
-TEST_F(Filter2DInferTest, AcceptsRealInputAndOutputsReal) {
-  const std::vector<TDesc> in = {device_desc({2, 2}, DType::F32)};
-  const auto               r  = factory.infer(in, all_pass_settings());
+TEST_F(FlatfieldInferTest, KeepsF32ShapeAndDtype) {
+  const std::vector<TDesc> in = {device_desc({2, 3, 4}, DType::F32)};
+  const auto               r  = factory.infer(in, settings());
 
   EXPECT_EQ(r.kind, TaskKind::Sync);
   ASSERT_EQ(r.output_descs.size(), 1);
-  EXPECT_EQ(r.output_descs[0].shape, (std::vector<size_t>{2, 2}));
+  EXPECT_EQ(r.output_descs[0].shape, (std::vector<size_t>{2, 3, 4}));
   EXPECT_EQ(r.output_descs[0].dtype, DType::F32);
   EXPECT_TRUE(r.in_place.empty());
 }
 
-TEST_F(Filter2DInferTest, KeepsComplexInputInPlace) {
-  const std::vector<TDesc> in = {device_desc({2, 2}, DType::CF32)};
-  const auto               r  = factory.infer(in, all_pass_settings());
-
-  EXPECT_EQ(r.kind, TaskKind::Sync);
-  ASSERT_EQ(r.output_descs.size(), 1);
-  EXPECT_EQ(r.output_descs[0].shape, (std::vector<size_t>{2, 2}));
-  EXPECT_EQ(r.output_descs[0].dtype, DType::CF32);
-  ASSERT_EQ(r.in_place.size(), 1);
-  EXPECT_EQ(r.in_place[0].in_idx, 0);
-  EXPECT_EQ(r.in_place[0].out_idx, 0);
+TEST_F(FlatfieldInferTest, RejectsNonPositiveSigma) {
+  const std::vector<TDesc> in = {device_desc({2, 2}, DType::F32)};
+  EXPECT_THROW(factory.infer(in, settings(0.0f)), std::invalid_argument);
 }
 
-class Filter2DExecuteTest : public ::testing::Test {
+class FlatfieldExecuteTest : public ::testing::Test {
 protected:
-  holotask::syncs::Filter2DFactory factory;
+  holotask::syncs::FlatfieldFactory factory;
 };
 
-TEST_F(Filter2DExecuteTest, RealInputUsesRealOutput) {
+TEST_F(FlatfieldExecuteTest, ConstantInputSubtractsToZero) {
   const TDesc d    = device_desc({2, 2}, DType::F32);
-  const auto  data = as_bytes(std::vector<float>{1.0f, 2.0f, 3.0f, 4.0f});
+  const auto  data = as_bytes(std::vector<float>{5.0f, 5.0f, 5.0f, 5.0f});
 
-  const auto run =
-      holonp_test::run_sync_factory(factory, std::vector<TDesc>{d},
-                                    std::vector<std::vector<std::byte>>{data}, all_pass_settings());
+  const auto run = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{d}, std::vector<std::vector<std::byte>>{data}, settings());
 
   ASSERT_EQ(run.output_descs.size(), 1);
   EXPECT_EQ(run.output_descs[0].shape, (std::vector<size_t>{2, 2}));
   EXPECT_EQ(run.output_descs[0].dtype, DType::F32);
-
-  expect_f32_near(run.output_bytes[0], std::vector<float>{4.0f, 8.0f, 12.0f, 16.0f});
+  expect_f32_near(run.output_bytes[0], std::vector<float>{0.0f, 0.0f, 0.0f, 0.0f});
 }

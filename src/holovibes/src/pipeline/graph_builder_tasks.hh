@@ -59,6 +59,7 @@
 #include "holotask/syncs/cross_correlation2.hh"
 #include "holotask/syncs/cuda_stream_synchronize.hh"
 #include "holotask/syncs/filter2d.hh"
+#include "holotask/syncs/flatfield.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
 #include "holotask/syncs/mean_abs.hh"
 #include "holotask/syncs/memcpy.hh"
@@ -95,6 +96,7 @@ protected:
   TDesc batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
   TDesc convert(const TDesc &X, holotask::syncs::ConversionSettings s);
   TDesc pca(const TDesc &X, holotask::syncs::PcaSettings s);
+  TDesc flatfield(const TDesc &X, holotask::syncs::FlatfieldSettings s);
   TDesc filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
   TDesc fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
   TDesc fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);

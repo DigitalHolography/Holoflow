@@ -126,7 +126,8 @@ void write_image_rendering(json &j, const Settings &s) {
 void write_view(json &j, const Settings &s) {
   auto &view = j["compute_settings"]["view"];
 
-  view["fft_shift"] = s.pp_fft_shift;
+  view["fft_shift"]          = s.pp_fft_shift;
+  view["flatfield"]["sigma"] = s.pp_flatfield_sigma;
 
   view["registration"]["registration_enabled"] = s.pp_registration;
   view["registration"]["registration_zone"]    = s.pp_registration_radius;
@@ -173,8 +174,7 @@ void read_advanced(Settings &s, const json &advanced) {
   s.recording_count = val(advanced, "nb_frames_to_record", s.recording_count);
 
   const int input_fps_limit = val(advanced, "input_fps_limit", 0);
-  s.load_fps_limit          = input_fps_limit > 0 ? std::optional<int>{input_fps_limit}
-                                                  : std::nullopt;
+  s.load_fps_limit = input_fps_limit > 0 ? std::optional<int>{input_fps_limit} : std::nullopt;
 }
 
 void read_image_rendering(Settings &s, const json &rendering) {
@@ -214,7 +214,8 @@ void read_view_ranges(Settings &s, const json &view) {
 }
 
 void read_view(Settings &s, const json &view) {
-  s.pp_fft_shift = val(view, "fft_shift", s.pp_fft_shift);
+  s.pp_fft_shift       = val(view, "fft_shift", s.pp_fft_shift);
+  s.pp_flatfield_sigma = val(child_or_empty(view, "flatfield"), "sigma", s.pp_flatfield_sigma);
 
   const auto &window = child_or_empty(view, "window");
   const auto &xy     = child_or_empty(window, "xy");
