@@ -116,9 +116,10 @@ struct Settings {
   bool       view_processed_spectrum;
 
   // Post-processing
-  int         pp_fps;
-  bool        pp_fft_shift;
-  float       pp_flatfield_sigma;
+  int  pp_fps;
+  bool pp_fft_shift;
+  // Physical cutoff period used to derive Gaussian sigmas at the current image pitch.
+  float       pp_flatfield_cutoff_period_m;
   int         pp_accumulation;
   bool        pp_convolution;
   std::string pp_convolution_path;

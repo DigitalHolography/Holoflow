@@ -81,9 +81,10 @@ constexpr auto kView3DCutsConstraints        = std::to_array<const char *>({
 constexpr auto kSpectrumConstraints          = std::to_array<const char *>({
     "Display-only toggle. No validator issue is emitted yet for this field.",
 });
-constexpr auto kFlatfieldSigmaConstraints    = std::to_array<const char *>({
+constexpr auto kFlatfieldCutoffConstraints   = std::to_array<const char *>({
     "Must be strictly positive.",
-    "Used as the Gaussian standard deviation in pixels.",
+    "Physical period of the 50% amplitude transition convention, not a hard cutoff.",
+    "Converted to anisotropic Gaussian sigmas using the current image pitch.",
 });
 constexpr auto kConvolutionConstraints       = std::to_array<const char *>({
     "Not currently supported by the pipeline.",
@@ -147,9 +148,9 @@ const FieldHelp kFieldHelp[] = {
      "Displays the raw temporal spectrum view.", kSpectrumConstraints},
     {SettingsField::ViewProcessedSpectrum, "Processed Spectrum View",
      "Displays the processed temporal spectrum view.", kSpectrumConstraints},
-    {SettingsField::PpFlatfieldSigma, "Flatfield Sigma",
-     "Gaussian blur sigma used to estimate and subtract the low-frequency flatfield background.",
-     kFlatfieldSigmaConstraints},
+    {SettingsField::PpFlatfieldCutoffPeriod, "Flatfield Cutoff",
+     "Physical cutoff period used to derive the Gaussian background subtraction scale.",
+     kFlatfieldCutoffConstraints},
     {SettingsField::PpConvolution, "Convolution",
      "Applies a convolution kernel during post-processing.", kConvolutionConstraints},
     {SettingsField::PpRegistration, "Registration",

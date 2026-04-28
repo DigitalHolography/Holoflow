@@ -15,13 +15,68 @@
 #include "graph_builder.hh"
 
 #include <array>
+#include <cmath>
 #include <spdlog/fmt/ranges.h>
+#include <stdexcept>
+#include <utility>
 
 #include "bug.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
 
 namespace holovibes::pipeline {
+
+namespace {
+
+constexpr float kFlatfieldCutoffConstant = 0.187f;
+
+holotask::syncs::FlatfieldSettings flatfield_settings_from_cutoff_period(float cutoff_period_m,
+                                                                         float dy_m, float dx_m) {
+  if (cutoff_period_m <= 0.0f || dy_m <= 0.0f || dx_m <= 0.0f) {
+    throw std::invalid_argument("flatfield cutoff period and image pitches must be positive");
+  }
+
+  // The UI exposes a physical cutoff period, not the Gaussian sigma. The 0.187 factor follows
+  // the 50% amplitude transition convention for the Gaussian high-pass
+  // H_hp(f) = 1 - exp(-2*pi^2*sigma^2*f^2), so f50 = 0.187 / sigma_px and
+  // sigma_px = 0.187 * period_px. This is a convention, not a hard cutoff.
+  // Axis order follows image layout: y uses dy on axis -2, x uses dx on axis -1.
+  return {
+      .sigma_y = kFlatfieldCutoffConstant * cutoff_period_m / dy_m,
+      .sigma_x = kFlatfieldCutoffConstant * cutoff_period_m / dx_m,
+  };
+}
+
+std::pair<float, float> fresnel_1fft_output_pitch(float wavelength_m, float z_m, float dy_in_m,
+                                                  float dx_in_m, size_t ny, size_t nx) {
+  if (wavelength_m <= 0.0f || dy_in_m <= 0.0f || dx_in_m <= 0.0f || ny == 0 || nx == 0) {
+    throw std::invalid_argument(
+        "Fresnel output pitch requires positive wavelength, pitch, and shape");
+  }
+
+  const float z_abs = std::abs(z_m);
+  if (z_abs <= 0.0f) {
+    throw std::invalid_argument("Fresnel output pitch requires non-zero propagation distance");
+  }
+  return {
+      wavelength_m * z_abs / (static_cast<float>(ny) * dy_in_m),
+      wavelength_m * z_abs / (static_cast<float>(nx) * dx_in_m),
+  };
+}
+
+std::pair<float, float> post_propagation_pitch(const Settings              &settings,
+                                               const holoflow::core::TDesc &desc) {
+  if (settings.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
+    const auto rank = desc.shape.size();
+    return fresnel_1fft_output_pitch(settings.spacial_lambda, settings.spacial_z,
+                                     settings.spacial_pixel_size, settings.spacial_pixel_size,
+                                     desc.shape.at(rank - 2), desc.shape.at(rank - 1));
+  }
+
+  return {settings.spacial_pixel_size, settings.spacial_pixel_size};
+}
+
+} // namespace
 
 // -------------------------------------------------------------------------------------------------
 // Initialization
@@ -254,8 +309,10 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
   M0      = mean(M0, {{0}, true});
   M0      = fftshift(M0, {{-2, -1}});
 
-  // result = flatfield(result, {s_.pp_flatfield_sigma});
-  M0 = flatfield(M0, {6.0f});
+  const auto [flatfield_dy, flatfield_dx] =
+      fresnel_1fft_output_pitch(lam, z_prop, dy, dx, subap_h, subap_w);
+  M0 = flatfield(M0, flatfield_settings_from_cutoff_period(s_.pp_flatfield_cutoff_period_m,
+                                                           flatfield_dy, flatfield_dx));
 
   // Cross Correlation with Reference
   int64_t sy_ref = nb_subap / 2;
@@ -427,7 +484,10 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
   if (s_.pp_fft_shift) {
     result = fftshift(result, {{-2, -1}});
   }
-  result = flatfield(result, {s_.pp_flatfield_sigma});
+
+  const auto [flatfield_dy, flatfield_dx] = post_propagation_pitch(s_, FH_z);
+  result = flatfield(result, flatfield_settings_from_cutoff_period(s_.pp_flatfield_cutoff_period_m,
+                                                                   flatfield_dy, flatfield_dx));
 
   if (s_.pp_registration) {
     throw std::logic_error{"Registration is currently not supported"};

@@ -25,7 +25,10 @@ namespace holotask::syncs {
 // -------------------------------------------------------------------------------------------------
 
 struct FlatfieldSettings {
-  float sigma;
+  // Internal Gaussian sigmas in pixels. UI code derives these from the physical cutoff period and
+  // current sampling pitch before building the graph.
+  float sigma_y;
+  float sigma_x;
 
   bool operator==(const FlatfieldSettings &) const = default;
 };

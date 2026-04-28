@@ -31,10 +31,13 @@ namespace holotask::syncs {
 // -------------------------------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const FlatfieldSettings &s) {
-  j = nlohmann::json{{"sigma", s.sigma}};
+  j = nlohmann::json{{"sigma_y", s.sigma_y}, {"sigma_x", s.sigma_x}};
 }
 
-void from_json(const nlohmann::json &j, FlatfieldSettings &s) { j.at("sigma").get_to(s.sigma); }
+void from_json(const nlohmann::json &j, FlatfieldSettings &s) {
+  j.at("sigma_y").get_to(s.sigma_y);
+  j.at("sigma_x").get_to(s.sigma_x);
+}
 
 namespace {
 
@@ -106,6 +109,8 @@ __global__ void gaussian_horizontal_kernel(const float *__restrict__ input,
   temp[idx] = sum;
 }
 
+// Applies the vertical pass on image axis -2 after the horizontal pass on axis -1. All leading
+// axes are treated as independent planes, matching scipy's sigma [0, ..., sigma_y, sigma_x].
 __global__ void gaussian_subtract_vertical_kernel(const float *__restrict__ input,
                                                   const float *__restrict__ temp,
                                                   float *__restrict__ output,
@@ -135,11 +140,11 @@ __global__ void gaussian_subtract_vertical_kernel(const float *__restrict__ inpu
 class Flatfield : public holoflow::core::ISyncTask {
 public:
   Flatfield(FlatfieldSettings settings, holoflow::core::TDesc idesc, size_t total, int height,
-            int width, int radius, DevPtr<float> &&d_kernel, DevPtr<float> &&d_temp,
-            cudaStream_t stream)
+            int width, int radius_y, int radius_x, DevPtr<float> &&d_kernel_y,
+            DevPtr<float> &&d_kernel_x, DevPtr<float> &&d_temp, cudaStream_t stream)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), total_(total), height_(height),
-        width_(width), radius_(radius), d_kernel_(std::move(d_kernel)), d_temp_(std::move(d_temp)),
-        stream_(stream) {}
+        width_(width), radius_y_(radius_y), radius_x_(radius_x), d_kernel_y_(std::move(d_kernel_y)),
+        d_kernel_x_(std::move(d_kernel_x)), d_temp_(std::move(d_temp)), stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     const auto *idata = reinterpret_cast<const float *>(ctx.inputs[0].data());
@@ -147,10 +152,10 @@ public:
 
     constexpr int block = 256;
     const int     grid  = static_cast<int>((total_ + block - 1) / block);
-    gaussian_horizontal_kernel<<<grid, block, 0, stream_>>>(idata, d_temp_.get(), d_kernel_.get(),
-                                                            total_, height_, width_, radius_);
+    gaussian_horizontal_kernel<<<grid, block, 0, stream_>>>(idata, d_temp_.get(), d_kernel_x_.get(),
+                                                            total_, height_, width_, radius_x_);
     gaussian_subtract_vertical_kernel<<<grid, block, 0, stream_>>>(
-        idata, d_temp_.get(), odata, d_kernel_.get(), total_, height_, width_, radius_);
+        idata, d_temp_.get(), odata, d_kernel_y_.get(), total_, height_, width_, radius_y_);
 
     CUDA_CHECK(cudaGetLastError());
     return holoflow::core::OpResult::Ok;
@@ -167,8 +172,10 @@ private:
   size_t                total_;
   int                   height_;
   int                   width_;
-  int                   radius_;
-  DevPtr<float>         d_kernel_;
+  int                   radius_y_;
+  int                   radius_x_;
+  DevPtr<float>         d_kernel_y_;
+  DevPtr<float>         d_kernel_x_;
   DevPtr<float>         d_temp_;
   cudaStream_t          stream_;
 };
@@ -191,7 +198,8 @@ FlatfieldFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
   check(is_c_contiguous(idesc), "input must be C-contiguous");
   check(idesc.num_elements() > 0, "input must not be empty");
-  check(settings.sigma > 0.0f, "sigma must be positive");
+  check(settings.sigma_y > 0.0f, "sigma_y must be positive");
+  check(settings.sigma_x > 0.0f, "sigma_x must be positive");
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
@@ -212,18 +220,24 @@ FlatfieldFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const auto &idesc    = input_descs[0];
   const auto  rank     = idesc.rank();
 
-  const int  height = static_cast<int>(idesc.shape[rank - 2]);
-  const int  width  = static_cast<int>(idesc.shape[rank - 1]);
-  const auto kernel = make_gaussian_kernel(settings.sigma);
-  const int  radius = static_cast<int>(kernel.size() / 2);
+  const int  height   = static_cast<int>(idesc.shape[rank - 2]);
+  const int  width    = static_cast<int>(idesc.shape[rank - 1]);
+  const auto kernel_y = make_gaussian_kernel(settings.sigma_y);
+  const auto kernel_x = make_gaussian_kernel(settings.sigma_x);
+  const int  radius_y = static_cast<int>(kernel_y.size() / 2);
+  const int  radius_x = static_cast<int>(kernel_x.size() / 2);
 
-  auto d_kernel = curaii::make_unique_device_ptr<float>(kernel.size());
-  CUDA_CHECK(cudaMemcpyAsync(d_kernel.get(), kernel.data(), kernel.size() * sizeof(float),
+  auto d_kernel_y = curaii::make_unique_device_ptr<float>(kernel_y.size());
+  CUDA_CHECK(cudaMemcpyAsync(d_kernel_y.get(), kernel_y.data(), kernel_y.size() * sizeof(float),
+                             cudaMemcpyHostToDevice, ctx.stream));
+  auto d_kernel_x = curaii::make_unique_device_ptr<float>(kernel_x.size());
+  CUDA_CHECK(cudaMemcpyAsync(d_kernel_x.get(), kernel_x.data(), kernel_x.size() * sizeof(float),
                              cudaMemcpyHostToDevice, ctx.stream));
   auto d_temp = curaii::make_unique_device_ptr<float>(idesc.num_elements());
 
-  return std::make_unique<Flatfield>(settings, idesc, idesc.num_elements(), height, width, radius,
-                                     std::move(d_kernel), std::move(d_temp), ctx.stream);
+  return std::make_unique<Flatfield>(settings, idesc, idesc.num_elements(), height, width, radius_y,
+                                     radius_x, std::move(d_kernel_y), std::move(d_kernel_x),
+                                     std::move(d_temp), ctx.stream);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>

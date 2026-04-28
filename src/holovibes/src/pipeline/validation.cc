@@ -261,9 +261,10 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 {SettingsField::PpRegistration});
     }
 
-    if (settings.pp_flatfield_sigma <= 0.0f) {
-      add_issue(result, ValidationSeverity::Error, "pp_flatfield_sigma_non_positive",
-                "Flatfield sigma must be strictly positive.", {SettingsField::PpFlatfieldSigma});
+    if (settings.pp_flatfield_cutoff_period_m <= 0.0f) {
+      add_issue(result, ValidationSeverity::Error, "pp_flatfield_cutoff_period_non_positive",
+                "Flatfield cutoff period must be strictly positive.",
+                {SettingsField::PpFlatfieldCutoffPeriod});
     }
 
     if (settings.pp_convolution) {

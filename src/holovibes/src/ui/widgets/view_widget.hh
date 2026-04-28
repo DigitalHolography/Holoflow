@@ -43,7 +43,7 @@ public:
   int     get_z_width() const;
   QString get_view_kind() const;
   int     get_accumulation() const;
-  double  get_flatfield_sigma() const;
+  double  get_flatfield_cutoff_period_um() const;
   int     get_range_start() const;
   int     get_range_end() const;
   bool    is_registration_enabled() const;
@@ -63,7 +63,7 @@ public:
   void set_cuts_3d_enabled(bool enabled);
   void set_fft_shift_enabled(bool enabled);
   void set_accumulation(int value);
-  void set_flatfield_sigma(double value);
+  void set_flatfield_cutoff_period_um(double value);
   void set_reticle_radius(int value);
   void set_registration_enabled(bool enabled);
   void set_registration_radius(int value);
@@ -77,7 +77,7 @@ public:
   void mark_cuts_3d_invalid();
   void mark_raw_spectrum_invalid();
   void mark_processed_spectrum_invalid();
-  void mark_flatfield_sigma_invalid();
+  void mark_flatfield_cutoff_period_invalid();
   void mark_registration_invalid();
 
   // Access to widgets for connection setup
@@ -96,7 +96,7 @@ public:
   QSpinBox       *z_width_spin();
   QComboBox      *kind_combo();
   QSpinBox       *accumulation_spin();
-  QDoubleSpinBox *flatfield_sigma();
+  QDoubleSpinBox *flatfield_cutoff_period_um();
   QSpinBox       *range_start_spin();
   QSpinBox       *range_end_spin();
   QCheckBox      *registration_check();
@@ -137,7 +137,7 @@ private:
   QComboBox      *kind_combo_;
   QGroupBox      *post_processing_group_;
   QSpinBox       *accumulation_spin_;
-  QDoubleSpinBox *flatfield_sigma_;
+  QDoubleSpinBox *flatfield_cutoff_period_um_;
   QSpinBox       *range_start_spin_;
   QSpinBox       *range_end_spin_;
   QCheckBox      *registration_check_;

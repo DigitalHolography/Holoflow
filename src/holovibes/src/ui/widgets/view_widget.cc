@@ -74,15 +74,17 @@ int     ViewWidget::get_z_origin() const { return z_spin_->value(); }
 int     ViewWidget::get_z_width() const { return z_width_spin_->value(); }
 QString ViewWidget::get_view_kind() const { return kind_combo_->currentText(); }
 int     ViewWidget::get_accumulation() const { return accumulation_spin_->value(); }
-double  ViewWidget::get_flatfield_sigma() const { return flatfield_sigma_->value(); }
-int     ViewWidget::get_range_start() const { return range_start_spin_->value(); }
-int     ViewWidget::get_range_end() const { return range_end_spin_->value(); }
-bool    ViewWidget::is_registration_enabled() const { return registration_check_->isChecked(); }
-double  ViewWidget::get_registration_radius() const { return registration_radius_->value(); }
-bool    ViewWidget::is_reticle_enabled() const { return reticle_check_->isChecked(); }
-double  ViewWidget::get_reticle_radius() const { return reticle_radius_->value(); }
-bool    ViewWidget::is_pct_enabled() const { return pct_check_->isChecked(); }
-double  ViewWidget::get_pct_radius() const { return pct_radius_->value(); }
+double  ViewWidget::get_flatfield_cutoff_period_um() const {
+  return flatfield_cutoff_period_um_->value();
+}
+int    ViewWidget::get_range_start() const { return range_start_spin_->value(); }
+int    ViewWidget::get_range_end() const { return range_end_spin_->value(); }
+bool   ViewWidget::is_registration_enabled() const { return registration_check_->isChecked(); }
+double ViewWidget::get_registration_radius() const { return registration_radius_->value(); }
+bool   ViewWidget::is_reticle_enabled() const { return reticle_check_->isChecked(); }
+double ViewWidget::get_reticle_radius() const { return reticle_radius_->value(); }
+bool   ViewWidget::is_pct_enabled() const { return pct_check_->isChecked(); }
+double ViewWidget::get_pct_radius() const { return pct_radius_->value(); }
 
 // Setters
 void ViewWidget::set_x_origin(int value) { x_spin_->setValue(value); }
@@ -94,7 +96,9 @@ void ViewWidget::set_z_width(int value) { z_width_spin_->setValue(value); }
 void ViewWidget::set_cuts_3d_enabled(bool enabled) { cuts_3d_check_->setChecked(enabled); }
 void ViewWidget::set_fft_shift_enabled(bool enabled) { fft_shift_check_->setChecked(enabled); }
 void ViewWidget::set_accumulation(int value) { accumulation_spin_->setValue(value); }
-void ViewWidget::set_flatfield_sigma(double value) { flatfield_sigma_->setValue(value); }
+void ViewWidget::set_flatfield_cutoff_period_um(double value) {
+  flatfield_cutoff_period_um_->setValue(value);
+}
 void ViewWidget::set_reticle_radius(int value) { reticle_radius_->setValue(value); }
 void ViewWidget::set_registration_enabled(bool enabled) {
   registration_check_->setChecked(enabled);
@@ -111,7 +115,9 @@ void ViewWidget::mark_raw_spectrum_invalid() { mark_validation_error(raw_spectru
 void ViewWidget::mark_processed_spectrum_invalid() {
   mark_validation_error(process_spectrum_view_check_);
 }
-void ViewWidget::mark_flatfield_sigma_invalid() { mark_validation_error(flatfield_sigma_); }
+void ViewWidget::mark_flatfield_cutoff_period_invalid() {
+  mark_validation_error(flatfield_cutoff_period_um_);
+}
 void ViewWidget::mark_registration_invalid() { mark_validation_error(registration_check_); }
 
 // Access to widgets for connection setup
@@ -130,7 +136,7 @@ QSpinBox       *ViewWidget::z_spin() { return z_spin_; }
 QSpinBox       *ViewWidget::z_width_spin() { return z_width_spin_; }
 QComboBox      *ViewWidget::kind_combo() { return kind_combo_; }
 QSpinBox       *ViewWidget::accumulation_spin() { return accumulation_spin_; }
-QDoubleSpinBox *ViewWidget::flatfield_sigma() { return flatfield_sigma_; }
+QDoubleSpinBox *ViewWidget::flatfield_cutoff_period_um() { return flatfield_cutoff_period_um_; }
 QSpinBox       *ViewWidget::range_start_spin() { return range_start_spin_; }
 QSpinBox       *ViewWidget::range_end_spin() { return range_end_spin_; }
 QCheckBox      *ViewWidget::registration_check() { return registration_check_; }
@@ -217,9 +223,10 @@ void ViewWidget::setup_ui() {
   accumulation_spin_ = create_spin_box(post_processing_group_, 1, kLargeSpinMax, 1);
   post_layout->addWidget(accumulation_spin_, 0, 1);
 
-  post_layout->addWidget(new QLabel("Flatfield sigma:", post_processing_group_), 1, 0);
-  flatfield_sigma_ = create_double_spin_box(post_processing_group_, 0.01, 1024.0, 1.0, 20.0);
-  post_layout->addWidget(flatfield_sigma_, 1, 1, 1, 2);
+  post_layout->addWidget(new QLabel("Flatfield cutoff (um):", post_processing_group_), 1, 0);
+  flatfield_cutoff_period_um_ =
+      create_double_spin_box(post_processing_group_, 1.0, 1000000.0, 100.0, 2000.0, 1);
+  post_layout->addWidget(flatfield_cutoff_period_um_, 1, 1, 1, 2);
 
   post_layout->addWidget(new QLabel("Range:", post_processing_group_), 2, 0);
   range_start_spin_ = create_spin_box(post_processing_group_, 1, kLargeSpinMax, 0);
@@ -279,7 +286,7 @@ void ViewWidget::connect_signals() {
           &ViewWidget::settings_changed);
   connect(accumulation_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);
-  connect(flatfield_sigma_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+  connect(flatfield_cutoff_period_um_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);
   connect(range_start_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);
@@ -299,7 +306,7 @@ void ViewWidget::clear_validation_styles() {
   clear_validation_error(cuts_3d_check_);
   clear_validation_error(raw_spectrum_view_check_);
   clear_validation_error(process_spectrum_view_check_);
-  clear_validation_error(flatfield_sigma_);
+  clear_validation_error(flatfield_cutoff_period_um_);
   clear_validation_error(registration_check_);
 }
 
