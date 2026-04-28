@@ -18,6 +18,7 @@ set(SOURCES
     angular_spectrum_test.cu
     flatfield_test.cu
     filter2d_test.cu
+    holofile_sink_test.cc
     ../holonp/support/tensor_test_buffer.cc
     ../holonp/support/sync_task_runner.cc
 )

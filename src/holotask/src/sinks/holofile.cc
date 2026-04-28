@@ -25,7 +25,6 @@
 #include <omp.h>
 #include <span>
 #include <system_error>
-#include <unordered_map>
 #include <unordered_set>
 
 #include "bug.hh"
@@ -109,6 +108,35 @@ holofile::Header make_header(int count, const RecordingGeometry &g) {
       .data_size_in_bytes = data_size,
       .endianness         = holofile::Header::LITTLE_ENDIAN,
   };
+}
+
+uint8_t bits_per_pixel_for(holoflow::core::DType dtype) {
+  switch (dtype) {
+  case holoflow::core::DType::U8:
+    return 8;
+  case holoflow::core::DType::U16:
+    return 16;
+  default:
+    HOLOVIBES_BUG("Unsupported Holofile dtype: {}", static_cast<int>(dtype));
+  }
+}
+
+RecordingGeometry recording_geometry_from_desc(const holoflow::core::TDesc &desc) {
+  return RecordingGeometry{
+      .bits_per_pixel = bits_per_pixel_for(desc.dtype),
+      .frame_width    = static_cast<uint32_t>(desc.shape[2]),
+      .frame_height   = static_cast<uint32_t>(desc.shape[1]),
+  };
+}
+
+size_t recording_frame_byte_size(const RecordingGeometry &geometry) {
+  return static_cast<size_t>(geometry.frame_width) * geometry.frame_height *
+         geometry.bits_per_pixel / 8;
+}
+
+bool same_geometry(const RecordingGeometry &a, const RecordingGeometry &b) {
+  return a.bits_per_pixel == b.bits_per_pixel && a.frame_width == b.frame_width &&
+         a.frame_height == b.frame_height;
 }
 
 void check(bool condition, const std::string &msg) {
@@ -197,6 +225,21 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
+  bool can_reuse(const HolofileSettings &settings, const RecordingGeometry &geometry,
+                 size_t frame_byte_size) const {
+    return settings.use_buffer == settings_.use_buffer && settings.count == settings_.count &&
+           same_geometry(geometry, geometry_) && frame_byte_size == frame_byte_size_;
+  }
+
+  void update_settings(const HolofileSettings &settings) {
+    const auto active_path = settings_.path;
+
+    settings_ = settings;
+    if (recording_) {
+      settings_.path = active_path;
+    }
+  }
+
 private:
   void flush_to_disk() {
     const auto header = make_header(settings_.count, geometry_);
@@ -236,9 +279,8 @@ private:
         }
 
         if (settings_.count <= 0) {
-          const auto message =
-              "Cannot start recording: invalid frame count (" + std::to_string(settings_.count) +
-              ")";
+          const auto message = "Cannot start recording: invalid frame count (" +
+                               std::to_string(settings_.count) + ")";
           logger()->error("[HolofileWriter] {}", message);
           emit_failed_event(ctx, message);
           continue;
@@ -257,7 +299,8 @@ private:
         recording_       = false;
         frames_buffered_ = 0;
 
-        if (!settings_.path.empty() && std::remove(settings_.path.c_str()) != 0 && errno != ENOENT) {
+        if (!settings_.path.empty() && std::remove(settings_.path.c_str()) != 0 &&
+            errno != ENOENT) {
           std::error_code ec(errno, std::generic_category());
           logger()->error("[HolofileWriter] Failed to remove incomplete recording at {}: {}",
                           settings_.path, ec.message());
@@ -361,27 +404,39 @@ std::unique_ptr<holoflow::core::ISyncTask>
 HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                         const nlohmann::json                  &jsettings,
                         const holoflow::core::SyncCreateCtx &) const {
-  static const std::unordered_map<holoflow::core::DType, uint8_t> dtype_to_bpp = {
-      {holoflow::core::DType::U8, static_cast<uint8_t>(8)},
-      {holoflow::core::DType::U16, static_cast<uint8_t>(16)},
-  };
-
   auto  settings = jsettings.get<HolofileSettings>();
   auto &idesc    = input_descs[0];
 
-  const auto bpp             = dtype_to_bpp.at(idesc.dtype);
-  const auto frame_width     = static_cast<uint32_t>(idesc.shape[2]);
-  const auto frame_height    = static_cast<uint32_t>(idesc.shape[1]);
-  const auto frame_byte_size = frame_width * frame_height * bpp / 8;
-
-  const RecordingGeometry geometry{
-      .bits_per_pixel = bpp,
-      .frame_width    = frame_width,
-      .frame_height   = frame_height,
-  };
+  const auto geometry        = recording_geometry_from_desc(idesc);
+  const auto frame_byte_size = recording_frame_byte_size(geometry);
 
   logger()->info("[HolofileFactory::create] Buffer-then-flush writer ({} frames)", settings.count);
   return std::make_unique<HolofileWriter>(settings, geometry, frame_byte_size);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+HolofileFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                        std::span<const holoflow::core::TDesc>     input_descs,
+                        const nlohmann::json                      &jsettings,
+                        const holoflow::core::SyncCreateCtx       &ctx) const {
+  auto *old = dynamic_cast<HolofileWriter *>(old_task.get());
+  if (old == nullptr)
+    return create(input_descs, jsettings, ctx);
+
+  infer(input_descs, jsettings);
+
+  const auto settings        = jsettings.get<HolofileSettings>();
+  const auto geometry        = recording_geometry_from_desc(input_descs[0]);
+  const auto frame_byte_size = recording_frame_byte_size(geometry);
+
+  if (!old->can_reuse(settings, geometry, frame_byte_size)) {
+    logger()->debug("[HolofileFactory::update] Recreating writer because buffer shape changed");
+    return create(input_descs, jsettings, ctx);
+  }
+
+  logger()->debug("[HolofileFactory::update] Reusing existing Holofile writer buffer");
+  old->update_settings(settings);
+  return old_task;
 }
 
 } // namespace holotask::sinks
