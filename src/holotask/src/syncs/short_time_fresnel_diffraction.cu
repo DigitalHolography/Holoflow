@@ -321,14 +321,53 @@ __global__ void stft_input_phase_kernel(cuFloatComplex *lens, int width, int hei
   lens[row * width + col] = make_cuComplex(c, s);
 }
 
-DevPtr<cuFloatComplex> make_input_lens(int width, int height, float dx, float dy, float x_origin,
-                                       float y_origin, float lambda, float z, cudaStream_t stream) {
-  auto  d = curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(width) * height);
+struct InputLensGeometry {
+  float x_origin;
+  float y_origin;
+  int   width;
+  int   height;
+};
+
+InputLensGeometry input_lens_geometry(const ShortTimeFresnelDiffractionSettings &s, int field_w,
+                                      int field_h) {
+  if (s.phase_ref == STFDPhaseReference::LOCAL) {
+    // Frame: window centered. Convention identical to make_quadratic_lens in FresnelDiffraction.
+    int loc_size  = s.win_w > s.win_h ? static_cast<int>(s.win_w) : static_cast<int>(s.win_h);
+    int loc_off_x = (loc_size - static_cast<int>(s.win_w)) / 2;
+    int loc_off_y = (loc_size - static_cast<int>(s.win_h)) / 2;
+    return {
+        .x_origin = (loc_off_x - loc_size / 2.0f) * s.dx,
+        .y_origin = (loc_off_y - loc_size / 2.0f) * s.dy,
+        .width    = static_cast<int>(s.win_w),
+        .height   = static_cast<int>(s.win_h),
+    };
+  }
+
+  // Frame: full field centered. Same convention: largest dimension sets the scale.
+  int glo_size  = field_w > field_h ? field_w : field_h;
+  int glo_off_x = (glo_size - field_w) / 2;
+  int glo_off_y = (glo_size - field_h) / 2;
+  return {
+      .x_origin = (glo_off_x - glo_size / 2.0f) * s.dx,
+      .y_origin = (glo_off_y - glo_size / 2.0f) * s.dy,
+      .width    = field_w,
+      .height   = field_h,
+  };
+}
+
+void update_input_lens(cuFloatComplex *lens, int width, int height, float dx, float dy,
+                       float x_origin, float y_origin, float lambda, float z, cudaStream_t stream) {
   dim3  block(16, 16);
   dim3  grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
   float pi_over_lz = CUDART_PI_F / (lambda * z);
-  stft_input_phase_kernel<<<grid, block, 0, stream>>>(d.get(), width, height, dx, dy, x_origin,
+  stft_input_phase_kernel<<<grid, block, 0, stream>>>(lens, width, height, dx, dy, x_origin,
                                                       y_origin, pi_over_lz);
+}
+
+DevPtr<cuFloatComplex> make_input_lens(int width, int height, float dx, float dy, float x_origin,
+                                       float y_origin, float lambda, float z, cudaStream_t stream) {
+  auto d = curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(width) * height);
+  update_input_lens(d.get(), width, height, dx, dy, x_origin, y_origin, lambda, z, stream);
   return d;
 }
 
@@ -343,37 +382,43 @@ __global__ void stft_output_phase_kernel(cuFloatComplex *output, const cuFloatCo
   auto total = static_cast<unsigned long long>(batch) * height * width;
   if (lid >= total)
     return;
-  auto b   = lid / (static_cast<unsigned long long>(height) * width);
-  auto loc = lid % (static_cast<unsigned long long>(height) * width);
-  auto row = static_cast<int>(loc / width);
-  auto col = static_cast<int>(loc % width);
-  auto idx = b * idist + static_cast<unsigned long long>(row) * stride_h +
-             static_cast<unsigned long long>(col) * istride;
+  auto b      = lid / (static_cast<unsigned long long>(height) * width);
+  auto loc    = lid % (static_cast<unsigned long long>(height) * width);
+  auto row    = static_cast<int>(loc / width);
+  auto col    = static_cast<int>(loc % width);
+  auto idx    = b * idist + static_cast<unsigned long long>(row) * stride_h +
+                static_cast<unsigned long long>(col) * istride;
   output[idx] = cuCmulf(output[idx], lens[static_cast<unsigned long long>(row) * width + col]);
 }
 
+__global__ void stft_win_lens_kernel(cuFloatComplex *lens, int width, int height, float lambda,
+                                     float z, float dx) {
+  int col = blockIdx.x * blockDim.x + threadIdx.x;
+  int row = blockIdx.y * blockDim.y + threadIdx.y;
+  if (col >= width || row >= height)
+    return;
+
+  int   size              = width > height ? width : height;
+  int   off_x             = (size - width) / 2;
+  int   off_y             = (size - height) / 2;
+  float x                 = ((col + off_x) - size / 2.0f) * dx;
+  float y                 = ((row + off_y) - size / 2.0f) * dx;
+  float phase             = CUDART_PI_F / (lambda * z) * (x * x + y * y);
+  lens[row * width + col] = make_cuComplex(cosf(phase), sinf(phase));
+}
+
+void update_win_lens(cuFloatComplex *lens, int win_w, int win_h, float lambda, float z, float dx,
+                     cudaStream_t stream) {
+  dim3 block(16, 16);
+  dim3 grid((win_w + block.x - 1) / block.x, (win_h + block.y - 1) / block.y);
+  stft_win_lens_kernel<<<grid, block, 0, stream>>>(lens, win_w, win_h, lambda, z, dx);
+}
+
 // Build the output-plane quadratic lens for a window (same convention as classic Fresnel).
-DevPtr<cuFloatComplex> make_win_lens(int win_w, int win_h, float lambda, float z, float dx) {
-  int   size  = win_w > win_h ? win_w : win_h;
-  int   off_x = (size - win_w) / 2;
-  int   off_y = (size - win_h) / 2;
-  float pil   = CUDART_PI_F / (lambda * z);
-
+DevPtr<cuFloatComplex> make_win_lens(int win_w, int win_h, float lambda, float z, float dx,
+                                     cudaStream_t stream) {
   auto d = curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(win_w) * win_h);
-
-  // Host-side fill (small lens) — for large windows a kernel would be better, but consistency
-  // with fresnel_diffraction.cu (which uses a kernel) is maintained by calling the same pattern.
-  std::vector<cuFloatComplex> h(static_cast<size_t>(win_w) * win_h);
-  for (int row = 0; row < win_h; ++row) {
-    for (int col = 0; col < win_w; ++col) {
-      float x              = ((col + off_x) - size / 2.0f) * dx;
-      float y              = ((row + off_y) - size / 2.0f) * dx;
-      float phase          = pil * (x * x + y * y);
-      h[row * win_w + col] = make_cuComplex(cosf(phase), sinf(phase));
-    }
-  }
-  CUDA_CHECK(
-      cudaMemcpy(d.get(), h.data(), h.size() * sizeof(cuFloatComplex), cudaMemcpyHostToDevice));
+  update_win_lens(d.get(), win_w, win_h, lambda, z, dx, stream);
   return d;
 }
 
@@ -411,6 +456,12 @@ bool is_c_contiguous(const holoflow::core::TDesc &desc) {
 bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
   return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
          a.mem_loc == b.mem_loc;
+}
+
+bool same_settings_except_z(ShortTimeFresnelDiffractionSettings lhs,
+                            ShortTimeFresnelDiffractionSettings rhs) {
+  rhs.z = lhs.z;
+  return lhs == rhs;
 }
 
 } // namespace
@@ -455,6 +506,8 @@ public:
   const holoflow::core::TDesc               &idesc() const;
   const ShortTimeFresnelDiffractionSettings &settings() const;
   void                                       update_stream(cudaStream_t stream);
+  void update_propagation_distance(const ShortTimeFresnelDiffractionSettings &settings,
+                                   cudaStream_t                               stream);
 
 private:
   std::unique_ptr<ShortTimeFresnelDiffractionImpl> impl_;
@@ -476,6 +529,24 @@ void ShortTimeFresnelDiffraction::update_stream(cudaStream_t stream) {
     impl_->stream = stream;
     CUFFT_CHECK(cufftSetStream(impl_->fft_handle.get(), stream));
   }
+}
+
+void ShortTimeFresnelDiffraction::update_propagation_distance(
+    const ShortTimeFresnelDiffractionSettings &settings, cudaStream_t stream) {
+  update_stream(stream);
+
+  auto     &im      = *impl_;
+  const int rank    = static_cast<int>(im.idesc.rank());
+  auto [ax0, ax1]   = normalize_axes(settings, rank);
+  const int field_h = static_cast<int>(im.idesc.shape[ax0]);
+  const int field_w = static_cast<int>(im.idesc.shape[ax1]);
+  auto      input   = input_lens_geometry(settings, field_w, field_h);
+
+  update_input_lens(im.d_input_lens.get(), input.width, input.height, settings.dx, settings.dy,
+                    input.x_origin, input.y_origin, settings.lambda, settings.z, im.stream);
+  update_win_lens(im.d_win_lens.get(), im.win_w, im.win_h, settings.lambda, settings.z, settings.dx,
+                  im.stream);
+  im.settings = settings;
 }
 
 holoflow::core::OpResult ShortTimeFresnelDiffraction::execute(holoflow::core::SyncCtx &ctx) {
@@ -619,30 +690,10 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
   const long long out_istride   = 1LL;
 
   // -- Caller-info struct & Precomputation ------------------------------------------------------
-  float x_origin, y_origin;
-  int   input_lens_w, input_lens_h;
-  if (s.phase_ref == STFDPhaseReference::LOCAL) {
-    // Frame: window centered. Convention identical to make_quadratic_lens in FresnelDiffraction.
-    int loc_size  = win_w > win_h ? win_w : win_h;
-    int loc_off_x = (loc_size - win_w) / 2;
-    int loc_off_y = (loc_size - win_h) / 2;
-    x_origin      = (loc_off_x - loc_size / 2.0f) * s.dx;
-    y_origin      = (loc_off_y - loc_size / 2.0f) * s.dy;
-    input_lens_w  = win_w;
-    input_lens_h  = win_h;
-  } else {
-    // Frame: full field centered. Same convention: largest dimension sets the scale.
-    int glo_size  = W > H ? W : H;
-    int glo_off_x = (glo_size - W) / 2;
-    int glo_off_y = (glo_size - H) / 2;
-    x_origin      = (glo_off_x - glo_size / 2.0f) * s.dx;
-    y_origin      = (glo_off_y - glo_size / 2.0f) * s.dy;
-    input_lens_w  = W;
-    input_lens_h  = H;
-  }
-
-  auto d_input_lens = make_input_lens(input_lens_w, input_lens_h, s.dx, s.dy, x_origin, y_origin,
-                                      s.lambda, s.z, ctx.stream);
+  auto input_lens = input_lens_geometry(s, W, H);
+  auto d_input_lens =
+      make_input_lens(input_lens.width, input_lens.height, s.dx, s.dy, input_lens.x_origin,
+                      input_lens.y_origin, s.lambda, s.z, ctx.stream);
 
   STFTCallerInfo info{
       .precomputed_lens = d_input_lens.get(),
@@ -661,7 +712,7 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
                      static_cast<unsigned>(W), static_cast<unsigned long long>(group.in_idist));
 
   // -- Window-lens for output phase shift -------------------------------------------------------
-  auto d_win_lens = make_win_lens(win_w, win_h, s.lambda, s.z, s.dx);
+  auto d_win_lens = make_win_lens(win_w, win_h, s.lambda, s.z, s.dx, ctx.stream);
 
   // -- cuFFT plan -------------------------------------------------------------------------------
   curaii::CufftHandle plan;
@@ -731,12 +782,19 @@ ShortTimeFresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISync
   const auto &oid = old->idesc();
   auto        s   = jsettings.get<ShortTimeFresnelDiffractionSettings>();
 
-  bool reusable = (s == old->settings()) && same_desc(nid, oid);
+  bool reusable      = (s == old->settings()) && same_desc(nid, oid);
+  bool z_only_change = same_settings_except_z(s, old->settings()) && same_desc(nid, oid);
 
   if (reusable) {
     old->update_stream(ctx.stream);
     return old_task;
   }
+
+  if (z_only_change) {
+    old->update_propagation_distance(s, ctx.stream);
+    return old_task;
+  }
+
   return create(input_descs, jsettings, ctx);
 }
 

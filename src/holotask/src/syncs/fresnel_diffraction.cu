@@ -322,14 +322,19 @@ __global__ void quadratic_lens_kernel(cuFloatComplex *lens, int width, int heigh
   lens[row * width + col] = make_cuComplex(cosf(phase), sinf(phase));
 }
 
-DevPtr<cuFloatComplex> make_quadratic_lens(int width, int height,
-                                           const FresnelDiffractionSettings &settings) {
-  auto d_lens = curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(width) * height);
-
+void update_quadratic_lens(cuFloatComplex *lens, int width, int height,
+                           const FresnelDiffractionSettings &settings, cudaStream_t stream) {
   dim3 block(16, 16);
   dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
-  quadratic_lens_kernel<<<grid, block>>>(d_lens.get(), width, height, settings.lambda, settings.z,
-                                         settings.dx);
+  quadratic_lens_kernel<<<grid, block, 0, stream>>>(lens, width, height, settings.lambda,
+                                                    settings.z, settings.dx);
+}
+
+DevPtr<cuFloatComplex> make_quadratic_lens(int width, int height,
+                                           const FresnelDiffractionSettings &settings,
+                                           cudaStream_t                      stream) {
+  auto d_lens = curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(width) * height);
+  update_quadratic_lens(d_lens.get(), width, height, settings, stream);
   return d_lens;
 }
 
@@ -413,7 +418,19 @@ public:
       CUFFT_CHECK(cufftSetStream(fft_handle.get(), new_stream));
     }
   }
+
+  void update_propagation_distance(const FresnelDiffractionSettings &new_settings,
+                                   cudaStream_t                      new_stream) {
+    update_stream(new_stream);
+    update_quadratic_lens(d_lens.get(), width, height, new_settings, stream);
+    settings = new_settings;
+  }
 };
+
+bool same_settings_except_z(FresnelDiffractionSettings lhs, FresnelDiffractionSettings rhs) {
+  rhs.z = lhs.z;
+  return lhs == rhs;
+}
 
 } // namespace
 
@@ -523,7 +540,7 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
                                 static_cast<unsigned long long>(best_group.in_idist),
                                 static_cast<unsigned long long>(in_stride_h),
                                 static_cast<unsigned long long>(in_istride));
-  auto d_lens  = make_quadratic_lens(W, H, settings);
+  auto d_lens  = make_quadratic_lens(W, H, settings, ctx.stream);
 
   ApplyLensCallerInfo info{
       .lens = d_lens.get(),
@@ -592,9 +609,16 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
   bool same_dtype    = (new_idesc.dtype == old_idesc.dtype);
   bool same_mem_loc  = (new_idesc.mem_loc == old_idesc.mem_loc);
   bool can_reuse     = same_settings && same_shape && same_strides && same_dtype && same_mem_loc;
+  bool z_only_change = same_settings_except_z(settings, old_fresnel->settings) && same_shape &&
+                       same_strides && same_dtype && same_mem_loc;
 
   if (can_reuse) {
     old_fresnel->update_stream(ctx.stream);
+    return old_task;
+  }
+
+  if (z_only_change) {
+    old_fresnel->update_propagation_distance(settings, ctx.stream);
     return old_task;
   }
 
