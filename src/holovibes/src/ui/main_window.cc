@@ -1080,6 +1080,7 @@ void MainWindow::save_persistent_state() {
   settings.beginGroup("autofocus");
   settings.setValue("enabled", autofocus->is_enabled());
   settings.setValue("nb_subaps", autofocus->get_nb_subaps());
+  settings.setValue("nb_iter", autofocus->get_nb_iter());
   settings.setValue("z2_enabled", autofocus->is_z2_enabled());
   settings.setValue("z3_enabled", autofocus->is_z3_enabled());
   settings.setValue("z4_enabled", autofocus->is_z4_enabled());
@@ -1222,6 +1223,7 @@ void MainWindow::restore_persistent_state() {
   settings.beginGroup("autofocus");
   autofocus->nb_subaps_spin()->setValue(
       settings.value("nb_subaps", autofocus->get_nb_subaps()).toInt());
+  autofocus->nb_iter_spin()->setValue(settings.value("nb_iter", autofocus->get_nb_iter()).toInt());
   autofocus->set_z2_enabled(settings.value("z2_enabled", autofocus->is_z2_enabled()).toBool());
   autofocus->set_z3_enabled(settings.value("z3_enabled", autofocus->is_z3_enabled()).toBool());
   autofocus->set_z4_enabled(settings.value("z4_enabled", autofocus->is_z4_enabled()).toBool());
@@ -1991,6 +1993,9 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::AutofocusNbSubaps:
         render_widget_->autofocus_widget()->mark_nb_subaps_invalid();
         break;
+      case SettingsField::AutofocusNbIter:
+        render_widget_->autofocus_widget()->mark_nb_iter_invalid();
+        break;
       }
     }
   }
@@ -2026,6 +2031,8 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
       FieldBinding{SettingsField::RecordingCount, export_widget_->frames_spin()},
       FieldBinding{SettingsField::AutofocusNbSubaps,
                    render_widget_->autofocus_widget()->nb_subaps_spin()},
+      FieldBinding{SettingsField::AutofocusNbIter,
+                   render_widget_->autofocus_widget()->nb_iter_spin()},
   };
 
   for (const auto &binding : bindings) {
@@ -2309,6 +2316,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
   {
     s.autofocus_enabled        = render_widget_->autofocus_widget()->is_enabled();
     s.autofocus_nb_subaps      = render_widget_->autofocus_widget()->get_nb_subaps();
+    s.autofocus_nb_iter        = render_widget_->autofocus_widget()->get_nb_iter();
     s.autofocus_zernike_orders = std::vector<int>();
 
     if (render_widget_->autofocus_widget()->is_z2_enabled()) {
@@ -2489,6 +2497,14 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     export_widget_->set_file_path(QString::fromStdString(s.recording_path.string()));
     export_widget_->set_frame_count(static_cast<int>(s.recording_count));
     // recording_method not exposed (always RAW in get_pipeline_settings)
+  }
+
+  // --- Auto-Focus Settings ---
+  {
+    auto *autofocus = render_widget_->autofocus_widget();
+    autofocus->set_enabled(s.autofocus_enabled);
+    autofocus->nb_subaps_spin()->setValue(s.autofocus_nb_subaps);
+    autofocus->nb_iter_spin()->setValue(s.autofocus_nb_iter);
   }
 
   configure_unsupported_features();

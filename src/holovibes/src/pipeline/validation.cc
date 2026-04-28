@@ -332,6 +332,12 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                       settings.autofocus_nb_subaps, *context.source_width, *context.source_height),
           {SettingsField::AutofocusNbSubaps});
     }
+
+    if (settings.autofocus_nb_iter <= 0) {
+      add_issue(result, ValidationSeverity::Error, "autofocus_nb_iter_non_positive",
+                "Auto-focus iteration count must be strictly positive.",
+                {SettingsField::AutofocusNbIter});
+    }
   }
 
   return result;

@@ -105,6 +105,10 @@ constexpr auto kAutofocusNbSubapsConstraints = std::to_array<const char *>({
     "Must be odd.",
     "Must fit within the source dimensions.",
 });
+constexpr auto kAutofocusNbIterConstraints   = std::to_array<const char *>({
+    "Must be strictly positive.",
+    "Each pass applies one Shack-Hartmann phase correction.",
+});
 
 const FieldHelp kFieldHelp[] = {
     {SettingsField::LoadPath, "Input File",
@@ -162,6 +166,8 @@ const FieldHelp kFieldHelp[] = {
      kRecordingCountConstraints},
     {SettingsField::AutofocusNbSubaps, "Auto-focus Sub-apertures",
      "Number of Shack-Hartmann sub-apertures per image dimension.", kAutofocusNbSubapsConstraints},
+    {SettingsField::AutofocusNbIter, "Auto-focus Iterations",
+     "Number of Shack-Hartmann correction passes.", kAutofocusNbIterConstraints},
 };
 
 } // namespace

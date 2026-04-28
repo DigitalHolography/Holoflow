@@ -111,6 +111,10 @@ void write_image_rendering(json &j, const Settings &s) {
   rendering["filter2d"]["inner_radius"] = s.filter_r_inner;
   rendering["filter2d"]["outer_radius"] = s.filter_r_outer;
 
+  rendering["autofocus"]["enabled"]   = s.autofocus_enabled;
+  rendering["autofocus"]["nb_subaps"] = s.autofocus_nb_subaps;
+  rendering["autofocus"]["nb_iter"]   = s.autofocus_nb_iter;
+
   // Legacy format expects this field even if space transformation is NONE.
   rendering["image_mode"] = "HOLOGRAM";
 
@@ -192,6 +196,11 @@ void read_image_rendering(Settings &s, const json &rendering) {
   s.filter_2d          = val(filter2d, "enabled", s.filter_2d);
   s.filter_r_inner     = val(filter2d, "inner_radius", s.filter_r_inner);
   s.filter_r_outer     = val(filter2d, "outer_radius", s.filter_r_outer);
+
+  const auto &autofocus = child_or_empty(rendering, "autofocus");
+  s.autofocus_enabled   = val(autofocus, "enabled", s.autofocus_enabled);
+  s.autofocus_nb_subaps = val(autofocus, "nb_subaps", s.autofocus_nb_subaps);
+  s.autofocus_nb_iter   = val(autofocus, "nb_iter", s.autofocus_nb_iter);
 
   const auto &convolution = child_or_empty(rendering, "convolution");
   s.pp_convolution_path   = val(convolution, "type", s.pp_convolution_path);

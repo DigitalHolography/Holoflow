@@ -92,6 +92,7 @@ public:
 
   void clear_validation_styles();
   void mark_nb_subaps_invalid();
+  void mark_nb_iter_invalid();
 
   // Accessors for external connection/setup if needed
   QCheckBox *z2_checkbox();
@@ -108,6 +109,7 @@ public:
   QCheckBox *shack_hartmann_sensor_view_checkbox();
   QCheckBox *cross_correlation_view_checkbox();
   QSpinBox  *nb_subaps_spin();
+  QSpinBox  *nb_iter_spin();
 
 signals:
   void settings_changed();

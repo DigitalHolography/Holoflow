@@ -52,6 +52,7 @@ enum class SettingsField {
   RecordingPath,
   RecordingCount,
   AutofocusNbSubaps,
+  AutofocusNbIter,
 };
 
 struct ValidationIssue {

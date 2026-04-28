@@ -31,13 +31,15 @@ namespace {
 constexpr int kDefaultNbSubaps = 5;
 constexpr int kMinNbSubaps     = 3;
 constexpr int kMaxNbSubaps     = 99;
-constexpr int kFixedNbIter     = 1;
+constexpr int kDefaultNbIter   = 1;
+constexpr int kMinNbIter       = 1;
+constexpr int kMaxNbIter       = 8;
 
-QSpinBox *create_fixed_spin_box(QWidget *parent, int value, const QString &tooltip) {
+QSpinBox *create_spin_box(QWidget *parent, int value, int min_value, int max_value,
+                          const QString &tooltip) {
   auto *spin_box = new QSpinBox(parent);
-  spin_box->setRange(value, value);
+  spin_box->setRange(min_value, max_value);
   spin_box->setValue(value);
-  spin_box->setEnabled(false);
   spin_box->setToolTip(tooltip);
   return spin_box;
 }
@@ -210,9 +212,13 @@ void AutoFocusWidget::set_enabled(bool enabled) {
   set_controls_enabled(enabled);
 }
 
-void AutoFocusWidget::clear_validation_styles() { clear_validation_error(nb_subaps_spin_); }
+void AutoFocusWidget::clear_validation_styles() {
+  clear_validation_error(nb_subaps_spin_);
+  clear_validation_error(nb_iter_spin_);
+}
 
 void AutoFocusWidget::mark_nb_subaps_invalid() { mark_validation_error(nb_subaps_spin_); }
+void AutoFocusWidget::mark_nb_iter_invalid() { mark_validation_error(nb_iter_spin_); }
 
 // Widget accessors
 QCheckBox *AutoFocusWidget::z2_checkbox() { return z2_checkbox_; }
@@ -236,6 +242,7 @@ QCheckBox *AutoFocusWidget::cross_correlation_view_checkbox() {
 }
 
 QSpinBox *AutoFocusWidget::nb_subaps_spin() { return nb_subaps_spin_; }
+QSpinBox *AutoFocusWidget::nb_iter_spin() { return nb_iter_spin_; }
 
 void AutoFocusWidget::setup_ui() {
   auto *outer_layout = new QVBoxLayout(this);
@@ -278,8 +285,8 @@ void AutoFocusWidget::setup_ui() {
                           "Choose an odd number of subapertures per dimension.");
   add_label_widget_row("Nb Subaps:", nb_subaps_spin_);
 
-  nb_iter_spin_ = create_fixed_spin_box(content_container_, kFixedNbIter,
-                                        "Only one iteration is supported for now.");
+  nb_iter_spin_ = create_spin_box(content_container_, kDefaultNbIter, kMinNbIter, kMaxNbIter,
+                                  "Number of Shack-Hartmann correction passes.");
   add_label_widget_row("Nb Iter:", nb_iter_spin_);
 
   add_zernike_row("Z2 - Tilt X:", z2_checkbox_, z2_spin_);
@@ -327,6 +334,9 @@ void AutoFocusWidget::connect_signals() {
 
     emit settings_changed();
   });
+
+  connect(nb_iter_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &AutoFocusWidget::settings_changed);
 
   connect(z2_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
   connect(z3_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);

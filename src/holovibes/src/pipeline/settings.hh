@@ -139,6 +139,7 @@ struct Settings {
   // Auto-focus
   bool             autofocus_enabled;
   int              autofocus_nb_subaps;
+  int              autofocus_nb_iter;
   std::vector<int> autofocus_zernike_orders;
 };
 

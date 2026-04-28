@@ -116,7 +116,13 @@ holoflow::core::GraphSpec GraphBuilder::build() {
   }
 
   if (s_.autofocus_enabled) {
-    FH = build_shack_hartmann(FH);
+    if (s_.autofocus_nb_iter <= 0) {
+      throw std::invalid_argument("autofocus_nb_iter must be positive");
+    }
+
+    for (int pass = 0; pass < s_.autofocus_nb_iter; ++pass) {
+      FH = build_shack_hartmann(FH, pass == s_.autofocus_nb_iter - 1);
+    }
   }
 
   TDesc FH_z = build_spatial_propagation(FH);
@@ -271,7 +277,7 @@ GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
   return batched_queue(FH, {s_.pp_accumulation * 2, s_.pp_accumulation, s_.pp_accumulation});
 }
 
-GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
+GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass) {
   if (s_.autofocus_nb_subaps <= 0) {
     throw std::invalid_argument("autofocus_nb_subaps must be positive");
   }
@@ -328,23 +334,25 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
   xcorr = fftshift(xcorr, {{-2, -1}});
   xcorr = normalize(xcorr, {{-2, -1}, 0.0f, 255.0f});
 
-  // Shack-Hartmann Output Processing
-  int64_t h          = static_cast<int64_t>(subap_h * nb_subap);
-  int64_t w          = static_cast<int64_t>(subap_w * nb_subap);
-  auto    M0_sh_disp = normalize(M0, {{-2, -1}, 0.0f, 255.0f});
-  M0_sh_disp         = transpose(M0_sh_disp, {{0, 1, 3, 2, 4}});
-  M0_sh_disp         = reshape(M0_sh_disp, {{1, h, w}});
-  M0_sh_disp         = convert(M0_sh_disp, {Target::U8, Strat::Scaled});
-  M0_sh_disp         = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
-  shack_hartmann_display(M0_sh_disp, {});
+  if (is_last_pass) {
+    // Shack-Hartmann Output Processing
+    int64_t h          = static_cast<int64_t>(subap_h * nb_subap);
+    int64_t w          = static_cast<int64_t>(subap_w * nb_subap);
+    auto    M0_sh_disp = normalize(M0, {{-2, -1}, 0.0f, 255.0f});
+    M0_sh_disp         = transpose(M0_sh_disp, {{0, 1, 3, 2, 4}});
+    M0_sh_disp         = reshape(M0_sh_disp, {{1, h, w}});
+    M0_sh_disp         = convert(M0_sh_disp, {Target::U8, Strat::Scaled});
+    M0_sh_disp         = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
+    shack_hartmann_display(M0_sh_disp, {});
 
-  h                    = static_cast<int64_t>(xcorr.shape.at(3) * nb_subap);
-  w                    = static_cast<int64_t>(xcorr.shape.at(4) * nb_subap);
-  auto xcorr_flattened = convert(xcorr, {Target::U8, Strat::Scaled});
-  xcorr_flattened      = transpose(xcorr_flattened, {{0, 1, 3, 2, 4}});
-  xcorr_flattened      = reshape(xcorr_flattened, {{1, h, w}});
-  xcorr_flattened      = batched_queue(xcorr_flattened, {s_.cpu_out_size, 1, 1});
-  shack_hartmann_xcorr_display(xcorr_flattened, {});
+    h                    = static_cast<int64_t>(xcorr.shape.at(3) * nb_subap);
+    w                    = static_cast<int64_t>(xcorr.shape.at(4) * nb_subap);
+    auto xcorr_flattened = convert(xcorr, {Target::U8, Strat::Scaled});
+    xcorr_flattened      = transpose(xcorr_flattened, {{0, 1, 3, 2, 4}});
+    xcorr_flattened      = reshape(xcorr_flattened, {{1, h, w}});
+    xcorr_flattened      = batched_queue(xcorr_flattened, {s_.cpu_out_size, 1, 1});
+    shack_hartmann_xcorr_display(xcorr_flattened, {});
+  }
 
   // Zernike & Phase Correction
   if (!s_.autofocus_zernike_orders.empty()) {
@@ -358,16 +366,20 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
     };
     auto zernike_coeffs = zernike(xcorr_zernike, zernike_settings);
     zernike_coeffs      = slice(zernike_coeffs, {{0, 0, {}}});
-    zernike_coefficients_display(zernike_coeffs, {s_.autofocus_zernike_orders});
+    if (is_last_pass) {
+      zernike_coefficients_display(zernike_coeffs, {s_.autofocus_zernike_orders});
+    }
 
     auto phase     = zernike_phase(zernike_coeffs, {s_.autofocus_zernike_orders, ny, nx});
     auto phase_gpu = memcpy(phase, {Device});
     FH             = correct_phase(FH, phase_gpu, {});
 
-    auto phase_disp = wrap2pi(phase_gpu, {});
-    phase_disp      = reshape(phase_disp, {{1, ny, nx}});
-    phase_disp      = batched_queue(phase_disp, {s_.cpu_out_size, 1, 1});
-    zernike_phase_display(phase_disp, {});
+    if (is_last_pass) {
+      auto phase_disp = wrap2pi(phase_gpu, {});
+      phase_disp      = reshape(phase_disp, {{1, ny, nx}});
+      phase_disp      = batched_queue(phase_disp, {s_.cpu_out_size, 1, 1});
+      zernike_phase_display(phase_disp, {});
+    }
   }
 
   // When no Zernike orders are specified, still display an empty phase map for consistency
@@ -376,7 +388,9 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH) {
     auto nx          = static_cast<size_t>(FH.shape.at(3));
     auto empty_phase = zeros({{1, ny, nx}, holoflow::core::DType::F32});
     FH               = correct_phase(FH, empty_phase, {});
-    zernike_phase_display(empty_phase, {});
+    if (is_last_pass) {
+      zernike_phase_display(empty_phase, {});
+    }
   }
 
   return FH;
