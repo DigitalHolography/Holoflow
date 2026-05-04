@@ -14,12 +14,19 @@
 
 #include "holotask/syncs/flatfield.hh"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <optional>
+#include <ranges>
 #include <stdexcept>
+#include <string>
 #include <utility>
 #include <vector>
 
 #include "curaii/cuda.hh"
+#include "curaii/cufft.hh"
+#include "curaii/nvrtc.hh"
 #include "logger.hh"
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
@@ -84,6 +91,101 @@ std::vector<float> make_gaussian_kernel(float sigma) {
   return kernel;
 }
 
+std::string get_compute_arch() {
+  int device{};
+  CUDA_CHECK(cudaGetDevice(&device));
+  cudaDeviceProp prop{};
+  CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
+  return "compute_" + std::to_string(prop.major) + std::to_string(prop.minor);
+}
+
+std::vector<std::string> get_nvrtc_args() {
+  auto CUDA_PATH = std::getenv("CUDA_PATH");
+  if (CUDA_PATH == nullptr) {
+    throw std::runtime_error("CUDA_PATH environment variable not set");
+  }
+
+  return {
+      "-I" + std::string{CUDA_PATH} + "/include",
+      "-arch=" + get_compute_arch(),
+      "--std=c++20",
+      "--relocatable-device-code=true",
+      "-default-device",
+      "-dlto",
+  };
+}
+
+std::vector<char> compile_source_to_lto(const std::string &source, const std::string &name) {
+  auto                 args_string = get_nvrtc_args();
+  curaii::NvrtcProgram prog(source.c_str(), name.c_str(), 0, nullptr, nullptr);
+
+  std::vector<char *> args;
+  std::ranges::transform(args_string, std::back_inserter(args),
+                         [](const std::string &s) { return const_cast<char *>(s.c_str()); });
+
+  try {
+    NVRTC_CHECK(nvrtcCompileProgram(prog.get(), static_cast<int>(args.size()), args.data()));
+    size_t code_size = 0;
+    NVRTC_CHECK(nvrtcGetLTOIRSize(prog.get(), &code_size));
+    std::vector<char> lto(code_size);
+    NVRTC_CHECK(nvrtcGetLTOIR(prog.get(), lto.data()));
+    return lto;
+  } catch (const curaii::NvrtcError &e) {
+    size_t log_size = 0;
+    NVRTC_CHECK(nvrtcGetProgramLogSize(prog.get(), &log_size));
+    std::string log(log_size, '\0');
+    NVRTC_CHECK(nvrtcGetProgramLog(prog.get(), log.data()));
+    logger()->error("[Flatfield] NVRTC compilation log:\n{}", log);
+    throw e;
+  }
+}
+
+std::vector<char> highpass_callback_lto(int width, int height, float sigma_y, float sigma_x) {
+  const int   filter_width = width / 2 + 1;
+  const float scale        = 1.0f / static_cast<float>(width * height);
+
+  std::string src = "#define WIDTH " + std::to_string(width) + "ull\n" + "#define HEIGHT " +
+                    std::to_string(height) + "ull\n" + "#define FILTER_WIDTH " +
+                    std::to_string(filter_width) + "ull\n" + "#define SIGMA_Y " +
+                    std::to_string(sigma_y) + "f\n" + "#define SIGMA_X " + std::to_string(sigma_x) +
+                    "f\n" + "#define SCALE " + std::to_string(scale) + "f\n";
+
+  src += R"(
+#include <cuComplex.h>
+
+__device__ cuFloatComplex flatfield_highpass_callback(
+    void *data, size_t offset, void *callerInfo, void *sharedPtr) {
+  const size_t local = offset % (HEIGHT * FILTER_WIDTH);
+  const size_t y     = local / FILTER_WIDTH;
+  const size_t x     = local - y * FILTER_WIDTH;
+
+  const float fx = static_cast<float>(x) / static_cast<float>(WIDTH);
+  const float fy_idx =
+      y <= HEIGHT / 2 ? static_cast<float>(y)
+                      : static_cast<float>(static_cast<long long>(y) -
+                                           static_cast<long long>(HEIGHT));
+  const float fy = fy_idx / static_cast<float>(HEIGHT);
+
+  constexpr float two_pi_squared = 19.739208802178716f;
+  const float lowpass =
+      expf(-two_pi_squared * (SIGMA_X * SIGMA_X * fx * fx + SIGMA_Y * SIGMA_Y * fy * fy));
+  const float gain = (1.0f - lowpass) * SCALE;
+  const auto  val  = reinterpret_cast<cuFloatComplex *>(data)[offset];
+
+  return make_cuFloatComplex(val.x * gain, val.y * gain);
+}
+)";
+
+  return compile_source_to_lto(src, "flatfield_highpass_callback.cu");
+}
+
+bool should_use_fft_flatfield(int height, int width, size_t kernel_y_size, size_t kernel_x_size) {
+  // The spatial path preserves the exact clamp-at-edge behavior for small kernels. Large kernels
+  // use the analytic Fourier-domain Gaussian high-pass to avoid O(pixels * kernel radius) work.
+  constexpr size_t kMinFftKernelSize = 65;
+  return height > 1 && width > 1 && std::max(kernel_y_size, kernel_x_size) >= kMinFftKernelSize;
+}
+
 __global__ void gaussian_horizontal_kernel(const float *__restrict__ input,
                                            float *__restrict__ temp,
                                            const float *__restrict__ kernel, size_t total,
@@ -140,15 +242,19 @@ __global__ void gaussian_subtract_vertical_kernel(const float *__restrict__ inpu
 class Flatfield : public holoflow::core::ISyncTask {
 public:
   Flatfield(FlatfieldSettings settings, holoflow::core::TDesc idesc, size_t total, int height,
-            int width, int radius_y, int radius_x, DevPtr<float> &&d_kernel_y,
-            DevPtr<float> &&d_kernel_x, DevPtr<float> &&d_temp, cudaStream_t stream)
+            int width, bool use_fft, cudaStream_t stream)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), total_(total), height_(height),
-        width_(width), radius_y_(radius_y), radius_x_(radius_x), d_kernel_y_(std::move(d_kernel_y)),
-        d_kernel_x_(std::move(d_kernel_x)), d_temp_(std::move(d_temp)), stream_(stream) {}
+        width_(width), use_fft_(use_fft), stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    const auto *idata = reinterpret_cast<const float *>(ctx.inputs[0].data());
-    auto       *odata = reinterpret_cast<float *>(ctx.outputs[0].data());
+    auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data());
+    auto *odata = reinterpret_cast<float *>(ctx.outputs[0].data());
+
+    if (use_fft_) {
+      CUFFT_CHECK(cufftXtExec(fwd_plan_->get(), idata, d_spectrum_.get(), CUFFT_FORWARD));
+      CUFFT_CHECK(cufftXtExec(inv_plan_->get(), d_spectrum_.get(), odata, CUFFT_INVERSE));
+      return holoflow::core::OpResult::Ok;
+    }
 
     constexpr int block = 256;
     const int     grid  = static_cast<int>((total_ + block - 1) / block);
@@ -161,23 +267,51 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
-  void update_stream(cudaStream_t stream) { stream_ = stream; }
+  void update_stream(cudaStream_t stream) {
+    stream_ = stream;
+    if (use_fft_) {
+      CUFFT_CHECK(cufftSetStream(fwd_plan_->get(), stream_));
+      CUFFT_CHECK(cufftSetStream(inv_plan_->get(), stream_));
+    }
+  }
+
+  void set_spatial_data(int radius_y, int radius_x, DevPtr<float> &&d_kernel_y,
+                        DevPtr<float> &&d_kernel_x, DevPtr<float> &&d_temp) {
+    radius_y_   = radius_y;
+    radius_x_   = radius_x;
+    d_kernel_y_ = std::move(d_kernel_y);
+    d_kernel_x_ = std::move(d_kernel_x);
+    d_temp_     = std::move(d_temp);
+  }
+
+  void set_fft_data(curaii::CufftHandle &&fwd_plan, curaii::CufftHandle &&inv_plan,
+                    DevPtr<cuFloatComplex> &&d_spectrum, std::vector<char> &&highpass_lto) {
+    fwd_plan_.emplace(std::move(fwd_plan));
+    inv_plan_.emplace(std::move(inv_plan));
+    d_spectrum_   = std::move(d_spectrum);
+    highpass_lto_ = std::move(highpass_lto);
+  }
 
   const FlatfieldSettings     &settings() const { return settings_; }
   const holoflow::core::TDesc &idesc() const { return idesc_; }
 
 private:
-  FlatfieldSettings     settings_;
-  holoflow::core::TDesc idesc_;
-  size_t                total_;
-  int                   height_;
-  int                   width_;
-  int                   radius_y_;
-  int                   radius_x_;
-  DevPtr<float>         d_kernel_y_;
-  DevPtr<float>         d_kernel_x_;
-  DevPtr<float>         d_temp_;
-  cudaStream_t          stream_;
+  FlatfieldSettings                  settings_;
+  holoflow::core::TDesc              idesc_;
+  size_t                             total_;
+  int                                height_;
+  int                                width_;
+  bool                               use_fft_;
+  int                                radius_y_ = 0;
+  int                                radius_x_ = 0;
+  DevPtr<float>                      d_kernel_y_;
+  DevPtr<float>                      d_kernel_x_;
+  DevPtr<float>                      d_temp_;
+  std::optional<curaii::CufftHandle> fwd_plan_;
+  std::optional<curaii::CufftHandle> inv_plan_;
+  DevPtr<cuFloatComplex>             d_spectrum_;
+  std::vector<char>                  highpass_lto_;
+  cudaStream_t                       stream_;
 };
 
 } // namespace
@@ -227,6 +361,54 @@ FlatfieldFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const int  radius_y = static_cast<int>(kernel_y.size() / 2);
   const int  radius_x = static_cast<int>(kernel_x.size() / 2);
 
+  int batch = 1;
+  for (size_t i = 0; i + 2 < rank; ++i) {
+    batch *= static_cast<int>(idesc.shape[i]);
+  }
+
+  const bool use_fft = should_use_fft_flatfield(height, width, kernel_y.size(), kernel_x.size());
+  auto task = std::make_unique<Flatfield>(settings, idesc, idesc.num_elements(), height, width,
+                                          use_fft, ctx.stream);
+
+  if (use_fft) {
+    const int filter_width = width / 2 + 1;
+    auto highpass_lto = highpass_callback_lto(width, height, settings.sigma_y, settings.sigma_x);
+    auto d_spectrum   = curaii::make_unique_device_ptr<cuFloatComplex>(
+        static_cast<size_t>(batch) * static_cast<size_t>(height) *
+        static_cast<size_t>(filter_width));
+
+    constexpr int rank_2d           = 2;
+    long long int n[2]              = {height, width};
+    long long int inembed[2]        = {height, width};
+    long long int spectrum_embed[2] = {height, filter_width};
+    constexpr int istride           = 1;
+    const int     idist             = height * width;
+    constexpr int ostride           = 1;
+    const int     spectrum_dist     = height * filter_width;
+    const int     batch_count       = batch;
+    size_t        work_size         = 0;
+
+    curaii::CufftHandle fwd_plan;
+    curaii::CufftHandle inv_plan;
+    CUFFT_CHECK(cufftSetStream(fwd_plan.get(), ctx.stream));
+    CUFFT_CHECK(cufftSetStream(inv_plan.get(), ctx.stream));
+
+    CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "flatfield_highpass_callback",
+                                      highpass_lto.data(), highpass_lto.size(), CUFFT_CB_LD_COMPLEX,
+                                      nullptr));
+
+    CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank_2d, n, inembed, istride, idist, CUDA_R_32F,
+                                    spectrum_embed, ostride, spectrum_dist, CUDA_C_32F, batch_count,
+                                    &work_size, CUDA_C_32F));
+    CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank_2d, n, spectrum_embed, istride,
+                                    spectrum_dist, CUDA_C_32F, inembed, ostride, idist, CUDA_R_32F,
+                                    batch_count, &work_size, CUDA_C_32F));
+
+    task->set_fft_data(std::move(fwd_plan), std::move(inv_plan), std::move(d_spectrum),
+                       std::move(highpass_lto));
+    return task;
+  }
+
   auto d_kernel_y = curaii::make_unique_device_ptr<float>(kernel_y.size());
   CUDA_CHECK(cudaMemcpyAsync(d_kernel_y.get(), kernel_y.data(), kernel_y.size() * sizeof(float),
                              cudaMemcpyHostToDevice, ctx.stream));
@@ -235,9 +417,9 @@ FlatfieldFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                              cudaMemcpyHostToDevice, ctx.stream));
   auto d_temp = curaii::make_unique_device_ptr<float>(idesc.num_elements());
 
-  return std::make_unique<Flatfield>(settings, idesc, idesc.num_elements(), height, width, radius_y,
-                                     radius_x, std::move(d_kernel_y), std::move(d_kernel_x),
-                                     std::move(d_temp), ctx.stream);
+  task->set_spatial_data(radius_y, radius_x, std::move(d_kernel_y), std::move(d_kernel_x),
+                         std::move(d_temp));
+  return task;
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>

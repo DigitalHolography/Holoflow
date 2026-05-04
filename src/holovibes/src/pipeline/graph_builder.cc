@@ -319,10 +319,12 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
   M0      = mean(M0, {{0}, true});
   M0      = fftshift(M0, {{-2, -1}});
 
-  const auto [flatfield_dy, flatfield_dx] =
-      fresnel_1fft_output_pitch(lam, z_prop, dy, dx, subap_h, subap_w);
-  M0 = flatfield(M0, flatfield_settings_from_cutoff_period(s_.pp_flatfield_cutoff_period_m,
-                                                           flatfield_dy, flatfield_dx));
+  if (s_.pp_flatfield) {
+    const auto [flatfield_dy, flatfield_dx] =
+        fresnel_1fft_output_pitch(lam, z_prop, dy, dx, subap_h, subap_w);
+    M0 = flatfield(M0, flatfield_settings_from_cutoff_period(s_.pp_flatfield_cutoff_period_m,
+                                                             flatfield_dy, flatfield_dx));
+  }
 
   // Cross Correlation with Reference
   int64_t sy_ref = nb_subap / 2;
@@ -522,9 +524,11 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
     result = fftshift(result, {{-2, -1}});
   }
 
-  const auto [flatfield_dy, flatfield_dx] = post_propagation_pitch(s_, FH_z);
-  result = flatfield(result, flatfield_settings_from_cutoff_period(s_.pp_flatfield_cutoff_period_m,
-                                                                   flatfield_dy, flatfield_dx));
+  if (s_.pp_flatfield) {
+    const auto [flatfield_dy, flatfield_dx] = post_propagation_pitch(s_, FH_z);
+    result = flatfield(result, flatfield_settings_from_cutoff_period(
+                                   s_.pp_flatfield_cutoff_period_m, flatfield_dy, flatfield_dx));
+  }
 
   if (s_.pp_registration) {
     throw std::logic_error{"Registration is currently not supported"};

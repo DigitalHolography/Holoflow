@@ -172,3 +172,15 @@ TEST_F(FlatfieldExecuteTest, AnisotropicSigmaMatchesReference) {
   ASSERT_EQ(run.output_descs.size(), 1);
   expect_f32_near(run.output_bytes[0], flatfield_reference(input, 3, 4, sigma_y, sigma_x));
 }
+
+TEST_F(FlatfieldExecuteTest, LargeSigmaConstantInputSubtractsToZero) {
+  const TDesc              d = device_desc({8, 8}, DType::F32);
+  const std::vector<float> input(64, 7.0f);
+
+  const auto run = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{d}, std::vector<std::vector<std::byte>>{as_bytes(input)},
+      settings(12.0f, 12.0f));
+
+  ASSERT_EQ(run.output_descs.size(), 1);
+  expect_f32_near(run.output_bytes[0], std::vector<float>(64, 0.0f), 1e-3f);
+}

@@ -131,6 +131,7 @@ void write_view(json &j, const Settings &s) {
   auto &view = j["compute_settings"]["view"];
 
   view["fft_shift"]                    = s.pp_fft_shift;
+  view["flatfield"]["enabled"]         = s.pp_flatfield;
   view["flatfield"]["cutoff_period_m"] = s.pp_flatfield_cutoff_period_m;
 
   view["registration"]["registration_enabled"] = s.pp_registration;
@@ -223,9 +224,11 @@ void read_view_ranges(Settings &s, const json &view) {
 }
 
 void read_view(Settings &s, const json &view) {
-  s.pp_fft_shift = val(view, "fft_shift", s.pp_fft_shift);
+  s.pp_fft_shift        = val(view, "fft_shift", s.pp_fft_shift);
+  const auto &flatfield = child_or_empty(view, "flatfield");
+  s.pp_flatfield        = val(flatfield, "enabled", s.pp_flatfield);
   s.pp_flatfield_cutoff_period_m =
-      val(child_or_empty(view, "flatfield"), "cutoff_period_m", s.pp_flatfield_cutoff_period_m);
+      val(flatfield, "cutoff_period_m", s.pp_flatfield_cutoff_period_m);
 
   const auto &window = child_or_empty(view, "window");
   const auto &xy     = child_or_empty(window, "xy");

@@ -118,6 +118,7 @@ struct Settings {
   // Post-processing
   int  pp_fps;
   bool pp_fft_shift;
+  bool pp_flatfield;
   // Physical cutoff period used to derive Gaussian sigmas at the current image pitch.
   float       pp_flatfield_cutoff_period_m;
   int         pp_accumulation;

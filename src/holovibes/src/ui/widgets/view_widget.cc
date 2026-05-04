@@ -66,6 +66,7 @@ bool    ViewWidget::is_raw_spectrum_view_enabled() const {
 bool ViewWidget::is_process_spectrum_view_enabled() const {
   return process_spectrum_view_check_->isChecked();
 }
+bool    ViewWidget::is_flatfield_enabled() const { return flatfield_check_->isChecked(); }
 int     ViewWidget::get_x_origin() const { return x_spin_->value(); }
 int     ViewWidget::get_x_width() const { return x_width_spin_->value(); }
 int     ViewWidget::get_y_origin() const { return y_spin_->value(); }
@@ -95,6 +96,10 @@ void ViewWidget::set_z_origin(int value) { z_spin_->setValue(value); }
 void ViewWidget::set_z_width(int value) { z_width_spin_->setValue(value); }
 void ViewWidget::set_cuts_3d_enabled(bool enabled) { cuts_3d_check_->setChecked(enabled); }
 void ViewWidget::set_fft_shift_enabled(bool enabled) { fft_shift_check_->setChecked(enabled); }
+void ViewWidget::set_flatfield_enabled(bool enabled) {
+  flatfield_check_->setChecked(enabled);
+  flatfield_cutoff_period_um_->setEnabled(enabled);
+}
 void ViewWidget::set_accumulation(int value) { accumulation_spin_->setValue(value); }
 void ViewWidget::set_flatfield_cutoff_period_um(double value) {
   flatfield_cutoff_period_um_->setValue(value);
@@ -127,6 +132,7 @@ QCheckBox      *ViewWidget::fft_shift_check() { return fft_shift_check_; }
 QCheckBox      *ViewWidget::raw_view_check() { return raw_view_check_; }
 QCheckBox      *ViewWidget::raw_spectrum_view_check() { return raw_spectrum_view_check_; }
 QCheckBox      *ViewWidget::process_spectrum_view_check() { return process_spectrum_view_check_; }
+QCheckBox      *ViewWidget::flatfield_check() { return flatfield_check_; }
 QGroupBox      *ViewWidget::post_processing_group() { return post_processing_group_; }
 QSpinBox       *ViewWidget::x_spin() { return x_spin_; }
 QSpinBox       *ViewWidget::x_width_spin() { return x_width_spin_; }
@@ -223,10 +229,13 @@ void ViewWidget::setup_ui() {
   accumulation_spin_ = create_spin_box(post_processing_group_, 1, kLargeSpinMax, 1);
   post_layout->addWidget(accumulation_spin_, 0, 1);
 
-  post_layout->addWidget(new QLabel("Flatfield cutoff (um):", post_processing_group_), 1, 0);
+  flatfield_check_ = new QCheckBox("Flatfield", post_processing_group_);
+  flatfield_check_->setChecked(true);
+  post_layout->addWidget(flatfield_check_, 1, 0);
+  post_layout->addWidget(new QLabel("Cutoff (um):", post_processing_group_), 1, 1);
   flatfield_cutoff_period_um_ =
       create_double_spin_box(post_processing_group_, 1.0, 1000000.0, 100.0, 2000.0, 1);
-  post_layout->addWidget(flatfield_cutoff_period_um_, 1, 1, 1, 2);
+  post_layout->addWidget(flatfield_cutoff_period_um_, 1, 2);
 
   post_layout->addWidget(new QLabel("Range:", post_processing_group_), 2, 0);
   range_start_spin_ = create_spin_box(post_processing_group_, 1, kLargeSpinMax, 0);
@@ -286,6 +295,9 @@ void ViewWidget::connect_signals() {
           &ViewWidget::settings_changed);
   connect(accumulation_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);
+  connect(flatfield_check_, &QCheckBox::toggled, flatfield_cutoff_period_um_,
+          &QDoubleSpinBox::setEnabled);
+  connect(flatfield_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
   connect(flatfield_cutoff_period_um_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);
   connect(range_start_spin_, qOverload<int>(&QSpinBox::valueChanged), this,

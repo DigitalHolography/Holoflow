@@ -35,6 +35,7 @@ public:
   bool    is_raw_view_enabled() const;
   bool    is_raw_spectrum_view_enabled() const;
   bool    is_process_spectrum_view_enabled() const;
+  bool    is_flatfield_enabled() const;
   int     get_x_origin() const;
   int     get_x_width() const;
   int     get_y_origin() const;
@@ -62,6 +63,7 @@ public:
   void set_z_width(int value);
   void set_cuts_3d_enabled(bool enabled);
   void set_fft_shift_enabled(bool enabled);
+  void set_flatfield_enabled(bool enabled);
   void set_accumulation(int value);
   void set_flatfield_cutoff_period_um(double value);
   void set_reticle_radius(int value);
@@ -87,6 +89,7 @@ public:
   QCheckBox      *raw_view_check();
   QCheckBox      *raw_spectrum_view_check();
   QCheckBox      *process_spectrum_view_check();
+  QCheckBox      *flatfield_check();
   QGroupBox      *post_processing_group();
   QSpinBox       *x_spin();
   QSpinBox       *x_width_spin();
@@ -137,6 +140,7 @@ private:
   QComboBox      *kind_combo_;
   QGroupBox      *post_processing_group_;
   QSpinBox       *accumulation_spin_;
+  QCheckBox      *flatfield_check_;
   QDoubleSpinBox *flatfield_cutoff_period_um_;
   QSpinBox       *range_start_spin_;
   QSpinBox       *range_end_spin_;
