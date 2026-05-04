@@ -15,6 +15,7 @@
 #pragma once
 
 #include <map>
+#include <optional>
 
 #include "graph_builder_tasks.hh"
 #include "pipeline/settings.hh"
@@ -36,6 +37,11 @@ public:
   holoflow::core::GraphSpec build();
 
 private:
+  struct ShackHartmannIterationState {
+    std::optional<TDesc> cumulative_coeffs_gpu;
+    std::optional<TDesc> cumulative_phase_gpu;
+  };
+
   // Pipeline construction stages
   TDesc build_acquisition();
 
@@ -57,7 +63,8 @@ private:
   bool  build_raw_view(const TDesc &H);
   TDesc build_preprocessing(TDesc H);
   TDesc build_time_frequency_analysis(TDesc H);
-  TDesc build_shack_hartmann(TDesc FH, bool is_last_pass);
+  TDesc build_shack_hartmann(TDesc FH, bool is_last_pass,
+                             ShackHartmannIterationState &iteration_state);
   TDesc build_spatial_propagation(const TDesc &FH);
   TDesc build_spatial_filter(const TDesc &FH_z);
   void  build_xy_view(const TDesc &FH_z);

@@ -120,8 +120,10 @@ holoflow::core::GraphSpec GraphBuilder::build() {
       throw std::invalid_argument("autofocus_nb_iter must be positive");
     }
 
+    ShackHartmannIterationState shack_hartmann_iteration_state;
     for (int pass = 0; pass < s_.autofocus_nb_iter; ++pass) {
-      FH = build_shack_hartmann(FH, pass == s_.autofocus_nb_iter - 1);
+      FH = build_shack_hartmann(FH, pass == s_.autofocus_nb_iter - 1,
+                                shack_hartmann_iteration_state);
     }
   }
 
@@ -277,7 +279,9 @@ GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
   return batched_queue(FH, {s_.pp_accumulation * 2, s_.pp_accumulation, s_.pp_accumulation});
 }
 
-GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass) {
+GraphBuilder::TDesc
+GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
+                                   ShackHartmannIterationState &iteration_state) {
   if (s_.autofocus_nb_subaps <= 0) {
     throw std::invalid_argument("autofocus_nb_subaps must be positive");
   }
@@ -366,16 +370,35 @@ GraphBuilder::TDesc GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pa
     };
     auto zernike_coeffs = zernike(xcorr_zernike, zernike_settings);
     zernike_coeffs      = slice(zernike_coeffs, {{0, 0, {}}});
-    if (is_last_pass) {
-      zernike_coefficients_display(zernike_coeffs, {s_.autofocus_zernike_orders});
-    }
 
     auto phase     = zernike_phase(zernike_coeffs, {s_.autofocus_zernike_orders, ny, nx});
     auto phase_gpu = memcpy(phase, {Device});
     FH             = correct_phase(FH, phase_gpu, {});
 
+    auto zernike_coeffs_gpu = memcpy(zernike_coeffs, {Device});
+    if (iteration_state.cumulative_coeffs_gpu.has_value()) {
+      iteration_state.cumulative_coeffs_gpu =
+          add(*iteration_state.cumulative_coeffs_gpu, zernike_coeffs_gpu, {});
+    } else {
+      iteration_state.cumulative_coeffs_gpu = zernike_coeffs_gpu;
+    }
+
+    if (iteration_state.cumulative_phase_gpu.has_value()) {
+      iteration_state.cumulative_phase_gpu =
+          add(*iteration_state.cumulative_phase_gpu, phase_gpu, {});
+    } else {
+      iteration_state.cumulative_phase_gpu = phase_gpu;
+    }
+
     if (is_last_pass) {
-      auto phase_disp = wrap2pi(phase_gpu, {});
+      HOLOVIBES_CHECK(iteration_state.cumulative_coeffs_gpu.has_value());
+      HOLOVIBES_CHECK(iteration_state.cumulative_phase_gpu.has_value());
+
+      zernike_coefficients_display(*iteration_state.cumulative_coeffs_gpu,
+                                   {s_.autofocus_zernike_orders});
+
+      auto phase_disp = copy(*iteration_state.cumulative_phase_gpu, {});
+      phase_disp      = wrap2pi(phase_disp, {});
       phase_disp      = reshape(phase_disp, {{1, ny, nx}});
       phase_disp      = batched_queue(phase_disp, {s_.cpu_out_size, 1, 1});
       zernike_phase_display(phase_disp, {});
