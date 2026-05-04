@@ -360,55 +360,8 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
     shack_hartmann_xcorr_display(xcorr_flattened, {});
   }
 
-  // Zernike & Phase Correction
-  if (!s_.autofocus_zernike_orders.empty()) {
-    int ny             = static_cast<int>(FH.shape.at(2));
-    int nx             = static_cast<int>(FH.shape.at(3));
-    xcorr              = cuda_stream_synchronize(xcorr, {});
-    auto xcorr_zernike = memcpy(xcorr, {Host});
-
-    holotask::syncs::ZernikeSettings zernike_settings{
-        s_.autofocus_zernike_orders, lam, dx, dy, z_prop, 1, 1,
-    };
-    auto zernike_coeffs = zernike(xcorr_zernike, zernike_settings);
-    zernike_coeffs      = slice(zernike_coeffs, {{0, 0, {}}});
-
-    auto phase     = zernike_phase(zernike_coeffs, {s_.autofocus_zernike_orders, ny, nx});
-    auto phase_gpu = memcpy(phase, {Device});
-    FH             = correct_phase(FH, phase_gpu, {});
-
-    auto zernike_coeffs_gpu = memcpy(zernike_coeffs, {Device});
-    if (iteration_state.cumulative_coeffs_gpu.has_value()) {
-      iteration_state.cumulative_coeffs_gpu =
-          add(*iteration_state.cumulative_coeffs_gpu, zernike_coeffs_gpu, {});
-    } else {
-      iteration_state.cumulative_coeffs_gpu = zernike_coeffs_gpu;
-    }
-
-    if (iteration_state.cumulative_phase_gpu.has_value()) {
-      iteration_state.cumulative_phase_gpu =
-          add(*iteration_state.cumulative_phase_gpu, phase_gpu, {});
-    } else {
-      iteration_state.cumulative_phase_gpu = phase_gpu;
-    }
-
-    if (is_last_pass) {
-      HOLOVIBES_CHECK(iteration_state.cumulative_coeffs_gpu.has_value());
-      HOLOVIBES_CHECK(iteration_state.cumulative_phase_gpu.has_value());
-
-      zernike_coefficients_display(*iteration_state.cumulative_coeffs_gpu,
-                                   {s_.autofocus_zernike_orders});
-
-      auto phase_disp = copy(*iteration_state.cumulative_phase_gpu, {});
-      phase_disp      = wrap2pi(phase_disp, {});
-      phase_disp      = reshape(phase_disp, {{1, ny, nx}});
-      phase_disp      = batched_queue(phase_disp, {s_.cpu_out_size, 1, 1});
-      zernike_phase_display(phase_disp, {});
-    }
-  }
-
   // When no Zernike orders are specified, still display an empty phase map for consistency
-  else {
+  if (s_.autofocus_zernike_orders.empty()) {
     auto ny          = static_cast<size_t>(FH.shape.at(2));
     auto nx          = static_cast<size_t>(FH.shape.at(3));
     auto empty_phase = zeros({{1, ny, nx}, holoflow::core::DType::F32});
@@ -416,6 +369,50 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
     if (is_last_pass) {
       zernike_phase_display(empty_phase, {});
     }
+
+    return FH;
+  }
+
+  // Zernike & Phase Correction
+  int ny             = static_cast<int>(FH.shape.at(2));
+  int nx             = static_cast<int>(FH.shape.at(3));
+  xcorr              = cuda_stream_synchronize(xcorr, {});
+  auto xcorr_zernike = memcpy(xcorr, {Host});
+
+  holotask::syncs::ZernikeSettings zernike_settings{
+      s_.autofocus_zernike_orders, lam, dx, dy, z_prop, 1, 1,
+  };
+  auto zernike_coeffs = zernike(xcorr_zernike, zernike_settings);
+  zernike_coeffs      = slice(zernike_coeffs, {{0, 0, {}}});
+
+  auto phase     = zernike_phase(zernike_coeffs, {s_.autofocus_zernike_orders, ny, nx});
+  auto phase_gpu = memcpy(phase, {Device});
+  FH             = correct_phase(FH, phase_gpu, {});
+
+  auto zernike_coeffs_gpu = memcpy(zernike_coeffs, {Device});
+
+  iteration_state.cumulative_coeffs_gpu =
+      iteration_state.cumulative_coeffs_gpu.has_value()
+          ? add(*iteration_state.cumulative_coeffs_gpu, zernike_coeffs_gpu, {})
+          : zernike_coeffs_gpu;
+
+  iteration_state.cumulative_phase_gpu =
+      iteration_state.cumulative_phase_gpu.has_value()
+          ? add(*iteration_state.cumulative_phase_gpu, phase_gpu, {})
+          : phase_gpu;
+
+  if (is_last_pass) {
+    HOLOVIBES_CHECK(iteration_state.cumulative_coeffs_gpu.has_value());
+    HOLOVIBES_CHECK(iteration_state.cumulative_phase_gpu.has_value());
+
+    zernike_coefficients_display(*iteration_state.cumulative_coeffs_gpu,
+                                 {s_.autofocus_zernike_orders});
+
+    auto phase_disp = copy(*iteration_state.cumulative_phase_gpu, {});
+    phase_disp      = wrap2pi(phase_disp, {});
+    phase_disp      = reshape(phase_disp, {{1, ny, nx}});
+    phase_disp      = batched_queue(phase_disp, {s_.cpu_out_size, 1, 1});
+    zernike_phase_display(phase_disp, {});
   }
 
   return FH;
