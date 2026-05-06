@@ -329,7 +329,7 @@ public:
     for (std::size_t sy = 0; sy < static_cast<std::size_t>(ctx.inputs[0].desc.shape[1]); ++sy) {
       for (std::size_t sx = 0; sx < static_cast<std::size_t>(ctx.inputs[0].desc.shape[2]); ++sx) {
         const auto &shift = shifts[sy * static_cast<std::size_t>(ctx.inputs[0].desc.shape[2]) + sx];
-        logger()->debug("Subaperture ({}, {}): Shift (dx: {:.3f} px, dy: {:.3f} px)", sx, sy,
+        logger()->trace("Subaperture ({}, {}): Shift (dx: {:.3f} px, dy: {:.3f} px)", sx, sy,
                         shift.dx, shift.dy);
       }
     }
@@ -371,7 +371,7 @@ public:
         center_sy = std::min(center_sy, nb_sub_y - 1);
 
         ShiftPx ref_shift = shifts[center_sy * nb_sub_x + center_sx];
-        logger()->debug("Region ({}, {}): Reference subaperture at ({}, {}) with shift (dx: {:.3f} "
+        logger()->trace("Region ({}, {}): Reference subaperture at ({}, {}) with shift (dx: {:.3f} "
                         "px, dy: {:.3f} px)",
                         rx, ry, center_sx, center_sy, ref_shift.dx, ref_shift.dy);
 
@@ -464,8 +464,8 @@ public:
       }
     }
 
-    logger()->info("Kept {} subapertures, skipped {} outside the global pupil", kept_subaps,
-                   skipped_subaps);
+    logger()->trace("Kept {} subapertures, skipped {} outside the global pupil", kept_subaps,
+                    skipped_subaps);
 
     auto *out_ptr = reinterpret_cast<float *>(ctx.outputs[0].data());
     for (std::size_t r = 0; r < num_regions; ++r) {
@@ -488,8 +488,8 @@ public:
         float coef_diff   = out_ptr[r * n_modes + i] - center_coef;
         coef_str += fmt::format("Z{}: {:.4e} rad, ", settings_.indexes[i], coef_diff);
       }
-      logger()->info("Region ({}, {}): Coeff diff from center region: {}", r % nx, r / nx,
-                     coef_str);
+      logger()->trace("Region ({}, {}): Coeff diff from center region: {}", r % nx, r / nx,
+                      coef_str);
     }
 
     return holoflow::core::OpResult::Ok;
