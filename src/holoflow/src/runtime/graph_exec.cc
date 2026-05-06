@@ -82,6 +82,10 @@ size_t count_distinct_tids(const GraphPlan &graph) {
   return tids.size();
 }
 
+std::string task_range_name(std::string_view operation, const core::NodeSpec &spec) {
+  return std::format("{}: {} ({})", operation, spec.name, spec.kind);
+}
+
 [[noreturn]] inline void log_and_abort_current_exception(std::string_view thread_name) {
   try {
     throw;
@@ -420,8 +424,8 @@ void Scheduler::run_section(int section_id) {
     }
   } catch (...) {
     stop_.store(true);
-    log_and_abort_current_exception(std::format("Scheduler::run_section section={} id={}", sec.name,
-                                                section_id));
+    log_and_abort_current_exception(
+        std::format("Scheduler::run_section section={} id={}", sec.name, section_id));
   }
 }
 
@@ -624,8 +628,13 @@ void Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
   auto &srt = std::get<SyncRt>(nrt);
 
   logger()->trace("[Scheduler::run_sync] Executing node '{}'", np.spec.name);
-  auto t0 = clock::now();
-  auto r  = srt.task->execute(srt.ctx);
+  const auto range_name = task_range_name("sync execute", np.spec);
+  auto       t0         = clock::now();
+  auto       r          = core::OpResult::Cancelled;
+  {
+    nvtx3::scoped_range task_range{range_name.c_str()};
+    r = srt.task->execute(srt.ctx);
+  }
   auto t1 = clock::now();
 
   switch (r) {
@@ -668,12 +677,17 @@ void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
   auto &art = std::get<AsyncRt>(nrt);
 
   logger()->trace("[Scheduler::run_async_cons] Executing node '{}'", np.spec.name);
-  auto t0 = clock::now();
-  auto r  = art.task->try_pop(art.xctx);
-  while (r == core::OpResult::NotReady) {
-    if (stop_.load())
-      return;
+  const auto range_name = task_range_name("async pop", np.spec);
+  auto       t0         = clock::now();
+  auto       r          = core::OpResult::Cancelled;
+  {
+    nvtx3::scoped_range task_range{range_name.c_str()};
     r = art.task->try_pop(art.xctx);
+    while (r == core::OpResult::NotReady) {
+      if (stop_.load())
+        return;
+      r = art.task->try_pop(art.xctx);
+    }
   }
   auto t1 = clock::now();
 
@@ -711,12 +725,17 @@ void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
   auto &art = std::get<AsyncRt>(nrt);
 
   logger()->trace("[Scheduler::run_async_prod] Executing node '{}'", np.spec.name);
-  auto t0 = clock::now();
-  auto r  = art.task->try_push(art.pctx);
-  while (r == core::OpResult::NotReady) {
-    if (stop_.load())
-      return;
+  const auto range_name = task_range_name("async push", np.spec);
+  auto       t0         = clock::now();
+  auto       r          = core::OpResult::Cancelled;
+  {
+    nvtx3::scoped_range task_range{range_name.c_str()};
     r = art.task->try_push(art.pctx);
+    while (r == core::OpResult::NotReady) {
+      if (stop_.load())
+        return;
+      r = art.task->try_push(art.pctx);
+    }
   }
   auto t1 = clock::now();
 
