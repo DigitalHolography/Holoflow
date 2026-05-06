@@ -14,6 +14,7 @@
 
 #include "graph_builder.hh"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <spdlog/fmt/ranges.h>
@@ -307,6 +308,9 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
     throw std::invalid_argument("autofocus_nb_subaps is too large for the current frame size");
   }
 
+  const float pupil_radius_m = 0.5f * std::min(static_cast<float>(subap_w * nb_subap) * dx,
+                                               static_cast<float>(subap_h * nb_subap) * dy);
+
   // 2. Sub-aperture Processing via Short-Time Fresnel
   // We use stride == subap size for non-overlapping Shack-Hartmann windows.
   auto FH_prop = short_time_fresnel_diffraction(
@@ -407,6 +411,15 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
 
     zernike_coefficients_display(*iteration_state.cumulative_coeffs_gpu,
                                  {s_.autofocus_zernike_orders});
+
+    bool a4_included =
+        std::find(s_.autofocus_zernike_orders.begin(), s_.autofocus_zernike_orders.end(), 4) !=
+        s_.autofocus_zernike_orders.end();
+
+    if (a4_included) {
+      zernike_defocus_z_prop(*iteration_state.cumulative_coeffs_gpu,
+                             {s_.autofocus_zernike_orders, lam, z_prop, pupil_radius_m});
+    }
 
     auto phase_disp = copy(*iteration_state.cumulative_phase_gpu, {});
     phase_disp      = wrap2pi(phase_disp, {});

@@ -88,6 +88,7 @@
 #include "holotask/syncs/unfold2d.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike.hh"
+#include "holotask/syncs/zernike_defocus_z_prop.hh"
 #include "holotask/syncs/zernike_phase.hh"
 #include "logger.hh"
 #include "pipeline/validation.hh"
@@ -184,6 +185,7 @@ void Manager::register_components() {
   reg_sync<syncs::Unfold2DFactory>(registry_, "Unfold2D");
   reg_sync<syncs::Wrap2PiFactory>(registry_, "Wrap2Pi");
   reg_sync<syncs::ZernikeFactory>(registry_, "Zernike");
+  reg_sync<syncs::ZernikeDefocusZPropFactory>(registry_, "ZernikeDefocusZProp");
   reg_sync<syncs::ZernikePhaseFactory>(registry_, "ZernikePhase");
   reg_sync<ArangeFactory>(registry_, "Arange");
   reg_sync<AsArrayFactory>(registry_, "AsArray");

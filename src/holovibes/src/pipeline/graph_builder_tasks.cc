@@ -72,6 +72,7 @@ DEFINE_UNARY_SYNC_NODE (registration,                           "registration", 
 DEFINE_UNARY_SYNC_NODE (wrap2pi,                                "wrap2pi",                             "Wrap2Pi",                         holotask::syncs::Wrap2PiSettings)
 DEFINE_UNARY_SYNC_NODE (zernike,                                "zernike",                             "Zernike",                         holotask::syncs::ZernikeSettings)
 DEFINE_UNARY_SYNC_NODE (zernike_phase,                          "zernike_phase",                       "ZernikePhase",                    holotask::syncs::ZernikePhaseSettings)
+DEFINE_SINK_SYNC_NODE  (zernike_defocus_z_prop,                 "zernike_defocus_z_prop",              "ZernikeDefocusZProp",             holotask::syncs::ZernikeDefocusZPropSettings)
 
 DEFINE_SINK_SYNC_NODE  (xy_raw_display,               "xy_raw_display",               "DisplayTensorXYRaw",              tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE  (xy_processed_display,         "xy_processed_display",         "DisplayTensorXY",                 tasks::sinks::DisplayTensorSettings)
