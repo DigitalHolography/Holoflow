@@ -117,7 +117,7 @@ __device__ bool in_ellipse(int x, int y, int width, int height, PctClipSettings:
   return (xr * xr) / (roi.rx * roi.rx) + (yr * yr) / (roi.ry * roi.ry) <= 1.0f;
 }
 
-__global__ void roi_mask_kernel(uint8_t *mask, int width, int height, int depth,
+__global__ void roi_mask_kernel(uint8_t *mask, int *roi_count, int width, int height, int depth,
                                 PctClipSettings::Ellipse roi) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -126,8 +126,12 @@ __global__ void roi_mask_kernel(uint8_t *mask, int width, int height, int depth,
     return;
   }
 
-  int idx   = z * width * height + y * width + x;
-  mask[idx] = in_ellipse(x, y, width, height, roi);
+  int  idx      = z * width * height + y * width + x;
+  bool selected = in_ellipse(x, y, width, height, roi);
+  mask[idx]     = selected;
+  if (selected) {
+    atomicAdd(roi_count, 1);
+  }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -136,15 +140,17 @@ __global__ void roi_mask_kernel(uint8_t *mask, int width, int height, int depth,
 
 class PctClip : public holoflow::core::ISyncTask {
 public:
-  PctClip(PctClipSettings settings, holoflow::core::TDesc idesc, DevPtr<float> &&d_min,
-          DevPtr<float> &&d_max, DevPtr<uint8_t> &&d_roi_mask, size_t sort_tmp_bytes,
-          DevPtr<uint8_t> &&d_sort_tmp, size_t select_tmp_bytes, DevPtr<uint8_t> &&d_select_tmp,
-          DevPtr<float> &&d_roi, DevPtr<int> &&d_roi_count, cudaStream_t stream)
-      : settings_(std::move(settings)), idesc_(std::move(idesc)), d_min_(std::move(d_min)),
-        d_max_(std::move(d_max)), d_roi_mask_(std::move(d_roi_mask)),
-        sort_tmp_bytes_(sort_tmp_bytes), d_sort_tmp_(std::move(d_sort_tmp)),
-        select_tmp_bytes_(select_tmp_bytes), d_select_tmp_(std::move(d_select_tmp)),
-        d_roi_(std::move(d_roi)), d_roi_count_(std::move(d_roi_count)), stream_(stream) {}
+  PctClip(PctClipSettings settings, holoflow::core::TDesc idesc, int roi_count, int min_idx,
+          int max_idx, DevPtr<float> &&d_min, DevPtr<float> &&d_max, DevPtr<uint8_t> &&d_roi_mask,
+          size_t sort_tmp_bytes, DevPtr<uint8_t> &&d_sort_tmp, size_t select_tmp_bytes,
+          DevPtr<uint8_t> &&d_select_tmp, DevPtr<float> &&d_roi, DevPtr<int> &&d_roi_count,
+          cudaStream_t stream)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), roi_count_(roi_count),
+        min_idx_(min_idx), max_idx_(max_idx), d_min_(std::move(d_min)), d_max_(std::move(d_max)),
+        d_roi_mask_(std::move(d_roi_mask)), sort_tmp_bytes_(sort_tmp_bytes),
+        d_sort_tmp_(std::move(d_sort_tmp)), select_tmp_bytes_(select_tmp_bytes),
+        d_select_tmp_(std::move(d_select_tmp)), d_roi_(std::move(d_roi)),
+        d_roi_count_(std::move(d_roi_count)), stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data());
@@ -155,23 +161,12 @@ public:
                                           d_roi_mask_.get(), d_roi_.get(), d_roi_count_.get(),
                                           count, stream_));
 
-    int h_roi_count = 0;
-    CUDA_CHECK(cudaStreamSynchronize(stream_));
-    CUDA_CHECK(cudaMemcpyAsync(&h_roi_count, d_roi_count_.get(), sizeof(int),
-                               cudaMemcpyDeviceToHost, stream_));
-    CUDA_CHECK(cudaStreamSynchronize(stream_));
-
     CUDA_CHECK(cub::DeviceRadixSort::SortKeys(d_sort_tmp_.get(), sort_tmp_bytes_, d_roi_.get(),
-                                              odata, h_roi_count, 0, 32, stream_));
+                                              odata, roi_count_, 0, 32, stream_));
 
-    HOLOVIBES_CHECK(h_roi_count > 0, "No pixels in ROI");
+    float *d_min = odata + min_idx_;
+    float *d_max = odata + max_idx_;
 
-    const int min_idx = static_cast<int>(settings_.min_pct / 100.0f * (h_roi_count - 1));
-    const int max_idx = static_cast<int>(settings_.max_pct / 100.0f * (h_roi_count - 1));
-    float    *d_min   = odata + min_idx;
-    float    *d_max   = odata + max_idx;
-
-    CUDA_CHECK(cudaStreamSynchronize(stream_));
     CUDA_CHECK(
         cudaMemcpyAsync(d_min_.get(), d_min, sizeof(float), cudaMemcpyDeviceToDevice, stream_));
     CUDA_CHECK(
@@ -194,6 +189,9 @@ public:
 private:
   PctClipSettings       settings_;
   holoflow::core::TDesc idesc_;
+  int                   roi_count_;
+  int                   min_idx_;
+  int                   max_idx_;
   DevPtr<float>         d_min_;
   DevPtr<float>         d_max_;
   DevPtr<uint8_t>       d_roi_mask_;
@@ -263,13 +261,32 @@ PctClipFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const int width  = static_cast<int>(idesc.shape[2]);
   const int count  = static_cast<int>(idesc.num_elements());
 
-  auto d_min      = make_unique_device_ptr<float>(1);
-  auto d_max      = make_unique_device_ptr<float>(1);
-  auto d_roi_mask = make_unique_device_ptr<uint8_t>(count);
+  auto d_min       = make_unique_device_ptr<float>(1);
+  auto d_max       = make_unique_device_ptr<float>(1);
+  auto d_roi_mask  = make_unique_device_ptr<uint8_t>(count);
+  auto d_roi_count = make_unique_device_ptr<int>(1);
+
+  dim3 block_size(16, 16, 1);
+  dim3 grid_size((width + block_size.x - 1) / block_size.x,
+                 (height + block_size.y - 1) / block_size.y,
+                 (depth + block_size.z - 1) / block_size.z);
+  CUDA_CHECK(cudaMemsetAsync(d_roi_count.get(), 0, sizeof(int), ctx.stream));
+  roi_mask_kernel<<<grid_size, block_size, 0, ctx.stream>>>(d_roi_mask.get(), d_roi_count.get(),
+                                                            width, height, depth, settings.roi);
+  CUDA_CHECK(cudaGetLastError());
+
+  int h_roi_count = 0;
+  CUDA_CHECK(cudaMemcpyAsync(&h_roi_count, d_roi_count.get(), sizeof(int), cudaMemcpyDeviceToHost,
+                             ctx.stream));
+  CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
+  HOLOVIBES_CHECK(h_roi_count > 0, "No pixels in ROI");
+
+  const int min_idx = static_cast<int>(settings.min_pct / 100.0f * (h_roi_count - 1));
+  const int max_idx = static_cast<int>(settings.max_pct / 100.0f * (h_roi_count - 1));
 
   size_t sort_tmp_bytes = 0;
   CUDA_CHECK(cub::DeviceRadixSort::SortKeys(nullptr, sort_tmp_bytes, static_cast<float *>(nullptr),
-                                            static_cast<float *>(nullptr), count, 0, 32,
+                                            static_cast<float *>(nullptr), h_roi_count, 0, 32,
                                             ctx.stream));
   auto d_sort_tmp = make_unique_device_ptr<uint8_t>(sort_tmp_bytes);
 
@@ -278,20 +295,12 @@ PctClipFactory::create(std::span<const holoflow::core::TDesc> input_descs,
       nullptr, select_tmp_bytes, static_cast<float *>(nullptr), static_cast<uint8_t *>(nullptr),
       static_cast<float *>(nullptr), static_cast<int *>(nullptr), count, ctx.stream));
   auto d_select_tmp = make_unique_device_ptr<uint8_t>(select_tmp_bytes);
-  auto d_roi_count  = make_unique_device_ptr<int>(1);
-  auto d_roi        = make_unique_device_ptr<float>(count);
+  auto d_roi        = make_unique_device_ptr<float>(h_roi_count);
 
-  dim3 block_size(16, 16, 1);
-  dim3 grid_size((width + block_size.x - 1) / block_size.x,
-                 (height + block_size.y - 1) / block_size.y,
-                 (depth + block_size.z - 1) / block_size.z);
-  roi_mask_kernel<<<grid_size, block_size, 0, ctx.stream>>>(d_roi_mask.get(), width, height, depth,
-                                                            settings.roi);
-
-  return std::make_unique<PctClip>(settings, idesc, std::move(d_min), std::move(d_max),
-                                   std::move(d_roi_mask), sort_tmp_bytes, std::move(d_sort_tmp),
-                                   select_tmp_bytes, std::move(d_select_tmp), std::move(d_roi),
-                                   std::move(d_roi_count), ctx.stream);
+  return std::make_unique<PctClip>(settings, idesc, h_roi_count, min_idx, max_idx, std::move(d_min),
+                                   std::move(d_max), std::move(d_roi_mask), sort_tmp_bytes,
+                                   std::move(d_sort_tmp), select_tmp_bytes, std::move(d_select_tmp),
+                                   std::move(d_roi), std::move(d_roi_count), ctx.stream);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>

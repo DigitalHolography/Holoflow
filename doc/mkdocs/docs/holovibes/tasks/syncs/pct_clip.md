@@ -5,7 +5,7 @@ The **Percentile Clip** sync task clamps a 3D float tensor on the GPU to the val
     The ROI is an ellipse expressed in normalized image coordinates: `cx`/`cy` give the center in `[0, 1]`, `rx`/`ry` the radii in `[0, 1]`, and `angle` the rotation in degrees. 
 
 !!! warning
-    If the ROI does not cover any pixels, execution fails with `No pixels in ROI`. Ensure your ROI parameters select at least one sample.
+    If the ROI does not cover any pixels, the task fails with `No pixels in ROI`. Ensure your ROI parameters select at least one sample.
 
 ## Inputs
 This task expects a single input tensor of shape `(B, H, W)`:
