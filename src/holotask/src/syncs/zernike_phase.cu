@@ -18,16 +18,25 @@
 #include <cmath>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
+#include "curaii/cuda.hh"
 #include "logger.hh"
 
 namespace holotask::syncs {
+
+namespace {
+
+constexpr int kMaxSupportedModes = 9; // Noll indices 2..10
+
+} // namespace
 
 void to_json(nlohmann::json &j, const ZernikePhaseSettings &s) {
   j = nlohmann::json{
       {"indexes", s.indexes},
       {"ny", s.ny},
       {"nx", s.nx},
+      {"output", s.output},
   };
 }
 
@@ -42,6 +51,14 @@ void from_json(const nlohmann::json &j, ZernikePhaseSettings &s) {
 
   j.at("ny").get_to(s.ny);
   j.at("nx").get_to(s.nx);
+
+  if (j.contains("output")) {
+    j.at("output").get_to(s.output);
+  } else if (j.contains("device")) {
+    j.at("device").get_to(s.output);
+  } else {
+    s.output = holoflow::core::MemLoc::Host;
+  }
 }
 
 namespace {
@@ -106,6 +123,97 @@ float eval_zernike_noll_value(int noll_index, float x_n, float y_n) {
   }
 }
 
+struct ZernikePhaseKernelSettings {
+  int indexes[kMaxSupportedModes]{};
+  int n_modes = 0;
+  int ny      = 0;
+  int nx      = 0;
+};
+
+ZernikePhaseKernelSettings make_kernel_settings(const ZernikePhaseSettings &settings) {
+  ZernikePhaseKernelSettings kernel_settings{
+      .n_modes = static_cast<int>(settings.indexes.size()),
+      .ny      = settings.ny,
+      .nx      = settings.nx,
+  };
+
+  for (std::size_t i = 0; i < settings.indexes.size(); ++i) {
+    kernel_settings.indexes[i] = settings.indexes[i];
+  }
+
+  return kernel_settings;
+}
+
+__device__ float eval_zernike_noll_value_device(int noll_index, float x_n, float y_n) {
+  constexpr float sqrt3 = 1.7320508075688772f;
+  constexpr float sqrt6 = 2.4494897427831781f;
+  constexpr float sqrt8 = 2.8284271247461903f;
+
+  switch (noll_index) {
+  case 2:
+    return 2.0f * x_n;
+
+  case 3:
+    return 2.0f * y_n;
+
+  case 4:
+    return sqrt3 * (2.0f * (x_n * x_n + y_n * y_n) - 1.0f);
+
+  case 5:
+    return 2.0f * sqrt6 * x_n * y_n;
+
+  case 6:
+    return sqrt6 * (x_n * x_n - y_n * y_n);
+
+  case 7:
+    return sqrt8 * y_n * (3.0f * x_n * x_n - y_n * y_n);
+
+  case 8:
+    return sqrt8 * y_n * (3.0f * x_n * x_n + 3.0f * y_n * y_n - 2.0f);
+
+  case 9:
+    return sqrt8 * x_n * (3.0f * x_n * x_n + 3.0f * y_n * y_n - 2.0f);
+
+  case 10:
+    return sqrt8 * x_n * (x_n * x_n - 3.0f * y_n * y_n);
+
+  default:
+    return 0.0f;
+  }
+}
+
+__global__ void zernike_phase_kernel(const float *coefficients, float *phase,
+                                     ZernikePhaseKernelSettings settings) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  const int n   = settings.ny * settings.nx;
+  if (idx >= n) {
+    return;
+  }
+
+  const int y_idx = idx / settings.nx;
+  const int x_idx = idx % settings.nx;
+
+  const int   min_size     = settings.ny < settings.nx ? settings.ny : settings.nx;
+  const float center_y     = (static_cast<float>(settings.ny) - 1.0f) * 0.5f;
+  const float center_x     = (static_cast<float>(settings.nx) - 1.0f) * 0.5f;
+  const float pupil_radius = 0.5f * static_cast<float>(min_size);
+  const float x_n          = (static_cast<float>(x_idx) - center_x) / pupil_radius;
+  const float y_n          = (static_cast<float>(y_idx) - center_y) / pupil_radius;
+
+  const float r2        = x_n * x_n + y_n * y_n;
+  float       phase_rad = 0.0f;
+
+  if (r2 <= 1.0f || true) {
+    for (int i = 0; i < settings.n_modes; ++i) {
+      const int   noll_index = settings.indexes[i];
+      const float z_value    = eval_zernike_noll_value_device(noll_index, x_n, y_n);
+      phase_rad += coefficients[i] * z_value;
+    }
+  }
+
+  phase[idx] = phase_rad;
+}
+
 } // namespace
 
 // -------------------------------------------------------------------------------------------------
@@ -114,11 +222,23 @@ float eval_zernike_noll_value(int noll_index, float x_n, float y_n) {
 
 class ZernikePhase : public holoflow::core::ISyncTask {
 public:
-  explicit ZernikePhase(ZernikePhaseSettings settings) : settings_(std::move(settings)) {}
+  ZernikePhase(ZernikePhaseSettings settings, cudaStream_t stream)
+      : settings_(std::move(settings)), kernel_settings_(make_kernel_settings(settings_)),
+        stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     const auto *in_data  = reinterpret_cast<const float *>(ctx.inputs[0].data());
     auto       *out_data = reinterpret_cast<float *>(ctx.outputs[0].data());
+
+    if (settings_.output == holoflow::core::MemLoc::Device) {
+      const int     n          = settings_.ny * settings_.nx;
+      constexpr int block_size = 256;
+      const int     grid_size  = (n + block_size - 1) / block_size;
+      zernike_phase_kernel<<<grid_size, block_size, 0, stream_>>>(in_data, out_data,
+                                                                  kernel_settings_);
+      CUDA_CHECK(cudaGetLastError());
+      return holoflow::core::OpResult::Ok;
+    }
 
     const int ny = settings_.ny;
     const int nx = settings_.nx;
@@ -151,10 +271,13 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
+  void                        update_stream(cudaStream_t stream) { stream_ = stream; }
   const ZernikePhaseSettings &settings() const { return settings_; }
 
 private:
-  ZernikePhaseSettings settings_;
+  ZernikePhaseSettings       settings_;
+  ZernikePhaseKernelSettings kernel_settings_;
+  cudaStream_t               stream_;
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -169,12 +292,17 @@ ZernikePhaseFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(input_descs.size() == 1, "ZernikePhase task must have exactly one input");
 
   const auto &idesc = input_descs[0];
-  check(idesc.mem_loc == holoflow::core::MemLoc::Host, "Input coefficients must be in host memory");
+  check(settings.output == holoflow::core::MemLoc::Host ||
+            settings.output == holoflow::core::MemLoc::Device,
+        "Output memory location must be Host or Device");
+  check(idesc.mem_loc == settings.output,
+        "Input coefficients must be in the output memory location");
   check(idesc.dtype == holoflow::core::DType::F32, "Input coefficients dtype must be F32");
   check(idesc.rank() == 1, "Input coefficients rank must be 1");
   check(is_c_contiguous(idesc), "Input coefficients must be C-contiguous");
 
   check(!settings.indexes.empty(), "indexes must not be empty");
+  check(settings.indexes.size() <= kMaxSupportedModes, "Too many requested Zernike modes");
   for (int idx : settings.indexes) {
     check(idx >= 2 && idx <= 10, "Only zernike Noll indexes 2..10 are supported");
   }
@@ -189,7 +317,7 @@ ZernikePhaseFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
   holoflow::core::TDesc odesc(
       {static_cast<std::size_t>(settings.ny), static_cast<std::size_t>(settings.nx)},
-      holoflow::core::DType::F32, holoflow::core::MemLoc::Host);
+      holoflow::core::DType::F32, settings.output);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
@@ -205,11 +333,10 @@ std::unique_ptr<holoflow::core::ISyncTask>
 ZernikePhaseFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                             const nlohmann::json                  &jsettings,
                             const holoflow::core::SyncCreateCtx   &ctx) const {
-  (void)ctx;
   (void)infer(input_descs, jsettings);
 
   const auto settings = jsettings.get<ZernikePhaseSettings>();
-  return std::make_unique<ZernikePhase>(settings);
+  return std::make_unique<ZernikePhase>(settings, ctx.stream);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -217,7 +344,6 @@ ZernikePhaseFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                             std::span<const holoflow::core::TDesc>     input_descs,
                             const nlohmann::json                      &jsettings,
                             const holoflow::core::SyncCreateCtx       &ctx) const {
-  (void)ctx;
   (void)infer(input_descs, jsettings);
 
   auto *old_zernike_phase = dynamic_cast<ZernikePhase *>(old_task.get());
@@ -227,6 +353,7 @@ ZernikePhaseFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 
   const auto settings = jsettings.get<ZernikePhaseSettings>();
   if (settings == old_zernike_phase->settings()) {
+    old_zernike_phase->update_stream(ctx.stream);
     return old_task;
   }
 

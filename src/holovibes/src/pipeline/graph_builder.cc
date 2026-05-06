@@ -389,11 +389,10 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
   auto zernike_coeffs = zernike(xcorr_zernike, zernike_settings);
   zernike_coeffs      = slice(zernike_coeffs, {{0, 0, {}}});
 
-  auto phase     = zernike_phase(zernike_coeffs, {s_.autofocus_zernike_orders, ny, nx});
-  auto phase_gpu = memcpy(phase, {Device});
-  FH             = correct_phase(FH, phase_gpu, {});
-
   auto zernike_coeffs_gpu = memcpy(zernike_coeffs, {Device});
+  auto phase_gpu          = zernike_phase(
+      zernike_coeffs_gpu, {s_.autofocus_zernike_orders, ny, nx, holoflow::core::MemLoc::Device});
+  FH = correct_phase(FH, phase_gpu, {});
 
   iteration_state.cumulative_coeffs_gpu =
       iteration_state.cumulative_coeffs_gpu.has_value()

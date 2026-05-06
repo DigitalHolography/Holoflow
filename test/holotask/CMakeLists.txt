@@ -20,6 +20,7 @@ set(SOURCES
     filter2d_test.cu
     fresnel_diffraction_test.cu
     holofile_sink_test.cc
+    zernike_phase_test.cu
     ../holonp/support/tensor_test_buffer.cc
     ../holonp/support/sync_task_runner.cc
 )

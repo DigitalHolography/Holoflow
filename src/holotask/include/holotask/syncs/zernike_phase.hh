@@ -26,9 +26,10 @@ namespace holotask::syncs {
 // -------------------------------------------------------------------------------------------------
 
 struct ZernikePhaseSettings {
-  std::vector<int> indexes;
-  int              ny;
-  int              nx;
+  std::vector<int>       indexes;
+  int                    ny;
+  int                    nx;
+  holoflow::core::MemLoc output = holoflow::core::MemLoc::Host;
 
   bool operator==(const ZernikePhaseSettings &) const = default;
 };
