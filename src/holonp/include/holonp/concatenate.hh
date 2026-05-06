@@ -42,6 +42,9 @@ struct ConcatenateInputPlan {
   std::int64_t total_in    = 0;
   std::int64_t axis_dim    = 0;
   std::int64_t axis_offset = 0;
+  std::int64_t ndim        = 0;
+  std::int64_t shape[16]{};
+  std::int64_t strides[16]{};
 };
 
 // -------------------------------------------------------------------------------------------------

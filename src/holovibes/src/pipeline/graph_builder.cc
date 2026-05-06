@@ -252,12 +252,10 @@ GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
       // Positive frequencies: [s_.time_z_begin, s_.time_z_end)
       auto pos_range = holonp::SliceRange{s_.time_z_begin, s_.time_z_end};
       auto FH_pos    = slice(FH, {{{}, pos_range, {}, {}}});
-      FH_pos         = copy(FH_pos, {});
 
       // Negative frequencies: [N - s_.time_z_end, N - s_.time_z_begin)
       auto neg_range = holonp::SliceRange{N - s_.time_z_end, N - s_.time_z_begin};
       auto FH_neg    = slice(FH, {{{}, neg_range, {}, {}}});
-      FH_neg         = copy(FH_neg, {});
 
       FH = concatenate(std::array<TDesc, 2>{FH_pos, FH_neg}, {1}); // concat along freq axis
     }

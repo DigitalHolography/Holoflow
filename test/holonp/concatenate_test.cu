@@ -165,10 +165,12 @@ TEST_F(ConcatenateInferTest, RejectsMismatchedDtypes) {
   EXPECT_THROW(factory.infer(in, nlohmann::json::object()), std::invalid_argument);
 }
 
-TEST_F(ConcatenateInferTest, RejectsNonContiguousInput) {
+TEST_F(ConcatenateInferTest, AcceptsNonContiguousInput) {
   const TDesc              a({2, 2}, DType::F32, MemLoc::Device, std::vector<size_t>{16, 4});
   const std::vector<TDesc> in = {a, device_desc({2, 2}, DType::F32)};
-  EXPECT_THROW(factory.infer(in, nlohmann::json::object()), std::invalid_argument);
+  const auto               r  = factory.infer(in, nlohmann::json::object());
+
+  EXPECT_EQ(r.output_descs[0].shape, (std::vector<size_t>{4, 2}));
 }
 
 TEST_F(ConcatenateInferTest, RejectsAxisOutOfRange) {
@@ -229,6 +231,32 @@ TEST_F(ConcatenateOracleTest, F32Axis1) {
       as_bytes(std::vector<float>{10.f, 20.f}),
   };
   check(DType::F32, in, data, axis_settings(1));
+}
+
+TEST_F(ConcatenateOracleTest, F32Axis1StridedInput) {
+  const TDesc              a({2, 2}, DType::F32, MemLoc::Device, std::vector<size_t>{16, 4});
+  const TDesc              b                     = device_desc({2, 1}, DType::F32);
+  const std::vector<TDesc> in                    = {a, b};
+  const std::vector<std::vector<std::byte>> data = {
+      as_bytes(std::vector<float>{1.f, 2.f, -1.f, -1.f, 3.f, 4.f, -1.f, -1.f}),
+      as_bytes(std::vector<float>{10.f, 20.f}),
+  };
+  check(DType::F32, in, data, axis_settings(1));
+}
+
+TEST_F(ConcatenateOracleTest, F32Axis1OffsetStridedInput) {
+  const TDesc              a({2, 2}, DType::F32, MemLoc::Device, std::vector<size_t>{16, 4}, 8);
+  const TDesc              b                     = device_desc({2, 1}, DType::F32);
+  const std::vector<TDesc> in                    = {a, b};
+  const std::vector<std::vector<std::byte>> data = {
+      as_bytes(std::vector<float>{1.f, 2.f, -1.f, -1.f, 3.f, 4.f, -1.f, -1.f}),
+      as_bytes(std::vector<float>{10.f, 20.f}),
+  };
+
+  const auto run = holonp_test::run_sync_factory(factory, in, data, axis_settings(1));
+
+  expect_near_oracle(run.output_bytes[0],
+                     as_bytes(std::vector<float>{1.f, 2.f, 10.f, 3.f, 4.f, 20.f}), DType::F32);
 }
 
 TEST_F(ConcatenateOracleTest, F32AxisNullFlatten) {

@@ -59,7 +59,8 @@ namespace {
 // Helpers
 // -------------------------------------------------------------------------------------------------
 
-constexpr std::int64_t kMaxI64 = std::numeric_limits<std::int64_t>::max();
+constexpr std::int64_t kMaxI64  = std::numeric_limits<std::int64_t>::max();
+constexpr int          kMaxNDim = 16;
 
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
@@ -93,6 +94,33 @@ inline int normalize_axis(int axis, int ndim) {
   return axis;
 }
 
+ConcatenateInputPlan make_input_plan(const holoflow::core::TDesc &desc, std::int64_t axis_dim,
+                                     std::int64_t axis_offset) {
+  const auto ndim = static_cast<int>(desc.shape.size());
+  check(ndim <= kMaxNDim, "input ndim too large");
+  check(desc.strides.size() == desc.shape.size(), "input strides rank mismatch");
+
+  const auto elem_size = holoflow::core::size_of(desc.dtype);
+
+  ConcatenateInputPlan plan{
+      .total_in    = to_i64(desc.num_elements(), "input too large"),
+      .axis_dim    = axis_dim,
+      .axis_offset = axis_offset,
+      .ndim        = ndim,
+  };
+
+  for (int i = 0; i < ndim; ++i) {
+    const auto dim                     = desc.shape[static_cast<size_t>(i)];
+    plan.shape[static_cast<size_t>(i)] = to_i64(dim, "input shape too large");
+    check(desc.strides[static_cast<size_t>(i)] % elem_size == 0,
+          "input strides must be a multiple of element size");
+    plan.strides[static_cast<size_t>(i)] =
+        to_i64(desc.strides[static_cast<size_t>(i)] / elem_size, "input stride too large");
+  }
+
+  return plan;
+}
+
 struct ConcatPlan {
   std::vector<size_t>               out_shape;
   std::int64_t                      inner        = 1;
@@ -112,8 +140,6 @@ ConcatPlan build_plan(const ConcatenateSettings             &settings,
   for (const auto &desc : input_descs) {
     check(desc.mem_loc == mem_loc, "all inputs must share the same mem_loc");
     check(desc.dtype == dtype, "all inputs must share the same dtype");
-    holoflow::core::TDesc contiguous(desc.shape, desc.dtype, desc.mem_loc, desc.offset);
-    check(desc.strides == contiguous.strides, "all inputs must be contiguous");
   }
 
   ConcatPlan plan;
@@ -122,7 +148,7 @@ ConcatPlan build_plan(const ConcatenateSettings             &settings,
     std::int64_t offset = 0;
     for (const auto &desc : input_descs) {
       const auto total_in = to_i64(desc.num_elements(), "input too large");
-      plan.inputs.push_back(ConcatenateInputPlan{total_in, total_in, offset});
+      plan.inputs.push_back(make_input_plan(desc, total_in, offset));
       offset = checked_add(offset, total_in, "output too large");
     }
     plan.inner        = 1;
@@ -159,9 +185,7 @@ ConcatPlan build_plan(const ConcatenateSettings             &settings,
     }
 
     const auto axis_dim = to_i64(desc.shape[static_cast<size_t>(axis)], "axis dimension too large");
-    const auto total_in = to_i64(desc.num_elements(), "input too large");
-
-    plan.inputs.push_back(ConcatenateInputPlan{total_in, axis_dim, axis_offset});
+    plan.inputs.push_back(make_input_plan(desc, axis_dim, axis_offset));
     axis_offset = checked_add(axis_offset, axis_dim, "output axis too large");
   }
 
@@ -171,10 +195,21 @@ ConcatPlan build_plan(const ConcatenateSettings             &settings,
   return plan;
 }
 
+__device__ std::int64_t logical_to_strided_offset(std::int64_t         tid,
+                                                  ConcatenateInputPlan input_plan) {
+  std::int64_t offset = 0;
+  for (std::int64_t dim = input_plan.ndim - 1; dim >= 0; --dim) {
+    const auto idx = tid % input_plan.shape[dim];
+    tid /= input_plan.shape[dim];
+    offset += idx * input_plan.strides[dim];
+  }
+  return offset;
+}
+
 template <typename T>
 __global__ void concat_kernel(const T *__restrict__ in, T *__restrict__ out, std::int64_t total_in,
                               std::int64_t inner, std::int64_t axis_dim, std::int64_t out_axis_dim,
-                              std::int64_t axis_offset) {
+                              std::int64_t axis_offset, ConcatenateInputPlan input_plan) {
   const std::int64_t tid =
       static_cast<std::int64_t>(blockIdx.x) * blockDim.x + static_cast<std::int64_t>(threadIdx.x);
   if (tid >= total_in) {
@@ -190,7 +225,8 @@ __global__ void concat_kernel(const T *__restrict__ in, T *__restrict__ out, std
   const std::int64_t out_idx =
       (outer_idx * out_axis_dim + (axis_offset + axis_idx)) * inner + inner_idx;
 
-  out[out_idx] = in[tid];
+  const auto in_idx = logical_to_strided_offset(tid, input_plan);
+  out[out_idx]      = in[in_idx];
 }
 
 bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
@@ -259,28 +295,28 @@ holoflow::core::OpResult Concatenate::execute(holoflow::core::SyncCtx &ctx) {
       auto *out = reinterpret_cast<std::uint8_t *>(odata);
       auto *in  = reinterpret_cast<const std::uint8_t *>(idata);
       concat_kernel<<<grid_size, block_size, 0, stream_>>>(in, out, total_in, inner_, plan.axis_dim,
-                                                           out_axis_dim_, plan.axis_offset);
+                                                           out_axis_dim_, plan.axis_offset, plan);
       break;
     }
     case holoflow::core::DType::U16: {
       auto *out = reinterpret_cast<std::uint16_t *>(odata);
       auto *in  = reinterpret_cast<const std::uint16_t *>(idata);
       concat_kernel<<<grid_size, block_size, 0, stream_>>>(in, out, total_in, inner_, plan.axis_dim,
-                                                           out_axis_dim_, plan.axis_offset);
+                                                           out_axis_dim_, plan.axis_offset, plan);
       break;
     }
     case holoflow::core::DType::F32: {
       auto *out = reinterpret_cast<float *>(odata);
       auto *in  = reinterpret_cast<const float *>(idata);
       concat_kernel<<<grid_size, block_size, 0, stream_>>>(in, out, total_in, inner_, plan.axis_dim,
-                                                           out_axis_dim_, plan.axis_offset);
+                                                           out_axis_dim_, plan.axis_offset, plan);
       break;
     }
     case holoflow::core::DType::CF32: {
       auto *out = reinterpret_cast<cuFloatComplex *>(odata);
       auto *in  = reinterpret_cast<const cuFloatComplex *>(idata);
       concat_kernel<<<grid_size, block_size, 0, stream_>>>(in, out, total_in, inner_, plan.axis_dim,
-                                                           out_axis_dim_, plan.axis_offset);
+                                                           out_axis_dim_, plan.axis_offset, plan);
       break;
     }
     default:
