@@ -14,11 +14,14 @@
 
 #include "ui/main_window.hh"
 
+#include <QAction>
 #include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDialog>
+#include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
 #include <QDockWidget>
@@ -31,12 +34,15 @@
 #include <QEvent>
 #include <QFileDialog>
 #include <QFileInfoList>
+#include <QFormLayout>
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
 #include <QMouseEvent>
@@ -61,9 +67,11 @@
 #include <QVBoxLayout>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <limits>
 #include <optional>
 
 #include "bug.hh"
@@ -77,6 +85,7 @@ namespace {
 constexpr int  kLargeSpinMax             = 1024 * 1024;
 constexpr int  kTopBarHeight             = 30;
 constexpr int  kEmptySecondaryDropHeight = 72;
+constexpr auto kDefaultSamplingFrequency = 37'000.0;
 constexpr auto kDisplayPanelMimeType     = "application/x-holovibes-display-panel";
 constexpr auto kDisplayPanelIdProperty   = "displayPanelId";
 constexpr auto kDisplayPanelMainProperty = "displayPanelInMain";
@@ -103,6 +112,25 @@ QComboBox *create_combo_box(QWidget *parent, const QStringList &items) {
   combo_box->addItems(items);
   return combo_box;
 }
+
+QLabel *create_result_label(QWidget *parent) {
+  auto *label = new QLabel("-", parent);
+  label->setTextInteractionFlags(Qt::TextSelectableByMouse);
+  return label;
+}
+
+QString format_decimal(double value, int decimals = 6) {
+  QString text = QString::number(value, 'f', decimals);
+  while (text.contains('.') && text.endsWith('0')) {
+    text.chop(1);
+  }
+  if (text.endsWith('.')) {
+    text.chop(1);
+  }
+  return text;
+}
+
+QString format_frequency(double value) { return QString("%1 Hz").arg(format_decimal(value, 3)); }
 
 struct FieldBinding {
   holovibes::pipeline::SettingsField field;
@@ -405,6 +433,213 @@ protected:
 
 private:
   DropHandler drop_handler_;
+};
+
+class FftFrequencyToolDialog : public QDialog {
+public:
+  using ApplyHandler = std::function<void(int, int)>;
+
+  FftFrequencyToolDialog(double sampling_frequency_hz, int window_size, double start_frequency_hz,
+                         double end_frequency_hz, const QString &time_transform,
+                         ApplyHandler apply_handler, QWidget *parent)
+      : QDialog(parent), apply_handler_(std::move(apply_handler)) {
+    setWindowTitle(tr("FFT Frequency Range to Bins"));
+    setMinimumWidth(420);
+
+    auto *dialog_layout = new QVBoxLayout(this);
+
+    auto *input_form = new QFormLayout();
+    input_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+
+    sampling_frequency_spin_ =
+        create_double_spin_box(this, 0.000001, 1.0e12, 100.0, sampling_frequency_hz, 6);
+    sampling_frequency_spin_->setSuffix(" Hz");
+    input_form->addRow(tr("Sampling frequency"), sampling_frequency_spin_);
+
+    window_size_spin_ = create_spin_box(this, 1, std::numeric_limits<int>::max(), window_size);
+    input_form->addRow(tr("Window size"), window_size_spin_);
+
+    start_frequency_spin_ =
+        create_double_spin_box(this, -1.0e12, 1.0e12, 1.0, start_frequency_hz, 6);
+    start_frequency_spin_->setSuffix(" Hz");
+    input_form->addRow(tr("F0"), start_frequency_spin_);
+
+    end_frequency_spin_ = create_double_spin_box(this, -1.0e12, 1.0e12, 1.0, end_frequency_hz, 6);
+    end_frequency_spin_->setSuffix(" Hz");
+    input_form->addRow(tr("F1"), end_frequency_spin_);
+
+    transform_combo_ = create_combo_box(this, QStringList{"RFFT", "FFT"});
+    if (time_transform == "FFT") {
+      transform_combo_->setCurrentText("FFT");
+    }
+    input_form->addRow(tr("Transform"), transform_combo_);
+
+    dialog_layout->addLayout(input_form);
+
+    auto *result_form = new QFormLayout();
+    result_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+
+    bin_spacing_value_     = create_result_label(this);
+    fractional_bin_value_  = create_result_label(this);
+    pipeline_start_value_  = create_result_label(this);
+    pipeline_width_value_  = create_result_label(this);
+    pipeline_end_value_    = create_result_label(this);
+    full_fft_bin_value_    = create_result_label(this);
+    bin_frequency_value_   = create_result_label(this);
+    frequency_error_value_ = create_result_label(this);
+
+    result_form->addRow(tr("Bin spacing"), bin_spacing_value_);
+    result_form->addRow(tr("Fractional bins"), fractional_bin_value_);
+    result_form->addRow(tr("Pipeline Z start"), pipeline_start_value_);
+    result_form->addRow(tr("Pipeline Z width"), pipeline_width_value_);
+    result_form->addRow(tr("Pipeline Z end"), pipeline_end_value_);
+    result_form->addRow(tr("Full FFT bins"), full_fft_bin_value_);
+    result_form->addRow(tr("Selected frequency range"), bin_frequency_value_);
+    result_form->addRow(tr("Endpoint error"), frequency_error_value_);
+    dialog_layout->addLayout(result_form);
+
+    message_label_ = new QLabel(this);
+    message_label_->setWordWrap(true);
+    dialog_layout->addWidget(message_label_);
+
+    auto_apply_check_ = new QCheckBox(tr("Auto write Z range to settings"), this);
+    auto_apply_check_->setToolTip(
+        tr("When enabled, valid calculator results are written to View Z and Width immediately."));
+    dialog_layout->addWidget(auto_apply_check_);
+
+    auto *button_box = new QDialogButtonBox(QDialogButtonBox::Close, this);
+    apply_button_    = button_box->addButton(tr("Set Z Range"), QDialogButtonBox::ActionRole);
+    apply_button_->setToolTip(tr("Writes the calculated Z start and width to the View settings."));
+    dialog_layout->addWidget(button_box);
+
+    connect(sampling_frequency_spin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+            [this](double) { update_result(); });
+    connect(window_size_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+            [this](int) { update_result(); });
+    connect(start_frequency_spin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+            [this](double) { update_result(); });
+    connect(end_frequency_spin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+            [this](double) { update_result(); });
+    connect(transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](int) { update_result(); });
+    connect(auto_apply_check_, &QCheckBox::toggled, this, [this](bool checked) {
+      if (checked && result_valid_) {
+        apply_result();
+      }
+    });
+    connect(apply_button_, &QPushButton::clicked, this, [this]() { apply_result(); });
+    connect(button_box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+
+    update_result();
+  }
+
+private:
+  bool is_fft_transform() const { return transform_combo_->currentText() == "FFT"; }
+
+  void apply_result() {
+    if (result_valid_ && apply_handler_) {
+      apply_handler_(pipeline_bin_start_, pipeline_bin_width_);
+    }
+  }
+
+  void update_result() {
+    const double sampling_frequency_hz = sampling_frequency_spin_->value();
+    const int    window_size           = window_size_spin_->value();
+    const double start_frequency_hz    = start_frequency_spin_->value();
+    const double end_frequency_hz      = end_frequency_spin_->value();
+    const double bin_spacing_hz        = sampling_frequency_hz / window_size;
+    const double nyquist_hz            = sampling_frequency_hz / 2.0;
+    const double range_start_hz =
+        std::min(std::abs(start_frequency_hz), std::abs(end_frequency_hz));
+    const double range_end_hz = std::max(std::abs(start_frequency_hz), std::abs(end_frequency_hz));
+    const int    max_positive_bin = window_size / 2;
+    const int    max_pipeline_end = max_positive_bin + 1;
+
+    const bool endpoints_in_range = range_end_hz <= nyquist_hz;
+    const auto rounded_start      = std::llround(range_start_hz / bin_spacing_hz);
+    const auto rounded_end        = std::llround(range_end_hz / bin_spacing_hz);
+
+    pipeline_bin_start_ =
+        static_cast<int>(std::clamp(rounded_start, 0LL, static_cast<long long>(max_pipeline_end)));
+    pipeline_bin_end_ =
+        static_cast<int>(std::clamp(rounded_end, 0LL, static_cast<long long>(max_pipeline_end)));
+    if (pipeline_bin_end_ <= pipeline_bin_start_) {
+      pipeline_bin_end_ = std::min(max_pipeline_end, pipeline_bin_start_ + 1);
+    }
+    pipeline_bin_width_ = pipeline_bin_end_ - pipeline_bin_start_;
+
+    result_valid_ = endpoints_in_range && pipeline_bin_width_ > 0;
+    apply_button_->setEnabled(result_valid_);
+
+    const bool    fft_transform      = is_fft_transform();
+    const double  selected_start_hz  = pipeline_bin_start_ * bin_spacing_hz;
+    const double  selected_end_hz    = pipeline_bin_end_ * bin_spacing_hz;
+    const double  start_endpoint_err = selected_start_hz - range_start_hz;
+    const double  end_endpoint_err   = selected_end_hz - range_end_hz;
+    const QString full_fft_bins_text = fft_transform && result_valid_
+                                           ? QString("[%1, %2) and [%3, %4)")
+                                                 .arg(pipeline_bin_start_)
+                                                 .arg(pipeline_bin_end_)
+                                                 .arg(window_size - pipeline_bin_end_)
+                                                 .arg(window_size - pipeline_bin_start_)
+                                           : tr("N/A");
+
+    bin_spacing_value_->setText(format_frequency(bin_spacing_hz));
+    fractional_bin_value_->setText(QString("%1 to %2")
+                                       .arg(format_decimal(range_start_hz / bin_spacing_hz, 6),
+                                            format_decimal(range_end_hz / bin_spacing_hz, 6)));
+    pipeline_start_value_->setText(result_valid_ ? QString::number(pipeline_bin_start_) : "-");
+    pipeline_width_value_->setText(result_valid_ ? QString::number(pipeline_bin_width_) : "-");
+    pipeline_end_value_->setText(result_valid_ ? QString::number(pipeline_bin_end_) : "-");
+    full_fft_bin_value_->setText(full_fft_bins_text);
+    bin_frequency_value_->setText(result_valid_ ? QString("[%1, %2)")
+                                                      .arg(format_frequency(selected_start_hz),
+                                                           format_frequency(selected_end_hz))
+                                                : "-");
+    frequency_error_value_->setText(
+        result_valid_ ? QString("%1, %2").arg(format_frequency(start_endpoint_err),
+                                              format_frequency(end_endpoint_err))
+                      : "-");
+
+    if (!endpoints_in_range) {
+      message_label_->setText(tr("Frequency range is outside the Nyquist range of +/- %1.")
+                                  .arg(format_frequency(nyquist_hz)));
+    } else if (!fft_transform && (start_frequency_hz < 0.0 || end_frequency_hz < 0.0)) {
+      message_label_->setText(tr(
+          "RFFT exposes non-negative frequencies; negative inputs are converted to magnitudes."));
+    } else if (fft_transform) {
+      message_label_->setText(
+          tr("The pipeline stores the positive range and mirrors the negative FFT range."));
+    } else {
+      message_label_->clear();
+    }
+
+    if (auto_apply_check_->isChecked() && result_valid_) {
+      apply_result();
+    }
+  }
+
+  QDoubleSpinBox *sampling_frequency_spin_ = nullptr;
+  QSpinBox       *window_size_spin_        = nullptr;
+  QDoubleSpinBox *start_frequency_spin_    = nullptr;
+  QDoubleSpinBox *end_frequency_spin_      = nullptr;
+  QComboBox      *transform_combo_         = nullptr;
+  QLabel         *bin_spacing_value_       = nullptr;
+  QLabel         *fractional_bin_value_    = nullptr;
+  QLabel         *pipeline_start_value_    = nullptr;
+  QLabel         *pipeline_width_value_    = nullptr;
+  QLabel         *pipeline_end_value_      = nullptr;
+  QLabel         *full_fft_bin_value_      = nullptr;
+  QLabel         *bin_frequency_value_     = nullptr;
+  QLabel         *frequency_error_value_   = nullptr;
+  QLabel         *message_label_           = nullptr;
+  QCheckBox      *auto_apply_check_        = nullptr;
+  QPushButton    *apply_button_            = nullptr;
+  ApplyHandler    apply_handler_;
+  int             pipeline_bin_start_ = 0;
+  int             pipeline_bin_width_ = 1;
+  int             pipeline_bin_end_   = 1;
+  bool            result_valid_       = false;
 };
 
 } // namespace
@@ -1473,12 +1708,40 @@ void MainWindow::connect_export_controls() {
 void MainWindow::configure_window() {
   setWindowTitle("Holovibes");
 
+  auto *tools_menu      = menuBar()->addMenu(tr("&Tools"));
+  auto *fft_tool_action = tools_menu->addAction(tr("FFT Frequency Range to Bins..."));
+  fft_tool_action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+F")));
+  fft_tool_action->setShortcutContext(Qt::ApplicationShortcut);
+  connect(fft_tool_action, &QAction::triggered, this, &MainWindow::show_fft_frequency_tool);
+
   const QSize minimum_size(960, 640);
   const QSize default_size = minimum_size.expandedTo(QSize(1280, 800));
   setMinimumSize(minimum_size);
   if (!geometry_restored_) {
     resize(default_size);
   }
+}
+
+void MainWindow::show_fft_frequency_tool() {
+  const double sampling_frequency_hz =
+      last_input_fps_ > 0.0 ? last_input_fps_ : kDefaultSamplingFrequency;
+  const int    window_size        = std::max(1, render_widget_->get_time_window());
+  const double bin_spacing_hz     = sampling_frequency_hz / static_cast<double>(window_size);
+  const double start_frequency_hz = view_widget_->get_z_origin() * bin_spacing_hz;
+  const double end_frequency_hz =
+      (view_widget_->get_z_origin() + view_widget_->get_z_width()) * bin_spacing_hz;
+
+  FftFrequencyToolDialog dialog(
+      sampling_frequency_hz, window_size, start_frequency_hz, end_frequency_hz,
+      render_widget_->get_time_transform(),
+      [this](int z_start, int z_width) {
+        if (view_widget_ != nullptr) {
+          view_widget_->set_z_origin(z_start);
+          view_widget_->set_z_width(z_width);
+        }
+      },
+      this);
+  dialog.exec();
 }
 
 std::filesystem::path MainWindow::makeRecordingPath(const QString &userText) {
@@ -1668,6 +1931,7 @@ void MainWindow::on_metrics_updated(double input_fps) {
   if (input_fps < 0.0) {
     input_fps = 0.0;
   }
+  last_input_fps_ = input_fps;
 
   int fps = static_cast<int>(input_fps);
 
@@ -2283,7 +2547,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     QString     appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
     QString     convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels/";
     std::string kernel_path             = convolutionsKernelsPath.toStdString() +
-                              render_widget_->get_convolution().toStdString() + ".json";
+                                          render_widget_->get_convolution().toStdString() + ".json";
 
     s.pp_fps       = 60;
     s.pp_fft_shift = view_widget_->is_fft_shift_enabled();

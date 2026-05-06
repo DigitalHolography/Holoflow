@@ -101,6 +101,7 @@ private:
   void connect_import_controls();
   void connect_export_controls();
   void configure_window();
+  void show_fft_frequency_tool();
 
   QGroupBox                 *create_display_panel(const QString &title, const QString &display_id,
                                                   TensorDisplayWidget *widget);
@@ -139,6 +140,7 @@ private:
   bool               geometry_restored_           = false;
   int                display_layout_update_depth_ = 0;
   bool               display_layout_dirty_        = false;
+  double             last_input_fps_              = 0.0;
   QString            session_id_;
   int                next_acquisition_id_ = 1;
   std::optional<int> pending_recording_acquisition_id_;
