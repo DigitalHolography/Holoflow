@@ -15,13 +15,18 @@
 #include "holonp/fft.hh"
 
 #include <cmath>
+#include <cstdint>
+#include <cstdlib>
 #include <cuComplex.h>
 #include <limits>
 #include <numeric>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
+#include "curaii/nvrtc.hh"
 
 namespace holonp {
 
@@ -103,33 +108,101 @@ inline float norm_scale(FftNorm norm, size_t n_fft) {
   return static_cast<float>(1.0 / std::sqrt(n));
 }
 
-__global__ void real_to_complex_kernel(const float *__restrict__ in,
-                                       cuFloatComplex *__restrict__ out, std::int64_t n) {
-  const std::int64_t idx =
-      static_cast<std::int64_t>(blockIdx.x) * blockDim.x + static_cast<std::int64_t>(threadIdx.x);
-  if (idx < n) {
-    out[idx] = make_cuFloatComplex(in[idx], 0.0f);
+struct FFTStoreCallbackInfo {
+  float scale = 1.0f;
+};
+
+std::string get_compute_arch() {
+  int device{};
+  CUDA_CHECK(cudaGetDevice(&device));
+  cudaDeviceProp prop{};
+  CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
+  return "compute_" + std::to_string(prop.major) + std::to_string(prop.minor);
+}
+
+std::vector<std::string> get_nvrtc_args() {
+  auto cuda_path = std::getenv("CUDA_PATH");
+  check(cuda_path != nullptr, "CUDA_PATH environment variable not set");
+
+  return {
+      "-I" + std::string{cuda_path} + "/include",
+      "-arch=" + get_compute_arch(),
+      "--std=c++20",
+      "--relocatable-device-code=true",
+      "-default-device",
+      "-dlto",
+  };
+}
+
+std::vector<char> compile_source_to_lto(const std::string &source, const std::string &name) {
+  const auto           args_string = get_nvrtc_args();
+  curaii::NvrtcProgram prog(source.c_str(), name.c_str(), 0, nullptr, nullptr);
+
+  std::vector<char *> args;
+  args.reserve(args_string.size());
+  for (const auto &arg : args_string) {
+    args.push_back(const_cast<char *>(arg.c_str()));
+  }
+
+  try {
+    NVRTC_CHECK(nvrtcCompileProgram(prog.get(), static_cast<int>(args.size()), args.data()));
+    size_t code_size = 0;
+    NVRTC_CHECK(nvrtcGetLTOIRSize(prog.get(), &code_size));
+    std::vector<char> lto(code_size);
+    NVRTC_CHECK(nvrtcGetLTOIR(prog.get(), lto.data()));
+    return lto;
+  } catch (const curaii::NvrtcError &e) {
+    size_t log_size = 0;
+    NVRTC_CHECK(nvrtcGetProgramLogSize(prog.get(), &log_size));
+    std::string log(log_size, '\0');
+    NVRTC_CHECK(nvrtcGetProgramLog(prog.get(), log.data()));
+    throw std::runtime_error(std::string(e.what()) + "\n" + log);
   }
 }
 
-__global__ void scale_cf32_kernel(cuFloatComplex *__restrict__ data, std::int64_t n, float scale) {
-  const std::int64_t idx =
-      static_cast<std::int64_t>(blockIdx.x) * blockDim.x + static_cast<std::int64_t>(threadIdx.x);
-  if (idx < n) {
-    data[idx].x *= scale;
-    data[idx].y *= scale;
-  }
+std::vector<char> load_real_as_complex_lto() {
+  std::string src = R"(
+#include <cuComplex.h>
+
+__device__ cuFloatComplex load_real_as_complex_callback(
+    void *data, unsigned long long offset, void *callerInfo, void *sharedPtr) {
+  return make_cuComplex(((float *)data)[offset], 0.0f);
+}
+)";
+
+  return compile_source_to_lto(src, "load_real_as_complex_callback.cu");
+}
+
+std::vector<char> store_scaled_complex_lto() {
+  std::string src = R"(
+#include <cuComplex.h>
+
+struct FFTStoreCallbackInfo {
+  float scale;
+};
+
+__device__ void store_scaled_complex_callback(
+    void *dataOut, unsigned long long offset, cuFloatComplex element, void *callerInfo,
+    void *sharedPtr) {
+  auto *info = (FFTStoreCallbackInfo *)callerInfo;
+  ((cuFloatComplex *)dataOut)[offset] = make_cuComplex(element.x * info->scale,
+                                                       element.y * info->scale);
+}
+)";
+
+  return compile_source_to_lto(src, "store_scaled_complex_callback.cu");
 }
 
 class FFT : public holoflow::core::ISyncTask {
 public:
-  FFT(FFTSettings settings, holoflow::core::TDesc idesc, curaii::CufftHandle &&plan,
-      size_t total_elems, size_t n_fft, size_t exec_count, size_t exec_stride,
-      holoflow::core::DType input_dtype, cudaStream_t stream, DevPtr<cuFloatComplex> d_tmp)
+  FFT(FFTSettings settings, holoflow::core::TDesc idesc, curaii::CufftHandle &&plan, size_t n_fft,
+      size_t exec_count, size_t exec_stride, holoflow::core::DType input_dtype, cudaStream_t stream,
+      std::vector<char> load_lto, std::vector<char> store_lto,
+      DevPtr<FFTStoreCallbackInfo> d_store_info)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), plan_(std::move(plan)),
-        total_elems_(total_elems), n_fft_(n_fft), exec_count_(exec_count),
-        exec_stride_(exec_stride), input_dtype_(input_dtype), stream_(stream),
-        d_tmp_(std::move(d_tmp)) {}
+        n_fft_(n_fft), exec_count_(exec_count), exec_stride_(exec_stride),
+        input_dtype_(input_dtype), stream_(stream), load_lto_(std::move(load_lto)),
+        store_lto_(std::move(store_lto)), d_store_info_(std::move(d_store_info)) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
@@ -143,16 +216,17 @@ public:
   }
 
 private:
-  FFTSettings            settings_;
-  holoflow::core::TDesc  idesc_;
-  curaii::CufftHandle    plan_;
-  size_t                 total_elems_;
-  size_t                 n_fft_;
-  size_t                 exec_count_;
-  size_t                 exec_stride_;
-  holoflow::core::DType  input_dtype_;
-  cudaStream_t           stream_;
-  DevPtr<cuFloatComplex> d_tmp_;
+  FFTSettings                  settings_;
+  holoflow::core::TDesc        idesc_;
+  curaii::CufftHandle          plan_;
+  size_t                       n_fft_;
+  size_t                       exec_count_;
+  size_t                       exec_stride_;
+  holoflow::core::DType        input_dtype_;
+  cudaStream_t                 stream_;
+  std::vector<char>            load_lto_;
+  std::vector<char>            store_lto_;
+  DevPtr<FFTStoreCallbackInfo> d_store_info_;
 };
 
 } // namespace
@@ -161,30 +235,16 @@ holoflow::core::OpResult FFT::execute(holoflow::core::SyncCtx &ctx) {
   auto *idata = ctx.inputs[0].data();
   auto *odata = ctx.outputs[0].data();
 
-  const auto total_i64 = static_cast<std::int64_t>(total_elems_);
-  const int  block     = 256;
-  const int  grid      = static_cast<int>((total_i64 + block - 1) / block);
+  auto *in_f  = reinterpret_cast<float *>(idata);
+  auto *in_c  = reinterpret_cast<cuFloatComplex *>(idata);
+  auto *out_c = reinterpret_cast<cuFloatComplex *>(odata);
 
-  const cuFloatComplex *in = nullptr;
-  if (input_dtype_ == holoflow::core::DType::F32) {
-    auto *in_f = reinterpret_cast<const float *>(idata);
-    real_to_complex_kernel<<<grid, block, 0, stream_>>>(in_f, d_tmp_.get(), total_i64);
-    in = d_tmp_.get();
-  } else {
-    in = reinterpret_cast<const cuFloatComplex *>(idata);
-  }
-
-  auto *out = reinterpret_cast<cuFloatComplex *>(odata);
   for (size_t i = 0; i < exec_count_; ++i) {
-    const auto offset  = i * exec_stride_;
-    auto      *in_ptr  = const_cast<cuFloatComplex *>(in + offset);
-    auto      *out_ptr = out + offset;
+    const auto offset = i * exec_stride_;
+    auto *in_ptr  = input_dtype_ == holoflow::core::DType::F32 ? static_cast<void *>(in_f + offset)
+                                                               : static_cast<void *>(in_c + offset);
+    auto *out_ptr = out_c + offset;
     CUFFT_CHECK(cufftXtExec(plan_.get(), in_ptr, out_ptr, CUFFT_FORWARD));
-  }
-
-  const float scale = norm_scale(settings_.norm, n_fft_);
-  if (scale != 1.0f) {
-    scale_cf32_kernel<<<grid, block, 0, stream_>>>(out, total_i64, scale);
   }
 
   CUDA_CHECK(cudaGetLastError());
@@ -237,7 +297,6 @@ FFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const auto settings = jsettings.get<FFTSettings>();
 
   const auto &idesc = input_descs[0];
-  const auto  total = product_shape(idesc.shape);
   const int   ndim  = static_cast<int>(idesc.shape.size());
 
   const int axis = normalize_axis(settings.axis, ndim);
@@ -294,17 +353,36 @@ FFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   curaii::CufftHandle plan;
   CUFFT_CHECK(cufftSetStream(plan.get(), ctx.stream));
+
+  std::vector<char> load_lto;
+  if (idesc.dtype == holoflow::core::DType::F32) {
+    load_lto = load_real_as_complex_lto();
+    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "load_real_as_complex_callback", load_lto.data(),
+                                      load_lto.size(), CUFFT_CB_LD_COMPLEX, nullptr));
+  }
+
+  std::vector<char>            store_lto;
+  DevPtr<FFTStoreCallbackInfo> d_store_info;
+  const float                  scale = norm_scale(settings.norm, n_fft);
+  if (scale != 1.0f) {
+    store_lto    = store_scaled_complex_lto();
+    d_store_info = curaii::make_unique_device_ptr<FFTStoreCallbackInfo>(1, ctx.stream);
+    FFTStoreCallbackInfo info{
+        .scale = scale,
+    };
+    CUDA_CHECK(cudaMemcpyAsync(d_store_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice,
+                               ctx.stream));
+    auto *d_store_info_ptr = reinterpret_cast<void *>(d_store_info.get());
+    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "store_scaled_complex_callback", store_lto.data(),
+                                      store_lto.size(), CUFFT_CB_ST_COMPLEX, &d_store_info_ptr));
+  }
+
   CUFFT_CHECK(cufftXtMakePlanMany(plan.get(), rank, n, inembed, istride, idist, inputtype, onembed,
                                   ostride, odist, outputtype, batch_i, &work_size, executiontype));
 
-  DevPtr<cuFloatComplex> d_tmp;
-  if (idesc.dtype == holoflow::core::DType::F32) {
-    d_tmp = curaii::make_unique_device_ptr<cuFloatComplex>(total, ctx.stream);
-  }
-
   return std::unique_ptr<holoflow::core::ISyncTask>(
-      new FFT(settings, idesc, std::move(plan), total, n_fft, exec_count, exec_stride, idesc.dtype,
-              ctx.stream, std::move(d_tmp)));
+      new FFT(settings, idesc, std::move(plan), n_fft, exec_count, exec_stride, idesc.dtype,
+              ctx.stream, std::move(load_lto), std::move(store_lto), std::move(d_store_info)));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>

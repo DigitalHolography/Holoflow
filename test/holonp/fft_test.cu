@@ -98,6 +98,23 @@ TEST_F(FFTOracleTest, F32Axis1) {
   expect_cf32_near(run.output_bytes[0], oracle.output_bytes[0]);
 }
 
+TEST_F(FFTOracleTest, F32Axis1ForwardNorm) {
+  const TDesc d    = device_desc({2, 4}, DType::F32);
+  const auto  data = as_bytes(std::vector<float>{1.f, 2.f, 3.f, 4.f, 0.f, -1.f, 2.f, -3.f});
+  const auto  j    = nlohmann::json{{"axis", 1}, {"norm", "forward"}};
+  const auto  run  = holonp_test::run_sync_factory(factory, std::vector<TDesc>{d},
+                                                   std::vector<std::vector<std::byte>>{data}, j);
+
+  holonp_test::OracleInput oi;
+  oi.op             = "fft";
+  oi.n_outputs      = 1;
+  oi.input_descs    = {d};
+  oi.input_bytes    = {data};
+  oi.settings       = j;
+  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  expect_cf32_near(run.output_bytes[0], oracle.output_bytes[0]);
+}
+
 class FFTUpdateTest : public ::testing::Test {
 protected:
   holonp::FFTFactory factory;
