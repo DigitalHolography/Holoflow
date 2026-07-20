@@ -15,6 +15,7 @@
 #include "pipeline/validation.hh"
 
 #include <cerrno>
+#include <cmath>
 #include <cstdio>
 #include <filesystem>
 #include <format>
@@ -190,6 +191,20 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
   if (settings.time_stride <= 0) {
     add_issue(result, ValidationSeverity::Error, "time_stride_non_positive",
               "Time stride must be strictly positive.", {SettingsField::TimeStride});
+  }
+
+  if (!std::isfinite(settings.signal_plot_time_window_seconds) ||
+      settings.signal_plot_time_window_seconds <= 0.0) {
+    add_issue(result, ValidationSeverity::Error, "signal_plot_time_window_non_positive",
+              "Signal plot time window must be strictly positive and finite.",
+              {SettingsField::SignalPlotTimeWindow});
+  }
+
+  if (!std::isfinite(settings.signal_plot_sample_time_seconds) ||
+      settings.signal_plot_sample_time_seconds <= 0.0) {
+    add_issue(result, ValidationSeverity::Error, "signal_plot_sample_time_non_positive",
+              "Signal plot sample time must be strictly positive and finite.",
+              {SettingsField::SignalPlotSampleTime});
   }
 
   if (settings.time_window > 0 && settings.time_stride > 0 &&

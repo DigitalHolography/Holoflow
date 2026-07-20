@@ -16,3 +16,4 @@ enable_testing()
 
 add_subdirectory(holonp)
 add_subdirectory(holotask)
+add_subdirectory(holovibes)

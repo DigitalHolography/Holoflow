@@ -53,6 +53,8 @@ enum class SettingsField {
   RecordingCount,
   AutofocusNbSubaps,
   AutofocusNbIter,
+  SignalPlotTimeWindow,
+  SignalPlotSampleTime,
 };
 
 struct ValidationIssue {

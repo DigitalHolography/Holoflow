@@ -82,6 +82,7 @@ DEFINE_SINK_SYNC_NODE  (shack_hartmann_display,       "shack_hartmann_display", 
 DEFINE_SINK_SYNC_NODE  (shack_hartmann_xcorr_display, "shack_hartmann_xcorr_display", "DisplayTensorShackHartmannXcorr", tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE  (zernike_phase_display,        "zernike_phase_display",        "DisplayTensorZernikePhase",       tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE  (zernike_coefficients_display, "zernike_coefficients_display", "DisplayZernikeCoefficients",      tasks::sinks::DisplayZernikeCoefficientsSettings)
+DEFINE_SINK_SYNC_NODE  (zernike_history_display,      "zernike_history_display",      "DisplaySignalHistory",            tasks::sinks::DisplaySignalHistorySettings)
 
 DEFINE_NARY_SYNC_NODE  (concatenate,                  "concatenate",                  "Concatenate",                     holonp::ConcatenateSettings)
 DEFINE_UNARY_SYNC_NODE (transpose,                    "transpose",                    "Transpose",                       holonp::TransposeSettings)

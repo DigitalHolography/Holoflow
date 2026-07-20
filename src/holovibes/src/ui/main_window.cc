@@ -39,6 +39,7 @@
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
+#include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -78,7 +79,9 @@
 #include "holofile/holofile.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
+#include "ui/widgets/selected_widget_settings_panel.hh"
 #include "ui/widgets/tensor_display_widget.hh"
+#include "ui/widgets/zernike_history_widget.hh"
 
 namespace {
 
@@ -316,21 +319,21 @@ private:
   QPoint      drag_start_pos_;
 };
 
-class SquareDisplayViewport : public QFrame {
+class DisplayViewport : public QFrame {
 public:
   using DropHandler = DraggableDisplayPanel::DropHandler;
 
-  SquareDisplayViewport(holovibes::ui::TensorDisplayWidget *display, const QString &display_id,
-                        DropHandler drop_handler, QWidget *parent)
+  DisplayViewport(QWidget *display, const QString &display_id, DropHandler drop_handler,
+                  bool square_viewport, bool interactive_viewport, QWidget *parent)
       : QFrame(parent), display_(display), display_id_(display_id),
-        drop_handler_(std::move(drop_handler)) {
+        drop_handler_(std::move(drop_handler)), square_viewport_(square_viewport) {
     setObjectName("displayViewport");
     setAcceptDrops(true);
     setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setMinimumSize(0, 0);
 
     display_->setParent(this);
-    display_->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    display_->setAttribute(Qt::WA_TransparentForMouseEvents, !interactive_viewport);
     display_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     display_->setMinimumSize(0, 0);
     display_->show();
@@ -358,10 +361,14 @@ protected:
   void resizeEvent(QResizeEvent *event) override {
     QFrame::resizeEvent(event);
 
-    const int side = std::max(0, std::min(width(), height()));
-    const int x    = (width() - side) / 2;
-    const int y    = (height() - side) / 2;
-    display_->setGeometry(x, y, side, side);
+    if (square_viewport_) {
+      const int side = std::max(0, std::min(width(), height()));
+      const int x    = (width() - side) / 2;
+      const int y    = (height() - side) / 2;
+      display_->setGeometry(x, y, side, side);
+    } else {
+      display_->setGeometry(rect());
+    }
   }
 
   void dragEnterEvent(QDragEnterEvent *event) override {
@@ -393,10 +400,11 @@ protected:
   }
 
 private:
-  holovibes::ui::TensorDisplayWidget *display_;
-  QString                             display_id_;
-  DropHandler                         drop_handler_;
-  QPoint                              drag_start_pos_;
+  QWidget    *display_;
+  QString     display_id_;
+  DropHandler drop_handler_;
+  bool        square_viewport_;
+  QPoint      drag_start_pos_;
 };
 
 class DisplayDropZone : public QFrame {
@@ -663,6 +671,7 @@ MainWindow::MainWindow(QWidget *parent)
   validate_inputs();
   refresh_command_bar();
   configure_window();
+  qApp->installEventFilter(this);
 }
 
 void MainWindow::setup_main_layout() {
@@ -830,13 +839,24 @@ void MainWindow::setup_main_layout() {
   display_layout->setContentsMargins(8, 0, 8, 0);
   display_layout->setSpacing(8);
 
-  monitor_widget_ = new SystemMonitorWidget(this);
+  right_sidebar_ = new QWidget(main_splitter_);
+  right_sidebar_->setObjectName("rightSidebar");
+  right_sidebar_->setMinimumWidth(280);
+  right_sidebar_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+  auto *right_sidebar_layout = new QVBoxLayout(right_sidebar_);
+  right_sidebar_layout->setContentsMargins(0, 0, 0, 0);
+  right_sidebar_layout->setSpacing(8);
+
+  monitor_widget_ = new SystemMonitorWidget(right_sidebar_);
   monitor_widget_->setObjectName("systemMonitorPanel");
-  monitor_widget_->setMinimumWidth(280);
+  monitor_widget_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+  selected_widget_settings_panel_ = new SelectedWidgetSettingsPanel(right_sidebar_);
+  right_sidebar_layout->addWidget(monitor_widget_);
+  right_sidebar_layout->addWidget(selected_widget_settings_panel_, 1);
 
   main_splitter_->addWidget(controls_scroll);
   main_splitter_->addWidget(display_workspace_);
-  main_splitter_->addWidget(monitor_widget_);
+  main_splitter_->addWidget(right_sidebar_);
   main_splitter_->setStretchFactor(0, 0);
   main_splitter_->setStretchFactor(1, 1);
   main_splitter_->setStretchFactor(2, 0);
@@ -849,7 +869,8 @@ void MainWindow::setup_main_layout() {
 }
 
 QGroupBox *MainWindow::create_display_panel(const QString &title, const QString &display_id,
-                                            TensorDisplayWidget *widget) {
+                                            QWidget *widget, bool square_viewport,
+                                            bool interactive_viewport) {
   auto *panel = new DraggableDisplayPanel(
       title, display_id,
       [this](const QString &dropped_id, bool target_main) {
@@ -861,26 +882,27 @@ QGroupBox *MainWindow::create_display_panel(const QString &title, const QString 
   auto *layout = new QVBoxLayout(panel);
   layout->setContentsMargins(6, 6, 6, 6);
   layout->setSpacing(0);
-  layout->addWidget(new SquareDisplayViewport(
+  layout->addWidget(new DisplayViewport(
       widget, display_id,
       [this](const QString &dropped_id, bool target_main) {
         move_display_panel(dropped_id,
                            target_main ? DisplayPanelZone::Main : DisplayPanelZone::Secondary);
       },
-      panel));
+      square_viewport, interactive_viewport, panel));
 
   widget->show();
   panel->hide();
   return panel;
 }
 
-std::array<QGroupBox *, 9> MainWindow::display_panels() const {
+std::array<QGroupBox *, 10> MainWindow::display_panels() const {
   return {xy_processed_panel_,         xy_raw_panel_,        raw_spectrum_panel_,
           processed_spectrum_panel_,   zernike_phase_panel_, shack_hartmann_panel_,
-          shack_hartmann_xcorr_panel_, xz_processed_panel_,  yz_processed_panel_};
+          shack_hartmann_xcorr_panel_, xz_processed_panel_,  yz_processed_panel_,
+          zernike_history_panel_};
 }
 
-QGroupBox *MainWindow::display_panel_for(TensorDisplayWidget *widget) const {
+QGroupBox *MainWindow::display_panel_for(QWidget *widget) const {
   if (widget == xy_processed_widget_) {
     return xy_processed_panel_;
   }
@@ -908,6 +930,9 @@ QGroupBox *MainWindow::display_panel_for(TensorDisplayWidget *widget) const {
   if (widget == zernike_phase_widget_) {
     return zernike_phase_panel_;
   }
+  if (widget == zernike_history_widget_) {
+    return zernike_history_panel_;
+  }
 
   return nullptr;
 }
@@ -922,7 +947,7 @@ QGroupBox *MainWindow::display_panel_for_id(const QString &display_id) const {
   return nullptr;
 }
 
-void MainWindow::set_display_title(TensorDisplayWidget *widget, const QString &title) {
+void MainWindow::set_display_title(QWidget *widget, const QString &title) {
   if (widget != nullptr) {
     widget->setWindowTitle(title);
   }
@@ -932,7 +957,7 @@ void MainWindow::set_display_title(TensorDisplayWidget *widget, const QString &t
   }
 }
 
-void MainWindow::set_display_visible(TensorDisplayWidget *widget, bool visible) {
+void MainWindow::set_display_visible(QWidget *widget, bool visible) {
   if (widget == nullptr) {
     return;
   }
@@ -948,6 +973,56 @@ void MainWindow::set_display_visible(TensorDisplayWidget *widget, bool visible) 
   }
 
   relayout_display_panels();
+}
+
+void MainWindow::select_configurable_widget(ZernikeHistoryWidget *widget) {
+  if (selected_configurable_widget_ == widget) {
+    selected_widget_settings_panel_->set_selected_widget(widget);
+    return;
+  }
+
+  if (auto *old_panel = display_panel_for(selected_configurable_widget_.data());
+      old_panel != nullptr) {
+    old_panel->setProperty("selected", false);
+    repolish(old_panel);
+  }
+
+  selected_configurable_widget_ = widget;
+  selected_widget_settings_panel_->set_selected_widget(widget);
+  if (auto *panel = display_panel_for(widget); panel != nullptr) {
+    panel->setProperty("selected", true);
+    repolish(panel);
+  }
+}
+
+void MainWindow::clear_configurable_widget_selection() { select_configurable_widget(nullptr); }
+
+bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+  if (selected_configurable_widget_.isNull()) {
+    return QMainWindow::eventFilter(watched, event);
+  }
+
+  if (event->type() == QEvent::KeyPress &&
+      static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
+    clear_configurable_widget_selection();
+    return QMainWindow::eventFilter(watched, event);
+  }
+
+  if (event->type() == QEvent::MouseButtonPress) {
+    auto *clicked_widget = qobject_cast<QWidget *>(watched);
+    auto  contains       = [](QWidget *container, QWidget *candidate) {
+      return container != nullptr && candidate != nullptr &&
+             (container == candidate || container->isAncestorOf(candidate));
+    };
+
+    auto *selected_panel = display_panel_for(selected_configurable_widget_.data());
+    if (!contains(selected_panel, clicked_widget) &&
+        !contains(selected_widget_settings_panel_, clicked_widget)) {
+      clear_configurable_widget_selection();
+    }
+  }
+
+  return QMainWindow::eventFilter(watched, event);
 }
 
 void MainWindow::begin_display_layout_update() { ++display_layout_update_depth_; }
@@ -1195,15 +1270,26 @@ void MainWindow::refresh_command_bar() {
     return;
   }
 
+  const QString primary_action = pipeline_running_  ? QStringLiteral("Pause")
+                                 : pipeline_paused_ ? QStringLiteral("Resume")
+                                                    : QStringLiteral("Start");
+  import_widget_->start_button()->setText(primary_action);
+  start_command_button_->setText(primary_action);
   start_command_button_->setEnabled(import_widget_->start_button()->isEnabled());
   stop_command_button_->setEnabled(import_widget_->stop_button()->isEnabled());
   record_command_button_->setEnabled(export_widget_->record_button()->isEnabled());
   stop_record_command_button_->setEnabled(export_widget_->stop_button()->isEnabled());
 
-  if (pipeline_running_) {
-    set_status_label(pipeline_status_label_, "Live", "success");
+  if (pause_requested_) {
+    set_status_label(pipeline_status_label_, "Pausing", "warning");
+  } else if (resume_in_progress_) {
+    set_status_label(pipeline_status_label_, "Resuming", "warning");
   } else if (update_in_progress_) {
     set_status_label(pipeline_status_label_, "Updating", "warning");
+  } else if (pipeline_running_) {
+    set_status_label(pipeline_status_label_, "Live", "success");
+  } else if (pipeline_paused_) {
+    set_status_label(pipeline_status_label_, "Paused", "warning");
   } else {
     set_status_label(pipeline_status_label_, "Idle", "muted");
   }
@@ -1329,6 +1415,14 @@ void MainWindow::save_persistent_state() {
   settings.setValue("show_phase", autofocus->show_reconstructed_phase());
   settings.setValue("show_shack_hartmann", autofocus->show_shack_hartmann_sensor_view());
   settings.setValue("show_xcorr", autofocus->show_cross_correlation_view());
+  settings.endGroup();
+
+  settings.beginGroup("zernike_history_display");
+  const auto display_settings = zernike_history_widget_->display_settings();
+  settings.setValue("time_window_seconds", display_settings.time_window_seconds);
+  settings.setValue("y_scaling_mode", static_cast<int>(display_settings.y_scaling_mode));
+  settings.setValue("manual_y_minimum", display_settings.manual_y_minimum);
+  settings.setValue("manual_y_maximum", display_settings.manual_y_maximum);
   settings.endGroup();
 
   settings.sync();
@@ -1480,6 +1574,25 @@ void MainWindow::restore_persistent_state() {
   autofocus->set_enabled(settings.value("enabled", autofocus->is_enabled()).toBool());
   settings.endGroup();
 
+  settings.beginGroup("zernike_history_display");
+  auto display_settings = zernike_history_widget_->display_settings();
+  display_settings.time_window_seconds =
+      settings.value("time_window_seconds", display_settings.time_window_seconds).toDouble();
+  const int scaling_mode =
+      settings.value("y_scaling_mode", static_cast<int>(display_settings.y_scaling_mode)).toInt();
+  if (scaling_mode >= static_cast<int>(YAxisScalingMode::VisibleWindow) &&
+      scaling_mode <= static_cast<int>(YAxisScalingMode::Manual)) {
+    display_settings.y_scaling_mode = static_cast<YAxisScalingMode>(scaling_mode);
+  }
+  display_settings.manual_y_minimum =
+      settings.value("manual_y_minimum", display_settings.manual_y_minimum).toDouble();
+  display_settings.manual_y_maximum =
+      settings.value("manual_y_maximum", display_settings.manual_y_maximum).toDouble();
+  zernike_history_widget_->set_display_settings(display_settings);
+  signal_plot_time_window_seconds_ =
+      zernike_history_widget_->display_settings().time_window_seconds;
+  settings.endGroup();
+
   update_recording_path_preview();
 }
 
@@ -1493,6 +1606,7 @@ void MainWindow::initialize_display_widgets() {
   shack_hartmann_widget_       = new TensorDisplayWidget(display_workspace_);
   shack_hartmann_xcorr_widget_ = new TensorDisplayWidget(display_workspace_);
   zernike_phase_widget_        = new TensorDisplayWidget(display_workspace_);
+  zernike_history_widget_      = new ZernikeHistoryWidget(display_workspace_);
 
   set_display_title(xy_raw_widget_, "XY-Raw");
   set_display_title(xy_processed_widget_, "XY-Processed");
@@ -1503,6 +1617,7 @@ void MainWindow::initialize_display_widgets() {
   set_display_title(shack_hartmann_widget_, "Shack Hartmann");
   set_display_title(shack_hartmann_xcorr_widget_, "Shack Hartmann XCorr");
   set_display_title(zernike_phase_widget_, "Zernike Phase");
+  set_display_title(zernike_history_widget_, "Zernike a4");
 
   zernike_phase_widget_->set_colormap(Colormap::Twilight);
   zernike_phase_widget_->set_value_range(0.0f, 2 * static_cast<float>(M_PI));
@@ -1535,6 +1650,8 @@ void MainWindow::initialize_display_widgets() {
       create_display_panel("Processed Spectrum", "processed_spectrum", processed_spectrum_widget_);
   zernike_phase_panel_ =
       create_display_panel("Zernike Phase", "zernike_phase", zernike_phase_widget_);
+  zernike_history_panel_ = create_display_panel("Zernike a4", "zernike_a4_history",
+                                                zernike_history_widget_, false, true);
   shack_hartmann_panel_ =
       create_display_panel("Shack Hartmann", "shack_hartmann", shack_hartmann_widget_);
   shack_hartmann_xcorr_panel_ = create_display_panel("Shack Hartmann XCorr", "shack_hartmann_xcorr",
@@ -1552,11 +1669,21 @@ void MainWindow::initialize_display_widgets() {
   set_display_visible(raw_spectrum_widget_, false);
   set_display_visible(processed_spectrum_widget_, false);
   set_display_visible(zernike_phase_widget_, false);
+  set_display_visible(zernike_history_widget_, false);
   set_display_visible(shack_hartmann_widget_, false);
   set_display_visible(shack_hartmann_xcorr_widget_, false);
   set_display_visible(xz_processed_widget_, false);
   set_display_visible(yz_processed_widget_, false);
   end_display_layout_update();
+
+  connect(zernike_history_widget_, &ZernikeHistoryWidget::configuration_requested, this,
+          &MainWindow::select_configurable_widget);
+  connect(zernike_history_widget_, &ZernikeHistoryWidget::display_settings_changed, this,
+          [this](const ZernikeHistoryDisplaySettings &settings) {
+            // Axis policy is GUI-only. Keeping this out of update_if_running avoids rebuilding or
+            // restarting the processing pipeline for display changes.
+            signal_plot_time_window_seconds_ = settings.time_window_seconds;
+          });
 
   connect(view_widget_, &ViewWidget::cuts_3d_toggled, this, [this](bool checked) {
     if (checked) {
@@ -1612,7 +1739,8 @@ void MainWindow::initialize_pipeline_manager() {
   pipeline_manager_ = new pipeline::Manager(
       render_widget_->autofocus_widget(), xy_processed_widget_, xz_processed_widget_,
       yz_processed_widget_, xy_raw_widget_, raw_spectrum_widget_, processed_spectrum_widget_,
-      shack_hartmann_widget_, shack_hartmann_xcorr_widget_, zernike_phase_widget_);
+      shack_hartmann_widget_, shack_hartmann_xcorr_widget_, zernike_phase_widget_,
+      zernike_history_widget_);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);
   pipeline_manager_thread_->start();
@@ -1630,6 +1758,12 @@ void MainWindow::connect_manager_signals() {
 
   connect(pipeline_manager_, &pipeline::Manager::stop_pipeline_failure, this,
           &MainWindow::on_stop_pipeline_failure);
+
+  connect(pipeline_manager_, &pipeline::Manager::resume_pipeline_success, this,
+          &MainWindow::on_resume_pipeline_success);
+
+  connect(pipeline_manager_, &pipeline::Manager::resume_pipeline_failure, this,
+          &MainWindow::on_resume_pipeline_failure);
 
   connect(pipeline_manager_, &pipeline::Manager::update_pipeline_success, this,
           &MainWindow::on_update_pipeline_success);
@@ -1785,7 +1919,12 @@ void MainWindow::show_pipeline_error_popup(const QString &message) {
 
 void MainWindow::on_start_pipeline_success() {
   logger()->info("[MainWindow::on_start_pipeline_success]");
-  pipeline_running_ = true;
+  pipeline_running_      = true;
+  pipeline_paused_       = false;
+  pause_requested_       = false;
+  resume_in_progress_    = false;
+  paused_settings_dirty_ = false;
+  import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(true);
   export_widget_->set_record_enabled(!export_in_progress_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(export_in_progress_);
@@ -1810,6 +1949,7 @@ void MainWindow::on_start_pipeline_success() {
 
   begin_display_layout_update();
   set_display_visible(xy_processed_widget_, true);
+  set_display_visible(zernike_history_widget_, true);
 
   auto *autofocus_widget = render_widget_->autofocus_widget();
   if (autofocus_widget->is_enabled()) {
@@ -1864,8 +2004,12 @@ void MainWindow::on_start_pipeline_success() {
 
 void MainWindow::on_start_pipeline_failure(const QString &error) {
   logger()->error("[MainWindow::on_start_pipeline_failure]");
-  pipeline_running_   = false;
-  export_in_progress_ = false;
+  pipeline_running_      = false;
+  pipeline_paused_       = false;
+  pause_requested_       = false;
+  resume_in_progress_    = false;
+  paused_settings_dirty_ = false;
+  export_in_progress_    = false;
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
   export_widget_->set_record_enabled(false);
@@ -1877,35 +2021,79 @@ void MainWindow::on_start_pipeline_failure(const QString &error) {
 
 void MainWindow::on_stop_pipeline_success() {
   logger()->info("[MainWindow::on_stop_pipeline_success]");
-  pipeline_running_ = false;
-  import_widget_->set_start_enabled(true);
-  import_widget_->set_stop_enabled(false);
-  export_in_progress_ = false;
-  export_widget_->set_record_enabled(false);
-  export_widget_->set_stop_enabled(false);
-  on_metrics_updated(0.0);
+  if (pause_requested_) {
+    pipeline_running_   = false;
+    pipeline_paused_    = true;
+    pause_requested_    = false;
+    export_in_progress_ = false;
+    import_widget_->set_start_enabled(true);
+    import_widget_->set_stop_enabled(true);
+    export_widget_->set_record_enabled(false);
+    export_widget_->set_stop_enabled(false);
+    on_metrics_updated(0.0);
+    refresh_command_bar();
+    return;
+  }
 
-  begin_display_layout_update();
-  set_display_visible(xy_raw_widget_, false);
-  set_display_visible(xy_processed_widget_, false);
-  set_display_visible(xz_processed_widget_, false);
-  set_display_visible(yz_processed_widget_, false);
-  set_display_visible(raw_spectrum_widget_, false);
-  set_display_visible(processed_spectrum_widget_, false);
-  set_display_visible(shack_hartmann_widget_, false);
-  set_display_visible(shack_hartmann_xcorr_widget_, false);
-  set_display_visible(zernike_phase_widget_, false);
-  end_display_layout_update();
-  render_widget_->autofocus_widget()->reset_zernike_values();
-  refresh_command_bar();
+  reset_pipeline_ui_after_stop();
 }
 
 void MainWindow::on_stop_pipeline_failure(const QString &error) {
   logger()->error("[MainWindow::on_stop_pipeline_failure]");
-  pipeline_running_ = false;
+  if (pause_requested_) {
+    pipeline_running_   = false;
+    pipeline_paused_    = true;
+    pause_requested_    = false;
+    export_in_progress_ = false;
+    import_widget_->set_start_enabled(true);
+    import_widget_->set_stop_enabled(true);
+    export_widget_->set_record_enabled(false);
+    export_widget_->set_stop_enabled(false);
+    on_metrics_updated(0.0);
+    refresh_command_bar();
+  } else {
+    reset_pipeline_ui_after_stop();
+  }
+
+  show_pipeline_error_popup(error);
+}
+
+void MainWindow::on_resume_pipeline_success() {
+  logger()->info("[MainWindow::on_resume_pipeline_success]");
+  pipeline_running_   = true;
+  pipeline_paused_    = false;
+  resume_in_progress_ = false;
+  import_widget_->set_start_enabled(true);
+  import_widget_->set_stop_enabled(true);
+  export_widget_->set_record_enabled(!export_in_progress_ && export_widget_->isChecked());
+  export_widget_->set_stop_enabled(export_in_progress_);
+  refresh_command_bar();
+}
+
+void MainWindow::on_resume_pipeline_failure(const QString &error) {
+  logger()->error("[MainWindow::on_resume_pipeline_failure]");
+  pipeline_running_   = false;
+  pipeline_paused_    = true;
+  resume_in_progress_ = false;
+  export_in_progress_ = false;
+  import_widget_->set_start_enabled(true);
+  import_widget_->set_stop_enabled(true);
+  export_widget_->set_record_enabled(false);
+  export_widget_->set_stop_enabled(false);
+  refresh_command_bar();
+
+  show_pipeline_error_popup(tr("An error occurred while resuming the pipeline:\n%1").arg(error));
+}
+
+void MainWindow::reset_pipeline_ui_after_stop() {
+  pipeline_running_      = false;
+  pipeline_paused_       = false;
+  pause_requested_       = false;
+  resume_in_progress_    = false;
+  paused_settings_dirty_ = false;
+  export_in_progress_    = false;
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
-  export_in_progress_ = false;
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
   on_metrics_updated(0.0);
@@ -1920,11 +2108,10 @@ void MainWindow::on_stop_pipeline_failure(const QString &error) {
   set_display_visible(shack_hartmann_widget_, false);
   set_display_visible(shack_hartmann_xcorr_widget_, false);
   set_display_visible(zernike_phase_widget_, false);
+  set_display_visible(zernike_history_widget_, false);
   end_display_layout_update();
   render_widget_->autofocus_widget()->reset_zernike_values();
   refresh_command_bar();
-
-  show_pipeline_error_popup(error);
 }
 
 void MainWindow::on_metrics_updated(double input_fps) {
@@ -1957,7 +2144,7 @@ void MainWindow::on_metrics_updated(double input_fps) {
 void MainWindow::on_update_pipeline_success() {
   logger()->info("[MainWindow::on_update_pipeline_success]");
   update_in_progress_ = false;
-  import_widget_->set_start_enabled(false);
+  import_widget_->set_start_enabled(pipeline_running_);
   export_widget_->set_record_enabled(!export_in_progress_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(export_in_progress_);
 
@@ -1975,6 +2162,7 @@ void MainWindow::on_update_pipeline_success() {
   }
   xy_processed_widget_->set_fixed_aspect(dims);
   begin_display_layout_update();
+  set_display_visible(zernike_history_widget_, true);
   if (view_widget_->is_raw_view_enabled()) {
     set_display_visible(xy_raw_widget_, true);
   }
@@ -2024,13 +2212,18 @@ void MainWindow::on_update_pipeline_success() {
 
 void MainWindow::on_update_pipeline_failure(const QString &error) {
   logger()->error("[MainWindow::on_update_pipeline_failure]");
-  pipeline_running_   = false;
-  update_in_progress_ = false;
+  pipeline_running_      = false;
+  pipeline_paused_       = false;
+  pause_requested_       = false;
+  resume_in_progress_    = false;
+  update_in_progress_    = false;
+  paused_settings_dirty_ = false;
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
   export_in_progress_ = false;
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
+  set_display_visible(zernike_history_widget_, false);
   refresh_command_bar();
 
   show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
@@ -2049,9 +2242,10 @@ void MainWindow::closeEvent(QCloseEvent *event) {
   set_display_visible(shack_hartmann_widget_, false);
   set_display_visible(shack_hartmann_xcorr_widget_, false);
   set_display_visible(zernike_phase_widget_, false);
+  set_display_visible(zernike_history_widget_, false);
   end_display_layout_update();
 
-  if (pipeline_manager_ && import_widget_->is_stop_enabled()) {
+  if (pipeline_manager_ && pipeline_running_) {
     pipeline_manager_->stop_pipeline();
   }
 
@@ -2065,13 +2259,34 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 }
 
 void MainWindow::on_import_start_clicked() {
-  HOLOVIBES_CHECK(!pipeline_running_);
+  if (pipeline_running_) {
+    pause_requested_ = true;
+    import_widget_->set_start_enabled(false);
+    import_widget_->set_stop_enabled(false);
+    refresh_command_bar();
+    auto pause = [manager = pipeline_manager_]() { manager->stop_pipeline(); };
+    HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, pause, Qt::QueuedConnection));
+    return;
+  }
+
+  if (pipeline_paused_ && !paused_settings_dirty_) {
+    resume_in_progress_ = true;
+    import_widget_->set_start_enabled(false);
+    import_widget_->set_stop_enabled(false);
+    refresh_command_bar();
+    auto resume = [manager = pipeline_manager_]() { manager->resume_pipeline(); };
+    HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, resume, Qt::QueuedConnection));
+    return;
+  }
 
   if (!validate_inputs()) {
     return;
   }
 
+  pipeline_paused_       = false;
+  paused_settings_dirty_ = false;
   import_widget_->set_start_enabled(false);
+  import_widget_->set_stop_enabled(false);
   refresh_command_bar();
   pipeline::Settings settings = get_pipeline_settings();
   auto               update   = [=]() { pipeline_manager_->update_pipeline(settings); };
@@ -2081,7 +2296,14 @@ void MainWindow::on_import_start_clicked() {
 }
 
 void MainWindow::on_import_stop_clicked() {
+  if (pipeline_paused_) {
+    reset_pipeline_ui_after_stop();
+    return;
+  }
+
   HOLOVIBES_CHECK(pipeline_running_);
+  pause_requested_ = false;
+  import_widget_->set_start_enabled(false);
   import_widget_->set_stop_enabled(false);
   refresh_command_bar();
   auto stop = [=]() { pipeline_manager_->stop_pipeline(); };
@@ -2380,7 +2602,12 @@ void MainWindow::setup_update_connections() {
 }
 
 void MainWindow::update_if_running() {
-  if (!pipeline_manager_ || !import_widget_->is_stop_enabled()) {
+  if (pipeline_paused_) {
+    paused_settings_dirty_ = true;
+    return;
+  }
+
+  if (!pipeline_manager_ || !pipeline_running_) {
     return;
   }
 
@@ -2622,6 +2849,9 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     if (render_widget_->autofocus_widget()->is_z10_enabled()) {
       s.autofocus_zernike_orders.push_back(10);
     }
+
+    s.signal_plot_time_window_seconds = signal_plot_time_window_seconds_;
+    s.signal_plot_sample_time_seconds = signal_plot_sample_time_seconds_;
   }
 
   return s;
@@ -2629,6 +2859,9 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
 void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   using namespace holovibes::pipeline;
+
+  signal_plot_time_window_seconds_ = s.signal_plot_time_window_seconds;
+  signal_plot_sample_time_seconds_ = s.signal_plot_sample_time_seconds;
 
   // --- Advanced Settings ---
   {

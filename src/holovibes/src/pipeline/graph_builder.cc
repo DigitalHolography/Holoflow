@@ -91,6 +91,15 @@ GraphBuilder::GraphBuilder(const Settings &settings, holoflow::core::Registry &r
 // -------------------------------------------------------------------------------------------------
 
 holoflow::core::GraphSpec GraphBuilder::build() {
+  if (!std::isfinite(s_.signal_plot_time_window_seconds) ||
+      s_.signal_plot_time_window_seconds <= 0.0) {
+    throw std::invalid_argument("signal_plot_time_window_seconds must be positive and finite");
+  }
+  if (!std::isfinite(s_.signal_plot_sample_time_seconds) ||
+      s_.signal_plot_sample_time_seconds <= 0.0) {
+    throw std::invalid_argument("signal_plot_sample_time_seconds must be positive and finite");
+  }
+
   TDesc H     = build_acquisition();
   TDesc H_raw = H;
 
@@ -409,13 +418,27 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
     zernike_coefficients_display(*iteration_state.cumulative_coeffs_gpu,
                                  {s_.autofocus_zernike_orders});
 
-    bool a4_included =
-        std::find(s_.autofocus_zernike_orders.begin(), s_.autofocus_zernike_orders.end(), 4) !=
-        s_.autofocus_zernike_orders.end();
+    const auto a4_it       = std::ranges::find(s_.autofocus_zernike_orders, 4);
+    const bool a4_included = a4_it != s_.autofocus_zernike_orders.end();
 
     if (a4_included) {
+      const auto a4_index = std::distance(s_.autofocus_zernike_orders.begin(), a4_it);
+      auto       range    = holonp::SliceRange{a4_index, a4_index + 1};
+      auto       a4       = slice(*iteration_state.cumulative_coeffs_gpu, {{range}});
+      a4                  = memcpy(a4, {Host});
+
+      zernike_history_display(a4, {
+                                      s_.signal_plot_time_window_seconds,
+                                      s_.signal_plot_sample_time_seconds,
+                                  });
+
       zernike_defocus_z_prop(*iteration_state.cumulative_coeffs_gpu,
-                             {s_.autofocus_zernike_orders, lam, z_prop, pupil_radius_m});
+                             {
+                                 s_.autofocus_zernike_orders,
+                                 lam,
+                                 z_prop,
+                                 pupil_radius_m,
+                             });
     }
 
     auto phase_disp = copy(*iteration_state.cumulative_phase_gpu, {});

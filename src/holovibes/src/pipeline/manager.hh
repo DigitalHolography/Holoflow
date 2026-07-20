@@ -31,6 +31,7 @@
 namespace holovibes::ui {
 class AutoFocusWidget;
 class TensorDisplayWidget;
+class ZernikeHistoryWidget;
 } // namespace holovibes::ui
 
 class QTimer;
@@ -45,11 +46,12 @@ public:
   Manager(ui::AutoFocusWidget *autofocus_widget, ui::TensorDisplayWidget *xy_processed_widget,
           ui::TensorDisplayWidget *xz_processed_widget,
           ui::TensorDisplayWidget *yz_processed_widget, ui::TensorDisplayWidget *xy_raw_widget,
-          ui::TensorDisplayWidget *raw_spectrum_widget,
-          ui::TensorDisplayWidget *processed_spectrum_widget,
-          ui::TensorDisplayWidget *shack_hartmann_widget,
-          ui::TensorDisplayWidget *shack_hartmann_xcorr_widget,
-          ui::TensorDisplayWidget *zernike_phase_widget);
+          ui::TensorDisplayWidget  *raw_spectrum_widget,
+          ui::TensorDisplayWidget  *processed_spectrum_widget,
+          ui::TensorDisplayWidget  *shack_hartmann_widget,
+          ui::TensorDisplayWidget  *shack_hartmann_xcorr_widget,
+          ui::TensorDisplayWidget  *zernike_phase_widget,
+          ui::ZernikeHistoryWidget *zernike_history_widget);
 
   ~Manager() override = default;
 
@@ -58,6 +60,9 @@ public:
 
   /// @brief Requests a stop and waits for the pipeline to halt cleanly.
   void stop_pipeline();
+
+  /// @brief Restarts execution from the retained compiled graph and task state.
+  void resume_pipeline();
 
   /// @brief Updates settings and dynamically rebuilds/restarts the pipeline if currently running.
   void update_pipeline(const Settings &settings);
@@ -74,6 +79,8 @@ signals:
   void start_pipeline_failure(const QString &error);
   void stop_pipeline_success();
   void stop_pipeline_failure(const QString &error);
+  void resume_pipeline_success();
+  void resume_pipeline_failure(const QString &error);
   void update_pipeline_success();
   void update_pipeline_failure(const QString &error);
 
@@ -103,25 +110,30 @@ private:
 
   // --- Graph Management ---
   void build_and_run();
+  void run_compiled_graph();
   void build_graph_spec();
   void reset_graph_spec();
   void guess_optimizations();
   void guess_source_dims();
+  void configure_zernike_history(bool start_run);
+  void resume_zernike_history();
+  void stop_zernike_history();
 
   // --- Logging Helpers ---
   void dump_graph_logs(const std::filesystem::path &log_dir);
 
   // --- UI Elements ---
-  ui::AutoFocusWidget     *autofocus_widget_;
-  ui::TensorDisplayWidget *xy_processed_widget_;
-  ui::TensorDisplayWidget *xz_processed_widget_;
-  ui::TensorDisplayWidget *yz_processed_widget_;
-  ui::TensorDisplayWidget *xy_raw_widget_;
-  ui::TensorDisplayWidget *raw_spectrum_widget_;
-  ui::TensorDisplayWidget *processed_spectrum_widget_;
-  ui::TensorDisplayWidget *shack_hartmann_widget_;
-  ui::TensorDisplayWidget *shack_hartmann_xcorr_widget_;
-  ui::TensorDisplayWidget *zernike_phase_widget_;
+  ui::AutoFocusWidget      *autofocus_widget_;
+  ui::TensorDisplayWidget  *xy_processed_widget_;
+  ui::TensorDisplayWidget  *xz_processed_widget_;
+  ui::TensorDisplayWidget  *yz_processed_widget_;
+  ui::TensorDisplayWidget  *xy_raw_widget_;
+  ui::TensorDisplayWidget  *raw_spectrum_widget_;
+  ui::TensorDisplayWidget  *processed_spectrum_widget_;
+  ui::TensorDisplayWidget  *shack_hartmann_widget_;
+  ui::TensorDisplayWidget  *shack_hartmann_xcorr_widget_;
+  ui::TensorDisplayWidget  *zernike_phase_widget_;
+  ui::ZernikeHistoryWidget *zernike_history_widget_;
 
   // --- State & Configuration ---
   Settings s_;

@@ -16,7 +16,6 @@
 
 #include <QGridLayout>
 #include <QLabel>
-#include <QSpacerItem>
 #include <QVBoxLayout>
 
 namespace holovibes::ui {
@@ -101,8 +100,6 @@ void SystemMonitorWidget::setup_ui() {
   configure_bar(&record_queue_bar_, "Record Queue", 12, 32);
 
   layout->addWidget(queue_group);
-  layout->addItem(new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding));
-  layout->addStretch(1);
 }
 
 void SystemMonitorWidget::update_metrics(double input_fps) {

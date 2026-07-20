@@ -14,11 +14,14 @@
 
 #include "pipeline/manager.hh"
 
+#include <QMetaObject>
 #include <QStandardPaths>
+#include <QThread>
 #include <QTimer>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -93,9 +96,11 @@
 #include "logger.hh"
 #include "pipeline/validation.hh"
 #include "settings_loader.hh"
+#include "tasks/sinks/display_signal_history.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
 #include "ui/widgets/auto_focus_widget.hh"
+#include "ui/widgets/zernike_history_widget.hh"
 
 using namespace holotask;
 using namespace holonp;
@@ -116,23 +121,21 @@ void reg_async(holoflow::core::Registry &r, std::string_view name, Args &&...arg
 
 } // namespace
 
-Manager::Manager(ui::AutoFocusWidget     *autofocus_widget,
-                 ui::TensorDisplayWidget *xy_processed_widget,
-                 ui::TensorDisplayWidget *xz_processed_widget,
-                 ui::TensorDisplayWidget *yz_processed_widget,
-                 ui::TensorDisplayWidget *xy_raw_widget,
-                 ui::TensorDisplayWidget *raw_spectrum_widget,
-                 ui::TensorDisplayWidget *processed_spectrum_widget,
-                 ui::TensorDisplayWidget *shack_hartmann_widget,
-                 ui::TensorDisplayWidget *shack_hartmann_xcorr_widget,
-                 ui::TensorDisplayWidget *zernike_phase_widget)
+Manager::Manager(
+    ui::AutoFocusWidget *autofocus_widget, ui::TensorDisplayWidget *xy_processed_widget,
+    ui::TensorDisplayWidget *xz_processed_widget, ui::TensorDisplayWidget *yz_processed_widget,
+    ui::TensorDisplayWidget *xy_raw_widget, ui::TensorDisplayWidget *raw_spectrum_widget,
+    ui::TensorDisplayWidget *processed_spectrum_widget,
+    ui::TensorDisplayWidget *shack_hartmann_widget,
+    ui::TensorDisplayWidget *shack_hartmann_xcorr_widget,
+    ui::TensorDisplayWidget *zernike_phase_widget, ui::ZernikeHistoryWidget *zernike_history_widget)
     : autofocus_widget_(autofocus_widget), xy_processed_widget_(xy_processed_widget),
       xz_processed_widget_(xz_processed_widget), yz_processed_widget_(yz_processed_widget),
       xy_raw_widget_(xy_raw_widget), raw_spectrum_widget_(raw_spectrum_widget),
       processed_spectrum_widget_(processed_spectrum_widget),
       shack_hartmann_widget_(shack_hartmann_widget),
       shack_hartmann_xcorr_widget_(shack_hartmann_xcorr_widget),
-      zernike_phase_widget_(zernike_phase_widget) {
+      zernike_phase_widget_(zernike_phase_widget), zernike_history_widget_(zernike_history_widget) {
 
   register_components();
 
@@ -163,6 +166,7 @@ void Manager::register_components() {
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase", zernike_phase_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(registry_, "DisplayZernikeCoefficients", autofocus_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory", zernike_history_widget_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
@@ -222,6 +226,55 @@ void Manager::register_components() {
   // clang-format on
 }
 
+void Manager::configure_zernike_history(bool start_run) {
+  const double time_window_seconds = s_.signal_plot_time_window_seconds;
+  if (!std::isfinite(time_window_seconds) || time_window_seconds <= 0.0) {
+    throw std::invalid_argument("signal_plot_time_window_seconds must be positive and finite");
+  }
+  if (!std::isfinite(s_.signal_plot_sample_time_seconds) ||
+      s_.signal_plot_sample_time_seconds <= 0.0) {
+    throw std::invalid_argument("signal_plot_sample_time_seconds must be positive and finite");
+  }
+
+  auto configure = [widget = zernike_history_widget_, time_window_seconds, start_run]() {
+    if (start_run) {
+      widget->start_run(time_window_seconds);
+    } else {
+      widget->set_time_window_seconds(time_window_seconds);
+    }
+  };
+
+  if (QThread::currentThread() == zernike_history_widget_->thread()) {
+    configure();
+    return;
+  }
+
+  HOLOVIBES_CHECK(QMetaObject::invokeMethod(zernike_history_widget_, std::move(configure),
+                                            Qt::BlockingQueuedConnection));
+}
+
+void Manager::stop_zernike_history() {
+  auto stop = [widget = zernike_history_widget_]() { widget->stop_run(); };
+  if (QThread::currentThread() == zernike_history_widget_->thread()) {
+    stop();
+    return;
+  }
+
+  HOLOVIBES_CHECK(QMetaObject::invokeMethod(zernike_history_widget_, std::move(stop),
+                                            Qt::BlockingQueuedConnection));
+}
+
+void Manager::resume_zernike_history() {
+  auto resume = [widget = zernike_history_widget_]() { widget->resume_run(); };
+  if (QThread::currentThread() == zernike_history_widget_->thread()) {
+    resume();
+    return;
+  }
+
+  HOLOVIBES_CHECK(QMetaObject::invokeMethod(zernike_history_widget_, std::move(resume),
+                                            Qt::BlockingQueuedConnection));
+}
+
 void Manager::start_pipeline() {
   logger()->info("[Manager::start_pipeline] Starting pipeline...");
   std::lock_guard lock(mtx_);
@@ -234,10 +287,12 @@ void Manager::start_pipeline() {
   }
 
   try {
+    configure_zernike_history(true);
     build_and_run();
     logger()->info("[Manager::start_pipeline] Pipeline started successfully");
     emit start_pipeline_success();
   } catch (const std::exception &e) {
+    stop_zernike_history();
     const QString msg = QString("Failed to start pipeline: %1").arg(e.what());
     logger()->error("[Manager::start_pipeline] {}", msg.toStdString());
     emit start_pipeline_failure(msg);
@@ -259,6 +314,7 @@ void Manager::stop_pipeline() {
     // Request an asynchronous stop and block until graph execution concludes safely.
     scheduler_->request_stop();
     scheduler_->wait();
+    stop_zernike_history();
 
     stop_metrics_updates();
     stop_event_polling();
@@ -267,9 +323,40 @@ void Manager::stop_pipeline() {
     logger()->info("[Manager::stop_pipeline] Pipeline stopped successfully");
     emit stop_pipeline_success();
   } catch (const std::exception &e) {
+    stop_zernike_history();
     const QString msg = QString("Failed to stop pipeline: %1").arg(e.what());
     logger()->error("[Manager::stop_pipeline] {}", msg.toStdString());
     emit stop_pipeline_failure(msg);
+  }
+}
+
+void Manager::resume_pipeline() {
+  logger()->info("[Manager::resume_pipeline] Resuming pipeline...");
+  std::lock_guard lock(mtx_);
+
+  if (scheduler_ && scheduler_->is_running()) {
+    const QString msg = "Pipeline is already running";
+    logger()->error("[Manager::resume_pipeline] {}", msg.toStdString());
+    emit resume_pipeline_failure(msg);
+    return;
+  }
+  if (!compiler_output_ || settings_dirty_) {
+    const QString msg = "No unchanged compiled pipeline is available to resume";
+    logger()->error("[Manager::resume_pipeline] {}", msg.toStdString());
+    emit resume_pipeline_failure(msg);
+    return;
+  }
+
+  try {
+    resume_zernike_history();
+    run_compiled_graph();
+    logger()->info("[Manager::resume_pipeline] Pipeline resumed successfully");
+    emit resume_pipeline_success();
+  } catch (const std::exception &e) {
+    stop_zernike_history();
+    const QString msg = QString("Failed to resume pipeline: %1").arg(e.what());
+    logger()->error("[Manager::resume_pipeline] {}", msg.toStdString());
+    emit resume_pipeline_failure(msg);
   }
 }
 
@@ -280,8 +367,16 @@ void Manager::update_pipeline(const Settings &settings) {
   settings_dirty_ = true;
 
   if (!scheduler_ || !scheduler_->is_running()) {
-    logger()->debug("[Manager::update_pipeline] Pipeline is not running, updated parameters only.");
-    emit update_pipeline_success();
+    try {
+      configure_zernike_history(false);
+      logger()->debug(
+          "[Manager::update_pipeline] Pipeline is not running, updated parameters only.");
+      emit update_pipeline_success();
+    } catch (const std::exception &e) {
+      const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
+      logger()->error("[Manager::update_pipeline] {}", msg.toStdString());
+      emit update_pipeline_failure(msg);
+    }
     return;
   }
 
@@ -291,11 +386,13 @@ void Manager::update_pipeline(const Settings &settings) {
     scheduler_->wait();
     raw_recording_active_ = false;
 
+    configure_zernike_history(true);
     build_and_run();
 
     logger()->info("[Manager::update_pipeline] Pipeline updated successfully");
     emit update_pipeline_success();
   } catch (const std::exception &e) {
+    stop_zernike_history();
     const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
     logger()->error("[Manager::update_pipeline] {}", msg.toStdString());
     emit update_pipeline_failure(msg);
@@ -458,12 +555,9 @@ void Manager::poll_events() {
 
 // --- Graph Building & Execution ---
 void Manager::build_and_run() {
-  using Scheduler      = holoflow::runtime::Scheduler;
   using CompilerConfig = holoflow::runtime::Compiler::Config;
   using Compiler       = holoflow::runtime::Compiler;
 
-  stop_metrics_updates();
-  stop_event_polling();
   build_graph_spec();
 
   // Create an OS-appropriate, writable directory for logs (e.g., AppData/Local/Holovibes/logs)
@@ -489,6 +583,20 @@ void Manager::build_and_run() {
   auto     prev_output = std::move(compiler_output_);
   Compiler compiler(registry_, config);
   compiler_output_ = compiler.compile(spec_, std::move(prev_output));
+
+  run_compiled_graph();
+}
+
+void Manager::run_compiled_graph() {
+  using Scheduler = holoflow::runtime::Scheduler;
+
+  HOLOVIBES_CHECK(compiler_output_ != nullptr, "Compiled pipeline is not available");
+  stop_metrics_updates();
+  stop_event_polling();
+
+  // A fresh scheduler runtime avoids retaining cancelled queue acquisitions while the compiled
+  // graph, task objects, source cursor, and allocated resources remain intact across a pause.
+  scheduler_.reset();
 
   auto &graph     = compiler_output_->graph;
   auto &sections  = compiler_output_->sections;

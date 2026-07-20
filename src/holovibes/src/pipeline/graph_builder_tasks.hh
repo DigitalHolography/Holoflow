@@ -73,6 +73,7 @@
 #include "holotask/syncs/zernike.hh"
 #include "holotask/syncs/zernike_defocus_z_prop.hh"
 #include "holotask/syncs/zernike_phase.hh"
+#include "tasks/sinks/display_signal_history.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
 
@@ -115,6 +116,7 @@ protected:
   void  shack_hartmann_xcorr_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  zernike_phase_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  zernike_coefficients_display(const TDesc &X, tasks::sinks::DisplayZernikeCoefficientsSettings s);
+  void  zernike_history_display(const TDesc &X, tasks::sinks::DisplaySignalHistorySettings s);
   void  zernike_defocus_z_prop(const TDesc &X, holotask::syncs::ZernikeDefocusZPropSettings s);
   void  holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
   TDesc ametek_s710_euresys_coaxlink_octo(holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings s);

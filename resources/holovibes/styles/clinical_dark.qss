@@ -157,6 +157,7 @@ QWidget#controlsContent,
 QWidget#controlsColumn,
 QWidget#controlsScrollViewport,
 QScrollArea#controlsScrollArea,
+QWidget#rightSidebar,
 QGroupBox#systemMonitorPanel {
   background-color: @PANEL@;
 }
@@ -236,6 +237,10 @@ QGroupBox#displayPanel[dragActive="true"] {
   border-color: @ACCENT@;
 }
 
+QGroupBox#displayPanel[selected="true"] {
+  border-color: @ACCENT@;
+}
+
 QGroupBox#displayPanel::title {
   color: @TEXT_MUTED@;
   background-color: @DISPLAY@;
@@ -256,6 +261,29 @@ QFrame#displayViewport[dragActive="true"],
 QFrame#mainDisplayZone[dragActive="true"],
 QFrame#secondaryDisplayZone[dragActive="true"] {
   border: 1px solid @ACCENT@;
+}
+
+QGroupBox#selectedWidgetSettingsPanel,
+QScrollArea#widgetSettingsScrollArea,
+QWidget#widgetSettingsScrollViewport,
+QWidget#zernikeHistorySettingsPage {
+  background-color: @PANEL@;
+}
+
+QLabel#settingsWidgetTitle {
+  color: @TEXT_HEADER@;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+QLabel#settingsSectionLabel {
+  color: @TEXT_MUTED@;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+QLabel#settingsPlaceholder {
+  color: @TEXT_MUTED@;
 }
 
 QLabel {
