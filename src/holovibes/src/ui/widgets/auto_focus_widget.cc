@@ -83,6 +83,9 @@ AutoFocusWidget::AutoFocusWidget(QWidget *parent) : QGroupBox("AUTO FOCUS", pare
 int  AutoFocusWidget::get_nb_subaps() const { return nb_subaps_spin_->value(); }
 int  AutoFocusWidget::get_nb_iter() const { return nb_iter_spin_->value(); }
 bool AutoFocusWidget::is_enabled() const { return enable_check_->isChecked(); }
+bool AutoFocusWidget::skip_subapertures_outside_pupil() const {
+  return skip_subapertures_outside_pupil_checkbox_->isChecked();
+}
 
 // Zernike values
 double AutoFocusWidget::get_z2() const { return z2_spin_->value(); }
@@ -183,6 +186,10 @@ void AutoFocusWidget::set_z9_enabled(bool enabled) { z9_checkbox_->setChecked(en
 void AutoFocusWidget::set_z10_enabled(bool enabled) { z10_checkbox_->setChecked(enabled); }
 
 // Visualization toggles
+bool AutoFocusWidget::show_zernike_metrics_plot() const {
+  return zernike_metrics_plot_checkbox_->isChecked();
+}
+
 bool AutoFocusWidget::show_reconstructed_phase() const {
   return reconstructed_phase_checkbox_->isChecked();
 }
@@ -193,6 +200,10 @@ bool AutoFocusWidget::show_shack_hartmann_sensor_view() const {
 
 bool AutoFocusWidget::show_cross_correlation_view() const {
   return cross_correlation_view_checkbox_->isChecked();
+}
+
+void AutoFocusWidget::set_show_zernike_metrics_plot(bool checked) {
+  zernike_metrics_plot_checkbox_->setChecked(checked);
 }
 
 void AutoFocusWidget::set_show_reconstructed_phase(bool checked) {
@@ -210,6 +221,10 @@ void AutoFocusWidget::set_show_cross_correlation_view(bool checked) {
 void AutoFocusWidget::set_enabled(bool enabled) {
   enable_check_->setChecked(enabled);
   set_controls_enabled(enabled);
+}
+
+void AutoFocusWidget::set_skip_subapertures_outside_pupil(bool skip) {
+  skip_subapertures_outside_pupil_checkbox_->setChecked(skip);
 }
 
 void AutoFocusWidget::clear_validation_styles() {
@@ -289,6 +304,12 @@ void AutoFocusWidget::setup_ui() {
                                   "Number of Shack-Hartmann correction passes.");
   add_label_widget_row("Nb Iter:", nb_iter_spin_);
 
+  skip_subapertures_outside_pupil_checkbox_ =
+      create_checkbox(content_container_, true, "Skip subapertures outside pupil");
+  skip_subapertures_outside_pupil_checkbox_->setToolTip(
+      "Exclude subapertures whose centers lie outside the circular pupil during Zernike fitting.");
+  inner_layout->addWidget(skip_subapertures_outside_pupil_checkbox_, row++, 0, 1, 3);
+
   add_zernike_row("Z2 - Tilt X:", z2_checkbox_, z2_spin_);
   add_zernike_row("Z3 - Tilt Y:", z3_checkbox_, z3_spin_);
   add_zernike_row("Z4 - Defocus:", z4_checkbox_, z4_spin_);
@@ -300,6 +321,8 @@ void AutoFocusWidget::setup_ui() {
   add_zernike_row("Z9 - Horizontal coma:", z9_checkbox_, z9_spin_);
   add_zernike_row("Z10 - Oblique trefoil:", z10_checkbox_, z10_spin_);
 
+  zernike_metrics_plot_checkbox_ =
+      create_checkbox(content_container_, true, "Display Zernike metrics plot");
   reconstructed_phase_checkbox_ =
       create_checkbox(content_container_, false, "Display reconstructed phase");
   shack_hartmann_sensor_view_checkbox_ =
@@ -307,6 +330,7 @@ void AutoFocusWidget::setup_ui() {
   cross_correlation_view_checkbox_ =
       create_checkbox(content_container_, false, "Display cross-correlation view");
 
+  inner_layout->addWidget(zernike_metrics_plot_checkbox_, row++, 0, 1, 3);
   inner_layout->addWidget(reconstructed_phase_checkbox_, row++, 0, 1, 3);
   inner_layout->addWidget(shack_hartmann_sensor_view_checkbox_, row++, 0, 1, 3);
   inner_layout->addWidget(cross_correlation_view_checkbox_, row++, 0, 1, 3);
@@ -337,6 +361,8 @@ void AutoFocusWidget::connect_signals() {
 
   connect(nb_iter_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &AutoFocusWidget::settings_changed);
+  connect(skip_subapertures_outside_pupil_checkbox_, &QCheckBox::toggled, this,
+          &AutoFocusWidget::settings_changed);
 
   connect(z2_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
   connect(z3_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
@@ -349,6 +375,8 @@ void AutoFocusWidget::connect_signals() {
   connect(z9_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
   connect(z10_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
 
+  connect(zernike_metrics_plot_checkbox_, &QCheckBox::toggled, this,
+          &AutoFocusWidget::zernike_metrics_plot_toggled);
   connect(reconstructed_phase_checkbox_, &QCheckBox::toggled, this,
           &AutoFocusWidget::settings_changed);
   connect(shack_hartmann_sensor_view_checkbox_, &QCheckBox::toggled, this,

@@ -35,8 +35,14 @@ namespace holotask::syncs {
 
 void to_json(nlohmann::json &j, const ZernikeSettings &s) {
   j = nlohmann::json{
-      {"indexes", s.indexes}, {"lambda", s.lambda}, {"dx", s.dx}, {"dy", s.dy}, {"z", s.z},
-      {"ny", s.ny},           {"nx", s.nx},
+      {"indexes", s.indexes},
+      {"lambda", s.lambda},
+      {"dx", s.dx},
+      {"dy", s.dy},
+      {"z", s.z},
+      {"ny", s.ny},
+      {"nx", s.nx},
+      {"skip_subapertures_outside_pupil", s.skip_subapertures_outside_pupil},
   };
 }
 
@@ -55,8 +61,9 @@ void from_json(const nlohmann::json &j, ZernikeSettings &s) {
   j.at("z").get_to(s.z);
 
   // Default to 1 if not provided for backward compatibility
-  s.ny = j.value("ny", 1);
-  s.nx = j.value("nx", 1);
+  s.ny                              = j.value("ny", 1);
+  s.nx                              = j.value("nx", 1);
+  s.skip_subapertures_outside_pupil = j.value("skip_subapertures_outside_pupil", true);
 }
 
 namespace {
@@ -421,7 +428,8 @@ public:
         const float x_n_global = X / global_pupil_radius_m;
         const float y_n_global = Y / global_pupil_radius_m;
 
-        if (x_n_global * x_n_global + y_n_global * y_n_global > 1.0f) {
+        if (settings_.skip_subapertures_outside_pupil &&
+            x_n_global * x_n_global + y_n_global * y_n_global > 1.0f) {
           skipped_subaps++;
           continue;
         }

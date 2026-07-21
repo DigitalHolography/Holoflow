@@ -15,12 +15,14 @@
 #include "ui/widgets/tensor_display_widget.hh"
 
 #include <QDebug>
+#include <QLabel>
 #include <QMetaType>
 #include <QOpenGLExtraFunctions>
 #include <QOpenGLShaderProgram>
 #include <QPaintEvent>
 #include <QPainter>
 #include <QStyleOption>
+#include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
@@ -73,6 +75,15 @@ void main(){ frag = color; })";
 TensorDisplayWidget::TensorDisplayWidget(QWidget *p) : QOpenGLWidget(p) {
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   setMinimumSize(0, 0);
+
+  auto *layout = new QVBoxLayout(this);
+  layout->setContentsMargins(24, 24, 24, 24);
+  waiting_label_ = new QLabel(tr("Waiting for data"), this);
+  waiting_label_->setObjectName("visualizationWorkspacePlaceholder");
+  waiting_label_->setAlignment(Qt::AlignCenter);
+  waiting_label_->setWordWrap(true);
+  waiting_label_->setAttribute(Qt::WA_TransparentForMouseEvents);
+  layout->addWidget(waiting_label_, 1);
 }
 
 void TensorDisplayWidget::set_fixed_aspect(std::optional<QSize> size) {
@@ -111,7 +122,8 @@ void TensorDisplayWidget::set_value_range(float vmin, float vmax) {
 
 void TensorDisplayWidget::initializeGL() {
   initializeOpenGLFunctions();
-  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  const QColor background = palette().color(QPalette::Window);
+  glClearColor(background.redF(), background.greenF(), background.blueF(), 1.0f);
 
   // QOpenGLWidget receives a new context when ADS reparents it between docked and floating
   // top-level windows. Image dimensions survive that transition, but texture storage does not.
@@ -286,6 +298,7 @@ void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
   updateTexture(reinterpret_cast<const void *>(bytes.constData()), w, h, dtype);
   doneCurrent();
 
+  waiting_label_->hide();
   update();
   emit tensorDisplayed();
 }
@@ -356,9 +369,15 @@ void TensorDisplayWidget::drawReticle() {
 }
 
 void TensorDisplayWidget::paintGL() {
-  glClear(GL_COLOR_BUFFER_BIT);
-  if (img_w_ <= 0 || img_h_ <= 0)
+  if (img_w_ <= 0 || img_h_ <= 0) {
+    const QColor background = palette().color(QPalette::Window);
+    glClearColor(background.redF(), background.greenF(), background.blueF(), 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
     return;
+  }
+
+  glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+  glClear(GL_COLOR_BUFFER_BIT);
 
   updateLetterboxViewport();
 

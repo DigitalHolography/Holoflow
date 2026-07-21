@@ -37,7 +37,7 @@ public:
     layout->setContentsMargins(2, 2, 2, 2);
     layout->setSpacing(7);
 
-    auto *widget_title = new QLabel("Zernike a4", this);
+    auto *widget_title = new QLabel("Zernike metrics", this);
     widget_title->setObjectName("settingsWidgetTitle");
     layout->addWidget(widget_title);
 

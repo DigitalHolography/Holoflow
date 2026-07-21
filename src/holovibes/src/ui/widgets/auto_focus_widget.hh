@@ -33,6 +33,7 @@ public:
   int  get_nb_subaps() const;
   int  get_nb_iter() const;
   bool is_enabled() const;
+  bool skip_subapertures_outside_pupil() const;
 
   // Zernike values in radians
   double get_z2() const;
@@ -80,15 +81,18 @@ public:
   void set_z10_enabled(bool enabled);
 
   // Visualization toggles
+  bool show_zernike_metrics_plot() const;
   bool show_reconstructed_phase() const;
   bool show_shack_hartmann_sensor_view() const;
   bool show_cross_correlation_view() const;
 
+  void set_show_zernike_metrics_plot(bool checked);
   void set_show_reconstructed_phase(bool checked);
   void set_show_shack_hartmann_sensor_view(bool checked);
   void set_show_cross_correlation_view(bool checked);
 
   void set_enabled(bool enabled);
+  void set_skip_subapertures_outside_pupil(bool skip);
 
   void clear_validation_styles();
   void mark_nb_subaps_invalid();
@@ -113,6 +117,7 @@ public:
 
 signals:
   void settings_changed();
+  void zernike_metrics_plot_toggled(bool checked);
 
 private:
   void setup_ui();
@@ -122,6 +127,7 @@ private:
   QCheckBox *enable_check_;
   QSpinBox  *nb_subaps_spin_;
   QSpinBox  *nb_iter_spin_;
+  QCheckBox *skip_subapertures_outside_pupil_checkbox_;
 
   QCheckBox      *z2_checkbox_;
   QCheckBox      *z3_checkbox_;
@@ -142,6 +148,7 @@ private:
   QDoubleSpinBox *z9_spin_;
   QDoubleSpinBox *z10_spin_;
 
+  QCheckBox *zernike_metrics_plot_checkbox_;
   QCheckBox *reconstructed_phase_checkbox_;
   QCheckBox *shack_hartmann_sensor_view_checkbox_;
   QCheckBox *cross_correlation_view_checkbox_;

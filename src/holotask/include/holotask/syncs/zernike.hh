@@ -31,8 +31,9 @@ struct ZernikeSettings {
   float            dx;
   float            dy;
   float            z;
-  size_t           ny = 1;
-  size_t           nx = 1;
+  size_t           ny                              = 1;
+  size_t           nx                              = 1;
+  bool             skip_subapertures_outside_pupil = true;
 
   bool operator==(const ZernikeSettings &) const = default;
 };

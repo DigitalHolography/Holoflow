@@ -228,6 +228,7 @@ void Manager::register_components() {
 
 void Manager::configure_zernike_history(bool start_run) {
   const double time_window_seconds = s_.signal_plot_time_window_seconds;
+  const auto   indexes             = s_.autofocus_zernike_orders;
   if (!std::isfinite(time_window_seconds) || time_window_seconds <= 0.0) {
     throw std::invalid_argument("signal_plot_time_window_seconds must be positive and finite");
   }
@@ -236,10 +237,11 @@ void Manager::configure_zernike_history(bool start_run) {
     throw std::invalid_argument("signal_plot_sample_time_seconds must be positive and finite");
   }
 
-  auto configure = [widget = zernike_history_widget_, time_window_seconds, start_run]() {
+  auto configure = [widget = zernike_history_widget_, indexes, time_window_seconds, start_run]() {
     if (start_run) {
-      widget->start_run(time_window_seconds);
+      widget->start_run(time_window_seconds, indexes);
     } else {
+      widget->set_series(indexes);
       widget->set_time_window_seconds(time_window_seconds);
     }
   };

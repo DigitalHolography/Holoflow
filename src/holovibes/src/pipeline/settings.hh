@@ -142,9 +142,10 @@ struct Settings {
   int              autofocus_nb_subaps;
   int              autofocus_nb_iter;
   std::vector<int> autofocus_zernike_orders;
+  bool             autofocus_skip_subapertures_outside_pupil = true;
 
-  // Zernike a4 signal history. sample_time_seconds is the nominal interval between two
-  // consecutive plotted (emitted and valid) Zernike results, not processing completion time.
+  // Zernike coefficient history. sample_time_seconds is the nominal interval between two
+  // consecutive plotted (emitted and valid) coefficient sets, not processing completion time.
   double signal_plot_time_window_seconds = 8.0;
   double signal_plot_sample_time_seconds = 1.0 / 15.0;
 };

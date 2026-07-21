@@ -22,6 +22,7 @@
 #include "signal_history.hh"
 
 class QTimer;
+class QLabel;
 
 namespace holovibes::ui {
 
@@ -45,17 +46,23 @@ struct ZernikeHistoryDisplaySettings {
   bool operator==(const ZernikeHistoryDisplaySettings &) const = default;
 };
 
+struct ZernikeHistorySample {
+  int          noll_index;
+  SignalSample sample;
+};
+
 class ZernikeHistoryWidget : public QWidget {
   Q_OBJECT
 
 public:
   explicit ZernikeHistoryWidget(QWidget *parent = nullptr);
 
-  void start_run(double time_window_seconds);
+  void start_run(double time_window_seconds, const std::vector<int> &indexes);
   void resume_run();
   void stop_run();
+  void set_series(const std::vector<int> &indexes);
   void set_time_window_seconds(double time_window_seconds);
-  void append_samples(std::vector<SignalSample> samples);
+  void append_samples(std::vector<ZernikeHistorySample> samples);
 
   [[nodiscard]] ZernikeHistoryDisplaySettings display_settings() const;
   [[nodiscard]] AxisRange                     displayed_y_range() const;
@@ -77,19 +84,24 @@ protected:
   void mousePressEvent(QMouseEvent *event) override;
 
 private:
-  void update_recorded_extrema(double value);
-  void initialize_recorded_extrema_from_visible_samples();
-  void request_refresh();
+  struct Series {
+    int                   noll_index;
+    SignalHistory         history;
+    std::optional<double> recorded_minimum;
+    std::optional<double> recorded_maximum;
+  };
 
-  SignalHistory                 history_;
+  [[nodiscard]] Series   *find_series(int noll_index);
+  [[nodiscard]] AxisRange displayed_y_range(const Series &series) const;
+  void                    update_recorded_extrema(Series &series, double value);
+  void                    initialize_recorded_extrema_from_visible_samples();
+  void                    request_refresh();
+
+  std::vector<Series>           series_;
   ZernikeHistoryDisplaySettings display_settings_;
 
-  // Recorded extrema outlive the rolling visible buffer so samples that scroll out cannot shrink
-  // RecordedExtrema mode. Only exact data extrema are stored; display padding is computed later.
-  std::optional<double> recorded_minimum_;
-  std::optional<double> recorded_maximum_;
-
   QTimer *refresh_timer_ = nullptr;
+  QLabel *waiting_label_ = nullptr;
   bool    active_        = false;
   bool    refresh_dirty_ = true;
 };

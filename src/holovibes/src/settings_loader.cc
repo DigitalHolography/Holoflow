@@ -111,9 +111,11 @@ void write_image_rendering(json &j, const Settings &s) {
   rendering["filter2d"]["inner_radius"] = s.filter_r_inner;
   rendering["filter2d"]["outer_radius"] = s.filter_r_outer;
 
-  rendering["autofocus"]["enabled"]                           = s.autofocus_enabled;
-  rendering["autofocus"]["nb_subaps"]                         = s.autofocus_nb_subaps;
-  rendering["autofocus"]["nb_iter"]                           = s.autofocus_nb_iter;
+  rendering["autofocus"]["enabled"]   = s.autofocus_enabled;
+  rendering["autofocus"]["nb_subaps"] = s.autofocus_nb_subaps;
+  rendering["autofocus"]["nb_iter"]   = s.autofocus_nb_iter;
+  rendering["autofocus"]["skip_subapertures_outside_pupil"] =
+      s.autofocus_skip_subapertures_outside_pupil;
   rendering["autofocus"]["a4_history"]["time_window_seconds"] = s.signal_plot_time_window_seconds;
   rendering["autofocus"]["a4_history"]["sample_time_seconds"] = s.signal_plot_sample_time_seconds;
 
@@ -200,11 +202,13 @@ void read_image_rendering(Settings &s, const json &rendering) {
   s.filter_r_inner     = val(filter2d, "inner_radius", s.filter_r_inner);
   s.filter_r_outer     = val(filter2d, "outer_radius", s.filter_r_outer);
 
-  const auto &autofocus  = child_or_empty(rendering, "autofocus");
-  s.autofocus_enabled    = val(autofocus, "enabled", s.autofocus_enabled);
-  s.autofocus_nb_subaps  = val(autofocus, "nb_subaps", s.autofocus_nb_subaps);
-  s.autofocus_nb_iter    = val(autofocus, "nb_iter", s.autofocus_nb_iter);
-  const auto &a4_history = child_or_empty(autofocus, "a4_history");
+  const auto &autofocus                       = child_or_empty(rendering, "autofocus");
+  s.autofocus_enabled                         = val(autofocus, "enabled", s.autofocus_enabled);
+  s.autofocus_nb_subaps                       = val(autofocus, "nb_subaps", s.autofocus_nb_subaps);
+  s.autofocus_nb_iter                         = val(autofocus, "nb_iter", s.autofocus_nb_iter);
+  s.autofocus_skip_subapertures_outside_pupil = val(autofocus, "skip_subapertures_outside_pupil",
+                                                    s.autofocus_skip_subapertures_outside_pupil);
+  const auto &a4_history                      = child_or_empty(autofocus, "a4_history");
   s.signal_plot_time_window_seconds =
       val(a4_history, "time_window_seconds", s.signal_plot_time_window_seconds);
   s.signal_plot_sample_time_seconds =

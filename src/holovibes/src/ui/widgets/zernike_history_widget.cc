@@ -14,13 +14,16 @@
 
 #include "zernike_history_widget.hh"
 
+#include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPalette>
 #include <QTimer>
+#include <QVBoxLayout>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <limits>
 
@@ -29,7 +32,7 @@ namespace holovibes::ui {
 namespace {
 
 constexpr int kRefreshIntervalMs = 33;
-constexpr int kTickCount         = 5;
+constexpr int kTickCount         = 2;
 
 std::optional<std::pair<double, double>> finite_extrema(const std::deque<SignalSample> &samples) {
   double minimum = std::numeric_limits<double>::infinity();
@@ -92,6 +95,15 @@ ZernikeHistoryWidget::ZernikeHistoryWidget(QWidget *parent) : QWidget(parent) {
   setMinimumSize(320, 220);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 
+  auto *layout = new QVBoxLayout(this);
+  layout->setContentsMargins(24, 24, 24, 24);
+  waiting_label_ = new QLabel(tr("Waiting for data"), this);
+  waiting_label_->setObjectName("visualizationWorkspacePlaceholder");
+  waiting_label_->setAlignment(Qt::AlignCenter);
+  waiting_label_->setWordWrap(true);
+  waiting_label_->setAttribute(Qt::WA_TransparentForMouseEvents);
+  layout->addWidget(waiting_label_, 1);
+
   refresh_timer_ = new QTimer(this);
   refresh_timer_->setInterval(kRefreshIntervalMs);
   refresh_timer_->setTimerType(Qt::CoarseTimer);
@@ -104,13 +116,17 @@ ZernikeHistoryWidget::ZernikeHistoryWidget(QWidget *parent) : QWidget(parent) {
   });
 }
 
-void ZernikeHistoryWidget::start_run(double time_window_seconds) {
+void ZernikeHistoryWidget::start_run(double time_window_seconds, const std::vector<int> &indexes) {
   const bool time_window_changed = display_settings_.time_window_seconds != time_window_seconds;
   display_settings_.time_window_seconds = time_window_seconds;
-  history_.set_time_window_seconds(display_settings_.time_window_seconds);
-  history_.clear();
-  recorded_minimum_.reset();
-  recorded_maximum_.reset();
+  set_series(indexes);
+  for (auto &series : series_) {
+    series.history.set_time_window_seconds(display_settings_.time_window_seconds);
+    series.history.clear();
+    series.recorded_minimum.reset();
+    series.recorded_maximum.reset();
+  }
+  waiting_label_->show();
   active_ = true;
   refresh_timer_->start();
   request_refresh();
@@ -130,25 +146,45 @@ void ZernikeHistoryWidget::stop_run() {
   refresh_timer_->stop();
 }
 
+void ZernikeHistoryWidget::set_series(const std::vector<int> &indexes) {
+  const bool unchanged =
+      series_.size() == indexes.size() &&
+      std::equal(series_.begin(), series_.end(), indexes.begin(),
+                 [](const Series &series, int index) { return series.noll_index == index; });
+  if (unchanged) {
+    return;
+  }
+
+  series_.clear();
+  series_.reserve(indexes.size());
+  for (const int index : indexes) {
+    series_.push_back({index, SignalHistory(display_settings_.time_window_seconds)});
+  }
+  waiting_label_->show();
+  request_refresh();
+}
+
 void ZernikeHistoryWidget::set_time_window_seconds(double time_window_seconds) {
   auto settings                = display_settings_;
   settings.time_window_seconds = time_window_seconds;
   set_display_settings(settings);
 }
 
-void ZernikeHistoryWidget::append_samples(std::vector<SignalSample> samples) {
+void ZernikeHistoryWidget::append_samples(std::vector<ZernikeHistorySample> samples) {
   if (!active_) {
     return;
   }
 
   bool appended = false;
   for (const auto &sample : samples) {
-    if (history_.append(sample)) {
-      update_recorded_extrema(sample.value);
+    auto *series = find_series(sample.noll_index);
+    if (series != nullptr && series->history.append(sample.sample)) {
+      update_recorded_extrema(*series, sample.sample.value);
       appended = true;
     }
   }
   if (appended) {
+    waiting_label_->hide();
     request_refresh();
   }
 }
@@ -159,15 +195,33 @@ ZernikeHistoryDisplaySettings ZernikeHistoryWidget::display_settings() const {
 
 AxisRange ZernikeHistoryWidget::displayed_y_range() const {
   switch (display_settings_.y_scaling_mode) {
-  case YAxisScalingMode::VisibleWindow:
-    if (const auto extrema = finite_extrema(history_.samples()); extrema.has_value()) {
-      return make_display_range(extrema->first, extrema->second);
+  case YAxisScalingMode::VisibleWindow: {
+    double minimum = std::numeric_limits<double>::infinity();
+    double maximum = -std::numeric_limits<double>::infinity();
+    for (const auto &series : series_) {
+      if (const auto extrema = finite_extrema(series.history.samples()); extrema.has_value()) {
+        minimum = std::min(minimum, extrema->first);
+        maximum = std::max(maximum, extrema->second);
+      }
     }
+    if (std::isfinite(minimum) && std::isfinite(maximum)) {
+      return make_display_range(minimum, maximum);
+    }
+  }
     return {-1.0, 1.0};
-  case YAxisScalingMode::RecordedExtrema:
-    if (recorded_minimum_.has_value() && recorded_maximum_.has_value()) {
-      return make_display_range(*recorded_minimum_, *recorded_maximum_);
+  case YAxisScalingMode::RecordedExtrema: {
+    double minimum = std::numeric_limits<double>::infinity();
+    double maximum = -std::numeric_limits<double>::infinity();
+    for (const auto &series : series_) {
+      if (series.recorded_minimum.has_value() && series.recorded_maximum.has_value()) {
+        minimum = std::min(minimum, *series.recorded_minimum);
+        maximum = std::max(maximum, *series.recorded_maximum);
+      }
     }
+    if (std::isfinite(minimum) && std::isfinite(maximum)) {
+      return make_display_range(minimum, maximum);
+    }
+  }
     return {-1.0, 1.0};
   case YAxisScalingMode::Manual:
     return {display_settings_.manual_y_minimum, display_settings_.manual_y_maximum};
@@ -189,7 +243,9 @@ bool ZernikeHistoryWidget::set_display_settings(const ZernikeHistoryDisplaySetti
   }
 
   display_settings_ = settings;
-  history_.set_time_window_seconds(display_settings_.time_window_seconds);
+  for (auto &series : series_) {
+    series.history.set_time_window_seconds(display_settings_.time_window_seconds);
+  }
   request_refresh();
   emit display_settings_changed(display_settings_);
   return true;
@@ -219,8 +275,10 @@ void ZernikeHistoryWidget::set_y_axis_scaling_mode(YAxisScalingMode mode) {
 
 void ZernikeHistoryWidget::reset_recorded_range_state() {
   // This reset removes old outlier influence without changing display settings, samples, or time.
-  recorded_minimum_.reset();
-  recorded_maximum_.reset();
+  for (auto &series : series_) {
+    series.recorded_minimum.reset();
+    series.recorded_maximum.reset();
+  }
   initialize_recorded_extrema_from_visible_samples();
   request_refresh();
 }
@@ -235,108 +293,132 @@ QSize ZernikeHistoryWidget::sizeHint() const { return {520, 300}; }
 void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
   QPainter painter(this);
   painter.setRenderHint(QPainter::Antialiasing, true);
-  painter.fillRect(rect(), palette().color(QPalette::Base));
 
-  constexpr int left_margin   = 70;
-  constexpr int top_margin    = 34;
-  constexpr int right_margin  = 20;
-  constexpr int bottom_margin = 54;
-  const QRectF  plot =
-      QRectF(rect()).adjusted(left_margin, top_margin, -right_margin, -bottom_margin);
-  if (plot.width() <= 1.0 || plot.height() <= 1.0) {
+  const bool has_samples = std::ranges::any_of(
+      series_, [](const Series &series) { return !series.history.samples().empty(); });
+  painter.fillRect(rect(), palette().color(has_samples ? QPalette::Base : QPalette::Window));
+  if (!has_samples) {
     return;
   }
 
   const QColor text_color = palette().color(QPalette::Text);
   QColor       grid_color = text_color;
   grid_color.setAlpha(45);
-  QColor curve_color = palette().color(QPalette::Highlight);
-  if (!curve_color.isValid()) {
-    curve_color = QColor(50, 170, 210);
-  }
+  const std::array<QColor, 9> curve_colors{
+      QColor("#3DAEE9"), QColor("#E67E22"), QColor("#2ECC71"), QColor("#E74C3C"), QColor("#9B59B6"),
+      QColor("#F1C40F"), QColor("#1ABC9C"), QColor("#E84393"), QColor("#95A5A6"),
+  };
 
   painter.setPen(text_color);
   QFont title_font = painter.font();
   title_font.setBold(true);
   painter.setFont(title_font);
-  painter.drawText(QRectF(0.0, 4.0, width(), 24.0), Qt::AlignCenter, tr("Zernike a4"));
+  painter.drawText(QRectF(0.0, 2.0, width(), 22.0), Qt::AlignCenter, tr("Zernike metrics"));
 
-  const auto     &samples     = history_.samples();
-  const double    time_window = history_.time_window_seconds();
-  const AxisRange y_range     = displayed_y_range();
-  const double    y_min       = y_range.minimum;
-  const double    y_max       = y_range.maximum;
-  const double    newest_time = samples.empty() ? 0.0 : samples.back().time_seconds;
-  const auto      map_to_plot = [&](double relative_time, double value) {
-    const double x_fraction = (relative_time + time_window) / time_window;
-    const double y_fraction = (value - y_min) / (y_max - y_min);
-    return QPointF(plot.left() + x_fraction * plot.width(),
-                   plot.bottom() - y_fraction * plot.height());
-  };
-
-  painter.setFont(QFont(painter.font().family(), 8));
-  painter.setPen(QPen(grid_color, 1.0));
-  for (int tick = 0; tick <= kTickCount; ++tick) {
-    const double fraction = static_cast<double>(tick) / kTickCount;
-    const double x        = plot.left() + fraction * plot.width();
-    const double y        = plot.bottom() - fraction * plot.height();
-    painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()));
-    painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y));
-
-    painter.setPen(text_color);
-    const double relative_time = -time_window + fraction * time_window;
-    painter.drawText(QRectF(x - 34.0, plot.bottom() + 5.0, 68.0, 18.0), Qt::AlignHCenter,
-                     QString::number(relative_time, 'f', time_window < 2.0 ? 2 : 1));
-    const double y_value = y_min + fraction * (y_max - y_min);
-    painter.drawText(QRectF(2.0, y - 9.0, left_margin - 9.0, 18.0),
-                     Qt::AlignRight | Qt::AlignVCenter, format_axis_value(y_value));
-    painter.setPen(QPen(grid_color, 1.0));
-  }
-
-  painter.setPen(QPen(text_color, 1.0));
-  painter.drawRect(plot);
-  painter.drawText(QRectF(plot.left(), height() - 26.0, plot.width(), 20.0), Qt::AlignCenter,
-                   tr("Time (s)"));
-
-  painter.save();
-  painter.translate(17.0, plot.center().y());
-  painter.rotate(-90.0);
-  painter.drawText(QRectF(-plot.height() / 2.0, -10.0, plot.height(), 20.0), Qt::AlignCenter,
-                   tr("a4 (rad)"));
-  painter.restore();
-
-  if (samples.empty()) {
-    QColor no_data_color = text_color;
-    no_data_color.setAlpha(150);
-    painter.setPen(no_data_color);
-    painter.drawText(plot, Qt::AlignCenter, tr("No data"));
+  const int        series_count = static_cast<int>(series_.size());
+  const int        columns      = series_count <= 3 ? 1 : series_count <= 6 ? 2 : 3;
+  const int        rows         = (series_count + columns - 1) / columns;
+  constexpr double gap          = 8.0;
+  const QRectF     content      = QRectF(rect()).adjusted(8.0, 28.0, -8.0, -8.0);
+  const double     cell_width   = (content.width() - (columns - 1) * gap) / columns;
+  const double     cell_height  = (content.height() - (rows - 1) * gap) / rows;
+  if (cell_width <= 1.0 || cell_height <= 1.0) {
     return;
   }
 
-  QPainterPath curve;
-  bool         started = false;
-  for (const auto &sample : samples) {
-    if (!std::isfinite(sample.value)) {
-      continue;
-    }
-    const QPointF point = map_to_plot(sample.time_seconds - newest_time, sample.value);
-    if (!started) {
-      curve.moveTo(point);
-      started = true;
-    } else {
-      curve.lineTo(point);
+  const double time_window = display_settings_.time_window_seconds;
+  double       newest_time = 0.0;
+  for (const auto &series : series_) {
+    const auto &samples = series.history.samples();
+    if (!samples.empty()) {
+      newest_time = std::max(newest_time, samples.back().time_seconds);
     }
   }
 
-  painter.save();
-  painter.setClipRect(plot);
-  painter.setPen(QPen(curve_color, 2.0));
-  painter.drawPath(curve);
-  if (samples.size() == 1) {
-    painter.setBrush(curve_color);
-    painter.drawEllipse(map_to_plot(0.0, samples.back().value), 2.5, 2.5);
+  for (size_t i = 0; i < series_.size(); ++i) {
+    const int    column = static_cast<int>(i) % columns;
+    const int    row    = static_cast<int>(i) / columns;
+    const QRectF cell(content.left() + column * (cell_width + gap),
+                      content.top() + row * (cell_height + gap), cell_width, cell_height);
+    const QRectF plot = cell.adjusted(50.0, 20.0, -8.0, -30.0);
+    if (plot.width() <= 1.0 || plot.height() <= 1.0) {
+      continue;
+    }
+
+    const auto     &series      = series_[i];
+    const auto     &samples     = series.history.samples();
+    const AxisRange y_range     = displayed_y_range(series);
+    const double    y_min       = y_range.minimum;
+    const double    y_max       = y_range.maximum;
+    const auto      map_to_plot = [&](double relative_time, double value) {
+      const double x_fraction = (relative_time + time_window) / time_window;
+      const double y_fraction = (value - y_min) / (y_max - y_min);
+      return QPointF(plot.left() + x_fraction * plot.width(),
+                     plot.bottom() - y_fraction * plot.height());
+    };
+
+    QFont subplot_title_font = painter.font();
+    subplot_title_font.setBold(true);
+    subplot_title_font.setPixelSize(11);
+    painter.setFont(subplot_title_font);
+    painter.setPen(text_color);
+    painter.drawText(QRectF(cell.left(), cell.top(), cell.width(), 18.0), Qt::AlignCenter,
+                     QString("a%1 (rad)").arg(series.noll_index));
+
+    painter.setFont(QFont(painter.font().family(), 7));
+    painter.setPen(QPen(grid_color, 1.0));
+    for (int tick = 0; tick <= kTickCount; ++tick) {
+      const double fraction = static_cast<double>(tick) / kTickCount;
+      const double x        = plot.left() + fraction * plot.width();
+      const double y        = plot.bottom() - fraction * plot.height();
+      painter.drawLine(QPointF(x, plot.top()), QPointF(x, plot.bottom()));
+      painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y));
+
+      painter.setPen(text_color);
+      const double relative_time = -time_window + fraction * time_window;
+      painter.drawText(QRectF(x - 28.0, plot.bottom() + 2.0, 56.0, 13.0), Qt::AlignHCenter,
+                       QString::number(relative_time, 'f', time_window < 2.0 ? 2 : 1));
+      const double y_value = y_min + fraction * (y_max - y_min);
+      painter.drawText(QRectF(cell.left(), y - 7.0, 45.0, 14.0), Qt::AlignRight | Qt::AlignVCenter,
+                       format_axis_value(y_value));
+      painter.setPen(QPen(grid_color, 1.0));
+    }
+
+    painter.setPen(QPen(text_color, 1.0));
+    painter.drawRect(plot);
+    painter.drawText(QRectF(plot.left(), plot.bottom() + 15.0, plot.width(), 13.0), Qt::AlignCenter,
+                     tr("Time (s)"));
+
+    if (samples.empty()) {
+      painter.drawText(plot, Qt::AlignCenter, tr("Waiting for data"));
+      continue;
+    }
+
+    QPainterPath curve;
+    bool         started = false;
+    for (const auto &sample : samples) {
+      const QPointF point = map_to_plot(sample.time_seconds - newest_time, sample.value);
+      if (!started) {
+        curve.moveTo(point);
+        started = true;
+      } else {
+        curve.lineTo(point);
+      }
+    }
+
+    const QColor curve_color = curve_colors[i % curve_colors.size()];
+    painter.save();
+    painter.setClipRect(plot);
+    painter.setPen(QPen(curve_color, 2.0));
+    painter.setBrush(Qt::NoBrush);
+    painter.drawPath(curve);
+    if (samples.size() == 1) {
+      painter.setBrush(curve_color);
+      painter.drawEllipse(
+          map_to_plot(samples.back().time_seconds - newest_time, samples.back().value), 2.5, 2.5);
+    }
+    painter.restore();
   }
-  painter.restore();
 }
 
 void ZernikeHistoryWidget::mousePressEvent(QMouseEvent *event) {
@@ -346,17 +428,45 @@ void ZernikeHistoryWidget::mousePressEvent(QMouseEvent *event) {
   QWidget::mousePressEvent(event);
 }
 
-void ZernikeHistoryWidget::update_recorded_extrema(double value) {
+ZernikeHistoryWidget::Series *ZernikeHistoryWidget::find_series(int noll_index) {
+  const auto it = std::ranges::find(series_, noll_index, &Series::noll_index);
+  return it == series_.end() ? nullptr : &*it;
+}
+
+AxisRange ZernikeHistoryWidget::displayed_y_range(const Series &series) const {
+  switch (display_settings_.y_scaling_mode) {
+  case YAxisScalingMode::VisibleWindow:
+    if (const auto extrema = finite_extrema(series.history.samples()); extrema.has_value()) {
+      return make_display_range(extrema->first, extrema->second);
+    }
+    return {-1.0, 1.0};
+  case YAxisScalingMode::RecordedExtrema:
+    if (series.recorded_minimum.has_value() && series.recorded_maximum.has_value()) {
+      return make_display_range(*series.recorded_minimum, *series.recorded_maximum);
+    }
+    return {-1.0, 1.0};
+  case YAxisScalingMode::Manual:
+    return {display_settings_.manual_y_minimum, display_settings_.manual_y_maximum};
+  }
+
+  return {-1.0, 1.0};
+}
+
+void ZernikeHistoryWidget::update_recorded_extrema(Series &series, double value) {
   if (!std::isfinite(value)) {
     return;
   }
-  recorded_minimum_ = recorded_minimum_.has_value() ? std::min(*recorded_minimum_, value) : value;
-  recorded_maximum_ = recorded_maximum_.has_value() ? std::max(*recorded_maximum_, value) : value;
+  series.recorded_minimum =
+      series.recorded_minimum.has_value() ? std::min(*series.recorded_minimum, value) : value;
+  series.recorded_maximum =
+      series.recorded_maximum.has_value() ? std::max(*series.recorded_maximum, value) : value;
 }
 
 void ZernikeHistoryWidget::initialize_recorded_extrema_from_visible_samples() {
-  for (const auto &sample : history_.samples()) {
-    update_recorded_extrema(sample.value);
+  for (auto &series : series_) {
+    for (const auto &sample : series.history.samples()) {
+      update_recorded_extrema(series, sample.value);
+    }
   }
 }
 

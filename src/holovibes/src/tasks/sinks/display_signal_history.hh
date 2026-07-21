@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include <vector>
+
 #include <nlohmann/json.hpp>
 
 #include "holoflow/core/tasks.hh"
@@ -29,10 +31,11 @@ namespace holovibes::tasks::sinks {
 // -------------------------------------------------------------------------------------------------
 
 struct DisplaySignalHistorySettings {
-  double time_window_seconds = 8.0;
+  std::vector<int> indexes;
+  double           time_window_seconds = 8.0;
 
-  // One interval separates two consecutive emitted, valid Zernike a4 results. It is acquisition
-  // or pipeline time, not processing completion or GUI refresh time.
+  // One interval separates two consecutive emitted, valid Zernike coefficient sets. It is
+  // acquisition or pipeline time, not processing completion or GUI refresh time.
   double sample_time_seconds = 1.0 / 15.0;
 
   bool operator==(const DisplaySignalHistorySettings &) const = default;

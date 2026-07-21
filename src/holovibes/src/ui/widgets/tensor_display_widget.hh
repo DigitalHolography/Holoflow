@@ -26,6 +26,8 @@
 
 #include "holoflow/core/tensor.hh"
 
+class QLabel;
+
 namespace holovibes::ui {
 
 /// Available colormaps for tensor visualization
@@ -103,6 +105,7 @@ private:
   holoflow::core::DType current_dtype_ = holoflow::core::DType::U8;
 
   std::optional<QSize> fixed_aspect_size_{std::nullopt};
+  QLabel              *waiting_label_ = nullptr;
 };
 
 } // namespace holovibes::ui

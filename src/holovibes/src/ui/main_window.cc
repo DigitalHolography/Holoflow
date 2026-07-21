@@ -601,7 +601,7 @@ void MainWindow::refresh_visualization_availability() {
   const bool autofocus_enabled = autofocus->is_enabled();
   display_workspace_->set_visualization_availability({
       {"xy_processed", true},
-      {"zernike_a4", true},
+      {"zernike_a4", autofocus->show_zernike_metrics_plot()},
       {"zernike_phase", autofocus_enabled && autofocus->show_reconstructed_phase()},
       {"shack_hartmann", autofocus_enabled && autofocus->show_shack_hartmann_sensor_view()},
       {"shack_hartmann_xcorr", autofocus_enabled && autofocus->show_cross_correlation_view()},
@@ -878,6 +878,8 @@ void MainWindow::save_persistent_state() {
   settings.setValue("enabled", autofocus->is_enabled());
   settings.setValue("nb_subaps", autofocus->get_nb_subaps());
   settings.setValue("nb_iter", autofocus->get_nb_iter());
+  settings.setValue("skip_subapertures_outside_pupil",
+                    autofocus->skip_subapertures_outside_pupil());
   settings.setValue("z2_enabled", autofocus->is_z2_enabled());
   settings.setValue("z3_enabled", autofocus->is_z3_enabled());
   settings.setValue("z4_enabled", autofocus->is_z4_enabled());
@@ -887,6 +889,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("z8_enabled", autofocus->is_z8_enabled());
   settings.setValue("z9_enabled", autofocus->is_z9_enabled());
   settings.setValue("z10_enabled", autofocus->is_z10_enabled());
+  settings.setValue("show_zernike_metrics", autofocus->show_zernike_metrics_plot());
   settings.setValue("show_phase", autofocus->show_reconstructed_phase());
   settings.setValue("show_shack_hartmann", autofocus->show_shack_hartmann_sensor_view());
   settings.setValue("show_xcorr", autofocus->show_cross_correlation_view());
@@ -1020,6 +1023,10 @@ void MainWindow::restore_persistent_state() {
   autofocus->nb_subaps_spin()->setValue(
       settings.value("nb_subaps", autofocus->get_nb_subaps()).toInt());
   autofocus->nb_iter_spin()->setValue(settings.value("nb_iter", autofocus->get_nb_iter()).toInt());
+  autofocus->set_skip_subapertures_outside_pupil(
+      settings
+          .value("skip_subapertures_outside_pupil", autofocus->skip_subapertures_outside_pupil())
+          .toBool());
   autofocus->set_z2_enabled(settings.value("z2_enabled", autofocus->is_z2_enabled()).toBool());
   autofocus->set_z3_enabled(settings.value("z3_enabled", autofocus->is_z3_enabled()).toBool());
   autofocus->set_z4_enabled(settings.value("z4_enabled", autofocus->is_z4_enabled()).toBool());
@@ -1029,6 +1036,8 @@ void MainWindow::restore_persistent_state() {
   autofocus->set_z8_enabled(settings.value("z8_enabled", autofocus->is_z8_enabled()).toBool());
   autofocus->set_z9_enabled(settings.value("z9_enabled", autofocus->is_z9_enabled()).toBool());
   autofocus->set_z10_enabled(settings.value("z10_enabled", autofocus->is_z10_enabled()).toBool());
+  autofocus->set_show_zernike_metrics_plot(
+      settings.value("show_zernike_metrics", autofocus->show_zernike_metrics_plot()).toBool());
   autofocus->set_show_reconstructed_phase(
       settings.value("show_phase", autofocus->show_reconstructed_phase()).toBool());
   autofocus->set_show_shack_hartmann_sensor_view(
@@ -1079,8 +1088,9 @@ void MainWindow::initialize_display_widgets() {
 
   display_workspace_->register_visualization(
       {"xy_processed", "XY Processed", xy_processed_widget_, {}, DockPlacement::Root});
-  display_workspace_->register_visualization(
-      {"zernike_a4", "Zernike a4", zernike_history_widget_, "xy_processed", DockPlacement::Right});
+  display_workspace_->register_visualization({"zernike_a4", "Zernike Metrics",
+                                              zernike_history_widget_, "xy_processed",
+                                              DockPlacement::Right});
   display_workspace_->register_visualization({"zernike_phase", "Zernike Phase",
                                               zernike_phase_widget_, "xy_processed",
                                               DockPlacement::Below});
@@ -1127,6 +1137,8 @@ void MainWindow::initialize_display_widgets() {
           [this](bool) { refresh_visualization_availability(); });
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this,
           &MainWindow::refresh_visualization_availability);
+  connect(render_widget_->autofocus_widget(), &AutoFocusWidget::zernike_metrics_plot_toggled, this,
+          [this](bool) { refresh_visualization_availability(); });
 
   connect(view_widget_, &ViewWidget::reticle_toggled, this, [this](bool checked) {
     xy_processed_widget_->set_reticle_enabled(checked);
@@ -1399,7 +1411,6 @@ void MainWindow::on_stop_pipeline_success() {
     export_widget_->set_record_enabled(false);
     export_widget_->set_stop_enabled(false);
     on_metrics_updated(0.0);
-    display_workspace_->set_pipeline_running(false);
     refresh_command_bar();
     return;
   }
@@ -1419,7 +1430,6 @@ void MainWindow::on_stop_pipeline_failure(const QString &error) {
     export_widget_->set_record_enabled(false);
     export_widget_->set_stop_enabled(false);
     on_metrics_updated(0.0);
-    display_workspace_->set_pipeline_running(false);
     refresh_command_bar();
   } else {
     reset_pipeline_ui_after_stop();
@@ -1452,7 +1462,6 @@ void MainWindow::on_resume_pipeline_failure(const QString &error) {
   import_widget_->set_stop_enabled(true);
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
-  display_workspace_->set_pipeline_running(false);
   refresh_command_bar();
 
   show_pipeline_error_popup(tr("An error occurred while resuming the pipeline:\n%1").arg(error));
@@ -2131,6 +2140,8 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.autofocus_nb_subaps      = render_widget_->autofocus_widget()->get_nb_subaps();
     s.autofocus_nb_iter        = render_widget_->autofocus_widget()->get_nb_iter();
     s.autofocus_zernike_orders = std::vector<int>();
+    s.autofocus_skip_subapertures_outside_pupil =
+        render_widget_->autofocus_widget()->skip_subapertures_outside_pupil();
 
     if (render_widget_->autofocus_widget()->is_z2_enabled()) {
       s.autofocus_zernike_orders.push_back(2);
@@ -2325,6 +2336,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     autofocus->set_enabled(s.autofocus_enabled);
     autofocus->nb_subaps_spin()->setValue(s.autofocus_nb_subaps);
     autofocus->nb_iter_spin()->setValue(s.autofocus_nb_iter);
+    autofocus->set_skip_subapertures_outside_pupil(s.autofocus_skip_subapertures_outside_pupil);
   }
 
   configure_unsupported_features();

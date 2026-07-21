@@ -36,29 +36,34 @@ TEST(SignalPlotSettingsTest, DefaultsArePositive) {
   const Settings settings{};
   EXPECT_DOUBLE_EQ(settings.signal_plot_time_window_seconds, 8.0);
   EXPECT_DOUBLE_EQ(settings.signal_plot_sample_time_seconds, 1.0 / 15.0);
+  EXPECT_TRUE(settings.autofocus_skip_subapertures_outside_pupil);
 }
 
 TEST(SignalPlotSettingsTest, LegacyJsonRoundTripPreservesValues) {
   Settings settings{};
-  settings.signal_plot_time_window_seconds = 12.5;
-  settings.signal_plot_sample_time_seconds = 0.025;
+  settings.signal_plot_time_window_seconds           = 12.5;
+  settings.signal_plot_sample_time_seconds           = 0.025;
+  settings.autofocus_skip_subapertures_outside_pupil = false;
 
   const auto json     = settings_to_old_json(settings);
   const auto restored = old_json_to_settings(json, Settings{});
 
   EXPECT_DOUBLE_EQ(restored.signal_plot_time_window_seconds, 12.5);
   EXPECT_DOUBLE_EQ(restored.signal_plot_sample_time_seconds, 0.025);
+  EXPECT_FALSE(restored.autofocus_skip_subapertures_outside_pupil);
 }
 
 TEST(SignalPlotSettingsTest, MissingLegacyFieldsKeepDefaults) {
   Settings defaults{};
-  defaults.signal_plot_time_window_seconds = 9.0;
-  defaults.signal_plot_sample_time_seconds = 0.2;
+  defaults.signal_plot_time_window_seconds           = 9.0;
+  defaults.signal_plot_sample_time_seconds           = 0.2;
+  defaults.autofocus_skip_subapertures_outside_pupil = false;
 
   const auto restored = old_json_to_settings(nlohmann::json::object(), defaults);
 
   EXPECT_DOUBLE_EQ(restored.signal_plot_time_window_seconds, 9.0);
   EXPECT_DOUBLE_EQ(restored.signal_plot_sample_time_seconds, 0.2);
+  EXPECT_FALSE(restored.autofocus_skip_subapertures_outside_pupil);
 }
 
 TEST(SignalPlotSettingsTest, ValidationRejectsInvalidValues) {
