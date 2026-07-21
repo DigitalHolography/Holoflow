@@ -15,7 +15,6 @@
 #include "ui/main_window.hh"
 
 #include <QAction>
-#include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -24,20 +23,11 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
-#include <QDockWidget>
 #include <QDoubleSpinBox>
-#include <QDrag>
-#include <QDragEnterEvent>
-#include <QDragLeaveEvent>
-#include <QDragMoveEvent>
-#include <QDropEvent>
-#include <QEvent>
 #include <QFileDialog>
 #include <QFileInfoList>
 #include <QFormLayout>
 #include <QFrame>
-#include <QGridLayout>
-#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QKeySequence>
@@ -45,22 +35,16 @@
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
-#include <QMimeData>
-#include <QMouseEvent>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
-#include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSlider>
-#include <QSpacerItem>
 #include <QSpinBox>
-#include <QSplitter>
-#include <QStackedLayout>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QStyle>
@@ -79,6 +63,7 @@
 #include "holofile/holofile.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
+#include "ui/visualization_workspace.hh"
 #include "ui/widgets/selected_widget_settings_panel.hh"
 #include "ui/widgets/tensor_display_widget.hh"
 #include "ui/widgets/zernike_history_widget.hh"
@@ -87,11 +72,7 @@ namespace {
 
 constexpr int  kLargeSpinMax             = 1024 * 1024;
 constexpr int  kTopBarHeight             = 30;
-constexpr int  kEmptySecondaryDropHeight = 72;
 constexpr auto kDefaultSamplingFrequency = 37'000.0;
-constexpr auto kDisplayPanelMimeType     = "application/x-holovibes-display-panel";
-constexpr auto kDisplayPanelIdProperty   = "displayPanelId";
-constexpr auto kDisplayPanelMainProperty = "displayPanelInMain";
 
 QSpinBox *create_spin_box(QWidget *parent, int minimum, int maximum, int value) {
   auto *spin_box = new QSpinBox(parent);
@@ -189,259 +170,6 @@ void restore_combo_text(QSettings &settings, const char *key, QComboBox *combo_b
     combo_box->setCurrentIndex(index);
   }
 }
-
-void clear_layout(QLayout *layout) {
-  auto     *grid_layout = qobject_cast<QGridLayout *>(layout);
-  const int rows        = grid_layout != nullptr ? grid_layout->rowCount() : 0;
-  const int columns     = grid_layout != nullptr ? grid_layout->columnCount() : 0;
-
-  while (auto *item = layout->takeAt(0)) {
-    delete item;
-  }
-
-  if (grid_layout != nullptr) {
-    for (int row = 0; row < rows; ++row) {
-      grid_layout->setRowStretch(row, 0);
-      grid_layout->setRowMinimumHeight(row, 0);
-    }
-    for (int column = 0; column < columns; ++column) {
-      grid_layout->setColumnStretch(column, 0);
-      grid_layout->setColumnMinimumWidth(column, 0);
-    }
-  }
-}
-
-void repolish(QWidget *widget) {
-  widget->style()->unpolish(widget);
-  widget->style()->polish(widget);
-  widget->update();
-}
-
-void set_drag_active(QWidget *widget, bool active) {
-  widget->setProperty("dragActive", active);
-  repolish(widget);
-}
-
-void start_display_panel_drag(QWidget *source, const QString &display_id) {
-  auto *mime_data = new QMimeData();
-  mime_data->setData(kDisplayPanelMimeType, display_id.toUtf8());
-
-  auto *drag = new QDrag(source);
-  drag->setMimeData(mime_data);
-  drag->exec(Qt::MoveAction);
-}
-
-bool accepts_display_panel_drag(QDragEnterEvent *event) {
-  if (!event->mimeData()->hasFormat(kDisplayPanelMimeType)) {
-    return false;
-  }
-
-  event->acceptProposedAction();
-  return true;
-}
-
-bool accepts_display_panel_drag(QDragMoveEvent *event) {
-  if (!event->mimeData()->hasFormat(kDisplayPanelMimeType)) {
-    return false;
-  }
-
-  event->acceptProposedAction();
-  return true;
-}
-
-QString dropped_display_panel_id(QDropEvent *event) {
-  if (!event->mimeData()->hasFormat(kDisplayPanelMimeType)) {
-    return {};
-  }
-
-  event->acceptProposedAction();
-  return QString::fromUtf8(event->mimeData()->data(kDisplayPanelMimeType));
-}
-
-class DraggableDisplayPanel : public QGroupBox {
-public:
-  using DropHandler = std::function<void(const QString &, bool)>;
-
-  DraggableDisplayPanel(const QString &title, const QString &display_id, DropHandler drop_handler,
-                        QWidget *parent)
-      : QGroupBox(title, parent), display_id_(display_id), drop_handler_(std::move(drop_handler)) {
-    setObjectName("displayPanel");
-    setAcceptDrops(true);
-    setProperty(kDisplayPanelIdProperty, display_id_);
-    setProperty(kDisplayPanelMainProperty, false);
-  }
-
-protected:
-  void mousePressEvent(QMouseEvent *event) override {
-    if (event->button() == Qt::LeftButton) {
-      drag_start_pos_ = event->pos();
-    }
-
-    QGroupBox::mousePressEvent(event);
-  }
-
-  void mouseMoveEvent(QMouseEvent *event) override {
-    if ((event->buttons() & Qt::LeftButton) != 0 &&
-        (event->pos() - drag_start_pos_).manhattanLength() >= QApplication::startDragDistance()) {
-      start_display_panel_drag(this, display_id_);
-      return;
-    }
-
-    QGroupBox::mouseMoveEvent(event);
-  }
-
-  void dragEnterEvent(QDragEnterEvent *event) override {
-    if (accepts_display_panel_drag(event)) {
-      set_drag_active(this, true);
-    }
-  }
-
-  void dragMoveEvent(QDragMoveEvent *event) override { accepts_display_panel_drag(event); }
-
-  void dragLeaveEvent(QDragLeaveEvent *event) override {
-    set_drag_active(this, false);
-    QGroupBox::dragLeaveEvent(event);
-  }
-
-  void dropEvent(QDropEvent *event) override {
-    const QString dropped_id = dropped_display_panel_id(event);
-    set_drag_active(this, false);
-    if (dropped_id.isEmpty() || dropped_id == display_id_) {
-      return;
-    }
-
-    drop_handler_(dropped_id, property(kDisplayPanelMainProperty).toBool());
-  }
-
-private:
-  QString     display_id_;
-  DropHandler drop_handler_;
-  QPoint      drag_start_pos_;
-};
-
-class DisplayViewport : public QFrame {
-public:
-  using DropHandler = DraggableDisplayPanel::DropHandler;
-
-  DisplayViewport(QWidget *display, const QString &display_id, DropHandler drop_handler,
-                  bool square_viewport, bool interactive_viewport, QWidget *parent)
-      : QFrame(parent), display_(display), display_id_(display_id),
-        drop_handler_(std::move(drop_handler)), square_viewport_(square_viewport) {
-    setObjectName("displayViewport");
-    setAcceptDrops(true);
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    setMinimumSize(0, 0);
-
-    display_->setParent(this);
-    display_->setAttribute(Qt::WA_TransparentForMouseEvents, !interactive_viewport);
-    display_->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-    display_->setMinimumSize(0, 0);
-    display_->show();
-  }
-
-protected:
-  void mousePressEvent(QMouseEvent *event) override {
-    if (event->button() == Qt::LeftButton) {
-      drag_start_pos_ = event->pos();
-    }
-
-    QFrame::mousePressEvent(event);
-  }
-
-  void mouseMoveEvent(QMouseEvent *event) override {
-    if ((event->buttons() & Qt::LeftButton) != 0 &&
-        (event->pos() - drag_start_pos_).manhattanLength() >= QApplication::startDragDistance()) {
-      start_display_panel_drag(this, display_id_);
-      return;
-    }
-
-    QFrame::mouseMoveEvent(event);
-  }
-
-  void resizeEvent(QResizeEvent *event) override {
-    QFrame::resizeEvent(event);
-
-    if (square_viewport_) {
-      const int side = std::max(0, std::min(width(), height()));
-      const int x    = (width() - side) / 2;
-      const int y    = (height() - side) / 2;
-      display_->setGeometry(x, y, side, side);
-    } else {
-      display_->setGeometry(rect());
-    }
-  }
-
-  void dragEnterEvent(QDragEnterEvent *event) override {
-    if (accepts_display_panel_drag(event)) {
-      set_drag_active(this, true);
-    }
-  }
-
-  void dragMoveEvent(QDragMoveEvent *event) override { accepts_display_panel_drag(event); }
-
-  void dragLeaveEvent(QDragLeaveEvent *event) override {
-    set_drag_active(this, false);
-    QFrame::dragLeaveEvent(event);
-  }
-
-  void dropEvent(QDropEvent *event) override {
-    const QString dropped_id = dropped_display_panel_id(event);
-    set_drag_active(this, false);
-    if (dropped_id.isEmpty() || dropped_id == display_id_) {
-      return;
-    }
-
-    auto *panel = qobject_cast<QWidget *>(parent());
-    if (panel == nullptr) {
-      return;
-    }
-
-    drop_handler_(dropped_id, panel->property(kDisplayPanelMainProperty).toBool());
-  }
-
-private:
-  QWidget    *display_;
-  QString     display_id_;
-  DropHandler drop_handler_;
-  bool        square_viewport_;
-  QPoint      drag_start_pos_;
-};
-
-class DisplayDropZone : public QFrame {
-public:
-  using DropHandler = std::function<void(const QString &)>;
-
-  explicit DisplayDropZone(DropHandler drop_handler, QWidget *parent)
-      : QFrame(parent), drop_handler_(std::move(drop_handler)) {
-    setAcceptDrops(true);
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-  }
-
-protected:
-  void dragEnterEvent(QDragEnterEvent *event) override {
-    if (accepts_display_panel_drag(event)) {
-      set_drag_active(this, true);
-    }
-  }
-
-  void dragMoveEvent(QDragMoveEvent *event) override { accepts_display_panel_drag(event); }
-
-  void dragLeaveEvent(QDragLeaveEvent *event) override {
-    set_drag_active(this, false);
-    QFrame::dragLeaveEvent(event);
-  }
-
-  void dropEvent(QDropEvent *event) override {
-    const QString dropped_id = dropped_display_panel_id(event);
-    set_drag_active(this, false);
-    if (!dropped_id.isEmpty()) {
-      drop_handler_(dropped_id);
-    }
-  }
-
-private:
-  DropHandler drop_handler_;
-};
 
 class FftFrequencyToolDialog : public QDialog {
 public:
@@ -671,7 +399,6 @@ MainWindow::MainWindow(QWidget *parent)
   validate_inputs();
   refresh_command_bar();
   configure_window();
-  qApp->installEventFilter(this);
 }
 
 void MainWindow::setup_main_layout() {
@@ -779,11 +506,13 @@ void MainWindow::setup_main_layout() {
   connect(stop_record_command_button_, &QPushButton::clicked, this,
           &MainWindow::on_export_stop_clicked);
 
-  main_splitter_ = new QSplitter(Qt::Horizontal, central_widget);
-  main_splitter_->setChildrenCollapsible(false);
-  main_layout->addWidget(main_splitter_, 1);
+  auto *content_row    = new QWidget(central_widget);
+  auto *content_layout = new QHBoxLayout(content_row);
+  content_layout->setContentsMargins(0, 0, 0, 0);
+  content_layout->setSpacing(8);
+  main_layout->addWidget(content_row, 1);
 
-  auto *controls_content = new QWidget(main_splitter_);
+  auto *controls_content = new QWidget(content_row);
   controls_content->setObjectName("controlsContent");
   controls_content->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
   auto *controls_layout = new QHBoxLayout(controls_content);
@@ -819,7 +548,7 @@ void MainWindow::setup_main_layout() {
   controls_layout->addWidget(controls_divider);
   controls_layout->addWidget(processing_column);
 
-  auto *controls_scroll = new QScrollArea(main_splitter_);
+  auto *controls_scroll = new QScrollArea(content_row);
   controls_scroll->setObjectName("controlsScrollArea");
   controls_scroll->viewport()->setObjectName("controlsScrollViewport");
   controls_scroll->setWidgetResizable(true);
@@ -833,16 +562,12 @@ void MainWindow::setup_main_layout() {
   controls_scroll->setFixedWidth(controls_width);
   controls_scroll->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
 
-  display_workspace_ = new QWidget(main_splitter_);
-  display_workspace_->setObjectName("displayWorkspace");
-  auto *display_layout = new QVBoxLayout(display_workspace_);
-  display_layout->setContentsMargins(8, 0, 8, 0);
-  display_layout->setSpacing(8);
+  display_workspace_ = new VisualizationWorkspace(content_row);
 
-  right_sidebar_ = new QWidget(main_splitter_);
+  right_sidebar_ = new QWidget(content_row);
   right_sidebar_->setObjectName("rightSidebar");
   right_sidebar_->setMinimumWidth(280);
-  right_sidebar_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+  right_sidebar_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
   auto *right_sidebar_layout = new QVBoxLayout(right_sidebar_);
   right_sidebar_layout->setContentsMargins(0, 0, 0, 0);
   right_sidebar_layout->setSpacing(8);
@@ -854,13 +579,12 @@ void MainWindow::setup_main_layout() {
   right_sidebar_layout->addWidget(monitor_widget_);
   right_sidebar_layout->addWidget(selected_widget_settings_panel_, 1);
 
-  main_splitter_->addWidget(controls_scroll);
-  main_splitter_->addWidget(display_workspace_);
-  main_splitter_->addWidget(right_sidebar_);
-  main_splitter_->setStretchFactor(0, 0);
-  main_splitter_->setStretchFactor(1, 1);
-  main_splitter_->setStretchFactor(2, 0);
-  main_splitter_->setSizes({controls_width, 780, 300});
+  const int right_sidebar_width = std::max(280, right_sidebar_->sizeHint().width());
+  right_sidebar_->setFixedWidth(right_sidebar_width);
+
+  content_layout->addWidget(controls_scroll, 0);
+  content_layout->addWidget(display_workspace_, 1);
+  content_layout->addWidget(right_sidebar_, 0);
 
   connect(patient_line_edit_, &QLineEdit::textChanged, this,
           &MainWindow::update_recording_path_preview);
@@ -868,288 +592,44 @@ void MainWindow::setup_main_layout() {
           [this](int) { update_recording_path_preview(); });
 }
 
-QGroupBox *MainWindow::create_display_panel(const QString &title, const QString &display_id,
-                                            QWidget *widget, bool square_viewport,
-                                            bool interactive_viewport) {
-  auto *panel = new DraggableDisplayPanel(
-      title, display_id,
-      [this](const QString &dropped_id, bool target_main) {
-        move_display_panel(dropped_id,
-                           target_main ? DisplayPanelZone::Main : DisplayPanelZone::Secondary);
-      },
-      display_workspace_);
-
-  auto *layout = new QVBoxLayout(panel);
-  layout->setContentsMargins(6, 6, 6, 6);
-  layout->setSpacing(0);
-  layout->addWidget(new DisplayViewport(
-      widget, display_id,
-      [this](const QString &dropped_id, bool target_main) {
-        move_display_panel(dropped_id,
-                           target_main ? DisplayPanelZone::Main : DisplayPanelZone::Secondary);
-      },
-      square_viewport, interactive_viewport, panel));
-
-  widget->show();
-  panel->hide();
-  return panel;
-}
-
-std::array<QGroupBox *, 10> MainWindow::display_panels() const {
-  return {xy_processed_panel_,         xy_raw_panel_,        raw_spectrum_panel_,
-          processed_spectrum_panel_,   zernike_phase_panel_, shack_hartmann_panel_,
-          shack_hartmann_xcorr_panel_, xz_processed_panel_,  yz_processed_panel_,
-          zernike_history_panel_};
-}
-
-QGroupBox *MainWindow::display_panel_for(QWidget *widget) const {
-  if (widget == xy_processed_widget_) {
-    return xy_processed_panel_;
-  }
-  if (widget == xz_processed_widget_) {
-    return xz_processed_panel_;
-  }
-  if (widget == yz_processed_widget_) {
-    return yz_processed_panel_;
-  }
-  if (widget == xy_raw_widget_) {
-    return xy_raw_panel_;
-  }
-  if (widget == raw_spectrum_widget_) {
-    return raw_spectrum_panel_;
-  }
-  if (widget == processed_spectrum_widget_) {
-    return processed_spectrum_panel_;
-  }
-  if (widget == shack_hartmann_widget_) {
-    return shack_hartmann_panel_;
-  }
-  if (widget == shack_hartmann_xcorr_widget_) {
-    return shack_hartmann_xcorr_panel_;
-  }
-  if (widget == zernike_phase_widget_) {
-    return zernike_phase_panel_;
-  }
-  if (widget == zernike_history_widget_) {
-    return zernike_history_panel_;
-  }
-
-  return nullptr;
-}
-
-QGroupBox *MainWindow::display_panel_for_id(const QString &display_id) const {
-  for (auto *panel : display_panels()) {
-    if (panel != nullptr && panel->property(kDisplayPanelIdProperty).toString() == display_id) {
-      return panel;
-    }
-  }
-
-  return nullptr;
-}
-
-void MainWindow::set_display_title(QWidget *widget, const QString &title) {
-  if (widget != nullptr) {
-    widget->setWindowTitle(title);
-  }
-
-  if (auto *panel = display_panel_for(widget); panel != nullptr) {
-    panel->setTitle(title);
-  }
-}
-
-void MainWindow::set_display_visible(QWidget *widget, bool visible) {
-  if (widget == nullptr) {
+void MainWindow::refresh_visualization_availability() {
+  if (display_workspace_ == nullptr || view_widget_ == nullptr || render_widget_ == nullptr) {
     return;
   }
 
-  if (auto *panel = display_panel_for(widget); panel != nullptr) {
-    panel->setVisible(visible);
-  }
-
-  widget->setVisible(visible);
-  if (display_layout_update_depth_ > 0) {
-    display_layout_dirty_ = true;
-    return;
-  }
-
-  relayout_display_panels();
+  auto      *autofocus         = render_widget_->autofocus_widget();
+  const bool autofocus_enabled = autofocus->is_enabled();
+  display_workspace_->set_visualization_availability({
+      {"xy_processed", true},
+      {"zernike_a4", true},
+      {"zernike_phase", autofocus_enabled && autofocus->show_reconstructed_phase()},
+      {"shack_hartmann", autofocus_enabled && autofocus->show_shack_hartmann_sensor_view()},
+      {"shack_hartmann_xcorr", autofocus_enabled && autofocus->show_cross_correlation_view()},
+      {"xy_raw", view_widget_->is_raw_view_enabled()},
+      {"raw_spectrum", view_widget_->is_raw_spectrum_view_enabled()},
+      {"processed_spectrum", view_widget_->is_process_spectrum_view_enabled()},
+      {"xz_processed", view_widget_->is_cuts_3d_enabled()},
+      {"yz_processed", view_widget_->is_cuts_3d_enabled()},
+  });
 }
 
 void MainWindow::select_configurable_widget(ZernikeHistoryWidget *widget) {
-  if (selected_configurable_widget_ == widget) {
-    selected_widget_settings_panel_->set_selected_widget(widget);
+  if (widget == nullptr) {
+    selected_widget_settings_panel_->clear_selection();
     return;
   }
 
-  if (auto *old_panel = display_panel_for(selected_configurable_widget_.data());
-      old_panel != nullptr) {
-    old_panel->setProperty("selected", false);
-    repolish(old_panel);
-  }
-
-  selected_configurable_widget_ = widget;
-  selected_widget_settings_panel_->set_selected_widget(widget);
-  if (auto *panel = display_panel_for(widget); panel != nullptr) {
-    panel->setProperty("selected", true);
-    repolish(panel);
-  }
+  display_workspace_->select_visualization("zernike_a4");
 }
 
-void MainWindow::clear_configurable_widget_selection() { select_configurable_widget(nullptr); }
-
-bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
-  if (selected_configurable_widget_.isNull()) {
-    return QMainWindow::eventFilter(watched, event);
+void MainWindow::on_selected_visualization_changed(const QString &visualization_id) {
+  if (visualization_id == "zernike_a4") {
+    selected_widget_settings_panel_->set_selected_widget(zernike_history_widget_);
+  } else if (visualization_id.isEmpty()) {
+    selected_widget_settings_panel_->clear_selection();
+  } else {
+    selected_widget_settings_panel_->show_no_configurable_settings();
   }
-
-  if (event->type() == QEvent::KeyPress &&
-      static_cast<QKeyEvent *>(event)->key() == Qt::Key_Escape) {
-    clear_configurable_widget_selection();
-    return QMainWindow::eventFilter(watched, event);
-  }
-
-  if (event->type() == QEvent::MouseButtonPress) {
-    auto *clicked_widget = qobject_cast<QWidget *>(watched);
-    auto  contains       = [](QWidget *container, QWidget *candidate) {
-      return container != nullptr && candidate != nullptr &&
-             (container == candidate || container->isAncestorOf(candidate));
-    };
-
-    auto *selected_panel = display_panel_for(selected_configurable_widget_.data());
-    if (!contains(selected_panel, clicked_widget) &&
-        !contains(selected_widget_settings_panel_, clicked_widget)) {
-      clear_configurable_widget_selection();
-    }
-  }
-
-  return QMainWindow::eventFilter(watched, event);
-}
-
-void MainWindow::begin_display_layout_update() { ++display_layout_update_depth_; }
-
-void MainWindow::end_display_layout_update() {
-  if (display_layout_update_depth_ <= 0) {
-    return;
-  }
-
-  --display_layout_update_depth_;
-  if (display_layout_update_depth_ == 0 && display_layout_dirty_) {
-    display_layout_dirty_ = false;
-    relayout_display_panels();
-  }
-}
-
-void MainWindow::move_display_panel(const QString &display_id, DisplayPanelZone zone) {
-  auto *panel = display_panel_for_id(display_id);
-  if (panel == nullptr) {
-    return;
-  }
-
-  set_display_panel_zone(panel, zone);
-  relayout_display_panels();
-}
-
-void MainWindow::set_display_panel_zone(QGroupBox *panel, DisplayPanelZone zone) {
-  if (panel == nullptr) {
-    return;
-  }
-
-  panel->setProperty(kDisplayPanelMainProperty, zone == DisplayPanelZone::Main);
-}
-
-bool MainWindow::is_display_panel_in_main(QGroupBox *panel) const {
-  return panel != nullptr && panel->property(kDisplayPanelMainProperty).toBool();
-}
-
-QStringList MainWindow::main_display_panel_ids() const {
-  QStringList ids;
-  for (auto *panel : display_panels()) {
-    if (is_display_panel_in_main(panel)) {
-      ids << panel->property(kDisplayPanelIdProperty).toString();
-    }
-  }
-
-  return ids;
-}
-
-void MainWindow::relayout_display_panels() {
-  if (main_display_layout_ == nullptr || secondary_display_layout_ == nullptr) {
-    return;
-  }
-
-  clear_layout(main_display_layout_);
-  clear_layout(secondary_display_layout_);
-
-  QList<QGroupBox *> main_panels;
-  QList<QGroupBox *> secondary_panels;
-  for (auto *panel : display_panels()) {
-    if (panel == nullptr) {
-      continue;
-    }
-
-    if (panel->isHidden()) {
-      continue;
-    }
-
-    if (is_display_panel_in_main(panel)) {
-      main_panels << panel;
-    } else {
-      secondary_panels << panel;
-    }
-  }
-
-  auto add_panels = [](QGridLayout *layout, const QList<QGroupBox *> &panels, int columns) {
-    const int clamped_columns = std::max(1, columns);
-    for (int i = 0; i < panels.size(); ++i) {
-      layout->addWidget(panels[i], i / clamped_columns, i % clamped_columns);
-    }
-
-    for (int column = 0; column < clamped_columns; ++column) {
-      layout->setColumnStretch(column, 1);
-    }
-
-    const int panel_count = static_cast<int>(panels.size());
-    const int rows        = std::max(1, (panel_count + clamped_columns - 1) / clamped_columns);
-    for (int row = 0; row < rows; ++row) {
-      layout->setRowStretch(row, 1);
-    }
-  };
-
-  const int main_columns = main_panels.size() <= 1 ? 1 : (main_panels.size() <= 4 ? 2 : 3);
-  add_panels(main_display_layout_, main_panels, main_columns);
-  add_panels(secondary_display_layout_, secondary_panels, 4);
-  refresh_secondary_display_visibility();
-}
-
-void MainWindow::refresh_secondary_display_visibility() {
-  if (secondary_display_container_ == nullptr) {
-    return;
-  }
-
-  bool any_secondary_visible = false;
-  int  visible_main_count    = 0;
-  for (auto *panel : display_panels()) {
-    if (panel == nullptr || panel->isHidden()) {
-      continue;
-    }
-
-    if (is_display_panel_in_main(panel)) {
-      ++visible_main_count;
-    } else {
-      any_secondary_visible = true;
-    }
-  }
-
-  const bool keep_drop_target_visible = !any_secondary_visible && visible_main_count > 1;
-  if (any_secondary_visible) {
-    secondary_display_container_->setMinimumHeight(0);
-    secondary_display_container_->setMaximumHeight(QWIDGETSIZE_MAX);
-  } else if (keep_drop_target_visible) {
-    secondary_display_container_->setMinimumHeight(kEmptySecondaryDropHeight);
-    secondary_display_container_->setMaximumHeight(kEmptySecondaryDropHeight);
-  }
-
-  secondary_display_container_->setVisible(any_secondary_visible || keep_drop_target_visible);
 }
 
 QString MainWindow::sanitize_recording_token(const QString &value) const {
@@ -1238,8 +718,6 @@ void MainWindow::configure_unsupported_features() {
   view_widget_->x_width_spin()->setEnabled(false);
   view_widget_->y_spin()->setEnabled(false);
   view_widget_->y_width_spin()->setEnabled(false);
-  set_display_visible(xz_processed_widget_, false);
-  set_display_visible(yz_processed_widget_, false);
 
   {
     QSignalBlocker blocker(view_widget_->registration_check());
@@ -1262,6 +740,7 @@ void MainWindow::configure_unsupported_features() {
   render_widget_->convolution_combo()->setToolTip(convolution_tooltip);
   render_widget_->convolution_divide_check()->setEnabled(false);
   render_widget_->convolution_divide_check()->setToolTip(convolution_tooltip);
+  refresh_visualization_availability();
 }
 
 void MainWindow::refresh_command_bar() {
@@ -1324,10 +803,6 @@ void MainWindow::save_persistent_state() {
 
   settings.beginGroup("main_window");
   settings.setValue("geometry", saveGeometry());
-  if (main_splitter_ != nullptr) {
-    settings.setValue("splitter_state", main_splitter_->saveState());
-  }
-  settings.setValue("main_display_panels", main_display_panel_ids());
   settings.endGroup();
 
   settings.beginGroup("session");
@@ -1425,6 +900,8 @@ void MainWindow::save_persistent_state() {
   settings.setValue("manual_y_maximum", display_settings.manual_y_maximum);
   settings.endGroup();
 
+  display_workspace_->save_persistent_state(settings);
+
   settings.sync();
 }
 
@@ -1435,22 +912,9 @@ void MainWindow::restore_persistent_state() {
   if (settings.contains("geometry")) {
     geometry_restored_ = restoreGeometry(settings.value("geometry").toByteArray());
   }
-  if (main_splitter_ != nullptr && settings.contains("splitter_state")) {
-    main_splitter_->restoreState(settings.value("splitter_state").toByteArray());
-  }
-  if (settings.contains("main_display_panels")) {
-    const QStringList main_panel_ids = settings.value("main_display_panels").toStringList();
-    for (auto *panel : display_panels()) {
-      set_display_panel_zone(panel, DisplayPanelZone::Secondary);
-    }
-    for (const auto &display_id : main_panel_ids) {
-      if (auto *panel = display_panel_for_id(display_id); panel != nullptr) {
-        set_display_panel_zone(panel, DisplayPanelZone::Main);
-      }
-    }
-    relayout_display_panels();
-  }
   settings.endGroup();
+
+  display_workspace_->restore_persistent_state(settings);
 
   settings.beginGroup("session");
   patient_line_edit_->setText(settings.value("patient", patient_line_edit_->text()).toString());
@@ -1594,6 +1058,8 @@ void MainWindow::restore_persistent_state() {
   settings.endGroup();
 
   update_recording_path_preview();
+  refresh_visualization_availability();
+  display_workspace_->set_pipeline_running(false);
 }
 
 void MainWindow::initialize_display_widgets() {
@@ -1608,74 +1074,40 @@ void MainWindow::initialize_display_widgets() {
   zernike_phase_widget_        = new TensorDisplayWidget(display_workspace_);
   zernike_history_widget_      = new ZernikeHistoryWidget(display_workspace_);
 
-  set_display_title(xy_raw_widget_, "XY-Raw");
-  set_display_title(xy_processed_widget_, "XY-Processed");
-  set_display_title(xz_processed_widget_, "XZ-Processed");
-  set_display_title(yz_processed_widget_, "YZ-Processed");
-  set_display_title(raw_spectrum_widget_, "Raw Spectrum");
-  set_display_title(processed_spectrum_widget_, "Processed Spectrum");
-  set_display_title(shack_hartmann_widget_, "Shack Hartmann");
-  set_display_title(shack_hartmann_xcorr_widget_, "Shack Hartmann XCorr");
-  set_display_title(zernike_phase_widget_, "Zernike Phase");
-  set_display_title(zernike_history_widget_, "Zernike a4");
-
   zernike_phase_widget_->set_colormap(Colormap::Twilight);
   zernike_phase_widget_->set_value_range(0.0f, 2 * static_cast<float>(M_PI));
 
-  auto *display_layout = static_cast<QVBoxLayout *>(display_workspace_->layout());
+  display_workspace_->register_visualization(
+      {"xy_processed", "XY Processed", xy_processed_widget_, {}, DockPlacement::Root});
+  display_workspace_->register_visualization(
+      {"zernike_a4", "Zernike a4", zernike_history_widget_, "xy_processed", DockPlacement::Right});
+  display_workspace_->register_visualization({"zernike_phase", "Zernike Phase",
+                                              zernike_phase_widget_, "xy_processed",
+                                              DockPlacement::Below});
+  display_workspace_->register_visualization({"shack_hartmann", "Shack Hartmann",
+                                              shack_hartmann_widget_, "zernike_phase",
+                                              DockPlacement::Right});
+  display_workspace_->register_visualization({"shack_hartmann_xcorr", "Shack Hartmann XCorr",
+                                              shack_hartmann_xcorr_widget_, "shack_hartmann",
+                                              DockPlacement::Right});
 
-  main_display_container_ = new DisplayDropZone(
-      [this](const QString &display_id) { move_display_panel(display_id, DisplayPanelZone::Main); },
-      display_workspace_);
-  main_display_container_->setObjectName("mainDisplayZone");
-  main_display_layout_ = new QGridLayout(main_display_container_);
-  main_display_layout_->setContentsMargins(0, 0, 0, 0);
-  main_display_layout_->setSpacing(8);
-  display_layout->addWidget(main_display_container_, 3);
+  // Optional current displays use the same registry and visibility model. They default to tabs so
+  // enabling one does not disturb the requested five-display hierarchy.
+  display_workspace_->register_visualization(
+      {"xy_raw", "XY Raw", xy_raw_widget_, "xy_processed", DockPlacement::Tab});
+  display_workspace_->register_visualization(
+      {"raw_spectrum", "Raw Spectrum", raw_spectrum_widget_, "zernike_phase", DockPlacement::Tab});
+  display_workspace_->register_visualization({"processed_spectrum", "Processed Spectrum",
+                                              processed_spectrum_widget_, "raw_spectrum",
+                                              DockPlacement::Tab});
+  display_workspace_->register_visualization(
+      {"xz_processed", "XZ Processed", xz_processed_widget_, "xy_processed", DockPlacement::Tab});
+  display_workspace_->register_visualization(
+      {"yz_processed", "YZ Processed", yz_processed_widget_, "xy_processed", DockPlacement::Tab});
+  display_workspace_->finalize_registration();
 
-  secondary_display_container_ = new DisplayDropZone(
-      [this](const QString &display_id) {
-        move_display_panel(display_id, DisplayPanelZone::Secondary);
-      },
-      display_workspace_);
-  secondary_display_container_->setObjectName("secondaryDisplayZone");
-  secondary_display_layout_ = new QGridLayout(secondary_display_container_);
-  secondary_display_layout_->setContentsMargins(0, 0, 0, 0);
-  secondary_display_layout_->setSpacing(8);
-
-  xy_processed_panel_ = create_display_panel("XY-Processed", "xy_processed", xy_processed_widget_);
-  xy_raw_panel_       = create_display_panel("XY-Raw", "xy_raw", xy_raw_widget_);
-  raw_spectrum_panel_ = create_display_panel("Raw Spectrum", "raw_spectrum", raw_spectrum_widget_);
-  processed_spectrum_panel_ =
-      create_display_panel("Processed Spectrum", "processed_spectrum", processed_spectrum_widget_);
-  zernike_phase_panel_ =
-      create_display_panel("Zernike Phase", "zernike_phase", zernike_phase_widget_);
-  zernike_history_panel_ = create_display_panel("Zernike a4", "zernike_a4_history",
-                                                zernike_history_widget_, false, true);
-  shack_hartmann_panel_ =
-      create_display_panel("Shack Hartmann", "shack_hartmann", shack_hartmann_widget_);
-  shack_hartmann_xcorr_panel_ = create_display_panel("Shack Hartmann XCorr", "shack_hartmann_xcorr",
-                                                     shack_hartmann_xcorr_widget_);
-  xz_processed_panel_ = create_display_panel("XZ-Processed", "xz_processed", xz_processed_widget_);
-  yz_processed_panel_ = create_display_panel("YZ-Processed", "yz_processed", yz_processed_widget_);
-
-  set_display_panel_zone(xy_processed_panel_, DisplayPanelZone::Main);
-  relayout_display_panels();
-
-  display_layout->addWidget(secondary_display_container_, 2);
-  begin_display_layout_update();
-  set_display_visible(xy_processed_widget_, false);
-  set_display_visible(xy_raw_widget_, false);
-  set_display_visible(raw_spectrum_widget_, false);
-  set_display_visible(processed_spectrum_widget_, false);
-  set_display_visible(zernike_phase_widget_, false);
-  set_display_visible(zernike_history_widget_, false);
-  set_display_visible(shack_hartmann_widget_, false);
-  set_display_visible(shack_hartmann_xcorr_widget_, false);
-  set_display_visible(xz_processed_widget_, false);
-  set_display_visible(yz_processed_widget_, false);
-  end_display_layout_update();
-
+  connect(display_workspace_, &VisualizationWorkspace::selected_visualization_changed, this,
+          &MainWindow::on_selected_visualization_changed);
   connect(zernike_history_widget_, &ZernikeHistoryWidget::configuration_requested, this,
           &MainWindow::select_configurable_widget);
   connect(zernike_history_widget_, &ZernikeHistoryWidget::display_settings_changed, this,
@@ -1685,51 +1117,25 @@ void MainWindow::initialize_display_widgets() {
             signal_plot_time_window_seconds_ = settings.time_window_seconds;
           });
 
-  connect(view_widget_, &ViewWidget::cuts_3d_toggled, this, [this](bool checked) {
-    if (checked) {
-      set_display_visible(xz_processed_widget_, true);
-      set_display_visible(yz_processed_widget_, true);
-    } else {
-      set_display_visible(xz_processed_widget_, false);
-      set_display_visible(yz_processed_widget_, false);
-    }
-  });
-
-  connect(view_widget_, &ViewWidget::raw_view_toggled, this, [this](bool checked) {
-    if (pipeline_running_ && checked) {
-      set_display_visible(xy_raw_widget_, true);
-    } else {
-      set_display_visible(xy_raw_widget_, false);
-    }
-  });
-
-  connect(view_widget_, &ViewWidget::raw_spectrum_view_toggled, this, [this](bool checked) {
-    if (pipeline_running_ && checked) {
-      set_display_visible(raw_spectrum_widget_, true);
-    } else {
-      set_display_visible(raw_spectrum_widget_, false);
-    }
-  });
-
-  connect(view_widget_, &ViewWidget::process_spectrum_view_toggled, this, [this](bool checked) {
-    if (pipeline_running_ && checked) {
-      set_display_visible(processed_spectrum_widget_, true);
-    } else {
-      set_display_visible(processed_spectrum_widget_, false);
-    }
-  });
+  connect(view_widget_, &ViewWidget::cuts_3d_toggled, this,
+          [this](bool) { refresh_visualization_availability(); });
+  connect(view_widget_, &ViewWidget::raw_view_toggled, this,
+          [this](bool) { refresh_visualization_availability(); });
+  connect(view_widget_, &ViewWidget::raw_spectrum_view_toggled, this,
+          [this](bool) { refresh_visualization_availability(); });
+  connect(view_widget_, &ViewWidget::process_spectrum_view_toggled, this,
+          [this](bool) { refresh_visualization_availability(); });
+  connect(render_widget_, &ImageRenderingWidget::settings_changed, this,
+          &MainWindow::refresh_visualization_availability);
 
   connect(view_widget_, &ViewWidget::reticle_toggled, this, [this](bool checked) {
-    if (xy_processed_widget_) {
-      xy_processed_widget_->set_reticle_enabled(checked);
-      if (checked) {
-        xy_processed_widget_->set_reticle_radius(view_widget_->get_reticle_radius());
-      }
+    xy_processed_widget_->set_reticle_enabled(checked);
+    if (checked) {
+      xy_processed_widget_->set_reticle_radius(view_widget_->get_reticle_radius());
     }
   });
-
   connect(view_widget_, &ViewWidget::reticle_radius_changed, this, [this](double value) {
-    if (xy_processed_widget_ && view_widget_->is_reticle_enabled()) {
+    if (view_widget_->is_reticle_enabled()) {
       xy_processed_widget_->set_reticle_radius(value);
     }
   });
@@ -1842,6 +1248,9 @@ void MainWindow::connect_export_controls() {
 void MainWindow::configure_window() {
   setWindowTitle("Holovibes");
 
+  auto *view_menu = menuBar()->addMenu(tr("&View"));
+  display_workspace_->populate_view_menu(view_menu);
+
   auto *tools_menu      = menuBar()->addMenu(tr("&Tools"));
   auto *fft_tool_action = tools_menu->addAction(tr("FFT Frequency Range to Bins..."));
   fft_tool_action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+F")));
@@ -1929,12 +1338,6 @@ void MainWindow::on_start_pipeline_success() {
   export_widget_->set_record_enabled(!export_in_progress_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(export_in_progress_);
 
-  if (render_widget_->get_image_mode() == "Raw") {
-    set_display_title(xy_processed_widget_, "XY-Raw");
-  } else {
-    set_display_title(xy_processed_widget_, "XY-Processed");
-  }
-
   auto dims = guess_source_dims();
   xy_raw_widget_->set_fixed_aspect(dims);
   if (render_widget_->get_space_transform() == "Fresnel Diffraction" &&
@@ -1947,10 +1350,6 @@ void MainWindow::on_start_pipeline_success() {
   shack_hartmann_xcorr_widget_->set_fixed_aspect(dims);
   zernike_phase_widget_->set_fixed_aspect(guess_source_dims());
 
-  begin_display_layout_update();
-  set_display_visible(xy_processed_widget_, true);
-  set_display_visible(zernike_history_widget_, true);
-
   auto *autofocus_widget = render_widget_->autofocus_widget();
   if (autofocus_widget->is_enabled()) {
     const bool has_enabled_zernike =
@@ -1962,43 +1361,11 @@ void MainWindow::on_start_pipeline_success() {
     if (!has_enabled_zernike) {
       autofocus_widget->reset_zernike_values();
     }
-
-    if (autofocus_widget->show_shack_hartmann_sensor_view()) {
-      set_display_visible(shack_hartmann_widget_, true);
-    } else {
-      set_display_visible(shack_hartmann_widget_, false);
-    }
-
-    if (autofocus_widget->show_cross_correlation_view()) {
-      set_display_visible(shack_hartmann_xcorr_widget_, true);
-    } else {
-      set_display_visible(shack_hartmann_xcorr_widget_, false);
-    }
-
-    if (autofocus_widget->show_reconstructed_phase()) {
-      set_display_visible(zernike_phase_widget_, true);
-    } else {
-      set_display_visible(zernike_phase_widget_, false);
-    }
   } else {
-    set_display_visible(shack_hartmann_widget_, false);
-    set_display_visible(shack_hartmann_xcorr_widget_, false);
-    set_display_visible(zernike_phase_widget_, false);
     autofocus_widget->reset_zernike_values();
   }
-
-  if (view_widget_->is_raw_view_enabled()) {
-    set_display_visible(xy_raw_widget_, true);
-  }
-
-  if (view_widget_->is_raw_spectrum_view_enabled()) {
-    set_display_visible(raw_spectrum_widget_, true);
-  }
-
-  if (view_widget_->is_process_spectrum_view_enabled()) {
-    set_display_visible(processed_spectrum_widget_, true);
-  }
-  end_display_layout_update();
+  refresh_visualization_availability();
+  display_workspace_->set_pipeline_running(true);
   refresh_command_bar();
 }
 
@@ -2014,6 +1381,7 @@ void MainWindow::on_start_pipeline_failure(const QString &error) {
   import_widget_->set_stop_enabled(false);
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
+  display_workspace_->set_pipeline_running(false);
   refresh_command_bar();
 
   show_pipeline_error_popup(tr("An error occurred while starting the pipeline:\n%1").arg(error));
@@ -2031,6 +1399,7 @@ void MainWindow::on_stop_pipeline_success() {
     export_widget_->set_record_enabled(false);
     export_widget_->set_stop_enabled(false);
     on_metrics_updated(0.0);
+    display_workspace_->set_pipeline_running(false);
     refresh_command_bar();
     return;
   }
@@ -2050,6 +1419,7 @@ void MainWindow::on_stop_pipeline_failure(const QString &error) {
     export_widget_->set_record_enabled(false);
     export_widget_->set_stop_enabled(false);
     on_metrics_updated(0.0);
+    display_workspace_->set_pipeline_running(false);
     refresh_command_bar();
   } else {
     reset_pipeline_ui_after_stop();
@@ -2067,6 +1437,8 @@ void MainWindow::on_resume_pipeline_success() {
   import_widget_->set_stop_enabled(true);
   export_widget_->set_record_enabled(!export_in_progress_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(export_in_progress_);
+  refresh_visualization_availability();
+  display_workspace_->set_pipeline_running(true);
   refresh_command_bar();
 }
 
@@ -2080,6 +1452,7 @@ void MainWindow::on_resume_pipeline_failure(const QString &error) {
   import_widget_->set_stop_enabled(true);
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
+  display_workspace_->set_pipeline_running(false);
   refresh_command_bar();
 
   show_pipeline_error_popup(tr("An error occurred while resuming the pipeline:\n%1").arg(error));
@@ -2098,18 +1471,7 @@ void MainWindow::reset_pipeline_ui_after_stop() {
   export_widget_->set_stop_enabled(false);
   on_metrics_updated(0.0);
 
-  begin_display_layout_update();
-  set_display_visible(xy_raw_widget_, false);
-  set_display_visible(xy_processed_widget_, false);
-  set_display_visible(xz_processed_widget_, false);
-  set_display_visible(yz_processed_widget_, false);
-  set_display_visible(raw_spectrum_widget_, false);
-  set_display_visible(processed_spectrum_widget_, false);
-  set_display_visible(shack_hartmann_widget_, false);
-  set_display_visible(shack_hartmann_xcorr_widget_, false);
-  set_display_visible(zernike_phase_widget_, false);
-  set_display_visible(zernike_history_widget_, false);
-  end_display_layout_update();
+  display_workspace_->set_pipeline_running(false);
   render_widget_->autofocus_widget()->reset_zernike_values();
   refresh_command_bar();
 }
@@ -2148,12 +1510,6 @@ void MainWindow::on_update_pipeline_success() {
   export_widget_->set_record_enabled(!export_in_progress_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(export_in_progress_);
 
-  if (render_widget_->get_image_mode() == "Raw") {
-    set_display_title(xy_processed_widget_, "XY-Raw");
-  } else {
-    set_display_title(xy_processed_widget_, "XY-Processed");
-  }
-
   auto dims = guess_source_dims();
   xy_raw_widget_->set_fixed_aspect(dims);
   if (render_widget_->get_space_transform() == "Fresnel Diffraction" &&
@@ -2161,11 +1517,6 @@ void MainWindow::on_update_pipeline_success() {
     dims = QSize(dims.width(), dims.width());
   }
   xy_processed_widget_->set_fixed_aspect(dims);
-  begin_display_layout_update();
-  set_display_visible(zernike_history_widget_, true);
-  if (view_widget_->is_raw_view_enabled()) {
-    set_display_visible(xy_raw_widget_, true);
-  }
 
   shack_hartmann_widget_->set_fixed_aspect(dims);
   shack_hartmann_xcorr_widget_->set_fixed_aspect(dims);
@@ -2182,31 +1533,11 @@ void MainWindow::on_update_pipeline_success() {
     if (!has_enabled_zernike) {
       autofocus_widget->reset_zernike_values();
     }
-
-    if (autofocus_widget->show_shack_hartmann_sensor_view()) {
-      set_display_visible(shack_hartmann_widget_, true);
-    } else {
-      set_display_visible(shack_hartmann_widget_, false);
-    }
-
-    if (autofocus_widget->show_cross_correlation_view()) {
-      set_display_visible(shack_hartmann_xcorr_widget_, true);
-    } else {
-      set_display_visible(shack_hartmann_xcorr_widget_, false);
-    }
-
-    if (autofocus_widget->show_reconstructed_phase()) {
-      set_display_visible(zernike_phase_widget_, true);
-    } else {
-      set_display_visible(zernike_phase_widget_, false);
-    }
   } else {
-    set_display_visible(shack_hartmann_widget_, false);
-    set_display_visible(shack_hartmann_xcorr_widget_, false);
-    set_display_visible(zernike_phase_widget_, false);
     autofocus_widget->reset_zernike_values();
   }
-  end_display_layout_update();
+  refresh_visualization_availability();
+  display_workspace_->set_pipeline_running(true);
   refresh_command_bar();
 }
 
@@ -2223,7 +1554,7 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   export_in_progress_ = false;
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
-  set_display_visible(zernike_history_widget_, false);
+  display_workspace_->set_pipeline_running(false);
   refresh_command_bar();
 
   show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
@@ -2231,19 +1562,6 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
 
 void MainWindow::closeEvent(QCloseEvent *event) {
   save_persistent_state();
-
-  begin_display_layout_update();
-  set_display_visible(xy_processed_widget_, false);
-  set_display_visible(xz_processed_widget_, false);
-  set_display_visible(yz_processed_widget_, false);
-  set_display_visible(xy_raw_widget_, false);
-  set_display_visible(raw_spectrum_widget_, false);
-  set_display_visible(processed_spectrum_widget_, false);
-  set_display_visible(shack_hartmann_widget_, false);
-  set_display_visible(shack_hartmann_xcorr_widget_, false);
-  set_display_visible(zernike_phase_widget_, false);
-  set_display_visible(zernike_history_widget_, false);
-  end_display_layout_update();
 
   if (pipeline_manager_ && pipeline_running_) {
     pipeline_manager_->stop_pipeline();

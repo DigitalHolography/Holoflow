@@ -74,5 +74,13 @@ target_link_libraries(holovibes PRIVATE
     Qt6::OpenGL
     Qt6::OpenGLWidgets
     Qt6::Graphs
+    ads::qtadvanceddocking-qt6
     # EGrabber
+)
+
+add_custom_command(TARGET holovibes POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:ads::qtadvanceddocking-qt6>
+        $<TARGET_FILE_DIR:holovibes>
+    COMMENT "Copying Qt Advanced Docking System runtime"
 )

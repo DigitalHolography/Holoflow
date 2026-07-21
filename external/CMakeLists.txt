@@ -52,10 +52,20 @@ if(ENABLE_FETCHCONTENT)
         FetchContent_MakeAvailable(benchmark)
     endif()
 
+    set(BUILD_EXAMPLES OFF CACHE BOOL "Disable Qt ADS examples" FORCE)
+    set(BUILD_STATIC OFF CACHE BOOL "Disable Qt ADS static library" FORCE)
+    set(ADS_VERSION "5.0.0" CACHE STRING "Qt ADS version" FORCE)
+
+    declare_persistent_dependency(qtads "https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System.git" "5.0.0")
+    FetchContent_MakeAvailable(qtads)
+
     message(STATUS "FetchContent dependencies acquired.")
 
 else()
     find_package(spdlog REQUIRED)
+    find_package(Boost REQUIRED COMPONENTS system filesystem thread)
+    find_package(nlohmann_json REQUIRED)
+    find_package(qtadvanceddockingsystem 5.0.0 EXACT REQUIRED)
 
     if(ENABLE_TESTING)
         find_package(GTest REQUIRED)

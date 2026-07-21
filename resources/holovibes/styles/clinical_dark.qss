@@ -185,6 +185,11 @@ QWidget#displayWorkspace {
   background-color: @WINDOW@;
 }
 
+QLabel#visualizationWorkspacePlaceholder {
+  color: @TEXT_MUTED@;
+  font-size: 13px;
+}
+
 QFrame#mainDisplayZone,
 QFrame#secondaryDisplayZone {
   background-color: @WINDOW@;

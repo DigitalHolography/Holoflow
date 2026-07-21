@@ -211,11 +211,11 @@ SelectedWidgetSettingsPanel::SelectedWidgetSettingsPanel(QWidget *parent)
   empty_page_        = new QWidget(pages_);
   auto *empty_layout = new QVBoxLayout(empty_page_);
   empty_layout->setContentsMargins(8, 12, 8, 8);
-  auto *placeholder = new QLabel("Click a visualization to configure it", empty_page_);
-  placeholder->setObjectName("settingsPlaceholder");
-  placeholder->setWordWrap(true);
-  placeholder->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
-  empty_layout->addWidget(placeholder);
+  empty_placeholder_ = new QLabel("Click a visualization to configure it", empty_page_);
+  empty_placeholder_->setObjectName("settingsPlaceholder");
+  empty_placeholder_->setWordWrap(true);
+  empty_placeholder_->setAlignment(Qt::AlignHCenter | Qt::AlignTop);
+  empty_layout->addWidget(empty_placeholder_);
   empty_layout->addStretch(1);
   pages_->addWidget(empty_page_);
 
@@ -263,6 +263,18 @@ void SelectedWidgetSettingsPanel::clear_selection() {
   }
   selected_widget_.clear();
   zernike_history_page_->set_target(nullptr);
+  empty_placeholder_->setText("Click a visualization to configure it");
+  pages_->setCurrentWidget(empty_page_);
+}
+
+void SelectedWidgetSettingsPanel::show_no_configurable_settings() {
+  if (destroyed_connection_) {
+    disconnect(destroyed_connection_);
+    destroyed_connection_ = {};
+  }
+  selected_widget_.clear();
+  zernike_history_page_->set_target(nullptr);
+  empty_placeholder_->setText("No configurable settings");
   pages_->setCurrentWidget(empty_page_);
 }
 

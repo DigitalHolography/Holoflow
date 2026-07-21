@@ -18,6 +18,7 @@
 #include <QPointer>
 
 class QStackedWidget;
+class QLabel;
 
 namespace holovibes::ui {
 
@@ -31,11 +32,13 @@ public:
   explicit SelectedWidgetSettingsPanel(QWidget *parent = nullptr);
 
   void set_selected_widget(ZernikeHistoryWidget *widget);
+  void show_no_configurable_settings();
   void clear_selection();
 
 private:
   QStackedWidget                *pages_                = nullptr;
   QWidget                       *empty_page_           = nullptr;
+  QLabel                        *empty_placeholder_    = nullptr;
   ZernikeHistorySettingsWidget  *zernike_history_page_ = nullptr;
   QPointer<ZernikeHistoryWidget> selected_widget_;
   QMetaObject::Connection        destroyed_connection_;

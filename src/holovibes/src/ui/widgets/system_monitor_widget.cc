@@ -61,8 +61,12 @@ void SystemMonitorWidget::setup_ui() {
 
   auto add_metric_row = [&](int row, const QString &label, QLabel **value_label,
                             const QString &value) {
-    metrics_layout->addWidget(new QLabel(label, this), row, 0);
+    auto *name_label = new QLabel(label, this);
+    name_label->setMinimumWidth(0);
+    name_label->setWordWrap(true);
+    metrics_layout->addWidget(name_label, row, 0);
     *value_label = new QLabel(value, this);
+    (*value_label)->setMinimumWidth(0);
     (*value_label)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     metrics_layout->addWidget(*value_label, row, 1);
   };

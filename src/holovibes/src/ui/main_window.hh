@@ -18,17 +18,14 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDoubleSpinBox>
-#include <QGroupBox>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMainWindow>
-#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSlider>
 #include <QSpinBox>
 #include <QWidget>
-#include <array>
 #include <optional>
 
 #include "pipeline/field_help.hh"
@@ -41,13 +38,11 @@
 #include "ui/widgets/system_monitor_widget.hh"
 #include "ui/widgets/view_widget.hh"
 
-class QSplitter;
-class QGridLayout;
-
 namespace holovibes::ui {
 
 class ZernikeHistoryWidget;
 class SelectedWidgetSettingsPanel;
+class VisualizationWorkspace;
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
@@ -57,7 +52,6 @@ public:
 
 protected:
   void closeEvent(QCloseEvent *event) override;
-  bool eventFilter(QObject *watched, QEvent *event) override;
 
 private slots:
   void on_import_start_clicked();
@@ -71,8 +65,6 @@ private slots:
   void on_raw_record_stopped_failure(const QString &error);
 
 private:
-  enum class DisplayPanelZone { Main, Secondary };
-
   ImportWidget                *import_widget_;
   ExportWidget                *export_widget_;
   ImageRenderingWidget        *render_widget_;
@@ -111,34 +103,20 @@ private:
   void configure_window();
   void show_fft_frequency_tool();
 
-  QGroupBox *create_display_panel(const QString &title, const QString &display_id, QWidget *widget,
-                                  bool square_viewport = true, bool interactive_viewport = false);
-  std::array<QGroupBox *, 10> display_panels() const;
-  QGroupBox                  *display_panel_for(QWidget *widget) const;
-  QGroupBox                  *display_panel_for_id(const QString &display_id) const;
-  void                        set_display_title(QWidget *widget, const QString &title);
-  void                        set_display_visible(QWidget *widget, bool visible);
-  void                        begin_display_layout_update();
-  void                        end_display_layout_update();
-  void                        move_display_panel(const QString &display_id, DisplayPanelZone zone);
-  void                        set_display_panel_zone(QGroupBox *panel, DisplayPanelZone zone);
-  bool                        is_display_panel_in_main(QGroupBox *panel) const;
-  QStringList                 main_display_panel_ids() const;
-  void                        relayout_display_panels();
-  void                        refresh_secondary_display_visibility();
-  void                        select_configurable_widget(ZernikeHistoryWidget *widget);
-  void                        clear_configurable_widget_selection();
-  void                        reset_pipeline_ui_after_stop();
-  void                        configure_unsupported_features();
-  void                        save_persistent_state();
-  void                        restore_persistent_state();
-  QString                     sanitize_recording_token(const QString &value) const;
-  QString                     recording_file_name(int acquisition_id) const;
-  QString                     acquisition_label(int acquisition_id) const;
-  void                        update_acquisition_label();
-  void                        update_recording_path_preview();
-  void                        refresh_command_bar();
-  void set_status_label(QLabel *label, const QString &text, const char *tone);
+  void    refresh_visualization_availability();
+  void    select_configurable_widget(ZernikeHistoryWidget *widget);
+  void    on_selected_visualization_changed(const QString &visualization_id);
+  void    reset_pipeline_ui_after_stop();
+  void    configure_unsupported_features();
+  void    save_persistent_state();
+  void    restore_persistent_state();
+  QString sanitize_recording_token(const QString &value) const;
+  QString recording_file_name(int acquisition_id) const;
+  QString acquisition_label(int acquisition_id) const;
+  void    update_acquisition_label();
+  void    update_recording_path_preview();
+  void    refresh_command_bar();
+  void    set_status_label(QLabel *label, const QString &text, const char *tone);
 
   std::filesystem::path makeRecordingPath(const QString &userText);
   QStringList           load_available_camera_configs();
@@ -153,8 +131,6 @@ private:
   bool               paused_settings_dirty_           = false;
   bool               export_in_progress_              = false;
   bool               geometry_restored_               = false;
-  int                display_layout_update_depth_     = 0;
-  bool               display_layout_dirty_            = false;
   double             last_input_fps_                  = 0.0;
   double             signal_plot_time_window_seconds_ = 8.0;
   double             signal_plot_sample_time_seconds_ = 1.0 / 37000 * 32 * 64;
@@ -167,49 +143,32 @@ private:
   QThread           *pipeline_manager_thread_;
 
   // Display widgets
-  TensorDisplayWidget           *xy_processed_widget_;
-  TensorDisplayWidget           *xz_processed_widget_;
-  TensorDisplayWidget           *yz_processed_widget_;
-  TensorDisplayWidget           *xy_raw_widget_;
-  TensorDisplayWidget           *raw_spectrum_widget_;
-  TensorDisplayWidget           *processed_spectrum_widget_;
-  TensorDisplayWidget           *shack_hartmann_widget_;
-  TensorDisplayWidget           *shack_hartmann_xcorr_widget_;
-  TensorDisplayWidget           *zernike_phase_widget_;
-  ZernikeHistoryWidget          *zernike_history_widget_;
-  QPointer<ZernikeHistoryWidget> selected_configurable_widget_;
-
-  // Embedded display panels
-  QSplitter   *main_splitter_               = nullptr;
-  QLineEdit   *patient_line_edit_           = nullptr;
-  QComboBox   *eye_side_combo_              = nullptr;
-  QLabel      *session_value_label_         = nullptr;
-  QLabel      *acquisition_value_label_     = nullptr;
-  QPushButton *start_command_button_        = nullptr;
-  QPushButton *stop_command_button_         = nullptr;
-  QPushButton *record_command_button_       = nullptr;
-  QPushButton *stop_record_command_button_  = nullptr;
-  QLabel      *pipeline_status_label_       = nullptr;
-  QLabel      *source_status_label_         = nullptr;
-  QLabel      *view_status_label_           = nullptr;
-  QLabel      *fps_status_label_            = nullptr;
-  QLabel      *recording_status_label_      = nullptr;
-  QWidget     *display_workspace_           = nullptr;
-  QWidget     *right_sidebar_               = nullptr;
-  QWidget     *main_display_container_      = nullptr;
-  QWidget     *secondary_display_container_ = nullptr;
-  QGridLayout *main_display_layout_         = nullptr;
-  QGridLayout *secondary_display_layout_    = nullptr;
-  QGroupBox   *xy_processed_panel_          = nullptr;
-  QGroupBox   *xz_processed_panel_          = nullptr;
-  QGroupBox   *yz_processed_panel_          = nullptr;
-  QGroupBox   *xy_raw_panel_                = nullptr;
-  QGroupBox   *raw_spectrum_panel_          = nullptr;
-  QGroupBox   *processed_spectrum_panel_    = nullptr;
-  QGroupBox   *shack_hartmann_panel_        = nullptr;
-  QGroupBox   *shack_hartmann_xcorr_panel_  = nullptr;
-  QGroupBox   *zernike_phase_panel_         = nullptr;
-  QGroupBox   *zernike_history_panel_       = nullptr;
+  TensorDisplayWidget  *xy_processed_widget_;
+  TensorDisplayWidget  *xz_processed_widget_;
+  TensorDisplayWidget  *yz_processed_widget_;
+  TensorDisplayWidget  *xy_raw_widget_;
+  TensorDisplayWidget  *raw_spectrum_widget_;
+  TensorDisplayWidget  *processed_spectrum_widget_;
+  TensorDisplayWidget  *shack_hartmann_widget_;
+  TensorDisplayWidget  *shack_hartmann_xcorr_widget_;
+  TensorDisplayWidget  *zernike_phase_widget_;
+  ZernikeHistoryWidget *zernike_history_widget_;
+  // Application columns and central visualization workspace
+  QLineEdit              *patient_line_edit_          = nullptr;
+  QComboBox              *eye_side_combo_             = nullptr;
+  QLabel                 *session_value_label_        = nullptr;
+  QLabel                 *acquisition_value_label_    = nullptr;
+  QPushButton            *start_command_button_       = nullptr;
+  QPushButton            *stop_command_button_        = nullptr;
+  QPushButton            *record_command_button_      = nullptr;
+  QPushButton            *stop_record_command_button_ = nullptr;
+  QLabel                 *pipeline_status_label_      = nullptr;
+  QLabel                 *source_status_label_        = nullptr;
+  QLabel                 *view_status_label_          = nullptr;
+  QLabel                 *fps_status_label_           = nullptr;
+  QLabel                 *recording_status_label_     = nullptr;
+  VisualizationWorkspace *display_workspace_          = nullptr;
+  QWidget                *right_sidebar_              = nullptr;
 };
 
 } // namespace holovibes::ui
