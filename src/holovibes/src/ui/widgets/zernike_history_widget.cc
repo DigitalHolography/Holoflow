@@ -14,6 +14,8 @@
 
 #include "zernike_history_widget.hh"
 
+#include <QDebug>
+#include <QElapsedTimer>
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
@@ -33,6 +35,64 @@ namespace {
 
 constexpr int kRefreshIntervalMs = 33;
 constexpr int kTickCount         = 2;
+constexpr int kProfileReportMs   = 1000;
+
+struct PaintProfileAccumulator {
+  QElapsedTimer report_timer;
+  qint64        paint_count   = 0;
+  qint64        plot_count    = 0;
+  qint64        sample_count  = 0;
+  qint64        total_ns      = 0;
+  qint64        range_ns      = 0;
+  qint64        chrome_ns     = 0;
+  qint64        path_build_ns = 0;
+  qint64        path_draw_ns  = 0;
+
+  void record(qint64 paint_total_ns, qint64 paint_range_ns, qint64 paint_chrome_ns,
+              qint64 paint_path_build_ns, qint64 paint_path_draw_ns, qint64 painted_plots,
+              qint64 painted_samples) {
+    if (!report_timer.isValid()) {
+      report_timer.start();
+    }
+
+    ++paint_count;
+    plot_count += painted_plots;
+    sample_count += painted_samples;
+    total_ns += paint_total_ns;
+    range_ns += paint_range_ns;
+    chrome_ns += paint_chrome_ns;
+    path_build_ns += paint_path_build_ns;
+    path_draw_ns += paint_path_draw_ns;
+
+    const qint64 elapsed_ms = report_timer.elapsed();
+    if (elapsed_ms < kProfileReportMs) {
+      return;
+    }
+
+    constexpr double ns_to_ms    = 1.0e-6;
+    const qint64     measured_ns = range_ns + chrome_ns + path_build_ns + path_draw_ns;
+    const qint64     other_ns    = std::max<qint64>(0, total_ns - measured_ns);
+    qInfo().nospace() << "Zernike paint profile (" << elapsed_ms << " ms): frames=" << paint_count
+                      << ", plots=" << plot_count << ", samples=" << sample_count
+                      << ", total=" << total_ns * ns_to_ms
+                      << " ms, average=" << total_ns * ns_to_ms / static_cast<double>(paint_count)
+                      << " ms/frame, setup/other=" << other_ns * ns_to_ms
+                      << " ms, ranges=" << range_ns * ns_to_ms
+                      << " ms, grid/text=" << chrome_ns * ns_to_ms
+                      << " ms, path build=" << path_build_ns * ns_to_ms
+                      << " ms, path draw=" << path_draw_ns * ns_to_ms << " ms";
+
+    paint_count   = 0;
+    plot_count    = 0;
+    sample_count  = 0;
+    total_ns      = 0;
+    range_ns      = 0;
+    chrome_ns     = 0;
+    path_build_ns = 0;
+    path_draw_ns  = 0;
+    report_timer.restart();
+  }
+};
 
 std::optional<std::pair<double, double>> finite_extrema(const std::deque<SignalSample> &samples) {
   double minimum = std::numeric_limits<double>::infinity();
@@ -291,8 +351,19 @@ void ZernikeHistoryWidget::reset_display_settings() {
 QSize ZernikeHistoryWidget::sizeHint() const { return {520, 300}; }
 
 void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
+  QElapsedTimer paint_timer;
+  QElapsedTimer phase_timer;
+  paint_timer.start();
+
+  qint64 range_ns      = 0;
+  qint64 chrome_ns     = 0;
+  qint64 path_build_ns = 0;
+  qint64 path_draw_ns  = 0;
+  qint64 plotted       = 0;
+  qint64 samples_drawn = 0;
+
   QPainter painter(this);
-  painter.setRenderHint(QPainter::Antialiasing, true);
+  painter.setRenderHint(QPainter::Antialiasing, false);
 
   const bool has_samples = std::ranges::any_of(
       series_, [](const Series &series) { return !series.history.samples().empty(); });
@@ -345,18 +416,21 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
       continue;
     }
 
-    const auto     &series      = series_[i];
-    const auto     &samples     = series.history.samples();
-    const AxisRange y_range     = displayed_y_range(series);
-    const double    y_min       = y_range.minimum;
-    const double    y_max       = y_range.maximum;
-    const auto      map_to_plot = [&](double relative_time, double value) {
+    const auto &series  = series_[i];
+    const auto &samples = series.history.samples();
+    phase_timer.restart();
+    const AxisRange y_range = displayed_y_range(series);
+    range_ns += phase_timer.nsecsElapsed();
+    const double y_min       = y_range.minimum;
+    const double y_max       = y_range.maximum;
+    const auto   map_to_plot = [&](double relative_time, double value) {
       const double x_fraction = (relative_time + time_window) / time_window;
       const double y_fraction = (value - y_min) / (y_max - y_min);
       return QPointF(plot.left() + x_fraction * plot.width(),
                      plot.bottom() - y_fraction * plot.height());
     };
 
+    phase_timer.restart();
     QFont subplot_title_font = painter.font();
     subplot_title_font.setBold(true);
     subplot_title_font.setPixelSize(11);
@@ -388,12 +462,17 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
     painter.drawRect(plot);
     painter.drawText(QRectF(plot.left(), plot.bottom() + 15.0, plot.width(), 13.0), Qt::AlignCenter,
                      tr("Time (s)"));
+    chrome_ns += phase_timer.nsecsElapsed();
+    ++plotted;
 
     if (samples.empty()) {
+      phase_timer.restart();
       painter.drawText(plot, Qt::AlignCenter, tr("Waiting for data"));
+      chrome_ns += phase_timer.nsecsElapsed();
       continue;
     }
 
+    phase_timer.restart();
     QPainterPath curve;
     bool         started = false;
     for (const auto &sample : samples) {
@@ -405,7 +484,10 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
         curve.lineTo(point);
       }
     }
+    path_build_ns += phase_timer.nsecsElapsed();
+    samples_drawn += static_cast<qint64>(samples.size());
 
+    phase_timer.restart();
     const QColor curve_color = curve_colors[i % curve_colors.size()];
     painter.save();
     painter.setClipRect(plot);
@@ -418,7 +500,13 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
           map_to_plot(samples.back().time_seconds - newest_time, samples.back().value), 2.5, 2.5);
     }
     painter.restore();
+    path_draw_ns += phase_timer.nsecsElapsed();
   }
+
+  painter.end();
+  static PaintProfileAccumulator profile;
+  profile.record(paint_timer.nsecsElapsed(), range_ns, chrome_ns, path_build_ns, path_draw_ns,
+                 plotted, samples_drawn);
 }
 
 void ZernikeHistoryWidget::mousePressEvent(QMouseEvent *event) {
