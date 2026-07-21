@@ -113,6 +113,10 @@ void TensorDisplayWidget::initializeGL() {
   initializeOpenGLFunctions();
   glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
 
+  // QOpenGLWidget receives a new context when ADS reparents it between docked and floating
+  // top-level windows. Image dimensions survive that transition, but texture storage does not.
+  texture_storage_allocated_ = false;
+
   // Quad: pos(x,y), uv
   const float quad[] = {
       -1.f, -1.f, 0.f, 0.f, 1.f, -1.f, 1.f, 0.f, -1.f, 1.f, 0.f, 1.f, 1.f, 1.f, 1.f, 1.f,
@@ -222,7 +226,7 @@ void TensorDisplayWidget::initializeReticle() {
 }
 
 void TensorDisplayWidget::ensureTexture(int w, int h, holoflow::core::DType dtype) {
-  if (w == img_w_ && h == img_h_ && dtype == current_dtype_)
+  if (texture_storage_allocated_ && w == img_w_ && h == img_h_ && dtype == current_dtype_)
     return;
 
   img_w_         = w;
@@ -242,6 +246,7 @@ void TensorDisplayWidget::ensureTexture(int w, int h, holoflow::core::DType dtyp
 
   glBindTexture(GL_TEXTURE_2D, tex_);
   glTexImage2D(GL_TEXTURE_2D, 0, internal_format, w, h, 0, GL_RED, type, nullptr);
+  texture_storage_allocated_ = true;
 
   updateLetterboxViewport();
 }
@@ -259,8 +264,6 @@ void TensorDisplayWidget::updateTexture(const void *pixels, int w, int h,
   } else if (dtype == holoflow::core::DType::F32) {
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED, GL_FLOAT, pixels);
   }
-
-  texture_dirty_ = true;
 }
 
 void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,

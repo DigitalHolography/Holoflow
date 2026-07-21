@@ -90,7 +90,7 @@ private:
   GLint  vmax_loc_     = -1;
 
   int  img_w_ = 0, img_h_ = 0;
-  bool texture_dirty_ = false;
+  bool texture_storage_allocated_ = false;
 
   bool   reticle_enabled_ = false;
   double reticle_radius_  = 1.0;
