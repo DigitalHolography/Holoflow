@@ -880,6 +880,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("nb_iter", autofocus->get_nb_iter());
   settings.setValue("skip_subapertures_outside_pupil",
                     autofocus->skip_subapertures_outside_pupil());
+  settings.setValue("use_graph_laplacian", autofocus->use_graph_laplacian());
   settings.setValue("z2_enabled", autofocus->is_z2_enabled());
   settings.setValue("z3_enabled", autofocus->is_z3_enabled());
   settings.setValue("z4_enabled", autofocus->is_z4_enabled());
@@ -1027,6 +1028,8 @@ void MainWindow::restore_persistent_state() {
       settings
           .value("skip_subapertures_outside_pupil", autofocus->skip_subapertures_outside_pupil())
           .toBool());
+  autofocus->set_use_graph_laplacian(
+      settings.value("use_graph_laplacian", autofocus->use_graph_laplacian()).toBool());
   autofocus->set_z2_enabled(settings.value("z2_enabled", autofocus->is_z2_enabled()).toBool());
   autofocus->set_z3_enabled(settings.value("z3_enabled", autofocus->is_z3_enabled()).toBool());
   autofocus->set_z4_enabled(settings.value("z4_enabled", autofocus->is_z4_enabled()).toBool());
@@ -2142,6 +2145,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.autofocus_zernike_orders = std::vector<int>();
     s.autofocus_skip_subapertures_outside_pupil =
         render_widget_->autofocus_widget()->skip_subapertures_outside_pupil();
+    s.autofocus_use_graph_laplacian = render_widget_->autofocus_widget()->use_graph_laplacian();
 
     if (render_widget_->autofocus_widget()->is_z2_enabled()) {
       s.autofocus_zernike_orders.push_back(2);
@@ -2337,6 +2341,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     autofocus->nb_subaps_spin()->setValue(s.autofocus_nb_subaps);
     autofocus->nb_iter_spin()->setValue(s.autofocus_nb_iter);
     autofocus->set_skip_subapertures_outside_pupil(s.autofocus_skip_subapertures_outside_pupil);
+    autofocus->set_use_graph_laplacian(s.autofocus_use_graph_laplacian);
   }
 
   configure_unsupported_features();

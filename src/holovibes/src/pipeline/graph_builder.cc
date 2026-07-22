@@ -336,19 +336,29 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
     M0     = flatfield(M0, s);
   }
 
-  // Cross Correlation with Reference
-  int64_t sy_ref = nb_subap / 2;
-  int64_t sx_ref = nb_subap / 2;
-  auto    M0_ref = slice(M0, {{{}, sy_ref, sx_ref, {}, {}}});
-  auto    xcorr =
-      cross_correlation2(M0, M0_ref,
-                         {
-                             {-2, -1},
-                             holotask::syncs::FftNorm::Backward,
-                             {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f},
-                         });
-  xcorr = fftshift(xcorr, {{-2, -1}});
-  xcorr = normalize(xcorr, {{-2, -1}, 0.0f, 255.0f});
+  // Registration and physical wavefront-slope recovery. The large correlation tensor is only a
+  // graph output on the final pass, when it is needed by the display path.
+  const auto slope_mode    = s_.autofocus_use_graph_laplacian
+                                 ? holotask::syncs::ShackHartmannSlopeMode::FullPairwise
+                                 : holotask::syncs::ShackHartmannSlopeMode::SingleReference;
+  auto       slope_outputs = shack_hartmann_slopes(
+      M0, {
+              .mode               = slope_mode,
+              .lambda             = lam,
+              .dx                 = dx,
+              .dy                 = dy,
+              .z                  = z_prop,
+              .subaperture_height = subap_h,
+              .subaperture_width  = subap_w,
+              .stride_y           = subap_h,
+              .stride_x           = subap_w,
+              .correlation_roi    = {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f},
+              .skip_subapertures_outside_pupil = s_.autofocus_skip_subapertures_outside_pupil,
+              .output_xcorr_maps =
+                  slope_mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference &&
+                  is_last_pass,
+          });
+  auto slopes = slope_outputs.at(0);
 
   if (is_last_pass) {
     // Shack-Hartmann Output Processing
@@ -361,13 +371,18 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
     M0_sh_disp         = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
     shack_hartmann_display(M0_sh_disp, {});
 
-    h                    = static_cast<int64_t>(xcorr.shape.at(3) * nb_subap);
-    w                    = static_cast<int64_t>(xcorr.shape.at(4) * nb_subap);
-    auto xcorr_flattened = convert(xcorr, {Target::U8, Strat::Scaled});
-    xcorr_flattened      = transpose(xcorr_flattened, {{0, 1, 3, 2, 4}});
-    xcorr_flattened      = reshape(xcorr_flattened, {{1, h, w}});
-    xcorr_flattened      = batched_queue(xcorr_flattened, {s_.cpu_out_size, 1, 1});
-    shack_hartmann_xcorr_display(xcorr_flattened, {});
+    if (slope_mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference) {
+      auto xcorr           = slope_outputs.at(1);
+      xcorr                = fftshift(xcorr, {{-2, -1}});
+      xcorr                = normalize(xcorr, {{-2, -1}, 0.0f, 255.0f});
+      h                    = static_cast<int64_t>(xcorr.shape.at(3) * nb_subap);
+      w                    = static_cast<int64_t>(xcorr.shape.at(4) * nb_subap);
+      auto xcorr_flattened = convert(xcorr, {Target::U8, Strat::Scaled});
+      xcorr_flattened      = transpose(xcorr_flattened, {{0, 1, 3, 2, 4}});
+      xcorr_flattened      = reshape(xcorr_flattened, {{1, h, w}});
+      xcorr_flattened      = batched_queue(xcorr_flattened, {s_.cpu_out_size, 1, 1});
+      shack_hartmann_xcorr_display(xcorr_flattened, {});
+    }
   }
 
   // When no Zernike orders are specified, still display an empty phase map for consistency
@@ -384,22 +399,25 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
   }
 
   // Zernike & Phase Correction
-  int ny             = static_cast<int>(FH.shape.at(2));
-  int nx             = static_cast<int>(FH.shape.at(3));
-  xcorr              = cuda_stream_synchronize(xcorr, {});
-  auto xcorr_zernike = memcpy(xcorr, {Host});
+  int ny           = static_cast<int>(FH.shape.at(2));
+  int nx           = static_cast<int>(FH.shape.at(3));
+  slopes           = cuda_stream_synchronize(slopes, {});
+  auto slopes_host = memcpy(slopes, {Host});
 
-  holotask::syncs::ZernikeSettings zernike_settings{
-      s_.autofocus_zernike_orders,
-      lam,
-      dx,
-      dy,
-      z_prop,
-      1,
-      1,
-      s_.autofocus_skip_subapertures_outside_pupil,
+  holotask::syncs::ZernikeFromSlopesSettings zernike_settings{
+      .indexes                         = s_.autofocus_zernike_orders,
+      .lambda                          = lam,
+      .dx                              = dx,
+      .dy                              = dy,
+      .subaperture_height              = subap_h,
+      .subaperture_width               = subap_w,
+      .stride_y                        = subap_h,
+      .stride_x                        = subap_w,
+      .ny                              = 1,
+      .nx                              = 1,
+      .skip_subapertures_outside_pupil = s_.autofocus_skip_subapertures_outside_pupil,
   };
-  auto zernike_coeffs = zernike(xcorr_zernike, zernike_settings);
+  auto zernike_coeffs = zernike_from_slopes(slopes_host, zernike_settings);
   zernike_coeffs      = slice(zernike_coeffs, {{0, 0, {}}});
 
   auto zernike_coeffs_gpu = memcpy(zernike_coeffs, {Device});

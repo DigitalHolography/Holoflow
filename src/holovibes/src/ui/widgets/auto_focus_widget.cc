@@ -28,12 +28,14 @@ namespace holovibes::ui {
 
 namespace {
 
-constexpr int kDefaultNbSubaps = 5;
-constexpr int kMinNbSubaps     = 3;
-constexpr int kMaxNbSubaps     = 99;
-constexpr int kDefaultNbIter   = 1;
-constexpr int kMinNbIter       = 1;
-constexpr int kMaxNbIter       = 8;
+constexpr int kDefaultNbSubaps      = 5;
+constexpr int kMinNbSubaps          = 3;
+constexpr int kMaxNbSubaps          = 99;
+constexpr int kDefaultNbIter        = 1;
+constexpr int kMinNbIter            = 1;
+constexpr int kMaxNbIter            = 8;
+constexpr int kSingleReferenceIndex = 0;
+constexpr int kGraphLaplacianIndex  = 1;
 
 QSpinBox *create_spin_box(QWidget *parent, int value, int min_value, int max_value,
                           const QString &tooltip) {
@@ -85,6 +87,9 @@ int  AutoFocusWidget::get_nb_iter() const { return nb_iter_spin_->value(); }
 bool AutoFocusWidget::is_enabled() const { return enable_check_->isChecked(); }
 bool AutoFocusWidget::skip_subapertures_outside_pupil() const {
   return skip_subapertures_outside_pupil_checkbox_->isChecked();
+}
+bool AutoFocusWidget::use_graph_laplacian() const {
+  return slope_recovery_combo_->currentIndex() == kGraphLaplacianIndex;
 }
 
 // Zernike values
@@ -199,7 +204,7 @@ bool AutoFocusWidget::show_shack_hartmann_sensor_view() const {
 }
 
 bool AutoFocusWidget::show_cross_correlation_view() const {
-  return cross_correlation_view_checkbox_->isChecked();
+  return !use_graph_laplacian() && cross_correlation_view_checkbox_->isChecked();
 }
 
 void AutoFocusWidget::set_show_zernike_metrics_plot(bool checked) {
@@ -225,6 +230,11 @@ void AutoFocusWidget::set_enabled(bool enabled) {
 
 void AutoFocusWidget::set_skip_subapertures_outside_pupil(bool skip) {
   skip_subapertures_outside_pupil_checkbox_->setChecked(skip);
+}
+
+void AutoFocusWidget::set_use_graph_laplacian(bool enabled) {
+  slope_recovery_combo_->setCurrentIndex(enabled ? kGraphLaplacianIndex : kSingleReferenceIndex);
+  update_mode_dependent_controls();
 }
 
 void AutoFocusWidget::clear_validation_styles() {
@@ -304,6 +314,12 @@ void AutoFocusWidget::setup_ui() {
                                   "Number of Shack-Hartmann correction passes.");
   add_label_widget_row("Nb Iter:", nb_iter_spin_);
 
+  slope_recovery_combo_ = new QComboBox(content_container_);
+  slope_recovery_combo_->addItems({"Single reference", "Graph Laplacian (full pairwise)"});
+  slope_recovery_combo_->setToolTip(
+      "Choose center-reference registration or full-pairwise graph-Laplacian recovery.");
+  add_label_widget_row("Slope recovery:", slope_recovery_combo_);
+
   skip_subapertures_outside_pupil_checkbox_ =
       create_checkbox(content_container_, true, "Skip subapertures outside pupil");
   skip_subapertures_outside_pupil_checkbox_->setToolTip(
@@ -329,6 +345,8 @@ void AutoFocusWidget::setup_ui() {
       create_checkbox(content_container_, false, "Display Shack-Hartmann sensor view");
   cross_correlation_view_checkbox_ =
       create_checkbox(content_container_, false, "Display cross-correlation view");
+  cross_correlation_view_checkbox_->setToolTip(
+      "The correlation montage is available only in Single reference mode.");
 
   inner_layout->addWidget(zernike_metrics_plot_checkbox_, row++, 0, 1, 3);
   inner_layout->addWidget(reconstructed_phase_checkbox_, row++, 0, 1, 3);
@@ -361,6 +379,11 @@ void AutoFocusWidget::connect_signals() {
 
   connect(nb_iter_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &AutoFocusWidget::settings_changed);
+  connect(slope_recovery_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+          [this](int) {
+            update_mode_dependent_controls();
+            emit settings_changed();
+          });
   connect(skip_subapertures_outside_pupil_checkbox_, &QCheckBox::toggled, this,
           &AutoFocusWidget::settings_changed);
 
@@ -387,6 +410,12 @@ void AutoFocusWidget::connect_signals() {
 
 void AutoFocusWidget::set_controls_enabled(bool enabled) {
   content_container_->setEnabled(enabled);
+  update_mode_dependent_controls();
+}
+
+void AutoFocusWidget::update_mode_dependent_controls() {
+  cross_correlation_view_checkbox_->setEnabled(content_container_->isEnabled() &&
+                                               !use_graph_laplacian());
 }
 
 } // namespace holovibes::ui

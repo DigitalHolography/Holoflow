@@ -15,6 +15,7 @@
 #pragma once
 
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QSpinBox>
@@ -34,6 +35,7 @@ public:
   int  get_nb_iter() const;
   bool is_enabled() const;
   bool skip_subapertures_outside_pupil() const;
+  bool use_graph_laplacian() const;
 
   // Zernike values in radians
   double get_z2() const;
@@ -93,6 +95,7 @@ public:
 
   void set_enabled(bool enabled);
   void set_skip_subapertures_outside_pupil(bool skip);
+  void set_use_graph_laplacian(bool enabled);
 
   void clear_validation_styles();
   void mark_nb_subaps_invalid();
@@ -123,10 +126,12 @@ private:
   void setup_ui();
   void connect_signals();
   void set_controls_enabled(bool enabled);
+  void update_mode_dependent_controls();
 
   QCheckBox *enable_check_;
   QSpinBox  *nb_subaps_spin_;
   QSpinBox  *nb_iter_spin_;
+  QComboBox *slope_recovery_combo_;
   QCheckBox *skip_subapertures_outside_pupil_checkbox_;
 
   QCheckBox      *z2_checkbox_;

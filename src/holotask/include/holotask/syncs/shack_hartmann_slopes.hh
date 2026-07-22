@@ -15,9 +15,9 @@
 #pragma once
 
 #include <nlohmann/json.hpp>
-#include <vector>
 
 #include "holoflow/core/tasks.hh"
+#include "holotask/syncs/cross_correlation2.hh"
 
 namespace holotask::syncs {
 
@@ -25,27 +25,47 @@ namespace holotask::syncs {
 // Settings
 // -------------------------------------------------------------------------------------------------
 
-struct ZernikeSettings {
-  std::vector<int> indexes;
-  float            lambda;
-  float            dx;
-  float            dy;
-  float            z;
-  size_t           ny                              = 1;
-  size_t           nx                              = 1;
-  bool             skip_subapertures_outside_pupil = true;
-
-  bool operator==(const ZernikeSettings &) const = default;
+enum class ShackHartmannSlopeMode {
+  SingleReference,
+  FullPairwise,
 };
 
-void to_json(nlohmann::json &j, const ZernikeSettings &s);
-void from_json(const nlohmann::json &j, ZernikeSettings &s);
+void to_json(nlohmann::json &j, ShackHartmannSlopeMode mode);
+void from_json(const nlohmann::json &j, ShackHartmannSlopeMode &mode);
+
+struct ShackHartmannSlopeSettings {
+  ShackHartmannSlopeMode mode = ShackHartmannSlopeMode::SingleReference;
+
+  float lambda = 0.0f;
+  float dx     = 0.0f;
+  float dy     = 0.0f;
+  float z      = 0.0f;
+
+  size_t subaperture_height = 0;
+  size_t subaperture_width  = 0;
+
+  size_t stride_y = 0;
+  size_t stride_x = 0;
+
+  CrossCorrelation2Settings::Ellipse correlation_roi;
+
+  bool skip_subapertures_outside_pupil = true;
+  bool output_xcorr_maps               = false;
+
+  // Reserved for full-pairwise recovery.
+  size_t pair_batch_size = 256;
+
+  bool operator==(const ShackHartmannSlopeSettings &) const = default;
+};
+
+void to_json(nlohmann::json &j, const ShackHartmannSlopeSettings &s);
+void from_json(const nlohmann::json &j, ShackHartmannSlopeSettings &s);
 
 // -------------------------------------------------------------------------------------------------
 // Factory
 // -------------------------------------------------------------------------------------------------
 
-class ZernikeFactory : public holoflow::core::ISyncTaskFactory {
+class ShackHartmannSlopesFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;

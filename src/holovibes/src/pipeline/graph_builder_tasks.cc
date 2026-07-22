@@ -70,7 +70,7 @@ DEFINE_UNARY_SYNC_NODE (convolution,                            "convolution",  
 DEFINE_UNARY_SYNC_NODE (pct_clip,                               "pct_clip",                            "PctClip",                         holotask::syncs::PctClipSettings)
 DEFINE_UNARY_SYNC_NODE (registration,                           "registration",                        "Registration",                    holotask::syncs::RegistrationSettings)
 DEFINE_UNARY_SYNC_NODE (wrap2pi,                                "wrap2pi",                             "Wrap2Pi",                         holotask::syncs::Wrap2PiSettings)
-DEFINE_UNARY_SYNC_NODE (zernike,                                "zernike",                             "Zernike",                         holotask::syncs::ZernikeSettings)
+DEFINE_UNARY_SYNC_NODE (zernike_from_slopes,                    "zernike_from_slopes",                 "ZernikeFromSlopes",               holotask::syncs::ZernikeFromSlopesSettings)
 DEFINE_UNARY_SYNC_NODE (zernike_phase,                          "zernike_phase",                       "ZernikePhase",                    holotask::syncs::ZernikePhaseSettings)
 DEFINE_SINK_SYNC_NODE  (zernike_defocus_z_prop,                 "zernike_defocus_z_prop",              "ZernikeDefocusZProp",             holotask::syncs::ZernikeDefocusZPropSettings)
 
@@ -103,6 +103,13 @@ DEFINE_UNARY_SYNC_NODE (normalize,                    "normalize",              
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                "batch_queue",                  "BatchQueue",                      holotask::asyncs::BatchQueueSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                    "slide_avg",                    "SlidingAverage",                  holotask::asyncs::SlidingAverageSettings)
 // clang-format on
+
+std::vector<GraphBuilderTasks::TDesc>
+GraphBuilderTasks::shack_hartmann_slopes(const TDesc                                &X,
+                                         holotask::syncs::ShackHartmannSlopeSettings s) {
+  return make_unary_sync_node("shack_hartmann_slopes", "ShackHartmannSlopes", "ShackHartmannSlopes",
+                              X, s);
+}
 
 GraphBuilderTasks::TDesc GraphBuilderTasks::multiply(const TDesc &A, const TDesc &B,
                                                      holonp::MultiplySettings s) {

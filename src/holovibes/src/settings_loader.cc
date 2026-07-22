@@ -82,6 +82,20 @@ using json = nlohmann::json;
   return TimeMethod::NONE;
 }
 
+[[nodiscard]] std::string autofocus_slope_mode_name(bool use_graph_laplacian) {
+  return use_graph_laplacian ? "full_pairwise" : "single_reference";
+}
+
+[[nodiscard]] bool use_graph_laplacian(const std::string &value, bool default_value) {
+  if (value == "full_pairwise") {
+    return true;
+  }
+  if (value == "single_reference") {
+    return false;
+  }
+  return default_value;
+}
+
 void write_advanced(json &j, const Settings &s) {
   auto &advanced = j["compute_settings"]["advanced"];
 
@@ -116,6 +130,7 @@ void write_image_rendering(json &j, const Settings &s) {
   rendering["autofocus"]["nb_iter"]   = s.autofocus_nb_iter;
   rendering["autofocus"]["skip_subapertures_outside_pupil"] =
       s.autofocus_skip_subapertures_outside_pupil;
+  rendering["autofocus"]["slope_mode"] = autofocus_slope_mode_name(s.autofocus_use_graph_laplacian);
   rendering["autofocus"]["a4_history"]["time_window_seconds"] = s.signal_plot_time_window_seconds;
   rendering["autofocus"]["a4_history"]["sample_time_seconds"] = s.signal_plot_sample_time_seconds;
 
@@ -208,7 +223,10 @@ void read_image_rendering(Settings &s, const json &rendering) {
   s.autofocus_nb_iter                         = val(autofocus, "nb_iter", s.autofocus_nb_iter);
   s.autofocus_skip_subapertures_outside_pupil = val(autofocus, "skip_subapertures_outside_pupil",
                                                     s.autofocus_skip_subapertures_outside_pupil);
-  const auto &a4_history                      = child_or_empty(autofocus, "a4_history");
+  s.autofocus_use_graph_laplacian             = use_graph_laplacian(
+      val(autofocus, "slope_mode", autofocus_slope_mode_name(s.autofocus_use_graph_laplacian)),
+      s.autofocus_use_graph_laplacian);
+  const auto &a4_history = child_or_empty(autofocus, "a4_history");
   s.signal_plot_time_window_seconds =
       val(a4_history, "time_window_seconds", s.signal_plot_time_window_seconds);
   s.signal_plot_sample_time_seconds =

@@ -25,6 +25,7 @@
 
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
+#include "syncs/phase_correlation.cuh"
 
 namespace holotask::syncs {
 
@@ -348,27 +349,6 @@ std::vector<size_t> make_reference_batch_map(const holoflow::core::TDesc &moving
   return batch_map;
 }
 
-__device__ float compute_ellipse_sq_dist(int x, int y, int W, int H,
-                                         CrossCorrelation2Settings::Ellipse roi) {
-  if (W <= 0 || H <= 0 || roi.rx <= 0.f || roi.ry <= 0.f) {
-    return 2.0f; // Safely outside
-  }
-
-  float xn = (static_cast<float>(x) + 0.5f) / static_cast<float>(W);
-  float yn = (static_cast<float>(y) + 0.5f) / static_cast<float>(H);
-
-  float dx = xn - roi.cx;
-  float dy = yn - roi.cy;
-
-  float th = roi.angle * (CUDART_PI_F / 180.0f);
-  float c  = cosf(th);
-  float s  = sinf(th);
-  float xr = c * dx + s * dy;
-  float yr = -s * dx + c * dy;
-
-  return (xr * xr) / (roi.rx * roi.rx) + (yr * yr) / (roi.ry * roi.ry);
-}
-
 __global__ void compute_means_kernel(const float *__restrict__ in_base,
                                      float *__restrict__ means_out, size_t inner_batches,
                                      size_t idist, size_t istride, size_t inembed_w, size_t h,
@@ -388,8 +368,8 @@ __global__ void compute_means_kernel(const float *__restrict__ in_base,
     size_t x = i % w;
 
     // Only accumulate pixels inside the ellipse
-    if (compute_ellipse_sq_dist(static_cast<int>(x), static_cast<int>(y), static_cast<int>(w),
-                                static_cast<int>(h), roi) <= 1.0f) {
+    if (detail::ellipse_sq_distance(static_cast<int>(x), static_cast<int>(y), static_cast<int>(w),
+                                    static_cast<int>(h), roi) <= 1.0f) {
       sum += img_in[y * inembed_w * istride + x * istride];
       count++;
     }
@@ -441,17 +421,11 @@ subtract_and_pack_kernel(const float *__restrict__ in_base, const float *__restr
   float        mean    = means[global_batch_offset + batch_idx];
   size_t       out_idx = (global_batch_offset + batch_idx) * (h * w) + pixel_idx;
 
-  float d = compute_ellipse_sq_dist(static_cast<int>(x), static_cast<int>(y), static_cast<int>(w),
-                                    static_cast<int>(h), roi);
+  float d = detail::ellipse_sq_distance(static_cast<int>(x), static_cast<int>(y),
+                                        static_cast<int>(w), static_cast<int>(h), roi);
 
-  if (d <= 1.0f) {
-    float w_val               = 0.5f * (1.0f + cosf(CUDART_PI_F * sqrtf(d)));
-    out_contiguous[out_idx].x = (val - mean) * w_val;
-    out_contiguous[out_idx].y = 0.0f;
-  } else {
-    out_contiguous[out_idx].x = 0.0f;
-    out_contiguous[out_idx].y = 0.0f;
-  }
+  out_contiguous[out_idx] =
+      make_cuFloatComplex(detail::preprocess_phase_correlation_value(val, mean, d), 0.0f);
 }
 
 __global__ void phase_correlate_kernel(cuFloatComplex *__restrict__ moving_freq,
@@ -468,16 +442,7 @@ __global__ void phase_correlate_kernel(cuFloatComplex *__restrict__ moving_freq,
 
   const cuFloatComplex moving_val    = moving_freq[idx];
   const cuFloatComplex reference_val = reference_freq[ref_batch * freq_elems_per_batch + freq_idx];
-  const cuFloatComplex product       = cuCmulf(moving_val, cuConjf(reference_val));
-  const float          mag           = sqrtf(product.x * product.x + product.y * product.y);
-
-  if (mag > 1e-12f) {
-    moving_freq[idx].x = product.x / mag;
-    moving_freq[idx].y = product.y / mag;
-  } else {
-    moving_freq[idx].x = 0.0f;
-    moving_freq[idx].y = 0.0f;
-  }
+  moving_freq[idx]                   = detail::normalized_cross_power(moving_val, reference_val);
 }
 
 // Extract real component from cuFloatComplex buffer to float buffer and scale
@@ -624,8 +589,8 @@ holoflow::core::OpResult CrossCorrelation2::execute(holoflow::core::SyncCtx &ctx
 
   auto        *out_ptr = reinterpret_cast<float *>(ctx.outputs[0].data());
   const size_t n_fft   = moving_desc_.shape[moving_desc_.shape.size() - 2] *
-                       moving_desc_.shape[moving_desc_.shape.size() - 1];
-  const float scale = inverse_scale(settings_.norm, n_fft);
+                         moving_desc_.shape[moving_desc_.shape.size() - 1];
+  const float  scale   = inverse_scale(settings_.norm, n_fft);
 
   if (total_out_elems_ > 0) {
     constexpr unsigned int block = 256;

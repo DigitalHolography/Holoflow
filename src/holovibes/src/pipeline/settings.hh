@@ -143,6 +143,7 @@ struct Settings {
   int              autofocus_nb_iter;
   std::vector<int> autofocus_zernike_orders;
   bool             autofocus_skip_subapertures_outside_pupil = true;
+  bool             autofocus_use_graph_laplacian             = false;
 
   // Zernike coefficient history. sample_time_seconds is the nominal interval between two
   // consecutive plotted (emitted and valid) coefficient sets, not processing completion time.

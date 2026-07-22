@@ -67,11 +67,12 @@
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
+#include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 #include "holotask/syncs/unfold2d.hh"
 #include "holotask/syncs/wrap2pi.hh"
-#include "holotask/syncs/zernike.hh"
 #include "holotask/syncs/zernike_defocus_z_prop.hh"
+#include "holotask/syncs/zernike_from_slopes.hh"
 #include "holotask/syncs/zernike_phase.hh"
 #include "tasks/sinks/display_signal_history.hh"
 #include "tasks/sinks/display_tensor.hh"
@@ -126,7 +127,8 @@ protected:
   TDesc pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);
   TDesc registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
   TDesc wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
-  TDesc zernike(const TDesc &X, holotask::syncs::ZernikeSettings s);
+  std::vector<TDesc> shack_hartmann_slopes(const TDesc &X, holotask::syncs::ShackHartmannSlopeSettings s);
+  TDesc zernike_from_slopes(const TDesc &X, holotask::syncs::ZernikeFromSlopesSettings s);
   TDesc zernike_phase(const TDesc &X, holotask::syncs::ZernikePhaseSettings s);
   TDesc concatenate(std::span<const TDesc> Xs, holonp::ConcatenateSettings s);
   TDesc transpose(const TDesc &X, holonp::TransposeSettings s);
