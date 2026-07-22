@@ -19,8 +19,8 @@
 #include <QLabel>
 #include <QMouseEvent>
 #include <QPainter>
-#include <QPainterPath>
 #include <QPalette>
+#include <QPolygonF>
 #include <QTimer>
 #include <QVBoxLayout>
 
@@ -39,17 +39,17 @@ constexpr int kProfileReportMs   = 1000;
 
 struct PaintProfileAccumulator {
   QElapsedTimer report_timer;
-  qint64        paint_count   = 0;
-  qint64        plot_count    = 0;
-  qint64        sample_count  = 0;
-  qint64        total_ns      = 0;
-  qint64        range_ns      = 0;
-  qint64        chrome_ns     = 0;
-  qint64        path_build_ns = 0;
-  qint64        path_draw_ns  = 0;
+  qint64        paint_count       = 0;
+  qint64        plot_count        = 0;
+  qint64        sample_count      = 0;
+  qint64        total_ns          = 0;
+  qint64        range_ns          = 0;
+  qint64        chrome_ns         = 0;
+  qint64        polyline_build_ns = 0;
+  qint64        polyline_draw_ns  = 0;
 
   void record(qint64 paint_total_ns, qint64 paint_range_ns, qint64 paint_chrome_ns,
-              qint64 paint_path_build_ns, qint64 paint_path_draw_ns, qint64 painted_plots,
+              qint64 paint_polyline_build_ns, qint64 paint_polyline_draw_ns, qint64 painted_plots,
               qint64 painted_samples) {
     if (!report_timer.isValid()) {
       report_timer.start();
@@ -61,8 +61,8 @@ struct PaintProfileAccumulator {
     total_ns += paint_total_ns;
     range_ns += paint_range_ns;
     chrome_ns += paint_chrome_ns;
-    path_build_ns += paint_path_build_ns;
-    path_draw_ns += paint_path_draw_ns;
+    polyline_build_ns += paint_polyline_build_ns;
+    polyline_draw_ns += paint_polyline_draw_ns;
 
     const qint64 elapsed_ms = report_timer.elapsed();
     if (elapsed_ms < kProfileReportMs) {
@@ -70,7 +70,7 @@ struct PaintProfileAccumulator {
     }
 
     constexpr double ns_to_ms    = 1.0e-6;
-    const qint64     measured_ns = range_ns + chrome_ns + path_build_ns + path_draw_ns;
+    const qint64     measured_ns = range_ns + chrome_ns + polyline_build_ns + polyline_draw_ns;
     const qint64     other_ns    = std::max<qint64>(0, total_ns - measured_ns);
     qInfo().nospace() << "Zernike paint profile (" << elapsed_ms << " ms): frames=" << paint_count
                       << ", plots=" << plot_count << ", samples=" << sample_count
@@ -79,17 +79,17 @@ struct PaintProfileAccumulator {
                       << " ms/frame, setup/other=" << other_ns * ns_to_ms
                       << " ms, ranges=" << range_ns * ns_to_ms
                       << " ms, grid/text=" << chrome_ns * ns_to_ms
-                      << " ms, path build=" << path_build_ns * ns_to_ms
-                      << " ms, path draw=" << path_draw_ns * ns_to_ms << " ms";
+                      << " ms, polyline build=" << polyline_build_ns * ns_to_ms
+                      << " ms, polyline draw=" << polyline_draw_ns * ns_to_ms << " ms";
 
-    paint_count   = 0;
-    plot_count    = 0;
-    sample_count  = 0;
-    total_ns      = 0;
-    range_ns      = 0;
-    chrome_ns     = 0;
-    path_build_ns = 0;
-    path_draw_ns  = 0;
+    paint_count       = 0;
+    plot_count        = 0;
+    sample_count      = 0;
+    total_ns          = 0;
+    range_ns          = 0;
+    chrome_ns         = 0;
+    polyline_build_ns = 0;
+    polyline_draw_ns  = 0;
     report_timer.restart();
   }
 };
@@ -355,12 +355,12 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
   QElapsedTimer phase_timer;
   paint_timer.start();
 
-  qint64 range_ns      = 0;
-  qint64 chrome_ns     = 0;
-  qint64 path_build_ns = 0;
-  qint64 path_draw_ns  = 0;
-  qint64 plotted       = 0;
-  qint64 samples_drawn = 0;
+  qint64 range_ns          = 0;
+  qint64 chrome_ns         = 0;
+  qint64 polyline_build_ns = 0;
+  qint64 polyline_draw_ns  = 0;
+  qint64 plotted           = 0;
+  qint64 samples_drawn     = 0;
 
   QPainter painter(this);
   painter.setRenderHint(QPainter::Antialiasing, false);
@@ -473,18 +473,12 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
     }
 
     phase_timer.restart();
-    QPainterPath curve;
-    bool         started = false;
+    QPolygonF curve;
+    curve.reserve(static_cast<qsizetype>(samples.size()));
     for (const auto &sample : samples) {
-      const QPointF point = map_to_plot(sample.time_seconds - newest_time, sample.value);
-      if (!started) {
-        curve.moveTo(point);
-        started = true;
-      } else {
-        curve.lineTo(point);
-      }
+      curve.append(map_to_plot(sample.time_seconds - newest_time, sample.value));
     }
-    path_build_ns += phase_timer.nsecsElapsed();
+    polyline_build_ns += phase_timer.nsecsElapsed();
     samples_drawn += static_cast<qint64>(samples.size());
 
     phase_timer.restart();
@@ -493,20 +487,20 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
     painter.setClipRect(plot);
     painter.setPen(QPen(curve_color, 2.0));
     painter.setBrush(Qt::NoBrush);
-    painter.drawPath(curve);
+    painter.drawPolyline(curve);
     if (samples.size() == 1) {
       painter.setBrush(curve_color);
       painter.drawEllipse(
           map_to_plot(samples.back().time_seconds - newest_time, samples.back().value), 2.5, 2.5);
     }
     painter.restore();
-    path_draw_ns += phase_timer.nsecsElapsed();
+    polyline_draw_ns += phase_timer.nsecsElapsed();
   }
 
   painter.end();
   static PaintProfileAccumulator profile;
-  profile.record(paint_timer.nsecsElapsed(), range_ns, chrome_ns, path_build_ns, path_draw_ns,
-                 plotted, samples_drawn);
+  profile.record(paint_timer.nsecsElapsed(), range_ns, chrome_ns, polyline_build_ns,
+                 polyline_draw_ns, plotted, samples_drawn);
 }
 
 void ZernikeHistoryWidget::mousePressEvent(QMouseEvent *event) {

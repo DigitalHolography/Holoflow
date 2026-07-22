@@ -331,10 +331,9 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
   M0      = fftshift(M0, {{-2, -1}});
 
   if (s_.pp_flatfield) {
-    const auto [flatfield_dy, flatfield_dx] =
-        fresnel_1fft_output_pitch(lam, z_prop, dy, dx, subap_h, subap_w);
-    M0 = flatfield(M0, flatfield_settings_from_cutoff_period(s_.pp_flatfield_cutoff_period_m,
-                                                             flatfield_dy, flatfield_dx));
+    auto [dy_out, dx_out] = fresnel_1fft_output_pitch(lam, z_prop, dy, dx, subap_h, subap_w);
+    auto s = flatfield_settings_from_cutoff_period(s_.pp_flatfield_cutoff_period_m, dy_out, dx_out);
+    M0     = flatfield(M0, s);
   }
 
   // Cross Correlation with Reference

@@ -449,6 +449,8 @@ public:
 
         const float x_n_local = (X - local_center_X) / local_radius_m;
         const float y_n_local = (Y - local_center_Y) / local_radius_m;
+        const float x_n_ref   = 0.0f;
+        const float y_n_ref   = 0.0f;
 
         const auto &shift   = shifts[sy * nb_sub_x + sx];
         float       slope_x = (shift.dx * dx_out) / settings_.z;
@@ -458,9 +460,10 @@ public:
         std::array<float, kMaxSupportedModes> gy{};
 
         for (std::size_t i = 0; i < n_modes; ++i) {
-          const auto eval = eval_zernike_noll(settings_.indexes[i], x_n_local, y_n_local);
-          gx[i]           = eval.d_dx_n / local_radius_m;
-          gy[i]           = eval.d_dy_n / local_radius_m;
+          const auto eval     = eval_zernike_noll(settings_.indexes[i], x_n_local, y_n_local);
+          const auto eval_ref = eval_zernike_noll(settings_.indexes[i], x_n_ref, y_n_ref);
+          gx[i]               = (eval.d_dx_n - eval_ref.d_dx_n) / local_radius_m;
+          gy[i]               = (eval.d_dy_n - eval_ref.d_dy_n) / local_radius_m;
         }
 
         for (std::size_t i = 0; i < n_modes; ++i) {
