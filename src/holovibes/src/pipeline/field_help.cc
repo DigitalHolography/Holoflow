@@ -78,9 +78,6 @@ constexpr auto kTimeZEndConstraints          = std::to_array<const char *>({
 constexpr auto kView3DCutsConstraints        = std::to_array<const char *>({
     "Not currently supported by the pipeline.",
 });
-constexpr auto kSpectrumConstraints          = std::to_array<const char *>({
-    "Display-only toggle. No validator issue is emitted yet for this field.",
-});
 constexpr auto kFlatfieldCutoffConstraints   = std::to_array<const char *>({
     "Must be strictly positive.",
     "Physical period of the 50% amplitude transition convention, not a hard cutoff.",
@@ -148,10 +145,6 @@ const FieldHelp kFieldHelp[] = {
      kTimeZEndConstraints},
     {SettingsField::View3DCuts, "3D Cuts",
      "Enables XZ and YZ cut views derived from the processed volume.", kView3DCutsConstraints},
-    {SettingsField::ViewRawSpectrum, "Raw Spectrum View",
-     "Displays the raw temporal spectrum view.", kSpectrumConstraints},
-    {SettingsField::ViewProcessedSpectrum, "Processed Spectrum View",
-     "Displays the processed temporal spectrum view.", kSpectrumConstraints},
     {SettingsField::PpFlatfieldCutoffPeriod, "Flatfield Cutoff",
      "Physical cutoff period used to derive the Gaussian background subtraction scale.",
      kFlatfieldCutoffConstraints},

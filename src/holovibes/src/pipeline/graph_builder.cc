@@ -343,20 +343,20 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
                                  : holotask::syncs::ShackHartmannSlopeMode::SingleReference;
   auto       slope_outputs = shack_hartmann_slopes(
       M0, {
-              .mode               = slope_mode,
-              .lambda             = lam,
-              .dx                 = dx,
-              .dy                 = dy,
-              .z                  = z_prop,
-              .subaperture_height = subap_h,
-              .subaperture_width  = subap_w,
-              .stride_y           = subap_h,
-              .stride_x           = subap_w,
-              .correlation_roi    = {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f},
-              .skip_subapertures_outside_pupil = s_.autofocus_skip_subapertures_outside_pupil,
-              .output_xcorr_maps =
+                    .mode               = slope_mode,
+                    .lambda             = lam,
+                    .dx                 = dx,
+                    .dy                 = dy,
+                    .z                  = z_prop,
+                    .subaperture_height = subap_h,
+                    .subaperture_width  = subap_w,
+                    .stride_y           = subap_h,
+                    .stride_x           = subap_w,
+                    .correlation_roi = {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f},
+                    .skip_subapertures_outside_pupil = s_.autofocus_skip_subapertures_outside_pupil,
+                    .output_xcorr_maps =
                   slope_mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference &&
-                  is_last_pass,
+                  is_last_pass && s_.view_shack_hartmann_xcorr,
           });
   auto slopes = slope_outputs.at(0);
 
@@ -369,9 +369,12 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
     M0_sh_disp         = reshape(M0_sh_disp, {{1, h, w}});
     M0_sh_disp         = convert(M0_sh_disp, {Target::U8, Strat::Scaled});
     M0_sh_disp         = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
-    shack_hartmann_display(M0_sh_disp, {});
+    if (s_.view_shack_hartmann) {
+      shack_hartmann_display(M0_sh_disp, {});
+    }
 
-    if (slope_mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference) {
+    if (slope_mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference &&
+        s_.view_shack_hartmann_xcorr) {
       auto xcorr           = slope_outputs.at(1);
       xcorr                = fftshift(xcorr, {{-2, -1}});
       xcorr                = normalize(xcorr, {{-2, -1}, 0.0f, 255.0f});
@@ -392,7 +395,9 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
     auto empty_phase = zeros({{1, ny, nx}, holoflow::core::DType::F32});
     FH               = correct_phase(FH, empty_phase, {});
     if (is_last_pass) {
-      zernike_phase_display(empty_phase, {});
+      if (s_.view_zernike_phase) {
+        zernike_phase_display(empty_phase, {});
+      }
     }
 
     return FH;
@@ -442,12 +447,14 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
     zernike_coefficients_display(*iteration_state.cumulative_coeffs_gpu,
                                  {s_.autofocus_zernike_orders});
 
-    auto zernike_coeffs_host = memcpy(*iteration_state.cumulative_coeffs_gpu, {Host});
-    zernike_history_display(zernike_coeffs_host, {
-                                                     s_.autofocus_zernike_orders,
-                                                     s_.signal_plot_time_window_seconds,
-                                                     s_.signal_plot_sample_time_seconds,
-                                                 });
+    if (s_.view_zernike_metrics) {
+      auto zernike_coeffs_host = memcpy(*iteration_state.cumulative_coeffs_gpu, {Host});
+      zernike_history_display(zernike_coeffs_host, {
+                                                       s_.autofocus_zernike_orders,
+                                                       s_.signal_plot_time_window_seconds,
+                                                       s_.signal_plot_sample_time_seconds,
+                                                   });
+    }
 
     const auto a4_it       = std::ranges::find(s_.autofocus_zernike_orders, 4);
     const bool a4_included = a4_it != s_.autofocus_zernike_orders.end();
@@ -462,11 +469,13 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
                              });
     }
 
-    auto phase_disp = copy(*iteration_state.cumulative_phase_gpu, {});
-    phase_disp      = wrap2pi(phase_disp, {});
-    phase_disp      = reshape(phase_disp, {{1, ny, nx}});
-    phase_disp      = batched_queue(phase_disp, {s_.cpu_out_size, 1, 1});
-    zernike_phase_display(phase_disp, {});
+    if (s_.view_zernike_phase) {
+      auto phase_disp = copy(*iteration_state.cumulative_phase_gpu, {});
+      phase_disp      = wrap2pi(phase_disp, {});
+      phase_disp      = reshape(phase_disp, {{1, ny, nx}});
+      phase_disp      = batched_queue(phase_disp, {s_.cpu_out_size, 1, 1});
+      zernike_phase_display(phase_disp, {});
+    }
   }
 
   return FH;

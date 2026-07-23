@@ -39,6 +39,12 @@ struct VisualizationDescriptor {
   QWidget      *widget = nullptr;
   QString       default_anchor_id;
   DockPlacement default_placement = DockPlacement::Tab;
+  bool          default_enabled   = true;
+};
+
+struct VisualizationContentExpectation {
+  bool    expected = false;
+  QString unavailable_message;
 };
 
 class VisualizationWorkspace : public QWidget {
@@ -53,8 +59,12 @@ public:
   void populate_view_menu(QMenu *view_menu);
 
   void set_pipeline_running(bool running);
-  void set_visualization_availability(const QHash<QString, bool> &availability);
+  void set_visualization_content_expectations(
+      const QHash<QString, VisualizationContentExpectation> &expectations);
   void set_visualization_title(const QString &id, const QString &title);
+  void set_visualization_enabled(const QString &id, bool enabled);
+  bool is_visualization_enabled(const QString &id) const;
+  void reset_visualization_content();
   void select_visualization(const QString &id);
 
   void save_persistent_state(QSettings &settings);
@@ -62,6 +72,7 @@ public:
 
 signals:
   void selected_visualization_changed(const QString &visualization_id);
+  void visualization_preferences_changed();
 
 private:
   struct Entry;
@@ -71,6 +82,7 @@ private:
   void   add_entry_at_default_location(Entry &entry);
   void   apply_state();
   void   update_central_page();
+  void   update_entry_content(Entry &entry);
   void   cache_active_layout();
   void   show_all_visualizations();
   void   hide_all_visualizations();

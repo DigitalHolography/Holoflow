@@ -190,39 +190,6 @@ void AutoFocusWidget::set_z8_enabled(bool enabled) { z8_checkbox_->setChecked(en
 void AutoFocusWidget::set_z9_enabled(bool enabled) { z9_checkbox_->setChecked(enabled); }
 void AutoFocusWidget::set_z10_enabled(bool enabled) { z10_checkbox_->setChecked(enabled); }
 
-// Visualization toggles
-bool AutoFocusWidget::show_zernike_metrics_plot() const {
-  return zernike_metrics_plot_checkbox_->isChecked();
-}
-
-bool AutoFocusWidget::show_reconstructed_phase() const {
-  return reconstructed_phase_checkbox_->isChecked();
-}
-
-bool AutoFocusWidget::show_shack_hartmann_sensor_view() const {
-  return shack_hartmann_sensor_view_checkbox_->isChecked();
-}
-
-bool AutoFocusWidget::show_cross_correlation_view() const {
-  return !use_graph_laplacian() && cross_correlation_view_checkbox_->isChecked();
-}
-
-void AutoFocusWidget::set_show_zernike_metrics_plot(bool checked) {
-  zernike_metrics_plot_checkbox_->setChecked(checked);
-}
-
-void AutoFocusWidget::set_show_reconstructed_phase(bool checked) {
-  reconstructed_phase_checkbox_->setChecked(checked);
-}
-
-void AutoFocusWidget::set_show_shack_hartmann_sensor_view(bool checked) {
-  shack_hartmann_sensor_view_checkbox_->setChecked(checked);
-}
-
-void AutoFocusWidget::set_show_cross_correlation_view(bool checked) {
-  cross_correlation_view_checkbox_->setChecked(checked);
-}
-
 void AutoFocusWidget::set_enabled(bool enabled) {
   enable_check_->setChecked(enabled);
   set_controls_enabled(enabled);
@@ -255,16 +222,6 @@ QCheckBox *AutoFocusWidget::z7_checkbox() { return z7_checkbox_; }
 QCheckBox *AutoFocusWidget::z8_checkbox() { return z8_checkbox_; }
 QCheckBox *AutoFocusWidget::z9_checkbox() { return z9_checkbox_; }
 QCheckBox *AutoFocusWidget::z10_checkbox() { return z10_checkbox_; }
-
-QCheckBox *AutoFocusWidget::reconstructed_phase_checkbox() { return reconstructed_phase_checkbox_; }
-
-QCheckBox *AutoFocusWidget::shack_hartmann_sensor_view_checkbox() {
-  return shack_hartmann_sensor_view_checkbox_;
-}
-
-QCheckBox *AutoFocusWidget::cross_correlation_view_checkbox() {
-  return cross_correlation_view_checkbox_;
-}
 
 QSpinBox *AutoFocusWidget::nb_subaps_spin() { return nb_subaps_spin_; }
 QSpinBox *AutoFocusWidget::nb_iter_spin() { return nb_iter_spin_; }
@@ -337,22 +294,6 @@ void AutoFocusWidget::setup_ui() {
   add_zernike_row("Z9 - Horizontal coma:", z9_checkbox_, z9_spin_);
   add_zernike_row("Z10 - Oblique trefoil:", z10_checkbox_, z10_spin_);
 
-  zernike_metrics_plot_checkbox_ =
-      create_checkbox(content_container_, true, "Display Zernike metrics plot");
-  reconstructed_phase_checkbox_ =
-      create_checkbox(content_container_, false, "Display reconstructed phase");
-  shack_hartmann_sensor_view_checkbox_ =
-      create_checkbox(content_container_, false, "Display Shack-Hartmann sensor view");
-  cross_correlation_view_checkbox_ =
-      create_checkbox(content_container_, false, "Display cross-correlation view");
-  cross_correlation_view_checkbox_->setToolTip(
-      "The correlation montage is available only in Single reference mode.");
-
-  inner_layout->addWidget(zernike_metrics_plot_checkbox_, row++, 0, 1, 3);
-  inner_layout->addWidget(reconstructed_phase_checkbox_, row++, 0, 1, 3);
-  inner_layout->addWidget(shack_hartmann_sensor_view_checkbox_, row++, 0, 1, 3);
-  inner_layout->addWidget(cross_correlation_view_checkbox_, row++, 0, 1, 3);
-
   inner_layout->setColumnStretch(0, 1);
   inner_layout->setColumnStretch(1, 0);
   inner_layout->setColumnStretch(2, 1);
@@ -397,15 +338,6 @@ void AutoFocusWidget::connect_signals() {
   connect(z8_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
   connect(z9_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
   connect(z10_checkbox_, &QCheckBox::toggled, this, &AutoFocusWidget::settings_changed);
-
-  connect(zernike_metrics_plot_checkbox_, &QCheckBox::toggled, this,
-          &AutoFocusWidget::zernike_metrics_plot_toggled);
-  connect(reconstructed_phase_checkbox_, &QCheckBox::toggled, this,
-          &AutoFocusWidget::settings_changed);
-  connect(shack_hartmann_sensor_view_checkbox_, &QCheckBox::toggled, this,
-          &AutoFocusWidget::settings_changed);
-  connect(cross_correlation_view_checkbox_, &QCheckBox::toggled, this,
-          &AutoFocusWidget::settings_changed);
 }
 
 void AutoFocusWidget::set_controls_enabled(bool enabled) {
@@ -413,9 +345,6 @@ void AutoFocusWidget::set_controls_enabled(bool enabled) {
   update_mode_dependent_controls();
 }
 
-void AutoFocusWidget::update_mode_dependent_controls() {
-  cross_correlation_view_checkbox_->setEnabled(content_container_->isEnabled() &&
-                                               !use_graph_laplacian());
-}
+void AutoFocusWidget::update_mode_dependent_controls() {}
 
 } // namespace holovibes::ui

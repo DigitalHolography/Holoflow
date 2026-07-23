@@ -19,6 +19,7 @@
 #include <QLabel>
 #include <QSpacerItem>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace holovibes::ui {
 
@@ -57,15 +58,6 @@ ViewWidget::ViewWidget(QWidget *parent) : QGroupBox("VIEW", parent) {
 }
 
 QString ViewWidget::get_image_type() const { return image_type_combo_->currentText(); }
-bool    ViewWidget::is_cuts_3d_enabled() const { return cuts_3d_check_->isChecked(); }
-bool    ViewWidget::is_fft_shift_enabled() const { return fft_shift_check_->isChecked(); }
-bool    ViewWidget::is_raw_view_enabled() const { return raw_view_check_->isChecked(); }
-bool    ViewWidget::is_raw_spectrum_view_enabled() const {
-  return raw_spectrum_view_check_->isChecked();
-}
-bool ViewWidget::is_process_spectrum_view_enabled() const {
-  return process_spectrum_view_check_->isChecked();
-}
 bool    ViewWidget::is_flatfield_enabled() const { return flatfield_check_->isChecked(); }
 int     ViewWidget::get_x_origin() const { return x_spin_->value(); }
 int     ViewWidget::get_x_width() const { return x_width_spin_->value(); }
@@ -73,7 +65,6 @@ int     ViewWidget::get_y_origin() const { return y_spin_->value(); }
 int     ViewWidget::get_y_width() const { return y_width_spin_->value(); }
 int     ViewWidget::get_z_origin() const { return z_spin_->value(); }
 int     ViewWidget::get_z_width() const { return z_width_spin_->value(); }
-QString ViewWidget::get_view_kind() const { return kind_combo_->currentText(); }
 int     ViewWidget::get_accumulation() const { return accumulation_spin_->value(); }
 double  ViewWidget::get_flatfield_cutoff_period_um() const {
   return flatfield_cutoff_period_um_->value();
@@ -88,14 +79,18 @@ bool   ViewWidget::is_pct_enabled() const { return pct_check_->isChecked(); }
 double ViewWidget::get_pct_radius() const { return pct_radius_->value(); }
 
 // Setters
-void ViewWidget::set_x_origin(int value) { x_spin_->setValue(value); }
-void ViewWidget::set_x_width(int value) { x_width_spin_->setValue(value); }
-void ViewWidget::set_y_origin(int value) { y_spin_->setValue(value); }
-void ViewWidget::set_y_width(int value) { y_width_spin_->setValue(value); }
+void ViewWidget::set_xy_extent(int width, int height) {
+  width  = std::max(width, 1);
+  height = std::max(height, 1);
+
+  x_spin_->setRange(0, 0);
+  x_width_spin_->setRange(width, width);
+  y_spin_->setRange(0, 0);
+  y_width_spin_->setRange(height, height);
+}
+
 void ViewWidget::set_z_origin(int value) { z_spin_->setValue(value); }
 void ViewWidget::set_z_width(int value) { z_width_spin_->setValue(value); }
-void ViewWidget::set_cuts_3d_enabled(bool enabled) { cuts_3d_check_->setChecked(enabled); }
-void ViewWidget::set_fft_shift_enabled(bool enabled) { fft_shift_check_->setChecked(enabled); }
 void ViewWidget::set_flatfield_enabled(bool enabled) {
   flatfield_check_->setChecked(enabled);
   flatfield_cutoff_period_um_->setEnabled(enabled);
@@ -115,11 +110,6 @@ void ViewWidget::set_pct_radius(double value) { pct_radius_->setValue(value); }
 // Validation
 void ViewWidget::mark_z_invalid() { mark_validation_error(z_spin_); }
 void ViewWidget::mark_z_width_invalid() { mark_validation_error(z_width_spin_); }
-void ViewWidget::mark_cuts_3d_invalid() { mark_validation_error(cuts_3d_check_); }
-void ViewWidget::mark_raw_spectrum_invalid() { mark_validation_error(raw_spectrum_view_check_); }
-void ViewWidget::mark_processed_spectrum_invalid() {
-  mark_validation_error(process_spectrum_view_check_);
-}
 void ViewWidget::mark_flatfield_cutoff_period_invalid() {
   mark_validation_error(flatfield_cutoff_period_um_);
 }
@@ -127,20 +117,10 @@ void ViewWidget::mark_registration_invalid() { mark_validation_error(registratio
 
 // Access to widgets for connection setup
 QComboBox      *ViewWidget::image_type_combo() { return image_type_combo_; }
-QCheckBox      *ViewWidget::cuts_3d_check() { return cuts_3d_check_; }
-QCheckBox      *ViewWidget::fft_shift_check() { return fft_shift_check_; }
-QCheckBox      *ViewWidget::raw_view_check() { return raw_view_check_; }
-QCheckBox      *ViewWidget::raw_spectrum_view_check() { return raw_spectrum_view_check_; }
-QCheckBox      *ViewWidget::process_spectrum_view_check() { return process_spectrum_view_check_; }
 QCheckBox      *ViewWidget::flatfield_check() { return flatfield_check_; }
 QGroupBox      *ViewWidget::post_processing_group() { return post_processing_group_; }
-QSpinBox       *ViewWidget::x_spin() { return x_spin_; }
-QSpinBox       *ViewWidget::x_width_spin() { return x_width_spin_; }
-QSpinBox       *ViewWidget::y_spin() { return y_spin_; }
-QSpinBox       *ViewWidget::y_width_spin() { return y_width_spin_; }
 QSpinBox       *ViewWidget::z_spin() { return z_spin_; }
 QSpinBox       *ViewWidget::z_width_spin() { return z_width_spin_; }
-QComboBox      *ViewWidget::kind_combo() { return kind_combo_; }
 QSpinBox       *ViewWidget::accumulation_spin() { return accumulation_spin_; }
 QDoubleSpinBox *ViewWidget::flatfield_cutoff_period_um() { return flatfield_cutoff_period_um_; }
 QSpinBox       *ViewWidget::range_start_spin() { return range_start_spin_; }
@@ -151,13 +131,6 @@ QCheckBox      *ViewWidget::reticle_check() { return reticle_check_; }
 QDoubleSpinBox *ViewWidget::reticle_radius() { return reticle_radius_; }
 QCheckBox      *ViewWidget::pct_check() { return pct_check_; }
 QDoubleSpinBox *ViewWidget::pct_radius() { return pct_radius_; }
-
-void ViewWidget::update_3d_cut_controls(bool enabled) {
-  x_spin_->setEnabled(enabled);
-  x_width_spin_->setEnabled(enabled);
-  y_spin_->setEnabled(enabled);
-  y_width_spin_->setEnabled(enabled);
-}
 
 void ViewWidget::setup_ui() {
   auto *layout = new QGridLayout(this);
@@ -174,24 +147,6 @@ void ViewWidget::setup_ui() {
   };
 
   add_combo_row("Image Type:", image_type_combo_, QStringList{"M0", "M1", "M2"});
-
-  cuts_3d_check_ = new QCheckBox("3D Cuts", this);
-  layout->addWidget(cuts_3d_check_, row, 0);
-
-  fft_shift_check_ = new QCheckBox("FFT Shift", this);
-  layout->addWidget(fft_shift_check_, row, 1);
-  ++row;
-
-  raw_view_check_ = new QCheckBox("Raw View", this);
-  layout->addWidget(raw_view_check_, row, 0);
-  ++row;
-
-  raw_spectrum_view_check_ = new QCheckBox("Raw Spectrum View", this);
-  layout->addWidget(raw_spectrum_view_check_, row, 0);
-
-  process_spectrum_view_check_ = new QCheckBox("Processed Spectrum View", this);
-  layout->addWidget(process_spectrum_view_check_, row, 1);
-  ++row;
 
   auto *axes_layout = new QGridLayout();
   axes_layout->setContentsMargins(0, 0, 0, 0);
@@ -211,10 +166,19 @@ void ViewWidget::setup_ui() {
   add_axis_row("X", x_spin_, x_width_spin_);
   add_axis_row("Y", y_spin_, y_width_spin_);
   add_axis_row("Z", z_spin_, z_width_spin_);
+  set_xy_extent(1, 1);
+  x_spin_->setEnabled(false);
+  x_width_spin_->setEnabled(false);
+  y_spin_->setEnabled(false);
+  y_width_spin_->setEnabled(false);
+  const auto xy_tooltip =
+      tr("X/Y ranges are fixed to the full source image until X/Y slicing is implemented.");
+  x_spin_->setToolTip(xy_tooltip);
+  x_width_spin_->setToolTip(xy_tooltip);
+  y_spin_->setToolTip(xy_tooltip);
+  y_width_spin_->setToolTip(xy_tooltip);
   layout->addLayout(axes_layout, row, 0, 1, 2);
   ++row;
-
-  add_combo_row("View Kind:", kind_combo_, QStringList{"XY", "XZ", "YZ"});
 
   layout->addItem(new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding), row, 0, 1,
                   2);
@@ -257,41 +221,19 @@ void ViewWidget::setup_ui() {
   post_layout->addWidget(registration_check_, 5, 0);
   registration_radius_ = create_double_spin_box(post_processing_group_, 0.05, 1.0, 0.05, 1.0);
   post_layout->addWidget(registration_radius_, 5, 1, 1, 2);
-
-  update_3d_cut_controls(cuts_3d_check_->isChecked());
 }
 
 void ViewWidget::connect_signals() {
   // Special signals for UI changes
-  connect(cuts_3d_check_, &QCheckBox::toggled, this, &ViewWidget::cuts_3d_toggled);
-  connect(raw_view_check_, &QCheckBox::toggled, this, &ViewWidget::raw_view_toggled);
-  connect(raw_spectrum_view_check_, &QCheckBox::toggled, this,
-          &ViewWidget::raw_spectrum_view_toggled);
-  connect(process_spectrum_view_check_, &QCheckBox::toggled, this,
-          &ViewWidget::process_spectrum_view_toggled);
   connect(reticle_check_, &QCheckBox::toggled, this, &ViewWidget::reticle_toggled);
   connect(reticle_radius_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           &ViewWidget::reticle_radius_changed);
-  connect(cuts_3d_check_, &QCheckBox::toggled, this, &ViewWidget::update_3d_cut_controls);
 
   // Emit settings_changed for all control changes
   connect(image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ViewWidget::settings_changed);
-  connect(cuts_3d_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
-  connect(fft_shift_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
-  connect(raw_view_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
-  connect(raw_spectrum_view_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
-  connect(process_spectrum_view_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
-  connect(x_spin_, qOverload<int>(&QSpinBox::valueChanged), this, &ViewWidget::settings_changed);
-  connect(x_width_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
-          &ViewWidget::settings_changed);
-  connect(y_spin_, qOverload<int>(&QSpinBox::valueChanged), this, &ViewWidget::settings_changed);
-  connect(y_width_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
-          &ViewWidget::settings_changed);
   connect(z_spin_, qOverload<int>(&QSpinBox::valueChanged), this, &ViewWidget::settings_changed);
   connect(z_width_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
-          &ViewWidget::settings_changed);
-  connect(kind_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ViewWidget::settings_changed);
   connect(accumulation_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);
@@ -315,9 +257,6 @@ void ViewWidget::connect_signals() {
 void ViewWidget::clear_validation_styles() {
   clear_validation_error(z_spin_);
   clear_validation_error(z_width_spin_);
-  clear_validation_error(cuts_3d_check_);
-  clear_validation_error(raw_spectrum_view_check_);
-  clear_validation_error(process_spectrum_view_check_);
   clear_validation_error(flatfield_cutoff_period_um_);
   clear_validation_error(registration_check_);
 }

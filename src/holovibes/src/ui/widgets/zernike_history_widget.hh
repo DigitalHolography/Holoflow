@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <QString>
 #include <QWidget>
 
 #include <optional>
@@ -63,6 +64,7 @@ public:
   void set_series(const std::vector<int> &indexes);
   void set_time_window_seconds(double time_window_seconds);
   void append_samples(std::vector<ZernikeHistorySample> samples);
+  void show_waiting_placeholder(const QString &message = {});
 
   [[nodiscard]] ZernikeHistoryDisplaySettings display_settings() const;
   [[nodiscard]] AxisRange                     displayed_y_range() const;
@@ -78,6 +80,7 @@ public:
 signals:
   void configuration_requested(holovibes::ui::ZernikeHistoryWidget *widget);
   void display_settings_changed(const holovibes::ui::ZernikeHistoryDisplaySettings &settings);
+  void samplesDisplayed();
 
 protected:
   void paintEvent(QPaintEvent *event) override;

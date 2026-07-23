@@ -78,7 +78,7 @@ TensorDisplayWidget::TensorDisplayWidget(QWidget *p) : QOpenGLWidget(p) {
 
   auto *layout = new QVBoxLayout(this);
   layout->setContentsMargins(24, 24, 24, 24);
-  waiting_label_ = new QLabel(tr("Waiting for data"), this);
+  waiting_label_ = new QLabel(tr("Waiting for data..."), this);
   waiting_label_->setObjectName("visualizationWorkspacePlaceholder");
   waiting_label_->setAlignment(Qt::AlignCenter);
   waiting_label_->setWordWrap(true);
@@ -96,7 +96,9 @@ void TensorDisplayWidget::set_fixed_aspect(std::optional<QSize> size) {
 bool TensorDisplayWidget::hasHeightForWidth() const { return fixed_aspect_size_.has_value(); }
 
 int TensorDisplayWidget::heightForWidth(int w) const {
-  HOLOVIBES_CHECK(fixed_aspect_size_);
+  if (!fixed_aspect_size_)
+    return QOpenGLWidget::heightForWidth(w);
+
   auto ar = float(fixed_aspect_size_->width()) / float(fixed_aspect_size_->height());
   HOLOVIBES_CHECK(ar > 0.f);
   return int(std::round(float(w) / ar));
@@ -338,6 +340,14 @@ void TensorDisplayWidget::set_reticle_enabled(bool enabled) {
 
 void TensorDisplayWidget::set_reticle_radius(double radius) {
   reticle_radius_ = qBound(0.05, radius, 1.0);
+  update();
+}
+
+void TensorDisplayWidget::show_waiting_placeholder(const QString &message) {
+  waiting_label_->setText(message.isEmpty() ? tr("Waiting for data...") : message);
+  waiting_label_->show();
+  img_w_ = 0;
+  img_h_ = 0;
   update();
 }
 

@@ -21,6 +21,7 @@
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
 #include <QPixmap>
+#include <QString>
 #include <QWidget>
 #include <optional>
 
@@ -43,6 +44,7 @@ public:
   void set_fixed_aspect(std::optional<QSize> size);
   void set_reticle_enabled(bool enabled);
   void set_reticle_radius(double radius);
+  void show_waiting_placeholder(const QString &message = {});
 
   /// Set the active colormap
   void set_colormap(Colormap cmap);

@@ -114,6 +114,10 @@ struct Settings {
   MomentType moment_type;
   bool       view_raw_spectrum;
   bool       view_processed_spectrum;
+  bool       view_zernike_metrics;
+  bool       view_zernike_phase;
+  bool       view_shack_hartmann;
+  bool       view_shack_hartmann_xcorr;
 
   // Post-processing
   int  pp_fps;

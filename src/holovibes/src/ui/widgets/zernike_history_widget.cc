@@ -157,7 +157,7 @@ ZernikeHistoryWidget::ZernikeHistoryWidget(QWidget *parent) : QWidget(parent) {
 
   auto *layout = new QVBoxLayout(this);
   layout->setContentsMargins(24, 24, 24, 24);
-  waiting_label_ = new QLabel(tr("Waiting for data"), this);
+  waiting_label_ = new QLabel(tr("Waiting for data..."), this);
   waiting_label_->setObjectName("visualizationWorkspacePlaceholder");
   waiting_label_->setAlignment(Qt::AlignCenter);
   waiting_label_->setWordWrap(true);
@@ -246,7 +246,14 @@ void ZernikeHistoryWidget::append_samples(std::vector<ZernikeHistorySample> samp
   if (appended) {
     waiting_label_->hide();
     request_refresh();
+    emit samplesDisplayed();
   }
+}
+
+void ZernikeHistoryWidget::show_waiting_placeholder(const QString &message) {
+  waiting_label_->setText(message.isEmpty() ? tr("Waiting for data...") : message);
+  waiting_label_->show();
+  request_refresh();
 }
 
 ZernikeHistoryDisplaySettings ZernikeHistoryWidget::display_settings() const {
@@ -427,7 +434,7 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
       const double x_fraction = (relative_time + time_window) / time_window;
       const double y_fraction = (value - y_min) / (y_max - y_min);
       return QPointF(plot.left() + x_fraction * plot.width(),
-                     plot.bottom() - y_fraction * plot.height());
+                       plot.bottom() - y_fraction * plot.height());
     };
 
     phase_timer.restart();

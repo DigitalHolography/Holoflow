@@ -44,8 +44,6 @@ enum class SettingsField {
   TimeZBegin,
   TimeZEnd,
   View3DCuts,
-  ViewRawSpectrum,
-  ViewProcessedSpectrum,
   PpFlatfieldCutoffPeriod,
   PpConvolution,
   PpRegistration,

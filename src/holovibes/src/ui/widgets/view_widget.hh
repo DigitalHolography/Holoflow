@@ -30,11 +30,6 @@ public:
 
   // Getters
   QString get_image_type() const;
-  bool    is_cuts_3d_enabled() const;
-  bool    is_fft_shift_enabled() const;
-  bool    is_raw_view_enabled() const;
-  bool    is_raw_spectrum_view_enabled() const;
-  bool    is_process_spectrum_view_enabled() const;
   bool    is_flatfield_enabled() const;
   int     get_x_origin() const;
   int     get_x_width() const;
@@ -42,7 +37,6 @@ public:
   int     get_y_width() const;
   int     get_z_origin() const;
   int     get_z_width() const;
-  QString get_view_kind() const;
   int     get_accumulation() const;
   double  get_flatfield_cutoff_period_um() const;
   int     get_range_start() const;
@@ -55,14 +49,9 @@ public:
   double  get_pct_radius() const;
 
   // Setters
-  void set_x_origin(int value);
-  void set_x_width(int value);
-  void set_y_origin(int value);
-  void set_y_width(int value);
+  void set_xy_extent(int width, int height);
   void set_z_origin(int value);
   void set_z_width(int value);
-  void set_cuts_3d_enabled(bool enabled);
-  void set_fft_shift_enabled(bool enabled);
   void set_flatfield_enabled(bool enabled);
   void set_accumulation(int value);
   void set_flatfield_cutoff_period_um(double value);
@@ -76,28 +65,15 @@ public:
   void clear_validation_styles();
   void mark_z_invalid();
   void mark_z_width_invalid();
-  void mark_cuts_3d_invalid();
-  void mark_raw_spectrum_invalid();
-  void mark_processed_spectrum_invalid();
   void mark_flatfield_cutoff_period_invalid();
   void mark_registration_invalid();
 
   // Access to widgets for connection setup
   QComboBox      *image_type_combo();
-  QCheckBox      *cuts_3d_check();
-  QCheckBox      *fft_shift_check();
-  QCheckBox      *raw_view_check();
-  QCheckBox      *raw_spectrum_view_check();
-  QCheckBox      *process_spectrum_view_check();
   QCheckBox      *flatfield_check();
   QGroupBox      *post_processing_group();
-  QSpinBox       *x_spin();
-  QSpinBox       *x_width_spin();
-  QSpinBox       *y_spin();
-  QSpinBox       *y_width_spin();
   QSpinBox       *z_spin();
   QSpinBox       *z_width_spin();
-  QComboBox      *kind_combo();
   QSpinBox       *accumulation_spin();
   QDoubleSpinBox *flatfield_cutoff_period_um();
   QSpinBox       *range_start_spin();
@@ -111,33 +87,20 @@ public:
 
 signals:
   void settings_changed();
-  void cuts_3d_toggled(bool enabled);
-  void raw_view_toggled(bool enabled);
-  void raw_spectrum_view_toggled(bool enabled);
-  void process_spectrum_view_toggled(bool enabled);
   void reticle_toggled(bool enabled);
   void reticle_radius_changed(double radius);
-
-private slots:
-  void update_3d_cut_controls(bool enabled);
 
 private:
   void setup_ui();
   void connect_signals();
 
   QComboBox      *image_type_combo_;
-  QCheckBox      *cuts_3d_check_;
-  QCheckBox      *fft_shift_check_;
-  QCheckBox      *raw_view_check_;
-  QCheckBox      *raw_spectrum_view_check_;
-  QCheckBox      *process_spectrum_view_check_;
   QSpinBox       *x_spin_;
   QSpinBox       *x_width_spin_;
   QSpinBox       *y_spin_;
   QSpinBox       *y_width_spin_;
   QSpinBox       *z_spin_;
   QSpinBox       *z_width_spin_;
-  QComboBox      *kind_combo_;
   QGroupBox      *post_processing_group_;
   QSpinBox       *accumulation_spin_;
   QCheckBox      *flatfield_check_;

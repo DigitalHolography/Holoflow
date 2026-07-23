@@ -82,17 +82,6 @@ public:
   void set_z9_enabled(bool enabled);
   void set_z10_enabled(bool enabled);
 
-  // Visualization toggles
-  bool show_zernike_metrics_plot() const;
-  bool show_reconstructed_phase() const;
-  bool show_shack_hartmann_sensor_view() const;
-  bool show_cross_correlation_view() const;
-
-  void set_show_zernike_metrics_plot(bool checked);
-  void set_show_reconstructed_phase(bool checked);
-  void set_show_shack_hartmann_sensor_view(bool checked);
-  void set_show_cross_correlation_view(bool checked);
-
   void set_enabled(bool enabled);
   void set_skip_subapertures_outside_pupil(bool skip);
   void set_use_graph_laplacian(bool enabled);
@@ -112,15 +101,11 @@ public:
   QCheckBox *z9_checkbox();
   QCheckBox *z10_checkbox();
 
-  QCheckBox *reconstructed_phase_checkbox();
-  QCheckBox *shack_hartmann_sensor_view_checkbox();
-  QCheckBox *cross_correlation_view_checkbox();
-  QSpinBox  *nb_subaps_spin();
-  QSpinBox  *nb_iter_spin();
+  QSpinBox *nb_subaps_spin();
+  QSpinBox *nb_iter_spin();
 
 signals:
   void settings_changed();
-  void zernike_metrics_plot_toggled(bool checked);
 
 private:
   void setup_ui();
@@ -152,11 +137,6 @@ private:
   QDoubleSpinBox *z8_spin_;
   QDoubleSpinBox *z9_spin_;
   QDoubleSpinBox *z10_spin_;
-
-  QCheckBox *zernike_metrics_plot_checkbox_;
-  QCheckBox *reconstructed_phase_checkbox_;
-  QCheckBox *shack_hartmann_sensor_view_checkbox_;
-  QCheckBox *cross_correlation_view_checkbox_;
 
   QWidget *content_container_;
 };

@@ -24,10 +24,14 @@
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QStackedLayout>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 
 #include <algorithm>
 #include <utility>
+
+#include "ui/widgets/tensor_display_widget.hh"
+#include "ui/widgets/zernike_history_widget.hh"
 
 namespace {
 
@@ -44,6 +48,19 @@ QWidget *create_placeholder(const QString &text, QWidget *parent) {
   label->setWordWrap(true);
   layout->addWidget(label, 1);
   return page;
+}
+
+void show_waiting_placeholder(QWidget *widget) {
+  if (auto *tensor_widget = qobject_cast<holovibes::ui::TensorDisplayWidget *>(widget);
+      tensor_widget != nullptr) {
+    tensor_widget->show_waiting_placeholder();
+    return;
+  }
+
+  if (auto *history_widget = qobject_cast<holovibes::ui::ZernikeHistoryWidget *>(widget);
+      history_widget != nullptr) {
+    history_widget->show_waiting_placeholder();
+  }
 }
 
 ads::DockWidgetArea dock_area_for(holovibes::ui::DockPlacement placement) {
@@ -71,9 +88,14 @@ namespace holovibes::ui {
 
 struct VisualizationWorkspace::Entry {
   VisualizationDescriptor descriptor;
-  ads::CDockWidget       *dock_widget     = nullptr;
-  QAction                *view_action     = nullptr;
-  bool                    available       = false;
+  ads::CDockWidget       *dock_widget      = nullptr;
+  QStackedWidget         *content_stack    = nullptr;
+  QWidget                *placeholder      = nullptr;
+  QLabel                 *placeholder_text = nullptr;
+  QAction                *view_action      = nullptr;
+  bool                    content_expected = false;
+  bool                    content_received = false;
+  QString                 unavailable_message;
   bool                    view_preference = true;
 };
 
@@ -125,18 +147,31 @@ bool VisualizationWorkspace::register_visualization(VisualizationDescriptor desc
     return false;
   }
 
-  auto entry         = std::make_unique<Entry>();
-  entry->descriptor  = std::move(descriptor);
-  entry->dock_widget = new ads::CDockWidget(dock_manager_, entry->descriptor.title);
+  auto entry             = std::make_unique<Entry>();
+  entry->descriptor      = std::move(descriptor);
+  entry->view_preference = entry->descriptor.default_enabled;
+  entry->dock_widget     = new ads::CDockWidget(dock_manager_, entry->descriptor.title);
   entry->dock_widget->setObjectName(entry->descriptor.id);
   entry->dock_widget->setFeatures(
       ads::CDockWidget::DockWidgetClosable | ads::CDockWidget::DockWidgetMovable |
       ads::CDockWidget::DockWidgetFloatable | ads::CDockWidget::DockWidgetFocusable);
   entry->dock_widget->setMinimumSizeHintMode(ads::CDockWidget::MinimumSizeHintFromDockWidget);
 
+  entry->content_stack = new QStackedWidget(entry->dock_widget);
+  entry->content_stack->setContentsMargins(0, 0, 0, 0);
+  entry->content_stack->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+  entry->content_stack->setMinimumSize(0, 0);
+
   entry->descriptor.widget->setMinimumSize(0, 0);
   entry->descriptor.widget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
-  entry->dock_widget->setWidget(entry->descriptor.widget, ads::CDockWidget::ForceNoScrollArea);
+  entry->content_stack->addWidget(entry->descriptor.widget);
+
+  entry->placeholder = create_placeholder({}, entry->content_stack);
+  entry->placeholder_text =
+      entry->placeholder->findChild<QLabel *>(QStringLiteral("visualizationWorkspacePlaceholder"));
+  entry->content_stack->addWidget(entry->placeholder);
+
+  entry->dock_widget->setWidget(entry->content_stack, ads::CDockWidget::ForceNoScrollArea);
 
   entry->view_action = new QAction(entry->descriptor.title, this);
   entry->view_action->setCheckable(true);
@@ -144,12 +179,28 @@ bool VisualizationWorkspace::register_visualization(VisualizationDescriptor desc
   entry->view_action->setEnabled(false);
 
   auto *entry_pointer = entry.get();
+  if (auto *tensor_widget = qobject_cast<TensorDisplayWidget *>(entry_pointer->descriptor.widget);
+      tensor_widget != nullptr) {
+    connect(tensor_widget, &TensorDisplayWidget::tensorDisplayed, this, [this, entry_pointer]() {
+      entry_pointer->content_received = true;
+      update_entry_content(*entry_pointer);
+    });
+  } else if (auto *history_widget =
+                 qobject_cast<ZernikeHistoryWidget *>(entry_pointer->descriptor.widget);
+             history_widget != nullptr) {
+    connect(history_widget, &ZernikeHistoryWidget::samplesDisplayed, this, [this, entry_pointer]() {
+      entry_pointer->content_received = true;
+      update_entry_content(*entry_pointer);
+    });
+  }
+
   connect(entry->view_action, &QAction::toggled, this, [this, entry_pointer](bool checked) {
     if (applying_state_) {
       return;
     }
     entry_pointer->view_preference = checked;
     apply_state();
+    emit visualization_preferences_changed();
   });
   connect(entry->dock_widget, &ads::CDockWidget::closed, this, [this, entry_pointer]() {
     if (applying_state_) {
@@ -160,6 +211,7 @@ bool VisualizationWorkspace::register_visualization(VisualizationDescriptor desc
     entry_pointer->view_action->setChecked(false);
     cache_active_layout();
     update_central_page();
+    emit visualization_preferences_changed();
   });
 
   entries_.push_back(std::move(entry));
@@ -214,16 +266,24 @@ void VisualizationWorkspace::set_pipeline_running(bool running) {
   if (pipeline_running_) {
     cache_active_layout();
   }
+  if (!pipeline_running_ && running) {
+    reset_visualization_content();
+  }
   pipeline_running_ = running;
   apply_state();
 }
 
-void VisualizationWorkspace::set_visualization_availability(
-    const QHash<QString, bool> &availability) {
+void VisualizationWorkspace::set_visualization_content_expectations(
+    const QHash<QString, VisualizationContentExpectation> &expectations) {
   for (auto &entry : entries_) {
-    const auto it = availability.constFind(entry->descriptor.id);
-    if (it != availability.cend()) {
-      entry->available = it.value();
+    const auto it = expectations.constFind(entry->descriptor.id);
+    if (it != expectations.cend()) {
+      const bool expected_changed = entry->content_expected != it->expected;
+      entry->content_expected     = it->expected;
+      entry->unavailable_message  = it->unavailable_message;
+      if (expected_changed || !entry->content_expected) {
+        entry->content_received = false;
+      }
     }
   }
   apply_state();
@@ -238,6 +298,29 @@ void VisualizationWorkspace::set_visualization_title(const QString &id, const QS
   entry->descriptor.title = title;
   entry->dock_widget->setWindowTitle(title);
   entry->view_action->setText(title);
+}
+
+void VisualizationWorkspace::set_visualization_enabled(const QString &id, bool enabled) {
+  auto *entry = entry_for_id(id);
+  if (entry == nullptr || entry->view_preference == enabled) {
+    return;
+  }
+
+  entry->view_preference = enabled;
+  apply_state();
+  emit visualization_preferences_changed();
+}
+
+bool VisualizationWorkspace::is_visualization_enabled(const QString &id) const {
+  const auto *entry = entry_for_id(id);
+  return entry != nullptr && entry->view_preference;
+}
+
+void VisualizationWorkspace::reset_visualization_content() {
+  for (auto &entry : entries_) {
+    entry->content_received = false;
+  }
+  apply_state();
 }
 
 void VisualizationWorkspace::select_visualization(const QString &id) {
@@ -279,7 +362,9 @@ bool VisualizationWorkspace::restore_persistent_state(QSettings &settings) {
   settings.beginGroup("visualization_workspace");
   for (auto &entry : entries_) {
     entry->view_preference =
-        settings.value(QString("view_preferences/%1").arg(entry->descriptor.id), true).toBool();
+        settings
+            .value(QString("view_preferences/%1").arg(entry->descriptor.id), entry->view_preference)
+            .toBool();
   }
 
   const QByteArray saved_state = settings.value("layout_state").toByteArray();
@@ -299,9 +384,11 @@ bool VisualizationWorkspace::restore_persistent_state(QSettings &settings) {
   settings.endGroup();
 
   if (!restored) {
-    applying_state_ = true;
-    restored        = !default_layout_state_.isEmpty() &&
-                      dock_manager_->restoreState(default_layout_state_, kLayoutStateVersion);
+    applying_state_               = true;
+    const bool has_default_layout = !default_layout_state_.isEmpty();
+    if (has_default_layout) {
+      restored = dock_manager_->restoreState(default_layout_state_, kLayoutStateVersion);
+    }
     applying_state_ = false;
   }
 
@@ -351,13 +438,14 @@ void VisualizationWorkspace::apply_state() {
     {
       const QSignalBlocker blocker(entry->view_action);
       entry->view_action->setChecked(entry->view_preference);
-      entry->view_action->setEnabled(entry->available);
+      entry->view_action->setEnabled(true);
     }
 
-    const bool should_be_open = pipeline_running_ && entry->available && entry->view_preference;
+    const bool should_be_open = entry->view_preference;
     if (should_be_open == entry->dock_widget->isClosed()) {
       entry->dock_widget->toggleView(should_be_open);
     }
+    update_entry_content(*entry);
   }
   applying_state_ = false;
   update_central_page();
@@ -369,23 +457,34 @@ void VisualizationWorkspace::update_central_page() {
     return;
   }
 
-  if (!pipeline_running_) {
-    stack->setCurrentWidget(pipeline_stopped_page_);
-    return;
-  }
-
-  const auto available_count = std::count_if(entries_.cbegin(), entries_.cend(),
-                                             [](const auto &entry) { return entry->available; });
-  if (available_count == 0) {
-    stack->setCurrentWidget(no_displays_page_);
-    return;
-  }
-
   const auto visible_count =
       std::count_if(entries_.cbegin(), entries_.cend(), [](const auto &entry) {
-        return entry->available && entry->view_preference && !entry->dock_widget->isClosed();
+        return entry->view_preference && !entry->dock_widget->isClosed();
       });
   stack->setCurrentWidget(visible_count == 0 ? all_hidden_page_ : dock_manager_);
+}
+
+void VisualizationWorkspace::update_entry_content(Entry &entry) {
+  if (entry.content_stack == nullptr || entry.placeholder == nullptr) {
+    return;
+  }
+
+  if (!entry.content_expected) {
+    const QString message =
+        entry.unavailable_message.isEmpty()
+            ? tr("This visualization is unavailable in the current configuration.")
+            : entry.unavailable_message;
+    if (entry.placeholder_text != nullptr) {
+      entry.placeholder_text->setText(message);
+    }
+    entry.content_stack->setCurrentWidget(entry.placeholder);
+    return;
+  }
+
+  entry.content_stack->setCurrentWidget(entry.descriptor.widget);
+  if (!entry.content_received) {
+    show_waiting_placeholder(entry.descriptor.widget);
+  }
 }
 
 void VisualizationWorkspace::cache_active_layout() {
@@ -401,11 +500,10 @@ void VisualizationWorkspace::cache_active_layout() {
 
 void VisualizationWorkspace::show_all_visualizations() {
   for (auto &entry : entries_) {
-    if (entry->available) {
-      entry->view_preference = true;
-    }
+    entry->view_preference = true;
   }
   apply_state();
+  emit visualization_preferences_changed();
 }
 
 void VisualizationWorkspace::hide_all_visualizations() {
@@ -413,6 +511,7 @@ void VisualizationWorkspace::hide_all_visualizations() {
     entry->view_preference = false;
   }
   apply_state();
+  emit visualization_preferences_changed();
 }
 
 void VisualizationWorkspace::dock_all_visualizations() {
