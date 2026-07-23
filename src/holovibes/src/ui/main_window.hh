@@ -133,7 +133,6 @@ private:
   bool               geometry_restored_               = false;
   double             last_input_fps_                  = 0.0;
   double             signal_plot_time_window_seconds_ = 8.0;
-  double             signal_plot_sample_time_seconds_ = 1.0 / 37000 * 32 * 64;
   QString            session_id_;
   int                next_acquisition_id_ = 1;
   std::optional<int> pending_recording_acquisition_id_;

@@ -95,9 +95,10 @@ holoflow::core::GraphSpec GraphBuilder::build() {
       s_.signal_plot_time_window_seconds <= 0.0) {
     throw std::invalid_argument("signal_plot_time_window_seconds must be positive and finite");
   }
-  if (!std::isfinite(s_.signal_plot_sample_time_seconds) ||
-      s_.signal_plot_sample_time_seconds <= 0.0) {
-    throw std::invalid_argument("signal_plot_sample_time_seconds must be positive and finite");
+  const double signal_plot_sample_time_seconds = s_.signal_plot_sample_time_seconds();
+  if (!std::isfinite(signal_plot_sample_time_seconds) ||
+      signal_plot_sample_time_seconds <= 0.0) {
+    throw std::invalid_argument("derived signal plot sample time must be positive and finite");
   }
 
   TDesc H     = build_acquisition();
@@ -452,7 +453,7 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
       zernike_history_display(zernike_coeffs_host, {
                                                        s_.autofocus_zernike_orders,
                                                        s_.signal_plot_time_window_seconds,
-                                                       s_.signal_plot_sample_time_seconds,
+                                                       s_.signal_plot_sample_time_seconds(),
                                                    });
     }
 

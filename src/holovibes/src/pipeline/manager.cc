@@ -234,9 +234,9 @@ void Manager::configure_zernike_history(bool start_run) {
   if (!std::isfinite(time_window_seconds) || time_window_seconds <= 0.0) {
     throw std::invalid_argument("signal_plot_time_window_seconds must be positive and finite");
   }
-  if (!std::isfinite(s_.signal_plot_sample_time_seconds) ||
-      s_.signal_plot_sample_time_seconds <= 0.0) {
-    throw std::invalid_argument("signal_plot_sample_time_seconds must be positive and finite");
+  const double sample_time_seconds = s_.signal_plot_sample_time_seconds();
+  if (!std::isfinite(sample_time_seconds) || sample_time_seconds <= 0.0) {
+    throw std::invalid_argument("derived signal plot sample time must be positive and finite");
   }
 
   auto configure = [widget = zernike_history_widget_, indexes, time_window_seconds, start_run]() {

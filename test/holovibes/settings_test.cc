@@ -35,7 +35,7 @@ bool has_issue(const ValidationResult &result, std::string_view code) {
 TEST(SignalPlotSettingsTest, DefaultsArePositive) {
   const Settings settings{};
   EXPECT_DOUBLE_EQ(settings.signal_plot_time_window_seconds, 8.0);
-  EXPECT_DOUBLE_EQ(settings.signal_plot_sample_time_seconds, 1.0 / 15.0);
+  EXPECT_DOUBLE_EQ(settings.input_sampling_frequency_hz, 1.0e6 / 27.0);
   EXPECT_TRUE(settings.autofocus_skip_subapertures_outside_pupil);
   EXPECT_FALSE(settings.autofocus_use_graph_laplacian);
 }
@@ -43,7 +43,7 @@ TEST(SignalPlotSettingsTest, DefaultsArePositive) {
 TEST(SignalPlotSettingsTest, LegacyJsonRoundTripPreservesValues) {
   Settings settings{};
   settings.signal_plot_time_window_seconds           = 12.5;
-  settings.signal_plot_sample_time_seconds           = 0.025;
+  settings.input_sampling_frequency_hz               = 25'000.0;
   settings.autofocus_skip_subapertures_outside_pupil = false;
   settings.autofocus_use_graph_laplacian             = true;
 
@@ -53,9 +53,22 @@ TEST(SignalPlotSettingsTest, LegacyJsonRoundTripPreservesValues) {
   EXPECT_EQ(json.at("compute_settings").at("image_rendering").at("autofocus").at("slope_mode"),
             "full_pairwise");
   EXPECT_DOUBLE_EQ(restored.signal_plot_time_window_seconds, 12.5);
-  EXPECT_DOUBLE_EQ(restored.signal_plot_sample_time_seconds, 0.025);
+  EXPECT_DOUBLE_EQ(restored.input_sampling_frequency_hz, 25'000.0);
   EXPECT_FALSE(restored.autofocus_skip_subapertures_outside_pupil);
   EXPECT_TRUE(restored.autofocus_use_graph_laplacian);
+}
+
+TEST(SignalPlotSettingsTest, DerivesSampleTimeFromFrequencyStrideAndAccumulation) {
+  Settings settings{};
+  settings.input_sampling_frequency_hz = 40'000.0;
+  settings.time_stride                 = 32;
+  settings.pp_accumulation             = 8;
+
+  EXPECT_DOUBLE_EQ(settings.signal_plot_sample_time_seconds(), 32.0 * 8.0 / 40'000.0);
+
+  settings.time_stride     = 64;
+  settings.pp_accumulation = 4;
+  EXPECT_DOUBLE_EQ(settings.signal_plot_sample_time_seconds(), 64.0 * 4.0 / 40'000.0);
 }
 
 TEST(SignalPlotSettingsTest, UnknownAutofocusSlopeModeKeepsDefault) {
@@ -73,27 +86,42 @@ TEST(SignalPlotSettingsTest, UnknownAutofocusSlopeModeKeepsDefault) {
 TEST(SignalPlotSettingsTest, MissingLegacyFieldsKeepDefaults) {
   Settings defaults{};
   defaults.signal_plot_time_window_seconds           = 9.0;
-  defaults.signal_plot_sample_time_seconds           = 0.2;
+  defaults.input_sampling_frequency_hz               = 12'345.0;
   defaults.autofocus_skip_subapertures_outside_pupil = false;
   defaults.autofocus_use_graph_laplacian             = true;
 
   const auto restored = old_json_to_settings(nlohmann::json::object(), defaults);
 
   EXPECT_DOUBLE_EQ(restored.signal_plot_time_window_seconds, 9.0);
-  EXPECT_DOUBLE_EQ(restored.signal_plot_sample_time_seconds, 0.2);
+  EXPECT_DOUBLE_EQ(restored.input_sampling_frequency_hz, 12'345.0);
   EXPECT_FALSE(restored.autofocus_skip_subapertures_outside_pupil);
   EXPECT_TRUE(restored.autofocus_use_graph_laplacian);
 }
 
+TEST(SignalPlotSettingsTest, IgnoresLegacySampleTimeField) {
+  Settings defaults{};
+  defaults.input_sampling_frequency_hz = 22'000.0;
+  const nlohmann::json json             = {
+      {"compute_settings",
+       {{"image_rendering",
+         {{"autofocus", {{"a4_history", {{"sample_time_seconds", 123.0}}}}}}}}},
+  };
+
+  const auto restored = old_json_to_settings(json, defaults);
+
+  EXPECT_DOUBLE_EQ(restored.input_sampling_frequency_hz, 22'000.0);
+}
+
 TEST(SignalPlotSettingsTest, ValidationRejectsInvalidValues) {
-  Settings settings{};
-  settings.signal_plot_time_window_seconds = 0.0;
-  settings.signal_plot_sample_time_seconds = std::numeric_limits<double>::infinity();
+  for (const double invalid_frequency :
+       {0.0, -1.0, std::numeric_limits<double>::infinity()}) {
+    Settings settings{};
+    settings.input_sampling_frequency_hz = invalid_frequency;
 
-  const auto result = validate_settings(settings, {});
+    const auto result = validate_settings(settings, {});
 
-  EXPECT_TRUE(has_issue(result, "signal_plot_time_window_non_positive"));
-  EXPECT_TRUE(has_issue(result, "signal_plot_sample_time_non_positive"));
+    EXPECT_TRUE(has_issue(result, "input_sampling_frequency_non_positive"));
+  }
 }
 
 } // namespace holovibes::pipeline

@@ -111,6 +111,7 @@ void write_advanced(json &j, const Settings &s) {
   if (s.load_fps_limit.has_value()) {
     advanced["input_fps_limit"] = *s.load_fps_limit;
   }
+  advanced["input_sampling_frequency_hz"] = s.input_sampling_frequency_hz;
 }
 
 void write_image_rendering(json &j, const Settings &s) {
@@ -132,7 +133,6 @@ void write_image_rendering(json &j, const Settings &s) {
       s.autofocus_skip_subapertures_outside_pupil;
   rendering["autofocus"]["slope_mode"] = autofocus_slope_mode_name(s.autofocus_use_graph_laplacian);
   rendering["autofocus"]["a4_history"]["time_window_seconds"] = s.signal_plot_time_window_seconds;
-  rendering["autofocus"]["a4_history"]["sample_time_seconds"] = s.signal_plot_sample_time_seconds;
 
   // Legacy format expects this field even if space transformation is NONE.
   rendering["image_mode"] = "HOLOGRAM";
@@ -199,6 +199,8 @@ void read_advanced(Settings &s, const json &advanced) {
 
   const int input_fps_limit = val(advanced, "input_fps_limit", 0);
   s.load_fps_limit = input_fps_limit > 0 ? std::optional<int>{input_fps_limit} : std::nullopt;
+  s.input_sampling_frequency_hz =
+      val(advanced, "input_sampling_frequency_hz", s.input_sampling_frequency_hz);
 }
 
 void read_image_rendering(Settings &s, const json &rendering) {
@@ -229,8 +231,6 @@ void read_image_rendering(Settings &s, const json &rendering) {
   const auto &a4_history = child_or_empty(autofocus, "a4_history");
   s.signal_plot_time_window_seconds =
       val(a4_history, "time_window_seconds", s.signal_plot_time_window_seconds);
-  s.signal_plot_sample_time_seconds =
-      val(a4_history, "sample_time_seconds", s.signal_plot_sample_time_seconds);
 
   const auto &convolution = child_or_empty(rendering, "convolution");
   s.pp_convolution_path   = val(convolution, "type", s.pp_convolution_path);

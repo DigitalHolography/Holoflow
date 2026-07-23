@@ -821,6 +821,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("camera_mode", import_widget_->is_camera_mode());
   settings.setValue("file_path", import_widget_->get_file_path());
   settings.setValue("fps_limit", import_widget_->get_fps_limit().value_or(0));
+  settings.setValue("sampling_frequency_hz", import_widget_->get_sampling_frequency_hz());
   settings.setValue("start_index", import_widget_->get_start_index());
   settings.setValue("end_index", import_widget_->get_end_index());
   settings.setValue("load_method", import_widget_->get_load_method());
@@ -940,6 +941,9 @@ void MainWindow::restore_persistent_state() {
   restore_combo_text(settings, "load_method", import_widget_->load_method_combo());
   restore_combo_text(settings, "camera_type", import_widget_->camera_combo());
   restore_combo_text(settings, "camera_config", import_widget_->camera_config_combo());
+  import_widget_->set_sampling_frequency_hz(
+      settings.value("sampling_frequency_hz", import_widget_->get_sampling_frequency_hz())
+          .toDouble());
   settings.endGroup();
 
   settings.beginGroup("rendering");
@@ -1773,6 +1777,9 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::CameraConfigPath:
         import_widget_->mark_camera_config_invalid();
         break;
+      case SettingsField::InputSamplingFrequency:
+        import_widget_->mark_sampling_frequency_invalid();
+        break;
       case SettingsField::LoadBegin:
         import_widget_->mark_start_index_invalid();
         break;
@@ -1843,6 +1850,8 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
   const std::array bindings = {
       FieldBinding{SettingsField::LoadPath, import_widget_->file_line_edit()},
       FieldBinding{SettingsField::CameraConfigPath, import_widget_->camera_config_combo()},
+      FieldBinding{SettingsField::InputSamplingFrequency,
+                   import_widget_->sampling_frequency_spin()},
       FieldBinding{SettingsField::LoadBegin, import_widget_->start_index_spin()},
       FieldBinding{SettingsField::LoadEnd, import_widget_->end_index_spin()},
       FieldBinding{SettingsField::LoadBatch, render_widget_->batch_size_spin()},
@@ -2026,6 +2035,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"Ametek S710 Euresys Coaxlink Octo", ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO},
         {"Ametek S711 Euresys Coaxlink QSFP+", ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP},
     };
+    s.input_sampling_frequency_hz = import_widget_->get_sampling_frequency_hz();
 
     if (!import_widget_->is_camera_mode()) {
       s.import_source  = ImportSource::HOLOFILE;
@@ -2045,7 +2055,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       s.import_source      = source_from_str.at(source.toStdString());
       s.camera_config_path = get_selected_camera_config_path();
       s.load_batch         = 1;
-      s.load_fps_limit     = std::nullopt;
+      s.load_fps_limit = std::nullopt;
 
       std::ifstream cfg_file(s.camera_config_path);
       if (cfg_file.is_open()) {
@@ -2211,7 +2221,6 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     }
 
     s.signal_plot_time_window_seconds = signal_plot_time_window_seconds_;
-    s.signal_plot_sample_time_seconds = signal_plot_sample_time_seconds_;
   }
 
   return s;
@@ -2221,7 +2230,6 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   using namespace holovibes::pipeline;
 
   signal_plot_time_window_seconds_ = s.signal_plot_time_window_seconds;
-  signal_plot_sample_time_seconds_ = s.signal_plot_sample_time_seconds;
 
   // --- Advanced Settings ---
   {
@@ -2272,6 +2280,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
       }
       import_widget_->set_camera_type(source);
     }
+    import_widget_->set_sampling_frequency_hz(s.input_sampling_frequency_hz);
   }
 
   // --- Image Rendering Settings ---

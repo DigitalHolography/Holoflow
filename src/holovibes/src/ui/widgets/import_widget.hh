@@ -23,6 +23,7 @@
 #include <QStringList>
 #include <optional>
 
+class QDoubleSpinBox;
 class QStackedLayout;
 
 namespace holovibes::ui {
@@ -34,18 +35,20 @@ public:
   explicit ImportWidget(QWidget *parent = nullptr);
 
   // Getters for settings
-  bool    is_camera_mode() const;
-  QString get_file_path() const;
+  bool               is_camera_mode() const;
+  QString            get_file_path() const;
   std::optional<int> get_fps_limit() const;
-  int     get_start_index() const;
-  int     get_end_index() const;
-  QString get_load_method() const;
-  QString get_camera_type() const;
-  QString get_camera_config() const;
+  double             get_sampling_frequency_hz() const;
+  int                get_start_index() const;
+  int                get_end_index() const;
+  QString            get_load_method() const;
+  QString            get_camera_type() const;
+  QString            get_camera_config() const;
 
   // Setters
   void set_file_path(const QString &path);
   void set_fps_limit(std::optional<int> value);
+  void set_sampling_frequency_hz(double value);
   void set_start_index(int value);
   void set_end_index(int value);
   void set_end_index_range(int min, int max);
@@ -62,22 +65,24 @@ public:
   void clear_validation_styles();
   void mark_file_invalid();
   void mark_fps_invalid();
+  void mark_sampling_frequency_invalid();
   void mark_start_index_invalid();
   void mark_end_index_invalid();
   void mark_camera_config_invalid();
 
   // Access to widgets for connection setup
-  QLineEdit   *file_line_edit();
-  QPushButton *browse_button();
-  QPushButton *start_button();
-  QPushButton *stop_button();
-  QSpinBox    *fps_spin();
-  QSpinBox    *start_index_spin();
-  QSpinBox    *end_index_spin();
-  QComboBox   *load_method_combo();
-  QCheckBox   *cam_check();
-  QComboBox   *camera_combo();
-  QComboBox   *camera_config_combo();
+  QLineEdit      *file_line_edit();
+  QPushButton    *browse_button();
+  QPushButton    *start_button();
+  QPushButton    *stop_button();
+  QSpinBox       *fps_spin();
+  QDoubleSpinBox *sampling_frequency_spin();
+  QSpinBox       *start_index_spin();
+  QSpinBox       *end_index_spin();
+  QComboBox      *load_method_combo();
+  QCheckBox      *cam_check();
+  QComboBox      *camera_combo();
+  QComboBox      *camera_config_combo();
 
 signals:
   void start_clicked();
@@ -91,14 +96,17 @@ private:
   QWidget    *create_file_page();
   QWidget    *create_camera_page();
   QStringList load_available_camera_configs();
+  void        update_sampling_frequency_from_camera_config();
+
+  QDoubleSpinBox *sampling_frequency_spin_;
 
   // File mode widgets
-  QLineEdit   *file_line_edit_;
-  QPushButton *browse_button_;
-  QSpinBox    *fps_spin_;
-  QSpinBox    *start_index_spin_;
-  QSpinBox    *end_index_spin_;
-  QComboBox   *load_method_combo_;
+  QLineEdit      *file_line_edit_;
+  QPushButton    *browse_button_;
+  QSpinBox       *fps_spin_;
+  QSpinBox       *start_index_spin_;
+  QSpinBox       *end_index_spin_;
+  QComboBox      *load_method_combo_;
 
   // Camera mode widgets
   QCheckBox *cam_check_;

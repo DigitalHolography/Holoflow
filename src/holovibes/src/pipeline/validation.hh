@@ -31,6 +31,7 @@ enum class ValidationSeverity {
 enum class SettingsField {
   LoadPath,
   CameraConfigPath,
+  InputSamplingFrequency,
   LoadBegin,
   LoadEnd,
   LoadBatch,
@@ -52,7 +53,6 @@ enum class SettingsField {
   AutofocusNbSubaps,
   AutofocusNbIter,
   SignalPlotTimeWindow,
-  SignalPlotSampleTime,
 };
 
 struct ValidationIssue {

@@ -183,6 +183,13 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
               "Input batch size must be strictly positive.", {SettingsField::LoadBatch});
   }
 
+  if (!std::isfinite(settings.input_sampling_frequency_hz) ||
+      settings.input_sampling_frequency_hz <= 0.0) {
+    add_issue(result, ValidationSeverity::Error, "input_sampling_frequency_non_positive",
+              "Input sampling frequency must be strictly positive and finite.",
+              {SettingsField::InputSamplingFrequency});
+  }
+
   if (settings.time_window <= 0) {
     add_issue(result, ValidationSeverity::Error, "time_window_non_positive",
               "Time window must be strictly positive.", {SettingsField::TimeWindow});
@@ -198,13 +205,6 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     add_issue(result, ValidationSeverity::Error, "signal_plot_time_window_non_positive",
               "Signal plot time window must be strictly positive and finite.",
               {SettingsField::SignalPlotTimeWindow});
-  }
-
-  if (!std::isfinite(settings.signal_plot_sample_time_seconds) ||
-      settings.signal_plot_sample_time_seconds <= 0.0) {
-    add_issue(result, ValidationSeverity::Error, "signal_plot_sample_time_non_positive",
-              "Signal plot sample time must be strictly positive and finite.",
-              {SettingsField::SignalPlotSampleTime});
   }
 
   if (settings.time_window > 0 && settings.time_stride > 0 &&

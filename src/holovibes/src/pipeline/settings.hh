@@ -79,6 +79,7 @@ struct Settings {
   int                   load_end;
   int                   load_batch;
   std::optional<int>    load_fps_limit;
+  double                input_sampling_frequency_hz = 1.0e6 / 27.0;
   std::filesystem::path camera_config_path;
 
   // Spacial Propagation
@@ -149,10 +150,13 @@ struct Settings {
   bool             autofocus_skip_subapertures_outside_pupil = true;
   bool             autofocus_use_graph_laplacian             = false;
 
-  // Zernike coefficient history. sample_time_seconds is the nominal interval between two
-  // consecutive plotted (emitted and valid) coefficient sets, not processing completion time.
+  // Zernike coefficient history.
   double signal_plot_time_window_seconds = 8.0;
-  double signal_plot_sample_time_seconds = 1.0 / 15.0;
+
+  [[nodiscard]] double signal_plot_sample_time_seconds() const {
+    return static_cast<double>(time_stride) * static_cast<double>(pp_accumulation) /
+           input_sampling_frequency_hz;
+  }
 };
 
 } // namespace holovibes::pipeline

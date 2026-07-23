@@ -28,6 +28,10 @@ constexpr auto kLoadPathConstraints          = std::to_array<const char *>({
 constexpr auto kCameraConfigConstraints      = std::to_array<const char *>({
     "Select a readable JSON camera configuration file.",
 });
+constexpr auto kInputSamplingFrequencyConstraints = std::to_array<const char *>({
+    "Must be strictly positive.",
+    "Represents physical acquisition timing, not processing or playback throughput.",
+});
 constexpr auto kLoadBeginConstraints         = std::to_array<const char *>({
     "Must be strictly smaller than End Index.",
 });
@@ -113,6 +117,9 @@ const FieldHelp kFieldHelp[] = {
     {SettingsField::CameraConfigPath, "Camera Config",
      "JSON configuration file used to initialize the selected camera source.",
      kCameraConfigConstraints},
+    {SettingsField::InputSamplingFrequency, "Input Sampling Frequency",
+     "Physical camera frame sampling frequency used to derive Zernike history timing.",
+     kInputSamplingFrequencyConstraints},
     {SettingsField::LoadBegin, "Start Index",
      "First input frame included in the imported holofile range.", kLoadBeginConstraints},
     {SettingsField::LoadEnd, "End Index", "Frame index just after the imported holofile range.",
