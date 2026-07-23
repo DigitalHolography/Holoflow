@@ -299,7 +299,7 @@ private:
   void launch_f32_u8_scaled(holoflow::core::TView in, holoflow::core::TView out) {
     auto *idata = reinterpret_cast<float *>(const_cast<std::byte *>(in.data()));
     auto *odata = reinterpret_cast<uint8_t *>(out.data());
-    auto  size  = in.desc.num_elements();
+    int   size  = static_cast<int>(in.desc.num_elements());
 
     size_t   min_storage_bytes = min_temp_storage_bytes_;
     size_t   max_storage_bytes = max_temp_storage_bytes_;

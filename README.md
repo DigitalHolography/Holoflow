@@ -93,7 +93,7 @@ cmake --preset msvc-multi
 ```
 
 ### Common cache variables
-- `PROJECT_CUDA_ARCHS` (string list, default `75;86;89;90`)
+- `PROJECT_CUDA_ARCHS` (string list, default `75;86;89;120-real;120-virtual`)
 - `ENABLE_TESTING` (ON/OFF)
 - `ENABLE_BENCHMARKS` (ON/OFF)
 - `ENABLE_DOCUMENTATION` (ON/OFF)

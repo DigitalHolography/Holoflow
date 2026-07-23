@@ -383,7 +383,8 @@ private:
     }
 
     dim3 block_size(16, 16);
-    dim3 grid_size((w + block_size.x - 1) / block_size.x, (h + block_size.y - 1) / block_size.y);
+    dim3 grid_size(static_cast<unsigned int>((w + block_size.x - 1) / block_size.x),
+                   static_cast<unsigned int>((h + block_size.y - 1) / block_size.y));
     f32_shift_subpixel_kernel<<<grid_size, block_size, 0, stream_>>>(
         odata, idata, shift_x, shift_y, static_cast<int>(w), static_cast<int>(h));
   }
@@ -497,7 +498,8 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto   d_selected       = make_unique_device_ptr<float>(W * H);
 
   dim3 block_size(16, 16);
-  dim3 grid_size((W + block_size.x - 1) / block_size.x, (H + block_size.y - 1) / block_size.y);
+  dim3 grid_size(static_cast<unsigned int>((W + block_size.x - 1) / block_size.x),
+                 static_cast<unsigned int>((H + block_size.y - 1) / block_size.y));
 
   ellipse_mask_kernel<<<grid_size, block_size, 0, ctx.stream>>>(
       d_select_roi.get(), static_cast<int>(W), static_cast<int>(H), settings.radius);

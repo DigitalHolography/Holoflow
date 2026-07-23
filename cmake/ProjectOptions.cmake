@@ -44,6 +44,7 @@ function(project_options)
         /external:anglebrackets
         /external:W0
         /wd4211
+        /wd4193
     )
     set(_NVCC_COMMON
         --generate-line-info

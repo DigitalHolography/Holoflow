@@ -78,20 +78,9 @@ static void expect_eq_u16(const std::vector<std::byte>     &actual,
     EXPECT_EQ(a[i], expected[i]) << "at index " << i;
 }
 
-// Brute-force flat argmax for CF32 using the same lexicographic ordering as the kernel
-// (compare real parts first, then imaginary parts on a tie).
 struct CF32 {
   float re, im;
 };
-static std::uint16_t flat_argmax_cf32(const std::vector<CF32> &v) {
-  std::uint16_t best = 0;
-  for (size_t i = 1; i < v.size(); ++i) {
-    const bool greater = (v[i].re > v[best].re) || (v[i].re == v[best].re && v[i].im > v[best].im);
-    if (greater)
-      best = static_cast<std::uint16_t>(i);
-  }
-  return best;
-}
 
 // -------------------------------------------------------------------------------------------------
 // ArgmaxFactory: inference tests

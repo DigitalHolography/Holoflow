@@ -71,8 +71,8 @@ public:
   const holoflow::core::TDesc  &idesc() const { return idesc_; }
 
 private:
-  int writer_size() const;
-  int reader_size() const;
+  size_t writer_size() const;
+  size_t reader_size() const;
 
   SlidingAverageSettings settings_;
   holoflow::core::TDesc  idesc_;
@@ -119,20 +119,20 @@ __global__ void f32_sub_avg_kernel(const float *idata, float *odata, int nx, int
 
 } // namespace
 
-int SlidingAverage::writer_size() const {
-  int write_idx = write_idx_.load(std::memory_order_relaxed);
-  int read_idx  = read_idx_.load(std::memory_order_acquire);
-  int diff      = write_idx - read_idx;
+size_t SlidingAverage::writer_size() const {
+  size_t write_idx = write_idx_.load(std::memory_order_relaxed);
+  size_t read_idx  = read_idx_.load(std::memory_order_acquire);
+  size_t diff      = write_idx - read_idx;
   if (write_idx < read_idx) {
     diff += nb_slots_;
   }
   return diff;
 }
 
-int SlidingAverage::reader_size() const {
-  int write_idx = write_idx_.load(std::memory_order_acquire);
-  int read_idx  = read_idx_.load(std::memory_order_relaxed);
-  int diff      = write_idx - read_idx;
+size_t SlidingAverage::reader_size() const {
+  size_t write_idx = write_idx_.load(std::memory_order_acquire);
+  size_t read_idx  = read_idx_.load(std::memory_order_relaxed);
+  size_t diff      = write_idx - read_idx;
   if (write_idx < read_idx) {
     diff += nb_slots_;
   }
@@ -148,7 +148,7 @@ std::optional<holoflow::core::TView> SlidingAverage::acquire_input(int index) {
     return std::nullopt;
   }
 
-  int        write_idx = write_idx_.load(std::memory_order_relaxed);
+  size_t     write_idx = write_idx_.load(std::memory_order_relaxed);
   std::byte *data      = d_buffer_.get() + write_idx * element_size_;
   auto      &storage   = storage_access().owned_input_storage(0);
   storage.ptr          = data;
@@ -164,8 +164,8 @@ void SlidingAverage::release_output(int index) {
     throw std::out_of_range("SlidingAverage::release_output: invalid index");
   }
 
-  int read_idx      = read_idx_.load(std::memory_order_relaxed);
-  int next_read_idx = read_idx + 1;
+  size_t read_idx      = read_idx_.load(std::memory_order_relaxed);
+  size_t next_read_idx = read_idx + 1;
   if (next_read_idx == nb_slots_) {
     next_read_idx = 0;
   }
@@ -183,18 +183,20 @@ holoflow::core::OpResult SlidingAverage::try_push(holoflow::core::AsyncPushCtx &
   uint8_t *avg_data   = reinterpret_cast<uint8_t *>(d_buffer_.get()) + avg_idx * element_size_;
   logger()->trace("[SlidingAverage::try_push] write_idx={} avg_idx={}", write_idx, avg_idx);
 
-  size_t ny = idesc_.shape.at(1);
-  size_t nx = idesc_.shape.at(2);
+  auto ny = static_cast<unsigned int>(idesc_.shape.at(1));
+  auto nx = static_cast<unsigned int>(idesc_.shape.at(2));
 
   // Cuda workload
   dim3 block_size(16, 16);
   dim3 grid_size((nx + block_size.x - 1) / block_size.x, (ny + block_size.y - 1) / block_size.y);
 
   f32_add_avg_kernel<<<grid_size, block_size, 0, producer_stream_>>>(
-      reinterpret_cast<float *>(write_data), d_running_avg_.get(), nx, ny, settings_.window_size);
+      reinterpret_cast<float *>(write_data), d_running_avg_.get(), static_cast<int>(nx),
+      static_cast<int>(ny), static_cast<int>(settings_.window_size));
 
   f32_sub_avg_kernel<<<grid_size, block_size, 0, producer_stream_>>>(
-      reinterpret_cast<float *>(avg_data), d_running_avg_.get(), nx, ny, settings_.window_size);
+      reinterpret_cast<float *>(avg_data), d_running_avg_.get(), static_cast<int>(nx),
+      static_cast<int>(ny), static_cast<int>(settings_.window_size));
 
   CUDA_CHECK(cudaMemcpyAsync(avg_data, d_running_avg_.get(), element_size_,
                              cudaMemcpyDeviceToDevice, producer_stream_));
@@ -225,7 +227,7 @@ holoflow::core::OpResult SlidingAverage::try_pop(holoflow::core::AsyncPopCtx &ct
     return holoflow::core::OpResult::NotReady;
   }
 
-  int        read_idx = read_idx_.load(std::memory_order_relaxed);
+  size_t     read_idx = read_idx_.load(std::memory_order_relaxed);
   std::byte *data     = d_buffer_.get() + read_idx * element_size_;
   auto      &storage  = storage_access().owned_output_storage(0);
   storage.ptr         = data;
@@ -284,7 +286,7 @@ SlidingAverageFactory::create(std::span<const holoflow::core::TDesc> input_descs
   auto        settings = jsettings.get<SlidingAverageSettings>();
   const auto &idesc    = input_descs[0];
 
-  int    nb_slots     = settings.target_capacity + settings.window_size;
+  size_t nb_slots     = settings.target_capacity + settings.window_size;
   size_t element_size = idesc.num_bytes();
   size_t buffer_size  = nb_slots * element_size;
 
