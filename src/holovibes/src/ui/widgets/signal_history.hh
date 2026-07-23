@@ -14,13 +14,21 @@
 
 #pragma once
 
+#include <cstddef>
 #include <deque>
+#include <optional>
 
 namespace holovibes::ui {
 
 struct SignalSample {
   double time_seconds;
   double value;
+};
+
+struct SignalStatistics {
+  std::size_t sample_count;
+  double      mean;
+  double      standard_deviation;
 };
 
 class SignalHistory {
@@ -33,6 +41,7 @@ public:
 
   [[nodiscard]] double                          time_window_seconds() const;
   [[nodiscard]] const std::deque<SignalSample> &samples() const;
+  [[nodiscard]] std::optional<SignalStatistics> statistics(double minimum_time_seconds) const;
 
 private:
   void trim();

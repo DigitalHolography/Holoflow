@@ -43,6 +43,7 @@ struct ZernikeHistoryDisplaySettings {
   YAxisScalingMode y_scaling_mode      = YAxisScalingMode::VisibleWindow;
   double           manual_y_minimum    = -1.0;
   double           manual_y_maximum    = 1.0;
+  bool             show_statistics     = true;
 
   bool operator==(const ZernikeHistoryDisplaySettings &) const = default;
 };

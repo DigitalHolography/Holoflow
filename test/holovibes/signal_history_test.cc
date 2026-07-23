@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <cmath>
 #include <limits>
 
 #include "ui/widgets/signal_history.hh"
@@ -58,6 +59,52 @@ TEST(SignalHistoryTest, RejectsNonPositiveOrNonFiniteTimeWindows) {
   EXPECT_THROW((void)SignalHistory{0.0}, std::invalid_argument);
   EXPECT_THROW((void)SignalHistory{-1.0}, std::invalid_argument);
   EXPECT_THROW((void)SignalHistory{std::numeric_limits<double>::infinity()}, std::invalid_argument);
+}
+
+TEST(SignalHistoryTest, ReturnsNoStatisticsForEmptyHistory) {
+  const SignalHistory history;
+
+  EXPECT_FALSE(history.statistics(0.0).has_value());
+}
+
+TEST(SignalHistoryTest, SingleSampleHasZeroPopulationStandardDeviation) {
+  SignalHistory history;
+  ASSERT_TRUE(history.append({1.0, 4.5}));
+
+  const auto statistics = history.statistics(0.0);
+
+  ASSERT_TRUE(statistics.has_value());
+  EXPECT_EQ(statistics->sample_count, 1);
+  EXPECT_DOUBLE_EQ(statistics->mean, 4.5);
+  EXPECT_DOUBLE_EQ(statistics->standard_deviation, 0.0);
+}
+
+TEST(SignalHistoryTest, ComputesPopulationStatisticsInsideMinimumTime) {
+  SignalHistory history;
+  ASSERT_TRUE(history.append({0.0, 100.0}));
+  ASSERT_TRUE(history.append({1.0, 2.0}));
+  ASSERT_TRUE(history.append({2.0, 4.0}));
+  ASSERT_TRUE(history.append({3.0, 6.0}));
+
+  const auto statistics = history.statistics(1.0);
+
+  ASSERT_TRUE(statistics.has_value());
+  EXPECT_EQ(statistics->sample_count, 3);
+  EXPECT_DOUBLE_EQ(statistics->mean, 4.0);
+  EXPECT_NEAR(statistics->standard_deviation, std::sqrt(8.0 / 3.0), 1e-12);
+}
+
+TEST(SignalHistoryTest, ComputesStableStatisticsForLargeCommonOffset) {
+  SignalHistory history;
+  ASSERT_TRUE(history.append({0.0, 1.0e12 + 1.0}));
+  ASSERT_TRUE(history.append({1.0, 1.0e12 + 2.0}));
+  ASSERT_TRUE(history.append({2.0, 1.0e12 + 3.0}));
+
+  const auto statistics = history.statistics(0.0);
+
+  ASSERT_TRUE(statistics.has_value());
+  EXPECT_DOUBLE_EQ(statistics->mean, 1.0e12 + 2.0);
+  EXPECT_NEAR(statistics->standard_deviation, std::sqrt(2.0 / 3.0), 1e-12);
 }
 
 } // namespace holovibes::ui

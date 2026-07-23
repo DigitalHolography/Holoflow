@@ -418,7 +418,8 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
     const int    row    = static_cast<int>(i) / columns;
     const QRectF cell(content.left() + column * (cell_width + gap),
                       content.top() + row * (cell_height + gap), cell_width, cell_height);
-    const QRectF plot = cell.adjusted(50.0, 20.0, -8.0, -30.0);
+    const double header_height = display_settings_.show_statistics ? 32.0 : 20.0;
+    const QRectF plot          = cell.adjusted(50.0, header_height, -8.0, -30.0);
     if (plot.width() <= 1.0 || plot.height() <= 1.0) {
       continue;
     }
@@ -443,8 +444,23 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
     subplot_title_font.setPixelSize(11);
     painter.setFont(subplot_title_font);
     painter.setPen(text_color);
-    painter.drawText(QRectF(cell.left(), cell.top(), cell.width(), 18.0), Qt::AlignCenter,
+    painter.drawText(QRectF(cell.left(), cell.top(), cell.width(), 16.0), Qt::AlignCenter,
                      QString("a%1 (rad)").arg(series.noll_index));
+
+    if (display_settings_.show_statistics) {
+      const auto statistics = series.history.statistics(newest_time - time_window);
+      if (statistics.has_value()) {
+        QFont statistics_font = painter.font();
+        statistics_font.setBold(false);
+        statistics_font.setPixelSize(9);
+        painter.setFont(statistics_font);
+        painter.drawText(
+            QRectF(cell.left(), cell.top() + 16.0, cell.width(), 14.0), Qt::AlignCenter,
+            tr("Mean %1   SD %2")
+                .arg(format_axis_value(statistics->mean),
+                     format_axis_value(statistics->standard_deviation)));
+      }
+    }
 
     painter.setFont(QFont(painter.font().family(), 7));
     painter.setPen(QPen(grid_color, 1.0));

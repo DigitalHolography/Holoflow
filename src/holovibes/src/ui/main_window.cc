@@ -895,6 +895,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("y_scaling_mode", static_cast<int>(display_settings.y_scaling_mode));
   settings.setValue("manual_y_minimum", display_settings.manual_y_minimum);
   settings.setValue("manual_y_maximum", display_settings.manual_y_maximum);
+  settings.setValue("show_statistics", display_settings.show_statistics);
   settings.endGroup();
 
   display_workspace_->save_persistent_state(settings);
@@ -1065,6 +1066,8 @@ void MainWindow::restore_persistent_state() {
       settings.value("manual_y_minimum", display_settings.manual_y_minimum).toDouble();
   display_settings.manual_y_maximum =
       settings.value("manual_y_maximum", display_settings.manual_y_maximum).toDouble();
+  display_settings.show_statistics =
+      settings.value("show_statistics", display_settings.show_statistics).toBool();
   zernike_history_widget_->set_display_settings(display_settings);
   signal_plot_time_window_seconds_ =
       zernike_history_widget_->display_settings().time_window_seconds;

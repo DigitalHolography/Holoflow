@@ -14,6 +14,7 @@
 
 #include "signal_history.hh"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -53,6 +54,36 @@ bool SignalHistory::append(SignalSample sample) {
 double SignalHistory::time_window_seconds() const { return time_window_seconds_; }
 
 const std::deque<SignalSample> &SignalHistory::samples() const { return samples_; }
+
+std::optional<SignalStatistics>
+SignalHistory::statistics(double minimum_time_seconds) const {
+  std::size_t sample_count          = 0;
+  double      mean                  = 0.0;
+  double      squared_deviation_sum = 0.0;
+
+  for (const auto &sample : samples_) {
+    if (sample.time_seconds < minimum_time_seconds) {
+      continue;
+    }
+
+    ++sample_count;
+    const double delta = sample.value - mean;
+    mean += delta / static_cast<double>(sample_count);
+    squared_deviation_sum += delta * (sample.value - mean);
+  }
+
+  if (sample_count == 0) {
+    return std::nullopt;
+  }
+
+  const double variance =
+      std::max(0.0, squared_deviation_sum / static_cast<double>(sample_count));
+  return SignalStatistics{
+      .sample_count       = sample_count,
+      .mean               = mean,
+      .standard_deviation = std::sqrt(variance),
+  };
+}
 
 void SignalHistory::trim() {
   if (samples_.empty()) {

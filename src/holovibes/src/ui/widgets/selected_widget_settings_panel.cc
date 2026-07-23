@@ -14,6 +14,7 @@
 
 #include "selected_widget_settings_panel.hh"
 
+#include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QLabel>
@@ -80,6 +81,10 @@ public:
     manual_maximum_spin_  = make_y_spin_box();
     add_field(manual_maximum_label_, manual_maximum_spin_);
 
+    add_section_label("STATISTICS");
+    show_statistics_check_ = new QCheckBox("Show mean and standard deviation", this);
+    layout->addWidget(show_statistics_check_);
+
     auto *reset_range_button = new QPushButton("Reset range state", this);
     reset_display_button_    = new QPushButton("Reset display settings", this);
     layout->addSpacing(6);
@@ -104,6 +109,14 @@ public:
             [this]() { apply_manual_range(); });
     connect(manual_maximum_spin_, &QDoubleSpinBox::editingFinished, this,
             [this]() { apply_manual_range(); });
+    connect(show_statistics_check_, &QCheckBox::toggled, this, [this](bool checked) {
+      if (target_.isNull()) {
+        return;
+      }
+      auto settings            = target_->display_settings();
+      settings.show_statistics = checked;
+      target_->set_display_settings(settings);
+    });
     connect(reset_range_button, &QPushButton::clicked, this, [this]() {
       if (!target_.isNull()) {
         target_->reset_recorded_range_state();
@@ -150,12 +163,14 @@ private:
     const QSignalBlocker mode_blocker(scaling_mode_combo_);
     const QSignalBlocker minimum_blocker(manual_minimum_spin_);
     const QSignalBlocker maximum_blocker(manual_maximum_spin_);
+    const QSignalBlocker statistics_blocker(show_statistics_check_);
 
     time_window_spin_->setValue(settings.time_window_seconds);
     const int mode_index = scaling_mode_combo_->findData(static_cast<int>(settings.y_scaling_mode));
     scaling_mode_combo_->setCurrentIndex(mode_index);
     manual_minimum_spin_->setValue(settings.manual_y_minimum);
     manual_maximum_spin_->setValue(settings.manual_y_maximum);
+    show_statistics_check_->setChecked(settings.show_statistics);
     set_manual_fields_enabled(settings.y_scaling_mode == YAxisScalingMode::Manual);
     clear_validation_error(manual_minimum_spin_);
     clear_validation_error(manual_maximum_spin_);
@@ -188,13 +203,14 @@ private:
 
   QPointer<ZernikeHistoryWidget> target_;
   QMetaObject::Connection        settings_connection_;
-  QDoubleSpinBox                *time_window_spin_     = nullptr;
-  QComboBox                     *scaling_mode_combo_   = nullptr;
-  QLabel                        *manual_minimum_label_ = nullptr;
-  QDoubleSpinBox                *manual_minimum_spin_  = nullptr;
-  QLabel                        *manual_maximum_label_ = nullptr;
-  QDoubleSpinBox                *manual_maximum_spin_  = nullptr;
-  QPushButton                   *reset_display_button_ = nullptr;
+  QDoubleSpinBox                *time_window_spin_      = nullptr;
+  QComboBox                     *scaling_mode_combo_    = nullptr;
+  QLabel                        *manual_minimum_label_  = nullptr;
+  QDoubleSpinBox                *manual_minimum_spin_   = nullptr;
+  QLabel                        *manual_maximum_label_  = nullptr;
+  QDoubleSpinBox                *manual_maximum_spin_   = nullptr;
+  QCheckBox                     *show_statistics_check_ = nullptr;
+  QPushButton                   *reset_display_button_  = nullptr;
 };
 
 SelectedWidgetSettingsPanel::SelectedWidgetSettingsPanel(QWidget *parent)
