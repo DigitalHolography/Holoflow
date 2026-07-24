@@ -15,11 +15,10 @@
 #include "holotask/syncs/pct_clip.hh"
 
 #include <cub/cub.cuh>
+#include <math_constants.h>
 
 #include <string>
 #include <utility>
-
-#include <math_constants.h>
 
 #include "bug.hh"
 #include "curaii/cuda.hh"

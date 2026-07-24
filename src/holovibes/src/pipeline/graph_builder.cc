@@ -96,8 +96,7 @@ holoflow::core::GraphSpec GraphBuilder::build() {
     throw std::invalid_argument("signal_plot_time_window_seconds must be positive and finite");
   }
   const double signal_plot_sample_time_seconds = s_.signal_plot_sample_time_seconds();
-  if (!std::isfinite(signal_plot_sample_time_seconds) ||
-      signal_plot_sample_time_seconds <= 0.0) {
+  if (!std::isfinite(signal_plot_sample_time_seconds) || signal_plot_sample_time_seconds <= 0.0) {
     throw std::invalid_argument("derived signal plot sample time must be positive and finite");
   }
 
@@ -233,7 +232,7 @@ GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
   // Time-frequency analysis then operates along axis 1 (the T dimension).
   // The output is [N_pre, Nz, Hy, Hx], which feeds directly into the post-TFA queue.
 
-  int     N_pre = 4;
+  int     N_pre = 8;
   int64_t T     = static_cast<int64_t>(H.shape.at(0));
   int64_t Hy    = static_cast<int64_t>(H.shape.at(1));
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
@@ -344,18 +343,18 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
                                  : holotask::syncs::ShackHartmannSlopeMode::SingleReference;
   auto       slope_outputs = shack_hartmann_slopes(
       M0, {
-                    .mode               = slope_mode,
-                    .lambda             = lam,
-                    .dx                 = dx,
-                    .dy                 = dy,
-                    .z                  = z_prop,
-                    .subaperture_height = subap_h,
-                    .subaperture_width  = subap_w,
-                    .stride_y           = subap_h,
-                    .stride_x           = subap_w,
-                    .correlation_roi = {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f},
-                    .skip_subapertures_outside_pupil = s_.autofocus_skip_subapertures_outside_pupil,
-                    .output_xcorr_maps =
+              .mode               = slope_mode,
+              .lambda             = lam,
+              .dx                 = dx,
+              .dy                 = dy,
+              .z                  = z_prop,
+              .subaperture_height = subap_h,
+              .subaperture_width  = subap_w,
+              .stride_y           = subap_h,
+              .stride_x           = subap_w,
+              .correlation_roi    = {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f},
+              .skip_subapertures_outside_pupil = s_.autofocus_skip_subapertures_outside_pupil,
+              .output_xcorr_maps =
                   slope_mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference &&
                   is_last_pass && s_.view_shack_hartmann_xcorr,
           });
@@ -485,20 +484,20 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
 GraphBuilder::TDesc GraphBuilder::short_time_fresnel_diffraction(
     const TDesc &field, size_t win_w, size_t win_h, size_t stride_x, size_t stride_y, float lam,
     float dx, float dy, float z_prop, PhaseReference phase_ref, bool skip_phase_shift) {
-  return GraphBuilderTasks::short_time_fresnel_diffraction(
-      field, {
-                 .lambda           = lam,
-                 .dx               = dx,
-                 .dy               = dy,
-                 .z                = z_prop,
-                 .win_h            = win_h,
-                 .win_w            = win_w,
-                 .stride_y         = stride_y,
-                 .stride_x         = stride_x,
-                 .phase_ref        = phase_ref,
-                 .skip_phase_shift = skip_phase_shift,
-                 .output_magnitude = true,
-             });
+  return GraphBuilderTasks::short_time_fresnel_diffraction(field,
+                                                           {
+                                                               .lambda           = lam,
+                                                               .dx               = dx,
+                                                               .dy               = dy,
+                                                               .z                = z_prop,
+                                                               .win_h            = win_h,
+                                                               .win_w            = win_w,
+                                                               .stride_y         = stride_y,
+                                                               .stride_x         = stride_x,
+                                                               .phase_ref        = phase_ref,
+                                                               .skip_phase_shift = skip_phase_shift,
+                                                               .output_magnitude = true,
+                                                           });
 }
 
 GraphBuilder::TDesc GraphBuilder::build_spatial_propagation(const TDesc &FH) {
@@ -588,7 +587,7 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
   auto Host    = holotask::syncs::MemcpySettings::Target::Host;
 
-  TDesc result;
+  TDesc      result;
   const bool is_magnitude = FH_z.dtype == holoflow::core::DType::F32;
 
   if (s_.moment_type == MomentType::M0) {
