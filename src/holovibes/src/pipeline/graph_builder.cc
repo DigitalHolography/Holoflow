@@ -327,7 +327,7 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
       lam, dx, dy, z_prop,   // reconstruction parameters
       PhaseReference::GLOBAL // applies the necessary off-axis phase correction
   );
-  auto M0 = mean_abs(FH_prop, {{1}, false});
+  auto M0 = mean(FH_prop, {{1}, false});
   M0      = mean(M0, {{0}, true});
   M0      = fftshift(M0, {{-2, -1}});
 
@@ -486,17 +486,30 @@ GraphBuilder::TDesc GraphBuilder::short_time_fresnel_diffraction(
     const TDesc &field, size_t win_w, size_t win_h, size_t stride_x, size_t stride_y, float lam,
     float dx, float dy, float z_prop, PhaseReference phase_ref, bool skip_phase_shift) {
   return GraphBuilderTasks::short_time_fresnel_diffraction(
-      field, {lam, dx, dy, z_prop, win_h, win_w, stride_y, stride_x, phase_ref, skip_phase_shift});
+      field, {
+                 .lambda           = lam,
+                 .dx               = dx,
+                 .dy               = dy,
+                 .z                = z_prop,
+                 .win_h            = win_h,
+                 .win_w            = win_w,
+                 .stride_y         = stride_y,
+                 .stride_x         = stride_x,
+                 .phase_ref        = phase_ref,
+                 .skip_phase_shift = skip_phase_shift,
+                 .output_magnitude = true,
+             });
 }
 
 GraphBuilder::TDesc GraphBuilder::build_spatial_propagation(const TDesc &FH) {
   if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
     return fresnel_diffraction(FH, {
-                                       s_.spacial_lambda,
-                                       s_.spacial_pixel_size,
-                                       s_.spacial_pixel_size,
-                                       s_.spacial_z,
-                                       {-2, -1},
+                                       .lambda           = s_.spacial_lambda,
+                                       .dx               = s_.spacial_pixel_size,
+                                       .dy               = s_.spacial_pixel_size,
+                                       .z                = s_.spacial_z,
+                                       .axes             = {-2, -1},
+                                       .output_magnitude = true,
                                    });
   }
 
@@ -576,14 +589,15 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
   auto Host    = holotask::syncs::MemcpySettings::Target::Host;
 
   TDesc result;
+  const bool is_magnitude = FH_z.dtype == holoflow::core::DType::F32;
 
   if (s_.moment_type == MomentType::M0) {
-    result = mean_abs(FH_z, {{-3}, true});
+    result = is_magnitude ? mean(FH_z, {{-3}, true}) : mean_abs(FH_z, {{-3}, true});
   }
 
   else if (s_.moment_type == MomentType::M1) {
     auto n_freq   = static_cast<int64_t>(FH_z.shape.at(1));
-    auto abs_S    = abs(FH_z, {});
+    auto abs_S    = is_magnitude ? FH_z : abs(FH_z, {});
     auto freqs    = reshape(build_freq_weights(), {{1, n_freq, 1, 1}});
     auto weighted = multiply(freqs, abs_S, {});
     result        = mean(weighted, {{-3}, true});
@@ -591,7 +605,7 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
 
   else if (s_.moment_type == MomentType::M2) {
     auto n_freq   = static_cast<int64_t>(FH_z.shape.at(1));
-    auto abs_S    = abs(FH_z, {});
+    auto abs_S    = is_magnitude ? FH_z : abs(FH_z, {});
     auto freqs    = reshape(build_freq_weights(), {{1, n_freq, 1, 1}});
     freqs         = multiply(freqs, freqs, {});
     auto weighted = multiply(freqs, abs_S, {});

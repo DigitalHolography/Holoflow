@@ -21,7 +21,8 @@
     "dx": 3.45e-06,
     "dy": 3.45e-06,
     "z": 0.1,
-    "skip_phase_shift": true
+    "skip_phase_shift": true,
+    "output_magnitude": false
 }
 ```
 
@@ -32,6 +33,7 @@
 | + [dy](#dy )         | No      | number | No         | -          | Pixel pitch in meters along Y. Must satisfy:<br />- dy > 0<br />- dy = dx |
 | + [z](#z )           | No      | number | No         | -          | Propagation distance in meters. Can be positive or negative.              |
 | - [skip_phase_shift](#skip_phase_shift ) | No      | boolean | No         | -          | When true, omit the output-plane quadratic phase factor after the FFT. When false, multiply the FFT result by exp(i*pi*(x^2+y^2)/(lambda*z)). |
+| - [output_magnitude](#output_magnitude ) | No      | boolean | No         | -          | When true, store the magnitude of each propagated complex sample directly from the FFT and return an F32 tensor. |
 
 <!-- ----------------------------------------------------------------------------------------------------------------------------
 Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 13:11:10 +0200

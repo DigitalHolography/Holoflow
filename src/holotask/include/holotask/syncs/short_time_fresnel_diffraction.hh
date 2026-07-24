@@ -49,6 +49,7 @@ struct ShortTimeFresnelDiffractionSettings {
   size_t             stride_x;
   STFDPhaseReference phase_ref        = STFDPhaseReference::LOCAL;
   bool               skip_phase_shift = true;
+  bool               output_magnitude = false;
   std::vector<int>   axes             = {-2, -1};
 
   bool operator==(const ShortTimeFresnelDiffractionSettings &) const = default;

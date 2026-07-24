@@ -25,6 +25,11 @@
       "type": "boolean",
       "default": true,
       "description": "When true, omit the output-plane quadratic phase factor after the FFT. When false, multiply the FFT result by exp(i*pi*(x^2+y^2)/(lambda*z))."
+    },
+    "output_magnitude": {
+      "type": "boolean",
+      "default": false,
+      "description": "When true, store the magnitude of each propagated complex sample directly from the FFT and return an F32 tensor."
     }
   },
   "required": [
@@ -39,7 +44,8 @@
       "dx": 3.45e-6,
       "dy": 3.45e-6,
       "z": 0.10,
-      "skip_phase_shift": true
+      "skip_phase_shift": true,
+      "output_magnitude": false
     }
   ]
 }

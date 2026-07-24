@@ -28,7 +28,7 @@ This task expects a single complex tensor of shape `(B, H, W)`:
 The dtype must be `complex32` (`CF32`) and the tensor must reside in device memory.
 
 ## Outputs
-One output tensor is produced with the same shape `(B, H, W)`, dtype `complex32`, and device memory location as the input. The data contains the Fresnel-propagated field samples at distance `z`, with the optional output-plane quadratic phase term controlled by `skip_phase_shift`, up to a global complex scaling factor.
+One output tensor is produced with the same shape `(B, H, W)` and device memory location as the input. By default its dtype is `complex32`, and it contains the Fresnel-propagated field samples at distance `z`, with the optional output-plane quadratic phase term controlled by `skip_phase_shift`, up to a global complex scaling factor. When `output_magnitude=true`, a cuFFT store callback writes the modulus of each propagated sample directly and the output dtype is `float32`; the output-plane phase term is then omitted because it cannot change the modulus.
 
 ## Inplace
 This task has an inplace relationship between its input and output.

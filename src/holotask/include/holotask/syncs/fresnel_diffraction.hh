@@ -33,6 +33,7 @@ struct FresnelDiffractionSettings {
   float            z;                           ///< Propagation distance [m].
   std::vector<int> axes             = {-2, -1}; ///< Spatial axes (H, W).
   bool             skip_phase_shift = true;     ///< Omit output-plane quadratic phase.
+  bool             output_magnitude = false;    ///< Store the propagated magnitude as F32.
 
   bool operator==(const FresnelDiffractionSettings &) const = default;
 };

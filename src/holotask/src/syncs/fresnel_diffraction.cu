@@ -39,8 +39,13 @@ namespace holotask::syncs {
 
 void to_json(nlohmann::json &j, const FresnelDiffractionSettings &fds) {
   j = {
-      {"lambda", fds.lambda}, {"dx", fds.dx},     {"dy", fds.dy},
-      {"z", fds.z},           {"axes", fds.axes}, {"skip_phase_shift", fds.skip_phase_shift},
+      {"lambda", fds.lambda},
+      {"dx", fds.dx},
+      {"dy", fds.dy},
+      {"z", fds.z},
+      {"axes", fds.axes},
+      {"skip_phase_shift", fds.skip_phase_shift},
+      {"output_magnitude", fds.output_magnitude},
   };
 }
 
@@ -54,6 +59,8 @@ void from_json(const nlohmann::json &j, FresnelDiffractionSettings &fds) {
     j.at("axes").get_to(fds.axes);
   if (j.contains("skip_phase_shift"))
     j.at("skip_phase_shift").get_to(fds.skip_phase_shift);
+  if (j.contains("output_magnitude"))
+    j.at("output_magnitude").get_to(fds.output_magnitude);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -77,6 +84,7 @@ struct BatchGroup {
 // Minimized CallerInfo struct. All dimensions are injected via macros.
 struct ApplyLensCallerInfo {
   cuFloatComplex *lens;
+  float          *magnitude_output;
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -265,7 +273,8 @@ std::vector<char> apply_lens_lto(bool is_fast, bool is_real, unsigned int width,
 #include <cuComplex.h>
 
 struct ApplyLensCallerInfo {
-  cuFloatComplex    *lens;
+  cuFloatComplex *lens;
+  float          *magnitude_output;
 };
 
 __device__ cuFloatComplex apply_lens_callback2(
@@ -297,6 +306,15 @@ __device__ cuFloatComplex apply_lens_callback2(
 }
 )";
   }
+
+  src += R"(
+__device__ void store_magnitude_callback(
+    void *data, unsigned long long offset, cuFloatComplex element,
+    void *callerInfo, void *sharedPtr) {
+  auto *info = (ApplyLensCallerInfo *)callerInfo;
+  info->magnitude_output[offset] = cuCabsf(element);
+}
+)";
 
   return compile_source_to_lto(src, "apply_lens_callback2.cu");
 }
@@ -384,6 +402,7 @@ public:
   // -- Device resources ---------------------------------------------------------------------------
   cudaStream_t           stream;
   DevPtr<cuFloatComplex> d_lens;
+  DevPtr<cuFloatComplex> d_fft_output;
   DevPtr<void>           d_caller_info;
   std::vector<char>      lto;
 
@@ -394,15 +413,25 @@ public:
 
     for (const auto &offset : offsets) {
       auto *in_ptr  = idata_base + offset.in_bytes;
-      auto *out_ptr = reinterpret_cast<cuFloatComplex *>(odata_base + offset.out_bytes);
-      CUFFT_CHECK(cufftXtExec(fft_handle.get(), in_ptr, out_ptr, CUFFT_FORWARD));
+      auto *out_ptr = odata_base + offset.out_bytes;
+      auto *fft_out = reinterpret_cast<cuFloatComplex *>(out_ptr);
+      if (settings.output_magnitude) {
+        auto *magnitude_output = reinterpret_cast<float *>(out_ptr);
+        auto *output_field =
+            static_cast<uint8_t *>(d_caller_info.get()) + offsetof(ApplyLensCallerInfo,
+                                                                   magnitude_output);
+        CUDA_CHECK(cudaMemcpyAsync(output_field, &magnitude_output, sizeof(magnitude_output),
+                                   cudaMemcpyHostToDevice, stream));
+        fft_out = d_fft_output.get();
+      }
+      CUFFT_CHECK(cufftXtExec(fft_handle.get(), in_ptr, fft_out, CUFFT_FORWARD));
 
-      if (!settings.skip_phase_shift) {
+      if (!settings.output_magnitude && !settings.skip_phase_shift) {
         constexpr int block_size = 256;
         auto          total      = inner_batch * static_cast<size_t>(height) * width;
         int           grid_size  = static_cast<int>((total + block_size - 1) / block_size);
         apply_output_phase_shift_kernel<<<grid_size, block_size, 0, stream>>>(
-            out_ptr, d_lens.get(), inner_batch, height, width, out_idist, out_stride_h,
+            fft_out, d_lens.get(), inner_batch, height, width, out_idist, out_stride_h,
             out_istride);
       }
     }
@@ -460,10 +489,13 @@ FresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc> input_de
   check(settings.dx == settings.dy, "dx must equal dy");
   // clang-format on
 
-  holoflow::core::TDesc odesc =
-      (idesc.dtype == holoflow::core::DType::CF32)
-          ? idesc
-          : holoflow::core::TDesc(idesc.shape, holoflow::core::DType::CF32, idesc.mem_loc);
+  holoflow::core::TDesc odesc;
+  if (settings.output_magnitude)
+    odesc = holoflow::core::TDesc(idesc.shape, holoflow::core::DType::F32, idesc.mem_loc);
+  else if (idesc.dtype == holoflow::core::DType::CF32)
+    odesc = idesc;
+  else
+    odesc = holoflow::core::TDesc(idesc.shape, holoflow::core::DType::CF32, idesc.mem_loc);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
@@ -491,7 +523,8 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
 
   const bool   is_real       = (idesc.dtype == holoflow::core::DType::F32);
   const size_t in_elem_size  = is_real ? sizeof(float) : sizeof(cuFloatComplex);
-  const size_t out_elem_size = sizeof(cuFloatComplex);
+  const size_t out_elem_size =
+      settings.output_magnitude ? sizeof(float) : sizeof(cuFloatComplex);
 
   auto in_strides_bytes  = get_strides_bytes(idesc);
   auto out_strides_bytes = get_strides_bytes(odesc);
@@ -543,7 +576,8 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
   auto d_lens  = make_quadratic_lens(W, H, settings, ctx.stream);
 
   ApplyLensCallerInfo info{
-      .lens = d_lens.get(),
+      .lens             = d_lens.get(),
+      .magnitude_output = nullptr,
   };
   auto d_info = curaii::make_unique_device_ptr<ApplyLensCallerInfo>(1);
   auto e = cudaMemcpyAsync(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice, ctx.stream);
@@ -556,6 +590,10 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
   auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
   CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "apply_lens_callback2", lto.data(), lto.size(),
                                     CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+  if (settings.output_magnitude) {
+    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "store_magnitude_callback", lto.data(), lto.size(),
+                                      CUFFT_CB_ST_COMPLEX, &d_info_ptr));
+  }
 
   size_t        work_size     = 0;
   long long int n[2]          = {H, W};
@@ -583,6 +621,10 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
   task->out_istride   = out_istride;
   task->stream        = ctx.stream;
   task->d_lens        = std::move(d_lens);
+  if (settings.output_magnitude) {
+    task->d_fft_output =
+        curaii::make_unique_device_ptr<cuFloatComplex>(best_group.size * best_group.out_idist);
+  }
   task->d_caller_info = std::move(d_info);
   task->lto           = std::move(lto);
 

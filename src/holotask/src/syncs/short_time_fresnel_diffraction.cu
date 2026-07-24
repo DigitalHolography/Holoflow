@@ -48,6 +48,7 @@ void to_json(nlohmann::json &j, const ShortTimeFresnelDiffractionSettings &s) {
        {"stride_x", s.stride_x},
        {"phase_ref", s.phase_ref},
        {"skip_phase_shift", s.skip_phase_shift},
+       {"output_magnitude", s.output_magnitude},
        {"axes", s.axes}};
 }
 
@@ -64,6 +65,8 @@ void from_json(const nlohmann::json &j, ShortTimeFresnelDiffractionSettings &s) 
     j.at("phase_ref").get_to(s.phase_ref);
   if (j.contains("skip_phase_shift"))
     j.at("skip_phase_shift").get_to(s.skip_phase_shift);
+  if (j.contains("output_magnitude"))
+    j.at("output_magnitude").get_to(s.output_magnitude);
   if (j.contains("axes"))
     j.at("axes").get_to(s.axes);
 }
@@ -83,6 +86,7 @@ struct LaunchOffset {
 // Minimized to just the pointer. All structure params are macro-injected.
 struct STFTCallerInfo {
   cuFloatComplex *precomputed_lens;
+  float          *magnitude_output;
 };
 
 // Shared header for both callback variants.
@@ -91,6 +95,7 @@ constexpr const char *k_stft_callback_header = R"(
 
 struct STFTCallerInfo {
   cuFloatComplex *precomputed_lens;
+  float          *magnitude_output;
 };
 
 // Decode a flat cuFFT offset using 32-bit macro math to prevent register spills and dynamic division
@@ -218,6 +223,14 @@ std::vector<char> build_stft_lto(bool is_global, bool is_real, unsigned int win_
 
   src += k_stft_callback_header;
   src += get_stft_load_body(is_global, is_real);
+  src += R"(
+__device__ void stft_store_magnitude(
+    void *data, unsigned long long offset, cuFloatComplex element,
+    void *callerInfo, void *sharedPtr) {
+  auto *info = (STFTCallerInfo *)callerInfo;
+  info->magnitude_output[offset] = cuCabsf(element);
+}
+)";
 
   const char *name = is_global ? "stft_load_global.cu" : "stft_load_local.cu";
   logger()->debug("[ShortTimeFresnelDiffraction] Source for {} callback:\n{}", name, src);
@@ -488,6 +501,7 @@ struct ShortTimeFresnelDiffractionImpl {
   cudaStream_t           stream;
   DevPtr<cuFloatComplex> d_win_lens;   // output-plane quadratic lens [win_h, win_w]
   DevPtr<cuFloatComplex> d_input_lens; // input phase shift (local or global)
+  DevPtr<cuFloatComplex> d_fft_output;
   DevPtr<void>           d_caller_info;
   std::vector<char>      lto;
 };
@@ -544,8 +558,10 @@ void ShortTimeFresnelDiffraction::update_propagation_distance(
 
   update_input_lens(im.d_input_lens.get(), input.width, input.height, settings.dx, settings.dy,
                     input.x_origin, input.y_origin, settings.lambda, settings.z, im.stream);
-  update_win_lens(im.d_win_lens.get(), im.win_w, im.win_h, settings.lambda, settings.z, settings.dx,
-                  im.stream);
+  if (!settings.output_magnitude) {
+    update_win_lens(im.d_win_lens.get(), im.win_w, im.win_h, settings.lambda, settings.z,
+                    settings.dx, im.stream);
+  }
   im.settings = settings;
 }
 
@@ -557,17 +573,27 @@ holoflow::core::OpResult ShortTimeFresnelDiffraction::execute(holoflow::core::Sy
 
   for (const auto &off : im.offsets) {
     auto *in_ptr  = idata + off.in_bytes;
-    auto *out_ptr = reinterpret_cast<cuFloatComplex *>(odata + off.out_bytes);
+    auto *out_ptr = odata + off.out_bytes;
+    auto *fft_out = reinterpret_cast<cuFloatComplex *>(out_ptr);
+    if (im.settings.output_magnitude) {
+      auto *magnitude_output = reinterpret_cast<float *>(out_ptr);
+      auto *output_field =
+          static_cast<uint8_t *>(im.d_caller_info.get()) +
+          offsetof(STFTCallerInfo, magnitude_output);
+      CUDA_CHECK(cudaMemcpyAsync(output_field, &magnitude_output, sizeof(magnitude_output),
+                                 cudaMemcpyHostToDevice, im.stream));
+      fft_out = im.d_fft_output.get();
+    }
 
-    CUFFT_CHECK(cufftXtExec(im.fft_handle.get(), in_ptr, out_ptr, CUFFT_FORWARD));
+    CUFFT_CHECK(cufftXtExec(im.fft_handle.get(), in_ptr, fft_out, CUFFT_FORWARD));
 
-    if (!im.settings.skip_phase_shift) {
+    if (!im.settings.output_magnitude && !im.settings.skip_phase_shift) {
       constexpr int block_size = 256;
       auto          total_wins = im.inner_batch * im.ny_win * im.nx_win;
       auto          total      = total_wins * static_cast<size_t>(im.win_h) * im.win_w;
       int           grid_size  = static_cast<int>((total + block_size - 1) / block_size);
       stft_output_phase_kernel<<<grid_size, block_size, 0, im.stream>>>(
-          out_ptr, im.d_win_lens.get(), total_wins, im.win_h, im.win_w, im.out_idist,
+          fft_out, im.d_win_lens.get(), total_wins, im.win_h, im.win_w, im.out_idist,
           im.out_stride_h, im.out_istride);
     }
   }
@@ -617,8 +643,9 @@ ShortTimeFresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc>
   out_shape.push_back(s.win_w);
   // clang-format on
 
-  holoflow::core::TDesc odesc(out_shape, holoflow::core::DType::CF32,
-                              holoflow::core::MemLoc::Device);
+  auto output_dtype =
+      s.output_magnitude ? holoflow::core::DType::F32 : holoflow::core::DType::CF32;
+  holoflow::core::TDesc odesc(out_shape, output_dtype, holoflow::core::MemLoc::Device);
 
   return {.input_descs   = {id},
           .output_descs  = {odesc},
@@ -653,7 +680,7 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
 
   const bool   is_real = (idesc.dtype == holoflow::core::DType::F32);
   const size_t in_esz  = is_real ? sizeof(float) : sizeof(cuFloatComplex);
-  const size_t out_esz = sizeof(cuFloatComplex);
+  const size_t out_esz = s.output_magnitude ? sizeof(float) : sizeof(cuFloatComplex);
 
   auto in_sb  = strides_bytes(idesc);
   auto out_sb = strides_bytes(odesc);
@@ -697,6 +724,7 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
 
   STFTCallerInfo info{
       .precomputed_lens = d_input_lens.get(),
+      .magnitude_output = nullptr,
   };
   auto d_info = curaii::make_unique_device_ptr<STFTCallerInfo>(1);
   CUDA_CHECK(
@@ -712,7 +740,9 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
                      static_cast<unsigned>(W), static_cast<unsigned long long>(group.in_idist));
 
   // -- Window-lens for output phase shift -------------------------------------------------------
-  auto d_win_lens = make_win_lens(win_w, win_h, s.lambda, s.z, s.dx, ctx.stream);
+  DevPtr<cuFloatComplex> d_win_lens;
+  if (!s.output_magnitude)
+    d_win_lens = make_win_lens(win_w, win_h, s.lambda, s.z, s.dx, ctx.stream);
 
   // -- cuFFT plan -------------------------------------------------------------------------------
   curaii::CufftHandle plan;
@@ -722,6 +752,10 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
   const char *cb_name    = is_global ? "stft_load_global" : "stft_load_local";
   CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), cb_name, lto.data(), lto.size(),
                                     CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+  if (s.output_magnitude) {
+    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "stft_store_magnitude", lto.data(), lto.size(),
+                                      CUFFT_CB_ST_COMPLEX, &d_info_ptr));
+  }
 
   // Virtual input layout (overridden by callback): [inner_batch*ny_win*nx_win, win_h, win_w].
   long long int n[2]       = {win_h, win_w};
@@ -755,6 +789,11 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
       .stream        = ctx.stream,
       .d_win_lens    = std::move(d_win_lens),
       .d_input_lens  = std::move(d_input_lens),
+      .d_fft_output =
+          s.output_magnitude
+              ? curaii::make_unique_device_ptr<cuFloatComplex>(
+                    static_cast<size_t>(batch) * static_cast<size_t>(out_win_idist))
+              : DevPtr<cuFloatComplex>{},
       .d_caller_info = std::move(d_info),
       .lto           = std::move(lto),
   });
