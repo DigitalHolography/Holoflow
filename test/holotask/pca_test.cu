@@ -217,6 +217,30 @@ TEST_F(PcaExecuteTest, U8FusedPathHandlesSpatialAndComponentTails) {
   EXPECT_GT(dot(output.data(), output.data(), output.size()), 0.0f);
 }
 
+TEST_F(PcaExecuteTest, U8FusedPathSupportsSixtyFourFeatures) {
+  constexpr size_t          features   = 64;
+  constexpr size_t          samples    = 128;
+  constexpr size_t          components = 16;
+  std::vector<std::uint8_t> input(features * samples);
+  for (size_t feature = 0; feature < features; ++feature) {
+    for (size_t sample = 0; sample < samples; ++sample) {
+      input[feature * samples + sample] =
+          static_cast<std::uint8_t>((sample * (feature + 3) + 11 * feature + 1) % 251);
+    }
+  }
+
+  const TDesc input_desc = device_desc({features, 1, samples}, DType::U8);
+  const auto  result     = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{input_desc}, std::vector<std::vector<std::byte>>{as_bytes(input)},
+      settings(0, static_cast<int>(components)));
+
+  const auto output = as_floats(result.output_bytes[0]);
+  ASSERT_EQ(output.size(), components * samples);
+  for (const float value : output) {
+    EXPECT_TRUE(std::isfinite(value));
+  }
+}
+
 TEST_F(PcaExecuteTest, SelectsNonzeroBeginAcrossBatchedAndTailKernels) {
   constexpr size_t   batches = 33;
   std::vector<float> input;

@@ -54,7 +54,7 @@ using CovarianceBlas =
              cublasdx::Function<cublasdx::function::MM>() +
              cublasdx::Arrangement<cublasdx::row_major, cublasdx::col_major,
                                    cublasdx::col_major>() +
-             cublasdx::Alignment<1, 1, 4>() + cublasdx::Block() +
+             cublasdx::Alignment<2, 2, 4>() + cublasdx::Block() +
              cublasdx::BlockDim<mathdx_block_size>() + cublasdx::SM<PCA_BLAS_SM>());
 
 template <unsigned int Components>
@@ -91,7 +91,8 @@ extern "C" __constant__ unsigned int pca_tail_block_x = TailSolver::block_dim.x;
 extern "C" __constant__ unsigned int pca_tail_shared_memory = TailSolver::shared_memory_size;
 extern "C" __constant__ unsigned int pca_covariance_block_x = CovarianceBlas::block_dim.x;
 extern "C" __constant__ unsigned int pca_covariance_shared_memory =
-    cublasdx::get_shared_storage_size_ab<CovarianceBlas, unsigned char, unsigned char>();
+    cublasdx::get_shared_storage_size_ab<CovarianceBlas, __half, __half>(
+        CovarianceBlas::suggest_layout_smem_a(), CovarianceBlas::suggest_layout_smem_b());
 extern "C" __constant__ unsigned int pca_covariance_split_samples =
     covariance_split_samples;
 extern "C" __constant__ unsigned int pca_projection8_block_x = ProjectionBlas8::block_dim.x;
@@ -116,10 +117,11 @@ extern "C" __global__ void pca_covariance_u8(const unsigned char *input, float *
 
   extern __shared__ __align__(16) cublasdx::byte covariance_shared_memory[];
   auto [a_ptr, b_ptr] =
-      cublasdx::slice_shared_memory_ab<CovarianceBlas, unsigned char, unsigned char>(
-          covariance_shared_memory);
-  auto a_shared = cublasdx::make_tensor(a_ptr, CovarianceBlas::get_layout_smem_a());
-  auto b_shared = cublasdx::make_tensor(b_ptr, CovarianceBlas::get_layout_smem_b());
+      cublasdx::slice_shared_memory_ab<CovarianceBlas, __half, __half>(
+          covariance_shared_memory, CovarianceBlas::suggest_layout_smem_a(),
+          CovarianceBlas::suggest_layout_smem_b());
+  auto a_shared = cublasdx::make_tensor(a_ptr, CovarianceBlas::suggest_layout_smem_a());
+  auto b_shared = cublasdx::make_tensor(b_ptr, CovarianceBlas::suggest_layout_smem_b());
   auto accumulator = CovarianceBlas().suggest_accumulator();
   accumulator.clear();
 
@@ -139,8 +141,9 @@ extern "C" __global__ void pca_covariance_u8(const unsigned char *input, float *
       const unsigned char value =
           sample < split_end ? batch_input[feature * samples + sample]
                              : static_cast<unsigned char>(0);
-      a_shared(feature, sample_in_tile) = value;
-      b_shared(sample_in_tile, feature) = value;
+      const __half converted = __float2half_rn(static_cast<float>(value));
+      a_shared(feature, sample_in_tile) = converted;
+      b_shared(sample_in_tile, feature) = converted;
     }
     __syncthreads();
     CovarianceBlas().execute(a_shared, b_shared, accumulator);
