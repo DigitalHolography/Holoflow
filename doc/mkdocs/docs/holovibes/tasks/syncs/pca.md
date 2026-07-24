@@ -1,5 +1,5 @@
 # PCA Sync Task
-The **Principal Component Analysis (PCA)** sync task projects complex data onto a reduced set of orthogonal modes. Given an input tensor $X \in \mathbb{C}^{F \times H \times W}$, the task reshapes it into a sample matrix $X_{(N \times F)}$ with $N = H \cdot W$, forms the Hermitian covariance
+The **Principal Component Analysis (PCA)** sync task projects real FP32 data onto a reduced set of orthogonal modes. Given an input tensor $X \in\mathbb{R}^{F \times H \times W}$, the task reshapes it into a sample matrix $X_{(N \times F)}$ with $N = H \cdot W$, forms the symmetric covariance
 
 $$
 C = X^\mathrm{H} X,
@@ -26,7 +26,8 @@ This task has a single input of shape `(F, H, W)`, where:
 - `H`: height (rows)
 - `W`: width (columns)
 
-The dtype must be complex 32-bit (`complex32`) and the tensor must reside in device memory.
+The dtype must be real 32-bit (`float32`) and the tensor must reside in device memory. Complex
+FP32 PCA is not yet supported by the cuSolverDx path.
 
 ## Outputs
 This task produces a single output of shape `((end - begin), H, W)`, where:
@@ -35,7 +36,7 @@ This task produces a single output of shape `((end - begin), H, W)`, where:
 - `H`: height (same as input)
 - `W`: width (same as input)
 
-The dtype of the output tensor is complex 32-bit (`complex32`) and it is written to device memory.
+The dtype of the output tensor is real 32-bit (`float32`) and it is written to device memory.
 
 ## Inplace
 This task does not support inplace operation.

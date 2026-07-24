@@ -25,12 +25,11 @@ namespace holotask::syncs {
 struct PcaSettings {
   int begin;
   int end;
-  int update_rate = 1; // 1 means update every frame, N means every Nth frame
 
   int components() const { return end - begin; }
 
   bool operator==(const PcaSettings &other) const {
-    return begin == other.begin && end == other.end && update_rate == other.update_rate;
+    return begin == other.begin && end == other.end;
   }
 };
 

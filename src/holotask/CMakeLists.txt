@@ -68,7 +68,14 @@ target_link_libraries(${TARGET}
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     Boost::graph
-    MKL::MKL
+)
+
+target_link_libraries(${TARGET}
+    PRIVATE
+    holoflow_cusolverdx_nvrtc
+    cuda
+    nvJitLink
+    nvrtc
 )
 
 if(EGrabber_FOUND)

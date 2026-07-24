@@ -277,7 +277,7 @@ GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
     // Output FH: [N_pre, Nz, Hy, Hx] where Nz = z1 - z0.
     int z0 = s_.view_3d_cuts ? 0 : s_.time_z_begin;
     int z1 = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
-    FH     = pca(H, {z0, z1, 1});
+    FH     = pca(H, {z0, z1});
   }
 
   else {

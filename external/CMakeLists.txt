@@ -32,6 +32,18 @@ if(ENABLE_FETCHCONTENT)
         )
     endmacro()
 
+    macro(declare_persistent_archive NAME URL HASH)
+        FetchContent_Declare(
+            ${NAME}
+            URL         ${URL}
+            URL_HASH    ${HASH}
+            SOURCE_DIR  "${FETCHCONTENT_BASE_DIR}/${NAME}-src"
+            BINARY_DIR  "${FETCHCONTENT_BASE_DIR}/${NAME}-build"
+            SUBBUILD_DIR "${FETCHCONTENT_BASE_DIR}/${NAME}-subbuild"
+            DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+        )
+    endmacro()
+
     declare_persistent_dependency(spdlog "https://github.com/gabime/spdlog.git" "v1.15.3")
     FetchContent_MakeAvailable(spdlog)
 
@@ -58,6 +70,65 @@ if(ENABLE_FETCHCONTENT)
 
     declare_persistent_dependency(qtads "https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System.git" "5.0.0")
     FetchContent_MakeAvailable(qtads)
+
+    set(MATHDX_VERSION "26.06.1")
+    set(MATHDX_CUDA_MAJOR "13")
+
+    declare_persistent_archive(
+        mathdx
+        "https://developer.nvidia.com/downloads/compute/cuSOLVERDx/redist/cuSOLVERDx/cuda13/nvidia-mathdx-${MATHDX_VERSION}-cuda13.zip"
+        "SHA256=c691252f1c7dc8bce2f96f4166604efe11eb11735998f492ffcf9bc2835e424f"
+    )
+
+    FetchContent_MakeAvailable(mathdx)
+
+    set(MATHDX_ROOT
+        "${mathdx_SOURCE_DIR}/nvidia/mathdx/26.06"
+    )
+
+    find_package(
+        mathdx
+        26.06
+        REQUIRED
+        COMPONENTS cusolverdx
+        CONFIG
+        PATHS "${MATHDX_ROOT}"
+        NO_DEFAULT_PATH
+    )
+
+    if(NOT mathdx_FOUND)
+        message(FATAL_ERROR "MathDx package was not found")
+    endif()
+
+    if(NOT cusolverdx_FOUND)
+        message(FATAL_ERROR "cuSolverDx component was not found")
+    endif()
+
+    if(NOT EXISTS "${cusolverdx_FATBIN}")
+        message(FATAL_ERROR
+            "cuSolverDx fatbin does not exist: ${cusolverdx_FATBIN}"
+        )
+    endif()
+
+    message(STATUS "MathDx version: ${mathdx_VERSION}")
+    message(STATUS "cuSolverDx version: ${cusolverdx_VERSION}")
+    message(STATUS "MathDx includes: ${mathdx_INCLUDE_DIRS}")
+    message(STATUS "cuSolverDx includes: ${cusolverdx_INCLUDE_DIRS}")
+    message(STATUS "cuSolverDx fatbin: ${cusolverdx_FATBIN}")
+
+    file(TO_CMAKE_PATH "$ENV{CUDA_PATH}/include" HOLOFLOW_CUDA_INCLUDE_DIR)
+    file(TO_CMAKE_PATH "${cusolverdx_INCLUDE_DIR}" HOLOFLOW_CUSOLVERDX_INCLUDE_DIR)
+    file(TO_CMAKE_PATH "${cusolverdx_cutlass_INCLUDE_DIR}" HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR)
+    file(TO_CMAKE_PATH "${cusolverdx_FATBIN}" HOLOFLOW_CUSOLVERDX_FATBIN)
+
+    add_library(holoflow_cusolverdx_nvrtc INTERFACE)
+    target_compile_definitions(holoflow_cusolverdx_nvrtc
+        INTERFACE
+        HOLOFLOW_CUDA_INCLUDE_DIR="${HOLOFLOW_CUDA_INCLUDE_DIR}"
+        HOLOFLOW_CUSOLVERDX_INCLUDE_DIR="${HOLOFLOW_CUSOLVERDX_INCLUDE_DIR}"
+        HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR="${HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR}"
+        HOLOFLOW_CUSOLVERDX_FATBIN="${HOLOFLOW_CUSOLVERDX_FATBIN}"
+    )
 
     message(STATUS "FetchContent dependencies acquired.")
 
