@@ -28,6 +28,14 @@ namespace holotask::syncs {
 
 /// @brief Settings for the angular spectrum propagation task.
 struct AngularSpectrumSettings {
+  /// @brief Optional centered zero-padding resolution.
+  struct Padding {
+    int width;  ///< Padded width in pixels.
+    int height; ///< Padded height in pixels.
+
+    bool operator==(const Padding &) const = default;
+  };
+
   /// @brief Optional bandlimiting filter.
   struct Filter {
     int r_inner; ///< Inner radius in pixels.
@@ -38,17 +46,20 @@ struct AngularSpectrumSettings {
     bool operator==(const Filter &) const = default;
   };
 
-  float                 lambda; ///< Wavelength [m].
-  float                 dx;     ///< Pixel pitch, horizontal [m].
-  float                 dy;     ///< Pixel pitch, vertical [m].
-  float                 z;      ///< Propagation distance [m].
-  std::optional<Filter> filter; ///< Optional bandlimiting filter.
+  float                  lambda;  ///< Wavelength [m].
+  float                  dx;      ///< Pixel pitch, horizontal [m].
+  float                  dy;      ///< Pixel pitch, vertical [m].
+  float                  z;       ///< Propagation distance [m].
+  std::optional<Filter>  filter;  ///< Optional bandlimiting filter.
+  std::optional<Padding> padding; ///< Optional centered zero-padding resolution.
 
   bool operator==(const AngularSpectrumSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const AngularSpectrumSettings::Filter &f);
 void from_json(const nlohmann::json &j, AngularSpectrumSettings::Filter &f);
+void to_json(nlohmann::json &j, const AngularSpectrumSettings::Padding &p);
+void from_json(const nlohmann::json &j, AngularSpectrumSettings::Padding &p);
 void to_json(nlohmann::json &j, const AngularSpectrumSettings &as);
 void from_json(const nlohmann::json &j, AngularSpectrumSettings &as);
 

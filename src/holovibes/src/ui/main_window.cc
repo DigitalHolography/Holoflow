@@ -841,6 +841,9 @@ void MainWindow::save_persistent_state() {
   settings.setValue("time_window", render_widget_->get_time_window());
   settings.setValue("lambda_nm", render_widget_->get_lambda());
   settings.setValue("focus_mm", render_widget_->get_focus());
+  settings.setValue("asp_padding_enabled", render_widget_->is_asp_padding_enabled());
+  settings.setValue("asp_padded_width", render_widget_->get_asp_padded_width());
+  settings.setValue("asp_padded_height", render_widget_->get_asp_padded_height());
   settings.setValue("convolution", render_widget_->get_convolution());
   settings.setValue("convolution_divide", render_widget_->is_convolution_divide());
   settings.endGroup();
@@ -964,6 +967,12 @@ void MainWindow::restore_persistent_state() {
       settings.value("time_window", render_widget_->get_time_window()).toInt());
   render_widget_->set_lambda(settings.value("lambda_nm", render_widget_->get_lambda()).toInt());
   render_widget_->set_focus(settings.value("focus_mm", render_widget_->get_focus()).toInt());
+  render_widget_->set_asp_padding_enabled(
+      settings.value("asp_padding_enabled", render_widget_->is_asp_padding_enabled()).toBool());
+  render_widget_->set_asp_padded_width(
+      settings.value("asp_padded_width", render_widget_->get_asp_padded_width()).toInt());
+  render_widget_->set_asp_padded_height(
+      settings.value("asp_padded_height", render_widget_->get_asp_padded_height()).toInt());
   restore_combo_text(settings, "convolution", render_widget_->convolution_combo());
   render_widget_->set_convolution_divide(
       settings.value("convolution_divide", render_widget_->is_convolution_divide()).toBool());
@@ -1377,12 +1386,9 @@ void MainWindow::on_start_pipeline_success() {
   export_widget_->set_stop_enabled(export_in_progress_);
 
   auto dims = guess_source_dims();
-  view_widget_->set_xy_extent(dims.width(), dims.height());
   xy_raw_widget_->set_fixed_aspect(dims);
-  if (render_widget_->get_space_transform() == "Fresnel Diffraction" &&
-      render_widget_->get_image_mode() != "Raw") {
-    dims = QSize(dims.width(), dims.width());
-  }
+  dims = processed_display_dims(dims);
+  view_widget_->set_xy_extent(dims.width(), dims.height());
   xy_processed_widget_->set_fixed_aspect(dims);
   xy_raw_widget_->set_fixed_aspect(guess_source_dims());
   shack_hartmann_widget_->set_fixed_aspect(dims);
@@ -1547,12 +1553,9 @@ void MainWindow::on_update_pipeline_success() {
   export_widget_->set_stop_enabled(export_in_progress_);
 
   auto dims = guess_source_dims();
-  view_widget_->set_xy_extent(dims.width(), dims.height());
   xy_raw_widget_->set_fixed_aspect(dims);
-  if (render_widget_->get_space_transform() == "Fresnel Diffraction" &&
-      render_widget_->get_image_mode() != "Raw") {
-    dims = QSize(dims.width(), dims.width());
-  }
+  dims = processed_display_dims(dims);
+  view_widget_->set_xy_extent(dims.width(), dims.height());
   xy_processed_widget_->set_fixed_aspect(dims);
 
   shack_hartmann_widget_->set_fixed_aspect(dims);
@@ -1757,7 +1760,13 @@ bool MainWindow::validate_inputs() {
 
   pipeline::Settings settings = get_pipeline_settings();
   const auto         context  = build_validation_context(settings);
-  view_widget_->set_xy_extent(context.source_width.value_or(1), context.source_height.value_or(1));
+  QSize display_dims(context.source_width.value_or(1), context.source_height.value_or(1));
+  if (settings.view_type != pipeline::ViewType::RAW &&
+      settings.spacial_method == pipeline::SpacialMethod::ANGULAR_SPECTRUM &&
+      settings.asp_padding_enabled) {
+    display_dims = QSize(settings.asp_padded_width, settings.asp_padded_height);
+  }
+  view_widget_->set_xy_extent(display_dims.width(), display_dims.height());
   const auto result = pipeline::validate_settings(settings, context);
   refresh_validation_tooltips(result);
   apply_validation_result(result);
@@ -1800,6 +1809,9 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
         break;
       case SettingsField::SpacialMethod:
         render_widget_->mark_space_transform_invalid();
+        break;
+      case SettingsField::AspPadding:
+        render_widget_->mark_asp_padding_invalid();
         break;
       case SettingsField::TimeMethod:
         render_widget_->mark_time_transform_invalid();
@@ -1859,6 +1871,9 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
       FieldBinding{SettingsField::Filter2DInnerRadius, render_widget_->filter_2d_inner_spin()},
       FieldBinding{SettingsField::Filter2DOuterRadius, render_widget_->filter_2d_outer_spin()},
       FieldBinding{SettingsField::SpacialMethod, render_widget_->space_transform_combo()},
+      FieldBinding{SettingsField::AspPadding, render_widget_->asp_padding_check()},
+      FieldBinding{SettingsField::AspPadding, render_widget_->asp_padded_width_spin()},
+      FieldBinding{SettingsField::AspPadding, render_widget_->asp_padded_height_spin()},
       FieldBinding{SettingsField::TimeMethod, render_widget_->time_transform_combo()},
       FieldBinding{SettingsField::TimeWindow, render_widget_->time_window_spin()},
       FieldBinding{SettingsField::TimeStride, render_widget_->time_stride_spin()},
@@ -2010,6 +2025,20 @@ QSize MainWindow::guess_source_dims() {
   HOLOVIBES_UNIMPLEMENTED();
 }
 
+QSize MainWindow::processed_display_dims(QSize source_dims) const {
+  if (render_widget_->get_image_mode() == "Raw") {
+    return source_dims;
+  }
+  if (render_widget_->get_space_transform() == "Fresnel Diffraction") {
+    return QSize(source_dims.width(), source_dims.width());
+  }
+  if (render_widget_->get_space_transform() == "Angular Spectrum" &&
+      render_widget_->is_asp_padding_enabled()) {
+    return QSize(render_widget_->get_asp_padded_width(), render_widget_->get_asp_padded_height());
+  }
+  return source_dims;
+}
+
 pipeline::Settings MainWindow::get_pipeline_settings() {
   using namespace holovibes::pipeline;
 
@@ -2079,11 +2108,14 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"Fresnel Diffraction", SpacialMethod::FRESNEL_DIFFRACTION},
         {"Angular Spectrum", SpacialMethod::ANGULAR_SPECTRUM},
     };
-    QString method       = render_widget_->get_space_transform();
-    s.spacial_method     = method_from_str.at(method.toStdString());
-    s.spacial_lambda     = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
-    s.spacial_z          = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
-    s.spacial_pixel_size = 20e-6f; // TODO: get from camera
+    QString method        = render_widget_->get_space_transform();
+    s.spacial_method      = method_from_str.at(method.toStdString());
+    s.spacial_lambda      = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
+    s.spacial_z           = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
+    s.spacial_pixel_size  = 20e-6f; // TODO: get from camera
+    s.asp_padding_enabled = render_widget_->is_asp_padding_enabled();
+    s.asp_padded_width    = render_widget_->get_asp_padded_width();
+    s.asp_padded_height   = render_widget_->get_asp_padded_height();
   }
   {
     s.filter_2d           = render_widget_->is_filter_2d_enabled();
@@ -2301,6 +2333,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     render_widget_->set_space_transform(method);
     render_widget_->set_lambda(s.spacial_lambda * 1e9); // nm
     render_widget_->set_focus(s.spacial_z * 1e3);       // mm
+    render_widget_->set_asp_padding_enabled(s.asp_padding_enabled);
+    render_widget_->set_asp_padded_width(s.asp_padded_width);
+    render_widget_->set_asp_padded_height(s.asp_padded_height);
   }
   {
     render_widget_->set_filter_2d_enabled(s.filter_2d);

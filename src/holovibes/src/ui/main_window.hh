@@ -91,6 +91,7 @@ private:
   void                        update_if_running();
 
   QSize              guess_source_dims();
+  QSize              processed_display_dims(QSize source_dims) const;
   pipeline::Settings get_pipeline_settings();
   void               set_pipeline_settings(const pipeline::Settings &s);
 

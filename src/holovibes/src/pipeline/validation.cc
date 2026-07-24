@@ -264,6 +264,29 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 {SettingsField::SpacialMethod});
     }
 
+    if (settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM &&
+        settings.asp_padding_enabled) {
+      if (settings.asp_padded_width <= 0 || settings.asp_padded_height <= 0) {
+        add_issue(result, ValidationSeverity::Error, "asp_padding_non_positive",
+                  "Angular Spectrum padded width and height must be strictly positive.",
+                  {SettingsField::AspPadding});
+      }
+
+      if (context.source_width.has_value() && context.source_height.has_value()) {
+        const int width_padding  = settings.asp_padded_width - *context.source_width;
+        const int height_padding = settings.asp_padded_height - *context.source_height;
+        if (width_padding < 0 || height_padding < 0) {
+          add_issue(result, ValidationSeverity::Error, "asp_padding_smaller_than_source",
+                    "Angular Spectrum padded resolution must be at least the source resolution.",
+                    {SettingsField::AspPadding});
+        } else if (width_padding % 2 != 0 || height_padding % 2 != 0) {
+          add_issue(result, ValidationSeverity::Error, "asp_padding_not_even",
+                    "Angular Spectrum must add an even number of pixels on each axis.",
+                    {SettingsField::AspPadding});
+        }
+      }
+    }
+
     if (settings.view_3d_cuts) {
       add_issue(result, ValidationSeverity::Error, "view_3d_cuts_unsupported",
                 "3D cuts are not currently supported by the pipeline.",

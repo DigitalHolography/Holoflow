@@ -64,9 +64,14 @@ QString ImageRenderingWidget::get_space_transform() const {
 QString ImageRenderingWidget::get_time_transform() const {
   return time_transform_combo_->currentText();
 }
-int     ImageRenderingWidget::get_time_window() const { return time_window_spin_->value(); }
-int     ImageRenderingWidget::get_lambda() const { return lambda_spin_->value(); }
-int     ImageRenderingWidget::get_focus() const { return focus_spin_->value(); }
+int  ImageRenderingWidget::get_time_window() const { return time_window_spin_->value(); }
+int  ImageRenderingWidget::get_lambda() const { return lambda_spin_->value(); }
+int  ImageRenderingWidget::get_focus() const { return focus_spin_->value(); }
+bool ImageRenderingWidget::is_asp_padding_enabled() const {
+  return asp_padding_check_->isChecked();
+}
+int ImageRenderingWidget::get_asp_padded_width() const { return asp_padded_width_spin_->value(); }
+int ImageRenderingWidget::get_asp_padded_height() const { return asp_padded_height_spin_->value(); }
 QString ImageRenderingWidget::get_convolution() const { return convolution_combo_->currentText(); }
 bool    ImageRenderingWidget::is_convolution_divide() const {
   return convolution_divide_check_->isChecked();
@@ -88,6 +93,15 @@ void ImageRenderingWidget::set_time_transform(const QString &method) {
 void ImageRenderingWidget::set_time_window(int value) { time_window_spin_->setValue(value); }
 void ImageRenderingWidget::set_lambda(int value) { lambda_spin_->setValue(value); }
 void ImageRenderingWidget::set_focus(int value) { focus_spin_->setValue(value); }
+void ImageRenderingWidget::set_asp_padding_enabled(bool enabled) {
+  asp_padding_check_->setChecked(enabled);
+}
+void ImageRenderingWidget::set_asp_padded_width(int value) {
+  asp_padded_width_spin_->setValue(value);
+}
+void ImageRenderingWidget::set_asp_padded_height(int value) {
+  asp_padded_height_spin_->setValue(value);
+}
 void ImageRenderingWidget::set_convolution(const QString &kernel) {
   convolution_combo_->setCurrentText(kernel);
 }
@@ -108,6 +122,11 @@ void ImageRenderingWidget::mark_time_window_invalid() { mark_validation_error(ti
 void ImageRenderingWidget::mark_space_transform_invalid() {
   mark_validation_error(space_transform_combo_);
 }
+void ImageRenderingWidget::mark_asp_padding_invalid() {
+  mark_validation_error(asp_padding_check_);
+  mark_validation_error(asp_padded_width_spin_);
+  mark_validation_error(asp_padded_height_spin_);
+}
 void ImageRenderingWidget::mark_time_transform_invalid() {
   mark_validation_error(time_transform_combo_);
 }
@@ -125,6 +144,9 @@ QSpinBox  *ImageRenderingWidget::time_window_spin() { return time_window_spin_; 
 QSpinBox  *ImageRenderingWidget::lambda_spin() { return lambda_spin_; }
 QSpinBox  *ImageRenderingWidget::focus_spin() { return focus_spin_; }
 QSlider   *ImageRenderingWidget::focus_slider() { return focus_slider_; }
+QCheckBox *ImageRenderingWidget::asp_padding_check() { return asp_padding_check_; }
+QSpinBox  *ImageRenderingWidget::asp_padded_width_spin() { return asp_padded_width_spin_; }
+QSpinBox  *ImageRenderingWidget::asp_padded_height_spin() { return asp_padded_height_spin_; }
 QComboBox *ImageRenderingWidget::convolution_combo() { return convolution_combo_; }
 QCheckBox *ImageRenderingWidget::convolution_divide_check() { return convolution_divide_check_; }
 AutoFocusWidget *ImageRenderingWidget::autofocus_widget() { return autofocus_widget_; }
@@ -173,6 +195,22 @@ void ImageRenderingWidget::setup_ui() {
 
   auto space_transforms = QStringList{"None", "Fresnel Diffraction", "Angular Spectrum"};
   add_combo_row("Space Transform:", space_transform_combo_, space_transforms);
+
+  asp_padding_check_ = new QCheckBox("ASP Padding", this);
+  layout->addWidget(asp_padding_check_, row, 0);
+  asp_padding_controls_    = new QWidget(this);
+  auto *asp_padding_layout = new QHBoxLayout(asp_padding_controls_);
+  asp_padding_layout->setContentsMargins(0, 0, 0, 0);
+  asp_padding_layout->setSpacing(6);
+  asp_padded_width_spin_ = create_spin_box(asp_padding_controls_, 1, kLargeSpinMax, 1024);
+  asp_padded_width_spin_->setPrefix("W ");
+  asp_padding_layout->addWidget(asp_padded_width_spin_);
+  asp_padded_height_spin_ = create_spin_box(asp_padding_controls_, 1, kLargeSpinMax, 1024);
+  asp_padded_height_spin_->setPrefix("H ");
+  asp_padding_layout->addWidget(asp_padded_height_spin_);
+  layout->addWidget(asp_padding_controls_, row, 1);
+  ++row;
+
   auto time_transforms = QStringList{"None", "RFFT", "FFT", "Principal Component Analysis"};
   add_combo_row("Time Transform:", time_transform_combo_, time_transforms);
   add_spin_row("Time Window:", time_window_spin_, 1, kLargeSpinMax, 32);
@@ -198,6 +236,7 @@ void ImageRenderingWidget::setup_ui() {
 
   layout->addItem(new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding), row, 0, 1,
                   2);
+  update_asp_padding_visibility();
 }
 
 void ImageRenderingWidget::connect_signals() {
@@ -232,7 +271,17 @@ void ImageRenderingWidget::connect_signals() {
           &ImageRenderingWidget::settings_changed);
   connect(filter_2d_outer_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
-  connect(space_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+  connect(space_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+    update_asp_padding_visibility();
+    emit settings_changed();
+  });
+  connect(asp_padding_check_, &QCheckBox::toggled, this, [this](bool enabled) {
+    asp_padding_controls_->setEnabled(enabled);
+    emit settings_changed();
+  });
+  connect(asp_padded_width_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &ImageRenderingWidget::settings_changed);
+  connect(asp_padded_height_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(time_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ImageRenderingWidget::settings_changed);
@@ -248,6 +297,13 @@ void ImageRenderingWidget::connect_signals() {
     set_angular_spectrum_enabled(!autofocus_widget_->is_enabled());
     emit settings_changed();
   });
+}
+
+void ImageRenderingWidget::update_asp_padding_visibility() {
+  const bool visible = space_transform_combo_->currentText() == "Angular Spectrum";
+  asp_padding_check_->setVisible(visible);
+  asp_padding_controls_->setVisible(visible);
+  asp_padding_controls_->setEnabled(asp_padding_check_->isChecked());
 }
 
 void ImageRenderingWidget::set_angular_spectrum_enabled(bool enabled) {
@@ -294,6 +350,9 @@ void ImageRenderingWidget::clear_validation_styles() {
   clear_validation_error(filter_2d_outer_spin_);
   clear_validation_error(time_window_spin_);
   clear_validation_error(space_transform_combo_);
+  clear_validation_error(asp_padding_check_);
+  clear_validation_error(asp_padded_width_spin_);
+  clear_validation_error(asp_padded_height_spin_);
   clear_validation_error(time_transform_combo_);
   clear_validation_error(convolution_combo_);
 }

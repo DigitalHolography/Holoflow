@@ -52,6 +52,18 @@ void from_json(const nlohmann::json &j, AngularSpectrumSettings::Filter &f) {
   j.at("s_outer").get_to(f.s_outer);
 }
 
+void to_json(nlohmann::json &j, const AngularSpectrumSettings::Padding &p) {
+  j = {
+      {"width", p.width},
+      {"height", p.height},
+  };
+}
+
+void from_json(const nlohmann::json &j, AngularSpectrumSettings::Padding &p) {
+  j.at("width").get_to(p.width);
+  j.at("height").get_to(p.height);
+}
+
 void to_json(nlohmann::json &j, const AngularSpectrumSettings &as) {
   j = {
       {"lambda", as.lambda},
@@ -61,6 +73,9 @@ void to_json(nlohmann::json &j, const AngularSpectrumSettings &as) {
   };
   if (as.filter.has_value()) {
     j["filter"] = as.filter.value();
+  }
+  if (as.padding.has_value()) {
+    j["padding"] = as.padding.value();
   }
 }
 
@@ -75,6 +90,12 @@ void from_json(const nlohmann::json &j, AngularSpectrumSettings &as) {
   } else {
     as.filter = std::nullopt;
   }
+  if (j.contains("padding")) {
+    as.padding = AngularSpectrumSettings::Padding{};
+    j.at("padding").get_to(as.padding.value());
+  } else {
+    as.padding = std::nullopt;
+  }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -84,8 +105,8 @@ void from_json(const nlohmann::json &j, AngularSpectrumSettings &as) {
 namespace {
 
 // Minimized CallerInfo struct. Dimensions are injected via macros.
-struct ApplyLensCallerInfo {
-  cuFloatComplex *lens;
+struct ApplyTransferFunctionCallerInfo {
+  cuFloatComplex *transfer_function;
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -165,19 +186,41 @@ std::vector<char> compile_source_to_lto(const std::string &source, const std::st
   }
 }
 
-std::vector<char> load_input_lto(bool is_real) {
-  std::string src =
-      "#define ANGULAR_SPECTRUM_INPUT_IS_REAL " + std::to_string(is_real ? 1 : 0) + "\n";
+std::vector<char> load_input_lto(bool is_real, int input_width, int input_height, int output_width,
+                                 int output_height) {
+  std::string src = "#define ANGULAR_SPECTRUM_INPUT_IS_REAL " + std::to_string(is_real ? 1 : 0) +
+                    "\n" + "#define INPUT_WIDTH " + std::to_string(input_width) + "ull\n" +
+                    "#define INPUT_HEIGHT " + std::to_string(input_height) + "ull\n" +
+                    "#define OUTPUT_WIDTH " + std::to_string(output_width) + "ull\n" +
+                    "#define OUTPUT_HEIGHT " + std::to_string(output_height) + "ull\n" +
+                    "#define INPUT_PLANE_SIZE (INPUT_WIDTH * INPUT_HEIGHT)\n" +
+                    "#define OUTPUT_PLANE_SIZE (OUTPUT_WIDTH * OUTPUT_HEIGHT)\n";
 
   src += R"(
 #include <cuComplex.h>
 
 __device__ cuFloatComplex load_angular_spectrum_input_callback(
-    void *data, size_t offset, void *callerInfo, void *sharedPtr) {
+    void *data, unsigned long long offset, void *callerInfo, void *sharedPtr) {
+  const unsigned long long batch = offset / OUTPUT_PLANE_SIZE;
+  const unsigned long long plane_offset = offset % OUTPUT_PLANE_SIZE;
+  const unsigned long long output_x = plane_offset % OUTPUT_WIDTH;
+  const unsigned long long output_y = plane_offset / OUTPUT_WIDTH;
+  const unsigned long long offset_x = (OUTPUT_WIDTH - INPUT_WIDTH) / 2;
+  const unsigned long long offset_y = (OUTPUT_HEIGHT - INPUT_HEIGHT) / 2;
+
+  if (output_x < offset_x || output_x >= offset_x + INPUT_WIDTH ||
+      output_y < offset_y || output_y >= offset_y + INPUT_HEIGHT) {
+    return make_cuComplex(0.0f, 0.0f);
+  }
+
+  const unsigned long long input_x = output_x - offset_x;
+  const unsigned long long input_y = output_y - offset_y;
+  const unsigned long long input_offset =
+      batch * INPUT_PLANE_SIZE + input_y * INPUT_WIDTH + input_x;
 #if ANGULAR_SPECTRUM_INPUT_IS_REAL
-  return make_cuComplex(((float *)data)[offset], 0.0f);
+  return make_cuComplex(((float *)data)[input_offset], 0.0f);
 #else
-  return ((cuFloatComplex *)data)[offset];
+  return ((cuFloatComplex *)data)[input_offset];
 #endif
 }
 )";
@@ -185,29 +228,30 @@ __device__ cuFloatComplex load_angular_spectrum_input_callback(
   return compile_source_to_lto(src, "load_angular_spectrum_input_callback.cu");
 }
 
-std::vector<char> apply_lens_lto(int width, int height) {
+std::vector<char> apply_transfer_function_lto(int width, int height) {
   std::string src = "#define WIDTH " + std::to_string(width) + "ull\n" + "#define HEIGHT " +
-                    std::to_string(height) + "ull\n" + "#define LENS_SIZE (WIDTH * HEIGHT)\n";
+                    std::to_string(height) + "ull\n" +
+                    "#define TRANSFER_FUNCTION_SIZE (WIDTH * HEIGHT)\n";
 
   // Common header — struct definition shared with the host side
   src += R"(
 #include <cuComplex.h>
 
-struct ApplyLensCallerInfo {
-  cuFloatComplex *lens;
+struct ApplyTransferFunctionCallerInfo {
+  cuFloatComplex *transfer_function;
 };
 
-__device__ cuFloatComplex apply_lens_callback(
-    void *data, size_t offset, void *callerInfo, void *sharedPtr) {
-  auto  *info     = (ApplyLensCallerInfo *)callerInfo;
-  size_t lens_idx = offset % LENS_SIZE;
-  auto   val      = ((cuFloatComplex *)data)[offset];
+__device__ cuFloatComplex apply_transfer_function_callback(
+    void *data, unsigned long long offset, void *callerInfo, void *sharedPtr) {
+  auto *info = (ApplyTransferFunctionCallerInfo *)callerInfo;
+  const unsigned long long transfer_idx = offset % TRANSFER_FUNCTION_SIZE;
+  const auto val = ((cuFloatComplex *)data)[offset];
 
-  return cuCmulf(val, info->lens[lens_idx]);
+  return cuCmulf(val, info->transfer_function[transfer_idx]);
 }
 )";
 
-  return compile_source_to_lto(src, "apply_lens_callback.cu");
+  return compile_source_to_lto(src, "apply_transfer_function_callback.cu");
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -233,10 +277,10 @@ __global__ void spectral_lens_kernel(cuFloatComplex *lens, int width, int height
   lens[row * width + col] = make_cuComplex(cosf(phase), sinf(phase));
 }
 
-__global__ void apply_filter_2d_kernel(cuFloatComplex *filter, const uint32_t width,
-                                       const uint32_t height, const uint32_t r_inner,
-                                       const uint32_t r_outer, const uint32_t smooth_inner,
-                                       const uint32_t smooth_outer) {
+__global__ void multiply_filter_2d_kernel(cuFloatComplex *transfer_function, const uint32_t width,
+                                          const uint32_t height, const uint32_t r_inner,
+                                          const uint32_t r_outer, const uint32_t smooth_inner,
+                                          const uint32_t smooth_outer) {
   const uint32_t x   = blockIdx.x * blockDim.x + threadIdx.x;
   const uint32_t y   = blockIdx.y * blockDim.y + threadIdx.y;
   const uint32_t idx = y * width + x;
@@ -280,9 +324,9 @@ __global__ void apply_filter_2d_kernel(cuFloatComplex *filter, const uint32_t wi
     val = 0.0f;
   }
 
-  // Squaring the real value into the complex filter
-  // Note: cuCmulf(val, val) results in (val*val - 0*0) + i(val*0 + 0*val)
-  filter[idx] = make_cuComplex(val * val, 0.0f);
+  const float weight = val * val;
+  transfer_function[idx].x *= weight;
+  transfer_function[idx].y *= weight;
 }
 
 __global__ void swap_corners_kernel(cuFloatComplex *in, cuFloatComplex *out, int width, int height,
@@ -318,26 +362,28 @@ __global__ void swap_corners_kernel(cuFloatComplex *in, cuFloatComplex *out, int
   out_frame[bottom_left_idx] = tmp;
 }
 
-DevPtr<cuFloatComplex> make_spectral_lens(int width, int height,
-                                          const AngularSpectrumSettings &settings) {
-  auto d_lens = curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(width) * height);
+DevPtr<cuFloatComplex> make_transfer_function(int width, int height,
+                                              const AngularSpectrumSettings &settings) {
+  auto d_transfer_function =
+      curaii::make_unique_device_ptr<cuFloatComplex>(static_cast<size_t>(width) * height);
 
   dim3 block(16, 16);
   dim3 grid((width + block.x - 1) / block.x, (height + block.y - 1) / block.y);
-  spectral_lens_kernel<<<grid, block>>>(d_lens.get(), width, height, settings.lambda, settings.z,
-                                        settings.dx);
+  spectral_lens_kernel<<<grid, block>>>(d_transfer_function.get(), width, height, settings.lambda,
+                                        settings.z, settings.dx);
 
   if (settings.filter.has_value()) {
     const auto &f = settings.filter.value();
-    apply_filter_2d_kernel<<<grid, block>>>(
-        d_lens.get(), static_cast<uint32_t>(width), static_cast<uint32_t>(height),
+    multiply_filter_2d_kernel<<<grid, block>>>(
+        d_transfer_function.get(), static_cast<uint32_t>(width), static_cast<uint32_t>(height),
         static_cast<uint32_t>(f.r_inner), static_cast<uint32_t>(f.r_outer),
         static_cast<uint32_t>(f.s_inner), static_cast<uint32_t>(f.s_outer));
   }
 
-  swap_corners_kernel<<<grid, block>>>(d_lens.get(), d_lens.get(), width, height, 1);
+  swap_corners_kernel<<<grid, block>>>(d_transfer_function.get(), d_transfer_function.get(), width,
+                                       height, 1);
   CUDA_CHECK(cudaGetLastError());
-  return d_lens;
+  return d_transfer_function;
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -353,16 +399,25 @@ public:
   curaii::CufftHandle     inv_plan;
 
   // -- Device resources ---------------------------------------------------------------------------
-  DevPtr<cuFloatComplex> d_lens;
+  DevPtr<cuFloatComplex> d_transfer_function;
   DevPtr<void>           d_caller_info;
   std::vector<char>      load_lto;
-  std::vector<char>      lens_lto;
+  std::vector<char>      transfer_function_lto;
 
   // -- ISyncTask interface ------------------------------------------------------------------------
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     auto *odata = reinterpret_cast<cuFloatComplex *>(ctx.outputs[0].data());
 
-    if (idesc.dtype == holoflow::core::DType::F32) {
+    if (settings.padding.has_value()) {
+      if (idesc.dtype == holoflow::core::DType::F32) {
+        auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data());
+        CUFFT_CHECK(cufftXtExec(fwd_plan.get(), idata, odata, CUFFT_FORWARD));
+      } else {
+        auto *idata = reinterpret_cast<cuFloatComplex *>(ctx.inputs[0].data());
+        CUFFT_CHECK(cufftXtExec(fwd_plan.get(), idata, odata, CUFFT_FORWARD));
+      }
+      CUFFT_CHECK(cufftXtExec(inv_plan.get(), odata, odata, CUFFT_INVERSE));
+    } else if (idesc.dtype == holoflow::core::DType::F32) {
       auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data());
       CUFFT_CHECK(cufftXtExec(fwd_plan.get(), idata, odata, CUFFT_FORWARD));
       CUFFT_CHECK(cufftXtExec(inv_plan.get(), odata, odata, CUFFT_INVERSE));
@@ -376,9 +431,9 @@ public:
   }
 
   // -- Update utilities ---------------------------------------------------------------------------
-  void update_stream(cudaStream_t stream) {
-    CUFFT_CHECK(cufftSetStream(fwd_plan.get(), stream));
-    CUFFT_CHECK(cufftSetStream(inv_plan.get(), stream));
+  void update_stream(cudaStream_t new_stream) {
+    CUFFT_CHECK(cufftSetStream(fwd_plan.get(), new_stream));
+    CUFFT_CHECK(cufftSetStream(inv_plan.get(), new_stream));
   }
 };
 
@@ -404,14 +459,27 @@ AngularSpectrumFactory::infer(std::span<const holoflow::core::TDesc> input_descs
   check(settings.dx > 0.0f, "dx must be positive");
   check(settings.dy > 0.0f, "dy must be positive");
   check(settings.dx == settings.dy, "dx must equal dy");
+  if (settings.padding.has_value()) {
+    const auto &padding = settings.padding.value();
+    const auto  height  = static_cast<int64_t>(idesc.shape[idesc.rank() - 2]);
+    const auto  width   = static_cast<int64_t>(idesc.shape[idesc.rank() - 1]);
+    check(padding.width > 0, "padding width must be positive");
+    check(padding.height > 0, "padding height must be positive");
+    check(padding.width >= width, "padding width must be at least the input width");
+    check(padding.height >= height, "padding height must be at least the input height");
+    check((padding.width - width) % 2 == 0, "horizontal padding must be even");
+    check((padding.height - height) % 2 == 0, "vertical padding must be even");
+  }
   // clang-format on
 
-  holoflow::core::TDesc odesc =
-      idesc.dtype == holoflow::core::DType::CF32
-          ? idesc
-          : holoflow::core::TDesc(idesc.shape, holoflow::core::DType::CF32, idesc.mem_loc);
+  auto output_shape = idesc.shape;
+  if (settings.padding.has_value()) {
+    output_shape[output_shape.size() - 2] = static_cast<size_t>(settings.padding->height);
+    output_shape[output_shape.size() - 1] = static_cast<size_t>(settings.padding->width);
+  }
+  holoflow::core::TDesc odesc(output_shape, holoflow::core::DType::CF32, idesc.mem_loc);
   std::vector<holoflow::core::InPlace> in_place;
-  if (idesc.dtype == holoflow::core::DType::CF32) {
+  if (idesc.dtype == holoflow::core::DType::CF32 && !settings.padding.has_value()) {
     in_place.push_back({0, 0});
   }
 
@@ -440,31 +508,35 @@ AngularSpectrumFactory::create(std::span<const holoflow::core::TDesc> input_desc
   for (size_t i = 0; i + 2 < tensor_rank; ++i) {
     B *= static_cast<int>(idesc.shape[i]);
   }
-  const int H = static_cast<int>(idesc.shape[tensor_rank - 2]);
-  const int W = static_cast<int>(idesc.shape[tensor_rank - 1]);
+  const int H  = static_cast<int>(idesc.shape[tensor_rank - 2]);
+  const int W  = static_cast<int>(idesc.shape[tensor_rank - 1]);
+  const int OH = settings.padding.has_value() ? settings.padding->height : H;
+  const int OW = settings.padding.has_value() ? settings.padding->width : W;
 
   // -- JIT callback -------------------------------------------------------------------------------
-  auto load_lto = is_real ? load_input_lto(true) : std::vector<char>{};
-  auto lens_lto = apply_lens_lto(W, H);
-  auto d_lens   = make_spectral_lens(W, H, settings);
+  const bool needs_input_callback = is_real || settings.padding.has_value();
+  auto       load_lto =
+      needs_input_callback ? load_input_lto(is_real, W, H, OW, OH) : std::vector<char>{};
+  auto transfer_function_lto = apply_transfer_function_lto(OW, OH);
+  auto d_transfer_function   = make_transfer_function(OW, OH, settings);
 
-  ApplyLensCallerInfo info{
-      .lens = d_lens.get(),
+  ApplyTransferFunctionCallerInfo info{
+      .transfer_function = d_transfer_function.get(),
   };
-  auto d_info = curaii::make_unique_device_ptr<ApplyLensCallerInfo>(1);
+  auto d_info = curaii::make_unique_device_ptr<ApplyTransferFunctionCallerInfo>(1);
   auto e = cudaMemcpyAsync(d_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice, ctx.stream);
   CUDA_CHECK(e);
 
   // -- cuFFT plans --------------------------------------------------------------------------------
   int           rank          = 2;
-  long long int n[2]          = {H, W};
-  long long int inembed[2]    = {H, W};
+  long long int n[2]          = {OH, OW};
+  long long int inembed[2]    = {OH, OW};
   int           istride       = 1;
-  int           idist         = H * W;
+  int           idist         = OH * OW;
   cudaDataType  inputtype     = CUDA_C_32F;
-  long long int onembed[2]    = {H, W};
+  long long int onembed[2]    = {OH, OW};
   int           ostride       = 1;
-  int           odist         = H * W;
+  int           odist         = OH * OW;
   cudaDataType  outputtype    = CUDA_C_32F;
   int           batch         = B;
   size_t        work_size     = 0;
@@ -476,13 +548,14 @@ AngularSpectrumFactory::create(std::span<const holoflow::core::TDesc> input_desc
   CUFFT_CHECK(cufftSetStream(inv_plan.get(), ctx.stream));
 
   auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
-  if (is_real) {
+  if (needs_input_callback) {
     CUFFT_CHECK(cufftXtSetJITCallback(fwd_plan.get(), "load_angular_spectrum_input_callback",
                                       load_lto.data(), load_lto.size(), CUFFT_CB_LD_COMPLEX,
                                       nullptr));
   }
-  CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_lens_callback", lens_lto.data(),
-                                    lens_lto.size(), CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+  CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_transfer_function_callback",
+                                    transfer_function_lto.data(), transfer_function_lto.size(),
+                                    CUFFT_CB_LD_COMPLEX, &d_info_ptr));
 
   CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, inputtype,
                                   onembed, ostride, odist, outputtype, batch, &work_size,
@@ -493,15 +566,15 @@ AngularSpectrumFactory::create(std::span<const holoflow::core::TDesc> input_desc
                                   executiontype));
 
   // Construct task directly
-  auto task           = std::make_unique<AngularSpectrum>();
-  task->settings      = settings;
-  task->idesc         = idesc;
-  task->fwd_plan      = std::move(fwd_plan);
-  task->inv_plan      = std::move(inv_plan);
-  task->d_lens        = std::move(d_lens);
-  task->d_caller_info = std::move(d_info);
-  task->load_lto      = std::move(load_lto);
-  task->lens_lto      = std::move(lens_lto);
+  auto task                   = std::make_unique<AngularSpectrum>();
+  task->settings              = settings;
+  task->idesc                 = idesc;
+  task->fwd_plan              = std::move(fwd_plan);
+  task->inv_plan              = std::move(inv_plan);
+  task->d_transfer_function   = std::move(d_transfer_function);
+  task->d_caller_info         = std::move(d_info);
+  task->load_lto              = std::move(load_lto);
+  task->transfer_function_lto = std::move(transfer_function_lto);
 
   return task;
 }

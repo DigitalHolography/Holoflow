@@ -27,6 +27,10 @@ See [Angular Spectrum Method - Wikipedia](https://en.wikipedia.org/wiki/Angular_
 !!! note
     This task can perform an optional **frequency domain filtering** step specified by the **optional** `filter` setting. See the [Filter 2D](filter2d.md) task documentation for more details on the available filter types and settings.
 
+!!! note
+    The optional `padding` setting centers the input in a larger zero-filled grid before
+    propagation. The requested width and height must be at least the input dimensions, and the
+    number of pixels added on each axis must be even.
 
 ## Inputs
 This task has a single input tensor of rank 2 or higher. The last two dimensions are the propagated spatial dimensions:
@@ -39,12 +43,15 @@ Any leading dimensions are treated as batch dimensions. The dtype of the input t
 The memory location of the input tensor must be device memory.
 
 ## Outputs
-This task has a single output with the same shape as the input. The dtype of the output tensor is complex 32-bit (`complex32`).
+This task has a single complex 32-bit (`complex32`) output. Without padding, its shape matches the
+input. With padding, the last two dimensions are replaced by the requested padded height and width;
+all leading batch dimensions are preserved.
 
 The memory location of the output tensor is device memory.
 
 ## Inplace
-This task has an inplace relationship between its input and output for complex input. Real input is not in-place because the output is complex.
+Without padding, this task has an inplace relationship between its input and output for complex
+input. Padding and real input require a separate complex output.
 
 ## Ownership
 This task does not own any inputs or outputs.

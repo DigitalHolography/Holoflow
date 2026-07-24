@@ -44,7 +44,8 @@ constexpr auto kLoadBatchConstraints         = std::to_array<const char *>({
     "Used as the recording batch size for raw recording.",
 });
 constexpr auto kFilter2DConstraints          = std::to_array<const char *>({
-    "Applies to processed images after spatial propagation.",
+    "Angular Spectrum folds this filter into its propagation transfer function.",
+    "Other propagation methods use a separate frequency-domain filtering stage.",
     "Uses the inner and outer radii as pixel distances in the spatial-frequency plane.",
 });
 constexpr auto kFilter2DInnerConstraints     = std::to_array<const char *>({
@@ -58,6 +59,11 @@ constexpr auto kFilter2DOuterConstraints     = std::to_array<const char *>({
 constexpr auto kSpacialMethodConstraints     = std::to_array<const char *>({
     "Processed mode supports Fresnel Diffraction and Angular Spectrum.",
     "Angular Spectrum is disabled when Auto Focus is enabled.",
+});
+constexpr auto kAspPaddingConstraints        = std::to_array<const char *>({
+    "Available only for Angular Spectrum propagation.",
+    "Width and height must be at least the source dimensions.",
+    "The number of pixels added on each axis must be even.",
 });
 constexpr auto kTimeMethodConstraints        = std::to_array<const char *>({
     "Processed mode requires a time transform.",
@@ -137,6 +143,9 @@ const FieldHelp kFieldHelp[] = {
      kFilter2DOuterConstraints},
     {SettingsField::SpacialMethod, "Space Transform",
      "Spatial propagation method applied after temporal analysis.", kSpacialMethodConstraints},
+    {SettingsField::AspPadding, "ASP Padding",
+     "Centered zero-padding resolution used for Angular Spectrum propagation.",
+     kAspPaddingConstraints},
     {SettingsField::TimeMethod, "Time Transform",
      "Temporal transform used to convert frame windows into the analysis domain.",
      kTimeMethodConstraints},

@@ -87,6 +87,9 @@ struct Settings {
   float         spacial_lambda;
   float         spacial_z;
   float         spacial_pixel_size;
+  bool          asp_padding_enabled = false;
+  int           asp_padded_width    = 1024;
+  int           asp_padded_height   = 1024;
 
   // Spatial Filter
   bool filter_2d;

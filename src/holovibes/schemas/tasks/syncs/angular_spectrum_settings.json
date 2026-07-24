@@ -56,6 +56,27 @@
         "s_outer"
       ],
       "additionalProperties": false
+    },
+    "padding": {
+      "type": "object",
+      "description": "Optional centered zero-padding resolution. The target dimensions must be at least the input dimensions, and each target-input difference must be even.",
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Padded output width in pixels."
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Padded output height in pixels."
+        }
+      },
+      "required": [
+        "width",
+        "height"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
@@ -81,6 +102,16 @@
         "r_outer": 220,
         "s_inner": 16,
         "s_outer": 32
+      }
+    },
+    {
+      "lambda": 5.32e-7,
+      "dx": 3.45e-6,
+      "dy": 3.45e-6,
+      "z": 0.1,
+      "padding": {
+        "width": 1024,
+        "height": 1024
       }
     }
   ]

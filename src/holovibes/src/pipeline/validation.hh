@@ -39,6 +39,7 @@ enum class SettingsField {
   Filter2DInnerRadius,
   Filter2DOuterRadius,
   SpacialMethod,
+  AspPadding,
   TimeMethod,
   TimeWindow,
   TimeStride,

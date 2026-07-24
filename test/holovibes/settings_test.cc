@@ -58,6 +58,63 @@ TEST(SignalPlotSettingsTest, LegacyJsonRoundTripPreservesValues) {
   EXPECT_TRUE(restored.autofocus_use_graph_laplacian);
 }
 
+TEST(AngularSpectrumPaddingSettingsTest, LegacyJsonRoundTripPreservesValues) {
+  Settings settings{};
+  settings.asp_padding_enabled = true;
+  settings.asp_padded_width    = 1280;
+  settings.asp_padded_height   = 1024;
+
+  const auto json     = settings_to_old_json(settings);
+  const auto restored = old_json_to_settings(json, Settings{});
+
+  const auto &padding =
+      json.at("compute_settings").at("image_rendering").at("angular_spectrum").at("padding");
+  EXPECT_TRUE(padding.at("enabled").get<bool>());
+  EXPECT_EQ(padding.at("width"), 1280);
+  EXPECT_EQ(padding.at("height"), 1024);
+  EXPECT_TRUE(restored.asp_padding_enabled);
+  EXPECT_EQ(restored.asp_padded_width, 1280);
+  EXPECT_EQ(restored.asp_padded_height, 1024);
+}
+
+TEST(AngularSpectrumPaddingSettingsTest, MissingLegacyFieldsKeepDefaults) {
+  Settings defaults{};
+  defaults.asp_padding_enabled = true;
+  defaults.asp_padded_width    = 2048;
+  defaults.asp_padded_height   = 1536;
+
+  const auto restored = old_json_to_settings(nlohmann::json::object(), defaults);
+
+  EXPECT_TRUE(restored.asp_padding_enabled);
+  EXPECT_EQ(restored.asp_padded_width, 2048);
+  EXPECT_EQ(restored.asp_padded_height, 1536);
+}
+
+TEST(AngularSpectrumPaddingSettingsTest, ValidationRejectsInvalidResolution) {
+  Settings settings{};
+  settings.view_type           = ViewType::PROCESSED;
+  settings.spacial_method      = SpacialMethod::ANGULAR_SPECTRUM;
+  settings.asp_padding_enabled = true;
+  ValidationContext context{
+      .source_width  = 640,
+      .source_height = 480,
+  };
+
+  settings.asp_padded_width  = 638;
+  settings.asp_padded_height = 480;
+  EXPECT_TRUE(has_issue(validate_settings(settings, context), "asp_padding_smaller_than_source"));
+
+  settings.asp_padded_width  = 641;
+  settings.asp_padded_height = 480;
+  EXPECT_TRUE(has_issue(validate_settings(settings, context), "asp_padding_not_even"));
+
+  settings.asp_padded_width  = 1024;
+  settings.asp_padded_height = 1024;
+  const auto valid_padding   = validate_settings(settings, context);
+  EXPECT_FALSE(has_issue(valid_padding, "asp_padding_smaller_than_source"));
+  EXPECT_FALSE(has_issue(valid_padding, "asp_padding_not_even"));
+}
+
 TEST(SignalPlotSettingsTest, DerivesSampleTimeFromFrequencyStrideAndAccumulation) {
   Settings settings{};
   settings.input_sampling_frequency_hz = 40'000.0;

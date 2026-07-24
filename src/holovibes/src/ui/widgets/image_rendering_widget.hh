@@ -42,6 +42,9 @@ public:
   int     get_time_window() const;
   int     get_lambda() const;
   int     get_focus() const;
+  bool    is_asp_padding_enabled() const;
+  int     get_asp_padded_width() const;
+  int     get_asp_padded_height() const;
   QString get_convolution() const;
   bool    is_convolution_divide() const;
 
@@ -56,6 +59,9 @@ public:
   void set_time_window(int value);
   void set_lambda(int value);
   void set_focus(int value);
+  void set_asp_padding_enabled(bool enabled);
+  void set_asp_padded_width(int value);
+  void set_asp_padded_height(int value);
   void set_convolution(const QString &kernel);
   void set_convolution_divide(bool enabled);
 
@@ -68,6 +74,7 @@ public:
   void mark_filter_outer_invalid();
   void mark_time_window_invalid();
   void mark_space_transform_invalid();
+  void mark_asp_padding_invalid();
   void mark_time_transform_invalid();
   void mark_convolution_invalid();
 
@@ -84,6 +91,9 @@ public:
   QSpinBox        *lambda_spin();
   QSpinBox        *focus_spin();
   QSlider         *focus_slider();
+  QCheckBox       *asp_padding_check();
+  QSpinBox        *asp_padded_width_spin();
+  QSpinBox        *asp_padded_height_spin();
   QComboBox       *convolution_combo();
   QCheckBox       *convolution_divide_check();
   AutoFocusWidget *autofocus_widget();
@@ -96,6 +106,7 @@ private:
   void        connect_signals();
   QStringList load_available_kernels();
   void        set_angular_spectrum_enabled(bool enabled);
+  void        update_asp_padding_visibility();
 
   QComboBox       *image_combo_;
   QSpinBox        *batch_size_spin_;
@@ -109,6 +120,10 @@ private:
   QSpinBox        *lambda_spin_;
   QSpinBox        *focus_spin_;
   QSlider         *focus_slider_;
+  QCheckBox       *asp_padding_check_;
+  QSpinBox        *asp_padded_width_spin_;
+  QSpinBox        *asp_padded_height_spin_;
+  QWidget         *asp_padding_controls_;
   QComboBox       *convolution_combo_;
   QCheckBox       *convolution_divide_check_;
   AutoFocusWidget *autofocus_widget_;

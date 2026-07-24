@@ -122,7 +122,7 @@ holoflow::core::GraphSpec GraphBuilder::build() {
 
   TDesc FH = build_time_frequency_analysis(H);
 
-  if (s_.filter_2d) {
+  if (s_.filter_2d && s_.spacial_method != SpacialMethod::ANGULAR_SPECTRUM) {
     FH = build_spatial_filter(FH);
   }
 
@@ -505,12 +505,29 @@ GraphBuilder::TDesc GraphBuilder::build_spatial_propagation(const TDesc &FH) {
       throw std::logic_error{"Angular Spectrum is not supported with Shack-Hartmann autofocus"};
     }
 
+    std::optional<holotask::syncs::AngularSpectrumSettings::Padding> padding;
+    if (s_.asp_padding_enabled) {
+      padding = holotask::syncs::AngularSpectrumSettings::Padding{
+          .width  = s_.asp_padded_width,
+          .height = s_.asp_padded_height,
+      };
+    }
+    std::optional<holotask::syncs::AngularSpectrumSettings::Filter> filter;
+    if (s_.filter_2d) {
+      filter = holotask::syncs::AngularSpectrumSettings::Filter{
+          .r_inner = s_.filter_r_inner,
+          .r_outer = s_.filter_r_outer,
+          .s_inner = s_.filter_smooth_inner,
+          .s_outer = s_.filter_smooth_outer,
+      };
+    }
     return angular_spectrum(FH, {
                                     s_.spacial_lambda,
                                     s_.spacial_pixel_size,
                                     s_.spacial_pixel_size,
                                     s_.spacial_z,
-                                    std::nullopt,
+                                    filter,
+                                    padding,
                                 });
   }
 
