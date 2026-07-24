@@ -17,13 +17,14 @@
 #include <cuda_runtime_api.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 
 namespace holotask::syncs::detail {
 
 class PcaHeevKernel {
 public:
-  PcaHeevKernel(int n_features, size_t n_batch, cudaStream_t stream);
+  PcaHeevKernel(int n_features, int n_samples, size_t n_batch, cudaStream_t stream);
   ~PcaHeevKernel() noexcept;
 
   PcaHeevKernel(const PcaHeevKernel &)            = delete;
@@ -32,10 +33,18 @@ public:
   PcaHeevKernel(PcaHeevKernel &&) noexcept;
   PcaHeevKernel &operator=(PcaHeevKernel &&) noexcept;
 
-  [[nodiscard]] bool is_compatible_stream(cudaStream_t stream) const;
+  [[nodiscard]] bool   is_compatible_stream(cudaStream_t stream) const;
+  [[nodiscard]] size_t covariance_partial_count() const;
+
+  void launch_covariance(const std::uint8_t *input, float *partials, size_t n_batch,
+                         cudaStream_t stream) const;
+  void launch_covariance_reduction(const float *partials, float *covariance, size_t n_batch,
+                                   cudaStream_t stream) const;
 
   void launch(float *covariance, float *eigenvalues, int *info, size_t n_batch,
               cudaStream_t stream) const;
+  void launch_projection(const std::uint8_t *input, const float *eigenvectors, float *output,
+                         int begin, int components, size_t n_batch, cudaStream_t stream) const;
 
 private:
   struct Impl;

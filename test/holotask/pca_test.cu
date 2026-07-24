@@ -113,8 +113,22 @@ TEST_F(PcaInferTest, AcceptsF32AndPreservesBatchShape) {
   EXPECT_EQ(result.output_descs[0].dtype, DType::F32);
 }
 
+TEST_F(PcaInferTest, AcceptsU8AndProducesF32WithPreservedBatchShape) {
+  const std::vector<TDesc> inputs = {device_desc({3, 4, 5, 6}, DType::U8)};
+  const auto               result = factory.infer(inputs, settings(1, 3));
+
+  ASSERT_EQ(result.output_descs.size(), 1);
+  EXPECT_EQ(result.output_descs[0].shape, (std::vector<size_t>{3, 2, 5, 6}));
+  EXPECT_EQ(result.output_descs[0].dtype, DType::F32);
+}
+
 TEST_F(PcaInferTest, RejectsComplexInput) {
   const std::vector<TDesc> inputs = {device_desc({2, 1, 2}, DType::CF32)};
+  EXPECT_THROW(factory.infer(inputs, settings(0, 2)), std::invalid_argument);
+}
+
+TEST_F(PcaInferTest, RejectsU16Input) {
+  const std::vector<TDesc> inputs = {device_desc({2, 1, 2}, DType::U16)};
   EXPECT_THROW(factory.infer(inputs, settings(0, 2)), std::invalid_argument);
 }
 
@@ -134,6 +148,73 @@ TEST_F(PcaExecuteTest, ProducesOrthogonalComponentsWithExpectedEigenvalueEnergy)
   EXPECT_NEAR(dot(output.data(), output.data(), 2), 1.0f, 2e-2f);
   EXPECT_NEAR(dot(output.data() + 2, output.data() + 2, 2), 3.0f, 2e-2f);
   EXPECT_NEAR(dot(output.data(), output.data() + 2, 2), 0.0f, 2e-2f);
+}
+
+TEST_F(PcaExecuteTest, U8FusedPathMatchesF32ReferenceProjectionGramMatrix) {
+  constexpr size_t          batches  = 3;
+  constexpr size_t          features = 8;
+  constexpr size_t          samples  = 128;
+  std::vector<std::uint8_t> input_u8(batches * features * samples);
+  std::vector<float>        input_f32(input_u8.size());
+  for (size_t batch = 0; batch < batches; ++batch) {
+    for (size_t feature = 0; feature < features; ++feature) {
+      for (size_t sample = 0; sample < samples; ++sample) {
+        const auto index = (batch * features + feature) * samples + sample;
+        input_u8[index]  = static_cast<std::uint8_t>(
+            (sample * (3 + 2 * feature) + batch * (5 + 3 * feature) + 7 * feature + 1) % 251);
+        input_f32[index] = static_cast<float>(input_u8[index]);
+      }
+    }
+  }
+
+  const auto fused = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{device_desc({batches, features, 1, samples}, DType::U8)},
+      std::vector<std::vector<std::byte>>{as_bytes(input_u8)},
+      settings(0, static_cast<int>(features)));
+  const auto reference = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{device_desc({batches, features, 1, samples}, DType::F32)},
+      std::vector<std::vector<std::byte>>{as_bytes(input_f32)},
+      settings(0, static_cast<int>(features)));
+
+  const auto fused_output     = as_floats(fused.output_bytes[0]);
+  const auto reference_output = as_floats(reference.output_bytes[0]);
+  ASSERT_EQ(fused_output.size(), reference_output.size());
+
+  for (size_t batch = 0; batch < batches; ++batch) {
+    double error_sq = 0.0;
+    double norm_sq  = 0.0;
+    for (size_t lhs_sample = 0; lhs_sample < samples; ++lhs_sample) {
+      for (size_t rhs_sample = 0; rhs_sample < samples; ++rhs_sample) {
+        double actual_gram   = 0.0;
+        double expected_gram = 0.0;
+        for (size_t component = 0; component < features; ++component) {
+          const auto offset = (batch * features + component) * samples;
+          actual_gram += static_cast<double>(fused_output[offset + lhs_sample]) *
+                         fused_output[offset + rhs_sample];
+          expected_gram += static_cast<double>(reference_output[offset + lhs_sample]) *
+                           reference_output[offset + rhs_sample];
+        }
+        const double diff = actual_gram - expected_gram;
+        error_sq += diff * diff;
+        norm_sq += expected_gram * expected_gram;
+      }
+    }
+    EXPECT_LT(std::sqrt(error_sq / norm_sq), 1e-3);
+  }
+}
+
+TEST_F(PcaExecuteTest, U8FusedPathHandlesSpatialAndComponentTails) {
+  const std::vector<std::uint8_t> input = {
+      1, 2, 3, 4, 5, 2, 1, 4, 3, 7,
+  };
+  const TDesc input_desc = device_desc({2, 1, 5}, DType::U8);
+  const auto  result     = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{input_desc}, std::vector<std::vector<std::byte>>{as_bytes(input)},
+      settings(1, 2));
+
+  const auto output = as_floats(result.output_bytes[0]);
+  ASSERT_EQ(output.size(), 5);
+  EXPECT_GT(dot(output.data(), output.data(), output.size()), 0.0f);
 }
 
 TEST_F(PcaExecuteTest, SelectsNonzeroBeginAcrossBatchedAndTailKernels) {
@@ -179,8 +260,7 @@ TEST_F(PcaExecuteTest, ProducesOrthogonalComponentsForEveryBatch) {
     const auto *batch_output = output.data() + batch * 4;
     const auto  scale_sq     = static_cast<float>((batch + 1) * (batch + 1));
     EXPECT_NEAR(dot(batch_output, batch_output, 2), scale_sq, 2e-2f * scale_sq);
-    EXPECT_NEAR(dot(batch_output + 2, batch_output + 2, 2), 3.0f * scale_sq,
-                2e-2f * scale_sq);
+    EXPECT_NEAR(dot(batch_output + 2, batch_output + 2, 2), 3.0f * scale_sq, 2e-2f * scale_sq);
     EXPECT_NEAR(dot(batch_output, batch_output + 2, 2), 0.0f, 2e-2f * scale_sq);
   }
 }
@@ -211,7 +291,7 @@ TEST_F(PcaExecuteTest, ReusesCompiledTaskWhenComponentSelectionChanges) {
   const auto               selected    = factory.infer(input_descs, settings(1, 2));
 
   curaii::CudaStream stream;
-  auto task = factory.create(input_descs, settings(0, 2), {stream.get()});
+  auto               task = factory.create(input_descs, settings(0, 2), {stream.get()});
   task->bind_logger(spdlog::default_logger());
   const auto *original_task = task.get();
 

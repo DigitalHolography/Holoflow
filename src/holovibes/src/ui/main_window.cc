@@ -2074,17 +2074,18 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       s.load_fps_limit = import_widget_->get_fps_limit();
       QString method   = import_widget_->get_load_method();
       s.load_method    = method_from_str.at(method.toStdString());
-      if (render_widget_->get_time_transform() == "Principal Component Analysis") {
-        s.load_batch = 32;
-      } else {
-        s.load_batch = render_widget_->get_batch_size();
-      }
+      s.load_batch     = render_widget_->get_batch_size();
+      // if (render_widget_->get_time_transform() == "Principal Component Analysis") {
+      //   s.load_batch = 32;
+      // } else {
+      //   s.load_batch = render_widget_->get_batch_size();
+      // }
     } else {
       QString source       = import_widget_->get_camera_type();
       s.import_source      = source_from_str.at(source.toStdString());
       s.camera_config_path = get_selected_camera_config_path();
       s.load_batch         = 1;
-      s.load_fps_limit = std::nullopt;
+      s.load_fps_limit     = std::nullopt;
 
       std::ifstream cfg_file(s.camera_config_path);
       if (cfg_file.is_open()) {
@@ -2173,7 +2174,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     QString     appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
     QString     convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels/";
     std::string kernel_path             = convolutionsKernelsPath.toStdString() +
-                              render_widget_->get_convolution().toStdString() + ".json";
+                                          render_widget_->get_convolution().toStdString() + ".json";
 
     s.pp_fps       = 60;
     s.pp_fft_shift = s.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;

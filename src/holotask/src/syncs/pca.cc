@@ -14,6 +14,8 @@
 
 #include "holotask/syncs/pca.hh"
 
+#include <cstdint>
+#include <limits>
 #include <nvtx3/nvtx3.hpp>
 #include <stdexcept>
 #include <string>
@@ -41,13 +43,24 @@ public:
       : settings_(settings), idesc_(idesc), stream_(ctx.stream), n_features_(n_features),
         n_batch_(n_batch) {
 
+    const auto rank    = idesc_.shape.size();
+    const auto height  = idesc_.shape.at(rank - 2);
+    const auto width   = idesc_.shape.at(rank - 1);
+    const auto samples = height * width;
+    n_samples_         = static_cast<int>(samples);
+
     CUBLAS_CHECK(cublasSetStream(cublas_handle_.get(), stream_));
-    heev_kernel_ = std::make_unique<detail::PcaHeevKernel>(n_features_, n_batch_, stream_);
+    heev_kernel_ =
+        std::make_unique<detail::PcaHeevKernel>(n_features_, n_samples_, n_batch_, stream_);
 
     const auto cov_elems = n_batch_ * static_cast<size_t>(n_features_) * n_features_;
     d_cov_               = curaii::make_unique_device_ptr<float>(cov_elems);
     d_eigvals_           = curaii::make_unique_device_ptr<float>(n_batch_ * n_features_);
     d_info_              = curaii::make_unique_device_ptr<int>(n_batch_);
+    if (idesc_.dtype == holoflow::core::DType::U8) {
+      const auto partial_elems = heev_kernel_->covariance_partial_count() * cov_elems;
+      d_cov_partials_          = curaii::make_unique_device_ptr<float>(partial_elems);
+    }
   }
 
   const holoflow::core::TDesc &get_idesc() const { return idesc_; }
@@ -68,49 +81,66 @@ public:
     nvtx3::scoped_range r("PCA Sync Task");
     auto               &iview = ctx.inputs[0];
     auto               &oview = ctx.outputs[0];
-    auto               *idata = reinterpret_cast<float *>(iview.data());
     auto               *odata = reinterpret_cast<float *>(oview.data());
 
-    const auto     &idesc      = iview.desc;
-    const int       rank       = static_cast<int>(idesc.shape.size());
-    const int       height     = static_cast<int>(idesc.shape.at(static_cast<size_t>(rank - 2)));
-    const int       width      = static_cast<int>(idesc.shape.at(static_cast<size_t>(rank - 1)));
-    const int       n_samples  = height * width;
     const int       components = settings_.components();
     constexpr float alpha      = 1.0f;
     constexpr float beta       = 0.0f;
 
     // Strides (in elements) between consecutive batch slices
-    const long long stride_I = static_cast<long long>(n_features_) * n_samples;
+    const long long stride_I = static_cast<long long>(n_features_) * n_samples_;
     const long long stride_C = static_cast<long long>(n_features_) * n_features_;
-    const long long stride_O = static_cast<long long>(n_samples) * components;
+    const long long stride_O = static_cast<long long>(n_samples_) * components;
 
-    {
-      nvtx3::scoped_range covariance_range("PCA covariance");
-      // Independent GEMMs preserve cuBLAS Split-K selection for the large sample dimension.
-      for (size_t b = 0; b < n_batch_; ++b) {
-        CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_T, CUBLAS_OP_N, n_features_,
-                                  n_features_, n_samples, &alpha, idata + b * stride_I, CUDA_R_32F,
-                                  n_samples, idata + b * stride_I, CUDA_R_32F, n_samples, &beta,
-                                  d_cov_.get() + b * stride_C, CUDA_R_32F, n_features_,
-                                  CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
+    if (idesc_.dtype == holoflow::core::DType::U8) {
+      auto *idata = reinterpret_cast<const std::uint8_t *>(iview.data());
+      {
+        nvtx3::scoped_range covariance_range("PCA cuBLASDx U8 covariance");
+        heev_kernel_->launch_covariance(idata, d_cov_partials_.get(), n_batch_, stream_);
+        heev_kernel_->launch_covariance_reduction(d_cov_partials_.get(), d_cov_.get(), n_batch_,
+                                                  stream_);
       }
-    }
 
-    {
-      nvtx3::scoped_range eigendecomposition_range("PCA cuSolverDx eigendecomposition");
-      heev_kernel_->launch(d_cov_.get(), d_eigvals_.get(), d_info_.get(), n_batch_, stream_);
-    }
+      {
+        nvtx3::scoped_range eigendecomposition_range("PCA cuSolverDx eigendecomposition");
+        heev_kernel_->launch(d_cov_.get(), d_eigvals_.get(), d_info_.get(), n_batch_, stream_);
+      }
 
-    {
-      nvtx3::scoped_range projection_range("PCA projection");
-      const auto eigenvector_offset = static_cast<long long>(settings_.begin) * n_features_;
-      for (size_t b = 0; b < n_batch_; ++b) {
-        CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_N, CUBLAS_OP_N, n_samples,
-                                  components, n_features_, &alpha, idata + b * stride_I, CUDA_R_32F,
-                                  n_samples, d_cov_.get() + b * stride_C + eigenvector_offset,
-                                  CUDA_R_32F, n_features_, &beta, odata + b * stride_O, CUDA_R_32F,
-                                  n_samples, CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
+      {
+        nvtx3::scoped_range projection_range("PCA cuBLASDx U8 projection");
+        heev_kernel_->launch_projection(idata, d_cov_.get(), odata, settings_.begin, components,
+                                        n_batch_, stream_);
+      }
+    } else {
+      auto *idata = reinterpret_cast<float *>(iview.data());
+      {
+        nvtx3::scoped_range covariance_range("PCA cuBLAS reference covariance");
+        // Independent GEMMs preserve cuBLAS Split-K selection for the large sample dimension.
+        for (size_t b = 0; b < n_batch_; ++b) {
+          CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_T, CUBLAS_OP_N, n_features_,
+                                    n_features_, n_samples_, &alpha, idata + b * stride_I,
+                                    CUDA_R_32F, n_samples_, idata + b * stride_I, CUDA_R_32F,
+                                    n_samples_, &beta, d_cov_.get() + b * stride_C, CUDA_R_32F,
+                                    n_features_, CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
+        }
+      }
+
+      {
+        nvtx3::scoped_range eigendecomposition_range("PCA cuSolverDx eigendecomposition");
+        heev_kernel_->launch(d_cov_.get(), d_eigvals_.get(), d_info_.get(), n_batch_, stream_);
+      }
+
+      {
+        nvtx3::scoped_range projection_range("PCA cuBLAS reference projection");
+        const auto eigenvector_offset = static_cast<long long>(settings_.begin) * n_features_;
+        for (size_t b = 0; b < n_batch_; ++b) {
+          CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_N, CUBLAS_OP_N, n_samples_,
+                                    components, n_features_, &alpha, idata + b * stride_I,
+                                    CUDA_R_32F, n_samples_,
+                                    d_cov_.get() + b * stride_C + eigenvector_offset, CUDA_R_32F,
+                                    n_features_, &beta, odata + b * stride_O, CUDA_R_32F,
+                                    n_samples_, CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
+        }
       }
     }
 
@@ -122,11 +152,13 @@ private:
   holoflow::core::TDesc idesc_;
   cudaStream_t          stream_;
   int                   n_features_;
+  int                   n_samples_;
   size_t                n_batch_;
 
   curaii::CublasHandle                   cublas_handle_;
   std::unique_ptr<detail::PcaHeevKernel> heev_kernel_;
   curaii::unique_device_ptr<float>       d_cov_;
+  curaii::unique_device_ptr<float>       d_cov_partials_;
   curaii::unique_device_ptr<float>       d_eigvals_;
   curaii::unique_device_ptr<int>         d_info_;
 };
@@ -167,19 +199,27 @@ holoflow::core::InferResult PcaFactory::infer(std::span<const holoflow::core::TD
   check(input_descs.size() == 1, "expected exactly one input");
   const auto &idesc = input_descs[0];
   check(idesc.rank() >= 3, "expected input rank >= 3");
-  check(idesc.dtype == holoflow::core::DType::F32,
-        "cuSolverDx PCA currently supports F32 input only");
+  check(idesc.dtype == holoflow::core::DType::U8 || idesc.dtype == holoflow::core::DType::F32,
+        "PCA supports U8 or F32 input only");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "expected input in device memory");
   check(settings.begin < settings.end, "expected begin < end");
   check(settings.begin >= 0, "expected begin >= 0");
 
   const int feat_dim = static_cast<int>(idesc.rank()) - 3;
+  check(idesc.shape.at(static_cast<size_t>(feat_dim)) <=
+            static_cast<size_t>((std::numeric_limits<int>::max)()),
+        "feature count exceeds the supported range");
   check(settings.end <= static_cast<int>(idesc.shape.at(static_cast<size_t>(feat_dim))),
         "expected end <= n_features");
+  const auto height = idesc.shape.at(idesc.rank() - 2);
+  const auto width  = idesc.shape.at(idesc.rank() - 1);
+  check(height > 0 && width > 0, "spatial dimensions must be > 0");
+  check(height <= static_cast<size_t>((std::numeric_limits<int>::max)()) / width,
+        "spatial sample count exceeds the supported range");
 
   auto oshape                              = idesc.shape;
   oshape.at(static_cast<size_t>(feat_dim)) = static_cast<size_t>(settings.components());
-  holoflow::core::TDesc odesc(oshape, idesc.dtype, idesc.mem_loc);
+  holoflow::core::TDesc odesc(oshape, holoflow::core::DType::F32, idesc.mem_loc);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
@@ -224,7 +264,8 @@ PcaFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     const auto  new_settings = jsettings.get<PcaSettings>();
     const auto &new_idesc    = input_descs[0];
 
-    if (new_idesc.dtype == holoflow::core::DType::F32) {
+    if (new_idesc.dtype == holoflow::core::DType::U8 ||
+        new_idesc.dtype == holoflow::core::DType::F32) {
       auto *old_pca = dynamic_cast<PcaTask *>(old_task.get());
       if (old_pca != nullptr) {
         const auto &old_idesc = old_pca->get_idesc();

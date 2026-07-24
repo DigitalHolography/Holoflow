@@ -30,6 +30,7 @@ namespace holovibes::pipeline {
 namespace {
 
 constexpr float kFlatfieldCutoffConstant = 0.187f;
+constexpr int   kPreTransformBatchCount  = 8;
 
 holotask::syncs::FlatfieldSettings flatfield_settings_from_cutoff_period(float cutoff_period_m,
                                                                          float dy_m, float dx_m) {
@@ -218,6 +219,29 @@ GraphBuilder::TDesc GraphBuilder::build_preprocessing(TDesc H) {
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
   auto Device  = holotask::syncs::MemcpySettings::Target::Device;
 
+  if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
+    const bool load_in_gpu = s_.load_method == LoadMethod::LOAD_IN_GPU;
+    if (!load_in_gpu) {
+      H = memcpy(H, {Device});
+    }
+
+    const auto height = static_cast<int64_t>(H.shape.at(1));
+    const auto width  = static_cast<int64_t>(H.shape.at(2));
+    H = reshape(H, {{-1, static_cast<int64_t>(s_.time_window), height, width}, false});
+
+    const int minimum_capacity = kPreTransformBatchCount * 2;
+    // The queue now counts temporal windows rather than individual frames. Preserve the configured
+    // GPU input capacity by converting it to the equivalent number of windows.
+    const int window_capacity =
+        load_in_gpu
+            ? minimum_capacity
+            : std::max(minimum_capacity,
+                       (s_.gpu_in_size + s_.time_window - 1) / s_.time_window);
+    H = batched_queue(
+        H, {window_capacity, kPreTransformBatchCount, kPreTransformBatchCount});
+    return H;
+  }
+
   if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
     H = memcpy(H, {Device});
     H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window});
@@ -227,18 +251,20 @@ GraphBuilder::TDesc GraphBuilder::build_preprocessing(TDesc H) {
 }
 
 GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
-  // H enters as [T, Hy, Hx] (F32).
-  // We first accumulate N_pre such windows into a batch, producing [N_pre, T, Hy, Hx].
-  // Time-frequency analysis then operates along axis 1 (the T dimension).
-  // The output is [N_pre, Nz, Hy, Hx], which feeds directly into the post-TFA queue.
-
-  int     N_pre = 8;
-  int64_t T     = static_cast<int64_t>(H.shape.at(0));
-  int64_t Hy    = static_cast<int64_t>(H.shape.at(1));
-  int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
-
-  H = reshape(H, {{1, T, Hy, Hx}, false});
-  H = batched_queue(H, {N_pre * 2, N_pre, N_pre}); // → [N_pre, T, Hy, Hx]
+  // PCA preprocessing already emits [N_pre, T, Hy, Hx] directly from the U8 device queue.
+  // FFT paths still enter as [T, Hy, Hx] and use the existing F32 pre-transform queue.
+  const bool pca_input = s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS;
+  int64_t    T         = 0;
+  if (pca_input) {
+    T = static_cast<int64_t>(H.shape.at(H.shape.size() - 3));
+  } else {
+    T          = static_cast<int64_t>(H.shape.at(0));
+    int64_t Hy = static_cast<int64_t>(H.shape.at(1));
+    int64_t Hx = static_cast<int64_t>(H.shape.at(2));
+    H          = reshape(H, {{1, T, Hy, Hx}, false});
+    H          = batched_queue(
+        H, {kPreTransformBatchCount * 2, kPreTransformBatchCount, kPreTransformBatchCount});
+  }
 
   TDesc FH;
   if (s_.time_method == TimeMethod::RFFT) {

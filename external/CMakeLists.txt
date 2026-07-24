@@ -90,7 +90,7 @@ if(ENABLE_FETCHCONTENT)
         mathdx
         26.06
         REQUIRED
-        COMPONENTS cusolverdx
+        COMPONENTS cublasdx cusolverdx
         CONFIG
         PATHS "${MATHDX_ROOT}"
         NO_DEFAULT_PATH
@@ -104,6 +104,16 @@ if(ENABLE_FETCHCONTENT)
         message(FATAL_ERROR "cuSolverDx component was not found")
     endif()
 
+    if(NOT cublasdx_FOUND)
+        message(FATAL_ERROR "cuBLASDx component was not found")
+    endif()
+
+    if(NOT EXISTS "${cublasdx_FATBIN}")
+        message(FATAL_ERROR
+            "cuBLASDx fatbin does not exist: ${cublasdx_FATBIN}"
+        )
+    endif()
+
     if(NOT EXISTS "${cusolverdx_FATBIN}")
         message(FATAL_ERROR
             "cuSolverDx fatbin does not exist: ${cusolverdx_FATBIN}"
@@ -111,12 +121,18 @@ if(ENABLE_FETCHCONTENT)
     endif()
 
     message(STATUS "MathDx version: ${mathdx_VERSION}")
+    message(STATUS "cuBLASDx version: ${cublasdx_VERSION}")
     message(STATUS "cuSolverDx version: ${cusolverdx_VERSION}")
     message(STATUS "MathDx includes: ${mathdx_INCLUDE_DIRS}")
+    message(STATUS "cuBLASDx includes: ${cublasdx_INCLUDE_DIRS}")
     message(STATUS "cuSolverDx includes: ${cusolverdx_INCLUDE_DIRS}")
+    message(STATUS "cuBLASDx fatbin: ${cublasdx_FATBIN}")
     message(STATUS "cuSolverDx fatbin: ${cusolverdx_FATBIN}")
 
     file(TO_CMAKE_PATH "$ENV{CUDA_PATH}/include" HOLOFLOW_CUDA_INCLUDE_DIR)
+    file(TO_CMAKE_PATH "${cublasdx_INCLUDE_DIR}" HOLOFLOW_CUBLASDX_INCLUDE_DIR)
+    file(TO_CMAKE_PATH "${cublasdx_cutlass_INCLUDE_DIR}" HOLOFLOW_CUBLASDX_CUTLASS_INCLUDE_DIR)
+    file(TO_CMAKE_PATH "${cublasdx_FATBIN}" HOLOFLOW_CUBLASDX_FATBIN)
     file(TO_CMAKE_PATH "${cusolverdx_INCLUDE_DIR}" HOLOFLOW_CUSOLVERDX_INCLUDE_DIR)
     file(TO_CMAKE_PATH "${cusolverdx_cutlass_INCLUDE_DIR}" HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR)
     file(TO_CMAKE_PATH "${cusolverdx_FATBIN}" HOLOFLOW_CUSOLVERDX_FATBIN)
@@ -125,6 +141,9 @@ if(ENABLE_FETCHCONTENT)
     target_compile_definitions(holoflow_cusolverdx_nvrtc
         INTERFACE
         HOLOFLOW_CUDA_INCLUDE_DIR="${HOLOFLOW_CUDA_INCLUDE_DIR}"
+        HOLOFLOW_CUBLASDX_INCLUDE_DIR="${HOLOFLOW_CUBLASDX_INCLUDE_DIR}"
+        HOLOFLOW_CUBLASDX_CUTLASS_INCLUDE_DIR="${HOLOFLOW_CUBLASDX_CUTLASS_INCLUDE_DIR}"
+        HOLOFLOW_CUBLASDX_FATBIN="${HOLOFLOW_CUBLASDX_FATBIN}"
         HOLOFLOW_CUSOLVERDX_INCLUDE_DIR="${HOLOFLOW_CUSOLVERDX_INCLUDE_DIR}"
         HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR="${HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR}"
         HOLOFLOW_CUSOLVERDX_FATBIN="${HOLOFLOW_CUSOLVERDX_FATBIN}"
