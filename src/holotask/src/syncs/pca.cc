@@ -22,7 +22,7 @@
 #include "curaii/cuda.hh"
 
 #include "logger.hh"
-#include "pca_cusolverdx.hh"
+#include "pca_heev.hh"
 
 namespace holotask::syncs {
 
@@ -41,19 +41,20 @@ public:
       : settings_(settings), idesc_(idesc), stream_(ctx.stream), n_features_(n_features),
         n_batch_(n_batch) {
 
-    CUBLAS_CHECK(cublasSetStream(cublas_handle_.get(), stream_));
-    heev_kernel_ = std::make_unique<detail::PcaHeevKernel>(n_features_, n_batch_, stream_);
-
     const auto cov_elems = n_batch_ * static_cast<size_t>(n_features_) * n_features_;
     d_cov_               = curaii::make_unique_device_ptr<float>(cov_elems);
     d_eigvals_           = curaii::make_unique_device_ptr<float>(n_batch_ * n_features_);
     d_info_              = curaii::make_unique_device_ptr<int>(n_batch_);
+
+    CUBLAS_CHECK(cublasSetStream(cublas_handle_.get(), stream_));
+    heev_solver_ = std::make_unique<detail::PcaHeevSolver>(n_features_, n_batch_, d_cov_.get(),
+                                                           d_eigvals_.get(), stream_);
   }
 
   const holoflow::core::TDesc &get_idesc() const { return idesc_; }
   const PcaSettings           &get_settings() const { return settings_; }
   bool                         is_compatible_stream(cudaStream_t stream) const {
-    return heev_kernel_->is_compatible_stream(stream);
+    return heev_solver_->is_compatible_stream(stream);
   }
 
   void update_settings(const PcaSettings &settings, cudaStream_t stream) {
@@ -98,8 +99,8 @@ public:
     }
 
     {
-      nvtx3::scoped_range eigendecomposition_range("PCA cuSolverDx eigendecomposition");
-      heev_kernel_->launch(d_cov_.get(), d_eigvals_.get(), d_info_.get(), n_batch_, stream_);
+      nvtx3::scoped_range eigendecomposition_range("PCA eigendecomposition");
+      heev_solver_->launch(d_cov_.get(), d_eigvals_.get(), d_info_.get(), n_batch_, stream_);
     }
 
     {
@@ -125,7 +126,7 @@ private:
   size_t                n_batch_;
 
   curaii::CublasHandle                   cublas_handle_;
-  std::unique_ptr<detail::PcaHeevKernel> heev_kernel_;
+  std::unique_ptr<detail::PcaHeevSolver> heev_solver_;
   curaii::unique_device_ptr<float>       d_cov_;
   curaii::unique_device_ptr<float>       d_eigvals_;
   curaii::unique_device_ptr<int>         d_info_;

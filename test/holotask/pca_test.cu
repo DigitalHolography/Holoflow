@@ -78,6 +78,14 @@ std::vector<float> covariance_two_by_two_input(float scale = 1.0f) {
   };
 }
 
+std::vector<float> diagonal_covariance_input(size_t depth) {
+  std::vector<float> input(depth * depth, 0.0f);
+  for (size_t feature = 0; feature < depth; ++feature) {
+    input[feature * depth + feature] = std::sqrt(static_cast<float>(feature + 1));
+  }
+  return input;
+}
+
 std::vector<float> execute_once(holoflow::core::ISyncTask     &task,
                                 holonp_test::TensorTestBuffer &input,
                                 holonp_test::TensorTestBuffer &output, cudaStream_t stream) {
@@ -85,11 +93,11 @@ std::vector<float> execute_once(holoflow::core::ISyncTask     &task,
   std::vector<holoflow::core::TView> outputs = {output.view()};
   std::atomic<bool>                  cancelled{false};
   holoflow::core::SyncCtx            ctx{
-                 .inputs       = inputs,
-                 .outputs      = outputs,
-                 .cancelled    = &cancelled,
-                 .event_writer = nullptr,
-                 .event_reader = nullptr,
+      .inputs       = inputs,
+      .outputs      = outputs,
+      .cancelled    = &cancelled,
+      .event_writer = nullptr,
+      .event_reader = nullptr,
   };
 
   EXPECT_EQ(task.execute(ctx), holoflow::core::OpResult::Ok);
@@ -179,9 +187,23 @@ TEST_F(PcaExecuteTest, ProducesOrthogonalComponentsForEveryBatch) {
     const auto *batch_output = output.data() + batch * 4;
     const auto  scale_sq     = static_cast<float>((batch + 1) * (batch + 1));
     EXPECT_NEAR(dot(batch_output, batch_output, 2), scale_sq, 2e-2f * scale_sq);
-    EXPECT_NEAR(dot(batch_output + 2, batch_output + 2, 2), 3.0f * scale_sq,
-                2e-2f * scale_sq);
+    EXPECT_NEAR(dot(batch_output + 2, batch_output + 2, 2), 3.0f * scale_sq, 2e-2f * scale_sq);
     EXPECT_NEAR(dot(batch_output, batch_output + 2, 2), 0.0f, 2e-2f * scale_sq);
+  }
+}
+
+TEST_F(PcaExecuteTest, SupportsDepthsAtAndAboveCusolverFallbackBoundary) {
+  for (const size_t depth : {size_t{256}, size_t{512}}) {
+    const TDesc input_desc = device_desc({depth, 1, depth});
+    const auto  result     = holonp_test::run_sync_factory(
+        factory, std::vector<TDesc>{input_desc},
+        std::vector<std::vector<std::byte>>{as_bytes(diagonal_covariance_input(depth))},
+        settings(static_cast<int>(depth - 1), static_cast<int>(depth)));
+
+    const auto output = as_floats(result.output_bytes[0]);
+    ASSERT_EQ(output.size(), depth);
+    EXPECT_NEAR(dot(output.data(), output.data(), output.size()), static_cast<float>(depth),
+                5e-2f * static_cast<float>(depth));
   }
 }
 
@@ -211,7 +233,7 @@ TEST_F(PcaExecuteTest, ReusesCompiledTaskWhenComponentSelectionChanges) {
   const auto               selected    = factory.infer(input_descs, settings(1, 2));
 
   curaii::CudaStream stream;
-  auto task = factory.create(input_descs, settings(0, 2), {stream.get()});
+  auto               task = factory.create(input_descs, settings(0, 2), {stream.get()});
   task->bind_logger(spdlog::default_logger());
   const auto *original_task = task.get();
 
