@@ -154,6 +154,8 @@ if(WIN32 AND MSVC)
     find_single_cuda_runtime(CUDA_CUBLAS "cublas64_*.dll")
     find_single_cuda_runtime(CUDA_CUBLASLT "cublasLt64_*.dll")
     find_single_cuda_runtime(CUDA_CUFFT "cufft64_*.dll")
+    find_single_cuda_runtime(CUDA_CUSOLVER "cusolver64_*.dll")
+    find_single_cuda_runtime(CUDA_CUSPARSE "cusparse64_*.dll")
     find_single_cuda_runtime(CUDA_NVJITLINK "nvJitLink_*.dll")
     find_single_cuda_runtime(CUDA_NVRTC "nvrtc64_*.dll")
     find_single_cuda_runtime(CUDA_NVRTC_BUILTINS "nvrtc-builtins64_*.dll")
@@ -162,6 +164,8 @@ if(WIN32 AND MSVC)
         "${CUDA_CUBLAS}"
         "${CUDA_CUBLASLT}"
         "${CUDA_CUFFT}"
+        "${CUDA_CUSOLVER}"
+        "${CUDA_CUSPARSE}"
         "${CUDA_NVJITLINK}"
         "${CUDA_NVRTC}"
         "${CUDA_NVRTC_BUILTINS}"

@@ -34,6 +34,8 @@ $requiredPatterns = @(
     "cublas64_*.dll",
     "cublasLt64_*.dll",
     "cufft64_*.dll",
+    "cusolver64_*.dll",
+    "cusparse64_*.dll",
     "nvJitLink_*.dll",
     "nvrtc64_*.dll",
     "nvrtc-builtins64_*.dll",
