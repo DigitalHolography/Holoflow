@@ -18,6 +18,7 @@ $requiredFiles = @(
     "share\holovibes\nvrtc\mathdx\include\commondx\types.hpp",
     "share\holovibes\nvrtc\mathdx\include\cusolverdx\types.hpp",
     "share\holovibes\nvrtc\mathdx\cutlass\include\cutlass\cutlass.h",
+    "share\holovibes\nvrtc\mathdx\cutlass\include\cutlass\floating_point_nvrtc.h",
     "share\holovibes\nvrtc\mathdx\lib\libcusolverdx.fatbin",
     "share\licenses\NVIDIA-CUDA-EULA.txt",
     "share\licenses\NVIDIA-MathDx-LICENSE.txt"

@@ -153,8 +153,54 @@ if(ENABLE_FETCHCONTENT)
             COMPONENT dependencies
         )
         install(
-            DIRECTORY "${cusolverdx_cutlass_INCLUDE_DIR}/"
+            DIRECTORY "${cusolverdx_cutlass_INCLUDE_DIR}/cute"
             DESTINATION share/holovibes/nvrtc/mathdx/cutlass/include
+            COMPONENT dependencies
+        )
+        install(
+            FILES
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/array_subbyte.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/array.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/bfloat16.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/complex.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/coord.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/cuda_host_adapter.hpp"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/cutlass.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/exmy_base.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/fast_math.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/float_subbyte.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/float8.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/floating_point_nvrtc.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/functional.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/half.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/integer_subbyte.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/numeric_size.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/numeric_types.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/real.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/tfloat32.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/trace.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/uint128.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/uint256.h"
+            DESTINATION share/holovibes/nvrtc/mathdx/cutlass/include/cutlass
+            COMPONENT dependencies
+        )
+        install(
+            FILES
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/arch/config.h"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/arch/synclog.hpp"
+            DESTINATION share/holovibes/nvrtc/mathdx/cutlass/include/cutlass/arch
+            COMPONENT dependencies
+        )
+        install(
+            FILES
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/detail/dependent_false.hpp"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/detail/helper_macros.hpp"
+            DESTINATION share/holovibes/nvrtc/mathdx/cutlass/include/cutlass/detail
+            COMPONENT dependencies
+        )
+        install(
+            FILES "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/platform/platform.h"
+            DESTINATION share/holovibes/nvrtc/mathdx/cutlass/include/cutlass/platform
             COMPONENT dependencies
         )
         install(
