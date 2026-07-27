@@ -35,4 +35,4 @@ This task does not own any inputs or outputs.
 
 ---
 ## Settings
---8<-- "docs\schemas\sources\ametek_s710_euresys_coaxlink_octo_settings.md"
+--8<-- "docs/schemas/sources/ametek_s710_euresys_coaxlink_octo_settings.md"
