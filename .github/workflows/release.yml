@@ -1,50 +1,87 @@
-name: Release CI
+name: Release
 
-on: workflow_dispatch
+on:
+  push:
+    tags:
+      - "v*"
 
-env:
-  BUILD_TYPE: Release
+permissions:
+  contents: write
 
 jobs:
-  check-fork:
-    runs-on: [ self-hosted, windows, x64 ]
-    steps:
-      - name: Fork Check
-        if: github.event.pull_request.head.repo.fork == true
-        run: |
-          echo "This is a forked repository."
-          exit 1
+  release:
+    runs-on: [self-hosted, windows, x64]
+    timeout-minutes: 180
 
-  build-package:
-    runs-on: [ self-hosted, windows, x64 ]
-    needs: check-fork    
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out tagged source
+        uses: actions/checkout@v4
         with:
           submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate release tag
+        shell: pwsh
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $expectedTag = "v$version"
+          if ($env:GITHUB_REF_NAME -ne $expectedTag) {
+              throw "Tag '$env:GITHUB_REF_NAME' does not match VERSION '$expectedTag'."
+          }
+
+          git fetch origin main --no-tags
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) {
+              throw "Release tag must point to a commit contained in origin/main."
+          }
 
       - name: Configure
-        run: |
-          cmake --preset msvc-multi -DFETCHCONTENT_BASE_DIR="C:/.fc"
-            
+        run: >
+          cmake --preset msvc-multi
+          -DFETCHCONTENT_BASE_DIR=C:/.fc
+          -DENABLE_BENCHMARKS=OFF
+          -DENABLE_DOCUMENTATION=OFF
+          -DENABLE_EXAMPLES=OFF
+
       - name: Build
-        run: |
-          cmake --build --preset build-Release -j
+        run: cmake --build --preset build-Release -j
 
       - name: Test
-        run: |
-          build\msvc-multi\Release\holoflow_test.exe
-        
-      - name: Package
-        run: |
-          cmake --build --preset build-Release --target package -j
+        run: ctest --preset test-Release
 
-      - name: Create Release
+      - name: Stage install
+        shell: pwsh
         run: |
-          $version = Get-Content VERSION
-          gh release create "v$version" "build/msvc-multi/Holoflow-$version-win64.exe" `
-            --title "v$version" `
-            --notes "Automated release of version $version" `
-            --latest
+          $stage = Join-Path $env:GITHUB_WORKSPACE "build/stage"
+          cmake --install build/msvc-multi --config Release --prefix $stage --component binaries
+          cmake --install build/msvc-multi --config Release --prefix $stage --component dependencies
+
+      - name: Validate staged runtime
+        run: >
+          pwsh -NoProfile -File tools/validate_windows_package.ps1
+          -StageDirectory build/stage
+
+      - name: Package
+        run: cmake --build --preset build-Release --target package -j
+
+      - name: Publish GitHub Release
+        shell: pwsh
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $version = (Get-Content VERSION -Raw).Trim()
+          $tag = "v$version"
+          $asset = "build/msvc-multi/Holoflow-$version-win64.exe"
+          if (-not (Test-Path -LiteralPath $asset)) {
+              throw "Installer was not generated: $asset"
+          }
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+              gh release upload $tag $asset --clobber
+          } elseif ($version.Contains("-")) {
+              gh release create $tag $asset --verify-tag --title $tag --generate-notes --prerelease
+          } else {
+              gh release create $tag $asset --verify-tag --title $tag --generate-notes --latest
+          }

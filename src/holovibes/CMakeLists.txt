@@ -16,7 +16,12 @@ set(TARGET holovibes)
 set(HOLOVIBES_VERSION "${PROJECT_VERSION_FULL}")
 add_definitions(-DHOLOVIBES_VERSION_SEMVER2="${HOLOVIBES_VERSION}")
 
-set(APP_ICON_RESOURCE_WINDOWS "${CMAKE_SOURCE_DIR}/resources/holovibes/assets/appicon.rc")
+set(APP_VERSION_RESOURCE_WINDOWS "${CMAKE_CURRENT_BINARY_DIR}/holovibes_version.rc")
+configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/holovibes_version.rc.in"
+    "${APP_VERSION_RESOURCE_WINDOWS}"
+    @ONLY
+)
 
 file(GLOB_RECURSE HOLOVIBES_PRIVATE_HEADERS 
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hh
@@ -33,7 +38,7 @@ file(GLOB_RECURSE APP_RESOURCES
 )
 
 qt_add_executable(holovibes
-    ${HOLOVIBES_SOURCES} ${APP_ICON_RESOURCE_WINDOWS}
+    ${HOLOVIBES_SOURCES} ${APP_VERSION_RESOURCE_WINDOWS}
 )
 
 file(RELATIVE_PATH APP_RESOURCES_REL "${CMAKE_CURRENT_SOURCE_DIR}" "${APP_RESOURCES}")
@@ -67,7 +72,6 @@ target_link_libraries(holovibes PRIVATE
     spdlog::spdlog
     nlohmann_json::nlohmann_json
     Boost::graph
-    MKL::MKL
     Qt6::Core
     Qt6::Widgets
     Qt6::Gui

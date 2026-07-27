@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_DESTINATION bin)
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_COMPONENT dependencies)
+set(CMAKE_INSTALL_OPENMP_LIBRARIES ON)
 include(InstallRequiredSystemLibraries)
 
 file(READ "${CMAKE_SOURCE_DIR}/VERSION" PROJECT_VERSION_RAW)
@@ -20,14 +23,17 @@ string(STRIP "${PROJECT_VERSION_RAW}" PROJECT_VERSION_FULL)
 # installer rules. 
 set(CPACK_PACKAGE_NAME "Holovibes")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Holoflow - Digital Holography Software")
-set(CPACK_PACKAGE_VENDOR "Holoflow Developers")
+set(CPACK_PACKAGE_VENDOR "Digital Holography Foundation")
 set(CPACK_PACKAGE_VERSION ${PROJECT_VERSION_FULL})
-set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL ON)
+set(CPACK_PACKAGE_FILE_NAME "Holoflow-${PROJECT_VERSION_FULL}-win64")
+set(CPACK_PACKAGE_INSTALL_DIRECTORY "Holovibes\\\\${PROJECT_VERSION_FULL}")
+set(CPACK_PACKAGE_INSTALL_REGISTRY_KEY "Holovibes ${PROJECT_VERSION_FULL}")
+set(CPACK_NSIS_ENABLE_UNINSTALL_BEFORE_INSTALL OFF)
 
 set(CPACK_NSIS_MUI_ICON "${CMAKE_CURRENT_SOURCE_DIR}/resources/holovibes/assets/holovibes_logo.ico")
-set(CPACK_PACKAGE_INSTALL_DIRECTORY "${PROJECT_VERSION_FULL}")
-set(CPACK_NSIS_INSTALLED_ICON_NAME "${CMAKE_CURRENT_SOURCE_DIR}/resources/holovibes/assets/holovibes_logo.ico")
+set(CPACK_NSIS_INSTALLED_ICON_NAME "bin\\\\holovibes.exe")
 set(CPACK_NSIS_DISPLAY_NAME "Holovibes ${PROJECT_VERSION_FULL}")
+set(CPACK_NSIS_UNINSTALL_NAME "Uninstall Holovibes ${PROJECT_VERSION_FULL}")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_RESOURCE_FILE_README "${CMAKE_CURRENT_SOURCE_DIR}/README.md")
 
@@ -35,20 +41,16 @@ set(CPACK_GENERATOR "NSIS")
 
 include(CPackComponent)
 
-cpack_add_install_type(Full DISPLAY_NAME "Install Everything")
-
 cpack_add_component(binaries
-    DISPLAY_NAME "Holovibes Binaries"
-    DESCRIPTION "This will install the main application."
+    DISPLAY_NAME "Holovibes"
+    DESCRIPTION "Holovibes application binaries."
     REQUIRED
-    INSTALL_TYPES Full 
 )
 
 cpack_add_component(dependencies
-    DISPLAY_NAME "Holovibes Dependencies"
-    DESCRIPTION "This will install the required dependencies."
+    DISPLAY_NAME "Runtime dependencies"
+    DESCRIPTION "Runtime libraries required by Holovibes."
     REQUIRED
-    INSTALL_TYPES Full 
 )
 
 set(CPACK_COMPONENTS_ALL binaries dependencies)

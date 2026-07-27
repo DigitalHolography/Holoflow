@@ -1,0 +1,36 @@
+#include <windows.h>
+
+IDI_ICON1 ICON DISCARDABLE "@CMAKE_SOURCE_DIR@/resources/holovibes/assets/holovibes_logo.ico"
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+ FILEFLAGSMASK VS_FFI_FILEFLAGSMASK
+#ifdef _DEBUG
+ FILEFLAGS VS_FF_DEBUG
+#else
+ FILEFLAGS 0x0L
+#endif
+ FILEOS VOS_NT_WINDOWS32
+ FILETYPE VFT_APP
+ FILESUBTYPE VFT2_UNKNOWN
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName", "Digital Holography Foundation\0"
+            VALUE "FileDescription", "Holovibes\0"
+            VALUE "FileVersion", "@PROJECT_VERSION_FULL@\0"
+            VALUE "InternalName", "holovibes\0"
+            VALUE "LegalCopyright", "Copyright 2025 Digital Holography Foundation\0"
+            VALUE "OriginalFilename", "holovibes.exe\0"
+            VALUE "ProductName", "Holovibes\0"
+            VALUE "ProductVersion", "@PROJECT_VERSION_FULL@\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0409, 1200
+    END
+END

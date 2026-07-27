@@ -19,7 +19,14 @@ string(STRIP "${PROJECT_VERSION_RAW}" PROJECT_VERSION_FULL)
 
 message(STATUS "Holoflow version ${PROJECT_VERSION_FULL}")
 
-string(REGEX MATCH "^([0-9]+)\.([0-9]+)\.([0-9]+)(-.+)?$" _ "${PROJECT_VERSION_FULL}")
+string(REGEX MATCH "^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$" _ "${PROJECT_VERSION_FULL}")
+
+if(NOT CMAKE_MATCH_0 STREQUAL PROJECT_VERSION_FULL)
+    message(FATAL_ERROR
+        "VERSION must be a semantic version such as 0.2.0 or 0.2.0-dev.1; "
+        "got '${PROJECT_VERSION_FULL}'"
+    )
+endif()
 
 set(PROJECT_VERSION_MAJOR "${CMAKE_MATCH_1}")
 set(PROJECT_VERSION_MINOR "${CMAKE_MATCH_2}")
@@ -31,10 +38,11 @@ set(PROJECT_VERSION_NUMERIC
 
 if(CMAKE_MATCH_4)
     string(SUBSTRING "${CMAKE_MATCH_4}" 1 -1 PROJECT_VERSION_PRERELEASE)
-    set(CPACK_PACKAGE_FILE_NAME "Holoflow-${PROJECT_VERSION_FULL}-win64")
 else()
     set(PROJECT_VERSION_PRERELEASE "")
 endif()
+
+set(CPACK_PACKAGE_FILE_NAME "Holoflow-${PROJECT_VERSION_FULL}-win64")
 
 project(holoflow VERSION "${PROJECT_VERSION_NUMERIC}" LANGUAGES CXX CUDA)
 
@@ -101,97 +109,65 @@ endif()
 
 if(WIN32 AND MSVC)
     install(TARGETS holovibes
-        RUNTIME DESTINATION bin COMPONENT binaries
+        RUNTIME DESTINATION bin
+        COMPONENT binaries
     )
-    
-    get_target_property(QT_QMAKE_EXECUTABLE Qt6::qmake IMPORTED_LOCATION)
-    get_filename_component(QT_BIN_DIR "${QT_QMAKE_EXECUTABLE}" DIRECTORY)
-    find_program(WINDEPLOYQT_EXECUTABLE windeployqt HINTS "${QT_BIN_DIR}")
-    
-    if(NOT WINDEPLOYQT_EXECUTABLE)
-        message(WARNING "windeployqt not found. Qt dependencies might be missing in the installer.")
-    else()
-        message(STATUS "Found windeployqt: ${WINDEPLOYQT_EXECUTABLE}")
-        
-        install(CODE "
-            set(_qt_deps_dir \"\${CMAKE_INSTALL_PREFIX}/_qt_deps\")
-            execute_process(
-                COMMAND \"${CMAKE_COMMAND}\" -E make_directory \"\${_qt_deps_dir}\"
-            )
-            
-            # Run windeployqt to gather Qt dependencies
-            execute_process(
-                COMMAND \"${WINDEPLOYQT_EXECUTABLE}\" 
-                    --verbose 1
-                    --no-compiler-runtime
-                    --no-opengl-sw
-                    --dir \"\${_qt_deps_dir}\"
-                    \"\${CMAKE_INSTALL_PREFIX}/../binaries/bin/holovibes.exe\"
-                RESULT_VARIABLE _result
-            )
-            
-            if(NOT _result EQUAL 0)
-                message(WARNING \"windeployqt failed: \${_result}\")
-            else()
-                # Copy Qt dependencies to bin directory
-                execute_process(
-                    COMMAND \"${CMAKE_COMMAND}\" -E copy_directory \"\${_qt_deps_dir}\" \"\${CMAKE_INSTALL_PREFIX}/bin\"
-                )
-            endif()
-            
-            # Clean up temporary directory
-            execute_process(
-                COMMAND \"${CMAKE_COMMAND}\" -E remove_directory \"\${_qt_deps_dir}\"
-            )
-        " COMPONENT dependencies)
-    endif()
-
-    set(CUDA_BIN_DIR "$ENV{CUDA_PATH}/bin/x64")
-    file(REAL_PATH "${CUDA_BIN_DIR}/cublas64_13.dll" CUDA_CUBLAS)
-    file(REAL_PATH "${CUDA_BIN_DIR}/cublasLt64_13.dll" CUDA_CUBLASLT)
-    file(REAL_PATH "${CUDA_BIN_DIR}/cufft64_12.dll" CUDA_CUFFT)
-    file(REAL_PATH "${CUDA_BIN_DIR}/cusolver64_12.dll" CUDA_CUSOLVER)
-    file(REAL_PATH "${CUDA_BIN_DIR}/cusparse64_12.dll" CUDA_CUSPARSE)
-    file(REAL_PATH "${CUDA_BIN_DIR}/nvJitLink_130_0.dll" CUDA_NVJIT)
-    file(REAL_PATH "${CUDA_BIN_DIR}/nvrtc64_130_0.dll" CUDA_NVRTC)
-    file(REAL_PATH "${CUDA_BIN_DIR}/nvrtc-builtins64_130.dll" CUDA_NVRTC_BUILTINS)
-
-    set(INTEL_COMPILER_BIN_DIR "C:/Program Files (x86)/Intel/oneAPI/compiler/latest/bin")
-    set(INTEL_MKL_BIN_DIR "C:/Program Files (x86)/Intel/oneAPI/mkl/latest/bin")
-    file(REAL_PATH "${INTEL_COMPILER_BIN_DIR}/libiomp5md.dll" INTEL_LIBIOMP5MD)
-    file(REAL_PATH "${INTEL_MKL_BIN_DIR}/mkl_intel_thread.2.dll" INTEL_MKL_INTEL_THREAD)
-    file(REAL_PATH "${INTEL_MKL_BIN_DIR}/mkl_core.2.dll" INTEL_MKL_CORE)
-    file(REAL_PATH "${INTEL_MKL_BIN_DIR}/mkl_avx2.2.dll" INTEL_MKL_AVX2)
-    file(REAL_PATH "${INTEL_MKL_BIN_DIR}/mkl_avx512.2.dll" INTEL_MKL_AVX512)
-    file(REAL_PATH "${INTEL_MKL_BIN_DIR}/mkl_sequential.2.dll" INTEL_MKL_SEQUENTIAL)
 
     install(FILES
-        "${INTEL_LIBIOMP5MD}"
-        "${INTEL_MKL_INTEL_THREAD}"
-        "${INTEL_MKL_CORE}"
-        "${INTEL_MKL_AVX2}"
-        "${INTEL_MKL_AVX512}"
-        "${INTEL_MKL_SEQUENTIAL}"
+        "$<TARGET_FILE:ads::qtadvanceddocking-qt6>"
+        DESTINATION bin
+        COMPONENT dependencies
+    )
 
+    qt_generate_deploy_app_script(
+        TARGET holovibes
+        OUTPUT_SCRIPT QT_DEPLOY_SCRIPT
+        NO_UNSUPPORTED_PLATFORM_ERROR
+        NO_COMPILER_RUNTIME
+        NO_TRANSLATIONS
+        PRE_EXCLUDE_REGEXES
+            "api-ms-"
+            "ext-ms-"
+        POST_EXCLUDE_REGEXES
+            ".*[\\\\/]system32[\\\\/].*"
+    )
+    install(SCRIPT "${QT_DEPLOY_SCRIPT}" COMPONENT dependencies)
+
+    file(TO_CMAKE_PATH "$ENV{CUDA_PATH}/bin/x64" CUDA_BIN_DIR)
+    if(NOT IS_DIRECTORY "${CUDA_BIN_DIR}")
+        message(FATAL_ERROR "CUDA runtime directory does not exist: ${CUDA_BIN_DIR}")
+    endif()
+
+    function(find_single_cuda_runtime OUTPUT_VARIABLE GLOB_PATTERN)
+        file(GLOB MATCHES "${CUDA_BIN_DIR}/${GLOB_PATTERN}")
+        list(LENGTH MATCHES MATCH_COUNT)
+        if(NOT MATCH_COUNT EQUAL 1)
+            message(FATAL_ERROR
+                "Expected exactly one CUDA runtime matching "
+                "'${CUDA_BIN_DIR}/${GLOB_PATTERN}', found ${MATCH_COUNT}: ${MATCHES}"
+            )
+        endif()
+        list(GET MATCHES 0 MATCH)
+        set("${OUTPUT_VARIABLE}" "${MATCH}" PARENT_SCOPE)
+    endfunction()
+
+    find_single_cuda_runtime(CUDA_CUBLAS "cublas64_*.dll")
+    find_single_cuda_runtime(CUDA_CUBLASLT "cublasLt64_*.dll")
+    find_single_cuda_runtime(CUDA_CUFFT "cufft64_*.dll")
+    find_single_cuda_runtime(CUDA_NVJITLINK "nvJitLink_*.dll")
+    find_single_cuda_runtime(CUDA_NVRTC "nvrtc64_*.dll")
+    find_single_cuda_runtime(CUDA_NVRTC_BUILTINS "nvrtc-builtins64_*.dll")
+
+    install(FILES
         "${CUDA_CUBLAS}"
         "${CUDA_CUBLASLT}"
         "${CUDA_CUFFT}"
-        "${CUDA_CUSOLVER}"
-        "${CUDA_CUSPARSE}"
-        "${CUDA_NVJIT}"
+        "${CUDA_NVJITLINK}"
         "${CUDA_NVRTC}"
         "${CUDA_NVRTC_BUILTINS}"
         DESTINATION bin
         COMPONENT dependencies
     )
-
-    set(CPACK_NSIS_EXTRA_INSTALL_COMMANDS "
-    ReadEnvStr \\$0 CUDA_PATH
-    StrCmp \\$0 \\\"\\\" 0 cuda_ok
-    MessageBox MB_OK|MB_ICONEXCLAMATION \
-        'CUDA Toolkit not detected!\\$\\\\n\\$\\\\nPlease install CUDA Toolkit from:\\$\\\\nhttps://developer.nvidia.com/cuda-downloads\\$\\\\n\\$\\\\nNVRTC features will not work without CUDA.'
-    cuda_ok:
-    ")
 endif()
 
-include (CPackConfig)
+include(CPackConfig)

@@ -135,7 +135,7 @@ This project uses **CMake**, **CPack**, and the **NSIS installer generator** to 
 
 Before packaging, make sure these following tools are installed :
 
-- **[NSIS](https://nsis.sourceforge.io/Download)**
+- **[NSIS >= 3.03](https://nsis.sourceforge.io/Download)**
 
 ### Command
 
@@ -146,6 +146,10 @@ cmake --build --preset build-Release --target package -j
 ```
 
 It will generate the installer inside the `build\msvc-multi\` folder.
+
+Each version installs independently under
+`Program Files\Holovibes\<version>` and creates a versioned desktop shortcut.
+Installing or uninstalling one version does not remove other installed versions.
 
 ## Benchmarks
 > TODO
@@ -191,11 +195,27 @@ generate-schema-doc src\holovibes\schemas\tasks\node_type\xxx_settings.json doc\
 ## Git
 This project uses Git for version control. Make sure to have Git installed and configured on your system.
 This project follows the [Conventional Commits](https://www.conventionalcommits.org/) specification.
-This project comes with pre-commit hooks to enforce coding standards.
-You can enable these hooks by running:
+This project uses [Commitizen](https://commitizen-tools.github.io/commitizen/)
+for version bumps, changelog generation, and release tags. Install the pinned
+release tool and enable both hook types:
+
 ```powershell
-pre-commit install
+pipx install commitizen==4.16.3
+pre-commit install --hook-type pre-commit --hook-type commit-msg
 ```
+
+To prepare a release, first run the manually dispatched Windows Verification
+workflow against `main`. Once it succeeds, create the version commit and tag
+locally. Development versions use an explicit version to preserve the
+`dev.<number>` spelling:
+
+```powershell
+cz bump 0.2.0-dev.1 --check-consistency
+git push origin main --follow-tags
+```
+
+Only protected `v*` tags publish installers. Windows workflows never run for
+pull requests or forks because they use a persistent self-hosted runner.
 
 ## License
 This project is licensed under the Apache License 2.0.

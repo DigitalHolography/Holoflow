@@ -66,5 +66,4 @@ target_link_libraries(${TARGET}
     holoflow
     spdlog::spdlog
     nlohmann_json::nlohmann_json
-    MKL::MKL
 )

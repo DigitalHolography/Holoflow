@@ -1,0 +1,50 @@
+name: Windows Verification
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, windows, x64]
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out trusted main
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure
+        run: >
+          cmake --preset msvc-multi
+          -DFETCHCONTENT_BASE_DIR=C:/.fc
+          -DENABLE_BENCHMARKS=OFF
+          -DENABLE_DOCUMENTATION=OFF
+          -DENABLE_EXAMPLES=OFF
+
+      - name: Build
+        run: cmake --build --preset build-Release -j
+
+      - name: Test
+        run: ctest --preset test-Release
+
+      - name: Stage install
+        shell: pwsh
+        run: |
+          $stage = Join-Path $env:GITHUB_WORKSPACE "build/stage"
+          cmake --install build/msvc-multi --config Release --prefix $stage --component binaries
+          cmake --install build/msvc-multi --config Release --prefix $stage --component dependencies
+
+      - name: Validate staged runtime
+        run: >
+          pwsh -NoProfile -File tools/validate_windows_package.ps1
+          -StageDirectory build/stage
+
+      - name: Package
+        run: cmake --build --preset build-Release --target package -j
