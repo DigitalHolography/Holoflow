@@ -16,8 +16,10 @@
 
 #include <cuda.h>
 #include <nvJitLink.h>
+#include <windows.h>
 
 #include <cstdint>
+#include <filesystem>
 #include <format>
 #include <stdexcept>
 #include <string>
@@ -207,7 +209,71 @@ CUcontext stream_context(cudaStream_t stream) {
   return context;
 }
 
-std::vector<char> compile_lto_ir(int n_features, int solver_sm, int architecture) {
+struct NvrtcAssets {
+  std::filesystem::path cuda_include;
+  std::filesystem::path cusolverdx_include;
+  std::filesystem::path cutlass_include;
+  std::filesystem::path cusolverdx_fatbin;
+};
+
+std::filesystem::path executable_directory() {
+  std::vector<wchar_t> buffer(MAX_PATH);
+  while (true) {
+    const auto length =
+        GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+    if (length == 0) {
+      throw std::runtime_error(
+          std::format("[Pca] Failed to locate the executable (Windows error {})", GetLastError()));
+    }
+    if (length < buffer.size() - 1) {
+      return std::filesystem::path(std::wstring(buffer.data(), length)).parent_path();
+    }
+    buffer.resize(buffer.size() * 2);
+  }
+}
+
+bool assets_exist(const NvrtcAssets &assets) {
+  return std::filesystem::is_directory(assets.cuda_include) &&
+         std::filesystem::is_regular_file(assets.cuda_include / "cuda_runtime.h") &&
+         std::filesystem::is_directory(assets.cuda_include / "cccl") &&
+         std::filesystem::is_regular_file(assets.cusolverdx_include / "cusolverdx.hpp") &&
+         std::filesystem::is_regular_file(assets.cusolverdx_include / "cusolverdx_io.hpp") &&
+         std::filesystem::is_directory(assets.cutlass_include) &&
+         std::filesystem::is_regular_file(assets.cusolverdx_fatbin);
+}
+
+NvrtcAssets nvrtc_assets() {
+  const auto installed_root =
+      (executable_directory() / HOLOFLOW_NVRTC_ASSET_RELATIVE_DIR).lexically_normal();
+  NvrtcAssets installed{
+      installed_root / "cuda/include",
+      installed_root / "mathdx/include",
+      installed_root / "mathdx/cutlass/include",
+      installed_root / "mathdx/lib/libcusolverdx.fatbin",
+  };
+  if (assets_exist(installed)) {
+    return installed;
+  }
+
+  NvrtcAssets build{
+      HOLOFLOW_CUDA_INCLUDE_DIR,
+      HOLOFLOW_CUSOLVERDX_INCLUDE_DIR,
+      HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR,
+      HOLOFLOW_CUSOLVERDX_FATBIN,
+  };
+  if (assets_exist(build)) {
+    return build;
+  }
+
+  throw std::runtime_error(std::format(
+      "[Pca] cuSolverDx runtime-compilation assets are missing. Expected installed assets under "
+      "'{}' (CUDA headers, cuSolverDx/CommonDx headers, CUTLASS headers, and "
+      "libcusolverdx.fatbin); build-tree fallback is also unavailable",
+      installed_root.string()));
+}
+
+std::vector<char> compile_lto_ir(int n_features, int solver_sm, int architecture,
+                                 const NvrtcAssets &assets) {
   curaii::NvrtcProgram program(pca_heev_source, "pca_heev_kernel.cu");
 
   std::vector<std::string> options = {
@@ -218,10 +284,10 @@ std::vector<char> compile_lto_ir(int n_features, int solver_sm, int architecture
       std::format("--gpu-architecture=sm_{}", architecture),
       std::format("-DPCA_FEATURES={}", n_features),
       std::format("-DPCA_SOLVER_SM={}", solver_sm),
-      std::format("--include-path={}", HOLOFLOW_CUDA_INCLUDE_DIR),
-      std::format("--include-path={}/cccl", HOLOFLOW_CUDA_INCLUDE_DIR),
-      std::format("--include-path={}", HOLOFLOW_CUSOLVERDX_INCLUDE_DIR),
-      std::format("--include-path={}", HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR),
+      std::format("--include-path={}", assets.cuda_include.string()),
+      std::format("--include-path={}", (assets.cuda_include / "cccl").string()),
+      std::format("--include-path={}", assets.cusolverdx_include.string()),
+      std::format("--include-path={}", assets.cutlass_include.string()),
   };
 
   std::vector<const char *> option_ptrs;
@@ -248,15 +314,16 @@ std::vector<char> compile_lto_ir(int n_features, int solver_sm, int architecture
   return lto_ir;
 }
 
-std::vector<char> link_cubin(const std::vector<char> &lto_ir, int architecture) {
+std::vector<char> link_cubin(const std::vector<char> &lto_ir, int architecture,
+                             const NvrtcAssets &assets) {
   nvJitLinkHandle linker      = nullptr;
   const auto      arch_option = std::format("-arch=sm_{}", architecture);
   const char     *options[]   = {"-lto", arch_option.c_str()};
 
   PCA_NVJITLINK_CHECK(linker, nvJitLinkCreate(&linker, 2, options));
   try {
-    PCA_NVJITLINK_CHECK(
-        linker, nvJitLinkAddFile(linker, NVJITLINK_INPUT_FATBIN, HOLOFLOW_CUSOLVERDX_FATBIN));
+    PCA_NVJITLINK_CHECK(linker, nvJitLinkAddFile(linker, NVJITLINK_INPUT_FATBIN,
+                                                 assets.cusolverdx_fatbin.string().c_str()));
     PCA_NVJITLINK_CHECK(linker, nvJitLinkAddData(linker, NVJITLINK_INPUT_LTOIR,
                                                  const_cast<char *>(lto_ir.data()), lto_ir.size(),
                                                  "pca_heev_lto_ir"));
@@ -294,8 +361,9 @@ struct PcaHeevKernel::Impl {
     context = stream_context(stream);
     ContextGuard guard(context);
 
-    const auto lto_ir = compile_lto_ir(n_features, solver_sm, architecture);
-    const auto cubin  = link_cubin(lto_ir, architecture);
+    const auto assets = nvrtc_assets();
+    const auto lto_ir = compile_lto_ir(n_features, solver_sm, architecture, assets);
+    const auto cubin  = link_cubin(lto_ir, architecture, assets);
 
     PCA_DRIVER_CHECK(cuModuleLoadDataEx(&module, cubin.data(), 0, nullptr, nullptr));
     try {

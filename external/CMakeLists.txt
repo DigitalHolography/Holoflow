@@ -117,6 +117,7 @@ if(ENABLE_FETCHCONTENT)
     message(STATUS "cuSolverDx fatbin: ${cusolverdx_FATBIN}")
 
     file(TO_CMAKE_PATH "$ENV{CUDA_PATH}/include" HOLOFLOW_CUDA_INCLUDE_DIR)
+    file(TO_CMAKE_PATH "$ENV{CUDA_PATH}/EULA.txt" HOLOFLOW_CUDA_LICENSE)
     file(TO_CMAKE_PATH "${cusolverdx_INCLUDE_DIR}" HOLOFLOW_CUSOLVERDX_INCLUDE_DIR)
     file(TO_CMAKE_PATH "${cusolverdx_cutlass_INCLUDE_DIR}" HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR)
     file(TO_CMAKE_PATH "${cusolverdx_FATBIN}" HOLOFLOW_CUSOLVERDX_FATBIN)
@@ -128,7 +129,52 @@ if(ENABLE_FETCHCONTENT)
         HOLOFLOW_CUSOLVERDX_INCLUDE_DIR="${HOLOFLOW_CUSOLVERDX_INCLUDE_DIR}"
         HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR="${HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR}"
         HOLOFLOW_CUSOLVERDX_FATBIN="${HOLOFLOW_CUSOLVERDX_FATBIN}"
+        HOLOFLOW_NVRTC_ASSET_RELATIVE_DIR="../share/holovibes/nvrtc"
     )
+
+    if(WIN32)
+        install(
+            DIRECTORY "${HOLOFLOW_CUDA_INCLUDE_DIR}/"
+            DESTINATION share/holovibes/nvrtc/cuda/include
+            COMPONENT dependencies
+        )
+        install(
+            FILES
+                "${MATHDX_ROOT}/include/cusolverdx.hpp"
+                "${MATHDX_ROOT}/include/cusolverdx_io.hpp"
+            DESTINATION share/holovibes/nvrtc/mathdx/include
+            COMPONENT dependencies
+        )
+        install(
+            DIRECTORY
+                "${MATHDX_ROOT}/include/cusolverdx"
+                "${MATHDX_ROOT}/include/commondx"
+            DESTINATION share/holovibes/nvrtc/mathdx/include
+            COMPONENT dependencies
+        )
+        install(
+            DIRECTORY "${cusolverdx_cutlass_INCLUDE_DIR}/"
+            DESTINATION share/holovibes/nvrtc/mathdx/cutlass/include
+            COMPONENT dependencies
+        )
+        install(
+            FILES "${cusolverdx_FATBIN}"
+            DESTINATION share/holovibes/nvrtc/mathdx/lib
+            COMPONENT dependencies
+        )
+        install(
+            FILES "${HOLOFLOW_CUDA_LICENSE}"
+            DESTINATION share/licenses
+            RENAME NVIDIA-CUDA-EULA.txt
+            COMPONENT dependencies
+        )
+        install(
+            FILES "${MATHDX_ROOT}/LICENSE.txt"
+            DESTINATION share/licenses
+            RENAME NVIDIA-MathDx-LICENSE.txt
+            COMPONENT dependencies
+        )
+    endif()
 
     message(STATUS "FetchContent dependencies acquired.")
 

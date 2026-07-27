@@ -10,7 +10,17 @@ $bin = Join-Path $stage "bin"
 $requiredFiles = @(
     "bin\holovibes.exe",
     "bin\qtadvanceddocking-qt6.dll",
-    "plugins\platforms\qwindows.dll"
+    "plugins\platforms\qwindows.dll",
+    "share\holovibes\nvrtc\cuda\include\cuda_runtime.h",
+    "share\holovibes\nvrtc\cuda\include\cccl\cuda\std\version",
+    "share\holovibes\nvrtc\mathdx\include\cusolverdx.hpp",
+    "share\holovibes\nvrtc\mathdx\include\cusolverdx_io.hpp",
+    "share\holovibes\nvrtc\mathdx\include\commondx\types.hpp",
+    "share\holovibes\nvrtc\mathdx\include\cusolverdx\types.hpp",
+    "share\holovibes\nvrtc\mathdx\cutlass\include\cutlass\cutlass.h",
+    "share\holovibes\nvrtc\mathdx\lib\libcusolverdx.fatbin",
+    "share\licenses\NVIDIA-CUDA-EULA.txt",
+    "share\licenses\NVIDIA-MathDx-LICENSE.txt"
 )
 
 foreach ($relativePath in $requiredFiles) {
