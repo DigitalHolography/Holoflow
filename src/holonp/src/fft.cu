@@ -112,6 +112,13 @@ struct FFTStoreCallbackInfo {
   float scale = 1.0f;
 };
 
+struct FFTLoadCallbackInfo {
+  const std::uint8_t *input                   = nullptr;
+  const void         *dummy_input             = nullptr;
+  unsigned long long  input_exec_stride       = 0;
+  unsigned long long  dummy_exec_stride_bytes = 0;
+};
+
 std::string get_compute_arch() {
   int device{};
   CUDA_CHECK(cudaGetDevice(&device));
@@ -173,6 +180,31 @@ __device__ cuFloatComplex load_real_as_complex_callback(
   return compile_source_to_lto(src, "load_real_as_complex_callback.cu");
 }
 
+std::vector<char> load_u8_as_complex_lto() {
+  std::string src = R"(
+#include <cuComplex.h>
+
+struct FFTLoadCallbackInfo {
+  const unsigned char *input;
+  const void *dummy_input;
+  unsigned long long input_exec_stride;
+  unsigned long long dummy_exec_stride_bytes;
+};
+
+__device__ cuFloatComplex load_u8_as_complex_callback(
+    void *data, unsigned long long offset, void *callerInfo, void *sharedPtr) {
+  const auto *info = (const FFTLoadCallbackInfo *)callerInfo;
+  const auto dummy_offset =
+      (unsigned long long)((const unsigned char *)data -
+                           (const unsigned char *)info->dummy_input);
+  const auto exec = dummy_offset / info->dummy_exec_stride_bytes;
+  return make_cuComplex((float)info->input[exec * info->input_exec_stride + offset], 0.0f);
+}
+)";
+
+  return compile_source_to_lto(src, "load_u8_as_complex_callback.cu");
+}
+
 std::vector<char> store_scaled_complex_lto() {
   std::string src = R"(
 #include <cuComplex.h>
@@ -198,11 +230,12 @@ public:
   FFT(FFTSettings settings, holoflow::core::TDesc idesc, curaii::CufftHandle &&plan, size_t n_fft,
       size_t exec_count, size_t exec_stride, holoflow::core::DType input_dtype, cudaStream_t stream,
       std::vector<char> load_lto, std::vector<char> store_lto,
-      DevPtr<FFTStoreCallbackInfo> d_store_info)
+      DevPtr<FFTLoadCallbackInfo> d_load_info, DevPtr<FFTStoreCallbackInfo> d_store_info)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), plan_(std::move(plan)),
         n_fft_(n_fft), exec_count_(exec_count), exec_stride_(exec_stride),
         input_dtype_(input_dtype), stream_(stream), load_lto_(std::move(load_lto)),
-        store_lto_(std::move(store_lto)), d_store_info_(std::move(d_store_info)) {}
+        store_lto_(std::move(store_lto)), d_load_info_(std::move(d_load_info)),
+        d_store_info_(std::move(d_store_info)) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
@@ -210,7 +243,9 @@ public:
   const holoflow::core::TDesc &idesc() const { return idesc_; }
   void                         update_stream(cudaStream_t stream) {
     if (stream_ != stream) {
-      stream_ = stream;
+      stream_          = stream;
+      callback_input_  = nullptr;
+      callback_output_ = nullptr;
       CUFFT_CHECK(cufftSetStream(plan_.get(), stream_));
     }
   }
@@ -226,7 +261,10 @@ private:
   cudaStream_t                 stream_;
   std::vector<char>            load_lto_;
   std::vector<char>            store_lto_;
+  DevPtr<FFTLoadCallbackInfo>  d_load_info_;
   DevPtr<FFTStoreCallbackInfo> d_store_info_;
+  const void                  *callback_input_{nullptr};
+  const void                  *callback_output_{nullptr};
 };
 
 } // namespace
@@ -237,12 +275,36 @@ holoflow::core::OpResult FFT::execute(holoflow::core::SyncCtx &ctx) {
 
   auto *in_f  = reinterpret_cast<float *>(idata);
   auto *in_c  = reinterpret_cast<cuFloatComplex *>(idata);
+  auto *in_u8 = reinterpret_cast<std::uint8_t *>(idata);
   auto *out_c = reinterpret_cast<cuFloatComplex *>(odata);
+
+  // cuFFT validates the input allocation against the plan's CF32 type before invoking the load
+  // callback. Use the CF32 output as the validated dummy input and provide the actual U8 source
+  // through callerInfo. Graph buffers are stable, so the metadata copy normally occurs only once.
+  if (input_dtype_ == holoflow::core::DType::U8 &&
+      (idata != callback_input_ || odata != callback_output_)) {
+    const FFTLoadCallbackInfo info{
+        .input                   = in_u8,
+        .dummy_input             = out_c,
+        .input_exec_stride       = exec_stride_,
+        .dummy_exec_stride_bytes = exec_stride_ * sizeof(cuFloatComplex),
+    };
+    CUDA_CHECK(
+        cudaMemcpyAsync(d_load_info_.get(), &info, sizeof(info), cudaMemcpyHostToDevice, stream_));
+    callback_input_  = idata;
+    callback_output_ = odata;
+  }
 
   for (size_t i = 0; i < exec_count_; ++i) {
     const auto offset = i * exec_stride_;
-    auto *in_ptr  = input_dtype_ == holoflow::core::DType::F32 ? static_cast<void *>(in_f + offset)
-                                                               : static_cast<void *>(in_c + offset);
+    void      *in_ptr = nullptr;
+    if (input_dtype_ == holoflow::core::DType::U8) {
+      in_ptr = out_c + offset;
+    } else if (input_dtype_ == holoflow::core::DType::F32) {
+      in_ptr = in_f + offset;
+    } else {
+      in_ptr = in_c + offset;
+    }
     auto *out_ptr = out_c + offset;
     CUFFT_CHECK(cufftXtExec(plan_.get(), in_ptr, out_ptr, CUFFT_FORWARD));
   }
@@ -260,8 +322,9 @@ holoflow::core::InferResult FFTFactory::infer(std::span<const holoflow::core::TD
 
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "only Device tensors are supported");
   check(is_c_contiguous(idesc), "input must be C-contiguous");
-  check(idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::CF32,
-        "input dtype must be F32 or CF32");
+  check(idesc.dtype == holoflow::core::DType::U8 || idesc.dtype == holoflow::core::DType::F32 ||
+            idesc.dtype == holoflow::core::DType::CF32,
+        "input dtype must be U8, F32, or CF32");
 
   const int ndim = static_cast<int>(idesc.shape.size());
   check(ndim > 0, "input ndim must be > 0");
@@ -354,11 +417,18 @@ FFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   curaii::CufftHandle plan;
   CUFFT_CHECK(cufftSetStream(plan.get(), ctx.stream));
 
-  std::vector<char> load_lto;
+  std::vector<char>           load_lto;
+  DevPtr<FFTLoadCallbackInfo> d_load_info;
   if (idesc.dtype == holoflow::core::DType::F32) {
     load_lto = load_real_as_complex_lto();
     CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "load_real_as_complex_callback", load_lto.data(),
                                       load_lto.size(), CUFFT_CB_LD_COMPLEX, nullptr));
+  } else if (idesc.dtype == holoflow::core::DType::U8) {
+    load_lto              = load_u8_as_complex_lto();
+    d_load_info           = curaii::make_unique_device_ptr<FFTLoadCallbackInfo>(1, ctx.stream);
+    auto *d_load_info_ptr = reinterpret_cast<void *>(d_load_info.get());
+    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "load_u8_as_complex_callback", load_lto.data(),
+                                      load_lto.size(), CUFFT_CB_LD_COMPLEX, &d_load_info_ptr));
   }
 
   std::vector<char>            store_lto;
@@ -380,9 +450,9 @@ FFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   CUFFT_CHECK(cufftXtMakePlanMany(plan.get(), rank, n, inembed, istride, idist, inputtype, onembed,
                                   ostride, odist, outputtype, batch_i, &work_size, executiontype));
 
-  return std::unique_ptr<holoflow::core::ISyncTask>(
-      new FFT(settings, idesc, std::move(plan), n_fft, exec_count, exec_stride, idesc.dtype,
-              ctx.stream, std::move(load_lto), std::move(store_lto), std::move(d_store_info)));
+  return std::unique_ptr<holoflow::core::ISyncTask>(new FFT(
+      settings, idesc, std::move(plan), n_fft, exec_count, exec_stride, idesc.dtype, ctx.stream,
+      std::move(load_lto), std::move(store_lto), std::move(d_load_info), std::move(d_store_info)));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>

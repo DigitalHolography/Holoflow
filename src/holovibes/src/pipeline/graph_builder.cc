@@ -215,16 +215,14 @@ bool GraphBuilder::build_raw_view(const TDesc &H) {
 }
 
 GraphBuilder::TDesc GraphBuilder::build_preprocessing(TDesc H) {
-  using Target = holotask::syncs::ConversionSettings::Target;
-  using Strat  = holotask::syncs::ConversionSettings::Strategy;
-  auto Device  = holotask::syncs::MemcpySettings::Target::Device;
+  auto       Device      = holotask::syncs::MemcpySettings::Target::Device;
+  const bool load_in_gpu = s_.load_method == LoadMethod::LOAD_IN_GPU;
+
+  if (!load_in_gpu) {
+    H = memcpy(H, {Device});
+  }
 
   if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
-    const bool load_in_gpu = s_.load_method == LoadMethod::LOAD_IN_GPU;
-    if (!load_in_gpu) {
-      H = memcpy(H, {Device});
-    }
-
     const auto height = static_cast<int64_t>(H.shape.at(1));
     const auto width  = static_cast<int64_t>(H.shape.at(2));
     H = reshape(H, {{-1, static_cast<int64_t>(s_.time_window), height, width}, false});
@@ -242,17 +240,16 @@ GraphBuilder::TDesc GraphBuilder::build_preprocessing(TDesc H) {
     return H;
   }
 
-  if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
-    H = memcpy(H, {Device});
+  if (!load_in_gpu) {
     H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window});
   }
 
-  return convert(H, {Target::F32, Strat::Real});
+  return H;
 }
 
 GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
   // PCA preprocessing already emits [N_pre, T, Hy, Hx] directly from the U8 device queue.
-  // FFT paths still enter as [T, Hy, Hx] and use the existing F32 pre-transform queue.
+  // FFT paths enter as [T, Hy, Hx] and convert U8 samples in their cuFFT load callbacks.
   const bool pca_input = s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS;
   int64_t    T         = 0;
   if (pca_input) {
