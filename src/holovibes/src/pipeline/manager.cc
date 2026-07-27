@@ -14,6 +14,7 @@
 
 #include "pipeline/manager.hh"
 
+#include <QCoreApplication>
 #include <QMetaObject>
 #include <QStandardPaths>
 #include <QThread>
@@ -564,14 +565,21 @@ void Manager::build_and_run() {
 
   build_graph_spec();
 
-  // Create an OS-appropriate, writable directory for logs (e.g., AppData/Local/Holovibes/logs)
-  const std::filesystem::path log_root = "logs";
+  std::filesystem::path log_root;
+  const auto app_data_dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+  if (!app_data_dir.isEmpty()) {
+    log_root = std::filesystem::path(app_data_dir.toStdString()) /
+               QCoreApplication::applicationVersion().toStdString() / "logs";
 
-  std::error_code log_ec;
-  std::filesystem::create_directories(log_root, log_ec);
-  if (log_ec) {
-    logger()->warn("[Manager::build_and_run] Failed to create log directory at: {}",
-                   log_root.string());
+    std::error_code log_ec;
+    std::filesystem::create_directories(log_root, log_ec);
+    if (log_ec) {
+      logger()->warn("[Manager::build_and_run] Failed to create log directory '{}': {}",
+                     log_root.string(), log_ec.message());
+      log_root.clear();
+    }
+  } else {
+    logger()->warn("[Manager::build_and_run] No writable application data directory is available");
   }
 
   // TODO: What should be done about this verbose logging?
