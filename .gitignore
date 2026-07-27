@@ -1,4 +1,5 @@
 build/
+doc/mkdocs/site/
 .venv/
 .fc/
 *.dot
