@@ -25,6 +25,8 @@
 #include <QPushButton>
 #include <QSlider>
 #include <QSpinBox>
+#include <QToolButton>
+#include <QUrl>
 #include <QWidget>
 #include <optional>
 
@@ -43,6 +45,7 @@ namespace holovibes::ui {
 class ZernikeHistoryWidget;
 class SelectedWidgetSettingsPanel;
 class VisualizationWorkspace;
+class UpdateChecker;
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
@@ -102,6 +105,7 @@ private:
   void connect_import_controls();
   void connect_export_controls();
   void configure_window();
+  void check_for_updates();
   void show_fft_frequency_tool();
 
   void    refresh_visualization_availability();
@@ -169,6 +173,9 @@ private:
   QLabel                 *recording_status_label_     = nullptr;
   VisualizationWorkspace *display_workspace_          = nullptr;
   QWidget                *right_sidebar_              = nullptr;
+  QToolButton            *update_indicator_           = nullptr;
+  UpdateChecker          *update_checker_             = nullptr;
+  QUrl                    available_update_url_;
 };
 
 } // namespace holovibes::ui

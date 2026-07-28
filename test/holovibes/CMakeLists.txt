@@ -17,8 +17,10 @@ set(TARGET holovibes_test)
 set(SOURCES
     signal_history_test.cc
     settings_test.cc
+    update_checker_test.cc
     ../../src/holovibes/src/pipeline/validation.cc
     ../../src/holovibes/src/settings_loader.cc
+    ../../src/holovibes/src/ui/update_checker.cc
     ../../src/holovibes/src/ui/widgets/signal_history.cc
 )
 
@@ -34,6 +36,8 @@ target_link_libraries(${TARGET}
     project_options
     nlohmann_json::nlohmann_json
     GTest::gtest_main
+    Qt6::Core
+    Qt6::Network
 )
 
 include(GoogleTest)

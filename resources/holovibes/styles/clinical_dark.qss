@@ -74,6 +74,25 @@ QFrame#sessionBar QLabel#sessionValue {
   font-weight: 600;
 }
 
+QFrame#sessionBar QToolButton#updateIndicator {
+  background-color: @ACCENT_DARK@;
+  color: @ACCENT_HOVER@;
+  border: 1px solid @ACCENT@;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+QFrame#sessionBar QToolButton#updateIndicator:hover {
+  background-color: @SURFACE_ALT@;
+  border-color: @ACCENT_HOVER@;
+}
+
+QFrame#sessionBar QToolButton#updateIndicator:pressed {
+  background-color: @PANEL@;
+}
+
 QLineEdit#patientField {
   background-color: @FIELD@;
   font-weight: 600;

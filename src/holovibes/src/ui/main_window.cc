@@ -19,6 +19,7 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDesktopServices>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -49,6 +50,8 @@
 #include <QStringList>
 #include <QStyle>
 #include <QThread>
+#include <QTimer>
+#include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <array>
@@ -63,6 +66,7 @@
 #include "holofile/holofile.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
+#include "ui/update_checker.hh"
 #include "ui/visualization_workspace.hh"
 #include "ui/widgets/selected_widget_settings_panel.hh"
 #include "ui/widgets/tensor_display_widget.hh"
@@ -399,6 +403,7 @@ MainWindow::MainWindow(QWidget *parent)
   validate_inputs();
   refresh_command_bar();
   configure_window();
+  check_for_updates();
 }
 
 void MainWindow::setup_main_layout() {
@@ -452,6 +457,17 @@ void MainWindow::setup_main_layout() {
   session_layout->addWidget(next_acquisition_label);
   session_layout->addWidget(acquisition_value_label_);
   session_layout->addStretch(1);
+
+  update_indicator_ = new QToolButton(session_bar);
+  update_indicator_->setObjectName("updateIndicator");
+  update_indicator_->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+  update_indicator_->setIcon(
+      QIcon(QStringLiteral(":/resources/holovibes/assets/download_update.svg")));
+  update_indicator_->setIconSize(QSize(14, 14));
+  update_indicator_->setCursor(Qt::PointingHandCursor);
+  update_indicator_->setVisible(false);
+  update_indicator_->setToolTip(tr("Open the Holoflow release page"));
+  session_layout->addWidget(update_indicator_);
   main_layout->addWidget(session_bar, 0);
 
   render_widget_ = new ImageRenderingWidget(this);
@@ -505,6 +521,11 @@ void MainWindow::setup_main_layout() {
           &MainWindow::on_export_record_clicked);
   connect(stop_record_command_button_, &QPushButton::clicked, this,
           &MainWindow::on_export_stop_clicked);
+  connect(update_indicator_, &QToolButton::clicked, this, [this]() {
+    if (available_update_url_.isValid()) {
+      QDesktopServices::openUrl(available_update_url_);
+    }
+  });
 
   auto *content_row    = new QWidget(central_widget);
   auto *content_layout = new QHBoxLayout(content_row);
@@ -1312,6 +1333,17 @@ void MainWindow::configure_window() {
   }
 }
 
+void MainWindow::check_for_updates() {
+  update_checker_ = new UpdateChecker(QCoreApplication::applicationVersion(), this);
+  connect(update_checker_, &UpdateChecker::update_available, this,
+          [this](const QString &version, const QUrl &page_url) {
+            available_update_url_ = page_url;
+            update_indicator_->setText(tr("Update available  v%1").arg(version));
+            update_indicator_->setVisible(true);
+          });
+  QTimer::singleShot(0, update_checker_, &UpdateChecker::start);
+}
+
 void MainWindow::show_fft_frequency_tool() {
   const double sampling_frequency_hz =
       last_input_fps_ > 0.0 ? last_input_fps_ : kDefaultSamplingFrequency;
@@ -2084,7 +2116,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       s.import_source      = source_from_str.at(source.toStdString());
       s.camera_config_path = get_selected_camera_config_path();
       s.load_batch         = 1;
-      s.load_fps_limit = std::nullopt;
+      s.load_fps_limit     = std::nullopt;
 
       std::ifstream cfg_file(s.camera_config_path);
       if (cfg_file.is_open()) {
@@ -2173,7 +2205,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     QString     appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
     QString     convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels/";
     std::string kernel_path             = convolutionsKernelsPath.toStdString() +
-                              render_widget_->get_convolution().toStdString() + ".json";
+                                          render_widget_->get_convolution().toStdString() + ".json";
 
     s.pp_fps       = 60;
     s.pp_fft_shift = s.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;

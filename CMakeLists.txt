@@ -82,7 +82,7 @@ project_options(
 )
 
 find_package(EGrabber)
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui OpenGL OpenGLWidgets Graphs)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Network OpenGL OpenGLWidgets Graphs)
 qt_standard_project_setup()
 
 add_subdirectory(external)
