@@ -6,6 +6,16 @@ The `v0.1.0-dev.6` through `v0.1.0-dev.8` releases were produced from the former
 `refactor` branch. The current `main` release line diverged after
 `v0.1.0-dev.5`; `v0.2.0-dev.1` establishes the new common release baseline.
 
+## v0.2.0-dev.3 (2026-07-28)
+
+### Feat
+
+- show available application updates
+
+### Perf
+
+- render Zernike curves off the UI thread
+
 ## v0.2.0-dev.2 (2026-07-27)
 
 ### Fix
