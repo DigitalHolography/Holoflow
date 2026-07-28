@@ -1,0 +1,2213 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+      
+        <link rel="prev" href="../concepts/tensors.html">
+      
+      
+        <link rel="next" href="scheduler.html">
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.21">
+    
+    
+      
+        <title>Compiler - Holoflow</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.2a3383ac.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#compiler" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../index.html" title="Holoflow" class="md-header__button md-logo" aria-label="Holoflow" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Holoflow
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Compiler
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../about.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  About
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../holovibes/index.html" class="md-tabs__link">
+          
+  
+  
+  Holovibes
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../index.html" class="md-tabs__link">
+          
+  
+  
+  Holoflow
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../curaii/index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Curaii
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../holofile/index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Holofile
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+  
+
+<nav class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../index.html" title="Holoflow" class="md-nav__button md-logo" aria-label="Holoflow" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Holoflow
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../about.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    About
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Holovibes
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Holovibes
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Overview
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Tasks
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            Tasks
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2_1" id="__nav_3_2_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Sources
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            Sources
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/sources/ametek_s710_euresys_coaxlink_octo.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Ametek s710 Euresys Coaxlink Octo
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/sources/ametek_s711_euresys_coaxlink_qsfp%2B.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Ametek s711 Euresys Coaxlink QSFP+
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/sources/holofile.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Holofile
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2_2" id="__nav_3_2_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Sinks
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            Sinks
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/sinks/display_tensor.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Display Tensor
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/sinks/holofile.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Holofile
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2_3" id="__nav_3_2_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Synchronous
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            Synchronous
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/angular_spectrum.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Angular Spectrum
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/average.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Average
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/conversion.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Conversion
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/convolution.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Convolution
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/fft_shift.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    FFT Shift
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/filter2d.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Filter 2D
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/fresnel_diffraction.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Fresnel Diffraction
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/memcpy.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Memcpy
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/pca.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    PCA
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/pct_clip.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Percentile Clip
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/registration.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Registration
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/reshape.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Reshape
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/rotation.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Rotation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/stft.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    STFT
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_3_2_4" id="__nav_3_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Asynchronous
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            Asynchronous
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/asyncs/batch_queue.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Batch Queue
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/asyncs/sliding_average.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Sliding Average
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    Holoflow
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Holoflow
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Overview
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Architecture
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Concepts
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_3">
+            <span class="md-nav__icon md-icon"></span>
+            Concepts
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/graph.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Graph And Data Model
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/tasks.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Task Model
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/tensors.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Tensors And Storage
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Runtime
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            Runtime
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Compiler
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="compiler.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Compiler
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#compilerconfig" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compiler::Config
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#what-the-compiler-guarantees" class="md-nav__link">
+    <span class="md-ellipsis">
+      What the compiler guarantees
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pass-pipeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pass pipeline
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Pass pipeline">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#1-validate-spec" class="md-nav__link">
+    <span class="md-ellipsis">
+      1. Validate spec
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#2-build-graph-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      2. Build graph plan
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#3-type-inference" class="md-nav__link">
+    <span class="md-ellipsis">
+      3. Type inference
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#4-assign-tensor-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      4. Assign tensor IDs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#5-assign-storage-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      5. Assign storage IDs
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#6-verify-buffer-consistency" class="md-nav__link">
+    <span class="md-ellipsis">
+      6. Verify buffer consistency
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#7-allocate-buffers" class="md-nav__link">
+    <span class="md-ellipsis">
+      7. Allocate buffers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#8-create-storage-adapters" class="md-nav__link">
+    <span class="md-ellipsis">
+      8. Create storage adapters
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#9-partition-sections" class="md-nav__link">
+    <span class="md-ellipsis">
+      9. Partition sections
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#10-assign-streams" class="md-nav__link">
+    <span class="md-ellipsis">
+      10. Assign streams
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#11-instantiate-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      11. Instantiate tasks
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#12-bind-tasks" class="md-nav__link">
+    <span class="md-ellipsis">
+      12. Bind tasks
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#compiler-output-structures" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compiler output structures
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Compiler output structures">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nodeplan" class="md-nav__link">
+    <span class="md-ellipsis">
+      NodePlan
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#edgeplan" class="md-nav__link">
+    <span class="md-ellipsis">
+      EdgePlan
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#execresouces" class="md-nav__link">
+    <span class="md-ellipsis">
+      ExecResouces
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pseudo-algorithm-compiler-main-loop" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pseudo algorithm: compiler main loop
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#pseudo-algorithm-section-partitioning" class="md-nav__link">
+    <span class="md-ellipsis">
+      Pseudo algorithm: section partitioning
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#update-semantics" class="md-nav__link">
+    <span class="md-ellipsis">
+      Update semantics
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#failure-modes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Failure modes
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="scheduler.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Scheduler
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Guides
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5">
+            <span class="md-nav__icon md-icon"></span>
+            Guides
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/authoring.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Authoring Tasks
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../guides/inspection.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Inspection And Debugging
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../curaii/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Curaii
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holofile/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Holofile
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="compiler">Compiler</h1>
+<p>The compiler translates a user-authored <code>GraphSpec</code> into an executable runtime package:</p>
+<ul>
+<li><code>GraphPlan</code></li>
+<li><code>std::vector&lt;Section&gt;</code></li>
+<li><code>ExecResouces</code></li>
+</ul>
+<p>Its public entry point is:</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1">1</a></span>
+<span class="normal"><a href="#__codelineno-0-2">2</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1"></a><span class="n">holoflow</span><span class="o">::</span><span class="n">runtime</span><span class="o">::</span><span class="n">Compiler</span><span class="w"> </span><span class="nf">compiler</span><span class="p">(</span><span class="n">registry</span><span class="p">,</span><span class="w"> </span><span class="n">config</span><span class="p">);</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2"></a><span class="k">auto</span><span class="w"> </span><span class="n">compiled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">compiler</span><span class="p">.</span><span class="n">compile</span><span class="p">(</span><span class="n">graph_spec</span><span class="p">);</span>
+</code></pre></div></td></tr></table></div>
+<p>The same API also supports incremental updates:</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-1-1">1</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1"></a><span class="k">auto</span><span class="w"> </span><span class="n">next</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">compiler</span><span class="p">.</span><span class="n">compile</span><span class="p">(</span><span class="n">updated_graph_spec</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">move</span><span class="p">(</span><span class="n">previous_output</span><span class="p">));</span>
+</code></pre></div></td></tr></table></div>
+<h2 id="compilerconfig"><code>Compiler::Config</code></h2>
+<p>The current public configuration fields are:</p>
+<ul>
+<li><code>log_dir</code></li>
+<li><code>dump_dot_on_failure</code></li>
+<li><code>verbose_tracing</code></li>
+<li><code>enable_profiling</code></li>
+<li><code>trace_filename</code></li>
+</ul>
+<p>When <code>log_dir</code> is set, the compiler can emit:</p>
+<ul>
+<li><code>compiler.log</code></li>
+<li>graphviz dumps for success/failure</li>
+<li>Chrome trace JSON when profiling is enabled</li>
+</ul>
+<h2 id="what-the-compiler-guarantees">What the compiler guarantees</h2>
+<p>After successful compilation, the scheduler receives:</p>
+<ul>
+<li>a DAG with compiled node metadata</li>
+<li>validated input/output tensor descriptors for every node</li>
+<li>a tensor-to-storage mapping that respects in-place aliasing</li>
+<li>allocated or user-managed storage records</li>
+<li>instantiated tasks with bound loggers and storage adapters</li>
+<li>execution sections and CUDA streams</li>
+</ul>
+<h2 id="pass-pipeline">Pass pipeline</h2>
+<p>The implementation is organized as a sequence of passes.</p>
+<h3 id="1-validate-spec">1. Validate spec</h3>
+<p>Checks performed up front:</p>
+<ul>
+<li>node names must be unique</li>
+<li>every node <code>kind</code> must exist in the registry</li>
+<li>a destination input slot may have only one incoming edge</li>
+</ul>
+<p>The current compiler also rejects cycles later during topological sorting.</p>
+<h3 id="2-build-graph-plan">2. Build graph plan</h3>
+<p>The <code>GraphSpec</code> structure is copied into a <code>GraphPlan</code> skeleton:</p>
+<ul>
+<li><code>NodeSpec</code> becomes <code>NodePlan::spec</code></li>
+<li><code>EdgeSpec</code> becomes <code>EdgePlan::spec</code></li>
+</ul>
+<p>At this stage there are still no inferred descriptors or tensor IDs.</p>
+<h3 id="3-type-inference">3. Type inference</h3>
+<p>The compiler topologically sorts the graph and visits nodes in dependency order. For each node it:</p>
+<ol>
+<li>collects input descriptors from incoming edges</li>
+<li>calls <code>registry.get(kind).infer(input_descs, settings)</code></li>
+<li>stores the returned <code>InferResult</code> on the node</li>
+<li>writes output descriptors back to outgoing edges</li>
+</ol>
+<p>This is where most semantic validation happens. If a task factory rejects the settings or the upstream descriptors, compilation fails here.</p>
+<h3 id="4-assign-tensor-ids">4. Assign tensor IDs</h3>
+<p>Each node output receives a fresh tensor ID.</p>
+<ul>
+<li><code>NodePlan::out_tids</code> stores those new IDs</li>
+<li>incoming edges propagate their producer tensor IDs into <code>NodePlan::in_tids</code></li>
+<li><code>ExecResouces::tensor_descs</code> records the descriptor for each tensor ID</li>
+</ul>
+<h3 id="5-assign-storage-ids">5. Assign storage IDs</h3>
+<p>The compiler decides which logical tensors share physical memory.</p>
+<ul>
+<li>default case: each output gets a new storage ID</li>
+<li>in-place case: an output reuses the storage ID of the designated input</li>
+</ul>
+<p>This uses <code>InferResult::in_place</code>.</p>
+<h3 id="6-verify-buffer-consistency">6. Verify buffer consistency</h3>
+<p>The compiler checks that a tensor is not multiply owned. If several owned input/output declarations point at the same tensor ID, compilation fails.</p>
+<p>This protects the runtime from ambiguous lifetime responsibility.</p>
+<h3 id="7-allocate-buffers">7. Allocate buffers</h3>
+<p>For each storage ID, the compiler either:</p>
+<ul>
+<li>allocates a fresh host/device block</li>
+<li>reuses a matching block scavenged from the previous compilation</li>
+<li>skips allocation entirely when the storage is user-managed through task ownership</li>
+</ul>
+<p>Reused blocks are matched by:</p>
+<ul>
+<li><code>MemLoc</code></li>
+<li>exact byte size</li>
+</ul>
+<h3 id="8-create-storage-adapters">8. Create storage adapters</h3>
+<p>Each node gets an internal <code>IOStorageAccess</code> adapter bound to its input and output tensor IDs. Tasks use this only when they implement owned I/O behavior.</p>
+<h3 id="9-partition-sections">9. Partition sections</h3>
+<p>The compiler groups nodes into execution sections:</p>
+<ul>
+<li>sync-to-sync connectivity merges nodes into the same section</li>
+<li>async nodes act as boundaries</li>
+<li>async producer and consumer roles are attached to neighboring sections</li>
+</ul>
+<h3 id="10-assign-streams">10. Assign streams</h3>
+<p>Each section gets a CUDA stream:</p>
+<ul>
+<li>from the previous compilation when possible</li>
+<li>otherwise from a fresh <code>curaii::CudaStream</code></li>
+</ul>
+<h3 id="11-instantiate-tasks">11. Instantiate tasks</h3>
+<p>For each node:</p>
+<ul>
+<li>sync nodes receive a <code>SyncCreateCtx { stream }</code></li>
+<li>async nodes receive an <code>AsyncCreateCtx { producer_stream, consumer_stream }</code></li>
+</ul>
+<p>The compiler prefers <code>update(...)</code> over <code>create(...)</code> only when:</p>
+<ul>
+<li>a previous node with the same <code>name</code> exists</li>
+<li>the previous node has the same <code>kind</code></li>
+<li>the previous task instance can be cast to the expected interface</li>
+</ul>
+<p>Otherwise it falls back to <code>create(...)</code>.</p>
+<h3 id="12-bind-tasks">12. Bind tasks</h3>
+<p>Each instantiated task is then bound to:</p>
+<ul>
+<li>its storage adapter</li>
+<li>a per-node logger</li>
+</ul>
+<h2 id="compiler-output-structures">Compiler output structures</h2>
+<h3 id="nodeplan"><code>NodePlan</code></h3>
+<p>Each compiled node stores:</p>
+<ul>
+<li><code>spec</code></li>
+<li><code>infer</code></li>
+<li><code>in_tids</code></li>
+<li><code>out_tids</code></li>
+</ul>
+<h3 id="edgeplan"><code>EdgePlan</code></h3>
+<p>Each compiled edge stores:</p>
+<ul>
+<li><code>spec</code></li>
+<li><code>desc</code></li>
+<li><code>tid</code></li>
+</ul>
+<h3 id="execresouces"><code>ExecResouces</code></h3>
+<p>The current runtime resource bundle includes:</p>
+<ul>
+<li><code>memory_blocks</code></li>
+<li><code>storages</code></li>
+<li><code>tensor_descs</code></li>
+<li><code>tid_to_sid</code></li>
+<li><code>node_storage_adapters</code></li>
+<li><code>streams</code></li>
+<li><code>tasks</code></li>
+</ul>
+<p><code>ExecResouces</code> is intentionally low-level. It is the physical backing store of the runtime.</p>
+<h2 id="pseudo-algorithm-compiler-main-loop">Pseudo algorithm: compiler main loop</h2>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-2-1"> 1</a></span>
+<span class="normal"><a href="#__codelineno-2-2"> 2</a></span>
+<span class="normal"><a href="#__codelineno-2-3"> 3</a></span>
+<span class="normal"><a href="#__codelineno-2-4"> 4</a></span>
+<span class="normal"><a href="#__codelineno-2-5"> 5</a></span>
+<span class="normal"><a href="#__codelineno-2-6"> 6</a></span>
+<span class="normal"><a href="#__codelineno-2-7"> 7</a></span>
+<span class="normal"><a href="#__codelineno-2-8"> 8</a></span>
+<span class="normal"><a href="#__codelineno-2-9"> 9</a></span>
+<span class="normal"><a href="#__codelineno-2-10">10</a></span>
+<span class="normal"><a href="#__codelineno-2-11">11</a></span>
+<span class="normal"><a href="#__codelineno-2-12">12</a></span>
+<span class="normal"><a href="#__codelineno-2-13">13</a></span>
+<span class="normal"><a href="#__codelineno-2-14">14</a></span>
+<span class="normal"><a href="#__codelineno-2-15">15</a></span>
+<span class="normal"><a href="#__codelineno-2-16">16</a></span>
+<span class="normal"><a href="#__codelineno-2-17">17</a></span>
+<span class="normal"><a href="#__codelineno-2-18">18</a></span>
+<span class="normal"><a href="#__codelineno-2-19">19</a></span>
+<span class="normal"><a href="#__codelineno-2-20">20</a></span>
+<span class="normal"><a href="#__codelineno-2-21">21</a></span>
+<span class="normal"><a href="#__codelineno-2-22">22</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1"></a>compile(graph_spec, prev_output):
+<a id="__codelineno-2-2" name="__codelineno-2-2"></a>  validate_spec(graph_spec, registry)
+<a id="__codelineno-2-3" name="__codelineno-2-3"></a>  graph_plan = copy_structure(graph_spec)
+<a id="__codelineno-2-4" name="__codelineno-2-4"></a>
+<a id="__codelineno-2-5" name="__codelineno-2-5"></a>  topo = topological_sort(graph_plan)
+<a id="__codelineno-2-6" name="__codelineno-2-6"></a>  for node in topo:
+<a id="__codelineno-2-7" name="__codelineno-2-7"></a>    inputs = descriptors_from_in_edges(node)
+<a id="__codelineno-2-8" name="__codelineno-2-8"></a>    infer  = registry[node.kind].infer(inputs, node.settings)
+<a id="__codelineno-2-9" name="__codelineno-2-9"></a>    store infer on node
+<a id="__codelineno-2-10" name="__codelineno-2-10"></a>    propagate output descriptors to out edges
+<a id="__codelineno-2-11" name="__codelineno-2-11"></a>
+<a id="__codelineno-2-12" name="__codelineno-2-12"></a>  assign_tensor_ids(graph_plan)
+<a id="__codelineno-2-13" name="__codelineno-2-13"></a>  assign_storage_ids(graph_plan, in_place_rules)
+<a id="__codelineno-2-14" name="__codelineno-2-14"></a>  verify_buffer_consistency(graph_plan)
+<a id="__codelineno-2-15" name="__codelineno-2-15"></a>
+<a id="__codelineno-2-16" name="__codelineno-2-16"></a>  resources = allocate_or_reuse_storage(prev_output, graph_plan)
+<a id="__codelineno-2-17" name="__codelineno-2-17"></a>  sections  = partition_sections(graph_plan)
+<a id="__codelineno-2-18" name="__codelineno-2-18"></a>  assign_streams(sections, prev_output)
+<a id="__codelineno-2-19" name="__codelineno-2-19"></a>  instantiate_tasks(graph_plan, sections, resources, prev_output)
+<a id="__codelineno-2-20" name="__codelineno-2-20"></a>  bind_tasks(graph_plan, resources)
+<a id="__codelineno-2-21" name="__codelineno-2-21"></a>
+<a id="__codelineno-2-22" name="__codelineno-2-22"></a>  return CompilerOutput{graph_plan, sections, resources}
+</code></pre></div></td></tr></table></div>
+<h2 id="pseudo-algorithm-section-partitioning">Pseudo algorithm: section partitioning</h2>
+<p>The current sectioning logic is well approximated by:</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-3-1"> 1</a></span>
+<span class="normal"><a href="#__codelineno-3-2"> 2</a></span>
+<span class="normal"><a href="#__codelineno-3-3"> 3</a></span>
+<span class="normal"><a href="#__codelineno-3-4"> 4</a></span>
+<span class="normal"><a href="#__codelineno-3-5"> 5</a></span>
+<span class="normal"><a href="#__codelineno-3-6"> 6</a></span>
+<span class="normal"><a href="#__codelineno-3-7"> 7</a></span>
+<span class="normal"><a href="#__codelineno-3-8"> 8</a></span>
+<span class="normal"><a href="#__codelineno-3-9"> 9</a></span>
+<span class="normal"><a href="#__codelineno-3-10">10</a></span>
+<span class="normal"><a href="#__codelineno-3-11">11</a></span>
+<span class="normal"><a href="#__codelineno-3-12">12</a></span>
+<span class="normal"><a href="#__codelineno-3-13">13</a></span>
+<span class="normal"><a href="#__codelineno-3-14">14</a></span>
+<span class="normal"><a href="#__codelineno-3-15">15</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1"></a>parent[v] = v
+<a id="__codelineno-3-2" name="__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3"></a>for each edge u -&gt; v:
+<a id="__codelineno-3-4" name="__codelineno-3-4"></a>  if u is sync and v is sync:
+<a id="__codelineno-3-5" name="__codelineno-3-5"></a>    union(u, v)
+<a id="__codelineno-3-6" name="__codelineno-3-6"></a>
+<a id="__codelineno-3-7" name="__codelineno-3-7"></a>for each async node a:
+<a id="__codelineno-3-8" name="__codelineno-3-8"></a>  union all sync predecessors of a together
+<a id="__codelineno-3-9" name="__codelineno-3-9"></a>  union all sync successors of a together
+<a id="__codelineno-3-10" name="__codelineno-3-10"></a>
+<a id="__codelineno-3-11" name="__codelineno-3-11"></a>create one section per union-find root that contains sync nodes
+<a id="__codelineno-3-12" name="__codelineno-3-12"></a>
+<a id="__codelineno-3-13" name="__codelineno-3-13"></a>for each async node a:
+<a id="__codelineno-3-14" name="__codelineno-3-14"></a>  attach a as async_prod to each predecessor sync section
+<a id="__codelineno-3-15" name="__codelineno-3-15"></a>  attach a as async_cons to each successor sync section
+</code></pre></div></td></tr></table></div>
+<p>This gives the scheduler explicit handoff points across async boundaries.</p>
+<h2 id="update-semantics">Update semantics</h2>
+<p>Compilation with a previous output is not a diff engine over arbitrary graph changes. The effective reuse rules are pragmatic:</p>
+<ul>
+<li>same node name + same node kind: try <code>update(...)</code></li>
+<li>name missing in previous graph: create fresh task</li>
+<li>same name but different kind: create fresh task</li>
+<li>reused memory blocks must match exact memory location and byte size</li>
+<li>streams are reused in section order as long as old streams are still available</li>
+</ul>
+<p>That design keeps update logic simple and predictable.</p>
+<h2 id="failure-modes">Failure modes</h2>
+<p>Compilation can fail because of:</p>
+<ul>
+<li>unknown task kind</li>
+<li>duplicate node names</li>
+<li>multiple edges targeting the same input slot</li>
+<li>cycles in the graph</li>
+<li>task-specific inference rejection</li>
+<li>invalid in-place aliasing</li>
+<li>conflicting ownership declarations</li>
+<li>allocation failure or CUDA failure</li>
+</ul>
+<p>When <code>dump_dot_on_failure</code> is enabled and <code>log_dir</code> is configured, the compiler emits a DOT dump that is often the fastest way to inspect the failing plan.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.top", "content.code.annotate", "content.code.copy", "toc.integrate"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
