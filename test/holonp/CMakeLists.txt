@@ -69,7 +69,11 @@ target_link_libraries(${TARGET}
 target_compile_definitions(${TARGET}
     PRIVATE
     "HOLONP_TEST_ORACLE_SCRIPT=\"${CMAKE_CURRENT_SOURCE_DIR}/python/oracle.py\""
+    "HOLOFLOW_TEST_PYTHON_EXECUTABLE=\"${HOLOFLOW_TEST_PYTHON_EXECUTABLE}\""
 )
 
-include(GoogleTest)
-gtest_discover_tests(${TARGET})
+holoflow_discover_tests(${TARGET}
+    LABELS gpu
+    TIMEOUT 120
+    RESOURCE_LOCK holoflow_gpu
+)

@@ -40,5 +40,17 @@ target_link_libraries(${TARGET}
     GTest::gtest_main
 )
 
-include(GoogleTest)
-gtest_discover_tests(${TARGET})
+holoflow_discover_tests(${TARGET}
+    LABELS gpu
+    TIMEOUT 120
+    RESOURCE_LOCK holoflow_gpu
+    FILTER "-*Performance*"
+)
+
+holoflow_discover_tests(${TARGET}
+    LABELS performance
+    TIMEOUT 180
+    RESOURCE_LOCK holoflow_gpu
+    FILTER "*Performance*"
+    PREFIX "performance::"
+)

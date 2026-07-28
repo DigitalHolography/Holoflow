@@ -11,3 +11,36 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+add_executable(holoflow_core_test
+    core_test.cc
+    event_router_test.cc
+)
+
+target_link_libraries(holoflow_core_test
+    PRIVATE
+    holoflow
+    holoflow_event
+    GTest::gtest_main
+)
+
+holoflow_discover_tests(holoflow_core_test
+    LABELS fast
+    TIMEOUT 10
+)
+
+add_executable(holoflow_runtime_test
+    compiler_test.cc
+)
+
+target_link_libraries(holoflow_runtime_test
+    PRIVATE
+    holoflow
+    GTest::gtest_main
+)
+
+holoflow_discover_tests(holoflow_runtime_test
+    LABELS gpu
+    TIMEOUT 60
+    RESOURCE_LOCK holoflow_gpu
+)

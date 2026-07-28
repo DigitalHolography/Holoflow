@@ -19,6 +19,19 @@
         {
             "name": "msvc-multi",
             "inherits": "base-multi"
+        },
+        {
+            "name": "msvc-coverage",
+            "inherits": "base-multi",
+            "cacheVariables": {
+                "ENABLE_IPO": "OFF",
+                "ENABLE_BENCHMARKS": "OFF",
+                "ENABLE_DOCUMENTATION": "OFF",
+                "ENABLE_EXAMPLES": "OFF",
+                "CMAKE_C_FLAGS_RELEASE": "/O2 /Ob2 /DNDEBUG /Zi",
+                "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob2 /DNDEBUG /Zi",
+                "CMAKE_EXE_LINKER_FLAGS_RELEASE": "/DEBUG /INCREMENTAL:NO"
+            }
         }
     ],
     "buildPresets": [
@@ -41,6 +54,11 @@
             "name": "build-MinSizeRel",
             "configurePreset": "msvc-multi",
             "configuration": "MinSizeRel"
+        },
+        {
+            "name": "build-Coverage",
+            "configurePreset": "msvc-coverage",
+            "configuration": "Release"
         }
     ],
     "testPresets": [
@@ -56,6 +74,11 @@
             "name": "test-Release",
             "configurePreset": "msvc-multi",
             "configuration": "Release",
+            "filter": {
+                "exclude": {
+                    "label": "performance"
+                }
+            },
             "output": {
                 "outputOnFailure": true
             }
@@ -66,6 +89,73 @@
             "configuration": "RelWithDebInfo",
             "output": {
                 "outputOnFailure": true
+            }
+        },
+        {
+            "name": "test-fast",
+            "configurePreset": "msvc-multi",
+            "configuration": "Release",
+            "filter": {
+                "include": {
+                    "label": "fast"
+                }
+            },
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "jobs": 4
+            }
+        },
+        {
+            "name": "test-gpu",
+            "configurePreset": "msvc-multi",
+            "configuration": "Release",
+            "filter": {
+                "include": {
+                    "label": "gpu"
+                },
+                "exclude": {
+                    "label": "performance"
+                }
+            },
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "jobs": 4
+            }
+        },
+        {
+            "name": "test-all",
+            "configurePreset": "msvc-multi",
+            "configuration": "Release",
+            "filter": {
+                "exclude": {
+                    "label": "performance"
+                }
+            },
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "jobs": 4
+            }
+        },
+        {
+            "name": "test-Coverage",
+            "configurePreset": "msvc-coverage",
+            "configuration": "Release",
+            "filter": {
+                "exclude": {
+                    "label": "performance"
+                }
+            },
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "jobs": 4
             }
         }
     ]

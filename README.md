@@ -122,10 +122,28 @@ build\msvc-multi\Release\holovibes.exe --help
 ```
 
 ## Test
-The individual tests can be run from cmd:
+Build the desired configuration first, then use the CTest presets:
+
 ```powershell
-build\msvc-multi\Debug\holoflow_test.exe
+ctest --preset test-fast
+ctest --preset test-gpu
+ctest --preset test-Release
 ```
+
+`test-fast` contains deterministic host tests. `test-gpu` contains CUDA tests and serializes
+access to the GPU. `test-Release` runs every functional test; performance-labelled tests are kept
+out of the default workflow.
+
+To collect host C++ coverage with the Visual Studio native coverage component:
+
+```powershell
+cmake --preset msvc-coverage
+cmake --build --preset build-Coverage -j
+pwsh -NoProfile -File tools/run_coverage.ps1
+```
+
+Coverage is written to `build/coverage`. CUDA device instructions are validated by numerical and
+regression tests but are not represented by native host line coverage.
 
 ## Package
 

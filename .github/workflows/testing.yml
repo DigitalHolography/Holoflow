@@ -1,0 +1,104 @@
+name: Windows Tests and Coverage
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: testing-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  release-tests:
+    name: Windows Release Tests
+    runs-on: [self-hosted, windows, x64]
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out trusted repository branch
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Preflight toolchain
+        shell: pwsh
+        run: |
+          cmake --version
+          nvcc --version
+          nvidia-smi
+          python --version
+          python -c "import numpy; print(numpy.__version__)"
+
+      - name: Configure
+        run: >
+          cmake --preset msvc-multi
+          -DFETCHCONTENT_BASE_DIR=C:/.fc
+          -DENABLE_BENCHMARKS=OFF
+          -DENABLE_DOCUMENTATION=OFF
+          -DENABLE_EXAMPLES=OFF
+
+      - name: Build
+        run: cmake --build --preset build-Release -j
+
+      - name: Test
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force build/test-results | Out-Null
+          ctest --preset test-Release --output-junit build/test-results/release.junit.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-results-${{ github.sha }}
+          path: |
+            build/test-results
+            build/msvc-multi/Testing/Temporary
+          retention-days: 30
+
+  coverage:
+    name: Windows Native Coverage
+    runs-on: [self-hosted, windows, x64]
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out trusted repository branch
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Preflight coverage toolchain
+        shell: pwsh
+        run: |
+          nvidia-smi
+          python -c "import numpy; print(numpy.__version__)"
+          Microsoft.CodeCoverage.Console --version
+          dotnet --version
+
+      - name: Configure coverage build
+        run: >
+          cmake --preset msvc-coverage
+          -DFETCHCONTENT_BASE_DIR=C:/.fc
+
+      - name: Build coverage configuration
+        run: cmake --build --preset build-Coverage -j
+
+      - name: Collect and render coverage
+        run: pwsh -NoProfile -File tools/run_coverage.ps1
+
+      - name: Upload coverage reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-coverage-${{ github.sha }}
+          path: |
+            build/coverage
+            build/msvc-coverage/Testing/Temporary
+          retention-days: 30
