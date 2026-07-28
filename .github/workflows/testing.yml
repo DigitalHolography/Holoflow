@@ -2,6 +2,11 @@ name: Windows Tests and Coverage
 
 on:
   push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
@@ -18,7 +23,7 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      - name: Check out trusted repository branch
+      - name: Check out source
         uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -67,7 +72,7 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      - name: Check out trusted repository branch
+      - name: Check out source
         uses: actions/checkout@v4
         with:
           submodules: recursive
