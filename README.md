@@ -232,8 +232,14 @@ cz bump 0.2.0-dev.1 --check-consistency
 git push origin main --follow-tags
 ```
 
-Only protected `v*` tags publish installers. Windows workflows never run for
-pull requests or forks because they use a persistent self-hosted runner.
+Only protected `v*` tags publish installers. Internal pull requests run Release
+builds and tests on the persistent self-hosted Windows runner. Pull request
+workflows from forks must never be approved; review their changes first, then
+move trusted commits to a branch in this repository before running Windows CI.
+
+Native coverage runs on `main` after merge and is published with the
+documentation. Packaging is additionally checked on pull requests that change
+build, dependency, runtime asset, or packaging inputs.
 
 ## License
 This project is licensed under the Apache License 2.0.
