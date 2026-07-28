@@ -14,11 +14,18 @@
 
 if(ENABLE_FETCHCONTENT)
     message(STATUS "Using FetchContent to acquire external dependencies...")
+
+    set(
+        FETCHCONTENT_BASE_DIR
+        "${CMAKE_SOURCE_DIR}/.fc"
+        CACHE PATH
+        "Persistent storage for FetchContent"
+    )
+
     include(FetchContent)
 
-    set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/.fc" CACHE PATH "Persistent storage for FetchContent" FORCE)
-    file(MAKE_DIRECTORY "${FETCHCONTENT_BASE_DIR}")
     message(STATUS "FetchContent base directory: ${FETCHCONTENT_BASE_DIR}")
+    file(MAKE_DIRECTORY "${FETCHCONTENT_BASE_DIR}")
 
     macro(declare_persistent_dependency NAME REPO TAG)
         FetchContent_Declare(
