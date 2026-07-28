@@ -26,6 +26,21 @@ namespace holonp_test {
 
 namespace {
 
+class TemporaryDirectory {
+public:
+  explicit TemporaryDirectory(std::filesystem::path path) : path_(std::move(path)) {}
+
+  ~TemporaryDirectory() { std::filesystem::remove_all(path_); }
+
+  TemporaryDirectory(const TemporaryDirectory &)            = delete;
+  TemporaryDirectory &operator=(const TemporaryDirectory &) = delete;
+
+  const std::filesystem::path &path() const noexcept { return path_; }
+
+private:
+  std::filesystem::path path_;
+};
+
 std::string dtype_name(holoflow::core::DType d) {
   switch (d) {
   case holoflow::core::DType::U8:
@@ -53,7 +68,8 @@ std::filesystem::path make_oracle_tmpdir() {
 } // namespace
 
 OracleOutput invoke_oracle(const OracleInput &input, const std::filesystem::path &oracle_script) {
-  const auto tmpdir = make_oracle_tmpdir();
+  const TemporaryDirectory temporary_directory(make_oracle_tmpdir());
+  const auto              &tmpdir = temporary_directory.path();
 
   // Write input payloads and build manifest.
   nlohmann::json manifest;
@@ -99,10 +115,12 @@ OracleOutput invoke_oracle(const OracleInput &input, const std::filesystem::path
 
   // Invoke Python oracle.
   std::ostringstream cmd;
-  cmd << "python \"" << oracle_script.string() << "\" \"" << manifest_path.string() << "\"";
+  // std::system uses cmd.exe on Windows. The extra outer quotes preserve the quoted executable
+  // path when arguments are also quoted.
+  cmd << "\"\"" << HOLOFLOW_TEST_PYTHON_EXECUTABLE << "\" \"" << oracle_script.string() << "\" \""
+      << manifest_path.string() << "\"\"";
   const int ret = std::system(cmd.str().c_str());
   if (ret != 0) {
-    std::filesystem::remove_all(tmpdir);
     throw std::runtime_error("Python oracle failed (exit " + std::to_string(ret) +
                              ").\nCommand: " + cmd.str());
   }
@@ -114,7 +132,6 @@ OracleOutput invoke_oracle(const OracleInput &input, const std::filesystem::path
     const auto    out_path = tmpdir / ("output_" + std::to_string(i) + ".bin");
     std::ifstream f(out_path, std::ios::binary | std::ios::ate);
     if (!f.is_open()) {
-      std::filesystem::remove_all(tmpdir);
       throw std::runtime_error("Oracle output not found: " + out_path.string());
     }
     const auto sz = static_cast<size_t>(f.tellg());
@@ -124,7 +141,6 @@ OracleOutput invoke_oracle(const OracleInput &input, const std::filesystem::path
     result.output_bytes.push_back(std::move(buf));
   }
 
-  std::filesystem::remove_all(tmpdir);
   return result;
 }
 

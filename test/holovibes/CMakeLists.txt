@@ -40,6 +40,8 @@ target_link_libraries(${TARGET}
     Qt6::Network
 )
 
-include(GoogleTest)
-gtest_discover_tests(${TARGET})
+holoflow_discover_tests(${TARGET}
+    LABELS fast
+    TIMEOUT 10
+)
 
