@@ -17,6 +17,8 @@
 #include <QString>
 #include <QWidget>
 
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -58,6 +60,7 @@ class ZernikeHistoryWidget : public QWidget {
 
 public:
   explicit ZernikeHistoryWidget(QWidget *parent = nullptr);
+  ~ZernikeHistoryWidget() override;
 
   void start_run(double time_window_seconds, const std::vector<int> &indexes);
   void resume_run();
@@ -88,6 +91,8 @@ protected:
   void mousePressEvent(QMouseEvent *event) override;
 
 private:
+  class CurveRenderWorker;
+
   struct Series {
     int                   noll_index;
     SignalHistory         history;
@@ -104,10 +109,13 @@ private:
   std::vector<Series>           series_;
   ZernikeHistoryDisplaySettings display_settings_;
 
-  QTimer *refresh_timer_ = nullptr;
-  QLabel *waiting_label_ = nullptr;
-  bool    active_        = false;
-  bool    refresh_dirty_ = true;
+  QTimer  *refresh_timer_   = nullptr;
+  QLabel  *waiting_label_   = nullptr;
+  bool     active_          = false;
+  bool     refresh_dirty_   = true;
+  uint64_t render_revision_ = 0;
+
+  std::unique_ptr<CurveRenderWorker> curve_render_worker_;
 };
 
 } // namespace holovibes::ui

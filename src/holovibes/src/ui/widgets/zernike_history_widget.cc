@@ -16,10 +16,13 @@
 
 #include <QDebug>
 #include <QElapsedTimer>
+#include <QImage>
 #include <QLabel>
+#include <QMetaObject>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPalette>
+#include <QPointer>
 #include <QPolygonF>
 #include <QTimer>
 #include <QVBoxLayout>
@@ -27,7 +30,12 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <condition_variable>
+#include <cstdint>
 #include <limits>
+#include <mutex>
+#include <thread>
+#include <utility>
 
 namespace holovibes::ui {
 
@@ -151,6 +159,133 @@ QString format_axis_value(double value) {
 
 } // namespace
 
+// -------------------------------------------------------------------------------------------------
+// Curve rendering worker
+// -------------------------------------------------------------------------------------------------
+
+class ZernikeHistoryWidget::CurveRenderWorker {
+public:
+  struct Curve {
+    QPolygonF points;
+    QRectF    clip_rect;
+    QColor    color;
+  };
+
+  struct Job {
+    uint64_t           revision;
+    QSize              logical_size;
+    qreal              device_pixel_ratio;
+    std::vector<Curve> curves;
+  };
+
+  explicit CurveRenderWorker(ZernikeHistoryWidget *widget)
+      : widget_(widget), thread_([this]() { run(); }) {}
+
+  ~CurveRenderWorker() {
+    {
+      std::lock_guard lock(mutex_);
+      stopping_ = true;
+      pending_job_.reset();
+    }
+    condition_.notify_one();
+    thread_.join();
+  }
+
+  void submit(Job job) {
+    {
+      std::lock_guard lock(mutex_);
+      if (last_submitted_revision_ == job.revision && last_submitted_size_ == job.logical_size &&
+          qFuzzyCompare(last_submitted_device_pixel_ratio_, job.device_pixel_ratio)) {
+        return;
+      }
+
+      last_submitted_revision_           = job.revision;
+      last_submitted_size_               = job.logical_size;
+      last_submitted_device_pixel_ratio_ = job.device_pixel_ratio;
+      pending_job_                       = std::move(job);
+    }
+    condition_.notify_one();
+  }
+
+  [[nodiscard]] QImage latest_image(const QSize &logical_size) const {
+    std::lock_guard lock(mutex_);
+    if (ready_image_.isNull() || ready_image_.deviceIndependentSize().toSize() != logical_size) {
+      return {};
+    }
+    return ready_image_;
+  }
+
+private:
+  void run() {
+    while (true) {
+      Job job;
+      {
+        std::unique_lock lock(mutex_);
+        condition_.wait(lock, [this]() { return stopping_ || pending_job_.has_value(); });
+        if (stopping_) {
+          return;
+        }
+        job = std::move(*pending_job_);
+        pending_job_.reset();
+      }
+
+      const QSize image_size(
+          std::max(1, qRound(job.logical_size.width() * job.device_pixel_ratio)),
+          std::max(1, qRound(job.logical_size.height() * job.device_pixel_ratio)));
+      QImage image(image_size, QImage::Format_ARGB32_Premultiplied);
+      image.setDevicePixelRatio(job.device_pixel_ratio);
+      image.fill(Qt::transparent);
+
+      QPainter painter(&image);
+      painter.setRenderHint(QPainter::Antialiasing, false);
+      for (const auto &curve : job.curves) {
+        painter.save();
+        painter.setClipRect(curve.clip_rect);
+        painter.setPen(QPen(curve.color, 2.0));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawPolyline(curve.points);
+        if (curve.points.size() == 1) {
+          painter.setBrush(curve.color);
+          painter.drawEllipse(curve.points.back(), 2.5, 2.5);
+        }
+        painter.restore();
+      }
+      painter.end();
+
+      {
+        std::lock_guard lock(mutex_);
+        if (stopping_) {
+          return;
+        }
+        ready_image_ = std::move(image);
+      }
+
+      QPointer<ZernikeHistoryWidget> widget = widget_;
+      if (!widget.isNull()) {
+        QMetaObject::invokeMethod(
+            widget.data(),
+            [widget]() {
+              if (!widget.isNull()) {
+                widget->update();
+              }
+            },
+            Qt::QueuedConnection);
+      }
+    }
+  }
+
+  QPointer<ZernikeHistoryWidget> widget_;
+  mutable std::mutex             mutex_;
+  std::condition_variable        condition_;
+  std::optional<Job>             pending_job_;
+  QImage                         ready_image_;
+  uint64_t                       last_submitted_revision_ = std::numeric_limits<uint64_t>::max();
+  QSize                          last_submitted_size_;
+  qreal                          last_submitted_device_pixel_ratio_ = 0.0;
+  bool                           stopping_                          = false;
+  std::thread                    thread_;
+};
+
 ZernikeHistoryWidget::ZernikeHistoryWidget(QWidget *parent) : QWidget(parent) {
   setMinimumSize(320, 220);
   setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
@@ -174,7 +309,11 @@ ZernikeHistoryWidget::ZernikeHistoryWidget(QWidget *parent) : QWidget(parent) {
     refresh_dirty_ = false;
     update();
   });
+
+  curve_render_worker_ = std::make_unique<CurveRenderWorker>(this);
 }
+
+ZernikeHistoryWidget::~ZernikeHistoryWidget() = default;
 
 void ZernikeHistoryWidget::start_run(double time_window_seconds, const std::vector<int> &indexes) {
   const bool time_window_changed = display_settings_.time_window_seconds != time_window_seconds;
@@ -362,12 +501,14 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
   QElapsedTimer phase_timer;
   paint_timer.start();
 
-  qint64 range_ns          = 0;
-  qint64 chrome_ns         = 0;
-  qint64 polyline_build_ns = 0;
-  qint64 polyline_draw_ns  = 0;
-  qint64 plotted           = 0;
-  qint64 samples_drawn     = 0;
+  qint64                                range_ns          = 0;
+  qint64                                chrome_ns         = 0;
+  qint64                                polyline_build_ns = 0;
+  qint64                                polyline_draw_ns  = 0;
+  qint64                                plotted           = 0;
+  qint64                                samples_drawn     = 0;
+  std::vector<CurveRenderWorker::Curve> curves;
+  curves.reserve(series_.size());
 
   QPainter painter(this);
   painter.setRenderHint(QPainter::Antialiasing, false);
@@ -435,7 +576,7 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
       const double x_fraction = (relative_time + time_window) / time_window;
       const double y_fraction = (value - y_min) / (y_max - y_min);
       return QPointF(plot.left() + x_fraction * plot.width(),
-                       plot.bottom() - y_fraction * plot.height());
+                     plot.bottom() - y_fraction * plot.height());
     };
 
     phase_timer.restart();
@@ -454,11 +595,11 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
         statistics_font.setBold(false);
         statistics_font.setPixelSize(9);
         painter.setFont(statistics_font);
-        painter.drawText(
-            QRectF(cell.left(), cell.top() + 16.0, cell.width(), 14.0), Qt::AlignCenter,
-            tr("Mean %1   SD %2")
-                .arg(format_axis_value(statistics->mean),
-                     format_axis_value(statistics->standard_deviation)));
+        painter.drawText(QRectF(cell.left(), cell.top() + 16.0, cell.width(), 14.0),
+                         Qt::AlignCenter,
+                         tr("Mean %1   SD %2")
+                             .arg(format_axis_value(statistics->mean),
+                                  format_axis_value(statistics->standard_deviation)));
       }
     }
 
@@ -504,21 +645,23 @@ void ZernikeHistoryWidget::paintEvent(QPaintEvent *) {
     polyline_build_ns += phase_timer.nsecsElapsed();
     samples_drawn += static_cast<qint64>(samples.size());
 
-    phase_timer.restart();
     const QColor curve_color = curve_colors[i % curve_colors.size()];
-    painter.save();
-    painter.setClipRect(plot);
-    painter.setPen(QPen(curve_color, 2.0));
-    painter.setBrush(Qt::NoBrush);
-    painter.drawPolyline(curve);
-    if (samples.size() == 1) {
-      painter.setBrush(curve_color);
-      painter.drawEllipse(
-          map_to_plot(samples.back().time_seconds - newest_time, samples.back().value), 2.5, 2.5);
-    }
-    painter.restore();
-    polyline_draw_ns += phase_timer.nsecsElapsed();
+    curves.push_back({std::move(curve), plot, curve_color});
   }
+
+  curve_render_worker_->submit({
+      .revision           = render_revision_,
+      .logical_size       = size(),
+      .device_pixel_ratio = devicePixelRatioF(),
+      .curves             = std::move(curves),
+  });
+
+  phase_timer.restart();
+  const QImage curve_image = curve_render_worker_->latest_image(size());
+  if (!curve_image.isNull()) {
+    painter.drawImage(QPointF(0.0, 0.0), curve_image);
+  }
+  polyline_draw_ns += phase_timer.nsecsElapsed();
 
   painter.end();
   static PaintProfileAccumulator profile;
@@ -576,6 +719,7 @@ void ZernikeHistoryWidget::initialize_recorded_extrema_from_visible_samples() {
 }
 
 void ZernikeHistoryWidget::request_refresh() {
+  ++render_revision_;
   refresh_dirty_ = true;
   if (!refresh_timer_->isActive()) {
     refresh_dirty_ = false;
