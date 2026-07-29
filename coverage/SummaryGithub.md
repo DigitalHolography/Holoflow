@@ -3,16 +3,16 @@
 
 |||
 |:---|:---|
-| Generated on: | 7/28/2026 - 6:00:54 PM |
+| Generated on: | 29/07/2026 - 15:50:54 |
 | Parser: | Cobertura |
 | Assemblies: | 5 |
 | Classes: | 140 |
 | Files: | 50 |
-| **Line coverage:** | 46.3% (1901 of 4105) |
-| Covered lines: | 1901 |
-| Uncovered lines: | 2204 |
-| Coverable lines: | 4105 |
-| Total lines: | 37000 |
+| **Line coverage:** | 46.1% (1892 of 4099) |
+| Covered lines: | 1892 |
+| Uncovered lines: | 2207 |
+| Coverable lines: | 4099 |
+| Total lines: | 37171 |
 | Covered branches: | 0 |
 | Total branches: | 0 |
 | **Method coverage:** | [Feature is only available for sponsors](https://reportgenerator.io/pro) |
@@ -20,11 +20,11 @@
 </details>
 
 ## Coverage
-<details><summary>holoflow_core_test - 44.1%</summary>
+<details><summary>holoflow_core_test - 44.2%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holoflow_core_test**|**44.1%**|****|
+|**holoflow_core_test**|**44.2%**|****|
 |curaii|0%||
 |curaii::detail|0%||
 |curaii.CudaStream|0%||
@@ -48,11 +48,11 @@
 |static void holoflow::core::`anonymous namespace'|100%||
 
 </details>
-<details><summary>holoflow_runtime_test - 45.6%</summary>
+<details><summary>holoflow_runtime_test - 45.2%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holoflow_runtime_test**|**45.6%**|****|
+|**holoflow_runtime_test**|**45.2%**|****|
 |curaii|31.8%||
 |curaii::detail|0%||
 |curaii.CudaStream|47.6%||
@@ -71,12 +71,12 @@
 |holoflow::core.TDesc|32.1%||
 |holoflow::core.Tensor|0%||
 |holoflow::core.TView|0%||
-|holoflow::runtime|51.5%||
+|holoflow::runtime|51%||
 |holoflow::runtime.CompilationProfiler|84%||
 |holoflow::runtime.Compiler|75%||
 |holoflow::runtime.Compiler::Impl|52.9%||
 |holoflow::runtime.MemoryBlock|83.3%||
-|holoflow::runtime.Scheduler|46%||
+|holoflow::runtime.Scheduler|45.1%||
 |holoflow::runtime.Scheduler::NodeMetricAccumulator|0%||
 |holoflow::runtime.ScopedTrace|78.2%||
 |holoflow::runtime.TaskStorageAdapter|0%||
@@ -106,11 +106,11 @@
 |static const char * `anonymous namespace'|0%||
 
 </details>
-<details><summary>holotask_test - 48.3%</summary>
+<details><summary>holotask_test - 48.2%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holotask_test**|**48.3%**|****|
+|**holotask_test**|**48.2%**|****|
 |curaii|31.3%||
 |curaii::detail|0%||
 |curaii.CublasHandle|31.5%||
@@ -143,13 +143,13 @@
 |holoflow::core.TView|83.3%||
 |holotask|100%||
 |holotask::sinks::`anonymous-namespace'.HolofileWriter|0%||
-|holotask::syncs|97%||
+|holotask::syncs|97.1%||
 |holotask::syncs::`anonymous-namespace'.PcaTask|76.4%||
 |holotask::syncs::`anonymous-namespace'.ZernikeFromSlopes|0%||
-|holotask::syncs::detail|68.5%||
+|holotask::syncs::detail|68%||
 |holotask::syncs::detail::`anonymous-namespace'.ContextGuard|56.2%||
 |holotask::syncs::detail.PcaHeevKernel|50%||
-|holotask::syncs::detail.PcaHeevKernel::Impl|60.9%||
+|holotask::syncs::detail.PcaHeevKernel::Impl|60%||
 |holotask::syncs::detail.PcaHeevSolver|77.7%||
 |holotask::syncs::detail.PcaHeevSolver::Impl|75%||
 |holotask::syncs.PcaFactory|100%||
@@ -158,7 +158,7 @@
 |static  holotask::sinks::`anonymous namespace'|0%||
 |static bool holotask::sinks::`anonymous namespace'|0%||
 |static bool holotask::syncs::detail::`anonymous namespace'|100%||
-|static class std::array<float,9> holotask::syncs::`anonymous namespace'|90%||
+|static class std::array<float,9> holotask::syncs::`anonymous namespace'|92.8%||
 |static class std::basic_string<char,std::char_traits<char>,std::allocator<c<br/>har> > holotask::syncs::detail::`anonymous namespace'|0%||
 |static class std::filesystem::path holotask::syncs::detail::`anonymous name<br/>space'|50%||
 |static const char * `anonymous namespace'|0%||
@@ -176,15 +176,15 @@
 |static void holotask::syncs::detail::`anonymous namespace'|46.1%||
 
 </details>
-<details><summary>holovibes_test - 51.6%</summary>
+<details><summary>holovibes_test - 52%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holovibes_test**|**51.6%**|****|
+|**holovibes_test**|**52%**|****|
 |holovibes::pipeline|46.6%||
 |holovibes::pipeline.Settings|0%||
 |holovibes::pipeline.ValidationResult|0%||
-|holovibes::ui.SignalHistory|92.1%||
+|holovibes::ui.SignalHistory|92.3%||
 |static bool holovibes::pipeline::`anonymous namespace'|0%||
 |static class std::basic_string<char,std::char_traits<char>,std::allocator<c<br/>har> > holovibes::pipeline::`anonymous namespace'|25%||
 |static const class nlohmann::json_abi_v3_12_0::basic_json<std::map,std::vec<br/>tor,std::basic_string<char,std::char_traits<char>,std::allocator<char> >,bo<br/>ol,__int64,unsigned __int64,double,std::allocator,nlohmann::json_abi_v3_12_<br/>0::adl_serializer,std::vector<unsigned char,std::allocator<unsigned char> ><br/>,void> & const holovibes::pipeline::`anonymous namespace'|100%||
@@ -192,6 +192,6 @@
 |static holovibes::pipeline::TimeMethod holovibes::pipeline::`anonymous name<br/>space'|0%||
 |static int holovibes::pipeline::`anonymous namespace'|0%||
 |static int holovibes::ui::`anonymous namespace'|60%||
-|static void holovibes::pipeline::`anonymous namespace'|66.2%||
+|static void holovibes::pipeline::`anonymous namespace'|67%||
 
 </details>

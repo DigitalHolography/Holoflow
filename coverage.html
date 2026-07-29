@@ -1677,8 +1677,8 @@
 <p><a href="coverage/index.html">Open the latest interactive coverage report</a></p>
 <p>The report measures native host C++ source lines. CUDA device instructions are validated by the
 GPU numerical and regression tests, but they are not represented by native host line coverage.</p>
-<p>Pull requests publish a coverage summary in their GitHub Actions results without replacing this
-report.</p>
+<p>Pull requests run the Release build and test suite without collecting native coverage. Coverage is
+collected from <code>main</code> after merge so this report always represents the protected branch.</p>
 
 
 
