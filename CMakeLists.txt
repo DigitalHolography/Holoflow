@@ -66,6 +66,7 @@ option(ENABLE_BENCHMARKS "Build benchmarks" ON)
 option(ENABLE_DOCUMENTATION "Build documentation" ON)
 option(ENABLE_EXAMPLES "Build examples" ON)
 option(ENABLE_FETCHCONTENT "Use FetchContent for dependencies" ON)
+option(ENABLE_COVERAGE "Build the complete native coverage image" OFF)
 option(ENABLE_WARNINGS "Enable compiler warnings" ON)
 option(ENABLE_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 

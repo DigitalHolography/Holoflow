@@ -36,3 +36,14 @@ add_subdirectory(holoflow)
 add_subdirectory(holonp)
 add_subdirectory(holotask)
 add_subdirectory(holovibes)
+
+if(ENABLE_COVERAGE)
+    add_test(
+        NAME coverage::production_image
+        COMMAND holovibes --coverage-probe
+    )
+    set_tests_properties(coverage::production_image PROPERTIES
+        LABELS coverage
+        TIMEOUT 10
+    )
+endif()

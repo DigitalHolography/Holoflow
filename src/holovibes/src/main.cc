@@ -14,6 +14,7 @@
 
 #include <QApplication>
 #include <cstdlib>
+#include <string_view>
 
 #include "app_utils.hh"
 #include "bug.hh"
@@ -30,6 +31,12 @@
 #include "holonp/arange.hh"
 
 int main(int argc, char **argv) {
+#if defined(HOLOFLOW_COVERAGE_PROBE)
+  if (argc == 2 && std::string_view(argv[1]) == "--coverage-probe") {
+    return EXIT_SUCCESS;
+  }
+#endif
+
   spdlog::set_level(spdlog::level::debug);
 
   holonp::ArangeSettings s{

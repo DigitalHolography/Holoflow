@@ -26,11 +26,12 @@
             "cacheVariables": {
                 "ENABLE_IPO": "OFF",
                 "ENABLE_BENCHMARKS": "OFF",
+                "ENABLE_COVERAGE": "ON",
                 "ENABLE_DOCUMENTATION": "OFF",
                 "ENABLE_EXAMPLES": "OFF",
-                "CMAKE_C_FLAGS_RELEASE": "/O2 /Ob2 /DNDEBUG /Zi",
-                "CMAKE_CXX_FLAGS_RELEASE": "/O2 /Ob2 /DNDEBUG /Zi",
-                "CMAKE_EXE_LINKER_FLAGS_RELEASE": "/DEBUG /INCREMENTAL:NO"
+                "CMAKE_C_FLAGS_RELEASE": "/Od /Ob0 /DNDEBUG /Zi",
+                "CMAKE_CXX_FLAGS_RELEASE": "/Od /Ob0 /DNDEBUG /Zi",
+                "CMAKE_EXE_LINKER_FLAGS_RELEASE": "/DEBUG /INCREMENTAL:NO /OPT:NOREF /OPT:NOICF"
             }
         }
     ],

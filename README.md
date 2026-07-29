@@ -145,6 +145,13 @@ pwsh -NoProfile -File tools/run_coverage.ps1
 Coverage is written to `build/coverage`. CUDA device instructions are validated by numerical and
 regression tests but are not represented by native host line coverage.
 
+The report is grouped by production module and merges repeated source lines from every test
+executable. A coverage-only launch of the complete application image retains otherwise unreferenced
+host code so that untouched functions are reported as uncovered. The coverable-line count therefore
+represents MSVC-instrumentable source lines, not physical repository LOC: comments, blank lines,
+declarations, CMake/JSON files, and code emitted only for CUDA devices are not part of that
+denominator.
+
 ## Package
 
 This project uses **CMake**, **CPack**, and the **NSIS installer generator** to produce a Windows installer (`.exe`) that contains the compiled application and all required Qt runtime libraries.
