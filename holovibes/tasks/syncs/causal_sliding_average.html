@@ -9,10 +9,10 @@
       
       
       
-        <link rel="prev" href="registration.html">
+        <link rel="prev" href="average.html">
       
       
-        <link rel="next" href="rotation.html">
+        <link rel="next" href="conversion.html">
       
       
       <link rel="icon" href="../../../assets/images/favicon.png">
@@ -20,7 +20,7 @@
     
     
       
-        <title>Reshape - Holoflow</title>
+        <title>Causal Sliding Average - Holoflow</title>
       
     
     
@@ -62,7 +62,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#reshape-sync-task" class="md-skip">
+        <a href="#causal-sliding-average" class="md-skip">
           Skip to content
         </a>
       
@@ -96,7 +96,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Reshape
+              Causal Sliding Average
             
           </span>
         </div>
@@ -819,10 +819,32 @@
                 
   
   
+    
   
   
-    <li class="md-nav__item">
-      <a href="causal_sliding_average.html" class="md-nav__link">
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Causal Sliding Average
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="causal_sliding_average.html" class="md-nav__link md-nav__link--active">
         
   
   
@@ -833,6 +855,35 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      Settings
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
     </li>
   
 
@@ -1049,32 +1100,10 @@
                 
   
   
-    
   
   
-  
-    <li class="md-nav__item md-nav__item--active">
-      
-      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
-      
-      
-        
-      
-      
-        <label class="md-nav__link md-nav__link--active" for="__toc">
-          
-  
-  
-  <span class="md-ellipsis">
-    Reshape
-    
-  </span>
-  
-
-          <span class="md-nav__icon md-icon"></span>
-        </label>
-      
-      <a href="reshape.html" class="md-nav__link md-nav__link--active">
+    <li class="md-nav__item">
+      <a href="reshape.html" class="md-nav__link">
         
   
   
@@ -1085,71 +1114,6 @@
   
 
       </a>
-      
-        
-
-<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
-  
-  
-  
-    
-  
-  
-    <label class="md-nav__title" for="__toc">
-      <span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
-      
-        <li class="md-nav__item">
-  <a href="#inputs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Inputs
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#outputs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Outputs
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#inplace" class="md-nav__link">
-    <span class="md-ellipsis">
-      Inplace
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#ownership" class="md-nav__link">
-    <span class="md-ellipsis">
-      Ownership
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#settings" class="md-nav__link">
-    <span class="md-ellipsis">
-      Settings
-    </span>
-  </a>
-  
-</li>
-      
-    </ul>
-  
-</nav>
-      
     </li>
   
 
@@ -1804,81 +1768,17 @@
 
 
 
-<h1 id="reshape-sync-task">Reshape Sync Task</h1>
-<p>The <strong>Reshape</strong> sync task changes the logical shape of a tensor on the GPU while preserving element order and dtype. It writes the input buffer into a new tensor whose extents are provided by the <code>shape</code> setting, effectively reinterpreting the linear data with different dimensions.</p>
-<div class="admonition note">
-<p class="admonition-title">Note</p>
-<p>Reshape only remaps contiguous data; it neither transposes nor reorders samples. The linear memory layout remains identical to the source tensor.</p>
-</div>
-<div class="admonition warning">
-<p class="admonition-title">Warning</p>
-<p>The configured <code>shape</code> must contain only positive dimensions and its product must exactly match the number of elements in the input tensor. If either check fails, task creation is rejected during inference.</p>
-</div>
-<h2 id="inputs">Inputs</h2>
-<p>This task consumes a single input tensor of arbitrary rank, shape, dtype, and memory location.</p>
-<h2 id="outputs">Outputs</h2>
-<p>This task produces one output tensor located in the same memory space as the input tensor. The output tensor has the same dtype as the input tensor but a shape defined by the configured <code>shape</code> setting.</p>
-<h2 id="inplace">Inplace</h2>
-<p>This task does not support inplace operation.</p>
-<h2 id="ownership">Ownership</h2>
-<p>This task does not own any inputs or outputs.</p>
-<hr />
+<h1 id="causal-sliding-average">Causal Sliding Average</h1>
+<p>The <strong>Causal Sliding Average</strong> is a synchronous, stateful GPU task. It accepts any contiguous,
+device-resident <code>float32</code> tensor and returns a tensor with the same descriptor for every input.</p>
+<p>For the first <code>window_size - 1</code> inputs, the output is divided by the number of samples observed.
+Once the window is full, the task emits the mean of the most recent <code>window_size</code> tensors. A GPU
+ring buffer and running sum make each execution constant in the window length.</p>
+<p>Task creation or pipeline rebuilding clears the stored history.</p>
 <h2 id="settings">Settings</h2>
-<!-- # ReshapeSettings -->
-
-<!-- **Title:** ReshapeSettings
- -->
-
-<!-- |                           |             |
-| ------------------------- | ----------- |
-| **Type**                  | `object`    |
-| **Required**              | No          |
-| **Additional properties** | Not allowed |
- -->
-
-<!-- **Description:** Settings for the Reshape sync task.
- -->
-
-<p><strong>Example:</strong></p>
-<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1">1</a></span>
-<span class="normal"><a href="#__codelineno-0-2">2</a></span>
-<span class="normal"><a href="#__codelineno-0-3">3</a></span>
-<span class="normal"><a href="#__codelineno-0-4">4</a></span>
-<span class="normal"><a href="#__codelineno-0-5">5</a></span>
-<span class="normal"><a href="#__codelineno-0-6">6</a></span>
-<span class="normal"><a href="#__codelineno-0-7">7</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1"></a><span class="p">{</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2"></a><span class="w">    </span><span class="nt">&quot;shape&quot;</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3"></a><span class="w">        </span><span class="mi">1</span><span class="p">,</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4"></a><span class="w">        </span><span class="mi">512</span><span class="p">,</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5"></a><span class="w">        </span><span class="mi">512</span>
-<a id="__codelineno-0-6" name="__codelineno-0-6"></a><span class="w">    </span><span class="p">]</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7"></a><span class="p">}</span>
-</code></pre></div></td></tr></table></div>
-<table>
-<thead>
-<tr>
-<th>Property</th>
-<th>Pattern</th>
-<th>Type</th>
-<th>Deprecated</th>
-<th>Definition</th>
-<th>Title/Description</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>+ <a href="#shape">shape</a></td>
-<td>No</td>
-<td>array of integer</td>
-<td>No</td>
-<td>-</td>
-<td>Desired output shape expressed as a list of dimensions. Must satisfy:<br />- shape has at least one dimension<br />- no dimension is zero<br />- product(shape) equals the number of input elements</td>
-</tr>
-</tbody>
-</table>
-<!-- ----------------------------------------------------------------------------------------------------------------------------
-Generated using [json-schema-for-humans](https://github.com/coveooss/json-schema-for-humans) on 2025-10-10 at 13:11:11 +0200
--->
+<ul>
+<li><code>window_size</code>: number of tensors in the causal window; must be positive.</li>
+</ul>
 
 
 

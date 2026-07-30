@@ -9,7 +9,7 @@
       
       
       
-        <link rel="prev" href="batch_queue.html">
+        <link rel="prev" href="dual_reader_batch_queue.html">
       
       
         <link rel="next" href="../../../holoflow/index.html">
@@ -820,6 +820,29 @@
   
   
     <li class="md-nav__item">
+      <a href="../syncs/causal_sliding_average.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Causal Sliding Average
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../syncs/conversion.html" class="md-nav__link">
         
   
@@ -1153,6 +1176,29 @@
   
   <span class="md-ellipsis">
     Batch Queue
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="dual_reader_batch_queue.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Dual Reader Batch Queue
     
   </span>
   
@@ -1765,12 +1811,15 @@
 <p>The internal buffer is provisioned with <code>target_capacity + window_size</code> slots in device memory. The extra <code>target_capacity</code> slots absorb producer/consumer latency.</p>
 </div>
 <h2 id="inputs">Inputs</h2>
-<p>This task consumes a single tensor per push with shape <code>(1, H, W)</code>, where:</p>
+<p>This task consumes a tensor per push with shape <code>(1, H, W)</code>, where:</p>
 <ul>
 <li><code>1</code>: unit batch size (exactly one frame per push)</li>
 <li><code>H</code>, <code>W</code>: frame height and width</li>
 </ul>
 <p>The tensor must be 32-bit floating point (<code>float32</code>) data already located in device memory. <code>acquire_input</code> returns a writable view that aliases the internal circular buffer.</p>
+<p>An optional second input may provide a host <code>uint8</code> scalar with shape <code>(1)</code>. A zero value discards
+the associated frame without advancing the averaging window; a nonzero value accepts it. This is
+used to suppress invalid warm-up frames from centered correction pipelines.</p>
 <h2 id="outputs">Outputs</h2>
 <p>After the warm-up period required to enqueue the first <code>window_size</code> frames, each pop exposes one tensor of shape <code>(1, H, W)</code> with the same dtype and memory location as the input. </p>
 <h2 id="inplace">Inplace</h2>
