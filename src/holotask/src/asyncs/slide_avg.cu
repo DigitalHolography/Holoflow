@@ -36,12 +36,15 @@ namespace holotask::asyncs {
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 void to_json(nlohmann::json &j, const SlidingAverageSettings &s) {
-  j = nlohmann::json{{"target_capacity", s.target_capacity}, {"window_size", s.window_size}};
+  j = nlohmann::json{{"target_capacity", s.target_capacity},
+                     {"window_size", s.window_size},
+                     {"discard_first", s.discard_first}};
 }
 
 void from_json(const nlohmann::json &j, SlidingAverageSettings &s) {
   j.at("target_capacity").get_to(s.target_capacity);
   j.at("window_size").get_to(s.window_size);
+  s.discard_first = j.value("discard_first", size_t{0});
 }
 
 namespace {
@@ -85,6 +88,7 @@ private:
   size_t                 element_size_;
   DevPtr<std::byte>      d_buffer_;
   DevPtr<float>          d_running_avg_;
+  size_t                 discarded_ = 0;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> avg_idx_;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_idx_;
@@ -178,8 +182,12 @@ void SlidingAverage::release_output(int index) {
 }
 
 holoflow::core::OpResult SlidingAverage::try_push(holoflow::core::AsyncPushCtx &ctx) {
-  if (ctx.inputs.size() == 2 &&
-      *reinterpret_cast<const std::uint8_t *>(ctx.inputs[1].data()) == std::uint8_t{0}) {
+  const bool invalid = ctx.inputs.size() == 2 && *reinterpret_cast<const std::uint8_t *>(
+                                                     ctx.inputs[1].data()) == std::uint8_t{0};
+  if (invalid || discarded_ < settings_.discard_first) {
+    if (!invalid) {
+      ++discarded_;
+    }
     storage_access().owned_input_storage(0).ptr = nullptr;
     return holoflow::core::OpResult::Ok;
   }

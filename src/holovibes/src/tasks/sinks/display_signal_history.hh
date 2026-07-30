@@ -38,6 +38,9 @@ struct DisplaySignalHistorySettings {
   // acquisition or pipeline time, not processing completion or GUI refresh time.
   double sample_time_seconds = 1.0 / 15.0;
 
+  // Known pipeline warm-up samples are discarded before the logical plot timeline starts.
+  size_t discard_first = 0;
+
   bool operator==(const DisplaySignalHistorySettings &) const = default;
 };
 

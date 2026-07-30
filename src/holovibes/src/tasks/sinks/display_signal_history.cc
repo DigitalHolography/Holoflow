@@ -130,6 +130,10 @@ public:
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    if (received_sample_index_++ < settings_.discard_first) {
+      return holoflow::core::OpResult::Ok;
+    }
+
     auto              &input = ctx.inputs[0];
     const auto        &desc  = input.desc;
     const auto         count = settings_.indexes.size();
@@ -173,7 +177,8 @@ private:
   holoflow::core::TDesc                    idesc_;
   std::shared_ptr<SignalHistoryDispatcher> dispatcher_;
   cudaStream_t                             stream_;
-  uint64_t                                 valid_sample_index_ = 0;
+  uint64_t                                 received_sample_index_ = 0;
+  uint64_t                                 valid_sample_index_    = 0;
 };
 
 } // namespace
@@ -183,6 +188,7 @@ void to_json(nlohmann::json &j, const DisplaySignalHistorySettings &settings) {
       {"indexes", settings.indexes},
       {"time_window_seconds", settings.time_window_seconds},
       {"sample_time_seconds", settings.sample_time_seconds},
+      {"discard_first", settings.discard_first},
   };
 }
 
@@ -190,6 +196,7 @@ void from_json(const nlohmann::json &j, DisplaySignalHistorySettings &settings) 
   j.at("indexes").get_to(settings.indexes);
   j.at("time_window_seconds").get_to(settings.time_window_seconds);
   j.at("sample_time_seconds").get_to(settings.sample_time_seconds);
+  settings.discard_first = j.value("discard_first", size_t{0});
 }
 
 DisplaySignalHistoryFactory::DisplaySignalHistoryFactory(
