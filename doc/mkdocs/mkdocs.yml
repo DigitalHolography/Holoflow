@@ -17,6 +17,7 @@ nav:
       - Synchronous:
         - Angular Spectrum: holovibes/tasks/syncs/angular_spectrum.md
         - Average: holovibes/tasks/syncs/average.md
+        - Causal Sliding Average: holovibes/tasks/syncs/causal_sliding_average.md
         - Conversion: holovibes/tasks/syncs/conversion.md
         - Convolution: holovibes/tasks/syncs/convolution.md
         - FFT Shift: holovibes/tasks/syncs/fft_shift.md
@@ -31,6 +32,7 @@ nav:
         - STFT: holovibes/tasks/syncs/stft.md
       - Asynchronous:
         - Batch Queue: holovibes/tasks/asyncs/batch_queue.md
+        - Dual Reader Batch Queue: holovibes/tasks/asyncs/dual_reader_batch_queue.md
         - Sliding Average: holovibes/tasks/asyncs/sliding_average.md
 
   - Holoflow:

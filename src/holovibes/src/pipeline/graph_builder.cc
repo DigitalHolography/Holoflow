@@ -125,21 +125,39 @@ holoflow::core::GraphSpec GraphBuilder::build() {
     FH = build_spatial_filter(FH);
   }
 
+  if (s_.pp_accumulation <= 0) {
+    throw std::invalid_argument("pp_accumulation must be positive");
+  }
+  const auto timing_outputs =
+      dual_reader_batch_queue(FH, {
+                                      .target_capacity = std::max<size_t>(2, 2 * FH.shape.at(0)),
+                                      .window_size     = static_cast<size_t>(s_.pp_accumulation),
+                                  });
+  TDesc                FH_current = timing_outputs.at(0);
+  const TDesc          FH_delayed = timing_outputs.at(1);
+  std::optional<TDesc> valid;
+
   if (s_.autofocus_enabled) {
     if (s_.autofocus_nb_iter <= 0) {
       throw std::invalid_argument("autofocus_nb_iter must be positive");
     }
+    if (s_.pp_accumulation > 1 && s_.autofocus_nb_iter > 1) {
+      throw std::invalid_argument(
+          "sliding Shack-Hartmann correction only supports one autofocus iteration");
+    }
 
+    valid = timing_outputs.at(2);
     ShackHartmannIterationState shack_hartmann_iteration_state;
     for (int pass = 0; pass < s_.autofocus_nb_iter; ++pass) {
-      FH = build_shack_hartmann(FH, pass == s_.autofocus_nb_iter - 1,
-                                shack_hartmann_iteration_state);
+      const TDesc &delayed = pass == 0 ? FH_delayed : FH_current;
+      FH_current = build_shack_hartmann(FH_current, delayed, pass == s_.autofocus_nb_iter - 1,
+                                        shack_hartmann_iteration_state);
     }
   }
 
-  TDesc FH_z = build_spatial_propagation(FH);
+  TDesc FH_z = build_spatial_propagation(FH_current);
 
-  build_xy_view(FH_z);
+  build_xy_view(FH_z, valid);
 
   if (s_.view_3d_cuts) {
     build_3d_cuts(FH_z);
@@ -283,12 +301,14 @@ GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
     throw std::logic_error{"Time method is currently not supported in GraphBuilder"};
   }
 
-  // FH is [N_pre, Nz, Hy, Hx] — accumulate pp_accumulation such batches for post-processing.
-  return batched_queue(FH, {s_.pp_accumulation * 2, s_.pp_accumulation, s_.pp_accumulation});
+  // FH remains [N_pre, Nz, Hy, Hx]. The dual-reader queue downstream exposes one spectrum per
+  // scheduler iteration while retaining the batched producer write.
+  return FH;
 }
 
 GraphBuilder::TDesc
-GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
+GraphBuilder::build_shack_hartmann(const TDesc &FH_current, const TDesc &FH_delayed,
+                                   bool                         is_last_pass,
                                    ShackHartmannIterationState &iteration_state) {
   if (s_.autofocus_nb_subaps <= 0) {
     throw std::invalid_argument("autofocus_nb_subaps must be positive");
@@ -309,8 +329,8 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
   auto Device  = holotask::syncs::MemcpySettings::Target::Device;
 
   // 1. Spatial Cropping (keep this to ensure perfect divisibility)
-  auto subap_w = FH.shape.at(3) / nb_subap;
-  auto subap_h = FH.shape.at(2) / nb_subap;
+  auto subap_w = FH_current.shape.at(3) / nb_subap;
+  auto subap_h = FH_current.shape.at(2) / nb_subap;
   if (subap_w == 0 || subap_h == 0) {
     throw std::invalid_argument("autofocus_nb_subaps is too large for the current frame size");
   }
@@ -321,13 +341,13 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
   // 2. Sub-aperture Processing via Short-Time Fresnel
   // We use stride == subap size for non-overlapping Shack-Hartmann windows.
   auto FH_prop = short_time_fresnel_diffraction(
-      FH, subap_w, subap_h,  // window dimensions
-      subap_w, subap_h,      // strides (non-overlapping)
-      lam, dx, dy, z_prop,   // reconstruction parameters
-      PhaseReference::GLOBAL // applies the necessary off-axis phase correction
+      FH_current, subap_w, subap_h, // window dimensions
+      subap_w, subap_h,             // strides (non-overlapping)
+      lam, dx, dy, z_prop,          // reconstruction parameters
+      PhaseReference::GLOBAL        // applies the necessary off-axis phase correction
   );
   auto M0 = mean(FH_prop, {{1}, false});
-  M0      = mean(M0, {{0}, true});
+  M0      = causal_slide_avg(M0, {static_cast<size_t>(s_.pp_accumulation)});
   M0      = fftshift(M0, {{-2, -1}});
 
   if (s_.pp_flatfield) {
@@ -390,22 +410,22 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
 
   // When no Zernike orders are specified, still display an empty phase map for consistency
   if (s_.autofocus_zernike_orders.empty()) {
-    auto ny          = static_cast<size_t>(FH.shape.at(2));
-    auto nx          = static_cast<size_t>(FH.shape.at(3));
+    auto ny          = static_cast<size_t>(FH_current.shape.at(2));
+    auto nx          = static_cast<size_t>(FH_current.shape.at(3));
     auto empty_phase = zeros({{1, ny, nx}, holoflow::core::DType::F32});
-    FH               = correct_phase(FH, empty_phase, {});
+    auto corrected   = correct_phase(FH_delayed, empty_phase, {});
     if (is_last_pass) {
       if (s_.view_zernike_phase) {
         zernike_phase_display(empty_phase, {});
       }
     }
 
-    return FH;
+    return corrected;
   }
 
   // Zernike & Phase Correction
-  int ny           = static_cast<int>(FH.shape.at(2));
-  int nx           = static_cast<int>(FH.shape.at(3));
+  int ny           = static_cast<int>(FH_current.shape.at(2));
+  int nx           = static_cast<int>(FH_current.shape.at(3));
   slopes           = cuda_stream_synchronize(slopes, {});
   auto slopes_host = memcpy(slopes, {Host});
 
@@ -428,7 +448,7 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
   auto zernike_coeffs_gpu = memcpy(zernike_coeffs, {Device});
   auto phase_gpu          = zernike_phase(
       zernike_coeffs_gpu, {s_.autofocus_zernike_orders, ny, nx, holoflow::core::MemLoc::Device});
-  FH = correct_phase(FH, phase_gpu, {});
+  auto corrected = correct_phase(FH_delayed, phase_gpu, {});
 
   iteration_state.cumulative_coeffs_gpu =
       iteration_state.cumulative_coeffs_gpu.has_value()
@@ -478,7 +498,7 @@ GraphBuilder::build_shack_hartmann(TDesc FH, bool is_last_pass,
     }
   }
 
-  return FH;
+  return corrected;
 }
 
 GraphBuilder::TDesc GraphBuilder::short_time_fresnel_diffraction(
@@ -582,7 +602,7 @@ GraphBuilder::TDesc GraphBuilder::build_freq_weights() {
   return freqs;
 }
 
-void GraphBuilder::build_xy_view(const TDesc &FH_z) {
+void GraphBuilder::build_xy_view(const TDesc &FH_z, const std::optional<TDesc> &valid) {
   using Target = holotask::syncs::ConversionSettings::Target;
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
   auto Host    = holotask::syncs::MemcpySettings::Target::Host;
@@ -626,6 +646,16 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
   }
 
   result = mean(result, {{0}, false}); // [1, H, W]
+  const holotask::asyncs::SlidingAverageSettings slide_settings{
+      .target_capacity = static_cast<size_t>(std::max(1, s_.gpu_out_size)),
+      .window_size     = static_cast<size_t>(s_.pp_accumulation),
+  };
+  if (valid.has_value()) {
+    auto stable_valid = memcpy(*valid, {holotask::syncs::MemcpySettings::Target::Host});
+    result            = slide_avg(result, stable_valid, slide_settings);
+  } else {
+    result = slide_avg(result, slide_settings);
+  }
 
   if (s_.pp_convolution) {
     throw std::logic_error{"Convolution is currently not supported"};

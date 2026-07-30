@@ -22,6 +22,7 @@ set(SOURCES
     holofile_sink_test.cc
     pca_test.cu
     shack_hartmann_test.cu
+    sliding_average_test.cu
     zernike_phase_test.cu
     ../holonp/support/tensor_test_buffer.cc
     ../holonp/support/sync_task_runner.cc

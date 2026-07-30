@@ -63,11 +63,11 @@ private:
   bool  build_raw_view(const TDesc &H);
   TDesc build_preprocessing(TDesc H);
   TDesc build_time_frequency_analysis(TDesc H);
-  TDesc build_shack_hartmann(TDesc FH, bool is_last_pass,
+  TDesc build_shack_hartmann(const TDesc &FH_current, const TDesc &FH_delayed, bool is_last_pass,
                              ShackHartmannIterationState &iteration_state);
   TDesc build_spatial_propagation(const TDesc &FH);
   TDesc build_spatial_filter(const TDesc &FH_z);
-  void  build_xy_view(const TDesc &FH_z);
+  void  build_xy_view(const TDesc &FH_z, const std::optional<TDesc> &valid);
   void  build_3d_cuts(const TDesc &FH_z);
   TDesc build_freq_weights();
 

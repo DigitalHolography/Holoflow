@@ -126,4 +126,34 @@ GraphBuilderTracer::make_unary_async_node(std::string_view node_name, std::strin
   return wrap_infer_outputs(node_name, v, infer);
 }
 
+template <typename SettingsT>
+std::vector<GraphBuilderTracer::TDesc>
+GraphBuilderTracer::make_nary_async_node(std::string_view node_name, std::string_view kind,
+                                         std::string_view reg_key, std::span<const TDesc> inputs,
+                                         const SettingsT &s, bool debug) {
+  HOLOVIBES_CHECK(!inputs.empty());
+  for (const auto &X : inputs) {
+    HOLOVIBES_CHECK(X.producer.has_value());
+  }
+  HOLOVIBES_CHECK(reg_.is_async_registered(std::string{reg_key}));
+
+  holoflow::core::NodeSpec node_spec{
+      .name     = std::string{node_name} + "_" + std::to_string(unique_id_counter_++),
+      .kind     = std::string{kind},
+      .settings = nlohmann::json(s),
+      .debug    = debug,
+  };
+
+  auto v = boost::add_vertex(node_spec, g_);
+  for (size_t i = 0; i < inputs.size(); ++i) {
+    const auto &X = inputs[i];
+    boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, static_cast<int>(i)}, g_);
+  }
+
+  auto      &factory     = reg_.get_async(std::string{reg_key});
+  const auto core_inputs = to_core_descs(inputs);
+  const auto infer       = factory.infer(core_inputs, nlohmann::json(s));
+  return wrap_infer_outputs(node_name, v, infer);
+}
+
 } // namespace holovibes::pipeline

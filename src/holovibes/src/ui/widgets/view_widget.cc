@@ -110,6 +110,7 @@ void ViewWidget::set_pct_radius(double value) { pct_radius_->setValue(value); }
 // Validation
 void ViewWidget::mark_z_invalid() { mark_validation_error(z_spin_); }
 void ViewWidget::mark_z_width_invalid() { mark_validation_error(z_width_spin_); }
+void ViewWidget::mark_accumulation_invalid() { mark_validation_error(accumulation_spin_); }
 void ViewWidget::mark_flatfield_cutoff_period_invalid() {
   mark_validation_error(flatfield_cutoff_period_um_);
 }

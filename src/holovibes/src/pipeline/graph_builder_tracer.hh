@@ -93,6 +93,12 @@ protected:
                                            std::string_view reg_key, const TDesc &X,
                                            const SettingsT &s, bool debug = true);
 
+  // Add an n-ary async node (multiple inputs) and return its output descriptors.
+  template <typename SettingsT>
+  std::vector<TDesc> make_nary_async_node(std::string_view node_name, std::string_view kind,
+                                          std::string_view reg_key, std::span<const TDesc> inputs,
+                                          const SettingsT &s, bool debug = true);
+
   holoflow::core::Registry &reg_;
   holoflow::core::GraphSpec g_;
   std::stack<std::string>   scope_;

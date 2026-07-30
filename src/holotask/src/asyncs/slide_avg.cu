@@ -14,10 +14,12 @@
 
 #include "holotask/asyncs/slide_avg.hh"
 
+#include <cstdint>
 #include <cub/cub.cuh>
 #include <math_constants.h>
 #include <optional>
 #include <span>
+#include <vector>
 
 #include "bug.hh"
 #include "curaii/cuda.hh"
@@ -175,7 +177,13 @@ void SlidingAverage::release_output(int index) {
   read_idx_.store(next_read_idx, std::memory_order_release);
 }
 
-holoflow::core::OpResult SlidingAverage::try_push(holoflow::core::AsyncPushCtx &) {
+holoflow::core::OpResult SlidingAverage::try_push(holoflow::core::AsyncPushCtx &ctx) {
+  if (ctx.inputs.size() == 2 &&
+      *reinterpret_cast<const std::uint8_t *>(ctx.inputs[1].data()) == std::uint8_t{0}) {
+    storage_access().owned_input_storage(0).ptr = nullptr;
+    return holoflow::core::OpResult::Ok;
+  }
+
   // Compute offsets
   size_t   write_idx  = write_idx_.load(std::memory_order_relaxed);
   uint8_t *write_data = reinterpret_cast<uint8_t *>(d_buffer_.get()) + write_idx * element_size_;
@@ -252,7 +260,8 @@ SlidingAverageFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   auto settings = jsettings.get<SlidingAverageSettings>();
 
   // validate
-  check(input_descs.size() == 1, "unexpected input port");
+  check(input_descs.size() == 1 || input_descs.size() == 2,
+        "expected one input and optional valid");
   auto idesc = input_descs[0];
   check(idesc.dtype == holoflow::core::DType::F32, "input must be float32");
   check(idesc.rank() == 3, "input must be 3D");
@@ -261,16 +270,23 @@ SlidingAverageFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(is_contiguous(idesc), "input must be contiguous");
   check(settings.target_capacity > 0, "target_capacity must be greater or equal than zero");
   check(settings.window_size > 0, "window_size must be greater or equal than zero");
+  if (input_descs.size() == 2) {
+    const auto &valid = input_descs[1];
+    check(valid.dtype == holoflow::core::DType::U8, "valid input must be uint8");
+    check(valid.mem_loc == holoflow::core::MemLoc::Host, "valid input must be in host memory");
+    check(valid.shape == std::vector<size_t>{1}, "valid input must have shape [1]");
+  }
 
   auto odesc        = input_descs[0];
   odesc.shape.at(0) = 1;
 
   // Success
   return holoflow::core::InferResult{
-      .input_descs   = {idesc},
-      .output_descs  = {odesc},
-      .in_place      = {},
-      .owned_inputs  = {true},
+      .input_descs  = {input_descs.begin(), input_descs.end()},
+      .output_descs = {odesc},
+      .in_place     = {},
+      .owned_inputs =
+          input_descs.size() == 1 ? std::vector<bool>{true} : std::vector<bool>{true, false},
       .owned_outputs = {true},
       .kind          = holoflow::core::TaskKind::Async,
   };
