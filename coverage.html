@@ -1675,8 +1675,13 @@
 <h1 id="test-coverage">Test coverage</h1>
 <p>The coverage report represents the latest successful test run from the <code>main</code> branch.</p>
 <p><a href="coverage/index.html">Open the latest interactive coverage report</a></p>
-<p>The report measures native host C++ source lines. CUDA device instructions are validated by the
-GPU numerical and regression tests, but they are not represented by native host line coverage.</p>
+<p>The native collector measures MSVC-instrumentable host C++ code. Results from the test executables
+and a complete production image are merged by source line, then grouped under the <code>curaii</code>,
+<code>holofile</code>, <code>holoflow</code>, <code>holoflow_event</code>, <code>holonp</code>, <code>holotask</code>, and <code>holovibes</code> modules. Host
+functions that are retained in the production image but never executed are reported as uncovered.</p>
+<p>The coverable-line total is not repository LOC. It excludes comments, blank lines, declarations,
+CMake and JSON files, and code emitted only for CUDA devices. CUDA kernels are exercised by GPU
+numerical and regression tests, but they are not represented by native host line coverage.</p>
 <p>Pull requests run the Release build and test suite without collecting native coverage. Coverage is
 collected from <code>main</code> after merge so this report always represents the protected branch.</p>
 
