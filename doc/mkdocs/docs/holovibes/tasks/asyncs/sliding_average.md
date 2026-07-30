@@ -14,7 +14,11 @@ The tensor must be 32-bit floating point (`float32`) data already located in dev
 
 An optional second input may provide a host `uint8` scalar with shape `(1)`. A zero value discards
 the associated frame without advancing the averaging window; a nonzero value accepts it. This is
-used to suppress invalid warm-up frames from centered correction pipelines.
+available for data-dependent filtering.
+
+`discard_first` deterministically discards the requested number of initial accepted frames without
+advancing the averaging window. The VSH correction pipeline uses this to suppress its known
+`window_size - 1` alignment warm-up without adding a validity edge to the graph.
 
 ## Outputs
 After the warm-up period required to enqueue the first `window_size` frames, each pop exposes one tensor of shape `(1, H, W)` with the same dtype and memory location as the input. 

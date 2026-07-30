@@ -246,4 +246,50 @@ TEST(SlidingAverageTest, DiscardsInvalidInputsBeforeFullWindowWarmup) {
   EXPECT_EQ(output_count, 2);
 }
 
+TEST(SlidingAverageTest, DiscardsConfiguredInitialFramesWithoutValidityInput) {
+  const TDesc                                    image_desc({1, 1, 1}, DType::F32, MemLoc::Device);
+  const std::array                               input_descs{image_desc};
+  const holotask::asyncs::SlidingAverageSettings settings{
+      .target_capacity = 4,
+      .window_size     = 3,
+      .discard_first   = 2,
+  };
+  holotask::asyncs::SlidingAverageFactory factory;
+  const auto infer = factory.infer(input_descs, nlohmann::json(settings));
+
+  curaii::CudaStream producer_stream;
+  curaii::CudaStream consumer_stream;
+  auto               task = factory.create(input_descs, nlohmann::json(settings),
+                                           {producer_stream.get(), consumer_stream.get()});
+  task->bind_logger(spdlog::default_logger());
+  TestStorageAccess storage_access(infer.input_descs, infer.output_descs);
+  task->bind_storage_access(&storage_access);
+
+  std::array output_views{TView{infer.output_descs[0], &storage_access.owned_output_storage(0)}};
+  std::atomic<bool>           cancelled{false};
+  holoflow::core::AsyncPopCtx pop_ctx{output_views, &cancelled};
+  const std::array            values{100.0f, 200.0f, 3.0f, 5.0f, 7.0f};
+
+  for (size_t i = 0; i < values.size(); ++i) {
+    auto acquired = task->acquire_input(0);
+    ASSERT_TRUE(acquired.has_value());
+    CUDA_CHECK(cudaMemcpy(acquired->data(), &values[i], sizeof(float), cudaMemcpyHostToDevice));
+    std::array                   input_views{*acquired};
+    holoflow::core::AsyncPushCtx push_ctx{input_views, &cancelled};
+    ASSERT_EQ(task->try_push(push_ctx), OpResult::Ok);
+
+    const auto pop_result = task->try_pop(pop_ctx);
+    if (i + 1 < values.size()) {
+      EXPECT_EQ(pop_result, OpResult::NotReady);
+      continue;
+    }
+
+    ASSERT_EQ(pop_result, OpResult::Ok);
+    float actual = 0.0f;
+    CUDA_CHECK(cudaMemcpy(&actual, output_views[0].data(), sizeof(float), cudaMemcpyDeviceToHost));
+    EXPECT_FLOAT_EQ(actual, 5.0f);
+    task->release_output(0);
+  }
+}
+
 } // namespace

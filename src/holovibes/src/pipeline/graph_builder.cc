@@ -133,9 +133,8 @@ holoflow::core::GraphSpec GraphBuilder::build() {
                                       .target_capacity = std::max<size_t>(2, 2 * FH.shape.at(0)),
                                       .window_size     = static_cast<size_t>(s_.pp_accumulation),
                                   });
-  TDesc                FH_current = timing_outputs.at(0);
-  const TDesc          FH_delayed = timing_outputs.at(1);
-  std::optional<TDesc> valid;
+  TDesc       FH_current = timing_outputs.at(0);
+  const TDesc FH_delayed = timing_outputs.at(1);
 
   if (s_.autofocus_enabled) {
     if (s_.autofocus_nb_iter <= 0) {
@@ -146,7 +145,6 @@ holoflow::core::GraphSpec GraphBuilder::build() {
           "sliding Shack-Hartmann correction only supports one autofocus iteration");
     }
 
-    valid = timing_outputs.at(2);
     ShackHartmannIterationState shack_hartmann_iteration_state;
     for (int pass = 0; pass < s_.autofocus_nb_iter; ++pass) {
       const TDesc &delayed = pass == 0 ? FH_delayed : FH_current;
@@ -157,7 +155,7 @@ holoflow::core::GraphSpec GraphBuilder::build() {
 
   TDesc FH_z = build_spatial_propagation(FH_current);
 
-  build_xy_view(FH_z, valid);
+  build_xy_view(FH_z);
 
   if (s_.view_3d_cuts) {
     build_3d_cuts(FH_z);
@@ -473,6 +471,7 @@ GraphBuilder::build_shack_hartmann(const TDesc &FH_current, const TDesc &FH_dela
                                                        s_.autofocus_zernike_orders,
                                                        s_.signal_plot_time_window_seconds,
                                                        s_.signal_plot_sample_time_seconds(),
+                                                       static_cast<size_t>(s_.pp_accumulation - 1),
                                                    });
     }
 
@@ -602,7 +601,7 @@ GraphBuilder::TDesc GraphBuilder::build_freq_weights() {
   return freqs;
 }
 
-void GraphBuilder::build_xy_view(const TDesc &FH_z, const std::optional<TDesc> &valid) {
+void GraphBuilder::build_xy_view(const TDesc &FH_z) {
   using Target = holotask::syncs::ConversionSettings::Target;
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
   auto Host    = holotask::syncs::MemcpySettings::Target::Host;
@@ -649,13 +648,10 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z, const std::optional<TDesc> &
   const holotask::asyncs::SlidingAverageSettings slide_settings{
       .target_capacity = static_cast<size_t>(std::max(1, s_.gpu_out_size)),
       .window_size     = static_cast<size_t>(s_.pp_accumulation),
+      .discard_first =
+          s_.autofocus_enabled ? static_cast<size_t>(s_.pp_accumulation - 1) : size_t{0},
   };
-  if (valid.has_value()) {
-    auto stable_valid = memcpy(*valid, {holotask::syncs::MemcpySettings::Target::Host});
-    result            = slide_avg(result, stable_valid, slide_settings);
-  } else {
-    result = slide_avg(result, slide_settings);
-  }
+  result = slide_avg(result, slide_settings);
 
   if (s_.pp_convolution) {
     throw std::logic_error{"Convolution is currently not supported"};

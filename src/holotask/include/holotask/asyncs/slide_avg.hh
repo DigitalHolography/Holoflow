@@ -28,6 +28,7 @@ namespace holotask::asyncs {
 struct SlidingAverageSettings {
   size_t target_capacity;
   size_t window_size;
+  size_t discard_first = 0;
 
   bool operator==(const SlidingAverageSettings &) const = default;
 };

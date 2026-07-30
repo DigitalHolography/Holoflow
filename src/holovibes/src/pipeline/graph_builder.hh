@@ -67,7 +67,7 @@ private:
                              ShackHartmannIterationState &iteration_state);
   TDesc build_spatial_propagation(const TDesc &FH);
   TDesc build_spatial_filter(const TDesc &FH_z);
-  void  build_xy_view(const TDesc &FH_z, const std::optional<TDesc> &valid);
+  void  build_xy_view(const TDesc &FH_z);
   void  build_3d_cuts(const TDesc &FH_z);
   TDesc build_freq_weights();
 
