@@ -1862,6 +1862,9 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
         break;
       case SettingsField::View3DCuts:
         break;
+      case SettingsField::PpAccumulation:
+        view_widget_->mark_accumulation_invalid();
+        break;
       case SettingsField::PpFlatfieldCutoffPeriod:
         view_widget_->mark_flatfield_cutoff_period_invalid();
         break;
@@ -1911,6 +1914,7 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
       FieldBinding{SettingsField::TimeStride, render_widget_->time_stride_spin()},
       FieldBinding{SettingsField::TimeZBegin, view_widget_->z_spin()},
       FieldBinding{SettingsField::TimeZEnd, view_widget_->z_width_spin()},
+      FieldBinding{SettingsField::PpAccumulation, view_widget_->accumulation_spin()},
       FieldBinding{SettingsField::PpFlatfieldCutoffPeriod,
                    view_widget_->flatfield_cutoff_period_um()},
       FieldBinding{SettingsField::PpConvolution, render_widget_->convolution_combo()},

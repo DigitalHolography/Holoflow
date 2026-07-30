@@ -5,12 +5,16 @@ The **Sliding Average** async task maintains a rolling mean of the most recent `
     The internal buffer is provisioned with `target_capacity + window_size` slots in device memory. The extra `target_capacity` slots absorb producer/consumer latency.
     
 ## Inputs
-This task consumes a single tensor per push with shape `(1, H, W)`, where:
+This task consumes a tensor per push with shape `(1, H, W)`, where:
 
 - `1`: unit batch size (exactly one frame per push)
 - `H`, `W`: frame height and width
 
 The tensor must be 32-bit floating point (`float32`) data already located in device memory. `acquire_input` returns a writable view that aliases the internal circular buffer.
+
+An optional second input may provide a host `uint8` scalar with shape `(1)`. A zero value discards
+the associated frame without advancing the averaging window; a nonzero value accepts it. This is
+used to suppress invalid warm-up frames from centered correction pipelines.
 
 ## Outputs
 After the warm-up period required to enqueue the first `window_size` frames, each pop exposes one tensor of shape `(1, H, W)` with the same dtype and memory location as the input. 

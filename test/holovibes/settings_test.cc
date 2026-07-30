@@ -115,17 +115,39 @@ TEST(AngularSpectrumPaddingSettingsTest, ValidationRejectsInvalidResolution) {
   EXPECT_FALSE(has_issue(valid_padding, "asp_padding_not_even"));
 }
 
-TEST(SignalPlotSettingsTest, DerivesSampleTimeFromFrequencyStrideAndAccumulation) {
+TEST(SignalPlotSettingsTest, DerivesSampleTimeFromFrequencyStride) {
   Settings settings{};
   settings.input_sampling_frequency_hz = 40'000.0;
   settings.time_stride                 = 32;
   settings.pp_accumulation             = 8;
 
-  EXPECT_DOUBLE_EQ(settings.signal_plot_sample_time_seconds(), 32.0 * 8.0 / 40'000.0);
+  EXPECT_DOUBLE_EQ(settings.signal_plot_sample_time_seconds(), 32.0 / 40'000.0);
 
   settings.time_stride     = 64;
   settings.pp_accumulation = 4;
-  EXPECT_DOUBLE_EQ(settings.signal_plot_sample_time_seconds(), 64.0 * 4.0 / 40'000.0);
+  EXPECT_DOUBLE_EQ(settings.signal_plot_sample_time_seconds(), 64.0 / 40'000.0);
+}
+
+TEST(SlidingAverageSettingsTest, RejectsMultipleAutofocusIterationsForNonUnitWindow) {
+  Settings settings{};
+  settings.view_type           = ViewType::PROCESSED;
+  settings.time_method         = TimeMethod::RFFT;
+  settings.spacial_method      = SpacialMethod::FRESNEL_DIFFRACTION;
+  settings.time_window         = 8;
+  settings.time_stride         = 8;
+  settings.time_z_begin        = 0;
+  settings.time_z_end          = 5;
+  settings.pp_accumulation     = 4;
+  settings.autofocus_enabled   = true;
+  settings.autofocus_nb_subaps = 3;
+  settings.autofocus_nb_iter   = 2;
+
+  EXPECT_TRUE(
+      has_issue(validate_settings(settings, {}), "autofocus_sliding_average_multiple_iterations"));
+
+  settings.pp_accumulation = 1;
+  EXPECT_FALSE(
+      has_issue(validate_settings(settings, {}), "autofocus_sliding_average_multiple_iterations"));
 }
 
 TEST(SignalPlotSettingsTest, UnknownAutofocusSlopeModeKeepsDefault) {
@@ -158,10 +180,9 @@ TEST(SignalPlotSettingsTest, MissingLegacyFieldsKeepDefaults) {
 TEST(SignalPlotSettingsTest, IgnoresLegacySampleTimeField) {
   Settings defaults{};
   defaults.input_sampling_frequency_hz = 22'000.0;
-  const nlohmann::json json             = {
+  const nlohmann::json json            = {
       {"compute_settings",
-       {{"image_rendering",
-         {{"autofocus", {{"a4_history", {{"sample_time_seconds", 123.0}}}}}}}}},
+       {{"image_rendering", {{"autofocus", {{"a4_history", {{"sample_time_seconds", 123.0}}}}}}}}},
   };
 
   const auto restored = old_json_to_settings(json, defaults);
@@ -170,8 +191,7 @@ TEST(SignalPlotSettingsTest, IgnoresLegacySampleTimeField) {
 }
 
 TEST(SignalPlotSettingsTest, ValidationRejectsInvalidValues) {
-  for (const double invalid_frequency :
-       {0.0, -1.0, std::numeric_limits<double>::infinity()}) {
+  for (const double invalid_frequency : {0.0, -1.0, std::numeric_limits<double>::infinity()}) {
     Settings settings{};
     settings.input_sampling_frequency_hz = invalid_frequency;
 

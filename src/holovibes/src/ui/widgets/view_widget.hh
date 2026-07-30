@@ -65,6 +65,7 @@ public:
   void clear_validation_styles();
   void mark_z_invalid();
   void mark_z_width_invalid();
+  void mark_accumulation_invalid();
   void mark_flatfield_cutoff_period_invalid();
   void mark_registration_invalid();
 

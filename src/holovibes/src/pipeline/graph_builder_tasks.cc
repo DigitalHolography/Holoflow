@@ -65,6 +65,7 @@ DEFINE_UNARY_SYNC_NODE (filter_2d,                              "filter_2d",    
 DEFINE_UNARY_SYNC_NODE (fresnel_diffraction,                    "fresnel_diffraction",                 "FresnelDiffraction",              holotask::syncs::FresnelDiffractionSettings)
 DEFINE_UNARY_SYNC_NODE (angular_spectrum,                       "angular_spectrum",                    "AngularSpectrum",                 holotask::syncs::AngularSpectrumSettings)
 DEFINE_UNARY_SYNC_NODE (cuda_stream_synchronize,                "cuda_stream_synchronize",             "CudaStreamSynchronize",           holotask::syncs::CudaStreamSynchronizeSettings)
+DEFINE_UNARY_SYNC_NODE (causal_slide_avg,                       "causal_slide_avg",                     "CausalSlidingAverage",             holotask::syncs::CausalSlidingAverageSettings)
 DEFINE_UNARY_SYNC_NODE (reshape,                                "reshape",                             "Reshape",                         holonp::ReshapeSettings)
 DEFINE_UNARY_SYNC_NODE (convolution,                            "convolution",                         "Convolution",                     holotask::syncs::ConvolutionSettings)
 DEFINE_UNARY_SYNC_NODE (pct_clip,                               "pct_clip",                            "PctClip",                         holotask::syncs::PctClipSettings)
@@ -103,6 +104,21 @@ DEFINE_UNARY_SYNC_NODE (normalize,                    "normalize",              
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                "batch_queue",                  "BatchQueue",                      holotask::asyncs::BatchQueueSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                    "slide_avg",                    "SlidingAverage",                  holotask::asyncs::SlidingAverageSettings)
 // clang-format on
+
+std::vector<GraphBuilderTasks::TDesc>
+GraphBuilderTasks::dual_reader_batch_queue(const TDesc                                   &X,
+                                           holotask::asyncs::DualReaderBatchQueueSettings s) {
+  return make_unary_async_node("dual_reader_batch_queue", "DualReaderBatchQueue",
+                               "DualReaderBatchQueue", X, s);
+}
+
+GraphBuilderTasks::TDesc GraphBuilderTasks::slide_avg(const TDesc &X, const TDesc &Valid,
+                                                      holotask::asyncs::SlidingAverageSettings s) {
+  const std::array<TDesc, 2> inputs{X, Valid};
+  return std::move(make_nary_async_node("slide_avg", "SlidingAverage", "SlidingAverage",
+                                        std::span<const TDesc>{inputs}, s)
+                       .at(0));
+}
 
 std::vector<GraphBuilderTasks::TDesc>
 GraphBuilderTasks::shack_hartmann_slopes(const TDesc                                &X,

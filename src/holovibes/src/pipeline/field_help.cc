@@ -22,97 +22,102 @@ namespace holovibes::pipeline {
 
 namespace {
 
-constexpr auto kLoadPathConstraints          = std::to_array<const char *>({
+constexpr auto kLoadPathConstraints               = std::to_array<const char *>({
     "Select an existing holofile when import source is file-based.",
 });
-constexpr auto kCameraConfigConstraints      = std::to_array<const char *>({
+constexpr auto kCameraConfigConstraints           = std::to_array<const char *>({
     "Select a readable JSON camera configuration file.",
 });
 constexpr auto kInputSamplingFrequencyConstraints = std::to_array<const char *>({
     "Must be strictly positive.",
     "Represents physical acquisition timing, not processing or playback throughput.",
 });
-constexpr auto kLoadBeginConstraints         = std::to_array<const char *>({
+constexpr auto kLoadBeginConstraints              = std::to_array<const char *>({
     "Must be strictly smaller than End Index.",
 });
-constexpr auto kLoadEndConstraints           = std::to_array<const char *>({
+constexpr auto kLoadEndConstraints                = std::to_array<const char *>({
     "Must be strictly greater than Start Index.",
     "Must not exceed the number of frames in the holofile.",
 });
-constexpr auto kLoadBatchConstraints         = std::to_array<const char *>({
+constexpr auto kLoadBatchConstraints              = std::to_array<const char *>({
     "Must be strictly positive.",
     "Used as the recording batch size for raw recording.",
 });
-constexpr auto kFilter2DConstraints          = std::to_array<const char *>({
+constexpr auto kFilter2DConstraints               = std::to_array<const char *>({
     "Angular Spectrum folds this filter into its propagation transfer function.",
     "Other propagation methods use a separate frequency-domain filtering stage.",
     "Uses the inner and outer radii as pixel distances in the spatial-frequency plane.",
 });
-constexpr auto kFilter2DInnerConstraints     = std::to_array<const char *>({
+constexpr auto kFilter2DInnerConstraints          = std::to_array<const char *>({
     "Must be non-negative.",
     "Must not exceed the outer radius when Filter 2D is enabled.",
 });
-constexpr auto kFilter2DOuterConstraints     = std::to_array<const char *>({
+constexpr auto kFilter2DOuterConstraints          = std::to_array<const char *>({
     "Must be non-negative.",
     "Must be greater than or equal to the inner radius when Filter 2D is enabled.",
 });
-constexpr auto kSpacialMethodConstraints     = std::to_array<const char *>({
+constexpr auto kSpacialMethodConstraints          = std::to_array<const char *>({
     "Processed mode supports Fresnel Diffraction and Angular Spectrum.",
     "Angular Spectrum is disabled when Auto Focus is enabled.",
 });
-constexpr auto kAspPaddingConstraints        = std::to_array<const char *>({
+constexpr auto kAspPaddingConstraints             = std::to_array<const char *>({
     "Available only for Angular Spectrum propagation.",
     "Width and height must be at least the source dimensions.",
     "The number of pixels added on each axis must be even.",
 });
-constexpr auto kTimeMethodConstraints        = std::to_array<const char *>({
+constexpr auto kTimeMethodConstraints             = std::to_array<const char *>({
     "Processed mode requires a time transform.",
 });
-constexpr auto kTimeWindowConstraints        = std::to_array<const char *>({
+constexpr auto kTimeWindowConstraints             = std::to_array<const char *>({
     "Must be strictly positive.",
     "Time Stride must be a multiple of Time Window.",
 });
-constexpr auto kTimeStrideConstraints        = std::to_array<const char *>({
+constexpr auto kTimeStrideConstraints             = std::to_array<const char *>({
     "Must be strictly positive.",
     "Must be a multiple of Time Window.",
     "For holofile import, must not exceed the selected frame range.",
 });
-constexpr auto kTimeZBeginConstraints        = std::to_array<const char *>({
+constexpr auto kTimeZBeginConstraints             = std::to_array<const char *>({
     "Defines the start of the selected temporal-frequency range.",
     "Must stay within the current time transform output.",
 });
-constexpr auto kTimeZEndConstraints          = std::to_array<const char *>({
+constexpr auto kTimeZEndConstraints               = std::to_array<const char *>({
     "Defines the end of the selected temporal-frequency range.",
     "Must be strictly greater than Z start and within the current time transform output.",
 });
-constexpr auto kView3DCutsConstraints        = std::to_array<const char *>({
+constexpr auto kView3DCutsConstraints             = std::to_array<const char *>({
     "Not currently supported by the pipeline.",
 });
-constexpr auto kFlatfieldCutoffConstraints   = std::to_array<const char *>({
+constexpr auto kAccumulationConstraints           = std::to_array<const char *>({
+    "Must be strictly positive.",
+    "Controls both reconstruction and Shack-Hartmann sliding windows.",
+    "Values above one require a single auto-focus iteration.",
+});
+constexpr auto kFlatfieldCutoffConstraints        = std::to_array<const char *>({
     "Must be strictly positive.",
     "Physical period of the 50% amplitude transition convention, not a hard cutoff.",
     "Converted to anisotropic Gaussian sigmas using the current image pitch.",
 });
-constexpr auto kConvolutionConstraints       = std::to_array<const char *>({
+constexpr auto kConvolutionConstraints            = std::to_array<const char *>({
     "Not currently supported by the pipeline.",
 });
-constexpr auto kRegistrationConstraints      = std::to_array<const char *>({
+constexpr auto kRegistrationConstraints           = std::to_array<const char *>({
     "Not currently supported by the pipeline.",
 });
-constexpr auto kRecordingPathConstraints     = std::to_array<const char *>({
+constexpr auto kRecordingPathConstraints          = std::to_array<const char *>({
     "Required when recording is enabled.",
     "The parent directory must exist and be writable.",
 });
-constexpr auto kRecordingCountConstraints    = std::to_array<const char *>({
+constexpr auto kRecordingCountConstraints         = std::to_array<const char *>({
     "Must be strictly positive.",
     "Must be divisible by the effective pipeline batch size.",
 });
-constexpr auto kAutofocusNbSubapsConstraints = std::to_array<const char *>({
+constexpr auto kAutofocusNbSubapsConstraints      = std::to_array<const char *>({
     "Must be strictly positive.",
     "Must be odd.",
     "Must fit within the source dimensions.",
 });
-constexpr auto kAutofocusNbIterConstraints   = std::to_array<const char *>({
+constexpr auto kAutofocusNbIterConstraints        = std::to_array<const char *>({
     "Must be strictly positive.",
     "Each pass applies one Shack-Hartmann phase correction.",
 });
@@ -161,6 +166,9 @@ const FieldHelp kFieldHelp[] = {
      kTimeZEndConstraints},
     {SettingsField::View3DCuts, "3D Cuts",
      "Enables XZ and YZ cut views derived from the processed volume.", kView3DCutsConstraints},
+    {SettingsField::PpAccumulation, "Accumulation",
+     "Number of temporal samples in the reconstruction and Shack-Hartmann sliding averages.",
+     kAccumulationConstraints},
     {SettingsField::PpFlatfieldCutoffPeriod, "Flatfield Cutoff",
      "Physical cutoff period used to derive the Gaussian background subtraction scale.",
      kFlatfieldCutoffConstraints},

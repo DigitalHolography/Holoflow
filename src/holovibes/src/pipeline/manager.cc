@@ -66,6 +66,7 @@
 #include "holonp/where.hh"
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
+#include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
@@ -74,6 +75,7 @@
 #include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
 #include "holotask/syncs/angular_spectrum.hh"
+#include "holotask/syncs/causal_sliding_average.hh"
 #include "holotask/syncs/conversion.hh"
 #include "holotask/syncs/convolution.hh"
 #include "holotask/syncs/correct_phase.hh"
@@ -157,6 +159,7 @@ Manager::Manager(
 void Manager::register_components() {
   // clang-format off
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
+  reg_async<asyncs::DualReaderBatchQueueFactory>(registry_, "DualReaderBatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
@@ -177,6 +180,7 @@ void Manager::register_components() {
   reg_sync<sources::FresnelQoutFactory>(registry_, "FresnelQout");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
   reg_sync<syncs::CudaStreamSynchronizeFactory>(registry_, "CudaStreamSynchronize");
+  reg_sync<syncs::CausalSlidingAverageFactory>(registry_, "CausalSlidingAverage");
   reg_sync<syncs::ConversionFactory>(registry_, "Conversion");
   reg_sync<syncs::FresnelDiffractionFactory>(registry_, "FresnelDiffraction");
   reg_sync<syncs::MemcpyFactory>(registry_, "Memcpy");

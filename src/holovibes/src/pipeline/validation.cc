@@ -243,6 +243,11 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
   }
 
   if (requires_processed_pipeline(settings)) {
+    if (settings.pp_accumulation <= 0) {
+      add_issue(result, ValidationSeverity::Error, "pp_accumulation_non_positive",
+                "Accumulation must be strictly positive.", {SettingsField::PpAccumulation});
+    }
+
     if (settings.time_method == TimeMethod::NONE) {
       add_issue(result, ValidationSeverity::Error, "time_method_unsupported",
                 "A time transform must be selected for processed view mode.",
@@ -375,6 +380,10 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
       add_issue(result, ValidationSeverity::Error, "autofocus_nb_iter_non_positive",
                 "Auto-focus iteration count must be strictly positive.",
                 {SettingsField::AutofocusNbIter});
+    } else if (settings.pp_accumulation > 1 && settings.autofocus_nb_iter > 1) {
+      add_issue(result, ValidationSeverity::Error, "autofocus_sliding_average_multiple_iterations",
+                "Sliding Shack-Hartmann correction supports one auto-focus iteration.",
+                {SettingsField::PpAccumulation, SettingsField::AutofocusNbIter});
     }
   }
 

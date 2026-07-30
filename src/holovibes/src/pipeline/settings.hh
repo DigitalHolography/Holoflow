@@ -157,8 +157,7 @@ struct Settings {
   double signal_plot_time_window_seconds = 8.0;
 
   [[nodiscard]] double signal_plot_sample_time_seconds() const {
-    return static_cast<double>(time_stride) * static_cast<double>(pp_accumulation) /
-           input_sampling_frequency_hz;
+    return static_cast<double>(time_stride) / input_sampling_frequency_hz;
   }
 };
 

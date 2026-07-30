@@ -45,6 +45,7 @@
 #include "holonp/where.hh"
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
+#include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
@@ -53,6 +54,7 @@
 #include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
 #include "holotask/syncs/angular_spectrum.hh"
+#include "holotask/syncs/causal_sliding_average.hh"
 #include "holotask/syncs/conversion.hh"
 #include "holotask/syncs/convolution.hh"
 #include "holotask/syncs/correct_phase.hh"
@@ -97,6 +99,7 @@ protected:
   TDesc copy(const TDesc &X, holonp::CopySettings s);
   TDesc memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);
   TDesc batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
+  std::vector<TDesc> dual_reader_batch_queue(const TDesc &X, holotask::asyncs::DualReaderBatchQueueSettings s);
   TDesc convert(const TDesc &X, holotask::syncs::ConversionSettings s);
   TDesc pca(const TDesc &X, holotask::syncs::PcaSettings s);
   TDesc flatfield(const TDesc &X, holotask::syncs::FlatfieldSettings s);
@@ -108,7 +111,9 @@ protected:
   TDesc unfold2d(const TDesc &X, holotask::syncs::Unfold2DSettings s);
   TDesc angular_spectrum(const TDesc &X, holotask::syncs::AngularSpectrumSettings s);
   TDesc cuda_stream_synchronize(const TDesc &X, holotask::syncs::CudaStreamSynchronizeSettings s);
+  TDesc causal_slide_avg(const TDesc &X, holotask::syncs::CausalSlidingAverageSettings s);
   TDesc slide_avg(const TDesc &X, holotask::asyncs::SlidingAverageSettings s);
+  TDesc slide_avg(const TDesc &X, const TDesc &Valid, holotask::asyncs::SlidingAverageSettings s);
   void  xy_raw_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  xy_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  xz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
