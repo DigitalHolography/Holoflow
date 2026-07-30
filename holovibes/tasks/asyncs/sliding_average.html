@@ -1819,7 +1819,10 @@
 <p>The tensor must be 32-bit floating point (<code>float32</code>) data already located in device memory. <code>acquire_input</code> returns a writable view that aliases the internal circular buffer.</p>
 <p>An optional second input may provide a host <code>uint8</code> scalar with shape <code>(1)</code>. A zero value discards
 the associated frame without advancing the averaging window; a nonzero value accepts it. This is
-used to suppress invalid warm-up frames from centered correction pipelines.</p>
+available for data-dependent filtering.</p>
+<p><code>discard_first</code> deterministically discards the requested number of initial accepted frames without
+advancing the averaging window. The VSH correction pipeline uses this to suppress its known
+<code>window_size - 1</code> alignment warm-up without adding a validity edge to the graph.</p>
 <h2 id="outputs">Outputs</h2>
 <p>After the warm-up period required to enqueue the first <code>window_size</code> frames, each pop exposes one tensor of shape <code>(1, H, W)</code> with the same dtype and memory location as the input. </p>
 <h2 id="inplace">Inplace</h2>
