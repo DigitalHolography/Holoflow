@@ -125,10 +125,13 @@ public:
 /// @par Ownership lifecycle
 /// - Inputs (owned):
 ///   - Acquire with @ref acquire_input(int) before execution or push.
+///   - Publish the acquired pointer through @ref IOStorageAccess::owned_input_storage.
 ///   - The acquired view must not be used after the operation returns.
 /// - Outputs (owned):
-///   - The task assigns owned output views into the context during execute/pop.
+///   - Publish the output pointer through @ref IOStorageAccess::owned_output_storage.
+///   - Context TViews share that stable Storage and observe pointer updates directly.
 ///   - After downstream consumption, scheduler calls @ref release_output(int).
+///   - The task controls pointer cleanup and the lifetime of its owned memory.
 /// @todo Define rollback semantics on cancellation before use.
 class ITask {
 public:
@@ -136,7 +139,8 @@ public:
 
   /// Acquire a writable view for an **owned** input index.
   /// Valid only for indices marked owned by inference.
-  /// The view is transient and must not outlive the operation.
+  /// The view must reference the compiler-provided Storage for that index.
+  /// It signals readiness; scheduler contexts already share the same Storage.
   /// @returns view or std::nullopt if not currently acquirable.
   /// @throws std::out_of_range on bad index.
   [[nodiscard]] virtual std::optional<TView> acquire_input(int index);

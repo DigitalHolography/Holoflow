@@ -150,8 +150,8 @@ public:
 
     start_time_ = Clock::now();
     start_us_   = std::chrono::time_point_cast<std::chrono::microseconds>(SystemClock::now())
-                    .time_since_epoch()
-                    .count();
+                      .time_since_epoch()
+                      .count();
 
     if (logger_ && category_ == "pass") {
       logger_->trace(">> Begin Pass: {}", name_);
@@ -302,6 +302,7 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
 
     run_pass("Tensor IDs", [&] { assign_tensor_ids(); });
     run_pass("Storage Mapping", [&] { assign_storage_ids(); });
+    run_pass("Buffer Consistency", [&] { verify_buffer_consistency(); });
     run_pass("Buffer Allocation", [&] { allocate_buffers(); });
 
     run_pass("Storage Adapters", [&] { create_storage_adapters(); });
@@ -552,26 +553,27 @@ void Compiler::Impl::assign_storage_ids() {
 }
 
 void Compiler::Impl::verify_buffer_consistency() {
-  std::map<int, std::vector<std::string>> owners;
-  auto                                   &g = out_->graph;
+  std::map<size_t, std::vector<std::string>> owners;
+  auto                                      &g   = out_->graph;
+  auto                                      &res = out_->resources;
 
   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
     const auto &node = g[v];
     for (size_t i = 0; i < node.infer.owned_inputs.size(); ++i) {
       if (node.infer.owned_inputs[i]) {
-        owners[node.in_tids[i]].push_back(node.spec.name + ":in");
+        owners[res.tid_to_sid.at(node.in_tids[i])].push_back(node.spec.name + ":in");
       }
     }
     for (size_t i = 0; i < node.infer.owned_outputs.size(); ++i) {
       if (node.infer.owned_outputs[i]) {
-        owners[node.out_tids[i]].push_back(node.spec.name + ":out");
+        owners[res.tid_to_sid.at(node.out_tids[i])].push_back(node.spec.name + ":out");
       }
     }
   }
 
-  for (const auto &[tid, nodeList] : owners) {
+  for (const auto &[sid, nodeList] : owners) {
     if (nodeList.size() > 1) {
-      throw CompilerException(std::format("TID {} has multiple owners", tid));
+      throw CompilerException(std::format("Storage ID {} has multiple owners", sid));
     }
   }
 }
@@ -769,6 +771,17 @@ void Compiler::Impl::allocate_buffers() {
 void Compiler::Impl::partition_sections() {
   auto &g         = out_->graph;
   auto  num_verts = boost::num_vertices(g);
+
+  for (auto e : boost::make_iterator_range(boost::edges(g))) {
+    const auto source = boost::source(e, g);
+    const auto target = boost::target(e, g);
+    if (g[source].infer.kind == core::TaskKind::Async &&
+        g[target].infer.kind == core::TaskKind::Async) {
+      throw CompilerException(
+          std::format("Consecutive asynchronous nodes '{}' and '{}' are not supported",
+                      g[source].spec.name, g[target].spec.name));
+    }
+  }
 
   std::vector<size_t> parent(num_verts);
   std::iota(parent.begin(), parent.end(), 0);

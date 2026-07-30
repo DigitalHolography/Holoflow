@@ -331,6 +331,7 @@ void Scheduler::run_section(int section_id) {
 
   try {
     while (!stop_.load()) {
+      std::vector<GraphPlan::vertex_descriptor> produced_owned_outputs;
       logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
 
       // 1. Outer Section Range
@@ -366,61 +367,63 @@ void Scheduler::run_section(int section_id) {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async consumers", color_async_c}};
         for (auto v : sec.async_cons) {
           try {
-            run_async_cons(v);
+            if (run_async_cons(v) == core::OpResult::Ok) {
+              produced_owned_outputs.push_back(v);
+            }
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_async_consumer", section_id, sec.name);
           }
+          if (stop_.load())
+            break;
         }
       }
 
-      if (stop_.load()) {
-        break; // Safe!
-      }
-
       // 4. Execute sync nodes
-      {
+      if (!stop_.load()) {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Execute sync nodes", color_sync}};
         for (auto v : sec.sync_topo) {
           try {
-            run_sync(v);
+            if (run_sync(v) == core::OpResult::Ok) {
+              produced_owned_outputs.push_back(v);
+            }
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_sync", section_id, sec.name);
           }
+          if (stop_.load())
+            break;
         }
 
         CUDA_CHECK(cudaStreamSynchronize(stream));
       }
 
       // 5. Execute async producers
-      {
+      if (!stop_.load()) {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async producers", color_async_p}};
         for (auto v : sec.async_prod) {
           try {
-            run_async_prod(v);
+            (void)run_async_prod(v);
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_async_producer", section_id, sec.name);
+          }
+          if (stop_.load())
+            break;
+        }
+      }
+
+      // 6. Release only outputs produced successfully in this iteration.
+      {
+        nvtx3::scoped_range r{nvtx3::event_attributes{"Release owned outputs", color_release}};
+        for (auto v : produced_owned_outputs) {
+          try {
+            release_owned_outputs(v);
+          } catch (...) {
+            rethrow_with_node_context(graph_, v, "release_owned_outputs", section_id, sec.name);
           }
         }
       }
 
-      // 6. Release owned outputs
-      {
-        nvtx3::scoped_range r{nvtx3::event_attributes{"Release owned outputs", color_release}};
-        for (auto v : sec.sync_topo) {
-          try {
-            release_owned_outputs(v);
-          } catch (...) {
-            rethrow_with_node_context(graph_, v, "release_owned_outputs", section_id, sec.name);
-          }
-        }
-        for (auto v : sec.async_cons) {
-          try {
-            release_owned_outputs(v);
-          } catch (...) {
-            rethrow_with_node_context(graph_, v, "release_owned_outputs", section_id, sec.name);
-          }
-        }
-      }
+      if (stop_.load())
+        break;
     }
   } catch (...) {
     stop_.store(true);
@@ -544,8 +547,6 @@ void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v) {
         return;
       tview = task->acquire_input(static_cast<int>(i));
     }
-
-    // tviews_.at(np.in_tids.at(i)) = tview.value();
   }
 }
 
@@ -563,63 +564,10 @@ void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v) {
       continue;
 
     task->release_output(static_cast<int>(i));
-    // tviews_.at(np.out_tids.at(i)) = core::TView{};
   }
 }
 
-void Scheduler::refresh_views_sync(GraphPlan::vertex_descriptor v) {
-  const auto  idx = boost::get(boost::vertex_index, graph_, v);
-  const auto &np  = graph_[v];
-  auto       &nrt = node_rts_.at(idx);
-  HOLOFLOW_CHECK(std::holds_alternative<SyncRt>(nrt));
-  auto &srt = std::get<SyncRt>(nrt);
-
-  for (size_t i = 0; i < np.in_tids.size(); ++i) {
-    auto &tv = tviews_.at(np.in_tids[i]);
-    HOLOFLOW_CHECK(!tv.is_nullptr());
-    srt.in_views[i] = tv;
-  }
-
-  for (size_t i = 0; i < np.out_tids.size(); ++i) {
-    auto &tv    = tviews_.at(np.out_tids[i]);
-    bool  owned = np.infer.owned_outputs[i];
-
-    HOLOFLOW_CHECK(owned == tv.is_nullptr());
-    srt.out_views[i] = tv;
-  }
-}
-
-void Scheduler::refresh_views_async_cons(GraphPlan::vertex_descriptor v) {
-  const auto  idx = boost::get(boost::vertex_index, graph_, v);
-  const auto &np  = graph_[v];
-  auto       &nrt = node_rts_.at(idx);
-  HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
-  auto &art = std::get<AsyncRt>(nrt);
-
-  for (size_t i = 0; i < np.out_tids.size(); i++) {
-    auto &tv    = tviews_.at(np.out_tids[i]);
-    bool  owned = np.infer.owned_outputs[i];
-
-    HOLOFLOW_CHECK(owned == tv.is_nullptr());
-    art.out_views[i] = tv;
-  }
-}
-
-void Scheduler::refresh_views_async_prod(GraphPlan::vertex_descriptor v) {
-  const auto  idx = boost::get(boost::vertex_index, graph_, v);
-  const auto &np  = graph_[v];
-  auto       &nrt = node_rts_.at(idx);
-  HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
-  auto &art = std::get<AsyncRt>(nrt);
-
-  for (size_t i = 0; i < np.in_tids.size(); i++) {
-    auto &tv = tviews_.at(np.in_tids[i]);
-    HOLOFLOW_CHECK(!tv.is_nullptr());
-    art.in_views[i] = tv;
-  }
-}
-
-void Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
+core::OpResult Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
   using clock     = std::chrono::high_resolution_clock;
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
@@ -666,9 +614,10 @@ void Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
     record_node_sample(idx, static_cast<uint64_t>(duration_ns), host_in + host_out,
                        device_in + device_out);
   }
+  return r;
 }
 
-void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
+core::OpResult Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
   using clock     = std::chrono::high_resolution_clock;
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
@@ -685,7 +634,7 @@ void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
     r = art.task->try_pop(art.xctx);
     while (r == core::OpResult::NotReady) {
       if (stop_.load())
-        return;
+        return core::OpResult::Cancelled;
       r = art.task->try_pop(art.xctx);
     }
   }
@@ -714,9 +663,10 @@ void Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
         sum_bytes(std::span<const core::TView>(art.out_views.data(), art.out_views.size()));
     record_node_sample(idx, static_cast<uint64_t>(duration_ns), host_out, device_out);
   }
+  return r;
 }
 
-void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
+core::OpResult Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
   using clock     = std::chrono::high_resolution_clock;
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
@@ -733,7 +683,7 @@ void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
     r = art.task->try_push(art.pctx);
     while (r == core::OpResult::NotReady) {
       if (stop_.load())
-        return;
+        return core::OpResult::Cancelled;
       r = art.task->try_push(art.pctx);
     }
   }
@@ -762,34 +712,7 @@ void Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
         sum_bytes(std::span<const core::TView>(art.in_views.data(), art.in_views.size()));
     record_node_sample(idx, static_cast<uint64_t>(duration_ns), host_in, device_in);
   }
-}
-
-void Scheduler::refresh_outputs_sync(GraphPlan::vertex_descriptor v) {
-  const auto  idx = boost::get(boost::vertex_index, graph_, v);
-  const auto &np  = graph_[v];
-  auto       &nrt = node_rts_.at(idx);
-  HOLOFLOW_CHECK(std::holds_alternative<SyncRt>(nrt));
-  auto &srt = std::get<SyncRt>(nrt);
-
-  for (size_t i = 0; i < np.out_tids.size(); i++) {
-    if (np.infer.owned_outputs.at(i)) {
-      tviews_.at(np.out_tids.at(i)) = srt.out_views.at(i);
-    }
-  }
-}
-
-void Scheduler::refresh_outputs_async_cons(GraphPlan::vertex_descriptor v) {
-  const auto  idx = boost::get(boost::vertex_index, graph_, v);
-  const auto &np  = graph_[v];
-  auto       &nrt = node_rts_.at(idx);
-  HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
-  auto &art = std::get<AsyncRt>(nrt);
-
-  for (size_t i = 0; i < np.out_tids.size(); i++) {
-    if (np.infer.owned_outputs.at(i)) {
-      tviews_.at(np.out_tids.at(i)) = art.out_views.at(i);
-    }
-  }
+  return r;
 }
 
 void Scheduler::reset_metrics_state() {
@@ -848,9 +771,6 @@ void Scheduler::metrics_loop() {
 void Scheduler::aggregate_metrics(double interval_seconds) {
   if (interval_seconds <= 0.0) {
     interval_seconds = static_cast<double>(metrics_interval_.count()) / 1000.0;
-    if (interval_seconds <= 0.0) {
-      interval_seconds = 1.0;
-    }
   }
 
   std::map<std::string, NodeMetrics> snapshot;
@@ -883,9 +803,6 @@ void Scheduler::aggregate_metrics(double interval_seconds) {
 
 void Scheduler::record_node_sample(std::size_t idx, uint64_t duration_ns, uint64_t host_bytes,
                                    uint64_t device_bytes) {
-  if (idx >= metric_accumulators_.size()) {
-    return;
-  }
   auto &acc = metric_accumulators_.at(idx);
   acc.duration_ns.fetch_add(duration_ns, std::memory_order_relaxed);
   acc.run_count.fetch_add(1, std::memory_order_relaxed);

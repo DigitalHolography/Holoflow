@@ -329,7 +329,7 @@ TEST(SchedulerFunctionalTest, CancelsAProgressingThreeSectionPipeline) {
   EXPECT_FALSE(scheduler.is_running());
 }
 
-TEST(CompilerTest, DISABLED_KnownBug_RejectsUnsupportedConsecutiveAsyncNodes) {
+TEST(CompilerTest, RejectsUnsupportedConsecutiveAsyncNodes) {
   auto                     state = std::make_shared<holoflow::test::MathState>();
   holoflow::core::Registry registry;
   registry.register_sync("source", std::make_unique<holoflow::test::VectorSourceFactory>(

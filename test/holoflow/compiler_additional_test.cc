@@ -171,7 +171,7 @@ TEST(CompilerTest, EmitsLogsTraceAndSuccessGraph) {
   registry.register_sync("source", std::make_unique<TrackingSourceFactory>(tracking));
   registry.register_sync("sink", std::make_unique<SinkFactory>());
   const auto unique_suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-  const auto directory     = std::filesystem::temp_directory_path() /
+  const auto directory = std::filesystem::temp_directory_path() /
                          ("holoflow-compiler-observability-test-" + std::to_string(unique_suffix));
 
   {
@@ -188,7 +188,7 @@ TEST(CompilerTest, EmitsLogsTraceAndSuccessGraph) {
   EXPECT_TRUE(std::filesystem::exists(directory / "trace.json"));
 }
 
-TEST(CompilerTest, DISABLED_KnownBug_RejectsMultipleOwnersOfOneTensor) {
+TEST(CompilerTest, RejectsMultipleOwnersOfOneTensor) {
   holoflow::core::Registry registry;
   registry.register_sync("source", std::make_unique<OwnedSourceFactory>());
   registry.register_sync("sink", std::make_unique<OwnedSinkFactory>());

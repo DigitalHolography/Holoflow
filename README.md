@@ -131,19 +131,71 @@ ctest --preset test-Release
 ```
 
 `test-fast` contains deterministic host tests. `test-gpu` contains CUDA tests and serializes
-access to the GPU. `test-Release` runs every functional test; performance-labelled tests are kept
-out of the default workflow.
+access to the GPU. `test-Release` runs every CTest-registered Release test except tests labelled
+`performance`.
 
-To collect host C++ coverage with the Visual Studio native coverage component:
+### Coverage
+
+Coverage collection is supported on Windows and requires:
+
+- Visual Studio with **Desktop development with C++** and the **Code coverage tools** component
+- the .NET SDK (`dotnet`)
+- PowerShell 7 (`pwsh`)
+- the CUDA toolkit and other normal project build prerequisites
+
+Verify that the two tools used by the coverage script are available:
+
+```powershell
+Microsoft.CodeCoverage.Console --help
+dotnet --info
+```
+
+From the repository root, configure and build the dedicated instrumented tree:
 
 ```powershell
 cmake --preset msvc-coverage
-cmake --build --preset build-Coverage -j
+cmake --build --preset build-Coverage -j 4
+```
+
+The first build can take several minutes because it builds the complete production image and all
+CUDA tests. Do not run another configure or build against the same tree concurrently.
+
+Run every non-performance test under the native collector and generate the reports:
+
+```powershell
 pwsh -NoProfile -File tools/run_coverage.ps1
 ```
 
-Coverage is written to `build/coverage`. CUDA device instructions are validated by numerical and
-regression tests but are not represented by native host line coverage.
+The script also restores the repository-pinned ReportGenerator .NET tool. On success, open the
+interactive report:
+
+```powershell
+Start-Process build\coverage\html\index.html
+```
+
+Generated artifacts are written under `build/coverage`:
+
+- `coverage.cobertura.xml`: source-line coverage grouped by production module
+- `coverage.raw.cobertura.xml`: ungrouped collector output
+- `test-results.junit.xml`: results from the instrumented CTest run
+- `html/index.html`: interactive HTML report
+
+To print the files with the largest Holoflow gaps:
+
+```powershell
+pwsh -NoProfile -File tools/report_coverage_gaps.ps1 -Module holoflow -Limit 50
+```
+
+To inspect another production module, replace `holoflow` with `curaii`, `holofile`,
+`holoflow_event`, `holonp`, `holotask`, or `holovibes`.
+
+If sources or tests changed after the last coverage build, rebuild `build-Coverage` before
+collecting again. If CTest reports missing executables, the coverage build did not finish
+successfully. If `Microsoft.CodeCoverage.Console` is not found, add the Visual Studio coverage
+component and run the commands from a fresh terminal.
+
+CUDA device instructions are validated by numerical and regression tests but are not represented by
+native host line coverage.
 
 The report is grouped by production module and merges repeated source lines from every test
 executable. A coverage-only launch of the complete application image retains otherwise unreferenced

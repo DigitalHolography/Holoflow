@@ -108,6 +108,9 @@ TEST(RegistryTest, SupportsAsyncFactoriesAndRejectsCrossKindDuplicates) {
       std::invalid_argument);
   EXPECT_THROW(registry.register_sync("null", nullptr), std::invalid_argument);
   EXPECT_THROW(registry.register_async("null", nullptr), std::invalid_argument);
+  EXPECT_THROW(
+      registry.register_async("async", std::make_unique<holoflow::test::AsyncBridgeFactory>(state)),
+      std::invalid_argument);
   EXPECT_THROW((void)registry.get_sync("missing"), std::out_of_range);
 }
 
@@ -189,7 +192,7 @@ TEST(GraphSpecTest, DotHandlesUnnamedNodesKindsAndCarriageReturns) {
   EXPECT_EQ(dot.find('\r'), std::string::npos);
 }
 
-TEST(GraphSpecTest, DISABLED_KnownBug_NullParamsAreNormalizedToAnObject) {
+TEST(GraphSpecTest, NullParamsAreNormalizedToAnObject) {
   const auto graph = holoflow::core::from_json({
       {"nodes", {{"a", {{"type", "source"}, {"params", nullptr}}}}},
   });

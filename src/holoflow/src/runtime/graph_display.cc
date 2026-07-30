@@ -129,16 +129,13 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
     if (!np.spec.kind.empty())
       label << "\n(" << np.spec.kind << ")";
 
-    try {
-      if (np.spec.debug && !np.spec.settings.is_null() &&
-          !(np.spec.settings.is_object() && np.spec.settings.empty())) {
-        std::string sd = np.spec.settings.dump();
-        if (sd.size() > settings_max_len)
-          sd = sd.substr(0, settings_max_len) + "...";
-        // raw JSON might contain quotes/newlines -> we escape later
-        label << "\n" << sd;
-      }
-    } catch (...) {
+    if (np.spec.debug && !np.spec.settings.is_null() &&
+        !(np.spec.settings.is_object() && np.spec.settings.empty())) {
+      std::string sd = np.spec.settings.dump();
+      if (sd.size() > settings_max_len)
+        sd = sd.substr(0, settings_max_len) + "...";
+      // raw JSON might contain quotes/newlines -> we escape later
+      label << "\n" << sd;
     }
 
     label << "\n[infer: ";
@@ -288,21 +285,10 @@ std::string to_dot(const CompilerOutput &out, core::Registry &registry) {
   std::ostringstream ss;
   write_compiled_graph_header(ss, "holoflow_compiled");
 
-  try {
-    write_compiled_resources(ss, out.resources);
-  } catch (...) {
-  }
-
-  try {
-    write_compiled_nodes(ss, out.graph, out.sections, registry);
-    write_compiled_edges(ss, out.graph);
-  } catch (...) {
-  }
-
-  try {
-    write_compiled_sections(ss, out.sections);
-  } catch (...) {
-  }
+  write_compiled_resources(ss, out.resources);
+  write_compiled_nodes(ss, out.graph, out.sections, registry);
+  write_compiled_edges(ss, out.graph);
+  write_compiled_sections(ss, out.sections);
 
   ss << "}\n";
   return ss.str();
