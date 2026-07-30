@@ -5,6 +5,7 @@
     <ModulePaths mergeDefaults="false">
       <Include>
         <ModulePath>.*_test\.exe$</ModulePath>
+        <ModulePath>.*holovibes\.exe$</ModulePath>
       </Include>
     </ModulePaths>
     <Sources>
@@ -20,7 +21,7 @@
       </Exclude>
     </Functions>
     <CollectFromChildProcesses>True</CollectFromChildProcesses>
-    <EnableStaticNativeInstrumentation>False</EnableStaticNativeInstrumentation>
+    <EnableStaticNativeInstrumentation>True</EnableStaticNativeInstrumentation>
     <EnableDynamicNativeInstrumentation>True</EnableDynamicNativeInstrumentation>
   </CodeCoverage>
 </Configuration>

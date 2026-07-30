@@ -156,8 +156,9 @@ private:
 
   void run_section(int section_id);
 
-  /// This function acquires all owned inputs for the given node,
-  /// and updates the corresponding TViews in tviews_.
+  /// This function acquires all owned inputs for the given node.
+  /// Owning tasks publish memory by updating their compiler-provided Storage;
+  /// all scheduler TViews retain pointers to that stable Storage object.
   /// This function blocks until all owned inputs are acquired.
   /// @warning If stop_ is set while waiting, the function returns early,
   /// and some owned inputs may not be acquired.
@@ -165,54 +166,22 @@ private:
   /// producer node only.
   void acquire_owned_inputs(GraphPlan::vertex_descriptor v);
 
-  /// This function releases all owned outputs for the given node,
-  /// and clears the corresponding TViews in tviews_.
+  /// This function releases all owned outputs for the given node.
+  /// Pointer cleanup remains the owning task's responsibility.
   /// This function does not block.
-  /// @warning Cleared twiews will be set to {nullptr, {}}, but their
-  /// indices in tviews_ remain accessible.
   void release_owned_outputs(GraphPlan::vertex_descriptor v);
 
-  /// Refreshes both input and output TViews in the `SyncRt` of the given node
-  /// based on the current `tviews_`.
-  /// @warning This function must be called on a synchronous node only.
-  void refresh_views_sync(GraphPlan::vertex_descriptor v);
-
-  /// Refreshes output TViews in the `AsyncRt` of the given node
-  /// based on the current `tviews_`.
-  /// @warning This function must be called on an asynchronous consumer node only.
-  void refresh_views_async_cons(GraphPlan::vertex_descriptor v);
-
-  /// Refreshes input TViews in the `AsyncRt` of the given node
-  /// based on the current `tviews_`.
-  /// @warning This function must be called on an asynchronous producer node only.
-  void refresh_views_async_prod(GraphPlan::vertex_descriptor v);
-
   /// Executes a synchronous node.
-  /// The input and output TViews in the `SyncRt` must be up-to-date
-  /// before calling this function.
   /// @warning This function must be called on a synchronous node only.
-  void run_sync(GraphPlan::vertex_descriptor v);
+  [[nodiscard]] core::OpResult run_sync(GraphPlan::vertex_descriptor v);
 
   /// Executes an asynchronous consumer node.
-  /// The output TViews in the `AsyncRt` must be up-to-date before calling this function.
   /// @warning This function must be called on an asynchronous consumer node only.
-  void run_async_cons(GraphPlan::vertex_descriptor v);
+  [[nodiscard]] core::OpResult run_async_cons(GraphPlan::vertex_descriptor v);
 
   /// Executes an asynchronous producer node.
-  /// The input TViews in the `AsyncRt` must be up-to-date before calling
-  /// this function.
   /// @warning This function must be called on an asynchronous producer node only.
-  void run_async_prod(GraphPlan::vertex_descriptor v);
-
-  /// This function updates the TViews in tviews_ based on the outputs
-  /// of the given synchronous node.
-  /// @warning This function must be called on a synchronous node only.
-  void refresh_outputs_sync(GraphPlan::vertex_descriptor v);
-
-  /// This function updates the TViews in tviews_ based on the outputs
-  /// of the given asynchronous consumer node.
-  /// @warning This function must be called on an asynchronous consumer node only.
-  void refresh_outputs_async_cons(GraphPlan::vertex_descriptor v);
+  [[nodiscard]] core::OpResult run_async_prod(GraphPlan::vertex_descriptor v);
 
 private:
   std::atomic<bool>           running_{false}; ///< True if the scheduler is running.
@@ -221,10 +190,8 @@ private:
   const std::vector<Section> &sections_;       ///< Execution sections.
   ExecResouces               &res_;            ///< Execution resources (streams, tasks, tensors).
 
-  /// Current TViews for all tensors by their IDs.
-  /// If a TView is {nullptr, {}}, it means the tensor is not currently
-  /// available (owned tensor not aqcuired).
-  /// They are exclusive to sections, i.e. no sharing between sections.
+  /// Stable TViews for all tensors by their IDs. Copies across node contexts
+  /// observe ownership changes through their shared Storage pointers.
   std::vector<core::TView> tviews_;
 
   std::vector<NodeRt>      node_rts_; ///< Runtime data for each node.

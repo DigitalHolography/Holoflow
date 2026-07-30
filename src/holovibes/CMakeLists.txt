@@ -83,6 +83,23 @@ target_link_libraries(holovibes PRIVATE
     # EGrabber
 )
 
+if(ENABLE_COVERAGE)
+    target_compile_definitions(holovibes PRIVATE HOLOFLOW_COVERAGE_PROBE)
+
+    # Keep every object from the production libraries in the coverage image so
+    # untouched host code is represented as uncovered instead of disappearing.
+    target_link_options(holovibes PRIVATE
+        "/WHOLEARCHIVE:$<TARGET_FILE:holoflow>"
+        "/WHOLEARCHIVE:$<TARGET_FILE:holoflow_event>"
+        "/WHOLEARCHIVE:$<TARGET_FILE:holotask>"
+        "/WHOLEARCHIVE:$<TARGET_FILE:holonp>"
+        "/WHOLEARCHIVE:$<TARGET_FILE:curaii>"
+        "/WHOLEARCHIVE:$<TARGET_FILE:holofile>"
+        "/OPT:NOREF"
+        "/OPT:NOICF"
+    )
+endif()
+
 add_custom_command(TARGET holovibes POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         $<TARGET_FILE:ads::qtadvanceddocking-qt6>

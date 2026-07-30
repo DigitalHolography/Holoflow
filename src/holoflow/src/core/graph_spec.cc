@@ -132,7 +132,7 @@ GraphSpec from_json(const nlohmann::json &j) {
     require(node_json.is_object(), "node '" + name + "' must be an object");
     require(has_object_key(node_json, "type"), "node '" + name + "': missing 'type'");
     require(node_json.at("type").is_string(), "node '" + name + "': 'type' must be a string");
-    require(has_object_key(node_json, "params"), "node '" + name + "': missing 'params'");
+    require(node_json.contains("params"), "node '" + name + "': missing 'params'");
 
     NodeSpec spec;
     spec.name = name;
@@ -235,13 +235,9 @@ static void write_nodes(std::ostringstream &ss, const GraphSpec &g) {
     if (!ns.kind.empty())
       label << "\n(" << ns.kind << ")";
 
-    try {
-      if (ns.debug && !ns.settings.is_null() && !(ns.settings.is_object() && ns.settings.empty())) {
-        std::string settings_dump = ns.settings.dump(2);
-        label << "\n" << settings_dump;
-      }
-    } catch (...) {
-      // ignore bad settings
+    if (ns.debug && !ns.settings.is_null() && !(ns.settings.is_object() && ns.settings.empty())) {
+      std::string settings_dump = ns.settings.dump(2);
+      label << "\n" << settings_dump;
     }
 
     std::string esc_label = escape_for_label(label.str());
