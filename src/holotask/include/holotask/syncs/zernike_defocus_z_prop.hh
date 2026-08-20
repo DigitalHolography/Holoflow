@@ -30,6 +30,7 @@ struct ZernikeDefocusZPropSettings {
   float            lambda;
   float            z_curr;
   float            pupil_radius;
+  double           interval_seconds = 1.0;
 
   bool operator==(const ZernikeDefocusZPropSettings &) const = default;
 };

@@ -23,6 +23,7 @@ set(SOURCES
     pca_test.cu
     shack_hartmann_test.cu
     sliding_average_test.cu
+    zernike_defocus_z_prop_test.cc
     zernike_phase_test.cu
     ../holonp/support/tensor_test_buffer.cc
     ../holonp/support/sync_task_runner.cc
