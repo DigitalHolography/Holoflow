@@ -151,6 +151,9 @@ holoflow::core::GraphSpec GraphBuilder::build() {
       FH_current = build_shack_hartmann(FH_current, delayed, pass == s_.autofocus_nb_iter - 1,
                                         shack_hartmann_iteration_state);
     }
+
+    // Decouple the final propagation so it can overlap the next Shack-Hartmann iteration.
+    FH_current = batched_queue(FH_current, {2, 1, 1});
   }
 
   TDesc FH_z = build_spatial_propagation(FH_current);
