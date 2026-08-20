@@ -26,6 +26,7 @@
 #include "curaii/cuda.hh"
 #include "logger.hh"
 #include "syncs/phase_correlation.cuh"
+#include "syncs/shack_hartmann_cuda_graph.cuh"
 #include "syncs/shack_hartmann_geometry.hh"
 #include "syncs/shack_hartmann_slopes_full_pairwise.cuh"
 
@@ -232,6 +233,75 @@ public:
         measured_shifts_(std::move(measured_shifts)), active_(std::move(active)), stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    const auto addresses = graph_addresses(ctx);
+    if (stream_ == nullptr) {
+      return enqueue(ctx);
+    }
+
+    cudaStreamCaptureStatus capture_status = cudaStreamCaptureStatusNone;
+    CUDA_CHECK(cudaStreamIsCapturing(stream_, &capture_status));
+    if (capture_status != cudaStreamCaptureStatusNone) {
+      return enqueue(ctx);
+    }
+
+    if (graph_.matches(addresses)) {
+      graph_.launch(stream_);
+      return holoflow::core::OpResult::Ok;
+    }
+
+    graph_.reset();
+    // Produce this frame directly, then capture the same sequence for future matching buffers.
+    const auto result = enqueue(ctx);
+    if (result == holoflow::core::OpResult::Ok && graph_capture_enabled_) {
+      try_capture(ctx, addresses);
+    }
+    return result;
+  }
+
+  const ShackHartmannSlopeSettings &settings() const override { return settings_; }
+  const holoflow::core::TDesc      &input_desc() const override { return input_desc_; }
+
+  void update_stream(cudaStream_t stream) override {
+    if (stream_ == stream) {
+      return;
+    }
+
+    graph_.reset();
+    graph_capture_enabled_ = true;
+    const CrossCorrelation2Settings xcorr_settings{
+        .axes = {-2, -1},
+        .norm = FftNorm::Backward,
+        .roi  = settings_.correlation_roi,
+    };
+    const std::array input_descs{input_desc_, reference_desc_};
+    cross_correlation_ = CrossCorrelation2Factory{}.update(
+        std::move(cross_correlation_), input_descs, xcorr_settings, {.stream = stream});
+    stream_ = stream;
+  }
+
+private:
+  [[nodiscard]] detail::ShackHartmannCudaGraph::Addresses
+  graph_addresses(holoflow::core::SyncCtx &ctx) const {
+    auto xcorr_view = settings_.output_xcorr_maps ? ctx.outputs[1] : xcorr_scratch_->view();
+    return {ctx.inputs[0].data(), ctx.outputs[0].data(), xcorr_view.data()};
+  }
+
+  void try_capture(holoflow::core::SyncCtx                         &ctx,
+                   const detail::ShackHartmannCudaGraph::Addresses &addresses) {
+    try {
+      const bool captured = graph_.capture(stream_, addresses, [&]() {
+        return enqueue(ctx) == holoflow::core::OpResult::Ok;
+      });
+      if (!captured) {
+        graph_capture_enabled_ = false;
+      }
+    } catch (const std::exception &error) {
+      graph_capture_enabled_ = false;
+      logger()->warn("[ShackHartmannSlopes] CUDA Graph capture disabled: {}", error.what());
+    }
+  }
+
+  holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx) {
     auto reference_view = ctx.inputs[0];
     reference_view.desc = reference_desc_;
 
@@ -276,27 +346,6 @@ public:
     CUDA_CHECK(cudaGetLastError());
     return holoflow::core::OpResult::Ok;
   }
-
-  const ShackHartmannSlopeSettings &settings() const override { return settings_; }
-  const holoflow::core::TDesc      &input_desc() const override { return input_desc_; }
-
-  void update_stream(cudaStream_t stream) override {
-    if (stream_ == stream) {
-      return;
-    }
-
-    const CrossCorrelation2Settings xcorr_settings{
-        .axes = {-2, -1},
-        .norm = FftNorm::Backward,
-        .roi  = settings_.correlation_roi,
-    };
-    const std::array input_descs{input_desc_, reference_desc_};
-    cross_correlation_ = CrossCorrelation2Factory{}.update(
-        std::move(cross_correlation_), input_descs, xcorr_settings, {.stream = stream});
-    stream_ = stream;
-  }
-
-private:
   ShackHartmannSlopeSettings                 settings_;
   holoflow::core::TDesc                      input_desc_;
   holoflow::core::TDesc                      reference_desc_;
@@ -305,6 +354,8 @@ private:
   DevPtr<float2>                             measured_shifts_;
   DevPtr<std::uint8_t>                       active_;
   cudaStream_t                               stream_;
+  bool                                       graph_capture_enabled_ = true;
+  detail::ShackHartmannCudaGraph             graph_;
 };
 
 } // namespace

@@ -29,7 +29,9 @@
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
+#include "logger.hh"
 #include "syncs/phase_correlation.cuh"
+#include "syncs/shack_hartmann_cuda_graph.cuh"
 #include "syncs/shack_hartmann_geometry.hh"
 
 namespace holotask::syncs::detail {
@@ -283,6 +285,62 @@ public:
         tail_inverse_plan_(std::move(tail_inverse_plan)), stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    const ShackHartmannCudaGraph::Addresses addresses{ctx.inputs[0].data(),
+                                                       ctx.outputs[0].data(), nullptr};
+    if (stream_ == nullptr) {
+      return enqueue(ctx);
+    }
+
+    cudaStreamCaptureStatus capture_status = cudaStreamCaptureStatusNone;
+    CUDA_CHECK(cudaStreamIsCapturing(stream_, &capture_status));
+    if (capture_status != cudaStreamCaptureStatusNone) {
+      return enqueue(ctx);
+    }
+
+    if (graph_.matches(addresses)) {
+      graph_.launch(stream_);
+      return holoflow::core::OpResult::Ok;
+    }
+
+    graph_.reset();
+    // Produce this frame directly, then capture the same sequence for future matching buffers.
+    const auto result = enqueue(ctx);
+    if (result == holoflow::core::OpResult::Ok && graph_capture_enabled_) {
+      try {
+        const bool captured = graph_.capture(stream_, addresses, [&]() {
+          return enqueue(ctx) == holoflow::core::OpResult::Ok;
+        });
+        if (!captured) {
+          graph_capture_enabled_ = false;
+        }
+      } catch (const std::exception &error) {
+        graph_capture_enabled_ = false;
+        logger()->warn("[FullPairwiseShackHartmannSlopes] CUDA Graph capture disabled: {}",
+                       error.what());
+      }
+    }
+    return result;
+  }
+
+  const ShackHartmannSlopeSettings &settings() const override { return settings_; }
+  const holoflow::core::TDesc      &input_desc() const override { return input_desc_; }
+
+  void update_stream(cudaStream_t stream) override {
+    if (stream_ == stream) {
+      return;
+    }
+    graph_.reset();
+    graph_capture_enabled_ = true;
+    CUFFT_CHECK(cufftSetStream(forward_plan_.get(), stream));
+    CUFFT_CHECK(cufftSetStream(inverse_plan_.get(), stream));
+    if (tail_inverse_plan_) {
+      CUFFT_CHECK(cufftSetStream(tail_inverse_plan_->get(), stream));
+    }
+    stream_ = stream;
+  }
+
+private:
+  holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx) {
     const size_t           sx               = input_desc_.shape[2];
     const size_t           height           = input_desc_.shape[3];
     const size_t           width            = input_desc_.shape[4];
@@ -341,23 +399,6 @@ public:
     CUDA_CHECK(cudaGetLastError());
     return holoflow::core::OpResult::Ok;
   }
-
-  const ShackHartmannSlopeSettings &settings() const override { return settings_; }
-  const holoflow::core::TDesc      &input_desc() const override { return input_desc_; }
-
-  void update_stream(cudaStream_t stream) override {
-    if (stream_ == stream) {
-      return;
-    }
-    CUFFT_CHECK(cufftSetStream(forward_plan_.get(), stream));
-    CUFFT_CHECK(cufftSetStream(inverse_plan_.get(), stream));
-    if (tail_inverse_plan_) {
-      CUFFT_CHECK(cufftSetStream(tail_inverse_plan_->get(), stream));
-    }
-    stream_ = stream;
-  }
-
-private:
   ShackHartmannSlopeSettings           settings_;
   holoflow::core::TDesc                input_desc_;
   size_t                               active_count_;
@@ -375,6 +416,8 @@ private:
   curaii::CufftHandle                  inverse_plan_;
   std::unique_ptr<curaii::CufftHandle> tail_inverse_plan_;
   cudaStream_t                         stream_;
+  bool                                 graph_capture_enabled_ = true;
+  ShackHartmannCudaGraph               graph_;
 };
 
 inline std::unique_ptr<holoflow::core::ISyncTask> make_full_pairwise_shack_hartmann_slopes(
