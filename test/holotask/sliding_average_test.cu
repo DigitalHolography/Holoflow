@@ -292,4 +292,69 @@ TEST(SlidingAverageTest, DiscardsConfiguredInitialFramesWithoutValidityInput) {
   }
 }
 
+TEST(SlidingAverageTest, ProducesMultiElementAveragesAcrossRingWraparound) {
+  constexpr size_t width         = 3;
+  constexpr size_t height        = 2;
+  constexpr size_t element_count = width * height;
+  constexpr size_t window_size   = 3;
+  constexpr size_t frame_count   = 8;
+
+  const TDesc      image_desc({1, height, width}, DType::F32, MemLoc::Device);
+  const std::array input_descs{image_desc};
+  const holotask::asyncs::SlidingAverageSettings settings{
+      .target_capacity = 2,
+      .window_size     = window_size,
+  };
+  holotask::asyncs::SlidingAverageFactory factory;
+  const auto infer = factory.infer(input_descs, nlohmann::json(settings));
+
+  curaii::CudaStream producer_stream;
+  curaii::CudaStream consumer_stream;
+  auto               task = factory.create(input_descs, nlohmann::json(settings),
+                                           {producer_stream.get(), consumer_stream.get()});
+  task->bind_logger(spdlog::default_logger());
+  TestStorageAccess storage_access(infer.input_descs, infer.output_descs);
+  task->bind_storage_access(&storage_access);
+
+  std::array output_views{TView{infer.output_descs[0], &storage_access.owned_output_storage(0)}};
+  std::atomic<bool>                                         cancelled{false};
+  holoflow::core::AsyncPopCtx                               pop_ctx{output_views, &cancelled};
+  std::array<float, element_count>                          running_average{};
+  std::array<std::array<float, element_count>, window_size> history{};
+
+  for (size_t frame = 0; frame < frame_count; ++frame) {
+    std::array<float, element_count> input{};
+    for (size_t pixel = 0; pixel < element_count; ++pixel) {
+      input[pixel] = 3.0f * static_cast<float>(frame * element_count + pixel + 1);
+      running_average[pixel] += input[pixel] / static_cast<float>(window_size);
+      running_average[pixel] -=
+          history[frame % window_size][pixel] / static_cast<float>(window_size);
+    }
+    history[frame % window_size] = input;
+
+    auto acquired = task->acquire_input(0);
+    ASSERT_TRUE(acquired.has_value());
+    CUDA_CHECK(
+        cudaMemcpy(acquired->data(), input.data(), image_desc.num_bytes(), cudaMemcpyHostToDevice));
+    std::array                   input_views{*acquired};
+    holoflow::core::AsyncPushCtx push_ctx{input_views, &cancelled};
+    ASSERT_EQ(task->try_push(push_ctx), OpResult::Ok);
+
+    const auto pop_result = task->try_pop(pop_ctx);
+    if (frame + 1 < window_size) {
+      EXPECT_EQ(pop_result, OpResult::NotReady);
+      continue;
+    }
+
+    ASSERT_EQ(pop_result, OpResult::Ok);
+    std::array<float, element_count> actual{};
+    CUDA_CHECK(cudaMemcpy(actual.data(), output_views[0].data(), image_desc.num_bytes(),
+                          cudaMemcpyDeviceToHost));
+    for (size_t pixel = 0; pixel < element_count; ++pixel) {
+      EXPECT_FLOAT_EQ(actual[pixel], running_average[pixel]);
+    }
+    task->release_output(0);
+  }
+}
+
 } // namespace

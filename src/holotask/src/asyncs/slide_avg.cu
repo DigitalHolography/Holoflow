@@ -99,7 +99,8 @@ bool is_contiguous(const holoflow::core::TDesc &desc) {
   return desc.strides == contiguous.strides;
 }
 
-__global__ void f32_add_avg_kernel(const float *idata, float *odata, int nx, int ny, int avg_size) {
+__global__ void f32_update_avg_kernel(const float *write_data, float *avg_data, float *running_avg,
+                                      int nx, int ny, int avg_size) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
   int y = blockIdx.y * blockDim.y + threadIdx.y;
 
@@ -107,20 +108,12 @@ __global__ void f32_add_avg_kernel(const float *idata, float *odata, int nx, int
     return;
   }
 
-  int idx = y * nx + x;
-  odata[idx] += idata[idx] / avg_size;
-}
-
-__global__ void f32_sub_avg_kernel(const float *idata, float *odata, int nx, int ny, int avg_size) {
-  int x = blockIdx.x * blockDim.x + threadIdx.x;
-  int y = blockIdx.y * blockDim.y + threadIdx.y;
-
-  if (x >= nx || y >= ny) {
-    return;
-  }
-
-  int idx = y * nx + x;
-  odata[idx] -= idata[idx] / avg_size;
+  int   idx         = y * nx + x;
+  float updated_avg = running_avg[idx];
+  updated_avg += write_data[idx] / avg_size;
+  updated_avg -= avg_data[idx] / avg_size;
+  running_avg[idx] = updated_avg;
+  avg_data[idx]    = updated_avg;
 }
 
 } // namespace
@@ -206,16 +199,10 @@ holoflow::core::OpResult SlidingAverage::try_push(holoflow::core::AsyncPushCtx &
   dim3 block_size(16, 16);
   dim3 grid_size((nx + block_size.x - 1) / block_size.x, (ny + block_size.y - 1) / block_size.y);
 
-  f32_add_avg_kernel<<<grid_size, block_size, 0, producer_stream_>>>(
-      reinterpret_cast<float *>(write_data), d_running_avg_.get(), static_cast<int>(nx),
-      static_cast<int>(ny), static_cast<int>(settings_.window_size));
-
-  f32_sub_avg_kernel<<<grid_size, block_size, 0, producer_stream_>>>(
-      reinterpret_cast<float *>(avg_data), d_running_avg_.get(), static_cast<int>(nx),
-      static_cast<int>(ny), static_cast<int>(settings_.window_size));
-
-  CUDA_CHECK(cudaMemcpyAsync(avg_data, d_running_avg_.get(), element_size_,
-                             cudaMemcpyDeviceToDevice, producer_stream_));
+  f32_update_avg_kernel<<<grid_size, block_size, 0, producer_stream_>>>(
+      reinterpret_cast<float *>(write_data), reinterpret_cast<float *>(avg_data),
+      d_running_avg_.get(), static_cast<int>(nx), static_cast<int>(ny),
+      static_cast<int>(settings_.window_size));
 
   CUDA_CHECK(cudaStreamSynchronize(producer_stream_));
 
