@@ -380,14 +380,14 @@ GraphBuilder::build_shack_hartmann(const TDesc &FH_current, const TDesc &FH_dela
 
   if (is_last_pass) {
     // Shack-Hartmann Output Processing
-    int64_t h          = static_cast<int64_t>(subap_h * nb_subap);
-    int64_t w          = static_cast<int64_t>(subap_w * nb_subap);
-    auto    M0_sh_disp = normalize(M0, {{-2, -1}, 0.0f, 255.0f});
-    M0_sh_disp         = transpose(M0_sh_disp, {{0, 1, 3, 2, 4}});
-    M0_sh_disp         = reshape(M0_sh_disp, {{1, h, w}});
-    M0_sh_disp         = convert(M0_sh_disp, {Target::U8, Strat::Scaled});
-    M0_sh_disp         = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
+    int64_t h = static_cast<int64_t>(subap_h * nb_subap);
+    int64_t w = static_cast<int64_t>(subap_w * nb_subap);
     if (s_.view_shack_hartmann) {
+      auto M0_sh_disp = normalize(M0, {{-2, -1}, 0.0f, 255.0f});
+      M0_sh_disp      = transpose(M0_sh_disp, {{0, 1, 3, 2, 4}});
+      M0_sh_disp      = reshape(M0_sh_disp, {{1, h, w}});
+      M0_sh_disp      = convert(M0_sh_disp, {Target::U8, Strat::Scaled});
+      M0_sh_disp      = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
       shack_hartmann_display(M0_sh_disp, {});
     }
 

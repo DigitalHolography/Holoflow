@@ -82,3 +82,7 @@ Guidance:
 * use the sub-banner style for smaller logical subsections
 * keep banner titles short and descriptive
 * do not introduce alternative banner styles
+
+## Profiling
+
+To use nsys refer to 'C:\Program Files\NVIDIA Corporation\Nsight Systems 2026.4.1\skills\nsight-systems\SKILL.md'
