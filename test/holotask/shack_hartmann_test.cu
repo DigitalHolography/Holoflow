@@ -366,11 +366,13 @@ holotask::syncs::ZernikeFromSlopesSettings fit_settings() {
   };
 }
 
-std::vector<float> run_fit(const std::vector<float> &slopes) {
+std::vector<float>
+run_fit(const std::vector<float> &slopes, MemLoc mem_loc = MemLoc::Device,
+        const holotask::syncs::ZernikeFromSlopesSettings &settings = fit_settings()) {
   holotask::syncs::ZernikeFromSlopesFactory factory;
   const auto                                run = holonp_test::run_sync_factory(
-      factory, std::vector<TDesc>{desc({1, kSy, kSx, 2}, MemLoc::Host)},
-      std::vector<std::vector<std::byte>>{as_bytes(slopes)}, fit_settings());
+      factory, std::vector<TDesc>{desc({1, kSy, kSx, 2}, mem_loc)},
+      std::vector<std::vector<std::byte>>{as_bytes(slopes)}, settings);
   return from_bytes<float>(run.output_bytes[0]);
 }
 
@@ -801,6 +803,26 @@ TEST(ZernikeFromSlopesRegression, ObservableCoefficientsAndPhaseMatchCenterGauge
   EXPECT_LT(max_phase_difference, 2e-4f);
 }
 
+TEST(ZernikeFromSlopesExecution, DeviceAndHostBackendsMatchForMixedModes) {
+  auto settings    = fit_settings();
+  settings.indexes = {10, 2, 4, 7};
+  const std::array<std::pair<int, float>, 3> injected{{{10, -0.02f}, {4, 0.18f}, {7, 0.04f}}};
+  std::vector<float>                         combined(kSy * kSx * 2, 0.0f);
+  for (const auto &[mode, coefficient] : injected) {
+    const auto component = ideal_slopes(mode, coefficient);
+    for (size_t i = 0; i < combined.size(); ++i) {
+      combined[i] += component[i];
+    }
+  }
+
+  const auto host_coefficients   = run_fit(combined, MemLoc::Host, settings);
+  const auto device_coefficients = run_fit(combined, MemLoc::Device, settings);
+  ASSERT_EQ(device_coefficients.size(), host_coefficients.size());
+  for (size_t mode = 0; mode < host_coefficients.size(); ++mode) {
+    EXPECT_NEAR(device_coefficients[mode], host_coefficients[mode], 5e-5f) << mode;
+  }
+}
+
 TEST(ShackHartmannFullPairwisePipeline, NoiselessDefocusMatchesSingleReferenceAndZernikeFit) {
   constexpr size_t height        = 48;
   constexpr size_t width         = 48;
@@ -848,7 +870,7 @@ TEST(ShackHartmannFullPairwisePipeline, NoiselessDefocusMatchesSingleReferenceAn
   zernike_settings.stride_y           = height;
   zernike_settings.stride_x           = width;
   holotask::syncs::ZernikeFromSlopesFactory fit_factory;
-  const auto                                input_desc = desc({1, kSy, kSx, 2}, MemLoc::Host);
+  const auto                                input_desc = desc({1, kSy, kSx, 2}, MemLoc::Device);
   const auto                                single_fit = holonp_test::run_sync_factory(
       fit_factory, std::vector<TDesc>{input_desc},
       std::vector<std::vector<std::byte>>{as_bytes(single)}, zernike_settings);
@@ -1072,11 +1094,11 @@ TEST(ShackHartmannPipelineRegression, MeasuredDataMatchesCorrectedCenterReferenc
   settings.stride_x           = width;
   holotask::syncs::ZernikeFromSlopesFactory fit_factory;
   const auto                                fit_run = holonp_test::run_sync_factory(
-      fit_factory, std::vector<TDesc>{desc({1, kSy, kSx, 2}, MemLoc::Host)},
+      fit_factory, std::vector<TDesc>{desc({1, kSy, kSx, 2}, MemLoc::Device)},
       std::vector<std::vector<std::byte>>{as_bytes(measured_slopes)}, settings);
   const auto new_coefficients = from_bytes<float>(fit_run.output_bytes[0]);
   const auto full_fit_run     = holonp_test::run_sync_factory(
-      fit_factory, std::vector<TDesc>{desc({1, kSy, kSx, 2}, MemLoc::Host)},
+      fit_factory, std::vector<TDesc>{desc({1, kSy, kSx, 2}, MemLoc::Device)},
       std::vector<std::vector<std::byte>>{as_bytes(full_slopes)}, settings);
   const auto full_coefficients = from_bytes<float>(full_fit_run.output_bytes[0]);
   const auto old_coefficients  = legacy_center_fit(maps, height, width, static_cast<float>(width));
@@ -1130,7 +1152,7 @@ TEST(ShackHartmannPipelineRegression, MeasuredDataMatchesCorrectedCenterReferenc
 
 TEST(ZernikeFromSlopesInference, RejectsPartialRegionalGaugeAndReusesTask) {
   holotask::syncs::ZernikeFromSlopesFactory factory;
-  const auto                                input    = desc({1, kSy, kSx, 2}, MemLoc::Host);
+  const auto                                input    = desc({1, kSy, kSx, 2}, MemLoc::Device);
   auto                                      settings = fit_settings();
   settings.nx                                        = 2;
   EXPECT_THROW((void)factory.infer(std::vector<TDesc>{input}, settings), std::invalid_argument);
@@ -1138,6 +1160,11 @@ TEST(ZernikeFromSlopesInference, RejectsPartialRegionalGaugeAndReusesTask) {
   settings.nx                     = 1;
   const nlohmann::json serialized = settings;
   EXPECT_EQ(serialized.get<holotask::syncs::ZernikeFromSlopesSettings>(), settings);
+  const auto device_infer = factory.infer(std::vector<TDesc>{input}, settings);
+  EXPECT_EQ(device_infer.output_descs[0].mem_loc, MemLoc::Device);
+  const auto host_infer =
+      factory.infer(std::vector<TDesc>{desc({1, kSy, kSx, 2}, MemLoc::Host)}, settings);
+  EXPECT_EQ(host_infer.output_descs[0].mem_loc, MemLoc::Host);
 
   const auto run = holonp_test::run_sync_factory_update(
       factory, std::vector<TDesc>{input},

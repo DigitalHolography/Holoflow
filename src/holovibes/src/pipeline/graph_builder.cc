@@ -327,7 +327,6 @@ GraphBuilder::build_shack_hartmann(const TDesc &FH_current, const TDesc &FH_dela
   using Target = holotask::syncs::ConversionSettings::Target;
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
   auto Host    = holotask::syncs::MemcpySettings::Target::Host;
-  auto Device  = holotask::syncs::MemcpySettings::Target::Device;
 
   // 1. Spatial Cropping (keep this to ensure perfect divisibility)
   auto subap_w = FH_current.shape.at(3) / nb_subap;
@@ -425,10 +424,8 @@ GraphBuilder::build_shack_hartmann(const TDesc &FH_current, const TDesc &FH_dela
   }
 
   // Zernike & Phase Correction
-  int ny           = static_cast<int>(FH_current.shape.at(2));
-  int nx           = static_cast<int>(FH_current.shape.at(3));
-  slopes           = cuda_stream_synchronize(slopes, {});
-  auto slopes_host = memcpy(slopes, {Host});
+  int ny = static_cast<int>(FH_current.shape.at(2));
+  int nx = static_cast<int>(FH_current.shape.at(3));
 
   holotask::syncs::ZernikeFromSlopesSettings zernike_settings{
       .indexes                         = s_.autofocus_zernike_orders,
@@ -443,10 +440,8 @@ GraphBuilder::build_shack_hartmann(const TDesc &FH_current, const TDesc &FH_dela
       .nx                              = 1,
       .skip_subapertures_outside_pupil = s_.autofocus_skip_subapertures_outside_pupil,
   };
-  auto zernike_coeffs = zernike_from_slopes(slopes_host, zernike_settings);
-  zernike_coeffs      = slice(zernike_coeffs, {{0, 0, {}}});
-
-  auto zernike_coeffs_gpu = memcpy(zernike_coeffs, {Device});
+  auto zernike_coeffs_gpu = zernike_from_slopes(slopes, zernike_settings);
+  zernike_coeffs_gpu      = slice(zernike_coeffs_gpu, {{0, 0, {}}});
   auto phase_gpu          = zernike_phase(
       zernike_coeffs_gpu, {s_.autofocus_zernike_orders, ny, nx, holoflow::core::MemLoc::Device});
   auto corrected = correct_phase(FH_delayed, phase_gpu, {});
