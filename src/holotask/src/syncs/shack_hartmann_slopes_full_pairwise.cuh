@@ -183,26 +183,27 @@ __global__ void recover_complex_phase_correlation_peaks(const cuFloatComplex *__
                                                         float2 *__restrict__ shifts,
                                                         size_t map_count, size_t height,
                                                         size_t width, float inverse_fft_scale) {
-  const size_t map_index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  const size_t map_index = blockIdx.x;
   if (map_index >= map_count) {
     return;
   }
 
-  const cuFloatComplex *map        = maps + map_index * height * width;
-  float                 best_value = -FLT_MAX;
-  size_t                peak_y     = 0;
-  size_t                peak_x     = 0;
-  for (size_t y = 0; y < height; ++y) {
-    for (size_t x = 0; x < width; ++x) {
-      const float value = map[y * width + x].x * inverse_fft_scale;
-      if (value > best_value) {
-        best_value = value;
-        peak_y     = y;
-        peak_x     = x;
-      }
-    }
+  const size_t          pixels_per_map = height * width;
+  const cuFloatComplex *map            = maps + map_index * pixels_per_map;
+  PhaseCorrelationPeak local_peak{-FLT_MAX, 0};
+  for (size_t pixel = threadIdx.x; pixel < pixels_per_map; pixel += blockDim.x) {
+    const float value = map[pixel].x * inverse_fft_scale;
+    local_peak        = select_phase_correlation_peak(local_peak, {value, pixel});
   }
 
+  __shared__ PhaseCorrelationPeak shared_peaks[kPhaseCorrelationPeakBlockSize];
+  const auto peak = reduce_phase_correlation_peak(local_peak, shared_peaks);
+  if (threadIdx.x != 0) {
+    return;
+  }
+
+  const size_t peak_y  = peak.index / width;
+  const size_t peak_x  = peak.index % width;
   const size_t x_minus = (peak_x + width - 1) % width;
   const size_t x_plus  = (peak_x + 1) % width;
   const size_t y_minus = (peak_y + height - 1) % height;
@@ -287,7 +288,7 @@ public:
     const size_t           width            = input_desc_.shape[4];
     const size_t           pixels_per_image = height * width;
     const size_t           active_elements  = active_count_ * pixels_per_image;
-    constexpr unsigned int block            = 256;
+    constexpr unsigned int block            = kPhaseCorrelationPeakBlockSize;
     const auto             grid_for         = [](size_t count) {
       return static_cast<unsigned int>((count + block - 1) / block);
     };
@@ -326,7 +327,8 @@ public:
       const cufftHandle inverse =
           pair_count == pair_capacity_ ? inverse_plan_.get() : tail_inverse_plan_->get();
       CUFFT_CHECK(cufftXtExec(inverse, pair_buffer_.get(), pair_buffer_.get(), CUFFT_INVERSE));
-      recover_complex_phase_correlation_peaks<<<grid_for(pair_count), block, 0, stream_>>>(
+      recover_complex_phase_correlation_peaks<<<static_cast<unsigned int>(pair_count), block, 0,
+                                                stream_>>>(
           pair_buffer_.get(), pair_shifts_.get(), pair_count, height, width, inverse_fft_scale);
       accumulate_complete_graph_rhs<<<grid_for(pair_count), block, 0, stream_>>>(
           pair_sources_.get(), pair_destinations_.get(), pair_shifts_.get(), rhs_.get(), pair_count,

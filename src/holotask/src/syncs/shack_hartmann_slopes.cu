@@ -140,27 +140,27 @@ geometry_settings(const holoflow::core::TDesc &input, const ShackHartmannSlopeSe
 __global__ void recover_phase_correlation_peaks(const float *__restrict__ maps,
                                                 float2 *__restrict__ shifts, size_t map_count,
                                                 size_t height, size_t width) {
-  const size_t map_index = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
+  const size_t map_index = blockIdx.x;
   if (map_index >= map_count) {
     return;
   }
 
-  const float *map        = maps + map_index * height * width;
-  float        best_value = -FLT_MAX;
-  size_t       peak_y     = 0;
-  size_t       peak_x     = 0;
-
-  for (size_t y = 0; y < height; ++y) {
-    for (size_t x = 0; x < width; ++x) {
-      const float value = map[y * width + x];
-      if (value > best_value) {
-        best_value = value;
-        peak_y     = y;
-        peak_x     = x;
-      }
-    }
+  const size_t pixels_per_map = height * width;
+  const float *map            = maps + map_index * pixels_per_map;
+  detail::PhaseCorrelationPeak local_peak{-FLT_MAX, 0};
+  for (size_t pixel = threadIdx.x; pixel < pixels_per_map; pixel += blockDim.x) {
+    local_peak = detail::select_phase_correlation_peak(local_peak, {map[pixel], pixel});
   }
 
+  __shared__ detail::PhaseCorrelationPeak
+      shared_peaks[detail::kPhaseCorrelationPeakBlockSize];
+  const auto peak = detail::reduce_phase_correlation_peak(local_peak, shared_peaks);
+  if (threadIdx.x != 0) {
+    return;
+  }
+
+  const size_t peak_y  = peak.index / width;
+  const size_t peak_x  = peak.index % width;
   const size_t x_minus = (peak_x + width - 1) % width;
   const size_t x_plus  = (peak_x + 1) % width;
   const size_t y_minus = (peak_y + height - 1) % height;
@@ -258,9 +258,8 @@ public:
     const size_t width        = input_desc_.shape[4];
     const size_t sample_count = sy * sx;
 
-    constexpr unsigned int block = 128;
-    const unsigned int     grid  = static_cast<unsigned int>((sample_count + block - 1) / block);
-    recover_phase_correlation_peaks<<<grid, block, 0, stream_>>>(
+    constexpr unsigned int block = detail::kPhaseCorrelationPeakBlockSize;
+    recover_phase_correlation_peaks<<<static_cast<unsigned int>(sample_count), block, 0, stream_>>>(
         reinterpret_cast<const float *>(xcorr_view.data()), measured_shifts_.get(), sample_count,
         height, width);
 
