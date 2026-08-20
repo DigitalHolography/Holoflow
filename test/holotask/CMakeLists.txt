@@ -21,6 +21,7 @@ set(SOURCES
     fresnel_diffraction_test.cu
     holofile_sink_test.cc
     pca_test.cu
+    pct_clip_test.cu
     shack_hartmann_test.cu
     sliding_average_test.cu
     zernike_defocus_z_prop_test.cc

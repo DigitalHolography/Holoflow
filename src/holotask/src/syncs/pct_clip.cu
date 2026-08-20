@@ -15,10 +15,13 @@
 #include "holotask/syncs/pct_clip.hh"
 
 #include <cub/cub.cuh>
-#include <math_constants.h>
 
+#include <array>
+#include <cmath>
+#include <cstdint>
 #include <string>
 #include <utility>
+#include <vector>
 
 #include "bug.hh"
 #include "curaii/cuda.hh"
@@ -84,54 +87,240 @@ bool is_c_contiguous(const holoflow::core::TDesc &desc) {
   return true;
 }
 
-__global__ void clip_kernel(float *odata, const float *idata, int n, const float *min_val,
-                            const float *max_val) {
+__global__ void gather_roi_kernel(float *roi_values, const float *idata, const int *spatial_indices,
+                                  int spatial_roi_count, int plane_size, int roi_count) {
+  int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx >= roi_count) {
+    return;
+  }
+
+  const int plane         = idx / spatial_roi_count;
+  const int spatial_index = spatial_indices[idx % spatial_roi_count];
+  roi_values[idx]         = idata[plane * plane_size + spatial_index];
+}
+
+__global__ void load_percentile_bounds_kernel(float *bounds, const float *sorted_values,
+                                              int min_idx, int max_idx) {
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
+    bounds[0] = sorted_values[min_idx];
+    bounds[1] = sorted_values[max_idx];
+  }
+}
+
+__global__ void clip_kernel(float *odata, const float *idata, int n, const float *bounds) {
   int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx >= n) {
     return;
   }
 
   float val  = idata[idx];
-  val        = fminf(fmaxf(val, *min_val), *max_val);
+  val        = fminf(fmaxf(val, bounds[0]), bounds[1]);
   odata[idx] = val;
 }
 
-__device__ bool in_ellipse(int x, int y, int width, int height, PctClipSettings::Ellipse roi) {
-  if (width <= 0 || height <= 0 || roi.rx <= 0.f || roi.ry <= 0.f) {
-    return false;
+std::vector<int> make_spatial_roi_indices(int width, int height,
+                                          const PctClipSettings::Ellipse &roi) {
+  constexpr float  pi = 3.14159265358979323846f;
+  const float      th = roi.angle * (pi / 180.0f);
+  const float      c  = std::cos(th);
+  const float      s  = std::sin(th);
+  std::vector<int> indices;
+  indices.reserve(static_cast<size_t>(width) * height);
+
+  for (int y = 0; y < height; ++y) {
+    const float yn = (static_cast<float>(y) + 0.5f) / static_cast<float>(height);
+    for (int x = 0; x < width; ++x) {
+      const float xn = (static_cast<float>(x) + 0.5f) / static_cast<float>(width);
+      const float dx = xn - roi.cx;
+      const float dy = yn - roi.cy;
+      const float xr = c * dx + s * dy;
+      const float yr = -s * dx + c * dy;
+      if ((xr * xr) / (roi.rx * roi.rx) + (yr * yr) / (roi.ry * roi.ry) <= 1.0f) {
+        indices.push_back(y * width + x);
+      }
+    }
   }
-
-  float xn = (static_cast<float>(x) + 0.5f) / static_cast<float>(width);
-  float yn = (static_cast<float>(y) + 0.5f) / static_cast<float>(height);
-
-  float dx = xn - roi.cx;
-  float dy = yn - roi.cy;
-
-  float th = roi.angle * (CUDART_PI_F / 180.0f);
-  float c  = cosf(th);
-  float s  = sinf(th);
-  float xr = c * dx + s * dy;
-  float yr = -s * dx + c * dy;
-
-  return (xr * xr) / (roi.rx * roi.rx) + (yr * yr) / (roi.ry * roi.ry) <= 1.0f;
+  return indices;
 }
 
-__global__ void roi_mask_kernel(uint8_t *mask, int *roi_count, int width, int height, int depth,
-                                PctClipSettings::Ellipse roi) {
-  int x = blockIdx.x * blockDim.x + threadIdx.x;
-  int y = blockIdx.y * blockDim.y + threadIdx.y;
-  int z = blockIdx.z * blockDim.z + threadIdx.z;
-  if (x >= width || y >= height || z >= depth) {
-    return;
+class PctClipCudaGraph {
+public:
+  using Addresses = std::array<const void *, 2>;
+
+  PctClipCudaGraph() = default;
+  ~PctClipCudaGraph() noexcept { reset(); }
+
+  PctClipCudaGraph(const PctClipCudaGraph &)            = delete;
+  PctClipCudaGraph &operator=(const PctClipCudaGraph &) = delete;
+
+  [[nodiscard]] bool ready() const noexcept { return executable_ != nullptr; }
+  [[nodiscard]] bool matches(const Addresses &addresses) const noexcept {
+    return ready() && addresses_ == addresses;
+  }
+  [[nodiscard]] bool matches_output(const Addresses &addresses) const noexcept {
+    return ready() && addresses_[1] == addresses[1];
   }
 
-  int  idx      = z * width * height + y * width + x;
-  bool selected = in_ellipse(x, y, width, height, roi);
-  mask[idx]     = selected;
-  if (selected) {
-    atomicAdd(roi_count, 1);
+  void launch(cudaStream_t stream) const { CUDA_CHECK(cudaGraphLaunch(executable_, stream)); }
+
+  void reset() noexcept {
+    if (executable_ != nullptr) {
+      CUDA_CHECK_NT(cudaGraphExecDestroy(executable_));
+      executable_ = nullptr;
+    }
+    if (graph_ != nullptr) {
+      CUDA_CHECK_NT(cudaGraphDestroy(graph_));
+      graph_ = nullptr;
+    }
+    addresses_   = {};
+    gather_node_ = nullptr;
+    clip_node_   = nullptr;
   }
-}
+
+  template <typename Enqueue>
+  bool capture(cudaStream_t stream, const Addresses &addresses, Enqueue &&enqueue) {
+    cudaGraph_t graph = capture_graph(stream, std::forward<Enqueue>(enqueue));
+    if (graph == nullptr) {
+      return false;
+    }
+    cudaGraphExec_t executable = nullptr;
+    try {
+      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+      const auto nodes = find_update_nodes(graph);
+      reset();
+      executable_  = executable;
+      graph_       = graph;
+      addresses_   = addresses;
+      gather_node_ = nodes[0];
+      clip_node_   = nodes[1];
+      return true;
+    } catch (...) {
+      if (executable != nullptr) {
+        CUDA_CHECK_NT(cudaGraphExecDestroy(executable));
+      }
+      if (graph != nullptr) {
+        CUDA_CHECK_NT(cudaGraphDestroy(graph));
+      }
+      throw;
+    }
+  }
+
+  void update_input(const cudaKernelNodeParams &gather_params,
+                    const cudaKernelNodeParams &clip_params, const Addresses &addresses) {
+    CUDA_CHECK(cudaGraphExecKernelNodeSetParams(executable_, gather_node_, &gather_params));
+    CUDA_CHECK(cudaGraphExecKernelNodeSetParams(executable_, clip_node_, &clip_params));
+    addresses_ = addresses;
+  }
+
+  template <typename Enqueue>
+  bool update(cudaStream_t stream, const Addresses &addresses, Enqueue &&enqueue) {
+    cudaGraph_t candidate = capture_graph(stream, std::forward<Enqueue>(enqueue));
+    if (candidate == nullptr) {
+      return false;
+    }
+
+    cudaGraphExecUpdateResultInfo update_info{};
+    const auto update_error = cudaGraphExecUpdate(executable_, candidate, &update_info);
+    if (update_error == cudaSuccess) {
+      CUDA_CHECK_NT(cudaGraphDestroy(candidate));
+      addresses_ = addresses;
+      return true;
+    }
+    if (update_error != cudaErrorGraphExecUpdateFailure) {
+      CUDA_CHECK_NT(cudaGraphDestroy(candidate));
+      CUDA_CHECK(update_error);
+    }
+
+    cudaGraphExec_t executable = nullptr;
+    try {
+      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, candidate, 0));
+      const auto nodes = find_update_nodes(candidate);
+      reset();
+      executable_  = executable;
+      graph_       = candidate;
+      addresses_   = addresses;
+      gather_node_ = nodes[0];
+      clip_node_   = nodes[1];
+      return true;
+    } catch (...) {
+      if (executable != nullptr) {
+        CUDA_CHECK_NT(cudaGraphExecDestroy(executable));
+      }
+      CUDA_CHECK_NT(cudaGraphDestroy(candidate));
+      throw;
+    }
+  }
+
+private:
+  template <typename Enqueue>
+  static cudaGraph_t capture_graph(cudaStream_t stream, Enqueue &&enqueue) {
+    cudaGraph_t graph     = nullptr;
+    bool        capturing = false;
+    try {
+      CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+      capturing           = true;
+      const bool complete = std::forward<Enqueue>(enqueue)();
+      CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
+      capturing = false;
+      if (!complete) {
+        if (graph != nullptr) {
+          CUDA_CHECK_NT(cudaGraphDestroy(graph));
+        }
+        return nullptr;
+      }
+      return graph;
+    } catch (...) {
+      if (capturing) {
+        cudaGraph_t discarded = nullptr;
+        (void)cudaStreamEndCapture(stream, &discarded);
+        if (discarded != nullptr) {
+          CUDA_CHECK_NT(cudaGraphDestroy(discarded));
+        }
+      } else if (graph != nullptr) {
+        CUDA_CHECK_NT(cudaGraphDestroy(graph));
+      }
+      throw;
+    }
+  }
+
+  static std::array<cudaGraphNode_t, 2> find_update_nodes(cudaGraph_t graph) {
+    size_t node_count = 0;
+    CUDA_CHECK(cudaGraphGetNodes(graph, nullptr, &node_count));
+    std::vector<cudaGraphNode_t> nodes(node_count);
+    CUDA_CHECK(cudaGraphGetNodes(graph, nodes.data(), &node_count));
+
+    cudaGraphNode_t gather_node = nullptr;
+    cudaGraphNode_t clip_node   = nullptr;
+    for (const auto node : nodes) {
+      cudaGraphNodeType type{};
+      CUDA_CHECK(cudaGraphNodeGetType(node, &type));
+      if (type != cudaGraphNodeTypeKernel) {
+        continue;
+      }
+
+      cudaKernelNodeParams params{};
+      CUDA_CHECK(cudaGraphKernelNodeGetParams(node, &params));
+      if (params.func == reinterpret_cast<void *>(gather_roi_kernel)) {
+        HOLOVIBES_CHECK(gather_node == nullptr, "Multiple gather kernels in percentile clip graph");
+        gather_node = node;
+      } else if (params.func == reinterpret_cast<void *>(clip_kernel)) {
+        HOLOVIBES_CHECK(clip_node == nullptr, "Multiple clip kernels in percentile clip graph");
+        clip_node = node;
+      }
+    }
+
+    HOLOVIBES_CHECK(gather_node != nullptr, "Missing gather kernel in percentile clip graph");
+    HOLOVIBES_CHECK(clip_node != nullptr, "Missing clip kernel in percentile clip graph");
+    return {gather_node, clip_node};
+  }
+
+  // Kernel-node executable updates require their originating graph nodes to stay alive.
+  cudaGraph_t     graph_       = nullptr;
+  cudaGraphExec_t executable_  = nullptr;
+  Addresses       addresses_   = {};
+  cudaGraphNode_t gather_node_ = nullptr;
+  cudaGraphNode_t clip_node_   = nullptr;
+};
 
 // -------------------------------------------------------------------------------------------------
 // PctClip task implementation
@@ -139,68 +328,165 @@ __global__ void roi_mask_kernel(uint8_t *mask, int *roi_count, int width, int he
 
 class PctClip : public holoflow::core::ISyncTask {
 public:
-  PctClip(PctClipSettings settings, holoflow::core::TDesc idesc, int roi_count, int min_idx,
-          int max_idx, DevPtr<float> &&d_min, DevPtr<float> &&d_max, DevPtr<uint8_t> &&d_roi_mask,
-          size_t sort_tmp_bytes, DevPtr<uint8_t> &&d_sort_tmp, size_t select_tmp_bytes,
-          DevPtr<uint8_t> &&d_select_tmp, DevPtr<float> &&d_roi, DevPtr<int> &&d_roi_count,
-          cudaStream_t stream)
+  PctClip(PctClipSettings settings, holoflow::core::TDesc idesc, int spatial_roi_count,
+          int roi_count, int min_idx, int max_idx, DevPtr<int> &&d_spatial_indices,
+          DevPtr<float> &&d_bounds, size_t sort_tmp_bytes, DevPtr<uint8_t> &&d_sort_tmp,
+          DevPtr<float> &&d_roi, cudaStream_t stream)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), roi_count_(roi_count),
-        min_idx_(min_idx), max_idx_(max_idx), d_min_(std::move(d_min)), d_max_(std::move(d_max)),
-        d_roi_mask_(std::move(d_roi_mask)), sort_tmp_bytes_(sort_tmp_bytes),
-        d_sort_tmp_(std::move(d_sort_tmp)), select_tmp_bytes_(select_tmp_bytes),
-        d_select_tmp_(std::move(d_select_tmp)), d_roi_(std::move(d_roi)),
-        d_roi_count_(std::move(d_roi_count)), stream_(stream) {}
+        spatial_roi_count_(spatial_roi_count), min_idx_(min_idx), max_idx_(max_idx),
+        d_spatial_indices_(std::move(d_spatial_indices)), d_bounds_(std::move(d_bounds)),
+        sort_tmp_bytes_(sort_tmp_bytes), d_sort_tmp_(std::move(d_sort_tmp)),
+        d_roi_(std::move(d_roi)), stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data());
-    auto *odata = reinterpret_cast<float *>(ctx.outputs[0].data());
-    auto  count = static_cast<int>(ctx.inputs[0].desc.num_elements());
+    const PctClipCudaGraph::Addresses addresses{ctx.inputs[0].data(), ctx.outputs[0].data()};
+    if (stream_ == nullptr) {
+      return enqueue(ctx);
+    }
 
-    CUDA_CHECK(cub::DeviceSelect::Flagged(d_select_tmp_.get(), select_tmp_bytes_, idata,
-                                          d_roi_mask_.get(), d_roi_.get(), d_roi_count_.get(),
-                                          count, stream_));
+    cudaStreamCaptureStatus capture_status = cudaStreamCaptureStatusNone;
+    CUDA_CHECK(cudaStreamIsCapturing(stream_, &capture_status));
+    if (capture_status != cudaStreamCaptureStatusNone) {
+      return enqueue(ctx);
+    }
 
-    CUDA_CHECK(cub::DeviceRadixSort::SortKeys(d_sort_tmp_.get(), sort_tmp_bytes_, d_roi_.get(),
-                                              odata, roi_count_, 0, 32, stream_));
+    if (graph_.matches(addresses)) {
+      graph_.launch(stream_);
+      return holoflow::core::OpResult::Ok;
+    }
 
-    float *d_min = odata + min_idx_;
-    float *d_max = odata + max_idx_;
+    if (graph_.matches_output(addresses)) {
+      try {
+        // Only these two custom kernels consume the rotating sliding-average input. CUB's
+        // captured nodes use stable scratch and output addresses and do not need updating.
+        update_graph_input(ctx, addresses);
+        graph_.launch(stream_);
+        return holoflow::core::OpResult::Ok;
+      } catch (const std::exception &error) {
+        logger()->warn("[PctClip] CUDA Graph input update failed; recapturing: {}", error.what());
+        graph_.reset();
+      }
+    } else if (graph_.ready() && graph_capture_enabled_) {
+      try {
+        const bool updated = graph_.update(
+            stream_, addresses, [&]() { return enqueue(ctx) == holoflow::core::OpResult::Ok; });
+        if (updated) {
+          graph_.launch(stream_);
+          return holoflow::core::OpResult::Ok;
+        }
+        graph_capture_enabled_ = false;
+      } catch (const std::exception &error) {
+        logger()->warn("[PctClip] CUDA Graph executable update failed; recapturing: {}",
+                       error.what());
+        graph_.reset();
+      }
+    }
 
-    CUDA_CHECK(
-        cudaMemcpyAsync(d_min_.get(), d_min, sizeof(float), cudaMemcpyDeviceToDevice, stream_));
-    CUDA_CHECK(
-        cudaMemcpyAsync(d_max_.get(), d_max, sizeof(float), cudaMemcpyDeviceToDevice, stream_));
-
-    constexpr int block_size = 256;
-    const int     grid_size  = (count + block_size - 1) / block_size;
-    clip_kernel<<<grid_size, block_size, 0, stream_>>>(odata, idata, count, d_min_.get(),
-                                                       d_max_.get());
-
-    CUDA_CHECK(cudaGetLastError());
-    return holoflow::core::OpResult::Ok;
+    const auto result = enqueue(ctx);
+    if (result == holoflow::core::OpResult::Ok && graph_capture_enabled_) {
+      try_capture(ctx, addresses);
+    }
+    return result;
   }
 
-  void update_stream(cudaStream_t stream) { stream_ = stream; }
+  void update_stream(cudaStream_t stream) {
+    if (stream_ == stream) {
+      return;
+    }
+    graph_capture_enabled_ = true;
+    stream_                = stream;
+  }
 
   const PctClipSettings       &settings() const { return settings_; }
   const holoflow::core::TDesc &idesc() const { return idesc_; }
 
 private:
+  void update_graph_input(holoflow::core::SyncCtx           &ctx,
+                          const PctClipCudaGraph::Addresses &addresses) {
+    auto *idata      = reinterpret_cast<const float *>(ctx.inputs[0].data());
+    auto *odata      = reinterpret_cast<float *>(ctx.outputs[0].data());
+    int   count      = static_cast<int>(ctx.inputs[0].desc.num_elements());
+    int   plane_size = static_cast<int>(idesc_.shape[1] * idesc_.shape[2]);
+    auto *roi_values = d_roi_.get();
+    auto *indices    = d_spatial_indices_.get();
+    auto *bounds     = d_bounds_.get();
+
+    constexpr int        block_size    = 256;
+    const int            roi_grid_size = (roi_count_ + block_size - 1) / block_size;
+    void                *gather_args[] = {&roi_values,         &idata,      &indices,
+                                          &spatial_roi_count_, &plane_size, &roi_count_};
+    cudaKernelNodeParams gather_params{
+        .func           = reinterpret_cast<void *>(gather_roi_kernel),
+        .gridDim        = {static_cast<unsigned int>(roi_grid_size), 1, 1},
+        .blockDim       = {block_size, 1, 1},
+        .sharedMemBytes = 0,
+        .kernelParams   = gather_args,
+        .extra          = nullptr,
+    };
+
+    const int            grid_size   = (count + block_size - 1) / block_size;
+    void                *clip_args[] = {&odata, &idata, &count, &bounds};
+    cudaKernelNodeParams clip_params{
+        .func           = reinterpret_cast<void *>(clip_kernel),
+        .gridDim        = {static_cast<unsigned int>(grid_size), 1, 1},
+        .blockDim       = {block_size, 1, 1},
+        .sharedMemBytes = 0,
+        .kernelParams   = clip_args,
+        .extra          = nullptr,
+    };
+
+    graph_.update_input(gather_params, clip_params, addresses);
+  }
+
+  void try_capture(holoflow::core::SyncCtx &ctx, const PctClipCudaGraph::Addresses &addresses) {
+    try {
+      const bool captured = graph_.capture(
+          stream_, addresses, [&]() { return enqueue(ctx) == holoflow::core::OpResult::Ok; });
+      if (!captured) {
+        graph_capture_enabled_ = false;
+      }
+    } catch (const std::exception &error) {
+      graph_capture_enabled_ = false;
+      logger()->warn("[PctClip] CUDA Graph capture disabled: {}", error.what());
+    }
+  }
+
+  holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx) {
+    auto     *idata      = reinterpret_cast<const float *>(ctx.inputs[0].data());
+    auto     *odata      = reinterpret_cast<float *>(ctx.outputs[0].data());
+    const int count      = static_cast<int>(ctx.inputs[0].desc.num_elements());
+    const int plane_size = static_cast<int>(idesc_.shape[1] * idesc_.shape[2]);
+
+    constexpr int block_size    = 256;
+    const int     roi_grid_size = (roi_count_ + block_size - 1) / block_size;
+    gather_roi_kernel<<<roi_grid_size, block_size, 0, stream_>>>(
+        d_roi_.get(), idata, d_spatial_indices_.get(), spatial_roi_count_, plane_size, roi_count_);
+
+    CUDA_CHECK(cub::DeviceRadixSort::SortKeys(d_sort_tmp_.get(), sort_tmp_bytes_, d_roi_.get(),
+                                              odata, roi_count_, 0, 32, stream_));
+
+    load_percentile_bounds_kernel<<<1, 1, 0, stream_>>>(d_bounds_.get(), odata, min_idx_, max_idx_);
+
+    const int grid_size = (count + block_size - 1) / block_size;
+    clip_kernel<<<grid_size, block_size, 0, stream_>>>(odata, idata, count, d_bounds_.get());
+
+    CUDA_CHECK(cudaGetLastError());
+    return holoflow::core::OpResult::Ok;
+  }
   PctClipSettings       settings_;
   holoflow::core::TDesc idesc_;
   int                   roi_count_;
+  int                   spatial_roi_count_;
   int                   min_idx_;
   int                   max_idx_;
-  DevPtr<float>         d_min_;
-  DevPtr<float>         d_max_;
-  DevPtr<uint8_t>       d_roi_mask_;
+  DevPtr<int>           d_spatial_indices_;
+  DevPtr<float>         d_bounds_;
   size_t                sort_tmp_bytes_;
   DevPtr<uint8_t>       d_sort_tmp_;
-  size_t                select_tmp_bytes_;
-  DevPtr<uint8_t>       d_select_tmp_;
   DevPtr<float>         d_roi_;
-  DevPtr<int>           d_roi_count_;
   cudaStream_t          stream_;
+  bool                  graph_capture_enabled_ = true;
+  PctClipCudaGraph      graph_;
 };
 
 } // namespace
@@ -255,33 +541,21 @@ PctClipFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const auto  settings = jsettings.get<PctClipSettings>();
   const auto &idesc    = input_descs[0];
 
-  const int depth  = static_cast<int>(idesc.shape[0]);
-  const int height = static_cast<int>(idesc.shape[1]);
-  const int width  = static_cast<int>(idesc.shape[2]);
-  const int count  = static_cast<int>(idesc.num_elements());
-
-  auto d_min       = make_unique_device_ptr<float>(1);
-  auto d_max       = make_unique_device_ptr<float>(1);
-  auto d_roi_mask  = make_unique_device_ptr<uint8_t>(count);
-  auto d_roi_count = make_unique_device_ptr<int>(1);
-
-  dim3 block_size(16, 16, 1);
-  dim3 grid_size((width + block_size.x - 1) / block_size.x,
-                 (height + block_size.y - 1) / block_size.y,
-                 (depth + block_size.z - 1) / block_size.z);
-  CUDA_CHECK(cudaMemsetAsync(d_roi_count.get(), 0, sizeof(int), ctx.stream));
-  roi_mask_kernel<<<grid_size, block_size, 0, ctx.stream>>>(d_roi_mask.get(), d_roi_count.get(),
-                                                            width, height, depth, settings.roi);
-  CUDA_CHECK(cudaGetLastError());
-
-  int h_roi_count = 0;
-  CUDA_CHECK(cudaMemcpyAsync(&h_roi_count, d_roi_count.get(), sizeof(int), cudaMemcpyDeviceToHost,
-                             ctx.stream));
-  CUDA_CHECK(cudaStreamSynchronize(ctx.stream));
-  HOLOVIBES_CHECK(h_roi_count > 0, "No pixels in ROI");
+  const int  depth               = static_cast<int>(idesc.shape[0]);
+  const int  height              = static_cast<int>(idesc.shape[1]);
+  const int  width               = static_cast<int>(idesc.shape[2]);
+  const auto spatial_roi_indices = make_spatial_roi_indices(width, height, settings.roi);
+  HOLOVIBES_CHECK(!spatial_roi_indices.empty(), "No pixels in ROI");
+  const int spatial_roi_count = static_cast<int>(spatial_roi_indices.size());
+  const int h_roi_count       = depth * spatial_roi_count;
 
   const int min_idx = static_cast<int>(settings.min_pct / 100.0f * (h_roi_count - 1));
   const int max_idx = static_cast<int>(settings.max_pct / 100.0f * (h_roi_count - 1));
+
+  auto d_spatial_indices = make_unique_device_ptr<int>(spatial_roi_count);
+  CUDA_CHECK(cudaMemcpy(d_spatial_indices.get(), spatial_roi_indices.data(),
+                        spatial_roi_indices.size() * sizeof(int), cudaMemcpyHostToDevice));
+  auto d_bounds = make_unique_device_ptr<float>(2);
 
   size_t sort_tmp_bytes = 0;
   CUDA_CHECK(cub::DeviceRadixSort::SortKeys(nullptr, sort_tmp_bytes, static_cast<float *>(nullptr),
@@ -289,17 +563,12 @@ PctClipFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                             ctx.stream));
   auto d_sort_tmp = make_unique_device_ptr<uint8_t>(sort_tmp_bytes);
 
-  size_t select_tmp_bytes = 0;
-  CUDA_CHECK(cub::DeviceSelect::Flagged(
-      nullptr, select_tmp_bytes, static_cast<float *>(nullptr), static_cast<uint8_t *>(nullptr),
-      static_cast<float *>(nullptr), static_cast<int *>(nullptr), count, ctx.stream));
-  auto d_select_tmp = make_unique_device_ptr<uint8_t>(select_tmp_bytes);
-  auto d_roi        = make_unique_device_ptr<float>(h_roi_count);
+  auto d_roi = make_unique_device_ptr<float>(h_roi_count);
 
-  return std::make_unique<PctClip>(settings, idesc, h_roi_count, min_idx, max_idx, std::move(d_min),
-                                   std::move(d_max), std::move(d_roi_mask), sort_tmp_bytes,
-                                   std::move(d_sort_tmp), select_tmp_bytes, std::move(d_select_tmp),
-                                   std::move(d_roi), std::move(d_roi_count), ctx.stream);
+  return std::make_unique<PctClip>(settings, idesc, spatial_roi_count, h_roi_count, min_idx,
+                                   max_idx, std::move(d_spatial_indices), std::move(d_bounds),
+                                   sort_tmp_bytes, std::move(d_sort_tmp), std::move(d_roi),
+                                   ctx.stream);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
