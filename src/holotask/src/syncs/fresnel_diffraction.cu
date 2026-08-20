@@ -405,6 +405,7 @@ public:
   DevPtr<cuFloatComplex> d_fft_output;
   DevPtr<void>           d_caller_info;
   std::vector<char>      lto;
+  float                 *last_magnitude_output = nullptr;
 
   // -- ISyncTask interface ------------------------------------------------------------------------
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
@@ -417,11 +418,13 @@ public:
       auto *fft_out = reinterpret_cast<cuFloatComplex *>(out_ptr);
       if (settings.output_magnitude) {
         auto *magnitude_output = reinterpret_cast<float *>(out_ptr);
-        auto *output_field =
-            static_cast<uint8_t *>(d_caller_info.get()) + offsetof(ApplyLensCallerInfo,
-                                                                   magnitude_output);
-        CUDA_CHECK(cudaMemcpyAsync(output_field, &magnitude_output, sizeof(magnitude_output),
-                                   cudaMemcpyHostToDevice, stream));
+        if (magnitude_output != last_magnitude_output) {
+          auto *output_field = static_cast<uint8_t *>(d_caller_info.get()) +
+                               offsetof(ApplyLensCallerInfo, magnitude_output);
+          CUDA_CHECK(cudaMemcpyAsync(output_field, &magnitude_output, sizeof(magnitude_output),
+                                     cudaMemcpyHostToDevice, stream));
+          last_magnitude_output = magnitude_output;
+        }
         fft_out = d_fft_output.get();
       }
       CUFFT_CHECK(cufftXtExec(fft_handle.get(), in_ptr, fft_out, CUFFT_FORWARD));

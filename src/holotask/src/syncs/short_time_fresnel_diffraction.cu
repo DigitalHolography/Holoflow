@@ -504,6 +504,7 @@ struct ShortTimeFresnelDiffractionImpl {
   DevPtr<cuFloatComplex> d_fft_output;
   DevPtr<void>           d_caller_info;
   std::vector<char>      lto;
+  float                 *last_magnitude_output = nullptr;
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -577,11 +578,13 @@ holoflow::core::OpResult ShortTimeFresnelDiffraction::execute(holoflow::core::Sy
     auto *fft_out = reinterpret_cast<cuFloatComplex *>(out_ptr);
     if (im.settings.output_magnitude) {
       auto *magnitude_output = reinterpret_cast<float *>(out_ptr);
-      auto *output_field =
-          static_cast<uint8_t *>(im.d_caller_info.get()) +
-          offsetof(STFTCallerInfo, magnitude_output);
-      CUDA_CHECK(cudaMemcpyAsync(output_field, &magnitude_output, sizeof(magnitude_output),
-                                 cudaMemcpyHostToDevice, im.stream));
+      if (magnitude_output != im.last_magnitude_output) {
+        auto *output_field = static_cast<uint8_t *>(im.d_caller_info.get()) +
+                             offsetof(STFTCallerInfo, magnitude_output);
+        CUDA_CHECK(cudaMemcpyAsync(output_field, &magnitude_output, sizeof(magnitude_output),
+                                   cudaMemcpyHostToDevice, im.stream));
+        im.last_magnitude_output = magnitude_output;
+      }
       fft_out = im.d_fft_output.get();
     }
 
