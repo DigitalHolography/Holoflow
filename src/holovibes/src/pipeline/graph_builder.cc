@@ -27,55 +27,20 @@
 
 namespace holovibes::pipeline {
 
+// -----------------------------------------------------------------------------
+// Helpers declarations
+// -----------------------------------------------------------------------------
+
 namespace {
 
-constexpr float kFlatfieldCutoffConstant = 0.187f;
-
 holotask::syncs::FlatfieldSettings flatfield_settings_from_cutoff_period(float cutoff_period_m,
-                                                                         float dy_m, float dx_m) {
-  if (cutoff_period_m <= 0.0f || dy_m <= 0.0f || dx_m <= 0.0f) {
-    throw std::invalid_argument("flatfield cutoff period and image pitches must be positive");
-  }
-
-  // The UI exposes a physical cutoff period, not the Gaussian sigma. The 0.187 factor follows
-  // the 50% amplitude transition convention for the Gaussian high-pass
-  // H_hp(f) = 1 - exp(-2*pi^2*sigma^2*f^2), so f50 = 0.187 / sigma_px and
-  // sigma_px = 0.187 * period_px. This is a convention, not a hard cutoff.
-  // Axis order follows image layout: y uses dy on axis -2, x uses dx on axis -1.
-  return {
-      .sigma_y = kFlatfieldCutoffConstant * cutoff_period_m / dy_m,
-      .sigma_x = kFlatfieldCutoffConstant * cutoff_period_m / dx_m,
-  };
-}
+                                                                         float dy_m, float dx_m);
 
 std::pair<float, float> fresnel_1fft_output_pitch(float wavelength_m, float z_m, float dy_in_m,
-                                                  float dx_in_m, size_t ny, size_t nx) {
-  if (wavelength_m <= 0.0f || dy_in_m <= 0.0f || dx_in_m <= 0.0f || ny == 0 || nx == 0) {
-    throw std::invalid_argument(
-        "Fresnel output pitch requires positive wavelength, pitch, and shape");
-  }
-
-  const float z_abs = std::abs(z_m);
-  if (z_abs <= 0.0f) {
-    throw std::invalid_argument("Fresnel output pitch requires non-zero propagation distance");
-  }
-  return {
-      wavelength_m * z_abs / (static_cast<float>(ny) * dy_in_m),
-      wavelength_m * z_abs / (static_cast<float>(nx) * dx_in_m),
-  };
-}
+                                                  float dx_in_m, size_t ny, size_t nx);
 
 std::pair<float, float> post_propagation_pitch(const Settings              &settings,
-                                               const holoflow::core::TDesc &desc) {
-  if (settings.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
-    const auto rank = desc.shape.size();
-    return fresnel_1fft_output_pitch(settings.spacial_lambda, settings.spacial_z,
-                                     settings.spacial_pixel_size, settings.spacial_pixel_size,
-                                     desc.shape.at(rank - 2), desc.shape.at(rank - 1));
-  }
-
-  return {settings.spacial_pixel_size, settings.spacial_pixel_size};
-}
+                                               const holoflow::core::TDesc &desc);
 
 } // namespace
 
@@ -100,60 +65,42 @@ holoflow::core::GraphSpec GraphBuilder::build() {
     throw std::invalid_argument("derived signal plot sample time must be positive and finite");
   }
 
-  TDesc H     = build_acquisition();
-  TDesc H_raw = H;
+  TDesc H = build_acquisition();
+
+  if (s_.recording_method == RecordingMethod::RAW) {
+    build_raw_record(H);
+  }
 
   if (s_.raw_view || s_.view_type == ViewType::RAW) {
     bool should_exit = build_raw_view(H);
     if (should_exit) {
-      if (s_.recording_method == RecordingMethod::RAW) {
-        build_raw_record(H);
-      }
       return g_;
     }
   }
 
   H = build_preprocessing(H);
 
-  if (s_.recording_method == RecordingMethod::RAW) {
-    build_raw_record(H_raw);
-  }
-
   TDesc FH = build_time_frequency_analysis(H);
 
-  if (s_.filter_2d && s_.spacial_method != SpacialMethod::ANGULAR_SPECTRUM) {
+  bool filter_2d_standalone = s_.spacial_method != SpacialMethod::ANGULAR_SPECTRUM;
+  if (s_.filter_2d && filter_2d_standalone) {
     FH = build_spatial_filter(FH);
   }
 
   if (s_.pp_accumulation <= 0) {
     throw std::invalid_argument("pp_accumulation must be positive");
   }
-  const auto timing_outputs =
-      dual_reader_batch_queue(FH, {
-                                      .target_capacity = std::max<size_t>(2, 2 * FH.shape.at(0)),
-                                      .window_size     = static_cast<size_t>(s_.pp_accumulation),
-                                  });
-  TDesc       FH_current = timing_outputs.at(0);
-  const TDesc FH_delayed = timing_outputs.at(1);
+
+  // Batch queue with two readers. FH_delayed is used for Shack-Hartmann correction, FH_current is
+  // used for propagation.
+  auto        target_capacity = std::max<size_t>(2, 2 * FH.shape.at(0));
+  auto        window_size     = static_cast<size_t>(s_.pp_accumulation);
+  const auto  timing_outputs  = dual_reader_batch_queue(FH, {target_capacity, window_size});
+  TDesc       FH_current      = timing_outputs.at(0);
+  const TDesc FH_delayed      = timing_outputs.at(1);
 
   if (s_.autofocus_enabled) {
-    if (s_.autofocus_nb_iter <= 0) {
-      throw std::invalid_argument("autofocus_nb_iter must be positive");
-    }
-    if (s_.pp_accumulation > 1 && s_.autofocus_nb_iter > 1) {
-      throw std::invalid_argument(
-          "sliding Shack-Hartmann correction only supports one autofocus iteration");
-    }
-
-    ShackHartmannIterationState shack_hartmann_iteration_state;
-    for (int pass = 0; pass < s_.autofocus_nb_iter; ++pass) {
-      const TDesc &delayed = pass == 0 ? FH_delayed : FH_current;
-      FH_current = build_shack_hartmann(FH_current, delayed, pass == s_.autofocus_nb_iter - 1,
-                                        shack_hartmann_iteration_state);
-    }
-
-    // Decouple the final propagation so it can overlap the next Shack-Hartmann iteration.
-    FH_current = batched_queue(FH_current, {2, 1, 1});
+    FH_current = build_iterative_shack_hartmann(FH_current, FH_delayed);
   }
 
   TDesc FH_z = build_spatial_propagation(FH_current);
@@ -175,18 +122,20 @@ GraphBuilder::TDesc GraphBuilder::build_acquisition() {
   auto cam_path = s_.camera_config_path.string();
 
   if (s_.import_source == ImportSource::HOLOFILE) {
-    return holofile_read({
-        .path        = s_.load_path.string(),
-        .load_kind   = load_method_map_.at(s_.load_method),
-        .start_frame = s_.load_begin,
-        .end_frame   = s_.load_end,
-        .batch_size  = s_.load_batch,
-        .max_fps     = s_.load_fps_limit,
-        .keep_cursor = false,
-    });
-  } else if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
+    return holofile_read({.path        = s_.load_path.string(),
+                          .load_kind   = load_method_map_.at(s_.load_method),
+                          .start_frame = s_.load_begin,
+                          .end_frame   = s_.load_end,
+                          .batch_size  = s_.load_batch,
+                          .max_fps     = s_.load_fps_limit,
+                          .keep_cursor = false});
+  }
+
+  if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
     return ametek_s710_euresys_coaxlink_octo({cam_path});
-  } else if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
+  }
+
+  if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
     return ametek_s711_euresys_coaxlink_qsfp_plus({cam_path});
   }
 
@@ -194,50 +143,37 @@ GraphBuilder::TDesc GraphBuilder::build_acquisition() {
 }
 
 void GraphBuilder::build_raw_record(const TDesc &H) {
-  // auto Host = holotask::syncs::MemcpySettings::Target::Host;
-
-  // auto H_rec = memcpy(H, {Host});
-  // H_rec      = batched_queue(H_rec, {s_.recording_count, s_.time_window, s_.time_window});
-
-  holofile_write(H, {
-                        s_.recording_path.string(),
-                        s_.recording_count,
-                        settings_to_old_json(s_),
-                        true,
-                    });
+  auto path          = s_.recording_path.string();
+  auto count         = s_.recording_count;
+  auto settings_json = settings_to_old_json(s_);
+  holofile_write(H, {path, count, settings_json, true});
 }
 
 bool GraphBuilder::build_raw_view(const TDesc &H) {
   auto Host = holotask::syncs::MemcpySettings::Target::Host;
 
-  int64_t new_y = static_cast<int64_t>(H.shape.at(1));
-  int64_t new_x = static_cast<int64_t>(H.shape.at(2));
-  (void)new_y;
-  (void)new_x;
-
-  auto H_disp     = memcpy(H, {Host});
-  auto H_view     = batched_queue(H_disp, {s_.cpu_out_size, 1, 1});
-  auto H_reshaped = H_view;
-  // auto H_reshaped = reshape(H_view, {{1, new_y, new_x}, true});
+  auto H_disp = memcpy(H, {Host});
+  auto H_view = batched_queue(H_disp, {s_.cpu_out_size, 1, 1});
 
   if (s_.raw_view) {
-    xy_raw_display(H_reshaped, {});
+    xy_raw_display(H_view, {});
   }
 
   if (s_.view_type == ViewType::RAW) {
-    xy_processed_display(H_reshaped, {});
-    return true; // Signal to caller to exit pipeline early
+    xy_processed_display(H_view, {});
+    return true;
   }
 
   return false;
 }
 
 GraphBuilder::TDesc GraphBuilder::build_preprocessing(TDesc H) {
+  using MemLoc = holoflow::core::MemLoc;
   using Target = holotask::syncs::ConversionSettings::Target;
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
   auto Device  = holotask::syncs::MemcpySettings::Target::Device;
 
-  if (s_.load_method != LoadMethod::LOAD_IN_GPU) {
+  if (H.mem_loc != MemLoc::Device) {
     H = memcpy(H, {Device});
     H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window});
   }
@@ -257,54 +193,75 @@ GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
 
   H = reshape(H, {{1, T, Hy, Hx}, false});
-  H = batched_queue(H, {N_pre * 2, N_pre, N_pre}); // → [N_pre, T, Hy, Hx]
+  H = batched_queue(H, {N_pre * 2, N_pre, N_pre}); // [N_pre, T, Hy, Hx]
 
-  TDesc FH;
   if (s_.time_method == TimeMethod::RFFT) {
-    FH = rfft(H, {1}); // axis 1 = T dimension
+    auto FH = rfft(H, {1}); // axis 1 = T dimension
 
-    // Optimization: slice relevant frequency components early
-    if (!s_.view_3d_cuts) {
-      FH = slice(FH, {{{}, holonp::SliceRange{s_.time_z_begin, s_.time_z_end}, {}, {}}});
-      FH = copy(FH, {});
+    if (s_.view_3d_cuts) {
+      return FH;
     }
+
+    // Optimization: slice relevant components early. The rest is not used therefore this saves
+    // further computations.
+    FH = slice(FH, {{{}, holonp::SliceRange{s_.time_z_begin, s_.time_z_end}, {}, {}}});
+    FH = copy(FH, {});
+    return FH;
   }
 
-  else if (s_.time_method == TimeMethod::FFT) {
-    FH = fft(H, {1}); // axis 1 = T dimension
+  if (s_.time_method == TimeMethod::FFT) {
+    auto FH = fft(H, {1});
 
-    // Optimization: slice relevant components early, including the symmetric negative band
-    if (!s_.view_3d_cuts) {
-      auto N = T; // number of FFT points along the time axis
-
-      // Positive frequencies: [s_.time_z_begin, s_.time_z_end)
-      auto pos_range = holonp::SliceRange{s_.time_z_begin, s_.time_z_end};
-      auto FH_pos    = slice(FH, {{{}, pos_range, {}, {}}});
-
-      // Negative frequencies: [N - s_.time_z_end, N - s_.time_z_begin)
-      auto neg_range = holonp::SliceRange{N - s_.time_z_end, N - s_.time_z_begin};
-      auto FH_neg    = slice(FH, {{{}, neg_range, {}, {}}});
-
-      FH = concatenate(std::array<TDesc, 2>{FH_pos, FH_neg}, {1}); // concat along freq axis
+    if (s_.view_3d_cuts) {
+      return FH;
     }
+
+    // Optimization: slice relevant components early, including the symmetric negative band. The
+    // rest is not used therefore this saves further computations.
+    auto pos_range = holonp::SliceRange{s_.time_z_begin, s_.time_z_end};
+    auto FH_pos    = slice(FH, {{{}, pos_range, {}, {}}});
+
+    auto neg_range = holonp::SliceRange{T - s_.time_z_end, T - s_.time_z_begin};
+    auto FH_neg    = slice(FH, {{{}, neg_range, {}, {}}});
+
+    FH = concatenate(std::array<TDesc, 2>{FH_pos, FH_neg}, {1});
+    return FH;
   }
 
-  else if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
+  if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
     // PCA natively supports arbitrary leading batch dimensions (rank >= 3).
     // Input H: [N_pre, T, Hy, Hx] — the feature axis is shape[-3] = T.
     // Output FH: [N_pre, Nz, Hy, Hx] where Nz = z1 - z0.
-    int z0 = s_.view_3d_cuts ? 0 : s_.time_z_begin;
-    int z1 = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
-    FH     = pca(H, {z0, z1});
+    int  z0 = s_.view_3d_cuts ? 0 : s_.time_z_begin;
+    int  z1 = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
+    auto FH = pca(H, {z0, z1});
+    return FH;
   }
 
-  else {
-    throw std::logic_error{"Time method is currently not supported in GraphBuilder"};
+  HOLOVIBES_UNREACHABLE();
+}
+
+GraphBuilder::TDesc GraphBuilder::build_iterative_shack_hartmann(const TDesc &FH_current,
+                                                                 const TDesc &FH_delayed) {
+  if (s_.autofocus_nb_iter <= 0) {
+    throw std::invalid_argument("autofocus_nb_iter must be positive");
+  }
+  if (s_.pp_accumulation > 1 && s_.autofocus_nb_iter > 1) {
+    throw std::invalid_argument(
+        "sliding Shack-Hartmann correction only supports one autofocus iteration");
   }
 
-  // FH remains [N_pre, Nz, Hy, Hx]. The dual-reader queue downstream exposes one spectrum per
-  // scheduler iteration while retaining the batched producer write.
-  return FH;
+  auto                        FH_corrected = FH_current;
+  ShackHartmannIterationState shack_hartmann_iteration_state;
+  for (int pass = 0; pass < s_.autofocus_nb_iter; ++pass) {
+    const TDesc &delayed = pass == 0 ? FH_delayed : FH_corrected;
+    FH_corrected = build_shack_hartmann(FH_corrected, delayed, pass == s_.autofocus_nb_iter - 1,
+                                        shack_hartmann_iteration_state);
+  }
+
+  // Decouple the final propagation so it can overlap the next Shack-Hartmann iteration.
+  FH_corrected = batched_queue(FH_corrected, {2, 1, 1});
+  return FH_corrected;
 }
 
 GraphBuilder::TDesc
@@ -328,7 +285,7 @@ GraphBuilder::build_shack_hartmann(const TDesc &FH_current, const TDesc &FH_dela
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
   auto Host    = holotask::syncs::MemcpySettings::Target::Host;
 
-  // 1. Spatial Cropping (keep this to ensure perfect divisibility)
+  // 1. Spatial cropping to ensure perfect divisibility
   auto subap_w = FH_current.shape.at(3) / nb_subap;
   auto subap_h = FH_current.shape.at(2) / nb_subap;
   if (subap_w == 0 || subap_h == 0) {
@@ -502,69 +459,62 @@ GraphBuilder::TDesc GraphBuilder::short_time_fresnel_diffraction(
     const TDesc &field, size_t win_w, size_t win_h, size_t stride_x, size_t stride_y, float lam,
     float dx, float dy, float z_prop, PhaseReference phase_ref, bool skip_phase_shift) {
   return GraphBuilderTasks::short_time_fresnel_diffraction(field,
-                                                           {
-                                                               .lambda           = lam,
-                                                               .dx               = dx,
-                                                               .dy               = dy,
-                                                               .z                = z_prop,
-                                                               .win_h            = win_h,
-                                                               .win_w            = win_w,
-                                                               .stride_y         = stride_y,
-                                                               .stride_x         = stride_x,
-                                                               .phase_ref        = phase_ref,
-                                                               .skip_phase_shift = skip_phase_shift,
-                                                               .output_magnitude = true,
-                                                           });
+                                                           {.lambda           = lam,
+                                                            .dx               = dx,
+                                                            .dy               = dy,
+                                                            .z                = z_prop,
+                                                            .win_h            = win_h,
+                                                            .win_w            = win_w,
+                                                            .stride_y         = stride_y,
+                                                            .stride_x         = stride_x,
+                                                            .phase_ref        = phase_ref,
+                                                            .skip_phase_shift = skip_phase_shift,
+                                                            .output_magnitude = true});
 }
 
 GraphBuilder::TDesc GraphBuilder::build_spatial_propagation(const TDesc &FH) {
+  using Padding = holotask::syncs::AngularSpectrumSettings::Padding;
+  using Filter  = holotask::syncs::AngularSpectrumSettings::Filter;
+
   if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
-    return fresnel_diffraction(FH, {
-                                       .lambda           = s_.spacial_lambda,
-                                       .dx               = s_.spacial_pixel_size,
-                                       .dy               = s_.spacial_pixel_size,
-                                       .z                = s_.spacial_z,
-                                       .axes             = {-2, -1},
-                                       .output_magnitude = true,
-                                   });
+    return fresnel_diffraction(FH, {.lambda           = s_.spacial_lambda,
+                                    .dx               = s_.spacial_pixel_size,
+                                    .dy               = s_.spacial_pixel_size,
+                                    .z                = s_.spacial_z,
+                                    .axes             = {-2, -1},
+                                    .output_magnitude = true});
   }
 
-  else if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
+  if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
     if (s_.autofocus_enabled) {
       throw std::logic_error{"Angular Spectrum is not supported with Shack-Hartmann autofocus"};
     }
 
-    std::optional<holotask::syncs::AngularSpectrumSettings::Padding> padding;
+    std::optional<Padding> padding;
     if (s_.asp_padding_enabled) {
-      padding = holotask::syncs::AngularSpectrumSettings::Padding{
-          .width  = s_.asp_padded_width,
-          .height = s_.asp_padded_height,
-      };
+      padding = Padding{.width = s_.asp_padded_width, .height = s_.asp_padded_height};
     }
-    std::optional<holotask::syncs::AngularSpectrumSettings::Filter> filter;
+
+    std::optional<Filter> filter;
     if (s_.filter_2d) {
-      filter = holotask::syncs::AngularSpectrumSettings::Filter{
-          .r_inner = s_.filter_r_inner,
-          .r_outer = s_.filter_r_outer,
-          .s_inner = s_.filter_smooth_inner,
-          .s_outer = s_.filter_smooth_outer,
-      };
+      filter = Filter{.r_inner = s_.filter_r_inner,
+                      .r_outer = s_.filter_r_outer,
+                      .s_inner = s_.filter_smooth_inner,
+                      .s_outer = s_.filter_smooth_outer};
     }
-    return angular_spectrum(FH, {
-                                    s_.spacial_lambda,
-                                    s_.spacial_pixel_size,
-                                    s_.spacial_pixel_size,
-                                    s_.spacial_z,
-                                    filter,
-                                    padding,
-                                });
+
+    return angular_spectrum(FH, {.lambda  = s_.spacial_lambda,
+                                 .dx      = s_.spacial_pixel_size,
+                                 .dy      = s_.spacial_pixel_size,
+                                 .z       = s_.spacial_z,
+                                 .filter  = filter,
+                                 .padding = padding});
   }
 
-  throw std::logic_error{"Spacial method is currently not supported in GraphBuilder"};
+  HOLOVIBES_UNREACHABLE();
 }
 
 GraphBuilder::TDesc GraphBuilder::build_spatial_filter(const TDesc &FH_z) {
-  HOLOVIBES_CHECK(s_.filter_2d);
   return filter_2d(FH_z, {
                              s_.filter_r_inner,
                              s_.filter_r_outer,
@@ -580,29 +530,34 @@ GraphBuilder::TDesc GraphBuilder::build_freq_weights() {
   auto f0 = s_.time_z_begin * df;
   auto f1 = s_.time_z_end * df;
 
-  TDesc freqs;
   if (s_.view_3d_cuts) {
     throw std::logic_error{"Frequency weights are not supported when 3D cuts are enabled"};
   }
 
-  else if (s_.time_method == TimeMethod::FFT) {
+  if (s_.time_method == TimeMethod::FFT) {
     auto freqs_pos = arange({f0, f1, df, holoflow::core::DType::F32});
     auto freqs_neg = arange({f0 - fs, f1 - fs, df, holoflow::core::DType::F32});
-    freqs          = concatenate(std::array<TDesc, 2>{freqs_pos, freqs_neg}, {0});
+    auto freqs     = concatenate(std::array<TDesc, 2>{freqs_pos, freqs_neg}, {0});
+    return freqs;
   }
 
-  else if (s_.time_method == TimeMethod::RFFT ||
-           s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
-    freqs = arange({f0, f1, df, holoflow::core::DType::F32});
+  if (s_.time_method == TimeMethod::RFFT ||
+      s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
+    auto freqs = arange({f0, f1, df, holoflow::core::DType::F32});
+    return freqs;
   }
 
-  return freqs;
+  HOLOVIBES_UNREACHABLE();
 }
 
 void GraphBuilder::build_xy_view(const TDesc &FH_z) {
-  using Target = holotask::syncs::ConversionSettings::Target;
-  using Strat  = holotask::syncs::ConversionSettings::Strategy;
-  auto Host    = holotask::syncs::MemcpySettings::Target::Host;
+  using Target                 = holotask::syncs::ConversionSettings::Target;
+  using Strat                  = holotask::syncs::ConversionSettings::Strategy;
+  using SlidingAverageSettings = holotask::asyncs::SlidingAverageSettings;
+  using PctClipSettings        = holotask::syncs::PctClipSettings;
+  using Ellipse                = PctClipSettings::Ellipse;
+  using holotask::sinks::HolofileSettings;
+  auto Host = holotask::syncs::MemcpySettings::Target::Host;
 
   TDesc      result;
   const bool is_magnitude = FH_z.dtype == holoflow::core::DType::F32;
@@ -628,14 +583,18 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
     result        = mean(weighted, {{-3}, true});
   }
 
+  else {
+    HOLOVIBES_UNREACHABLE();
+  }
+
   if (s_.pp_fft_shift) {
     result = fftshift(result, {{-2, -1}});
   }
 
   if (s_.pp_flatfield) {
-    const auto [flatfield_dy, flatfield_dx] = post_propagation_pitch(s_, FH_z);
-    result = flatfield(result, flatfield_settings_from_cutoff_period(
-                                   s_.pp_flatfield_cutoff_period_m, flatfield_dy, flatfield_dx));
+    auto cutoff         = s_.pp_flatfield_cutoff_period_m;
+    const auto [dy, dx] = post_propagation_pitch(s_, FH_z);
+    result              = flatfield(result, flatfield_settings_from_cutoff_period(cutoff, dy, dx));
   }
 
   if (s_.pp_registration) {
@@ -643,35 +602,36 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
   }
 
   result = mean(result, {{0}, false}); // [1, H, W]
-  const holotask::asyncs::SlidingAverageSettings slide_settings{
-      .target_capacity = static_cast<size_t>(std::max(1, s_.gpu_out_size)),
-      .window_size     = static_cast<size_t>(s_.pp_accumulation),
-      .discard_first =
-          s_.autofocus_enabled ? static_cast<size_t>(s_.pp_accumulation - 1) : size_t{0},
-  };
-  result = slide_avg(result, slide_settings);
+
+  auto target_capacity = static_cast<size_t>(std::max(1, s_.gpu_out_size));
+  auto window_size     = static_cast<size_t>(s_.pp_accumulation);
+  auto discard_first   = s_.autofocus_enabled ? window_size - 1 : 0;
+  auto slide_settings  = SlidingAverageSettings{target_capacity, window_size, discard_first};
+  result               = slide_avg(result, slide_settings);
 
   if (s_.pp_convolution) {
     throw std::logic_error{"Convolution is currently not supported"};
   }
 
   if (s_.pp_pctclip) {
-    result = pct_clip(result, {s_.pp_pctclip_lower,
-                               s_.pp_pctclip_upper,
-                               {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f}});
+    Ellipse         roi{0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f};
+    PctClipSettings pct_clip_settings{s_.pp_pctclip_lower, s_.pp_pctclip_upper, roi};
+    result = pct_clip(result, pct_clip_settings);
   }
 
   result = convert(result, {Target::U8, Strat::Scaled});
   result = batched_queue(result, {s_.gpu_out_size, 1, 1});
-  // result = memcpy(result, {Host});
-  // result = batched_queue(result, {s_.cpu_out_size, 1, 1});
   xy_processed_display(result, {});
 
   if (s_.recording_method == RecordingMethod::PROCESSED) {
     auto result_rec = memcpy(result, {Host});
     result_rec      = batched_queue(result_rec, {s_.cpu_out_size, 1, 1});
-    holofile_write(result_rec,
-                   {s_.recording_path.string(), s_.recording_count, settings_to_old_json(s_)});
+
+    auto path              = s_.recording_path.string();
+    auto count             = s_.recording_count;
+    auto settings_json     = settings_to_old_json(s_);
+    auto holofile_settings = HolofileSettings{path, count, settings_json};
+    holofile_write(result_rec, holofile_settings);
   }
 }
 
@@ -679,5 +639,61 @@ void GraphBuilder::build_3d_cuts(const TDesc &FH_z) {
   (void)FH_z;
   throw std::logic_error{"3D cuts are currently not supported in GraphBuilder"};
 }
+
+// -----------------------------------------------------------------------------
+// Helpers definitions
+// -----------------------------------------------------------------------------
+
+namespace {
+
+constexpr float kFlatfieldCutoffConstant = 0.187f;
+
+holotask::syncs::FlatfieldSettings flatfield_settings_from_cutoff_period(float cutoff_period_m,
+                                                                         float dy_m, float dx_m) {
+  if (cutoff_period_m <= 0.0f || dy_m <= 0.0f || dx_m <= 0.0f) {
+    throw std::invalid_argument("flatfield cutoff period and image pitches must be positive");
+  }
+
+  // The UI exposes a physical cutoff period, not the Gaussian sigma. The 0.187 factor follows
+  // the 50% amplitude transition convention for the Gaussian high-pass
+  // H_hp(f) = 1 - exp(-2*pi^2*sigma^2*f^2), so f50 = 0.187 / sigma_px and
+  // sigma_px = 0.187 * period_px. This is a convention, not a hard cutoff.
+  // Axis order follows image layout: y uses dy on axis -2, x uses dx on axis -1.
+  return {
+      .sigma_y = kFlatfieldCutoffConstant * cutoff_period_m / dy_m,
+      .sigma_x = kFlatfieldCutoffConstant * cutoff_period_m / dx_m,
+  };
+}
+
+std::pair<float, float> fresnel_1fft_output_pitch(float wavelength_m, float z_m, float dy_in_m,
+                                                  float dx_in_m, size_t ny, size_t nx) {
+  if (wavelength_m <= 0.0f || dy_in_m <= 0.0f || dx_in_m <= 0.0f || ny == 0 || nx == 0) {
+    throw std::invalid_argument(
+        "Fresnel output pitch requires positive wavelength, pitch, and shape");
+  }
+
+  const float z_abs = std::abs(z_m);
+  if (z_abs <= 0.0f) {
+    throw std::invalid_argument("Fresnel output pitch requires non-zero propagation distance");
+  }
+  return {
+      wavelength_m * z_abs / (static_cast<float>(ny) * dy_in_m),
+      wavelength_m * z_abs / (static_cast<float>(nx) * dx_in_m),
+  };
+}
+
+std::pair<float, float> post_propagation_pitch(const Settings              &settings,
+                                               const holoflow::core::TDesc &desc) {
+  if (settings.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
+    const auto rank = desc.shape.size();
+    return fresnel_1fft_output_pitch(settings.spacial_lambda, settings.spacial_z,
+                                     settings.spacial_pixel_size, settings.spacial_pixel_size,
+                                     desc.shape.at(rank - 2), desc.shape.at(rank - 1));
+  }
+
+  return {settings.spacial_pixel_size, settings.spacial_pixel_size};
+}
+
+} // namespace
 
 } // namespace holovibes::pipeline

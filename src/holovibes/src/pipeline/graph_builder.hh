@@ -63,6 +63,7 @@ private:
   bool  build_raw_view(const TDesc &H);
   TDesc build_preprocessing(TDesc H);
   TDesc build_time_frequency_analysis(TDesc H);
+  TDesc build_iterative_shack_hartmann(const TDesc &FH_current, const TDesc &FH_delayed);
   TDesc build_shack_hartmann(const TDesc &FH_current, const TDesc &FH_delayed, bool is_last_pass,
                              ShackHartmannIterationState &iteration_state);
   TDesc build_spatial_propagation(const TDesc &FH);
