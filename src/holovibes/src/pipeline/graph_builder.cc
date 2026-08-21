@@ -17,15 +17,88 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <map>
+#include <optional>
 #include <spdlog/fmt/ranges.h>
 #include <stdexcept>
 #include <utility>
 
 #include "bug.hh"
+#include "graph_builder_tasks.hh"
 #include "logger.hh"
+#include "pipeline/settings.hh"
 #include "settings_loader.hh"
 
 namespace holovibes::pipeline {
+
+using PhaseReference = holotask::syncs::STFDPhaseReference;
+
+// -------------------------------------------------------------------------------------------------
+// Implementation
+// -------------------------------------------------------------------------------------------------
+
+class GraphBuilder::Impl : public GraphBuilderTasks {
+public:
+  Impl(const Settings &settings, holoflow::core::Registry &registry);
+
+  holoflow::core::GraphSpec build();
+
+private:
+  struct ShackHartmannGeometry {
+    size_t frame_width;
+    size_t frame_height;
+    size_t nb_subapertures;
+    size_t subaperture_width;
+    size_t subaperture_height;
+
+    float wavelength;
+    float pixel_pitch_x;
+    float pixel_pitch_y;
+    float propagation_distance;
+    float pupil_radius_m;
+  };
+
+  struct ShackHartmannSlopeOutput {
+    TDesc                slopes;
+    std::optional<TDesc> xcorr;
+  };
+
+  struct AberrationCorrectionState {
+    std::optional<TDesc> cumulative_coeffs_gpu;
+    std::optional<TDesc> cumulative_phase_gpu;
+  };
+
+  // clang-format off
+  TDesc build_acquisition();
+  TDesc short_time_fresnel_diffraction(const TDesc &field, size_t win_w, size_t win_h, size_t stride_x, size_t stride_y, float lam, float dx, float dy, float z_prop, PhaseReference phase_ref, bool skip_phase_shift = true);
+  void build_raw_record(const TDesc &H);
+  bool build_raw_view(const TDesc &H);
+  TDesc build_preprocessing(TDesc H);
+  TDesc build_time_frequency_analysis(TDesc H);
+  TDesc build_aberration_correction(const TDesc &FH_current, const TDesc &FH_delayed);
+  TDesc build_aberration_correction_pass(const TDesc &FH_current, const TDesc &FH_delayed, bool is_last_pass, AberrationCorrectionState &state);
+  ShackHartmannGeometry shack_hartmann_geometry(const TDesc &FH) const;
+  TDesc build_shack_hartmann_sensor(const TDesc &FH, const ShackHartmannGeometry &geometry);
+  ShackHartmannSlopeOutput build_shack_hartmann_slopes(const TDesc &sensor_images, const ShackHartmannGeometry &geometry, bool output_xcorr);
+  void build_shack_hartmann_view(const TDesc &sensor_images, const ShackHartmannGeometry &geometry);
+  void build_shack_hartmann_xcorr_view(const TDesc &xcorr, const ShackHartmannGeometry &geometry);
+  TDesc build_zernike_correction(const TDesc &FH, const TDesc &slopes, const ShackHartmannGeometry &geometry, bool is_last_pass, AberrationCorrectionState &state);
+  void build_zernike_outputs(const AberrationCorrectionState &state, const ShackHartmannGeometry &geometry);
+  TDesc build_spatial_propagation(const TDesc &FH);
+  TDesc build_spatial_filter(const TDesc &FH_z);
+  void build_xy_view(const TDesc &FH_z);
+  void build_3d_cuts(const TDesc &FH_z);
+  TDesc build_freq_weights();
+  // clang-format on
+
+  Settings s_;
+
+  std::map<LoadMethod, holotask::sources::HolofileSettings::LoadKind> load_method_map_{
+      {LoadMethod::READ_LIVE, holotask::sources::HolofileSettings::LoadKind::Live},
+      {LoadMethod::LOAD_IN_CPU, holotask::sources::HolofileSettings::LoadKind::CPUCached},
+      {LoadMethod::LOAD_IN_GPU, holotask::sources::HolofileSettings::LoadKind::GPUCached},
+  };
+};
 
 // -----------------------------------------------------------------------------
 // Helpers declarations
@@ -49,13 +122,23 @@ std::pair<float, float> post_propagation_pitch(const Settings              &sett
 // -------------------------------------------------------------------------------------------------
 
 GraphBuilder::GraphBuilder(const Settings &settings, holoflow::core::Registry &registry)
+    : impl_(std::make_unique<Impl>(settings, registry)) {}
+
+GraphBuilder::~GraphBuilder() = default;
+
+GraphBuilder::GraphBuilder(GraphBuilder &&) noexcept            = default;
+GraphBuilder &GraphBuilder::operator=(GraphBuilder &&) noexcept = default;
+
+holoflow::core::GraphSpec GraphBuilder::build() { return impl_->build(); }
+
+GraphBuilder::Impl::Impl(const Settings &settings, holoflow::core::Registry &registry)
     : GraphBuilderTasks(registry), s_(settings) {}
 
 // -------------------------------------------------------------------------------------------------
 // Top-level pipeline
 // -------------------------------------------------------------------------------------------------
 
-holoflow::core::GraphSpec GraphBuilder::build() {
+holoflow::core::GraphSpec GraphBuilder::Impl::build() {
   if (!std::isfinite(s_.signal_plot_time_window_seconds) ||
       s_.signal_plot_time_window_seconds <= 0.0) {
     throw std::invalid_argument("signal_plot_time_window_seconds must be positive and finite");
@@ -118,7 +201,7 @@ holoflow::core::GraphSpec GraphBuilder::build() {
 // Pipeline stages
 // -------------------------------------------------------------------------------------------------
 
-GraphBuilder::TDesc GraphBuilder::build_acquisition() {
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
   auto cam_path = s_.camera_config_path.string();
 
   if (s_.import_source == ImportSource::HOLOFILE) {
@@ -142,14 +225,14 @@ GraphBuilder::TDesc GraphBuilder::build_acquisition() {
   HOLOVIBES_UNREACHABLE();
 }
 
-void GraphBuilder::build_raw_record(const TDesc &H) {
+void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
   auto path          = s_.recording_path.string();
   auto count         = s_.recording_count;
   auto settings_json = settings_to_old_json(s_);
   holofile_write(H, {path, count, settings_json, true});
 }
 
-bool GraphBuilder::build_raw_view(const TDesc &H) {
+bool GraphBuilder::Impl::build_raw_view(const TDesc &H) {
   auto Host = holotask::syncs::MemcpySettings::Target::Host;
 
   auto H_disp = memcpy(H, {Host});
@@ -167,7 +250,7 @@ bool GraphBuilder::build_raw_view(const TDesc &H) {
   return false;
 }
 
-GraphBuilder::TDesc GraphBuilder::build_preprocessing(TDesc H) {
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
   using MemLoc = holoflow::core::MemLoc;
   using Target = holotask::syncs::ConversionSettings::Target;
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
@@ -181,7 +264,7 @@ GraphBuilder::TDesc GraphBuilder::build_preprocessing(TDesc H) {
   return convert(H, {Target::F32, Strat::Real});
 }
 
-GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDesc H) {
   // H enters as [T, Hy, Hx] (F32).
   // We first accumulate N_pre such windows into a batch, producing [N_pre, T, Hy, Hx].
   // Time-frequency analysis then operates along axis 1 (the T dimension).
@@ -245,8 +328,8 @@ GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
 // Aberration correction
 // -------------------------------------------------------------------------------------------------
 
-GraphBuilder::TDesc GraphBuilder::build_aberration_correction(const TDesc &FH_current,
-                                                              const TDesc &FH_delayed) {
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_aberration_correction(const TDesc &FH_current,
+                                                                          const TDesc &FH_delayed) {
   if (s_.autofocus_nb_iter <= 0) {
     throw std::invalid_argument("autofocus_nb_iter must be positive");
   }
@@ -268,10 +351,10 @@ GraphBuilder::TDesc GraphBuilder::build_aberration_correction(const TDesc &FH_cu
   return batched_queue(corrected, {2, 1, 1});
 }
 
-GraphBuilder::TDesc
-GraphBuilder::build_aberration_correction_pass(const TDesc &FH_current, const TDesc &FH_delayed,
-                                               bool                       is_last_pass,
-                                               AberrationCorrectionState &state) {
+GraphBuilder::Impl::TDesc
+GraphBuilder::Impl::build_aberration_correction_pass(const TDesc &FH_current,
+                                                     const TDesc &FH_delayed, bool is_last_pass,
+                                                     AberrationCorrectionState &state) {
   auto geometry      = shack_hartmann_geometry(FH_current);
   auto sensor_images = build_shack_hartmann_sensor(FH_current, geometry);
 
@@ -289,7 +372,8 @@ GraphBuilder::build_aberration_correction_pass(const TDesc &FH_current, const TD
   return build_zernike_correction(FH_delayed, slope_output.slopes, geometry, is_last_pass, state);
 }
 
-GraphBuilder::ShackHartmannGeometry GraphBuilder::shack_hartmann_geometry(const TDesc &FH) const {
+GraphBuilder::Impl::ShackHartmannGeometry
+GraphBuilder::Impl::shack_hartmann_geometry(const TDesc &FH) const {
   if (s_.autofocus_nb_subaps <= 0) {
     throw std::invalid_argument("autofocus_nb_subaps must be positive");
   }
@@ -327,8 +411,9 @@ GraphBuilder::ShackHartmannGeometry GraphBuilder::shack_hartmann_geometry(const 
           .pupil_radius_m       = pupil_radius_m};
 }
 
-GraphBuilder::TDesc
-GraphBuilder::build_shack_hartmann_sensor(const TDesc &FH, const ShackHartmannGeometry &geometry) {
+GraphBuilder::Impl::TDesc
+GraphBuilder::Impl::build_shack_hartmann_sensor(const TDesc                 &FH,
+                                                const ShackHartmannGeometry &geometry) {
   auto propagated = short_time_fresnel_diffraction(
       FH, geometry.subaperture_width, geometry.subaperture_height, geometry.subaperture_width,
       geometry.subaperture_height, geometry.wavelength, geometry.pixel_pitch_x,
@@ -352,7 +437,7 @@ GraphBuilder::build_shack_hartmann_sensor(const TDesc &FH, const ShackHartmannGe
   return sensor_images;
 }
 
-GraphBuilder::ShackHartmannSlopeOutput GraphBuilder::build_shack_hartmann_slopes(
+GraphBuilder::Impl::ShackHartmannSlopeOutput GraphBuilder::Impl::build_shack_hartmann_slopes(
     const TDesc &sensor_images, const ShackHartmannGeometry &geometry, bool output_xcorr) {
   using SlopeMode      = holotask::syncs::ShackHartmannSlopeMode;
   auto FullPairwise    = SlopeMode::FullPairwise;
@@ -384,8 +469,8 @@ GraphBuilder::ShackHartmannSlopeOutput GraphBuilder::build_shack_hartmann_slopes
   return result;
 }
 
-void GraphBuilder::build_shack_hartmann_view(const TDesc                 &sensor_images,
-                                             const ShackHartmannGeometry &geometry) {
+void GraphBuilder::Impl::build_shack_hartmann_view(const TDesc                 &sensor_images,
+                                                   const ShackHartmannGeometry &geometry) {
   using Target = holotask::syncs::ConversionSettings::Target;
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
 
@@ -400,8 +485,8 @@ void GraphBuilder::build_shack_hartmann_view(const TDesc                 &sensor
   shack_hartmann_display(display, {});
 }
 
-void GraphBuilder::build_shack_hartmann_xcorr_view(const TDesc                 &xcorr,
-                                                   const ShackHartmannGeometry &geometry) {
+void GraphBuilder::Impl::build_shack_hartmann_xcorr_view(const TDesc                 &xcorr,
+                                                         const ShackHartmannGeometry &geometry) {
   using Target = holotask::syncs::ConversionSettings::Target;
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
 
@@ -418,10 +503,10 @@ void GraphBuilder::build_shack_hartmann_xcorr_view(const TDesc                 &
   shack_hartmann_xcorr_display(display, {});
 }
 
-GraphBuilder::TDesc GraphBuilder::build_zernike_correction(const TDesc &FH, const TDesc &slopes,
-                                                           const ShackHartmannGeometry &geometry,
-                                                           bool                       is_last_pass,
-                                                           AberrationCorrectionState &state) {
+GraphBuilder::Impl::TDesc
+GraphBuilder::Impl::build_zernike_correction(const TDesc &FH, const TDesc &slopes,
+                                             const ShackHartmannGeometry &geometry,
+                                             bool is_last_pass, AberrationCorrectionState &state) {
   auto F32    = holoflow::core::DType::F32;
   auto Device = holoflow::core::MemLoc::Device;
 
@@ -470,8 +555,8 @@ GraphBuilder::TDesc GraphBuilder::build_zernike_correction(const TDesc &FH, cons
   return corrected;
 }
 
-void GraphBuilder::build_zernike_outputs(const AberrationCorrectionState &state,
-                                         const ShackHartmannGeometry     &geometry) {
+void GraphBuilder::Impl::build_zernike_outputs(const AberrationCorrectionState &state,
+                                               const ShackHartmannGeometry     &geometry) {
   auto Host = holotask::syncs::MemcpySettings::Target::Host;
 
   HOLOVIBES_CHECK(state.cumulative_coeffs_gpu.has_value());
@@ -511,7 +596,7 @@ void GraphBuilder::build_zernike_outputs(const AberrationCorrectionState &state,
   }
 }
 
-GraphBuilder::TDesc GraphBuilder::short_time_fresnel_diffraction(
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::short_time_fresnel_diffraction(
     const TDesc &field, size_t win_w, size_t win_h, size_t stride_x, size_t stride_y, float lam,
     float dx, float dy, float z_prop, PhaseReference phase_ref, bool skip_phase_shift) {
   return GraphBuilderTasks::short_time_fresnel_diffraction(field,
@@ -528,7 +613,7 @@ GraphBuilder::TDesc GraphBuilder::short_time_fresnel_diffraction(
                                                             .output_magnitude = true});
 }
 
-GraphBuilder::TDesc GraphBuilder::build_spatial_propagation(const TDesc &FH) {
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_propagation(const TDesc &FH) {
   using Padding = holotask::syncs::AngularSpectrumSettings::Padding;
   using Filter  = holotask::syncs::AngularSpectrumSettings::Filter;
 
@@ -570,7 +655,7 @@ GraphBuilder::TDesc GraphBuilder::build_spatial_propagation(const TDesc &FH) {
   HOLOVIBES_UNREACHABLE();
 }
 
-GraphBuilder::TDesc GraphBuilder::build_spatial_filter(const TDesc &FH_z) {
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_filter(const TDesc &FH_z) {
   return filter_2d(FH_z, {
                              s_.filter_r_inner,
                              s_.filter_r_outer,
@@ -579,7 +664,7 @@ GraphBuilder::TDesc GraphBuilder::build_spatial_filter(const TDesc &FH_z) {
                          });
 }
 
-GraphBuilder::TDesc GraphBuilder::build_freq_weights() {
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
   auto N  = static_cast<double>(s_.time_window);
   auto fs = 37e3;
   auto df = fs / N;
@@ -606,7 +691,7 @@ GraphBuilder::TDesc GraphBuilder::build_freq_weights() {
   HOLOVIBES_UNREACHABLE();
 }
 
-void GraphBuilder::build_xy_view(const TDesc &FH_z) {
+void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
   using Target                 = holotask::syncs::ConversionSettings::Target;
   using Strat                  = holotask::syncs::ConversionSettings::Strategy;
   using SlidingAverageSettings = holotask::asyncs::SlidingAverageSettings;
@@ -691,7 +776,7 @@ void GraphBuilder::build_xy_view(const TDesc &FH_z) {
   }
 }
 
-void GraphBuilder::build_3d_cuts(const TDesc &FH_z) {
+void GraphBuilder::Impl::build_3d_cuts(const TDesc &FH_z) {
   (void)FH_z;
   throw std::logic_error{"3D cuts are currently not supported in GraphBuilder"};
 }

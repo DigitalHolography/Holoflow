@@ -14,105 +14,38 @@
 
 #pragma once
 
-#include <map>
-#include <optional>
+#include <memory>
 
-#include "graph_builder_tasks.hh"
-#include "pipeline/settings.hh"
+#include "holoflow/core/graph_spec.hh"
+
+namespace holoflow::core {
+class Registry;
+}
 
 namespace holovibes::pipeline {
 
-// Convenience alias — callers can write PhaseReference::LOCAL / GLOBAL without the holotask prefix.
-using PhaseReference = holotask::syncs::STFDPhaseReference;
+struct Settings;
 
 // GraphBuilder defines the holographic computation pipeline.
 //
-// It translates a Settings snapshot into a GraphSpec by wiring together the
-// acquisition, preprocessing, time-frequency analysis, spatial propagation,
-// and display stages via the task wrappers inherited from GraphBuilderTasks.
-class GraphBuilder : public GraphBuilderTasks {
+// It translates a Settings snapshot into a GraphSpec by wiring together the acquisition,
+// preprocessing, time-frequency analysis, spatial propagation, and display stages.
+class GraphBuilder {
 public:
   GraphBuilder(const Settings &settings, holoflow::core::Registry &registry);
+  ~GraphBuilder();
+
+  GraphBuilder(GraphBuilder &&) noexcept;
+  GraphBuilder &operator=(GraphBuilder &&) noexcept;
+
+  GraphBuilder(const GraphBuilder &)            = delete;
+  GraphBuilder &operator=(const GraphBuilder &) = delete;
 
   holoflow::core::GraphSpec build();
 
 private:
-  struct ShackHartmannGeometry {
-    size_t frame_width;
-    size_t frame_height;
-    size_t nb_subapertures;
-    size_t subaperture_width;
-    size_t subaperture_height;
-
-    float wavelength;
-    float pixel_pitch_x;
-    float pixel_pitch_y;
-    float propagation_distance;
-    float pupil_radius_m;
-  };
-
-  struct ShackHartmannSlopeOutput {
-    TDesc                slopes;
-    std::optional<TDesc> xcorr;
-  };
-
-  struct AberrationCorrectionState {
-    std::optional<TDesc> cumulative_coeffs_gpu;
-    std::optional<TDesc> cumulative_phase_gpu;
-  };
-
-  // Pipeline construction stages
-  TDesc build_acquisition();
-
-  // Sliding-window Fresnel propagation (analogous to STFT).
-  //
-  // Extracts overlapping windows of size (win_h x win_w) with the given strides from the last two
-  // spatial dimensions of `field`, propagates each window, and returns the batched result with
-  // shape [..., ny_win, nx_win, win_h, win_w].
-  //
-  // phase_ref == LOCAL:  each window is treated as an independent on-axis field.
-  // phase_ref == GLOBAL: a corrective phase ramp is applied so that the result is equivalent to
-  //                      first applying a global quadratic lens to the full field and then
-  //                      propagating each window (plenoptic / Shack-Hartmann generalisation).
-  TDesc short_time_fresnel_diffraction(const TDesc &field, size_t win_w, size_t win_h,
-                                       size_t stride_x, size_t stride_y, float lam, float dx,
-                                       float dy, float z_prop, PhaseReference phase_ref,
-                                       bool skip_phase_shift = true);
-  void  build_raw_record(const TDesc &H);
-  bool  build_raw_view(const TDesc &H);
-  TDesc build_preprocessing(TDesc H);
-  TDesc build_time_frequency_analysis(TDesc H);
-  TDesc build_aberration_correction(const TDesc &FH_current, const TDesc &FH_delayed);
-  TDesc build_aberration_correction_pass(const TDesc &FH_current, const TDesc &FH_delayed,
-                                         bool is_last_pass, AberrationCorrectionState &state);
-  ShackHartmannGeometry shack_hartmann_geometry(const TDesc &FH) const;
-  TDesc build_shack_hartmann_sensor(const TDesc                  &FH,
-                                    const ShackHartmannGeometry &geometry);
-  ShackHartmannSlopeOutput
-  build_shack_hartmann_slopes(const TDesc                  &sensor_images,
-                              const ShackHartmannGeometry &geometry, bool output_xcorr);
-  void build_shack_hartmann_view(const TDesc                  &sensor_images,
-                                 const ShackHartmannGeometry &geometry);
-  void build_shack_hartmann_xcorr_view(const TDesc                  &xcorr,
-                                       const ShackHartmannGeometry &geometry);
-  TDesc build_zernike_correction(const TDesc &FH, const TDesc &slopes,
-                                 const ShackHartmannGeometry &geometry, bool is_last_pass,
-                                 AberrationCorrectionState &state);
-  void build_zernike_outputs(const AberrationCorrectionState &state,
-                             const ShackHartmannGeometry     &geometry);
-  TDesc build_spatial_propagation(const TDesc &FH);
-  TDesc build_spatial_filter(const TDesc &FH_z);
-  void  build_xy_view(const TDesc &FH_z);
-  void  build_3d_cuts(const TDesc &FH_z);
-  TDesc build_freq_weights();
-
-  Settings s_;
-
-  std::map<LoadMethod, holotask::sources::HolofileSettings::LoadKind> load_method_map_{
-      {LoadMethod::READ_LIVE, holotask::sources::HolofileSettings::LoadKind::Live},
-      {LoadMethod::LOAD_IN_CPU, holotask::sources::HolofileSettings::LoadKind::CPUCached},
-      {LoadMethod::LOAD_IN_GPU, holotask::sources::HolofileSettings::LoadKind::GPUCached},
-  };
+  class Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 } // namespace holovibes::pipeline
