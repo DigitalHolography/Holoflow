@@ -37,7 +37,26 @@ public:
   holoflow::core::GraphSpec build();
 
 private:
-  struct ShackHartmannIterationState {
+  struct ShackHartmannGeometry {
+    size_t frame_width;
+    size_t frame_height;
+    size_t nb_subapertures;
+    size_t subaperture_width;
+    size_t subaperture_height;
+
+    float wavelength;
+    float pixel_pitch_x;
+    float pixel_pitch_y;
+    float propagation_distance;
+    float pupil_radius_m;
+  };
+
+  struct ShackHartmannSlopeOutput {
+    TDesc                slopes;
+    std::optional<TDesc> xcorr;
+  };
+
+  struct AberrationCorrectionState {
     std::optional<TDesc> cumulative_coeffs_gpu;
     std::optional<TDesc> cumulative_phase_gpu;
   };
@@ -63,9 +82,24 @@ private:
   bool  build_raw_view(const TDesc &H);
   TDesc build_preprocessing(TDesc H);
   TDesc build_time_frequency_analysis(TDesc H);
-  TDesc build_iterative_shack_hartmann(const TDesc &FH_current, const TDesc &FH_delayed);
-  TDesc build_shack_hartmann(const TDesc &FH_current, const TDesc &FH_delayed, bool is_last_pass,
-                             ShackHartmannIterationState &iteration_state);
+  TDesc build_aberration_correction(const TDesc &FH_current, const TDesc &FH_delayed);
+  TDesc build_aberration_correction_pass(const TDesc &FH_current, const TDesc &FH_delayed,
+                                         bool is_last_pass, AberrationCorrectionState &state);
+  ShackHartmannGeometry shack_hartmann_geometry(const TDesc &FH) const;
+  TDesc build_shack_hartmann_sensor(const TDesc                  &FH,
+                                    const ShackHartmannGeometry &geometry);
+  ShackHartmannSlopeOutput
+  build_shack_hartmann_slopes(const TDesc                  &sensor_images,
+                              const ShackHartmannGeometry &geometry, bool output_xcorr);
+  void build_shack_hartmann_view(const TDesc                  &sensor_images,
+                                 const ShackHartmannGeometry &geometry);
+  void build_shack_hartmann_xcorr_view(const TDesc                  &xcorr,
+                                       const ShackHartmannGeometry &geometry);
+  TDesc build_zernike_correction(const TDesc &FH, const TDesc &slopes,
+                                 const ShackHartmannGeometry &geometry, bool is_last_pass,
+                                 AberrationCorrectionState &state);
+  void build_zernike_outputs(const AberrationCorrectionState &state,
+                             const ShackHartmannGeometry     &geometry);
   TDesc build_spatial_propagation(const TDesc &FH);
   TDesc build_spatial_filter(const TDesc &FH_z);
   void  build_xy_view(const TDesc &FH_z);

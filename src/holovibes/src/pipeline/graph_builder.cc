@@ -100,7 +100,7 @@ holoflow::core::GraphSpec GraphBuilder::build() {
   const TDesc FH_delayed      = timing_outputs.at(1);
 
   if (s_.autofocus_enabled) {
-    FH_current = build_iterative_shack_hartmann(FH_current, FH_delayed);
+    FH_current = build_aberration_correction(FH_current, FH_delayed);
   }
 
   TDesc FH_z = build_spatial_propagation(FH_current);
@@ -241,8 +241,12 @@ GraphBuilder::TDesc GraphBuilder::build_time_frequency_analysis(TDesc H) {
   HOLOVIBES_UNREACHABLE();
 }
 
-GraphBuilder::TDesc GraphBuilder::build_iterative_shack_hartmann(const TDesc &FH_current,
-                                                                 const TDesc &FH_delayed) {
+// -------------------------------------------------------------------------------------------------
+// Aberration correction
+// -------------------------------------------------------------------------------------------------
+
+GraphBuilder::TDesc GraphBuilder::build_aberration_correction(const TDesc &FH_current,
+                                                              const TDesc &FH_delayed) {
   if (s_.autofocus_nb_iter <= 0) {
     throw std::invalid_argument("autofocus_nb_iter must be positive");
   }
@@ -251,23 +255,41 @@ GraphBuilder::TDesc GraphBuilder::build_iterative_shack_hartmann(const TDesc &FH
         "sliding Shack-Hartmann correction only supports one autofocus iteration");
   }
 
-  auto                        FH_corrected = FH_current;
-  ShackHartmannIterationState shack_hartmann_iteration_state;
+  auto                      corrected = FH_current;
+  AberrationCorrectionState state;
+
   for (int pass = 0; pass < s_.autofocus_nb_iter; ++pass) {
-    const TDesc &delayed = pass == 0 ? FH_delayed : FH_corrected;
-    FH_corrected = build_shack_hartmann(FH_corrected, delayed, pass == s_.autofocus_nb_iter - 1,
-                                        shack_hartmann_iteration_state);
+    const bool   is_last_pass = pass == s_.autofocus_nb_iter - 1;
+    const TDesc &delayed      = pass == 0 ? FH_delayed : corrected;
+    corrected = build_aberration_correction_pass(corrected, delayed, is_last_pass, state);
   }
 
   // Decouple the final propagation so it can overlap the next Shack-Hartmann iteration.
-  FH_corrected = batched_queue(FH_corrected, {2, 1, 1});
-  return FH_corrected;
+  return batched_queue(corrected, {2, 1, 1});
 }
 
 GraphBuilder::TDesc
-GraphBuilder::build_shack_hartmann(const TDesc &FH_current, const TDesc &FH_delayed,
-                                   bool                         is_last_pass,
-                                   ShackHartmannIterationState &iteration_state) {
+GraphBuilder::build_aberration_correction_pass(const TDesc &FH_current, const TDesc &FH_delayed,
+                                               bool                       is_last_pass,
+                                               AberrationCorrectionState &state) {
+  auto geometry      = shack_hartmann_geometry(FH_current);
+  auto sensor_images = build_shack_hartmann_sensor(FH_current, geometry);
+
+  bool output_xcorr = is_last_pass && s_.view_shack_hartmann_xcorr;
+  auto slope_output = build_shack_hartmann_slopes(sensor_images, geometry, output_xcorr);
+
+  if (is_last_pass && s_.view_shack_hartmann) {
+    build_shack_hartmann_view(sensor_images, geometry);
+  }
+
+  if (slope_output.xcorr.has_value()) {
+    build_shack_hartmann_xcorr_view(*slope_output.xcorr, geometry);
+  }
+
+  return build_zernike_correction(FH_delayed, slope_output.slopes, geometry, is_last_pass, state);
+}
+
+GraphBuilder::ShackHartmannGeometry GraphBuilder::shack_hartmann_geometry(const TDesc &FH) const {
   if (s_.autofocus_nb_subaps <= 0) {
     throw std::invalid_argument("autofocus_nb_subaps must be positive");
   }
@@ -275,184 +297,218 @@ GraphBuilder::build_shack_hartmann(const TDesc &FH_current, const TDesc &FH_dela
     throw std::invalid_argument("autofocus_nb_subaps must be odd");
   }
 
-  auto nb_subap = static_cast<size_t>(s_.autofocus_nb_subaps);
-  auto lam      = s_.spacial_lambda;
-  auto dx       = s_.spacial_pixel_size;
-  auto dy       = s_.spacial_pixel_size;
-  auto z_prop   = s_.spacial_z;
+  const auto frame_width        = FH.shape.at(3);
+  const auto frame_height       = FH.shape.at(2);
+  const auto nb_subapertures    = static_cast<size_t>(s_.autofocus_nb_subaps);
+  const auto subaperture_width  = frame_width / nb_subapertures;
+  const auto subaperture_height = frame_height / nb_subapertures;
 
-  using Target = holotask::syncs::ConversionSettings::Target;
-  using Strat  = holotask::syncs::ConversionSettings::Strategy;
-  auto Host    = holotask::syncs::MemcpySettings::Target::Host;
-
-  // 1. Spatial cropping to ensure perfect divisibility
-  auto subap_w = FH_current.shape.at(3) / nb_subap;
-  auto subap_h = FH_current.shape.at(2) / nb_subap;
-  if (subap_w == 0 || subap_h == 0) {
+  if (subaperture_width == 0 || subaperture_height == 0) {
     throw std::invalid_argument("autofocus_nb_subaps is too large for the current frame size");
   }
 
-  const float pupil_radius_m = 0.5f * std::min(static_cast<float>(subap_w * nb_subap) * dx,
-                                               static_cast<float>(subap_h * nb_subap) * dy);
+  const auto  wavelength           = s_.spacial_lambda;
+  const auto  pixel_pitch_x        = s_.spacial_pixel_size;
+  const auto  pixel_pitch_y        = s_.spacial_pixel_size;
+  const auto  propagation_distance = s_.spacial_z;
+  const auto  width_m  = static_cast<float>(subaperture_width * nb_subapertures) * pixel_pitch_x;
+  const auto  height_m = static_cast<float>(subaperture_height * nb_subapertures) * pixel_pitch_y;
+  const float pupil_radius_m = 0.5f * std::min(width_m, height_m);
 
-  // 2. Sub-aperture Processing via Short-Time Fresnel
-  // We use stride == subap size for non-overlapping Shack-Hartmann windows.
-  auto FH_prop = short_time_fresnel_diffraction(
-      FH_current, subap_w, subap_h, // window dimensions
-      subap_w, subap_h,             // strides (non-overlapping)
-      lam, dx, dy, z_prop,          // reconstruction parameters
-      PhaseReference::GLOBAL        // applies the necessary off-axis phase correction
-  );
-  auto M0 = mean(FH_prop, {{1}, false});
-  M0      = causal_slide_avg(M0, {static_cast<size_t>(s_.pp_accumulation)});
-  M0      = fftshift(M0, {{-2, -1}});
+  return {.frame_width          = frame_width,
+          .frame_height         = frame_height,
+          .nb_subapertures      = nb_subapertures,
+          .subaperture_width    = subaperture_width,
+          .subaperture_height   = subaperture_height,
+          .wavelength           = wavelength,
+          .pixel_pitch_x        = pixel_pitch_x,
+          .pixel_pitch_y        = pixel_pitch_y,
+          .propagation_distance = propagation_distance,
+          .pupil_radius_m       = pupil_radius_m};
+}
 
-  if (s_.pp_flatfield) {
-    auto [dy_out, dx_out] = fresnel_1fft_output_pitch(lam, z_prop, dy, dx, subap_h, subap_w);
-    auto s = flatfield_settings_from_cutoff_period(s_.pp_flatfield_cutoff_period_m, dy_out, dx_out);
-    M0     = flatfield(M0, s);
+GraphBuilder::TDesc
+GraphBuilder::build_shack_hartmann_sensor(const TDesc &FH, const ShackHartmannGeometry &geometry) {
+  auto propagated = short_time_fresnel_diffraction(
+      FH, geometry.subaperture_width, geometry.subaperture_height, geometry.subaperture_width,
+      geometry.subaperture_height, geometry.wavelength, geometry.pixel_pitch_x,
+      geometry.pixel_pitch_y, geometry.propagation_distance, PhaseReference::GLOBAL);
+
+  auto sensor_images = mean(propagated, {{1}, false});
+  sensor_images      = causal_slide_avg(sensor_images, {static_cast<size_t>(s_.pp_accumulation)});
+  sensor_images      = fftshift(sensor_images, {{-2, -1}});
+
+  if (!s_.pp_flatfield) {
+    return sensor_images;
   }
 
-  // Registration and physical wavefront-slope recovery. The large correlation tensor is only a
-  // graph output on the final pass, when it is needed by the display path.
-  const auto slope_mode    = s_.autofocus_use_graph_laplacian
-                                 ? holotask::syncs::ShackHartmannSlopeMode::FullPairwise
-                                 : holotask::syncs::ShackHartmannSlopeMode::SingleReference;
-  auto       slope_outputs = shack_hartmann_slopes(
-      M0, {
-              .mode               = slope_mode,
-              .lambda             = lam,
-              .dx                 = dx,
-              .dy                 = dy,
-              .z                  = z_prop,
-              .subaperture_height = subap_h,
-              .subaperture_width  = subap_w,
-              .stride_y           = subap_h,
-              .stride_x           = subap_w,
-              .correlation_roi    = {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f},
-              .skip_subapertures_outside_pupil = s_.autofocus_skip_subapertures_outside_pupil,
-              .output_xcorr_maps =
-                  slope_mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference &&
-                  is_last_pass && s_.view_shack_hartmann_xcorr,
-          });
-  auto slopes = slope_outputs.at(0);
+  const auto [dy, dx] = fresnel_1fft_output_pitch(
+      geometry.wavelength, geometry.propagation_distance, geometry.pixel_pitch_y,
+      geometry.pixel_pitch_x, geometry.subaperture_height, geometry.subaperture_width);
 
-  if (is_last_pass) {
-    // Shack-Hartmann Output Processing
-    int64_t h = static_cast<int64_t>(subap_h * nb_subap);
-    int64_t w = static_cast<int64_t>(subap_w * nb_subap);
-    if (s_.view_shack_hartmann) {
-      auto M0_sh_disp = normalize(M0, {{-2, -1}, 0.0f, 255.0f});
-      M0_sh_disp      = transpose(M0_sh_disp, {{0, 1, 3, 2, 4}});
-      M0_sh_disp      = reshape(M0_sh_disp, {{1, h, w}});
-      M0_sh_disp      = convert(M0_sh_disp, {Target::U8, Strat::Scaled});
-      M0_sh_disp      = batched_queue(M0_sh_disp, {s_.cpu_out_size, 1, 1});
-      shack_hartmann_display(M0_sh_disp, {});
-    }
+  const auto cutoff   = s_.pp_flatfield_cutoff_period_m;
+  const auto settings = flatfield_settings_from_cutoff_period(cutoff, dy, dx);
+  sensor_images       = flatfield(sensor_images, settings);
+  return sensor_images;
+}
 
-    if (slope_mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference &&
-        s_.view_shack_hartmann_xcorr) {
-      auto xcorr           = slope_outputs.at(1);
-      xcorr                = fftshift(xcorr, {{-2, -1}});
-      xcorr                = normalize(xcorr, {{-2, -1}, 0.0f, 255.0f});
-      h                    = static_cast<int64_t>(xcorr.shape.at(3) * nb_subap);
-      w                    = static_cast<int64_t>(xcorr.shape.at(4) * nb_subap);
-      auto xcorr_flattened = convert(xcorr, {Target::U8, Strat::Scaled});
-      xcorr_flattened      = transpose(xcorr_flattened, {{0, 1, 3, 2, 4}});
-      xcorr_flattened      = reshape(xcorr_flattened, {{1, h, w}});
-      xcorr_flattened      = batched_queue(xcorr_flattened, {s_.cpu_out_size, 1, 1});
-      shack_hartmann_xcorr_display(xcorr_flattened, {});
-    }
+GraphBuilder::ShackHartmannSlopeOutput GraphBuilder::build_shack_hartmann_slopes(
+    const TDesc &sensor_images, const ShackHartmannGeometry &geometry, bool output_xcorr) {
+  using SlopeMode      = holotask::syncs::ShackHartmannSlopeMode;
+  auto FullPairwise    = SlopeMode::FullPairwise;
+  auto SingleReference = SlopeMode::SingleReference;
+
+  const auto mode       = s_.autofocus_use_graph_laplacian ? FullPairwise : SingleReference;
+  const bool emit_xcorr = output_xcorr && mode == SingleReference;
+
+  auto outputs = shack_hartmann_slopes(
+      sensor_images,
+      {.mode               = mode,
+       .lambda             = geometry.wavelength,
+       .dx                 = geometry.pixel_pitch_x,
+       .dy                 = geometry.pixel_pitch_y,
+       .z                  = geometry.propagation_distance,
+       .subaperture_height = geometry.subaperture_height,
+       .subaperture_width  = geometry.subaperture_width,
+       .stride_y           = geometry.subaperture_height,
+       .stride_x           = geometry.subaperture_width,
+       .correlation_roi    = {0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f},
+       .skip_subapertures_outside_pupil = s_.autofocus_skip_subapertures_outside_pupil,
+       .output_xcorr_maps               = emit_xcorr});
+
+  ShackHartmannSlopeOutput result{.slopes = outputs.at(0)};
+  if (emit_xcorr) {
+    result.xcorr = outputs.at(1);
   }
 
-  // When no Zernike orders are specified, still display an empty phase map for consistency
+  return result;
+}
+
+void GraphBuilder::build_shack_hartmann_view(const TDesc                 &sensor_images,
+                                             const ShackHartmannGeometry &geometry) {
+  using Target = holotask::syncs::ConversionSettings::Target;
+  using Strat  = holotask::syncs::ConversionSettings::Strategy;
+
+  const auto height = static_cast<int64_t>(geometry.subaperture_height * geometry.nb_subapertures);
+  const auto width  = static_cast<int64_t>(geometry.subaperture_width * geometry.nb_subapertures);
+
+  auto display = normalize(sensor_images, {{-2, -1}, 0.0f, 255.0f});
+  display      = transpose(display, {{0, 1, 3, 2, 4}});
+  display      = reshape(display, {{1, height, width}});
+  display      = convert(display, {Target::U8, Strat::Scaled});
+  display      = batched_queue(display, {s_.cpu_out_size, 1, 1});
+  shack_hartmann_display(display, {});
+}
+
+void GraphBuilder::build_shack_hartmann_xcorr_view(const TDesc                 &xcorr,
+                                                   const ShackHartmannGeometry &geometry) {
+  using Target = holotask::syncs::ConversionSettings::Target;
+  using Strat  = holotask::syncs::ConversionSettings::Strategy;
+
+  auto display = fftshift(xcorr, {{-2, -1}});
+  display      = normalize(display, {{-2, -1}, 0.0f, 255.0f});
+
+  const auto height = static_cast<int64_t>(display.shape.at(3) * geometry.nb_subapertures);
+  const auto width  = static_cast<int64_t>(display.shape.at(4) * geometry.nb_subapertures);
+
+  display = convert(display, {Target::U8, Strat::Scaled});
+  display = transpose(display, {{0, 1, 3, 2, 4}});
+  display = reshape(display, {{1, height, width}});
+  display = batched_queue(display, {s_.cpu_out_size, 1, 1});
+  shack_hartmann_xcorr_display(display, {});
+}
+
+GraphBuilder::TDesc GraphBuilder::build_zernike_correction(const TDesc &FH, const TDesc &slopes,
+                                                           const ShackHartmannGeometry &geometry,
+                                                           bool                       is_last_pass,
+                                                           AberrationCorrectionState &state) {
+  auto F32    = holoflow::core::DType::F32;
+  auto Device = holoflow::core::MemLoc::Device;
+
   if (s_.autofocus_zernike_orders.empty()) {
-    auto ny          = static_cast<size_t>(FH_current.shape.at(2));
-    auto nx          = static_cast<size_t>(FH_current.shape.at(3));
-    auto empty_phase = zeros({{1, ny, nx}, holoflow::core::DType::F32});
-    auto corrected   = correct_phase(FH_delayed, empty_phase, {});
-    if (is_last_pass) {
-      if (s_.view_zernike_phase) {
-        zernike_phase_display(empty_phase, {});
-      }
+    auto phase     = zeros({{1, geometry.frame_height, geometry.frame_width}, F32});
+    auto corrected = correct_phase(FH, phase, {});
+
+    if (is_last_pass && s_.view_zernike_phase) {
+      zernike_phase_display(phase, {});
     }
 
     return corrected;
   }
 
-  // Zernike & Phase Correction
-  int ny = static_cast<int>(FH_current.shape.at(2));
-  int nx = static_cast<int>(FH_current.shape.at(3));
-
-  holotask::syncs::ZernikeFromSlopesSettings zernike_settings{
+  holotask::syncs::ZernikeFromSlopesSettings settings{
       .indexes                         = s_.autofocus_zernike_orders,
-      .lambda                          = lam,
-      .dx                              = dx,
-      .dy                              = dy,
-      .subaperture_height              = subap_h,
-      .subaperture_width               = subap_w,
-      .stride_y                        = subap_h,
-      .stride_x                        = subap_w,
+      .lambda                          = geometry.wavelength,
+      .dx                              = geometry.pixel_pitch_x,
+      .dy                              = geometry.pixel_pitch_y,
+      .subaperture_height              = geometry.subaperture_height,
+      .subaperture_width               = geometry.subaperture_width,
+      .stride_y                        = geometry.subaperture_height,
+      .stride_x                        = geometry.subaperture_width,
       .ny                              = 1,
       .nx                              = 1,
-      .skip_subapertures_outside_pupil = s_.autofocus_skip_subapertures_outside_pupil,
+      .skip_subapertures_outside_pupil = s_.autofocus_skip_subapertures_outside_pupil};
+
+  auto coeffs    = zernike_from_slopes(slopes, settings);
+  coeffs         = slice(coeffs, {{0, 0, {}}});
+  auto height    = static_cast<int>(geometry.frame_height);
+  auto width     = static_cast<int>(geometry.frame_width);
+  auto phase     = zernike_phase(coeffs, {s_.autofocus_zernike_orders, height, width, Device});
+  auto corrected = correct_phase(FH, phase, {});
+
+  const auto accumulate = [this](auto &cumulative, const auto &value) {
+    cumulative = cumulative ? add(*cumulative, value, {}) : value;
   };
-  auto zernike_coeffs_gpu = zernike_from_slopes(slopes, zernike_settings);
-  zernike_coeffs_gpu      = slice(zernike_coeffs_gpu, {{0, 0, {}}});
-  auto phase_gpu          = zernike_phase(
-      zernike_coeffs_gpu, {s_.autofocus_zernike_orders, ny, nx, holoflow::core::MemLoc::Device});
-  auto corrected = correct_phase(FH_delayed, phase_gpu, {});
 
-  iteration_state.cumulative_coeffs_gpu =
-      iteration_state.cumulative_coeffs_gpu.has_value()
-          ? add(*iteration_state.cumulative_coeffs_gpu, zernike_coeffs_gpu, {})
-          : zernike_coeffs_gpu;
-
-  iteration_state.cumulative_phase_gpu =
-      iteration_state.cumulative_phase_gpu.has_value()
-          ? add(*iteration_state.cumulative_phase_gpu, phase_gpu, {})
-          : phase_gpu;
+  accumulate(state.cumulative_coeffs_gpu, coeffs);
+  accumulate(state.cumulative_phase_gpu, phase);
 
   if (is_last_pass) {
-    HOLOVIBES_CHECK(iteration_state.cumulative_coeffs_gpu.has_value());
-    HOLOVIBES_CHECK(iteration_state.cumulative_phase_gpu.has_value());
-
-    zernike_coefficients_display(*iteration_state.cumulative_coeffs_gpu,
-                                 {s_.autofocus_zernike_orders});
-
-    if (s_.view_zernike_metrics) {
-      auto zernike_coeffs_host = memcpy(*iteration_state.cumulative_coeffs_gpu, {Host});
-      zernike_history_display(zernike_coeffs_host, {
-                                                       s_.autofocus_zernike_orders,
-                                                       s_.signal_plot_time_window_seconds,
-                                                       s_.signal_plot_sample_time_seconds(),
-                                                       static_cast<size_t>(s_.pp_accumulation - 1),
-                                                   });
-    }
-
-    const auto a4_it       = std::ranges::find(s_.autofocus_zernike_orders, 4);
-    const bool a4_included = a4_it != s_.autofocus_zernike_orders.end();
-
-    if (a4_included) {
-      zernike_defocus_z_prop(*iteration_state.cumulative_coeffs_gpu,
-                             {
-                                 s_.autofocus_zernike_orders,
-                                 lam,
-                                 z_prop,
-                                 pupil_radius_m,
-                             });
-    }
-
-    if (s_.view_zernike_phase) {
-      auto phase_disp = copy(*iteration_state.cumulative_phase_gpu, {});
-      phase_disp      = wrap2pi(phase_disp, {});
-      phase_disp      = reshape(phase_disp, {{1, ny, nx}});
-      phase_disp      = batched_queue(phase_disp, {s_.cpu_out_size, 1, 1});
-      zernike_phase_display(phase_disp, {});
-    }
+    build_zernike_outputs(state, geometry);
   }
 
   return corrected;
+}
+
+void GraphBuilder::build_zernike_outputs(const AberrationCorrectionState &state,
+                                         const ShackHartmannGeometry     &geometry) {
+  auto Host = holotask::syncs::MemcpySettings::Target::Host;
+
+  HOLOVIBES_CHECK(state.cumulative_coeffs_gpu.has_value());
+  HOLOVIBES_CHECK(state.cumulative_phase_gpu.has_value());
+
+  const auto &coeffs = *state.cumulative_coeffs_gpu;
+  const auto &phase  = *state.cumulative_phase_gpu;
+
+  zernike_coefficients_display(coeffs, {s_.autofocus_zernike_orders});
+
+  if (s_.view_zernike_metrics) {
+    auto coeffs_host = memcpy(coeffs, {Host});
+    zernike_history_display(coeffs_host, {
+                                             s_.autofocus_zernike_orders,
+                                             s_.signal_plot_time_window_seconds,
+                                             s_.signal_plot_sample_time_seconds(),
+                                             static_cast<size_t>(s_.pp_accumulation - 1),
+                                         });
+  }
+
+  const bool defocus_included =
+      std::ranges::find(s_.autofocus_zernike_orders, 4) != s_.autofocus_zernike_orders.end();
+
+  if (defocus_included) {
+    zernike_defocus_z_prop(coeffs, {s_.autofocus_zernike_orders, geometry.wavelength,
+                                    geometry.propagation_distance, geometry.pupil_radius_m});
+  }
+
+  if (s_.view_zernike_phase) {
+    auto height  = static_cast<int64_t>(geometry.frame_height);
+    auto width   = static_cast<int64_t>(geometry.frame_width);
+    auto display = copy(phase, {});
+    display      = wrap2pi(display, {});
+    display      = reshape(display, {{1, height, width}});
+    display      = batched_queue(display, {s_.cpu_out_size, 1, 1});
+    zernike_phase_display(display, {});
+  }
 }
 
 GraphBuilder::TDesc GraphBuilder::short_time_fresnel_diffraction(
