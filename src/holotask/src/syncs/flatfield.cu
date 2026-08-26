@@ -15,8 +15,10 @@
 #include "holotask/syncs/flatfield.hh"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
+#include <list>
 #include <optional>
 #include <ranges>
 #include <stdexcept>
@@ -239,6 +241,163 @@ __global__ void gaussian_subtract_vertical_kernel(const float *__restrict__ inpu
   output[idx] = input[idx] - background;
 }
 
+// -------------------------------------------------------------------------------------------------
+// CUDA Graph helpers
+// -------------------------------------------------------------------------------------------------
+
+using GraphAddresses = std::array<const void *, 2>;
+
+template <typename Enqueue> cudaGraph_t capture_graph(cudaStream_t stream, Enqueue &&enqueue) {
+  cudaGraph_t graph     = nullptr;
+  bool        capturing = false;
+  try {
+    CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+    capturing = true;
+    std::forward<Enqueue>(enqueue)();
+    CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
+    capturing = false;
+    return graph;
+  } catch (...) {
+    if (capturing) {
+      cudaGraph_t discarded = nullptr;
+      (void)cudaStreamEndCapture(stream, &discarded);
+      if (discarded != nullptr) {
+        CUDA_CHECK_NT(cudaGraphDestroy(discarded));
+      }
+    } else if (graph != nullptr) {
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+    }
+    throw;
+  }
+}
+
+class SpatialCudaGraph {
+public:
+  SpatialCudaGraph() = default;
+  ~SpatialCudaGraph() noexcept { reset(); }
+
+  SpatialCudaGraph(const SpatialCudaGraph &)            = delete;
+  SpatialCudaGraph &operator=(const SpatialCudaGraph &) = delete;
+
+  [[nodiscard]] bool ready() const noexcept { return executable_ != nullptr; }
+  [[nodiscard]] bool matches(const GraphAddresses &addresses) const noexcept {
+    return ready() && addresses_ == addresses;
+  }
+
+  void launch(cudaStream_t stream) const { CUDA_CHECK(cudaGraphLaunch(executable_, stream)); }
+
+  void update(const cudaKernelNodeParams &horizontal_params,
+              const cudaKernelNodeParams &vertical_params, const GraphAddresses &addresses) {
+    CUDA_CHECK(cudaGraphExecKernelNodeSetParams(executable_, horizontal_node_, &horizontal_params));
+    CUDA_CHECK(cudaGraphExecKernelNodeSetParams(executable_, vertical_node_, &vertical_params));
+    addresses_ = addresses;
+  }
+
+  template <typename Enqueue>
+  void capture(cudaStream_t stream, const GraphAddresses &addresses, Enqueue &&enqueue) {
+    cudaGraph_t     graph      = capture_graph(stream, std::forward<Enqueue>(enqueue));
+    cudaGraphExec_t executable = nullptr;
+    try {
+      const auto nodes = find_kernel_nodes(graph);
+      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+      reset();
+      graph_           = graph;
+      executable_      = executable;
+      horizontal_node_ = nodes[0];
+      vertical_node_   = nodes[1];
+      addresses_       = addresses;
+    } catch (...) {
+      if (executable != nullptr) {
+        CUDA_CHECK_NT(cudaGraphExecDestroy(executable));
+      }
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+      throw;
+    }
+  }
+
+  void reset() noexcept {
+    if (executable_ != nullptr) {
+      CUDA_CHECK_NT(cudaGraphExecDestroy(executable_));
+      executable_ = nullptr;
+    }
+    if (graph_ != nullptr) {
+      CUDA_CHECK_NT(cudaGraphDestroy(graph_));
+      graph_ = nullptr;
+    }
+    horizontal_node_ = nullptr;
+    vertical_node_   = nullptr;
+    addresses_       = {};
+  }
+
+private:
+  static std::array<cudaGraphNode_t, 2> find_kernel_nodes(cudaGraph_t graph) {
+    size_t node_count = 0;
+    CUDA_CHECK(cudaGraphGetNodes(graph, nullptr, &node_count));
+    std::vector<cudaGraphNode_t> nodes(node_count);
+    CUDA_CHECK(cudaGraphGetNodes(graph, nodes.data(), &node_count));
+
+    cudaGraphNode_t horizontal = nullptr;
+    cudaGraphNode_t vertical   = nullptr;
+    for (const auto node : nodes) {
+      cudaGraphNodeType type{};
+      CUDA_CHECK(cudaGraphNodeGetType(node, &type));
+      if (type != cudaGraphNodeTypeKernel) {
+        continue;
+      }
+      cudaKernelNodeParams params{};
+      CUDA_CHECK(cudaGraphKernelNodeGetParams(node, &params));
+      if (params.func == reinterpret_cast<void *>(gaussian_horizontal_kernel)) {
+        horizontal = node;
+      } else if (params.func == reinterpret_cast<void *>(gaussian_subtract_vertical_kernel)) {
+        vertical = node;
+      }
+    }
+    if (horizontal == nullptr || vertical == nullptr) {
+      throw std::runtime_error("Flatfield spatial graph is missing a kernel node");
+    }
+    return {horizontal, vertical};
+  }
+
+  cudaGraph_t     graph_           = nullptr;
+  cudaGraphExec_t executable_      = nullptr;
+  cudaGraphNode_t horizontal_node_ = nullptr;
+  cudaGraphNode_t vertical_node_   = nullptr;
+  GraphAddresses  addresses_       = {};
+};
+
+class FftCudaGraph {
+public:
+  explicit FftCudaGraph(GraphAddresses addresses) : addresses_(addresses) {}
+  ~FftCudaGraph() noexcept {
+    if (executable_ != nullptr) {
+      CUDA_CHECK_NT(cudaGraphExecDestroy(executable_));
+    }
+  }
+
+  FftCudaGraph(const FftCudaGraph &)            = delete;
+  FftCudaGraph &operator=(const FftCudaGraph &) = delete;
+
+  [[nodiscard]] bool matches(const GraphAddresses &addresses) const noexcept {
+    return executable_ != nullptr && addresses_ == addresses;
+  }
+  void launch(cudaStream_t stream) const { CUDA_CHECK(cudaGraphLaunch(executable_, stream)); }
+
+  template <typename Enqueue> void capture(cudaStream_t stream, Enqueue &&enqueue) {
+    cudaGraph_t graph = capture_graph(stream, std::forward<Enqueue>(enqueue));
+    try {
+      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable_, graph, 0));
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+    } catch (...) {
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+      throw;
+    }
+  }
+
+private:
+  GraphAddresses  addresses_  = {};
+  cudaGraphExec_t executable_ = nullptr;
+};
+
 class Flatfield : public holoflow::core::ISyncTask {
 public:
   Flatfield(FlatfieldSettings settings, holoflow::core::TDesc idesc, size_t total, int height,
@@ -247,28 +406,26 @@ public:
         width_(width), use_fft_(use_fft), stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data());
-    auto *odata = reinterpret_cast<float *>(ctx.outputs[0].data());
-
-    if (use_fft_) {
-      CUFFT_CHECK(cufftXtExec(fwd_plan_->get(), idata, d_spectrum_.get(), CUFFT_FORWARD));
-      CUFFT_CHECK(cufftXtExec(inv_plan_->get(), d_spectrum_.get(), odata, CUFFT_INVERSE));
-      return holoflow::core::OpResult::Ok;
+    const GraphAddresses addresses{ctx.inputs[0].data(), ctx.outputs[0].data()};
+    if (stream_ == nullptr) {
+      return enqueue(ctx);
     }
 
-    constexpr int block = 256;
-    const int     grid  = static_cast<int>((total_ + block - 1) / block);
-    gaussian_horizontal_kernel<<<grid, block, 0, stream_>>>(idata, d_temp_.get(), d_kernel_x_.get(),
-                                                            total_, height_, width_, radius_x_);
-    gaussian_subtract_vertical_kernel<<<grid, block, 0, stream_>>>(
-        idata, d_temp_.get(), odata, d_kernel_y_.get(), total_, height_, width_, radius_y_);
+    cudaStreamCaptureStatus capture_status = cudaStreamCaptureStatusNone;
+    CUDA_CHECK(cudaStreamIsCapturing(stream_, &capture_status));
+    if (capture_status != cudaStreamCaptureStatusNone) {
+      return enqueue(ctx);
+    }
 
-    CUDA_CHECK(cudaGetLastError());
-    return holoflow::core::OpResult::Ok;
+    return use_fft_ ? execute_fft(ctx, addresses) : execute_spatial(ctx, addresses);
   }
 
   void update_stream(cudaStream_t stream) {
-    stream_ = stream;
+    if (stream_ == stream) {
+      return;
+    }
+    graph_capture_enabled_ = true;
+    stream_                = stream;
     if (use_fft_) {
       CUFFT_CHECK(cufftSetStream(fwd_plan_->get(), stream_));
       CUFFT_CHECK(cufftSetStream(inv_plan_->get(), stream_));
@@ -296,6 +453,121 @@ public:
   const holoflow::core::TDesc &idesc() const { return idesc_; }
 
 private:
+  // The FFT graph's opaque cuFFT nodes embed buffer addresses, so cache the finite set of rotating
+  // pipeline buffers instead of attempting node-parameter updates.
+  static constexpr size_t fft_graph_cache_capacity = 128;
+
+  holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx) {
+    auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data());
+    auto *odata = reinterpret_cast<float *>(ctx.outputs[0].data());
+
+    if (use_fft_) {
+      CUFFT_CHECK(cufftXtExec(fwd_plan_->get(), idata, d_spectrum_.get(), CUFFT_FORWARD));
+      CUFFT_CHECK(cufftXtExec(inv_plan_->get(), d_spectrum_.get(), odata, CUFFT_INVERSE));
+      return holoflow::core::OpResult::Ok;
+    }
+
+    constexpr int block = 256;
+    const int     grid  = static_cast<int>((total_ + block - 1) / block);
+    gaussian_horizontal_kernel<<<grid, block, 0, stream_>>>(idata, d_temp_.get(), d_kernel_x_.get(),
+                                                            total_, height_, width_, radius_x_);
+    gaussian_subtract_vertical_kernel<<<grid, block, 0, stream_>>>(
+        idata, d_temp_.get(), odata, d_kernel_y_.get(), total_, height_, width_, radius_y_);
+
+    CUDA_CHECK(cudaGetLastError());
+    return holoflow::core::OpResult::Ok;
+  }
+
+  holoflow::core::OpResult execute_spatial(holoflow::core::SyncCtx &ctx,
+                                           const GraphAddresses    &addresses) {
+    if (spatial_graph_.ready()) {
+      if (!spatial_graph_.matches(addresses)) {
+        try {
+          update_spatial_graph(ctx, addresses);
+        } catch (const std::exception &error) {
+          logger()->warn("[Flatfield] CUDA Graph parameter update failed; recapturing: {}",
+                         error.what());
+          spatial_graph_.reset();
+        }
+      }
+      if (spatial_graph_.ready()) {
+        spatial_graph_.launch(stream_);
+        return holoflow::core::OpResult::Ok;
+      }
+    }
+
+    const auto result = enqueue(ctx);
+    if (result == holoflow::core::OpResult::Ok && graph_capture_enabled_) {
+      try {
+        spatial_graph_.capture(stream_, addresses, [&]() { (void)enqueue(ctx); });
+      } catch (const std::exception &error) {
+        graph_capture_enabled_ = false;
+        logger()->warn("[Flatfield] CUDA Graph capture disabled: {}", error.what());
+      }
+    }
+    return result;
+  }
+
+  holoflow::core::OpResult execute_fft(holoflow::core::SyncCtx &ctx,
+                                       const GraphAddresses    &addresses) {
+    const auto graph = std::find_if(
+        fft_graphs_.begin(), fft_graphs_.end(),
+        [&addresses](const FftCudaGraph &candidate) { return candidate.matches(addresses); });
+    if (graph != fft_graphs_.end()) {
+      graph->launch(stream_);
+      fft_graphs_.splice(fft_graphs_.begin(), fft_graphs_, graph);
+      return holoflow::core::OpResult::Ok;
+    }
+
+    const auto result = enqueue(ctx);
+    if (result != holoflow::core::OpResult::Ok || !graph_capture_enabled_) {
+      return result;
+    }
+
+    fft_graphs_.emplace_front(addresses);
+    try {
+      fft_graphs_.front().capture(stream_, [&]() { (void)enqueue(ctx); });
+      if (fft_graphs_.size() > fft_graph_cache_capacity) {
+        fft_graphs_.pop_back();
+      }
+    } catch (const std::exception &error) {
+      fft_graphs_.pop_front();
+      graph_capture_enabled_ = false;
+      logger()->warn("[Flatfield] CUDA Graph capture disabled: {}", error.what());
+    }
+    return result;
+  }
+
+  void update_spatial_graph(holoflow::core::SyncCtx &ctx, const GraphAddresses &addresses) {
+    auto *idata    = reinterpret_cast<const float *>(ctx.inputs[0].data());
+    auto *odata    = reinterpret_cast<float *>(ctx.outputs[0].data());
+    auto *temp     = d_temp_.get();
+    auto *kernel_x = d_kernel_x_.get();
+    auto *kernel_y = d_kernel_y_.get();
+
+    constexpr int block     = 256;
+    const int     grid      = static_cast<int>((total_ + block - 1) / block);
+    void *horizontal_args[] = {&idata, &temp, &kernel_x, &total_, &height_, &width_, &radius_x_};
+    const cudaKernelNodeParams horizontal_params{
+        .func           = reinterpret_cast<void *>(gaussian_horizontal_kernel),
+        .gridDim        = {static_cast<unsigned int>(grid), 1, 1},
+        .blockDim       = {block, 1, 1},
+        .sharedMemBytes = 0,
+        .kernelParams   = horizontal_args,
+        .extra          = nullptr,
+    };
+    void                      *vertical_args[] = {&idata,  &temp,    &odata,  &kernel_y,
+                                                  &total_, &height_, &width_, &radius_y_};
+    const cudaKernelNodeParams vertical_params{
+        .func           = reinterpret_cast<void *>(gaussian_subtract_vertical_kernel),
+        .gridDim        = {static_cast<unsigned int>(grid), 1, 1},
+        .blockDim       = {block, 1, 1},
+        .sharedMemBytes = 0,
+        .kernelParams   = vertical_args,
+        .extra          = nullptr,
+    };
+    spatial_graph_.update(horizontal_params, vertical_params, addresses);
+  }
   FlatfieldSettings                  settings_;
   holoflow::core::TDesc              idesc_;
   size_t                             total_;
@@ -312,6 +584,9 @@ private:
   DevPtr<cuFloatComplex>             d_spectrum_;
   std::vector<char>                  highpass_lto_;
   cudaStream_t                       stream_;
+  bool                               graph_capture_enabled_ = true;
+  SpatialCudaGraph                   spatial_graph_;
+  std::list<FftCudaGraph>            fft_graphs_;
 };
 
 } // namespace

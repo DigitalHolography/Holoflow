@@ -14,18 +14,23 @@
 
 #include <gtest/gtest.h>
 
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <utility>
 #include <vector>
 
 #include <nlohmann/json.hpp>
+#include <spdlog/spdlog.h>
 
+#include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
 #include "holotask/syncs/flatfield.hh"
 
 #include "sync_task_runner.hh"
+#include "tensor_test_buffer.hh"
 
 using holoflow::core::DType;
 using holoflow::core::MemLoc;
@@ -42,6 +47,12 @@ template <typename T> std::vector<std::byte> as_bytes(const std::vector<T> &v) {
   std::vector<std::byte> out(v.size() * sizeof(T));
   std::memcpy(out.data(), v.data(), out.size());
   return out;
+}
+
+std::vector<float> as_floats(const std::vector<std::byte> &bytes) {
+  std::vector<float> values(bytes.size() / sizeof(float));
+  std::memcpy(values.data(), bytes.data(), bytes.size());
+  return values;
 }
 
 nlohmann::json settings(float sigma_y = 1.0f, float sigma_x = 1.0f) {
@@ -115,6 +126,23 @@ void expect_f32_near(const std::vector<std::byte> &actual, const std::vector<flo
   }
 }
 
+std::vector<std::byte> execute_default_stream(holotask::syncs::FlatfieldFactory &factory,
+                                              const TDesc &desc, const nlohmann::json &config,
+                                              const std::vector<float> &input) {
+  const auto inference = factory.infer(std::array{desc}, config);
+  auto       task      = factory.create(std::array{desc}, config, {.stream = nullptr});
+  holonp_test::TensorTestBuffer input_buffer(desc);
+  holonp_test::TensorTestBuffer output_buffer(inference.output_descs[0]);
+  input_buffer.upload(as_bytes(input));
+  std::array              inputs{input_buffer.view()};
+  std::array              outputs{output_buffer.view()};
+  std::atomic<bool>       cancelled{false};
+  holoflow::core::SyncCtx ctx{inputs, outputs, &cancelled, nullptr, nullptr};
+  EXPECT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+  CUDA_CHECK(cudaDeviceSynchronize());
+  return output_buffer.download();
+}
+
 } // namespace
 
 class FlatfieldInferTest : public ::testing::Test {
@@ -183,4 +211,147 @@ TEST_F(FlatfieldExecuteTest, LargeSigmaConstantInputSubtractsToZero) {
 
   ASSERT_EQ(run.output_descs.size(), 1);
   expect_f32_near(run.output_bytes[0], std::vector<float>(64, 0.0f), 1e-3f);
+}
+
+TEST_F(FlatfieldExecuteTest, SpatialCudaGraphReplaysRotatingBuffersAndUpdatedStream) {
+  constexpr int      height = 8;
+  constexpr int      width  = 9;
+  const TDesc        d      = device_desc({height, width}, DType::F32);
+  std::vector<float> first(static_cast<size_t>(height * width));
+  std::vector<float> second(first.size());
+  for (size_t i = 0; i < first.size(); ++i) {
+    first[i]  = static_cast<float>((i * 13 + 5) % 29) - 8.0f;
+    second[i] = static_cast<float>((i * 7 + 3) % 31) - 11.0f;
+  }
+  const auto         config    = settings(0.75f, 1.25f);
+  const auto         inference = factory.infer(std::array{d}, config);
+  curaii::CudaStream stream_a;
+  curaii::CudaStream stream_b;
+  auto               task = factory.create(std::array{d}, config, {.stream = stream_a.get()});
+  task->bind_logger(spdlog::default_logger());
+
+  holonp_test::TensorTestBuffer input_a(d);
+  holonp_test::TensorTestBuffer input_b(d);
+  holonp_test::TensorTestBuffer output_a(inference.output_descs[0]);
+  holonp_test::TensorTestBuffer output_b(inference.output_descs[0]);
+  std::array                    inputs_a{input_a.view()};
+  std::array                    inputs_b{input_b.view()};
+  std::array                    outputs_a{output_a.view()};
+  std::array                    outputs_b{output_b.view()};
+  std::atomic<bool>             cancelled{false};
+  holoflow::core::SyncCtx       ctx_a{inputs_a, outputs_a, &cancelled, nullptr, nullptr};
+  holoflow::core::SyncCtx       ctx_b{inputs_b, outputs_b, &cancelled, nullptr, nullptr};
+
+  input_a.upload(as_bytes(first));
+  ASSERT_EQ(task->execute(ctx_a), holoflow::core::OpResult::Ok);
+  CUDA_CHECK(cudaStreamSynchronize(stream_a.get()));
+  expect_f32_near(output_a.download(), flatfield_reference(first, height, width, 0.75f, 1.25f));
+
+  input_a.upload(as_bytes(second));
+  ASSERT_EQ(task->execute(ctx_a), holoflow::core::OpResult::Ok);
+  CUDA_CHECK(cudaStreamSynchronize(stream_a.get()));
+  expect_f32_near(output_a.download(), flatfield_reference(second, height, width, 0.75f, 1.25f));
+
+  input_b.upload(as_bytes(first));
+  ASSERT_EQ(task->execute(ctx_b), holoflow::core::OpResult::Ok);
+  CUDA_CHECK(cudaStreamSynchronize(stream_a.get()));
+  expect_f32_near(output_b.download(), flatfield_reference(first, height, width, 0.75f, 1.25f));
+
+  task = factory.update(std::move(task), std::array{d}, config, {.stream = stream_b.get()});
+  input_b.upload(as_bytes(second));
+  ASSERT_EQ(task->execute(ctx_b), holoflow::core::OpResult::Ok);
+  CUDA_CHECK(cudaStreamSynchronize(stream_b.get()));
+  expect_f32_near(output_b.download(), flatfield_reference(second, height, width, 0.75f, 1.25f));
+}
+
+TEST_F(FlatfieldExecuteTest, FftCudaGraphCachesRotatingBuffers) {
+  constexpr int      height = 8;
+  constexpr int      width  = 8;
+  const TDesc        d      = device_desc({height, width}, DType::F32);
+  std::vector<float> first(static_cast<size_t>(height * width));
+  std::vector<float> second(first.size());
+  for (size_t i = 0; i < first.size(); ++i) {
+    first[i]  = static_cast<float>((i * 5 + 1) % 23);
+    second[i] = static_cast<float>((i * 11 + 7) % 37) - 9.0f;
+  }
+  const auto         config          = settings(12.0f, 12.0f);
+  const auto         first_expected  = execute_default_stream(factory, d, config, first);
+  const auto         second_expected = execute_default_stream(factory, d, config, second);
+  const auto         inference       = factory.infer(std::array{d}, config);
+  curaii::CudaStream stream;
+  auto               task = factory.create(std::array{d}, config, {.stream = stream.get()});
+  task->bind_logger(spdlog::default_logger());
+
+  holonp_test::TensorTestBuffer input_a(d);
+  holonp_test::TensorTestBuffer input_b(d);
+  holonp_test::TensorTestBuffer output_a(inference.output_descs[0]);
+  holonp_test::TensorTestBuffer output_b(inference.output_descs[0]);
+  std::array                    inputs_a{input_a.view()};
+  std::array                    inputs_b{input_b.view()};
+  std::array                    outputs_a{output_a.view()};
+  std::array                    outputs_b{output_b.view()};
+  std::atomic<bool>             cancelled{false};
+  holoflow::core::SyncCtx       ctx_a{inputs_a, outputs_a, &cancelled, nullptr, nullptr};
+  holoflow::core::SyncCtx       ctx_b{inputs_b, outputs_b, &cancelled, nullptr, nullptr};
+
+  input_a.upload(as_bytes(first));
+  ASSERT_EQ(task->execute(ctx_a), holoflow::core::OpResult::Ok);
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  expect_f32_near(output_a.download(), as_floats(first_expected), 1e-3f);
+
+  input_a.upload(as_bytes(second));
+  ASSERT_EQ(task->execute(ctx_a), holoflow::core::OpResult::Ok);
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  expect_f32_near(output_a.download(), as_floats(second_expected), 1e-3f);
+
+  input_b.upload(as_bytes(second));
+  ASSERT_EQ(task->execute(ctx_b), holoflow::core::OpResult::Ok);
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  EXPECT_EQ(output_b.download(), second_expected);
+
+  input_a.upload(as_bytes(first));
+  ASSERT_EQ(task->execute(ctx_a), holoflow::core::OpResult::Ok);
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  EXPECT_EQ(output_a.download(), first_expected);
+
+  curaii::CudaStream updated_stream;
+  task = factory.update(std::move(task), std::array{d}, config, {.stream = updated_stream.get()});
+  input_b.upload(as_bytes(first));
+  ASSERT_EQ(task->execute(ctx_b), holoflow::core::OpResult::Ok);
+  CUDA_CHECK(cudaStreamSynchronize(updated_stream.get()));
+  EXPECT_EQ(output_b.download(), first_expected);
+}
+
+TEST_F(FlatfieldExecuteTest, ParticipatesInOuterCaptureForSpatialAndFftPaths) {
+  const TDesc        d = device_desc({8, 8}, DType::F32);
+  std::vector<float> input(d.num_elements());
+  for (size_t i = 0; i < input.size(); ++i) {
+    input[i] = static_cast<float>((i * 17 + 2) % 41) - 13.0f;
+  }
+
+  for (const auto config : {settings(1.0f, 1.0f), settings(12.0f, 12.0f)}) {
+    const auto         expected  = execute_default_stream(factory, d, config, input);
+    const auto         inference = factory.infer(std::array{d}, config);
+    curaii::CudaStream stream;
+    auto               task = factory.create(std::array{d}, config, {.stream = stream.get()});
+    holonp_test::TensorTestBuffer input_buffer(d);
+    holonp_test::TensorTestBuffer output_buffer(inference.output_descs[0]);
+    input_buffer.upload(as_bytes(input));
+    std::array              inputs{input_buffer.view()};
+    std::array              outputs{output_buffer.view()};
+    std::atomic<bool>       cancelled{false};
+    holoflow::core::SyncCtx ctx{inputs, outputs, &cancelled, nullptr, nullptr};
+
+    cudaGraph_t graph = nullptr;
+    CUDA_CHECK(cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeThreadLocal));
+    ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+    CUDA_CHECK(cudaStreamEndCapture(stream.get(), &graph));
+    cudaGraphExec_t executable = nullptr;
+    CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+    CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
+    CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+    EXPECT_EQ(output_buffer.download(), expected);
+    CUDA_CHECK(cudaGraphExecDestroy(executable));
+    CUDA_CHECK(cudaGraphDestroy(graph));
+  }
 }
