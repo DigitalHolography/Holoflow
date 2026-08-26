@@ -16,6 +16,7 @@ set(TARGET holotask_test)
 
 set(SOURCES
     angular_spectrum_test.cu
+    conversion_test.cu
     flatfield_test.cu
     filter2d_test.cu
     fresnel_diffraction_test.cu
