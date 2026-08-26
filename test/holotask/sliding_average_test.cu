@@ -201,6 +201,7 @@ TEST(SlidingAverageTest, DiscardsInvalidInputsBeforeFullWindowWarmup) {
   };
   holotask::asyncs::SlidingAverageFactory factory;
   const auto infer = factory.infer(input_descs, nlohmann::json(settings));
+  EXPECT_TRUE(infer.synchronizes_producer_stream);
 
   curaii::CudaStream producer_stream;
   curaii::CudaStream consumer_stream;
@@ -228,7 +229,17 @@ TEST(SlidingAverageTest, DiscardsInvalidInputsBeforeFullWindowWarmup) {
     valid_value = valid[i] ? std::uint8_t{1} : std::uint8_t{0};
     std::array                   input_views{*acquired, valid_view};
     holoflow::core::AsyncPushCtx push_ctx{input_views, &cancelled};
+    cudaEvent_t                  pending_work = nullptr;
+    if (!valid[i]) {
+      CUDA_CHECK(cudaMemsetAsync(acquired->data(), 0, sizeof(float), producer_stream.get()));
+      CUDA_CHECK(cudaEventCreate(&pending_work));
+      CUDA_CHECK(cudaEventRecord(pending_work, producer_stream.get()));
+    }
     ASSERT_EQ(task->try_push(push_ctx), OpResult::Ok);
+    if (pending_work != nullptr) {
+      EXPECT_EQ(cudaEventQuery(pending_work), cudaSuccess);
+      CUDA_CHECK(cudaEventDestroy(pending_work));
+    }
 
     const auto pop_result = task->try_pop(pop_ctx);
     if (i < 3) {
@@ -256,6 +267,7 @@ TEST(SlidingAverageTest, DiscardsConfiguredInitialFramesWithoutValidityInput) {
   };
   holotask::asyncs::SlidingAverageFactory factory;
   const auto infer = factory.infer(input_descs, nlohmann::json(settings));
+  EXPECT_TRUE(infer.synchronizes_producer_stream);
 
   curaii::CudaStream producer_stream;
   curaii::CudaStream consumer_stream;

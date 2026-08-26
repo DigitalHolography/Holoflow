@@ -241,6 +241,9 @@ struct InferResult {
   std::vector<bool>    owned_inputs;  ///< Ownership status of input tensors
   std::vector<bool>    owned_outputs; ///< Ownership status of output tensors
   TaskKind             kind;          ///< Kind of task (sync or async)
+  /// Async producer capability. When true, try_push synchronizes its producer stream before any
+  /// result that lets the scheduler advance. NotReady retries need not synchronize.
+  bool synchronizes_producer_stream = false;
 };
 
 /// Context for sync task creation.

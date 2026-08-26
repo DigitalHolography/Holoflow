@@ -393,7 +393,12 @@ void Scheduler::run_section(int section_id) {
             break;
         }
 
-        CUDA_CHECK(cudaStreamSynchronize(stream));
+        // A compiler-ordered synchronizing producer runs first below, so its later barrier covers
+        // both these kernels and its own CUDA launch while preserving safe publication by ordinary
+        // producers. Sections without that capability retain the explicit scheduler barrier.
+        if (!sec.has_synchronizing_async_producer) {
+          CUDA_CHECK(cudaStreamSynchronize(stream));
+        }
       }
 
       // 5. Execute async producers

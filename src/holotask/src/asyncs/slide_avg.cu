@@ -182,6 +182,9 @@ holoflow::core::OpResult SlidingAverage::try_push(holoflow::core::AsyncPushCtx &
       ++discarded_;
     }
     storage_access().owned_input_storage(0).ptr = nullptr;
+    // This task advertises that every successful producer submission supplies the section's CUDA
+    // barrier, including submissions that intentionally skip the averaging kernel.
+    CUDA_CHECK(cudaStreamSynchronize(producer_stream_));
     return holoflow::core::OpResult::Ok;
   }
 
@@ -282,8 +285,9 @@ SlidingAverageFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
       .in_place     = {},
       .owned_inputs =
           input_descs.size() == 1 ? std::vector<bool>{true} : std::vector<bool>{true, false},
-      .owned_outputs = {true},
-      .kind          = holoflow::core::TaskKind::Async,
+      .owned_outputs                = {true},
+      .kind                         = holoflow::core::TaskKind::Async,
+      .synchronizes_producer_stream = true,
   };
 }
 

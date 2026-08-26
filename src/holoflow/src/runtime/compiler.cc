@@ -890,6 +890,15 @@ void Compiler::Impl::partition_sections() {
       out_->sections[sec_id].async_prod.push_back(v);
     }
   }
+
+  for (auto &section : out_->sections) {
+    // A synchronizing producer must run before ordinary producers: its barrier covers all preceding
+    // sync-node work before an ordinary queue is allowed to publish its GPU-backed input.
+    const auto ordinary_begin =
+        std::stable_partition(section.async_prod.begin(), section.async_prod.end(),
+                              [&](auto v) { return g[v].infer.synchronizes_producer_stream; });
+    section.has_synchronizing_async_producer = ordinary_begin != section.async_prod.begin();
+  }
 }
 
 // void Compiler::Impl::assign_streams() {

@@ -208,6 +208,8 @@ TEST(SchedulerFunctionalTest, ExecutesSerialThreeSectionPipeline) {
   ASSERT_NE(source_section, nullptr);
   ASSERT_NE(middle_section, nullptr);
   ASSERT_NE(sink_section, nullptr);
+  EXPECT_FALSE(source_section->has_synchronizing_async_producer);
+  EXPECT_FALSE(middle_section->has_synchronizing_async_producer);
   EXPECT_TRUE(contains_node(output->graph, source_section->async_prod, "bridge-a"));
   EXPECT_TRUE(contains_node(output->graph, middle_section->async_cons, "bridge-a"));
   EXPECT_TRUE(contains_node(output->graph, middle_section->async_prod, "bridge-b"));
