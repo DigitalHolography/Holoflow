@@ -78,10 +78,10 @@ std::vector<float> covariance_two_by_two_input(float scale = 1.0f) {
   };
 }
 
-std::vector<float> diagonal_covariance_input(size_t depth) {
+std::vector<float> diagonal_covariance_input(size_t depth, float scale = 1.0f) {
   std::vector<float> input(depth * depth, 0.0f);
   for (size_t feature = 0; feature < depth; ++feature) {
-    input[feature * depth + feature] = std::sqrt(static_cast<float>(feature + 1));
+    input[feature * depth + feature] = scale * std::sqrt(static_cast<float>(feature + 1));
   }
   return input;
 }
@@ -228,6 +228,104 @@ TEST_F(PcaExecuteTest, RecomputesEigenvectorsOnEveryExecution) {
   EXPECT_NEAR(dot(updated.data() + 2, updated.data() + 2, 2), 9.0f, 3e-2f);
 }
 
+TEST_F(PcaExecuteTest, CudaGraphReplaysCusolverFallbackWithCurrentData) {
+  constexpr size_t depth      = 256;
+  const TDesc      input_desc = device_desc({depth, 1, depth});
+  const auto       inferred   = factory.infer(std::array{input_desc}, settings(depth - 1, depth));
+
+  curaii::CudaStream stream;
+  auto task = factory.create(std::array{input_desc}, settings(depth - 1, depth), {stream.get()});
+  task->bind_logger(spdlog::default_logger());
+  holonp_test::TensorTestBuffer input(input_desc);
+  holonp_test::TensorTestBuffer output(inferred.output_descs[0]);
+
+  input.upload(as_bytes(diagonal_covariance_input(depth)));
+  (void)execute_once(*task, input, output, stream.get());
+
+  input.upload(as_bytes(diagonal_covariance_input(depth, 2.0f)));
+  const auto replayed = execute_once(*task, input, output, stream.get());
+  EXPECT_NEAR(dot(replayed.data(), replayed.data(), replayed.size()), 4.0f * depth, 5e-2f * depth);
+}
+
+TEST_F(PcaExecuteTest, CudaGraphCachesRotatingInputAndOutputBuffers) {
+  const TDesc input_desc = device_desc({2, 1, 2});
+  const auto  inferred   = factory.infer(std::array{input_desc}, settings(0, 2));
+
+  curaii::CudaStream stream;
+  auto               task = factory.create(std::array{input_desc}, settings(0, 2), {stream.get()});
+  task->bind_logger(spdlog::default_logger());
+  holonp_test::TensorTestBuffer input_a(input_desc);
+  holonp_test::TensorTestBuffer input_b(input_desc);
+  holonp_test::TensorTestBuffer output_a(inferred.output_descs[0]);
+  holonp_test::TensorTestBuffer output_b(inferred.output_descs[0]);
+
+  input_a.upload(as_bytes(covariance_two_by_two_input()));
+  input_b.upload(as_bytes(covariance_two_by_two_input(2.0f)));
+  (void)execute_once(*task, input_a, output_a, stream.get());
+  (void)execute_once(*task, input_b, output_b, stream.get());
+
+  input_a.upload(as_bytes(std::vector<float>{3.0f, 0.0f, 0.0f, 1.0f}));
+  input_b.upload(as_bytes(std::vector<float>{4.0f, 0.0f, 0.0f, 2.0f}));
+  const auto replayed_a = execute_once(*task, input_a, output_a, stream.get());
+  const auto replayed_b = execute_once(*task, input_b, output_b, stream.get());
+  EXPECT_NEAR(dot(replayed_a.data() + 2, replayed_a.data() + 2, 2), 9.0f, 3e-2f);
+  EXPECT_NEAR(dot(replayed_b.data() + 2, replayed_b.data() + 2, 2), 16.0f, 5e-2f);
+}
+
+TEST_F(PcaExecuteTest, ParticipatesInOuterCaptureForDxAndCusolverPaths) {
+  for (const size_t depth : {size_t{2}, size_t{256}}) {
+    const TDesc        input_desc = device_desc({depth, 1, depth});
+    const auto         config     = settings(static_cast<int>(depth - 1), static_cast<int>(depth));
+    const auto         inferred   = factory.infer(std::array{input_desc}, config);
+    curaii::CudaStream stream;
+    auto               task = factory.create(std::array{input_desc}, config, {stream.get()});
+    task->bind_logger(spdlog::default_logger());
+    holonp_test::TensorTestBuffer input(input_desc);
+    holonp_test::TensorTestBuffer output(inferred.output_descs[0]);
+    input.upload(as_bytes(diagonal_covariance_input(depth)));
+    std::array              inputs{input.view()};
+    std::array              outputs{output.view()};
+    std::atomic<bool>       cancelled{false};
+    holoflow::core::SyncCtx ctx{inputs, outputs, &cancelled, nullptr, nullptr};
+
+    cudaGraph_t graph = nullptr;
+    CUDA_CHECK(cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeThreadLocal));
+    ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+    CUDA_CHECK(cudaStreamEndCapture(stream.get(), &graph));
+    cudaGraphExec_t executable = nullptr;
+    CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+    CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
+    CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+    const auto captured = as_floats(output.download());
+    EXPECT_NEAR(dot(captured.data(), captured.data(), captured.size()), static_cast<float>(depth),
+                5e-2f * depth);
+    CUDA_CHECK(cudaGraphExecDestroy(executable));
+    CUDA_CHECK(cudaGraphDestroy(graph));
+  }
+}
+
+TEST_F(PcaExecuteTest, FallsBackOnDefaultStream) {
+  constexpr size_t depth      = 256;
+  const TDesc      input_desc = device_desc({depth, 1, depth});
+  const auto       config     = settings(depth - 1, depth);
+  const auto       inferred   = factory.infer(std::array{input_desc}, config);
+  auto             task       = factory.create(std::array{input_desc}, config, {.stream = nullptr});
+  task->bind_logger(spdlog::default_logger());
+  holonp_test::TensorTestBuffer input(input_desc);
+  holonp_test::TensorTestBuffer output(inferred.output_descs[0]);
+  input.upload(as_bytes(diagonal_covariance_input(depth)));
+  std::array              inputs{input.view()};
+  std::array              outputs{output.view()};
+  std::atomic<bool>       cancelled{false};
+  holoflow::core::SyncCtx ctx{inputs, outputs, &cancelled, nullptr, nullptr};
+
+  ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+  CUDA_CHECK(cudaDeviceSynchronize());
+  const auto direct = as_floats(output.download());
+  EXPECT_NEAR(dot(direct.data(), direct.data(), direct.size()), static_cast<float>(depth),
+              5e-2f * depth);
+}
+
 TEST_F(PcaExecuteTest, ReusesCompiledTaskWhenComponentSelectionChanges) {
   const std::vector<TDesc> input_descs = {device_desc({2, 1, 2})};
   const auto               selected    = factory.infer(input_descs, settings(1, 2));
@@ -250,4 +348,7 @@ TEST_F(PcaExecuteTest, ReusesCompiledTaskWhenComponentSelectionChanges) {
 
   task = factory.update(std::move(task), input_descs, settings(0, 1), {stream.get()});
   EXPECT_EQ(task.get(), original_task);
+  const auto reconfigured = execute_once(*task, input, output, stream.get());
+  ASSERT_EQ(reconfigured.size(), 2);
+  EXPECT_NEAR(dot(reconfigured.data(), reconfigured.data(), reconfigured.size()), 1.0f, 2e-2f);
 }

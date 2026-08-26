@@ -19,12 +19,15 @@
 #include <nvtx3/nvtx3.hpp>
 #include <windows.h>
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
 #include <format>
 #include <limits>
+#include <list>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -608,6 +611,66 @@ private:
 // PCA task implementation
 // -------------------------------------------------------------------------------------------------
 
+using PcaGraphAddresses = std::array<const void *, 2>;
+
+template <typename Enqueue> cudaGraph_t capture_pca_graph(cudaStream_t stream, Enqueue &&enqueue) {
+  cudaGraph_t graph     = nullptr;
+  bool        capturing = false;
+  try {
+    CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+    capturing = true;
+    std::forward<Enqueue>(enqueue)();
+    CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
+    capturing = false;
+    return graph;
+  } catch (...) {
+    if (capturing) {
+      cudaGraph_t discarded = nullptr;
+      (void)cudaStreamEndCapture(stream, &discarded);
+      if (discarded != nullptr) {
+        CUDA_CHECK_NT(cudaGraphDestroy(discarded));
+      }
+    } else if (graph != nullptr) {
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+    }
+    throw;
+  }
+}
+
+class PcaCudaGraph {
+public:
+  explicit PcaCudaGraph(PcaGraphAddresses addresses) : addresses_(addresses) {}
+  ~PcaCudaGraph() noexcept {
+    if (executable_ != nullptr) {
+      CUDA_CHECK_NT(cudaGraphExecDestroy(executable_));
+    }
+  }
+
+  PcaCudaGraph(const PcaCudaGraph &)            = delete;
+  PcaCudaGraph &operator=(const PcaCudaGraph &) = delete;
+
+  [[nodiscard]] bool matches(const PcaGraphAddresses &addresses) const noexcept {
+    return executable_ != nullptr && addresses_ == addresses;
+  }
+
+  void launch(cudaStream_t stream) const { CUDA_CHECK(cudaGraphLaunch(executable_, stream)); }
+
+  template <typename Enqueue> void capture(cudaStream_t stream, Enqueue &&enqueue) {
+    cudaGraph_t graph = capture_pca_graph(stream, std::forward<Enqueue>(enqueue));
+    try {
+      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable_, graph, 0));
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+    } catch (...) {
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+      throw;
+    }
+  }
+
+private:
+  PcaGraphAddresses addresses_  = {};
+  cudaGraphExec_t   executable_ = nullptr;
+};
+
 class PcaTask : public holoflow::core::ISyncTask {
 public:
   // n_features: size of the feature dimension (shape[-3])
@@ -634,19 +697,70 @@ public:
   }
 
   void update_settings(const PcaSettings &settings, cudaStream_t stream) {
+    if (settings_ != settings) {
+      graphs_.clear();
+      graph_capture_enabled_ = true;
+    }
     settings_ = settings;
     if (stream_ != stream) {
-      stream_ = stream;
+      stream_                = stream;
+      graph_capture_enabled_ = true;
       CUBLAS_CHECK(cublasSetStream(cublas_handle_.get(), stream_));
     }
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    nvtx3::scoped_range r("PCA Sync Task");
-    auto               &iview = ctx.inputs[0];
-    auto               &oview = ctx.outputs[0];
-    auto               *idata = reinterpret_cast<float *>(iview.data());
-    auto               *odata = reinterpret_cast<float *>(oview.data());
+    nvtx3::scoped_range     r("PCA Sync Task");
+    const PcaGraphAddresses addresses{ctx.inputs[0].data(), ctx.outputs[0].data()};
+    if (stream_ == nullptr) {
+      return enqueue(ctx);
+    }
+
+    cudaStreamCaptureStatus capture_status = cudaStreamCaptureStatusNone;
+    CUDA_CHECK(cudaStreamIsCapturing(stream_, &capture_status));
+    if (capture_status != cudaStreamCaptureStatusNone) {
+      return enqueue(ctx);
+    }
+
+    const auto graph =
+        std::find_if(graphs_.begin(), graphs_.end(), [&addresses](const PcaCudaGraph &candidate) {
+          return candidate.matches(addresses);
+        });
+    if (graph != graphs_.end()) {
+      graph->launch(stream_);
+      graphs_.splice(graphs_.begin(), graphs_, graph);
+      return holoflow::core::OpResult::Ok;
+    }
+
+    const auto result = enqueue(ctx);
+    if (result != holoflow::core::OpResult::Ok || !graph_capture_enabled_) {
+      return result;
+    }
+
+    graphs_.emplace_front(addresses);
+    try {
+      graphs_.front().capture(stream_, [&]() { (void)enqueue(ctx); });
+      if (graphs_.size() > graph_cache_capacity) {
+        graphs_.pop_back();
+      }
+    } catch (const std::exception &error) {
+      graphs_.pop_front();
+      graph_capture_enabled_ = false;
+      logger()->warn("[Pca] CUDA Graph capture disabled: {}", error.what());
+    }
+    return result;
+  }
+
+private:
+  // cuBLAS and cuSOLVER graph nodes embed their buffer addresses. Cache the finite set of rotating
+  // pipeline buffers instead of attempting to update opaque library nodes.
+  static constexpr size_t graph_cache_capacity = 128;
+
+  holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx) {
+    auto &iview = ctx.inputs[0];
+    auto &oview = ctx.outputs[0];
+    auto *idata = reinterpret_cast<float *>(iview.data());
+    auto *odata = reinterpret_cast<float *>(oview.data());
 
     const auto     &idesc      = iview.desc;
     const int       rank       = static_cast<int>(idesc.shape.size());
@@ -694,7 +808,6 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
-private:
   PcaSettings           settings_;
   holoflow::core::TDesc idesc_;
   cudaStream_t          stream_;
@@ -706,6 +819,9 @@ private:
   curaii::unique_device_ptr<float>    d_cov_;
   curaii::unique_device_ptr<float>    d_eigvals_;
   curaii::unique_device_ptr<int>      d_info_;
+
+  bool                    graph_capture_enabled_ = true;
+  std::list<PcaCudaGraph> graphs_;
 };
 
 
