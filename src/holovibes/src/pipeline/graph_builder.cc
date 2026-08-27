@@ -744,7 +744,8 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
 
   result = mean(result, {{0}, false}); // [1, H, W]
 
-  auto target_capacity = static_cast<size_t>(std::max(1, s_.gpu_out_size));
+  // auto target_capacity = static_cast<size_t>(std::max(1, s_.gpu_out_size));
+  auto target_capacity = 8ULL;
   auto window_size     = static_cast<size_t>(s_.pp_accumulation);
   auto discard_first   = s_.autofocus_enabled ? window_size - 1 : 0;
   auto slide_settings  = SlidingAverageSettings{target_capacity, window_size, discard_first};
