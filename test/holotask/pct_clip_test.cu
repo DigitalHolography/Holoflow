@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstring>
+#include <memory>
 #include <span>
 #include <vector>
 
@@ -149,7 +150,7 @@ TEST(PctClip, HandlesConstantInputAndEndpointPercentiles) {
   }
 }
 
-TEST(PctClipCudaGraph, UpdatesRotatingInputsOutputsAndStreams) {
+TEST(PctClipCudaGraph, CachesRotatingAddressPairsAndStreams) {
   constexpr size_t depth  = 2;
   constexpr size_t height = 8;
   constexpr size_t width  = 9;
@@ -181,7 +182,7 @@ TEST(PctClipCudaGraph, UpdatesRotatingInputsOutputsAndStreams) {
   holoflow::core::SyncCtx       ctx_b{input_views_b, output_views_a, &cancelled, nullptr, nullptr};
   holoflow::core::SyncCtx       ctx_c{input_views_c, output_views_a, &cancelled, nullptr, nullptr};
   holoflow::core::SyncCtx       ctx_new_output{input_views_b, output_views_b, &cancelled, nullptr,
-                                         nullptr};
+                                               nullptr};
   holoflow::core::SyncCtx ctx_updated_output{input_views_a, output_views_b, &cancelled, nullptr,
                                              nullptr};
 
@@ -217,12 +218,69 @@ TEST(PctClipCudaGraph, UpdatesRotatingInputsOutputsAndStreams) {
   CUDA_CHECK(cudaStreamSynchronize(stream_a.get()));
   expect_values(output_b, reference_clip(frame_a, depth, height, width, settings));
 
+  input_a.upload(as_bytes(frame_c));
+  ASSERT_EQ(task->execute(ctx_a), OpResult::Ok);
+  CUDA_CHECK(cudaStreamSynchronize(stream_a.get()));
+  expect_values(output_a, reference_clip(frame_c, depth, height, width, settings));
+
   task =
       factory.update(std::move(task), std::array{input_desc}, settings, {.stream = stream_b.get()});
   input_b.upload(as_bytes(frame_b));
   ASSERT_EQ(task->execute(ctx_new_output), OpResult::Ok);
   CUDA_CHECK(cudaStreamSynchronize(stream_b.get()));
   expect_values(output_b, reference_clip(frame_b, depth, height, width, settings));
+}
+
+TEST(PctClipCudaGraph, EvictsLeastRecentlyUsedAddressPair) {
+  constexpr size_t depth        = 1;
+  constexpr size_t height       = 3;
+  constexpr size_t width        = 4;
+  constexpr size_t unique_pairs = 129;
+  const TDesc      input_desc({depth, height, width}, DType::F32, MemLoc::Device);
+  const holotask::syncs::PctClipSettings settings{
+      .min_pct = 25.0f,
+      .max_pct = 75.0f,
+      .roi     = {.cx = 0.5f, .cy = 0.5f, .rx = 1.0f, .ry = 1.0f, .angle = 0.0f},
+  };
+  holotask::syncs::PctClipFactory factory;
+  const auto                      inference = factory.infer(std::array{input_desc}, settings);
+  curaii::CudaStream              stream;
+  auto task = factory.create(std::array{input_desc}, settings, {.stream = stream.get()});
+  task->bind_logger(spdlog::default_logger());
+
+  std::vector<std::unique_ptr<holonp_test::TensorTestBuffer>> inputs;
+  std::vector<std::unique_ptr<holonp_test::TensorTestBuffer>> outputs;
+  inputs.reserve(unique_pairs);
+  outputs.reserve(unique_pairs);
+  std::atomic<bool> cancelled{false};
+
+  for (size_t pair = 0; pair < unique_pairs; ++pair) {
+    inputs.push_back(std::make_unique<holonp_test::TensorTestBuffer>(input_desc));
+    outputs.push_back(std::make_unique<holonp_test::TensorTestBuffer>(inference.output_descs[0]));
+
+    std::vector<float> frame(input_desc.num_elements());
+    for (size_t i = 0; i < frame.size(); ++i) {
+      frame[i] = static_cast<float>((i * 11 + pair * 7) % 61) - 20.0f;
+    }
+    inputs.back()->upload(as_bytes(frame));
+    std::array              input_views{inputs.back()->view()};
+    std::array              output_views{outputs.back()->view()};
+    holoflow::core::SyncCtx ctx{input_views, output_views, &cancelled, nullptr, nullptr};
+    ASSERT_EQ(task->execute(ctx), OpResult::Ok);
+  }
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+
+  std::vector<float> replacement(input_desc.num_elements());
+  for (size_t i = 0; i < replacement.size(); ++i) {
+    replacement[i] = static_cast<float>((i * 19 + 3) % 47) - 15.0f;
+  }
+  inputs.front()->upload(as_bytes(replacement));
+  std::array              input_views{inputs.front()->view()};
+  std::array              output_views{outputs.front()->view()};
+  holoflow::core::SyncCtx ctx{input_views, output_views, &cancelled, nullptr, nullptr};
+  ASSERT_EQ(task->execute(ctx), OpResult::Ok);
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  expect_values(*outputs.front(), reference_clip(replacement, depth, height, width, settings));
 }
 
 TEST(PctClipCudaGraph, FallsBackOnDefaultStream) {
@@ -233,7 +291,7 @@ TEST(PctClipCudaGraph, FallsBackOnDefaultStream) {
       .roi     = {.cx = 0.5f, .cy = 0.5f, .rx = 0.5f, .ry = 0.5f, .angle = 0.0f},
   };
   const std::vector<float>        input{-6.0f, -3.0f, 0.0f,  3.0f,  6.0f,  9.0f,
-                                 12.0f, 15.0f, 18.0f, 21.0f, 24.0f, 27.0f};
+                                        12.0f, 15.0f, 18.0f, 21.0f, 24.0f, 27.0f};
   holotask::syncs::PctClipFactory factory;
   const auto                      inference = factory.infer(std::array{input_desc}, settings);
   auto task = factory.create(std::array{input_desc}, settings, {.stream = nullptr});
@@ -248,6 +306,20 @@ TEST(PctClipCudaGraph, FallsBackOnDefaultStream) {
   ASSERT_EQ(task->execute(ctx), OpResult::Ok);
   CUDA_CHECK(cudaDeviceSynchronize());
   expect_values(output_buffer, reference_clip(input, 1, 3, 4, settings));
+
+  curaii::CudaStream stream;
+  auto captured_task = factory.create(std::array{input_desc}, settings, {.stream = stream.get()});
+  cudaGraph_t graph  = nullptr;
+  CUDA_CHECK(cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeThreadLocal));
+  ASSERT_EQ(captured_task->execute(ctx), OpResult::Ok);
+  CUDA_CHECK(cudaStreamEndCapture(stream.get(), &graph));
+  cudaGraphExec_t executable = nullptr;
+  CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+  CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  expect_values(output_buffer, reference_clip(input, 1, 3, 4, settings));
+  CUDA_CHECK(cudaGraphExecDestroy(executable));
+  CUDA_CHECK(cudaGraphDestroy(graph));
 }
 
 } // namespace

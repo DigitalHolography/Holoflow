@@ -16,12 +16,13 @@
 
 #include <cub/cub.cuh>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <list>
 #include <string>
 #include <utility>
-#include <vector>
 
 #include "bug.hh"
 #include "curaii/cuda.hh"
@@ -157,9 +158,6 @@ public:
   [[nodiscard]] bool matches(const Addresses &addresses) const noexcept {
     return ready() && addresses_ == addresses;
   }
-  [[nodiscard]] bool matches_output(const Addresses &addresses) const noexcept {
-    return ready() && addresses_[1] == addresses[1];
-  }
 
   void launch(cudaStream_t stream) const { CUDA_CHECK(cudaGraphLaunch(executable_, stream)); }
 
@@ -168,13 +166,7 @@ public:
       CUDA_CHECK_NT(cudaGraphExecDestroy(executable_));
       executable_ = nullptr;
     }
-    if (graph_ != nullptr) {
-      CUDA_CHECK_NT(cudaGraphDestroy(graph_));
-      graph_ = nullptr;
-    }
-    addresses_   = {};
-    gather_node_ = nullptr;
-    clip_node_   = nullptr;
+    addresses_ = {};
   }
 
   template <typename Enqueue>
@@ -186,13 +178,11 @@ public:
     cudaGraphExec_t executable = nullptr;
     try {
       CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
-      const auto nodes = find_update_nodes(graph);
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+      graph = nullptr;
       reset();
-      executable_  = executable;
-      graph_       = graph;
-      addresses_   = addresses;
-      gather_node_ = nodes[0];
-      clip_node_   = nodes[1];
+      executable_ = executable;
+      addresses_  = addresses;
       return true;
     } catch (...) {
       if (executable != nullptr) {
@@ -201,52 +191,6 @@ public:
       if (graph != nullptr) {
         CUDA_CHECK_NT(cudaGraphDestroy(graph));
       }
-      throw;
-    }
-  }
-
-  void update_input(const cudaKernelNodeParams &gather_params,
-                    const cudaKernelNodeParams &clip_params, const Addresses &addresses) {
-    CUDA_CHECK(cudaGraphExecKernelNodeSetParams(executable_, gather_node_, &gather_params));
-    CUDA_CHECK(cudaGraphExecKernelNodeSetParams(executable_, clip_node_, &clip_params));
-    addresses_ = addresses;
-  }
-
-  template <typename Enqueue>
-  bool update(cudaStream_t stream, const Addresses &addresses, Enqueue &&enqueue) {
-    cudaGraph_t candidate = capture_graph(stream, std::forward<Enqueue>(enqueue));
-    if (candidate == nullptr) {
-      return false;
-    }
-
-    cudaGraphExecUpdateResultInfo update_info{};
-    const auto update_error = cudaGraphExecUpdate(executable_, candidate, &update_info);
-    if (update_error == cudaSuccess) {
-      CUDA_CHECK_NT(cudaGraphDestroy(candidate));
-      addresses_ = addresses;
-      return true;
-    }
-    if (update_error != cudaErrorGraphExecUpdateFailure) {
-      CUDA_CHECK_NT(cudaGraphDestroy(candidate));
-      CUDA_CHECK(update_error);
-    }
-
-    cudaGraphExec_t executable = nullptr;
-    try {
-      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, candidate, 0));
-      const auto nodes = find_update_nodes(candidate);
-      reset();
-      executable_  = executable;
-      graph_       = candidate;
-      addresses_   = addresses;
-      gather_node_ = nodes[0];
-      clip_node_   = nodes[1];
-      return true;
-    } catch (...) {
-      if (executable != nullptr) {
-        CUDA_CHECK_NT(cudaGraphExecDestroy(executable));
-      }
-      CUDA_CHECK_NT(cudaGraphDestroy(candidate));
       throw;
     }
   }
@@ -283,43 +227,8 @@ private:
     }
   }
 
-  static std::array<cudaGraphNode_t, 2> find_update_nodes(cudaGraph_t graph) {
-    size_t node_count = 0;
-    CUDA_CHECK(cudaGraphGetNodes(graph, nullptr, &node_count));
-    std::vector<cudaGraphNode_t> nodes(node_count);
-    CUDA_CHECK(cudaGraphGetNodes(graph, nodes.data(), &node_count));
-
-    cudaGraphNode_t gather_node = nullptr;
-    cudaGraphNode_t clip_node   = nullptr;
-    for (const auto node : nodes) {
-      cudaGraphNodeType type{};
-      CUDA_CHECK(cudaGraphNodeGetType(node, &type));
-      if (type != cudaGraphNodeTypeKernel) {
-        continue;
-      }
-
-      cudaKernelNodeParams params{};
-      CUDA_CHECK(cudaGraphKernelNodeGetParams(node, &params));
-      if (params.func == reinterpret_cast<void *>(gather_roi_kernel)) {
-        HOLOVIBES_CHECK(gather_node == nullptr, "Multiple gather kernels in percentile clip graph");
-        gather_node = node;
-      } else if (params.func == reinterpret_cast<void *>(clip_kernel)) {
-        HOLOVIBES_CHECK(clip_node == nullptr, "Multiple clip kernels in percentile clip graph");
-        clip_node = node;
-      }
-    }
-
-    HOLOVIBES_CHECK(gather_node != nullptr, "Missing gather kernel in percentile clip graph");
-    HOLOVIBES_CHECK(clip_node != nullptr, "Missing clip kernel in percentile clip graph");
-    return {gather_node, clip_node};
-  }
-
-  // Kernel-node executable updates require their originating graph nodes to stay alive.
-  cudaGraph_t     graph_       = nullptr;
-  cudaGraphExec_t executable_  = nullptr;
-  Addresses       addresses_   = {};
-  cudaGraphNode_t gather_node_ = nullptr;
-  cudaGraphNode_t clip_node_   = nullptr;
+  cudaGraphExec_t executable_ = nullptr;
+  Addresses       addresses_  = {};
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -350,36 +259,13 @@ public:
       return enqueue(ctx);
     }
 
-    if (graph_.matches(addresses)) {
-      graph_.launch(stream_);
+    const auto graph = std::find_if(
+        graphs_.begin(), graphs_.end(),
+        [&addresses](const PctClipCudaGraph &candidate) { return candidate.matches(addresses); });
+    if (graph != graphs_.end()) {
+      graph->launch(stream_);
+      graphs_.splice(graphs_.begin(), graphs_, graph);
       return holoflow::core::OpResult::Ok;
-    }
-
-    if (graph_.matches_output(addresses)) {
-      try {
-        // Only these two custom kernels consume the rotating sliding-average input. CUB's
-        // captured nodes use stable scratch and output addresses and do not need updating.
-        update_graph_input(ctx, addresses);
-        graph_.launch(stream_);
-        return holoflow::core::OpResult::Ok;
-      } catch (const std::exception &error) {
-        logger()->warn("[PctClip] CUDA Graph input update failed; recapturing: {}", error.what());
-        graph_.reset();
-      }
-    } else if (graph_.ready() && graph_capture_enabled_) {
-      try {
-        const bool updated = graph_.update(
-            stream_, addresses, [&]() { return enqueue(ctx) == holoflow::core::OpResult::Ok; });
-        if (updated) {
-          graph_.launch(stream_);
-          return holoflow::core::OpResult::Ok;
-        }
-        graph_capture_enabled_ = false;
-      } catch (const std::exception &error) {
-        logger()->warn("[PctClip] CUDA Graph executable update failed; recapturing: {}",
-                       error.what());
-        graph_.reset();
-      }
     }
 
     const auto result = enqueue(ctx);
@@ -401,51 +287,23 @@ public:
   const holoflow::core::TDesc &idesc() const { return idesc_; }
 
 private:
-  void update_graph_input(holoflow::core::SyncCtx           &ctx,
-                          const PctClipCudaGraph::Addresses &addresses) {
-    auto *idata      = reinterpret_cast<const float *>(ctx.inputs[0].data());
-    auto *odata      = reinterpret_cast<float *>(ctx.outputs[0].data());
-    int   count      = static_cast<int>(ctx.inputs[0].desc.num_elements());
-    int   plane_size = static_cast<int>(idesc_.shape[1] * idesc_.shape[2]);
-    auto *roi_values = d_roi_.get();
-    auto *indices    = d_spatial_indices_.get();
-    auto *bounds     = d_bounds_.get();
-
-    constexpr int        block_size    = 256;
-    const int            roi_grid_size = (roi_count_ + block_size - 1) / block_size;
-    void                *gather_args[] = {&roi_values,         &idata,      &indices,
-                                          &spatial_roi_count_, &plane_size, &roi_count_};
-    cudaKernelNodeParams gather_params{
-        .func           = reinterpret_cast<void *>(gather_roi_kernel),
-        .gridDim        = {static_cast<unsigned int>(roi_grid_size), 1, 1},
-        .blockDim       = {block_size, 1, 1},
-        .sharedMemBytes = 0,
-        .kernelParams   = gather_args,
-        .extra          = nullptr,
-    };
-
-    const int            grid_size   = (count + block_size - 1) / block_size;
-    void                *clip_args[] = {&odata, &idata, &count, &bounds};
-    cudaKernelNodeParams clip_params{
-        .func           = reinterpret_cast<void *>(clip_kernel),
-        .gridDim        = {static_cast<unsigned int>(grid_size), 1, 1},
-        .blockDim       = {block_size, 1, 1},
-        .sharedMemBytes = 0,
-        .kernelParams   = clip_args,
-        .extra          = nullptr,
-    };
-
-    graph_.update_input(gather_params, clip_params, addresses);
-  }
+  static constexpr size_t graph_cache_capacity = 128;
 
   void try_capture(holoflow::core::SyncCtx &ctx, const PctClipCudaGraph::Addresses &addresses) {
+    graphs_.emplace_front();
     try {
-      const bool captured = graph_.capture(
+      const bool captured = graphs_.front().capture(
           stream_, addresses, [&]() { return enqueue(ctx) == holoflow::core::OpResult::Ok; });
       if (!captured) {
+        graphs_.pop_front();
         graph_capture_enabled_ = false;
+        return;
+      }
+      if (graphs_.size() > graph_cache_capacity) {
+        graphs_.pop_back();
       }
     } catch (const std::exception &error) {
+      graphs_.pop_front();
       graph_capture_enabled_ = false;
       logger()->warn("[PctClip] CUDA Graph capture disabled: {}", error.what());
     }
@@ -473,20 +331,20 @@ private:
     CUDA_CHECK(cudaGetLastError());
     return holoflow::core::OpResult::Ok;
   }
-  PctClipSettings       settings_;
-  holoflow::core::TDesc idesc_;
-  int                   roi_count_;
-  int                   spatial_roi_count_;
-  int                   min_idx_;
-  int                   max_idx_;
-  DevPtr<int>           d_spatial_indices_;
-  DevPtr<float>         d_bounds_;
-  size_t                sort_tmp_bytes_;
-  DevPtr<uint8_t>       d_sort_tmp_;
-  DevPtr<float>         d_roi_;
-  cudaStream_t          stream_;
-  bool                  graph_capture_enabled_ = true;
-  PctClipCudaGraph      graph_;
+  PctClipSettings             settings_;
+  holoflow::core::TDesc       idesc_;
+  int                         roi_count_;
+  int                         spatial_roi_count_;
+  int                         min_idx_;
+  int                         max_idx_;
+  DevPtr<int>                 d_spatial_indices_;
+  DevPtr<float>               d_bounds_;
+  size_t                      sort_tmp_bytes_;
+  DevPtr<uint8_t>             d_sort_tmp_;
+  DevPtr<float>               d_roi_;
+  cudaStream_t                stream_;
+  bool                        graph_capture_enabled_ = true;
+  std::list<PctClipCudaGraph> graphs_;
 };
 
 } // namespace
