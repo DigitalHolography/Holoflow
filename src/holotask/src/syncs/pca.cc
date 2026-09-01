@@ -1057,8 +1057,7 @@ holoflow::core::InferResult PcaFactory::infer(std::span<const holoflow::core::TD
 
   const auto &input_desc = input_descs.front();
   check(input_desc.rank() >= 3, "expected input rank >= 3");
-  check(input_desc.dtype == holoflow::core::DType::F32,
-        "cuSolverDx PCA currently supports F32 input only");
+  check(input_desc.dtype == holoflow::core::DType::F32, "PCA currently supports F32 input only");
   check(input_desc.mem_loc == holoflow::core::MemLoc::Device, "expected input in device memory");
   check(settings.begin < settings.end, "expected begin < end");
   check(settings.begin >= 0, "expected begin >= 0");
