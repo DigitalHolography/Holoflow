@@ -46,11 +46,907 @@ namespace holotask::syncs {
 namespace {
 
 // -------------------------------------------------------------------------------------------------
-// cuSolverDx device program
+// PCA data model
 // -------------------------------------------------------------------------------------------------
 
+// PCA operates on tensors shaped [..., features, height, width]. All leading dimensions are
+// flattened into independent batches.
+struct PcaLayout {
+  size_t feature_axis;
+  int    features;
+  int    height;
+  int    width;
+  int    samples;
+  size_t batches;
 
-constexpr const char *pca_heev_source = R"cusolverdx(
+  // Strides in elements between consecutive flattened batches.
+  long long input_batch_stride;
+  long long matrix_batch_stride;
+
+  explicit PcaLayout(const holoflow::core::TDesc &desc) {
+    const auto rank = desc.rank();
+
+    feature_axis = rank - 3;
+    features     = static_cast<int>(desc.shape.at(feature_axis));
+    height       = static_cast<int>(desc.shape.at(rank - 2));
+    width        = static_cast<int>(desc.shape.at(rank - 1));
+    samples      = height * width;
+
+    batches = 1;
+    for (size_t axis = 0; axis < feature_axis; ++axis) {
+      batches *= desc.shape.at(axis);
+    }
+
+    input_batch_stride  = static_cast<long long>(features) * samples;
+    matrix_batch_stride = static_cast<long long>(features) * features;
+  }
+
+  [[nodiscard]] long long output_batch_stride(int components) const {
+    return static_cast<long long>(samples) * components;
+  }
+};
+
+struct PcaWorkspace {
+  // The matrix buffer contains covariance matrices before HEEV and eigenvectors afterwards.
+  curaii::unique_device_ptr<float> matrices;
+  curaii::unique_device_ptr<float> eigenvalues;
+  curaii::unique_device_ptr<int>   solver_info;
+
+  explicit PcaWorkspace(const PcaLayout &layout)
+      : matrices(curaii::make_unique_device_ptr<float>(
+            layout.batches * static_cast<size_t>(layout.features) * layout.features)),
+        eigenvalues(curaii::make_unique_device_ptr<float>(layout.batches * layout.features)),
+        solver_info(curaii::make_unique_device_ptr<int>(layout.batches)) {}
+};
+
+// -------------------------------------------------------------------------------------------------
+// CUDA Graph replay
+// -------------------------------------------------------------------------------------------------
+
+using PcaGraphKey = std::array<const void *, 2>;
+
+template <typename Enqueue> cudaGraph_t capture_cuda_graph(cudaStream_t stream, Enqueue &&enqueue) {
+  cudaGraph_t graph     = nullptr;
+  bool        capturing = false;
+
+  try {
+    CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+    capturing = true;
+
+    std::forward<Enqueue>(enqueue)();
+
+    CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
+    capturing = false;
+    return graph;
+  } catch (...) {
+    if (capturing) {
+      cudaGraph_t discarded = nullptr;
+      (void)cudaStreamEndCapture(stream, &discarded);
+      if (discarded != nullptr) {
+        CUDA_CHECK_NT(cudaGraphDestroy(discarded));
+      }
+    } else if (graph != nullptr) {
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+    }
+    throw;
+  }
+}
+
+[[nodiscard]] bool stream_is_capturing(cudaStream_t stream) {
+  cudaStreamCaptureStatus status = cudaStreamCaptureStatusNone;
+  CUDA_CHECK(cudaStreamIsCapturing(stream, &status));
+  return status != cudaStreamCaptureStatusNone;
+}
+
+class PcaCudaGraph {
+public:
+  explicit PcaCudaGraph(PcaGraphKey key) : key_(key) {}
+
+  ~PcaCudaGraph() noexcept {
+    if (executable_ != nullptr) {
+      CUDA_CHECK_NT(cudaGraphExecDestroy(executable_));
+    }
+  }
+
+  PcaCudaGraph(const PcaCudaGraph &)            = delete;
+  PcaCudaGraph &operator=(const PcaCudaGraph &) = delete;
+
+  [[nodiscard]] bool matches(const PcaGraphKey &key) const noexcept {
+    return executable_ != nullptr && key_ == key;
+  }
+
+  void launch(cudaStream_t stream) const { CUDA_CHECK(cudaGraphLaunch(executable_, stream)); }
+
+  template <typename Enqueue> void capture(cudaStream_t stream, Enqueue &&enqueue) {
+    cudaGraph_t graph = capture_cuda_graph(stream, std::forward<Enqueue>(enqueue));
+
+    try {
+      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable_, graph, 0));
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+    } catch (...) {
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+      throw;
+    }
+  }
+
+private:
+  PcaGraphKey     key_{};
+  cudaGraphExec_t executable_{nullptr};
+};
+
+class PcaGraphCache {
+public:
+  void invalidate() {
+    graphs_.clear();
+    capture_enabled_ = true;
+  }
+
+  void enable_capture() noexcept { capture_enabled_ = true; }
+
+  [[nodiscard]] bool try_launch(const PcaGraphKey &key, cudaStream_t stream) {
+    const auto graph = std::find_if(graphs_.begin(), graphs_.end(),
+                                    [&](const PcaCudaGraph &entry) { return entry.matches(key); });
+
+    if (graph == graphs_.end()) {
+      return false;
+    }
+
+    graph->launch(stream);
+    graphs_.splice(graphs_.begin(), graphs_, graph);
+    return true;
+  }
+
+  template <typename Enqueue>
+  void try_capture(const PcaGraphKey &key, cudaStream_t stream, Enqueue &&enqueue) {
+    if (!capture_enabled_) {
+      return;
+    }
+
+    bool entry_inserted = false;
+    try {
+      graphs_.emplace_front(key);
+      entry_inserted = true;
+
+      graphs_.front().capture(stream, std::forward<Enqueue>(enqueue));
+
+      if (graphs_.size() > capacity) {
+        graphs_.pop_back();
+      }
+    } catch (const std::exception &error) {
+      if (entry_inserted) {
+        graphs_.pop_front();
+      }
+      capture_enabled_ = false;
+      logger()->warn("[Pca] CUDA Graph capture disabled: {}", error.what());
+    }
+  }
+
+private:
+  // cuBLAS and cuSOLVER graph nodes embed their buffer addresses. Cache the finite set of rotating
+  // pipeline buffers instead of attempting to update opaque library nodes.
+  static constexpr size_t capacity = 128;
+
+  bool                    capture_enabled_{true};
+  std::list<PcaCudaGraph> graphs_;
+};
+
+// -------------------------------------------------------------------------------------------------
+// Eigensolver abstraction
+// -------------------------------------------------------------------------------------------------
+
+class Eigensolver {
+public:
+  virtual ~Eigensolver() = default;
+
+  Eigensolver(const Eigensolver &)            = delete;
+  Eigensolver &operator=(const Eigensolver &) = delete;
+
+  [[nodiscard]] virtual bool is_compatible_stream(cudaStream_t stream) const = 0;
+
+  virtual void solve(float *matrices, float *eigenvalues, int *info, cudaStream_t stream) = 0;
+
+protected:
+  Eigensolver() = default;
+};
+
+std::unique_ptr<Eigensolver> make_eigensolver(const PcaLayout    &layout,
+                                              const PcaWorkspace &workspace, cudaStream_t stream);
+
+// -------------------------------------------------------------------------------------------------
+// PCA task
+// -------------------------------------------------------------------------------------------------
+
+class PcaTask final : public holoflow::core::ISyncTask {
+public:
+  PcaTask(const PcaSettings &settings, const holoflow::core::TDesc &input_desc,
+          const holoflow::core::SyncCreateCtx &ctx)
+      : settings_(settings), input_desc_(input_desc), layout_(input_desc), stream_(ctx.stream),
+        workspace_(layout_) {
+    CUBLAS_CHECK(cublasSetStream(cublas_.get(), stream_));
+    eigensolver_ = make_eigensolver(layout_, workspace_, stream_);
+  }
+
+  [[nodiscard]] bool can_reuse(const holoflow::core::TDesc &input_desc, cudaStream_t stream) const {
+    return input_desc.shape == input_desc_.shape && input_desc.strides == input_desc_.strides &&
+           input_desc.dtype == input_desc_.dtype && input_desc.mem_loc == input_desc_.mem_loc &&
+           eigensolver_->is_compatible_stream(stream);
+  }
+
+  void reconfigure(const PcaSettings &settings, cudaStream_t stream) {
+    if (settings_ != settings) {
+      settings_ = settings;
+      graph_cache_.invalidate();
+    }
+
+    if (stream_ != stream) {
+      stream_ = stream;
+      CUBLAS_CHECK(cublasSetStream(cublas_.get(), stream_));
+
+      // Graph executables are not tied to the stream on which they were captured. Reusing them is
+      // valid here because can_reuse() already guarantees that the CUDA context is unchanged.
+      graph_cache_.enable_capture();
+    }
+  }
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    nvtx3::scoped_range range("PCA Sync Task");
+
+    if (stream_ == nullptr || stream_is_capturing(stream_)) {
+      return enqueue(ctx);
+    }
+
+    const PcaGraphKey key{ctx.inputs[0].data(), ctx.outputs[0].data()};
+    if (graph_cache_.try_launch(key, stream_)) {
+      return holoflow::core::OpResult::Ok;
+    }
+
+    const auto result = enqueue(ctx);
+    if (result == holoflow::core::OpResult::Ok) {
+      graph_cache_.try_capture(key, stream_, [&]() { (void)enqueue(ctx); });
+    }
+    return result;
+  }
+
+private:
+  holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx) {
+    auto *input  = reinterpret_cast<float *>(ctx.inputs[0].data());
+    auto *output = reinterpret_cast<float *>(ctx.outputs[0].data());
+
+    enqueue_covariance(input);
+    enqueue_eigendecomposition();
+    enqueue_projection(input, output);
+
+    return holoflow::core::OpResult::Ok;
+  }
+
+  void enqueue_covariance(const float *input) {
+    nvtx3::scoped_range range("PCA covariance");
+
+    constexpr float alpha = 1.0f;
+    constexpr float beta  = 0.0f;
+
+    // Independent GEMMs preserve cuBLAS Split-K selection for the large sample dimension.
+    for (size_t batch = 0; batch < layout_.batches; ++batch) {
+      const auto input_offset  = static_cast<long long>(batch) * layout_.input_batch_stride;
+      const auto matrix_offset = static_cast<long long>(batch) * layout_.matrix_batch_stride;
+
+      CUBLAS_CHECK(cublasGemmEx(cublas_.get(), CUBLAS_OP_T, CUBLAS_OP_N, layout_.features,
+                                layout_.features, layout_.samples, &alpha, input + input_offset,
+                                CUDA_R_32F, layout_.samples, input + input_offset, CUDA_R_32F,
+                                layout_.samples, &beta, workspace_.matrices.get() + matrix_offset,
+                                CUDA_R_32F, layout_.features, CUBLAS_COMPUTE_32F_FAST_16F,
+                                CUBLAS_GEMM_DEFAULT));
+    }
+  }
+
+  void enqueue_eigendecomposition() {
+    nvtx3::scoped_range range("PCA eigendecomposition");
+
+    eigensolver_->solve(workspace_.matrices.get(), workspace_.eigenvalues.get(),
+                        workspace_.solver_info.get(), stream_);
+  }
+
+  void enqueue_projection(const float *input, float *output) {
+    nvtx3::scoped_range range("PCA projection");
+
+    constexpr float alpha = 1.0f;
+    constexpr float beta  = 0.0f;
+
+    const int components = settings_.components();
+
+    const auto eigenvector_offset = static_cast<long long>(settings_.begin) * layout_.features;
+    const auto output_stride      = layout_.output_batch_stride(components);
+
+    for (size_t batch = 0; batch < layout_.batches; ++batch) {
+      const auto input_offset  = static_cast<long long>(batch) * layout_.input_batch_stride;
+      const auto matrix_offset = static_cast<long long>(batch) * layout_.matrix_batch_stride;
+      const auto output_offset = static_cast<long long>(batch) * output_stride;
+
+      CUBLAS_CHECK(
+          cublasGemmEx(cublas_.get(), CUBLAS_OP_N, CUBLAS_OP_N, layout_.samples, components,
+                       layout_.features, &alpha, input + input_offset, CUDA_R_32F, layout_.samples,
+                       workspace_.matrices.get() + matrix_offset + eigenvector_offset, CUDA_R_32F,
+                       layout_.features, &beta, output + output_offset, CUDA_R_32F, layout_.samples,
+                       CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
+    }
+  }
+
+  PcaSettings           settings_;
+  holoflow::core::TDesc input_desc_;
+  PcaLayout             layout_;
+  cudaStream_t          stream_;
+
+  curaii::CublasHandle         cublas_;
+  PcaWorkspace                 workspace_;
+  std::unique_ptr<Eigensolver> eigensolver_;
+  PcaGraphCache                graph_cache_;
+};
+
+// -------------------------------------------------------------------------------------------------
+// CUDA Driver API support
+// -------------------------------------------------------------------------------------------------
+
+std::string driver_error_message(CUresult result, const char *expression, const char *file,
+                                 int line) {
+  const char *name    = nullptr;
+  const char *message = nullptr;
+  (void)cuGetErrorName(result, &name);
+  (void)cuGetErrorString(result, &message);
+
+  return std::format("CUDA Driver error: {} ({})\n  expression : {}\n  location   : {}:{}",
+                     message != nullptr ? message : "unknown",
+                     name != nullptr ? name : std::to_string(static_cast<int>(result)), expression,
+                     file, line);
+}
+
+void driver_check(CUresult result, const char *expression, const char *file, int line) {
+  if (result == CUDA_SUCCESS) {
+    return;
+  }
+
+  const auto message = driver_error_message(result, expression, file, line);
+  logger()->error("{}", message);
+  throw std::runtime_error(message);
+}
+
+#define PCA_DRIVER_CHECK(expr) driver_check((expr), #expr, __FILE__, __LINE__)
+
+class ScopedCudaContext {
+public:
+  explicit ScopedCudaContext(CUcontext context) {
+    CUcontext current = nullptr;
+    PCA_DRIVER_CHECK(cuCtxGetCurrent(&current));
+
+    if (current != context) {
+      PCA_DRIVER_CHECK(cuCtxPushCurrent(context));
+      pushed_ = true;
+    }
+  }
+
+  ~ScopedCudaContext() noexcept {
+    if (!pushed_) {
+      return;
+    }
+
+    CUcontext  popped = nullptr;
+    const auto result = cuCtxPopCurrent(&popped);
+    if (result != CUDA_SUCCESS) {
+      logger()->critical("{}", driver_error_message(result, "cuCtxPopCurrent", __FILE__, __LINE__));
+      std::abort();
+    }
+  }
+
+  ScopedCudaContext(const ScopedCudaContext &)            = delete;
+  ScopedCudaContext &operator=(const ScopedCudaContext &) = delete;
+
+private:
+  bool pushed_{false};
+};
+
+CUcontext cuda_context_for_stream(cudaStream_t stream) {
+  CUcontext context = nullptr;
+
+  if (stream != nullptr) {
+    PCA_DRIVER_CHECK(cuStreamGetCtx(reinterpret_cast<CUstream>(stream), &context));
+  } else {
+    PCA_DRIVER_CHECK(cuCtxGetCurrent(&context));
+  }
+
+  if (context == nullptr) {
+    throw std::runtime_error("PCA eigensolver requires an active CUDA context");
+  }
+
+  return context;
+}
+
+template <typename T> T read_module_constant(CUmodule module, const char *name) {
+  CUdeviceptr address = 0;
+  size_t      size    = 0;
+
+  PCA_DRIVER_CHECK(cuModuleGetGlobal(&address, &size, module, name));
+  if (size != sizeof(T)) {
+    throw std::runtime_error(
+        std::format("Unexpected size for cuSolverDx module constant {}", name));
+  }
+
+  T value{};
+  PCA_DRIVER_CHECK(cuMemcpyDtoH(&value, address, sizeof(T)));
+  return value;
+}
+
+CUfunction module_function(CUmodule module, const char *name) {
+  CUfunction function = nullptr;
+  PCA_DRIVER_CHECK(cuModuleGetFunction(&function, module, name));
+  return function;
+}
+
+// -------------------------------------------------------------------------------------------------
+// Conventional cuSOLVER eigensolver
+// -------------------------------------------------------------------------------------------------
+
+class CusolverEigensolver final : public Eigensolver {
+public:
+  CusolverEigensolver(int features, size_t batches, float *matrices, float *eigenvalues,
+                      cudaStream_t stream)
+      : features_(features), batches_(batches), context_(cuda_context_for_stream(stream)),
+        handle_(std::make_unique<curaii::CusolverDnHandle>()),
+        params_(std::make_unique<curaii::CusolverDnParams>()) {
+    if (batches_ > static_cast<size_t>((std::numeric_limits<int64_t>::max)())) {
+      throw std::invalid_argument("[Pca] Batch count exceeds the cuSOLVER API limit");
+    }
+
+    CUSOLVER_CHECK(cusolverDnSetStream(handle_->get(), stream));
+    CUSOLVER_CHECK(cusolverDnXsyevBatched_bufferSize(
+        handle_->get(), params_->get(), CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_LOWER, features_,
+        CUDA_R_32F, matrices, features_, CUDA_R_32F, eigenvalues, CUDA_R_32F,
+        &device_workspace_size_, &host_workspace_size_, static_cast<int64_t>(batches_)));
+
+    if (device_workspace_size_ != 0) {
+      device_workspace_ = curaii::make_unique_device_ptr<std::byte>(device_workspace_size_);
+    }
+    host_workspace_.resize(host_workspace_size_);
+  }
+
+  [[nodiscard]] bool is_compatible_stream(cudaStream_t stream) const override {
+    return cuda_context_for_stream(stream) == context_;
+  }
+
+  void solve(float *matrices, float *eigenvalues, int *info, cudaStream_t stream) override {
+    if (!is_compatible_stream(stream)) {
+      throw std::invalid_argument(
+          "[Pca] cuSOLVER eigensolver and PCA stream use different contexts");
+    }
+
+    CUSOLVER_CHECK(cusolverDnSetStream(handle_->get(), stream));
+    CUSOLVER_CHECK(cusolverDnXsyevBatched(
+        handle_->get(), params_->get(), CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_LOWER, features_,
+        CUDA_R_32F, matrices, features_, CUDA_R_32F, eigenvalues, CUDA_R_32F,
+        device_workspace_.get(), device_workspace_size_, host_workspace_.data(),
+        host_workspace_size_, info, static_cast<int64_t>(batches_)));
+  }
+
+private:
+  int       features_;
+  size_t    batches_;
+  CUcontext context_{nullptr};
+
+  std::unique_ptr<curaii::CusolverDnHandle> handle_;
+  std::unique_ptr<curaii::CusolverDnParams> params_;
+
+  curaii::unique_device_ptr<std::byte> device_workspace_;
+  size_t                               device_workspace_size_{0};
+  std::vector<std::byte>               host_workspace_;
+  size_t                               host_workspace_size_{0};
+};
+
+// -------------------------------------------------------------------------------------------------
+// cuSolverDx runtime compilation
+// -------------------------------------------------------------------------------------------------
+
+const char *cusolverdx_source();
+
+namespace cusolverdx_runtime {
+
+struct Assets {
+  std::filesystem::path cuda_include;
+  std::filesystem::path cusolverdx_include;
+  std::filesystem::path cutlass_include;
+  std::filesystem::path cusolverdx_fatbin;
+};
+
+std::string jitlink_error_log(nvJitLinkHandle linker) {
+  size_t size = 0;
+  if (linker == nullptr || nvJitLinkGetErrorLogSize(linker, &size) != NVJITLINK_SUCCESS ||
+      size == 0) {
+    return {};
+  }
+
+  std::vector<char> log(size);
+  if (nvJitLinkGetErrorLog(linker, log.data()) != NVJITLINK_SUCCESS) {
+    return {};
+  }
+
+  return std::string(log.data());
+}
+
+void jitlink_check(nvJitLinkHandle linker, nvJitLinkResult result, const char *expression,
+                   const char *file, int line) {
+  if (result == NVJITLINK_SUCCESS) {
+    return;
+  }
+
+  const auto log     = jitlink_error_log(linker);
+  const auto message = std::format("nvJitLink error: {} at {}:{}\n  expression : {}\n{}",
+                                   static_cast<int>(result), file, line, expression, log);
+  logger()->error("{}", message);
+  throw std::runtime_error(message);
+}
+
+#define PCA_NVJITLINK_CHECK(linker, expr) jitlink_check((linker), (expr), #expr, __FILE__, __LINE__)
+
+std::filesystem::path executable_directory() {
+  std::vector<wchar_t> buffer(MAX_PATH);
+
+  while (true) {
+    const auto length =
+        GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
+
+    if (length == 0) {
+      throw std::runtime_error(
+          std::format("[Pca] Failed to locate the executable (Windows error {})", GetLastError()));
+    }
+
+    if (length < buffer.size() - 1) {
+      return std::filesystem::path(std::wstring(buffer.data(), length)).parent_path();
+    }
+
+    buffer.resize(buffer.size() * 2);
+  }
+}
+
+bool assets_exist(const Assets &assets) {
+  return std::filesystem::is_directory(assets.cuda_include) &&
+         std::filesystem::is_regular_file(assets.cuda_include / "cuda_runtime.h") &&
+         std::filesystem::is_directory(assets.cuda_include / "cccl") &&
+         std::filesystem::is_regular_file(assets.cusolverdx_include / "cusolverdx.hpp") &&
+         std::filesystem::is_regular_file(assets.cusolverdx_include / "cusolverdx_io.hpp") &&
+         std::filesystem::is_directory(assets.cutlass_include) &&
+         std::filesystem::is_regular_file(assets.cusolverdx_fatbin);
+}
+
+Assets locate_assets() {
+  const auto installed_root =
+      (executable_directory() / HOLOFLOW_NVRTC_ASSET_RELATIVE_DIR).lexically_normal();
+
+  const Assets installed{
+      installed_root / "cuda/include",
+      installed_root / "mathdx/include",
+      installed_root / "mathdx/cutlass/include",
+      installed_root / "mathdx/lib/libcusolverdx.fatbin",
+  };
+
+  if (assets_exist(installed)) {
+    return installed;
+  }
+
+  const Assets build{
+      HOLOFLOW_CUDA_INCLUDE_DIR,
+      HOLOFLOW_CUSOLVERDX_INCLUDE_DIR,
+      HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR,
+      HOLOFLOW_CUSOLVERDX_FATBIN,
+  };
+
+  if (assets_exist(build)) {
+    return build;
+  }
+
+  throw std::runtime_error(std::format(
+      "[Pca] cuSolverDx runtime-compilation assets are missing. Expected installed assets under "
+      "'{}' (CUDA headers, cuSolverDx/CommonDx headers, CUTLASS headers, and "
+      "libcusolverdx.fatbin); build-tree fallback is also unavailable",
+      installed_root.string()));
+}
+
+std::vector<char> compile_lto_ir(int features, int solver_sm, int architecture,
+                                 const Assets &assets) {
+  curaii::NvrtcProgram program(cusolverdx_source(), "pca_heev_kernel.cu");
+
+  std::vector<std::string> options = {
+      "--std=c++17",
+      "--device-as-default-execution-space",
+      "-dlto",
+      "--relocatable-device-code=true",
+      std::format("--gpu-architecture=sm_{}", architecture),
+      std::format("-DPCA_FEATURES={}", features),
+      std::format("-DPCA_SOLVER_SM={}", solver_sm),
+      std::format("--include-path={}", assets.cuda_include.string()),
+      std::format("--include-path={}", (assets.cuda_include / "cccl").string()),
+      std::format("--include-path={}", assets.cusolverdx_include.string()),
+      std::format("--include-path={}", assets.cutlass_include.string()),
+  };
+
+  std::vector<const char *> option_ptrs;
+  option_ptrs.reserve(options.size());
+  for (const auto &option : options) {
+    option_ptrs.push_back(option.c_str());
+  }
+
+  const auto compile_result =
+      nvrtcCompileProgram(program.get(), static_cast<int>(option_ptrs.size()), option_ptrs.data());
+
+  if (compile_result != NVRTC_SUCCESS) {
+    size_t log_size = 0;
+    NVRTC_CHECK(nvrtcGetProgramLogSize(program.get(), &log_size));
+
+    std::vector<char> log(log_size);
+    NVRTC_CHECK(nvrtcGetProgramLog(program.get(), log.data()));
+    logger()->error("[Pca] NVRTC compilation log:\n{}", log.data());
+    NVRTC_CHECK(compile_result);
+  }
+
+  size_t lto_size = 0;
+  NVRTC_CHECK(nvrtcGetLTOIRSize(program.get(), &lto_size));
+
+  std::vector<char> lto_ir(lto_size);
+  NVRTC_CHECK(nvrtcGetLTOIR(program.get(), lto_ir.data()));
+  return lto_ir;
+}
+
+std::vector<char> link_cubin(const std::vector<char> &lto_ir, int architecture,
+                             const Assets &assets) {
+  nvJitLinkHandle linker      = nullptr;
+  const auto      arch_option = std::format("-arch=sm_{}", architecture);
+  const char     *options[]   = {"-lto", arch_option.c_str()};
+
+  PCA_NVJITLINK_CHECK(linker, nvJitLinkCreate(&linker, 2, options));
+
+  try {
+    PCA_NVJITLINK_CHECK(linker, nvJitLinkAddFile(linker, NVJITLINK_INPUT_FATBIN,
+                                                 assets.cusolverdx_fatbin.string().c_str()));
+    PCA_NVJITLINK_CHECK(linker, nvJitLinkAddData(linker, NVJITLINK_INPUT_LTOIR,
+                                                 const_cast<char *>(lto_ir.data()), lto_ir.size(),
+                                                 "pca_heev_lto_ir"));
+    PCA_NVJITLINK_CHECK(linker, nvJitLinkComplete(linker));
+
+    size_t cubin_size = 0;
+    PCA_NVJITLINK_CHECK(linker, nvJitLinkGetLinkedCubinSize(linker, &cubin_size));
+
+    std::vector<char> cubin(cubin_size);
+    PCA_NVJITLINK_CHECK(linker, nvJitLinkGetLinkedCubin(linker, cubin.data()));
+    PCA_NVJITLINK_CHECK(linker, nvJitLinkDestroy(&linker));
+    return cubin;
+  } catch (...) {
+    if (linker != nullptr) {
+      (void)nvJitLinkDestroy(&linker);
+    }
+    throw;
+  }
+}
+
+std::vector<char> compile_cubin(int features, int solver_sm, int architecture) {
+  const auto assets = locate_assets();
+  const auto lto_ir = compile_lto_ir(features, solver_sm, architecture, assets);
+  return link_cubin(lto_ir, architecture, assets);
+}
+
+} // namespace cusolverdx_runtime
+
+// -------------------------------------------------------------------------------------------------
+// cuSolverDx eigensolver
+// -------------------------------------------------------------------------------------------------
+
+struct DxKernel {
+  CUfunction   function{nullptr};
+  unsigned int block_x{0};
+  unsigned int shared_memory{0};
+};
+
+class CusolverDxEigensolver final : public Eigensolver {
+public:
+  CusolverDxEigensolver(int features, size_t batches, cudaStream_t stream)
+      : features_(features), batches_(batches) {
+    CUDA_CHECK(cudaGetDevice(&device_));
+
+    int major = 0;
+    int minor = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device_));
+    CUDA_CHECK(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device_));
+
+    architecture_       = major * 10 + minor;
+    const int solver_sm = architecture_ * 10;
+
+    PCA_DRIVER_CHECK(cuInit(0));
+    context_ = cuda_context_for_stream(stream);
+
+    ScopedCudaContext context_guard(context_);
+
+    const auto cubin = cusolverdx_runtime::compile_cubin(features_, solver_sm, architecture_);
+    PCA_DRIVER_CHECK(cuModuleLoadDataEx(&module_, cubin.data(), 0, nullptr, nullptr));
+
+    try {
+      load_kernel_configuration();
+      configure_shared_memory();
+    } catch (...) {
+      (void)cuModuleUnload(module_);
+      module_ = nullptr;
+      throw;
+    }
+  }
+
+  ~CusolverDxEigensolver() noexcept override {
+    if (module_ == nullptr) {
+      return;
+    }
+
+    try {
+      ScopedCudaContext context_guard(context_);
+      const auto        result = cuModuleUnload(module_);
+
+      if (result != CUDA_SUCCESS) {
+        logger()->critical("{}",
+                           driver_error_message(result, "cuModuleUnload", __FILE__, __LINE__));
+        std::abort();
+      }
+    } catch (...) {
+      std::abort();
+    }
+  }
+
+  [[nodiscard]] bool is_compatible_stream(cudaStream_t stream) const override {
+    return cuda_context_for_stream(stream) == context_;
+  }
+
+  void solve(float *matrices, float *eigenvalues, int *info, cudaStream_t stream) override {
+    if (!is_compatible_stream(stream)) {
+      throw std::invalid_argument(
+          "[Pca] cuSolverDx eigensolver and PCA stream use different contexts");
+    }
+
+    const size_t full_batches = (batches_ / batches_per_block_) * batches_per_block_;
+    if (full_batches != 0) {
+      launch_batched(matrices, eigenvalues, info, full_batches, stream);
+    }
+
+    const size_t tail_batches = batches_ - full_batches;
+    if (tail_batches != 0) {
+      launch_tail(matrices, eigenvalues, info, full_batches, tail_batches, stream);
+    }
+  }
+
+private:
+  void load_kernel_configuration() {
+    batched_kernel_ = {
+        .function      = module_function(module_, "pca_heev_batched"),
+        .block_x       = read_module_constant<unsigned int>(module_, "pca_batched_block_x"),
+        .shared_memory = read_module_constant<unsigned int>(module_, "pca_batched_shared_memory"),
+    };
+
+    tail_kernel_ = {
+        .function      = module_function(module_, "pca_heev_tail"),
+        .block_x       = read_module_constant<unsigned int>(module_, "pca_tail_block_x"),
+        .shared_memory = read_module_constant<unsigned int>(module_, "pca_tail_shared_memory"),
+    };
+
+    batches_per_block_ = read_module_constant<unsigned int>(module_, "pca_batches_per_block");
+  }
+
+  void configure_shared_memory() {
+    int max_shared_memory = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&max_shared_memory, cudaDevAttrMaxSharedMemoryPerBlockOptin,
+                                      device_));
+
+    const bool uses_batched = batches_ >= batches_per_block_;
+    const bool uses_tail    = batches_ < batches_per_block_ || (batches_ % batches_per_block_) != 0;
+
+    if (uses_batched &&
+        batched_kernel_.shared_memory > static_cast<unsigned int>(max_shared_memory)) {
+      throw_shared_memory_error(batched_kernel_.shared_memory, max_shared_memory);
+    }
+
+    if (uses_tail && tail_kernel_.shared_memory > static_cast<unsigned int>(max_shared_memory)) {
+      throw_shared_memory_error(tail_kernel_.shared_memory, max_shared_memory);
+    }
+
+    if (uses_batched) {
+      PCA_DRIVER_CHECK(cuFuncSetAttribute(batched_kernel_.function,
+                                          CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                                          static_cast<int>(batched_kernel_.shared_memory)));
+    }
+
+    if (uses_tail) {
+      PCA_DRIVER_CHECK(cuFuncSetAttribute(tail_kernel_.function,
+                                          CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                                          static_cast<int>(tail_kernel_.shared_memory)));
+    }
+  }
+
+  [[noreturn]] void throw_shared_memory_error(unsigned int required, int max_shared_memory) const {
+    throw std::runtime_error(
+        std::format("[Pca] cuSolverDx HEEV for {} features requires {} bytes of dynamic "
+                    "shared memory, but device sm_{} provides {} bytes",
+                    features_, required, architecture_, max_shared_memory));
+  }
+
+  void launch_batched(float *matrices, float *eigenvalues, int *info, size_t full_batches,
+                      cudaStream_t stream) const {
+    CUdeviceptr matrix_arg      = reinterpret_cast<CUdeviceptr>(matrices);
+    CUdeviceptr eigenvalues_arg = reinterpret_cast<CUdeviceptr>(eigenvalues);
+    CUdeviceptr info_arg        = reinterpret_cast<CUdeviceptr>(info);
+    auto        batch_arg       = static_cast<unsigned int>(full_batches);
+    void       *arguments[]     = {&matrix_arg, &eigenvalues_arg, &info_arg, &batch_arg};
+
+    PCA_DRIVER_CHECK(cuLaunchKernel(batched_kernel_.function,
+                                    static_cast<unsigned int>(full_batches / batches_per_block_), 1,
+                                    1, batched_kernel_.block_x, 1, 1, batched_kernel_.shared_memory,
+                                    reinterpret_cast<CUstream>(stream), arguments, nullptr));
+  }
+
+  void launch_tail(float *matrices, float *eigenvalues, int *info, size_t full_batches,
+                   size_t tail_batches, cudaStream_t stream) const {
+    const size_t matrix_offset = full_batches * static_cast<size_t>(features_) * features_;
+    const size_t value_offset  = full_batches * static_cast<size_t>(features_);
+
+    CUdeviceptr matrix_arg      = reinterpret_cast<CUdeviceptr>(matrices + matrix_offset);
+    CUdeviceptr eigenvalues_arg = reinterpret_cast<CUdeviceptr>(eigenvalues + value_offset);
+    CUdeviceptr info_arg        = reinterpret_cast<CUdeviceptr>(info + full_batches);
+    auto        batch_arg       = static_cast<unsigned int>(tail_batches);
+    void       *arguments[]     = {&matrix_arg, &eigenvalues_arg, &info_arg, &batch_arg};
+
+    PCA_DRIVER_CHECK(cuLaunchKernel(tail_kernel_.function, static_cast<unsigned int>(tail_batches),
+                                    1, 1, tail_kernel_.block_x, 1, 1, tail_kernel_.shared_memory,
+                                    reinterpret_cast<CUstream>(stream), arguments, nullptr));
+  }
+
+  int       features_;
+  size_t    batches_;
+  int       device_{0};
+  int       architecture_{0};
+  CUcontext context_{nullptr};
+  CUmodule  module_{nullptr};
+
+  DxKernel     batched_kernel_;
+  DxKernel     tail_kernel_;
+  unsigned int batches_per_block_{1};
+};
+
+// -------------------------------------------------------------------------------------------------
+// Eigensolver selection
+// -------------------------------------------------------------------------------------------------
+
+constexpr int cusolverdx_max_features_exclusive = 256;
+
+std::unique_ptr<Eigensolver> make_eigensolver(const PcaLayout    &layout,
+                                              const PcaWorkspace &workspace, cudaStream_t stream) {
+  if (layout.features < cusolverdx_max_features_exclusive) {
+    try {
+      return std::make_unique<CusolverDxEigensolver>(layout.features, layout.batches, stream);
+    } catch (const std::exception &error) {
+      logger()->warn("[Pca] cuSolverDx initialization failed for depth {}: {}\n"
+                     "[Pca] Falling back to the conventional cuSOLVER eigensolver",
+                     layout.features, error.what());
+    }
+  }
+
+  try {
+    return std::make_unique<CusolverEigensolver>(layout.features, layout.batches,
+                                                 workspace.matrices.get(),
+                                                 workspace.eigenvalues.get(), stream);
+  } catch (const std::exception &error) {
+    logger()->error("[Pca] Failed to initialize any GPU eigensolver for depth {}: {}",
+                    layout.features, error.what());
+
+    throw std::runtime_error(std::format("PCA could not initialize a GPU eigensolver for depth {}. "
+                                         "See the terminal log for details.",
+                                         layout.features));
+  }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Embedded cuSolverDx device program
+// -------------------------------------------------------------------------------------------------
+
+const char *cusolverdx_source() {
+  static constexpr char source[] = R"cusolverdx(
 #include <cusolverdx.hpp>
 #include <cusolverdx_io.hpp>
 
@@ -118,712 +1014,11 @@ extern "C" __global__ void pca_heev_tail(float *covariance, float *eigenvalues, 
 }
 )cusolverdx";
 
-// -------------------------------------------------------------------------------------------------
-// CUDA driver support
-// -------------------------------------------------------------------------------------------------
-
-std::string driver_error_message(CUresult result, const char *expression, const char *file,
-                                 int line) {
-  const char *name    = nullptr;
-  const char *message = nullptr;
-  (void)cuGetErrorName(result, &name);
-  (void)cuGetErrorString(result, &message);
-  return std::format("CUDA Driver error: {} ({})\n  expression : {}\n  location   : {}:{}",
-                     message != nullptr ? message : "unknown",
-                     name != nullptr ? name : std::to_string(static_cast<int>(result)), expression,
-                     file, line);
+  return source;
 }
 
-void driver_check(CUresult result, const char *expression, const char *file, int line) {
-  if (result != CUDA_SUCCESS) {
-    const auto message = driver_error_message(result, expression, file, line);
-    logger()->error("{}", message);
-    throw std::runtime_error(message);
-  }
-}
-
-#define PCA_DRIVER_CHECK(expr) driver_check((expr), #expr, __FILE__, __LINE__)
-
-std::string jitlink_error_log(nvJitLinkHandle linker) {
-  size_t size = 0;
-  if (linker == nullptr || nvJitLinkGetErrorLogSize(linker, &size) != NVJITLINK_SUCCESS ||
-      size == 0) {
-    return {};
-  }
-
-  std::vector<char> log(size);
-  if (nvJitLinkGetErrorLog(linker, log.data()) != NVJITLINK_SUCCESS) {
-    return {};
-  }
-  return std::string(log.data());
-}
-
-void jitlink_check(nvJitLinkHandle linker, nvJitLinkResult result, const char *expression,
-                   const char *file, int line) {
-  if (result != NVJITLINK_SUCCESS) {
-    const auto log     = jitlink_error_log(linker);
-    const auto message = std::format("nvJitLink error: {} at {}:{}\n  expression : {}\n{}",
-                                     static_cast<int>(result), file, line, expression, log);
-    logger()->error("{}", message);
-    throw std::runtime_error(message);
-  }
-}
-
-#define PCA_NVJITLINK_CHECK(linker, expr) jitlink_check((linker), (expr), #expr, __FILE__, __LINE__)
-
-class ContextGuard {
-public:
-  explicit ContextGuard(CUcontext context) {
-    PCA_DRIVER_CHECK(cuCtxGetCurrent(&previous_));
-    if (previous_ != context) {
-      PCA_DRIVER_CHECK(cuCtxPushCurrent(context));
-      pushed_ = true;
-    }
-  }
-
-  ~ContextGuard() noexcept {
-    if (pushed_) {
-      CUcontext  popped = nullptr;
-      const auto result = cuCtxPopCurrent(&popped);
-      if (result != CUDA_SUCCESS) {
-        logger()->critical("{}",
-                           driver_error_message(result, "cuCtxPopCurrent", __FILE__, __LINE__));
-        std::abort();
-      }
-    }
-  }
-
-  ContextGuard(const ContextGuard &)            = delete;
-  ContextGuard &operator=(const ContextGuard &) = delete;
-
-private:
-  CUcontext previous_{nullptr};
-  bool      pushed_{false};
-};
-
-template <typename T> T module_constant(CUmodule module, const char *name) {
-  CUdeviceptr address = 0;
-  size_t      size    = 0;
-  PCA_DRIVER_CHECK(cuModuleGetGlobal(&address, &size, module, name));
-  if (size != sizeof(T)) {
-    throw std::runtime_error(
-        std::format("Unexpected size for cuSolverDx module constant {}", name));
-  }
-
-  T value{};
-  PCA_DRIVER_CHECK(cuMemcpyDtoH(&value, address, sizeof(T)));
-  return value;
-}
-
-CUcontext stream_context(cudaStream_t stream) {
-  CUcontext context = nullptr;
-  if (stream != nullptr) {
-    PCA_DRIVER_CHECK(cuStreamGetCtx(reinterpret_cast<CUstream>(stream), &context));
-  } else {
-    PCA_DRIVER_CHECK(cuCtxGetCurrent(&context));
-  }
-  if (context == nullptr) {
-    throw std::runtime_error("PCA cuSolverDx compilation requires an active CUDA context");
-  }
-  return context;
-}
-
-struct NvrtcAssets {
-  std::filesystem::path cuda_include;
-  std::filesystem::path cusolverdx_include;
-  std::filesystem::path cutlass_include;
-  std::filesystem::path cusolverdx_fatbin;
-};
-
-// -------------------------------------------------------------------------------------------------
-// Runtime compilation
-// -------------------------------------------------------------------------------------------------
-
-std::filesystem::path executable_directory() {
-  std::vector<wchar_t> buffer(MAX_PATH);
-  while (true) {
-    const auto length =
-        GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-    if (length == 0) {
-      throw std::runtime_error(
-          std::format("[Pca] Failed to locate the executable (Windows error {})", GetLastError()));
-    }
-    if (length < buffer.size() - 1) {
-      return std::filesystem::path(std::wstring(buffer.data(), length)).parent_path();
-    }
-    buffer.resize(buffer.size() * 2);
-  }
-}
-
-bool assets_exist(const NvrtcAssets &assets) {
-  return std::filesystem::is_directory(assets.cuda_include) &&
-         std::filesystem::is_regular_file(assets.cuda_include / "cuda_runtime.h") &&
-         std::filesystem::is_directory(assets.cuda_include / "cccl") &&
-         std::filesystem::is_regular_file(assets.cusolverdx_include / "cusolverdx.hpp") &&
-         std::filesystem::is_regular_file(assets.cusolverdx_include / "cusolverdx_io.hpp") &&
-         std::filesystem::is_directory(assets.cutlass_include) &&
-         std::filesystem::is_regular_file(assets.cusolverdx_fatbin);
-}
-
-NvrtcAssets nvrtc_assets() {
-  const auto installed_root =
-      (executable_directory() / HOLOFLOW_NVRTC_ASSET_RELATIVE_DIR).lexically_normal();
-  NvrtcAssets installed{
-      installed_root / "cuda/include",
-      installed_root / "mathdx/include",
-      installed_root / "mathdx/cutlass/include",
-      installed_root / "mathdx/lib/libcusolverdx.fatbin",
-  };
-  if (assets_exist(installed)) {
-    return installed;
-  }
-
-  NvrtcAssets build{
-      HOLOFLOW_CUDA_INCLUDE_DIR,
-      HOLOFLOW_CUSOLVERDX_INCLUDE_DIR,
-      HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR,
-      HOLOFLOW_CUSOLVERDX_FATBIN,
-  };
-  if (assets_exist(build)) {
-    return build;
-  }
-
-  throw std::runtime_error(std::format(
-      "[Pca] cuSolverDx runtime-compilation assets are missing. Expected installed assets under "
-      "'{}' (CUDA headers, cuSolverDx/CommonDx headers, CUTLASS headers, and "
-      "libcusolverdx.fatbin); build-tree fallback is also unavailable",
-      installed_root.string()));
-}
-
-std::vector<char> compile_lto_ir(int n_features, int solver_sm, int architecture,
-                                 const NvrtcAssets &assets) {
-  curaii::NvrtcProgram program(pca_heev_source, "pca_heev_kernel.cu");
-
-  std::vector<std::string> options = {
-      "--std=c++17",
-      "--device-as-default-execution-space",
-      "-dlto",
-      "--relocatable-device-code=true",
-      std::format("--gpu-architecture=sm_{}", architecture),
-      std::format("-DPCA_FEATURES={}", n_features),
-      std::format("-DPCA_SOLVER_SM={}", solver_sm),
-      std::format("--include-path={}", assets.cuda_include.string()),
-      std::format("--include-path={}", (assets.cuda_include / "cccl").string()),
-      std::format("--include-path={}", assets.cusolverdx_include.string()),
-      std::format("--include-path={}", assets.cutlass_include.string()),
-  };
-
-  std::vector<const char *> option_ptrs;
-  option_ptrs.reserve(options.size());
-  for (const auto &option : options) {
-    option_ptrs.push_back(option.c_str());
-  }
-
-  const auto compile_result =
-      nvrtcCompileProgram(program.get(), static_cast<int>(option_ptrs.size()), option_ptrs.data());
-  if (compile_result != NVRTC_SUCCESS) {
-    size_t log_size = 0;
-    NVRTC_CHECK(nvrtcGetProgramLogSize(program.get(), &log_size));
-    std::vector<char> log(log_size);
-    NVRTC_CHECK(nvrtcGetProgramLog(program.get(), log.data()));
-    logger()->error("[Pca] NVRTC compilation log:\n{}", log.data());
-    NVRTC_CHECK(compile_result);
-  }
-
-  size_t lto_size = 0;
-  NVRTC_CHECK(nvrtcGetLTOIRSize(program.get(), &lto_size));
-  std::vector<char> lto_ir(lto_size);
-  NVRTC_CHECK(nvrtcGetLTOIR(program.get(), lto_ir.data()));
-  return lto_ir;
-}
-
-std::vector<char> link_cubin(const std::vector<char> &lto_ir, int architecture,
-                             const NvrtcAssets &assets) {
-  nvJitLinkHandle linker      = nullptr;
-  const auto      arch_option = std::format("-arch=sm_{}", architecture);
-  const char     *options[]   = {"-lto", arch_option.c_str()};
-
-  PCA_NVJITLINK_CHECK(linker, nvJitLinkCreate(&linker, 2, options));
-  try {
-    PCA_NVJITLINK_CHECK(linker, nvJitLinkAddFile(linker, NVJITLINK_INPUT_FATBIN,
-                                                 assets.cusolverdx_fatbin.string().c_str()));
-    PCA_NVJITLINK_CHECK(linker, nvJitLinkAddData(linker, NVJITLINK_INPUT_LTOIR,
-                                                 const_cast<char *>(lto_ir.data()), lto_ir.size(),
-                                                 "pca_heev_lto_ir"));
-    PCA_NVJITLINK_CHECK(linker, nvJitLinkComplete(linker));
-
-    size_t cubin_size = 0;
-    PCA_NVJITLINK_CHECK(linker, nvJitLinkGetLinkedCubinSize(linker, &cubin_size));
-    std::vector<char> cubin(cubin_size);
-    PCA_NVJITLINK_CHECK(linker, nvJitLinkGetLinkedCubin(linker, cubin.data()));
-    PCA_NVJITLINK_CHECK(linker, nvJitLinkDestroy(&linker));
-    return cubin;
-  } catch (...) {
-    if (linker != nullptr) {
-      (void)nvJitLinkDestroy(&linker);
-    }
-    throw;
-  }
-}
-
-
-// -------------------------------------------------------------------------------------------------
-// cuSolverDx eigensolver
-// -------------------------------------------------------------------------------------------------
-
-class CusolverDxEigensolver {
-public:
-  CusolverDxEigensolver(int n_features, size_t n_batch, cudaStream_t stream)
-      : n_features(n_features), n_batch(n_batch) {
-    CUDA_CHECK(cudaGetDevice(&device));
-
-    int major = 0;
-    int minor = 0;
-    CUDA_CHECK(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device));
-    CUDA_CHECK(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device));
-    architecture        = major * 10 + minor;
-    const int solver_sm = architecture * 10;
-
-    PCA_DRIVER_CHECK(cuInit(0));
-    context = stream_context(stream);
-    ContextGuard guard(context);
-
-    const auto assets = nvrtc_assets();
-    const auto lto_ir = compile_lto_ir(n_features, solver_sm, architecture, assets);
-    const auto cubin  = link_cubin(lto_ir, architecture, assets);
-
-    PCA_DRIVER_CHECK(cuModuleLoadDataEx(&module, cubin.data(), 0, nullptr, nullptr));
-    try {
-      PCA_DRIVER_CHECK(cuModuleGetFunction(&batched_function, module, "pca_heev_batched"));
-      PCA_DRIVER_CHECK(cuModuleGetFunction(&tail_function, module, "pca_heev_tail"));
-
-      batched_block_x       = module_constant<unsigned int>(module, "pca_batched_block_x");
-      batched_shared_memory = module_constant<unsigned int>(module, "pca_batched_shared_memory");
-      batches_per_block     = module_constant<unsigned int>(module, "pca_batches_per_block");
-      tail_block_x          = module_constant<unsigned int>(module, "pca_tail_block_x");
-      tail_shared_memory    = module_constant<unsigned int>(module, "pca_tail_shared_memory");
-
-      int max_shared_memory = 0;
-      CUDA_CHECK(cudaDeviceGetAttribute(&max_shared_memory, cudaDevAttrMaxSharedMemoryPerBlockOptin,
-                                        device));
-
-      const bool uses_batched = n_batch >= batches_per_block;
-      const bool uses_tail    = n_batch < batches_per_block || (n_batch % batches_per_block) != 0;
-      if ((uses_batched && batched_shared_memory > static_cast<unsigned int>(max_shared_memory)) ||
-          (uses_tail && tail_shared_memory > static_cast<unsigned int>(max_shared_memory))) {
-        const auto required = uses_batched ? batched_shared_memory : tail_shared_memory;
-        throw std::runtime_error(
-            std::format("[Pca] cuSolverDx HEEV for {} features requires {} bytes of dynamic "
-                        "shared memory, but device sm_{} provides {} bytes",
-                        n_features, required, architecture, max_shared_memory));
-      }
-
-      if (uses_batched) {
-        PCA_DRIVER_CHECK(cuFuncSetAttribute(batched_function,
-                                            CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
-                                            static_cast<int>(batched_shared_memory)));
-      }
-      if (uses_tail) {
-        PCA_DRIVER_CHECK(cuFuncSetAttribute(tail_function,
-                                            CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
-                                            static_cast<int>(tail_shared_memory)));
-      }
-    } catch (...) {
-      (void)cuModuleUnload(module);
-      module = nullptr;
-      throw;
-    }
-  }
-
-  ~CusolverDxEigensolver() noexcept {
-    if (module != nullptr) {
-      try {
-        ContextGuard guard(context);
-        const auto   result = cuModuleUnload(module);
-        if (result != CUDA_SUCCESS) {
-          logger()->critical("{}",
-                             driver_error_message(result, "cuModuleUnload", __FILE__, __LINE__));
-          std::abort();
-        }
-      } catch (...) {
-        std::abort();
-      }
-    }
-  }
-
-  [[nodiscard]] bool is_compatible_stream(cudaStream_t stream) const {
-    return stream_context(stream) == context;
-  }
-
-  void launch(float *covariance, float *eigenvalues, int *info, size_t batches,
-              cudaStream_t stream) const {
-    if (batches != n_batch) {
-      throw std::invalid_argument("[Pca] cuSolverDx batch count changed after task creation");
-    }
-    if (!is_compatible_stream(stream)) {
-      throw std::invalid_argument("[Pca] cuSolverDx kernel and PCA stream use different contexts");
-    }
-
-    const size_t full_batches = (batches / batches_per_block) * batches_per_block;
-    if (full_batches != 0) {
-      CUdeviceptr covariance_arg  = reinterpret_cast<CUdeviceptr>(covariance);
-      CUdeviceptr eigenvalues_arg = reinterpret_cast<CUdeviceptr>(eigenvalues);
-      CUdeviceptr info_arg        = reinterpret_cast<CUdeviceptr>(info);
-      auto        batch_arg       = static_cast<unsigned int>(full_batches);
-      void       *arguments[]     = {&covariance_arg, &eigenvalues_arg, &info_arg, &batch_arg};
-
-      PCA_DRIVER_CHECK(cuLaunchKernel(batched_function,
-                                      static_cast<unsigned int>(full_batches / batches_per_block),
-                                      1, 1, batched_block_x, 1, 1, batched_shared_memory,
-                                      reinterpret_cast<CUstream>(stream), arguments, nullptr));
-    }
-
-    const size_t tail_batches = batches - full_batches;
-    if (tail_batches != 0) {
-      const size_t matrix_offset = full_batches * static_cast<size_t>(n_features) * n_features;
-      const size_t value_offset  = full_batches * static_cast<size_t>(n_features);
-
-      CUdeviceptr covariance_arg  = reinterpret_cast<CUdeviceptr>(covariance + matrix_offset);
-      CUdeviceptr eigenvalues_arg = reinterpret_cast<CUdeviceptr>(eigenvalues + value_offset);
-      CUdeviceptr info_arg        = reinterpret_cast<CUdeviceptr>(info + full_batches);
-      auto        batch_arg       = static_cast<unsigned int>(tail_batches);
-      void       *arguments[]     = {&covariance_arg, &eigenvalues_arg, &info_arg, &batch_arg};
-
-      PCA_DRIVER_CHECK(cuLaunchKernel(tail_function, static_cast<unsigned int>(tail_batches), 1, 1,
-                                      tail_block_x, 1, 1, tail_shared_memory,
-                                      reinterpret_cast<CUstream>(stream), arguments, nullptr));
-    }
-  }
-
-private:
-  int          n_features;
-  size_t       n_batch;
-  int          device{0};
-  int          architecture{0};
-  CUcontext    context{nullptr};
-  CUmodule     module{nullptr};
-  CUfunction   batched_function{nullptr};
-  CUfunction   tail_function{nullptr};
-  unsigned int batched_block_x{0};
-  unsigned int batched_shared_memory{0};
-  unsigned int batches_per_block{1};
-  unsigned int tail_block_x{0};
-  unsigned int tail_shared_memory{0};
-};
-
-
-// -------------------------------------------------------------------------------------------------
-// Eigensolver selection and cuSOLVER fallback
-// -------------------------------------------------------------------------------------------------
-
-constexpr int cusolver_fallback_min_features = 256;
-
-class PcaEigensolver {
-public:
-  PcaEigensolver(int n_features, size_t n_batch, float *covariance, float *eigenvalues,
-                 cudaStream_t stream)
-      : n_features(n_features), n_batch(n_batch), context(stream_context(stream)) {
-    if (n_features < cusolver_fallback_min_features) {
-      try {
-        cusolverdx = std::make_unique<CusolverDxEigensolver>(n_features, n_batch, stream);
-        return;
-      } catch (const std::exception &e) {
-        logger()->warn("[Pca] cuSolverDx initialization failed for depth {}: {}\n"
-                       "[Pca] Falling back to the conventional cuSOLVER eigensolver",
-                       n_features, e.what());
-      }
-    }
-
-    try {
-      initialize_cusolver(covariance, eigenvalues, stream);
-    } catch (const std::exception &e) {
-      logger()->error("[Pca] Failed to initialize any GPU eigensolver for depth {}: {}", n_features,
-                      e.what());
-      throw std::runtime_error(
-          std::format("PCA could not initialize a GPU eigensolver for depth {}. "
-                      "See the terminal log for details.",
-                      n_features));
-    }
-  }
-
-  void initialize_cusolver(float *covariance, float *eigenvalues, cudaStream_t stream) {
-    if (n_batch > static_cast<size_t>((std::numeric_limits<int64_t>::max)())) {
-      throw std::invalid_argument("[Pca] Batch count exceeds the cuSOLVER API limit");
-    }
-
-    cusolver_handle = std::make_unique<curaii::CusolverDnHandle>();
-    cusolver_params = std::make_unique<curaii::CusolverDnParams>();
-
-    CUSOLVER_CHECK(cusolverDnSetStream(cusolver_handle->get(), stream));
-    CUSOLVER_CHECK(cusolverDnXsyevBatched_bufferSize(
-        cusolver_handle->get(), cusolver_params->get(), CUSOLVER_EIG_MODE_VECTOR,
-        CUBLAS_FILL_MODE_LOWER, n_features, CUDA_R_32F, covariance, n_features, CUDA_R_32F,
-        eigenvalues, CUDA_R_32F, &device_workspace_size, &host_workspace_size,
-        static_cast<int64_t>(n_batch)));
-
-    if (device_workspace_size != 0) {
-      device_workspace = curaii::make_unique_device_ptr<std::byte>(device_workspace_size);
-    }
-    host_workspace.resize(host_workspace_size);
-  }
-
-  [[nodiscard]] bool is_compatible_stream(cudaStream_t stream) const {
-    return stream_context(stream) == context;
-  }
-
-  void launch(float *covariance, float *eigenvalues, int *info, size_t batches,
-              cudaStream_t stream) {
-    if (batches != n_batch) {
-      throw std::invalid_argument("[Pca] Eigensolver batch count changed after task creation");
-    }
-    if (!is_compatible_stream(stream)) {
-      throw std::invalid_argument("[Pca] Eigensolver and PCA stream use different contexts");
-    }
-
-    if (cusolverdx != nullptr) {
-      cusolverdx->launch(covariance, eigenvalues, info, batches, stream);
-      return;
-    }
-
-    CUSOLVER_CHECK(cusolverDnSetStream(cusolver_handle->get(), stream));
-    CUSOLVER_CHECK(cusolverDnXsyevBatched(
-        cusolver_handle->get(), cusolver_params->get(), CUSOLVER_EIG_MODE_VECTOR,
-        CUBLAS_FILL_MODE_LOWER, n_features, CUDA_R_32F, covariance, n_features, CUDA_R_32F,
-        eigenvalues, CUDA_R_32F, device_workspace.get(), device_workspace_size,
-        host_workspace.data(), host_workspace_size, info, static_cast<int64_t>(batches)));
-  }
-
-private:
-  int                                       n_features;
-  size_t                                    n_batch;
-  CUcontext                                 context{nullptr};
-  std::unique_ptr<CusolverDxEigensolver>    cusolverdx;
-  std::unique_ptr<curaii::CusolverDnHandle> cusolver_handle;
-  std::unique_ptr<curaii::CusolverDnParams> cusolver_params;
-  curaii::unique_device_ptr<std::byte>      device_workspace;
-  size_t                                    device_workspace_size{0};
-  std::vector<std::byte>                    host_workspace;
-  size_t                                    host_workspace_size{0};
-};
-
-
-// -------------------------------------------------------------------------------------------------
-// PCA task implementation
-// -------------------------------------------------------------------------------------------------
-
-using PcaGraphAddresses = std::array<const void *, 2>;
-
-template <typename Enqueue> cudaGraph_t capture_pca_graph(cudaStream_t stream, Enqueue &&enqueue) {
-  cudaGraph_t graph     = nullptr;
-  bool        capturing = false;
-  try {
-    CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
-    capturing = true;
-    std::forward<Enqueue>(enqueue)();
-    CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
-    capturing = false;
-    return graph;
-  } catch (...) {
-    if (capturing) {
-      cudaGraph_t discarded = nullptr;
-      (void)cudaStreamEndCapture(stream, &discarded);
-      if (discarded != nullptr) {
-        CUDA_CHECK_NT(cudaGraphDestroy(discarded));
-      }
-    } else if (graph != nullptr) {
-      CUDA_CHECK_NT(cudaGraphDestroy(graph));
-    }
-    throw;
-  }
-}
-
-class PcaCudaGraph {
-public:
-  explicit PcaCudaGraph(PcaGraphAddresses addresses) : addresses_(addresses) {}
-  ~PcaCudaGraph() noexcept {
-    if (executable_ != nullptr) {
-      CUDA_CHECK_NT(cudaGraphExecDestroy(executable_));
-    }
-  }
-
-  PcaCudaGraph(const PcaCudaGraph &)            = delete;
-  PcaCudaGraph &operator=(const PcaCudaGraph &) = delete;
-
-  [[nodiscard]] bool matches(const PcaGraphAddresses &addresses) const noexcept {
-    return executable_ != nullptr && addresses_ == addresses;
-  }
-
-  void launch(cudaStream_t stream) const { CUDA_CHECK(cudaGraphLaunch(executable_, stream)); }
-
-  template <typename Enqueue> void capture(cudaStream_t stream, Enqueue &&enqueue) {
-    cudaGraph_t graph = capture_pca_graph(stream, std::forward<Enqueue>(enqueue));
-    try {
-      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable_, graph, 0));
-      CUDA_CHECK_NT(cudaGraphDestroy(graph));
-    } catch (...) {
-      CUDA_CHECK_NT(cudaGraphDestroy(graph));
-      throw;
-    }
-  }
-
-private:
-  PcaGraphAddresses addresses_  = {};
-  cudaGraphExec_t   executable_ = nullptr;
-};
-
-class PcaTask : public holoflow::core::ISyncTask {
-public:
-  // n_features: size of the feature dimension (shape[-3])
-  // n_batch:    product of all leading dimensions (1 for rank-3 input)
-  PcaTask(const PcaSettings &settings, const holoflow::core::TDesc &idesc,
-          const holoflow::core::SyncCreateCtx &ctx, int n_features, size_t n_batch)
-      : settings_(settings), idesc_(idesc), stream_(ctx.stream), n_features_(n_features),
-        n_batch_(n_batch) {
-
-    const auto cov_elems = n_batch_ * static_cast<size_t>(n_features_) * n_features_;
-    d_cov_               = curaii::make_unique_device_ptr<float>(cov_elems);
-    d_eigvals_           = curaii::make_unique_device_ptr<float>(n_batch_ * n_features_);
-    d_info_              = curaii::make_unique_device_ptr<int>(n_batch_);
-
-    CUBLAS_CHECK(cublasSetStream(cublas_handle_.get(), stream_));
-    eigensolver_ = std::make_unique<PcaEigensolver>(n_features_, n_batch_, d_cov_.get(),
-                                                    d_eigvals_.get(), stream_);
-  }
-
-  const holoflow::core::TDesc &get_idesc() const { return idesc_; }
-  const PcaSettings           &get_settings() const { return settings_; }
-  bool                         is_compatible_stream(cudaStream_t stream) const {
-    return eigensolver_->is_compatible_stream(stream);
-  }
-
-  void update_settings(const PcaSettings &settings, cudaStream_t stream) {
-    if (settings_ != settings) {
-      graphs_.clear();
-      graph_capture_enabled_ = true;
-    }
-    settings_ = settings;
-    if (stream_ != stream) {
-      stream_                = stream;
-      graph_capture_enabled_ = true;
-      CUBLAS_CHECK(cublasSetStream(cublas_handle_.get(), stream_));
-    }
-  }
-
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    nvtx3::scoped_range     r("PCA Sync Task");
-    const PcaGraphAddresses addresses{ctx.inputs[0].data(), ctx.outputs[0].data()};
-    if (stream_ == nullptr) {
-      return enqueue(ctx);
-    }
-
-    cudaStreamCaptureStatus capture_status = cudaStreamCaptureStatusNone;
-    CUDA_CHECK(cudaStreamIsCapturing(stream_, &capture_status));
-    if (capture_status != cudaStreamCaptureStatusNone) {
-      return enqueue(ctx);
-    }
-
-    const auto graph =
-        std::find_if(graphs_.begin(), graphs_.end(), [&addresses](const PcaCudaGraph &candidate) {
-          return candidate.matches(addresses);
-        });
-    if (graph != graphs_.end()) {
-      graph->launch(stream_);
-      graphs_.splice(graphs_.begin(), graphs_, graph);
-      return holoflow::core::OpResult::Ok;
-    }
-
-    const auto result = enqueue(ctx);
-    if (result != holoflow::core::OpResult::Ok || !graph_capture_enabled_) {
-      return result;
-    }
-
-    graphs_.emplace_front(addresses);
-    try {
-      graphs_.front().capture(stream_, [&]() { (void)enqueue(ctx); });
-      if (graphs_.size() > graph_cache_capacity) {
-        graphs_.pop_back();
-      }
-    } catch (const std::exception &error) {
-      graphs_.pop_front();
-      graph_capture_enabled_ = false;
-      logger()->warn("[Pca] CUDA Graph capture disabled: {}", error.what());
-    }
-    return result;
-  }
-
-private:
-  // cuBLAS and cuSOLVER graph nodes embed their buffer addresses. Cache the finite set of rotating
-  // pipeline buffers instead of attempting to update opaque library nodes.
-  static constexpr size_t graph_cache_capacity = 128;
-
-  holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx) {
-    auto &iview = ctx.inputs[0];
-    auto &oview = ctx.outputs[0];
-    auto *idata = reinterpret_cast<float *>(iview.data());
-    auto *odata = reinterpret_cast<float *>(oview.data());
-
-    const auto     &idesc      = iview.desc;
-    const int       rank       = static_cast<int>(idesc.shape.size());
-    const int       height     = static_cast<int>(idesc.shape.at(static_cast<size_t>(rank - 2)));
-    const int       width      = static_cast<int>(idesc.shape.at(static_cast<size_t>(rank - 1)));
-    const int       n_samples  = height * width;
-    const int       components = settings_.components();
-    constexpr float alpha      = 1.0f;
-    constexpr float beta       = 0.0f;
-
-    // Strides (in elements) between consecutive batch slices
-    const long long stride_I = static_cast<long long>(n_features_) * n_samples;
-    const long long stride_C = static_cast<long long>(n_features_) * n_features_;
-    const long long stride_O = static_cast<long long>(n_samples) * components;
-
-    {
-      nvtx3::scoped_range covariance_range("PCA covariance");
-      // Independent GEMMs preserve cuBLAS Split-K selection for the large sample dimension.
-      for (size_t b = 0; b < n_batch_; ++b) {
-        CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_T, CUBLAS_OP_N, n_features_,
-                                  n_features_, n_samples, &alpha, idata + b * stride_I, CUDA_R_32F,
-                                  n_samples, idata + b * stride_I, CUDA_R_32F, n_samples, &beta,
-                                  d_cov_.get() + b * stride_C, CUDA_R_32F, n_features_,
-                                  CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
-      }
-    }
-
-    {
-      nvtx3::scoped_range eigendecomposition_range("PCA eigendecomposition");
-      eigensolver_->launch(d_cov_.get(), d_eigvals_.get(), d_info_.get(), n_batch_, stream_);
-    }
-
-    {
-      nvtx3::scoped_range projection_range("PCA projection");
-      const auto eigenvector_offset = static_cast<long long>(settings_.begin) * n_features_;
-      for (size_t b = 0; b < n_batch_; ++b) {
-        CUBLAS_CHECK(cublasGemmEx(cublas_handle_.get(), CUBLAS_OP_N, CUBLAS_OP_N, n_samples,
-                                  components, n_features_, &alpha, idata + b * stride_I, CUDA_R_32F,
-                                  n_samples, d_cov_.get() + b * stride_C + eigenvector_offset,
-                                  CUDA_R_32F, n_features_, &beta, odata + b * stride_O, CUDA_R_32F,
-                                  n_samples, CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
-      }
-    }
-
-    return holoflow::core::OpResult::Ok;
-  }
-
-  PcaSettings           settings_;
-  holoflow::core::TDesc idesc_;
-  cudaStream_t          stream_;
-  int                   n_features_;
-  size_t                n_batch_;
-
-  curaii::CublasHandle               cublas_handle_;
-  std::unique_ptr<PcaEigensolver>     eigensolver_;
-  curaii::unique_device_ptr<float>    d_cov_;
-  curaii::unique_device_ptr<float>    d_eigvals_;
-  curaii::unique_device_ptr<int>      d_info_;
-
-  bool                    graph_capture_enabled_ = true;
-  std::list<PcaCudaGraph> graphs_;
-};
-
+#undef PCA_NVJITLINK_CHECK
+#undef PCA_DRIVER_CHECK
 
 } // namespace
 
@@ -849,35 +1044,36 @@ void from_json(const nlohmann::json &j, PcaSettings &settings) {
 
 holoflow::core::InferResult PcaFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                               const nlohmann::json &jsettings) const {
-  const auto check = [&](bool condition, const std::string &msg) {
+  const auto check = [&](bool condition, const std::string &message) {
     if (!condition) {
-      logger()->error("[PcaFactory::infer] error: {}", msg);
-      throw std::invalid_argument("PcaFactory inference error: " + msg);
+      logger()->error("[PcaFactory::infer] error: {}", message);
+      throw std::invalid_argument("PcaFactory inference error: " + message);
     }
   };
 
-  auto settings = jsettings.get<PcaSettings>();
+  const auto settings = jsettings.get<PcaSettings>();
 
   check(input_descs.size() == 1, "expected exactly one input");
-  const auto &idesc = input_descs[0];
-  check(idesc.rank() >= 3, "expected input rank >= 3");
-  check(idesc.dtype == holoflow::core::DType::F32,
+
+  const auto &input_desc = input_descs.front();
+  check(input_desc.rank() >= 3, "expected input rank >= 3");
+  check(input_desc.dtype == holoflow::core::DType::F32,
         "cuSolverDx PCA currently supports F32 input only");
-  check(idesc.mem_loc == holoflow::core::MemLoc::Device, "expected input in device memory");
+  check(input_desc.mem_loc == holoflow::core::MemLoc::Device, "expected input in device memory");
   check(settings.begin < settings.end, "expected begin < end");
   check(settings.begin >= 0, "expected begin >= 0");
 
-  const int feat_dim = static_cast<int>(idesc.rank()) - 3;
-  check(settings.end <= static_cast<int>(idesc.shape.at(static_cast<size_t>(feat_dim))),
-        "expected end <= n_features");
+  const PcaLayout layout(input_desc);
+  check(settings.end <= layout.features, "expected end <= n_features");
 
-  auto oshape                              = idesc.shape;
-  oshape.at(static_cast<size_t>(feat_dim)) = static_cast<size_t>(settings.components());
-  holoflow::core::TDesc odesc(oshape, idesc.dtype, idesc.mem_loc);
+  auto output_shape                    = input_desc.shape;
+  output_shape.at(layout.feature_axis) = static_cast<size_t>(settings.components());
+
+  holoflow::core::TDesc output_desc(output_shape, input_desc.dtype, input_desc.mem_loc);
 
   return holoflow::core::InferResult{
-      .input_descs   = {idesc},
-      .output_descs  = {odesc},
+      .input_descs   = {input_desc},
+      .output_descs  = {output_desc},
       .in_place      = {},
       .owned_inputs  = {false},
       .owned_outputs = {false},
@@ -889,21 +1085,9 @@ std::unique_ptr<holoflow::core::ISyncTask>
 PcaFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                    const nlohmann::json                  &jsettings,
                    const holoflow::core::SyncCreateCtx   &ctx) const {
+  this->infer(input_descs, jsettings);
 
-  this->infer(input_descs, jsettings); // Validate bounds & types
-
-  auto        settings = jsettings.get<PcaSettings>();
-  const auto &idesc    = input_descs[0];
-  const int   feat_dim = static_cast<int>(idesc.rank()) - 3;
-  const int   n_feats  = static_cast<int>(idesc.shape.at(static_cast<size_t>(feat_dim)));
-
-  // Flatten all leading dimensions into a single batch count
-  size_t n_batch = 1;
-  for (int i = 0; i < feat_dim; ++i) {
-    n_batch *= idesc.shape[static_cast<size_t>(i)];
-  }
-
-  return std::make_unique<PcaTask>(settings, idesc, ctx, n_feats, n_batch);
+  return std::make_unique<PcaTask>(jsettings.get<PcaSettings>(), input_descs.front(), ctx);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -911,29 +1095,17 @@ PcaFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                    std::span<const holoflow::core::TDesc>     input_descs,
                    const nlohmann::json                      &jsettings,
                    const holoflow::core::SyncCreateCtx       &ctx) const {
+  this->infer(input_descs, jsettings);
 
-  this->infer(input_descs, jsettings); // Validate settings before updating the existing task
+  const auto  settings   = jsettings.get<PcaSettings>();
+  const auto &input_desc = input_descs.front();
 
-  if (input_descs.size() == 1) {
-    const auto  new_settings = jsettings.get<PcaSettings>();
-    const auto &new_idesc    = input_descs[0];
-
-    if (new_idesc.dtype == holoflow::core::DType::F32) {
-      auto *old_pca = dynamic_cast<PcaTask *>(old_task.get());
-      if (old_pca != nullptr) {
-        const auto &old_idesc = old_pca->get_idesc();
-        if ((new_idesc.shape == old_idesc.shape) && (new_idesc.strides == old_idesc.strides) &&
-            (new_idesc.dtype == old_idesc.dtype) && (new_idesc.mem_loc == old_idesc.mem_loc) &&
-            old_pca->is_compatible_stream(ctx.stream)) {
-
-          old_pca->update_settings(new_settings, ctx.stream);
-          return old_task;
-        }
-      }
-    }
+  auto *pca = dynamic_cast<PcaTask *>(old_task.get());
+  if (pca != nullptr && pca->can_reuse(input_desc, ctx.stream)) {
+    pca->reconfigure(settings, ctx.stream);
+    return old_task;
   }
 
-  // Fallback: Recreate the task entirely.
   return create(input_descs, jsettings, ctx);
 }
 
