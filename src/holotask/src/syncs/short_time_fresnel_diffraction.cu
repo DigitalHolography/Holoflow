@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <list>
 #include <ranges>
 #include <string>
 #include <vector>
@@ -28,6 +29,7 @@
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
 #include "curaii/nvrtc.hh"
+#include "fresnel_cuda_graph.cuh"
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
@@ -88,6 +90,10 @@ struct STFTCallerInfo {
   cuFloatComplex *precomputed_lens;
   float          *magnitude_output;
 };
+
+__global__ void set_stft_magnitude_output_kernel(STFTCallerInfo *info, float *output) {
+  info->magnitude_output = output;
+}
 
 // Shared header for both callback variants.
 constexpr const char *k_stft_callback_header = R"(
@@ -498,13 +504,15 @@ struct ShortTimeFresnelDiffractionImpl {
   long long int             out_istride;
 
   // Device resources
-  cudaStream_t           stream;
-  DevPtr<cuFloatComplex> d_win_lens;   // output-plane quadratic lens [win_h, win_w]
-  DevPtr<cuFloatComplex> d_input_lens; // input phase shift (local or global)
-  DevPtr<cuFloatComplex> d_fft_output;
-  DevPtr<void>           d_caller_info;
-  std::vector<char>      lto;
-  float                 *last_magnitude_output = nullptr;
+  cudaStream_t                        stream;
+  DevPtr<cuFloatComplex>              d_win_lens;   // output-plane quadratic lens [win_h, win_w]
+  DevPtr<cuFloatComplex>              d_input_lens; // input phase shift (local or global)
+  DevPtr<cuFloatComplex>              d_fft_output;
+  DevPtr<void>                        d_caller_info;
+  std::vector<char>                   lto;
+  static constexpr size_t             graph_cache_capacity = 128;
+  std::list<detail::FresnelCudaGraph> graphs;
+  bool                                graph_capture_enabled = true;
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -525,6 +533,8 @@ public:
                                    cudaStream_t                               stream);
 
 private:
+  holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx);
+
   std::unique_ptr<ShortTimeFresnelDiffractionImpl> impl_;
 };
 
@@ -543,6 +553,7 @@ void ShortTimeFresnelDiffraction::update_stream(cudaStream_t stream) {
   if (impl_->stream != stream) {
     impl_->stream = stream;
     CUFFT_CHECK(cufftSetStream(impl_->fft_handle.get(), stream));
+    impl_->graph_capture_enabled = true;
   }
 }
 
@@ -569,6 +580,42 @@ void ShortTimeFresnelDiffraction::update_propagation_distance(
 holoflow::core::OpResult ShortTimeFresnelDiffraction::execute(holoflow::core::SyncCtx &ctx) {
   auto &im = *impl_;
 
+  if (im.stream == nullptr)
+    return enqueue(ctx);
+
+  const detail::FresnelCudaGraph::Addresses addresses{ctx.inputs[0].data(), ctx.outputs[0].data()};
+  cudaStreamCaptureStatus                   capture_status = cudaStreamCaptureStatusNone;
+  CUDA_CHECK(cudaStreamIsCapturing(im.stream, &capture_status));
+  if (capture_status != cudaStreamCaptureStatusNone)
+    return enqueue(ctx);
+
+  const auto graph = std::find_if(im.graphs.begin(), im.graphs.end(),
+                                  [&addresses](const detail::FresnelCudaGraph &candidate) {
+                                    return candidate.matches(addresses);
+                                  });
+  if (graph != im.graphs.end()) {
+    graph->launch(im.stream);
+    im.graphs.splice(im.graphs.begin(), im.graphs, graph);
+    return holoflow::core::OpResult::Ok;
+  }
+
+  const auto result = enqueue(ctx);
+  if (result == holoflow::core::OpResult::Ok && im.graph_capture_enabled) {
+    try {
+      im.graphs.emplace_front(im.stream, addresses, [&]() { (void)enqueue(ctx); });
+      if (im.graphs.size() > ShortTimeFresnelDiffractionImpl::graph_cache_capacity)
+        im.graphs.pop_back();
+    } catch (const std::exception &error) {
+      im.graph_capture_enabled = false;
+      logger()->warn("[ShortTimeFresnelDiffraction] CUDA Graph capture disabled: {}", error.what());
+    }
+  }
+  return result;
+}
+
+holoflow::core::OpResult ShortTimeFresnelDiffraction::enqueue(holoflow::core::SyncCtx &ctx) {
+  auto &im = *impl_;
+
   auto *idata = reinterpret_cast<uint8_t *>(ctx.inputs[0].data());
   auto *odata = reinterpret_cast<uint8_t *>(ctx.outputs[0].data());
 
@@ -578,13 +625,8 @@ holoflow::core::OpResult ShortTimeFresnelDiffraction::execute(holoflow::core::Sy
     auto *fft_out = reinterpret_cast<cuFloatComplex *>(out_ptr);
     if (im.settings.output_magnitude) {
       auto *magnitude_output = reinterpret_cast<float *>(out_ptr);
-      if (magnitude_output != im.last_magnitude_output) {
-        auto *output_field = static_cast<uint8_t *>(im.d_caller_info.get()) +
-                             offsetof(STFTCallerInfo, magnitude_output);
-        CUDA_CHECK(cudaMemcpyAsync(output_field, &magnitude_output, sizeof(magnitude_output),
-                                   cudaMemcpyHostToDevice, im.stream));
-        im.last_magnitude_output = magnitude_output;
-      }
+      set_stft_magnitude_output_kernel<<<1, 1, 0, im.stream>>>(
+          static_cast<STFTCallerInfo *>(im.d_caller_info.get()), magnitude_output);
       fft_out = im.d_fft_output.get();
     }
 
@@ -646,8 +688,7 @@ ShortTimeFresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc>
   out_shape.push_back(s.win_w);
   // clang-format on
 
-  auto output_dtype =
-      s.output_magnitude ? holoflow::core::DType::F32 : holoflow::core::DType::CF32;
+  auto output_dtype = s.output_magnitude ? holoflow::core::DType::F32 : holoflow::core::DType::CF32;
   holoflow::core::TDesc odesc(out_shape, output_dtype, holoflow::core::MemLoc::Device);
 
   return {.input_descs   = {id},
@@ -792,11 +833,10 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
       .stream        = ctx.stream,
       .d_win_lens    = std::move(d_win_lens),
       .d_input_lens  = std::move(d_input_lens),
-      .d_fft_output =
-          s.output_magnitude
-              ? curaii::make_unique_device_ptr<cuFloatComplex>(
-                    static_cast<size_t>(batch) * static_cast<size_t>(out_win_idist))
-              : DevPtr<cuFloatComplex>{},
+      .d_fft_output  = s.output_magnitude
+                           ? curaii::make_unique_device_ptr<cuFloatComplex>(
+                                 static_cast<size_t>(batch) * static_cast<size_t>(out_win_idist))
+                           : DevPtr<cuFloatComplex>{},
       .d_caller_info = std::move(d_info),
       .lto           = std::move(lto),
   });
