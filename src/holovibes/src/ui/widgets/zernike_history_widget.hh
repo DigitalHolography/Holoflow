@@ -24,8 +24,8 @@
 
 #include "signal_history.hh"
 
-class QTimer;
 class QLabel;
+class QTimer;
 
 namespace holovibes::ui {
 
@@ -65,8 +65,8 @@ public:
   void start_run(double time_window_seconds, const std::vector<int> &indexes);
   void resume_run();
   void stop_run();
+
   void set_series(const std::vector<int> &indexes);
-  void set_time_window_seconds(double time_window_seconds);
   void append_samples(std::vector<ZernikeHistorySample> samples);
   void show_waiting_placeholder(const QString &message = {});
 
@@ -74,6 +74,7 @@ public:
   [[nodiscard]] AxisRange                     displayed_y_range() const;
 
   bool set_display_settings(const ZernikeHistoryDisplaySettings &settings);
+  void set_time_window_seconds(double time_window_seconds);
   bool set_manual_y_range(double minimum, double maximum);
   void set_y_axis_scaling_mode(YAxisScalingMode mode);
   void reset_recorded_range_state();
@@ -94,23 +95,23 @@ private:
   class CurveRenderWorker;
 
   struct Series {
-    int                   noll_index;
-    SignalHistory         history;
-    std::optional<double> recorded_minimum;
-    std::optional<double> recorded_maximum;
+    int                      noll_index;
+    SignalHistory            history;
+    std::optional<AxisRange> recorded_range;
   };
 
   [[nodiscard]] Series   *find_series(int noll_index);
   [[nodiscard]] AxisRange displayed_y_range(const Series &series) const;
-  void                    update_recorded_extrema(Series &series, double value);
-  void                    initialize_recorded_extrema_from_visible_samples();
+  void                    update_recorded_range(Series &series, double value);
+  void                    initialize_recorded_ranges();
   void                    request_refresh();
 
   std::vector<Series>           series_;
   ZernikeHistoryDisplaySettings display_settings_;
 
-  QTimer  *refresh_timer_   = nullptr;
-  QLabel  *waiting_label_   = nullptr;
+  QTimer *refresh_timer_ = nullptr;
+  QLabel *waiting_label_ = nullptr;
+
   bool     active_          = false;
   bool     refresh_dirty_   = true;
   uint64_t render_revision_ = 0;
