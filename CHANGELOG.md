@@ -15,7 +15,6 @@ The `v0.1.0-dev.6` through `v0.1.0-dev.8` releases were produced from the former
 ### Perf
 
 - render Zernike curves off the UI thread
-- expand Zernike UI and curve worker profiling
 
 ## v0.2.0-dev.2 (2026-07-27)
 
