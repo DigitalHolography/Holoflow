@@ -6,6 +6,51 @@ The `v0.1.0-dev.6` through `v0.1.0-dev.8` releases were produced from the former
 `refactor` branch. The current `main` release line diverged after
 `v0.1.0-dev.5`; `v0.2.0-dev.1` establishes the new common release baseline.
 
+## v0.2.0-dev.4 (2026-09-02)
+
+### Feat
+
+- throttle Zernike defocus estimates
+- add sliding averages for VSH correction
+- add sliding averages for VSH correction
+
+### Fix
+
+- clarify PCA input validation
+- adjust pipeline buffering and metrics polling
+- skip deterministic VSH warm-up frames
+- skip deterministic VSH warm-up frames
+- harden holoflow ownership scheduling
+- fetchcontent now uses the assigned dir
+
+### Refactor
+
+- clean up PCA implementation
+- consolidate PCA solver implementation
+- hide graph builder implementation
+- split aberration correction stages
+- simplify pipeline graph construction
+
+### Perf
+
+- optimize Zernike curve rendering
+- reduce GPU input queue size
+- cache normalize CUDA graphs
+- cache Fresnel CUDA graphs
+- cache percentile clip CUDA graphs
+- accelerate PCA with CUDA graphs
+- avoid redundant async producer stream sync
+- accelerate flatfield with CUDA graphs
+- accelerate conversions with CUDA graphs
+- lazily update fresnel output pointers
+- optimize percentile clipping with CUDA graphs
+- run Zernike slope fitting on GPU
+- merge sliding average kernels
+- capture Shack-Hartmann execution in CUDA graphs
+- parallelize Shack-Hartmann peak recovery
+- overlap Shack-Hartmann and final propagation
+- skip disabled Shack-Hartmann display processing
+
 ## v0.2.0-dev.3 (2026-07-28)
 
 ### Feat
