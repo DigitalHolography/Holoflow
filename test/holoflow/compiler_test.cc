@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <boost/graph/adjacency_list.hpp>
 #include <chrono>
 #include <memory>
@@ -45,6 +46,46 @@ public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &) override {
     return holoflow::core::OpResult::Ok;
   }
+};
+
+class NoopAsyncTask final : public holoflow::core::IAsyncTask {
+public:
+  holoflow::core::OpResult try_push(holoflow::core::AsyncPushCtx &) override {
+    return holoflow::core::OpResult::Ok;
+  }
+  holoflow::core::OpResult try_pop(holoflow::core::AsyncPopCtx &) override {
+    return holoflow::core::OpResult::Ok;
+  }
+};
+
+class AsyncFactory final : public holoflow::core::IAsyncTaskFactory {
+public:
+  explicit AsyncFactory(bool synchronizes_producer_stream)
+      : synchronizes_producer_stream_(synchronizes_producer_stream) {}
+
+  InferResult infer(std::span<const TDesc> inputs, const nlohmann::json &) const override {
+    if (inputs.size() != 1) {
+      throw std::invalid_argument("async task requires one input");
+    }
+    return {
+        .input_descs                  = {inputs[0]},
+        .output_descs                 = {inputs[0]},
+        .in_place                     = {},
+        .owned_inputs                 = {false},
+        .owned_outputs                = {false},
+        .kind                         = TaskKind::Async,
+        .synchronizes_producer_stream = synchronizes_producer_stream_,
+    };
+  }
+
+  std::unique_ptr<holoflow::core::IAsyncTask>
+  create(std::span<const TDesc>, const nlohmann::json &,
+         const holoflow::core::AsyncCreateCtx &) const override {
+    return std::make_unique<NoopAsyncTask>();
+  }
+
+private:
+  bool synchronizes_producer_stream_;
 };
 
 class SourceFactory final : public holoflow::core::ISyncTaskFactory {
@@ -153,6 +194,40 @@ TEST(CompilerTest, CompilesLinearGraphIntoTasksSectionsAndStorage) {
   EXPECT_EQ(output->resources.tasks.size(), 3);
   EXPECT_FALSE(output->sections.empty());
   EXPECT_EQ(output->resources.tensor_descs.size(), 2);
+}
+
+TEST(CompilerTest, OrdersSynchronizingAsyncProducerBeforeOrdinaryProducer) {
+  auto factories = registry();
+  factories.register_async("ordinary", std::make_unique<AsyncFactory>(false));
+  factories.register_async("synchronizing", std::make_unique<AsyncFactory>(true));
+
+  GraphSpec  graph;
+  const auto source             = add_vertex(NodeSpec{"source", "source", {}}, graph);
+  const auto ordinary           = add_vertex(NodeSpec{"ordinary", "ordinary", {}}, graph);
+  const auto synchronizing      = add_vertex(NodeSpec{"synchronizing", "synchronizing", {}}, graph);
+  const auto ordinary_sink      = add_vertex(NodeSpec{"ordinary-sink", "sink", {}}, graph);
+  const auto synchronizing_sink = add_vertex(NodeSpec{"synchronizing-sink", "sink", {}}, graph);
+  add_edge(source, ordinary, holoflow::core::EdgeSpec{0, 0}, graph);
+  add_edge(source, synchronizing, holoflow::core::EdgeSpec{0, 0}, graph);
+  add_edge(ordinary, ordinary_sink, holoflow::core::EdgeSpec{0, 0}, graph);
+  add_edge(synchronizing, synchronizing_sink, holoflow::core::EdgeSpec{0, 0}, graph);
+
+  holoflow::runtime::Compiler       compiler(factories, {.dump_dot_on_failure = false});
+  const auto                        output         = compiler.compile(graph);
+  const holoflow::runtime::Section *source_section = nullptr;
+  for (const auto &section : output->sections) {
+    if (std::find(section.sync_topo.begin(), section.sync_topo.end(), source) !=
+        section.sync_topo.end()) {
+      source_section = &section;
+      break;
+    }
+  }
+
+  ASSERT_NE(source_section, nullptr);
+  ASSERT_EQ(source_section->async_prod.size(), 2);
+  EXPECT_TRUE(source_section->has_synchronizing_async_producer);
+  EXPECT_EQ(output->graph[source_section->async_prod[0]].spec.name, "synchronizing");
+  EXPECT_EQ(output->graph[source_section->async_prod[1]].spec.name, "ordinary");
 }
 
 TEST(CompilerTest, RejectsUnknownFactory) {

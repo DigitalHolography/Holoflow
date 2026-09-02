@@ -23,6 +23,34 @@
 
 namespace holotask::syncs::detail {
 
+inline constexpr unsigned int kPhaseCorrelationPeakBlockSize = 256;
+
+struct PhaseCorrelationPeak {
+  float  value;
+  size_t index;
+};
+
+__device__ inline PhaseCorrelationPeak select_phase_correlation_peak(
+    PhaseCorrelationPeak lhs, PhaseCorrelationPeak rhs) {
+  return rhs.value > lhs.value || (rhs.value == lhs.value && rhs.index < lhs.index) ? rhs : lhs;
+}
+
+__device__ inline PhaseCorrelationPeak reduce_phase_correlation_peak(
+    PhaseCorrelationPeak candidate, PhaseCorrelationPeak *__restrict__ shared_peaks) {
+  const unsigned int thread = threadIdx.x;
+  shared_peaks[thread]       = candidate;
+  __syncthreads();
+
+  for (unsigned int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+    if (thread < stride) {
+      shared_peaks[thread] =
+          select_phase_correlation_peak(shared_peaks[thread], shared_peaks[thread + stride]);
+    }
+    __syncthreads();
+  }
+  return shared_peaks[0];
+}
+
 __device__ inline float ellipse_sq_distance(int x, int y, int width, int height,
                                             CrossCorrelation2Settings::Ellipse roi) {
   if (width <= 0 || height <= 0 || roi.rx <= 0.0f || roi.ry <= 0.0f) {

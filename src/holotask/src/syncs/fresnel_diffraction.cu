@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <list>
 #include <ranges>
 #include <string>
 #include <vector>
@@ -28,6 +29,7 @@
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
 #include "curaii/nvrtc.hh"
+#include "fresnel_cuda_graph.cuh"
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
@@ -86,6 +88,10 @@ struct ApplyLensCallerInfo {
   cuFloatComplex *lens;
   float          *magnitude_output;
 };
+
+__global__ void set_magnitude_output_kernel(ApplyLensCallerInfo *info, float *output) {
+  info->magnitude_output = output;
+}
 
 // -------------------------------------------------------------------------------------------------
 // Validation
@@ -400,14 +406,52 @@ public:
   long long int             out_istride;
 
   // -- Device resources ---------------------------------------------------------------------------
-  cudaStream_t           stream;
-  DevPtr<cuFloatComplex> d_lens;
-  DevPtr<cuFloatComplex> d_fft_output;
-  DevPtr<void>           d_caller_info;
-  std::vector<char>      lto;
+  cudaStream_t                        stream;
+  DevPtr<cuFloatComplex>              d_lens;
+  DevPtr<cuFloatComplex>              d_fft_output;
+  DevPtr<void>                        d_caller_info;
+  std::vector<char>                   lto;
+  static constexpr size_t             graph_cache_capacity = 128;
+  std::list<detail::FresnelCudaGraph> graphs;
+  bool                                graph_capture_enabled = true;
 
   // -- ISyncTask interface ------------------------------------------------------------------------
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    if (stream == nullptr)
+      return enqueue(ctx);
+
+    const detail::FresnelCudaGraph::Addresses addresses{ctx.inputs[0].data(),
+                                                        ctx.outputs[0].data()};
+    cudaStreamCaptureStatus                   capture_status = cudaStreamCaptureStatusNone;
+    CUDA_CHECK(cudaStreamIsCapturing(stream, &capture_status));
+    if (capture_status != cudaStreamCaptureStatusNone)
+      return enqueue(ctx);
+
+    const auto graph = std::find_if(graphs.begin(), graphs.end(),
+                                    [&addresses](const detail::FresnelCudaGraph &candidate) {
+                                      return candidate.matches(addresses);
+                                    });
+    if (graph != graphs.end()) {
+      graph->launch(stream);
+      graphs.splice(graphs.begin(), graphs, graph);
+      return holoflow::core::OpResult::Ok;
+    }
+
+    const auto result = enqueue(ctx);
+    if (result == holoflow::core::OpResult::Ok && graph_capture_enabled) {
+      try {
+        graphs.emplace_front(stream, addresses, [&]() { (void)enqueue(ctx); });
+        if (graphs.size() > graph_cache_capacity)
+          graphs.pop_back();
+      } catch (const std::exception &error) {
+        graph_capture_enabled = false;
+        logger()->warn("[FresnelDiffraction] CUDA Graph capture disabled: {}", error.what());
+      }
+    }
+    return result;
+  }
+
+  holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx) {
     auto *idata_base = reinterpret_cast<uint8_t *>(ctx.inputs[0].data());
     auto *odata_base = reinterpret_cast<uint8_t *>(ctx.outputs[0].data());
 
@@ -417,11 +461,8 @@ public:
       auto *fft_out = reinterpret_cast<cuFloatComplex *>(out_ptr);
       if (settings.output_magnitude) {
         auto *magnitude_output = reinterpret_cast<float *>(out_ptr);
-        auto *output_field =
-            static_cast<uint8_t *>(d_caller_info.get()) + offsetof(ApplyLensCallerInfo,
-                                                                   magnitude_output);
-        CUDA_CHECK(cudaMemcpyAsync(output_field, &magnitude_output, sizeof(magnitude_output),
-                                   cudaMemcpyHostToDevice, stream));
+        set_magnitude_output_kernel<<<1, 1, 0, stream>>>(
+            static_cast<ApplyLensCallerInfo *>(d_caller_info.get()), magnitude_output);
         fft_out = d_fft_output.get();
       }
       CUFFT_CHECK(cufftXtExec(fft_handle.get(), in_ptr, fft_out, CUFFT_FORWARD));
@@ -445,6 +486,7 @@ public:
     if (stream != new_stream) {
       stream = new_stream;
       CUFFT_CHECK(cufftSetStream(fft_handle.get(), new_stream));
+      graph_capture_enabled = true;
     }
   }
 
@@ -523,8 +565,7 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
 
   const bool   is_real       = (idesc.dtype == holoflow::core::DType::F32);
   const size_t in_elem_size  = is_real ? sizeof(float) : sizeof(cuFloatComplex);
-  const size_t out_elem_size =
-      settings.output_magnitude ? sizeof(float) : sizeof(cuFloatComplex);
+  const size_t out_elem_size = settings.output_magnitude ? sizeof(float) : sizeof(cuFloatComplex);
 
   auto in_strides_bytes  = get_strides_bytes(idesc);
   auto out_strides_bytes = get_strides_bytes(odesc);
@@ -591,8 +632,8 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
   CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "apply_lens_callback2", lto.data(), lto.size(),
                                     CUFFT_CB_LD_COMPLEX, &d_info_ptr));
   if (settings.output_magnitude) {
-    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "store_magnitude_callback", lto.data(), lto.size(),
-                                      CUFFT_CB_ST_COMPLEX, &d_info_ptr));
+    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "store_magnitude_callback", lto.data(),
+                                      lto.size(), CUFFT_CB_ST_COMPLEX, &d_info_ptr));
   }
 
   size_t        work_size     = 0;
@@ -608,19 +649,19 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
                                   static_cast<long long int>(best_group.size), &work_size,
                                   executiontype));
 
-  auto task           = std::make_unique<FresnelDiffraction>();
-  task->settings      = settings;
-  task->idesc         = idesc;
-  task->fft_handle    = std::move(plan);
-  task->offsets       = std::move(offsets);
-  task->inner_batch   = best_group.size;
-  task->height        = H;
-  task->width         = W;
-  task->out_idist     = best_group.out_idist;
-  task->out_stride_h  = out_stride_h;
-  task->out_istride   = out_istride;
-  task->stream        = ctx.stream;
-  task->d_lens        = std::move(d_lens);
+  auto task          = std::make_unique<FresnelDiffraction>();
+  task->settings     = settings;
+  task->idesc        = idesc;
+  task->fft_handle   = std::move(plan);
+  task->offsets      = std::move(offsets);
+  task->inner_batch  = best_group.size;
+  task->height       = H;
+  task->width        = W;
+  task->out_idist    = best_group.out_idist;
+  task->out_stride_h = out_stride_h;
+  task->out_istride  = out_istride;
+  task->stream       = ctx.stream;
+  task->d_lens       = std::move(d_lens);
   if (settings.output_magnitude) {
     task->d_fft_output =
         curaii::make_unique_device_ptr<cuFloatComplex>(best_group.size * best_group.out_idist);

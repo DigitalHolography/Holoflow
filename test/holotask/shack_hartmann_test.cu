@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstring>
 #include <iostream>
+#include <memory>
 #include <numeric>
 #include <random>
 #include <utility>
@@ -365,11 +366,13 @@ holotask::syncs::ZernikeFromSlopesSettings fit_settings() {
   };
 }
 
-std::vector<float> run_fit(const std::vector<float> &slopes) {
+std::vector<float>
+run_fit(const std::vector<float> &slopes, MemLoc mem_loc = MemLoc::Device,
+        const holotask::syncs::ZernikeFromSlopesSettings &settings = fit_settings()) {
   holotask::syncs::ZernikeFromSlopesFactory factory;
   const auto                                run = holonp_test::run_sync_factory(
-      factory, std::vector<TDesc>{desc({1, kSy, kSx, 2}, MemLoc::Host)},
-      std::vector<std::vector<std::byte>>{as_bytes(slopes)}, fit_settings());
+      factory, std::vector<TDesc>{desc({1, kSy, kSx, 2}, mem_loc)},
+      std::vector<std::vector<std::byte>>{as_bytes(slopes)}, settings);
   return from_bytes<float>(run.output_bytes[0]);
 }
 
@@ -800,6 +803,26 @@ TEST(ZernikeFromSlopesRegression, ObservableCoefficientsAndPhaseMatchCenterGauge
   EXPECT_LT(max_phase_difference, 2e-4f);
 }
 
+TEST(ZernikeFromSlopesExecution, DeviceAndHostBackendsMatchForMixedModes) {
+  auto settings    = fit_settings();
+  settings.indexes = {10, 2, 4, 7};
+  const std::array<std::pair<int, float>, 3> injected{{{10, -0.02f}, {4, 0.18f}, {7, 0.04f}}};
+  std::vector<float>                         combined(kSy * kSx * 2, 0.0f);
+  for (const auto &[mode, coefficient] : injected) {
+    const auto component = ideal_slopes(mode, coefficient);
+    for (size_t i = 0; i < combined.size(); ++i) {
+      combined[i] += component[i];
+    }
+  }
+
+  const auto host_coefficients   = run_fit(combined, MemLoc::Host, settings);
+  const auto device_coefficients = run_fit(combined, MemLoc::Device, settings);
+  ASSERT_EQ(device_coefficients.size(), host_coefficients.size());
+  for (size_t mode = 0; mode < host_coefficients.size(); ++mode) {
+    EXPECT_NEAR(device_coefficients[mode], host_coefficients[mode], 5e-5f) << mode;
+  }
+}
+
 TEST(ShackHartmannFullPairwisePipeline, NoiselessDefocusMatchesSingleReferenceAndZernikeFit) {
   constexpr size_t height        = 48;
   constexpr size_t width         = 48;
@@ -847,7 +870,7 @@ TEST(ShackHartmannFullPairwisePipeline, NoiselessDefocusMatchesSingleReferenceAn
   zernike_settings.stride_y           = height;
   zernike_settings.stride_x           = width;
   holotask::syncs::ZernikeFromSlopesFactory fit_factory;
-  const auto                                input_desc = desc({1, kSy, kSx, 2}, MemLoc::Host);
+  const auto                                input_desc = desc({1, kSy, kSx, 2}, MemLoc::Device);
   const auto                                single_fit = holonp_test::run_sync_factory(
       fit_factory, std::vector<TDesc>{input_desc},
       std::vector<std::vector<std::byte>>{as_bytes(single)}, zernike_settings);
@@ -867,6 +890,128 @@ TEST(ShackHartmannFullPairwisePipeline, NoiselessDefocusMatchesSingleReferenceAn
   }
   std::cout << "Noiseless defocus maximum star/complete slope difference=" << max_slope_difference
             << "; maximum A4-A10 difference=" << max_coefficient_difference << " rad\n";
+}
+
+TEST(ShackHartmannCudaGraph, ReplaysCurrentDataAndRecapturesBuffersAndStreams) {
+  constexpr size_t height = 48;
+  constexpr size_t width  = 48;
+  std::vector<std::pair<float, float>> shifted_positions(kSy * kSx);
+  for (size_t i = 0; i < shifted_positions.size(); ++i) {
+    shifted_positions[i] = {static_cast<float>(static_cast<int>(i % kSx) - 2),
+                            static_cast<float>(static_cast<int>(i / kSx) - 2)};
+  }
+  const std::vector<std::pair<float, float>> zero_positions(kSy * kSx, {0.0f, 0.0f});
+  const auto shifted_images =
+      translated_subapertures(kSy, kSx, height, width, shifted_positions);
+  const auto zero_images = translated_subapertures(kSy, kSx, height, width, zero_positions);
+  const auto input_desc  = desc({1, kSy, kSx, height, width}, MemLoc::Device);
+
+  for (const auto mode : {holotask::syncs::ShackHartmannSlopeMode::SingleReference,
+                          holotask::syncs::ShackHartmannSlopeMode::FullPairwise}) {
+    SCOPED_TRACE(mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference
+                     ? "SingleReference"
+                     : "FullPairwise");
+    auto settings = slope_settings(height, width,
+                                   mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference);
+    settings.mode            = mode;
+    settings.pair_batch_size = 64;
+
+    holotask::syncs::ShackHartmannSlopesFactory factory;
+    const auto inference = factory.infer(std::vector<TDesc>{input_desc}, settings);
+    curaii::CudaStream stream_a;
+    curaii::CudaStream stream_b;
+    auto task = factory.create(std::vector<TDesc>{input_desc}, settings, {.stream = stream_a.get()});
+    task->bind_logger(spdlog::default_logger());
+
+    holonp_test::TensorTestBuffer input_a(input_desc);
+    holonp_test::TensorTestBuffer input_b(input_desc);
+    holonp_test::TensorTestBuffer slopes_a(inference.output_descs[0]);
+    holonp_test::TensorTestBuffer slopes_b(inference.output_descs[0]);
+    std::unique_ptr<holonp_test::TensorTestBuffer> maps_a;
+    std::unique_ptr<holonp_test::TensorTestBuffer> maps_b;
+    if (inference.output_descs.size() == 2) {
+      maps_a = std::make_unique<holonp_test::TensorTestBuffer>(inference.output_descs[1]);
+      maps_b = std::make_unique<holonp_test::TensorTestBuffer>(inference.output_descs[1]);
+    }
+
+    std::array inputs_a{input_a.view()};
+    std::array inputs_b{input_b.view()};
+    std::vector<holoflow::core::TView> outputs_a{slopes_a.view()};
+    std::vector<holoflow::core::TView> outputs_b{slopes_b.view()};
+    if (maps_a) {
+      outputs_a.push_back(maps_a->view());
+      outputs_b.push_back(maps_b->view());
+    }
+    std::atomic<bool> cancelled{false};
+    holoflow::core::SyncCtx context_a{inputs_a, outputs_a, &cancelled, nullptr, nullptr};
+    holoflow::core::SyncCtx context_b{inputs_b, outputs_b, &cancelled, nullptr, nullptr};
+
+    input_a.upload(as_bytes(shifted_images));
+    ASSERT_EQ(task->execute(context_a), holoflow::core::OpResult::Ok);
+    CUDA_CHECK(cudaStreamSynchronize(stream_a.get()));
+    const auto shifted_slopes = from_bytes<float>(slopes_a.download());
+    EXPECT_GT(*std::max_element(shifted_slopes.begin(), shifted_slopes.end()), 1.0f);
+
+    input_a.upload(as_bytes(zero_images));
+    ASSERT_EQ(task->execute(context_a), holoflow::core::OpResult::Ok);
+    CUDA_CHECK(cudaStreamSynchronize(stream_a.get()));
+    for (const float slope : from_bytes<float>(slopes_a.download())) {
+      EXPECT_NEAR(slope, 0.0f, 2e-3f);
+    }
+
+    input_b.upload(as_bytes(shifted_images));
+    ASSERT_EQ(task->execute(context_b), holoflow::core::OpResult::Ok);
+    CUDA_CHECK(cudaStreamSynchronize(stream_a.get()));
+    const auto recaptured_slopes = from_bytes<float>(slopes_b.download());
+    ASSERT_EQ(recaptured_slopes.size(), shifted_slopes.size());
+    for (size_t i = 0; i < shifted_slopes.size(); ++i) {
+      EXPECT_NEAR(recaptured_slopes[i], shifted_slopes[i], 2e-4f) << "slope " << i;
+    }
+
+    task = factory.update(std::move(task), std::vector<TDesc>{input_desc}, settings,
+                          {.stream = stream_b.get()});
+    input_b.upload(as_bytes(zero_images));
+    ASSERT_EQ(task->execute(context_b), holoflow::core::OpResult::Ok);
+    CUDA_CHECK(cudaStreamSynchronize(stream_b.get()));
+    for (const float slope : from_bytes<float>(slopes_b.download())) {
+      EXPECT_NEAR(slope, 0.0f, 2e-3f);
+    }
+
+    input_b.upload(as_bytes(shifted_images));
+    ASSERT_EQ(task->execute(context_b), holoflow::core::OpResult::Ok);
+    CUDA_CHECK(cudaStreamSynchronize(stream_b.get()));
+    const auto updated_stream_slopes = from_bytes<float>(slopes_b.download());
+    ASSERT_EQ(updated_stream_slopes.size(), shifted_slopes.size());
+    for (size_t i = 0; i < shifted_slopes.size(); ++i) {
+      EXPECT_NEAR(updated_stream_slopes[i], shifted_slopes[i], 2e-4f) << "slope " << i;
+    }
+  }
+}
+
+TEST(ShackHartmannCudaGraph, FallsBackOnDefaultStream) {
+  constexpr size_t height = 24;
+  constexpr size_t width  = 24;
+  const std::vector<std::pair<float, float>> positions(kSy * kSx, {0.0f, 0.0f});
+  const auto images     = translated_subapertures(kSy, kSx, height, width, positions);
+  const auto input_desc = desc({1, kSy, kSx, height, width}, MemLoc::Device);
+  auto settings         = slope_settings(height, width, false);
+
+  holotask::syncs::ShackHartmannSlopesFactory factory;
+  const auto inference = factory.infer(std::vector<TDesc>{input_desc}, settings);
+  auto task = factory.create(std::vector<TDesc>{input_desc}, settings, {.stream = nullptr});
+  holonp_test::TensorTestBuffer input(input_desc);
+  holonp_test::TensorTestBuffer output(inference.output_descs[0]);
+  input.upload(as_bytes(images));
+  std::array        inputs{input.view()};
+  std::array        outputs{output.view()};
+  std::atomic<bool> cancelled{false};
+  holoflow::core::SyncCtx context{inputs, outputs, &cancelled, nullptr, nullptr};
+
+  ASSERT_EQ(task->execute(context), holoflow::core::OpResult::Ok);
+  CUDA_CHECK(cudaDeviceSynchronize());
+  for (const float slope : from_bytes<float>(output.download())) {
+    EXPECT_NEAR(slope, 0.0f, 2e-3f);
+  }
 }
 
 TEST(ShackHartmannSlopesPerformance, ReportsRepresentativeRuntimeAndExplicitBuffers) {
@@ -949,11 +1094,11 @@ TEST(ShackHartmannPipelineRegression, MeasuredDataMatchesCorrectedCenterReferenc
   settings.stride_x           = width;
   holotask::syncs::ZernikeFromSlopesFactory fit_factory;
   const auto                                fit_run = holonp_test::run_sync_factory(
-      fit_factory, std::vector<TDesc>{desc({1, kSy, kSx, 2}, MemLoc::Host)},
+      fit_factory, std::vector<TDesc>{desc({1, kSy, kSx, 2}, MemLoc::Device)},
       std::vector<std::vector<std::byte>>{as_bytes(measured_slopes)}, settings);
   const auto new_coefficients = from_bytes<float>(fit_run.output_bytes[0]);
   const auto full_fit_run     = holonp_test::run_sync_factory(
-      fit_factory, std::vector<TDesc>{desc({1, kSy, kSx, 2}, MemLoc::Host)},
+      fit_factory, std::vector<TDesc>{desc({1, kSy, kSx, 2}, MemLoc::Device)},
       std::vector<std::vector<std::byte>>{as_bytes(full_slopes)}, settings);
   const auto full_coefficients = from_bytes<float>(full_fit_run.output_bytes[0]);
   const auto old_coefficients  = legacy_center_fit(maps, height, width, static_cast<float>(width));
@@ -1007,7 +1152,7 @@ TEST(ShackHartmannPipelineRegression, MeasuredDataMatchesCorrectedCenterReferenc
 
 TEST(ZernikeFromSlopesInference, RejectsPartialRegionalGaugeAndReusesTask) {
   holotask::syncs::ZernikeFromSlopesFactory factory;
-  const auto                                input    = desc({1, kSy, kSx, 2}, MemLoc::Host);
+  const auto                                input    = desc({1, kSy, kSx, 2}, MemLoc::Device);
   auto                                      settings = fit_settings();
   settings.nx                                        = 2;
   EXPECT_THROW((void)factory.infer(std::vector<TDesc>{input}, settings), std::invalid_argument);
@@ -1015,6 +1160,11 @@ TEST(ZernikeFromSlopesInference, RejectsPartialRegionalGaugeAndReusesTask) {
   settings.nx                     = 1;
   const nlohmann::json serialized = settings;
   EXPECT_EQ(serialized.get<holotask::syncs::ZernikeFromSlopesSettings>(), settings);
+  const auto device_infer = factory.infer(std::vector<TDesc>{input}, settings);
+  EXPECT_EQ(device_infer.output_descs[0].mem_loc, MemLoc::Device);
+  const auto host_infer =
+      factory.infer(std::vector<TDesc>{desc({1, kSy, kSx, 2}, MemLoc::Host)}, settings);
+  EXPECT_EQ(host_infer.output_descs[0].mem_loc, MemLoc::Host);
 
   const auto run = holonp_test::run_sync_factory_update(
       factory, std::vector<TDesc>{input},

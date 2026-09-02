@@ -15,11 +15,14 @@
 #include "holotask/syncs/normalize.hh"
 
 #include <algorithm>
+#include <array>
 #include <cfloat>
 #include <cstdint>
 #include <cub/cub.cuh>
+#include <list>
 #include <numeric>
 #include <stdexcept>
+#include <utility>
 
 namespace holotask::syncs {
 
@@ -62,6 +65,62 @@ void from_json(const nlohmann::json &j, NormalizeSettings &s) {
 namespace {
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
+
+class NormalizeCudaGraph {
+public:
+  using Addresses = std::array<const void *, 2>;
+
+  NormalizeCudaGraph() = default;
+  ~NormalizeCudaGraph() noexcept {
+    if (executable_ != nullptr) {
+      CUDA_CHECK_NT(cudaGraphExecDestroy(executable_));
+    }
+  }
+
+  NormalizeCudaGraph(const NormalizeCudaGraph &)            = delete;
+  NormalizeCudaGraph &operator=(const NormalizeCudaGraph &) = delete;
+
+  [[nodiscard]] bool matches(const Addresses &addresses) const noexcept {
+    return addresses_ == addresses;
+  }
+
+  void launch(cudaStream_t stream) const { CUDA_CHECK(cudaGraphLaunch(executable_, stream)); }
+
+  template <typename Enqueue>
+  NormalizeCudaGraph(cudaStream_t stream, const Addresses &addresses, Enqueue &&enqueue)
+      : addresses_(addresses) {
+    cudaGraph_t graph     = nullptr;
+    bool        capturing = false;
+    try {
+      CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+      capturing = true;
+      std::forward<Enqueue>(enqueue)();
+      CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
+      capturing = false;
+      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable_, graph, 0));
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+    } catch (...) {
+      if (capturing) {
+        cudaGraph_t discarded = nullptr;
+        (void)cudaStreamEndCapture(stream, &discarded);
+        if (discarded != nullptr) {
+          CUDA_CHECK_NT(cudaGraphDestroy(discarded));
+        }
+      } else if (graph != nullptr) {
+        CUDA_CHECK_NT(cudaGraphDestroy(graph));
+      }
+      if (executable_ != nullptr) {
+        CUDA_CHECK_NT(cudaGraphExecDestroy(executable_));
+        executable_ = nullptr;
+      }
+      throw;
+    }
+  }
+
+private:
+  cudaGraphExec_t executable_ = nullptr;
+  Addresses       addresses_  = {};
+};
 
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
@@ -322,32 +381,79 @@ public:
 
   const NormalizeSettings     &settings() const { return settings_; }
   const holoflow::core::TDesc &idesc() const { return idesc_; }
-  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
+  void                         update_stream(cudaStream_t stream) {
+    if (stream_ != stream) {
+      stream_                = stream;
+      graph_capture_enabled_ = true;
+    }
+  }
 
 private:
-  NormalizeSettings     settings_;
-  holoflow::core::TDesc idesc_;
-  cudaStream_t          stream_;
-  size_t                ndim_;
-  size_t                group_ndim_;
-  size_t                red_ndim_;
-  size_t                total_elems_;
-  size_t                total_groups_;
-  size_t                total_red_;
-  DevPtr<size_t>        d_shape_;
-  DevPtr<size_t>        d_in_strides_;
-  DevPtr<size_t>        d_out_strides_;
-  DevPtr<int>           d_group_axes_;
-  DevPtr<size_t>        d_group_strides_;
-  DevPtr<int>           d_red_axes_;
-  DevPtr<size_t>        d_red_strides_;
-  DevPtr<float>         d_group_mins_;
-  DevPtr<float>         d_group_maxs_;
+  static constexpr size_t graph_cache_capacity = 128;
+
+  holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx);
+
+  NormalizeSettings             settings_;
+  holoflow::core::TDesc         idesc_;
+  cudaStream_t                  stream_;
+  size_t                        ndim_;
+  size_t                        group_ndim_;
+  size_t                        red_ndim_;
+  size_t                        total_elems_;
+  size_t                        total_groups_;
+  size_t                        total_red_;
+  DevPtr<size_t>                d_shape_;
+  DevPtr<size_t>                d_in_strides_;
+  DevPtr<size_t>                d_out_strides_;
+  DevPtr<int>                   d_group_axes_;
+  DevPtr<size_t>                d_group_strides_;
+  DevPtr<int>                   d_red_axes_;
+  DevPtr<size_t>                d_red_strides_;
+  DevPtr<float>                 d_group_mins_;
+  DevPtr<float>                 d_group_maxs_;
+  std::list<NormalizeCudaGraph> graphs_;
+  bool                          graph_capture_enabled_ = true;
 };
 
 } // namespace
 
 holoflow::core::OpResult Normalize::execute(holoflow::core::SyncCtx &ctx) {
+  if (stream_ == nullptr) {
+    return enqueue(ctx);
+  }
+
+  const NormalizeCudaGraph::Addresses addresses{ctx.inputs[0].data(), ctx.outputs[0].data()};
+  cudaStreamCaptureStatus             capture_status = cudaStreamCaptureStatusNone;
+  CUDA_CHECK(cudaStreamIsCapturing(stream_, &capture_status));
+  if (capture_status != cudaStreamCaptureStatusNone) {
+    return enqueue(ctx);
+  }
+
+  const auto graph = std::find_if(
+      graphs_.begin(), graphs_.end(),
+      [&addresses](const NormalizeCudaGraph &candidate) { return candidate.matches(addresses); });
+  if (graph != graphs_.end()) {
+    graph->launch(stream_);
+    graphs_.splice(graphs_.begin(), graphs_, graph);
+    return holoflow::core::OpResult::Ok;
+  }
+
+  const auto result = enqueue(ctx);
+  if (result == holoflow::core::OpResult::Ok && graph_capture_enabled_) {
+    try {
+      graphs_.emplace_front(stream_, addresses, [&]() { (void)enqueue(ctx); });
+      if (graphs_.size() > graph_cache_capacity) {
+        graphs_.pop_back();
+      }
+    } catch (const std::exception &error) {
+      graph_capture_enabled_ = false;
+      logger()->warn("[Normalize] CUDA Graph capture disabled: {}", error.what());
+    }
+  }
+  return result;
+}
+
+holoflow::core::OpResult Normalize::enqueue(holoflow::core::SyncCtx &ctx) {
   auto       *idata = ctx.inputs[0].data();
   auto       *odata = ctx.outputs[0].data();
   const auto &idesc = ctx.inputs[0].desc;

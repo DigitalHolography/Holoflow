@@ -17,12 +17,16 @@
 #include <cuComplex.h>
 #include <cub/cub.cuh>
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
+#include <list>
 #include <map>
 #include <stdexcept>
 #include <string>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 #include "bug.hh"
 #include "curaii/cuda.hh"
@@ -215,6 +219,148 @@ __global__ void cf32_f32_argument_kernel(const cuFloatComplex *idata, float *oda
   }
 }
 
+// -------------------------------------------------------------------------------------------------
+// CUDA Graph helpers
+// -------------------------------------------------------------------------------------------------
+
+using GraphAddresses = std::array<const void *, 2>;
+
+template <typename Enqueue> cudaGraph_t capture_graph(cudaStream_t stream, Enqueue &&enqueue) {
+  cudaGraph_t graph     = nullptr;
+  bool        capturing = false;
+  try {
+    CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
+    capturing = true;
+    std::forward<Enqueue>(enqueue)();
+    CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
+    capturing = false;
+    return graph;
+  } catch (...) {
+    if (capturing) {
+      cudaGraph_t discarded = nullptr;
+      (void)cudaStreamEndCapture(stream, &discarded);
+      if (discarded != nullptr) {
+        CUDA_CHECK_NT(cudaGraphDestroy(discarded));
+      }
+    } else if (graph != nullptr) {
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+    }
+    throw;
+  }
+}
+
+class SingleKernelCudaGraph {
+public:
+  SingleKernelCudaGraph() = default;
+  ~SingleKernelCudaGraph() noexcept { reset(); }
+
+  SingleKernelCudaGraph(const SingleKernelCudaGraph &)            = delete;
+  SingleKernelCudaGraph &operator=(const SingleKernelCudaGraph &) = delete;
+
+  [[nodiscard]] bool ready() const noexcept { return executable_ != nullptr; }
+  [[nodiscard]] bool matches(const GraphAddresses &addresses) const noexcept {
+    return ready() && addresses_ == addresses;
+  }
+
+  void launch(cudaStream_t stream) const { CUDA_CHECK(cudaGraphLaunch(executable_, stream)); }
+
+  void update(const cudaKernelNodeParams &params, const GraphAddresses &addresses) {
+    CUDA_CHECK(cudaGraphExecKernelNodeSetParams(executable_, kernel_node_, &params));
+    addresses_ = addresses;
+  }
+
+  template <typename Enqueue>
+  void capture(cudaStream_t stream, const GraphAddresses &addresses, Enqueue &&enqueue) {
+    cudaGraph_t     graph      = capture_graph(stream, std::forward<Enqueue>(enqueue));
+    cudaGraphExec_t executable = nullptr;
+    try {
+      size_t node_count = 0;
+      CUDA_CHECK(cudaGraphGetNodes(graph, nullptr, &node_count));
+      std::vector<cudaGraphNode_t> nodes(node_count);
+      CUDA_CHECK(cudaGraphGetNodes(graph, nodes.data(), &node_count));
+
+      cudaGraphNode_t kernel_node = nullptr;
+      for (const auto node : nodes) {
+        cudaGraphNodeType type{};
+        CUDA_CHECK(cudaGraphNodeGetType(node, &type));
+        if (type == cudaGraphNodeTypeKernel) {
+          HOLOVIBES_CHECK(kernel_node == nullptr,
+                          "Single-kernel conversion graph contains multiple kernel nodes");
+          kernel_node = node;
+        }
+      }
+      HOLOVIBES_CHECK(kernel_node != nullptr,
+                      "Single-kernel conversion graph contains no kernel node");
+      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+
+      reset();
+      graph_       = graph;
+      executable_  = executable;
+      kernel_node_ = kernel_node;
+      addresses_   = addresses;
+    } catch (...) {
+      if (executable != nullptr) {
+        CUDA_CHECK_NT(cudaGraphExecDestroy(executable));
+      }
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+      throw;
+    }
+  }
+
+  void reset() noexcept {
+    if (executable_ != nullptr) {
+      CUDA_CHECK_NT(cudaGraphExecDestroy(executable_));
+      executable_ = nullptr;
+    }
+    if (graph_ != nullptr) {
+      CUDA_CHECK_NT(cudaGraphDestroy(graph_));
+      graph_ = nullptr;
+    }
+    kernel_node_ = nullptr;
+    addresses_   = {};
+  }
+
+private:
+  cudaGraph_t     graph_       = nullptr;
+  cudaGraphExec_t executable_  = nullptr;
+  cudaGraphNode_t kernel_node_ = nullptr;
+  GraphAddresses  addresses_   = {};
+};
+
+class ScaledCudaGraph {
+public:
+  explicit ScaledCudaGraph(GraphAddresses addresses) : addresses_(addresses) {}
+  ~ScaledCudaGraph() noexcept {
+    if (executable_ != nullptr) {
+      CUDA_CHECK_NT(cudaGraphExecDestroy(executable_));
+    }
+  }
+
+  ScaledCudaGraph(const ScaledCudaGraph &)            = delete;
+  ScaledCudaGraph &operator=(const ScaledCudaGraph &) = delete;
+
+  [[nodiscard]] bool matches(const GraphAddresses &addresses) const noexcept {
+    return executable_ != nullptr && addresses_ == addresses;
+  }
+
+  void launch(cudaStream_t stream) const { CUDA_CHECK(cudaGraphLaunch(executable_, stream)); }
+
+  template <typename Enqueue> void capture(cudaStream_t stream, Enqueue &&enqueue) {
+    cudaGraph_t graph = capture_graph(stream, std::forward<Enqueue>(enqueue));
+    try {
+      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable_, graph, 0));
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+    } catch (...) {
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+      throw;
+    }
+  }
+
+private:
+  GraphAddresses  addresses_  = {};
+  cudaGraphExec_t executable_ = nullptr;
+};
+
 } // namespace
 
 // -------------------------------------------------------------------------------------------------
@@ -235,6 +381,60 @@ public:
         stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    const GraphAddresses addresses{ctx.inputs[0].data(), ctx.outputs[0].data()};
+    if (stream_ == nullptr) {
+      return enqueue(ctx);
+    }
+
+    cudaStreamCaptureStatus capture_status = cudaStreamCaptureStatusNone;
+    CUDA_CHECK(cudaStreamIsCapturing(stream_, &capture_status));
+    if (capture_status != cudaStreamCaptureStatusNone) {
+      return enqueue(ctx);
+    }
+
+    if (settings_.strategy == Strategy::Scaled) {
+      return execute_scaled(ctx, addresses);
+    }
+
+    if (single_graph_.ready()) {
+      if (!single_graph_.matches(addresses)) {
+        try {
+          update_single_graph(ctx, addresses);
+        } catch (const std::exception &error) {
+          logger()->warn("[Conversion] CUDA Graph parameter update failed; recapturing: {}",
+                         error.what());
+          single_graph_.reset();
+        }
+      }
+      if (single_graph_.ready()) {
+        single_graph_.launch(stream_);
+        return holoflow::core::OpResult::Ok;
+      }
+    }
+
+    const auto result = enqueue(ctx);
+    if (result == holoflow::core::OpResult::Ok && graph_capture_enabled_) {
+      try_capture_single(ctx, addresses);
+    }
+    return result;
+  }
+
+  void update_stream(cudaStream_t stream) {
+    if (stream_ != stream) {
+      graph_capture_enabled_ = true;
+      stream_                = stream;
+    }
+  }
+
+  const ConversionSettings    &settings() const { return settings_; }
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+
+private:
+  // CUB's captured reduction nodes embed their input addresses and cannot be updated like the
+  // custom single-kernel paths. Cache the finite set of rotating pipeline buffers instead.
+  static constexpr size_t scaled_graph_cache_capacity = 128;
+
+  holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx) {
     auto in  = ctx.inputs[0];
     auto out = ctx.outputs[0];
 
@@ -257,12 +457,113 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
-  void update_stream(cudaStream_t stream) { stream_ = stream; }
+  holoflow::core::OpResult execute_scaled(holoflow::core::SyncCtx &ctx,
+                                          const GraphAddresses    &addresses) {
+    const auto graph = std::find_if(
+        scaled_graphs_.begin(), scaled_graphs_.end(),
+        [&addresses](const ScaledCudaGraph &candidate) { return candidate.matches(addresses); });
+    if (graph != scaled_graphs_.end()) {
+      graph->launch(stream_);
+      scaled_graphs_.splice(scaled_graphs_.begin(), scaled_graphs_, graph);
+      return holoflow::core::OpResult::Ok;
+    }
 
-  const ConversionSettings    &settings() const { return settings_; }
-  const holoflow::core::TDesc &idesc() const { return idesc_; }
+    const auto result = enqueue(ctx);
+    if (result != holoflow::core::OpResult::Ok || !graph_capture_enabled_) {
+      return result;
+    }
 
-private:
+    scaled_graphs_.emplace_front(addresses);
+    try {
+      scaled_graphs_.front().capture(stream_, [&]() { (void)enqueue(ctx); });
+      if (scaled_graphs_.size() > scaled_graph_cache_capacity) {
+        scaled_graphs_.pop_back();
+      }
+    } catch (const std::exception &error) {
+      scaled_graphs_.pop_front();
+      graph_capture_enabled_ = false;
+      logger()->warn("[Conversion] CUDA Graph capture disabled: {}", error.what());
+    }
+    return result;
+  }
+
+  void try_capture_single(holoflow::core::SyncCtx &ctx, const GraphAddresses &addresses) {
+    try {
+      single_graph_.capture(stream_, addresses, [&]() { (void)enqueue(ctx); });
+    } catch (const std::exception &error) {
+      graph_capture_enabled_ = false;
+      logger()->warn("[Conversion] CUDA Graph capture disabled: {}", error.what());
+    }
+  }
+
+  template <typename... Args>
+  void set_single_graph_params(const void *kernel, int num_blocks, const GraphAddresses &addresses,
+                               Args &...args) {
+    void                      *kernel_args[] = {&args...};
+    const cudaKernelNodeParams params{
+        .func           = const_cast<void *>(kernel),
+        .gridDim        = {static_cast<unsigned int>(num_blocks), 1, 1},
+        .blockDim       = {256, 1, 1},
+        .sharedMemBytes = 0,
+        .kernelParams   = kernel_args,
+        .extra          = nullptr,
+    };
+    single_graph_.update(params, addresses);
+  }
+
+  void update_single_graph(holoflow::core::SyncCtx &ctx, const GraphAddresses &addresses) {
+    auto      in         = ctx.inputs[0];
+    auto      out        = ctx.outputs[0];
+    int       size       = static_cast<int>(in.desc.num_elements());
+    int       num_blocks = (size + 255) / 256;
+    const Cfg cfg{in.desc.dtype, settings_.target, settings_.strategy};
+
+    if (cfg == Cfg{DType::U8, Target::F32, Strategy::Real}) {
+      auto *idata = reinterpret_cast<const uint8_t *>(in.data());
+      auto *odata = reinterpret_cast<float *>(out.data());
+      set_single_graph_params(reinterpret_cast<const void *>(u8_f32_real_kernel), num_blocks,
+                              addresses, idata, odata, size);
+      return;
+    }
+    if (cfg == Cfg{DType::U8, Target::CF32, Strategy::Real}) {
+      auto *idata = reinterpret_cast<const uint8_t *>(in.data());
+      auto *odata = reinterpret_cast<cuFloatComplex *>(out.data());
+      set_single_graph_params(reinterpret_cast<const void *>(u8_cf32_real_kernel), num_blocks,
+                              addresses, idata, odata, size);
+      return;
+    }
+    if (cfg == Cfg{DType::U16, Target::CF32, Strategy::Real}) {
+      auto *idata = reinterpret_cast<const uint16_t *>(in.data());
+      auto *odata = reinterpret_cast<cuFloatComplex *>(out.data());
+      set_single_graph_params(reinterpret_cast<const void *>(u16_cf32_real_kernel), num_blocks,
+                              addresses, idata, odata, size);
+      return;
+    }
+    if (cfg == Cfg{DType::F32, Target::CF32, Strategy::Real}) {
+      auto *idata = reinterpret_cast<const float *>(in.data());
+      auto *odata = reinterpret_cast<cuFloatComplex *>(out.data());
+      set_single_graph_params(reinterpret_cast<const void *>(f32_cf32_real_kernel), num_blocks,
+                              addresses, idata, odata, size);
+      return;
+    }
+    if (cfg == Cfg{DType::CF32, Target::F32, Strategy::Modulus}) {
+      auto *idata = reinterpret_cast<const cuFloatComplex *>(in.data());
+      auto *odata = reinterpret_cast<float *>(out.data());
+      set_single_graph_params(reinterpret_cast<const void *>(cf32_f32_modulus_kernel), num_blocks,
+                              addresses, idata, odata, size);
+      return;
+    }
+    if (cfg == Cfg{DType::CF32, Target::F32, Strategy::Argument}) {
+      auto *idata = reinterpret_cast<const cuFloatComplex *>(in.data());
+      auto *odata = reinterpret_cast<float *>(out.data());
+      set_single_graph_params(reinterpret_cast<const void *>(cf32_f32_argument_kernel), num_blocks,
+                              addresses, idata, odata, size);
+      return;
+    }
+
+    HOLOVIBES_UNREACHABLE();
+  }
+
   void launch_u8_f32_real(holoflow::core::TView in, holoflow::core::TView out) {
     auto *idata = reinterpret_cast<const uint8_t *>(in.data());
     auto *odata = reinterpret_cast<float *>(out.data());
@@ -373,15 +674,18 @@ private:
     CUDA_CHECK(cudaGetLastError());
   }
 
-  ConversionSettings    settings_;
-  holoflow::core::TDesc idesc_;
-  size_t                min_temp_storage_bytes_;
-  DevPtr<uint8_t>       d_min_temp_storage_;
-  DevPtr<std::byte>     d_min_;
-  size_t                max_temp_storage_bytes_;
-  DevPtr<uint8_t>       d_max_temp_storage_;
-  DevPtr<std::byte>     d_max_;
-  cudaStream_t          stream_;
+  ConversionSettings         settings_;
+  holoflow::core::TDesc      idesc_;
+  size_t                     min_temp_storage_bytes_;
+  DevPtr<uint8_t>            d_min_temp_storage_;
+  DevPtr<std::byte>          d_min_;
+  size_t                     max_temp_storage_bytes_;
+  DevPtr<uint8_t>            d_max_temp_storage_;
+  DevPtr<std::byte>          d_max_;
+  cudaStream_t               stream_;
+  bool                       graph_capture_enabled_ = true;
+  SingleKernelCudaGraph      single_graph_;
+  std::list<ScaledCudaGraph> scaled_graphs_;
 };
 
 // -------------------------------------------------------------------------------------------------

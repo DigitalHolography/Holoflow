@@ -16,13 +16,17 @@ set(TARGET holotask_test)
 
 set(SOURCES
     angular_spectrum_test.cu
+    conversion_test.cu
     flatfield_test.cu
     filter2d_test.cu
     fresnel_diffraction_test.cu
     holofile_sink_test.cc
+    normalize_test.cu
     pca_test.cu
+    pct_clip_test.cu
     shack_hartmann_test.cu
     sliding_average_test.cu
+    zernike_defocus_z_prop_test.cc
     zernike_phase_test.cu
     ../holonp/support/tensor_test_buffer.cc
     ../holonp/support/sync_task_runner.cc

@@ -109,6 +109,45 @@ TaskResult run_task(const holoflow::core::ISyncTaskFactory &factory, const TDesc
   return {infer.output_descs[0], output.download()};
 }
 
+void expect_magnitude_output_rebinding(const holoflow::core::ISyncTaskFactory &factory,
+                                       const TDesc                            &input_desc,
+                                       std::span<const std::byte>              input_bytes,
+                                       const nlohmann::json                   &settings) {
+  curaii::CudaStream stream;
+  const std::vector  input_descs = {input_desc};
+  const auto         infer       = factory.infer(input_descs, settings);
+  auto               task        = factory.create(input_descs, settings, {stream.get()});
+  task->bind_logger(spdlog::default_logger());
+
+  holonp_test::TensorTestBuffer input(input_desc);
+  holonp_test::TensorTestBuffer output_a(infer.output_descs[0]);
+  holonp_test::TensorTestBuffer output_b(infer.output_descs[0]);
+  input.upload(input_bytes);
+
+  auto              input_view    = input.view();
+  auto              output_view_a = output_a.view();
+  auto              output_view_b = output_b.view();
+  std::atomic<bool> cancelled{false};
+  auto              execute = [&](holoflow::core::TView &output) {
+    holoflow::core::SyncCtx execute_ctx{
+                     .inputs       = {&input_view, 1},
+                     .outputs      = {&output, 1},
+                     .cancelled    = &cancelled,
+                     .event_writer = nullptr,
+                     .event_reader = nullptr,
+    };
+    EXPECT_EQ(task->execute(execute_ctx), holoflow::core::OpResult::Ok);
+  };
+
+  execute(output_view_a);
+  execute(output_view_a); // Stable pointer: caller info should already be current.
+  execute(output_view_b); // New graph storage: caller info must be updated.
+  execute(output_view_a); // Rebinding must also work when returning to an earlier buffer.
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+
+  EXPECT_EQ(output_a.download(), output_b.download());
+}
+
 void expect_magnitude_matches(const TaskResult &complex_result, const TaskResult &magnitude_result) {
   ASSERT_EQ(complex_result.desc.dtype, DType::CF32);
   ASSERT_EQ(magnitude_result.desc.dtype, DType::F32);
@@ -177,6 +216,28 @@ TEST(ShortTimeFresnelDiffractionMagnitudeTest, StoreCallbackMatchesComplexMagnit
   const auto input_bytes = as_bytes(input_values);
   expect_magnitude_matches(run_task(factory, input_desc, input_bytes, complex_settings),
                            run_task(factory, input_desc, input_bytes, magnitude_settings));
+}
+
+TEST(FresnelDiffractionMagnitudeTest, LazilyUpdatesChangingOutputPointers) {
+  holotask::syncs::FresnelDiffractionFactory factory;
+  const auto                                 input_desc = device_desc({2, 3, 32, 48}, DType::CF32);
+  std::vector<cuFloatComplex>                input_values(input_desc.num_elements(),
+                                                          make_cuFloatComplex(1.0f, -0.5f));
+  auto                                       settings = fresnel_settings(0.01f);
+  settings["output_magnitude"]                        = true;
+
+  expect_magnitude_output_rebinding(factory, input_desc, as_bytes(input_values), settings);
+}
+
+TEST(ShortTimeFresnelDiffractionMagnitudeTest, LazilyUpdatesChangingOutputPointers) {
+  holotask::syncs::ShortTimeFresnelDiffractionFactory factory;
+  const auto                  input_desc = device_desc({2, 3, 32, 32}, DType::CF32);
+  std::vector<cuFloatComplex> input_values(input_desc.num_elements(),
+                                           make_cuFloatComplex(1.0f, -0.5f));
+  auto                        settings = short_time_fresnel_settings(0.01f);
+  settings["output_magnitude"]         = true;
+
+  expect_magnitude_output_rebinding(factory, input_desc, as_bytes(input_values), settings);
 }
 
 TEST(FresnelDiffractionUpdateTest, ReusesTaskWhenOnlyPropagationDistanceChanges) {

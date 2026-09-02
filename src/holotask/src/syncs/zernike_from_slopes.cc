@@ -25,8 +25,10 @@
 #include <utility>
 #include <vector>
 
+#include "curaii/cuda.hh"
 #include "logger.hh"
 #include "syncs/shack_hartmann_geometry.hh"
+#include "syncs/zernike_from_slopes_gpu.cuh"
 
 namespace holotask::syncs {
 
@@ -73,6 +75,8 @@ void from_json(const nlohmann::json &j, ZernikeFromSlopesSettings &s) {
 namespace {
 
 constexpr size_t kMaxSupportedModes = 9; // Noll indices 2..10
+
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 void check(bool condition, const std::string &message) {
   if (!condition) {
@@ -189,14 +193,112 @@ detail::ShackHartmannGeometrySettings geometry_settings(const holoflow::core::TD
   };
 }
 
+bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
+  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
+         a.mem_loc == b.mem_loc && a.offset == b.offset;
+}
+
+struct GpuFitData {
+  std::vector<size_t>                  active_samples;
+  std::vector<float>                   derivatives_x;
+  std::vector<float>                   derivatives_y;
+  std::vector<float>                   regularized_gram;
+  detail::ZernikeFromSlopesGpuSettings kernel_settings;
+};
+
+GpuFitData make_gpu_fit_data(const holoflow::core::TDesc     &input,
+                             const ZernikeFromSlopesSettings &settings) {
+  const auto geometry = detail::make_shack_hartmann_geometry(geometry_settings(input, settings));
+
+  std::vector<size_t> observable_positions;
+  observable_positions.reserve(settings.indexes.size());
+  for (size_t position = 0; position < settings.indexes.size(); ++position) {
+    if (settings.indexes[position] != 2 && settings.indexes[position] != 3) {
+      observable_positions.push_back(position);
+    }
+  }
+
+  GpuFitData data;
+  data.active_samples.reserve(geometry.samples.size());
+  for (size_t sample = 0; sample < geometry.samples.size(); ++sample) {
+    if (geometry.samples[sample].active) {
+      data.active_samples.push_back(sample);
+    }
+  }
+
+  const size_t observable_count = observable_positions.size();
+  const size_t active_count     = data.active_samples.size();
+  data.derivatives_x.resize(active_count * observable_count);
+  data.derivatives_y.resize(active_count * observable_count);
+  std::array<float, kMaxSupportedModes> means_x{};
+  std::array<float, kMaxSupportedModes> means_y{};
+
+  for (size_t active = 0; active < active_count; ++active) {
+    const auto &sample = geometry.samples[data.active_samples[active]];
+    for (size_t mode = 0; mode < observable_count; ++mode) {
+      const auto derivative = eval_zernike_noll_derivative(
+          settings.indexes[observable_positions[mode]], sample.x_n, sample.y_n);
+      const size_t offset        = active * observable_count + mode;
+      data.derivatives_x[offset] = derivative.dx_n / geometry.pupil_radius_m;
+      data.derivatives_y[offset] = derivative.dy_n / geometry.pupil_radius_m;
+      means_x[mode] += data.derivatives_x[offset];
+      means_y[mode] += data.derivatives_y[offset];
+    }
+  }
+
+  for (size_t mode = 0; mode < observable_count; ++mode) {
+    means_x[mode] /= static_cast<float>(active_count);
+    means_y[mode] /= static_cast<float>(active_count);
+  }
+  for (size_t active = 0; active < active_count; ++active) {
+    for (size_t mode = 0; mode < observable_count; ++mode) {
+      const size_t offset = active * observable_count + mode;
+      data.derivatives_x[offset] -= means_x[mode];
+      data.derivatives_y[offset] -= means_y[mode];
+    }
+  }
+
+  data.regularized_gram.assign(observable_count * observable_count, 0.0f);
+  for (size_t active = 0; active < active_count; ++active) {
+    const size_t derivative_offset = active * observable_count;
+    for (size_t i = 0; i < observable_count; ++i) {
+      for (size_t j = 0; j < observable_count; ++j) {
+        data.regularized_gram[i * observable_count + j] +=
+            data.derivatives_x[derivative_offset + i] * data.derivatives_x[derivative_offset + j] +
+            data.derivatives_y[derivative_offset + i] * data.derivatives_y[derivative_offset + j];
+      }
+    }
+  }
+  constexpr float ridge = 1e-9f;
+  for (size_t mode = 0; mode < observable_count; ++mode) {
+    data.regularized_gram[mode * observable_count + mode] += ridge;
+  }
+
+  data.kernel_settings = {
+      .active_count      = active_count,
+      .observable_count  = observable_count,
+      .output_count      = settings.indexes.size(),
+      .sx_count          = input.shape[2],
+      .stride_y          = input.strides[1],
+      .stride_x          = input.strides[2],
+      .stride_component  = input.strides[3],
+      .radians_per_meter = 2.0f * std::acos(-1.0f) / settings.lambda,
+  };
+  for (size_t mode = 0; mode < observable_count; ++mode) {
+    data.kernel_settings.observable_positions[mode] = static_cast<int>(observable_positions[mode]);
+  }
+  return data;
+}
+
 // -------------------------------------------------------------------------------------------------
 // ZernikeFromSlopes task implementation
 // -------------------------------------------------------------------------------------------------
 
-class ZernikeFromSlopes : public holoflow::core::ISyncTask {
+class CpuZernikeFromSlopes : public holoflow::core::ISyncTask {
 public:
-  explicit ZernikeFromSlopes(ZernikeFromSlopesSettings settings, cudaStream_t stream)
-      : settings_(std::move(settings)), stream_(stream) {}
+  CpuZernikeFromSlopes(ZernikeFromSlopesSettings settings, holoflow::core::TDesc input_desc,
+                       cudaStream_t stream)
+      : settings_(std::move(settings)), input_desc_(std::move(input_desc)), stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     CUDA_CHECK(cudaStreamSynchronize(stream_));
@@ -287,10 +389,68 @@ public:
 
   void                             update_stream(cudaStream_t stream) { stream_ = stream; }
   const ZernikeFromSlopesSettings &settings() const { return settings_; }
+  const holoflow::core::TDesc     &input_desc() const { return input_desc_; }
 
 private:
   ZernikeFromSlopesSettings settings_;
+  holoflow::core::TDesc     input_desc_;
   cudaStream_t              stream_;
+};
+
+class GpuZernikeFromSlopes : public holoflow::core::ISyncTask {
+public:
+  GpuZernikeFromSlopes(ZernikeFromSlopesSettings settings, holoflow::core::TDesc input_desc,
+                       GpuFitData fit_data, cudaStream_t stream)
+      : settings_(std::move(settings)), input_desc_(std::move(input_desc)),
+        kernel_settings_(fit_data.kernel_settings), stream_(stream),
+        active_samples_(curaii::make_unique_device_ptr<size_t>(
+            std::max<size_t>(1, fit_data.active_samples.size()), stream)),
+        derivatives_x_(curaii::make_unique_device_ptr<float>(
+            std::max<size_t>(1, fit_data.derivatives_x.size()), stream)),
+        derivatives_y_(curaii::make_unique_device_ptr<float>(
+            std::max<size_t>(1, fit_data.derivatives_y.size()), stream)),
+        regularized_gram_(curaii::make_unique_device_ptr<float>(
+            std::max<size_t>(1, fit_data.regularized_gram.size()), stream)) {
+    if (!fit_data.active_samples.empty()) {
+      CUDA_CHECK(cudaMemcpyAsync(active_samples_.get(), fit_data.active_samples.data(),
+                                 fit_data.active_samples.size() * sizeof(size_t),
+                                 cudaMemcpyHostToDevice, stream_));
+    }
+    if (!fit_data.derivatives_x.empty()) {
+      CUDA_CHECK(cudaMemcpyAsync(derivatives_x_.get(), fit_data.derivatives_x.data(),
+                                 fit_data.derivatives_x.size() * sizeof(float),
+                                 cudaMemcpyHostToDevice, stream_));
+      CUDA_CHECK(cudaMemcpyAsync(derivatives_y_.get(), fit_data.derivatives_y.data(),
+                                 fit_data.derivatives_y.size() * sizeof(float),
+                                 cudaMemcpyHostToDevice, stream_));
+      CUDA_CHECK(cudaMemcpyAsync(regularized_gram_.get(), fit_data.regularized_gram.data(),
+                                 fit_data.regularized_gram.size() * sizeof(float),
+                                 cudaMemcpyHostToDevice, stream_));
+    }
+  }
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    CUDA_CHECK(detail::launch_zernike_from_slopes_gpu(
+        reinterpret_cast<const float *>(ctx.inputs[0].data()),
+        reinterpret_cast<float *>(ctx.outputs[0].data()), active_samples_.get(),
+        derivatives_x_.get(), derivatives_y_.get(), regularized_gram_.get(), kernel_settings_,
+        stream_));
+    return holoflow::core::OpResult::Ok;
+  }
+
+  void                             update_stream(cudaStream_t stream) { stream_ = stream; }
+  const ZernikeFromSlopesSettings &settings() const { return settings_; }
+  const holoflow::core::TDesc     &input_desc() const { return input_desc_; }
+
+private:
+  ZernikeFromSlopesSettings            settings_;
+  holoflow::core::TDesc                input_desc_;
+  detail::ZernikeFromSlopesGpuSettings kernel_settings_;
+  cudaStream_t                         stream_;
+  DevPtr<size_t>                       active_samples_;
+  DevPtr<float>                        derivatives_x_;
+  DevPtr<float>                        derivatives_y_;
+  DevPtr<float>                        regularized_gram_;
 };
 
 } // namespace
@@ -306,7 +466,9 @@ ZernikeFromSlopesFactory::infer(std::span<const holoflow::core::TDesc> input_des
 
   check(input_descs.size() == 1, "task must have exactly one input");
   const auto &input = input_descs[0];
-  check(input.mem_loc == holoflow::core::MemLoc::Host, "input memory location must be Host");
+  check(input.mem_loc == holoflow::core::MemLoc::Host ||
+            input.mem_loc == holoflow::core::MemLoc::Device,
+        "input memory location must be Host or Device");
   check(input.dtype == holoflow::core::DType::F32, "input dtype must be F32");
   check(input.rank() == 4, "input rank must be 4");
   check(input.shape[0] == 1, "only batch size 1 is supported");
@@ -337,7 +499,7 @@ ZernikeFromSlopesFactory::infer(std::span<const holoflow::core::TDesc> input_des
         "at least one subaperture must be active");
 
   holoflow::core::TDesc output({1, 1, settings.indexes.size()}, holoflow::core::DType::F32,
-                               holoflow::core::MemLoc::Host);
+                               input.mem_loc);
   return {
       .input_descs   = {input},
       .output_descs  = {output},
@@ -353,8 +515,13 @@ ZernikeFromSlopesFactory::create(std::span<const holoflow::core::TDesc> input_de
                                  const nlohmann::json                  &jsettings,
                                  const holoflow::core::SyncCreateCtx   &ctx) const {
   (void)infer(input_descs, jsettings);
-  return std::make_unique<ZernikeFromSlopes>(jsettings.get<ZernikeFromSlopesSettings>(),
-                                             ctx.stream);
+  auto settings = jsettings.get<ZernikeFromSlopesSettings>();
+  auto input    = input_descs[0];
+  if (input.mem_loc == holoflow::core::MemLoc::Device) {
+    return std::make_unique<GpuZernikeFromSlopes>(settings, input,
+                                                  make_gpu_fit_data(input, settings), ctx.stream);
+  }
+  return std::make_unique<CpuZernikeFromSlopes>(settings, input, ctx.stream);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -364,10 +531,18 @@ ZernikeFromSlopesFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_
                                  const holoflow::core::SyncCreateCtx       &ctx) const {
   (void)infer(input_descs, jsettings);
 
-  auto      *old_fit  = dynamic_cast<ZernikeFromSlopes *>(old_task.get());
-  const auto settings = jsettings.get<ZernikeFromSlopesSettings>();
-  if (old_fit != nullptr && settings == old_fit->settings()) {
-    old_fit->update_stream(ctx.stream);
+  const auto  settings = jsettings.get<ZernikeFromSlopesSettings>();
+  const auto &input    = input_descs[0];
+  if (auto *old_cpu = dynamic_cast<CpuZernikeFromSlopes *>(old_task.get());
+      old_cpu != nullptr && input.mem_loc == holoflow::core::MemLoc::Host &&
+      settings == old_cpu->settings() && same_desc(input, old_cpu->input_desc())) {
+    old_cpu->update_stream(ctx.stream);
+    return old_task;
+  }
+  if (auto *old_gpu = dynamic_cast<GpuZernikeFromSlopes *>(old_task.get());
+      old_gpu != nullptr && input.mem_loc == holoflow::core::MemLoc::Device &&
+      settings == old_gpu->settings() && same_desc(input, old_gpu->input_desc())) {
+    old_gpu->update_stream(ctx.stream);
     return old_task;
   }
 

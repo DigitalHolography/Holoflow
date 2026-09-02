@@ -91,6 +91,7 @@ struct Section {
   std::vector<GraphPlan::vertex_descriptor> sync_topo;  ///< Synchronous nodes in topological order.
   std::vector<GraphPlan::vertex_descriptor> async_cons; ///< Asynchronous consumer nodes.
   std::vector<GraphPlan::vertex_descriptor> async_prod; ///< Asynchronous producer nodes
+  bool has_synchronizing_async_producer = false; ///< Producer supplies the section stream barrier.
 };
 
 struct SyncRt {

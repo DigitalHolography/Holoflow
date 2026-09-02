@@ -15,6 +15,7 @@
 #include "holotask/syncs/zernike_defocus_z_prop.hh"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <stdexcept>
@@ -41,6 +42,7 @@ void to_json(nlohmann::json &j, const ZernikeDefocusZPropSettings &s) {
       {"lambda", s.lambda},
       {"z_curr", s.z_curr},
       {"pupil_radius", s.pupil_radius},
+      {"interval_seconds", s.interval_seconds},
   };
 }
 
@@ -56,6 +58,7 @@ void from_json(const nlohmann::json &j, ZernikeDefocusZPropSettings &s) {
   j.at("lambda").get_to(s.lambda);
   j.at("z_curr").get_to(s.z_curr);
   j.at("pupil_radius").get_to(s.pupil_radius);
+  s.interval_seconds = j.value("interval_seconds", 1.0);
 }
 
 namespace {
@@ -130,6 +133,13 @@ public:
       : settings_(std::move(settings)), idesc_(std::move(idesc)), stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next_execution_) {
+      return holoflow::core::OpResult::Ok;
+    }
+    next_execution_ = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                std::chrono::duration<double>(settings_.interval_seconds));
+
     auto       &input       = ctx.inputs[0];
     const auto  a4_position = defocus_position(settings_.indexes);
     const auto *src         = reinterpret_cast<const float *>(input.data()) + a4_position;
@@ -173,9 +183,10 @@ public:
   void                               update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
-  ZernikeDefocusZPropSettings settings_;
-  holoflow::core::TDesc       idesc_;
-  cudaStream_t                stream_;
+  ZernikeDefocusZPropSettings           settings_;
+  holoflow::core::TDesc                 idesc_;
+  std::chrono::steady_clock::time_point next_execution_{};
+  cudaStream_t                          stream_;
 };
 
 } // namespace
@@ -192,6 +203,8 @@ ZernikeDefocusZPropFactory::infer(std::span<const holoflow::core::TDesc> input_d
   check(settings.lambda > 0.0f, "lambda must be positive");
   check(settings.z_curr != 0.0f, "z_curr must be non-zero");
   check(settings.pupil_radius > 0.0f, "pupil_radius must be positive");
+  check(std::isfinite(settings.interval_seconds) && settings.interval_seconds > 0.0,
+        "interval_seconds must be positive and finite");
   check(!settings.indexes.empty(), "indexes must not be empty");
   check(std::find(settings.indexes.begin(), settings.indexes.end(), kDefocusNollIndex) !=
             settings.indexes.end(),
