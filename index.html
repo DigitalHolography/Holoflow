@@ -24,6 +24,9 @@
     
       <link rel="stylesheet" href="assets/stylesheets/main.2a3383ac.min.css">
       
+        
+        <link rel="stylesheet" href="assets/stylesheets/palette.06af60db.min.css">
+      
       
 
 
@@ -51,7 +54,14 @@
   </head>
   
   
-    <body dir="ltr">
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
   
     
     <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
@@ -60,7 +70,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#holoflow-project" class="md-skip">
+        <a href="#holoflow" class="md-skip">
           Skip to content
         </a>
       
@@ -72,7 +82,9 @@
     
       
 
-<header class="md-header" data-md-component="header">
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href="index.html" title="Holoflow" class="md-header__button md-logo" aria-label="Holoflow" data-md-component="logo">
       
@@ -100,6 +112,42 @@
         </div>
       </div>
     </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m14.3 16-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12zm-9.15 3.96h2.3L12 9z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
     
     
       <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
@@ -131,6 +179,8 @@
         </button>
       </nav>
       
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
     </form>
     <div class="md-search__output">
       <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
@@ -147,16 +197,22 @@
       
     
     
+      <div class="md-header__source">
+        <a href="https://github.com/DigitalHolography/Holoflow" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DigitalHolography/Holoflow
+  </div>
+</a>
+      </div>
+    
   </nav>
   
-</header>
     
-    <div class="md-container" data-md-component="container">
       
-      
-        
-          
-            
 <nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
   <div class="md-grid">
     <ul class="md-tabs__list">
@@ -232,6 +288,8 @@
           
   
   
+    
+  
   Holovibes
 
         </a>
@@ -251,6 +309,8 @@
         <a href="holoflow/index.html" class="md-tabs__link">
           
   
+  
+    
   
   Holoflow
 
@@ -301,7 +361,13 @@
     </ul>
   </div>
 </nav>
-          
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
         
       
       <main class="md-main" data-md-component="main">
@@ -331,6 +397,18 @@
     Holoflow
   </label>
   
+    <div class="md-nav__source">
+      <a href="https://github.com/DigitalHolography/Holoflow" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DigitalHolography/Holoflow
+  </div>
+</a>
+    </div>
+  
   <ul class="md-nav__list" data-md-scrollfix>
     
       
@@ -349,6 +427,19 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="index.html" class="md-nav__link md-nav__link--active">
         
   
@@ -360,6 +451,43 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#from-processing-graph-to-real-time-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      From processing graph to real-time execution
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#built-as-a-modular-stack" class="md-nav__link">
+    <span class="md-ellipsis">
+      Built as a modular stack
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -417,9 +545,19 @@
   
     
     
+      
+        
+          
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -430,8 +568,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="holovibes/index.html" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -440,8 +579,14 @@
   </span>
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
@@ -451,27 +596,6 @@
           <ul class="md-nav__list" data-md-scrollfix>
             
               
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="holovibes/index.html" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Overview
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -481,9 +605,21 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -522,9 +658,19 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -640,9 +786,17 @@
   
     
     
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -735,9 +889,43 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -1129,9 +1317,19 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -1262,9 +1460,25 @@
   
     
     
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -1275,8 +1489,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="holoflow/index.html" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -1285,8 +1500,14 @@
   </span>
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_5">
@@ -1295,27 +1516,6 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="holoflow/index.html" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Overview
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
               
             
               
@@ -1349,9 +1549,19 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -1467,9 +1677,17 @@
   
     
     
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -1562,9 +1780,17 @@
   
     
     
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -1715,32 +1941,76 @@
                   
 
 
+  
+    <a href="https://github.com/DigitalHolography/Holoflow/edit/main/doc/mkdocs/docs/index.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/DigitalHolography/Holoflow/raw/main/doc/mkdocs/docs/index.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 18c.56 0 1 .44 1 1s-.44 1-1 1-1-.44-1-1 .44-1 1-1m0-3c-2.73 0-5.06 1.66-6 4 .94 2.34 3.27 4 6 4s5.06-1.66 6-4c-.94-2.34-3.27-4-6-4m0 6.5a2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5 2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5M9.27 20H6V4h7v5h5v4.07c.7.08 1.36.25 2 .49V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4.5a8.2 8.2 0 0 1-1.23-2"/></svg>
+    </a>
+  
 
-<h1 id="holoflow-project">Holoflow Project</h1>
-<p>The <strong>Holoflow Project</strong> is a modular framework for real-time digital holography and high-performance image processing.<br />
-It is composed of several libraries and an executable application:</p>
+
+<h1 id="holoflow">Holoflow<a class="headerlink" href="#holoflow" title="Permanent link">&para;</a></h1>
+<p>Holoflow is a graph-based high-performance computing framework for real-time scientific imaging, with first-class support for GPU-accelerated processing and laser Doppler holography.</p>
+<figure>
+<p><img alt="Holoflow processing graph from Holofile input through GPU processing tasks to the displayed output" loading="lazy" src="assets/images/holoflow-pipeline.svg" /></p>
+<figcaption>
+<p>Example Holoflow processing graph</p>
+</figcaption>
+</figure>
+<div class="grid">
+<figure>
+<p><img alt="Black placeholder for the input image" loading="lazy" src="assets/images/input-placeholder.svg" width="512" /></p>
+<figcaption>
+<p>Input</p>
+</figcaption>
+</figure>
+<figure>
+<p><img alt="Black placeholder for the output image" loading="lazy" src="assets/images/output-placeholder.svg" width="512" /></p>
+<figcaption>
+<p>Output</p>
+</figcaption>
+</figure>
+</div>
+<h2 id="from-processing-graph-to-real-time-execution">From processing graph to real-time execution<a class="headerlink" href="#from-processing-graph-to-real-time-execution" title="Permanent link">&para;</a></h2>
+<p>Describe your processing pipelined as a declarative graph of computational tasks. No implementation details, no manual buffer management, just the maths.
+Holoflow takes care of compiling and executing it efficiently!</p>
+<p>The runtime manages tasks instantiation, GPU scheduling, memory, tensor lifetimes, synchronization, and data movement, allowing processing code to remain focused on the algorithms themselves.
+Pipelines can combine acquisition, signal processing, reconstruction, analysis, and visualization while sustaining the high data rates required by modern scientific imaging systems.</p>
+<p>Holoflow was developed for demanding digital holography workloads, but its execution model is designed for general-purpose scientific computing.</p>
+<h2 id="built-as-a-modular-stack">Built as a modular stack<a class="headerlink" href="#built-as-a-modular-stack" title="Permanent link">&para;</a></h2>
+<div class="grid cards">
 <ul>
 <li>
-<p><strong>Holoflow (library)</strong><br />
-  Core runtime and graph execution engine. Provides the abstraction layer for pipelines as graphs of computational tasks.<br />
-  Handles scheduling, tensor management, memory allocation, and GPU acceleration.</p>
+<p><strong>Holoflow</strong></p>
+<p>Core graph runtime for task scheduling, tensor management, memory allocation, and GPU execution.</p>
+<p><a href="holoflow/index.html">Explore Holoflow</a></p>
 </li>
 <li>
-<p><strong>Holovibes (executable)</strong><br />
-  Reference application built on top of Holoflow, used for real-time digital holography. Offers a Qt-based graphical 
-  interface for visualization and interaction.<br />
-  Demonstrates the full capabilities of the runtime, including live acquisition and processing.</p>
+<p><strong>Holovibes</strong></p>
+<p>Interactive Qt application for real-time acquisition, holographic reconstruction, analysis, and visualization.</p>
+<p><a href="holovibes/index.html">Explore Holovibes</a></p>
 </li>
 <li>
-<p><strong>Curaii (library)</strong><br />
-  Low-level utilities for memory and tensor management. Provides smart pointers, allocation helpers, and RAII abstractions.<br />
-  This library provides C++ apis on top of existing libraries like cufft, cublas, etc.</p>
+<p><strong>Curaii</strong></p>
+<p>RAII-based GPU, memory, tensor, and CUDA library abstractions used throughout the stack.</p>
+<p><a href="curaii/index.html">Explore Curaii</a></p>
 </li>
 <li>
-<p><strong>Holofile (library)</strong><br />
-  Low-level file I/O utilities for reading and writing the custom .holo file format.</p>
+<p><strong>Holofile</strong></p>
+<p>Efficient reading and writing of the <code>.holo</code> format for high-throughput holographic acquisitions.</p>
+<p><a href="holofile/index.html">Explore Holofile</a></p>
 </li>
 </ul>
+</div>
 
 
 
@@ -1771,6 +2041,30 @@ It is composed of several libraries and an executable application:</p>
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+        
+          
+          <a href="about.html" class="md-footer__link md-footer__link--next" aria-label="Next: About">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                About
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
   <div class="md-footer-meta md-typeset">
     <div class="md-footer-meta__inner md-grid">
       <div class="md-copyright">
@@ -1795,7 +2089,7 @@ It is composed of several libraries and an executable application:</p>
     
     
       
-      <script id="__config" type="application/json">{"base": ".", "features": ["navigation.tabs", "navigation.top", "content.code.annotate", "content.code.copy", "toc.integrate"], "search": "assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"base": ".", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.indexes", "navigation.path", "navigation.tracking", "navigation.top", "navigation.footer", "content.code.annotate", "content.code.copy", "content.code.select", "content.tooltips", "content.action.edit", "content.action.view", "search.suggest", "search.highlight", "toc.integrate"], "search": "assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
       <script src="assets/javascripts/bundle.f55a23d4.min.js"></script>

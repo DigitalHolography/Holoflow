@@ -26,6 +26,9 @@
     
       <link rel="stylesheet" href="../../assets/stylesheets/main.2a3383ac.min.css">
       
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
       
 
 
@@ -53,7 +56,14 @@
   </head>
   
   
-    <body dir="ltr">
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
   
     
     <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
@@ -74,7 +84,9 @@
     
       
 
-<header class="md-header" data-md-component="header">
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
     <a href="../../index.html" title="Holoflow" class="md-header__button md-logo" aria-label="Holoflow" data-md-component="logo">
       
@@ -102,6 +114,42 @@
         </div>
       </div>
     </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m14.3 16-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12zm-9.15 3.96h2.3L12 9z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
     
     
       <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
@@ -133,6 +181,8 @@
         </button>
       </nav>
       
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
     </form>
     <div class="md-search__output">
       <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
@@ -149,16 +199,22 @@
       
     
     
+      <div class="md-header__source">
+        <a href="https://github.com/DigitalHolography/Holoflow" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DigitalHolography/Holoflow
+  </div>
+</a>
+      </div>
+    
   </nav>
   
-</header>
     
-    <div class="md-container" data-md-component="container">
       
-      
-        
-          
-            
 <nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
   <div class="md-grid">
     <ul class="md-tabs__list">
@@ -232,6 +288,8 @@
           
   
   
+    
+  
   Holovibes
 
         </a>
@@ -253,6 +311,8 @@
         <a href="../index.html" class="md-tabs__link">
           
   
+  
+    
   
   Holoflow
 
@@ -303,7 +363,13 @@
     </ul>
   </div>
 </nav>
-          
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
         
       
       <main class="md-main" data-md-component="main">
@@ -332,6 +398,18 @@
     </a>
     Holoflow
   </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/DigitalHolography/Holoflow" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DigitalHolography/Holoflow
+  </div>
+</a>
+    </div>
   
   <ul class="md-nav__list" data-md-scrollfix>
     
@@ -409,9 +487,19 @@
   
     
     
+      
+        
+          
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -422,8 +510,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
         
           
-          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../../holovibes/index.html" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -432,8 +521,14 @@
   </span>
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
           <label class="md-nav__title" for="__nav_4">
@@ -443,27 +538,6 @@
           <ul class="md-nav__list" data-md-scrollfix>
             
               
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../../holovibes/index.html" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Overview
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
             
               
                 
@@ -473,9 +547,21 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -514,9 +600,19 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -632,9 +728,17 @@
   
     
     
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -727,9 +831,43 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -1121,9 +1259,19 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
+      
+        
       
     
     
@@ -1256,12 +1404,28 @@
   
     
     
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
         
         
       
+      
+        
       
     
     
@@ -1272,8 +1436,9 @@
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
         
           
-          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
-            
+          <div class="md-nav__link md-nav__container">
+            <a href="../index.html" class="md-nav__link ">
+              
   
   
   <span class="md-ellipsis">
@@ -1282,8 +1447,14 @@
   </span>
   
 
-            <span class="md-nav__icon md-icon"></span>
-          </label>
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
         
         <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_5">
@@ -1292,27 +1463,6 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="../index.html" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Overview
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
               
             
               
@@ -1346,20 +1496,33 @@
   
     
     
+      
+        
+      
+        
+      
+        
+      
+    
     
     
       
       
+        
+          
+          
+        
+      
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" >
         
           
-          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="">
             
   
   
@@ -1464,20 +1627,31 @@
   
     
     
+      
+        
+      
+        
+      
+    
     
     
       
       
+        
+          
+          
+        
+      
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_4" >
         
           
-          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="">
             
   
   
@@ -1561,20 +1735,31 @@
   
     
     
+      
+        
+      
+        
+      
+    
     
     
       
       
+        
+          
+          
+        
+      
     
     
-    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
         <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_5" checked>
         
           
-          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="">
             
   
   
@@ -1960,10 +2145,26 @@
                   
 
 
+  
+    <a href="https://github.com/DigitalHolography/Holoflow/edit/main/doc/mkdocs/docs/holoflow/guides/authoring.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/DigitalHolography/Holoflow/raw/main/doc/mkdocs/docs/holoflow/guides/authoring.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 18c.56 0 1 .44 1 1s-.44 1-1 1-1-.44-1-1 .44-1 1-1m0-3c-2.73 0-5.06 1.66-6 4 .94 2.34 3.27 4 6 4s5.06-1.66 6-4c-.94-2.34-3.27-4-6-4m0 6.5a2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5 2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5M9.27 20H6V4h7v5h5v4.07c.7.08 1.36.25 2 .49V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4.5a8.2 8.2 0 0 1-1.23-2"/></svg>
+    </a>
+  
 
-<h1 id="authoring-tasks">Authoring Tasks</h1>
+
+<h1 id="authoring-tasks">Authoring Tasks<a class="headerlink" href="#authoring-tasks" title="Permanent link">&para;</a></h1>
 <p>This guide explains how to implement a new Holoflow task so that it compiles, executes, and updates correctly.</p>
-<h2 id="step-1-choose-the-task-kind">Step 1: choose the task kind</h2>
+<h2 id="step-1-choose-the-task-kind">Step 1: choose the task kind<a class="headerlink" href="#step-1-choose-the-task-kind" title="Permanent link">&para;</a></h2>
 <p>Use a synchronous task when the operator is naturally a single call:</p>
 <ul>
 <li>pure transforms</li>
@@ -1976,9 +2177,9 @@
 <li>buffering and batching stages</li>
 <li>producer/consumer adapters</li>
 </ul>
-<h2 id="step-2-define-the-factory-contract">Step 2: define the factory contract</h2>
+<h2 id="step-2-define-the-factory-contract">Step 2: define the factory contract<a class="headerlink" href="#step-2-define-the-factory-contract" title="Permanent link">&para;</a></h2>
 <p>Every task is created through a factory. The factory is the compiler-facing object; the task instance is the scheduler-facing object.</p>
-<h3 id="factory-responsibilities">Factory responsibilities</h3>
+<h3 id="factory-responsibilities">Factory responsibilities<a class="headerlink" href="#factory-responsibilities" title="Permanent link">&para;</a></h3>
 <ul>
 <li>validate <code>settings</code></li>
 <li>validate the incoming tensor descriptors</li>
@@ -1986,7 +2187,7 @@
 <li>create the concrete task instance</li>
 <li>optionally update a previous task instance</li>
 </ul>
-<h2 id="step-3-implement-infer">Step 3: implement <code>infer(...)</code></h2>
+<h2 id="step-3-implement-infer">Step 3: implement <code>infer(...)</code><a class="headerlink" href="#step-3-implement-infer" title="Permanent link">&para;</a></h2>
 <p><code>infer(...)</code> is the most important method because it defines the static contract of the node.</p>
 <p>It must fill:</p>
 <ul>
@@ -1997,7 +2198,7 @@
 <li><code>owned_outputs</code></li>
 <li><code>kind</code></li>
 </ul>
-<h3 id="example-simple-pass-through-sync-operator">Example: simple pass-through sync operator</h3>
+<h3 id="example-simple-pass-through-sync-operator">Example: simple pass-through sync operator<a class="headerlink" href="#example-simple-pass-through-sync-operator" title="Permanent link">&para;</a></h3>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1"> 1</a></span>
 <span class="normal"><a href="#__codelineno-0-2"> 2</a></span>
 <span class="normal"><a href="#__codelineno-0-3"> 3</a></span>
@@ -2036,8 +2237,8 @@
 <a id="__codelineno-0-18" name="__codelineno-0-18"></a><span class="w">  </span><span class="p">};</span>
 <a id="__codelineno-0-19" name="__codelineno-0-19"></a><span class="p">}</span>
 </code></pre></div></td></tr></table></div>
-<h2 id="step-4-implement-the-task-body">Step 4: implement the task body</h2>
-<h3 id="synchronous-task">Synchronous task</h3>
+<h2 id="step-4-implement-the-task-body">Step 4: implement the task body<a class="headerlink" href="#step-4-implement-the-task-body" title="Permanent link">&para;</a></h2>
+<h3 id="synchronous-task">Synchronous task<a class="headerlink" href="#synchronous-task" title="Permanent link">&para;</a></h3>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-1-1"> 1</a></span>
 <span class="normal"><a href="#__codelineno-1-2"> 2</a></span>
 <span class="normal"><a href="#__codelineno-1-3"> 3</a></span>
@@ -2064,13 +2265,13 @@
 <a id="__codelineno-1-12" name="__codelineno-1-12"></a><span class="w">  </span><span class="p">}</span>
 <a id="__codelineno-1-13" name="__codelineno-1-13"></a><span class="p">};</span>
 </code></pre></div></td></tr></table></div>
-<h3 id="asynchronous-task">Asynchronous task</h3>
+<h3 id="asynchronous-task">Asynchronous task<a class="headerlink" href="#asynchronous-task" title="Permanent link">&para;</a></h3>
 <p>An async task maintains internal state across two methods:</p>
 <ul>
 <li><code>try_push(...)</code>: accept or stage input</li>
 <li><code>try_pop(...)</code>: publish output when ready</li>
 </ul>
-<h2 id="step-5-implement-create">Step 5: implement <code>create(...)</code></h2>
+<h2 id="step-5-implement-create">Step 5: implement <code>create(...)</code><a class="headerlink" href="#step-5-implement-create" title="Permanent link">&para;</a></h2>
 <p>The create context carries runtime handles:</p>
 <ul>
 <li>sync task: one CUDA stream</li>
@@ -2083,7 +2284,7 @@
 <li>opening device/file handles</li>
 <li>storing the stream in the task instance</li>
 </ul>
-<h2 id="step-6-optionally-implement-update">Step 6: optionally implement <code>update(...)</code></h2>
+<h2 id="step-6-optionally-implement-update">Step 6: optionally implement <code>update(...)</code><a class="headerlink" href="#step-6-optionally-implement-update" title="Permanent link">&para;</a></h2>
 <p>The default <code>update(...)</code> implementation simply calls <code>create(...)</code> again. Override it only when preserving expensive state matters:</p>
 <ul>
 <li>FFT plans</li>
@@ -2092,15 +2293,15 @@
 <li>external device handles</li>
 </ul>
 <p>The compiler will call <code>update(...)</code> only when node name and node kind still match between the previous and current graph.</p>
-<h2 id="ownership-patterns">Ownership patterns</h2>
-<h3 id="borrowed-io">Borrowed I/O</h3>
+<h2 id="ownership-patterns">Ownership patterns<a class="headerlink" href="#ownership-patterns" title="Permanent link">&para;</a></h2>
+<h3 id="borrowed-io">Borrowed I/O<a class="headerlink" href="#borrowed-io" title="Permanent link">&para;</a></h3>
 <p>This is the common case:</p>
 <ul>
 <li><code>owned_inputs[i] = false</code></li>
 <li><code>owned_outputs[i] = false</code></li>
 </ul>
 <p>The scheduler provides all views and owns the backing storage.</p>
-<h3 id="owned-input">Owned input</h3>
+<h3 id="owned-input">Owned input<a class="headerlink" href="#owned-input" title="Permanent link">&para;</a></h3>
 <p>Use owned inputs when the task wants to hand the scheduler a writable buffer from its own pool before execution.</p>
 <p>Implementation sketch:</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-2-1">1</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="n">std</span><span class="o">::</span><span class="n">optional</span><span class="o">&lt;</span><span class="n">holoflow</span><span class="o">::</span><span class="n">core</span><span class="o">::</span><span class="n">TView</span><span class="o">&gt;</span><span class="w"> </span><span class="n">acquire_input</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">index</span><span class="p">)</span><span class="w"> </span><span class="k">override</span><span class="p">;</span>
@@ -2110,7 +2311,7 @@
 <li>staging into a preallocated ring buffer</li>
 <li>task-local DMA or pinned-memory pools</li>
 </ul>
-<h3 id="owned-output">Owned output</h3>
+<h3 id="owned-output">Owned output<a class="headerlink" href="#owned-output" title="Permanent link">&para;</a></h3>
 <p>Use owned outputs when the task publishes output views that it owns and later recycles.</p>
 <p>Implementation sketch:</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-3-1">1</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1"></a><span class="kt">void</span><span class="w"> </span><span class="nf">release_output</span><span class="p">(</span><span class="kt">int</span><span class="w"> </span><span class="n">index</span><span class="p">)</span><span class="w"> </span><span class="k">override</span><span class="p">;</span>
@@ -2121,7 +2322,7 @@
 <li>batchers</li>
 <li>shared scratch pools with task-defined reuse</li>
 </ul>
-<h2 id="in-place-tasks">In-place tasks</h2>
+<h2 id="in-place-tasks">In-place tasks<a class="headerlink" href="#in-place-tasks" title="Permanent link">&para;</a></h2>
 <p>If an output may alias an input, express that in <code>InferResult::in_place</code>.</p>
 <p>Example:</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-4-1">1</a></span>
@@ -2141,7 +2342,7 @@
 <a id="__codelineno-4-8" name="__codelineno-4-8"></a><span class="p">};</span>
 </code></pre></div></td></tr></table></div>
 <p>This tells the compiler to map output slot <code>0</code> onto the same storage as input slot <code>0</code>.</p>
-<h2 id="event-aware-tasks">Event-aware tasks</h2>
+<h2 id="event-aware-tasks">Event-aware tasks<a class="headerlink" href="#event-aware-tasks" title="Permanent link">&para;</a></h2>
 <p>Synchronous tasks can use:</p>
 <ul>
 <li><code>ctx.event_writer</code></li>
@@ -2153,7 +2354,7 @@
 <li>consuming UI control events</li>
 <li>emitting debugging annotations</li>
 </ul>
-<h2 id="pseudo-algorithm-factory-inference">Pseudo algorithm: factory inference</h2>
+<h2 id="pseudo-algorithm-factory-inference">Pseudo algorithm: factory inference<a class="headerlink" href="#pseudo-algorithm-factory-inference" title="Permanent link">&para;</a></h2>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-5-1">1</a></span>
 <span class="normal"><a href="#__codelineno-5-2">2</a></span>
 <span class="normal"><a href="#__codelineno-5-3">3</a></span>
@@ -2170,7 +2371,7 @@
 <a id="__codelineno-5-7" name="__codelineno-5-7"></a>  choose in-place aliases if safe
 <a id="__codelineno-5-8" name="__codelineno-5-8"></a>  return InferResult
 </code></pre></div></td></tr></table></div>
-<h2 id="pseudo-algorithm-owned-async-queue">Pseudo algorithm: owned async queue</h2>
+<h2 id="pseudo-algorithm-owned-async-queue">Pseudo algorithm: owned async queue<a class="headerlink" href="#pseudo-algorithm-owned-async-queue" title="Permanent link">&para;</a></h2>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-6-1"> 1</a></span>
 <span class="normal"><a href="#__codelineno-6-2"> 2</a></span>
 <span class="normal"><a href="#__codelineno-6-3"> 3</a></span>
@@ -2217,7 +2418,7 @@
 <a id="__codelineno-6-22" name="__codelineno-6-22"></a>  advance read index
 <a id="__codelineno-6-23" name="__codelineno-6-23"></a>  occupancy -= 1
 </code></pre></div></td></tr></table></div>
-<h2 id="common-mistakes">Common mistakes</h2>
+<h2 id="common-mistakes">Common mistakes<a class="headerlink" href="#common-mistakes" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Doing validation in <code>execute(...)</code> instead of in <code>infer(...)</code></li>
 <li>Returning <code>NotReady</code> from a synchronous task</li>
@@ -2226,7 +2427,7 @@
 <li>Forgetting that acquired owned inputs are transient</li>
 <li>Assuming <code>update(...)</code> is always called on graph changes</li>
 </ul>
-<h2 id="registration">Registration</h2>
+<h2 id="registration">Registration<a class="headerlink" href="#registration" title="Permanent link">&para;</a></h2>
 <p>Once implemented, register the factory with a unique kind string:</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-7-1">1</a></span>
 <span class="normal"><a href="#__codelineno-7-2">2</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1"></a><span class="n">holoflow</span><span class="o">::</span><span class="n">core</span><span class="o">::</span><span class="n">Registry</span><span class="w"> </span><span class="n">registry</span><span class="p">;</span>
@@ -2266,6 +2467,46 @@
       
         <footer class="md-footer">
   
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../runtime/scheduler.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Scheduler">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Scheduler
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="inspection.html" class="md-footer__link md-footer__link--next" aria-label="Next: Inspection And Debugging">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                Inspection And Debugging
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
   <div class="md-footer-meta md-typeset">
     <div class="md-footer-meta__inner md-grid">
       <div class="md-copyright">
@@ -2290,7 +2531,7 @@
     
     
       
-      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.top", "content.code.annotate", "content.code.copy", "toc.integrate"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.indexes", "navigation.path", "navigation.tracking", "navigation.top", "navigation.footer", "content.code.annotate", "content.code.copy", "content.code.select", "content.tooltips", "content.action.edit", "content.action.view", "search.suggest", "search.highlight", "toc.integrate"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
       <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>

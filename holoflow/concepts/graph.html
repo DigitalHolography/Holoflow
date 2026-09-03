@@ -11,12 +11,13 @@
 <meta content="mkdocs-1.6.1, mkdocs-material-9.6.21" name="generator"/>
 <title>Graph And Data Model - Holoflow</title>
 <link href="../../assets/stylesheets/main.2a3383ac.min.css" rel="stylesheet"/>
+<link href="../../assets/stylesheets/palette.06af60db.min.css" rel="stylesheet"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
 <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
 <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
 </head>
-<body dir="ltr">
+<body data-md-color-accent="indigo" data-md-color-primary="indigo" data-md-color-scheme="default" dir="ltr">
 <input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
 <input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
 <label class="md-overlay" for="__drawer"></label>
@@ -27,7 +28,7 @@
 </div>
 <div data-md-component="announce">
 </div>
-<header class="md-header" data-md-component="header">
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
 <nav aria-label="Header" class="md-header__inner md-grid">
 <a aria-label="Holoflow" class="md-header__button md-logo" data-md-component="logo" href="../../index.html" title="Holoflow">
 <svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
@@ -51,6 +52,20 @@
 </div>
 </div>
 </div>
+<form class="md-header__option" data-md-component="palette">
+<input aria-label="Switch to light mode" class="md-option" data-md-color-accent="indigo" data-md-color-media="(prefers-color-scheme)" data-md-color-primary="indigo" data-md-color-scheme="default" id="__palette_0" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_1" hidden="" title="Switch to light mode">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="m14.3 16-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12zm-9.15 3.96h2.3L12 9z"></path></svg>
+</label>
+<input aria-label="Switch to dark mode" class="md-option" data-md-color-accent="indigo" data-md-color-media="(prefers-color-scheme: light)" data-md-color-primary="indigo" data-md-color-scheme="default" id="__palette_1" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_2" hidden="" title="Switch to dark mode">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"></path></svg>
+</label>
+<input aria-label="Switch to system preference" class="md-option" data-md-color-accent="indigo" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-primary="indigo" data-md-color-scheme="slate" id="__palette_2" name="__palette" type="radio"/>
+<label class="md-header__button md-icon" for="__palette_0" hidden="" title="Switch to system preference">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"></path></svg>
+</label>
+</form>
 <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
 <label class="md-header__button md-icon" for="__search">
 <svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
@@ -69,6 +84,7 @@
 <svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
 </button>
 </nav>
+<div class="md-search__suggest" data-md-component="search-suggest"></div>
 </form>
 <div class="md-search__output">
 <div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
@@ -82,9 +98,17 @@
 </div>
 </div>
 </div>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/DigitalHolography/Holoflow" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    DigitalHolography/Holoflow
+  </div>
+</a>
+</div>
 </nav>
-</header>
-<div class="md-container" data-md-component="container">
 <nav aria-label="Tabs" class="md-tabs" data-md-component="tabs">
 <div class="md-grid">
 <ul class="md-tabs__list">
@@ -126,6 +150,8 @@
           
   
   
+    
+  
   Holovibes
 
         </a>
@@ -134,6 +160,8 @@
 <a class="md-tabs__link" href="../index.html">
           
   
+  
+    
   
   Holoflow
 
@@ -164,6 +192,8 @@
 </ul>
 </div>
 </nav>
+</header>
+<div class="md-container" data-md-component="container">
 <main class="md-main" data-md-component="main">
 <div class="md-main__inner md-grid">
 <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
@@ -176,6 +206,16 @@
 </a>
     Holoflow
   </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/DigitalHolography/Holoflow" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
+</div>
+<div class="md-source__repository">
+    DigitalHolography/Holoflow
+  </div>
+</a>
+</div>
 <ul class="md-nav__list" data-md-scrollfix="">
 <li class="md-nav__item">
 <a class="md-nav__link" href="../../index.html">
@@ -203,27 +243,23 @@
 </li>
 <li class="md-nav__item md-nav__item--nested">
 <input class="md-nav__toggle md-toggle" id="__nav_4" type="checkbox"/>
-<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+<div class="md-nav__link md-nav__container">
+<a class="md-nav__link" href="../../holovibes/index.html">
 <span class="md-ellipsis">
     Holovibes
     
   </span>
+</a>
+<label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
 <span class="md-nav__icon md-icon"></span>
 </label>
+</div>
 <nav aria-expanded="false" aria-labelledby="__nav_4_label" class="md-nav" data-md-level="1">
 <label class="md-nav__title" for="__nav_4">
 <span class="md-nav__icon md-icon"></span>
             Holovibes
           </label>
 <ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="../../holovibes/index.html">
-<span class="md-ellipsis">
-    Overview
-    
-  </span>
-</a>
-</li>
 <li class="md-nav__item md-nav__item--nested">
 <input class="md-nav__toggle md-toggle" id="__nav_4_2" type="checkbox"/>
 <label class="md-nav__link" for="__nav_4_2" id="__nav_4_2_label" tabindex="0">
@@ -503,27 +539,23 @@
 </li>
 <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
 <input checked="" class="md-nav__toggle md-toggle" id="__nav_5" type="checkbox"/>
-<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+<div class="md-nav__link md-nav__container">
+<a class="md-nav__link" href="../index.html">
 <span class="md-ellipsis">
     Holoflow
     
   </span>
+</a>
+<label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
 <span class="md-nav__icon md-icon"></span>
 </label>
+</div>
 <nav aria-expanded="true" aria-labelledby="__nav_5_label" class="md-nav" data-md-level="1">
 <label class="md-nav__title" for="__nav_5">
 <span class="md-nav__icon md-icon"></span>
             Holoflow
           </label>
 <ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="../index.html">
-<span class="md-ellipsis">
-    Overview
-    
-  </span>
-</a>
-</li>
 <li class="md-nav__item">
 <a class="md-nav__link" href="../architecture.html">
 <span class="md-ellipsis">
@@ -532,9 +564,9 @@
   </span>
 </a>
 </li>
-<li class="md-nav__item md-nav__item--active md-nav__item--nested">
+<li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
 <input checked="" class="md-nav__toggle md-toggle" id="__nav_5_3" type="checkbox"/>
-<label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+<label class="md-nav__link" for="__nav_5_3" id="__nav_5_3_label" tabindex="">
 <span class="md-ellipsis">
     Concepts
     
@@ -696,9 +728,9 @@
 </ul>
 </nav>
 </li>
-<li class="md-nav__item md-nav__item--nested">
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
 <input class="md-nav__toggle md-toggle" id="__nav_5_4" type="checkbox"/>
-<label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="0">
+<label class="md-nav__link" for="__nav_5_4" id="__nav_5_4_label" tabindex="">
 <span class="md-ellipsis">
     Runtime
     
@@ -730,9 +762,9 @@
 </ul>
 </nav>
 </li>
-<li class="md-nav__item md-nav__item--nested">
+<li class="md-nav__item md-nav__item--section md-nav__item--nested">
 <input class="md-nav__toggle md-toggle" id="__nav_5_5" type="checkbox"/>
-<label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="0">
+<label class="md-nav__link" for="__nav_5_5" id="__nav_5_5_label" tabindex="">
 <span class="md-ellipsis">
     Guides
     
@@ -790,9 +822,15 @@
 </div>
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
-<h1 id="graph-and-data-model">Graph And Data Model</h1>
+<a class="md-content__button md-icon" href="https://github.com/DigitalHolography/Holoflow/edit/main/doc/mkdocs/docs/holoflow/concepts/graph.md" rel="edit" title="Edit this page">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
+</a>
+<a class="md-content__button md-icon" href="https://github.com/DigitalHolography/Holoflow/raw/main/doc/mkdocs/docs/holoflow/concepts/graph.md" title="View source of this page">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17 18c.56 0 1 .44 1 1s-.44 1-1 1-1-.44-1-1 .44-1 1-1m0-3c-2.73 0-5.06 1.66-6 4 .94 2.34 3.27 4 6 4s5.06-1.66 6-4c-.94-2.34-3.27-4-6-4m0 6.5a2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5 2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5M9.27 20H6V4h7v5h5v4.07c.7.08 1.36.25 2 .49V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4.5a8.2 8.2 0 0 1-1.23-2"></path></svg>
+</a>
+<h1 id="graph-and-data-model">Graph And Data Model<a class="headerlink" href="#graph-and-data-model" title="Permanent link">¶</a></h1>
 <p>Holoflow represents a pipeline as a directed graph of tasks. This page focuses on the <em>source</em> model: what the user builds before compilation.</p>
-<h2 id="graph-primitives">Graph primitives</h2>
+<h2 id="graph-primitives">Graph primitives<a class="headerlink" href="#graph-primitives" title="Permanent link">¶</a></h2>
 <p>The graph type is:</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1">1</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1"></a><span class="k">using</span><span class="w"> </span><span class="n">GraphSpec</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">boost</span><span class="o">::</span><span class="n">adjacency_list</span><span class="o">&lt;</span><span class="p">...,</span><span class="w"> </span><span class="n">NodeSpec</span><span class="p">,</span><span class="w"> </span><span class="n">EdgeSpec</span><span class="o">&gt;</span><span class="p">;</span>
 </code></pre></div></td></tr></table></div>
@@ -819,14 +857,14 @@
 <a id="__codelineno-1-10" name="__codelineno-1-10"></a><span class="w">  </span><span class="kt">int</span><span class="w"> </span><span class="n">in_idx</span><span class="p">;</span>
 <a id="__codelineno-1-11" name="__codelineno-1-11"></a><span class="p">};</span>
 </code></pre></div></td></tr></table></div>
-<h2 id="mental-model">Mental model</h2>
+<h2 id="mental-model">Mental model<a class="headerlink" href="#mental-model" title="Permanent link">¶</a></h2>
 <ul>
 <li>A node is a configured task instance.</li>
 <li>An edge connects one output slot of the producer to one input slot of the consumer.</li>
 <li><code>kind</code> selects the factory that knows how to validate, create, and update that node.</li>
 <li><code>settings</code> is task-specific JSON carried unchanged into the factory.</li>
 </ul>
-<h2 id="what-the-compiler-currently-expects">What the compiler currently expects</h2>
+<h2 id="what-the-compiler-currently-expects">What the compiler currently expects<a class="headerlink" href="#what-the-compiler-currently-expects" title="Permanent link">¶</a></h2>
 <p>The current compiler enforces these structural rules:</p>
 <ul>
 <li>node names must be unique</li>
@@ -839,14 +877,14 @@
 <p>a typed DAG with explicit slot wiring</p>
 </blockquote>
 <p>That is more general than a pure tree and more constrained than an arbitrary multigraph.</p>
-<h2 id="input-and-output-slots">Input and output slots</h2>
+<h2 id="input-and-output-slots">Input and output slots<a class="headerlink" href="#input-and-output-slots" title="Permanent link">¶</a></h2>
 <p>Edges are labeled by slot indices:</p>
 <ul>
 <li><code>out_idx</code>: which output tensor of the source node is used</li>
 <li><code>in_idx</code>: which input tensor slot of the destination node is filled</li>
 </ul>
 <p>This makes multi-output tasks and explicit merge points possible.</p>
-<h3 id="example-fan-out">Example: fan-out</h3>
+<h3 id="example-fan-out">Example: fan-out<a class="headerlink" href="#example-fan-out" title="Permanent link">¶</a></h3>
 <pre class="mermaid"><code>flowchart LR
   A[source]
   B[branch 1]
@@ -855,7 +893,7 @@
   A --&gt;|"0 -&gt; 0"| B
   A --&gt;|"0 -&gt; 0"| C</code></pre>
 <p>One produced tensor may feed multiple downstream consumers.</p>
-<h3 id="example-multi-output-node">Example: multi-output node</h3>
+<h3 id="example-multi-output-node">Example: multi-output node<a class="headerlink" href="#example-multi-output-node" title="Permanent link">¶</a></h3>
 <pre class="mermaid"><code>flowchart LR
   A[splitter]
   B[path A]
@@ -863,7 +901,7 @@
 
   A --&gt;|"0 -&gt; 0"| B
   A --&gt;|"1 -&gt; 0"| C</code></pre>
-<h2 id="json-representation">JSON representation</h2>
+<h2 id="json-representation">JSON representation<a class="headerlink" href="#json-representation" title="Permanent link">¶</a></h2>
 <p><code>GraphSpec</code> supports JSON serialization with <code>holoflow::core::to_json(...)</code> and parsing with <code>holoflow::core::from_json(...)</code>.</p>
 <p>The format is:</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-2-1"> 1</a></span>
@@ -917,7 +955,7 @@
 <li><code>params</code> maps to <code>NodeSpec::settings</code></li>
 <li><code>debug</code> is optional and defaults to <code>true</code></li>
 </ul>
-<h2 id="dot-representation">DOT representation</h2>
+<h2 id="dot-representation">DOT representation<a class="headerlink" href="#dot-representation" title="Permanent link">¶</a></h2>
 <p><code>holoflow::core::to_dot(graph)</code> renders a Graphviz DOT view of the source graph.</p>
 <p>The source DOT is useful when debugging:</p>
 <ul>
@@ -925,7 +963,7 @@
 <li>unexpected settings payloads</li>
 <li>high-level topology before compilation</li>
 </ul>
-<h2 id="c-construction-example">C++ construction example</h2>
+<h2 id="c-construction-example">C++ construction example<a class="headerlink" href="#c-construction-example" title="Permanent link">¶</a></h2>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-3-1"> 1</a></span>
 <span class="normal"><a href="#__codelineno-3-2"> 2</a></span>
 <span class="normal"><a href="#__codelineno-3-3"> 3</a></span>
@@ -968,16 +1006,16 @@
 <a id="__codelineno-3-20" name="__codelineno-3-20"></a><span class="w">    </span><span class="p">.</span><span class="n">in_idx</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span>
 <a id="__codelineno-3-21" name="__codelineno-3-21"></a><span class="p">},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
 </code></pre></div></td></tr></table></div>
-<h2 id="source-graph-vs-compiled-graph">Source graph vs compiled graph</h2>
+<h2 id="source-graph-vs-compiled-graph">Source graph vs compiled graph<a class="headerlink" href="#source-graph-vs-compiled-graph" title="Permanent link">¶</a></h2>
 <p>It is useful to keep the distinction sharp:</p>
-<h3 id="source-graph">Source graph</h3>
+<h3 id="source-graph">Source graph<a class="headerlink" href="#source-graph" title="Permanent link">¶</a></h3>
 <ul>
 <li>names</li>
 <li>kinds</li>
 <li>JSON settings</li>
 <li>slot wiring</li>
 </ul>
-<h3 id="compiled-graph">Compiled graph</h3>
+<h3 id="compiled-graph">Compiled graph<a class="headerlink" href="#compiled-graph" title="Permanent link">¶</a></h3>
 <ul>
 <li>inferred tensor descriptors</li>
 <li>tensor IDs</li>
@@ -987,7 +1025,7 @@
 <li>concrete task instances</li>
 </ul>
 <p>The source graph is what you intend. The compiled graph is what the runtime can execute.</p>
-<h2 id="pseudo-algorithm-building-a-graph">Pseudo algorithm: building a graph</h2>
+<h2 id="pseudo-algorithm-building-a-graph">Pseudo algorithm: building a graph<a class="headerlink" href="#pseudo-algorithm-building-a-graph" title="Permanent link">¶</a></h2>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-4-1"> 1</a></span>
 <span class="normal"><a href="#__codelineno-4-2"> 2</a></span>
 <span class="normal"><a href="#__codelineno-4-3"> 3</a></span>
@@ -1010,7 +1048,7 @@
 <a id="__codelineno-4-10" name="__codelineno-4-10"></a>    - producer output index
 <a id="__codelineno-4-11" name="__codelineno-4-11"></a>    - consumer input index
 </code></pre></div></td></tr></table></div>
-<h2 id="design-guidance">Design guidance</h2>
+<h2 id="design-guidance">Design guidance<a class="headerlink" href="#design-guidance" title="Permanent link">¶</a></h2>
 <ul>
 <li>Keep node names stable across graph updates if you want the compiler to attempt task reuse.</li>
 <li>Use kinds as API identifiers, not display labels.</li>
@@ -1027,6 +1065,34 @@
 </button>
 </main>
 <footer class="md-footer">
+<nav aria-label="Footer" class="md-footer__inner md-grid">
+<a aria-label="Previous: Architecture" class="md-footer__link md-footer__link--prev" href="../architecture.html">
+<div class="md-footer__button md-icon">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
+</div>
+<div class="md-footer__title">
+<span class="md-footer__direction">
+                Previous
+              </span>
+<div class="md-ellipsis">
+                Architecture
+              </div>
+</div>
+</a>
+<a aria-label="Next: Task Model" class="md-footer__link md-footer__link--next" href="tasks.html">
+<div class="md-footer__title">
+<span class="md-footer__direction">
+                Next
+              </span>
+<div class="md-ellipsis">
+                Task Model
+              </div>
+</div>
+<div class="md-footer__button md-icon">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"></path></svg>
+</div>
+</a>
+</nav>
 <div class="md-footer-meta md-typeset">
 <div class="md-footer-meta__inner md-grid">
 <div class="md-copyright">
@@ -1044,7 +1110,7 @@
 <div class="md-dialog" data-md-component="dialog">
 <div class="md-dialog__inner md-typeset"></div>
 </div>
-<script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.top", "content.code.annotate", "content.code.copy", "toc.integrate"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.indexes", "navigation.path", "navigation.tracking", "navigation.top", "navigation.footer", "content.code.annotate", "content.code.copy", "content.code.select", "content.tooltips", "content.action.edit", "content.action.view", "search.suggest", "search.highlight", "toc.integrate"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
 <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
 </body>
