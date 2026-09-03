@@ -194,17 +194,26 @@ public:
     sampling_frequency_spin_ =
         create_double_spin_box(this, 0.000001, 1.0e12, 100.0, sampling_frequency_hz, 6);
     sampling_frequency_spin_->setSuffix(" Hz");
+
+    sampling_frequency_spin_->setToolTip(tr("The sampling frequency of the input signal. This is "
+                                            "always set to the input sampling frequency."));
+    sampling_frequency_spin_->setEnabled(false);
+
     input_form->addRow(tr("Sampling frequency"), sampling_frequency_spin_);
 
     window_size_spin_ = create_spin_box(this, 1, std::numeric_limits<int>::max(), window_size);
     input_form->addRow(tr("Window size"), window_size_spin_);
+    window_size_spin_->setToolTip(
+        tr("The number of samples in the FFT window. This is always set to the "
+           "time window."));
+    window_size_spin_->setEnabled(false);
 
     start_frequency_spin_ =
-        create_double_spin_box(this, -1.0e12, 1.0e12, 1.0, start_frequency_hz, 6);
+        create_double_spin_box(this, -1.0e12, 1.0e12, 1.0, start_frequency_hz, 2);
     start_frequency_spin_->setSuffix(" Hz");
     input_form->addRow(tr("F0"), start_frequency_spin_);
 
-    end_frequency_spin_ = create_double_spin_box(this, -1.0e12, 1.0e12, 1.0, end_frequency_hz, 6);
+    end_frequency_spin_ = create_double_spin_box(this, -1.0e12, 1.0e12, 1.0, end_frequency_hz, 2);
     end_frequency_spin_->setSuffix(" Hz");
     input_form->addRow(tr("F1"), end_frequency_spin_);
 
@@ -1345,11 +1354,10 @@ void MainWindow::check_for_updates() {
 }
 
 void MainWindow::show_fft_frequency_tool() {
-  const double sampling_frequency_hz =
-      last_input_fps_ > 0.0 ? last_input_fps_ : kDefaultSamplingFrequency;
-  const int    window_size        = std::max(1, render_widget_->get_time_window());
-  const double bin_spacing_hz     = sampling_frequency_hz / static_cast<double>(window_size);
-  const double start_frequency_hz = view_widget_->get_z_origin() * bin_spacing_hz;
+  const double sampling_frequency_hz = import_widget_->get_sampling_frequency_hz();
+  const int    window_size           = std::max(1, render_widget_->get_time_window());
+  const double bin_spacing_hz        = sampling_frequency_hz / static_cast<double>(window_size);
+  const double start_frequency_hz    = view_widget_->get_z_origin() * bin_spacing_hz;
   const double end_frequency_hz =
       (view_widget_->get_z_origin() + view_widget_->get_z_width()) * bin_spacing_hz;
 
