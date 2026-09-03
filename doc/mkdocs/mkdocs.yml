@@ -1,4 +1,8 @@
 site_name: Holoflow
+repo_name: DigitalHolography/Holoflow
+repo_url: https://github.com/DigitalHolography/Holoflow
+edit_uri: edit/main/doc/mkdocs/docs/
+
 nav:
   - Home: index.md
   - About: about.md
@@ -53,17 +57,54 @@ nav:
 
 theme:
   name: material
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/brightness-auto
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to system preference
   features:
     - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.indexes
+    - navigation.path
+    - navigation.tracking
     - navigation.top
+    - navigation.footer
     - content.code.annotate
     - content.code.copy
+    - content.code.select
+    - content.tooltips
+    - content.action.edit
+    - content.action.view
+    - search.suggest
+    - search.highlight
     - toc.integrate
 
 markdown_extensions:
+  - attr_list
   - admonition
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
   - pymdownx.arithmatex:
       generic: true
+  - pymdownx.blocks.caption
   - pymdownx.highlight:
       anchor_linenums: true
       linenums: true
@@ -74,7 +115,6 @@ markdown_extensions:
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.snippets:
       check_paths: true
-  - attr_list
 
 plugins:
   - search
