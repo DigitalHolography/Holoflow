@@ -775,7 +775,7 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     auto path              = s_.recording_path.string();
     auto count             = s_.recording_count;
     auto settings_json     = settings_to_old_json(s_);
-    auto holofile_settings = HolofileSettings{path, count, settings_json};
+    auto holofile_settings = HolofileSettings{path, count, settings_json, true};
     holofile_write(result_rec, holofile_settings);
   }
 }
