@@ -7,6 +7,8 @@ nav:
   - Home: index.md
   - About: about.md
   - Coverage: coverage.md
+  - References: references.md
+  - Glossary: glossary.md
 
   - Holovibes: 
     - Overview: holovibes/index.md
@@ -96,8 +98,10 @@ theme:
     - toc.integrate
 
 markdown_extensions:
+  - abbr
   - attr_list
   - admonition
+  - footnotes
   - md_in_html
   - tables
   - toc:
@@ -114,6 +118,8 @@ markdown_extensions:
           class: mermaid
           format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.snippets:
+      auto_append:
+        - docs/glossary.md:abbreviations
       check_paths: true
 
 plugins:
