@@ -191,10 +191,16 @@ GraphSpec from_json(const nlohmann::json &j) {
 static std::string escape_for_label(const std::string &s) {
   std::string out;
   out.reserve(s.size());
-  for (char c : s) {
+  for (auto it = s.begin(); it != s.end(); ++it) {
+    const char c = *it;
     switch (c) {
     case '\\':
-      out += "\\\\";
+      if (it + 1 != s.end() && *(it + 1) == 'l') {
+        out += "\\l";
+        ++it;
+      } else {
+        out += "\\\\";
+      }
       break;
     case '"':
       out += "\\\"";
@@ -212,14 +218,32 @@ static std::string escape_for_label(const std::string &s) {
   return out;
 }
 
-static void write_graph_header(std::ostringstream &ss) {
+static void write_graph_header(std::ostringstream &ss, const GraphSpecDumpPreferences &dump_prefs) {
   ss << "digraph holoflow_graph {\n";
-  ss << "  rankdir=LR;\n";
+  if (dump_prefs.rankdir == GraphSpecDumpPreferences::Rankdir::LeftToRight) {
+    ss << "  rankdir=LR;\n";
+  } else {
+    ss << "  rankdir=TB;\n";
+  }
   ss << "  node [shape=box, fontname=\"Helvetica\"];\n";
   ss << "  edge [fontname=\"Helvetica\"];\n\n";
 }
 
-static void write_nodes(std::ostringstream &ss, const GraphSpec &g) {
+static std::string replace_newlines_with_l(const std::string &s) {
+  std::string out;
+  out.reserve(s.size());
+  for (char c : s) {
+    if (c == '\n') {
+      out += "\\l";
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
+static void write_nodes(std::ostringstream &ss, const GraphSpec &g,
+                        const GraphSpecDumpPreferences &dump_prefs) {
   using vertex_iter_t = boost::graph_traits<GraphSpec>::vertex_iterator;
   vertex_iter_t vi, vi_end;
   for (boost::tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi) {
@@ -227,27 +251,33 @@ static void write_nodes(std::ostringstream &ss, const GraphSpec &g) {
     const NodeSpec &ns = g[v];
 
     std::ostringstream label;
-    if (!ns.name.empty())
-      label << ns.name;
-    else
-      label << "(unnamed)";
+    if (dump_prefs.dump_node_name) {
+      if (!ns.name.empty())
+        label << ns.name;
+      else
+        label << "(unnamed)";
+    }
 
-    if (!ns.kind.empty())
-      label << "\n(" << ns.kind << ")";
+    if (dump_prefs.dump_node_kind && !ns.kind.empty()) {
+      if (!label.str().empty())
+        label << "\n";
+      label << "(" << ns.kind << ")\n";
+    }
 
-    if (ns.debug && !ns.settings.is_null() && !(ns.settings.is_object() && ns.settings.empty())) {
+    if (dump_prefs.dump_node_settings && ns.debug && !ns.settings.is_null() &&
+        !(ns.settings.is_object() && ns.settings.empty())) {
       std::string settings_dump = ns.settings.dump(2);
-      label << "\n" << settings_dump;
+      label << replace_newlines_with_l(settings_dump) << "\\l";
     }
 
     std::string esc_label = escape_for_label(label.str());
-
     ss << "  v" << v << " [label=\"" << esc_label << "\"];\n";
   }
   ss << "\n";
 }
 
-static void write_edges(std::ostringstream &ss, const GraphSpec &g) {
+static void write_edges(std::ostringstream &ss, const GraphSpec &g,
+                        const GraphSpecDumpPreferences &dump_prefs) {
   using edge_iter_t = boost::graph_traits<GraphSpec>::edge_iterator;
   edge_iter_t ei, ei_end;
   for (boost::tie(ei, ei_end) = boost::edges(g); ei != ei_end; ++ei) {
@@ -256,17 +286,20 @@ static void write_edges(std::ostringstream &ss, const GraphSpec &g) {
     auto            t  = boost::target(e, g);
     const EdgeSpec &es = g[e];
 
-    ss << "  v" << s << " -> v" << t << " [taillabel=\""
-       << escape_for_label(std::to_string(es.out_idx)) << "\""
-       << " headlabel=\"" << escape_for_label(std::to_string(es.in_idx)) << "\"];\n";
+    ss << "  v" << s << " -> v" << t << " [taillabel=\"";
+    if (dump_prefs.dump_edge_indices) {
+      ss << escape_for_label(std::to_string(es.out_idx)) << "\""
+         << " headlabel=\"" << escape_for_label(std::to_string(es.in_idx)) << "\"]";
+    }
+    ss << ";\n";
   }
 }
 
-std::string to_dot(const GraphSpec &g) {
+std::string to_dot(const GraphSpec &g, const GraphSpecDumpPreferences &dump_prefs) {
   std::ostringstream ss;
-  write_graph_header(ss);
-  write_nodes(ss, g);
-  write_edges(ss, g);
+  write_graph_header(ss, dump_prefs);
+  write_nodes(ss, g, dump_prefs);
+  write_edges(ss, g, dump_prefs);
   ss << "}\n";
   return ss.str();
 }

@@ -469,6 +469,12 @@ void Manager::stop_raw_record() {
   emit raw_record_stopped_success();
 }
 
+// --- dump graph logs logic ---
+
+void Manager::update_graph_spec_dump_preferences(const GraphSpecDumpPreferences &prefs) {
+  graph_spec_dump_prefs_ = prefs;
+}
+
 // --- Polling logic ---
 void Manager::start_metrics_updates() {
   if (metrics_timer_ && !metrics_timer_->isActive())
@@ -641,7 +647,7 @@ void Manager::dump_graph_logs(const std::filesystem::path &log_dir) {
   const auto json_path = log_dir / std::format("pipeline_{}.json", date);
   const auto dot_path  = log_dir / std::format("pipeline_{}.dot", date);
 
-  std::ofstream(dot_path) << holoflow::core::to_dot(spec_);
+  std::ofstream(dot_path) << holoflow::core::to_dot(spec_, graph_spec_dump_prefs_);
   std::ofstream(json_path) << holoflow::core::to_json(spec_).dump(2);
 
   logger()->info("[Manager::dump_graph_logs] Pre-compile pipeline graphs saved to {}",

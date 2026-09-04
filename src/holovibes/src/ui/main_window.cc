@@ -384,20 +384,11 @@ private:
 
 class PreferencesDialog : public QDialog {
 public:
-  struct DumpPreferences {
-    enum class Rankdir { LeftToRight, TopToBottom };
-
-    Rankdir rankdir               = Rankdir::LeftToRight;
-    bool    dump_node_name        = true;
-    bool    dump_node_kind        = true;
-    bool    dump_node_settings    = true;
-    bool    dump_edge_start_index = true;
-    bool    dump_edge_end_index   = true;
-  };
+  using GraphSpecDumpPreferences = holoflow::core::GraphSpecDumpPreferences;
 
   PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager,
-                    DumpPreferences &dump_preferences)
-      : QDialog(parent), manager_(manager), dump_preferences_(dump_preferences) {
+                    const GraphSpecDumpPreferences &graph_spec_dump_preferences)
+      : QDialog(parent), manager_(manager) {
     setWindowTitle(tr("Preferences"));
     setMinimumWidth(400);
 
@@ -409,36 +400,31 @@ public:
     dump_input_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
 
     rankdir_combo_ = create_combo_box(this, QStringList{"LR", "TB"});
-    if (dump_preferences_.rankdir == DumpPreferences::Rankdir::TopToBottom) {
+    if (graph_spec_dump_preferences.rankdir == GraphSpecDumpPreferences::Rankdir::TopToBottom) {
       rankdir_combo_->setCurrentText("TB");
     }
 
     dump_input_form->addRow(tr("Graph rankdir"), rankdir_combo_);
 
     node_name_checkbox_ = new QCheckBox(this);
-    node_name_checkbox_->setChecked(dump_preferences_.dump_node_name);
+    node_name_checkbox_->setChecked(graph_spec_dump_preferences.dump_node_name);
     node_name_checkbox_->setToolTip(tr("Include node names in the graph dump."));
     dump_input_form->addRow(tr("Node names"), node_name_checkbox_);
 
     node_kind_checkbox_ = new QCheckBox(this);
-    node_kind_checkbox_->setChecked(dump_preferences_.dump_node_kind);
+    node_kind_checkbox_->setChecked(graph_spec_dump_preferences.dump_node_kind);
     node_kind_checkbox_->setToolTip(tr("Include node kinds in the graph dump."));
     dump_input_form->addRow(tr("Node kinds"), node_kind_checkbox_);
 
     node_settings_checkbox_ = new QCheckBox(this);
-    node_settings_checkbox_->setChecked(dump_preferences_.dump_node_settings);
+    node_settings_checkbox_->setChecked(graph_spec_dump_preferences.dump_node_settings);
     node_settings_checkbox_->setToolTip(tr("Include node settings in the graph dump."));
     dump_input_form->addRow(tr("Node settings"), node_settings_checkbox_);
 
-    edge_start_index_checkbox_ = new QCheckBox(this);
-    edge_start_index_checkbox_->setChecked(dump_preferences_.dump_edge_start_index);
-    edge_start_index_checkbox_->setToolTip(tr("Include edge start indices in the graph dump."));
-    dump_input_form->addRow(tr("Edge start indices"), edge_start_index_checkbox_);
-
-    edge_end_index_checkbox_ = new QCheckBox(this);
-    edge_end_index_checkbox_->setChecked(dump_preferences_.dump_edge_end_index);
-    edge_end_index_checkbox_->setToolTip(tr("Include edge end indices in the graph dump."));
-    dump_input_form->addRow(tr("Edge end indices"), edge_end_index_checkbox_);
+    edge_indices_checkbox_ = new QCheckBox(this);
+    edge_indices_checkbox_->setChecked(graph_spec_dump_preferences.dump_edge_indices);
+    edge_indices_checkbox_->setToolTip(tr("Include edge indices in the graph dump."));
+    dump_input_form->addRow(tr("Edge indices"), edge_indices_checkbox_);
 
     dump_group_box->setLayout(dump_input_form);
     dialog_layout->addWidget(dump_group_box);
@@ -451,14 +437,41 @@ public:
 
     connect(apply_button_, &QPushButton::clicked, this, [this]() { update_preferences(); });
     connect(button_box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    connect_signals();
   }
 
 private:
+  void update_preferences() {
+    // const auto &specs_ = nullptr;
+    // holoflow::core::to_dot(specs_);
+    apply_button_->setEnabled(false);
+    auto graph_spec_dump_preferences =
+        GraphSpecDumpPreferences{.rankdir = rankdir_combo_->currentText() == "LR"
+                                                ? GraphSpecDumpPreferences::Rankdir::LeftToRight
+                                                : GraphSpecDumpPreferences::Rankdir::TopToBottom,
+
+                                 .dump_node_name     = node_name_checkbox_->isChecked(),
+                                 .dump_node_kind     = node_kind_checkbox_->isChecked(),
+                                 .dump_node_settings = node_settings_checkbox_->isChecked(),
+                                 .dump_edge_indices  = edge_indices_checkbox_->isChecked()};
+    manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
+  }
+
+  void connect_signals() {
+    connect(rankdir_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](int) { apply_button_->setEnabled(true); });
+    connect(node_name_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+    connect(node_kind_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+    connect(node_settings_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+    connect(edge_indices_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+  }
+
   holovibes::pipeline::Manager &manager_;
 
-  DumpPreferences &dump_preferences_;
-
-  bool         dirty_        = false;
   QPushButton *apply_button_ = nullptr;
 
   // dump preferences
@@ -474,15 +487,8 @@ private:
   QCheckBox *node_settings_checkbox_ = nullptr;
 
   // Edges
-  // dump edge's start index
-  QCheckBox *edge_start_index_checkbox_ = nullptr;
-  // dump edge's end index
-  QCheckBox *edge_end_index_checkbox_ = nullptr;
-
-  void update_preferences() {
-    // const auto &specs_ = nullptr;
-    // holoflow::core::to_dot(specs_);
-  }
+  // dump edge indices
+  QCheckBox *edge_indices_checkbox_ = nullptr;
 };
 
 } // namespace
@@ -1476,8 +1482,8 @@ void MainWindow::show_fft_frequency_tool() {
 }
 
 void MainWindow::show_preferences() {
-  PreferencesDialog::DumpPreferences dump_prefs{};
-  PreferencesDialog                  dialog(this, *pipeline_manager_, dump_prefs);
+  PreferencesDialog dialog(this, *pipeline_manager_,
+                           pipeline_manager_->get_graph_spec_dump_preferences());
   dialog.exec();
 }
 

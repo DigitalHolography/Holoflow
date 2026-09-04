@@ -73,6 +73,13 @@ public:
   /// @brief Sends an event to the pipeline to stop writing raw data.
   void stop_raw_record();
 
+  using GraphSpecDumpPreferences = holoflow::core::GraphSpecDumpPreferences;
+  /// @brief Returns the current graph spec dump preferences
+  const GraphSpecDumpPreferences &get_graph_spec_dump_preferences() const {
+    return graph_spec_dump_prefs_;
+  }
+  void update_graph_spec_dump_preferences(const GraphSpecDumpPreferences &prefs);
+
 signals:
   // Lifecycle signals
   void start_pipeline_success();
@@ -139,6 +146,8 @@ private:
   Settings s_;
   int      src_width_  = 0;
   int      src_height_ = 0;
+
+  GraphSpecDumpPreferences graph_spec_dump_prefs_ = {};
 
   /// @brief Toggles debug dumps of the pipeline (.dot, .json) to disk.
   bool dump_debug_graphs_ = true;
