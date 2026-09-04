@@ -112,6 +112,11 @@ static_assert(sizeof(Header) == 64, "Holofile header must be 64 bytes");
 class Reader {
 public:
   explicit Reader(const std::string &path);
+  ~Reader();
+
+  Reader(Reader &&) noexcept;
+  Reader &operator=(Reader &&) noexcept;
+
   const Header         &header() const;
   std::optional<Footer> footer() const;
   void                  seek(std::size_t frame_index);
@@ -119,36 +124,25 @@ public:
   void                  read_frames(uint8_t *data, std::size_t frame_count);
 
 private:
-  void read_footer();
-
-  struct FileCloser {
-    void operator()(FILE *file) const { fclose(file); }
-  };
-
-  std::unique_ptr<FILE, FileCloser> file_;
-  Header                            header_;
-  std::optional<Footer>             footer_;
-  std::size_t                       frame_index_;
-  std::size_t                       data_end_offset_;
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 class Writer {
 public:
   explicit Writer(const std::string &path, const Header &header, const Footer &footer);
+  ~Writer();
+
+  Writer(Writer &&) noexcept;
+  Writer &operator=(Writer &&) noexcept;
+
   void   write_frames(const uint8_t *data, std::size_t frame_count);
   void   write_footer();
   size_t tell() const;
 
 private:
-  struct FileCloser {
-    void operator()(FILE *file) const { fclose(file); }
-  };
-
-  std::unique_ptr<FILE, FileCloser> file_;
-  Header                            header_;
-  Footer                            footer_;
-  std::size_t                       frame_index_;
-  std::size_t                       data_end_offset_;
+  struct Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 } // namespace holofile
