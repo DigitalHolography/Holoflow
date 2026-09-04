@@ -21,6 +21,7 @@ set(SOURCES
     filter2d_test.cu
     fresnel_diffraction_test.cu
     holofile_sink_test.cc
+    npyfile_sink_test.cc
     normalize_test.cu
     pca_test.cu
     pct_clip_test.cu

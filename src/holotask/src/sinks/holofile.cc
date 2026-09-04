@@ -32,6 +32,7 @@
 #include "holofile/holofile.hh"
 #include "holoflow/core/tasks.hh"
 #include "logger.hh"
+#include "recording_geometry.hh"
 
 template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
@@ -88,11 +89,7 @@ void mt_memcpy(void *dst, const void *src, const std::size_t n) {
   }
 }
 
-struct RecordingGeometry {
-  uint8_t  bits_per_pixel;
-  uint32_t frame_width;
-  uint32_t frame_height;
-};
+using detail::RecordingGeometry;
 
 holofile::Header make_header(int count, const RecordingGeometry &g) {
   const auto frame_count = static_cast<uint32_t>(count);
@@ -108,35 +105,6 @@ holofile::Header make_header(int count, const RecordingGeometry &g) {
       .data_size_in_bytes = data_size,
       .endianness         = holofile::Header::LITTLE_ENDIAN,
   };
-}
-
-uint8_t bits_per_pixel_for(holoflow::core::DType dtype) {
-  switch (dtype) {
-  case holoflow::core::DType::U8:
-    return 8;
-  case holoflow::core::DType::U16:
-    return 16;
-  default:
-    HOLOVIBES_BUG("Unsupported Holofile dtype: {}", static_cast<int>(dtype));
-  }
-}
-
-RecordingGeometry recording_geometry_from_desc(const holoflow::core::TDesc &desc) {
-  return RecordingGeometry{
-      .bits_per_pixel = bits_per_pixel_for(desc.dtype),
-      .frame_width    = static_cast<uint32_t>(desc.shape[2]),
-      .frame_height   = static_cast<uint32_t>(desc.shape[1]),
-  };
-}
-
-size_t recording_frame_byte_size(const RecordingGeometry &geometry) {
-  return static_cast<size_t>(geometry.frame_width) * geometry.frame_height *
-         geometry.bits_per_pixel / 8;
-}
-
-bool same_geometry(const RecordingGeometry &a, const RecordingGeometry &b) {
-  return a.bits_per_pixel == b.bits_per_pixel && a.frame_width == b.frame_width &&
-         a.frame_height == b.frame_height;
 }
 
 void check(bool condition, const std::string &msg) {
@@ -228,7 +196,7 @@ public:
   bool can_reuse(const HolofileSettings &settings, const RecordingGeometry &geometry,
                  size_t frame_byte_size) const {
     return settings.use_buffer == settings_.use_buffer && settings.count == settings_.count &&
-           same_geometry(geometry, geometry_) && frame_byte_size == frame_byte_size_;
+           detail::same_geometry(geometry, geometry_) && frame_byte_size == frame_byte_size_;
   }
 
   void update_settings(const HolofileSettings &settings) {
@@ -407,8 +375,8 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto  settings = jsettings.get<HolofileSettings>();
   auto &idesc    = input_descs[0];
 
-  const auto geometry        = recording_geometry_from_desc(idesc);
-  const auto frame_byte_size = recording_frame_byte_size(geometry);
+  const auto geometry        = detail::recording_geometry_from_desc(idesc);
+  const auto frame_byte_size = detail::recording_frame_byte_size(geometry);
 
   logger()->info("[HolofileFactory::create] Buffer-then-flush writer ({} frames)", settings.count);
   return std::make_unique<HolofileWriter>(settings, geometry, frame_byte_size);
@@ -426,8 +394,8 @@ HolofileFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   infer(input_descs, jsettings);
 
   const auto settings        = jsettings.get<HolofileSettings>();
-  const auto geometry        = recording_geometry_from_desc(input_descs[0]);
-  const auto frame_byte_size = recording_frame_byte_size(geometry);
+  const auto geometry        = detail::recording_geometry_from_desc(input_descs[0]);
+  const auto frame_byte_size = detail::recording_frame_byte_size(geometry);
 
   if (!old->can_reuse(settings, geometry, frame_byte_size)) {
     logger()->debug("[HolofileFactory::update] Recreating writer because buffer shape changed");
