@@ -46,6 +46,7 @@
 #include <QSizePolicy>
 #include <QSlider>
 #include <QSpinBox>
+#include <QSplitter>
 #include <QStandardPaths>
 #include <QStringList>
 #include <QStyle>
@@ -394,41 +395,16 @@ public:
 
     auto *dialog_layout = new QVBoxLayout(this);
 
+    auto *splitter = new QSplitter(Qt::Horizontal, this);
+
     // Dump preferences
-    auto *dump_group_box  = new QGroupBox(tr("Graph Dump Preferences"), this);
-    auto *dump_input_form = new QFormLayout();
-    dump_input_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    auto *graph_spec_dump_group_box = setup_graph_spec_dump_preferences(graph_spec_dump_preferences);
+    splitter->addWidget(graph_spec_dump_group_box);
 
-    rankdir_combo_ = create_combo_box(this, QStringList{"LR", "TB"});
-    if (graph_spec_dump_preferences.rankdir == GraphSpecDumpPreferences::Rankdir::TopToBottom) {
-      rankdir_combo_->setCurrentText("TB");
-    }
+    auto *graph_compiled_dump_group_box = setup_graph_compiled_dump_preferences();
+    splitter->addWidget(graph_compiled_dump_group_box);
 
-    dump_input_form->addRow(tr("Graph rankdir"), rankdir_combo_);
-
-    node_name_checkbox_ = new QCheckBox(this);
-    node_name_checkbox_->setChecked(graph_spec_dump_preferences.dump_node_name);
-    node_name_checkbox_->setToolTip(tr("Include node names in the graph dump."));
-    dump_input_form->addRow(tr("Node names"), node_name_checkbox_);
-
-    node_kind_checkbox_ = new QCheckBox(this);
-    node_kind_checkbox_->setChecked(graph_spec_dump_preferences.dump_node_kind);
-    node_kind_checkbox_->setToolTip(tr("Include node kinds in the graph dump."));
-    dump_input_form->addRow(tr("Node kinds"), node_kind_checkbox_);
-
-    node_settings_checkbox_ = new QCheckBox(this);
-    node_settings_checkbox_->setChecked(graph_spec_dump_preferences.dump_node_settings);
-    node_settings_checkbox_->setToolTip(tr("Include node settings in the graph dump."));
-    dump_input_form->addRow(tr("Node settings"), node_settings_checkbox_);
-
-    edge_indices_checkbox_ = new QCheckBox(this);
-    edge_indices_checkbox_->setChecked(graph_spec_dump_preferences.dump_edge_indices);
-    edge_indices_checkbox_->setToolTip(tr("Include edge indices in the graph dump."));
-    dump_input_form->addRow(tr("Edge indices"), edge_indices_checkbox_);
-
-    dump_group_box->setLayout(dump_input_form);
-    dialog_layout->addWidget(dump_group_box);
-
+    dialog_layout->addWidget(splitter);
     // Apply / Close
     auto *button_box = new QDialogButtonBox(QDialogButtonBox::Close, this);
     apply_button_    = button_box->addButton(tr("Apply"), QDialogButtonBox::ActionRole);
@@ -441,54 +417,212 @@ public:
   }
 
 private:
+  QGroupBox *
+  setup_graph_spec_dump_preferences(const GraphSpecDumpPreferences &graph_spec_dump_preferences) {
+    auto *group_box  = new QGroupBox(tr("Graph Dump Spec"), this);
+    auto *input_form = new QFormLayout();
+    input_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+
+    graph_spec_dump_preferences_widgets_.rankdir_combo_ =
+        create_combo_box(this, QStringList{"LR", "TB"});
+    if (graph_spec_dump_preferences.rankdir == GraphSpecDumpPreferences::Rankdir::TopToBottom) {
+      graph_spec_dump_preferences_widgets_.rankdir_combo_->setCurrentText("TB");
+    }
+
+    input_form->addRow(tr("Graph rankdir"), graph_spec_dump_preferences_widgets_.rankdir_combo_);
+
+    graph_spec_dump_preferences_widgets_.node_name_checkbox_ = new QCheckBox(this);
+    graph_spec_dump_preferences_widgets_.node_name_checkbox_->setChecked(
+        graph_spec_dump_preferences.dump_node_name);
+    graph_spec_dump_preferences_widgets_.node_name_checkbox_->setToolTip(
+        tr("Include node names in the graph dump."));
+    input_form->addRow(tr("Node names"), graph_spec_dump_preferences_widgets_.node_name_checkbox_);
+
+    graph_spec_dump_preferences_widgets_.node_kind_checkbox_ = new QCheckBox(this);
+    graph_spec_dump_preferences_widgets_.node_kind_checkbox_->setChecked(
+        graph_spec_dump_preferences.dump_node_kind);
+    graph_spec_dump_preferences_widgets_.node_kind_checkbox_->setToolTip(
+        tr("Include node kinds in the graph dump."));
+    input_form->addRow(tr("Node kinds"), graph_spec_dump_preferences_widgets_.node_kind_checkbox_);
+
+    graph_spec_dump_preferences_widgets_.node_settings_checkbox_ = new QCheckBox(this);
+    graph_spec_dump_preferences_widgets_.node_settings_checkbox_->setChecked(
+        graph_spec_dump_preferences.dump_node_settings);
+    graph_spec_dump_preferences_widgets_.node_settings_checkbox_->setToolTip(
+        tr("Include node settings in the graph dump."));
+    input_form->addRow(tr("Node settings"),
+                       graph_spec_dump_preferences_widgets_.node_settings_checkbox_);
+
+    graph_spec_dump_preferences_widgets_.edge_indices_checkbox_ = new QCheckBox(this);
+    graph_spec_dump_preferences_widgets_.edge_indices_checkbox_->setChecked(
+        graph_spec_dump_preferences.dump_edge_indices);
+    graph_spec_dump_preferences_widgets_.edge_indices_checkbox_->setToolTip(
+        tr("Include edge indices in the graph dump."));
+    input_form->addRow(tr("Edge indices"),
+                       graph_spec_dump_preferences_widgets_.edge_indices_checkbox_);
+
+    group_box->setLayout(input_form);
+    return group_box;
+  }
+
+  // TODO add compiled graph preferences args
+  QGroupBox *setup_graph_compiled_dump_preferences() {
+    auto *group_box  = new QGroupBox(tr("Graph Compiled Spec"), this);
+    auto *input_form = new QFormLayout();
+    input_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+
+    graph_compiled_preferences_widgets_.rankdir_combo_ =
+        create_combo_box(this, QStringList{"LR", "TB"});
+    graph_compiled_preferences_widgets_.rankdir_combo_->setToolTip(
+        tr("Include node names in the compiled graph."));
+    input_form->addRow(tr("Rank direction"), graph_compiled_preferences_widgets_.rankdir_combo_);
+
+    graph_compiled_preferences_widgets_.node_name_checkbox_ = new QCheckBox(this);
+    graph_compiled_preferences_widgets_.node_name_checkbox_->setToolTip(
+        tr("Include node names in the compiled graph."));
+    input_form->addRow(tr("Node names"), graph_compiled_preferences_widgets_.node_name_checkbox_);
+
+    graph_compiled_preferences_widgets_.node_kind_checkbox_ = new QCheckBox(this);
+    graph_compiled_preferences_widgets_.node_kind_checkbox_->setToolTip(
+        tr("Include node kinds in the compiled graph."));
+    input_form->addRow(tr("Node kinds"), graph_compiled_preferences_widgets_.node_kind_checkbox_);
+
+    graph_compiled_preferences_widgets_.node_settings_checkbox_ = new QCheckBox(this);
+    graph_compiled_preferences_widgets_.node_settings_checkbox_->setToolTip(
+        tr("Include node settings in the compiled graph."));
+    input_form->addRow(tr("Node settings"),
+                       graph_compiled_preferences_widgets_.node_settings_checkbox_);
+
+    graph_compiled_preferences_widgets_.node_in_out_tids_ = new QCheckBox(this);
+    graph_compiled_preferences_widgets_.node_in_out_tids_->setToolTip(
+        tr("Include node input and output TIDs in the compiled graph."));
+    input_form->addRow(tr("Node I/O TIDs"), graph_compiled_preferences_widgets_.node_in_out_tids_);
+
+    graph_compiled_preferences_widgets_.edge_indices_checkbox_ = new QCheckBox(this);
+    graph_compiled_preferences_widgets_.edge_indices_checkbox_->setToolTip(
+        tr("Include edge indices in the compiled graph."));
+    input_form->addRow(tr("Edge indices"),
+                       graph_compiled_preferences_widgets_.edge_indices_checkbox_);
+
+    graph_compiled_preferences_widgets_.edge_desc_checkbox_ = new QCheckBox(this);
+    graph_compiled_preferences_widgets_.edge_desc_checkbox_->setToolTip(
+        tr("Include edge descriptions in the compiled graph."));
+    input_form->addRow(tr("Edge descriptions"),
+                       graph_compiled_preferences_widgets_.edge_desc_checkbox_);
+
+    graph_compiled_preferences_widgets_.section_toggle_checkbox_ = new QCheckBox(this);
+    graph_compiled_preferences_widgets_.section_toggle_checkbox_->setToolTip(
+        tr("Include section information in the compiled graph."));
+    input_form->addRow(tr("Section info"),
+                       graph_compiled_preferences_widgets_.section_toggle_checkbox_);
+
+    graph_compiled_preferences_widgets_.section_stream_addr_checkbox_ = new QCheckBox(this);
+    graph_compiled_preferences_widgets_.section_stream_addr_checkbox_->setToolTip(
+        tr("Include section stream addresses in the compiled graph."));
+    input_form->addRow(tr("Section stream addresses"),
+                       graph_compiled_preferences_widgets_.section_stream_addr_checkbox_);
+
+    graph_compiled_preferences_widgets_.resources_toggle_checkbox_ = new QCheckBox(this);
+    graph_compiled_preferences_widgets_.resources_toggle_checkbox_->setToolTip(
+        tr("Include resource information in the compiled graph."));
+    input_form->addRow(tr("Resource info"),
+                       graph_compiled_preferences_widgets_.resources_toggle_checkbox_);
+
+    group_box->setLayout(input_form);
+    return group_box;
+  }
+
   void update_preferences() {
     // const auto &specs_ = nullptr;
     // holoflow::core::to_dot(specs_);
     apply_button_->setEnabled(false);
-    auto graph_spec_dump_preferences =
-        GraphSpecDumpPreferences{.rankdir = rankdir_combo_->currentText() == "LR"
-                                                ? GraphSpecDumpPreferences::Rankdir::LeftToRight
-                                                : GraphSpecDumpPreferences::Rankdir::TopToBottom,
+    auto graph_spec_dump_preferences = GraphSpecDumpPreferences{
+        .rankdir = graph_spec_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
+                       ? GraphSpecDumpPreferences::Rankdir::LeftToRight
+                       : GraphSpecDumpPreferences::Rankdir::TopToBottom,
 
-                                 .dump_node_name     = node_name_checkbox_->isChecked(),
-                                 .dump_node_kind     = node_kind_checkbox_->isChecked(),
-                                 .dump_node_settings = node_settings_checkbox_->isChecked(),
-                                 .dump_edge_indices  = edge_indices_checkbox_->isChecked()};
+        .dump_node_name = graph_spec_dump_preferences_widgets_.node_name_checkbox_->isChecked(),
+        .dump_node_kind = graph_spec_dump_preferences_widgets_.node_kind_checkbox_->isChecked(),
+        .dump_node_settings =
+            graph_spec_dump_preferences_widgets_.node_settings_checkbox_->isChecked(),
+        .dump_edge_indices =
+            graph_spec_dump_preferences_widgets_.edge_indices_checkbox_->isChecked()};
     manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
+    // TODO update compiled graph preferences
   }
 
   void connect_signals() {
-    connect(rankdir_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+    connect(graph_spec_dump_preferences_widgets_.rankdir_combo_,
+            qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](int) { apply_button_->setEnabled(true); });
-    connect(node_name_checkbox_, &QCheckBox::toggled, this,
+    connect(graph_spec_dump_preferences_widgets_.node_name_checkbox_, &QCheckBox::toggled, this,
             [this](bool) { apply_button_->setEnabled(true); });
-    connect(node_kind_checkbox_, &QCheckBox::toggled, this,
+    connect(graph_spec_dump_preferences_widgets_.node_kind_checkbox_, &QCheckBox::toggled, this,
             [this](bool) { apply_button_->setEnabled(true); });
-    connect(node_settings_checkbox_, &QCheckBox::toggled, this,
+    connect(graph_spec_dump_preferences_widgets_.node_settings_checkbox_, &QCheckBox::toggled, this,
             [this](bool) { apply_button_->setEnabled(true); });
-    connect(edge_indices_checkbox_, &QCheckBox::toggled, this,
+    connect(graph_spec_dump_preferences_widgets_.edge_indices_checkbox_, &QCheckBox::toggled, this,
             [this](bool) { apply_button_->setEnabled(true); });
+
+    connect(graph_compiled_preferences_widgets_.rankdir_combo_,
+            qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](int) { apply_button_->setEnabled(true); });
+    connect(graph_compiled_preferences_widgets_.node_name_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+    connect(graph_compiled_preferences_widgets_.node_kind_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+    connect(graph_compiled_preferences_widgets_.node_settings_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+    connect(graph_compiled_preferences_widgets_.edge_indices_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+    connect(graph_compiled_preferences_widgets_.edge_desc_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+    connect(graph_compiled_preferences_widgets_.section_toggle_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+    connect(graph_compiled_preferences_widgets_.section_stream_addr_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+    connect(graph_compiled_preferences_widgets_.resources_toggle_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
+
   }
 
   holovibes::pipeline::Manager &manager_;
 
   QPushButton *apply_button_ = nullptr;
 
-  // dump preferences
-  // rankdir: LR | TB
-  QComboBox *rankdir_combo_ = nullptr;
+  struct GraphSpecDumpPreferencesWidgets {
+    // dump preferences
+    // rankdir: LR | TB
+    QComboBox *rankdir_combo_ = nullptr;
+    // Nodes
+    QCheckBox *node_name_checkbox_     = nullptr;
+    QCheckBox *node_kind_checkbox_     = nullptr;
+    QCheckBox *node_settings_checkbox_ = nullptr;
+    // Edges
+    QCheckBox *edge_indices_checkbox_ = nullptr;
+  };
+  GraphSpecDumpPreferencesWidgets graph_spec_dump_preferences_widgets_;
 
-  // Nodes
-  // dump name
-  QCheckBox *node_name_checkbox_ = nullptr;
-  // dump kind
-  QCheckBox *node_kind_checkbox_ = nullptr;
-  // dump node settings
-  QCheckBox *node_settings_checkbox_ = nullptr;
+  struct GraphCompiledPreferencesWidgets {
+    // dump preferences
+    // rankdir: LR | TB
+    QComboBox *rankdir_combo_          = nullptr;
+    QCheckBox *node_name_checkbox_     = nullptr;
+    QCheckBox *node_kind_checkbox_     = nullptr;
+    QCheckBox *node_settings_checkbox_ = nullptr;
+    QCheckBox *node_in_out_tids_       = nullptr;
+    // Edges
+    QCheckBox *edge_indices_checkbox_ = nullptr;
+    QCheckBox *edge_desc_checkbox_    = nullptr;
 
-  // Edges
-  // dump edge indices
-  QCheckBox *edge_indices_checkbox_ = nullptr;
+    // Section
+    QCheckBox *section_toggle_checkbox_      = nullptr;
+    QCheckBox *section_stream_addr_checkbox_ = nullptr;
+
+    // Resources
+    QCheckBox *resources_toggle_checkbox_ = nullptr;
+  };
+  GraphCompiledPreferencesWidgets graph_compiled_preferences_widgets_;
 };
 
 } // namespace
