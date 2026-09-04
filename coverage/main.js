@@ -296,8 +296,7 @@ var assemblies = [
   {
     "name": "holofile",
     "classes": [
-      { "name": "include", "rp": "holofile_include.html", "cl": 0, "ucl": 2, "cal": 2, "tl": 154, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
-      { "name": "src", "rp": "holofile_src.html", "cl": 0, "ucl": 158, "cal": 158, "tl": 307, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holofile_src.html", "cl": 0, "ucl": 167, "cal": 167, "tl": 352, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
   {
     "name": "holoflow",
