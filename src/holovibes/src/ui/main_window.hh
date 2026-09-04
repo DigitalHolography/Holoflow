@@ -107,6 +107,7 @@ private:
   void configure_window();
   void check_for_updates();
   void show_fft_frequency_tool();
+  void show_preferences();
 
   void    refresh_visualization_availability();
   void    select_configurable_widget(ZernikeHistoryWidget *widget);

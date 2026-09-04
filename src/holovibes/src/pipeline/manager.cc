@@ -661,6 +661,9 @@ void Manager::build_graph_spec() {
 
   settings_dirty_ = false;
   logger()->debug("[Manager::build_graph_spec] Graph spec built successfully");
+  dump_graph_logs(
+      QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString() + "/" +
+      QCoreApplication::applicationVersion().toStdString() + "/logs");
 }
 
 void Manager::reset_graph_spec() { spec_ = holoflow::core::GraphSpec{}; }

@@ -382,6 +382,109 @@ private:
   bool            result_valid_       = false;
 };
 
+class PreferencesDialog : public QDialog {
+public:
+  struct DumpPreferences {
+    enum class Rankdir { LeftToRight, TopToBottom };
+
+    Rankdir rankdir               = Rankdir::LeftToRight;
+    bool    dump_node_name        = true;
+    bool    dump_node_kind        = true;
+    bool    dump_node_settings    = true;
+    bool    dump_edge_start_index = true;
+    bool    dump_edge_end_index   = true;
+  };
+
+  PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager,
+                    DumpPreferences &dump_preferences)
+      : QDialog(parent), manager_(manager), dump_preferences_(dump_preferences) {
+    setWindowTitle(tr("Preferences"));
+    setMinimumWidth(400);
+
+    auto *dialog_layout = new QVBoxLayout(this);
+
+    // Dump preferences
+    auto *dump_group_box  = new QGroupBox(tr("Graph Dump Preferences"), this);
+    auto *dump_input_form = new QFormLayout();
+    dump_input_form->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+
+    rankdir_combo_ = create_combo_box(this, QStringList{"LR", "TB"});
+    if (dump_preferences_.rankdir == DumpPreferences::Rankdir::TopToBottom) {
+      rankdir_combo_->setCurrentText("TB");
+    }
+
+    dump_input_form->addRow(tr("Graph rankdir"), rankdir_combo_);
+
+    node_name_checkbox_ = new QCheckBox(this);
+    node_name_checkbox_->setChecked(dump_preferences_.dump_node_name);
+    node_name_checkbox_->setToolTip(tr("Include node names in the graph dump."));
+    dump_input_form->addRow(tr("Node names"), node_name_checkbox_);
+
+    node_kind_checkbox_ = new QCheckBox(this);
+    node_kind_checkbox_->setChecked(dump_preferences_.dump_node_kind);
+    node_kind_checkbox_->setToolTip(tr("Include node kinds in the graph dump."));
+    dump_input_form->addRow(tr("Node kinds"), node_kind_checkbox_);
+
+    node_settings_checkbox_ = new QCheckBox(this);
+    node_settings_checkbox_->setChecked(dump_preferences_.dump_node_settings);
+    node_settings_checkbox_->setToolTip(tr("Include node settings in the graph dump."));
+    dump_input_form->addRow(tr("Node settings"), node_settings_checkbox_);
+
+    edge_start_index_checkbox_ = new QCheckBox(this);
+    edge_start_index_checkbox_->setChecked(dump_preferences_.dump_edge_start_index);
+    edge_start_index_checkbox_->setToolTip(tr("Include edge start indices in the graph dump."));
+    dump_input_form->addRow(tr("Edge start indices"), edge_start_index_checkbox_);
+
+    edge_end_index_checkbox_ = new QCheckBox(this);
+    edge_end_index_checkbox_->setChecked(dump_preferences_.dump_edge_end_index);
+    edge_end_index_checkbox_->setToolTip(tr("Include edge end indices in the graph dump."));
+    dump_input_form->addRow(tr("Edge end indices"), edge_end_index_checkbox_);
+
+    dump_group_box->setLayout(dump_input_form);
+    dialog_layout->addWidget(dump_group_box);
+
+    // Apply / Close
+    auto *button_box = new QDialogButtonBox(QDialogButtonBox::Close, this);
+    apply_button_    = button_box->addButton(tr("Apply"), QDialogButtonBox::ActionRole);
+    apply_button_->setDisabled(true);
+    dialog_layout->addWidget(button_box);
+
+    connect(apply_button_, &QPushButton::clicked, this, [this]() { update_preferences(); });
+    connect(button_box, &QDialogButtonBox::rejected, this, &QDialog::reject);
+  }
+
+private:
+  holovibes::pipeline::Manager &manager_;
+
+  DumpPreferences &dump_preferences_;
+
+  bool         dirty_        = false;
+  QPushButton *apply_button_ = nullptr;
+
+  // dump preferences
+  // rankdir: LR | TB
+  QComboBox *rankdir_combo_ = nullptr;
+
+  // Nodes
+  // dump name
+  QCheckBox *node_name_checkbox_ = nullptr;
+  // dump kind
+  QCheckBox *node_kind_checkbox_ = nullptr;
+  // dump node settings
+  QCheckBox *node_settings_checkbox_ = nullptr;
+
+  // Edges
+  // dump edge's start index
+  QCheckBox *edge_start_index_checkbox_ = nullptr;
+  // dump edge's end index
+  QCheckBox *edge_end_index_checkbox_ = nullptr;
+
+  void update_preferences() {
+    // const auto &specs_ = nullptr;
+    // holoflow::core::to_dot(specs_);
+  }
+};
+
 } // namespace
 
 namespace holovibes::ui {
@@ -1316,6 +1419,12 @@ void MainWindow::connect_export_controls() {
 void MainWindow::configure_window() {
   setWindowTitle("Holovibes");
 
+  auto *file_menu   = menuBar()->addMenu(tr("&File"));
+  auto *preferences = file_menu->addAction(tr("Preferences"));
+  preferences->setShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+P")));
+  preferences->setShortcutContext(Qt::ApplicationShortcut);
+  connect(preferences, &QAction::triggered, this, &MainWindow::show_preferences);
+
   auto *view_menu = menuBar()->addMenu(tr("&View"));
   display_workspace_->populate_view_menu(view_menu);
 
@@ -1363,6 +1472,12 @@ void MainWindow::show_fft_frequency_tool() {
         }
       },
       this);
+  dialog.exec();
+}
+
+void MainWindow::show_preferences() {
+  PreferencesDialog::DumpPreferences dump_prefs{};
+  PreferencesDialog                  dialog(this, *pipeline_manager_, dump_prefs);
   dialog.exec();
 }
 
