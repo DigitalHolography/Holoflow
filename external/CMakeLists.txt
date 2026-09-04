@@ -51,6 +51,71 @@ if(ENABLE_FETCHCONTENT)
         )
     endmacro()
 
+    if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(FFMPEG_VERSION "n8.1.2-50-g1a748fe2cd")
+        declare_persistent_archive(
+            ffmpeg
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-03-13-17/ffmpeg-n8.1.2-50-g1a748fe2cd-win64-lgpl-shared-8.1.zip"
+            "SHA256=383f173d39cf610ba7d1d56bf22941f5e9470dd5ebfcf76a152e8a6f6235fe68"
+        )
+        FetchContent_MakeAvailable(ffmpeg)
+
+        set(FFMPEG_ROOT "${ffmpeg_SOURCE_DIR}")
+        foreach(FFMPEG_DIRECTORY IN ITEMS include lib bin)
+            if(NOT IS_DIRECTORY "${FFMPEG_ROOT}/${FFMPEG_DIRECTORY}")
+                message(FATAL_ERROR
+                    "FFmpeg archive is missing its ${FFMPEG_DIRECTORY} directory: ${FFMPEG_ROOT}"
+                )
+            endif()
+        endforeach()
+        if(NOT EXISTS "${FFMPEG_ROOT}/LICENSE.txt")
+            message(FATAL_ERROR "FFmpeg archive is missing LICENSE.txt: ${FFMPEG_ROOT}")
+        endif()
+
+        set(FFMPEG_INCLUDE_DIR "${FFMPEG_ROOT}/include")
+        set(FFMPEG_LIBRARY_DIR "${FFMPEG_ROOT}/lib")
+        set(FFMPEG_RUNTIME_DIR "${FFMPEG_ROOT}/bin")
+
+        foreach(FFMPEG_COMPONENT IN ITEMS avcodec avformat avutil swscale)
+            file(GLOB FFMPEG_COMPONENT_DLL
+                "${FFMPEG_RUNTIME_DIR}/${FFMPEG_COMPONENT}-*.dll"
+            )
+            list(LENGTH FFMPEG_COMPONENT_DLL FFMPEG_COMPONENT_DLL_COUNT)
+            if(NOT FFMPEG_COMPONENT_DLL_COUNT EQUAL 1)
+                message(FATAL_ERROR
+                    "Expected one FFmpeg ${FFMPEG_COMPONENT} DLL, "
+                    "found ${FFMPEG_COMPONENT_DLL_COUNT}: ${FFMPEG_COMPONENT_DLL}"
+                )
+            endif()
+            list(GET FFMPEG_COMPONENT_DLL 0 FFMPEG_COMPONENT_DLL_PATH)
+            add_library(FFmpeg::${FFMPEG_COMPONENT} SHARED IMPORTED GLOBAL)
+            set_target_properties(FFmpeg::${FFMPEG_COMPONENT} PROPERTIES
+                IMPORTED_IMPLIB "${FFMPEG_LIBRARY_DIR}/${FFMPEG_COMPONENT}.lib"
+                IMPORTED_LOCATION "${FFMPEG_COMPONENT_DLL_PATH}"
+                INTERFACE_INCLUDE_DIRECTORIES "${FFMPEG_INCLUDE_DIR}"
+            )
+        endforeach()
+
+        add_library(holoflow_ffmpeg INTERFACE)
+        target_link_libraries(holoflow_ffmpeg INTERFACE
+            FFmpeg::avcodec
+            FFmpeg::avformat
+            FFmpeg::avutil
+            FFmpeg::swscale
+        )
+
+        file(GLOB FFMPEG_RUNTIME_DLLS CONFIGURE_DEPENDS "${FFMPEG_RUNTIME_DIR}/*.dll")
+        set_property(TARGET holoflow_ffmpeg PROPERTY
+            HOLOFLOW_FFMPEG_RUNTIME_DLLS "${FFMPEG_RUNTIME_DLLS}"
+        )
+        install(FILES ${FFMPEG_RUNTIME_DLLS} DESTINATION bin COMPONENT dependencies)
+        install(FILES "${FFMPEG_ROOT}/LICENSE.txt"
+            DESTINATION share/licenses
+            RENAME FFmpeg-LICENSE.txt
+            COMPONENT dependencies
+        )
+    endif()
+
     declare_persistent_dependency(spdlog "https://github.com/gabime/spdlog.git" "v1.15.3")
     FetchContent_MakeAvailable(spdlog)
 

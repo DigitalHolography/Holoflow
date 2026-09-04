@@ -47,6 +47,8 @@ ExportWidget::ExportWidget(QWidget *parent) : QGroupBox("EXPORT", parent) {
 }
 
 QString ExportWidget::get_image_type() const { return image_type_combo_->currentText(); }
+QString ExportWidget::get_format() const { return format_combo_->currentData().toString(); }
+QString ExportWidget::get_codec() const { return codec_combo_->currentData().toString(); }
 QString ExportWidget::get_file_path() const { return file_line_edit_->text(); }
 QString ExportWidget::get_tag() const { return tag_combo_->currentText(); }
 bool    ExportWidget::is_frame_count_enabled() const { return frames_check_->isChecked(); }
@@ -68,6 +70,8 @@ void ExportWidget::mark_file_invalid() { mark_validation_error(file_line_edit_);
 void ExportWidget::mark_frames_invalid() { mark_validation_error(frames_spin_); }
 
 QComboBox   *ExportWidget::image_type_combo() { return image_type_combo_; }
+QComboBox   *ExportWidget::format_combo() { return format_combo_; }
+QComboBox   *ExportWidget::codec_combo() { return codec_combo_; }
 QLineEdit   *ExportWidget::file_line_edit() { return file_line_edit_; }
 QPushButton *ExportWidget::browse_button() { return browse_button_; }
 QComboBox   *ExportWidget::tag_combo() { return tag_combo_; }
@@ -97,6 +101,29 @@ void ExportWidget::setup_ui() {
   image_type_combo_ =
       create_combo_box(content_container_, QStringList{"Raw Image", "Processed Image"});
   layout->addWidget(image_type_combo_, row, 0, 1, 2);
+  ++row;
+
+  layout->addWidget(new QLabel("Format", content_container_), row, 0);
+  format_combo_ = new QComboBox(content_container_);
+  format_combo_->addItem("Holo", "holo");
+  format_combo_->addItem("NPY", "npy");
+  format_combo_->addItem("MP4", "mp4");
+  format_combo_->addItem("AVI", "avi");
+  format_combo_->addItem("Matroska", "matroska");
+  format_combo_->addItem("WebM", "webm");
+  layout->addWidget(format_combo_, row, 1);
+  ++row;
+
+  layout->addWidget(new QLabel("Codec", content_container_), row, 0);
+  codec_combo_ = new QComboBox(content_container_);
+  codec_combo_->addItem("MPEG-4", "mpeg4");
+  codec_combo_->addItem("MJPEG", "mjpeg");
+  codec_combo_->addItem("FFV1", "ffv1");
+  codec_combo_->addItem("H.264", "libopenh264");
+  codec_combo_->addItem("HEVC", "libkvazaar");
+  codec_combo_->addItem("VP9", "libvpx-vp9");
+  codec_combo_->setEnabled(false);
+  layout->addWidget(codec_combo_, row, 1);
   ++row;
 
   file_line_edit_ = new QLineEdit(content_container_);
@@ -149,6 +176,14 @@ void ExportWidget::connect_signals() {
 
   // Emit settings_changed for all control changes
   connect(image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &ExportWidget::settings_changed);
+  connect(format_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+          [this](int) {
+            const auto format = format_combo_->currentData().toString();
+            codec_combo_->setEnabled(format != "holo" && format != "npy");
+            emit settings_changed();
+          });
+  connect(codec_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
   connect(file_line_edit_, &QLineEdit::textChanged, this, &ExportWidget::settings_changed);
   connect(tag_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,

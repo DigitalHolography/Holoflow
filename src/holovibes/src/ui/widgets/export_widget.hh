@@ -31,6 +31,8 @@ public:
 
   // Getters
   QString get_image_type() const;
+  QString get_format() const;
+  QString get_codec() const;
   QString get_file_path() const;
   QString get_tag() const;
   bool    is_frame_count_enabled() const;
@@ -54,6 +56,8 @@ public:
 
   // Access to widgets for connection setup
   QComboBox   *image_type_combo();
+  QComboBox   *format_combo();
+  QComboBox   *codec_combo();
   QLineEdit   *file_line_edit();
   QPushButton *browse_button();
   QComboBox   *tag_combo();
@@ -78,6 +82,8 @@ private:
   QCheckBox   *enable_check_;
   QWidget     *content_container_;
   QComboBox   *image_type_combo_;
+  QComboBox   *format_combo_;
+  QComboBox   *codec_combo_;
   QLineEdit   *file_line_edit_;
   QPushButton *browse_button_;
   QComboBox   *tag_combo_;

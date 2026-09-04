@@ -1,8 +1,6 @@
 #include "holotask/sinks/npyfile.hh"
 
 #include <algorithm>
-#include <cerrno>
-#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <stdexcept>
@@ -10,10 +8,9 @@
 
 #include "logger.hh"
 
-#include "bug.hh"
 #include "curaii/cuda.hh"
-#include "holoflow_event/router.hh"
 #include "recording_geometry.hh"
+#include "recording_sink.hh"
 
 namespace npyfile {
 namespace {
@@ -82,7 +79,7 @@ void check(bool condition, const std::string &message) {
     throw std::invalid_argument("NpyfileFactory error: " + message);
 }
 
-class NpyfileWriter final : public holoflow::core::ISyncTask {
+class NpyfileWriter final : public detail::RecordingSink {
 public:
   NpyfileWriter(NpyfileSettings settings, detail::RecordingGeometry geometry,
                 std::size_t frame_size)
@@ -91,15 +88,15 @@ public:
                                                          frame_size)) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    handle_events(ctx);
-    if (!recording_)
+    handle_events(ctx, settings_.path, settings_.count);
+    if (!is_recording())
       return holoflow::core::OpResult::Ok;
     const auto batch = static_cast<int>(ctx.inputs[0].desc.shape[0]);
-    const auto count = std::min(settings_.count - buffered_, batch);
-    copy_bytes(ring_.get() + static_cast<std::size_t>(buffered_) * frame_size_,
+    const auto count = std::min(settings_.count - frames_buffered_, batch);
+    copy_bytes(ring_.get() + static_cast<std::size_t>(frames_buffered_) * frame_size_,
                ctx.inputs[0].data(), static_cast<std::size_t>(count) * frame_size_);
-    buffered_ += count;
-    if (buffered_ >= settings_.count) {
+    frames_buffered_ += count;
+    if (frames_buffered_ >= settings_.count) {
       logger()->info("[NpyfileWriter] Frame buffer full ({} frames); flushing to disk...",
                      settings_.count);
       try {
@@ -108,17 +105,16 @@ public:
                                           geometry_.frame_height, geometry_.frame_width},
                                 .dtype = geometry_.bits_per_pixel == 8 ? "<u1" : "<u2"});
         writer.write_frames(ring_.get(), static_cast<std::size_t>(settings_.count), frame_size_);
-        emit(ctx, "recording_finished", {});
+        emit_finished_event(ctx);
         logger()->info("[NpyfileWriter] Recording complete: {} frames written to {}",
-                       buffered_, settings_.path);
+                       frames_buffered_, settings_.path);
       } catch (const std::exception &error) {
         std::remove(settings_.path.c_str());
-        emit(ctx, "recording_failed", {{"message", error.what()}});
+        emit_failed_event(ctx, error.what());
         logger()->error("[NpyfileWriter] Failed to finalize recording at {}: {}", settings_.path,
                         error.what());
       }
-      recording_ = false;
-      buffered_  = 0;
+      reset();
     }
     return holoflow::core::OpResult::Ok;
   }
@@ -129,60 +125,15 @@ public:
            detail::same_geometry(geometry, geometry_) && frame_size == frame_size_;
   }
   void update_settings(NpyfileSettings settings) {
-    const auto path = settings_.path;
-    settings_       = std::move(settings);
-    if (recording_)
-      settings_.path = path;
+    settings_ = std::move(settings);
+    update_recording_path(settings_.path);
   }
 
 private:
-  void handle_events(holoflow::core::SyncCtx &ctx) {
-    if (!ctx.event_reader)
-      return;
-    while (auto event = ctx.event_reader->try_pop()) {
-      const auto type = event->data.at("type").get<std::string>();
-      if (type == "start_recording") {
-        if (recording_) {
-          emit(ctx, "recording_failed", {{"message", "Recording already in progress"}});
-          continue;
-        }
-        settings_.path = event->data.value("record_path", std::string{});
-        if (settings_.path.empty()) {
-          emit(ctx, "recording_failed", {{"message", "Cannot start recording: empty path"}});
-          continue;
-        }
-        recording_ = true;
-        buffered_  = 0;
-      } else if (type == "stop_recording") {
-        if (recording_ && !settings_.path.empty() && std::remove(settings_.path.c_str()) != 0 &&
-            errno != ENOENT)
-          emit(ctx, "recording_failed", {{"message", "Failed to remove incomplete recording"}});
-        recording_ = false;
-        buffered_  = 0;
-      } else {
-        HOLOVIBES_BUG("Unknown event type: {}", type);
-      }
-    }
-  }
-  void emit(holoflow::core::SyncCtx &ctx, const char *type, nlohmann::json data) {
-    if (!ctx.event_writer)
-      return;
-    data["type"] = type;
-    data["path"] = settings_.path;
-    if (std::string(type) == "recording_finished")
-      data["frames_written"] = settings_.count;
-    (void)ctx.event_writer->try_push({.direction = holoflow_event::EventDirection::ToUi,
-                                      .node_id   = "",
-                                      .data      = std::move(data),
-                                      .ts        = std::chrono::steady_clock::now()});
-  }
-
   NpyfileSettings           settings_;
   detail::RecordingGeometry geometry_;
   std::size_t               frame_size_;
   HostPtr<std::uint8_t>     ring_;
-  bool                      recording_ = false;
-  int                       buffered_  = 0;
 };
 } // namespace
 

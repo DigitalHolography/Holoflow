@@ -17,6 +17,7 @@ set(TARGET holotask_test)
 set(SOURCES
     angular_spectrum_test.cu
     conversion_test.cu
+    ffmpeg_sink_test.cc
     flatfield_test.cu
     filter2d_test.cu
     fresnel_diffraction_test.cu
@@ -45,6 +46,22 @@ target_link_libraries(${TARGET}
     holotask
     GTest::gtest_main
 )
+
+if(TARGET holoflow_ffmpeg)
+    target_link_libraries(${TARGET} PRIVATE holoflow_ffmpeg)
+endif()
+
+if(TARGET holoflow_ffmpeg)
+    get_target_property(FFMPEG_RUNTIME_DLLS holoflow_ffmpeg HOLOFLOW_FFMPEG_RUNTIME_DLLS)
+    foreach(FFMPEG_RUNTIME_DLL IN LISTS FFMPEG_RUNTIME_DLLS)
+        add_custom_command(TARGET ${TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${FFMPEG_RUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:${TARGET}>"
+            COMMENT "Copying FFmpeg runtime ${FFMPEG_RUNTIME_DLL}"
+        )
+    endforeach()
+endif()
 
 holoflow_discover_tests(${TARGET}
     LABELS gpu

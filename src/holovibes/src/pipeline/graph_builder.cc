@@ -228,8 +228,14 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
 void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
   auto path          = s_.recording_path.string();
   auto count         = s_.recording_count;
-  auto settings_json = settings_to_old_json(s_);
-  holofile_write(H, {path, count, settings_json, true});
+  if (s_.recording_format == "npy") {
+    npyfile_write(H, {path, count, true});
+  } else if (s_.recording_format == "holo") {
+    holofile_write(H, {path, count, settings_to_old_json(s_), true});
+  } else {
+    ffmpeg_write(H, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
+                     s_.recording_codec});
+  }
 }
 
 bool GraphBuilder::Impl::build_raw_view(const TDesc &H) {
@@ -771,9 +777,14 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
 
     auto path              = s_.recording_path.string();
     auto count             = s_.recording_count;
-    auto settings_json     = settings_to_old_json(s_);
-    auto holofile_settings = HolofileSettings{path, count, settings_json};
-    holofile_write(result_rec, holofile_settings);
+    if (s_.recording_format == "npy") {
+      npyfile_write(result_rec, {path, count, true});
+    } else if (s_.recording_format == "holo") {
+      holofile_write(result_rec, {path, count, settings_to_old_json(s_), true});
+    } else {
+      ffmpeg_write(result_rec, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
+                                s_.recording_codec});
+    }
   }
 }
 

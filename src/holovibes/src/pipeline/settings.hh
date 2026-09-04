@@ -143,6 +143,8 @@ struct Settings {
   RecordingMethod       recording_method;
   std::filesystem::path recording_path;
   int                   recording_count;
+  std::string           recording_format = "holo";
+  std::string           recording_codec  = "mpeg4";
 
   // Auto-focus
   bool             autofocus_enabled;
