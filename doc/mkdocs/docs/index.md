@@ -1,20 +1,62 @@
-# Holoflow Project
+# Holoflow
 
-The **Holoflow Project** is a modular framework for real-time digital holography and high-performance image processing.  
-It is composed of several libraries and an executable application:
+Holoflow is a graph-based high-performance computing framework for real-time scientific imaging, with first-class support for GPU-accelerated processing and laser Doppler holography.
 
-- **Holoflow (library)**  
-  Core runtime and graph execution engine. Provides the abstraction layer for pipelines as graphs of computational tasks.  
-  Handles scheduling, tensor management, memory allocation, and GPU acceleration.
+![Holoflow processing graph from Holofile input through GPU processing tasks to the displayed output](assets/images/holoflow-pipeline.svg){ loading=lazy }
+/// caption
+Example Holoflow processing graph
+///
 
-- **Holovibes (executable)**  
-  Reference application built on top of Holoflow, used for real-time digital holography. Offers a Qt-based graphical 
-  interface for visualization and interaction.  
-  Demonstrates the full capabilities of the runtime, including live acquisition and processing.
+<div class="grid" markdown>
 
-- **Curaii (library)**  
-  Low-level utilities for memory and tensor management. Provides smart pointers, allocation helpers, and RAII abstractions.  
-  This library provides C++ apis on top of existing libraries like cufft, cublas, etc.
+![Black placeholder for the input image](assets/images/input-placeholder.svg){ width=512 loading=lazy }
+/// caption
+Input
+///
 
-- **Holofile (library)**  
-  Low-level file I/O utilities for reading and writing the custom .holo file format.
+![Black placeholder for the output image](assets/images/output-placeholder.svg){ width=512 loading=lazy }
+/// caption
+Output
+///
+
+</div>
+
+## From processing graph to real-time execution
+
+Describe your processing pipelined as a declarative graph of computational tasks. No implementation details, no manual buffer management, just the maths.
+Holoflow takes care of compiling and executing it efficiently!
+
+The runtime manages tasks instantiation, GPU scheduling, memory, tensor lifetimes, synchronization, and data movement, allowing processing code to remain focused on the algorithms themselves.
+Pipelines can combine acquisition, signal processing, reconstruction, analysis, and visualization while sustaining the high data rates required by modern scientific imaging systems.
+
+Holoflow was developed for demanding digital holography workloads, but its execution model is designed for general-purpose scientific computing.
+
+## Built as a modular stack
+
+<div class="grid cards" markdown>
+
+-   **Holoflow**
+
+    Core graph runtime for task scheduling, tensor management, memory allocation, and GPU execution.
+
+    [Explore Holoflow](holoflow/index.md)
+
+-   **Holovibes**
+
+    Interactive Qt application for real-time acquisition, holographic reconstruction, analysis, and visualization.
+
+    [Explore Holovibes](holovibes/index.md)
+
+-   **Curaii**
+
+    RAII-based GPU, memory, tensor, and CUDA library abstractions used throughout the stack.
+
+    [Explore Curaii](curaii/index.md)
+
+-   **Holofile**
+
+    Efficient reading and writing of the `.holo` format for high-throughput holographic acquisitions.
+
+    [Explore Holofile](holofile/index.md)
+
+</div>
