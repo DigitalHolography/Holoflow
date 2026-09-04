@@ -14,7 +14,10 @@
 
 #include "holofile/holofile.hh"
 
+#include <bit>
+#include <cstdio>
 #include <system_error>
+#include <utility>
 
 #include "logger.hh"
 
@@ -38,22 +41,50 @@ InvalidFrameSizeException::InvalidFrameSizeException()
 
 InvalidFooterException::InvalidFooterException() : Exception("Holofile: Invalid footer") {}
 
-Reader::Reader(const std::string &path) : frame_index_(0) {
+// -------------------------------------------------------------------------------------------------
+// Private implementation
+// -------------------------------------------------------------------------------------------------
+
+namespace {
+
+struct FileCloser {
+  void operator()(FILE *file) const { fclose(file); }
+};
+
+} // namespace
+
+struct Reader::Impl {
+  void read_footer();
+
+  std::unique_ptr<FILE, FileCloser> file;
+  Header                            header;
+  std::optional<Footer>             footer;
+  std::size_t                       frame_index = 0;
+};
+
+struct Writer::Impl {
+  std::unique_ptr<FILE, FileCloser> file;
+  Header                            header;
+  Footer                            footer;
+  std::size_t                       frame_index = 0;
+};
+
+Reader::Reader(const std::string &path) : impl_(std::make_unique<Impl>()) {
   // Open file
   FILE *fp = nullptr;
   if (fopen_s(&fp, path.c_str(), "rb") != 0 || !fp) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to open \"" + path + "\"");
   }
-  file_.reset(fp);
+  impl_->file.reset(fp);
 
   // Read header
-  std::size_t success = fread(&header_, sizeof(header_), 1, file_.get());
-  if (ferror(file_.get())) {
+  std::size_t success = fread(&impl_->header, sizeof(impl_->header), 1, impl_->file.get());
+  if (ferror(impl_->file.get())) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to read header:");
   }
-  if (feof(file_.get()) != 0) {
+  if (feof(impl_->file.get()) != 0) {
     throw IncompleteHeaderException();
   }
 
@@ -65,49 +96,55 @@ Reader::Reader(const std::string &path) : frame_index_(0) {
 
   // Check the header
   uint32_t magic_number = std::endian::native == std::endian::little ? 0x4F4C4F48 : 0x484F4C4F;
-  if (header_.magic_number != magic_number) {
+  if (impl_->header.magic_number != magic_number) {
     throw InvalidMagicNumberException();
   }
 
   // TODO: Version support.
 
-  std::size_t pixel_per_frame = header_.frame_width * header_.frame_height;
-  std::size_t bits_per_frame  = pixel_per_frame * header_.bits_per_pixel;
+  std::size_t pixel_per_frame = impl_->header.frame_width * impl_->header.frame_height;
+  std::size_t bits_per_frame  = pixel_per_frame * impl_->header.bits_per_pixel;
   if (bits_per_frame % 8 != 0) {
     throw InvalidFrameSizeException();
   }
 
   try {
-    read_footer();
+    impl_->read_footer();
   } catch (const Exception &e) {
     logger()->warn("Holofile footer could not be read: {}", e.what());
-    footer_ = std::nullopt;
+    impl_->footer = std::nullopt;
 
-    if (fseek(file_.get(), sizeof(header_), SEEK_SET) != 0) {
+    if (fseek(impl_->file.get(), sizeof(impl_->header), SEEK_SET) != 0) {
       std::error_code ec(errno, std::generic_category());
       throw std::system_error(ec, "Failed to seek:");
     }
   }
 }
 
-const Header &Reader::header() const { return header_; }
+Reader::~Reader() = default;
 
-std::optional<Footer> Reader::footer() const { return footer_; }
+Reader::Reader(Reader &&) noexcept = default;
 
-void Reader::read_footer() {
-  size_t footer_offset = sizeof(Header) + header_.data_size_in_bytes;
+Reader &Reader::operator=(Reader &&) noexcept = default;
 
-  int64_t current_pos = _ftelli64(file_.get());
+const Header &Reader::header() const { return impl_->header; }
+
+std::optional<Footer> Reader::footer() const { return impl_->footer; }
+
+void Reader::Impl::read_footer() {
+  size_t footer_offset = sizeof(Header) + header.data_size_in_bytes;
+
+  int64_t current_pos = _ftelli64(file.get());
   if (current_pos == -1) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to get current file position:");
   }
 
-  if (_fseeki64(file_.get(), 0, SEEK_END) != 0) {
+  if (_fseeki64(file.get(), 0, SEEK_END) != 0) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to seek to end:");
   }
-  int64_t file_size = _ftelli64(file_.get());
+  int64_t file_size = _ftelli64(file.get());
   if (file_size == -1) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to get file size:");
@@ -125,7 +162,7 @@ void Reader::read_footer() {
     throw InvalidFooterException();
   }
 
-  if (_fseeki64(file_.get(), static_cast<int64_t>(footer_offset), SEEK_SET) != 0) {
+  if (_fseeki64(file.get(), static_cast<int64_t>(footer_offset), SEEK_SET) != 0) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to seek to footer:");
   }
@@ -133,7 +170,7 @@ void Reader::read_footer() {
   std::string footer_json;
   footer_json.resize(footer_size);
 
-  size_t bytes_read = fread(footer_json.data(), 1, footer_size, file_.get());
+  size_t bytes_read = fread(footer_json.data(), 1, footer_size, file.get());
   if (bytes_read != footer_size) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to read footer:");
@@ -146,9 +183,9 @@ void Reader::read_footer() {
   }
 
   try {
-    Footer footer;
-    footer.pipeline_settings = nlohmann::json::parse(footer_json);
-    footer_                  = footer;
+    Footer parsed_footer;
+    parsed_footer.pipeline_settings = nlohmann::json::parse(footer_json);
+    footer                          = std::move(parsed_footer);
   } catch (const nlohmann::json::exception &e) {
     logger()->error("Failed to parse Holofile footer JSON: {}", e.what());
     std::string preview = footer_json.substr(0, std::min(footer_json.size(), size_t(100)));
@@ -156,41 +193,41 @@ void Reader::read_footer() {
     throw InvalidFooterException();
   }
 
-  if (_fseeki64(file_.get(), current_pos, SEEK_SET) != 0) {
+  if (_fseeki64(file.get(), current_pos, SEEK_SET) != 0) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to restore file position:");
   }
 }
 
 void Reader::seek(std::size_t frame_index) {
-  size_t pixels_per_frame = header_.frame_width * header_.frame_height;
-  size_t bits_per_frame   = pixels_per_frame * header_.bits_per_pixel;
+  size_t pixels_per_frame = impl_->header.frame_width * impl_->header.frame_height;
+  size_t bits_per_frame   = pixels_per_frame * impl_->header.bits_per_pixel;
   size_t bytes_per_frame  = bits_per_frame / 8;
 
-  size_t offset = sizeof(header_) + frame_index * bytes_per_frame;
-  if (_fseeki64(file_.get(), static_cast<int64_t>(offset), SEEK_SET) != 0) {
+  size_t offset = sizeof(impl_->header) + frame_index * bytes_per_frame;
+  if (_fseeki64(impl_->file.get(), static_cast<int64_t>(offset), SEEK_SET) != 0) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to seek:");
   }
 
-  frame_index_ = frame_index;
+  impl_->frame_index = frame_index;
 }
 
-std::size_t Reader::tell() const { return frame_index_; }
+std::size_t Reader::tell() const { return impl_->frame_index; }
 
 void Reader::read_frames(uint8_t *data, std::size_t frame_count) {
-  size_t pixels_per_frame = header_.frame_width * header_.frame_height;
-  size_t bits_per_frame   = pixels_per_frame * header_.bits_per_pixel;
+  size_t pixels_per_frame = impl_->header.frame_width * impl_->header.frame_height;
+  size_t bits_per_frame   = pixels_per_frame * impl_->header.bits_per_pixel;
   size_t bytes_per_frame  = bits_per_frame / 8;
 
-  size_t frames_read = fread(data, bytes_per_frame, frame_count, file_.get());
-  frame_index_ += frames_read;
+  size_t frames_read = fread(data, bytes_per_frame, frame_count, impl_->file.get());
+  impl_->frame_index += frames_read;
 
-  if (ferror(file_.get())) {
+  if (ferror(impl_->file.get())) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to read frames:");
   }
-  if (frames_read != frame_count && feof(file_.get()) != 0) {
+  if (frames_read != frame_count && feof(impl_->file.get()) != 0) {
     throw EndOfFileException();
   }
   if (frames_read != frame_count) {
@@ -201,18 +238,20 @@ void Reader::read_frames(uint8_t *data, std::size_t frame_count) {
 }
 
 Writer::Writer(const std::string &path, const Header &header, const Footer &footer)
-    : header_(header), frame_index_(0), footer_(footer) {
+    : impl_(std::make_unique<Impl>()) {
+  impl_->header = header;
+  impl_->footer = footer;
   // Open file
   FILE *fp = nullptr;
   if (fopen_s(&fp, path.c_str(), "wb") != 0 || !fp) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to open \"" + path + "\"");
   }
-  file_.reset(fp);
+  impl_->file.reset(fp);
 
   // Write header
-  std::size_t success = fwrite(&header_, sizeof(header_), 1, file_.get());
-  if (ferror(file_.get())) {
+  std::size_t success = fwrite(&impl_->header, sizeof(impl_->header), 1, impl_->file.get());
+  if (ferror(impl_->file.get())) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to write header:");
   }
@@ -224,36 +263,42 @@ Writer::Writer(const std::string &path, const Header &header, const Footer &foot
   }
 }
 
+Writer::~Writer() = default;
+
+Writer::Writer(Writer &&) noexcept = default;
+
+Writer &Writer::operator=(Writer &&) noexcept = default;
+
 void Writer::write_footer() {
-  std::string footer_json = footer_.pipeline_settings.dump();
+  std::string footer_json = impl_->footer.pipeline_settings.dump();
 
   logger()->info("Writing Holofile footer with pipeline settings: {}", footer_json);
 
-  if (_fseeki64(file_.get(), 0, SEEK_END) != 0) {
+  if (_fseeki64(impl_->file.get(), 0, SEEK_END) != 0) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to seek to end of file:");
   }
 
-  if (fwrite(footer_json.data(), 1, footer_json.size(), file_.get()) != footer_json.size()) {
+  if (fwrite(footer_json.data(), 1, footer_json.size(), impl_->file.get()) != footer_json.size()) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to write footer JSON:");
   }
 
-  if (fflush(file_.get()) != 0) {
+  if (fflush(impl_->file.get()) != 0) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to flush file:");
   }
 }
 
 void Writer::write_frames(const uint8_t *data, std::size_t frame_count) {
-  size_t pixels_per_frame = header_.frame_width * header_.frame_height;
-  size_t bits_per_frame   = pixels_per_frame * header_.bits_per_pixel;
+  size_t pixels_per_frame = impl_->header.frame_width * impl_->header.frame_height;
+  size_t bits_per_frame   = pixels_per_frame * impl_->header.bits_per_pixel;
   size_t bytes_per_frame  = bits_per_frame / 8;
 
-  size_t frames_written = fwrite(data, bytes_per_frame, frame_count, file_.get());
-  frame_index_ += frames_written;
+  size_t frames_written = fwrite(data, bytes_per_frame, frame_count, impl_->file.get());
+  impl_->frame_index += frames_written;
 
-  if (ferror(file_.get())) {
+  if (ferror(impl_->file.get())) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to write frames:");
   }
@@ -264,6 +309,6 @@ void Writer::write_frames(const uint8_t *data, std::size_t frame_count) {
   }
 }
 
-size_t Writer::tell() const { return frame_index_; }
+size_t Writer::tell() const { return impl_->frame_index; }
 
 } // namespace holofile
