@@ -7,13 +7,34 @@ edit_uri: edit/main/doc/mkdocs/docs/
 nav:
   - Home: index.md
   - About: about.md
-  - Coverage: coverage.md
-  - References: references.md
-  - Glossary: glossary.md
-
-  - Holovibes: 
-    - Overview: holovibes/index.md
-    - Tasks:
+  - Applications:
+    - Overview: applications/index.md
+    - Doppler Holography: applications/doppler-holography.md
+    - Doppler OCT: applications/doppler-oct.md
+    - Wavefront Analysis: applications/wavefront-analysis.md
+  - Learn: learn/index.md
+  - Documentation:
+    - Overview: documentation/index.md
+    - Holovibes: holovibes/index.md
+    - Holoflow:
+      - Overview: holoflow/index.md
+      - Architecture: holoflow/architecture.md
+      - Concepts:
+        - Graph And Data Model: holoflow/concepts/graph.md
+        - Task Model: holoflow/concepts/tasks.md
+        - Tensors And Storage: holoflow/concepts/tensors.md
+      - Runtime:
+        - Compiler: holoflow/runtime/compiler.md
+        - Scheduler: holoflow/runtime/scheduler.md
+      - Guides:
+        - Authoring Tasks: holoflow/guides/authoring.md
+        - Inspection And Debugging: holoflow/guides/inspection.md
+    - Curaii: curaii/index.md
+    - Holofile: holofile/index.md
+  - Research: research/index.md
+  - Reference:
+    - Overview: reference/index.md
+    - Holovibes Tasks:
       - Sources:
         - Ametek s710 Euresys Coaxlink Octo: holovibes/tasks/sources/ametek_s710_euresys_coaxlink_octo.md
         - Ametek s711 Euresys Coaxlink QSFP+: holovibes/tasks/sources/ametek_s711_euresys_coaxlink_qsfp+.md
@@ -41,22 +62,9 @@ nav:
         - Batch Queue: holovibes/tasks/asyncs/batch_queue.md
         - Dual Reader Batch Queue: holovibes/tasks/asyncs/dual_reader_batch_queue.md
         - Sliding Average: holovibes/tasks/asyncs/sliding_average.md
-
-  - Holoflow:
-    - Overview: holoflow/index.md
-    - Architecture: holoflow/architecture.md
-    - Concepts:
-      - Graph And Data Model: holoflow/concepts/graph.md
-      - Task Model: holoflow/concepts/tasks.md
-      - Tensors And Storage: holoflow/concepts/tensors.md
-    - Runtime:
-      - Compiler: holoflow/runtime/compiler.md
-      - Scheduler: holoflow/runtime/scheduler.md
-    - Guides:
-      - Authoring Tasks: holoflow/guides/authoring.md
-      - Inspection And Debugging: holoflow/guides/inspection.md
-  - Curaii: curaii/index.md
-  - Holofile: holofile/index.md
+    - Glossary: glossary.md
+    - Bibliography: references.md
+    - Test Coverage: coverage.md
 
 theme:
   name: material

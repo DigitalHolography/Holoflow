@@ -87,8 +87,8 @@ hide:
           Transform high-rate interferometric acquisitions into live views of retinal blood flow,
           with reconstruction and visualization performed as the data arrives.
         </p>
-        <a class="hf-text-link" href="holovibes/index.html">
-          Explore Holovibes <span aria-hidden="true">→</span>
+        <a class="hf-text-link" href="applications/doppler-holography.html">
+          Reproduce the experiment <span aria-hidden="true">→</span>
         </a>
       </div>
     </article>
@@ -121,8 +121,8 @@ hide:
           Use the same modular processing foundation to explore depth-resolved Doppler measurements
           and evolve experimental pipelines without rebuilding the application around each method.
         </p>
-        <a class="hf-text-link" href="holovibes/index.html">
-          See the application layer <span aria-hidden="true">→</span>
+        <a class="hf-text-link" href="applications/doppler-oct.html">
+          Open the application guide <span aria-hidden="true">→</span>
         </a>
       </div>
     </article>
@@ -155,8 +155,8 @@ hide:
           Inspect wavefront quality as the experiment runs, including Shack–Hartmann measurements
           and Zernike modes used to understand and correct optical aberrations.
         </p>
-        <a class="hf-text-link" href="holovibes/index.html">
-          Explore wavefront tools <span aria-hidden="true">→</span>
+        <a class="hf-text-link" href="applications/wavefront-analysis.html">
+          Open the application guide <span aria-hidden="true">→</span>
         </a>
       </div>
     </article>
