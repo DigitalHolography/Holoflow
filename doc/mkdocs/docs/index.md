@@ -1,101 +1,274 @@
-# Holoflow
+---
+template: home.html
+title: Holoflow
+hide:
+  - navigation
+  - toc
+---
 
-Holoflow is a graph-based high-performance computing (HPC) framework for real-time scientific imaging, with first-class support for GPU-accelerated processing and laser Doppler holography.
+<section class="hf-hero" aria-labelledby="hf-hero-title">
+  <div class="hf-shell hf-hero__layout">
+    <div class="hf-hero__copy">
+      <p class="hf-eyebrow">The Holoflow project</p>
+      <h1 id="hf-hero-title">Real-time digital holography, from acquisition to insight.</h1>
+      <p class="hf-lede">
+        Holoflow is an open-source C++ and CUDA stack for describing, running, and exploring
+        high-throughput scientific imaging pipelines. Holovibes brings the stack into the lab
+        through an interactive Qt application.
+      </p>
+      <div class="hf-actions">
+        <a class="md-button md-button--primary" href="#project">Explore the project</a>
+        <a class="md-button" href="https://github.com/DigitalHolography/Holoflow">View on GitHub</a>
+      </div>
+      <!-- <ul class="hf-facts" aria-label="Core technologies">
+        <li>C++</li>
+        <li>CUDA</li>
+        <li>Qt</li>
+        <li>Real-time processing</li>
+      </ul> -->
+    </div>
+    <figure class="hf-hero__visual">
+      <video autoplay loop muted playsinline preload="metadata" aria-label="Processed laser Doppler angiography">
+        <source src="assets/videos/DEMO_PROCESSED_NA_20260904_153832_AQ002_60fps_512x512.mp4" type="video/mp4">
+      </video>
+      <figcaption>Laser Doppler angiography processed in real time.</figcaption>
+    </figure>
+  </div>
+</section>
 
-## I'm looking for Holovibes!
+<section class="hf-section hf-section--tinted" aria-labelledby="showcase-title">
+  <div class="hf-shell">
+    <header class="hf-section__heading">
+      <p class="hf-eyebrow">Experiments and engineering</p>
+      <h2 id="showcase-title">What we build with it</h2>
+      <p>One stack connects the processing model, the GPU runtime, and the measurements seen in the lab.</p>
+    </header>
 
-Holovibes is the graphical user interface (GUI) built on top of Holoflow to support our laboratory experiments and clinical studies.
-It integrates many of our Doppler holography routines, and features real-time wavefront analysis for aberration correction and measurements.
+    <article class="hf-feature">
+      <div class="hf-feature__media hf-feature__media--diagram">
+        <img
+          src="assets/images/holoflow-pipeline.svg"
+          alt="Holoflow graph connecting acquisition, GPU processing tasks, and display output"
+          loading="lazy"
+        >
+      </div>
+      <div class="hf-feature__copy">
+        <h3>A graph backend for scientific pipelines</h3>
+        <p>
+          Describe the computation as connected tasks. Holoflow compiles the graph, manages tensor
+          lifetimes and memory, then schedules CPU and GPU work while the algorithm remains readable.
+        </p>
+        <a class="hf-text-link" href="holoflow/index.html">Understand the runtime <span aria-hidden="true">→</span></a>
+      </div>
+    </article>
 
-![Holovibes interface showing acquisition controls, retinal images, reconstruction views, metrics, and processing queues](assets/images/holovibes.png){ loading=lazy }
-/// caption
-Holovibes provides interactive control, visualization, and monitoring for scientific imaging pipelines.
-///
+    <article class="hf-feature hf-feature--experiment hf-feature--reverse">
+      <div class="hf-feature__media">
+        <div class="hf-video-pair">
+          <figure>
+            <video autoplay loop muted playsinline preload="metadata" aria-label="Raw interferometric frames">
+              <source src="assets/videos/DEMO_RAW_NA_20260904_153832_AQ004_60fps_512x512.mp4" type="video/mp4">
+            </video>
+            <figcaption>Interferometric input</figcaption>
+          </figure>
 
-## Why develop Holoflow?
+          <figure>
+            <video autoplay loop muted playsinline preload="metadata" aria-label="Processed laser Doppler angiography">
+              <source src="assets/videos/DEMO_PROCESSED_NA_20260904_153832_AQ002_60fps_512x512.mp4" type="video/mp4">
+            </video>
+            <figcaption>Doppler angiography</figcaption>
+          </figure>
+        </div>
+      </div>
 
-Holoflow's requirements originates from the intersection of real-time high-throughput processing, complex mathematical and physical pipelines, a fast-growing ecosystem in which new computational methods appear weekly, and highly parameterized applications.
-In practice, many domain scientists use NumPy[^numpy2020] or GPU-accelerated alternatives such as CuPy,[^cupy2017] JAX,[^jax2018] and PyTorch[^pytorch2019] because these libraries abstract implementation details and let researchers focus on equations.
+      <div class="hf-feature__copy">
+        <h3>Laser Doppler holography</h3>
+        <p>
+          Transform high-rate interferometric acquisitions into live views of retinal blood flow,
+          with reconstruction and visualization performed as the data arrives.
+        </p>
+        <a class="hf-text-link" href="holovibes/index.html">
+          Explore Holovibes <span aria-hidden="true">→</span>
+        </a>
+      </div>
+    </article>
 
-However, a focused benchmark of a representative micro-batch laser Doppler holography pipeline found that python-based implementations could not match the performance of optimized C++/CUDA, which was approximately 74–267% faster depending on the platform[^guillou2027].
-Reaching the required throughput still required significant HPC expertise and low-level optimization. Holoflow aims to add a first-class Windows backend for predictable, high-throughput general-purpose scientific computing (GPSC) while retaining a high-level interface.
+
+    <article class="hf-feature hf-feature--experiment">
+      <div class="hf-feature__media hf-feature__media--placeholder">
+        <div class="hf-video-pair">
+          <figure>
+            <video autoplay loop muted playsinline preload="metadata" aria-label="Temporary Doppler OCT input">
+              <source src="assets/videos/DEMO_RAW_NA_20260904_153832_AQ004_60fps_512x512.mp4" type="video/mp4">
+            </video>
+            <figcaption>Interferometric input</figcaption>
+          </figure>
+
+          <figure>
+            <video autoplay loop muted playsinline preload="metadata" aria-label="Temporary Doppler OCT output">
+              <source src="assets/videos/DEMO_PROCESSED_NA_20260904_153832_AQ002_60fps_512x512.mp4" type="video/mp4">
+            </video>
+            <figcaption>Doppler OCT</figcaption>
+          </figure>
+        </div>
+
+        <span class="hf-placeholder-label">OCT footage coming soon</span>
+      </div>
+
+      <div class="hf-feature__copy">
+        <h3>Doppler OCT</h3>
+        <p>
+          Use the same modular processing foundation to explore depth-resolved Doppler measurements
+          and evolve experimental pipelines without rebuilding the application around each method.
+        </p>
+        <a class="hf-text-link" href="holovibes/index.html">
+          See the application layer <span aria-hidden="true">→</span>
+        </a>
+      </div>
+    </article>
 
 
-![Holoflow processing graph from Holofile input through GPU processing tasks to the displayed output](assets/images/holoflow-pipeline.svg){ loading=lazy }
-/// caption
-Example Holoflow processing graph, derived from the laser Doppler holography processing described by Puyo et al.[^puyo2018]
-///
+    <article class="hf-feature hf-feature--experiment hf-feature--reverse">
+      <div class="hf-feature__media hf-feature__media--placeholder">
+        <div class="hf-video-pair">
+          <figure>
+            <video autoplay loop muted playsinline preload="metadata" aria-label="Temporary wavefront analysis input">
+              <source src="assets/videos/DEMO_RAW_NA_20260904_153832_AQ004_60fps_512x512.mp4" type="video/mp4">
+            </video>
+            <figcaption>Interferometric input</figcaption>
+          </figure>
 
-<div class="grid" markdown>
+          <figure>
+            <video autoplay loop muted playsinline preload="metadata" aria-label="Temporary wavefront analysis output">
+              <source src="assets/videos/DEMO_PROCESSED_NA_20260904_153832_AQ002_60fps_512x512.mp4" type="video/mp4">
+            </video>
+            <figcaption>Wavefront analysis</figcaption>
+          </figure>
+        </div>
 
-<figure>
-  <video width="512" autoplay loop muted playsinline>
-    <source src="assets/videos/DEMO_RAW_NA_20260904_153832_AQ004_60fps_512x512.mp4" type="video/mp4">
-  </video>
-  <figcaption>Input interferometric frames acquired at 37 kHz</figcaption>
-</figure>
+        <span class="hf-placeholder-label">Wavefront footage coming soon</span>
+      </div>
 
-<figure>
-  <video width="512" autoplay loop muted playsinline>
-    <source src="assets/videos/DEMO_PROCESSED_NA_20260904_153832_AQ002_60fps_512x512.mp4" type="video/mp4">
-  </video>
-  <figcaption>Laser Doppler angiography processed in real-time!</figcaption>
-</figure>
+      <div class="hf-feature__copy">
+        <h3>Wavefront analysis</h3>
+        <p>
+          Inspect wavefront quality as the experiment runs, including Shack–Hartmann measurements
+          and Zernike modes used to understand and correct optical aberrations.
+        </p>
+        <a class="hf-text-link" href="holovibes/index.html">
+          Explore wavefront tools <span aria-hidden="true">→</span>
+        </a>
+      </div>
+    </article>
+  </div>
+</section>
 
-</div>
+<section id="project" class="hf-section" aria-labelledby="project-title">
+  <div class="hf-shell">
+    <header class="hf-section__heading">
+      <p class="hf-eyebrow">One project, several layers</p>
+      <h2 id="project-title">Choose the level you need</h2>
+      <p>Start with the application or work directly with the runtime and its infrastructure libraries.</p>
+    </header>
 
-The input interferograms and processed laser Doppler angiography shown above are derived from the dataset published by Atlan.[^atlan2025]
+    <div class="hf-projects hf-projects--primary">
+      <a class="hf-project-card" href="holovibes/index.html">
+        <span class="hf-project-card__kind">Desktop application</span>
+        <h3>Holovibes</h3>
+        <p>Acquire, reconstruct, analyze, and visualize holographic data interactively.</p>
+        <span class="hf-project-card__link">Explore Holovibes <span aria-hidden="true">→</span></span>
+      </a>
+      <a class="hf-project-card" href="holoflow/index.html">
+        <span class="hf-project-card__kind">Execution runtime</span>
+        <h3>Holoflow</h3>
+        <p>Compile declarative processing graphs into predictable CPU and GPU execution.</p>
+        <span class="hf-project-card__link">Explore Holoflow <span aria-hidden="true">→</span></span>
+      </a>
+    </div>
 
-## From processing graph to real-time execution
+    <div class="hf-projects hf-projects--secondary">
+      <a class="hf-project-card hf-project-card--small" href="curaii/index.html">
+        <span class="hf-project-card__kind">GPU infrastructure</span>
+        <h3>Curaii</h3>
+        <p>RAII wrappers for CUDA resources and companion libraries.</p>
+        <span class="hf-project-card__link">Explore Curaii <span aria-hidden="true">→</span></span>
+      </a>
+      <a class="hf-project-card hf-project-card--small" href="holofile/index.html">
+        <span class="hf-project-card__kind">Acquisition format</span>
+        <h3>Holofile</h3>
+        <p>High-throughput reading and writing of holographic recordings.</p>
+        <span class="hf-project-card__link">Explore Holofile <span aria-hidden="true">→</span></span>
+      </a>
+    </div>
 
-Describe your processing pipelined as a declarative graph of computational tasks. No implementation details, no manual buffer management, just the maths.
-Holoflow takes care of compiling and executing it efficiently!
+    <p class="hf-supporting">
+      Supporting libraries: <code>holotask</code> for reusable operators,
+      <code>holonp</code> for numerical primitives, and <code>holoflow_event</code>
+      for runtime communication.
+    </p>
+  </div>
+</section>
 
-The runtime manages tasks instantiation, GPU scheduling, memory, tensor lifetimes, synchronization, and data movement, allowing processing code to remain focused on the algorithms themselves.
-Pipelines can combine acquisition, signal processing, reconstruction, analysis, and visualization while sustaining the high data rates required by modern scientific imaging systems.
+<section class="hf-section hf-section--author" aria-labelledby="authors-title">
+  <div class="hf-shell">
+    <header class="hf-section__heading">
+      <p class="hf-eyebrow">Built by</p>
+      <h2 id="authors-title">Physics and engineering, developed together</h2>
+    </header>
+    <div class="hf-authors">
+      <article class="hf-author-card">
+        <img
+          class="hf-author__portrait"
+          src="assets/images/michael-atlan.svg"
+          alt="Michael Atlan"
+          width="150"
+          height="150"
+          loading="lazy"
+        >
+        <div class="hf-author__copy">
+          <h3>Michael Atlan</h3>
+          <p class="hf-author__role">Scientific lead · Tenured Researcher at CNRS</p>
+          <hr>
+          <p>
+            Michael defines the scientific direction across digital holography, Doppler imaging,
+            optical coherence tomography, and ophthalmic experiments.
+          </p>
+          <a class="hf-text-link" href="https://www.pariseyeimaging.com/Members/180ab8642a-Michael-Atlan.en.htm">Research profile <span aria-hidden="true">→</span></a>
+        </div>
+      </article>
+      <article class="hf-author-card">
+        <img
+          class="hf-author__portrait"
+          src="assets/images/jules-guillou.svg"
+          alt="Jules Guillou"
+          width="420"
+          height="420"
+          loading="lazy"
+        >
+        <div class="hf-author__copy">
+          <h3>Jules Guillou</h3>
+          <p class="hf-author__role">Creator and lead developer</p>
+          <hr>
+          <p>
+            Jules designs and implements the software stack, from the Holoflow execution model and
+            CUDA processing to the Holovibes application.
+          </p>
+          <a class="hf-text-link" href="https://github.com/JulesGuillou">GitHub profile <span aria-hidden="true">→</span></a>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
 
-Holoflow was developed for demanding digital holography workloads, but its execution model is designed for general-purpose scientific computing.
-
-## Built as a modular stack
-
-<div class="grid cards" markdown>
-
--   **Holoflow**
-
-    Core graph runtime for task scheduling, tensor management, memory allocation, and GPU execution.
-
-    [Explore Holoflow](holoflow/index.md)
-
--   **Holovibes**
-
-    Interactive Qt application for real-time acquisition, holographic reconstruction, analysis, and visualization.
-
-    [Explore Holovibes](holovibes/index.md)
-
--   **Curaii**
-
-    RAII-based GPU, memory, tensor, and CUDA library abstractions used throughout the stack.
-
-    [Explore Curaii](curaii/index.md)
-
--   **Holofile**
-
-    Efficient reading and writing of the `.holo` format for high-throughput holographic acquisitions.
-
-    [Explore Holofile](holofile/index.md)
-
-</div>
-
-[^puyo2018]: L. Puyo, M. Paques, M. Fink, J.-A. Sahel, and M. Atlan, “[In vivo laser Doppler holography of the human retina](https://hal.sorbonne-universite.fr/hal-01875560v1),” *Biomedical Optics Express*, vol. 9, no. 9, pp. 4113–4129, 2018. [https://doi.org/10.1364/BOE.9.004113](https://doi.org/10.1364/BOE.9.004113). See also the [site-wide reference](references.md#puyo-2018).
-
-[^atlan2025]: M. Atlan, *Doppler Holography Measurements of the Eye Fundus in a Volunteer – May 27, 2025* [Data set]. Zenodo, 2025. [https://doi.org/10.5281/zenodo.16761111](https://doi.org/10.5281/zenodo.16761111). Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). See also the [site-wide reference](references.md#atlan-2025).
-
-[^numpy2020]: C. R. Harris, K. J. Millman, S. J. van der Walt, et al., “[Array programming with NumPy](https://doi.org/10.1038/s41586-020-2649-2),” *Nature*, vol. 585, no. 7825, pp. 357–362, 2020. See also the [site-wide reference](references.md#harris-2020).
-
-[^cupy2017]: R. Okuta, Y. Unno, D. Nishino, S. Hido, and C. Loomis, “[CuPy: A NumPy-Compatible Library for NVIDIA GPU Calculations](https://github.com/cupy/cupy#reference),” in *Proceedings of the Workshop on Machine Learning Systems at NIPS 2017*, 2017. See also the [site-wide reference](references.md#okuta-2017).
-
-[^jax2018]: J. Bradbury, R. Frostig, P. Hawkins, et al., “[JAX: composable transformations of Python+NumPy programs](https://github.com/jax-ml/jax#citing-jax),” software, 2018. See also the [site-wide reference](references.md#bradbury-2018).
-
-[^pytorch2019]: A. Paszke, S. Gross, F. Massa, et al., “[PyTorch: An Imperative Style, High-Performance Deep Learning Library](https://papers.neurips.cc/paper_files/paper/2019/hash/bdbca288fee7f92f2bfa9f7012727740-Abstract.html),” in *Advances in Neural Information Processing Systems 32*, pp. 8024–8035, 2019. See also the [site-wide reference](references.md#paszke-2019).
-
-[^guillou2027]: J. Guillou, J. Fabrizio, E. Carlinet, and M. Atlan, “Real-Time Scientific Computing in Python: The Cost of High-Level GPU Abstractions,” unpublished manuscript, 2027. See also the [site-wide reference](references.md#guillou-2027).
+<section class="hf-closing" aria-labelledby="closing-title">
+  <div class="hf-shell hf-closing__inner">
+    <div>
+      <p class="hf-eyebrow">Where to begin</p>
+      <h2 id="closing-title">Enter through the experiment or the engine.</h2>
+    </div>
+    <div class="hf-actions">
+      <a class="md-button md-button--primary" href="holovibes/index.html">Explore Holovibes</a>
+      <a class="md-button" href="holoflow/index.html">Understand Holoflow</a>
+    </div>
+  </div>
+</section>
