@@ -12,7 +12,9 @@ nav:
     - Doppler Holography: applications/doppler-holography.md
     - Doppler OCT: applications/doppler-oct.md
     - Wavefront Analysis: applications/wavefront-analysis.md
-  - Learn: learn/index.md
+  - Learn:
+    - Overview: learn/index.md
+    - Heterodyne Detection: learn/heterodyne-detection.md
   - Documentation:
     - Overview: documentation/index.md
     - Holovibes: holovibes/index.md
