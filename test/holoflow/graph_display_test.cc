@@ -20,10 +20,10 @@ TEST(CompiledGraphDisplayTest, RendersSyncAsyncEdgesSectionsAndResources) {
 
   holoflow::runtime::CompilerOutput output;
   holoflow::runtime::NodePlan       source{
-            .spec     = {"source", "sync", {{"text", "quoted\"\nvalue"}}},
-            .infer    = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync},
-            .in_tids  = {},
-            .out_tids = {0},
+      .spec     = {"source", "sync", {{"text", "quoted\"\nvalue"}}},
+      .infer    = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync},
+      .in_tids  = {},
+      .out_tids = {0},
   };
   holoflow::runtime::NodePlan bridge{
       .spec     = {"bridge", "bridge", {}},
@@ -49,7 +49,7 @@ TEST(CompiledGraphDisplayTest, RendersSyncAsyncEdgesSectionsAndResources) {
       0, holoflow::core::TDesc({4}, holoflow::core::DType::F32, holoflow::core::MemLoc::Host));
   output.resources.tid_to_sid.emplace(0, 9);
 
-  const auto dot = holoflow::runtime::to_dot(output, registry);
+  const auto dot = holoflow::runtime::to_dot(output);
   EXPECT_NE(dot.find("digraph holoflow_compiled"), std::string::npos);
   EXPECT_NE(dot.find("shape=octagon"), std::string::npos);
   EXPECT_NE(dot.find("color=blue"), std::string::npos);
@@ -61,8 +61,8 @@ TEST(CompiledGraphDisplayTest, RendersSyncAsyncEdgesSectionsAndResources) {
 
 TEST(CompiledGraphDisplayTest, RendersEmptyOutput) {
   holoflow::runtime::CompilerOutput output;
-  holoflow::core::Registry          registry;
-  const auto                        dot = holoflow::runtime::to_dot(output, registry);
+  // holoflow::core::Registry          registry;
+  const auto dot = holoflow::runtime::to_dot(output);
   EXPECT_NE(dot.find("// streams:"), std::string::npos);
   EXPECT_NE(dot.find("// tasks:"), std::string::npos);
   EXPECT_NE(dot.find("}\n"), std::string::npos);

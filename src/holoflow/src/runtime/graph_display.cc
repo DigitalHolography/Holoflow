@@ -18,16 +18,18 @@
 
 #include <boost/graph/graph_traits.hpp>
 #include <cstdint>
+#include <format>
 #include <iomanip>
 #include <memory>
 #include <sstream>
 #include <string>
 #include <type_traits>
 #include <unordered_set>
-
 namespace holoflow::runtime {
 
 namespace {
+
+using DumpCompiledPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
 
 // reuse escape helper
 std::string escape_for_label(const std::string &s) {
@@ -54,8 +56,6 @@ std::string escape_for_label(const std::string &s) {
   return out;
 }
 
-namespace {
-
 std::string tdesc_to_string(const core::TDesc &d) {
   std::ostringstream ss;
   ss << "{" << "\\n";
@@ -68,228 +68,190 @@ std::string tdesc_to_string(const core::TDesc &d) {
   return ss.str();
 }
 
-} // namespace
-
-// std::string tdesc_to_string(const core::TDesc &d) {
-//   std::ostringstream ss;
-//   ss << "shape " << d.shape.size();
-//   ss << "\nx " << std::string(to_string(d.dtype));
-//   ss << "(" << d.rank() << "D)";
-//   ss << "\nmem=" << std::string(holoflow::core::to_string(d.mem_loc));
-//   ss << "\nelems=" << d.num_elements() << "\nbytes=" << d.num_bytes();
-
-//   return ss.str();
-// }
-
-// std::string tensor_summary(const core::Tensor &t) {
-//   std::ostringstream ss;
-//   const core::TDesc &d = t.desc();
-//   ss << tdesc_to_string(d);
-//   const void *ptr = t.data();
-//   ss << " ptr=" << reinterpret_cast<uintptr_t>(ptr);
-//   return ss.str();
-// }
+std::string format_tdesc(const core::TDesc &d) {
+  std::ostringstream ss;
+  ss << "{\\n";
+  ss << "  shape: " << escape_for_label(nlohmann::json(d.shape).dump()) << ",\\n";
+  ss << "  dtype: " << escape_for_label(nlohmann::json(d.dtype).dump()) << "\\n";
+  ss << "  mem_loc: " << escape_for_label(nlohmann::json(d.mem_loc).dump()) << "\\n";
+  ss << "  strides: " << escape_for_label(nlohmann::json(d.strides).dump()) << "\\n";
+  ss << "  offset: " << d.offset << "\\n";
+  ss << "}";
+  return ss.str();
+}
 
 } // namespace
 
-static void write_compiled_graph_header(std::ostringstream &ss,
-                                        const std::string  &title = "holoflow_compiled_graph") {
+static void write_compiled_graph_header(std::ostringstream            &ss,
+                                        const DumpCompiledPreferences &prefs,
+                                        const std::string &title = "holoflow_compiled_graph") {
   ss << "digraph " << title << " {\n";
-  ss << "  rankdir=LR;\n";
-  ss << "  node [fontname=\"Helvetica\"];\n";
+  if (prefs.rankdir == GraphCompiledDumpPreferences::Rankdir::LeftToRight)
+    ss << "  rankdir=LR;\n";
+  else
+    ss << "  rankdir=TB;\n";
+
+  ss << "  compound=true;\n";
+  ss << "  node [fontname=\"Helvetica\", shape=box, style=filled];\n";
   ss << "  edge [fontname=\"Helvetica\"];\n\n";
 }
 
 static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPlan &g,
-                                 const std::vector<runtime::Section> &sections,
-                                 core::Registry &registry, std::size_t settings_max_len = 300) {
-  using vertex_iter_t = boost::graph_traits<runtime::GraphPlan>::vertex_iterator;
-  vertex_iter_t vi, vi_end;
+                                 const holoflow::runtime::ExecResouces &res,
+                                 const DumpCompiledPreferences         &prefs) {
 
-  std::unordered_set<runtime::GraphPlan::vertex_descriptor> async_producers;
-  std::unordered_set<runtime::GraphPlan::vertex_descriptor> async_consumers;
-  for (const auto &sec : sections) {
-    for (auto vd : sec.async_prod)
-      async_producers.insert(vd);
-    for (auto vd : sec.async_cons)
-      async_consumers.insert(vd);
+  auto fmt_id = [&](int tid) -> std::string {
+    if (res.tid_to_sid.contains(tid)) {
+      return std::format("{}(s:{})", tid, res.tid_to_sid.at(tid));
+    }
+    return std::to_string(tid);
+  };
+
+  auto get_visual_id = [&](size_t v, bool is_source) -> std::string {
+    if (g[v].infer.kind == core::TaskKind::Async) {
+      return is_source ? std::format("v{}_out", v) : std::format("v{}_in", v);
+    }
+    return std::format("v{}", v);
+  };
+
+  std::string ids_line = "";
+  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
+    const auto &np = g[v];
+
+    std::ostringstream label_base;
+    if (prefs.dump_node_name)
+      label_base << (np.spec.name.empty() ? "(unnamed)" : np.spec.name);
+
+    if (prefs.dump_node_in_out_tids) {
+      std::string in_str = "[";
+      for (size_t i = 0; i < np.in_tids.size(); ++i) {
+        in_str += (i ? "," : "") + fmt_id(np.in_tids[i]);
+      }
+      in_str += "]";
+
+      std::string out_str = "[";
+      for (size_t i = 0; i < np.out_tids.size(); ++i) {
+        const int   out_tid = np.out_tids[i];
+        std::string id_text = fmt_id(out_tid);
+
+        bool is_alias = false;
+        if (res.tid_to_sid.count(out_tid)) {
+          const size_t out_sid = res.tid_to_sid.at(out_tid);
+          for (int in_tid : np.in_tids) {
+            if (res.tid_to_sid.count(in_tid) && res.tid_to_sid.at(in_tid) == out_sid) {
+              is_alias = true;
+              break;
+            }
+          }
+        }
+
+        out_str += (i ? "," : "") + id_text + (is_alias ? "*" : "");
+      }
+      out_str += "]";
+
+      ids_line = "\nIn: " + in_str + "\nOut: " + out_str;
+    }
+
+    if (prefs.dump_node_kind) {
+      if (np.infer.kind == core::TaskKind::Async) {
+        const std::string label_in = label_base.str() + "\n(Producer/Write)" + ids_line + "\n";
+        ss << std::format("  v{}_in [label=\"{}\", shape=invhouse, fillcolor=\"#e6f2ff\", "
+                          "color=\"#0066cc\", style=\"filled,dashed\"];\n",
+                          v, escape_for_label(label_in));
+
+        const std::string label_out = label_base.str() + "\n(Consumer/Read)" + ids_line + "\n";
+        ss << std::format("  v{}_out [label=\"{}\", shape=house, fillcolor=\"#ffe6e6\", "
+                          "color=\"#cc0000\", style=\"filled,dashed\"];\n",
+                          v, escape_for_label(label_out));
+
+        ss << std::format("  v{}_in -> v{}_out [style=dotted, color=\"#888888\", penwidth=2, "
+                          "arrowh=none, label=\"Async Signal\"];\n",
+                          v, v);
+      } else {
+        const std::string label = label_base.str() + "\n(" + np.spec.kind + ")" + ids_line + "\n";
+        ss << std::format("  v{} [label=\"{}\", fillcolor=\"#ccffcc\"];\n", v,
+                          escape_for_label(label));
+      }
+    }
   }
-
-  for (boost::tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi) {
-    auto                     v  = *vi;
-    const runtime::NodePlan &np = g[v];
-
-    std::ostringstream label;
-
-    if (!np.spec.name.empty())
-      label << np.spec.name;
-    else
-      label << "(unnamed)";
-
-    if (!np.spec.kind.empty())
-      label << "\n(" << np.spec.kind << ")";
-
-    if (np.spec.debug && !np.spec.settings.is_null() &&
-        !(np.spec.settings.is_object() && np.spec.settings.empty())) {
-      std::string sd = np.spec.settings.dump();
-      if (sd.size() > settings_max_len)
-        sd = sd.substr(0, settings_max_len) + "...";
-      // raw JSON might contain quotes/newlines -> we escape later
-      label << "\n" << sd;
-    }
-
-    label << "\n[infer: ";
-    label << "present]";
-    label << "\n" << "in_tids:[";
-    for (size_t i = 0; i < np.in_tids.size(); ++i) {
-      if (i)
-        label << ",";
-      label << np.in_tids[i];
-    }
-    label << "]";
-
-    label << "\n" << "out_tids:[";
-    for (size_t i = 0; i < np.out_tids.size(); ++i) {
-      if (i)
-        label << ",";
-      label << np.out_tids[i];
-    }
-    label << "]";
-
-    std::string esc_label = escape_for_label(label.str());
-
-    std::string shape = "box";
-    try {
-      registry.get_async(np.spec.kind);
-      shape = "octagon";
-    } catch (...) {
-      shape = "box";
-    }
-
-    std::string style_attrs;
-    if (async_producers.count(v) && async_consumers.count(v)) {
-      style_attrs = ", style=bold";
-    } else if (async_producers.count(v)) {
-      style_attrs = ", color=blue, style=dashed";
-    } else if (async_consumers.count(v)) {
-      style_attrs = ", color=red, style=dashed";
-    }
-
-    ss << "  v" << v << " [label=\"" << esc_label << "\", shape=" << shape << style_attrs << "];\n";
-  }
-  ss << "\n";
 }
 
 static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPlan &g,
-                                 std::size_t desc_max_len = 200) {
-  (void)desc_max_len;
-  using edge_iter_t = boost::graph_traits<runtime::GraphPlan>::edge_iterator;
-  edge_iter_t ei, ei_end;
-  for (boost::tie(ei, ei_end) = boost::edges(g); ei != ei_end; ++ei) {
-    auto                     e  = *ei;
-    auto                     s  = boost::source(e, g);
-    auto                     t  = boost::target(e, g);
-    const runtime::EdgePlan &ep = g[e];
+                                 const holoflow::runtime::ExecResouces &res,
+                                 const DumpCompiledPreferences         &prefs) {
 
-    ss << "  v" << s << " -> v" << t << " [taillabel=\""
-       << escape_for_label(std::to_string(ep.spec.out_idx)) << "\""
-       << " headlabel=\"" << escape_for_label(std::to_string(ep.spec.in_idx)) << "\""
-       << " label=\"" << "tid:" << escape_for_label(std::to_string(ep.tid)) << "\\n"
-       << "TDesc:" << tdesc_to_string(ep.desc) << "\"];\n";
+  auto get_visual_id = [&](size_t v, bool is_source) -> std::string {
+    if (g[v].infer.kind == core::TaskKind::Async) {
+      return is_source ? std::format("v{}_out", v) : std::format("v{}_in", v);
+    }
+    return std::format("v{}", v);
+  };
 
-    // ss << "tid:" << escape_for_label(std::to_string(ep.tid)) << "\n";
-    // ss << "TDesc:" << escape_for_label(nlohmann::json(ep.desc).dump(2)) << "\n";
+  for (auto e : boost::make_iterator_range(boost::edges(g))) {
+    const auto  u  = boost::source(e, g);
+    const auto  v  = boost::target(e, g);
+    const auto &ep = g[e];
 
-    // std::ostringstream elabel;
-    // elabel << "out:" << ep.spec.out_idx << " \nin:" << ep.spec.in_idx << " \ntid:" << ep.tid;
-    // elabel << nlohmann::json(ep.desc).dump(2);
+    const std::string u_vis = get_visual_id(u, true);
+    const std::string v_vis = get_visual_id(v, false);
 
-    // // try {
-    // //   std::string desc_str = tdesc_to_string(ep.desc);
-    // //   if (desc_str.size() > desc_max_len)
-    // //     desc_str = desc_str.substr(0, desc_max_len) + "...";
-    // //   elabel << " \ndesc=" << desc_str;
-    // // } catch (...) {
-    // //   // ignore
-    // // }
+    std::ostringstream edge_lbl;
+    edge_lbl << "tid:" << ep.tid;
+    if (res.tid_to_sid.count(ep.tid)) {
+      edge_lbl << " (s:" << res.tid_to_sid.at(ep.tid) << ")";
+    }
+    edge_lbl << "\\n" << format_tdesc(ep.desc);
 
-    // std::string esc_elabel = escape_for_label(elabel.str());
-    // ss << "  v" << s << " -> v" << t << " [label=\"" << esc_elabel << "\"];\n";
+    ss << std::format("  {} -> {} ", u_vis, v_vis);
+    if (prefs.dump_edge_indices) {
+      ss << std::format("[taillabel=\"{}\", headlabel=\"{}\"]", ep.spec.out_idx, ep.spec.in_idx);
+    }
+    if (prefs.dump_edge_descriptions) {
+      ss << std::format("[label=\"{}\"]", edge_lbl.str()); // TODO : replace /n by /l
+    }
+    ss << ";\n";
   }
-  // ss << "\n";
 }
 
 static void write_compiled_sections(std::ostringstream                  &ss,
-                                    const std::vector<runtime::Section> &sections) {
+                                    const std::vector<runtime::Section> &sections,
+                                    const GraphCompiledDumpPreferences  &prefs) {
   for (const auto &sec : sections) {
-    ss << "  subgraph cluster_section_" << sec.id << " {\n";
-    ss << "    label = \""
-       << escape_for_label("Section " + std::to_string(sec.id) + ": " + sec.name) << "\";\n";
-    ss << "    labelloc = \"t\";\n";
-    ss << "    color = gray;\n";
-    ss << "    fontsize = 10;\n";
-    ss << "    // stream_ptr=" << reinterpret_cast<uintptr_t>(sec.stream) << "\n";
+    ss << std::format("  subgraph cluster_section_{} {{\n", sec.id);
 
-    ss << "    // sync_topo\n";
-    for (auto vd : sec.sync_topo)
-      ss << "    v" << vd << ";\n";
-
-    if (!sec.async_prod.empty()) {
-      ss << "    // async_producers\n";
-      for (auto vd : sec.async_prod)
-        ss << "    v" << vd << ";\n";
+    ss << std::format("    label=\"Section {}", sec.id);
+    if (prefs.dump_section_stream_addr) {
+      ss << std::format("(Stream {})", (void *)sec.stream);
     }
-    if (!sec.async_cons.empty()) {
-      ss << "    // async_consumers\n";
-      for (auto vd : sec.async_cons)
-        ss << "    v" << vd << ";\n";
+    ss << std::format("\\l\";\n");
+
+    ss << "    style=rounded; color=gray; bgcolor=\"#f8f8f8\";\n";
+
+    for (auto vd : sec.sync_topo) {
+      ss << std::format("    v{};\n", vd);
+    }
+    for (auto vd : sec.async_prod) {
+      ss << std::format("    v{}_in;\n", vd);
+    }
+    for (auto vd : sec.async_cons) {
+      ss << std::format("    v{}_out;\n", vd);
     }
 
-    ss << "  }\n\n";
+    ss << "  }\n";
   }
 }
 
-static void write_compiled_resources(std::ostringstream &ss, const runtime::ExecResouces &res) {
-  ss << "  // --- resources summary ---\n";
-
-  ss << "  // streams: ";
-  bool first = true;
-  for (const auto &p : res.streams) {
-    if (!first)
-      ss << ", ";
-    ss << p.first << "(addr=" << reinterpret_cast<uintptr_t>(std::addressof(p.second)) << ")";
-    first = false;
-  }
-  ss << "\n";
-
-  ss << "  // tasks: ";
-  first = true;
-  for (const auto &p : res.tasks) {
-    if (!first)
-      ss << ", ";
-    ss << p.first;
-    first = false;
-  }
-  ss << "\n";
-
-  ss << "  // tensors:\n";
-  // for (const auto &p : res.tensors) {
-  //   int                 tid = p.first;
-  //   const core::Tensor &t   = p.second;
-  //   ss << "  //   tid=" << tid << " : " << nlohmann::json(t.desc()).dump() << "\n";
-  // }
-  ss << "\n";
-}
-
-std::string to_dot(const CompilerOutput &out, core::Registry &registry) {
+std::string to_dot(const CompilerOutput &out, const DumpCompiledPreferences &prefs) {
   std::ostringstream ss;
-  write_compiled_graph_header(ss, "holoflow_compiled");
+  write_compiled_graph_header(ss, prefs, "holoflow_compiled");
 
-  write_compiled_resources(ss, out.resources);
-  write_compiled_nodes(ss, out.graph, out.sections, registry);
-  write_compiled_edges(ss, out.graph);
-  write_compiled_sections(ss, out.sections);
-
+  write_compiled_nodes(ss, out.graph, out.resources, prefs);
+  ss << "\n";
+  write_compiled_edges(ss, out.graph, out.resources, prefs);
+  ss << "\n";
+  if (prefs.dump_section_info) {
+    write_compiled_sections(ss, out.sections, prefs);
+  }
   ss << "}\n";
   return ss.str();
 }

@@ -1136,6 +1136,8 @@ void Compiler::Impl::bind_tasks() {
 // Visualization Helpers (Internal)
 // -------------------------------------------------------------------------------------------------
 
+// TODO : remove dump that has been moved to graph_display.cc
+
 namespace {
 
 std::string escape_dot_label(const std::string &s) {
@@ -1180,6 +1182,7 @@ std::string format_tdesc(const core::TDesc &d) {
 // Debugging: Graphviz Dump (Implementation)
 // -------------------------------------------------------------------------------------------------
 
+// TODO: rename dump_graphviz to to_dot (overloading ?)
 void Compiler::Impl::dump_graphviz(const std::string &filename) {
   if (config_.log_dir.empty()) {
     return;

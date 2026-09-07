@@ -609,6 +609,24 @@ void Manager::build_and_run() {
   Compiler compiler(registry_, config);
   compiler_output_ = compiler.compile(spec_, std::move(prev_output));
 
+  // here
+  if (compiler_output_) {
+    using namespace std::chrono;
+
+    auto t    = floor<seconds>(system_clock::now());
+    auto date = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
+
+    // Write original GraphSpec
+    const std::filesystem::path log_dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString() + "/" +
+        QCoreApplication::applicationVersion().toStdString() + "/logs";
+
+    const auto dot_path = log_dir / std::format("compiled_{}.dot", date);
+
+    std::ofstream(dot_path) << holoflow::runtime::to_dot(*compiler_output_,
+                                                         graph_compiled_dump_prefs_);
+  }
+
   run_compiled_graph();
 }
 

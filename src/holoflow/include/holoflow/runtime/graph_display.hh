@@ -24,16 +24,19 @@ namespace holoflow::runtime {
 struct GraphCompiledDumpPreferences {
   enum class Rankdir { LeftToRight, TopToBottom };
 
-  Rankdir rankdir                  = Rankdir::LeftToRight;
-  bool    dump_node_name           = true;
-  bool    dump_node_kind           = true;
-  bool    dump_node_settings       = true;
-  bool    dump_node_in_out_tids    = true;
-  bool    dump_edge_indices        = true;
-  bool    dump_edge_descriptions   = true;
-  bool    dump_section_info        = true;
-  bool    dump_section_stream_addr = true;
-  bool    dump_resource_info       = true;
+  Rankdir rankdir        = Rankdir::LeftToRight;
+  bool    dump_node_name = true;
+  bool    dump_node_kind = true;
+  // TODO : remove node settings
+  bool dump_node_settings    = true;
+  bool dump_node_in_out_tids = true;
+
+  bool dump_edge_indices      = true;
+  bool dump_edge_descriptions = true;
+
+  bool dump_section_info        = true;
+  bool dump_section_stream_addr = true;
+  bool dump_resource_info       = true;
 };
 
 /// Serialize a compiled graph (CompilerOutput) to Graphviz DOT format.
@@ -43,8 +46,8 @@ struct GraphCompiledDumpPreferences {
 ///  - clusters for Sections (sync/async grouping)
 ///
 /// @param out       Compiled graph output (non-owning reference).
-/// @param registry  Registry used to detect async node kinds.
+/// @param prefs     Preferences for controlling the output format.
 /// @return          DOT source as std::string.
-std::string to_dot(const CompilerOutput &out, core::Registry &registry);
+std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs = {});
 
 } // namespace holoflow::runtime
