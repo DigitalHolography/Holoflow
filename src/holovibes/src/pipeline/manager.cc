@@ -35,7 +35,6 @@
 #include "bug.hh"
 #include "graph_builder.hh"
 #include "holofile/holofile.hh"
-#include "holoflow/runtime/graph_display.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
@@ -473,6 +472,10 @@ void Manager::stop_raw_record() {
 
 void Manager::update_graph_spec_dump_preferences(const GraphSpecDumpPreferences &prefs) {
   graph_spec_dump_prefs_ = prefs;
+}
+
+void Manager::update_graph_compiled_dump_preferences(const GraphCompiledDumpPreferences &prefs) {
+  graph_compiled_dump_prefs_ = prefs;
 }
 
 // --- Polling logic ---

@@ -21,6 +21,21 @@
 
 namespace holoflow::runtime {
 
+struct GraphCompiledDumpPreferences {
+  enum class Rankdir { LeftToRight, TopToBottom };
+
+  Rankdir rankdir                  = Rankdir::LeftToRight;
+  bool    dump_node_name           = true;
+  bool    dump_node_kind           = true;
+  bool    dump_node_settings       = true;
+  bool    dump_node_in_out_tids    = true;
+  bool    dump_edge_indices        = true;
+  bool    dump_edge_descriptions   = true;
+  bool    dump_section_info        = true;
+  bool    dump_section_stream_addr = true;
+  bool    dump_resource_info       = true;
+};
+
 /// Serialize a compiled graph (CompilerOutput) to Graphviz DOT format.
 /// This prints:
 ///  - node labels with name/kind/settings/in_tids/out_tids/infer marker
