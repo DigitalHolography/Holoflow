@@ -71,6 +71,7 @@
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
+#include "holotask/syncs/resize.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 #include "holotask/syncs/unfold2d.hh"
@@ -162,6 +163,7 @@ protected:
   TDesc max(const TDesc &X, holonp::MaxSettings s);
   TDesc normalize(const TDesc &X, holotask::syncs::NormalizeSettings s);
   TDesc reshape(const TDesc &X, holonp::ReshapeSettings s);
+  TDesc resize(const TDesc &X, holotask::syncs::ResizeSettings s);
   TDesc conj(const TDesc &X, holonp::ConjSettings s);
   // clang-format on
 };

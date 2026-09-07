@@ -23,6 +23,7 @@ set(SOURCES
     fresnel_diffraction_test.cu
     holofile_sink_test.cc
     npyfile_sink_test.cc
+    resize_test.cc
     normalize_test.cu
     pca_test.cu
     pct_clip_test.cu

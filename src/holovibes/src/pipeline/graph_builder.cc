@@ -233,7 +233,10 @@ void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
   } else if (s_.recording_format == "holo") {
     holofile_write(H, {path, count, settings_to_old_json(s_), true});
   } else {
-    ffmpeg_write(H, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
+    auto video = memcpy(H, {holotask::syncs::MemcpySettings::Target::Host});
+    const auto square_size = std::max(video.shape.at(1), video.shape.at(2));
+    video = resize(video, {static_cast<int>(square_size), static_cast<int>(square_size)});
+    ffmpeg_write(video, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
                      s_.recording_codec});
   }
 }
@@ -782,6 +785,8 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     } else if (s_.recording_format == "holo") {
       holofile_write(result_rec, {path, count, settings_to_old_json(s_), true});
     } else {
+      const auto square_size = std::max(result_rec.shape.at(1), result_rec.shape.at(2));
+      result_rec = resize(result_rec, {static_cast<int>(square_size), static_cast<int>(square_size)});
       ffmpeg_write(result_rec, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
                                 s_.recording_codec});
     }

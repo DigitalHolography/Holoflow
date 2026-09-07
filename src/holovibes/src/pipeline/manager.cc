@@ -71,6 +71,7 @@
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
 #include "holotask/sinks/ffmpeg.hh"
+#include "holotask/syncs/resize.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
@@ -195,6 +196,7 @@ void Manager::register_components() {
   reg_sync<syncs::FlatfieldFactory>(registry_, "Flatfield");
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
+  reg_sync<syncs::ResizeFactory>(registry_, "Resize");
   reg_sync<syncs::ShortTimeFresnelDiffractionFactory>(registry_, "ShortTimeFresnelDiffraction");
   reg_sync<syncs::Unfold2DFactory>(registry_, "Unfold2D");
   reg_sync<syncs::Wrap2PiFactory>(registry_, "Wrap2Pi");
