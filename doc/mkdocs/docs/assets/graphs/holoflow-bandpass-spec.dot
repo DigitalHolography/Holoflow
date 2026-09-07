@@ -1,0 +1,24 @@
+digraph holoflow_graph {
+  rankdir=LR;
+  graph [bgcolor="transparent", pad="0.25", nodesep="0.45", ranksep="0.7"];
+  node [shape=box, style="rounded,filled", fillcolor="#f5f7ff", color="#4051b5",
+        fontname="Helvetica", fontsize=11, margin="0.16,0.10"];
+  edge [color="#5f6368", fontname="Helvetica", fontsize=9, arrowsize=0.75];
+
+  load [label="load\n(LoadNpy)"];
+  upload [label="upload\n(Memcpy to Device)"];
+  fft [label="fft\n(RFFT2)"];
+  mask [label="mask\n(BandpassMask)"];
+  multiply [label="multiply\n(Multiply)"];
+  ifft [label="ifft\n(IRFFT2)"];
+  download [label="download\n(Memcpy to Host)"];
+  save [label="save\n(SaveNpy)"];
+
+  load -> upload [taillabel="0", headlabel="0"];
+  upload -> fft [taillabel="0", headlabel="0"];
+  fft -> multiply [taillabel="0", headlabel="0"];
+  mask -> multiply [taillabel="0", headlabel="1"];
+  multiply -> ifft [taillabel="0", headlabel="0"];
+  ifft -> download [taillabel="0", headlabel="0"];
+  download -> save [taillabel="0", headlabel="0"];
+}

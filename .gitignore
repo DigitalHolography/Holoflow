@@ -3,6 +3,7 @@ doc/mkdocs/site/
 .venv/
 .fc/
 *.dot
+!doc/mkdocs/docs/assets/graphs/*.dot
 logs/
 graphify-out/
 .claude/
