@@ -10,6 +10,7 @@
 
 #include <memory>
 
+#include "holoflow/runtime/compiler.hh"
 #include "holoflow/runtime/graph_display.hh"
 #include "support/math_tasks.hh"
 

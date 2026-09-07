@@ -28,16 +28,6 @@ struct NodeSpec {
   bool           debug = true; ///< Whether to enable debug mode for this node.
 };
 
-struct GraphSpecDumpPreferences {
-  enum class Rankdir { LeftToRight, TopToBottom };
-
-  Rankdir rankdir            = Rankdir::LeftToRight;
-  bool    dump_node_name     = true;
-  bool    dump_node_kind     = true;
-  bool    dump_node_settings = true;
-  bool    dump_edge_indices  = true;
-};
-
 /// Specification of a directed edge between two nodes.
 struct EdgeSpec {
   int out_idx; ///< Output index of the source node.
@@ -70,10 +60,5 @@ nlohmann::json to_json(const GraphSpec &g, const GraphSpecWriteOptions &opts = {
 /// @param j  JSON representation of the graph specification.
 /// @return   Deserialized graph specification.
 GraphSpec from_json(const nlohmann::json &j);
-
-/// Serialize a graph specification to a dot format string.
-/// @param g     Graph specification to serialize.
-/// @return      Dot format representation of the graph specification.
-std::string to_dot(const GraphSpec &g, const GraphSpecDumpPreferences &dump_prefs = {});
 
 } // namespace holoflow::core

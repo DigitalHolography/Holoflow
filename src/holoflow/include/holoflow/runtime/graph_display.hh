@@ -14,13 +14,12 @@
 
 #pragma once
 
-#include "holoflow/core/registry.hh"
-#include "holoflow/runtime/compiler.hh"
-
 #include <string>
-
+// could not forward declare GraphSpec because it is an alias
+#include "holoflow/core/graph_spec.hh" 
 namespace holoflow::runtime {
 
+struct CompilerOutput;
 struct GraphCompiledDumpPreferences {
   enum class Rankdir { LeftToRight, TopToBottom };
 
@@ -50,4 +49,25 @@ struct GraphCompiledDumpPreferences {
 /// @return          DOT source as std::string.
 std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs = {});
 
+
 } // namespace holoflow::runtime
+
+namespace holoflow::core
+{
+
+struct GraphSpecDumpPreferences {
+  enum class Rankdir { LeftToRight, TopToBottom };
+
+  Rankdir rankdir            = Rankdir::LeftToRight;
+  bool    dump_node_name     = true;
+  bool    dump_node_kind     = true;
+  bool    dump_node_settings = true;
+  bool    dump_edge_indices  = true;
+};
+
+/// Serialize a graph specification to a dot format string.
+/// @param g     Graph specification to serialize.
+/// @return      Dot format representation of the graph specification.
+std::string to_dot(const holoflow::core::GraphSpec &g,
+                   const GraphSpecDumpPreferences  &dump_prefs = {});
+}
