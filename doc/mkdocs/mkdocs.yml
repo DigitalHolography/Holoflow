@@ -107,7 +107,7 @@ theme:
     - content.action.view
     - search.suggest
     - search.highlight
-    - toc.integrate
+    - toc.follow
 
 markdown_extensions:
   - abbr

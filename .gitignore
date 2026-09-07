@@ -1,6 +1,7 @@
 build/
 doc/mkdocs/site/
 .venv/
+__pycache__/
 .fc/
 *.dot
 !doc/mkdocs/docs/assets/graphs/*.dot

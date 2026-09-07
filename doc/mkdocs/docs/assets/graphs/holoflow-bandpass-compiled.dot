@@ -24,13 +24,13 @@ digraph GraphPlan {
 
   node [shape=box, style="rounded,filled", fillcolor="#fffdf5", color="#aaaaaa",
         fontsize=8, margin="0.08,0.05"];
-  t0 [label="t0 / s0\nF32 - Host\n512x512"];
-  t1 [label="t1 / s1\nF32 - Device\n512x512"];
-  t2 [label="t2 / s2\nCF32 - Device\n512x257"];
-  t3 [label="t3 / s3\nCF32 - Device\n512x257"];
-  t4 [label="t4 / s4\nCF32 - Device\n512x257"];
-  t5 [label="t5 / s5\nF32 - Device\n512x512"];
-  t6 [label="t6 / s6\nF32 - Host\n512x512"];
+  t0 [label="t0 / s0\nF32 - Host\n1x512x512"];
+  t1 [label="t1 / s1\nF32 - Device\n1x512x512"];
+  t2 [label="t2 / s2\nCF32 - Device\n1x512x257"];
+  t3 [label="t3 / s3\nCF32 - Device\n1x512x257"];
+  t4 [label="t4 / s4\nCF32 - Device\n1x512x257"];
+  t5 [label="t5 / s5\nF32 - Device\n1x512x512"];
+  t6 [label="t6 / s6\nF32 - Host\n1x512x512"];
 
   subgraph cluster_section_0 {
     label="Section 0";
