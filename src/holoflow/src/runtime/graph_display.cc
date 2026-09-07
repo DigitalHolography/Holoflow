@@ -33,6 +33,25 @@ namespace {
 using namespace holoflow::core;
 using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
 
+static std::string replace_newlines_escaped_with_l(const std::string &s) {
+  std::string out;
+  out.reserve(s.size());
+  for (auto it = s.begin(); it != s.end(); ++it) {
+    const char c = *it;
+    if (c == '\\') {
+      if (it + 1 != s.end() && *(it + 1) == 'n') {
+        out += "\\l";
+        ++it;
+      } else {
+        out += "\\";
+      }
+    } else {
+      out += c;
+    }
+  }
+  return out;
+}
+
 static std::string replace_newlines_with_l(const std::string &s) {
   std::string out;
   out.reserve(s.size());
@@ -229,7 +248,8 @@ static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPla
       ss << std::format("[taillabel=\"{}\", headlabel=\"{}\"]", ep.spec.out_idx, ep.spec.in_idx);
     }
     if (prefs.dump_edge_descriptions) {
-      ss << std::format("[label=\"{}\"]", edge_lbl.str()); // TODO : replace /n by /l
+      auto formated = replace_newlines_escaped_with_l(edge_lbl.str());
+      ss << std::format("[label=\"{}\\l\"]", formated);
     }
     ss << ";\n";
   }
