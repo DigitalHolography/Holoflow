@@ -160,6 +160,39 @@ hide:
         </a>
       </div>
     </article>
+
+    <article class="hf-feature hf-feature--experiment">
+      <div class="hf-feature__media hf-feature__media--placeholder">
+        <div class="hf-video-pair">
+          <figure>
+            <video autoplay loop muted playsinline preload="metadata" aria-label="Temporary tomographic diffractive microscopy input">
+              <source src="assets/videos/DEMO_RAW_NA_20260904_153832_AQ004_60fps_512x512.mp4" type="video/mp4">
+            </video>
+            <figcaption>Interferometric input</figcaption>
+          </figure>
+
+          <figure>
+            <video autoplay loop muted playsinline preload="metadata" aria-label="Temporary tomographic diffractive microscopy output">
+              <source src="assets/videos/DEMO_PROCESSED_NA_20260904_153832_AQ002_60fps_512x512.mp4" type="video/mp4">
+            </video>
+            <figcaption>Tomographic diffractive microscopy</figcaption>
+          </figure>
+        </div>
+
+        <span class="hf-placeholder-label">TDM footage coming soon</span>
+      </div>
+
+      <div class="hf-feature__copy">
+        <h3>Tomographic diffractive microscopy</h3>
+        <p>
+          Combine off-axis holography, aberration correction, and phase unwrapping to reconstruct three-dimensional
+          sample volumes from tomographic acquisitions.
+        </p>
+        <a class="hf-text-link" href="applications/tomographic-diffractive-microscopy.html">
+          Open the application guide <span aria-hidden="true">→</span>
+        </a>
+      </div>
+    </article>
   </div>
 </section>
 
