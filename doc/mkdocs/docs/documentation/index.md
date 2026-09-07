@@ -12,7 +12,7 @@ This section explains how to use and extend the software in the Holoflow project
 
 -   **Holoflow**
 
-    Understand the graph model, runtime architecture, task authoring, scheduling, and inspection facilities.
+    Build scientific processing pipelines, understand the task model, and progressively explore task authoring and runtime internals.
 
     [Read the Holoflow documentation](../holoflow/index.md)
 

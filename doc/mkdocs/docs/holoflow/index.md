@@ -1,4 +1,4 @@
-# Holoflow
+# Overview
 
 ## What is Holoflow?
 
@@ -60,7 +60,7 @@ boost::add_edge(download, save, EdgeSpec{0, 0}, graph);
 
 ### Compile the graph
 
-The registry connects each task kind to the factory that can infer its tensor contract and create its runtime implementation. The `my_app` factories below are illustrative application-provided implementations; the remaining factories come from Holotask and Holonp. Once the application has registered those factories, the compiler turns the specification into an executable graph.
+The registry connects each task kind to the factory that can infer its tensor contract and create its runtime implementation. The `my_app` factories below are illustrative application-provided implementations. Once the application has registered those factories, the compiler turns the specification into an executable graph.
 
 ```cpp
 #include <memory>
@@ -182,6 +182,12 @@ Once the queues contain data, one section can upload the next frame while anothe
 | --- | ---: | ---: | ---: | ---: |
 | Single section | 0 | 1 / 1 | TBD | TBD |
 | Three sections | 2 | 3 / 3 | TBD | TBD |
+
+## Where to go next
+
+- Learn how Holoflow classifies [sources, sinks, synchronous tasks, and asynchronous tasks](concepts/source-sink-sync-async.md).
+- See what the future [getting-started guide](getting-started/index.md) will cover.
+- Follow the progress of the planned [step-by-step LDH pipeline tutorial](tutorials/ldh-pipeline.md).
 
 [^numpy2020]: C. R. Harris, J. Millman, S. J. van der Walt, et al., “[Array programming with NumPy](https://doi.org/10.1038/s41586-020-2649-2),” *Nature*, vol. 585, no. 7825, pp. 357–362, 2020. See also the [site-wide reference](../references.md#harris-2020).
 

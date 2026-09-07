@@ -19,18 +19,17 @@ nav:
     - Overview: documentation/index.md
     - Holovibes: holovibes/index.md
     - Holoflow:
-      - Overview: holoflow/index.md
-      - Architecture: holoflow/architecture.md
+      - holoflow/index.md
+      - Getting Started: holoflow/getting-started/index.md
       - Concepts:
-        - Graph And Data Model: holoflow/concepts/graph.md
-        - Task Model: holoflow/concepts/tasks.md
-        - Tensors And Storage: holoflow/concepts/tensors.md
-      - Runtime:
-        - Compiler: holoflow/runtime/compiler.md
-        - Scheduler: holoflow/runtime/scheduler.md
-      - Guides:
-        - Authoring Tasks: holoflow/guides/authoring.md
-        - Inspection And Debugging: holoflow/guides/inspection.md
+        - holoflow/concepts/index.md
+        - Sources, Sinks, Sync, And Async: holoflow/concepts/source-sink-sync-async.md
+      - Tutorials:
+        - holoflow/tutorials/index.md
+        - Build An LDH Pipeline: holoflow/tutorials/ldh-pipeline.md
+      - How-to Guides: holoflow/how-to-guides/index.md
+      - Runtime Internals: holoflow/runtime-internals/index.md
+      - API Reference: holoflow/reference/index.md
     - Curaii: curaii/index.md
     - Holofile: holofile/index.md
   - Research: research/index.md
@@ -93,7 +92,7 @@ theme:
   features:
     - navigation.tabs
     - navigation.tabs.sticky
-    - navigation.sections
+    # - navigation.sections
     - navigation.indexes
     - navigation.path
     - navigation.tracking

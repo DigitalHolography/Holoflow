@@ -16,7 +16,7 @@ The physics path will introduce coherent light, interference, diffraction, wavef
 
 ## Software and HPC
 
-The software path will cover modern C++, CUDA execution, memory and tensor layouts, concurrency, task graphs, scheduling, measurement, and profiling. It will explain how scientific pipelines become predictable real-time systems and connect those ideas to the [Holoflow architecture](../holoflow/architecture.md).
+The software path will cover modern C++, CUDA execution, memory and tensor layouts, concurrency, task graphs, scheduling, measurement, and profiling. It will explain how scientific pipelines become predictable real-time systems and connect those ideas to [Holoflow](../holoflow/index.md).
 
 !!! info "Learning material in progress"
     Additional lessons will be added as complete, reviewed units. The [Applications](../applications/index.md) and [Documentation](../documentation/index.md) sections provide the practical and software-oriented entry points.
