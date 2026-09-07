@@ -42,6 +42,7 @@ public:
   // Setters
   void set_file_path(const QString &path);
   void set_frame_count(int count);
+  void set_frame_batch_size(int batch_size);
   void set_image_type(const QString &type);
   void setChecked(bool checked);
 
@@ -77,6 +78,7 @@ signals:
 private:
   void setup_ui();
   void connect_signals();
+  void update_codec_choices();
   void set_export_controls_enabled(bool enabled);
 
   QCheckBox   *enable_check_;
@@ -89,6 +91,9 @@ private:
   QComboBox   *tag_combo_;
   QCheckBox   *frames_check_;
   QSpinBox    *frames_spin_;
+  QPushButton *frames_lower_button_;
+  QPushButton *frames_higher_button_;
+  int          frame_batch_size_ = 1;
   QPushButton *record_button_;
   QPushButton *stop_button_;
   QPushButton *stop_fan_button_;

@@ -64,6 +64,7 @@
 
 #include "bug.hh"
 #include "holofile/holofile.hh"
+#include "holotask/sinks/ffmpeg_formats.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
 #include "ui/update_checker.hh"
@@ -695,12 +696,11 @@ QString MainWindow::recording_file_name(int acquisition_id) const {
   const QString eye     = sanitize_recording_token(eye_side_combo_->currentText());
   const QString format = export_widget_ == nullptr ? QStringLiteral("holo")
                                                    : export_widget_->get_format();
-  const QString extension = format == "npy"      ? "npy"
-                           : format == "mp4"      ? "mp4"
-                           : format == "avi"      ? "avi"
-                           : format == "matroska" ? "mkv"
-                           : format == "webm"     ? "webm"
-                                                   : "holo";
+  const auto *format_info = holotask::sinks::ffmpeg_format(format.toStdString());
+  const QString extension = format_info == nullptr
+                                 ? QStringLiteral("holo")
+                                 : QString::fromUtf8(format_info->extension.data(),
+                                                      format_info->extension.size());
   return QString("%1_%2_%3_%4.%5")
       .arg(patient, eye, session_id_, acquisition_label(acquisition_id), extension);
 }
@@ -1806,6 +1806,9 @@ bool MainWindow::validate_inputs() {
   configure_unsupported_features();
 
   pipeline::Settings settings = get_pipeline_settings();
+  export_widget_->set_frame_batch_size(
+      settings.recording_method == pipeline::RecordingMethod::RAW ? settings.load_batch
+                                                                   : settings.cpu_out_size);
   const auto         context  = build_validation_context(settings);
   QSize display_dims(context.source_width.value_or(1), context.source_height.value_or(1));
   if (settings.view_type != pipeline::ViewType::RAW &&

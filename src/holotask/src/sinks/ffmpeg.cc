@@ -28,6 +28,7 @@ extern "C" {
 }
 
 #include "holoflow/core/tensor.hh"
+#include "holotask/sinks/ffmpeg_formats.hh"
 #include "recording_geometry.hh"
 #include "recording_sink.hh"
 
@@ -98,6 +99,9 @@ void validate_ffmpeg_settings(const FfmpegSettings            &settings,
   check(std::isfinite(settings.fps) && settings.fps > 0.0, "fps must be finite and positive");
   check(!settings.format.empty(), "format must not be empty");
   check(!settings.codec.empty(), "codec must not be empty");
+
+  check(ffmpeg_codec_is_compatible(settings.format, settings.codec),
+        "codec '" + settings.codec + "' is not supported for format '" + settings.format + "'");
 
   const auto *output_format = av_guess_format(settings.format.c_str(), nullptr, nullptr);
   check(output_format != nullptr, "unknown output format: " + settings.format);
@@ -195,6 +199,12 @@ private:
     codec_context_->time_base    = av_inv_q(codec_context_->framerate);
     codec_context_->gop_size     = 12;
     codec_context_->max_b_frames = 0;
+    if (codec->id == AV_CODEC_ID_MPEG4) {
+      // MPEG-4's defaults are tuned for small bandwidth, which is too destructive for
+      // scientific images. Use a bounded quality range instead of an arbitrary bitrate.
+      codec_context_->qmin = 2;
+      codec_context_->qmax = 5;
+    }
     if ((format_context_->oformat->flags & AVFMT_GLOBALHEADER) != 0)
       codec_context_->flags |= AV_CODEC_FLAG_GLOBAL_HEADER;
 
