@@ -39,6 +39,7 @@
 #include "holoflow/core/registry.hh"
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
+#include "holoflow/runtime/graph_display.hh"
 #include "holoflow/runtime/graph_exec.hh"
 #include "spdlog/sinks/basic_file_sink.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
@@ -250,7 +251,7 @@ private:
   // --- Helpers ---
   void        setup_logging();
   ScopedTrace trace_scope(std::string name, std::string category = "pass");
-  void        dump_graphviz(const std::string &filename);
+  // void        dump_graphviz(const std::string &filename);
   template <class TaskInterface, class Factory, class Ctx>
   std::unique_ptr<core::ITask> create_or_update_task(Factory &factory, const NodePlan &np,
                                                      const Ctx &ctx);
@@ -313,12 +314,14 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     run_pass("Task Binding", [&] { bind_tasks(); });
 
     if (config_.dump_dot_on_failure) {
-      run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_success.dot"); });
+      run_pass("Dump Graphviz",
+               [&] { to_dot(*out_, GraphCompiledDumpPreferences{}, "compilation_success"); });
     }
   } catch (const std::exception &e) {
     logger_->error("Compilation Failed: {}", e.what());
     if (config_.dump_dot_on_failure) {
-      run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_failure.dot"); });
+      run_pass("Dump Graphviz",
+               [&] { to_dot(*out_, GraphCompiledDumpPreferences{}, "compilation_failure"); });
     }
 
     total_trace.reset(); // Stop timer before throwing
@@ -1130,190 +1133,6 @@ void Compiler::Impl::bind_tasks() {
     auto logger = create_task_logger(np.spec.name, np.spec.kind);
     task->bind_logger(std::move(logger));
   }
-}
-
-// -------------------------------------------------------------------------------------------------
-// Visualization Helpers (Internal)
-// -------------------------------------------------------------------------------------------------
-
-// TODO : remove dump that has been moved to graph_display.cc
-
-namespace {
-
-std::string escape_dot_label(const std::string &s) {
-  std::string out;
-  out.reserve(s.size());
-  for (char c : s) {
-    switch (c) {
-    case '\\':
-      out += "\\\\";
-      break;
-    case '"':
-      out += "\\\"";
-      break;
-    case '\n':
-      out += "\\n";
-      break;
-    case '\r':
-      break;
-    default:
-      out += c;
-      break;
-    }
-  }
-  return out;
-}
-
-std::string format_tdesc(const core::TDesc &d) {
-  std::ostringstream ss;
-  ss << "{\\n";
-  ss << "  shape: " << escape_dot_label(nlohmann::json(d.shape).dump()) << ",\\n";
-  ss << "  dtype: " << escape_dot_label(nlohmann::json(d.dtype).dump()) << "\\n";
-  ss << "  mem_loc: " << escape_dot_label(nlohmann::json(d.mem_loc).dump()) << "\\n";
-  ss << "  strides: " << escape_dot_label(nlohmann::json(d.strides).dump()) << "\\n";
-  ss << "  offset: " << d.offset << "\\n";
-  ss << "}";
-  return ss.str();
-}
-
-} // namespace
-
-// -------------------------------------------------------------------------------------------------
-// Debugging: Graphviz Dump (Implementation)
-// -------------------------------------------------------------------------------------------------
-
-// TODO: rename dump_graphviz to to_dot (overloading ?)
-void Compiler::Impl::dump_graphviz(const std::string &filename) {
-  if (config_.log_dir.empty()) {
-    return;
-  }
-
-  std::ofstream file(config_.log_dir / filename);
-  if (!file.is_open()) {
-    return;
-  }
-
-  auto &g        = out_->graph;
-  auto &res      = out_->resources;
-  auto &sections = out_->sections;
-
-  file << "digraph GraphPlan {\n";
-  file << "  rankdir=LR;\n";
-  file << "  compound=true;\n";
-  file << "  node [fontname=\"Helvetica\", shape=box, style=filled];\n";
-  file << "  edge [fontname=\"Helvetica\", fontsize=10];\n\n";
-
-  auto fmt_id = [&](int tid) -> std::string {
-    if (res.tid_to_sid.contains(tid)) {
-      return std::format("{}(s:{})", tid, res.tid_to_sid.at(tid));
-    }
-    return std::to_string(tid);
-  };
-
-  auto get_visual_id = [&](size_t v, bool is_source) -> std::string {
-    if (g[v].infer.kind == core::TaskKind::Async) {
-      return is_source ? std::format("v{}_out", v) : std::format("v{}_in", v);
-    }
-    return std::format("v{}", v);
-  };
-
-  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
-    const auto &np = g[v];
-
-    std::ostringstream label_base;
-    label_base << (np.spec.name.empty() ? "(unnamed)" : np.spec.name);
-
-    std::string in_str = "[";
-    for (size_t i = 0; i < np.in_tids.size(); ++i) {
-      in_str += (i ? "," : "") + fmt_id(np.in_tids[i]);
-    }
-    in_str += "]";
-
-    std::string out_str = "[";
-    for (size_t i = 0; i < np.out_tids.size(); ++i) {
-      const int   out_tid = np.out_tids[i];
-      std::string id_text = fmt_id(out_tid);
-
-      bool is_alias = false;
-      if (res.tid_to_sid.count(out_tid)) {
-        const size_t out_sid = res.tid_to_sid.at(out_tid);
-        for (int in_tid : np.in_tids) {
-          if (res.tid_to_sid.count(in_tid) && res.tid_to_sid.at(in_tid) == out_sid) {
-            is_alias = true;
-            break;
-          }
-        }
-      }
-
-      out_str += (i ? "," : "") + id_text + (is_alias ? "*" : "");
-    }
-    out_str += "]";
-
-    const std::string ids_line = "\nIn: " + in_str + "\nOut: " + out_str;
-
-    if (np.infer.kind == core::TaskKind::Async) {
-      const std::string label_in = label_base.str() + "\n(Producer/Write)" + ids_line + "\n";
-      file << std::format("  v{}_in [label=\"{}\", shape=invhouse, fillcolor=\"#e6f2ff\", "
-                          "color=\"#0066cc\", style=\"filled,dashed\"];\n",
-                          v, escape_dot_label(label_in));
-
-      const std::string label_out = label_base.str() + "\n(Consumer/Read)" + ids_line + "\n";
-      file << std::format("  v{}_out [label=\"{}\", shape=house, fillcolor=\"#ffe6e6\", "
-                          "color=\"#cc0000\", style=\"filled,dashed\"];\n",
-                          v, escape_dot_label(label_out));
-
-      file << std::format("  v{}_in -> v{}_out [style=dotted, color=\"#888888\", penwidth=2, "
-                          "arrowh=none, label=\"Async Signal\"];\n",
-                          v, v);
-    } else {
-      const std::string label = label_base.str() + "\n(" + np.spec.kind + ")" + ids_line + "\n";
-      file << std::format("  v{} [label=\"{}\", fillcolor=\"#ccffcc\"];\n", v,
-                          escape_dot_label(label));
-    }
-  }
-
-  file << "\n";
-
-  for (auto e : boost::make_iterator_range(boost::edges(g))) {
-    const auto  u  = boost::source(e, g);
-    const auto  v  = boost::target(e, g);
-    const auto &ep = g[e];
-
-    const std::string u_vis = get_visual_id(u, true);
-    const std::string v_vis = get_visual_id(v, false);
-
-    std::ostringstream edge_lbl;
-    edge_lbl << "tid:" << ep.tid;
-    if (res.tid_to_sid.count(ep.tid)) {
-      edge_lbl << " (s:" << res.tid_to_sid.at(ep.tid) << ")";
-    }
-    edge_lbl << "\\n" << format_tdesc(ep.desc);
-
-    file << std::format("  {} -> {} [taillabel=\"{}\", headlabel=\"{}\", label=\"{}\"];\n", u_vis,
-                        v_vis, ep.spec.out_idx, ep.spec.in_idx, edge_lbl.str());
-  }
-
-  file << "\n";
-
-  for (const auto &sec : sections) {
-    file << std::format("  subgraph cluster_section_{} {{\n", sec.id);
-    file << std::format("    label=\"Section {} (Stream {})\\l\";\n", sec.id, (void *)sec.stream);
-    file << "    style=rounded; color=gray; bgcolor=\"#f8f8f8\";\n";
-
-    for (auto vd : sec.sync_topo) {
-      file << std::format("    v{};\n", vd);
-    }
-    for (auto vd : sec.async_prod) {
-      file << std::format("    v{}_in;\n", vd);
-    }
-    for (auto vd : sec.async_cons) {
-      file << std::format("    v{}_out;\n", vd);
-    }
-
-    file << "  }\n";
-  }
-
-  file << "}\n";
 }
 
 // -------------------------------------------------------------------------------------------------

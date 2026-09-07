@@ -31,7 +31,7 @@
 namespace {
 
 using namespace holoflow::core;
-using DumpCompiledPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
+using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
 
 static std::string replace_newlines_with_l(const std::string &s) {
   std::string out;
@@ -104,8 +104,8 @@ std::string format_tdesc(const TDesc &d) {
 } // namespace
 namespace holoflow::runtime {
 
-static void write_compiled_graph_header(std::ostringstream            &ss,
-                                        const DumpCompiledPreferences &prefs,
+static void write_compiled_graph_header(std::ostringstream                 &ss,
+                                        const GraphCompiledDumpPreferences &prefs,
                                         const std::string &title = "holoflow_compiled_graph") {
   ss << "digraph " << title << " {\n";
   if (prefs.rankdir == GraphCompiledDumpPreferences::Rankdir::LeftToRight)
@@ -120,7 +120,7 @@ static void write_compiled_graph_header(std::ostringstream            &ss,
 
 static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPlan &g,
                                  const holoflow::runtime::ExecResouces &res,
-                                 const DumpCompiledPreferences         &prefs) {
+                                 const GraphCompiledDumpPreferences    &prefs) {
 
   auto fmt_id = [&](int tid) -> std::string {
     if (res.tid_to_sid.contains(tid)) {
@@ -200,7 +200,7 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
 
 static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPlan &g,
                                  const holoflow::runtime::ExecResouces &res,
-                                 const DumpCompiledPreferences         &prefs) {
+                                 const GraphCompiledDumpPreferences    &prefs) {
 
   auto get_visual_id = [&](size_t v, bool is_source) -> std::string {
     if (g[v].infer.kind == core::TaskKind::Async) {
@@ -263,9 +263,10 @@ static void write_compiled_sections(std::ostringstream                  &ss,
   }
 }
 
-std::string to_dot(const CompilerOutput &out, const DumpCompiledPreferences &prefs) {
+std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
+                   std::string filename) {
   std::ostringstream ss;
-  write_compiled_graph_header(ss, prefs, "holoflow_compiled");
+  write_compiled_graph_header(ss, prefs, filename);
 
   write_compiled_nodes(ss, out.graph, out.resources, prefs);
   ss << "\n";

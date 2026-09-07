@@ -47,7 +47,8 @@ struct GraphCompiledDumpPreferences {
 /// @param out       Compiled graph output (non-owning reference).
 /// @param prefs     Preferences for controlling the output format.
 /// @return          DOT source as std::string.
-std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs = {});
+std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs = {},
+                   std::string filename = "compiled");
 
 
 } // namespace holoflow::runtime
