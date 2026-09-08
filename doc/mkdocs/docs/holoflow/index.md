@@ -185,7 +185,7 @@ Once the queues contain data, one section can upload the next frame while anothe
 
 ## Where to go next
 
-- Learn how Holoflow classifies [sources, sinks, synchronous tasks, and asynchronous tasks](concepts/source-sink-sync-async.md).
+- Learn about the [Holoflow task model](concepts/task-model.md).
 - See what the future [getting-started guide](getting-started/index.md) will cover.
 - Follow the progress of the planned [step-by-step LDH pipeline tutorial](tutorials/ldh-pipeline.md).
 

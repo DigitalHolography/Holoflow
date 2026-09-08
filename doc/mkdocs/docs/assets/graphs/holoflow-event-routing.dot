@@ -1,0 +1,55 @@
+digraph EventRouting {
+  rankdir=TB;
+  newrank=true;
+  graph [nodesep=0.4, ranksep=0.75, pad=0.2, splines=polyline, bgcolor="transparent"];
+  node [fontname="Helvetica", shape=box, style="rounded,filled", fillcolor="#ccffcc",
+        color="#555555", fontsize=10, margin="0.12,0.08"];
+  edge [fontname="Helvetica", fontsize=9, color="#444444", fontcolor="#444444",
+        penwidth=1.2, arrowsize=0.65, arrowhead=vee];
+
+  subgraph cluster_to_task {
+    label="UI → synchronous task";
+    labelloc=t;
+    labeljust=l;
+    style=rounded;
+    color=gray;
+    bgcolor="#f8f8f8";
+
+    ui_send [label="ui_try_send(node, data)"];
+    ui_queue [label="UI → router\nbounded mailbox", shape=cylinder, fillcolor="#e6f2ff",
+              color="#0066cc"];
+    route_in [label="Router tick"];
+    node_queue [label="Router → node\nbounded mailbox", shape=cylinder, fillcolor="#e6f2ff",
+                color="#0066cc"];
+    task_read [label="SyncCtx event_reader\ntry_pop()"];
+
+    { rank=same; ui_send; ui_queue; route_in; node_queue; task_read; }
+    ui_send -> ui_queue -> route_in -> node_queue -> task_read;
+  }
+
+  subgraph cluster_to_ui {
+    label="Synchronous task → UI";
+    labelloc=t;
+    labeljust=l;
+    style=rounded;
+    color=gray;
+    bgcolor="#f8f8f8";
+
+    task_write [label="SyncCtx event_writer\ntry_push()"];
+    task_queue [label="Nodes → router\nbounded mailbox", shape=cylinder, fillcolor="#ffe6e6",
+                color="#cc0000"];
+    route_out [label="Router tick"];
+    ui_out [label="Router → UI\nbounded mailbox", shape=cylinder, fillcolor="#ffe6e6",
+            color="#cc0000"];
+    ui_read [label="ui_try_receive()"];
+
+    { rank=same; task_write; task_queue; route_out; ui_out; ui_read; }
+    task_write -> task_queue -> route_out -> ui_out -> ui_read;
+  }
+
+  ui_send -> task_write [style=invis, weight=1000];
+
+  full [label="A full destination mailbox drops the event\nand increments dropped_events", shape=note,
+        fillcolor="#fffdf5", color="#aaaaaa", fontsize=9];
+  task_write -> full [style=invis];
+}

@@ -1,0 +1,31 @@
+digraph CameraEventLifecycle {
+  rankdir=LR;
+  graph [nodesep=0.4, ranksep=0.7, pad=0.2, splines=polyline, bgcolor="transparent"];
+  node [fontname="Helvetica", shape=box, style="rounded,filled", fillcolor="#ccffcc",
+        color="#555555", fontsize=10, margin="0.12,0.08"];
+  edge [fontname="Helvetica", fontsize=9, color="#444444", fontcolor="#444444",
+        penwidth=1.2, arrowsize=0.65, arrowhead=vee];
+
+  acquire [label="Camera source\nacquires frame"];
+  gap [label="Detect frame-number gap"];
+  emit [label="event_writer.try_push\nframes_missed(count)"];
+  queue [label="Nodes → router\nmailbox", shape=cylinder, fillcolor="#e6f2ff",
+         color="#0066cc"];
+  route [label="Router tick"];
+  ui_queue [label="Router → UI\nmailbox", shape=cylinder, fillcolor="#e6f2ff",
+            color="#0066cc"];
+  monitor [label="UI updates\ndropped-frame monitor"];
+  continue [label="Tensor acquisition continues\nindependently", shape=note, fillcolor="#fffdf5",
+            color="#aaaaaa", fontsize=10, group=gap_column];
+  dropped [label="Mailbox full\nnotification dropped", shape=note, fillcolor="#ffe6e6",
+           color="#cc0000", fontsize=10, group=emit_column];
+
+  gap [group=gap_column];
+  emit [group=emit_column];
+  { rank=same; gap; continue; }
+  { rank=same; emit; dropped; }
+  acquire -> gap -> emit -> queue -> route -> ui_queue -> monitor;
+  gap -> continue [style=dashed, arrowhead=none, color="#888888", constraint=false];
+  emit -> dropped [label="false", style=dashed, color="#cc0000", fontcolor="#cc0000",
+                   constraint=false];
+}

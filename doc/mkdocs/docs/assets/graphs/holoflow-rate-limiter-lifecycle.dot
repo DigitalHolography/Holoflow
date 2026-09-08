@@ -1,0 +1,40 @@
+digraph RateLimiterLifecycle {
+  rankdir=TB;
+  graph [nodesep=0.55, ranksep=0.65, pad=0.2, splines=polyline, bgcolor="transparent"];
+  node [fontname="Helvetica", shape=box, style="rounded,filled", fillcolor="#ccffcc",
+        color="#555555", fontsize=14, margin="0.18,0.12"];
+  edge [fontname="Helvetica", fontsize=12, color="#444444", fontcolor="#444444",
+        penwidth=1.3, arrowsize=0.7, arrowhead=vee];
+
+  start [shape=point, width=0.12, height=0.12, label="", style=filled, fillcolor="#555555"];
+  empty [label="Empty"];
+  push [label="try_push\ncopy input · Ok"];
+  buffered [label="Buffered\n(private staging buffer)", fillcolor="#e6f2ff", color="#0066cc"];
+  deadline [label="Deadline reached", fillcolor="#fffdf5", color="#aaaaaa"];
+  pop [label="try_pop\ncopy output · Ok"];
+  next [label="Empty\n(next item)"];
+
+  empty_wait [label="try_pop before a push\n→ NotReady", shape=note, fillcolor="#fffdf5",
+              color="#aaaaaa", fontsize=12, group=empty_column];
+  push_wait [label="try_push while full\n→ NotReady", shape=note, fillcolor="#fffdf5",
+             color="#aaaaaa", fontsize=12, group=buffered_column];
+  pop_wait [label="try_pop before deadline\n→ NotReady", shape=note, fillcolor="#fffdf5",
+            color="#aaaaaa", fontsize=12, group=deadline_column];
+  cancelled [label="Cancellation at any operation → Cancelled", shape=note, style=filled,
+             fillcolor="#ffe6e6", color="#cc0000", fontsize=12,
+             group=buffered_column];
+
+  empty [group=empty_column];
+  buffered [group=buffered_column];
+  deadline [group=deadline_column];
+
+  { rank=same; start; empty; push; buffered; }
+  { rank=same; deadline; pop; next; }
+
+  start -> empty -> push -> buffered;
+  buffered -> deadline -> pop -> next;
+  empty -> empty_wait [style=dashed, arrowhead=none, color="#888888"];
+  buffered -> push_wait [style=dashed, arrowhead=none, color="#888888"];
+  push_wait -> cancelled [style=dashed, arrowhead=none, color="#cc0000"];
+  deadline -> pop_wait [style=dashed, arrowhead=none, color="#888888"];
+}
