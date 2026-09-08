@@ -31,7 +31,7 @@ hide:
       <video autoplay loop muted playsinline preload="metadata" aria-label="Processed laser Doppler angiography">
         <source src="assets/videos/DEMO_PROCESSED_NA_20260904_153832_AQ002_60fps_512x512.mp4" type="video/mp4">
       </video>
-      <figcaption>Laser Doppler angiography processed in real time.</figcaption>
+      <figcaption>Laser Doppler angiography processed in real time.<sup id="fnref:puyo2018-home"><a class="footnote-ref" href="#fn:puyo2018-home">1</a></sup><sup id="fnref:atlan2025-home"><a class="footnote-ref" href="#fn:atlan2025-home">2</a></sup></figcaption>
     </figure>
   </div>
 </section>
@@ -56,7 +56,8 @@ hide:
         <h3>A graph backend for scientific pipelines</h3>
         <p>
           Describe the computation as connected tasks. Holoflow compiles the graph, manages tensor
-          lifetimes and memory, then schedules CPU and GPU work while the algorithm remains readable.
+          lifetimes and memory, then schedules CPU and GPU work while the algorithm remains
+          readable.<sup id="fnref2:puyo2018-home"><a class="footnote-ref" href="#fn:puyo2018-home">1</a></sup>
         </p>
         <a class="hf-text-link" href="holoflow/index.html">Understand the runtime <span aria-hidden="true">→</span></a>
       </div>
@@ -85,7 +86,8 @@ hide:
         <h3>Laser Doppler holography</h3>
         <p>
           Transform high-rate interferometric acquisitions into live views of retinal blood flow,
-          with reconstruction and visualization performed as the data arrives.
+          with reconstruction and visualization performed as the data
+          arrives.<sup id="fnref3:puyo2018-home"><a class="footnote-ref" href="#fn:puyo2018-home">1</a></sup><sup id="fnref2:atlan2025-home"><a class="footnote-ref" href="#fn:atlan2025-home">2</a></sup>
         </p>
         <a class="hf-text-link" href="applications/doppler-holography.html">
           Reproduce the experiment <span aria-hidden="true">→</span>
@@ -195,6 +197,10 @@ hide:
     </article>
   </div>
 </section>
+
+[^puyo2018-home]: L. Puyo, M. Paques, M. Fink, J.-A. Sahel, and M. Atlan, “[In vivo laser Doppler holography of the human retina](https://hal.sorbonne-universite.fr/hal-01875560v1),” *Biomedical Optics Express*, vol. 9, no. 9, pp. 4113–4129, 2018. [https://doi.org/10.1364/BOE.9.004113](https://doi.org/10.1364/BOE.9.004113). See also the [site-wide reference](references.md#puyo-2018).
+
+[^atlan2025-home]: M. Atlan, *Doppler Holography Measurements of the Eye Fundus in a Volunteer – May 27, 2025* [Data set]. Zenodo, 2025. [https://doi.org/10.5281/zenodo.16761111](https://doi.org/10.5281/zenodo.16761111). Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). See also the [site-wide reference](references.md#atlan-2025).
 
 <section id="project" class="hf-section" aria-labelledby="project-title">
   <div class="hf-shell">

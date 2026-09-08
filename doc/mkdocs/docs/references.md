@@ -6,7 +6,7 @@ This page collects the sources cited throughout the Holoflow documentation.
 
 M. Atlan, *Doppler Holography Measurements of the Eye Fundus in a Volunteer – May 27, 2025* [Data set]. Zenodo, 2025. [https://doi.org/10.5281/zenodo.16761111](https://doi.org/10.5281/zenodo.16761111). Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 
-Used on: [About](about.md).
+Used on: [Home](index.md), [About](about.md).
 
 ## Bradbury et al. (2018) { #bradbury-2018 }
 
@@ -42,4 +42,4 @@ Used on: [Holoflow](holoflow/index.md).
 
 L. Puyo, M. Paques, M. Fink, J.-A. Sahel, and M. Atlan, “[In vivo laser Doppler holography of the human retina](https://hal.sorbonne-universite.fr/hal-01875560v1),” *Biomedical Optics Express*, vol. 9, no. 9, pp. 4113–4129, 2018. [https://doi.org/10.1364/BOE.9.004113](https://doi.org/10.1364/BOE.9.004113).
 
-Used on: [About](about.md).
+Used on: [Home](index.md), [About](about.md).
