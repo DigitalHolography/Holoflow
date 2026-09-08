@@ -25,6 +25,7 @@
 #include <QDir>
 #include <QDirIterator>
 #include <QDoubleSpinBox>
+#include <QFile>
 #include <QFileDialog>
 #include <QFileInfoList>
 #include <QFormLayout>
@@ -68,6 +69,7 @@
 #include "logger.hh"
 #include "settings_loader.hh"
 #include "ui/update_checker.hh"
+#include "ui/graph_visualizer_widget.hh"
 #include "ui/visualization_workspace.hh"
 #include "ui/widgets/selected_widget_settings_panel.hh"
 #include "ui/widgets/tensor_display_widget.hh"
@@ -949,6 +951,7 @@ void MainWindow::refresh_visualization_availability() {
       {"processed_spectrum", {false, spectrum_message}},
       {"xz_processed", {false, cuts_message}},
       {"yz_processed", {false, cuts_message}},
+      {"pipeline_graph", {true, {}}},
   });
 }
 
@@ -1444,6 +1447,7 @@ void MainWindow::initialize_display_widgets() {
   shack_hartmann_xcorr_widget_ = new TensorDisplayWidget(display_workspace_);
   zernike_phase_widget_        = new TensorDisplayWidget(display_workspace_);
   zernike_history_widget_      = new ZernikeHistoryWidget(display_workspace_);
+  graph_visualizer_widget_     = new GraphVisualizerWidget(display_workspace_);
 
   zernike_phase_widget_->set_colormap(Colormap::Twilight);
   zernike_phase_widget_->set_value_range(0.0f, 2 * static_cast<float>(M_PI));
@@ -1476,6 +1480,9 @@ void MainWindow::initialize_display_widgets() {
                                               "xy_processed", DockPlacement::Tab, false});
   display_workspace_->register_visualization({"yz_processed", "YZ Processed", yz_processed_widget_,
                                               "xy_processed", DockPlacement::Tab, false});
+  display_workspace_->register_visualization({"pipeline_graph", "Pipeline Graph",
+                                              graph_visualizer_widget_, "xy_processed",
+                                              DockPlacement::Tab, false});
   display_workspace_->finalize_registration();
 
   connect(display_workspace_, &VisualizationWorkspace::selected_visualization_changed, this,
@@ -1557,6 +1564,20 @@ void MainWindow::connect_manager_signals() {
 
   connect(pipeline_manager_, &pipeline::Manager::raw_record_stopped_failure, this,
           &MainWindow::on_raw_record_stopped_failure, Qt::QueuedConnection);
+
+  connect(pipeline_manager_, &pipeline::Manager::graph_visualization_ready, this,
+          [this](const QString &dot) {
+            if (graph_visualizer_widget_ != nullptr) {
+              graph_visualizer_widget_->render_dot(dot);
+            }
+          });
+  connect(pipeline_manager_, &pipeline::Manager::graph_visualization_failed, this,
+          [this](const QString &error) {
+            if (graph_visualizer_widget_ != nullptr) {
+              graph_visualizer_widget_->show_error(error);
+            }
+          });
+
 }
 
 void MainWindow::connect_import_controls() {
@@ -1622,6 +1643,11 @@ void MainWindow::configure_window() {
 
   auto *view_menu = menuBar()->addMenu(tr("&View"));
   display_workspace_->populate_view_menu(view_menu);
+  view_menu->addSeparator();
+  auto *graph_visualizer_action = view_menu->addAction(tr("Open Pipeline Graph..."));
+  connect(graph_visualizer_action, &QAction::triggered, this, &MainWindow::show_pipeline_graph);
+  auto *open_dot_action = view_menu->addAction(tr("Open DOT File..."));
+  connect(open_dot_action, &QAction::triggered, this, &MainWindow::open_dot_file);
 
   auto *tools_menu      = menuBar()->addMenu(tr("&Tools"));
   auto *fft_tool_action = tools_menu->addAction(tr("FFT Frequency Range to Bins..."));
@@ -1646,6 +1672,38 @@ void MainWindow::check_for_updates() {
             update_indicator_->setVisible(true);
           });
   QTimer::singleShot(0, update_checker_, &UpdateChecker::start);
+}
+
+void MainWindow::show_pipeline_graph() {
+  display_workspace_->set_visualization_title(QStringLiteral("pipeline_graph"),
+                                              tr("Pipeline Graph"));
+  display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
+  display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
+
+  auto request = [manager = pipeline_manager_]() { manager->request_compiled_graph_visualization(); };
+  HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, std::move(request),
+                                             Qt::QueuedConnection));
+}
+
+void MainWindow::open_dot_file() {
+  const QString path = QFileDialog::getOpenFileName(
+      this, tr("Open Graphviz DOT File"), {}, tr("Graphviz DOT Files (*.dot);;All Files (*)"));
+  if (path.isEmpty()) {
+    return;
+  }
+
+  QFile dot_file(path);
+  if (!dot_file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    QMessageBox::warning(this, tr("Open Graphviz DOT File"),
+                         tr("Could not open '%1': %2").arg(path, dot_file.errorString()));
+    return;
+  }
+
+  display_workspace_->set_visualization_title(
+      QStringLiteral("pipeline_graph"), tr("Pipeline Graph — %1").arg(QFileInfo(path).fileName()));
+  display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
+  display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
+  graph_visualizer_widget_->render_dot(QString::fromUtf8(dot_file.readAll()));
 }
 
 void MainWindow::show_fft_frequency_tool() {

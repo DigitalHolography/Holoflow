@@ -478,6 +478,17 @@ void Manager::update_graph_compiled_dump_preferences(const GraphCompiledDumpPref
   graph_compiled_dump_prefs_ = prefs;
 }
 
+void Manager::request_compiled_graph_visualization() {
+  if (!compiler_output_) {
+    emit graph_visualization_failed(
+        "No compiled pipeline graph is available. Start the pipeline first.");
+    return;
+  }
+
+  emit graph_visualization_ready(QString::fromStdString(holoflow::runtime::to_dot(
+      *compiler_output_, graph_compiled_dump_prefs_, "compiled_pipeline")));
+}
+
 // --- Polling logic ---
 void Manager::start_metrics_updates() {
   if (metrics_timer_ && !metrics_timer_->isActive())
@@ -609,7 +620,6 @@ void Manager::build_and_run() {
   Compiler compiler(registry_, config);
   compiler_output_ = compiler.compile(spec_, std::move(prev_output));
 
-  // here
   if (compiler_output_) {
     using namespace std::chrono;
 

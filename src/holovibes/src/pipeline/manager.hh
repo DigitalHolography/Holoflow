@@ -88,6 +88,9 @@ public:
   }
   void update_graph_compiled_dump_preferences(const GraphCompiledDumpPreferences &prefs);
 
+  /// @brief Emits Graphviz DOT for the current compiled pipeline graph.
+  void request_compiled_graph_visualization();
+
 signals:
   // Lifecycle signals
   void start_pipeline_success();
@@ -107,6 +110,10 @@ signals:
   void raw_record_started_failure(const QString &error);
   void raw_record_stopped_success();
   void raw_record_stopped_failure(const QString &error);
+
+  // Graph visualization signals
+  void graph_visualization_ready(const QString &dot);
+  void graph_visualization_failed(const QString &error);
 
 private:
   using V = holoflow::core::GraphSpec::vertex_descriptor;
