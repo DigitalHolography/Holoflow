@@ -28,7 +28,9 @@ nav:
         - holoflow/tutorials/index.md
         - Build An LDH Pipeline: holoflow/tutorials/ldh-pipeline.md
       - How-to Guides: holoflow/how-to-guides/index.md
-      - Runtime Internals: holoflow/runtime-internals/index.md
+      - Runtime Internals:
+        - holoflow/runtime-internals/index.md
+        - Graph Compilation: holoflow/runtime-internals/graph-compilation.md
       - API Reference: holoflow/reference/index.md
     - Curaii: curaii/index.md
     - Holofile: holofile/index.md
