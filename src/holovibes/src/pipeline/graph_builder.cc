@@ -565,10 +565,13 @@ void GraphBuilder::Impl::build_zernike_outputs(const AberrationCorrectionState &
   const auto &coeffs = *state.cumulative_coeffs_gpu;
   const auto &phase  = *state.cumulative_phase_gpu;
 
-  zernike_coefficients_display(coeffs, {s_.autofocus_zernike_orders});
+  auto coeffs_reshaped = reshape(coeffs, {{1, static_cast<int64_t>(coeffs.shape.at(0))}});
+  auto queue           = batched_queue(coeffs_reshaped, {s_.cpu_out_size, 1, 1});
+  coeffs_reshaped      = reshape(queue, {{static_cast<int64_t>(coeffs.shape.at(0))}});
+  zernike_coefficients_display(coeffs_reshaped, {s_.autofocus_zernike_orders});
 
   if (s_.view_zernike_metrics) {
-    auto coeffs_host = memcpy(coeffs, {Host});
+    auto coeffs_host = memcpy(coeffs_reshaped, {Host});
     zernike_history_display(coeffs_host, {
                                              s_.autofocus_zernike_orders,
                                              s_.signal_plot_time_window_seconds,
@@ -772,7 +775,7 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     auto path              = s_.recording_path.string();
     auto count             = s_.recording_count;
     auto settings_json     = settings_to_old_json(s_);
-    auto holofile_settings = HolofileSettings{path, count, settings_json};
+    auto holofile_settings = HolofileSettings{path, count, settings_json, true};
     holofile_write(result_rec, holofile_settings);
   }
 }
