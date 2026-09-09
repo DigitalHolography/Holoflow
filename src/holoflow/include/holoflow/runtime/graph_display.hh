@@ -23,9 +23,10 @@ struct CompilerOutput;
 struct GraphCompiledDumpPreferences {
   enum class Rankdir { LeftToRight, TopToBottom };
 
-  Rankdir rankdir        = Rankdir::LeftToRight;
-  bool    dump_node_name = true;
-  bool    dump_node_kind = true;
+  Rankdir rankdir                  = Rankdir::LeftToRight;
+  int     floating_point_precision = 17;
+  bool    dump_node_name           = true;
+  bool    dump_node_kind           = true;
   // TODO : remove node settings
   bool dump_node_settings    = true;
   bool dump_node_in_out_tids = true;
@@ -59,11 +60,12 @@ namespace holoflow::core
 struct GraphSpecDumpPreferences {
   enum class Rankdir { LeftToRight, TopToBottom };
 
-  Rankdir rankdir            = Rankdir::LeftToRight;
-  bool    dump_node_name     = true;
-  bool    dump_node_kind     = true;
-  bool    dump_node_settings = true;
-  bool    dump_edge_indices  = true;
+  Rankdir rankdir                  = Rankdir::LeftToRight;
+  int     floating_point_precision = 17;
+  bool    dump_node_name           = true;
+  bool    dump_node_kind           = true;
+  bool    dump_node_settings       = true;
+  bool    dump_edge_indices        = true;
 };
 
 /// Serialize a graph specification to a dot format string.

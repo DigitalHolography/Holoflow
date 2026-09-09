@@ -17,6 +17,8 @@
 #include "holoflow/core/tensor.hh"
 
 #include <boost/graph/graph_traits.hpp>
+#include <charconv>
+#include <cmath>
 #include <cstdint>
 #include <format>
 #include <iomanip>
@@ -96,6 +98,45 @@ static std::string escape_for_label(const std::string &s) {
   return out;
 }
 
+static void round_json_floating_point_values(nlohmann::json &value, int precision) {
+  if (value.is_array() || value.is_object()) {
+    for (auto &child : value) {
+      round_json_floating_point_values(child, precision);
+    }
+    return;
+  }
+
+  if (!value.is_number_float()) {
+    return;
+  }
+
+  const double number = value.get<double>();
+  if (!std::isfinite(number)) {
+    return;
+  }
+
+  char buffer[64];
+  const auto result = std::to_chars(buffer, buffer + sizeof(buffer), number,
+                                    std::chars_format::scientific, precision);
+  if (result.ec != std::errc{}) {
+    return;
+  }
+
+  double rounded = number;
+  const auto parsed = std::from_chars(buffer, result.ptr, rounded,
+                                      std::chars_format::scientific);
+  if (parsed.ec == std::errc{}) {
+    value = rounded;
+  }
+}
+
+static std::string dump_json_with_floating_point_precision(const nlohmann::json &value,
+                                                           int precision) {
+  auto rounded = value;
+  round_json_floating_point_values(rounded, precision);
+  return rounded.dump(2);
+}
+
 std::string tdesc_to_string(const TDesc &d) {
   std::ostringstream ss;
   ss << "{" << "\\n";
@@ -162,6 +203,16 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
     std::ostringstream label_base;
     if (prefs.dump_node_name)
       label_base << (np.spec.name.empty() ? "(unnamed)" : np.spec.name);
+
+    if (prefs.dump_node_settings && np.spec.debug && !np.spec.settings.is_null() &&
+        !(np.spec.settings.is_object() && np.spec.settings.empty())) {
+      if (!label_base.str().empty()) {
+        label_base << "\n";
+      }
+      label_base << replace_newlines_with_l(dump_json_with_floating_point_precision(
+                        np.spec.settings, prefs.floating_point_precision))
+                 << "\\l";
+    }
 
     if (prefs.dump_node_in_out_tids) {
       std::string in_str = "[";
@@ -338,7 +389,8 @@ static void write_nodes(std::ostringstream &ss, const GraphSpec &g,
 
     if (dump_prefs.dump_node_settings && ns.debug && !ns.settings.is_null() &&
         !(ns.settings.is_object() && ns.settings.empty())) {
-      std::string settings_dump = ns.settings.dump(2);
+      std::string settings_dump = dump_json_with_floating_point_precision(
+          ns.settings, dump_prefs.floating_point_precision);
       label << replace_newlines_with_l(settings_dump) << "\\l";
     }
 

@@ -445,6 +445,13 @@ private:
 
     input_form->addRow(tr("Graph rankdir"), graph_spec_dump_preferences_widgets_.rankdir_combo_);
 
+    graph_spec_dump_preferences_widgets_.floating_point_precision_spin_ =
+        create_spin_box(this, 0, 17, graph_spec_dump_preferences.floating_point_precision);
+    graph_spec_dump_preferences_widgets_.floating_point_precision_spin_->setToolTip(
+        tr("Number of digits after the decimal point in scientific notation."));
+    input_form->addRow(tr("Floating-point precision"),
+                       graph_spec_dump_preferences_widgets_.floating_point_precision_spin_);
+
     graph_spec_dump_preferences_widgets_.node_name_checkbox_ = new QCheckBox(this);
     graph_spec_dump_preferences_widgets_.node_name_checkbox_->setChecked(
         graph_spec_dump_preferences.dump_node_name);
@@ -497,6 +504,13 @@ private:
         tr("Include node names in the compiled graph."));
     input_form->addRow(tr("Rank direction"),
                        graph_compiled_dump_preferences_widgets_.rankdir_combo_);
+
+    graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_ =
+        create_spin_box(this, 0, 17, graph_compiled_dump_preferences.floating_point_precision);
+    graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_->setToolTip(
+        tr("Number of digits after the decimal point in scientific notation."));
+    input_form->addRow(tr("Floating-point precision"),
+                       graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_);
 
     graph_compiled_dump_preferences_widgets_.node_name_checkbox_ = new QCheckBox(this);
     graph_compiled_dump_preferences_widgets_.node_name_checkbox_->setChecked(
@@ -583,6 +597,9 @@ private:
                        ? GraphSpecDumpPreferences::Rankdir::LeftToRight
                        : GraphSpecDumpPreferences::Rankdir::TopToBottom,
 
+        .floating_point_precision =
+            graph_spec_dump_preferences_widgets_.floating_point_precision_spin_->value(),
+
         .dump_node_name = graph_spec_dump_preferences_widgets_.node_name_checkbox_->isChecked(),
         .dump_node_kind = graph_spec_dump_preferences_widgets_.node_kind_checkbox_->isChecked(),
         .dump_node_settings =
@@ -594,6 +611,9 @@ private:
         .rankdir = graph_compiled_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
                        ? GraphCompiledDumpPreferences::Rankdir::LeftToRight
                        : GraphCompiledDumpPreferences::Rankdir::TopToBottom,
+
+        .floating_point_precision =
+            graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_->value(),
 
         .dump_node_name = graph_compiled_dump_preferences_widgets_.node_name_checkbox_->isChecked(),
         .dump_node_kind = graph_compiled_dump_preferences_widgets_.node_kind_checkbox_->isChecked(),
@@ -620,6 +640,9 @@ private:
     connect(graph_spec_dump_preferences_widgets_.rankdir_combo_,
             qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](int) { apply_button_->setEnabled(true); });
+    connect(graph_spec_dump_preferences_widgets_.floating_point_precision_spin_,
+            qOverload<int>(&QSpinBox::valueChanged), this,
+            [this](int) { apply_button_->setEnabled(true); });
     connect(graph_spec_dump_preferences_widgets_.node_name_checkbox_, &QCheckBox::toggled, this,
             [this](bool) { apply_button_->setEnabled(true); });
     connect(graph_spec_dump_preferences_widgets_.node_kind_checkbox_, &QCheckBox::toggled, this,
@@ -631,6 +654,9 @@ private:
 
     connect(graph_compiled_dump_preferences_widgets_.rankdir_combo_,
             qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](int) { apply_button_->setEnabled(true); });
+    connect(graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_,
+            qOverload<int>(&QSpinBox::valueChanged), this,
             [this](int) { apply_button_->setEnabled(true); });
     connect(graph_compiled_dump_preferences_widgets_.node_name_checkbox_, &QCheckBox::toggled, this,
             [this](bool) { apply_button_->setEnabled(true); });
@@ -659,7 +685,8 @@ private:
   struct GraphSpecDumpPreferencesWidgets {
     // dump preferences
     // rankdir: LR | TB
-    QComboBox *rankdir_combo_ = nullptr;
+    QComboBox *rankdir_combo_                  = nullptr;
+    QSpinBox  *floating_point_precision_spin_ = nullptr;
     // Nodes
     QCheckBox *node_name_checkbox_     = nullptr;
     QCheckBox *node_kind_checkbox_     = nullptr;
@@ -672,11 +699,12 @@ private:
   struct GraphCompiledDumpPreferencesWidgets {
     // dump preferences
     // rankdir: LR | TB
-    QComboBox *rankdir_combo_          = nullptr;
-    QCheckBox *node_name_checkbox_     = nullptr;
-    QCheckBox *node_kind_checkbox_     = nullptr;
-    QCheckBox *node_settings_checkbox_ = nullptr;
-    QCheckBox *node_in_out_tids_       = nullptr;
+    QComboBox *rankdir_combo_                  = nullptr;
+    QSpinBox  *floating_point_precision_spin_ = nullptr;
+    QCheckBox *node_name_checkbox_             = nullptr;
+    QCheckBox *node_kind_checkbox_             = nullptr;
+    QCheckBox *node_settings_checkbox_         = nullptr;
+    QCheckBox *node_in_out_tids_               = nullptr;
     // Edges
     QCheckBox *edge_indices_checkbox_ = nullptr;
     QCheckBox *edge_desc_checkbox_    = nullptr;
