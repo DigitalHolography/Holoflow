@@ -22,6 +22,7 @@
 #include <string>
 #include <vector>
 
+#include "holoflow/core/adjacency_list.hh"
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
 #include "holoflow/core/tasks.hh"
@@ -185,4 +186,74 @@ TEST(GraphSpecTest, DotOutputContainsEscapedLabelsAndEdgePorts) {
   EXPECT_NE(dot.find("source"), std::string::npos);
   EXPECT_NE(dot.find("quoted"), std::string::npos);
   EXPECT_NE(dot.find("taillabel=\"0\" headlabel=\"0\""), std::string::npos);
+}
+
+// -------------------------------------------------------------------------------------------------
+// Adjacency List
+// -------------------------------------------------------------------------------------------------
+
+TEST(AdjacencyListTest, BasicGraphConcept) {
+  static_assert(holoflow::core::Graph<holoflow::core::AdjacencyList<std::string, std::string>>);
+}
+
+TEST(AdjacencyListTest, BasicGraphConstruction) {
+
+  holoflow::core::AdjacencyList<std::string, std::string> g;
+  auto                                                    v1 = g.add_vertex("v1");
+  auto                                                    v2 = g.add_vertex("v2");
+  g.add_edge(0, "v1 -> v2", 1);
+
+  EXPECT_EQ(g[v1], "v1");
+  EXPECT_EQ(g[v2], "v2");
+  EXPECT_EQ(g.num_vertices(), 2);
+}
+
+TEST(AdjacencyListTest, TopologicalSortBasic) {
+
+  holoflow::core::AdjacencyList<std::string, std::string> g;
+  g.add_vertex("v1");
+  g.add_vertex("v2");
+  g.add_edge(0, "v1 -> v2", 1);
+
+  std::vector<size_t> v{};
+  std::vector<size_t> expected{0, 1};
+  holoflow::core::topological_sort(g, std::back_inserter(v));
+  EXPECT_EQ(v, expected);
+}
+
+TEST(AdjacencyListTest, TopologicalSortBigger) {
+
+  holoflow::core::AdjacencyList<std::string, std::string> g;
+  g.add_vertex("A");
+  g.add_vertex("B");
+  g.add_vertex("C");
+  g.add_vertex("D");
+  g.add_vertex("E");
+  g.add_edge(1, "B -> E", 4);
+  g.add_edge(1, "B -> C", 2);
+  g.add_edge(4, "E -> C", 2);
+  g.add_edge(4, "E -> A", 0);
+  g.add_edge(0, "A -> C", 2);
+  g.add_edge(0, "A -> D", 3);
+  g.add_edge(2, "C -> D", 3);
+
+  std::vector<size_t> v{};
+  std::vector<size_t> expected{1, 4, 0, 2, 3};
+  holoflow::core::topological_sort(g, std::back_inserter(v));
+  EXPECT_EQ(v, expected);
+}
+
+TEST(AdjacencyListTest, TopologicalSortCycle) {
+
+  holoflow::core::AdjacencyList<std::string, std::string> g;
+  g.add_vertex("v1");
+  g.add_vertex("v2");
+  g.add_vertex("v3");
+  g.add_edge(0, "v1 -> v2", 1);
+  g.add_edge(1, "v2 -> v3", 2);
+  g.add_edge(2, "v2 -> v3", 0);
+
+  std::vector<size_t> v{};
+  EXPECT_THROW(holoflow::core::topological_sort(g, std::back_inserter(v)),
+               holoflow::core::DetectedCycleError);
 }

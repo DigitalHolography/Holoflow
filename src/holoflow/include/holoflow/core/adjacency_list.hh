@@ -20,10 +20,11 @@
 #include <stdexcept>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace holoflow::core {
 
-class DetectedCycleError : std::runtime_error {
+class DetectedCycleError : public std::runtime_error {
 public:
   explicit DetectedCycleError();
 };
@@ -36,16 +37,22 @@ concept Graph =
       typename G::EdgeProperties;
 
       typename G::InEdge;
-      typename G::OutEdge; // TODO add constaint such as get_source etc
+      { G::InEdge(0, ep).get_source() } -> std::same_as<typename G::VertexDescriptor>;
+      typename G::OutEdge;
+      { G::OutEdge(0, ep).get_target() } -> std::same_as<typename G::VertexDescriptor>;
 
-      typename G::VertexContainer;
-      typename G::EdgeContainer;
+      typename G::template VContainer<bool>;
 
-      g.add_vertex(vp);
+      { g.add_vertex(vp) } -> std::same_as<typename G::VertexDescriptor>;
+
       g.add_edge(d, ep, d);
       { g.num_vertices() } -> std::convertible_to<size_t>;
       { g[d] } -> std::same_as<typename G::VertexProperties &>;
       { gc[d] } -> std::same_as<const typename G::VertexProperties &>;
+
+      { g.in_degree(d) } -> std::same_as<size_t>;
+      { g.out_degree(d) } -> std::same_as<size_t>;
+
       typename G::VertexIterator;
       std::forward_iterator<typename G::VertexIterator>;
       typename G::InEdgeIterator;
@@ -55,72 +62,71 @@ concept Graph =
     };
 
 // TODO add concepts for containers
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor = size_t>
-class AdjacencyList {
+template <typename VProps, typename EProps> class AdjacencyList {
 public:
-  using VertexProperties = VProps;
-  using EdgeProperties   = EProps;
-  using VertexDescriptor = VDescriptor;
-
-  using VertexIterator  = declval<decltype(this)>().make_vertex_range().begin();
-  using OutEdgeIterator = EContainer<OutEdge>::iterator;
-  using InEdgeIterator  = EContainer<InEdge>::iterator;
-
-  using VertexContainer = VContainer;
-  using EdgeContainer   = EContainer;
+  using VertexDescriptor                 = size_t;
+  template <typename T> using EContainer = std::vector<T>;
+  template <typename T> using VContainer = std::vector<T>;
 
   class OutEdge {
   public:
-    OutEdge(const VDescriptor &target, const EProps &props);
+    OutEdge(const VertexDescriptor &target, const EProps &props);
 
-    inline VDescriptor   get_target();
-    inline const EProps &get_properties() const;
-    inline EProps       &get_properties();
+    inline VertexDescriptor get_target() const;
+    inline const EProps    &get_properties() const;
+    inline EProps          &get_properties();
 
   private:
-    VDescriptor target_;
-    EProps      properties_;
+    VertexDescriptor target_;
+    EProps           properties_;
   };
 
   class InEdge {
   public:
-    InEdge(const VDescriptor &source, const EProps &props);
+    InEdge(const VertexDescriptor &source, const EProps &props);
 
-    inline VDescriptor   get_source();
-    inline const EProps &get_properties() const;
-    inline EProps       &get_properties();
+    inline VertexDescriptor get_source() const;
+    inline const EProps    &get_properties() const;
+    inline EProps          &get_properties();
 
   private:
-    VDescriptor   source_;
-    const EProps &properties_;
+    VertexDescriptor source_;
+    const EProps    &properties_;
   };
 
   struct Vertex {
     Vertex(const VProps &props);
-    Vprops              properties;
+
+    inline size_t       out_degree() const;
+    inline size_t       in_degree() const;
+    VProps              properties;
     EContainer<OutEdge> out_edges;
     EContainer<InEdge>  in_edges;
-  }
+  };
 
-  inline void
-       add_vertex(const VProps &props);
-  void add_edge(VDescriptor source, const EProps &edge_props, VDescriptor target);
+  using VertexProperties = VProps;
+  using EdgeProperties   = EProps;
+
+  template <typename T> using VertexContainer = VContainer<T>;
+
+  inline VertexDescriptor add_vertex(const VProps &props);
+  void add_edge(VertexDescriptor source, const EProps &edge_props, VertexDescriptor target);
 
   inline size_t num_vertices() const;
 
-  VProps       &operator[](VDescriptor descriptor);
-  const VProps &operator[](VDescriptor descriptor) const;
+  VProps       &operator[](VertexDescriptor descriptor);
+  const VProps &operator[](VertexDescriptor descriptor) const;
 
-  inline auto make_vertex_range() { return std::ranges::views::iota(0, num_vertices()); }
+  inline size_t in_degree(VertexDescriptor descriptor) const;
+  inline size_t out_degree(VertexDescriptor descriptor) const;
 
-  inline auto make_out_edges_range(VDescriptor d) {
-    return std::tie(adjacency_list_[d].out_edges.begin(), adjacency_list_[d].out_edges.end());
-  }
+  inline auto                       make_vertex_range() const;
+  inline const EContainer<OutEdge> &make_out_edges_range(VertexDescriptor d) const;
+  inline const EContainer<InEdge>  &make_in_edges_range(VertexDescriptor d) const;
 
-  inline auto make_in_edges_range(VDescriptor d) {
-    return std::tie(adjacency_list_[d].in_edges.begin(), adjacency_list_[d].out_in.end());
-  }
+  using VertexIterator  = std::ranges::iota_view<VertexDescriptor, VertexDescriptor>;
+  using OutEdgeIterator = EContainer<OutEdge>::iterator;
+  using InEdgeIterator  = EContainer<InEdge>::iterator;
 
 private:
   VContainer<Vertex> adjacency_list_;

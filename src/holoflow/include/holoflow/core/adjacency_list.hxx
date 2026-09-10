@@ -14,11 +14,11 @@
 
 #pragma once
 
-#include "bug.hh"
-#include "adjacency_list.hh"
 #include <algorithm>
+#include <queue>
 #include <stdexcept>
-#include <vector>
+
+#include "adjacency_list.hh"
 
 namespace holoflow::core {
 
@@ -32,31 +32,23 @@ DetectedCycleError::DetectedCycleError() : std::runtime_error("detected unexpect
 // OutEdge
 // -------------------------------------------------------------------------------------------------
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::OutEdge::OutEdge(
-    const VDescriptor &target, const EProps &props)
+template <typename VProps, typename EProps>
+AdjacencyList<VProps, EProps>::OutEdge::OutEdge(const VertexDescriptor &target, const EProps &props)
     : target_{target}, properties_{props} {}
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-inline VDescriptor
-AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::OutEdge::get_target() {
+template <typename VProps, typename EProps>
+inline AdjacencyList<VProps, EProps>::VertexDescriptor
+AdjacencyList<VProps, EProps>::OutEdge::get_target() const {
   return target_;
 }
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-inline EProps &
-AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::OutEdge::get_properties() {
+template <typename VProps, typename EProps>
+inline EProps &AdjacencyList<VProps, EProps>::OutEdge::get_properties() {
   return properties_;
 }
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-inline const EProps &
-AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::OutEdge::get_properties()
-    const {
+template <typename VProps, typename EProps>
+inline const EProps &AdjacencyList<VProps, EProps>::OutEdge::get_properties() const {
   return properties_;
 }
 
@@ -64,30 +56,23 @@ AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::OutEdge::get
 // InEdge
 // -------------------------------------------------------------------------------------------------
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::InEdge::InEdge(
-    const VDescriptor &source, const EProps &props)
+template <typename VProps, typename EProps>
+AdjacencyList<VProps, EProps>::InEdge::InEdge(const VertexDescriptor &source, const EProps &props)
     : source_{source}, properties_{props} {}
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-inline VDescriptor
-AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::InEdge::get_source() {
-  return source;
+template <typename VProps, typename EProps>
+inline AdjacencyList<VProps, EProps>::VertexDescriptor
+AdjacencyList<VProps, EProps>::InEdge::get_source() const {
+  return source_;
 }
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-inline EProps &
-AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::InEdge::get_properties() {
+template <typename VProps, typename EProps>
+inline EProps &AdjacencyList<VProps, EProps>::InEdge::get_properties() {
   return properties_;
 }
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-inline const EProps &
-AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::InEdge::get_properties() const {
+template <typename VProps, typename EProps>
+inline const EProps &AdjacencyList<VProps, EProps>::InEdge::get_properties() const {
   return properties_;
 }
 
@@ -95,104 +80,118 @@ AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::InEdge::get_
 // Vertex
 // -------------------------------------------------------------------------------------------------
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::Vertex::Vertex(
-    const VProps &props)
-    : properties{props} {}
+template <typename VProps, typename EProps>
+AdjacencyList<VProps, EProps>::Vertex::Vertex(const VProps &props) : properties{props} {}
 
+template <typename VProps, typename EProps>
+inline size_t AdjacencyList<VProps, EProps>::Vertex::out_degree() const {
+  return out_edges.size();
+}
+
+template <typename VProps, typename EProps>
+size_t AdjacencyList<VProps, EProps>::Vertex::in_degree() const {
+  return in_edges.size();
+}
 // -------------------------------------------------------------------------------------------------
 // AdjacencyList
 // -------------------------------------------------------------------------------------------------
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-inline void AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::add_vertex(
-    const VProps &props) {
+template <typename VProps, typename EProps>
+inline AdjacencyList<VProps, EProps>::VertexDescriptor
+AdjacencyList<VProps, EProps>::add_vertex(const VProps &props) {
   adjacency_list_.emplace_back(Vertex(props));
+  return num_vertices() - 1; // TODO fix for non integral VertexDescriptor
 }
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-void AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::add_edge(
-    VDescriptor source, const EProps &edge_props, VDescriptor target) {
+template <typename VProps, typename EProps>
+void AdjacencyList<VProps, EProps>::add_edge(VertexDescriptor source, const EProps &edge_props,
+                                             VertexDescriptor target) {
   auto &v = adjacency_list_[source];
   v.out_edges.emplace_back(target, edge_props);
 
   auto &v2 = adjacency_list_[target];
-  v.in_edges.emplace_back(source, edge_props);
+  v2.in_edges.emplace_back(source, edge_props);
 }
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-VProps &AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::operator[](
-    VDescriptor descriptor) {
+template <typename VProps, typename EProps>
+VProps &AdjacencyList<VProps, EProps>::operator[](VertexDescriptor descriptor) {
   return adjacency_list_[descriptor].properties;
 }
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-const VProps &AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::operator[](
-    VDescriptor descriptor) const {
+template <typename VProps, typename EProps>
+const VProps &AdjacencyList<VProps, EProps>::operator[](VertexDescriptor descriptor) const {
   return adjacency_list_[descriptor].properties;
 }
 
-template <template <typename> class VContainer, template <typename> class EContainer,
-          typename VProps, typename EProps, typename VDescriptor>
-size_t AdjacencyList<VContainer, EContainer, VProps, EProps, VDescriptor>::num_vertices() const {
+template <typename VProps, typename EProps>
+size_t AdjacencyList<VProps, EProps>::num_vertices() const {
   return adjacency_list_.size();
 }
 
-template <typename G>
-  requires Graph<G>
-static G::VertexDescriptor
-select_umarked_node(const G &g, const typename G::VertexContainer<bool> &permanent_mark,
-                    const typename G::VertexContainer<bool> &temp_mark) {
-  for (auto vd : g.make_vertex_range()) {
-    if (!permanent_mark[vd] && !temp_mark[vd])
-      return vd;
-  }
-
-  HOLOFLOW_UNREACHABLE();
+template <typename VProps, typename EProps>
+inline auto AdjacencyList<VProps, EProps>::make_vertex_range() const {
+  return std::ranges::views::iota(static_cast<size_t>(0), num_vertices());
 }
 
-template <typename G, typename Inserter>
-  requires Graph<G> && std::output_iterator<Inserter, typename G::VertexDescriptor>
-static void visit(const G &g, typename G::VertexDescriptor n,
-                  const typename G::VertexContainer<bool> &permanent_mark,
-                  const typename G::VertexContainer<bool> &temp_mark, Inserter it) {
-
-  if (permanent_mark[n])
-    return;
-  else if (temp_mark[n])
-    throw DetectedCycleError();
-
-  temp_mark[n] = true;
-
-  auto nodes =
-      g.make_vertex_range() | std::ranges::views::filter([const & ](G::VertexDescriptor d) {
-        return std::ranges::any_of(g.make_in_edges_range(d),
-                                   [const & ](G::InEdge &e) { return e.get_source() == n; });
-      });
-  std::ranges::for_each(
-      nodes, [const & ](G::VertexDescriptor d) { visit(g, d, permanent_mark, temp_mark) });
-
-  permanent_mark[n] = true;
-
-  *it = n;
-  it++;
+template <typename VProps, typename EProps>
+inline const AdjacencyList<VProps,
+                           EProps>::EContainer<typename AdjacencyList<VProps, EProps>::OutEdge> &
+AdjacencyList<VProps, EProps>::make_out_edges_range(VertexDescriptor d) const {
+  return adjacency_list_[d].out_edges;
 }
+
+template <typename VProps, typename EProps>
+inline const AdjacencyList<VProps,
+                           EProps>::EContainer<typename AdjacencyList<VProps, EProps>::InEdge> &
+AdjacencyList<VProps, EProps>::make_in_edges_range(VertexDescriptor d) const {
+  return adjacency_list_[d].in_edges;
+}
+
+template <typename VProps, typename EProps>
+inline size_t AdjacencyList<VProps, EProps>::in_degree(VertexDescriptor d) const {
+  return adjacency_list_[d].in_degree();
+}
+
+template <typename VProps, typename EProps>
+inline size_t AdjacencyList<VProps, EProps>::out_degree(VertexDescriptor d) const {
+  return adjacency_list_[d].out_degree();
+}
+
+// -------------------------------------------------------------------------------------------------
+// Topological sort
+// -------------------------------------------------------------------------------------------------
 
 template <typename G, typename Inserter>
   requires Graph<G> && std::output_iterator<Inserter, typename G::VertexDescriptor>
 void topological_sort(const G &g, Inserter inserter) {
-  auto permanent_mark = G::VertexContainer<bool>{};
-  auto temporary_mark = G::VertexContainer<bool>{};
+  auto degree_range = std::ranges::views::transform(g.make_vertex_range(), [&](auto d) { return g.in_degree(d); });
+  auto in_degrees = G::template VertexContainer<size_t>(degree_range.begin(), degree_range.end());
 
-  while (permanent_mark.size() != g.num_vertices()) {
-    auto n = select_umarked_node(g, permanent_mark, temporary_mark);
-    visit(g, n, permanent_mark, temporary_mark, inserter);
+  auto   nodes_with_no_incoming_edge = std::queue<size_t>();
+  size_t count                       = 0;
+
+  for (size_t i = 0; i < in_degrees.size(); i++) {
+    if (in_degrees[i] == 0)
+      nodes_with_no_incoming_edge.emplace(i);
   }
+
+  while (nodes_with_no_incoming_edge.size() > 0) {
+    auto n = nodes_with_no_incoming_edge.front();
+    nodes_with_no_incoming_edge.pop();
+
+    *inserter = n;
+    inserter++;
+    count++;
+
+    for (auto e : g.make_out_edges_range(n)) {
+      in_degrees[e.get_target()]--;
+      if (in_degrees[e.get_target()] == 0)
+        nodes_with_no_incoming_edge.emplace(e.get_target());
+    }
+  }
+
+  if (count != g.num_vertices())
+    throw DetectedCycleError();
 }
 
 } // namespace holoflow::core
