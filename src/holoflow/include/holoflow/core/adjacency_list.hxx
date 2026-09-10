@@ -129,8 +129,16 @@ size_t AdjacencyList<VProps, EProps>::num_vertices() const {
 }
 
 template <typename VProps, typename EProps>
-inline auto AdjacencyList<VProps, EProps>::make_vertex_range() const {
+inline auto AdjacencyList<VProps, EProps>::make_vertices_range() const {
   return std::ranges::views::iota(static_cast<size_t>(0), num_vertices());
+}
+
+template <typename VProps, typename EProps>
+inline auto AdjacencyList<VProps, EProps>::make_edges_range() const {
+  auto indices = std::views::iota(std::size_t{0}, adjacency_list_.size());
+
+  return indices | std::views::transform(Vertex::VertexTransform(adjacency_list_)) |
+         std::views::join;
 }
 
 template <typename VProps, typename EProps>
@@ -164,7 +172,8 @@ inline size_t AdjacencyList<VProps, EProps>::out_degree(VertexDescriptor d) cons
 template <typename G, typename Inserter>
   requires Graph<G> && std::output_iterator<Inserter, typename G::VertexDescriptor>
 void topological_sort(const G &g, Inserter inserter) {
-  auto degree_range = std::ranges::views::transform(g.make_vertex_range(), [&](auto d) { return g.in_degree(d); });
+  auto degree_range =
+      std::ranges::views::transform(g.make_vertices_range(), [&](auto d) { return g.in_degree(d); });
   auto in_degrees = G::template VertexContainer<size_t>(degree_range.begin(), degree_range.end());
 
   auto   nodes_with_no_incoming_edge = std::queue<size_t>();

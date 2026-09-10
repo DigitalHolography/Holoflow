@@ -53,20 +53,23 @@ concept Graph =
       { g.in_degree(d) } -> std::same_as<size_t>;
       { g.out_degree(d) } -> std::same_as<size_t>;
 
-      typename G::VertexIterator;
-      std::forward_iterator<typename G::VertexIterator>;
-      typename G::InEdgeIterator;
-      std::forward_iterator<typename G::InEdgeIterator>;
-      typename G::OutEdgeIterator;
-      std::forward_iterator<typename G::OutEdgeIterator>;
+      typename G::VerticesIterator;
+      std::forward_iterator<typename G::VerticesIterator>;
+      typename G::EdgesIterator;
+      std::forward_iterator<typename G::EdgesIterator>;
+      typename G::InEdgesIterator;
+      std::forward_iterator<typename G::InEdgesIterator>;
+      typename G::OutEdgesIterator;
+      std::forward_iterator<typename G::OutEdgesIterator>;
     };
 
-// TODO add concepts for containers
 template <typename VProps, typename EProps> class AdjacencyList {
 public:
   using VertexDescriptor                 = size_t;
   template <typename T> using EContainer = std::vector<T>;
   template <typename T> using VContainer = std::vector<T>;
+
+  using Edge = std::tuple<VertexDescriptor, const EProps &, VertexDescriptor>;
 
   class OutEdge {
   public:
@@ -75,6 +78,14 @@ public:
     inline VertexDescriptor get_target() const;
     inline const EProps    &get_properties() const;
     inline EProps          &get_properties();
+    struct EdgeTransform {
+      std::size_t index;
+
+      // TODO move transformer in .hxx
+      Edge operator()(const OutEdge &e) const {
+        return std::tuple{index, e.get_properties(), e.get_target()};
+      }
+    };
 
   private:
     VertexDescriptor target_;
@@ -97,6 +108,16 @@ public:
   struct Vertex {
     Vertex(const VProps &props);
 
+    struct VertexTransform {
+      const VContainer<Vertex> &adjacency_list;
+      // TODO move transformer in .hxx
+      auto operator()(std::size_t i) const {
+        const auto &v = adjacency_list[i];
+
+        return v.out_edges | std::views::transform(OutEdge::EdgeTransform(i));
+      }
+    };
+
     inline size_t       out_degree() const;
     inline size_t       in_degree() const;
     VProps              properties;
@@ -109,7 +130,7 @@ public:
 
   template <typename T> using VertexContainer = VContainer<T>;
 
-  inline VertexDescriptor add_vertex(const VProps &props);
+  inline VertexDescriptor add_vertex(const VProps &props); // TODO add move semantic
   void add_edge(VertexDescriptor source, const EProps &edge_props, VertexDescriptor target);
 
   inline size_t num_vertices() const;
@@ -120,13 +141,21 @@ public:
   inline size_t in_degree(VertexDescriptor descriptor) const;
   inline size_t out_degree(VertexDescriptor descriptor) const;
 
-  inline auto                       make_vertex_range() const;
+  inline auto                       make_vertices_range() const;
+  inline auto                       make_edges_range() const;
   inline const EContainer<OutEdge> &make_out_edges_range(VertexDescriptor d) const;
   inline const EContainer<InEdge>  &make_in_edges_range(VertexDescriptor d) const;
 
-  using VertexIterator  = std::ranges::iota_view<VertexDescriptor, VertexDescriptor>;
-  using OutEdgeIterator = EContainer<OutEdge>::iterator;
-  using InEdgeIterator  = EContainer<InEdge>::iterator;
+  using VerticesIterator =
+      decltype(std::ranges::iota_view<VertexDescriptor, VertexDescriptor>(0, 1).begin());
+  using Indices    = std::ranges::iota_view<std::size_t, std::size_t>;
+  using InnerRange = decltype(std::declval<typename Vertex::VertexTransform>()(std::size_t{}));
+  using OuterRange = std::ranges::transform_view<Indices, typename Vertex::VertexTransform>;
+  using EdgesRange = std::ranges::join_view<OuterRange>;
+
+  using EdgesIterator    = std::ranges::iterator_t<EdgesRange>;
+  using OutEdgesIterator = EContainer<OutEdge>::iterator;
+  using InEdgesIterator  = EContainer<InEdge>::iterator;
 
 private:
   VContainer<Vertex> adjacency_list_;

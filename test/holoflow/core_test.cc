@@ -243,6 +243,30 @@ TEST(AdjacencyListTest, TopologicalSortBigger) {
   EXPECT_EQ(v, expected);
 }
 
+TEST(AdjacencyListTest, EdgeIterator) {
+
+  holoflow::core::AdjacencyList<std::string, std::string> g;
+  g.add_vertex("A");
+  g.add_vertex("B");
+  g.add_vertex("C");
+  g.add_vertex("D");
+  g.add_vertex("E");
+  auto edges = std::vector{
+      std::tuple(1, "B -> E", 4), std::tuple(1, "B -> C", 2), std::tuple(4, "E -> C", 2),
+      std::tuple(4, "E -> A", 0), std::tuple(0, "A -> C", 2), std::tuple(0, "A -> D", 3),
+      std::tuple(2, "C -> D", 3)};
+  for (auto e : edges) {
+    g.add_edge(std::get<0>(e), std::get<1>(e), std::get<2>(e));
+  }
+
+  auto edges_range = g.make_edges_range();
+
+  size_t i = 0;
+  for (auto &&edge : edges_range) {
+    EXPECT_EQ(edge, edges[i++]); //TODO compare to a set to ignore order + fix properties issue
+  }
+}
+
 TEST(AdjacencyListTest, TopologicalSortCycle) {
 
   holoflow::core::AdjacencyList<std::string, std::string> g;
