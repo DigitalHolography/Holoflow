@@ -1,282 +1,554 @@
 # Graph Compilation
 
-Graph compilation turns a declarative `GraphSpec` into the graph, resources, and execution
-sections consumed by the scheduler. This page describes the compiler as a sequence of passes. Each
-pass establishes invariants on which later passes rely.
+Graph compilation transforms a declarative graph into the execution plan and resources consumed by
+the scheduler. It prepares the pipeline but does not execute it.
 
-Compilation prepares tasks but does not execute the pipeline. After compilation, the application
-must keep the returned `CompilerOutput` alive for as long as its scheduler uses the contained graph
-and resources.
+This page specifies compilation as a sequence of partial transformations. Each pass either enriches
+the compiler state, establishes a property required by later passes, or rejects compilation.
+Equations describe the intended compiler contract; implementation restrictions and trusted
+assumptions are called out explicitly.
 
-## Inputs and output
+!!! warning "CompilerOutput lifetime"
+    The returned `CompilerOutput` owns objects referenced by the scheduler. It must remain alive for
+    the entire scheduler lifetime.
 
-The compiler receives:
+## Compilation pipeline
 
-- a `GraphSpec` containing node names, task kinds, settings, and slot-to-slot edges;
-- a `Registry` that maps task kinds to factories; and
-- optionally, the previous `CompilerOutput` when recompiling an updated graph.
+Compilation proceeds through twelve passes:
 
-It produces a `CompilerOutput` with three parts:
+| $j$ | Pass $P_j$ | State added or property established |
+| ---: | --- | --- |
+| 1 | Validate Spec | Names, registry keys, and destination slots are structurally valid |
+| 2 | Build Graph Plan | The mutable graph preserves the specification topology and ports |
+| 3 | Type Inference | DAG order, task contracts, and tensor descriptors |
+| 4 | Tensor IDs | Output slots and their consumers share logical tensor identities |
+| 5 | Storage Mapping | TIDs map to SIDs; in-place outputs alias their inputs |
+| 6 | Buffer Consistency | Every SID has at most one task owner |
+| 7 | Buffer Allocation | Stable `Storage` objects and compiler-owned memory blocks |
+| 8 | Storage Adapters | Node slots resolve to their `Storage` objects |
+| 9 | Section Partitioning | Synchronous nodes form independently scheduled sections |
+| 10 | Stream Assignment | Every section owns a CUDA stream |
+| 11 | Task Instantiation | Factories create or update one task per node |
+| 12 | Task Binding | Tasks receive storage access and logging services |
 
-| Part | Contents |
+Profiling and Graphviz output observe this process but do not modify its semantic result.
+
+## Formal model
+
+Let the graph specification be a finite, directed, port-labeled multigraph
+
+$$
+G_{\mathrm{spec}}=(V_{\mathrm{spec}},E_{\mathrm{spec}}).
+$$
+
+An edge is written
+
+$$
+e=(u,o,v,i),
+$$
+
+where $u$ is the producer, $o$ is its output slot, $v$ is the consumer, and $i$ is its input slot.
+
+| Notation | Definition |
 | --- | --- |
-| `graph` | A `GraphPlan` enriched with inference results, tensor descriptors, and tensor IDs |
-| `sections` | Independently scheduled regions and their synchronous and asynchronous work |
-| `resources` | Storage objects, memory blocks, CUDA streams, task instances, and storage adapters |
+| $\operatorname{src}(e)$ | Producer node $u$ |
+| $\operatorname{out}(e)$ | Producer output slot $o$ |
+| $\operatorname{dst}(e)$ | Consumer node $v$ |
+| $\operatorname{in}(e)$ | Consumer input slot $i$ |
+| $n(v)\in\mathrm{String}$ | Instance name of node $v$ |
+| $q(v)\in\mathrm{RegistryKey}$ | Registry key used to look up the node's factory |
+| $\kappa(v)\in\{\mathrm{Sync},\mathrm{Async}\}$ | Execution kind established during type inference |
 
-The compiler uses several related identities:
+Let $\Gamma$ denote the registry. The registry key $q(v)$ and execution kind $\kappa(v)$ are
+distinct: for example, `Fft` may be a registry key whose factory infers a synchronous task.
 
-- A **node name** identifies a task across compilation and graph updates.
-- A **tensor ID** (TID) identifies a logical node output and all edges that consume it.
-- A **storage ID** (SID) identifies the backing storage. Several tensors may share one SID through
-  an in-place mapping.
-- A **section ID** identifies work run by one scheduler thread on one CUDA stream.
+### Compiler state
 
-For an output slot `(v, i)`, every edge that consumes that slot receives the same tensor ID:
+Compilation progressively establishes the following objects and mappings:
 
-\[
-\operatorname{tid}(e) = \operatorname{out\_tid}(v, i)
-\quad\text{when}\quad
-e = (v, *, \operatorname{out\_idx}=i).
-\]
-
-For an in-place mapping from output `o` to input `i`:
-
-\[
-\operatorname{sid}(\operatorname{out\_tid}[o])
-=
-\operatorname{sid}(\operatorname{in\_tid}[i]).
-\]
-
-## Pass pipeline
-
-Passes run in this fixed order:
-
-| Phase | Passes | Principal result |
+| Symbol | Runtime representation | Meaning |
 | --- | --- | --- |
-| Structure | Validate Spec, Build Graph Plan | A valid mutable graph skeleton |
-| Semantics | Type Inference | Task contracts and tensor descriptors |
-| Storage | Tensor IDs, Storage Mapping, Buffer Consistency, Buffer Allocation, Storage Adapters | Addressable logical tensors and their storage |
-| Execution | Section Partitioning, Stream Assignment | Independently scheduled work and CUDA streams |
-| Materialization | Task Instantiation, Task Binding | Runtime tasks with their services bound |
+| $G=(V,E)$ | `GraphPlan` | Mutable graph enriched by later passes |
+| $F_v$ | node `InferResult` | Inference result for node $v$ |
+| $D_E$ | edge descriptors | Tensor descriptor carried by an edge |
+| $D_T$ | `tensor_descs` | Tensor descriptor associated with a TID |
+| $\tau$ | TIDs | Logical tensor identity |
+| $\sigma$ | `tid_to_sid` | Logical-to-physical storage mapping |
+| $\operatorname{Own}$ | owned input/output flags | Storage lifetime authority |
+| $\mathcal S$ | `sections` | Independently scheduled regions |
+| $c$ | `streams` | CUDA stream assigned to each section |
+| $T_v$ | `tasks` | Materialized runtime task for node $v$ |
+| $A_v$ | `node_storage_adapters` | Storage adapter for node $v$ |
 
-Profiling output and Graphviz dumps surround this pipeline but do not change its semantic result.
+Let $\mathcal R$ denote the resource bundle stored in `CompilerOutput::resources`, comprising tensor
+descriptors, the TID-to-SID mapping, storage objects and memory blocks, CUDA streams, task instances,
+and storage adapters.
 
-## Validate Spec
+When compilation succeeds, we write
 
-**Purpose.** Reject structural errors that can be diagnosed without invoking task factories.
+$$
+O=
+\operatorname{Compile}_{\Gamma}(G_{\mathrm{spec}},O_{\mathrm{prev}}?),
+$$
 
-**Preconditions.** The input `GraphSpec` is available and the registry has been populated.
+where $O_{\mathrm{prev}}$ is an optional previous compilation result and
 
-**Operation.** The pass verifies that node names are unique, every node kind is registered, and no
-two edges target the same `(node, input index)` pair.
+$$
+O=(G,\mathcal S,\mathcal R)
+$$
 
-**Postconditions.** Names can safely key task and adapter maps, every node has a factory, and each
-connected input slot has one producer at most.
+is the resulting `CompilerOutput`.
 
-**Rejected input.** Duplicate node names, unknown node kinds, and multiple edges targeting one
-input slot are rejected here. Cycles and invalid slot indices are deliberately deferred to type
-inference, where the compiler has the graph plan and factory contracts needed to diagnose them.
+`Compile` is partial: invalid specifications or factory results may be rejected, and allocation or
+CUDA operations may fail.
 
-## Build Graph Plan
+### Compilation as pass composition
 
-**Purpose.** Create the mutable representation enriched by the remaining passes.
+Let $X_0$ contain the compilation inputs and let $X_j$ be the compiler state after pass $P_j$.
+Each pass is a partial transformation
 
-**Preconditions.** The specification passed structural validation.
+$$
+P_j:X_{j-1}\rightharpoonup X_j.
+$$
 
-**Operation.** Each specification node becomes a `NodePlan` containing a copy of its `NodeSpec`.
-Each specification edge becomes an `EdgePlan` containing a copy of its `EdgeSpec`. The inference,
-descriptor, and ID fields are populated later.
+For a fixed registry $\Gamma$, the complete compiler is
 
-**Postconditions.** `CompilerOutput::graph` has the same topology and specifications as the input
-graph. No runtime resources exist yet.
+$$
+\operatorname{Compile}_{\Gamma}
+=
+P_{12}\circ P_{11}\circ\cdots\circ P_1.
+$$
 
-## Type Inference
+## Structure and inference
 
-**Purpose.** Ask every factory for its task contract and propagate tensor descriptions downstream.
+### Structural validity
 
-**Preconditions.** The graph plan mirrors the specification and all node kinds have registered
-factories.
+Validation establishes the predicate
 
-**Operation.** The compiler obtains a topological order, then visits producers before consumers.
-For each node it places incoming edge descriptors at their declared input indices, calls the
-factory's `infer(...)`, and copies inferred output descriptors to outgoing edges by output index.
+$$
+P_{\mathrm{struct}}(G_{\mathrm{spec}},\Gamma),
+$$
 
-```text
-order = topological_sort(graph)          # throws if graph is cyclic
+defined by three constraints.
 
-for node in producer_to_consumer(order):
-    inputs = array(in_degree(node))
+Node names are unique:
 
-    for edge in incoming_edges(node):
-        require edge.in_idx < inputs.size
-        inputs[edge.in_idx] = edge.desc
+$$
+\forall u,v\in V_{\mathrm{spec}},
+\quad
+u\ne v\Rightarrow n(u)\ne n(v).
+$$
 
-    node.infer = registry[node.kind].infer(inputs, node.settings)
+Every declared registry key is registered:
 
-    for edge in outgoing_edges(node):
-        require edge.out_idx < node.infer.output_descs.size
-        edge.desc = node.infer.output_descs[edge.out_idx]
-```
+$$
+\forall v\in V_{\mathrm{spec}},
+\quad
+q(v)\in\operatorname{dom}(\Gamma).
+$$
 
-**Postconditions.** Every node has an `InferResult`. Every edge has the descriptor of the source
-output it carries. The result also records task kind, owned slots, in-place mappings, and whether an
-asynchronous task synchronizes its producer stream.
+Every connected input slot has at most one producer:
 
-**Rejected input.** Cyclic graphs and edges whose input or output indices are out of bounds are
-rejected. Factory-specific validation errors also surface from `infer(...)`.
+$$
+\forall e_1,e_2\in E_{\mathrm{spec}},
+\quad
+e_1\ne e_2
+\Rightarrow
+(\operatorname{dst}(e_1),\operatorname{in}(e_1))
+\ne
+(\operatorname{dst}(e_2),\operatorname{in}(e_2)).
+$$
 
-!!! note "Input arity"
-    The input descriptor array is sized from the node's incoming edge count. Consequently, connected
-    input indices must form the range expected by the factory; a gap can make a higher input index
-    out of bounds.
+### Graph construction
 
-## Tensor IDs
+The build pass constructs $G=(V,E)$ and bijections
 
-**Purpose.** Give each logical output a stable identity inside the compiled result.
+$$
+\phi_V:V_{\mathrm{spec}}\rightarrow V,
+\qquad
+\phi_E:E_{\mathrm{spec}}\rightarrow E
+$$
 
-**Preconditions.** Type inference completed, so every node exposes its input and output descriptor
-vectors and every edge carries a descriptor.
+that preserve node specifications, edge specifications, endpoints, and port indices.
 
-**Operation.** Nodes are visited producer-first. Each output slot receives a fresh TID, including
-outputs with no consumers. That TID is copied to every outgoing edge selecting the output slot.
-Incoming edge TIDs are then used to populate each consumer's indexed input TIDs. Tensor descriptors
-are recorded in `resources.tensor_descs`.
+Therefore
 
-**Postconditions.** Each node has complete `in_tids` and `out_tids` vectors. All consumers of one
-logical output agree on its TID, and every assigned TID has a tensor descriptor.
+$$
+G\cong G_{\mathrm{spec}},
+$$
 
-## Storage Mapping
+where $\cong$ denotes this port- and specification-preserving graph isomorphism.
 
-**Purpose.** Decide which logical tensors share backing storage.
+Only the representation changes. Inference results and runtime resources have not yet been
+established.
 
-**Preconditions.** Tensor IDs are assigned, and inference has declared every in-place mapping.
+### Type inference
 
-**Operation.** Nodes are visited producer-first. An ordinary output receives a fresh SID. An output
-declared in-place reuses the SID already assigned to the mapped input.
+The compiler computes a topological order
 
-```text
-for node in producer_to_consumer(topological_sort(graph)):
-    for output_index, output_tid in node.out_tids:
-        mapping = in_place_mapping_for(output_index)
+$$
+\pi=(v_1,\ldots,v_{|V|})
+$$
 
-        if mapping exists:
-            input_tid = node.in_tids[mapping.input_index]
-            require input_tid already has a storage ID
-            sid = tid_to_sid[input_tid]
-        else:
-            sid = next_fresh_storage_id()
+such that
 
-        tid_to_sid[output_tid] = sid
-```
+$$
+(u,o,v,i)\in E
+\Rightarrow
+\operatorname{pos}_{\pi}(u)<\operatorname{pos}_{\pi}(v).
+$$
 
-**Postconditions.** Every output TID maps to one SID. In-place output tensors alias their mapped
-inputs; all other outputs have distinct storage.
+Failure to construct $\pi$ rejects cyclic graphs. Nodes are then visited producer-first.
 
-**Rejected input.** An in-place output is rejected if its mapped input has no assigned SID. Valid
-in-place indices and compatible descriptors are part of the factory's inference contract.
+For each node $v$, incoming edge descriptors form an indexed vector $I_v$:
 
-## Buffer Consistency
+$$
+I_v[\operatorname{in}(e)]=D_E(e)
+\qquad
+\forall e\in E:\operatorname{dst}(e)=v.
+$$
 
-**Purpose.** Ensure one task at most controls the lifetime of any storage object.
+The registered factory computes
 
-**Preconditions.** Owned input and output slots are known from inference, and TIDs map to SIDs.
+$$
+F_v
+=
+\Gamma[q(v)].\operatorname{infer}(I_v,\operatorname{settings}(v)).
+$$
 
-**Operation.** The pass groups all task-owned input and output declarations by SID.
+Its output descriptors propagate to outgoing edges:
 
-**Postconditions.** Every SID has zero or one declared owner.
+$$
+D_E(e)
+=
+F_{\operatorname{src}(e)}.\operatorname{output\_descs}[\operatorname{out}(e)]
+\qquad
+\forall e\in E.
+$$
 
-**Rejected input.** Compilation fails when multiple owned slots resolve to the same SID. This can
-happen when ownership and in-place aliasing combine into conflicting lifetime authorities. See
-[Storage Ownership](../concepts/storage-ownership.md) for the runtime ownership protocol.
+After inference, every node has an `InferResult`, every edge carries the descriptor of its selected
+producer output, and $G$ is known to be a DAG. Factory validation failures and out-of-range graph
+ports reject compilation.
 
-## Buffer Allocation
+!!! warning "Connected input indices must be dense"
+    The implementation sizes $I_v$ from the node's incoming edge count. Connected input indices must
+    consequently form $0,\ldots,\deg^-(v)-1$. Sparse connected slots are not represented as explicit
+    missing inputs.
 
-**Purpose.** Create stable storage objects and allocate compiler-owned memory.
+!!! warning "Factory result consistency is trusted"
+    The intended factory contract requires `input_descs`, `owned_inputs`, and the later `in_tids`
+    vector to describe the same input slots; likewise for outputs. It also requires valid in-place
+    indices and agreement between the registered factory interface and $\kappa(v)$. The compiler
+    does not currently validate all of these relationships immediately after `infer(...)`. A
+    malformed factory result may therefore fail in a later pass rather than at the contract
+    boundary.
 
-**Preconditions.** Tensor descriptors and the TID-to-SID mapping are complete, and storage ownership
-is unambiguous.
+## Logical tensors and physical storage
 
-**Operation.** The compiler first identifies SIDs controlled by tasks and chooses a representative
-TID for every SID. If a previous compiler output was supplied, its compiler-owned memory blocks form
-a reuse pool keyed by `(memory location, byte size)`.
+### Tensor identity
 
-```text
-owned_sids = storage_ids_of_all_owned_slots()
-representative_tid = choose_one_tensor_per_sid()
-reuse_pool = move_previous_blocks_grouped_by(memory_location, byte_size)
+Define the set of inferred output slots
 
-for sid, tid in representative_tid:
-    desc = tensor_descs[tid]
-    storage = Storage(desc.mem_loc, desc.num_bytes, null)
+$$
+\mathcal O
+=
+\{(v,o)\mid v\in V,\ 0\le o<|F_v.\operatorname{output\_descs}|\}.
+$$
 
-    if sid not in owned_sids:
-        block = reuse_pool.take_exact_match(desc.mem_loc, desc.num_bytes)
-                or allocate(desc.mem_loc, desc.num_bytes)
-        storage.ptr = block.data
-        memory_blocks[sid] = move(block)
+Let $\mathcal T$ be the set of generated tensor IDs. The tensor-ID pass constructs a bijection
 
-    storages[sid] = move(storage)
-```
+$$
+\tau_{\mathrm{out}}:\mathcal O\rightarrow\mathcal T.
+$$
 
-Host descriptors receive host allocations and device descriptors receive device allocations. A
-task-owned SID still receives a stable `Storage` object, but its pointer initially remains null; the
-owning task publishes its storage during execution.
+Every output receives a TID, including an unconnected output. Each edge inherits the identity of the
+output it carries:
 
-**Postconditions.** Every SID has a stable `Storage`. Every compiler-owned SID also has a matching
-`MemoryBlock`, and its storage points at that block. Reused blocks have exactly the requested memory
-location and byte size. Old blocks left in the reuse pool are released.
+$$
+\tau(e)
+=
+\tau_{\mathrm{out}}(\operatorname{src}(e),\operatorname{out}(e)).
+$$
 
-## Storage Adapters
+The consumer observes that same identity:
 
-**Purpose.** Give each task indexed access to the storage objects corresponding to its inputs and
-outputs.
+$$
+\tau_{\mathrm{in}}(\operatorname{dst}(e),\operatorname{in}(e))
+=
+\tau(e).
+$$
 
-**Preconditions.** Node TID vectors and the resource maps from TID to SID to `Storage` are complete.
+Thus fan-out duplicates references, not logical tensors:
 
-**Operation.** The compiler creates one `TaskStorageAdapter` per node. The adapter retains the
-node's input and output TIDs and resolves them through the compiled resources.
+$$
+e_1,e_2\text{ consume }(v,o)
+\Rightarrow
+\tau(e_1)=\tau(e_2)=\tau_{\mathrm{out}}(v,o).
+$$
 
-**Postconditions.** `resources.node_storage_adapters` contains an adapter keyed by every node name.
-The adapters are not exposed to tasks until the final binding pass.
+The TID descriptor map is total over generated TIDs:
 
-## Section Partitioning
+$$
+D_T(\tau_{\mathrm{out}}(v,o))
+=
+F_v.\operatorname{output\_descs}[o].
+$$
 
-**Purpose.** Divide the graph into regions that the scheduler can run independently.
+### Storage identity and in-place aliasing
 
-Synchronous nodes connected without crossing an asynchronous node belong to one section. An
-asynchronous node forms a boundary: it participates as a producer in upstream sections and as a
-consumer in downstream sections, rather than belonging to a section's synchronous sequence.
+TIDs name logical values; SIDs name physical storage identities.
 
-**Preconditions.** Every node's inferred task kind is known.
+Let $\mathcal U$ be the set of generated SIDs. The storage-mapping pass constructs a surjection
 
-**Operation.** The pass uses disjoint sets to build synchronous components:
+$$
+\sigma:\mathcal T\rightarrow\mathcal U.
+$$
 
-```text
-reject every Async -> Async edge
-create one disjoint set per graph node
+An ordinary output receives a fresh SID. If node $v$ declares output $o$ in place with input $i$,
+then
 
-for each Sync -> Sync edge:
-    unite(source, target)
+$$
+\sigma(\tau_{\mathrm{out}}(v,o))
+=
+\sigma(\tau_{\mathrm{in}}(v,i)).
+$$
 
-for each Async node:
-    unite all of its synchronous predecessors
-    unite all of its synchronous successors
+Different TIDs can therefore describe different logical tensors backed by the same storage.
 
-for each Sync node in topological order:
-    append node to the section representing its set
+!!! warning "In-place safety is a factory obligation"
+    Every tensor sharing an SID must agree on memory location and fit within the selected allocation.
+    Overwriting an in-place input must also be safe for every other consumer. The compiler currently
+    trusts the factory on these points: it neither compares all aliased descriptors nor performs
+    liveness analysis. See [Holoflow Task Model](../concepts/task-model.md#in-place-mappings).
 
-for each Async node:
-    add node as consumer to each downstream synchronous section
-    add node as producer to each upstream synchronous section
+### Unique ownership
 
-for each section:
-    stably move producers that synchronize their producer stream first
-```
+For $d\in\{\mathrm{in},\mathrm{out}\}$, let $\tau_d(v,j)$ denote the TID of slot $j$ on side $d$,
+and let $\operatorname{owned}_d(v,j)$ denote the corresponding ownership flag from $F_v$.
 
-Merging all synchronous predecessors of an asynchronous node ensures its producer side is invoked
-by one section. The corresponding successor merge does the same for its consumer side. Each
-section's `sync_topo` remains producer-to-consumer ordered.
+For each SID $s\in\mathcal U$, define its declared ownership set
+
+$$
+\operatorname{Owners}(s)
+=
+\{(v,d,j)\mid
+d\in\{\mathrm{in},\mathrm{out}\},
+\operatorname{owned}_d(v,j),
+\sigma(\tau_d(v,j))=s\}.
+$$
+
+Buffer consistency validates
+
+$$
+|\operatorname{Owners}(s)|\le 1
+\qquad
+\forall s\in\mathcal U.
+$$
+
+This makes storage lifetime authority unambiguous. Multiple owned slots that resolve to one SID are
+rejected, including conflicts introduced through in-place aliasing. Runtime ownership behavior is
+defined in [Storage Ownership](../concepts/storage-ownership.md).
+
+### Storage materialization
+
+For every SID $s\in\mathcal U$, the compiler selects a representative TID
+
+$$
+r(s)\in\sigma^{-1}(\{s\})
+$$
+
+and creates one stable `Storage` object with
+
+$$
+\operatorname{Storage}[s].\operatorname{mem\_loc}
+=
+D_T(r(s)).\operatorname{mem\_loc}
+$$
+
+and
+
+$$
+\operatorname{Storage}[s].\operatorname{bytes}
+=
+D_T(r(s)).\operatorname{num\_bytes}().
+$$
+
+Let
+
+$$
+\mathcal U_T
+=
+\{s\in\mathcal U\mid |\operatorname{Owners}(s)|=1\}
+$$
+
+be the task-owned SIDs.
+
+For $s\notin\mathcal U_T$, the compiler allocates a `MemoryBlock` or moves an exact match from the
+previous output:
+
+$$
+(\operatorname{mem\_loc},\operatorname{bytes})_{\mathrm{old}}
+=
+(\operatorname{mem\_loc},\operatorname{bytes})_{\mathrm{new}}.
+$$
+
+It then establishes
+
+$$
+\operatorname{Storage}[s].ptr
+=
+\operatorname{MemoryBlock}[s].data.
+$$
+
+For $s\in\mathcal U_T$, no backing block is allocated and
+
+$$
+\operatorname{Storage}[s].ptr=\mathrm{null}
+$$
+
+until the owning task publishes a pointer during execution. Previous blocks that are not reused are
+released when the reuse pool is destroyed.
+
+Finally, every node receives an adapter $A_v$ that resolves slots through the chain
+
+$$
+\mathrm{slot}\xrightarrow{\tau}\mathrm{TID}
+\xrightarrow{\sigma}\mathrm{SID}
+\longrightarrow\mathrm{Storage}.
+$$
+
+For example,
+
+$$
+A_v.\operatorname{input}(i)
+=
+\operatorname{Storage}[\sigma(\tau_{\mathrm{in}}(v,i))].
+$$
+
+The adapters exist at this stage but are bound to tasks only after task instantiation.
+
+## From a DAG to execution sections
+
+An asynchronous task splits input acceptance from output production. It is a scheduling boundary,
+not a member of a section's synchronous sequence.
+
+Let
+
+$$
+V_S=\{v\in V\mid\kappa(v)=\mathrm{Sync}\},
+\qquad
+V_A=\{v\in V\mid\kappa(v)=\mathrm{Async}\}.
+$$
+
+For an asynchronous node $a\in V_A$, define its synchronous predecessor and successor sets:
+
+$$
+\operatorname{Pred}_S(a)
+=
+\{p\in V_S\mid
+\exists o,i:\;(p,o,a,i)\in E\},
+$$
+
+$$
+\operatorname{Succ}_S(a)
+=
+\{q\in V_S\mid
+\exists o,i:\;(a,o,q,i)\in E\}.
+$$
+
+### The section equivalence relation
+
+The compiler constructs the smallest equivalence relation $\sim$ over $V_S$ satisfying three
+generating rules.
+
+First, directly connected synchronous nodes share a section:
+
+$$
+(u,o,v,i)\in E\land u,v\in V_S
+\Rightarrow
+u\sim v.
+$$
+
+Second, all synchronous predecessors of one asynchronous task share a section:
+
+$$
+p,q\in\operatorname{Pred}_S(a)
+\Rightarrow
+p\sim q
+\qquad
+\forall a\in V_A.
+$$
+
+Third, all synchronous successors of one asynchronous task share a section:
+
+$$
+p,q\in\operatorname{Succ}_S(a)
+\Rightarrow
+p\sim q
+\qquad
+\forall a\in V_A.
+$$
+
+The execution sections are the equivalence classes
+
+$$
+\mathcal S=V_S/{\sim}.
+$$
+
+Consequently, they partition the synchronous nodes:
+
+$$
+\bigsqcup_{S\in\mathcal S}S=V_S.
+$$
+
+This quotient induces the section map
+
+$$
+\operatorname{sec}:V_S\rightarrow\mathcal S,
+\qquad
+\operatorname{sec}(v)=[v]_{\sim}.
+$$
+
+The equations above define section membership. The current implementation computes the equivalence
+classes with a disjoint-set structure and stores each class in producer-to-consumer topological
+order.
+
+### Attaching asynchronous boundaries
+
+When an asynchronous node $a$ has synchronous predecessors, define
+
+$$
+\operatorname{up}(a)=\operatorname{sec}(p),
+\qquad
+p\in\operatorname{Pred}_S(a).
+$$
+
+This is well-defined because all synchronous predecessors of $a$ are equivalent. The task is added
+to
+
+$$
+\operatorname{async\_prod}[\operatorname{up}(a)].
+$$
+
+Similarly, when $a$ has synchronous successors,
+
+$$
+\operatorname{down}(a)=\operatorname{sec}(q),
+\qquad
+q\in\operatorname{Succ}_S(a),
+$$
+
+and the task is added to
+
+$$
+\operatorname{async\_cons}[\operatorname{down}(a)].
+$$
+
+Either attachment may be absent at a graph boundary.
+
+Within each section, asynchronous producers whose inference contract promises producer-stream
+synchronization are stably ordered before ordinary producers. This allows their barrier to cover
+preceding synchronous work before an ordinary queue publishes GPU-backed input.
 
 For example:
 
@@ -284,131 +556,178 @@ For example:
 Source -> Upload -> Queue -> Compute -> Download -> Sink
         [ section 0 ]       [          section 1          ]
                        ^   ^
-                       |   +-- Queue is an async consumer of section 1
-                       +------ Queue is an async producer of section 0
+                       |   +-- Queue consumes on section 1
+                       +------ Queue produces from section 0
 ```
 
-**Postconditions.** Every synchronous node belongs to one section. Each asynchronous node is listed
-in the relevant upstream `async_prod` and downstream `async_cons` collections. Synchronizing
-producers precede ordinary producers, and `has_synchronizing_async_producer` records whether the
-section contains one.
+!!! warning "Async-to-Async edges are unsupported"
+    The current section model rejects every edge $e$ for which both
+    $\operatorname{src}(e)\in V_A$ and $\operatorname{dst}(e)\in V_A$.
 
-**Rejected input.** Direct edges between two asynchronous nodes are not currently supported.
+### Stream assignment
 
-## Stream Assignment
+The compiler assigns one owned CUDA stream to every section:
 
-**Purpose.** Give each execution section the CUDA stream used by its synchronous work.
+$$
+c:\mathcal S\rightarrow\mathrm{CUDAStream}.
+$$
 
-**Preconditions.** Section partitioning has produced the complete section list.
+Fresh compilation creates a new stream for every section. Recompilation moves available streams
+from the previous output into new sections and creates additional streams when necessary. Each
+section stores the raw handle $c(S)$, while `resources.streams[section.id]` owns the corresponding
+`CudaStream`.
 
-**Operation.** A fresh compilation creates one stream per section. During recompilation, streams
-from the previous result are moved into new sections in map iteration order. If the new graph has
-more sections, the compiler creates the additional streams.
+!!! warning "Stream reuse is positional"
+    Previous streams are matched to new sections by iteration order, not by section identity or
+    graph structure. Reused tasks must obtain their stream handles from the new creation context.
 
-**Postconditions.** Every section has a valid stream handle, and the owning `CudaStream` is stored
-under that section's ID in `resources.streams`.
+## Task materialization
 
-!!! note "Stream reuse is positional"
-    Current recompilation reuses available streams by order; it does not match sections by name or
-    graph identity. Tasks must receive their streams from the new creation context.
+Every synchronous node $v\in V_S$ receives its section stream:
 
-## Task Instantiation
+$$
+\operatorname{ctx}(v).\operatorname{stream}
+=
+c(\operatorname{sec}(v)).
+$$
 
-**Purpose.** Create runtime tasks, or update reusable tasks from a previous compiled graph.
+An asynchronous node receives the streams on its two defined sides:
 
-**Preconditions.** Factories, inferred contracts, sections, and section streams are available.
+$$
+\operatorname{ctx}(a).\operatorname{producer\_stream}
+=
+\begin{cases}
+c(\operatorname{up}(a)), & \operatorname{Pred}_S(a)\ne\varnothing,\\
+\mathrm{null}, & \text{otherwise},
+\end{cases}
+$$
 
-**Operation.** A synchronous task receives its section stream in `SyncCreateCtx`. An asynchronous
-task receives the stream of its first synchronous predecessor and first synchronous successor as
-its producer and consumer streams, respectively; either side may be null at a graph boundary.
+$$
+\operatorname{ctx}(a).\operatorname{consumer\_stream}
+=
+\begin{cases}
+c(\operatorname{down}(a)), & \operatorname{Succ}_S(a)\ne\varnothing,\\
+\mathrm{null}, & \text{otherwise}.
+\end{cases}
+$$
 
-When a previous output is available, reuse follows this decision:
+The factory creates a new task unless the previous output contains a reusable task with:
 
-```text
-previous = previous_tasks.find(node.name)
+$$
+\text{the same node name},
+\qquad
+\text{the same registry key},
+\qquad
+\text{a compatible Sync/Async interface}.
+$$
 
-if previous is absent:
-    factory.create(...)
-else if no previous graph node has the same name and kind:
-    factory.create(...)
-else if previous task cannot be cast to the required task interface:
-    factory.create(...)
-else:
-    factory.update(move(previous), ...)
+When all three conditions hold, the previous task is moved into `factory.update(...)`. The factory
+decides which internal state survives.
 
-synchronize every non-null stream supplied in the creation context
-```
+After `create(...)` or `update(...)`, the compiler synchronizes every non-null stream in the creation
+context so initialization has completed before compilation returns.
 
-The factory decides what state an update preserves. Synchronizing after `create(...)` or
-`update(...)` ensures any initialization submitted to the supplied streams has completed before
-compilation returns.
+The final binding pass associates each task $T_v$ with its storage adapter and a logger identified by
+the registry key and node name:
 
-**Postconditions.** `resources.tasks` contains one task keyed by each node name. Each task was
-created or updated against the newly inferred input descriptors, settings, and stream context.
+$$
+T_v.\operatorname{storage\_access}\leftarrow A_v.
+$$
 
-## Task Binding
+Constructors and factory update methods must not use these services because binding happens
+afterward. See [Holoflow Task Model](../concepts/task-model.md#the-common-task-interface).
 
-**Purpose.** Inject runtime services that tasks must not use during construction.
+## Recompilation semantics
 
-**Preconditions.** Tasks and per-node storage adapters have been created.
+Supplying $O_{\mathrm{prev}}$ transfers ownership of reusable resources to the compiler. The new
+specification still passes through every compiler pass.
 
-**Operation.** Every task is bound to its node's storage adapter and to a logger named from the task
-kind and node name.
+Therefore
 
-**Postconditions.** Compiled tasks can access logging and storage services during runtime methods.
-Constructors and factory update methods must not assume these services are already bound. See the
-[Holoflow Task Model](../concepts/task-model.md#the-common-task-interface) for the task-facing
-contract.
+$$
+\operatorname{Compile}_{\Gamma}(G_{\mathrm{spec}},O_{\mathrm{prev}})
+$$
 
-## Incremental recompilation
+must satisfy the same compiler postconditions as fresh compilation. Reuse changes resource identity
+and construction cost, but not the graph derived from the new specification or the invariants
+established by the compiler passes.
 
-Passing the previous `CompilerOutput` transfers ownership of reusable resources into compilation.
-The new graph is still validated, inferred, and planned from scratch; reuse is an optimization, not
-a shortcut around compiler passes.
+The implementation may reuse:
 
-Three resource classes can be reused:
-
-- memory blocks with an exact memory-location and byte-size match;
-- CUDA streams, assigned to new sections in order; and
-- task objects with the same node name, task kind, and compatible sync or async interface.
+| Resource | Reuse key |
+| --- | --- |
+| Memory block | Exact memory location and byte size |
+| CUDA stream | Position in the previous stream map |
+| Task | Node name, registry key, and compatible task interface |
 
 Resources that cannot be reused are destroyed normally. Because reuse moves objects out of the
-previous result, callers must not retain runtime references into that result while recompiling.
+previous result, callers must not retain scheduler or task references into that result while
+recompiling.
+
+## Compiler guarantees and trusted assumptions
+
+### Compiler-enforced postconditions
+
+If compilation succeeds, the output satisfies:
+
+$$
+\begin{aligned}
+&G\cong G_{\mathrm{spec}}\text{ and }G\text{ is a DAG},\\
+&\tau_{\mathrm{out}}:\mathcal O\rightarrow\mathcal T
+  \text{ identifies every logical output},\\
+&\sigma:\mathcal T\rightarrow\mathcal U
+  \text{ assigns every TID one SID},\\
+&|\operatorname{Owners}(s)|\le1
+  \quad\forall s\in\mathcal U,\\
+&\bigsqcup_{S\in\mathcal S}S=V_S,\\
+&c(S)\text{ is defined for every }S\in\mathcal S,\\
+&T_v\text{ and }A_v\text{ exist for every }v\in V.
+\end{aligned}
+$$
+
+In addition:
+
+- every SID has a stable `Storage` object;
+- compiler-owned SIDs have correctly located and sized backing blocks;
+- declared in-place mappings share an SID;
+- every section's synchronous sequence is topologically ordered;
+- asynchronous tasks are attached to each defined producer and consumer side;
+- every task has its runtime storage and logging services bound; and
+- initialization submitted to compiler-provided streams during task creation or update has completed.
+
+The scheduler can therefore concentrate on execution: constructing tensor views, running section
+threads, enforcing asynchronous boundaries, and applying the storage-ownership protocol.
+
+### Required factory invariants
+
+Successful compilation does not independently verify every property required from task factories.
+The factory contract additionally requires that:
+
+- `input_descs`, ownership flags, and input-slot metadata describe compatible slot sets;
+- the corresponding output-side vectors are mutually consistent;
+- declared in-place indices are valid;
+- every tensor sharing an SID is storage-compatible with the selected allocation;
+- in-place mutation is safe with respect to every other consumer of the aliased storage; and
+- the concrete factory interface agrees with the inferred execution kind $\kappa(v)$.
+
+Violating these obligations may cause a later compiler pass or runtime operation to fail. They form
+part of the trusted task/factory boundary rather than compiler-enforced postconditions.
 
 ## Failure and diagnostics
 
-Any pass may throw. The compiler logs the failing exception and can write a Graphviz snapshot to
-`compilation_failure.dot` when a log directory and graph dumping are enabled. It then synchronizes
-the CUDA device, clears the last CUDA error, flushes the compiler log, and rethrows the exception.
+Any partial transformation may fail. The compiler logs the exception, optionally writes
+`compilation_failure.dot`, synchronizes the CUDA device, clears the last CUDA error, flushes its log,
+and rethrows. With graph dumping enabled, success produces `compilation_success.dot`.
 
-On success, the same graph-dump setting produces `compilation_success.dot`. When profiling is
-enabled, the compiler records pass and detailed timings, logs a summary, and writes Chrome trace
-events when a log directory is configured. These diagnostic stages observe the compiler state but
-do not establish scheduler invariants.
-
-## Final compiler invariants
-
-Before a `CompilerOutput` is handed to the scheduler:
-
-- the graph is acyclic and each node has a registered factory and inferred contract;
-- every logical output has a tensor descriptor, TID, and SID;
-- each SID has at most one task owner and a stable `Storage` object;
-- compiler-owned storage points to a correctly located and sized memory block;
-- each synchronous node belongs to one topologically ordered section;
-- asynchronous nodes appear on the producer and consumer sides of their adjacent sections;
-- every section owns one CUDA stream;
-- every node has a task, storage adapter, and logger; and
-- task initialization submitted to compiler-provided streams has completed.
-
-The scheduler can therefore concentrate on execution: constructing tensor views, running section
-threads, enforcing asynchronous boundaries, and applying the ownership protocol.
+When profiling is enabled, pass timings and selected detailed operations may be emitted as Chrome
+trace events. These diagnostics observe compiler state but establish no scheduler invariants.
 
 ## Implementation map
 
-The pass driver and implementations are in `src/holoflow/src/runtime/compiler.cc`. Public compiler
-configuration and output types are declared in `src/holoflow/include/holoflow/runtime/compiler.hh`;
-`GraphPlan`, `ExecResouces`, and `Section` are declared in
-`src/holoflow/include/holoflow/runtime/graph_exec.hh`.
+The pass driver and implementations are in
+`src/holoflow/src/runtime/compiler.cc`. Public configuration and output types are declared in
+`src/holoflow/include/holoflow/runtime/compiler.hh`; `GraphPlan`, `ExecResouces`, and `Section` are
+declared in `src/holoflow/include/holoflow/runtime/graph_exec.hh`.
 
 The most direct behavioral tests are `test/holoflow/compiler_test.cc`,
 `test/holoflow/compiler_additional_test.cc`, and the compiler-related cases in
