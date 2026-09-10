@@ -1,0 +1,57 @@
+digraph RecordingEventLifecycle {
+  rankdir=TB;
+  newrank=true;
+  graph [nodesep=0.4, ranksep=0.75, pad=0.2, splines=polyline, bgcolor="transparent"];
+  node [fontname="Helvetica", shape=box, style="rounded,filled", fillcolor="#ccffcc",
+        color="#555555", fontsize=10, margin="0.12,0.08"];
+  edge [fontname="Helvetica", fontsize=9, color="#444444", fontcolor="#444444",
+        penwidth=1.2, arrowsize=0.65, arrowhead=vee];
+
+  subgraph cluster_command {
+    label="Start command";
+    labelloc=t;
+    labeljust=l;
+    style=rounded;
+    color=gray;
+    bgcolor="#f8f8f8";
+
+    start [label="UI calls ui_try_send\nrecord · start_recording"];
+    in_queue [label="UI → router\nmailbox", shape=cylinder, fillcolor="#e6f2ff",
+              color="#0066cc"];
+    route_in [label="Router tick"];
+    record_queue [label="Router → record\nmailbox", shape=cylinder, fillcolor="#e6f2ff",
+                  color="#0066cc"];
+    begin [label="Record task reads command\nand begins recording"];
+
+    { rank=same; start; in_queue; route_in; record_queue; begin; }
+    start -> in_queue -> route_in -> record_queue -> begin;
+  }
+
+  subgraph cluster_completion {
+    label="Completion notification";
+    labelloc=t;
+    labeljust=l;
+    style=rounded;
+    color=gray;
+    bgcolor="#f8f8f8";
+
+    ui_done [label="UI polls result"];
+    out_queue [label="Router → UI\nmailbox", shape=cylinder, fillcolor="#ffe6e6",
+               color="#cc0000"];
+    route_out [label="Router tick"];
+    node_queue [label="Nodes → router\nmailbox", shape=cylinder, fillcolor="#ffe6e6",
+                color="#cc0000"];
+    finish [label="Record task emits\nrecording_finished\n(or recording_failed)"];
+    frames [label="Collect configured frames\nand write the Holofile"];
+
+    { rank=same; ui_done; out_queue; route_out; node_queue; finish; frames; }
+    ui_done -> out_queue -> route_out -> node_queue -> finish -> frames [style=invis, weight=1000];
+    frames -> finish [constraint=false];
+    finish -> node_queue [constraint=false];
+    node_queue -> route_out [constraint=false];
+    route_out -> out_queue [constraint=false];
+    out_queue -> ui_done [constraint=false];
+  }
+
+  begin -> frames [ltail=cluster_command, lhead=cluster_completion];
+}

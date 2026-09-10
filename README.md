@@ -255,6 +255,27 @@ mkdocs serve
 ```
 This command will launch a local web server where you can preview the documentation during development.
 
+### Regenerate animated figures
+
+The animated figures in the heterodyne-detection lesson are generated with Matplotlib and encoded by FFmpeg. Install the pinned animation dependencies, ensure `ffmpeg` is available on `PATH`, then run from the repository root:
+
+```powershell
+pip install -r tools/requirements-animations.txt
+python tools/generate_heterodyne_animations.py
+```
+
+The command deterministically replaces the four MP4 files under `doc/mkdocs/docs/assets/videos/learn/heterodyne`.
+
+### Regenerate Holoflow timeline figures
+
+The illustrative CPU/GPU timelines in the Holoflow introduction are generated with Matplotlib. From the repository root, run:
+
+```powershell
+python tools/generate_holoflow_timelines.py
+```
+
+The command deterministically replaces the two SVG files named `holoflow-bandpass*-timeline.svg` under `doc/mkdocs/docs/assets/images`.
+
 ### Generate JSON schema
 The JSON schemas are generated using the `json-schema-for-humans` dependency. They are used to display the settings associated of each node.
 
