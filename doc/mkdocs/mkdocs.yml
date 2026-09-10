@@ -24,6 +24,8 @@ nav:
       - Concepts:
         - holoflow/concepts/index.md
         - Holoflow Task Model: holoflow/concepts/task-model.md
+        - Storage Ownership: holoflow/concepts/storage-ownership.md
+        - Events: holoflow/concepts/events.md
       - Tutorials:
         - holoflow/tutorials/index.md
         - Build An LDH Pipeline: holoflow/tutorials/ldh-pipeline.md

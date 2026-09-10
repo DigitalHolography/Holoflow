@@ -1,6 +1,6 @@
 # Holoflow Task Model
 
-Holoflow describes every computation as a task with zero or more tensor inputs and zero or more tensor outputs. A task is either synchronous, completing one input-to-output operation per call, or asynchronous, separating input consumption from output production. 
+Holoflow describes every computation as a task with zero or more tensor inputs and zero or more tensor outputs. A task is either synchronous, completing one input-to-output operation per call, or asynchronous, separating input consumption from output production.
 By convention, a task with no inputs is called a source, and a task with no outputs is called a sink, matching flow-theory naming convention.
 
 ## Synchronous tasks
@@ -24,7 +24,7 @@ struct SyncCtx {
 };
 ```
 
-`inputs` and `outputs` are ordered by the slots declared for the node. Each `TView` combines a tensor description with access to its storage. The cancellation flag lets a long-running task stop cooperatively. The event reader and writer let synchronous tasks receive and emit application events without coupling the task to the event router.
+`inputs` and `outputs` are ordered by the slots declared for the node. Each `TView` combines a tensor description with access to its storage. The cancellation flag lets a long-running task stop cooperatively. The [event reader and writer](events.md) let synchronous tasks receive and emit application events without coupling the task to the event router.
 
 The return value describes expected control flow:
 
@@ -160,7 +160,7 @@ struct InferResult {
 };
 ```
 
-The tensor descriptions record the validated inputs and inferred outputs. `in_place` declares outputs that reuse input storage, while the two ownership masks identify slots whose memory lifecycle is controlled by the task. `kind` selects synchronous or asynchronous construction.
+The tensor descriptions record the validated inputs and inferred outputs. [`in_place`](#in-place-mappings) declares outputs that reuse input storage, while the [ownership masks](storage-ownership.md) identify slots whose memory lifecycle is controlled by the task. `kind` selects synchronous or asynchronous construction.
 
 The final flag applies only to asynchronous tasks. When it is `true`, `try_push(...)` must synchronize its producer stream before returning any result that lets the scheduler advance. With the default value of `false`, the scheduler supplies the required barrier before calling the producer side. Because inference happens before task construction, the compiler can validate the whole graph and plan its memory and execution sections without running a task.
 
@@ -460,10 +460,10 @@ For the CPU factory, `create(...)` ignores the stream context and constructs `Cp
 !!! note "One task kind in production"
     As with the square-root example, the separate `RateLimiterCpu` and `RateLimiterCuda` kinds make the implementations easy to compare. An application can expose one `RateLimiter` factory that selects the implementation from the inferred input memory location.
 
-The rate limiter demonstrates asynchronous control flow. The [ownership section](#borrowed-and-owned-storage) revisits the same task with a task-owned slot, eliminating both copies while preserving its rate-limiting behavior. Because the producer and consumer sides may run in different execution sections, they may be called from different CPU threads and use different CUDA streams. 
+The rate limiter demonstrates asynchronous control flow. The [storage ownership guide](storage-ownership.md#an-owning-rate-limiter) revisits the same task with a task-owned slot, eliminating both copies while preserving its rate-limiting behavior. Because the producer and consumer sides may run in different execution sections, they may be called from different CPU threads and use different CUDA streams.
 
 !!! warning
-    
+
     Asynchronous tasks must guarantee safe operations under single producer single consumer concurency.
 
 An asynchronous boundary gives the compiler an opportunity to split the graph into independently scheduled sections. In the [queued band-pass example](../index.md#example-2-overlap-work-with-batchqueue), this lets upload, computation, and download overlap across consecutive frames.
@@ -489,215 +489,9 @@ protected:
 };
 ```
 
-The compiler binds the logger after constructing every task. It binds storage access when factory inference declares at least one owned slot. Consequently, a task must not call `logger()` or `storage_access()` from its constructor. `logger()` is available after compilation during normal runtime methods. `storage_access()` is available in those methods only to tasks whose inference result requires it.
+The compiler binds the logger after constructing every task. It binds [storage access](storage-ownership.md) when factory inference declares at least one owned slot. Consequently, a task must not call `logger()` or `storage_access()` from its constructor. `logger()` is available after compilation during normal runtime methods. `storage_access()` is available in those methods only to tasks whose inference result requires it.
 
 The task-specific logger includes the node kind and name, which keeps messages attributable when several instances of the same implementation appear in a graph. Cancellation is provided separately through each execution context because it belongs to the current scheduler run.
-
-## Borrowed and owned storage
-
-Most numerical tasks borrow their input and output storage. The compiler allocates the tensors, the scheduler puts their views in the context, and the task reads or writes those views during its operation. Such tasks keep the default `acquire_input(...)` and `release_output(...)` implementations.
-
-Some tasks must control storage themselves. An owning version of the rate limiter can expose its one-element staging slot directly to upstream and downstream work instead of copying into and out of a private temporary buffer. Its factory marks both slots in `InferResult::owned_inputs` and `InferResult::owned_outputs`, and the task implements the corresponding lifecycle hooks.
-
-[![Borrowed and task-owned storage lifecycles](../../assets/images/holoflow-storage-ownership.svg)](../../assets/images/holoflow-storage-ownership.svg)
-
-*Borrowed tasks use compiler allocations directly; owning tasks publish regions from their own buffers through stable `Storage` objects.*
-
-For owned slots, `IOStorageAccess` exposes the stable storage objects prepared by the compiler:
-
-```cpp
-class IOStorageAccess {
-public:
-  virtual Storage &owned_input_storage(size_t index)  = 0;
-  virtual Storage &owned_output_storage(size_t index) = 0;
-};
-```
-
-### Owned inputs
-
-Before execution or a push, the scheduler calls `acquire_input(index)`. The task either returns a writable view or `std::nullopt` when no storage is currently available. The scheduler keeps retrying while the result is empty, but stops waiting when cancellation is requested.
-
-The task publishes the selected pointer through the stable `Storage` object returned by `storage_access().owned_input_storage(index)`. Context views already refer to that object, so upstream work writes directly into the rate limiter's slot. `try_push(...)` only commits the filled slot; it does not copy the input.
-
-### Owned outputs
-
-When the deadline is reached, `try_pop(...)` publishes that same slot through the stable output `Storage`. The scheduler calls `release_output(index)` only after the remaining work in the consumer section has finished using it. Until then, `pending_` remains true and `acquire_input(...)` applies backpressure.
-
-The two implementations differ only in where their slot is allocated. Neither task submits a copy or a kernel.
-
-=== "C++ / CPU"
-
-    ```cpp
-    class CpuOwnedRateLimiterTask final : public holoflow::core::IAsyncTask {
-    public:
-      using Clock = std::chrono::steady_clock;
-
-      CpuOwnedRateLimiterTask(holoflow::core::TDesc desc, double max_fps)
-          : desc_(std::move(desc)), slot_(desc_.num_bytes()),
-            period_(std::chrono::duration_cast<Clock::duration>(
-                std::chrono::duration<double>(1.0 / max_fps))),
-            next_emit_(Clock::now()) {}
-
-      std::optional<holoflow::core::TView> acquire_input(int index) override {
-        if (index != 0) {
-          throw std::out_of_range("OwnedRateLimiter: invalid input index");
-        }
-        if (pending_.load(std::memory_order_acquire)) {
-          return std::nullopt;
-        }
-
-        auto &storage = storage_access().owned_input_storage(0);
-        storage.ptr   = slot_.data();
-        return holoflow::core::TView{.desc = desc_, .storage = &storage};
-      }
-
-      holoflow::core::OpResult
-      try_push(holoflow::core::AsyncPushCtx &ctx) override {
-        if (ctx.cancelled->load(std::memory_order_relaxed)) {
-          return holoflow::core::OpResult::Cancelled;
-        }
-
-        storage_access().owned_input_storage(0).ptr = nullptr;
-        pending_.store(true, std::memory_order_release);
-        return holoflow::core::OpResult::Ok;
-      }
-
-      holoflow::core::OpResult
-      try_pop(holoflow::core::AsyncPopCtx &ctx) override {
-        if (ctx.cancelled->load(std::memory_order_relaxed)) {
-          return holoflow::core::OpResult::Cancelled;
-        }
-
-        const auto now = Clock::now();
-        if (!pending_.load(std::memory_order_acquire) || now < next_emit_) {
-          return holoflow::core::OpResult::NotReady;
-        }
-
-        auto &storage = storage_access().owned_output_storage(0);
-        storage.ptr   = slot_.data();
-        ctx.outputs[0] = holoflow::core::TView{.desc = desc_, .storage = &storage};
-        next_emit_     = now + period_;
-        return holoflow::core::OpResult::Ok;
-      }
-
-      void release_output(int index) override {
-        if (index != 0) {
-          throw std::out_of_range("OwnedRateLimiter: invalid output index");
-        }
-
-        storage_access().owned_output_storage(0).ptr = nullptr;
-        pending_.store(false, std::memory_order_release);
-      }
-
-    private:
-      holoflow::core::TDesc  desc_;
-      std::vector<std::byte> slot_;
-      Clock::duration        period_;
-      Clock::time_point      next_emit_;
-      std::atomic<bool>      pending_ = false;
-    };
-    ```
-
-=== "CUDA / GPU"
-
-    ```cpp
-    class CudaOwnedRateLimiterTask final : public holoflow::core::IAsyncTask {
-    public:
-      using Clock = std::chrono::steady_clock;
-
-      CudaOwnedRateLimiterTask(holoflow::core::TDesc desc, double max_fps)
-          : desc_(std::move(desc)),
-            slot_(curaii::make_unique_device_ptr<std::byte>(desc_.num_bytes())),
-            period_(std::chrono::duration_cast<Clock::duration>(
-                std::chrono::duration<double>(1.0 / max_fps))),
-            next_emit_(Clock::now()) {}
-
-      std::optional<holoflow::core::TView> acquire_input(int index) override {
-        if (index != 0) {
-          throw std::out_of_range("OwnedRateLimiter: invalid input index");
-        }
-        if (pending_.load(std::memory_order_acquire)) {
-          return std::nullopt;
-        }
-
-        auto &storage = storage_access().owned_input_storage(0);
-        storage.ptr   = slot_.get();
-        return holoflow::core::TView{.desc = desc_, .storage = &storage};
-      }
-
-      holoflow::core::OpResult
-      try_push(holoflow::core::AsyncPushCtx &ctx) override {
-        if (ctx.cancelled->load(std::memory_order_relaxed)) {
-          return holoflow::core::OpResult::Cancelled;
-        }
-
-        storage_access().owned_input_storage(0).ptr = nullptr;
-        pending_.store(true, std::memory_order_release);
-        return holoflow::core::OpResult::Ok;
-      }
-
-      holoflow::core::OpResult
-      try_pop(holoflow::core::AsyncPopCtx &ctx) override {
-        if (ctx.cancelled->load(std::memory_order_relaxed)) {
-          return holoflow::core::OpResult::Cancelled;
-        }
-
-        const auto now = Clock::now();
-        if (!pending_.load(std::memory_order_acquire) || now < next_emit_) {
-          return holoflow::core::OpResult::NotReady;
-        }
-
-        auto &storage = storage_access().owned_output_storage(0);
-        storage.ptr   = slot_.get();
-        ctx.outputs[0] = holoflow::core::TView{.desc = desc_, .storage = &storage};
-        next_emit_     = now + period_;
-        return holoflow::core::OpResult::Ok;
-      }
-
-      void release_output(int index) override {
-        if (index != 0) {
-          throw std::out_of_range("OwnedRateLimiter: invalid output index");
-        }
-
-        storage_access().owned_output_storage(0).ptr = nullptr;
-        pending_.store(false, std::memory_order_release);
-      }
-
-    private:
-      holoflow::core::TDesc                 desc_;
-      curaii::unique_device_ptr<std::byte> slot_;
-      Clock::duration                       period_;
-      Clock::time_point                     next_emit_;
-      std::atomic<bool>                     pending_ = false;
-    };
-    ```
-
-Both factories normalize the task-controlled slot to offset zero and mark its input and output as owned:
-
-```cpp
-const holoflow::core::TDesc owned_desc(
-    input.shape, input.dtype, input.mem_loc);
-
-return holoflow::core::InferResult{
-    .input_descs                  = {owned_desc},
-    .output_descs                 = {owned_desc},
-    .in_place                     = {},
-    .owned_inputs                 = {true},
-    .owned_outputs                = {true},
-    .kind                         = holoflow::core::TaskKind::Async,
-    .synchronizes_producer_stream = false,
-};
-```
-
-The CUDA task deliberately receives no streams. With `synchronizes_producer_stream` set to `false`, the scheduler completes upstream work on the producer stream before `try_push(...)` publishes the slot. The consumer can therefore expose the same device pointer without an internal copy or an additional synchronization.
-
-!!! warning "Ownership is a declared contract"
-    Call `acquire_input(...)` and `release_output(...)` only for slots marked as owned by factory inference. Failing to implement the lifecycle for an owned slot, or using the hooks for a borrowed slot, is undefined behavior.
-
-At most one acquired input group and one unreleased output group may exist at a time under the current single-producer, single-consumer assumptions. An acquired input view is valid only through the corresponding execution or push call. An owned output remains valid until its release call.
-
-!!! note "Cancellation and acquired inputs"
-    Holoflow does not yet define how to roll back an owned input acquired immediately before cancellation. Task authors should not assume an implicit discard or commit operation exists.
 
 ## Choosing a task model
 
@@ -727,78 +521,15 @@ During storage planning, the compiler assigns the input and output tensor IDs th
 | Mechanism | Allocation | Pointer publication | Purpose |
 | --- | --- | --- | --- |
 | In-place mapping | Compiler-managed | Fixed by the compiler | Reuse an input allocation for an output. |
-| Owned storage | Task-managed | Changed through `IOStorageAccess` | Let a task control when its storage is writable or readable. |
+| [Owned storage](storage-ownership.md) | Task-managed | Changed through `IOStorageAccess` | Let a task control when its storage is writable or readable. |
 
 !!! warning "In-place safety is the factory's responsibility"
     Declare a mapping only when the operation is correct with aliased input and output, the output descriptor fits the input allocation, and overwriting the input cannot affect another live consumer. The compiler assigns the shared storage but does not prove these conditions.
 
-## Events
-
-Events carry control and status messages independently of tensor data. An event contains a direction, a destination or originating node ID, a JSON payload, and a monotonic timestamp. The router moves events between bounded mailboxes; every send and receive operation is non-blocking, and mailbox counters expose successful and dropped traffic.
-
-Event handles currently belong to `SyncCtx`, so only synchronous tasks can consume or emit events directly. The scheduler binds each synchronous node's reader and writer before execution, while a dedicated router loop calls `tick()` to move queued events between the UI and node mailboxes.
-
-[![Bidirectional event routing lifecycle](../../assets/images/holoflow-event-routing.svg)](../../assets/images/holoflow-event-routing.svg)
-
-*UI commands are routed to a named task; task notifications are routed back to the UI.*
-
-=== "UI to task"
-
-    ```cpp
-    // Application thread: enqueue a command for the node named "record".
-    const bool queued = scheduler.ui_try_send(
-        "record",
-        {{"type", "start_recording"}, {"record_path", "capture.holo"}});
-
-    // Record task: drain commands without blocking its execute call.
-    while (auto event = ctx.event_reader->try_pop()) {
-      if (event->data.at("type") == "start_recording") {
-        begin_recording(event->data.at("record_path").get<std::string>());
-      }
-    }
-    ```
-
-=== "Task to UI"
-
-    ```cpp
-    // Task: publish a status notification.
-    holoflow_event::Event event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "camera",
-        .data      = {{"type", "frames_missed"}, {"count", missed_frames}},
-        .ts        = std::chrono::steady_clock::now(),
-    };
-
-    if (!ctx.event_writer->try_push(std::move(event))) {
-      logger()->warn("Event mailbox is full; frames_missed was dropped");
-    }
-
-    // Application thread: poll notifications without blocking.
-    while (auto received = scheduler.ui_try_receive()) {
-      handle_notification(*received);
-    }
-    ```
-
-`try_push(...)` returns `false` when its bounded mailbox is full. Tasks should choose deliberately whether to log, coalesce, count, or otherwise tolerate a dropped notification; they must not assume delivery.
-
-### Camera missed-frame notification
-
-The following lifecycle illustrates how a camera source could report a gap without mixing control metadata into its output tensor. It is an example pattern; current camera sources do not yet emit this event.
-
-[![Camera missed-frame event lifecycle](../../assets/images/holoflow-camera-event-lifecycle.svg)](../../assets/images/holoflow-camera-event-lifecycle.svg)
-
-*Frame acquisition continues while the event router carries the missed-frame notification to the UI.*
-
-### Recording command and completion
-
-The recording path uses both event directions. The UI sends `start_recording` to the node named `record`. The task drains that command during `execute(...)`, records the configured frame count, then emits `recording_finished`; validation or write failures emit `recording_failed` instead.
-
-[![Recording command and completion event lifecycle](../../assets/images/holoflow-recording-event-lifecycle.svg)](../../assets/images/holoflow-recording-event-lifecycle.svg)
-
-*The start request and completion notification travel through separate bounded mailboxes.*
-
 ## Where to go next
 
+- Learn how tasks control buffer lifetimes in [Storage Ownership](storage-ownership.md).
+- Learn how control and status messages move through [Events](events.md).
 - Return to the [Holoflow overview](../index.md) to see synchronous tasks and asynchronous queues in complete graphs.
 - Follow the planned [LDH pipeline tutorial](../tutorials/ldh-pipeline.md) for an application-level example.
 - Browse the existing [Holovibes task reference](../../reference/index.md) for concrete task implementations.
