@@ -633,8 +633,8 @@ void Manager::build_and_run() {
 
     const auto dot_path = log_dir / std::format("compiled_{}.dot", date);
 
-    std::ofstream(dot_path) << holoflow::runtime::to_dot(*compiler_output_,
-                                                         graph_compiled_dump_prefs_);
+    std::ofstream(dot_path)
+        << holoflow::runtime::to_dot(*compiler_output_, graph_compiled_dump_prefs_, "compiled_pipeline");
   }
 
   run_compiled_graph();

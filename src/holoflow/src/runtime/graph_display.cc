@@ -306,6 +306,29 @@ static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPla
   }
 }
 
+static void write_compiled_resources(std::ostringstream                    &ss,
+                                     const holoflow::runtime::ExecResouces &res) {
+  ss << "  // --- resources summary ---\n";
+
+  ss << "  // streams: ";
+  bool first = true;
+  for (const auto &[id, stream] : res.streams) {
+    (void)stream;
+    ss << (first ? "" : ", ") << id;
+    first = false;
+  }
+  ss << "\n";
+
+  ss << "  // tasks: ";
+  first = true;
+  for (const auto &[name, task] : res.tasks) {
+    (void)task;
+    ss << (first ? "" : ", ") << name;
+    first = false;
+  }
+  ss << "\n\n";
+}
+
 static void write_compiled_sections(std::ostringstream                  &ss,
                                     const std::vector<runtime::Section> &sections,
                                     const GraphCompiledDumpPreferences  &prefs) {
@@ -313,8 +336,11 @@ static void write_compiled_sections(std::ostringstream                  &ss,
     ss << std::format("  subgraph cluster_section_{} {{\n", sec.id);
 
     ss << std::format("    label=\"Section {}", sec.id);
+    if (!sec.name.empty()) {
+      ss << ": " << escape_for_label(sec.name);
+    }
     if (prefs.dump_section_stream_addr) {
-      ss << std::format("(Stream {})", (void *)sec.stream);
+      ss << std::format(" (Stream {})", (void *)sec.stream);
     }
     ss << std::format("\\l\";\n");
 
@@ -339,6 +365,9 @@ std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences
   std::ostringstream ss;
   write_compiled_graph_header(ss, prefs, filename);
 
+  if (prefs.dump_resource_info) {
+    write_compiled_resources(ss, out.resources);
+  }
   write_compiled_nodes(ss, out.graph, out.resources, prefs);
   ss << "\n";
   write_compiled_edges(ss, out.graph, out.resources, prefs);

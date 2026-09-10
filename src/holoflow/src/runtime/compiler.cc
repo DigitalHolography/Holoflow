@@ -251,7 +251,7 @@ private:
   // --- Helpers ---
   void        setup_logging();
   ScopedTrace trace_scope(std::string name, std::string category = "pass");
-  // void        dump_graphviz(const std::string &filename);
+  void        dump_graphviz(const std::string &filename);
   template <class TaskInterface, class Factory, class Ctx>
   std::unique_ptr<core::ITask> create_or_update_task(Factory &factory, const NodePlan &np,
                                                      const Ctx &ctx);
@@ -314,14 +314,12 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     run_pass("Task Binding", [&] { bind_tasks(); });
 
     if (config_.dump_dot_on_failure) {
-      run_pass("Dump Graphviz",
-               [&] { to_dot(*out_, GraphCompiledDumpPreferences{}, "compilation_success"); });
+      run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_success.dot"); });
     }
   } catch (const std::exception &e) {
     logger_->error("Compilation Failed: {}", e.what());
     if (config_.dump_dot_on_failure) {
-      run_pass("Dump Graphviz",
-               [&] { to_dot(*out_, GraphCompiledDumpPreferences{}, "compilation_failure"); });
+      run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_failure.dot"); });
     }
 
     total_trace.reset(); // Stop timer before throwing
@@ -376,6 +374,20 @@ void Compiler::Impl::setup_logging() {
 ScopedTrace Compiler::Impl::trace_scope(std::string name, std::string category) {
   return ScopedTrace(std::move(name), std::move(category), logger_,
                      config_.enable_profiling ? &profiler_ : nullptr);
+}
+
+void Compiler::Impl::dump_graphviz(const std::string &filename) {
+  if (config_.log_dir.empty()) {
+    return;
+  }
+
+  std::ofstream file(config_.log_dir / filename);
+  if (!file.is_open()) {
+    return;
+  }
+
+  const auto graph_name = std::filesystem::path(filename).stem().string();
+  file << to_dot(*out_, GraphCompiledDumpPreferences{}, graph_name);
 }
 
 // -------------------------------------------------------------------------------------------------

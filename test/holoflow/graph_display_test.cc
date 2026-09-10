@@ -50,10 +50,10 @@ TEST(CompiledGraphDisplayTest, RendersSyncAsyncEdgesSectionsAndResources) {
       0, holoflow::core::TDesc({4}, holoflow::core::DType::F32, holoflow::core::MemLoc::Host));
   output.resources.tid_to_sid.emplace(0, 9);
 
-  const auto dot = holoflow::runtime::to_dot(output);
+  const auto dot = holoflow::runtime::to_dot(output, {}, "holoflow_compiled");
   EXPECT_NE(dot.find("digraph holoflow_compiled"), std::string::npos);
-  EXPECT_NE(dot.find("shape=octagon"), std::string::npos);
-  EXPECT_NE(dot.find("color=blue"), std::string::npos);
+  EXPECT_NE(dot.find("shape=invhouse"), std::string::npos);
+  EXPECT_NE(dot.find("color=\"#0066cc\""), std::string::npos);
   EXPECT_NE(dot.find("tid:0"), std::string::npos);
   EXPECT_NE(dot.find("Section 3: producer"), std::string::npos);
   EXPECT_NE(dot.find("quoted"), std::string::npos);
@@ -63,7 +63,7 @@ TEST(CompiledGraphDisplayTest, RendersSyncAsyncEdgesSectionsAndResources) {
 TEST(CompiledGraphDisplayTest, RendersEmptyOutput) {
   holoflow::runtime::CompilerOutput output;
   // holoflow::core::Registry          registry;
-  const auto dot = holoflow::runtime::to_dot(output);
+  const auto dot = holoflow::runtime::to_dot(output, {}, "holoflow_compiled");
   EXPECT_NE(dot.find("// streams:"), std::string::npos);
   EXPECT_NE(dot.find("// tasks:"), std::string::npos);
   EXPECT_NE(dot.find("}\n"), std::string::npos);
