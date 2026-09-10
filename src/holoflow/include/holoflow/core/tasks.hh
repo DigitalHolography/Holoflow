@@ -244,6 +244,9 @@ struct InferResult {
   /// Async producer capability. When true, try_push synchronizes its producer stream before any
   /// result that lets the scheduler advance. NotReady retries need not synchronize.
   bool synchronizes_producer_stream = false;
+  /// Optional constness override: true means constant, false means dynamic, and nullopt lets the
+  /// compiler deduce constness from the task's predecessors.
+  std::optional<bool> const_override = std::nullopt;
 };
 
 /// Context for sync task creation.

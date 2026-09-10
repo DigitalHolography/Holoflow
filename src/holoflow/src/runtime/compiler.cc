@@ -14,6 +14,7 @@
 
 #include "holoflow/runtime/compiler.hh"
 
+#include <algorithm>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/graph/topological_sort.hpp>
@@ -259,6 +260,7 @@ private:
   void validate_spec();
   void build_graph_structure();
   void run_type_inference();
+  void deduce_const_tasks();
   void assign_tensor_ids();
   void assign_storage_ids();
   void verify_buffer_consistency();
@@ -299,6 +301,7 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     run_pass("Validate Spec", [&] { validate_spec(); });
     run_pass("Build Graph Plan", [&] { build_graph_structure(); });
     run_pass("Type Inference", [&] { run_type_inference(); });
+    run_pass("Const Deduction", [&] { deduce_const_tasks(); });
 
     run_pass("Tensor IDs", [&] { assign_tensor_ids(); });
     run_pass("Storage Mapping", [&] { assign_storage_ids(); });
@@ -468,6 +471,44 @@ void Compiler::Impl::run_type_inference() {
       }
       edge_plan.desc = node.infer.output_descs[edge_plan.spec.out_idx];
     }
+  }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Pass: Const Deduction
+// -------------------------------------------------------------------------------------------------
+void Compiler::Impl::deduce_const_tasks() {
+  auto                                     &g = out_->graph;
+  std::vector<GraphPlan::vertex_descriptor> topo_order;
+
+  boost::topological_sort(g, std::back_inserter(topo_order));
+
+  for (auto v : std::views::reverse(topo_order)) {
+    auto      &node      = g[v];
+    const auto in_degree = boost::in_degree(v, g);
+
+    if (node.infer.kind == core::TaskKind::Async) {
+      node.is_const = false;
+      continue;
+    }
+
+    if (node.infer.const_override.has_value()) {
+      if (*node.infer.const_override && in_degree != 0) {
+        throw CompilerException(std::format(
+            "Node '{}': const_override=true is only valid for source nodes", node.spec.name));
+      }
+      node.is_const = *node.infer.const_override;
+      continue;
+    }
+
+    if (in_degree == 0) {
+      node.is_const = false;
+      continue;
+    }
+
+    node.is_const =
+        std::ranges::all_of(boost::make_iterator_range(boost::in_edges(v, g)),
+                            [&](auto edge) { return g[boost::source(edge, g)].is_const; });
   }
 }
 
