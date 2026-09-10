@@ -16,17 +16,22 @@
 
 #include "holoflow/core/tensor.hh"
 
+#include <algorithm>
 #include <boost/graph/graph_traits.hpp>
 #include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <format>
+#include <functional>
 #include <iomanip>
 #include <memory>
+#include <queue>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <type_traits>
 #include <unordered_set>
+#include <vector>
 
 #include "holoflow/runtime/compiler.hh"
 
@@ -115,23 +120,22 @@ static void round_json_floating_point_values(nlohmann::json &value, int precisio
     return;
   }
 
-  char buffer[64];
+  char       buffer[64];
   const auto result = std::to_chars(buffer, buffer + sizeof(buffer), number,
                                     std::chars_format::scientific, precision);
   if (result.ec != std::errc{}) {
     return;
   }
 
-  double rounded = number;
-  const auto parsed = std::from_chars(buffer, result.ptr, rounded,
-                                      std::chars_format::scientific);
+  double     rounded = number;
+  const auto parsed  = std::from_chars(buffer, result.ptr, rounded, std::chars_format::scientific);
   if (parsed.ec == std::errc{}) {
     value = rounded;
   }
 }
 
 static std::string dump_json_with_floating_point_precision(const nlohmann::json &value,
-                                                           int precision) {
+                                                           int                   precision) {
   auto rounded = value;
   round_json_floating_point_values(rounded, precision);
   return rounded.dump(2);
@@ -164,16 +168,41 @@ std::string format_tdesc(const TDesc &d) {
 } // namespace
 namespace holoflow::runtime {
 
+static bool uses_section_layout(const GraphCompiledDumpPreferences &prefs) {
+  return prefs.dump_section_info && prefs.layout != GraphCompiledDumpPreferences::Layout::Normal;
+}
+
+static bool uses_block_layout(const GraphCompiledDumpPreferences &prefs) {
+  return prefs.dump_section_info && prefs.layout == GraphCompiledDumpPreferences::Layout::Block;
+}
+
+static bool uses_snake_layout(const GraphCompiledDumpPreferences &prefs) {
+  return prefs.dump_section_info && prefs.layout == GraphCompiledDumpPreferences::Layout::Snake;
+}
+
 static void write_compiled_graph_header(std::ostringstream                 &ss,
                                         const GraphCompiledDumpPreferences &prefs,
                                         const std::string &title = "holoflow_compiled_graph") {
   ss << "digraph " << title << " {\n";
-  if (prefs.rankdir == GraphCompiledDumpPreferences::Rankdir::LeftToRight)
+  if (!uses_section_layout(prefs) &&
+      prefs.rankdir == GraphCompiledDumpPreferences::Rankdir::LeftToRight)
     ss << "  rankdir=LR;\n";
   else
     ss << "  rankdir=TB;\n";
 
   ss << "  compound=true;\n";
+  if (uses_block_layout(prefs) || uses_snake_layout(prefs)) {
+    ss << "  newrank=true;\n";
+  }
+  if (uses_block_layout(prefs)) {
+    ss << "  splines=polyline;\n";
+  } else if (uses_snake_layout(prefs) && prefs.dump_edge_descriptions) {
+    ss << "  splines=line;\n";
+  }
+  if (uses_section_layout(prefs)) {
+    ss << "  nodesep=0.8;\n";
+    ss << "  ranksep=1.2;\n";
+  }
   ss << "  node [fontname=\"Helvetica\", shape=box, style=filled];\n";
   ss << "  edge [fontname=\"Helvetica\"];\n\n";
 }
@@ -256,9 +285,16 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
                           "color=\"#cc0000\", style=\"filled,dashed\"];\n",
                           v, escape_for_label(label_out));
 
-        ss << std::format("  v{}_in -> v{}_out [style=dotted, color=\"#888888\", penwidth=2, "
-                          "arrowh=none, label=\"Async Signal\"];\n",
-                          v, v);
+        if (uses_block_layout(prefs)) {
+          ss << std::format("  v{}_in:e -> v{}_out:w [style=dotted, color=\"#888888\", "
+                            "penwidth=2, arrowhead=none, label=\"Async Signal\", "
+                            "constraint=false];\n",
+                            v, v);
+        } else {
+          ss << std::format("  v{}_in -> v{}_out [style=dotted, color=\"#888888\", penwidth=2, "
+                            "arrowhead=none, label=\"Async Signal\"];\n",
+                            v, v);
+        }
       } else {
         const std::string label = label_base.str() + "\n(" + np.spec.kind + ")" + ids_line + "\n";
         ss << std::format("  v{} [label=\"{}\", fillcolor=\"#ccffcc\"];\n", v,
@@ -268,15 +304,32 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
   }
 }
 
-static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPlan &g,
+static std::vector<size_t>
+get_section_layout_order(const std::vector<runtime::Section> &sections);
+
+static void write_compiled_edges(std::ostringstream                    &ss,
+                                 const runtime::GraphPlan              &g,
                                  const holoflow::runtime::ExecResouces &res,
-                                 const GraphCompiledDumpPreferences    &prefs) {
+                                 const GraphCompiledDumpPreferences    &prefs,
+                                 const std::vector<runtime::Section>   &sections) {
 
   auto get_visual_id = [&](size_t v, bool is_source) -> std::string {
     if (g[v].infer.kind == core::TaskKind::Async) {
       return is_source ? std::format("v{}_out", v) : std::format("v{}_in", v);
     }
     return std::format("v{}", v);
+  };
+
+  std::vector<size_t> section_positions(sections.size());
+  if (uses_snake_layout(prefs)) {
+    const auto order = get_section_layout_order(sections);
+    for (size_t position = 0; position < order.size(); ++position) {
+      section_positions[order[position]] = position;
+    }
+  }
+
+  auto contains_vertex = [](const auto &vertices, auto vertex) {
+    return std::find(vertices.begin(), vertices.end(), vertex) != vertices.end();
   };
 
   for (auto e : boost::make_iterator_range(boost::edges(g))) {
@@ -287,6 +340,25 @@ static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPla
     const std::string u_vis = get_visual_id(u, true);
     const std::string v_vis = get_visual_id(v, false);
 
+    bool reverse_edge = false;
+    if (uses_snake_layout(prefs)) {
+      for (size_t section_idx = 0; section_idx < sections.size(); ++section_idx) {
+        const auto &section = sections[section_idx];
+        const bool  contains_source =
+            g[u].infer.kind == core::TaskKind::Async
+                ? contains_vertex(section.async_cons, u)
+                : contains_vertex(section.sync_topo, u);
+        const bool contains_target =
+            g[v].infer.kind == core::TaskKind::Async
+                ? contains_vertex(section.async_prod, v)
+                : contains_vertex(section.sync_topo, v);
+        if (contains_source && contains_target) {
+          reverse_edge = section_positions[section_idx] % 2 != 0;
+          break;
+        }
+      }
+    }
+
     std::ostringstream edge_lbl;
     edge_lbl << "tid:" << ep.tid;
     if (res.tid_to_sid.count(ep.tid)) {
@@ -294,9 +366,15 @@ static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPla
     }
     edge_lbl << "\\n" << format_tdesc(ep.desc);
 
-    ss << std::format("  {} -> {} ", u_vis, v_vis);
+    ss << std::format("  {} -> {} ", reverse_edge ? v_vis : u_vis,
+                      reverse_edge ? u_vis : v_vis);
+    if (reverse_edge) {
+      ss << "[dir=back]";
+    }
     if (prefs.dump_edge_indices) {
-      ss << std::format("[taillabel=\"{}\", headlabel=\"{}\"]", ep.spec.out_idx, ep.spec.in_idx);
+      ss << std::format("[taillabel=\"{}\", headlabel=\"{}\"]",
+                        reverse_edge ? ep.spec.in_idx : ep.spec.out_idx,
+                        reverse_edge ? ep.spec.out_idx : ep.spec.in_idx);
     }
     if (prefs.dump_edge_descriptions) {
       auto formated = replace_newlines_escaped_with_l(edge_lbl.str());
@@ -329,10 +407,76 @@ static void write_compiled_resources(std::ostringstream                    &ss,
   ss << "\n\n";
 }
 
+static std::vector<size_t> get_section_layout_order(const std::vector<runtime::Section> &sections) {
+  std::vector<std::vector<size_t>> successors(sections.size());
+  std::vector<size_t>              indegrees(sections.size(), 0);
+
+  for (size_t source_idx = 0; source_idx < sections.size(); ++source_idx) {
+    for (const auto vertex : sections[source_idx].async_prod) {
+      for (size_t target_idx = 0; target_idx < sections.size(); ++target_idx) {
+        if (source_idx == target_idx ||
+            std::find(sections[target_idx].async_cons.begin(),
+                      sections[target_idx].async_cons.end(),
+                      vertex) == sections[target_idx].async_cons.end() ||
+            std::find(successors[source_idx].begin(), successors[source_idx].end(), target_idx) !=
+                successors[source_idx].end()) {
+          continue;
+        }
+
+        successors[source_idx].push_back(target_idx);
+        ++indegrees[target_idx];
+      }
+    }
+  }
+
+  std::priority_queue<size_t, std::vector<size_t>, std::greater<>> ready;
+  for (size_t section_idx = 0; section_idx < sections.size(); ++section_idx) {
+    if (indegrees[section_idx] == 0) {
+      ready.push(section_idx);
+    }
+  }
+
+  std::vector<size_t> order;
+  order.reserve(sections.size());
+  while (!ready.empty()) {
+    const size_t section_idx = ready.top();
+    ready.pop();
+    order.push_back(section_idx);
+
+    for (const size_t successor : successors[section_idx]) {
+      if (--indegrees[successor] == 0) {
+        ready.push(successor);
+      }
+    }
+  }
+
+  if (order.size() != sections.size()) {
+    for (size_t section_idx = 0; section_idx < sections.size(); ++section_idx) {
+      if (std::find(order.begin(), order.end(), section_idx) == order.end()) {
+        order.push_back(section_idx);
+      }
+    }
+  }
+  return order;
+}
+
 static void write_compiled_sections(std::ostringstream                  &ss,
                                     const std::vector<runtime::Section> &sections,
                                     const GraphCompiledDumpPreferences  &prefs) {
-  for (const auto &sec : sections) {
+  const bool row_layout   = uses_section_layout(prefs);
+  const bool block_layout = uses_block_layout(prefs);
+  const bool snake_layout = uses_snake_layout(prefs);
+
+  std::vector<size_t> section_positions(sections.size());
+  if (snake_layout) {
+    const auto order = get_section_layout_order(sections);
+    for (size_t position = 0; position < order.size(); ++position) {
+      section_positions[order[position]] = position;
+    }
+  }
+
+  for (size_t section_idx = 0; section_idx < sections.size(); ++section_idx) {
+    const auto &sec = sections[section_idx];
     ss << std::format("  subgraph cluster_section_{} {{\n", sec.id);
 
     ss << std::format("    label=\"Section {}", sec.id);
@@ -346,17 +490,73 @@ static void write_compiled_sections(std::ostringstream                  &ss,
 
     ss << "    style=rounded; color=gray; bgcolor=\"#f8f8f8\";\n";
 
-    for (auto vd : sec.sync_topo) {
-      ss << std::format("    v{};\n", vd);
-    }
-    for (auto vd : sec.async_prod) {
-      ss << std::format("    v{}_in;\n", vd);
-    }
-    for (auto vd : sec.async_cons) {
-      ss << std::format("    v{}_out;\n", vd);
+    if (row_layout) {
+      ss << "    { rank=same;\n";
     }
 
+    std::vector<std::string> visual_ids;
+    auto append_visual_ids = [&](const auto &vertices, std::string_view suffix) {
+      for (const auto vertex : vertices) {
+        visual_ids.push_back(std::format("v{}{}", vertex, suffix));
+      }
+    };
+    auto append_visual_ids_reversed = [&](const auto &vertices, std::string_view suffix) {
+      for (auto vertex = vertices.rbegin(); vertex != vertices.rend(); ++vertex) {
+        visual_ids.push_back(std::format("v{}{}", *vertex, suffix));
+      }
+    };
+
+    if (block_layout) {
+      ss << std::format("      section_layout_{}_left [shape=point, width=0, height=0, "
+                        "label=\"\", style=invis, group=section_layout_left];\n",
+                        section_idx);
+      append_visual_ids(sec.async_cons, "_out");
+      append_visual_ids(sec.sync_topo, "");
+      append_visual_ids(sec.async_prod, "_in");
+    } else if (snake_layout && section_positions[section_idx] % 2 != 0) {
+      append_visual_ids_reversed(sec.async_prod, "_in");
+      append_visual_ids_reversed(sec.sync_topo, "");
+      append_visual_ids_reversed(sec.async_cons, "_out");
+    } else if (snake_layout) {
+      append_visual_ids(sec.async_cons, "_out");
+      append_visual_ids(sec.sync_topo, "");
+      append_visual_ids(sec.async_prod, "_in");
+    } else {
+      append_visual_ids(sec.sync_topo, "");
+      append_visual_ids(sec.async_prod, "_in");
+      append_visual_ids(sec.async_cons, "_out");
+    }
+
+    for (const auto &visual_id : visual_ids) {
+      ss << std::format("      {};\n", visual_id);
+    }
+
+    if (block_layout && !visual_ids.empty()) {
+      ss << std::format("      section_layout_{}_left", section_idx);
+      for (const auto &visual_id : visual_ids) {
+        ss << " -> " << visual_id;
+      }
+      ss << " [style=invis, weight=1000];\n";
+    } else if (snake_layout && visual_ids.size() > 1) {
+      ss << "      " << visual_ids.front();
+      for (size_t visual_idx = 1; visual_idx < visual_ids.size(); ++visual_idx) {
+        ss << " -> " << visual_ids[visual_idx];
+      }
+      ss << " [style=invis, weight=1000];\n";
+    }
+    if (row_layout) {
+      ss << "    }\n";
+    }
     ss << "  }\n";
+  }
+
+  if (block_layout && sections.size() > 1) {
+    const auto order = get_section_layout_order(sections);
+    ss << std::format("  section_layout_{}_left", order.front());
+    for (size_t order_idx = 1; order_idx < order.size(); ++order_idx) {
+      ss << std::format(" -> section_layout_{}_left", order[order_idx]);
+    }
+    ss << " [style=invis, weight=100000];\n";
   }
 }
 
@@ -370,7 +570,7 @@ std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences
   }
   write_compiled_nodes(ss, out.graph, out.resources, prefs);
   ss << "\n";
-  write_compiled_edges(ss, out.graph, out.resources, prefs);
+  write_compiled_edges(ss, out.graph, out.resources, prefs, out.sections);
   ss << "\n";
   if (prefs.dump_section_info) {
     write_compiled_sections(ss, out.sections, prefs);
@@ -418,8 +618,8 @@ static void write_nodes(std::ostringstream &ss, const GraphSpec &g,
 
     if (dump_prefs.dump_node_settings && ns.debug && !ns.settings.is_null() &&
         !(ns.settings.is_object() && ns.settings.empty())) {
-      std::string settings_dump = dump_json_with_floating_point_precision(
-          ns.settings, dump_prefs.floating_point_precision);
+      std::string settings_dump =
+          dump_json_with_floating_point_precision(ns.settings, dump_prefs.floating_point_precision);
       label << replace_newlines_with_l(settings_dump) << "\\l";
     }
 

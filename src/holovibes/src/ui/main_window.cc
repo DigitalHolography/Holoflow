@@ -501,9 +501,22 @@ private:
     }
 
     graph_compiled_dump_preferences_widgets_.rankdir_combo_->setToolTip(
-        tr("Include node names in the compiled graph."));
+        tr("Direction used by the normal compiled-graph layout."));
     input_form->addRow(tr("Rank direction"),
                        graph_compiled_dump_preferences_widgets_.rankdir_combo_);
+
+    graph_compiled_dump_preferences_widgets_.layout_combo_ =
+        create_combo_box(this,
+                         QStringList{tr("Normal"), tr("Stairs"), tr("Block"), tr("Snake")});
+    graph_compiled_dump_preferences_widgets_.layout_combo_->setCurrentIndex(
+        static_cast<int>(graph_compiled_dump_preferences.layout));
+    graph_compiled_dump_preferences_widgets_.layout_combo_->setToolTip(
+        tr("Arrange sections normally, as horizontal stairs, as a left-aligned block, or in "
+           "alternating snake rows."));
+    graph_compiled_dump_preferences_widgets_.rankdir_combo_->setEnabled(
+        graph_compiled_dump_preferences.layout == GraphCompiledDumpPreferences::Layout::Normal);
+    input_form->addRow(tr("Section layout"),
+                       graph_compiled_dump_preferences_widgets_.layout_combo_);
 
     graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_ =
         create_spin_box(this, 0, 17, graph_compiled_dump_preferences.floating_point_precision);
@@ -611,6 +624,8 @@ private:
         .rankdir = graph_compiled_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
                        ? GraphCompiledDumpPreferences::Rankdir::LeftToRight
                        : GraphCompiledDumpPreferences::Rankdir::TopToBottom,
+        .layout = static_cast<GraphCompiledDumpPreferences::Layout>(
+            graph_compiled_dump_preferences_widgets_.layout_combo_->currentIndex()),
 
         .floating_point_precision =
             graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_->value(),
@@ -655,6 +670,12 @@ private:
     connect(graph_compiled_dump_preferences_widgets_.rankdir_combo_,
             qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](int) { apply_button_->setEnabled(true); });
+    connect(graph_compiled_dump_preferences_widgets_.layout_combo_,
+            qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+              graph_compiled_dump_preferences_widgets_.rankdir_combo_->setEnabled(
+                  index == static_cast<int>(GraphCompiledDumpPreferences::Layout::Normal));
+              apply_button_->setEnabled(true);
+            });
     connect(graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_,
             qOverload<int>(&QSpinBox::valueChanged), this,
             [this](int) { apply_button_->setEnabled(true); });
@@ -700,6 +721,7 @@ private:
     // dump preferences
     // rankdir: LR | TB
     QComboBox *rankdir_combo_                  = nullptr;
+    QComboBox *layout_combo_                   = nullptr;
     QSpinBox  *floating_point_precision_spin_ = nullptr;
     QCheckBox *node_name_checkbox_             = nullptr;
     QCheckBox *node_kind_checkbox_             = nullptr;
@@ -1532,6 +1554,8 @@ void MainWindow::initialize_display_widgets() {
             // restarting the processing pipeline for display changes.
             signal_plot_time_window_seconds_ = settings.time_window_seconds;
           });
+  connect(graph_visualizer_widget_, &GraphVisualizerWidget::reload_requested, this,
+          &MainWindow::show_pipeline_graph);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this,
           &MainWindow::refresh_visualization_availability);
 
@@ -1712,6 +1736,7 @@ void MainWindow::check_for_updates() {
 }
 
 void MainWindow::show_pipeline_graph() {
+  graph_visualizer_widget_->set_reload_enabled(true);
   display_workspace_->set_visualization_title(QStringLiteral("pipeline_graph"),
                                               tr("Pipeline Graph"));
   display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
@@ -1738,6 +1763,7 @@ void MainWindow::open_dot_file() {
 
   display_workspace_->set_visualization_title(
       QStringLiteral("pipeline_graph"), tr("Pipeline Graph — %1").arg(QFileInfo(path).fileName()));
+  graph_visualizer_widget_->set_reload_enabled(false);
   display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
   display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
   graph_visualizer_widget_->render_dot(QString::fromUtf8(dot_file.readAll()));

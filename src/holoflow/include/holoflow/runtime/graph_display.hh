@@ -16,14 +16,16 @@
 
 #include <string>
 // could not forward declare GraphSpec because it is an alias
-#include "holoflow/core/graph_spec.hh" 
+#include "holoflow/core/graph_spec.hh"
 namespace holoflow::runtime {
 
 struct CompilerOutput;
 struct GraphCompiledDumpPreferences {
   enum class Rankdir { LeftToRight, TopToBottom };
+  enum class Layout { Normal, Stairs, Block, Snake };
 
   Rankdir rankdir                  = Rankdir::LeftToRight;
+  Layout  layout                   = Layout::Normal;
   int     floating_point_precision = 17;
   bool    dump_node_name           = true;
   bool    dump_node_kind           = true;
@@ -51,11 +53,9 @@ struct GraphCompiledDumpPreferences {
 std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs = {},
                    std::string filename = "compiled");
 
-
 } // namespace holoflow::runtime
 
-namespace holoflow::core
-{
+namespace holoflow::core {
 
 struct GraphSpecDumpPreferences {
   enum class Rankdir { LeftToRight, TopToBottom };
@@ -73,4 +73,4 @@ struct GraphSpecDumpPreferences {
 /// @return      Dot format representation of the graph specification.
 std::string to_dot(const holoflow::core::GraphSpec &g,
                    const GraphSpecDumpPreferences  &dump_prefs = {});
-}
+} // namespace holoflow::core

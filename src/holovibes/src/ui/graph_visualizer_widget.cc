@@ -58,6 +58,11 @@ GraphVisualizerWidget::GraphVisualizerWidget(QWidget *parent) : QWidget(parent) 
   fit_button->setText(tr("Fit"));
   fit_button->setToolTip(tr("Fit the complete graph in the panel."));
   toolbar->addWidget(fit_button);
+  reload_button_ = new QToolButton(this);
+  reload_button_->setText(tr("Reload"));
+  reload_button_->setToolTip(tr("Regenerate the pipeline graph with the current preferences."));
+  reload_button_->setEnabled(false);
+  toolbar->addWidget(reload_button_);
   toolbar->addStretch();
   status_ = new QLabel(tr("Select a pipeline graph or open a DOT file."), this);
   toolbar->addWidget(status_);
@@ -75,9 +80,15 @@ GraphVisualizerWidget::GraphVisualizerWidget(QWidget *parent) : QWidget(parent) 
     show_error(tr("Graphviz could not be started: %1").arg(process_->errorString()));
   });
   connect(fit_button, &QToolButton::clicked, this, &GraphVisualizerWidget::fit_graph);
+  connect(reload_button_, &QToolButton::clicked, this, [this]() {
+    reload_button_->setEnabled(false);
+    status_->setText(tr("Reloading pipeline graph…"));
+    emit reload_requested();
+  });
 }
 
 void GraphVisualizerWidget::render_dot(const QString &dot) {
+  reload_button_->setEnabled(false);
   const QString executable = QStandardPaths::findExecutable(QStringLiteral("dot"));
   if (executable.isEmpty()) {
     show_error(tr("Graphviz was not found. Install Graphviz and ensure its 'dot' executable is "
@@ -96,9 +107,15 @@ void GraphVisualizerWidget::render_dot(const QString &dot) {
   process_->closeWriteChannel();
 }
 
+void GraphVisualizerWidget::set_reload_enabled(bool enabled) {
+  reload_enabled_ = enabled;
+  reload_button_->setEnabled(enabled && process_->state() == QProcess::NotRunning);
+}
+
 void GraphVisualizerWidget::show_error(const QString &message) {
   status_->setText(message);
   status_->setWordWrap(true);
+  reload_button_->setEnabled(reload_enabled_);
 }
 
 void GraphVisualizerWidget::fit_graph() {
@@ -108,6 +125,7 @@ void GraphVisualizerWidget::fit_graph() {
 }
 
 void GraphVisualizerWidget::render_finished(int exit_code, QProcess::ExitStatus exit_status) {
+  reload_button_->setEnabled(reload_enabled_);
   if (exit_status != QProcess::NormalExit || exit_code != 0) {
     const QString details = QString::fromUtf8(process_->readAllStandardError()).trimmed();
     show_error(details.isEmpty() ? tr("Graphviz failed to render the pipeline graph.") : details);

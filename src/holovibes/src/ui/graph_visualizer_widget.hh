@@ -21,6 +21,7 @@ class QGraphicsScene;
 class QGraphicsView;
 class QLabel;
 class QSvgRenderer;
+class QToolButton;
 
 namespace holovibes::ui {
 
@@ -31,7 +32,11 @@ public:
   explicit GraphVisualizerWidget(QWidget *parent = nullptr);
 
   void render_dot(const QString &dot);
+  void set_reload_enabled(bool enabled);
   void show_error(const QString &message);
+
+signals:
+  void reload_requested();
 
 private:
   void fit_graph();
@@ -42,6 +47,8 @@ private:
   QLabel         *status_   = nullptr;
   QProcess       *process_  = nullptr;
   QSvgRenderer   *renderer_ = nullptr;
+  QToolButton    *reload_button_ = nullptr;
+  bool            reload_enabled_ = false;
 };
 
 } // namespace holovibes::ui
