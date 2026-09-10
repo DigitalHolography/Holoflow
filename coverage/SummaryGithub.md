@@ -3,16 +3,16 @@
 
 |||
 |:---|:---|
-| Generated on: | 9/4/2026 - 6:01:58 PM |
+| Generated on: | 9/10/2026 - 1:35:00 PM |
 | Parser: | Cobertura |
 | Assemblies: | 7 |
 | Classes: | 11 |
-| Files: | 85 |
-| **Line coverage:** | 29.2% (3034 of 10373) |
-| Covered lines: | 3034 |
-| Uncovered lines: | 7339 |
-| Coverable lines: | 10373 |
-| Total lines: | 22576 |
+| Files: | 86 |
+| **Line coverage:** | 29.6% (3108 of 10481) |
+| Covered lines: | 3108 |
+| Uncovered lines: | 7373 |
+| Coverable lines: | 10481 |
+| Total lines: | 22855 |
 | Covered branches: | 0 |
 | Total branches: | 0 |
 | **Method coverage:** | [Feature is only available for sponsors](https://reportgenerator.io/pro) |
@@ -37,13 +37,13 @@
 |src|0%||
 
 </details>
-<details><summary>holoflow - 89.7%</summary>
+<details><summary>holoflow - 89.8%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holoflow**|**89.7%**|****|
+|**holoflow**|**89.8%**|****|
 |include|70.8%||
-|src|90%||
+|src|90.1%||
 
 </details>
 <details><summary>holoflow_event - 86.2%</summary>
@@ -55,12 +55,12 @@
 |src|84%||
 
 </details>
-<details><summary>holonp - 31.8%</summary>
+<details><summary>holonp - 61.5%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holonp**|**31.8%**|****|
-|src|31.8%||
+|**holonp**|**61.5%**|****|
+|src|61.5%||
 
 </details>
 <details><summary>holotask - 43.5%</summary>
