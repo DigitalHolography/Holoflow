@@ -1,119 +1,235 @@
 
-<!DOCTYPE html>
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An open-source software stack for real-time digital holography">
+      
+      
+      
+      
+        <link rel="prev" href="../holovibes/index.html">
+      
+      
+        <link rel="next" href="getting-started/index.html">
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.21">
+    
+    
+      
+        <title>Overview - Holoflow</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.2a3383ac.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.06af60db.min.css">
+      
+      
 
-<html class="no-js" lang="en">
-<head>
-<meta charset="utf-8"/>
-<meta content="width=device-width,initial-scale=1" name="viewport"/>
-<link href="../holovibes/tasks/asyncs/sliding_average.html" rel="prev"/>
-<link href="architecture.html" rel="next"/>
-<link href="../assets/images/favicon.png" rel="icon"/>
-<meta content="mkdocs-1.6.1, mkdocs-material-9.6.21" name="generator"/>
-<title>Overview - Holoflow</title>
-<link href="../assets/stylesheets/main.2a3383ac.min.css" rel="stylesheet"/>
-<link href="../assets/stylesheets/palette.06af60db.min.css" rel="stylesheet"/>
-<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
-<link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
-<style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
-<script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
-</head>
-<body data-md-color-accent="indigo" data-md-color-primary="indigo" data-md-color-scheme="default" dir="ltr">
-<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
-<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
-<label class="md-overlay" for="__drawer"></label>
-<div data-md-component="skip">
-<a class="md-skip" href="#holoflow">
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/home.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#overview" class="md-skip">
           Skip to content
         </a>
-</div>
-<div data-md-component="announce">
-</div>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
 <header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
-<nav aria-label="Header" class="md-header__inner md-grid">
-<a aria-label="Holoflow" class="md-header__button md-logo" data-md-component="logo" href="../index.html" title="Holoflow">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
-</a>
-<label class="md-header__button md-icon" for="__drawer">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
-</label>
-<div class="md-header__title" data-md-component="header-title">
-<div class="md-header__ellipsis">
-<div class="md-header__topic">
-<span class="md-ellipsis">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../index.html" title="Holoflow" class="md-header__button md-logo" aria-label="Holoflow" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
             Holoflow
           </span>
-</div>
-<div class="md-header__topic" data-md-component="header-topic">
-<span class="md-ellipsis">
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
             
               Overview
             
           </span>
-</div>
-</div>
-</div>
-<form class="md-header__option" data-md-component="palette">
-<input aria-label="Switch to light mode" class="md-option" data-md-color-accent="indigo" data-md-color-media="(prefers-color-scheme)" data-md-color-primary="indigo" data-md-color-scheme="default" id="__palette_0" name="__palette" type="radio"/>
-<label class="md-header__button md-icon" for="__palette_1" hidden="" title="Switch to light mode">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="m14.3 16-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12zm-9.15 3.96h2.3L12 9z"></path></svg>
-</label>
-<input aria-label="Switch to dark mode" class="md-option" data-md-color-accent="indigo" data-md-color-media="(prefers-color-scheme: light)" data-md-color-primary="indigo" data-md-color-scheme="default" id="__palette_1" name="__palette" type="radio"/>
-<label class="md-header__button md-icon" for="__palette_2" hidden="" title="Switch to dark mode">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"></path></svg>
-</label>
-<input aria-label="Switch to system preference" class="md-option" data-md-color-accent="indigo" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-primary="indigo" data-md-color-scheme="slate" id="__palette_2" name="__palette" type="radio"/>
-<label class="md-header__button md-icon" for="__palette_0" hidden="" title="Switch to system preference">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"></path></svg>
-</label>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m14.3 16-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12zm-9.15 3.96h2.3L12 9z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
 </form>
-<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
-<label class="md-header__button md-icon" for="__search">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
-</label>
-<div class="md-search" data-md-component="search" role="dialog">
-<label class="md-search__overlay" for="__search"></label>
-<div class="md-search__inner" role="search">
-<form class="md-search__form" name="search">
-<input aria-label="Search" autocapitalize="off" autocomplete="off" autocorrect="off" class="md-search__input" data-md-component="search-query" name="query" placeholder="Search" required="" spellcheck="false" type="text"/>
-<label class="md-search__icon md-icon" for="__search">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"></path></svg>
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
-</label>
-<nav aria-label="Search" class="md-search__options">
-<button aria-label="Clear" class="md-search__icon md-icon" tabindex="-1" title="Clear" type="reset">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"></path></svg>
-</button>
-</nav>
-<div class="md-search__suggest" data-md-component="search-suggest"></div>
-</form>
-<div class="md-search__output">
-<div class="md-search__scrollwrap" data-md-scrollfix="" tabindex="0">
-<div class="md-search-result" data-md-component="search-result">
-<div class="md-search-result__meta">
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
             Initializing search
           </div>
-<ol class="md-search-result__list" role="presentation"></ol>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
-</div>
-</div>
-</div>
-</div>
-<div class="md-header__source">
-<a class="md-source" data-md-component="source" href="https://github.com/DigitalHolography/Holoflow" title="Go to repository">
-<div class="md-source__icon md-icon">
-<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
-</div>
-<div class="md-source__repository">
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/DigitalHolography/Holoflow" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
     DigitalHolography/Holoflow
   </div>
 </a>
-</div>
-</nav>
-<nav aria-label="Tabs" class="md-tabs" data-md-component="tabs">
-<div class="md-grid">
-<ul class="md-tabs__list">
-<li class="md-tabs__item">
-<a class="md-tabs__link" href="../index.html">
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../index.html" class="md-tabs__link">
         
   
   
@@ -122,9 +238,17 @@
   Home
 
       </a>
-</li>
-<li class="md-tabs__item">
-<a class="md-tabs__link" href="../about.html">
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../about.html" class="md-tabs__link">
         
   
   
@@ -133,665 +257,2242 @@
   About
 
       </a>
-</li>
-<li class="md-tabs__item">
-<a class="md-tabs__link" href="../coverage.html">
+    </li>
+  
+
+      
         
   
   
-    
-  
-  Coverage
-
-      </a>
-</li>
-<li class="md-tabs__item">
-<a class="md-tabs__link" href="../references.html">
-        
   
   
     
-  
-  References
-
-      </a>
-</li>
-<li class="md-tabs__item">
-<a class="md-tabs__link" href="../glossary.html">
-        
-  
-  
     
-  
-  Glossary
-
-      </a>
-</li>
-<li class="md-tabs__item">
-<a class="md-tabs__link" href="../holovibes/index.html">
+      <li class="md-tabs__item">
+        <a href="../applications/index.html" class="md-tabs__link">
           
   
   
     
   
-  Holovibes
+  Applications
 
         </a>
-</li>
-<li class="md-tabs__item md-tabs__item--active">
-<a class="md-tabs__link" href="index.html">
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../learn/index.html" class="md-tabs__link">
           
   
   
     
   
-  Holoflow
+  Learn
 
         </a>
-</li>
-<li class="md-tabs__item">
-<a class="md-tabs__link" href="../curaii/index.html">
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../documentation/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Documentation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../research/index.html" class="md-tabs__link">
         
   
   
     
   
-  Curaii
+  Research
 
       </a>
-</li>
-<li class="md-tabs__item">
-<a class="md-tabs__link" href="../holofile/index.html">
+    </li>
+  
+
+      
         
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../reference/index.html" class="md-tabs__link">
+          
   
   
     
   
-  Holofile
+  Reference
 
-      </a>
-</li>
-</ul>
-</div>
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
 </nav>
+    
+  
 </header>
-<div class="md-container" data-md-component="container">
-<main class="md-main" data-md-component="main">
-<div class="md-main__inner md-grid">
-<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
-<div class="md-sidebar__scrollwrap">
-<div class="md-sidebar__inner">
-<nav aria-label="Navigation" class="md-nav md-nav--primary md-nav--lifted md-nav--integrated" data-md-level="0">
-<label class="md-nav__title" for="__drawer">
-<a aria-label="Holoflow" class="md-nav__button md-logo" data-md-component="logo" href="../index.html" title="Holoflow">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
-</a>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../index.html" title="Holoflow" class="md-nav__button md-logo" aria-label="Holoflow" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
     Holoflow
   </label>
-<div class="md-nav__source">
-<a class="md-source" data-md-component="source" href="https://github.com/DigitalHolography/Holoflow" title="Go to repository">
-<div class="md-source__icon md-icon">
-<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"></path></svg>
-</div>
-<div class="md-source__repository">
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/DigitalHolography/Holoflow" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
     DigitalHolography/Holoflow
   </div>
 </a>
-</div>
-<ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="../index.html">
-<span class="md-ellipsis">
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
     Home
     
   </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../about.html">
-<span class="md-ellipsis">
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../about.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
     About
     
   </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../coverage.html">
-<span class="md-ellipsis">
-    Coverage
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../applications/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Applications
     
   </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../references.html">
-<span class="md-ellipsis">
-    References
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Applications
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../applications/doppler-holography.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Doppler Holography
     
   </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../glossary.html">
-<span class="md-ellipsis">
-    Glossary
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../applications/doppler-oct.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Doppler OCT
     
   </span>
-</a>
-</li>
-<li class="md-nav__item md-nav__item--nested">
-<input class="md-nav__toggle md-toggle" id="__nav_6" type="checkbox"/>
-<div class="md-nav__link md-nav__container">
-<a class="md-nav__link" href="../holovibes/index.html">
-<span class="md-ellipsis">
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../applications/wavefront-analysis.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Wavefront Analysis
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../learn/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Learn
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Learn
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../learn/heterodyne-detection.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Heterodyne Detection
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../documentation/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Documentation
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Documentation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
     Holovibes
     
   </span>
-</a>
-<label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
-<span class="md-nav__icon md-icon"></span>
-</label>
-</div>
-<nav aria-expanded="false" aria-labelledby="__nav_6_label" class="md-nav" data-md-level="1">
-<label class="md-nav__title" for="__nav_6">
-<span class="md-nav__icon md-icon"></span>
-            Holovibes
-          </label>
-<ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item md-nav__item--nested">
-<input class="md-nav__toggle md-toggle" id="__nav_6_2" type="checkbox"/>
-<label class="md-nav__link" for="__nav_6_2" id="__nav_6_2_label" tabindex="0">
-<span class="md-ellipsis">
-    Tasks
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
-  </span>
-<span class="md-nav__icon md-icon"></span>
-</label>
-<nav aria-expanded="false" aria-labelledby="__nav_6_2_label" class="md-nav" data-md-level="2">
-<label class="md-nav__title" for="__nav_6_2">
-<span class="md-nav__icon md-icon"></span>
-            Tasks
-          </label>
-<ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item md-nav__item--nested">
-<input class="md-nav__toggle md-toggle" id="__nav_6_2_1" type="checkbox"/>
-<label class="md-nav__link" for="__nav_6_2_1" id="__nav_6_2_1_label" tabindex="0">
-<span class="md-ellipsis">
-    Sources
+  
+  
+  
     
-  </span>
-<span class="md-nav__icon md-icon"></span>
-</label>
-<nav aria-expanded="false" aria-labelledby="__nav_6_2_1_label" class="md-nav" data-md-level="3">
-<label class="md-nav__title" for="__nav_6_2_1">
-<span class="md-nav__icon md-icon"></span>
-            Sources
-          </label>
-<ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/sources/ametek_s710_euresys_coaxlink_octo.html">
-<span class="md-ellipsis">
-    Ametek s710 Euresys Coaxlink Octo
     
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/sources/ametek_s711_euresys_coaxlink_qsfp%2B.html">
-<span class="md-ellipsis">
-    Ametek s711 Euresys Coaxlink QSFP+
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
     
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/sources/holofile.html">
-<span class="md-ellipsis">
-    Holofile
     
-  </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item md-nav__item--nested">
-<input class="md-nav__toggle md-toggle" id="__nav_6_2_2" type="checkbox"/>
-<label class="md-nav__link" for="__nav_6_2_2" id="__nav_6_2_2_label" tabindex="0">
-<span class="md-ellipsis">
-    Sinks
     
-  </span>
-<span class="md-nav__icon md-icon"></span>
-</label>
-<nav aria-expanded="false" aria-labelledby="__nav_6_2_2_label" class="md-nav" data-md-level="3">
-<label class="md-nav__title" for="__nav_6_2_2">
-<span class="md-nav__icon md-icon"></span>
-            Sinks
-          </label>
-<ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/sinks/display_tensor.html">
-<span class="md-ellipsis">
-    Display Tensor
+      
+      
     
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/sinks/holofile.html">
-<span class="md-ellipsis">
-    Holofile
     
-  </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item md-nav__item--nested">
-<input class="md-nav__toggle md-toggle" id="__nav_6_2_3" type="checkbox"/>
-<label class="md-nav__link" for="__nav_6_2_3" id="__nav_6_2_3_label" tabindex="0">
-<span class="md-ellipsis">
-    Synchronous
-    
-  </span>
-<span class="md-nav__icon md-icon"></span>
-</label>
-<nav aria-expanded="false" aria-labelledby="__nav_6_2_3_label" class="md-nav" data-md-level="3">
-<label class="md-nav__title" for="__nav_6_2_3">
-<span class="md-nav__icon md-icon"></span>
-            Synchronous
-          </label>
-<ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/angular_spectrum.html">
-<span class="md-ellipsis">
-    Angular Spectrum
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/average.html">
-<span class="md-ellipsis">
-    Average
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/causal_sliding_average.html">
-<span class="md-ellipsis">
-    Causal Sliding Average
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/conversion.html">
-<span class="md-ellipsis">
-    Conversion
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/convolution.html">
-<span class="md-ellipsis">
-    Convolution
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/fft_shift.html">
-<span class="md-ellipsis">
-    FFT Shift
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/filter2d.html">
-<span class="md-ellipsis">
-    Filter 2D
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/fresnel_diffraction.html">
-<span class="md-ellipsis">
-    Fresnel Diffraction
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/memcpy.html">
-<span class="md-ellipsis">
-    Memcpy
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/pca.html">
-<span class="md-ellipsis">
-    PCA
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/pct_clip.html">
-<span class="md-ellipsis">
-    Percentile Clip
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/registration.html">
-<span class="md-ellipsis">
-    Registration
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/reshape.html">
-<span class="md-ellipsis">
-    Reshape
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/rotation.html">
-<span class="md-ellipsis">
-    Rotation
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/syncs/stft.html">
-<span class="md-ellipsis">
-    STFT
-    
-  </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item md-nav__item--nested">
-<input class="md-nav__toggle md-toggle" id="__nav_6_2_4" type="checkbox"/>
-<label class="md-nav__link" for="__nav_6_2_4" id="__nav_6_2_4_label" tabindex="0">
-<span class="md-ellipsis">
-    Asynchronous
-    
-  </span>
-<span class="md-nav__icon md-icon"></span>
-</label>
-<nav aria-expanded="false" aria-labelledby="__nav_6_2_4_label" class="md-nav" data-md-level="3">
-<label class="md-nav__title" for="__nav_6_2_4">
-<span class="md-nav__icon md-icon"></span>
-            Asynchronous
-          </label>
-<ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/asyncs/batch_queue.html">
-<span class="md-ellipsis">
-    Batch Queue
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/asyncs/dual_reader_batch_queue.html">
-<span class="md-ellipsis">
-    Dual Reader Batch Queue
-    
-  </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holovibes/tasks/asyncs/sliding_average.html">
-<span class="md-ellipsis">
-    Sliding Average
-    
-  </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-</ul>
-</nav>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
-<input checked="" class="md-nav__toggle md-toggle" id="__nav_7" type="checkbox"/>
-<div class="md-nav__link md-nav__container">
-<a class="md-nav__link md-nav__link--active" href="index.html">
-<span class="md-ellipsis">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link md-nav__link--active">
+              
+  
+  
+  <span class="md-ellipsis">
     Holoflow
     
   </span>
-</a>
-<label class="md-nav__link md-nav__link--active" for="__nav_7" id="__nav_7_label" tabindex="">
-<span class="md-nav__icon md-icon"></span>
-</label>
-</div>
-<nav aria-expanded="true" aria-labelledby="__nav_7_label" class="md-nav" data-md-level="1">
-<label class="md-nav__title" for="__nav_7">
-<span class="md-nav__icon md-icon"></span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link md-nav__link--active" for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
             Holoflow
           </label>
-<ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="architecture.html">
-<span class="md-ellipsis">
-    Architecture
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="getting-started/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Getting Started
     
   </span>
-</a>
-</li>
-<li class="md-nav__item md-nav__item--section md-nav__item--nested">
-<input class="md-nav__toggle md-toggle" id="__nav_7_3" type="checkbox"/>
-<label class="md-nav__link" for="__nav_7_3" id="__nav_7_3_label" tabindex="">
-<span class="md-ellipsis">
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="concepts/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
     Concepts
     
   </span>
-<span class="md-nav__icon md-icon"></span>
-</label>
-<nav aria-expanded="false" aria-labelledby="__nav_7_3_label" class="md-nav" data-md-level="2">
-<label class="md-nav__title" for="__nav_7_3">
-<span class="md-nav__icon md-icon"></span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_3" id="__nav_5_3_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_3">
+            <span class="md-nav__icon md-icon"></span>
             Concepts
           </label>
-<ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="concepts/graph.html">
-<span class="md-ellipsis">
-    Graph And Data Model
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="concepts/task-model.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Holoflow Task Model
     
   </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="concepts/tasks.html">
-<span class="md-ellipsis">
-    Task Model
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="concepts/storage-ownership.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Storage Ownership
     
   </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="concepts/tensors.html">
-<span class="md-ellipsis">
-    Tensors And Storage
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="concepts/events.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Events
     
   </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item md-nav__item--section md-nav__item--nested">
-<input class="md-nav__toggle md-toggle" id="__nav_7_4" type="checkbox"/>
-<label class="md-nav__link" for="__nav_7_4" id="__nav_7_4_label" tabindex="">
-<span class="md-ellipsis">
-    Runtime
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="tutorials/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Tutorials
     
   </span>
-<span class="md-nav__icon md-icon"></span>
-</label>
-<nav aria-expanded="false" aria-labelledby="__nav_7_4_label" class="md-nav" data-md-level="2">
-<label class="md-nav__title" for="__nav_7_4">
-<span class="md-nav__icon md-icon"></span>
-            Runtime
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_4" id="__nav_5_3_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
           </label>
-<ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="runtime/compiler.html">
-<span class="md-ellipsis">
-    Compiler
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="tutorials/ldh-pipeline.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Build An LDH Pipeline
     
   </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="runtime/scheduler.html">
-<span class="md-ellipsis">
-    Scheduler
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="how-to-guides/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    How-to Guides
     
   </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item md-nav__item--section md-nav__item--nested">
-<input class="md-nav__toggle md-toggle" id="__nav_7_5" type="checkbox"/>
-<label class="md-nav__link" for="__nav_7_5" id="__nav_7_5_label" tabindex="">
-<span class="md-ellipsis">
-    Guides
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="runtime-internals/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Runtime Internals
     
   </span>
-<span class="md-nav__icon md-icon"></span>
-</label>
-<nav aria-expanded="false" aria-labelledby="__nav_7_5_label" class="md-nav" data-md-level="2">
-<label class="md-nav__title" for="__nav_7_5">
-<span class="md-nav__icon md-icon"></span>
-            Guides
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_6" id="__nav_5_3_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_6">
+            <span class="md-nav__icon md-icon"></span>
+            Runtime Internals
           </label>
-<ul class="md-nav__list" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="guides/authoring.html">
-<span class="md-ellipsis">
-    Authoring Tasks
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="runtime-internals/graph-compilation.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Graph Compilation
     
   </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="guides/inspection.html">
-<span class="md-ellipsis">
-    Inspection And Debugging
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="reference/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    API Reference
     
   </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../curaii/index.html">
-<span class="md-ellipsis">
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../curaii/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
     Curaii
     
   </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../holofile/index.html">
-<span class="md-ellipsis">
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holofile/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
     Holofile
     
   </span>
-</a>
-</li>
-</ul>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../research/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Research
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../reference/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Reference
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_2" id="__nav_7_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Holovibes Tasks
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2">
+            <span class="md-nav__icon md-icon"></span>
+            Holovibes Tasks
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_2_1" id="__nav_7_2_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Sources
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_7_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            Sources
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/sources/ametek_s710_euresys_coaxlink_octo.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Ametek s710 Euresys Coaxlink Octo
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/sources/ametek_s711_euresys_coaxlink_qsfp%2B.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Ametek s711 Euresys Coaxlink QSFP+
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/sources/holofile.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Holofile
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_2_2" id="__nav_7_2_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Sinks
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_7_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            Sinks
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/sinks/display_tensor.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Display Tensor
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/sinks/holofile.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Holofile
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_2_3" id="__nav_7_2_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Synchronous
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_7_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            Synchronous
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/angular_spectrum.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Angular Spectrum
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/average.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Average
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/causal_sliding_average.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Causal Sliding Average
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/conversion.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Conversion
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/convolution.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Convolution
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/fft_shift.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    FFT Shift
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/filter2d.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Filter 2D
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/fresnel_diffraction.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Fresnel Diffraction
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/memcpy.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Memcpy
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/pca.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    PCA
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/pct_clip.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Percentile Clip
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/registration.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Registration
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/reshape.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Reshape
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/rotation.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Rotation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/syncs/stft.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    STFT
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_2_4" id="__nav_7_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Asynchronous
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_7_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            Asynchronous
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/asyncs/batch_queue.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Batch Queue
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/asyncs/dual_reader_batch_queue.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Dual Reader Batch Queue
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holovibes/tasks/asyncs/sliding_average.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Sliding Average
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../glossary.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Glossary
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../references.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Bibliography
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../coverage.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Test Coverage
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
 </nav>
-</div>
-</div>
-</div>
-<div class="md-content" data-md-component="content">
-<article class="md-content__inner md-typeset">
-<a class="md-content__button md-icon" href="https://github.com/DigitalHolography/Holoflow/edit/main/doc/mkdocs/docs/holoflow/index.md" rel="edit" title="Edit this page">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"></path></svg>
-</a>
-<a class="md-content__button md-icon" href="https://github.com/DigitalHolography/Holoflow/raw/main/doc/mkdocs/docs/holoflow/index.md" title="View source of this page">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M17 18c.56 0 1 .44 1 1s-.44 1-1 1-1-.44-1-1 .44-1 1-1m0-3c-2.73 0-5.06 1.66-6 4 .94 2.34 3.27 4 6 4s5.06-1.66 6-4c-.94-2.34-3.27-4-6-4m0 6.5a2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5 2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5M9.27 20H6V4h7v5h5v4.07c.7.08 1.36.25 2 .49V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4.5a8.2 8.2 0 0 1-1.23-2"></path></svg>
-</a>
-<h1 id="holoflow">Holoflow<a class="headerlink" href="#holoflow" title="Permanent link">¶</a></h1>
-<p><code>holoflow</code> is the execution core of the repository. It provides:</p>
-<ul>
-<li>A declarative graph model (<code>holoflow::core::GraphSpec</code>)</li>
-<li>A task abstraction for synchronous and asynchronous operators</li>
-<li>A compiler that turns a graph specification into an executable plan</li>
-<li>A runtime scheduler that executes that plan on <abbr title="Central processing unit">CPU</abbr>/<abbr title="Graphics processing unit">GPU</abbr> resources</li>
-<li>Utilities to serialize, inspect, and visualize both the source graph and the compiled graph</li>
-</ul>
-<p>At a high level, the library separates four concerns:</p>
-<ol>
-<li><code>core</code>: static descriptions such as tensor metadata, task interfaces, the registry, and graph specs.</li>
-<li><code>runtime</code>: compilation, resource allocation, section partitioning, task instantiation, and scheduling.</li>
-<li>User code: concrete task factories and task implementations.</li>
-<li>Integration code: the application that assembles a registry, builds a graph, compiles it, and runs it.</li>
-</ol>
-<pre class="mermaid"><code>flowchart LR
-  A[GraphSpec&lt;br/&gt;NodeSpec + EdgeSpec] --&gt; B[Registry&lt;br/&gt;task factories]
-  B --&gt; C[Compiler]
-  A --&gt; C
-  C --&gt; D[CompilerOutput&lt;br/&gt;GraphPlan + Sections + ExecResouces]
-  D --&gt; E[Scheduler]
-  E --&gt; F[Running pipeline]</code></pre>
-<h2 id="public-api-map">Public API map<a class="headerlink" href="#public-api-map" title="Permanent link">¶</a></h2>
-<p>The public headers in <code>src/holoflow/include/holoflow/</code> group naturally into six topics:</p>
-<ul>
-<li><code>core/tensor.hh</code>: tensor descriptors, storage, tensor views, owning tensors</li>
-<li><code>core/tasks.hh</code>: task interfaces, execution contexts, inference contracts</li>
-<li><code>core/registry.hh</code>: registration and lookup of task factories</li>
-<li><code>core/graph_spec.hh</code>: declarative graph representation and JSON/DOT helpers</li>
-<li><code>runtime/compiler.hh</code>: compilation entry point and compiler output</li>
-<li><code>runtime/graph_exec.hh</code>: executable graph structures, resources, sections, scheduler</li>
-<li><code>runtime/graph_display.hh</code>: DOT export for compiled graphs</li>
-</ul>
-<h2 id="execution-model-in-one-paragraph">Execution model in one paragraph<a class="headerlink" href="#execution-model-in-one-paragraph" title="Permanent link">¶</a></h2>
-<p>You describe a pipeline as a directed acyclic graph whose nodes are task instances and whose edges connect output slots to input slots. The compiler walks that graph in topological order, asks each registered factory to infer its I/O contract, assigns tensor IDs and storage IDs, allocates or reuses memory blocks, partitions the graph into runtime sections, instantiates tasks, and returns a <code>CompilerOutput</code>. The scheduler then runs one thread per section plus one router thread, executes synchronous nodes inline, bridges asynchronous nodes across sections, and exposes runtime metrics and UI event channels.</p>
-<h2 id="what-this-manual-covers">What this manual covers<a class="headerlink" href="#what-this-manual-covers" title="Permanent link">¶</a></h2>
-<ul>
-<li><a href="architecture.html">Architecture</a>: the main runtime objects and how they fit together</li>
-<li><a href="concepts/graph.html">Graph And Data Model</a>: graph rules, JSON format, tensors, and IDs</li>
-<li><a href="concepts/tasks.html">Task Model</a>: sync vs async tasks, ownership, in-place execution</li>
-<li><a href="concepts/tensors.html">Tensors And Storage</a>: the low-level tensor and storage layer</li>
-<li><a href="runtime/compiler.html">Compiler</a>: passes, update semantics, memory reuse, sectioning</li>
-<li><a href="runtime/scheduler.html">Scheduler</a>: execution loop, cancellation, metrics, UI events</li>
-<li><a href="guides/authoring.html">Authoring Tasks</a>: how to implement factories and operators correctly</li>
-<li><a href="guides/inspection.html">Inspection And Debugging</a>: DOT dumps, tracing, and practical debugging</li>
-</ul>
-<h2 id="minimal-integration-flow">Minimal integration flow<a class="headerlink" href="#minimal-integration-flow" title="Permanent link">¶</a></h2>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-is-holoflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      What is Holoflow?
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-holoflow" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why Holoflow?
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-1-band-pass-filter" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example 1: Band-pass filter
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Example 1: Band-pass filter">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#build-the-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      Build the graph
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#compile-the-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      Compile the graph
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#start-and-stop-the-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      Start and stop the graph
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cpu-and-gpu-timeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      CPU and GPU timeline
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#example-2-overlap-work-with-batchqueue" class="md-nav__link">
+    <span class="md-ellipsis">
+      Example 2: overlap work with BatchQueue
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Example 2: overlap work with BatchQueue">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#updating-the-graph" class="md-nav__link">
+    <span class="md-ellipsis">
+      Updating the graph
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#overlapped-cpu-and-gpu-timeline" class="md-nav__link">
+    <span class="md-ellipsis">
+      Overlapped CPU and GPU timeline
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#throughput" class="md-nav__link">
+    <span class="md-ellipsis">
+      Throughput
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#where-to-go-next" class="md-nav__link">
+    <span class="md-ellipsis">
+      Where to go next
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/DigitalHolography/Holoflow/edit/main/doc/mkdocs/docs/holoflow/index.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/DigitalHolography/Holoflow/raw/main/doc/mkdocs/docs/holoflow/index.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 18c.56 0 1 .44 1 1s-.44 1-1 1-1-.44-1-1 .44-1 1-1m0-3c-2.73 0-5.06 1.66-6 4 .94 2.34 3.27 4 6 4s5.06-1.66 6-4c-.94-2.34-3.27-4-6-4m0 6.5a2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5 2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5M9.27 20H6V4h7v5h5v4.07c.7.08 1.36.25 2 .49V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4.5a8.2 8.2 0 0 1-1.23-2"/></svg>
+    </a>
+  
+
+
+<h1 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h1>
+<h2 id="what-is-holoflow">What is Holoflow?<a class="headerlink" href="#what-is-holoflow" title="Permanent link">&para;</a></h2>
+<p>Holoflow is a C++/<abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> library for building high-throughput scientific processing pipelines. An application describes its computation as a graph
+whose nodes are computational tasks and edges tensor-dependencies between them.</p>
+<p>The library separates the description of a pipeline from its execution. A <code>GraphSpec</code> records what should run ("the equations"), the compiler validates that graph and prepares its tensors, resources, and tasks. Finally, the scheduler executes the compiled graph on <abbr title="Central processing unit">CPU</abbr> and <abbr title="Graphics processing unit">GPU</abbr> resources.</p>
+<p>Applications provide the concrete tasks. Holoflow provides the graph model, compilation, memory management, scheduling, and inspection tools needed to connect those tasks into a running pipeline.</p>
+<h2 id="why-holoflow">Why Holoflow?<a class="headerlink" href="#why-holoflow" title="Permanent link">&para;</a></h2>
+<p>Scientific imaging pipelines combine high data rates, intense numerical processing, and algorithms that change quickly as experiments evolve. Implementing every pipeline directly
+with manual buffer management and scheduling makes those changes difficult to implement on the long run, and requires substantial high-performance-computing expertise.</p>
+<p>Many scientists use NumPy<sup id="fnref:numpy2020"><a class="footnote-ref" href="#fn:numpy2020">1</a></sup> or <abbr title="Graphics processing unit">GPU</abbr>-accelerated alternatives such as CuPy,<sup id="fnref:cupy2017"><a class="footnote-ref" href="#fn:cupy2017">2</a></sup> JAX,<sup id="fnref:jax2018"><a class="footnote-ref" href="#fn:jax2018">3</a></sup> and PyTorch<sup id="fnref:pytorch2019"><a class="footnote-ref" href="#fn:pytorch2019">4</a></sup> because they hide implementation details and keep the code close to the underlying equations. However, a focused benchmark of a representative micro-batch laser Doppler holography pipeline found that an optimized C++/<abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> implementation was up to 74–267% faster than the Python-based implementations, depending on the platform.<sup id="fnref:guillou2027"><a class="footnote-ref" href="#fn:guillou2027">5</a></sup></p>
+<p>Holoflow aims to combine those two needs: a high-level, declarative description of the computation and predictable execution suitable for real-time workloads, with first class support for Windows.</p>
+<h2 id="example-1-band-pass-filter">Example 1: Band-pass filter<a class="headerlink" href="#example-1-band-pass-filter" title="Permanent link">&para;</a></h2>
+<p>The following pipeline streams a NumPy array containing <span class="arithmatex">\(131072\)</span> <span class="arithmatex">\(512 \times 512\)</span> frames, transfers them to the <abbr title="Graphics processing unit">GPU</abbr>, applies a frequency-domain band-pass filter, and saves the result.</p>
+<h3 id="build-the-graph">Build the graph<a class="headerlink" href="#build-the-graph" title="Permanent link">&para;</a></h3>
+<p>Each node has a unique name, a registered task kind, and task-specific JSON settings. Each edge identifies the producer's output slot and the consumer's input slot.</p>
 <div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-0-1"> 1</a></span>
 <span class="normal"><a href="#__codelineno-0-2"> 2</a></span>
 <span class="normal"><a href="#__codelineno-0-3"> 3</a></span>
@@ -811,86 +2512,328 @@
 <span class="normal"><a href="#__codelineno-0-17">17</a></span>
 <span class="normal"><a href="#__codelineno-0-18">18</a></span>
 <span class="normal"><a href="#__codelineno-0-19">19</a></span>
-<span class="normal"><a href="#__codelineno-0-20">20</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;holoflow/core/graph_spec.hh&gt;</span>
-<a id="__codelineno-0-2" name="__codelineno-0-2"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;holoflow/core/registry.hh&gt;</span>
-<a id="__codelineno-0-3" name="__codelineno-0-3"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;holoflow/runtime/compiler.hh&gt;</span>
-<a id="__codelineno-0-4" name="__codelineno-0-4"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;holoflow/runtime/graph_exec.hh&gt;</span>
-<a id="__codelineno-0-5" name="__codelineno-0-5"></a>
-<a id="__codelineno-0-6" name="__codelineno-0-6"></a><span class="n">holoflow</span><span class="o">::</span><span class="n">core</span><span class="o">::</span><span class="n">Registry</span><span class="w"> </span><span class="n">registry</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">build_registry</span><span class="p">();</span>
-<a id="__codelineno-0-7" name="__codelineno-0-7"></a><span class="n">holoflow</span><span class="o">::</span><span class="n">core</span><span class="o">::</span><span class="n">GraphSpec</span><span class="w"> </span><span class="n">graph</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">build_graph</span><span class="p">();</span>
-<a id="__codelineno-0-8" name="__codelineno-0-8"></a>
-<a id="__codelineno-0-9" name="__codelineno-0-9"></a><span class="n">holoflow</span><span class="o">::</span><span class="n">runtime</span><span class="o">::</span><span class="n">Compiler</span><span class="w"> </span><span class="nf">compiler</span><span class="p">(</span><span class="n">registry</span><span class="p">);</span>
-<a id="__codelineno-0-10" name="__codelineno-0-10"></a><span class="k">auto</span><span class="w"> </span><span class="n">compiled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">compiler</span><span class="p">.</span><span class="n">compile</span><span class="p">(</span><span class="n">graph</span><span class="p">);</span>
-<a id="__codelineno-0-11" name="__codelineno-0-11"></a>
-<a id="__codelineno-0-12" name="__codelineno-0-12"></a><span class="n">holoflow</span><span class="o">::</span><span class="n">runtime</span><span class="o">::</span><span class="n">Scheduler</span><span class="w"> </span><span class="nf">scheduler</span><span class="p">(</span>
-<a id="__codelineno-0-13" name="__codelineno-0-13"></a><span class="w">    </span><span class="n">compiled</span><span class="o">-&gt;</span><span class="n">graph</span><span class="p">,</span>
-<a id="__codelineno-0-14" name="__codelineno-0-14"></a><span class="w">    </span><span class="n">compiled</span><span class="o">-&gt;</span><span class="n">sections</span><span class="p">,</span>
-<a id="__codelineno-0-15" name="__codelineno-0-15"></a><span class="w">    </span><span class="n">compiled</span><span class="o">-&gt;</span><span class="n">resources</span><span class="p">);</span>
-<a id="__codelineno-0-16" name="__codelineno-0-16"></a>
-<a id="__codelineno-0-17" name="__codelineno-0-17"></a><span class="n">scheduler</span><span class="p">.</span><span class="n">start</span><span class="p">();</span>
-<a id="__codelineno-0-18" name="__codelineno-0-18"></a><span class="cm">/* application loop */</span>
-<a id="__codelineno-0-19" name="__codelineno-0-19"></a><span class="n">scheduler</span><span class="p">.</span><span class="n">request_stop</span><span class="p">();</span>
-<a id="__codelineno-0-20" name="__codelineno-0-20"></a><span class="n">scheduler</span><span class="p">.</span><span class="n">wait</span><span class="p">();</span>
+<span class="normal"><a href="#__codelineno-0-20">20</a></span>
+<span class="normal"><a href="#__codelineno-0-21">21</a></span>
+<span class="normal"><a href="#__codelineno-0-22">22</a></span>
+<span class="normal"><a href="#__codelineno-0-23">23</a></span>
+<span class="normal"><a href="#__codelineno-0-24">24</a></span>
+<span class="normal"><a href="#__codelineno-0-25">25</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;boost/graph/adjacency_list.hpp&gt;</span>
+<a id="__codelineno-0-2" name="__codelineno-0-2"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;holoflow/core/graph_spec.hh&gt;</span>
+<a id="__codelineno-0-3" name="__codelineno-0-3"></a>
+<a id="__codelineno-0-4" name="__codelineno-0-4"></a><span class="k">using</span><span class="w"> </span><span class="n">holoflow</span><span class="o">::</span><span class="n">core</span><span class="o">::</span><span class="n">EdgeSpec</span><span class="p">;</span>
+<a id="__codelineno-0-5" name="__codelineno-0-5"></a><span class="k">using</span><span class="w"> </span><span class="n">holoflow</span><span class="o">::</span><span class="n">core</span><span class="o">::</span><span class="n">GraphSpec</span><span class="p">;</span>
+<a id="__codelineno-0-6" name="__codelineno-0-6"></a><span class="k">using</span><span class="w"> </span><span class="n">holoflow</span><span class="o">::</span><span class="n">core</span><span class="o">::</span><span class="n">NodeSpec</span><span class="p">;</span>
+<a id="__codelineno-0-7" name="__codelineno-0-7"></a>
+<a id="__codelineno-0-8" name="__codelineno-0-8"></a><span class="n">GraphSpec</span><span class="w"> </span><span class="n">graph</span><span class="p">;</span>
+<a id="__codelineno-0-9" name="__codelineno-0-9"></a>
+<a id="__codelineno-0-10" name="__codelineno-0-10"></a><span class="k">auto</span><span class="w"> </span><span class="n">load</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="n">boost</span><span class="o">::</span><span class="n">add_vertex</span><span class="p">(</span><span class="n">NodeSpec</span><span class="p">{</span><span class="s">"load"</span><span class="p">,</span><span class="w"> </span><span class="s">"LoadNpy"</span><span class="p">,</span><span class="w"> </span><span class="p">{{</span><span class="s">"path"</span><span class="p">,</span><span class="w"> </span><span class="s">"input.npy"</span><span class="p">}}},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-11" name="__codelineno-0-11"></a><span class="k">auto</span><span class="w"> </span><span class="n">upload</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="n">boost</span><span class="o">::</span><span class="n">add_vertex</span><span class="p">(</span><span class="n">NodeSpec</span><span class="p">{</span><span class="s">"upload"</span><span class="p">,</span><span class="w"> </span><span class="s">"Memcpy"</span><span class="p">,</span><span class="w"> </span><span class="p">{{</span><span class="s">"target"</span><span class="p">,</span><span class="w"> </span><span class="s">"Device"</span><span class="p">}}},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-12" name="__codelineno-0-12"></a><span class="k">auto</span><span class="w"> </span><span class="n">fft</span><span class="w">      </span><span class="o">=</span><span class="w"> </span><span class="n">boost</span><span class="o">::</span><span class="n">add_vertex</span><span class="p">(</span><span class="n">NodeSpec</span><span class="p">{</span><span class="s">"fft"</span><span class="p">,</span><span class="w"> </span><span class="s">"RFFT2"</span><span class="p">,</span><span class="w"> </span><span class="p">{{</span><span class="s">"axes"</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="mi">-2</span><span class="p">,</span><span class="w"> </span><span class="mi">-1</span><span class="p">}}}},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-13" name="__codelineno-0-13"></a><span class="k">auto</span><span class="w"> </span><span class="n">mask</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="n">boost</span><span class="o">::</span><span class="n">add_vertex</span><span class="p">(</span><span class="n">NodeSpec</span><span class="p">{</span><span class="s">"mask"</span><span class="p">,</span><span class="w"> </span><span class="s">"BandpassMask"</span><span class="p">,{{</span><span class="s">"shape"</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">512</span><span class="p">,</span><span class="w"> </span><span class="mi">257</span><span class="p">}},</span><span class="w"> </span><span class="p">{</span><span class="s">"inner_radius"</span><span class="p">,</span><span class="w"> </span><span class="mf">0.05</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="s">"outer_radius"</span><span class="p">,</span><span class="w"> </span><span class="mf">0.25</span><span class="p">}}},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-14" name="__codelineno-0-14"></a><span class="k">auto</span><span class="w"> </span><span class="n">multiply</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">boost</span><span class="o">::</span><span class="n">add_vertex</span><span class="p">(</span><span class="n">NodeSpec</span><span class="p">{</span><span class="s">"multiply"</span><span class="p">,</span><span class="w"> </span><span class="s">"Multiply"</span><span class="p">,</span><span class="w"> </span><span class="n">nlohmann</span><span class="o">::</span><span class="n">json</span><span class="o">::</span><span class="n">object</span><span class="p">()},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-15" name="__codelineno-0-15"></a><span class="k">auto</span><span class="w"> </span><span class="n">ifft</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="n">boost</span><span class="o">::</span><span class="n">add_vertex</span><span class="p">(</span><span class="n">NodeSpec</span><span class="p">{</span><span class="s">"ifft"</span><span class="p">,</span><span class="w"> </span><span class="s">"IRFFT2"</span><span class="p">,</span><span class="w"> </span><span class="p">{{</span><span class="s">"axes"</span><span class="p">,</span><span class="w"> </span><span class="p">{</span><span class="mi">-2</span><span class="p">,</span><span class="w"> </span><span class="mi">-1</span><span class="p">}}}},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-16" name="__codelineno-0-16"></a><span class="k">auto</span><span class="w"> </span><span class="n">download</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">boost</span><span class="o">::</span><span class="n">add_vertex</span><span class="p">(</span><span class="n">NodeSpec</span><span class="p">{</span><span class="s">"download"</span><span class="p">,</span><span class="w"> </span><span class="s">"Memcpy"</span><span class="p">,</span><span class="w"> </span><span class="p">{{</span><span class="s">"target"</span><span class="p">,</span><span class="w"> </span><span class="s">"Host"</span><span class="p">}}},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-17" name="__codelineno-0-17"></a><span class="k">auto</span><span class="w"> </span><span class="n">save</span><span class="w">     </span><span class="o">=</span><span class="w"> </span><span class="n">boost</span><span class="o">::</span><span class="n">add_vertex</span><span class="p">(</span><span class="n">NodeSpec</span><span class="p">{</span><span class="s">"save"</span><span class="p">,</span><span class="w"> </span><span class="s">"SaveNpy"</span><span class="p">,</span><span class="w"> </span><span class="p">{{</span><span class="s">"path"</span><span class="p">,</span><span class="w"> </span><span class="s">"filtered.npy"</span><span class="p">}}},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-18" name="__codelineno-0-18"></a>
+<a id="__codelineno-0-19" name="__codelineno-0-19"></a><span class="n">boost</span><span class="o">::</span><span class="n">add_edge</span><span class="p">(</span><span class="n">load</span><span class="p">,</span><span class="w"> </span><span class="n">upload</span><span class="p">,</span><span class="w"> </span><span class="n">EdgeSpec</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-20" name="__codelineno-0-20"></a><span class="n">boost</span><span class="o">::</span><span class="n">add_edge</span><span class="p">(</span><span class="n">upload</span><span class="p">,</span><span class="w"> </span><span class="n">fft</span><span class="p">,</span><span class="w"> </span><span class="n">EdgeSpec</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-21" name="__codelineno-0-21"></a><span class="n">boost</span><span class="o">::</span><span class="n">add_edge</span><span class="p">(</span><span class="n">fft</span><span class="p">,</span><span class="w"> </span><span class="n">multiply</span><span class="p">,</span><span class="w"> </span><span class="n">EdgeSpec</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-22" name="__codelineno-0-22"></a><span class="n">boost</span><span class="o">::</span><span class="n">add_edge</span><span class="p">(</span><span class="n">mask</span><span class="p">,</span><span class="w"> </span><span class="n">multiply</span><span class="p">,</span><span class="w"> </span><span class="n">EdgeSpec</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-23" name="__codelineno-0-23"></a><span class="n">boost</span><span class="o">::</span><span class="n">add_edge</span><span class="p">(</span><span class="n">multiply</span><span class="p">,</span><span class="w"> </span><span class="n">ifft</span><span class="p">,</span><span class="w"> </span><span class="n">EdgeSpec</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-24" name="__codelineno-0-24"></a><span class="n">boost</span><span class="o">::</span><span class="n">add_edge</span><span class="p">(</span><span class="n">ifft</span><span class="p">,</span><span class="w"> </span><span class="n">download</span><span class="p">,</span><span class="w"> </span><span class="n">EdgeSpec</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-0-25" name="__codelineno-0-25"></a><span class="n">boost</span><span class="o">::</span><span class="n">add_edge</span><span class="p">(</span><span class="n">download</span><span class="p">,</span><span class="w"> </span><span class="n">save</span><span class="p">,</span><span class="w"> </span><span class="n">EdgeSpec</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
 </code></pre></div></td></tr></table></div>
-<h2 id="important-lifetime-rule">Important lifetime rule<a class="headerlink" href="#important-lifetime-rule" title="Permanent link">¶</a></h2>
-<p><code>Scheduler</code> does not own the compiled artifacts. It keeps references to <code>CompilerOutput::graph</code>, <code>CompilerOutput::sections</code>, and <code>CompilerOutput::resources</code>. That means the <code>CompilerOutput</code> instance must stay alive for the full lifetime of the scheduler.</p>
-</article>
+<p><a href="../assets/images/holoflow-bandpass-spec.svg"><img alt="Graph specification for the band-pass filter" src="../assets/images/holoflow-bandpass-spec.svg" /></a></p>
+<p><em>The graph specification describes task configuration and slot-to-slot dependencies.</em></p>
+<h3 id="compile-the-graph">Compile the graph<a class="headerlink" href="#compile-the-graph" title="Permanent link">&para;</a></h3>
+<p>The registry connects each task kind to the factory that can infer its tensor contract and create its runtime implementation. The <code>my_app</code> factories below are illustrative application-provided implementations. Once the application has registered those factories, the compiler turns the specification into an executable graph.</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-1-1"> 1</a></span>
+<span class="normal"><a href="#__codelineno-1-2"> 2</a></span>
+<span class="normal"><a href="#__codelineno-1-3"> 3</a></span>
+<span class="normal"><a href="#__codelineno-1-4"> 4</a></span>
+<span class="normal"><a href="#__codelineno-1-5"> 5</a></span>
+<span class="normal"><a href="#__codelineno-1-6"> 6</a></span>
+<span class="normal"><a href="#__codelineno-1-7"> 7</a></span>
+<span class="normal"><a href="#__codelineno-1-8"> 8</a></span>
+<span class="normal"><a href="#__codelineno-1-9"> 9</a></span>
+<span class="normal"><a href="#__codelineno-1-10">10</a></span>
+<span class="normal"><a href="#__codelineno-1-11">11</a></span>
+<span class="normal"><a href="#__codelineno-1-12">12</a></span>
+<span class="normal"><a href="#__codelineno-1-13">13</a></span>
+<span class="normal"><a href="#__codelineno-1-14">14</a></span>
+<span class="normal"><a href="#__codelineno-1-15">15</a></span>
+<span class="normal"><a href="#__codelineno-1-16">16</a></span>
+<span class="normal"><a href="#__codelineno-1-17">17</a></span>
+<span class="normal"><a href="#__codelineno-1-18">18</a></span>
+<span class="normal"><a href="#__codelineno-1-19">19</a></span>
+<span class="normal"><a href="#__codelineno-1-20">20</a></span>
+<span class="normal"><a href="#__codelineno-1-21">21</a></span>
+<span class="normal"><a href="#__codelineno-1-22">22</a></span>
+<span class="normal"><a href="#__codelineno-1-23">23</a></span>
+<span class="normal"><a href="#__codelineno-1-24">24</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;memory&gt;</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;holoflow/core/registry.hh&gt;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;holoflow/runtime/compiler.hh&gt;</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5"></a>
+<a id="__codelineno-1-6" name="__codelineno-1-6"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">"my_app/sinks/save_npy.hh"</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">"my_app/sources/bandpass_mask.hh"</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">"my_app/sources/load_npy.hh"</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">"my_app/syncs/irfft2.hh"</span>
+<a id="__codelineno-1-10" name="__codelineno-1-10"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">"my_app/syncs/memcpy.hh"</span>
+<a id="__codelineno-1-11" name="__codelineno-1-11"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">"my_app/syncs/multiply.hh"</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">"my_app/syncs/rfft2.hh"</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13"></a>
+<a id="__codelineno-1-14" name="__codelineno-1-14"></a><span class="n">holoflow</span><span class="o">::</span><span class="n">core</span><span class="o">::</span><span class="n">Registry</span><span class="w"> </span><span class="n">registry</span><span class="p">;</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15"></a><span class="n">registry</span><span class="p">.</span><span class="n">register_sync</span><span class="p">(</span><span class="s">"LoadNpy"</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">my_app</span><span class="o">::</span><span class="n">LoadNpyFactory</span><span class="o">&gt;</span><span class="p">());</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16"></a><span class="n">registry</span><span class="p">.</span><span class="n">register_sync</span><span class="p">(</span><span class="s">"Memcpy"</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">my_app</span><span class="o">::</span><span class="n">syncs</span><span class="o">::</span><span class="n">MemcpyFactory</span><span class="o">&gt;</span><span class="p">());</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17"></a><span class="n">registry</span><span class="p">.</span><span class="n">register_sync</span><span class="p">(</span><span class="s">"RFFT2"</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">my_app</span><span class="o">::</span><span class="n">RFFT2Factory</span><span class="o">&gt;</span><span class="p">());</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18"></a><span class="n">registry</span><span class="p">.</span><span class="n">register_sync</span><span class="p">(</span><span class="s">"BandpassMask"</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">my_app</span><span class="o">::</span><span class="n">BandpassMaskFactory</span><span class="o">&gt;</span><span class="p">());</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19"></a><span class="n">registry</span><span class="p">.</span><span class="n">register_sync</span><span class="p">(</span><span class="s">"Multiply"</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">my_app</span><span class="o">::</span><span class="n">MultiplyFactory</span><span class="o">&gt;</span><span class="p">());</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20"></a><span class="n">registry</span><span class="p">.</span><span class="n">register_sync</span><span class="p">(</span><span class="s">"IRFFT2"</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">my_app</span><span class="o">::</span><span class="n">IRFFT2Factory</span><span class="o">&gt;</span><span class="p">());</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21"></a><span class="n">registry</span><span class="p">.</span><span class="n">register_sync</span><span class="p">(</span><span class="s">"SaveNpy"</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">my_app</span><span class="o">::</span><span class="n">SaveNpyFactory</span><span class="o">&gt;</span><span class="p">());</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22"></a>
+<a id="__codelineno-1-23" name="__codelineno-1-23"></a><span class="n">holoflow</span><span class="o">::</span><span class="n">runtime</span><span class="o">::</span><span class="n">Compiler</span><span class="w"> </span><span class="nf">compiler</span><span class="p">(</span><span class="n">registry</span><span class="p">);</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24"></a><span class="k">auto</span><span class="w"> </span><span class="n">compiled</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">compiler</span><span class="p">.</span><span class="n">compile</span><span class="p">(</span><span class="n">graph</span><span class="p">);</span>
+</code></pre></div></td></tr></table></div>
+<p><a href="../assets/images/holoflow-bandpass-compiled.svg"><img alt="Compiled band-pass filter graph" src="../assets/images/holoflow-bandpass-compiled.svg" /></a></p>
+<p><em>The compiled graph includes inferred tensor types and memory locations and groups the tasks into an execution section.</em></p>
+<h3 id="start-and-stop-the-graph">Start and stop the graph<a class="headerlink" href="#start-and-stop-the-graph" title="Permanent link">&para;</a></h3>
+<p>Construct a scheduler from the compiled graph and start it. <code>start()</code> returns after launching the runtime threads, so the application can continue with its own event or monitoring loop.</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-2-1"> 1</a></span>
+<span class="normal"><a href="#__codelineno-2-2"> 2</a></span>
+<span class="normal"><a href="#__codelineno-2-3"> 3</a></span>
+<span class="normal"><a href="#__codelineno-2-4"> 4</a></span>
+<span class="normal"><a href="#__codelineno-2-5"> 5</a></span>
+<span class="normal"><a href="#__codelineno-2-6"> 6</a></span>
+<span class="normal"><a href="#__codelineno-2-7"> 7</a></span>
+<span class="normal"><a href="#__codelineno-2-8"> 8</a></span>
+<span class="normal"><a href="#__codelineno-2-9"> 9</a></span>
+<span class="normal"><a href="#__codelineno-2-10">10</a></span>
+<span class="normal"><a href="#__codelineno-2-11">11</a></span>
+<span class="normal"><a href="#__codelineno-2-12">12</a></span>
+<span class="normal"><a href="#__codelineno-2-13">13</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">&lt;holoflow/runtime/graph_exec.hh&gt;</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2"></a>
+<a id="__codelineno-2-3" name="__codelineno-2-3"></a><span class="n">holoflow</span><span class="o">::</span><span class="n">runtime</span><span class="o">::</span><span class="n">Scheduler</span><span class="w"> </span><span class="nf">scheduler</span><span class="p">(</span>
+<a id="__codelineno-2-4" name="__codelineno-2-4"></a><span class="w">    </span><span class="n">compiled</span><span class="o">-&gt;</span><span class="n">graph</span><span class="p">,</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5"></a><span class="w">    </span><span class="n">compiled</span><span class="o">-&gt;</span><span class="n">sections</span><span class="p">,</span>
+<a id="__codelineno-2-6" name="__codelineno-2-6"></a><span class="w">    </span><span class="n">compiled</span><span class="o">-&gt;</span><span class="n">resources</span><span class="p">);</span>
+<a id="__codelineno-2-7" name="__codelineno-2-7"></a>
+<a id="__codelineno-2-8" name="__codelineno-2-8"></a><span class="n">scheduler</span><span class="p">.</span><span class="n">start</span><span class="p">();</span>
+<a id="__codelineno-2-9" name="__codelineno-2-9"></a>
+<a id="__codelineno-2-10" name="__codelineno-2-10"></a><span class="c1">// Application work continues here.</span>
+<a id="__codelineno-2-11" name="__codelineno-2-11"></a>
+<a id="__codelineno-2-12" name="__codelineno-2-12"></a><span class="n">scheduler</span><span class="p">.</span><span class="n">request_stop</span><span class="p">();</span>
+<a id="__codelineno-2-13" name="__codelineno-2-13"></a><span class="n">scheduler</span><span class="p">.</span><span class="n">wait</span><span class="p">();</span>
+</code></pre></div></td></tr></table></div>
+<p><code>request_stop()</code> asks the tasks to stop cooperatively. <code>wait()</code> joins the runtime threads and is the synchronization point for a clean shutdown. Because the scheduler borrows the compiled graph and resources, keep <code>compiled</code> alive until after <code>scheduler.wait()</code> returns.</p>
+<h3 id="cpu-and-gpu-timeline"><abbr title="Central processing unit">CPU</abbr> and <abbr title="Graphics processing unit">GPU</abbr> timeline<a class="headerlink" href="#cpu-and-gpu-timeline" title="Permanent link">&para;</a></h3>
+<p>For this graph, the compiler creates one execution section with one <abbr title="Central processing unit">CPU</abbr> thread and one <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> stream. The scheduler executes the tasks in graph order for each frame.</p>
+<div class="admonition warning">
+<p class="admonition-title">Synthetic profiling data</p>
+<p>This timeline uses illustrative timings and is not a performance measurement. It will be replaced with a trace captured from this example.</p>
 </div>
+<p><a href="../assets/images/holoflow-bandpass-timeline.svg"><img alt="Illustrative CPU and GPU timeline for the single-section band-pass filter" src="../assets/images/holoflow-bandpass-timeline.svg" /></a></p>
+<p><em>One section serializes transfers and kernels on a single <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> stream.</em></p>
+<h2 id="example-2-overlap-work-with-batchqueue">Example 2: overlap work with BatchQueue<a class="headerlink" href="#example-2-overlap-work-with-batchqueue" title="Permanent link">&para;</a></h2>
+<p>The initial design is inefficient because computations are halted when the data is transfered between the <abbr title="Central processing unit">CPU</abbr> and <abbr title="Graphics processing unit">GPU</abbr>. To increase throughput,
+we want to overlap computation of <code>frame (N)</code> with H2D transfer of <code>frame (N+1)</code> and D2H transfer of <code>frame (N-1)</code>.</p>
+<h3 id="updating-the-graph">Updating the graph<a class="headerlink" href="#updating-the-graph" title="Permanent link">&para;</a></h3>
+<p>Let's add a <code>BatchQueue</code> after the first <code>Memcpy</code> and another before the second one. Each queue is an asynchronous boundary: the compiler splits the graph at that boundary and assigns each resulting section its own <abbr title="Central processing unit">CPU</abbr> thread and <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> stream.</p>
+<p>The rest of the first graph remains unchanged. Include and register the asynchronous queue factory, then replace the direct <code>upload -&gt; fft</code> and <code>ifft -&gt; download</code> edges with these nodes and edges:</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-3-1"> 1</a></span>
+<span class="normal"><a href="#__codelineno-3-2"> 2</a></span>
+<span class="normal"><a href="#__codelineno-3-3"> 3</a></span>
+<span class="normal"><a href="#__codelineno-3-4"> 4</a></span>
+<span class="normal"><a href="#__codelineno-3-5"> 5</a></span>
+<span class="normal"><a href="#__codelineno-3-6"> 6</a></span>
+<span class="normal"><a href="#__codelineno-3-7"> 7</a></span>
+<span class="normal"><a href="#__codelineno-3-8"> 8</a></span>
+<span class="normal"><a href="#__codelineno-3-9"> 9</a></span>
+<span class="normal"><a href="#__codelineno-3-10">10</a></span>
+<span class="normal"><a href="#__codelineno-3-11">11</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">"my_app/asyncs/batch_queue.hh"</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2"></a>
+<a id="__codelineno-3-3" name="__codelineno-3-3"></a><span class="n">registry</span><span class="p">.</span><span class="n">register_async</span><span class="p">(</span><span class="s">"BatchQueue"</span><span class="p">,</span><span class="w"> </span><span class="n">std</span><span class="o">::</span><span class="n">make_unique</span><span class="o">&lt;</span><span class="n">my_app</span><span class="o">::</span><span class="n">asyncs</span><span class="o">::</span><span class="n">BatchQueueFactory</span><span class="o">&gt;</span><span class="p">());</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4"></a>
+<a id="__codelineno-3-5" name="__codelineno-3-5"></a><span class="k">auto</span><span class="w"> </span><span class="n">upload_queue</span><span class="w">   </span><span class="o">=</span><span class="w"> </span><span class="n">boost</span><span class="o">::</span><span class="n">add_vertex</span><span class="p">(</span><span class="n">NodeSpec</span><span class="p">{</span><span class="s">"upload_queue"</span><span class="p">,</span><span class="w"> </span><span class="s">"BatchQueue"</span><span class="p">,</span><span class="w"> </span><span class="p">{{</span><span class="s">"target_capacity"</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="s">"output_size"</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="s">"output_stride"</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">}}},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-3-6" name="__codelineno-3-6"></a><span class="k">auto</span><span class="w"> </span><span class="n">download_queue</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">boost</span><span class="o">::</span><span class="n">add_vertex</span><span class="p">(</span><span class="n">NodeSpec</span><span class="p">{</span><span class="s">"download_queue"</span><span class="p">,</span><span class="w"> </span><span class="s">"BatchQueue"</span><span class="p">,</span><span class="w"> </span><span class="p">{{</span><span class="s">"target_capacity"</span><span class="p">,</span><span class="w"> </span><span class="mi">4</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="s">"output_size"</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">},</span><span class="w"> </span><span class="p">{</span><span class="s">"output_stride"</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">}}},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-3-7" name="__codelineno-3-7"></a>
+<a id="__codelineno-3-8" name="__codelineno-3-8"></a><span class="n">boost</span><span class="o">::</span><span class="n">add_edge</span><span class="p">(</span><span class="n">upload</span><span class="p">,</span><span class="w"> </span><span class="n">upload_queue</span><span class="p">,</span><span class="w"> </span><span class="n">EdgeSpec</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-3-9" name="__codelineno-3-9"></a><span class="n">boost</span><span class="o">::</span><span class="n">add_edge</span><span class="p">(</span><span class="n">upload_queue</span><span class="p">,</span><span class="w"> </span><span class="n">fft</span><span class="p">,</span><span class="w"> </span><span class="n">EdgeSpec</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-3-10" name="__codelineno-3-10"></a><span class="n">boost</span><span class="o">::</span><span class="n">add_edge</span><span class="p">(</span><span class="n">ifft</span><span class="p">,</span><span class="w"> </span><span class="n">download_queue</span><span class="p">,</span><span class="w"> </span><span class="n">EdgeSpec</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+<a id="__codelineno-3-11" name="__codelineno-3-11"></a><span class="n">boost</span><span class="o">::</span><span class="n">add_edge</span><span class="p">(</span><span class="n">download_queue</span><span class="p">,</span><span class="w"> </span><span class="n">download</span><span class="p">,</span><span class="w"> </span><span class="n">EdgeSpec</span><span class="p">{</span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="mi">0</span><span class="p">},</span><span class="w"> </span><span class="n">graph</span><span class="p">);</span>
+</code></pre></div></td></tr></table></div>
+<p><a href="../assets/images/holoflow-bandpass-queued-spec.svg"><img alt="Graph specification for the queued band-pass filter" src="../assets/images/holoflow-bandpass-queued-spec.svg" /></a></p>
+<p><em>The two <code>BatchQueue</code> nodes separate data production from consumption without changing the tensor memory location.</em></p>
+<p>Apart from registering the asynchronous queue factory, the compiler and scheduler code is identical to the first example. Compiling the modified graph produces three execution sections connected by asynchronous queues.</p>
+<p><a href="../assets/images/holoflow-bandpass-queued-compiled.svg"><img alt="Compiled queued band-pass filter graph" src="../assets/images/holoflow-bandpass-queued-compiled.svg" /></a></p>
+<p><em>Each section has its own <abbr title="Central processing unit">CPU</abbr> thread and <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> stream. The producer and consumer halves of each asynchronous queue connect adjacent sections.</em></p>
+<h3 id="overlapped-cpu-and-gpu-timeline">Overlapped <abbr title="Central processing unit">CPU</abbr> and <abbr title="Graphics processing unit">GPU</abbr> timeline<a class="headerlink" href="#overlapped-cpu-and-gpu-timeline" title="Permanent link">&para;</a></h3>
+<p>Once the queues contain data, one section can upload the next frame while another applies the filter and the third downloads the previous result. The middle computation remains ordered on its own stream, but independent work from the other sections can overlap it.</p>
+<div class="admonition warning">
+<p class="admonition-title">Synthetic profiling data</p>
+<p>This timeline uses illustrative timings and is not a performance measurement. It will be replaced with a trace captured from this example.</p>
+</div>
+<p><a href="../assets/images/holoflow-bandpass-queued-timeline.svg"><img alt="Illustrative CPU and GPU timeline for the three-section band-pass filter" src="../assets/images/holoflow-bandpass-queued-timeline.svg" /></a></p>
+<p><em>Three streams overlap upload, computation, and download work across consecutive frames.</em></p>
+<h3 id="throughput">Throughput<a class="headerlink" href="#throughput" title="Permanent link">&para;</a></h3>
+<div class="admonition warning">
+<p class="admonition-title">Measurements pending</p>
+<p>Throughput values remain <code>TBD</code> until both versions have been measured with the same input, hardware, warm-up period, and measurement window.</p>
+</div>
+<table>
+<thead>
+<tr>
+<th>Variant</th>
+<th style="text-align: right;">Batch queues</th>
+<th style="text-align: right;">Execution sections / <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> streams</th>
+<th style="text-align: right;">Measured throughput (frames/s)</th>
+<th style="text-align: right;">Relative throughput</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Single section</td>
+<td style="text-align: right;">0</td>
+<td style="text-align: right;">1 / 1</td>
+<td style="text-align: right;">TBD</td>
+<td style="text-align: right;">TBD</td>
+</tr>
+<tr>
+<td>Three sections</td>
+<td style="text-align: right;">2</td>
+<td style="text-align: right;">3 / 3</td>
+<td style="text-align: right;">TBD</td>
+<td style="text-align: right;">TBD</td>
+</tr>
+</tbody>
+</table>
+<h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
+<ul>
+<li>Learn about the <a href="concepts/task-model.html">Holoflow task model</a>.</li>
+<li>See what the future <a href="getting-started/index.html">getting-started guide</a> will cover.</li>
+<li>Follow the progress of the planned <a href="tutorials/ldh-pipeline.html">step-by-step <abbr title="Laser Doppler holography">LDH</abbr> pipeline tutorial</a>.</li>
+</ul>
+<div class="footnote">
+<hr />
+<ol>
+<li id="fn:numpy2020">
+<p>C. R. Harris, J. Millman, S. J. van der Walt, et al., “<a href="https://doi.org/10.1038/s41586-020-2649-2">Array programming with NumPy</a>,” <em>Nature</em>, vol. 585, no. 7825, pp. 357–362, 2020. See also the <a href="../references.html#harris-2020">site-wide reference</a>.&#160;<a class="footnote-backref" href="#fnref:numpy2020" title="Jump back to footnote 1 in the text">&#8617;</a></p>
+</li>
+<li id="fn:cupy2017">
+<p>R. Okuta, Y. Unno, D. Nishino, S. Hido, and C. Loomis, “<a href="https://github.com/cupy/cupy#reference">CuPy: A NumPy-Compatible Library for NVIDIA <abbr title="Graphics processing unit">GPU</abbr> Calculations</a>,” in <em>Proceedings of the Workshop on Machine Learning Systems at NIPS 2017</em>, 2017. See also the <a href="../references.html#okuta-2017">site-wide reference</a>.&#160;<a class="footnote-backref" href="#fnref:cupy2017" title="Jump back to footnote 2 in the text">&#8617;</a></p>
+</li>
+<li id="fn:jax2018">
+<p>J. Bradbury, R. Frostig, P. Hawkins, et al., “<a href="https://github.com/jax-ml/jax#citing-jax">JAX: composable transformations of Python+NumPy programs</a>,” software, 2018. See also the <a href="../references.html#bradbury-2018">site-wide reference</a>.&#160;<a class="footnote-backref" href="#fnref:jax2018" title="Jump back to footnote 3 in the text">&#8617;</a></p>
+</li>
+<li id="fn:pytorch2019">
+<p>A. Paszke, S. Gross, F. Massa, et al., “<a href="https://papers.neurips.cc/paper_files/paper/2019/hash/bdbca288fee7f92f2bfa9f7012727740-Abstract.html">PyTorch: An Imperative Style, High-Performance Deep Learning Library</a>,” in <em>Advances in Neural Information Processing Systems 32</em>, pp. 8024–8035, 2019. See also the <a href="../references.html#paszke-2019">site-wide reference</a>.&#160;<a class="footnote-backref" href="#fnref:pytorch2019" title="Jump back to footnote 4 in the text">&#8617;</a></p>
+</li>
+<li id="fn:guillou2027">
+<p>J. Guillou, J. Fabrizio, E. Carlinet, and M. Atlan, “Real-Time Scientific Computing in Python: The Cost of High-Level <abbr title="Graphics processing unit">GPU</abbr> Abstractions,” unpublished manuscript, 2027. See also the <a href="../references.html#guillou-2027">site-wide reference</a>.&#160;<a class="footnote-backref" href="#fnref:guillou2027" title="Jump back to footnote 5 in the text">&#8617;</a></p>
+</li>
+</ol>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
-</div>
-<button class="md-top md-icon" data-md-component="top" hidden="" type="button">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"></path></svg>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
   Back to top
 </button>
-</main>
-<footer class="md-footer">
-<nav aria-label="Footer" class="md-footer__inner md-grid">
-<a aria-label="Previous: Sliding Average" class="md-footer__link md-footer__link--prev" href="../holovibes/tasks/asyncs/sliding_average.html">
-<div class="md-footer__button md-icon">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"></path></svg>
-</div>
-<div class="md-footer__title">
-<span class="md-footer__direction">
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="../holovibes/index.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Holovibes">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
                 Previous
               </span>
-<div class="md-ellipsis">
-                Sliding Average
+              <div class="md-ellipsis">
+                Holovibes
               </div>
-</div>
-</a>
-<a aria-label="Next: Architecture" class="md-footer__link md-footer__link--next" href="architecture.html">
-<div class="md-footer__title">
-<span class="md-footer__direction">
+            </div>
+          </a>
+        
+        
+          
+          <a href="getting-started/index.html" class="md-footer__link md-footer__link--next" aria-label="Next: Getting Started">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
                 Next
               </span>
-<div class="md-ellipsis">
-                Architecture
+              <div class="md-ellipsis">
+                Getting Started
               </div>
-</div>
-<div class="md-footer__button md-icon">
-<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"></path></svg>
-</div>
-</a>
-</nav>
-<div class="md-footer-meta md-typeset">
-<div class="md-footer-meta__inner md-grid">
-<div class="md-copyright">
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
   
   
     Made with
-    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
       Material for MkDocs
     </a>
+  
 </div>
-</div>
-</div>
+      
+    </div>
+  </div>
 </footer>
-</div>
-<div class="md-dialog" data-md-component="dialog">
-<div class="md-dialog__inner md-typeset"></div>
-</div>
-<script id="__config" type="application/json">{"base": "..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.sections", "navigation.indexes", "navigation.path", "navigation.tracking", "navigation.top", "navigation.footer", "content.code.annotate", "content.code.copy", "content.code.select", "content.tooltips", "content.action.edit", "content.action.view", "search.suggest", "search.highlight", "toc.integrate"], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
-<script src="../assets/javascripts/bundle.f55a23d4.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-</body>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.indexes", "navigation.path", "navigation.tracking", "navigation.top", "navigation.footer", "content.code.annotate", "content.code.copy", "content.code.select", "content.tooltips", "content.action.edit", "content.action.view", "search.suggest", "search.highlight", "toc.follow"], "search": "../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
 </html>

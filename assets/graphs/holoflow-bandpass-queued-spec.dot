@@ -1,0 +1,46 @@
+digraph holoflow_graph {
+  rankdir=TB;
+  newrank=true;
+  graph [bgcolor="transparent", pad="0.25", nodesep="0.45", ranksep="0.7", splines=polyline];
+  node [shape=box, style="rounded,filled", fillcolor="#f5f7ff", color="#4051b5",
+        fontname="Helvetica", fontsize=11, margin="0.16,0.10"];
+  edge [color="#5f6368", fontname="Helvetica", fontsize=9, arrowsize=0.75];
+
+  node [shape=point, width=0, height=0, label="", style=invis];
+  L0; R0; L1; R1; L2; R2;
+  L0 -> L1 -> L2 [style=invis, weight=1000];
+  R0 -> R1 -> R2 [style=invis, weight=1000];
+
+  node [shape=box, style="rounded,filled", fillcolor="#f5f7ff", color="#4051b5",
+        fontname="Helvetica", fontsize=11, margin="0.16,0.10"];
+
+  load [label="load\n(LoadNpy)"];
+  upload [label="upload\n(Memcpy to Device)"];
+  upload_queue [label="upload_queue\n(BatchQueue)"];
+  fft [label="fft\n(RFFT2)"];
+  mask [label="mask\n(BandpassMask)"];
+  multiply [label="multiply\n(Multiply)"];
+  ifft [label="ifft\n(IRFFT2)"];
+  download_queue [label="download_queue\n(BatchQueue)"];
+  download [label="download\n(Memcpy to Host)"];
+  save [label="save\n(SaveNpy)"];
+
+  { rank=same; L0; mask; R0; }
+  L0 -> mask -> R0 [style=invis, weight=1000];
+  { rank=same; L1; load; upload; upload_queue; fft; multiply; R1; }
+  L1 -> load -> upload -> upload_queue -> fft -> multiply -> R1 [style=invis, weight=1000];
+  { rank=same; L2; save; download; download_queue; ifft; R2; }
+  L2 -> save -> download -> download_queue -> ifft -> R2 [style=invis, weight=1000];
+
+  edge [color="#5f6368", fontname="Helvetica", fontsize=9, arrowsize=0.75,
+        style=solid, constraint=false];
+  load:e -> upload:w [taillabel="0", headlabel="0"];
+  upload:e -> upload_queue:w [taillabel="0", headlabel="0"];
+  upload_queue:e -> fft:w [taillabel="0", headlabel="0"];
+  fft:e -> multiply:w [taillabel="0", headlabel="0"];
+  mask:s -> multiply:n [taillabel="0", headlabel="1"];
+  multiply:s -> ifft:n [taillabel="0", headlabel="0"];
+  ifft:w -> download_queue:e [taillabel="0", headlabel="0"];
+  download_queue:w -> download:e [taillabel="0", headlabel="0"];
+  download:w -> save:e [taillabel="0", headlabel="0"];
+}
