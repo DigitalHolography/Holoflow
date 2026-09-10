@@ -79,6 +79,8 @@ target_link_libraries(holovibes PRIVATE
     Qt6::OpenGL
     Qt6::OpenGLWidgets
     Qt6::Graphs
+    Qt6::Svg
+    Qt6::SvgWidgets
     ads::qtadvanceddocking-qt6
     # EGrabber
 )
