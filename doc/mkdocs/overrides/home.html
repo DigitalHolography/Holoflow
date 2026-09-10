@@ -1,0 +1,20 @@
+{% extends "main.html" %}
+
+{% block extrahead %}
+  {{ super() }}
+  <style>
+    .md-main__inner {
+      display: block;
+      max-width: none;
+      margin: 0;
+    }
+  </style>
+{% endblock %}
+
+{% block site_nav %}{% endblock %}
+
+{% block container %}
+  <div class="hf-home md-typeset">
+    {{ page.content }}
+  </div>
+{% endblock %}
