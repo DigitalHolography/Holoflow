@@ -1705,9 +1705,10 @@ void MainWindow::configure_window() {
   auto *view_menu = menuBar()->addMenu(tr("&View"));
   display_workspace_->populate_view_menu(view_menu);
   view_menu->addSeparator();
-  auto *graph_visualizer_action = view_menu->addAction(tr("Open Pipeline Graph..."));
+  auto *debug_menu              = view_menu->addMenu(tr("Debug"));
+  auto *graph_visualizer_action = debug_menu->addAction(tr("Open Pipeline Graph..."));
   connect(graph_visualizer_action, &QAction::triggered, this, &MainWindow::show_pipeline_graph);
-  auto *open_dot_action = view_menu->addAction(tr("Open DOT File..."));
+  auto *open_dot_action = debug_menu->addAction(tr("Open DOT File..."));
   connect(open_dot_action, &QAction::triggered, this, &MainWindow::open_dot_file);
 
   auto *tools_menu      = menuBar()->addMenu(tr("&Tools"));
