@@ -52,6 +52,9 @@ ExportWidget::ExportWidget(QWidget *parent) : QGroupBox("EXPORT", parent) {
 QString ExportWidget::get_image_type() const { return image_type_combo_->currentText(); }
 QString ExportWidget::get_format() const { return format_combo_->currentData().toString(); }
 QString ExportWidget::get_codec() const { return codec_combo_->currentData().toString(); }
+QString ExportWidget::get_resize_algorithm() const {
+  return resize_algorithm_combo_->currentData().toString();
+}
 QString ExportWidget::get_file_path() const { return file_line_edit_->text(); }
 QString ExportWidget::get_tag() const { return tag_combo_->currentText(); }
 bool    ExportWidget::is_frame_count_enabled() const { return frames_check_->isChecked(); }
@@ -66,6 +69,10 @@ void ExportWidget::set_frame_batch_size(int batch_size) {
   frames_lower_button_->setEnabled(value > frame_batch_size_);
 }
 void ExportWidget::set_image_type(const QString &type) { image_type_combo_->setCurrentText(type); }
+void ExportWidget::set_resize_algorithm(const QString &algorithm) {
+  const auto index = resize_algorithm_combo_->findData(algorithm);
+  resize_algorithm_combo_->setCurrentIndex(index >= 0 ? index : 0);
+}
 void ExportWidget::setChecked(bool checked) {
   enable_check_->setChecked(checked);
   set_export_controls_enabled(checked);
@@ -80,6 +87,7 @@ void ExportWidget::mark_frames_invalid() { mark_validation_error(frames_spin_); 
 QComboBox   *ExportWidget::image_type_combo() { return image_type_combo_; }
 QComboBox   *ExportWidget::format_combo() { return format_combo_; }
 QComboBox   *ExportWidget::codec_combo() { return codec_combo_; }
+QComboBox   *ExportWidget::resize_algorithm_combo() { return resize_algorithm_combo_; }
 QLineEdit   *ExportWidget::file_line_edit() { return file_line_edit_; }
 QPushButton *ExportWidget::browse_button() { return browse_button_; }
 QComboBox   *ExportWidget::tag_combo() { return tag_combo_; }
@@ -128,6 +136,16 @@ void ExportWidget::setup_ui() {
   layout->addWidget(codec_combo_, row, 1);
   ++row;
   update_codec_choices();
+
+  layout->addWidget(new QLabel("Resize algorithm", content_container_), row, 0);
+  resize_algorithm_combo_ = create_combo_box(
+      content_container_, QStringList{"CPU bilinear", "GPU bilinear"});
+  resize_algorithm_combo_->setItemData(0, "CpuBilinear");
+  resize_algorithm_combo_->setItemData(1, "CudaBilinear");
+  resize_algorithm_combo_->setToolTip(
+      "Algorithm used when exporting video with square resizing enabled.");
+  layout->addWidget(resize_algorithm_combo_, row, 1);
+  ++row;
 
   file_line_edit_ = new QLineEdit(content_container_);
   file_line_edit_->setText("holovibes\\capture");
@@ -194,6 +212,8 @@ void ExportWidget::connect_signals() {
             emit settings_changed();
           });
   connect(codec_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &ExportWidget::settings_changed);
+  connect(resize_algorithm_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
   connect(file_line_edit_, &QLineEdit::textChanged, this, &ExportWidget::settings_changed);
   connect(tag_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,

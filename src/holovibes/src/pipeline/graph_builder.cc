@@ -70,6 +70,7 @@ private:
 
   // clang-format off
   TDesc build_acquisition();
+  TDesc resize_video_for_export(TDesc video);
   TDesc short_time_fresnel_diffraction(const TDesc &field, size_t win_w, size_t win_h, size_t stride_x, size_t stride_y, float lam, float dx, float dy, float z_prop, PhaseReference phase_ref, bool skip_phase_shift = true);
   void build_raw_record(const TDesc &H);
   bool build_raw_view(const TDesc &H);
@@ -237,11 +238,29 @@ void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
   else {
     auto video = memcpy(H, {holotask::syncs::MemcpySettings::Target::Host});
     const auto square_size = std::max(video.shape.at(1), video.shape.at(2));
-    video = resize(video, {static_cast<int>(square_size), static_cast<int>(square_size)});
+    video = resize_video_for_export(std::move(video));
     ffmpeg_write(video, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
                      s_.recording_codec});
   }
   */
+}
+
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::resize_video_for_export(TDesc video) {
+  const auto square_size = std::max(video.shape.at(1), video.shape.at(2));
+  const auto algorithm = s_.recording_resize_algorithm == "CudaBilinear"
+                             ? holotask::syncs::ResizeAlgorithm::CudaBilinear
+                             : holotask::syncs::ResizeAlgorithm::CpuBilinear;
+  if (algorithm == holotask::syncs::ResizeAlgorithm::CudaBilinear) {
+    video = memcpy(video, {holotask::syncs::MemcpySettings::Target::Device});
+  }
+
+  video = resize(video, {static_cast<int>(square_size), static_cast<int>(square_size),
+                         holotask::syncs::ResizeInterpolation::Bilinear, algorithm});
+
+  if (algorithm == holotask::syncs::ResizeAlgorithm::CudaBilinear) {
+    video = memcpy(video, {holotask::syncs::MemcpySettings::Target::Host});
+  }
+  return video;
 }
 
 bool GraphBuilder::Impl::build_raw_view(const TDesc &H) {
@@ -798,8 +817,7 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
                                 s_.recording_codec});
       */
       if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
-        const auto square_size = std::max(result_rec.shape.at(1), result_rec.shape.at(2));
-        result_rec = resize(result_rec, {static_cast<int>(square_size), static_cast<int>(square_size)});
+        result_rec = resize_video_for_export(std::move(result_rec));
       }
 
       ffmpeg_write(result_rec, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format, s_.recording_codec});

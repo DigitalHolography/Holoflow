@@ -908,6 +908,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("image_type", export_widget_->get_image_type());
   settings.setValue("format", export_widget_->get_format());
   settings.setValue("codec", export_widget_->get_codec());
+  settings.setValue("resize_algorithm", export_widget_->get_resize_algorithm());
   settings.setValue("file_path", export_widget_->get_file_path());
   settings.setValue("tag", export_widget_->get_tag());
   settings.setValue("frame_count_enabled", export_widget_->is_frame_count_enabled());
@@ -1063,6 +1064,7 @@ void MainWindow::restore_persistent_state() {
   restore_combo_text(settings, "image_type", export_widget_->image_type_combo());
   restore_combo_text(settings, "format", export_widget_->format_combo());
   restore_combo_text(settings, "codec", export_widget_->codec_combo());
+  restore_combo_text(settings, "resize_algorithm", export_widget_->resize_algorithm_combo());
   export_widget_->set_file_path(
       settings.value("file_path", export_widget_->get_file_path()).toString());
   restore_combo_text(settings, "tag", export_widget_->tag_combo());
@@ -2268,6 +2270,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.recording_count = export_widget_->get_frame_count();
     s.recording_format = export_widget_->get_format().toStdString();
     s.recording_codec  = export_widget_->get_codec().toStdString();
+    s.recording_resize_algorithm = export_widget_->get_resize_algorithm().toStdString();
   }
 
   // Auto-Focus Settings
@@ -2487,6 +2490,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     if (codec_index >= 0) {
       export_widget_->codec_combo()->setCurrentIndex(codec_index);
     }
+    export_widget_->set_resize_algorithm(QString::fromStdString(s.recording_resize_algorithm));
     // recording_method not exposed (always RAW in get_pipeline_settings)
   }
 

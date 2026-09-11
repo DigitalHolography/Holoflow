@@ -8,16 +8,24 @@ namespace holotask::syncs {
 
 enum class ResizeInterpolation { Bilinear };
 
+enum class ResizeAlgorithm {
+  CpuBilinear,
+  CudaBilinear,
+};
+
 struct ResizeSettings {
   int                 width;
   int                 height;
   ResizeInterpolation interpolation = ResizeInterpolation::Bilinear;
+  ResizeAlgorithm     algorithm      = ResizeAlgorithm::CpuBilinear;
 
   bool operator==(const ResizeSettings &) const = default;
 };
 
 void to_json(nlohmann::json &j, const ResizeInterpolation &interpolation);
 void from_json(const nlohmann::json &j, ResizeInterpolation &interpolation);
+void to_json(nlohmann::json &j, const ResizeAlgorithm &algorithm);
+void from_json(const nlohmann::json &j, ResizeAlgorithm &algorithm);
 void to_json(nlohmann::json &j, const ResizeSettings &settings);
 void from_json(const nlohmann::json &j, ResizeSettings &settings);
 
