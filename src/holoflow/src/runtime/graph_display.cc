@@ -16,7 +16,6 @@
 
 #include "holoflow/core/tensor.hh"
 
-#include <boost/graph/graph_traits.hpp>
 #include <cstdint>
 #include <iomanip>
 #include <memory>
@@ -103,11 +102,8 @@ static void write_compiled_graph_header(std::ostringstream &ss,
 static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPlan &g,
                                  const std::vector<runtime::Section> &sections,
                                  core::Registry &registry, std::size_t settings_max_len = 300) {
-  using vertex_iter_t = boost::graph_traits<runtime::GraphPlan>::vertex_iterator;
-  vertex_iter_t vi, vi_end;
-
-  std::unordered_set<runtime::GraphPlan::vertex_descriptor> async_producers;
-  std::unordered_set<runtime::GraphPlan::vertex_descriptor> async_consumers;
+  std::unordered_set<runtime::GraphPlan::VertexDescriptor> async_producers;
+  std::unordered_set<runtime::GraphPlan::VertexDescriptor> async_consumers;
   for (const auto &sec : sections) {
     for (auto vd : sec.async_prod)
       async_producers.insert(vd);
@@ -115,8 +111,7 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
       async_consumers.insert(vd);
   }
 
-  for (boost::tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi) {
-    auto                     v  = *vi;
+  for (auto v : g.make_vertices_range()) {
     const runtime::NodePlan &np = g[v];
 
     std::ostringstream label;
@@ -183,13 +178,10 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
 static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPlan &g,
                                  std::size_t desc_max_len = 200) {
   (void)desc_max_len;
-  using edge_iter_t = boost::graph_traits<runtime::GraphPlan>::edge_iterator;
-  edge_iter_t ei, ei_end;
-  for (boost::tie(ei, ei_end) = boost::edges(g); ei != ei_end; ++ei) {
-    auto                     e  = *ei;
-    auto                     s  = boost::source(e, g);
-    auto                     t  = boost::target(e, g);
-    const runtime::EdgePlan &ep = g[e];
+  for (auto e : g.make_edges_range()) {
+    auto                     s  = e.source;
+    auto                     t  = e.target;
+    const runtime::EdgePlan &ep = e.properties;
 
     ss << "  v" << s << " -> v" << t << " [taillabel=\""
        << escape_for_label(std::to_string(ep.spec.out_idx)) << "\""

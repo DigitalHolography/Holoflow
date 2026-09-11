@@ -8,7 +8,6 @@
 
 #include <gtest/gtest.h>
 
-#include <boost/graph/adjacency_list.hpp>
 #include <memory>
 
 #include "holoflow/runtime/compiler.hh"
@@ -22,27 +21,27 @@ using holoflow::core::NodeSpec;
 
 GraphSpec sync_math_graph() {
   GraphSpec graph;
-  auto      lhs   = add_vertex(NodeSpec{"lhs", "lhs", {}}, graph);
-  auto      rhs   = add_vertex(NodeSpec{"rhs", "rhs", {}}, graph);
-  auto      add   = add_vertex(NodeSpec{"add", "add", {}}, graph);
-  auto      scale = add_vertex(NodeSpec{"scale", "scale", {}}, graph);
-  auto      sink  = add_vertex(NodeSpec{"sink", "sink", {}}, graph);
-  add_edge(lhs, add, EdgeSpec{0, 0}, graph);
-  add_edge(rhs, add, EdgeSpec{0, 1}, graph);
-  add_edge(add, scale, EdgeSpec{0, 0}, graph);
-  add_edge(scale, sink, EdgeSpec{0, 0}, graph);
+  auto      lhs   = graph.add_vertex(NodeSpec{"lhs", "lhs", {}});
+  auto      rhs   = graph.add_vertex(NodeSpec{"rhs", "rhs", {}});
+  auto      add   = graph.add_vertex(NodeSpec{"add", "add", {}});
+  auto      scale = graph.add_vertex(NodeSpec{"scale", "scale", {}});
+  auto      sink  = graph.add_vertex(NodeSpec{"sink", "sink", {}});
+  graph.add_edge(lhs, EdgeSpec{0, 0}, add);
+  graph.add_edge(rhs, EdgeSpec{0, 1}, add);
+  graph.add_edge(add, EdgeSpec{0, 0}, scale);
+  graph.add_edge(scale, EdgeSpec{0, 0}, sink);
   return graph;
 }
 
 GraphSpec async_math_graph() {
   GraphSpec graph;
-  auto      source = add_vertex(NodeSpec{"source", "source", {}}, graph);
-  auto      bridge = add_vertex(NodeSpec{"bridge", "bridge", {}}, graph);
-  auto      scale  = add_vertex(NodeSpec{"scale", "scale", {}}, graph);
-  auto      sink   = add_vertex(NodeSpec{"sink", "sink", {}}, graph);
-  add_edge(source, bridge, EdgeSpec{0, 0}, graph);
-  add_edge(bridge, scale, EdgeSpec{0, 0}, graph);
-  add_edge(scale, sink, EdgeSpec{0, 0}, graph);
+  auto      source = graph.add_vertex(NodeSpec{"source", "source", {}});
+  auto      bridge = graph.add_vertex(NodeSpec{"bridge", "bridge", {}});
+  auto      scale  = graph.add_vertex(NodeSpec{"scale", "scale", {}});
+  auto      sink   = graph.add_vertex(NodeSpec{"sink", "sink", {}});
+  graph.add_edge(source, EdgeSpec{0, 0}, bridge);
+  graph.add_edge(bridge, EdgeSpec{0, 0}, scale);
+  graph.add_edge(scale, EdgeSpec{0, 0}, sink);
   return graph;
 }
 

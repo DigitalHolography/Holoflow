@@ -23,66 +23,6 @@
 namespace holoflow::core {
 
 // -------------------------------------------------------------------------------------------------
-// Exceptions
-// -------------------------------------------------------------------------------------------------
-
-DetectedCycleError::DetectedCycleError() : std::runtime_error("detected unexpected cycle") {}
-
-// -------------------------------------------------------------------------------------------------
-// OutEdge
-// -------------------------------------------------------------------------------------------------
-
-template <typename VProps, typename EProps>
-AdjacencyList<VProps, EProps>::OutEdge::OutEdge(const VertexDescriptor &target, const EProps &props)
-    : target_{target}, properties_{props} {}
-
-template <typename VProps, typename EProps>
-inline AdjacencyList<VProps, EProps>::VertexDescriptor
-AdjacencyList<VProps, EProps>::OutEdge::get_target() const {
-  return target_;
-}
-
-template <typename VProps, typename EProps>
-inline EProps &AdjacencyList<VProps, EProps>::OutEdge::get_properties() {
-  return properties_;
-}
-
-template <typename VProps, typename EProps>
-inline const EProps &AdjacencyList<VProps, EProps>::OutEdge::get_properties() const {
-  return properties_;
-}
-
-template <typename VProps, typename EProps>
-AdjacencyList<VProps, EProps>::Edge
-AdjacencyList<VProps, EProps>::OutEdge::EdgeTransform::operator()(const OutEdge &e) const {
-  return Edge{index, e.get_properties(), e.get_target()};
-}
-
-// -------------------------------------------------------------------------------------------------
-// InEdge
-// -------------------------------------------------------------------------------------------------
-
-template <typename VProps, typename EProps>
-AdjacencyList<VProps, EProps>::InEdge::InEdge(const VertexDescriptor &source, const EProps &props)
-    : source_{source}, properties_{props} {}
-
-template <typename VProps, typename EProps>
-inline AdjacencyList<VProps, EProps>::VertexDescriptor
-AdjacencyList<VProps, EProps>::InEdge::get_source() const {
-  return source_;
-}
-
-template <typename VProps, typename EProps>
-inline EProps &AdjacencyList<VProps, EProps>::InEdge::get_properties() {
-  return properties_;
-}
-
-template <typename VProps, typename EProps>
-inline const EProps &AdjacencyList<VProps, EProps>::InEdge::get_properties() const {
-  return properties_;
-}
-
-// -------------------------------------------------------------------------------------------------
 // Vertex
 // -------------------------------------------------------------------------------------------------
 
@@ -99,12 +39,6 @@ size_t AdjacencyList<VProps, EProps>::Vertex::in_degree() const {
   return in_edges.size();
 }
 
-template <typename VProps, typename EProps>
-auto AdjacencyList<VProps, EProps>::Vertex::VertexTransform::operator()(size_t i) const {
-  const auto &v = adjacency_list[i];
-
-  return v.out_edges | std::views::transform(OutEdge::EdgeTransform(i));
-}
 // -------------------------------------------------------------------------------------------------
 // AdjacencyList
 // -------------------------------------------------------------------------------------------------
@@ -112,18 +46,24 @@ auto AdjacencyList<VProps, EProps>::Vertex::VertexTransform::operator()(size_t i
 template <typename VProps, typename EProps>
 inline AdjacencyList<VProps, EProps>::VertexDescriptor
 AdjacencyList<VProps, EProps>::add_vertex(const VProps &props) {
-  adjacency_list_.emplace_back(Vertex(props));
+  adjacency_list_.emplace_back(props);
   return num_vertices() - 1;
 }
 
 template <typename VProps, typename EProps>
-void AdjacencyList<VProps, EProps>::add_edge(VertexDescriptor source, const EProps &edge_props,
-                                             VertexDescriptor target) {
+AdjacencyList<VProps, EProps>::EdgeDescriptor
+AdjacencyList<VProps, EProps>::add_edge(VertexDescriptor source, const EProps &edge_props,
+                                        VertexDescriptor target) {
+  edges_.emplace_back(source, target, edge_props);
+  EdgeDescriptor ed = edges_.size() - 1;
+
   auto &v = adjacency_list_[source];
-  v.out_edges.emplace_back(target, edge_props);
+  v.out_edges.emplace_back(ed);
 
   auto &v2 = adjacency_list_[target];
-  v2.in_edges.emplace_back(source, v.out_edges.back().get_properties());
+  v2.in_edges.emplace_back(ed);
+
+  return ed;
 }
 
 template <typename VProps, typename EProps>
@@ -137,8 +77,35 @@ const VProps &AdjacencyList<VProps, EProps>::operator[](VertexDescriptor descrip
 }
 
 template <typename VProps, typename EProps>
-size_t AdjacencyList<VProps, EProps>::num_vertices() const {
+EProps &AdjacencyList<VProps, EProps>::edge_properties(EdgeDescriptor descriptor) {
+  return edges_[descriptor].properties;
+}
+
+template <typename VProps, typename EProps>
+const EProps &AdjacencyList<VProps, EProps>::edge_properties(EdgeDescriptor descriptor) const {
+  return edges_[descriptor].properties;
+}
+
+template <typename VProps, typename EProps>
+AdjacencyList<VProps, EProps>::Edge &
+AdjacencyList<VProps, EProps>::edge(EdgeDescriptor descriptor) {
+  return edges_[descriptor];
+}
+
+template <typename VProps, typename EProps>
+const AdjacencyList<VProps, EProps>::Edge &
+AdjacencyList<VProps, EProps>::edge(EdgeDescriptor descriptor) const {
+  return edges_[descriptor];
+}
+
+template <typename VProps, typename EProps>
+inline size_t AdjacencyList<VProps, EProps>::num_vertices() const {
   return adjacency_list_.size();
+}
+
+template <typename VProps, typename EProps>
+inline size_t AdjacencyList<VProps, EProps>::num_edges() const {
+  return edges_.size();
 }
 
 template <typename VProps, typename EProps>
@@ -147,25 +114,44 @@ inline auto AdjacencyList<VProps, EProps>::make_vertices_range() const {
 }
 
 template <typename VProps, typename EProps>
-inline auto AdjacencyList<VProps, EProps>::make_edges_range() const {
-  auto indices = std::views::iota(std::size_t{0}, adjacency_list_.size());
-
-  return indices | std::views::transform(Vertex::VertexTransform(adjacency_list_)) |
-         std::views::join;
+inline const AdjacencyList<VProps,
+                           EProps>::EContainer<typename AdjacencyList<VProps, EProps>::Edge> &
+AdjacencyList<VProps, EProps>::make_edges_range() const {
+  return edges_;
 }
 
 template <typename VProps, typename EProps>
-inline const AdjacencyList<VProps,
-                           EProps>::EContainer<typename AdjacencyList<VProps, EProps>::OutEdge> &
+inline AdjacencyList<VProps, EProps>::EContainer<typename AdjacencyList<VProps, EProps>::Edge> &
+AdjacencyList<VProps, EProps>::make_edges_range() {
+  return edges_;
+}
+
+template <typename VProps, typename EProps>
+inline AdjacencyList<VProps, EProps>::ConstEdgeRange
 AdjacencyList<VProps, EProps>::make_out_edges_range(VertexDescriptor d) const {
-  return adjacency_list_[d].out_edges;
+  return adjacency_list_[d].out_edges |
+         std::ranges::views::transform(AdjacencyList<VProps, EProps>::ConstEdgeTransform(this));
 }
 
 template <typename VProps, typename EProps>
-inline const AdjacencyList<VProps,
-                           EProps>::EContainer<typename AdjacencyList<VProps, EProps>::InEdge> &
+inline AdjacencyList<VProps, EProps>::ConstEdgeRange
 AdjacencyList<VProps, EProps>::make_in_edges_range(VertexDescriptor d) const {
-  return adjacency_list_[d].in_edges;
+  return adjacency_list_[d].in_edges |
+         std::ranges::views::transform(AdjacencyList<VProps, EProps>::ConstEdgeTransform(this));
+}
+
+template <typename VProps, typename EProps>
+inline AdjacencyList<VProps, EProps>::EdgeRange
+AdjacencyList<VProps, EProps>::make_out_edges_range(VertexDescriptor d) {
+  return adjacency_list_[d].out_edges |
+         std::ranges::views::transform(AdjacencyList<VProps, EProps>::EdgeTransform(this));
+}
+
+template <typename VProps, typename EProps>
+inline AdjacencyList<VProps, EProps>::EdgeRange
+AdjacencyList<VProps, EProps>::make_in_edges_range(VertexDescriptor d) {
+  return adjacency_list_[d].in_edges |
+         std::ranges::views::transform(AdjacencyList<VProps, EProps>::EdgeTransform(this));
 }
 
 template <typename VProps, typename EProps>
@@ -206,9 +192,9 @@ void topological_sort(const G &g, Inserter inserter) {
     count++;
 
     for (auto e : g.make_out_edges_range(n)) {
-      in_degrees[e.get_target()]--;
-      if (in_degrees[e.get_target()] == 0)
-        nodes_with_no_incoming_edge.emplace(e.get_target());
+      in_degrees[e.target]--;
+      if (in_degrees[e.target] == 0)
+        nodes_with_no_incoming_edge.emplace(e.target);
     }
   }
 

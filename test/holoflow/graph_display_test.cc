@@ -20,10 +20,10 @@ TEST(CompiledGraphDisplayTest, RendersSyncAsyncEdgesSectionsAndResources) {
 
   holoflow::runtime::CompilerOutput output;
   holoflow::runtime::NodePlan       source{
-            .spec     = {"source", "sync", {{"text", "quoted\"\nvalue"}}},
-            .infer    = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync},
-            .in_tids  = {},
-            .out_tids = {0},
+      .spec     = {"source", "sync", {{"text", "quoted\"\nvalue"}}},
+      .infer    = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync},
+      .in_tids  = {},
+      .out_tids = {0},
   };
   holoflow::runtime::NodePlan bridge{
       .spec     = {"bridge", "bridge", {}},
@@ -31,14 +31,15 @@ TEST(CompiledGraphDisplayTest, RendersSyncAsyncEdgesSectionsAndResources) {
       .in_tids  = {0},
       .out_tids = {1},
   };
-  auto source_v = add_vertex(source, output.graph);
-  auto bridge_v = add_vertex(bridge, output.graph);
-  add_edge(source_v, bridge_v,
-           holoflow::runtime::EdgePlan{
-               {0, 0},
-               holoflow::core::TDesc({4}, holoflow::core::DType::F32, holoflow::core::MemLoc::Host),
-               0},
-           output.graph);
+  auto source_v = output.graph.add_vertex(source);
+  auto bridge_v = output.graph.add_vertex(bridge);
+  output.graph.add_edge(
+      source_v,
+      holoflow::runtime::EdgePlan{
+          {0, 0},
+          holoflow::core::TDesc({4}, holoflow::core::DType::F32, holoflow::core::MemLoc::Host),
+          0},
+      bridge_v);
   output.sections.push_back({.id         = 3,
                              .name       = "producer",
                              .stream     = nullptr,

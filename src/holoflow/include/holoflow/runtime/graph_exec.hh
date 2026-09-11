@@ -15,7 +15,6 @@
 #pragma once
 
 #include <atomic>
-#include <boost/graph/adjacency_list.hpp>
 #include <chrono>
 #include <condition_variable>
 #include <cstddef>
@@ -34,6 +33,7 @@
 
 #include "curaii/cuda.hh"
 #include "driver_types.h"
+#include "holoflow/core/adjacency_list.hh"
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
@@ -54,12 +54,9 @@ struct EdgePlan {
   int            tid;  ///< Tensor ID.
 };
 
-using GraphPlan = boost::adjacency_list<boost::vecS,           // OutEdgeList
-                                        boost::vecS,           // VertexList
-                                        boost::bidirectionalS, // Directed graph
-                                        NodePlan,              // Vertex properties
-                                        EdgePlan               // Edge properties
-                                        >;
+using GraphPlan = holoflow::core::AdjacencyList<NodePlan, // Vertex properties
+                                                EdgePlan  // Edge properties
+                                                >;
 
 /// Represents a block of memory used during graph execution.
 struct MemoryBlock {
@@ -85,12 +82,12 @@ struct ExecResouces {
 };
 
 struct Section {
-  int                                       id;         ///< Section ID.
-  std::string                               name;       ///< Section name (for logging).
-  cudaStream_t                              stream;     ///< CUDA stream for this section.
-  std::vector<GraphPlan::vertex_descriptor> sync_topo;  ///< Synchronous nodes in topological order.
-  std::vector<GraphPlan::vertex_descriptor> async_cons; ///< Asynchronous consumer nodes.
-  std::vector<GraphPlan::vertex_descriptor> async_prod; ///< Asynchronous producer nodes
+  int                                      id;         ///< Section ID.
+  std::string                              name;       ///< Section name (for logging).
+  cudaStream_t                             stream;     ///< CUDA stream for this section.
+  std::vector<GraphPlan::VertexDescriptor> sync_topo;  ///< Synchronous nodes in topological order.
+  std::vector<GraphPlan::VertexDescriptor> async_cons; ///< Asynchronous consumer nodes.
+  std::vector<GraphPlan::VertexDescriptor> async_prod; ///< Asynchronous producer nodes
   bool has_synchronizing_async_producer = false; ///< Producer supplies the section stream barrier.
 };
 
@@ -165,24 +162,24 @@ private:
   /// and some owned inputs may not be acquired.
   /// @warning This function must be called on a synchronous or asynchronous
   /// producer node only.
-  void acquire_owned_inputs(GraphPlan::vertex_descriptor v);
+  void acquire_owned_inputs(GraphPlan::VertexDescriptor v);
 
   /// This function releases all owned outputs for the given node.
   /// Pointer cleanup remains the owning task's responsibility.
   /// This function does not block.
-  void release_owned_outputs(GraphPlan::vertex_descriptor v);
+  void release_owned_outputs(GraphPlan::VertexDescriptor v);
 
   /// Executes a synchronous node.
   /// @warning This function must be called on a synchronous node only.
-  [[nodiscard]] core::OpResult run_sync(GraphPlan::vertex_descriptor v);
+  [[nodiscard]] core::OpResult run_sync(GraphPlan::VertexDescriptor v);
 
   /// Executes an asynchronous consumer node.
   /// @warning This function must be called on an asynchronous consumer node only.
-  [[nodiscard]] core::OpResult run_async_cons(GraphPlan::vertex_descriptor v);
+  [[nodiscard]] core::OpResult run_async_cons(GraphPlan::VertexDescriptor v);
 
   /// Executes an asynchronous producer node.
   /// @warning This function must be called on an asynchronous producer node only.
-  [[nodiscard]] core::OpResult run_async_prod(GraphPlan::vertex_descriptor v);
+  [[nodiscard]] core::OpResult run_async_prod(GraphPlan::VertexDescriptor v);
 
 private:
   std::atomic<bool>           running_{false}; ///< True if the scheduler is running.

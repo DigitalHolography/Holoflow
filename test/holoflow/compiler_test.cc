@@ -15,7 +15,6 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <boost/graph/adjacency_list.hpp>
 #include <chrono>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -165,16 +164,16 @@ holoflow::core::Registry registry() {
   return value;
 }
 
-GraphSpec linear_graph() {
+GraphSpec linear_graph(int out_idx = 0) {
   GraphSpec  graph;
-  const auto source = add_vertex(
-      NodeSpec{.name = "source", .kind = "source", .settings = nlohmann::json::object()}, graph);
-  const auto unary = add_vertex(
-      NodeSpec{.name = "unary", .kind = "unary", .settings = nlohmann::json::object()}, graph);
-  const auto sink = add_vertex(
-      NodeSpec{.name = "sink", .kind = "sink", .settings = nlohmann::json::object()}, graph);
-  add_edge(source, unary, holoflow::core::EdgeSpec{.out_idx = 0, .in_idx = 0}, graph);
-  add_edge(unary, sink, holoflow::core::EdgeSpec{.out_idx = 0, .in_idx = 0}, graph);
+  const auto source = graph.add_vertex(
+      NodeSpec{.name = "source", .kind = "source", .settings = nlohmann::json::object()});
+  const auto unary = graph.add_vertex(
+      NodeSpec{.name = "unary", .kind = "unary", .settings = nlohmann::json::object()});
+  const auto sink = graph.add_vertex(
+      NodeSpec{.name = "sink", .kind = "sink", .settings = nlohmann::json::object()});
+  graph.add_edge(source, holoflow::core::EdgeSpec{.out_idx = out_idx, .in_idx = 0}, unary);
+  graph.add_edge(unary, holoflow::core::EdgeSpec{.out_idx = 0, .in_idx = 0}, sink);
   return graph;
 }
 
@@ -189,8 +188,8 @@ TEST(CompilerTest, CompilesLinearGraphIntoTasksSectionsAndStorage) {
   const auto output = compiler.compile(linear_graph());
 
   ASSERT_NE(output, nullptr);
-  EXPECT_EQ(num_vertices(output->graph), 3);
-  EXPECT_EQ(num_edges(output->graph), 2);
+  EXPECT_EQ(output->graph.num_vertices(), 3);
+  EXPECT_EQ(output->graph.num_edges(), 2);
   EXPECT_EQ(output->resources.tasks.size(), 3);
   EXPECT_FALSE(output->sections.empty());
   EXPECT_EQ(output->resources.tensor_descs.size(), 2);
@@ -202,15 +201,15 @@ TEST(CompilerTest, OrdersSynchronizingAsyncProducerBeforeOrdinaryProducer) {
   factories.register_async("synchronizing", std::make_unique<AsyncFactory>(true));
 
   GraphSpec  graph;
-  const auto source             = add_vertex(NodeSpec{"source", "source", {}}, graph);
-  const auto ordinary           = add_vertex(NodeSpec{"ordinary", "ordinary", {}}, graph);
-  const auto synchronizing      = add_vertex(NodeSpec{"synchronizing", "synchronizing", {}}, graph);
-  const auto ordinary_sink      = add_vertex(NodeSpec{"ordinary-sink", "sink", {}}, graph);
-  const auto synchronizing_sink = add_vertex(NodeSpec{"synchronizing-sink", "sink", {}}, graph);
-  add_edge(source, ordinary, holoflow::core::EdgeSpec{0, 0}, graph);
-  add_edge(source, synchronizing, holoflow::core::EdgeSpec{0, 0}, graph);
-  add_edge(ordinary, ordinary_sink, holoflow::core::EdgeSpec{0, 0}, graph);
-  add_edge(synchronizing, synchronizing_sink, holoflow::core::EdgeSpec{0, 0}, graph);
+  const auto source             = graph.add_vertex(NodeSpec{"source", "source", {}});
+  const auto ordinary           = graph.add_vertex(NodeSpec{"ordinary", "ordinary", {}});
+  const auto synchronizing      = graph.add_vertex(NodeSpec{"synchronizing", "synchronizing", {}});
+  const auto ordinary_sink      = graph.add_vertex(NodeSpec{"ordinary-sink", "sink", {}});
+  const auto synchronizing_sink = graph.add_vertex(NodeSpec{"synchronizing-sink", "sink", {}});
+  graph.add_edge(source, holoflow::core::EdgeSpec{0, 0}, ordinary);
+  graph.add_edge(source, holoflow::core::EdgeSpec{0, 0}, synchronizing);
+  graph.add_edge(ordinary, holoflow::core::EdgeSpec{0, 0}, ordinary_sink);
+  graph.add_edge(synchronizing, holoflow::core::EdgeSpec{0, 0}, synchronizing_sink);
 
   holoflow::runtime::Compiler       compiler(factories, {.dump_dot_on_failure = false});
   const auto                        output         = compiler.compile(graph);
@@ -234,8 +233,8 @@ TEST(CompilerTest, RejectsUnknownFactory) {
   auto                        factories = registry();
   holoflow::runtime::Compiler compiler(factories, {.dump_dot_on_failure = false});
   GraphSpec                   graph;
-  add_vertex(NodeSpec{.name = "bad", .kind = "missing", .settings = nlohmann::json::object()},
-             graph);
+  graph.add_vertex(
+      NodeSpec{.name = "bad", .kind = "missing", .settings = nlohmann::json::object()});
 
   EXPECT_THROW((void)compiler.compile(graph), std::exception);
 }
@@ -244,7 +243,7 @@ TEST(CompilerTest, RejectsCycles) {
   auto                        factories = registry();
   holoflow::runtime::Compiler compiler(factories, {.dump_dot_on_failure = false});
   auto                        graph = linear_graph();
-  add_edge(2, 0, holoflow::core::EdgeSpec{.out_idx = 0, .in_idx = 0}, graph);
+  graph.add_edge(2, holoflow::core::EdgeSpec{.out_idx = 0, .in_idx = 0}, 0);
 
   EXPECT_THROW((void)compiler.compile(graph), std::exception);
 }
@@ -252,8 +251,7 @@ TEST(CompilerTest, RejectsCycles) {
 TEST(CompilerTest, RejectsOutOfRangeTensorPorts) {
   auto                        factories = registry();
   holoflow::runtime::Compiler compiler(factories, {.dump_dot_on_failure = false});
-  auto                        graph  = linear_graph();
-  graph[*edges(graph).first].out_idx = 5;
+  auto                        graph  = linear_graph(5);
 
   EXPECT_THROW((void)compiler.compile(graph), std::exception);
 }

@@ -14,10 +14,10 @@
 
 #pragma once
 
-#include <boost/graph/adjacency_list.hpp>
 #include <nlohmann/json.hpp>
 #include <string>
 
+#include "adjacency_list.hh"
 namespace holoflow::core {
 
 /// Specification of a computation node.
@@ -35,12 +35,8 @@ struct EdgeSpec {
 };
 
 /// Directed graph specification of a computation pipeline.
-using GraphSpec = boost::adjacency_list<boost::vecS,           // OutEdgeList
-                                        boost::vecS,           // VertexList
-                                        boost::bidirectionalS, // Directed graph
-                                        NodeSpec,              // Vertex properties
-                                        EdgeSpec               // Edge properties
-                                        >;
+using GraphSpec = AdjacencyList<NodeSpec,  // Vertex properties
+                                EdgeSpec>; // Edge properties
 
 /// Options for serializing a graph specification.
 struct GraphSpecWriteOptions {

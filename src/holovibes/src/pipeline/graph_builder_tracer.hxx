@@ -42,7 +42,7 @@ GraphBuilderTracer::make_source_sync_node(std::string_view node_name, std::strin
       .debug    = debug,
   };
 
-  auto       v       = boost::add_vertex(node_spec, g_);
+  auto       v       = g_.add_vertex(node_spec);
   auto      &factory = reg_.get_sync(std::string{reg_key});
   const auto infer   = factory.infer(std::span<const holoflow::core::TDesc>{}, nlohmann::json(s));
   return wrap_infer_outputs(node_name, v, infer);
@@ -63,8 +63,8 @@ GraphBuilderTracer::make_unary_sync_node(std::string_view node_name, std::string
       .debug    = debug,
   };
 
-  auto v = boost::add_vertex(node_spec, g_);
-  boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, 0}, g_);
+  auto v = g_.add_vertex(node_spec);
+  g_.add_edge(X.producer->vertex, {X.producer->out_idx, 0}, v);
 
   auto      &factory     = reg_.get_sync(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});
@@ -90,10 +90,10 @@ GraphBuilderTracer::make_nary_sync_node(std::string_view node_name, std::string_
       .debug    = debug,
   };
 
-  auto v = boost::add_vertex(node_spec, g_);
+  auto v = g_.add_vertex(node_spec);
   for (size_t i = 0; i < inputs.size(); ++i) {
     const auto &X = inputs[i];
-    boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, static_cast<int>(i)}, g_);
+    g_.add_edge(X.producer->vertex, {X.producer->out_idx, static_cast<int>(i)}, v);
   }
 
   auto      &factory     = reg_.get_sync(std::string{reg_key});
@@ -117,8 +117,8 @@ GraphBuilderTracer::make_unary_async_node(std::string_view node_name, std::strin
       .debug    = debug,
   };
 
-  auto v = boost::add_vertex(node_spec, g_);
-  boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, 0}, g_);
+  auto v = g_.add_vertex(node_spec);
+  g_.add_edge(X.producer->vertex, {X.producer->out_idx, 0}, v);
 
   auto      &factory     = reg_.get_async(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});
@@ -144,10 +144,10 @@ GraphBuilderTracer::make_nary_async_node(std::string_view node_name, std::string
       .debug    = debug,
   };
 
-  auto v = boost::add_vertex(node_spec, g_);
+  auto v = g_.add_vertex(node_spec);
   for (size_t i = 0; i < inputs.size(); ++i) {
     const auto &X = inputs[i];
-    boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, static_cast<int>(i)}, g_);
+    g_.add_edge(X.producer->vertex, {X.producer->out_idx, static_cast<int>(i)}, v);
   }
 
   auto      &factory     = reg_.get_async(std::string{reg_key});

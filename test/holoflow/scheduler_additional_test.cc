@@ -230,7 +230,7 @@ compile_result_graph(std::shared_ptr<ResultState> state) {
   auto registry = std::make_unique<holoflow::core::Registry>();
   registry->register_sync("result", std::make_unique<ResultFactory>(state));
   holoflow::core::GraphSpec graph;
-  add_vertex(holoflow::core::NodeSpec{"node", "result", {}}, graph);
+  graph.add_vertex(holoflow::core::NodeSpec{"node", "result", {}});
   holoflow::runtime::Compiler compiler(*registry,
                                        {.dump_dot_on_failure = false, .enable_profiling = false});
   return {compiler.compile(graph), std::move(registry)};
@@ -279,11 +279,11 @@ TEST(SchedulerTest, UsesSharedStorageAndReleasesSuccessfulOwnedOutputExactlyOnce
   registry.register_sync("sink", std::make_unique<OwnershipSinkFactory>(state));
 
   holoflow::core::GraphSpec graph;
-  auto source = add_vertex(holoflow::core::NodeSpec{"source", "source", {}}, graph);
-  auto relay  = add_vertex(holoflow::core::NodeSpec{"relay", "relay", {}}, graph);
-  auto sink   = add_vertex(holoflow::core::NodeSpec{"sink", "sink", {}}, graph);
-  add_edge(source, relay, holoflow::core::EdgeSpec{0, 0}, graph);
-  add_edge(relay, sink, holoflow::core::EdgeSpec{0, 0}, graph);
+  auto source = graph.add_vertex(holoflow::core::NodeSpec{"source", "source", {}});
+  auto relay  = graph.add_vertex(holoflow::core::NodeSpec{"relay", "relay", {}});
+  auto sink   = graph.add_vertex(holoflow::core::NodeSpec{"sink", "sink", {}});
+  graph.add_edge(source, holoflow::core::EdgeSpec{0, 0}, relay);
+  graph.add_edge(relay, holoflow::core::EdgeSpec{0, 0}, sink);
 
   holoflow::runtime::Compiler  compiler(registry,
                                         {.dump_dot_on_failure = false, .enable_profiling = false});
@@ -304,7 +304,7 @@ TEST(SchedulerTest, DoesNotReleaseOwnedOutputWhenOperationDoesNotProduceIt) {
   holoflow::core::Registry registry;
   registry.register_sync("terminal-owned", std::make_unique<UnproducedOwnedFactory>(state));
   holoflow::core::GraphSpec graph;
-  add_vertex(holoflow::core::NodeSpec{"terminal", "terminal-owned", {}}, graph);
+  graph.add_vertex(holoflow::core::NodeSpec{"terminal", "terminal-owned", {}});
 
   holoflow::runtime::Compiler  compiler(registry,
                                         {.dump_dot_on_failure = false, .enable_profiling = false});

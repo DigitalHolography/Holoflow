@@ -94,7 +94,7 @@ signals:
   void raw_record_stopped_failure(const QString &error);
 
 private:
-  using V = holoflow::core::GraphSpec::vertex_descriptor;
+  using V = holoflow::core::GraphSpec::VertexDescriptor;
 
   // --- Initialization Helpers ---
   void register_components();

@@ -37,7 +37,7 @@ public:
   explicit GraphBuilderTracer(holoflow::core::Registry &registry);
 
 protected:
-  using V      = holoflow::core::GraphSpec::vertex_descriptor;
+  using V      = holoflow::core::GraphSpec::VertexDescriptor;
   using NodeId = std::string;
 
   class TDesc : public holoflow::core::TDesc {

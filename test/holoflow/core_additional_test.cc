@@ -147,7 +147,7 @@ TEST(GraphSpecTest, AppliesDefaultsAndAcceptsPrimitiveSettings) {
        }},
   });
 
-  ASSERT_EQ(num_vertices(graph), 2);
+  ASSERT_EQ(graph.num_vertices(), 2);
   EXPECT_TRUE(graph[0].settings.is_object());
   EXPECT_TRUE(graph[0].debug);
   EXPECT_EQ(graph[1].settings, 42);
@@ -178,13 +178,13 @@ TEST(GraphSpecTest, RejectsInvalidNodeAndEdgeFields) {
 
 TEST(GraphSpecTest, RejectsUnnamedNodesWhenSerializing) {
   holoflow::core::GraphSpec graph;
-  add_vertex(holoflow::core::NodeSpec{"", "source", {}}, graph);
+  graph.add_vertex(holoflow::core::NodeSpec{"", "source", {}});
   EXPECT_THROW((void)holoflow::core::to_json(graph), std::runtime_error);
 }
 
 TEST(GraphSpecTest, DotHandlesUnnamedNodesKindsAndCarriageReturns) {
   holoflow::core::GraphSpec graph;
-  add_vertex(holoflow::core::NodeSpec{"", "", "line\r\nvalue"}, graph);
+  graph.add_vertex(holoflow::core::NodeSpec{"", "", "line\r\nvalue"});
   const auto dot = holoflow::core::to_dot(graph);
   EXPECT_NE(dot.find("(unnamed)"), std::string::npos);
   EXPECT_NE(dot.find("line"), std::string::npos);
@@ -196,6 +196,6 @@ TEST(GraphSpecTest, NullParamsAreNormalizedToAnObject) {
   const auto graph = holoflow::core::from_json({
       {"nodes", {{"a", {{"type", "source"}, {"params", nullptr}}}}},
   });
-  ASSERT_EQ(num_vertices(graph), 1);
+  ASSERT_EQ(graph.num_vertices(), 1);
   EXPECT_TRUE(graph[0].settings.is_object());
 }

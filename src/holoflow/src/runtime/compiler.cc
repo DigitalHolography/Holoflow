@@ -14,9 +14,6 @@
 
 #include "holoflow/runtime/compiler.hh"
 
-#include <boost/graph/adjacency_list.hpp>
-#include <boost/graph/breadth_first_search.hpp>
-#include <boost/graph/topological_sort.hpp>
 #include <chrono>
 #include <format>
 #include <fstream>
@@ -382,7 +379,7 @@ void Compiler::Impl::validate_spec() {
   std::unordered_set<std::string> names;
   std::unordered_set<std::string> edge_dsts;
 
-  auto vertices = boost::make_iterator_range(boost::vertices(*gspec_));
+  auto vertices = gspec_->make_vertices_range();
   for (const auto &v : vertices) {
     const auto &ns = (*gspec_)[v];
     if (!names.insert(ns.name).second) {
@@ -393,10 +390,10 @@ void Compiler::Impl::validate_spec() {
     }
   }
 
-  auto edges = boost::make_iterator_range(boost::edges(*gspec_));
+  auto edges = gspec_->make_edges_range();
   for (const auto &e : edges) {
-    const auto &es    = (*gspec_)[e];
-    const auto  dst   = (*gspec_)[boost::target(e, *gspec_)];
+    const auto &es    = e.properties;
+    const auto  dst   = (*gspec_)[e.target];
     std::string label = std::format("{}:{}", dst.name, es.in_idx);
 
     if (!edge_dsts.insert(label).second) {
@@ -409,24 +406,24 @@ void Compiler::Impl::validate_spec() {
 // Pass: Build Graph Structure
 // -------------------------------------------------------------------------------------------------
 void Compiler::Impl::build_graph_structure() {
-  using VSpec = core::GraphSpec::vertex_descriptor;
-  using VPlan = GraphPlan::vertex_descriptor;
+  using VSpec = core::GraphSpec::VertexDescriptor;
+  using VPlan = GraphPlan::VertexDescriptor;
   std::map<VSpec, VPlan> v_map;
   auto                  &g = out_->graph;
 
-  for (auto v : boost::make_iterator_range(boost::vertices(*gspec_))) {
+  for (auto v : gspec_->make_vertices_range()) {
     NodePlan np;
     np.spec  = (*gspec_)[v];
-    v_map[v] = boost::add_vertex(np, g);
+    v_map[v] = g.add_vertex(np);
   }
 
-  for (auto e : boost::make_iterator_range(boost::edges(*gspec_))) {
-    const auto &es  = (*gspec_)[e];
-    const auto  src = v_map.at(boost::source(e, *gspec_));
-    const auto  dst = v_map.at(boost::target(e, *gspec_));
+  for (auto e : gspec_->make_edges_range()) {
+    const auto &es  = e.properties;
+    const auto  src = v_map.at(e.source);
+    const auto  dst = v_map.at(e.target);
     EdgePlan    ep;
     ep.spec = es;
-    boost::add_edge(src, dst, ep, g);
+    g.add_edge(src, ep, dst);
   }
 }
 
@@ -434,12 +431,12 @@ void Compiler::Impl::build_graph_structure() {
 // Pass: Type Inference
 // -------------------------------------------------------------------------------------------------
 void Compiler::Impl::run_type_inference() {
-  auto                                     &g = out_->graph;
-  std::vector<GraphPlan::vertex_descriptor> topo_order;
+  auto                                    &g = out_->graph;
+  std::vector<GraphPlan::VertexDescriptor> topo_order;
 
   try {
-    boost::topological_sort(g, std::back_inserter(topo_order));
-  } catch (const boost::not_a_dag &) {
+    holoflow::core::topological_sort(g, std::back_inserter(topo_order));
+  } catch (const holoflow::core::DetectedCycleError &) {
     throw CompilerException("Graph contains a cycle (loop), which is not allowed.");
   }
 
@@ -447,11 +444,11 @@ void Compiler::Impl::run_type_inference() {
     auto &node       = g[v];
     auto  node_trace = trace_scope(std::format("Infer: {}", node.spec.name), "detail");
 
-    auto                     in_degree = boost::in_degree(v, g);
+    auto                     in_degree = g.in_degree(v);
     std::vector<core::TDesc> input_descs(in_degree);
 
-    for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
-      const auto &edge_plan = g[e];
+    for (auto e : g.make_in_edges_range(v)) {
+      const auto &edge_plan = e.properties;
       if (edge_plan.spec.in_idx >= input_descs.size()) {
         throw CompilerException("Input index out of bounds");
       }
@@ -461,8 +458,8 @@ void Compiler::Impl::run_type_inference() {
     const auto &factory = registry_.get(node.spec.kind);
     node.infer          = factory.infer(input_descs, node.spec.settings);
 
-    for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
-      auto &edge_plan = g[e];
+    for (auto e : g.make_out_edges_range(v)) {
+      auto &edge_plan = e.properties;
       if (edge_plan.spec.out_idx >= node.infer.output_descs.size()) {
         throw CompilerException("Output index out of bounds");
       }
@@ -479,30 +476,29 @@ void Compiler::Impl::assign_tensor_ids() {
   auto &res      = out_->resources;
   int   next_tid = 0;
 
-  std::vector<GraphPlan::vertex_descriptor> topo;
-  boost::topological_sort(g, std::back_inserter(topo));
+  std::vector<GraphPlan::VertexDescriptor> topo;
+  holoflow::core::topological_sort(g, std::back_inserter(topo));
 
   for (auto v : std::views::reverse(topo)) {
     auto &node = g[v];
 
     node.in_tids.resize(node.infer.input_descs.size());
-    for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
-      const auto &ep               = g[e];
+    for (auto e : g.make_in_edges_range(v)) {
+      const auto &ep               = e.properties;
       node.in_tids[ep.spec.in_idx] = ep.tid;
       res.tensor_descs[ep.tid]     = ep.desc;
     }
 
     node.out_tids.resize(node.infer.output_descs.size());
-    auto out_edges = boost::out_edges(v, g);
 
     for (size_t i = 0; i < node.out_tids.size(); ++i) {
       int tid               = next_tid++;
       node.out_tids[i]      = tid;
       res.tensor_descs[tid] = node.infer.output_descs[i];
 
-      for (auto e : boost::make_iterator_range(out_edges)) {
-        if (g[e].spec.out_idx == static_cast<int>(i)) {
-          g[e].tid = tid;
+      for (auto e : g.make_out_edges_range(v)) {
+        if (e.properties.spec.out_idx == static_cast<int>(i)) {
+          e.properties.tid = tid;
         }
       }
     }
@@ -519,8 +515,8 @@ void Compiler::Impl::assign_storage_ids() {
   res.tid_to_sid.clear();
   int next_sid = 0;
 
-  std::vector<GraphPlan::vertex_descriptor> topo;
-  boost::topological_sort(g, std::back_inserter(topo));
+  std::vector<GraphPlan::VertexDescriptor> topo;
+  holoflow::core::topological_sort(g, std::back_inserter(topo));
 
   for (auto v : std::views::reverse(topo)) {
     auto &node = g[v];
@@ -557,7 +553,7 @@ void Compiler::Impl::verify_buffer_consistency() {
   auto                                      &g   = out_->graph;
   auto                                      &res = out_->resources;
 
-  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
+  for (auto v : g.make_vertices_range()) {
     const auto &node = g[v];
     for (size_t i = 0; i < node.infer.owned_inputs.size(); ++i) {
       if (node.infer.owned_inputs[i]) {
@@ -578,88 +574,6 @@ void Compiler::Impl::verify_buffer_consistency() {
   }
 }
 
-// void Compiler::Impl::allocate_buffers() {
-//   auto &g   = out_->graph;
-//   auto &res = out_->resources;
-
-//   res.memory_blocks.clear();
-//   res.storages.clear();
-
-//   std::unordered_set<size_t> user_managed_sids;
-//   for (auto v : boost::make_iterator_range(boost::vertices(g))) {
-//     const auto &node = g[v];
-//     for (size_t i = 0; i < node.out_tids.size(); ++i) {
-//       if (node.infer.owned_outputs[i]) {
-//         int    tid = node.out_tids[i];
-//         size_t sid = res.tid_to_sid.at(tid);
-//         user_managed_sids.insert(sid);
-//       }
-//     }
-//     for (size_t i = 0; i < node.in_tids.size(); ++i) {
-//       if (node.infer.owned_inputs[i]) {
-//         int    tid = node.in_tids[i];
-//         size_t sid = res.tid_to_sid.at(tid);
-//         user_managed_sids.insert(sid);
-//       }
-//     }
-//   }
-
-//   std::map<size_t, size_t> sid_to_rep_tid;
-//   for (const auto &[tid, sid] : res.tid_to_sid) {
-//     if (!sid_to_rep_tid.count(sid))
-//       sid_to_rep_tid[sid] = tid;
-//   }
-
-//   for (const auto &[sid, tid] : sid_to_rep_tid) {
-//     auto        alloc_scope = trace_scope(std::format("Alloc SID {}", sid), "detail");
-//     const auto &desc        = res.tensor_descs.at(tid);
-
-//     auto storage     = std::make_unique<core::Storage>();
-//     storage->mem_loc = desc.mem_loc;
-//     storage->bytes   = desc.num_bytes();
-//     storage->ptr     = nullptr;
-
-//     if (!user_managed_sids.contains(sid)) {
-//       MemoryBlock block;
-//       block.mem_loc    = desc.mem_loc;
-//       block.size_bytes = desc.num_bytes();
-
-//       logger_->info("Allocating {} bytes for SID {} at {:?} memory", block.size_bytes, sid,
-//                     to_string(desc.mem_loc));
-
-//       // Use a standard scope block to control the RAII timer
-//       {
-//         auto sys_scope = trace_scope(
-//             desc.mem_loc == core::MemLoc::Host ? "Host Malloc" : "Device Malloc", "syscall");
-//         if (desc.mem_loc == core::MemLoc::Host) {
-//           block.h_data = curaii::make_unique_host_ptr<std::byte>(block.size_bytes);
-//         } else {
-//           block.d_data = curaii::make_unique_device_ptr<std::byte>(block.size_bytes);
-//         }
-//       } // sys_scope naturally destructs here!
-
-//       storage->ptr = static_cast<std::byte *>(block.get());
-//       res.memory_blocks.emplace(sid, std::move(block));
-//     } else {
-//       logger_->info("SID {} is user-managed; skipping allocation.", sid);
-//     }
-
-//     res.storages.emplace(sid, std::move(storage));
-//   }
-
-//   // Temp test, trigger a 1b cuda memcopy to see how it shows up in the profiler
-//   CUDA_CHECK(cudaDeviceSynchronize());
-//   if (res.memory_blocks.size() >= 2) {
-//     auto &block1 = res.memory_blocks.begin()->second;
-//     auto &block2 = std::next(res.memory_blocks.begin())->second;
-//     if (block1.mem_loc == core::MemLoc::Device && block2.mem_loc == core::MemLoc::Device) {
-//       auto sys_scope = trace_scope("Test Memcpy", "syscall");
-//       CUDA_CHECK(cudaMemcpy(block2.get(), block1.get(), 1, cudaMemcpyDeviceToDevice));
-//       CUDA_CHECK(cudaDeviceSynchronize());
-//     }
-//   }
-// }
-
 void Compiler::Impl::allocate_buffers() {
   auto &g   = out_->graph;
   auto &res = out_->resources;
@@ -669,7 +583,7 @@ void Compiler::Impl::allocate_buffers() {
 
   // 1. Identify user-managed SIDs
   std::unordered_set<size_t> user_managed_sids;
-  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
+  for (auto v : g.make_vertices_range()) {
     const auto &node = g[v];
     for (size_t i = 0; i < node.out_tids.size(); ++i) {
       if (node.infer.owned_outputs[i]) {
@@ -770,11 +684,11 @@ void Compiler::Impl::allocate_buffers() {
 // -------------------------------------------------------------------------------------------------
 void Compiler::Impl::partition_sections() {
   auto &g         = out_->graph;
-  auto  num_verts = boost::num_vertices(g);
+  auto  num_verts = g.num_vertices();
 
-  for (auto e : boost::make_iterator_range(boost::edges(g))) {
-    const auto source = boost::source(e, g);
-    const auto target = boost::target(e, g);
+  for (auto e : g.make_edges_range()) {
+    const auto source = e.source;
+    const auto target = e.target;
     if (g[source].infer.kind == core::TaskKind::Async &&
         g[target].infer.kind == core::TaskKind::Async) {
       throw CompilerException(
@@ -801,19 +715,19 @@ void Compiler::Impl::partition_sections() {
       parent[root_i] = root_j;
   };
 
-  for (auto e : boost::make_iterator_range(boost::edges(g))) {
-    auto u = boost::source(e, g);
-    auto v = boost::target(e, g);
+  for (auto e : g.make_edges_range()) {
+    auto u = e.source;
+    auto v = e.target;
     if (g[u].infer.kind == core::TaskKind::Sync && g[v].infer.kind == core::TaskKind::Sync) {
       unite(u, v);
     }
   }
 
-  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
+  for (auto v : g.make_vertices_range()) {
     if (g[v].infer.kind == core::TaskKind::Async) {
       std::vector<size_t> sync_preds;
-      for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
-        auto p = boost::source(e, g);
+      for (auto e : g.make_in_edges_range(v)) {
+        auto p = e.source;
         if (g[p].infer.kind == core::TaskKind::Sync)
           sync_preds.push_back(p);
       }
@@ -823,8 +737,8 @@ void Compiler::Impl::partition_sections() {
       }
 
       std::vector<size_t> sync_succs;
-      for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
-        auto s = boost::target(e, g);
+      for (auto e : g.make_out_edges_range(v)) {
+        auto s = e.target;
         if (g[s].infer.kind == core::TaskKind::Sync)
           sync_succs.push_back(s);
       }
@@ -852,8 +766,8 @@ void Compiler::Impl::partition_sections() {
     return root_to_section_id[root];
   };
 
-  std::vector<GraphPlan::vertex_descriptor> topo;
-  boost::topological_sort(g, std::back_inserter(topo));
+  std::vector<GraphPlan::VertexDescriptor> topo;
+  holoflow::core::topological_sort(g, std::back_inserter(topo));
 
   for (auto v : std::views::reverse(topo)) {
     auto &np = g[v];
@@ -864,13 +778,13 @@ void Compiler::Impl::partition_sections() {
     }
   }
 
-  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
+  for (auto v : g.make_vertices_range()) {
     if (g[v].infer.kind != core::TaskKind::Async)
       continue;
 
     std::set<size_t> unique_cons_sections;
-    for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
-      auto s = boost::target(e, g);
+    for (auto e : g.make_out_edges_range(v)) {
+      auto s = e.target;
       if (g[s].infer.kind == core::TaskKind::Sync) {
         unique_cons_sections.insert(get_section_id(s));
       }
@@ -880,8 +794,8 @@ void Compiler::Impl::partition_sections() {
     }
 
     std::set<size_t> unique_prod_sections;
-    for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
-      auto p = boost::source(e, g);
+    for (auto e : g.make_in_edges_range(v)) {
+      auto p = e.source;
       if (g[p].infer.kind == core::TaskKind::Sync) {
         unique_prod_sections.insert(get_section_id(p));
       }
@@ -949,7 +863,7 @@ void Compiler::Impl::create_storage_adapters() {
 
   res.node_storage_adapters.clear();
 
-  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
+  for (auto v : g.make_vertices_range()) {
     const auto &np      = g[v];
     auto        adapter = std::make_unique<TaskStorageAdapter>(np.in_tids, np.out_tids, res);
     res.node_storage_adapters.emplace(np.spec.name, std::move(adapter));
@@ -1024,9 +938,8 @@ Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, cons
   bool kind_mismatch       = false;
   bool found_in_prev_graph = false;
 
-  auto [vi, vi_end] = boost::vertices(prev_->graph);
-  for (; vi != vi_end; ++vi) {
-    const NodePlan &prev_node = prev_->graph[*vi];
+  for (auto v : prev_->graph.make_vertices_range()) {
+    const NodePlan &prev_node = prev_->graph[v];
     if (prev_node.spec.name == np.spec.name) {
       found_in_prev_graph = true;
       if (prev_node.spec.kind != np.spec.kind) {
@@ -1055,7 +968,7 @@ void Compiler::Impl::instantiate_tasks() {
 
   tasks.clear();
 
-  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
+  for (auto v : g.make_vertices_range()) {
     const auto &np = g[v];
 
     if (np.infer.kind == core::TaskKind::Sync) {
@@ -1070,8 +983,8 @@ void Compiler::Impl::instantiate_tasks() {
 
     } else if (np.infer.kind == core::TaskKind::Async) {
       void *prod_stream = nullptr;
-      for (auto e : boost::make_iterator_range(boost::in_edges(v, g))) {
-        auto p = boost::source(e, g);
+      for (auto e : g.make_in_edges_range(v)) {
+        auto p = e.source;
         if (g[p].infer.kind == core::TaskKind::Sync) {
           size_t sid  = node_to_section_map_.at(g[p].spec.name);
           prod_stream = out_->resources.streams.at(sid).get();
@@ -1080,8 +993,8 @@ void Compiler::Impl::instantiate_tasks() {
       }
 
       void *cons_stream = nullptr;
-      for (auto e : boost::make_iterator_range(boost::out_edges(v, g))) {
-        auto s = boost::target(e, g);
+      for (auto e : g.make_out_edges_range(v)) {
+        auto s = e.target;
         if (g[s].infer.kind == core::TaskKind::Sync) {
           size_t sid  = node_to_section_map_.at(g[s].spec.name);
           cons_stream = out_->resources.streams.at(sid).get();
@@ -1114,7 +1027,7 @@ void Compiler::Impl::bind_tasks() {
   auto &g   = out_->graph;
   auto &res = out_->resources;
 
-  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
+  for (auto v : g.make_vertices_range()) {
     const auto &np = g[v];
 
     auto it_task = res.tasks.find(np.spec.name);
@@ -1214,7 +1127,7 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
     return std::format("v{}", v);
   };
 
-  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
+  for (auto v : g.make_vertices_range()) {
     const auto &np = g[v];
 
     std::ostringstream label_base;
@@ -1271,10 +1184,10 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
 
   file << "\n";
 
-  for (auto e : boost::make_iterator_range(boost::edges(g))) {
-    const auto  u  = boost::source(e, g);
-    const auto  v  = boost::target(e, g);
-    const auto &ep = g[e];
+  for (auto e : g.make_edges_range()) {
+    const auto  u  = e.source;
+    const auto  v  = e.target;
+    const auto &ep = e.properties;
 
     const std::string u_vis = get_visual_id(u, true);
     const std::string v_vis = get_visual_id(v, false);

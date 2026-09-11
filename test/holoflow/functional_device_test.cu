@@ -8,7 +8,6 @@
 
 #include <gtest/gtest.h>
 
-#include <boost/graph/adjacency_list.hpp>
 #include <cuda_runtime.h>
 #include <memory>
 #include <mutex>
@@ -249,15 +248,15 @@ holoflow::core::GraphSpec device_math_graph() {
   using holoflow::core::EdgeSpec;
   using holoflow::core::NodeSpec;
   holoflow::core::GraphSpec graph;
-  auto                      lhs   = add_vertex(NodeSpec{"lhs", "lhs", {}}, graph);
-  auto                      rhs   = add_vertex(NodeSpec{"rhs", "rhs", {}}, graph);
-  auto                      add   = add_vertex(NodeSpec{"add", "add", {}}, graph);
-  auto                      scale = add_vertex(NodeSpec{"scale", "scale", {}}, graph);
-  auto                      sink  = add_vertex(NodeSpec{"sink", "sink", {}}, graph);
-  add_edge(lhs, add, EdgeSpec{0, 0}, graph);
-  add_edge(rhs, add, EdgeSpec{0, 1}, graph);
-  add_edge(add, scale, EdgeSpec{0, 0}, graph);
-  add_edge(scale, sink, EdgeSpec{0, 0}, graph);
+  auto                      lhs   = graph.add_vertex(NodeSpec{"lhs", "lhs", {}});
+  auto                      rhs   = graph.add_vertex(NodeSpec{"rhs", "rhs", {}});
+  auto                      add   = graph.add_vertex(NodeSpec{"add", "add", {}});
+  auto                      scale = graph.add_vertex(NodeSpec{"scale", "scale", {}});
+  auto                      sink  = graph.add_vertex(NodeSpec{"sink", "sink", {}});
+  graph.add_edge(lhs, EdgeSpec{0, 0}, add);
+  graph.add_edge(rhs, EdgeSpec{0, 1}, add);
+  graph.add_edge(add, EdgeSpec{0, 0}, scale);
+  graph.add_edge(scale, EdgeSpec{0, 0}, sink);
   return graph;
 }
 
@@ -265,17 +264,17 @@ holoflow::core::GraphSpec device_async_math_graph() {
   using holoflow::core::EdgeSpec;
   using holoflow::core::NodeSpec;
   holoflow::core::GraphSpec graph;
-  auto                      source   = add_vertex(NodeSpec{"source", "source", {}}, graph);
-  auto                      bridge_a = add_vertex(NodeSpec{"bridge-a", "bridge", {}}, graph);
-  auto                      scale_a  = add_vertex(NodeSpec{"scale-a", "double", {}}, graph);
-  auto                      bridge_b = add_vertex(NodeSpec{"bridge-b", "bridge", {}}, graph);
-  auto                      scale_b  = add_vertex(NodeSpec{"scale-b", "triple", {}}, graph);
-  auto                      sink     = add_vertex(NodeSpec{"sink", "sink", {}}, graph);
-  add_edge(source, bridge_a, EdgeSpec{0, 0}, graph);
-  add_edge(bridge_a, scale_a, EdgeSpec{0, 0}, graph);
-  add_edge(scale_a, bridge_b, EdgeSpec{0, 0}, graph);
-  add_edge(bridge_b, scale_b, EdgeSpec{0, 0}, graph);
-  add_edge(scale_b, sink, EdgeSpec{0, 0}, graph);
+  auto                      source   = graph.add_vertex(NodeSpec{"source", "source", {}});
+  auto                      bridge_a = graph.add_vertex(NodeSpec{"bridge-a", "bridge", {}});
+  auto                      scale_a  = graph.add_vertex(NodeSpec{"scale-a", "double", {}});
+  auto                      bridge_b = graph.add_vertex(NodeSpec{"bridge-b", "bridge", {}});
+  auto                      scale_b  = graph.add_vertex(NodeSpec{"scale-b", "triple", {}});
+  auto                      sink     = graph.add_vertex(NodeSpec{"sink", "sink", {}});
+  graph.add_edge(source, EdgeSpec{0, 0}, bridge_a);
+  graph.add_edge(bridge_a, EdgeSpec{0, 0}, scale_a);
+  graph.add_edge(scale_a, EdgeSpec{0, 0}, bridge_b);
+  graph.add_edge(bridge_b, EdgeSpec{0, 0}, scale_b);
+  graph.add_edge(scale_b, EdgeSpec{0, 0}, sink);
   return graph;
 }
 

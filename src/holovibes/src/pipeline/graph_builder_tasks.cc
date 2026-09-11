@@ -204,8 +204,8 @@ void GraphBuilderTasks::holofile_write(const TDesc &X, holotask::sinks::Holofile
       .debug    = debug,
   };
 
-  auto v = boost::add_vertex(node_spec, g_);
-  boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, 0}, g_);
+  auto v = g_.add_vertex(node_spec);
+  g_.add_edge(X.producer->vertex,  {X.producer->out_idx, 0},v);
 
   auto      &factory     = reg_.get_sync(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});

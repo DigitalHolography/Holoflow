@@ -8,7 +8,6 @@
 
 #include <gtest/gtest.h>
 
-#include <boost/graph/adjacency_list.hpp>
 #include <chrono>
 #include <filesystem>
 #include <memory>
@@ -28,9 +27,9 @@ using holoflow::core::TDesc;
 
 GraphSpec source_sink_graph() {
   GraphSpec graph;
-  auto      source = add_vertex(NodeSpec{"source", "source", {}}, graph);
-  auto      sink   = add_vertex(NodeSpec{"sink", "sink", {}}, graph);
-  add_edge(source, sink, EdgeSpec{0, 0}, graph);
+  auto      source = graph.add_vertex(NodeSpec{"source", "source", {}});
+  auto      sink   = graph.add_vertex(NodeSpec{"sink", "sink", {}});
+  graph.add_edge(source, EdgeSpec{0, 0}, sink);
   return graph;
 }
 
@@ -119,7 +118,7 @@ TEST(CompilerTest, CompilesAnEmptyGraph) {
   holoflow::runtime::Compiler compiler(registry,
                                        {.dump_dot_on_failure = false, .enable_profiling = false});
   const auto                  output = compiler.compile({});
-  EXPECT_EQ(num_vertices(output->graph), 0);
+  EXPECT_EQ(output->graph.num_vertices(), 0);
   EXPECT_TRUE(output->sections.empty());
   EXPECT_TRUE(output->resources.tasks.empty());
 }
@@ -132,16 +131,16 @@ TEST(CompilerTest, RejectsDuplicateNamesAndInputDestinations) {
   holoflow::runtime::Compiler compiler(registry, {.dump_dot_on_failure = false});
 
   GraphSpec duplicate_names;
-  add_vertex(NodeSpec{"same", "source", {}}, duplicate_names);
-  add_vertex(NodeSpec{"same", "source", {}}, duplicate_names);
+ duplicate_names.add_vertex(NodeSpec{"same", "source", {}});
+ duplicate_names.add_vertex(NodeSpec{"same", "source", {}});
   EXPECT_THROW((void)compiler.compile(duplicate_names), std::runtime_error);
 
   GraphSpec duplicate_input;
-  auto      a = add_vertex(NodeSpec{"a", "source", {}}, duplicate_input);
-  auto      b = add_vertex(NodeSpec{"b", "source", {}}, duplicate_input);
-  auto      s = add_vertex(NodeSpec{"sink", "sink", {}}, duplicate_input);
-  add_edge(a, s, EdgeSpec{0, 0}, duplicate_input);
-  add_edge(b, s, EdgeSpec{0, 0}, duplicate_input);
+  auto      a =duplicate_input.add_vertex(NodeSpec{"a", "source", {}});
+  auto      b =duplicate_input.add_vertex(NodeSpec{"b", "source", {}});
+  auto      s =duplicate_input.add_vertex(NodeSpec{"sink", "sink", {}});
+  duplicate_input.add_edge(a, EdgeSpec{0, 0}, s);
+  duplicate_input.add_edge(b, EdgeSpec{0, 0}, s);
   EXPECT_THROW((void)compiler.compile(duplicate_input), std::runtime_error);
 }
 

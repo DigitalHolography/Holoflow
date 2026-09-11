@@ -15,8 +15,6 @@
 #include "holoflow/core/graph_spec.hh"
 
 #include <algorithm>
-#include <boost/graph/adjacency_list.hpp>
-#include <boost/graph/graph_traits.hpp>
 #include <cctype>
 #include <stdexcept>
 #include <string>
@@ -67,7 +65,7 @@ nlohmann::json to_json(const GraphSpec &g, const GraphSpecWriteOptions &opts) {
   j["edges"] = nlohmann::json::array();
 
   // Nodes
-  for (auto vd : boost::make_iterator_range(vertices(g))) {
+  for (auto vd : g.make_vertices_range()) {
     const auto &n = g[vd];
     require(!n.name.empty(), "node has empty name");
     nlohmann::json node_obj = nlohmann::json::object();
@@ -89,10 +87,10 @@ nlohmann::json to_json(const GraphSpec &g, const GraphSpecWriteOptions &opts) {
   }
 
   // Edges
-  for (auto ed : boost::make_iterator_range(edges(g))) {
-    const auto  src = source(ed, g);
-    const auto  dst = target(ed, g);
-    const auto &e   = g[ed];
+  for (auto ed : g.make_edges_range()) {
+    const auto  src = ed.source;
+    const auto  dst = ed.target;
+    const auto &e   = ed.properties;
 
     const auto &src_name = g[src].name;
     const auto &dst_name = g[dst].name;
@@ -120,7 +118,7 @@ GraphSpec from_json(const nlohmann::json &j) {
   require(jedges.is_array(), "'edges' must be an array if present");
 
   GraphSpec g;
-  using Vertex = boost::graph_traits<GraphSpec>::vertex_descriptor;
+  using Vertex = GraphSpec::VertexDescriptor;
   std::unordered_map<std::string, Vertex> name_to_v;
   name_to_v.reserve(jnodes.size());
 
@@ -153,7 +151,7 @@ GraphSpec from_json(const nlohmann::json &j) {
       spec.debug = true;
     }
 
-    const auto v              = add_vertex(std::move(spec), g);
+    const auto v              = g.add_vertex(std::move(spec));
     const auto [it, inserted] = name_to_v.emplace(name, v);
     require(inserted, "duplicate node name '" + name + "'");
   }
@@ -182,7 +180,7 @@ GraphSpec from_json(const nlohmann::json &j) {
     require(e.at("in").is_number_integer(), "edge[" + std::to_string(i) + "]: 'in' must be int");
     es.out_idx = e.at("out").get<int>();
     es.in_idx  = e.at("in").get<int>();
-    add_edge(it_from->second, it_to->second, es, g);
+    g.add_edge(it_from->second, es, it_to->second);
   }
 
   return g;
@@ -220,9 +218,10 @@ static void write_graph_header(std::ostringstream &ss) {
 }
 
 static void write_nodes(std::ostringstream &ss, const GraphSpec &g) {
-  using vertex_iter_t = boost::graph_traits<GraphSpec>::vertex_iterator;
+  using vertex_iter_t = GraphSpec::VertexIterator;
   vertex_iter_t vi, vi_end;
-  for (boost::tie(vi, vi_end) = boost::vertices(g); vi != vi_end; ++vi) {
+  auto          vertex_range = g.make_vertices_range();
+  for (vi = vertex_range.begin(), vi_end = vertex_range.end(); vi != vi_end; ++vi) {
     auto            v  = *vi;
     const NodeSpec &ns = g[v];
 
@@ -248,13 +247,13 @@ static void write_nodes(std::ostringstream &ss, const GraphSpec &g) {
 }
 
 static void write_edges(std::ostringstream &ss, const GraphSpec &g) {
-  using edge_iter_t = boost::graph_traits<GraphSpec>::edge_iterator;
+  using edge_iter_t = GraphSpec::EdgeIterator;
   edge_iter_t ei, ei_end;
-  for (boost::tie(ei, ei_end) = boost::edges(g); ei != ei_end; ++ei) {
-    auto            e  = *ei;
-    auto            s  = boost::source(e, g);
-    auto            t  = boost::target(e, g);
-    const EdgeSpec &es = g[e];
+  auto        edge_range = g.make_edges_range();
+  for (auto e : edge_range) {
+    auto            s  = e.source;
+    auto            t  = e.target;
+    const EdgeSpec &es = e.properties;
 
     ss << "  v" << s << " -> v" << t << " [taillabel=\""
        << escape_for_label(std::to_string(es.out_idx)) << "\""

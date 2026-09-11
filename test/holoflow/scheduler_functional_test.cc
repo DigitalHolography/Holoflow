@@ -8,7 +8,6 @@
 
 #include <gtest/gtest.h>
 
-#include <boost/graph/adjacency_list.hpp>
 #include <chrono>
 #include <memory>
 #include <optional>
@@ -32,80 +31,80 @@ constexpr auto scheduler_timeout = std::chrono::seconds{5};
 
 GraphSpec serial_async_graph() {
   GraphSpec graph;
-  auto      source   = add_vertex(NodeSpec{"source", "source", {}}, graph);
-  auto      bridge_a = add_vertex(NodeSpec{"bridge-a", "bridge", {}}, graph);
-  auto      scale_a  = add_vertex(NodeSpec{"scale-a", "double", {}}, graph);
-  auto      bridge_b = add_vertex(NodeSpec{"bridge-b", "bridge", {}}, graph);
-  auto      scale_b  = add_vertex(NodeSpec{"scale-b", "triple", {}}, graph);
-  auto      sink     = add_vertex(NodeSpec{"sink", "sink", {}}, graph);
-  add_edge(source, bridge_a, EdgeSpec{0, 0}, graph);
-  add_edge(bridge_a, scale_a, EdgeSpec{0, 0}, graph);
-  add_edge(scale_a, bridge_b, EdgeSpec{0, 0}, graph);
-  add_edge(bridge_b, scale_b, EdgeSpec{0, 0}, graph);
-  add_edge(scale_b, sink, EdgeSpec{0, 0}, graph);
+  auto      source   = graph.add_vertex(NodeSpec{"source", "source", {}});
+  auto      bridge_a = graph.add_vertex(NodeSpec{"bridge-a", "bridge", {}});
+  auto      scale_a  = graph.add_vertex(NodeSpec{"scale-a", "double", {}});
+  auto      bridge_b = graph.add_vertex(NodeSpec{"bridge-b", "bridge", {}});
+  auto      scale_b  = graph.add_vertex(NodeSpec{"scale-b", "triple", {}});
+  auto      sink     = graph.add_vertex(NodeSpec{"sink", "sink", {}});
+  graph.add_edge(source, EdgeSpec{0, 0}, bridge_a);
+  graph.add_edge(bridge_a, EdgeSpec{0, 0}, scale_a);
+  graph.add_edge(scale_a, EdgeSpec{0, 0}, bridge_b);
+  graph.add_edge(bridge_b, EdgeSpec{0, 0}, scale_b);
+  graph.add_edge(scale_b, EdgeSpec{0, 0}, sink);
   return graph;
 }
 
 GraphSpec parallel_fan_in_graph() {
   GraphSpec graph;
-  auto      left         = add_vertex(NodeSpec{"left", "left", {}}, graph);
-  auto      right        = add_vertex(NodeSpec{"right", "right", {}}, graph);
-  auto      left_bridge  = add_vertex(NodeSpec{"left-bridge", "bridge", {}}, graph);
-  auto      right_bridge = add_vertex(NodeSpec{"right-bridge", "bridge", {}}, graph);
-  auto      left_scale   = add_vertex(NodeSpec{"left-scale", "double", {}}, graph);
-  auto      right_scale  = add_vertex(NodeSpec{"right-scale", "half", {}}, graph);
-  auto      add          = add_vertex(NodeSpec{"add", "add", {}}, graph);
-  auto      sink         = add_vertex(NodeSpec{"sink", "sink", {}}, graph);
-  add_edge(left, left_bridge, EdgeSpec{0, 0}, graph);
-  add_edge(right, right_bridge, EdgeSpec{0, 0}, graph);
-  add_edge(left_bridge, left_scale, EdgeSpec{0, 0}, graph);
-  add_edge(right_bridge, right_scale, EdgeSpec{0, 0}, graph);
-  add_edge(left_scale, add, EdgeSpec{0, 0}, graph);
-  add_edge(right_scale, add, EdgeSpec{0, 1}, graph);
-  add_edge(add, sink, EdgeSpec{0, 0}, graph);
+  auto      left         = graph.add_vertex(NodeSpec{"left", "left", {}});
+  auto      right        = graph.add_vertex(NodeSpec{"right", "right", {}});
+  auto      left_bridge  = graph.add_vertex(NodeSpec{"left-bridge", "bridge", {}});
+  auto      right_bridge = graph.add_vertex(NodeSpec{"right-bridge", "bridge", {}});
+  auto      left_scale   = graph.add_vertex(NodeSpec{"left-scale", "double", {}});
+  auto      right_scale  = graph.add_vertex(NodeSpec{"right-scale", "half", {}});
+  auto      add          = graph.add_vertex(NodeSpec{"add", "add", {}});
+  auto      sink         = graph.add_vertex(NodeSpec{"sink", "sink", {}});
+  graph.add_edge(left, EdgeSpec{0, 0}, left_bridge);
+  graph.add_edge(right, EdgeSpec{0, 0}, right_bridge);
+  graph.add_edge(left_bridge, EdgeSpec{0, 0}, left_scale);
+  graph.add_edge(right_bridge, EdgeSpec{0, 0}, right_scale);
+  graph.add_edge(left_scale, EdgeSpec{0, 0}, add);
+  graph.add_edge(right_scale, EdgeSpec{0, 1}, add);
+  graph.add_edge(add, EdgeSpec{0, 0}, sink);
   return graph;
 }
 
 GraphSpec diamond_graph() {
   GraphSpec graph;
-  auto      source   = add_vertex(NodeSpec{"source", "source", {}}, graph);
-  auto      bridge_a = add_vertex(NodeSpec{"bridge-a", "bridge", {}}, graph);
-  auto      bridge_b = add_vertex(NodeSpec{"bridge-b", "bridge", {}}, graph);
-  auto      scale_a  = add_vertex(NodeSpec{"scale-a", "double", {}}, graph);
-  auto      scale_b  = add_vertex(NodeSpec{"scale-b", "triple", {}}, graph);
-  auto      add      = add_vertex(NodeSpec{"add", "add", {}}, graph);
-  auto      sink     = add_vertex(NodeSpec{"sink", "sink", {}}, graph);
-  add_edge(source, bridge_a, EdgeSpec{0, 0}, graph);
-  add_edge(source, bridge_b, EdgeSpec{0, 0}, graph);
-  add_edge(bridge_a, scale_a, EdgeSpec{0, 0}, graph);
-  add_edge(bridge_b, scale_b, EdgeSpec{0, 0}, graph);
-  add_edge(scale_a, add, EdgeSpec{0, 0}, graph);
-  add_edge(scale_b, add, EdgeSpec{0, 1}, graph);
-  add_edge(add, sink, EdgeSpec{0, 0}, graph);
+  auto      source   = graph.add_vertex(NodeSpec{"source", "source", {}});
+  auto      bridge_a = graph.add_vertex(NodeSpec{"bridge-a", "bridge", {}});
+  auto      bridge_b = graph.add_vertex(NodeSpec{"bridge-b", "bridge", {}});
+  auto      scale_a  = graph.add_vertex(NodeSpec{"scale-a", "double", {}});
+  auto      scale_b  = graph.add_vertex(NodeSpec{"scale-b", "triple", {}});
+  auto      add      = graph.add_vertex(NodeSpec{"add", "add", {}});
+  auto      sink     = graph.add_vertex(NodeSpec{"sink", "sink", {}});
+  graph.add_edge(source, EdgeSpec{0, 0}, bridge_a);
+  graph.add_edge(source, EdgeSpec{0, 0}, bridge_b);
+  graph.add_edge(bridge_a, EdgeSpec{0, 0}, scale_a);
+  graph.add_edge(bridge_b, EdgeSpec{0, 0}, scale_b);
+  graph.add_edge(scale_a, EdgeSpec{0, 0}, add);
+  graph.add_edge(scale_b, EdgeSpec{0, 1}, add);
+  graph.add_edge(add, EdgeSpec{0, 0}, sink);
   return graph;
 }
 
 GraphSpec multi_frame_graph() {
   GraphSpec graph;
-  auto      source = add_vertex(NodeSpec{"source", "sequence", {}}, graph);
-  auto      bridge = add_vertex(NodeSpec{"bridge", "bridge", {}}, graph);
-  auto      scale  = add_vertex(NodeSpec{"scale", "scale", {}}, graph);
-  auto      sink   = add_vertex(NodeSpec{"sink", "history", {}}, graph);
-  add_edge(source, bridge, EdgeSpec{0, 0}, graph);
-  add_edge(bridge, scale, EdgeSpec{0, 0}, graph);
-  add_edge(scale, sink, EdgeSpec{0, 0}, graph);
+  auto      source = graph.add_vertex(NodeSpec{"source", "sequence", {}});
+  auto      bridge = graph.add_vertex(NodeSpec{"bridge", "bridge", {}});
+  auto      scale  = graph.add_vertex(NodeSpec{"scale", "scale", {}});
+  auto      sink   = graph.add_vertex(NodeSpec{"sink", "history", {}});
+  graph.add_edge(source, EdgeSpec{0, 0}, bridge);
+  graph.add_edge(bridge, EdgeSpec{0, 0}, scale);
+  graph.add_edge(scale, EdgeSpec{0, 0}, sink);
   return graph;
 }
 
 GraphSpec consecutive_async_graph() {
   GraphSpec graph;
-  auto      source   = add_vertex(NodeSpec{"source", "source", {}}, graph);
-  auto      bridge_a = add_vertex(NodeSpec{"bridge-a", "bridge", {}}, graph);
-  auto      bridge_b = add_vertex(NodeSpec{"bridge-b", "bridge", {}}, graph);
-  auto      sink     = add_vertex(NodeSpec{"sink", "sink", {}}, graph);
-  add_edge(source, bridge_a, EdgeSpec{0, 0}, graph);
-  add_edge(bridge_a, bridge_b, EdgeSpec{0, 0}, graph);
-  add_edge(bridge_b, sink, EdgeSpec{0, 0}, graph);
+  auto      source   = graph.add_vertex(NodeSpec{"source", "source", {}});
+  auto      bridge_a = graph.add_vertex(NodeSpec{"bridge-a", "bridge", {}});
+  auto      bridge_b = graph.add_vertex(NodeSpec{"bridge-b", "bridge", {}});
+  auto      sink     = graph.add_vertex(NodeSpec{"sink", "sink", {}});
+  graph.add_edge(source, EdgeSpec{0, 0}, bridge_a);
+  graph.add_edge(bridge_a, EdgeSpec{0, 0}, bridge_b);
+  graph.add_edge(bridge_b, EdgeSpec{0, 0}, sink);
   return graph;
 }
 

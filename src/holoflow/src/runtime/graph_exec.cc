@@ -17,17 +17,14 @@
 #include "holoflow/runtime/graph_exec.hh"
 
 #include <algorithm>
-#include <boost/graph/adjacency_list.hpp>
-#include <boost/graph/graph_traits.hpp>
 #include <chrono>
 #include <map>
 #include <mutex>
 #include <nvtx3/nvtx3.hpp>
+#include <set>
 #include <vector>
 #include <windows.h>
 
-#include "boost/graph/properties.hpp"
-#include "boost/range/iterator_range_core.hpp"
 #include "bug.hh"
 #include "cuda_runtime_api.h"
 #include "curaii/cuda.hh"
@@ -39,11 +36,11 @@ namespace holoflow::runtime {
 namespace {
 
 inline std::string node_context_msg(const holoflow::runtime::GraphPlan             &g,
-                                    holoflow::runtime::GraphPlan::vertex_descriptor v,
+                                    holoflow::runtime::GraphPlan::VertexDescriptor v,
                                     std::string_view phase, int section_id,
                                     std::string_view section_name) {
   const auto &np       = g[v];
-  const auto  vertex_i = static_cast<std::size_t>(boost::get(boost::vertex_index, g, v));
+  const auto  vertex_i = static_cast<std::size_t>(v);
   const auto  tid      = ::GetCurrentThreadId();
 
   return std::format("Exception in node '{}'\n"
@@ -56,7 +53,7 @@ inline std::string node_context_msg(const holoflow::runtime::GraphPlan          
 
 [[noreturn]] inline void
 rethrow_with_node_context(const holoflow::runtime::GraphPlan             &g,
-                          holoflow::runtime::GraphPlan::vertex_descriptor v, std::string_view phase,
+                          holoflow::runtime::GraphPlan::VertexDescriptor v, std::string_view phase,
                           int section_id, std::string_view section_name) {
   try {
     throw; // rethrow current exception
@@ -71,7 +68,7 @@ rethrow_with_node_context(const holoflow::runtime::GraphPlan             &g,
 
 size_t count_distinct_tids(const GraphPlan &graph) {
   std::set<int> tids;
-  for (const auto &v : boost::make_iterator_range(boost::vertices(graph))) {
+  for (const auto &v : graph.make_vertices_range()) {
     const auto &np   = graph[v];
     const auto tids_ = std::array{std::span{np.in_tids}, std::span{np.out_tids}} | std::views::join;
 
@@ -243,20 +240,20 @@ void Scheduler::init_tviews() {
 
 void Scheduler::build_event_handles() {
   event_handles_.clear();
-  for (auto v : boost::make_iterator_range(boost::vertices(graph_))) {
+  for (auto v : graph_.make_vertices_range()) {
     const auto &np = graph_[v];
     event_handles_.emplace(np.spec.name, router_.bind_node(np.spec.name));
   }
 }
 
 void Scheduler::build_nodes_rts() {
-  const auto num_vertices = boost::num_vertices(graph_);
+  const auto num_vertices = graph_.num_vertices();
   node_rts_.resize(num_vertices);
   node_names_.resize(num_vertices);
   metric_accumulators_.resize(num_vertices);
 
-  for (auto v : boost::make_iterator_range(boost::vertices(graph_))) {
-    const auto idx      = boost::get(boost::vertex_index, graph_, v);
+  for (auto v : graph_.make_vertices_range()) {
+    const auto idx      = v;
     const auto np       = graph_[v];
     node_names_.at(idx) = np.spec.name;
     auto *task          = res_.tasks.at(np.spec.name).get();
@@ -331,7 +328,7 @@ void Scheduler::run_section(int section_id) {
 
   try {
     while (!stop_.load()) {
-      std::vector<GraphPlan::vertex_descriptor> produced_owned_outputs;
+      std::vector<GraphPlan::VertexDescriptor> produced_owned_outputs;
       logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
 
       // 1. Outer Section Range
@@ -437,104 +434,8 @@ void Scheduler::run_section(int section_id) {
   }
 }
 
-// void Scheduler::run_section(int section_id) {
-//   const auto &sec    = sections_.at(section_id);
-//   auto        stream = sec.stream;
-
-//   // Nodes in sections are topologically sorted, so we can execute them in order.
-//   // However, owned inputs are used as outputs for former nodes, so we need to
-//   // acquire them first.
-//   // Owned outputs are used as inputs for later nodes, so we need to release
-//   // them last.
-
-//   // TODO: How to handle end of stream (Eof)? Do we need to propagate it?
-//   // Do we need to stop the scheduler when we reach Eof for every node?
-//   // Do we need to notify nodes when we reach Eof for their inputs?
-
-//   // TODO: How to handle stream synchronization? Should asynchronous tasks
-//   // be responsible for synchronizing push-stream before enabling to pop data?
-//   // Or should the scheduler be the sole responsible for synchronizing streams?
-
-//   // TODO: How to properly collect metrics on given tasks run on cuda streams?
-//   // Should we use cuda events?
-
-//   while (!stop_.load()) {
-//     logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
-//     nvtxRangePush(sec.name.c_str());
-
-//     // Acquire owned inputs.
-//     //
-//     // - We do not acquire owned-inputs of async consumers here, as they
-//     //   used in the former section only.
-//     //
-//     // - It is mandatory to check stop_ after acquiring inputs, as
-//     //   the scheduler may have been requested to stop while waiting
-//     //   for owned inputs to become available. This leads to undefined
-//     //   behavior if we proceed to execute nodes after stop_ was set.
-//     nvtxRangePush("Acquire owned inputs");
-//     for (auto v : sec.sync_topo) {
-//       acquire_owned_inputs(v);
-//     }
-//     for (auto v : sec.async_prod) {
-//       acquire_owned_inputs(v);
-//     }
-//     nvtxRangePop();
-//     if (stop_.load()) {
-//       break;
-//     }
-
-//     // Execute nodes.
-//     //
-//     // - We know the nodes are topologically sorted within the section, so we
-//     //   can execute them in order. The topological order also takes into account
-//     //   in-place operations, so inputs or siblings is not changed before they are
-//     //   executed.
-//     //
-//     // - It is mandatory to syncronize the stream before running async producers,
-//     //   as async consumers from the next section may depend on work done on this stream,
-//     //   and we have no guarantee that the async producer at the end of this section
-//     //   will synchronize the stream before pushing data (it may not be cuda-related).
-//     nvtxRangePush("Execute async consumers");
-//     for (auto v : sec.async_cons) {
-//       run_async_cons(v);
-//     }
-//     if (stop_.load()) {
-//       break;
-//     }
-//     nvtxRangePop();
-
-//     nvtxRangePush("Execute sync nodes");
-//     for (auto v : sec.sync_topo) {
-//       run_sync(v);
-//     }
-
-//     CUDA_CHECK(cudaStreamSynchronize(stream));
-//     nvtxRangePop();
-
-//     nvtxRangePush("Execute async producers");
-//     for (auto v : sec.async_prod) {
-//       run_async_prod(v);
-//     }
-//     nvtxRangePop();
-
-//     // Release owned outputs.
-//     //
-//     // - We do not release owned-outputs of async producers here, as they
-//     // used only in the next section.
-//     nvtxRangePush("Release owned outputs");
-//     for (auto v : sec.sync_topo) {
-//       release_owned_outputs(v);
-//     }
-//     for (auto v : sec.async_cons) {
-//       release_owned_outputs(v);
-//     }
-//     nvtxRangePop();
-//     nvtxRangePop();
-//   }
-// }
-
-void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v) {
-  const auto  idx        = boost::get(boost::vertex_index, graph_, v);
+void Scheduler::acquire_owned_inputs(GraphPlan::VertexDescriptor v) {
+  const auto  idx        = v;
   const auto &np         = graph_[v];
   auto       &nrt        = node_rts_.at(idx);
   const auto &owned_mask = np.infer.owned_inputs;
@@ -555,8 +456,8 @@ void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v) {
   }
 }
 
-void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v) {
-  const auto  idx        = boost::get(boost::vertex_index, graph_, v);
+void Scheduler::release_owned_outputs(GraphPlan::VertexDescriptor v) {
+  const auto  idx        = v;
   const auto &np         = graph_[v];
   auto       &nrt        = node_rts_.at(idx);
   const auto &owned_mask = np.infer.owned_outputs;
@@ -572,9 +473,9 @@ void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v) {
   }
 }
 
-core::OpResult Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
+core::OpResult Scheduler::run_sync(GraphPlan::VertexDescriptor v) {
   using clock     = std::chrono::high_resolution_clock;
-  const auto  idx = boost::get(boost::vertex_index, graph_, v);
+  const auto  idx = v;
   const auto &np  = graph_[v];
   auto       &nrt = node_rts_.at(idx);
   HOLOFLOW_CHECK(std::holds_alternative<SyncRt>(nrt));
@@ -622,9 +523,9 @@ core::OpResult Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
   return r;
 }
 
-core::OpResult Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
+core::OpResult Scheduler::run_async_cons(GraphPlan::VertexDescriptor v) {
   using clock     = std::chrono::high_resolution_clock;
-  const auto  idx = boost::get(boost::vertex_index, graph_, v);
+  const auto  idx = v;
   const auto &np  = graph_[v];
   auto       &nrt = node_rts_.at(idx);
   HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
@@ -671,9 +572,9 @@ core::OpResult Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
   return r;
 }
 
-core::OpResult Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
+core::OpResult Scheduler::run_async_prod(GraphPlan::VertexDescriptor v) {
   using clock     = std::chrono::high_resolution_clock;
-  const auto  idx = boost::get(boost::vertex_index, graph_, v);
+  const auto  idx = v;
   const auto &np  = graph_[v];
   auto       &nrt = node_rts_.at(idx);
   HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
@@ -721,7 +622,7 @@ core::OpResult Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
 }
 
 void Scheduler::reset_metrics_state() {
-  auto num_vertices = boost::num_vertices(graph_);
+  auto num_vertices = graph_.num_vertices();
   metric_accumulators_.clear();
   metric_accumulators_.resize(num_vertices);
 

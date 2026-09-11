@@ -14,7 +14,6 @@
 
 #include <gtest/gtest.h>
 
-#include <boost/graph/adjacency_list.hpp>
 #include <limits>
 #include <memory>
 #include <nlohmann/json.hpp>
@@ -67,12 +66,10 @@ public:
 GraphSpec sample_graph() {
   GraphSpec  graph;
   const auto source =
-      add_vertex(NodeSpec{.name = "source", .kind = "source", .settings = {{"frames", 4}}}, graph);
-  const auto sink = add_vertex(
-      NodeSpec{
-          .name = "sink", .kind = "sink", .settings = nlohmann::json::object(), .debug = false},
-      graph);
-  add_edge(source, sink, holoflow::core::EdgeSpec{.out_idx = 0, .in_idx = 0}, graph);
+      graph.add_vertex(NodeSpec{.name = "source", .kind = "source", .settings = {{"frames", 4}}});
+  const auto sink = graph.add_vertex(NodeSpec{
+      .name = "sink", .kind = "sink", .settings = nlohmann::json::object(), .debug = false});
+  graph.add_edge(source, holoflow::core::EdgeSpec{.out_idx = 0, .in_idx = 0}, sink);
   return graph;
 }
 
@@ -148,8 +145,8 @@ TEST(GraphSpecTest, RoundTripsNodesEdgesSettingsAndDebugFlag) {
   const auto roundtrip = holoflow::core::to_json(decoded);
 
   EXPECT_EQ(roundtrip, encoded);
-  EXPECT_EQ(num_vertices(decoded), 2);
-  EXPECT_EQ(num_edges(decoded), 1);
+  EXPECT_EQ(decoded.num_vertices(), 2);
+  EXPECT_EQ(decoded.num_edges(), 1);
 }
 
 TEST(GraphSpecTest, ProducesDeterministicVertexOrdering) {
@@ -201,11 +198,15 @@ TEST(AdjacencyListTest, BasicGraphConstruction) {
   holoflow::core::AdjacencyList<std::string, std::string> g;
   auto                                                    v1 = g.add_vertex("v1");
   auto                                                    v2 = g.add_vertex("v2");
-  g.add_edge(0, "v1 -> v2", 1);
+  auto                                                    e  = g.add_edge(0, "v1 -> v2", 1);
 
+  EXPECT_EQ(v1, 0);
+  EXPECT_EQ(v2, 1);
   EXPECT_EQ(g[v1], "v1");
   EXPECT_EQ(g[v2], "v2");
+  EXPECT_EQ(g.edge_properties(e), "v1 -> v2");
   EXPECT_EQ(g.num_vertices(), 2);
+  EXPECT_EQ(g.num_edges(), 1);
 }
 
 TEST(AdjacencyListTest, TopologicalSortBasic) {
@@ -266,8 +267,8 @@ TEST(AdjacencyListTest, EdgeIterator) {
 
   auto edges_range = g.make_edges_range();
 
-  for (auto &&edge : edges_range) {
-    EdgeTest e = {std::get<0>(edge), std::get<1>(edge), std::get<2>(edge)};
+  for (auto edge : edges_range) {
+    EdgeTest e = {edge.source, edge.properties, edge.target};
     EXPECT_NE(std::ranges::find(edges, e), edges.end());
   }
 }
