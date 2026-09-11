@@ -52,6 +52,12 @@ inline const EProps &AdjacencyList<VProps, EProps>::OutEdge::get_properties() co
   return properties_;
 }
 
+template <typename VProps, typename EProps>
+AdjacencyList<VProps, EProps>::Edge
+AdjacencyList<VProps, EProps>::OutEdge::EdgeTransform::operator()(const OutEdge &e) const {
+  return Edge{index, e.get_properties(), e.get_target()};
+}
+
 // -------------------------------------------------------------------------------------------------
 // InEdge
 // -------------------------------------------------------------------------------------------------
@@ -92,6 +98,13 @@ template <typename VProps, typename EProps>
 size_t AdjacencyList<VProps, EProps>::Vertex::in_degree() const {
   return in_edges.size();
 }
+
+template <typename VProps, typename EProps>
+auto AdjacencyList<VProps, EProps>::Vertex::VertexTransform::operator()(size_t i) const {
+  const auto &v = adjacency_list[i];
+
+  return v.out_edges | std::views::transform(OutEdge::EdgeTransform(i));
+}
 // -------------------------------------------------------------------------------------------------
 // AdjacencyList
 // -------------------------------------------------------------------------------------------------
@@ -100,7 +113,7 @@ template <typename VProps, typename EProps>
 inline AdjacencyList<VProps, EProps>::VertexDescriptor
 AdjacencyList<VProps, EProps>::add_vertex(const VProps &props) {
   adjacency_list_.emplace_back(Vertex(props));
-  return num_vertices() - 1; // TODO fix for non integral VertexDescriptor
+  return num_vertices() - 1;
 }
 
 template <typename VProps, typename EProps>
@@ -110,7 +123,7 @@ void AdjacencyList<VProps, EProps>::add_edge(VertexDescriptor source, const EPro
   v.out_edges.emplace_back(target, edge_props);
 
   auto &v2 = adjacency_list_[target];
-  v2.in_edges.emplace_back(source, edge_props);
+  v2.in_edges.emplace_back(source, v.out_edges.back().get_properties());
 }
 
 template <typename VProps, typename EProps>
@@ -172,9 +185,9 @@ inline size_t AdjacencyList<VProps, EProps>::out_degree(VertexDescriptor d) cons
 template <typename G, typename Inserter>
   requires Graph<G> && std::output_iterator<Inserter, typename G::VertexDescriptor>
 void topological_sort(const G &g, Inserter inserter) {
-  auto degree_range =
-      std::ranges::views::transform(g.make_vertices_range(), [&](auto d) { return g.in_degree(d); });
-  auto in_degrees = G::template VertexContainer<size_t>(degree_range.begin(), degree_range.end());
+  auto degree_range = std::ranges::views::transform(g.make_vertices_range(),
+                                                    [&](auto d) { return g.in_degree(d); });
+  auto in_degrees   = G::template VertexContainer<size_t>(degree_range.begin(), degree_range.end());
 
   auto   nodes_with_no_incoming_edge = std::queue<size_t>();
   size_t count                       = 0;

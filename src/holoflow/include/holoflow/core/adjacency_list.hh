@@ -81,10 +81,7 @@ public:
     struct EdgeTransform {
       std::size_t index;
 
-      // TODO move transformer in .hxx
-      Edge operator()(const OutEdge &e) const {
-        return std::tuple{index, e.get_properties(), e.get_target()};
-      }
+      Edge operator()(const OutEdge &e) const;
     };
 
   private:
@@ -110,12 +107,7 @@ public:
 
     struct VertexTransform {
       const VContainer<Vertex> &adjacency_list;
-      // TODO move transformer in .hxx
-      auto operator()(std::size_t i) const {
-        const auto &v = adjacency_list[i];
-
-        return v.out_edges | std::views::transform(OutEdge::EdgeTransform(i));
-      }
+      auto                      operator()(size_t i) const;
     };
 
     inline size_t       out_degree() const;
