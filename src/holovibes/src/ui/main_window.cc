@@ -64,6 +64,7 @@
 
 #include "bug.hh"
 #include "holofile/holofile.hh"
+#include "holotask/sinks/ffmpeg_formats.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
 #include "ui/update_checker.hh"
@@ -702,8 +703,15 @@ QString MainWindow::sanitize_recording_token(const QString &value) const {
 QString MainWindow::recording_file_name(int acquisition_id) const {
   const QString patient = sanitize_recording_token(patient_line_edit_->text());
   const QString eye     = sanitize_recording_token(eye_side_combo_->currentText());
-  return QString("%1_%2_%3_%4.holo")
-      .arg(patient, eye, session_id_, acquisition_label(acquisition_id));
+  const QString format = export_widget_ == nullptr ? QStringLiteral("holo")
+                                                   : export_widget_->get_format();
+  const auto *format_info = holotask::sinks::ffmpeg_format(format.toStdString());
+  const QString extension = format_info == nullptr
+                                 ? QStringLiteral("holo")
+                                 : QString::fromUtf8(format_info->extension.data(),
+                                                      format_info->extension.size());
+  return QString("%1_%2_%3_%4.%5")
+      .arg(patient, eye, session_id_, acquisition_label(acquisition_id), extension);
 }
 
 QString MainWindow::acquisition_label(int acquisition_id) const {
@@ -898,6 +906,9 @@ void MainWindow::save_persistent_state() {
   settings.beginGroup("export");
   settings.setValue("enabled", export_widget_->isChecked());
   settings.setValue("image_type", export_widget_->get_image_type());
+  settings.setValue("format", export_widget_->get_format());
+  settings.setValue("codec", export_widget_->get_codec());
+  settings.setValue("resize_algorithm", export_widget_->get_resize_algorithm());
   settings.setValue("file_path", export_widget_->get_file_path());
   settings.setValue("tag", export_widget_->get_tag());
   settings.setValue("frame_count_enabled", export_widget_->is_frame_count_enabled());
@@ -1051,6 +1062,9 @@ void MainWindow::restore_persistent_state() {
   settings.beginGroup("export");
   export_widget_->setChecked(settings.value("enabled", export_widget_->isChecked()).toBool());
   restore_combo_text(settings, "image_type", export_widget_->image_type_combo());
+  restore_combo_text(settings, "format", export_widget_->format_combo());
+  restore_combo_text(settings, "codec", export_widget_->codec_combo());
+  restore_combo_text(settings, "resize_algorithm", export_widget_->resize_algorithm_combo());
   export_widget_->set_file_path(
       settings.value("file_path", export_widget_->get_file_path()).toString());
   restore_combo_text(settings, "tag", export_widget_->tag_combo());
@@ -1302,6 +1316,9 @@ void MainWindow::connect_import_controls() {
 }
 
 void MainWindow::connect_export_controls() {
+
+  connect(export_widget_->format_combo(), qOverload<int>(&QComboBox::currentIndexChanged), this,
+          [this](int) { update_recording_path_preview(); });
 
   connect(export_widget_, &ExportWidget::record_clicked, this,
           &MainWindow::on_export_record_clicked);
@@ -1799,6 +1816,9 @@ bool MainWindow::validate_inputs() {
   configure_unsupported_features();
 
   pipeline::Settings settings = get_pipeline_settings();
+  export_widget_->set_frame_batch_size(
+      settings.recording_method == pipeline::RecordingMethod::RAW ? settings.load_batch
+                                                                   : settings.cpu_out_size);
   const auto         context  = build_validation_context(settings);
   QSize display_dims(context.source_width.value_or(1), context.source_height.value_or(1));
   if (settings.view_type != pipeline::ViewType::RAW &&
@@ -2248,6 +2268,9 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     }
     s.recording_path  = export_widget_->get_file_path().toStdString();
     s.recording_count = export_widget_->get_frame_count();
+    s.recording_format = export_widget_->get_format().toStdString();
+    s.recording_codec  = export_widget_->get_codec().toStdString();
+    s.recording_resize_algorithm = export_widget_->get_resize_algorithm().toStdString();
   }
 
   // Auto-Focus Settings
@@ -2457,6 +2480,17 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   {
     export_widget_->set_file_path(QString::fromStdString(s.recording_path.string()));
     export_widget_->set_frame_count(static_cast<int>(s.recording_count));
+    const auto format_index = export_widget_->format_combo()->findData(
+        QString::fromStdString(s.recording_format));
+    if (format_index >= 0) {
+      export_widget_->format_combo()->setCurrentIndex(format_index);
+    }
+    const auto codec_index = export_widget_->codec_combo()->findData(
+        QString::fromStdString(s.recording_codec));
+    if (codec_index >= 0) {
+      export_widget_->codec_combo()->setCurrentIndex(codec_index);
+    }
+    export_widget_->set_resize_algorithm(QString::fromStdString(s.recording_resize_algorithm));
     // recording_method not exposed (always RAW in get_pipeline_settings)
   }
 

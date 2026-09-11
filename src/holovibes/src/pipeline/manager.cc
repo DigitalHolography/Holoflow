@@ -69,6 +69,9 @@
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/holofile.hh"
+#include "holotask/sinks/npyfile.hh"
+#include "holotask/sinks/ffmpeg.hh"
+#include "holotask/syncs/resize.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
@@ -173,6 +176,8 @@ void Manager::register_components() {
   reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(registry_, "DisplayZernikeCoefficients", autofocus_widget_);
   reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory", zernike_history_widget_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
+  reg_sync<sinks::NpyfileFactory>(registry_, "NpyfileWriter");
+  reg_sync<sinks::FfmpegFactory>(registry_, "FfmpegWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
   reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS711EuresysCoaxlinkQSFP+");
@@ -191,6 +196,7 @@ void Manager::register_components() {
   reg_sync<syncs::FlatfieldFactory>(registry_, "Flatfield");
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
+  reg_sync<syncs::ResizeFactory>(registry_, "Resize");
   reg_sync<syncs::ShortTimeFresnelDiffractionFactory>(registry_, "ShortTimeFresnelDiffraction");
   reg_sync<syncs::Unfold2DFactory>(registry_, "Unfold2D");
   reg_sync<syncs::Wrap2PiFactory>(registry_, "Wrap2Pi");

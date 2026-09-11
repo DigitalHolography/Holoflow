@@ -18,6 +18,7 @@
 #include <optional>
 #include <variant>
 
+
 namespace holovibes::pipeline {
 
 enum class ImportSource {
@@ -143,6 +144,9 @@ struct Settings {
   RecordingMethod       recording_method;
   std::filesystem::path recording_path;
   int                   recording_count;
+  std::string           recording_format = "holo";
+  std::string           recording_codec  = "mpeg4";
+  std::string           recording_resize_algorithm = "CpuBilinear";
 
   // Auto-focus
   bool             autofocus_enabled;

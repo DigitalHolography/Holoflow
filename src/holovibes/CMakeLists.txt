@@ -106,3 +106,15 @@ add_custom_command(TARGET holovibes POST_BUILD
         $<TARGET_FILE_DIR:holovibes>
     COMMENT "Copying Qt Advanced Docking System runtime"
 )
+
+if(TARGET holoflow_ffmpeg)
+    get_target_property(FFMPEG_RUNTIME_DLLS holoflow_ffmpeg HOLOFLOW_FFMPEG_RUNTIME_DLLS)
+    foreach(FFMPEG_RUNTIME_DLL IN LISTS FFMPEG_RUNTIME_DLLS)
+        add_custom_command(TARGET holovibes POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${FFMPEG_RUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:holovibes>"
+            COMMENT "Copying FFmpeg runtime ${FFMPEG_RUNTIME_DLL}"
+        )
+    endforeach()
+endif()
