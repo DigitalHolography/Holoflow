@@ -211,7 +211,7 @@ public:
                DevPtr<float> d_sum, size_t amax_tmp_bytes, DevPtr<uint8_t> d_amax_tmp,
                DevPtr<float> d_max, DevPtr<int64_t> d_max_idx, size_t select_tmp_bytes,
                DevPtr<uint8_t> d_select_tmp, DevPtr<int> d_select_count,
-               DevPtr<uint8_t> d_select_roi, DevPtr<float> d_selected)
+               DevPtr<float> d_samples, DevPtr<uint8_t> d_select_roi, DevPtr<float> d_selected)
       : settings_(std::move(settings)), input_desc_(std::move(input_desc)),
         output_desc_(std::move(output_desc)), stream_(stream),
         d_mean_centered_(std::move(d_mean_centered)), ref_initialized_(ref_initialized),
@@ -222,9 +222,11 @@ public:
         d_amax_tmp_(std::move(d_amax_tmp)), d_max_(std::move(d_max)),
         d_max_idx_(std::move(d_max_idx)), select_tmp_bytes_(select_tmp_bytes),
         d_select_tmp_(std::move(d_select_tmp)), d_select_count_(std::move(d_select_count)),
-        d_select_roi_(std::move(d_select_roi)), d_selected_(std::move(d_selected)) {}
+        d_samples_(std::move(d_samples)), d_select_roi_(std::move(d_select_roi)),
+        d_selected_(std::move(d_selected)) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    handle_recording_events(ctx);
     if (ctx.cancelled && ctx.cancelled->load(std::memory_order_acquire)) {
       return holoflow::core::OpResult::Cancelled;
     }
@@ -238,6 +240,14 @@ public:
 
     float *input_data  = reinterpret_cast<float *>(input_view.data());
     float *output_data = reinterpret_cast<float *>(output_view.data());
+
+    // Registration is part of the live graph, but only needs to do the expensive
+    // phase-correlation work while an image recording is active.
+    if (!recording_) {
+      CUDA_CHECK(cudaMemcpyAsync(output_data, input_data, input_desc_.num_bytes(),
+                                 cudaMemcpyDeviceToDevice, stream_));
+      return holoflow::core::OpResult::Ok;
+    }
 
     const auto width  = input_desc_.shape.back();
     const auto height = input_desc_.shape[input_desc_.shape.size() - 2];
@@ -268,6 +278,21 @@ public:
   const holoflow::core::TDesc &input_desc() const { return input_desc_; }
 
 private:
+  void handle_recording_events(holoflow::core::SyncCtx &ctx) {
+    if (!ctx.event_reader)
+      return;
+    while (auto event = ctx.event_reader->try_pop()) {
+      const auto type = event->data.value("type", std::string{});
+      if (type == "start_recording") {
+        ref_initialized_ = false;
+        recording_        = true;
+      } else if (type == "stop_recording") {
+        ref_initialized_ = false;
+        recording_        = false;
+      }
+    }
+  }
+
   void xcorr(float *odata, const float *idata) {
     auto *idata_nc = const_cast<float *>(idata);
     CUFFT_CHECK(cufftExecR2C(r2c_handle_.get(), idata_nc, d_freq1_.get()));
@@ -355,18 +380,16 @@ private:
     int peak_x = static_cast<int>((shift_x < 0) ? shift_x + static_cast<int64_t>(w) : shift_x);
     int peak_y = static_cast<int>((shift_y < 0) ? shift_y + static_cast<int64_t>(h) : shift_y);
 
-    float *d_samples = nullptr;
-    float  h_samples[9];
-    CUDA_CHECK(cudaMalloc(&d_samples, 9 * sizeof(float)));
+    float h_samples[9];
 
     dim3 block_size(3, 3);
-    extract_3x3_kernel<<<1, block_size, 0, stream_>>>(d_samples, xcorr, peak_x, peak_y,
+    extract_3x3_kernel<<<1, block_size, 0, stream_>>>(d_samples_.get(), xcorr, peak_x, peak_y,
                                                       static_cast<int>(w), static_cast<int>(h));
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(
-        cudaMemcpyAsync(h_samples, d_samples, 9 * sizeof(float), cudaMemcpyDeviceToHost, stream_));
+        cudaMemcpyAsync(h_samples, d_samples_.get(), 9 * sizeof(float), cudaMemcpyDeviceToHost,
+                        stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_));
-    CUDA_CHECK(cudaFree(d_samples));
 
     float refined_dx = (h_samples[5] - h_samples[3]) /
                        (2.0f * (h_samples[3] + h_samples[5] - 2.0f * h_samples[4] + 1e-12f));
@@ -395,6 +418,7 @@ private:
   cudaStream_t           stream_;
   DevPtr<float>          d_mean_centered_;
   bool                   ref_initialized_;
+  bool                   recording_ = false;
   size_t                 freq_size_;
   curaii::CufftHandle    r2c_handle_;
   curaii::CufftHandle    c2r_handle_;
@@ -412,6 +436,7 @@ private:
   size_t                 select_tmp_bytes_;
   DevPtr<uint8_t>        d_select_tmp_;
   DevPtr<int>            d_select_count_;
+  DevPtr<float>          d_samples_;
   DevPtr<uint8_t>        d_select_roi_;
   DevPtr<float>          d_selected_;
 };
@@ -466,7 +491,7 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto d_mean_centered = make_unique_device_ptr<float>(W * H);
 
   bool   ref_initialized = false;
-  size_t freq_size       = H * W;
+  size_t freq_size       = H * (W / 2 + 1);
 
   auto r2c_handle = curaii::CufftHandle();
   auto c2r_handle = curaii::CufftHandle();
@@ -515,6 +540,8 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                         d_select_roi.get(), d_selected.get(), d_select_count.get(),
                                         W * H, ctx.stream));
 
+  auto d_samples = make_unique_device_ptr<float>(9);
+
   int select_count = 0;
   CUDA_CHECK(cudaMemcpyAsync(&select_count, d_select_count.get(), sizeof(int),
                              cudaMemcpyDeviceToHost, ctx.stream));
@@ -532,7 +559,8 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
       std::move(d_xcorr), std::move(d_freq1), std::move(d_freq2), sum_tmp_bytes,
       std::move(d_sum_tmp), std::move(d_sum), amax_tmp_bytes, std::move(d_amax_tmp),
       std::move(d_max), std::move(d_max_idx), select_tmp_bytes, std::move(d_select_tmp),
-      std::move(d_select_count), std::move(d_select_roi), std::move(d_selected));
+      std::move(d_select_count), std::move(d_samples), std::move(d_select_roi),
+      std::move(d_selected));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -551,10 +579,10 @@ RegistrationFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   const auto &old_input_desc = old_registration->input_desc();
   const auto  settings       = jsettings.get<RegistrationSettings>();
   const bool  can_reuse      = settings == old_registration->settings() &&
-                         new_input_desc.shape == old_input_desc.shape &&
-                         new_input_desc.strides == old_input_desc.strides &&
-                         new_input_desc.dtype == old_input_desc.dtype &&
-                         new_input_desc.mem_loc == old_input_desc.mem_loc;
+                               new_input_desc.shape == old_input_desc.shape &&
+                               new_input_desc.strides == old_input_desc.strides &&
+                               new_input_desc.dtype == old_input_desc.dtype &&
+                               new_input_desc.mem_loc == old_input_desc.mem_loc;
 
   if (can_reuse) {
     old_registration->update_stream(ctx.stream);

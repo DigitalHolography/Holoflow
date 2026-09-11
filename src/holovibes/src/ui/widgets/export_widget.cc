@@ -13,14 +13,14 @@
 // limitations under the License.
 
 #include "ui/widgets/export_widget.hh"
-#include "ui/widgets/validation_style.hh"
 #include "holotask/sinks/ffmpeg_formats.hh"
+#include "ui/widgets/validation_style.hh"
 
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QSpacerItem>
 #include <QSignalBlocker>
+#include <QSpacerItem>
 #include <QVBoxLayout>
 #include <algorithm>
 
@@ -54,18 +54,26 @@ QString ExportWidget::get_format() const { return format_combo_->currentData().t
 QString ExportWidget::get_codec() const { return codec_combo_->currentData().toString(); }
 QString ExportWidget::get_file_path() const { return file_line_edit_->text(); }
 QString ExportWidget::get_tag() const { return tag_combo_->currentText(); }
-bool    ExportWidget::is_frame_count_enabled() const { return frames_check_->isChecked(); }
-int     ExportWidget::get_frame_count() const { return frames_spin_->value(); }
-bool    ExportWidget::isChecked() const { return enable_check_->isChecked(); }
+bool    ExportWidget::is_motion_compensation_enabled() const {
+  return motion_compensation_check_->isChecked();
+}
+bool ExportWidget::is_frame_count_enabled() const { return frames_check_->isChecked(); }
+int  ExportWidget::get_frame_count() const { return frames_spin_->value(); }
+bool ExportWidget::isChecked() const { return enable_check_->isChecked(); }
 
 void ExportWidget::set_file_path(const QString &path) { file_line_edit_->setText(path); }
 void ExportWidget::set_frame_count(int count) { frames_spin_->setValue(count); }
 void ExportWidget::set_frame_batch_size(int batch_size) {
   frame_batch_size_ = std::max(1, batch_size);
-  const auto value = frames_spin_->value();
+  const auto value  = frames_spin_->value();
   frames_lower_button_->setEnabled(value > frame_batch_size_);
 }
 void ExportWidget::set_image_type(const QString &type) { image_type_combo_->setCurrentText(type); }
+void ExportWidget::set_motion_compensation_enabled(bool enabled) {
+  const auto format = format_combo_->currentData().toString();
+  motion_compensation_check_->setChecked(
+      enabled && (format == "png" || format == "jpg"));
+}
 void ExportWidget::setChecked(bool checked) {
   enable_check_->setChecked(checked);
   set_export_controls_enabled(checked);
@@ -80,6 +88,7 @@ void ExportWidget::mark_frames_invalid() { mark_validation_error(frames_spin_); 
 QComboBox   *ExportWidget::image_type_combo() { return image_type_combo_; }
 QComboBox   *ExportWidget::format_combo() { return format_combo_; }
 QComboBox   *ExportWidget::codec_combo() { return codec_combo_; }
+QCheckBox   *ExportWidget::motion_compensation_check() { return motion_compensation_check_; }
 QLineEdit   *ExportWidget::file_line_edit() { return file_line_edit_; }
 QPushButton *ExportWidget::browse_button() { return browse_button_; }
 QComboBox   *ExportWidget::tag_combo() { return tag_combo_; }
@@ -114,14 +123,18 @@ void ExportWidget::setup_ui() {
   layout->addWidget(new QLabel("Format", content_container_), row, 0);
   format_combo_ = new QComboBox(content_container_);
   for (const auto &format : holotask::sinks::kFfmpegFormats) {
-    format_combo_->addItem(QString::fromUtf8(format.label.data(), format.label.size()) +
-                               " (." +
+    format_combo_->addItem(QString::fromUtf8(format.label.data(), format.label.size()) + " (." +
                                QString::fromUtf8(format.extension.data(), format.extension.size()) +
                                ")",
                            QString::fromUtf8(format.name.data(), format.name.size()));
   }
   layout->addWidget(format_combo_, row, 1);
   ++row;
+
+  motion_compensation_check_ = new QCheckBox("Motion compensation", content_container_);
+  layout->addWidget(motion_compensation_check_, row, 0, 1, 2);
+  ++row;
+  update_motion_compensation_control();
 
   layout->addWidget(new QLabel("Codec", content_container_), row, 0);
   codec_combo_ = new QComboBox(content_container_);
@@ -147,9 +160,9 @@ void ExportWidget::setup_ui() {
   frames_check_ = new QCheckBox("Nb. of frames", content_container_);
   frames_check_->setChecked(true);
   layout->addWidget(frames_check_, row, 0);
-  auto *frame_controls = new QHBoxLayout();
-  frames_spin_ = create_spin_box(content_container_, 1, 999999, 2048);
-  frames_lower_button_ = new QPushButton("−", content_container_);
+  auto *frame_controls  = new QHBoxLayout();
+  frames_spin_          = create_spin_box(content_container_, 1, 999999, 2048);
+  frames_lower_button_  = new QPushButton("−", content_container_);
   frames_higher_button_ = new QPushButton("+", content_container_);
   frames_lower_button_->setFixedWidth(28);
   frames_higher_button_->setFixedWidth(28);
@@ -188,22 +201,22 @@ void ExportWidget::connect_signals() {
   // Emit settings_changed for all control changes
   connect(image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
-  connect(format_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          [this](int) {
-            update_codec_choices();
-            emit settings_changed();
-          });
+  connect(format_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+    update_codec_choices();
+    update_motion_compensation_control();
+    emit settings_changed();
+  });
   connect(codec_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
+  connect(motion_compensation_check_, &QCheckBox::toggled, this, &ExportWidget::settings_changed);
   connect(file_line_edit_, &QLineEdit::textChanged, this, &ExportWidget::settings_changed);
   connect(tag_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
   connect(frames_check_, &QCheckBox::toggled, this, &ExportWidget::settings_changed);
-  connect(frames_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
-          [this](int value) {
-            frames_lower_button_->setEnabled(value > frame_batch_size_);
-            emit settings_changed();
-          });
+  connect(frames_spin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
+    frames_lower_button_->setEnabled(value > frame_batch_size_);
+    emit settings_changed();
+  });
   connect(frames_lower_button_, &QPushButton::clicked, this, [this] {
     const auto batch = frame_batch_size_;
     const auto value = frames_spin_->value();
@@ -211,8 +224,8 @@ void ExportWidget::connect_signals() {
     frames_spin_->setValue(std::max(batch, lower));
   });
   connect(frames_higher_button_, &QPushButton::clicked, this, [this] {
-    const auto batch = frame_batch_size_;
-    const auto value = frames_spin_->value();
+    const auto batch  = frame_batch_size_;
+    const auto value  = frames_spin_->value();
     const auto higher = ((value / batch) + 1) * batch;
     frames_spin_->setValue(std::min(frames_spin_->maximum(), higher));
   });
@@ -229,9 +242,9 @@ void ExportWidget::set_export_controls_enabled(bool enabled) {
 }
 
 void ExportWidget::update_codec_choices() {
-  const auto format_name = format_combo_->currentData().toString().toStdString();
-  const auto *format      = holotask::sinks::ffmpeg_format(format_name);
-  const auto  previous    = codec_combo_->currentData().toString();
+  const auto     format_name = format_combo_->currentData().toString().toStdString();
+  const auto    *format      = holotask::sinks::ffmpeg_format(format_name);
+  const auto     previous    = codec_combo_->currentData().toString();
   QSignalBlocker blocker(codec_combo_);
   codec_combo_->clear();
   if (format == nullptr || format->codecs.empty()) {
@@ -248,6 +261,15 @@ void ExportWidget::update_codec_choices() {
   codec_combo_->setCurrentIndex(index >= 0 ? index : 0);
   codec_combo_->setEnabled(true);
   codec_combo_->setToolTip({});
+}
+
+void ExportWidget::update_motion_compensation_control() {
+  const auto format  = format_combo_->currentData().toString();
+  const bool enabled = format == "png" || format == "jpg";
+  if (!enabled)
+    motion_compensation_check_->setChecked(false);
+  motion_compensation_check_->setVisible(enabled);
+  motion_compensation_check_->setEnabled(enabled);
 }
 
 } // namespace holovibes::ui

@@ -1906,6 +1906,8 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::RecordingCount:
         export_widget_->mark_frames_invalid();
         break;
+      case SettingsField::RecordingMotionCompensation:
+        break;
       case SettingsField::AutofocusNbSubaps:
         render_widget_->autofocus_widget()->mark_nb_subaps_invalid();
         break;
@@ -1947,6 +1949,8 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
       FieldBinding{SettingsField::PpRegistration, view_widget_->registration_check()},
       FieldBinding{SettingsField::RecordingPath, export_widget_->file_line_edit()},
       FieldBinding{SettingsField::RecordingCount, export_widget_->frames_spin()},
+      FieldBinding{SettingsField::RecordingMotionCompensation,
+                   export_widget_->motion_compensation_check()},
       FieldBinding{SettingsField::AutofocusNbSubaps,
                    render_widget_->autofocus_widget()->nb_subaps_spin()},
       FieldBinding{SettingsField::AutofocusNbIter,
@@ -2268,6 +2272,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.recording_count = export_widget_->get_frame_count();
     s.recording_format = export_widget_->get_format().toStdString();
     s.recording_codec  = export_widget_->get_codec().toStdString();
+    s.recording_motion_compensation = export_widget_->is_motion_compensation_enabled();
   }
 
   // Auto-Focus Settings
@@ -2487,6 +2492,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     if (codec_index >= 0) {
       export_widget_->codec_combo()->setCurrentIndex(codec_index);
     }
+    export_widget_->set_motion_compensation_enabled(s.recording_motion_compensation);
     // recording_method not exposed (always RAW in get_pipeline_settings)
   }
 

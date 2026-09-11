@@ -68,10 +68,9 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
-#include "holotask/sinks/ffmpeg.hh"
-#include "holotask/syncs/resize.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
@@ -93,6 +92,7 @@
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
+#include "holotask/syncs/resize.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 #include "holotask/syncs/unfold2d.hh"
@@ -103,6 +103,7 @@
 #include "logger.hh"
 #include "pipeline/validation.hh"
 #include "settings_loader.hh"
+#include "tasks/sinks/average_image.hh"
 #include "tasks/sinks/display_signal_history.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
@@ -178,6 +179,7 @@ void Manager::register_components() {
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sinks::NpyfileFactory>(registry_, "NpyfileWriter");
   reg_sync<sinks::FfmpegFactory>(registry_, "FfmpegWriter");
+  reg_sync<holovibes::tasks::sinks::AverageImageFactory>(registry_, "AverageImageWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
   reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS711EuresysCoaxlinkQSFP+");
@@ -444,6 +446,8 @@ void Manager::start_raw_record(std::filesystem::path record_path) {
     emit raw_record_started_failure("Failed to enqueue start_recording event");
     return;
   }
+  (void)scheduler_->ui_try_send(
+      "registration", nlohmann::json{{"type", "start_recording"}, {"record_path", record_path}});
 
   raw_recording_active_ = true;
   logger()->info("[Manager::start_raw_record] Recording request enqueued to path: {}",
@@ -469,6 +473,7 @@ void Manager::stop_raw_record() {
     emit raw_record_stopped_failure("Failed to enqueue stop_recording event");
     return;
   }
+  (void)scheduler_->ui_try_send("registration", nlohmann::json{{"type", "stop_recording"}});
 
   raw_recording_active_ = false;
   logger()->info("[Manager::stop_raw_record] Stop request enqueued");
