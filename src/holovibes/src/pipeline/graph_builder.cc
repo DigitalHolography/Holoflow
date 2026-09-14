@@ -72,7 +72,7 @@ private:
   TDesc build_acquisition();
   TDesc short_time_fresnel_diffraction(const TDesc &field, size_t win_w, size_t win_h, size_t stride_x, size_t stride_y, float lam, float dx, float dy, float z_prop, PhaseReference phase_ref, bool skip_phase_shift = true);
   void build_raw_record(const TDesc &H);
-  TDesc motion_compensated_export(const TDesc &X);
+  std::vector<TDesc> motion_compensated_export(const TDesc &X);
   bool build_raw_view(const TDesc &H);
   TDesc build_preprocessing(TDesc H);
   TDesc build_time_frequency_analysis(TDesc H);
@@ -226,15 +226,14 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
   HOLOVIBES_UNREACHABLE();
 }
 
-GraphBuilder::Impl::TDesc GraphBuilder::Impl::motion_compensated_export(const TDesc &X) {
-  const auto input_batch = static_cast<int>(X.shape[0]);
+std::vector<GraphBuilder::Impl::TDesc>
+GraphBuilder::Impl::motion_compensated_export(const TDesc &X) {
+  const auto input_batch    = static_cast<int>(X.shape[0]);
   const auto queue_capacity = std::max(2, input_batch);
-  auto single_frames = input_batch == 1
-                           ? X
-                           : batched_queue(X, {queue_capacity, 1, 1});
-  using Target   = holotask::syncs::ConversionSettings::Target;
-  using Strategy = holotask::syncs::ConversionSettings::Strategy;
-  auto float_frames = [&] {
+  auto       single_frames  = input_batch == 1 ? X : batched_queue(X, {queue_capacity, 1, 1});
+  using Target              = holotask::syncs::ConversionSettings::Target;
+  using Strategy            = holotask::syncs::ConversionSettings::Strategy;
+  auto float_frames         = [&] {
     if (X.dtype == holoflow::core::DType::F32)
       return single_frames;
     if (X.dtype == holoflow::core::DType::U16) {
@@ -257,10 +256,17 @@ void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
     auto motion_input = s_.recording_motion_compensation
                             ? memcpy(H, {holotask::syncs::MemcpySettings::Target::Device})
                             : H;
-    auto image = s_.recording_motion_compensation ? motion_compensated_export(motion_input) : H;
-    image      = memcpy(image, {holotask::syncs::MemcpySettings::Target::Host});
-    average_image_write(image,
-                        {path, count, s_.recording_format, H.dtype == holoflow::core::DType::U16});
+    if (s_.recording_motion_compensation) {
+      auto registered = motion_compensated_export(motion_input);
+      auto image      = memcpy(registered[0], {holotask::syncs::MemcpySettings::Target::Host});
+      auto valid      = memcpy(registered[1], {holotask::syncs::MemcpySettings::Target::Host});
+      average_image_write(
+          image, valid, {path, count, s_.recording_format, H.dtype == holoflow::core::DType::U16});
+    } else {
+      auto image = memcpy(H, {holotask::syncs::MemcpySettings::Target::Host});
+      average_image_write(
+          image, {path, count, s_.recording_format, H.dtype == holoflow::core::DType::U16});
+    }
   } else {
     auto video = memcpy(H, {holotask::syncs::MemcpySettings::Target::Host});
     ffmpeg_write(video, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
@@ -805,28 +811,29 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
   }
 
   result = convert(result, {Target::U8, Strat::Scaled});
-  result = batched_queue(result,
-                         {s_.recording_motion_compensation ? 1 : s_.gpu_out_size, 1, 1});
+  result = batched_queue(result, {s_.recording_motion_compensation ? 1 : s_.gpu_out_size, 1, 1});
   xy_processed_display(result, {});
 
   if (s_.recording_method == RecordingMethod::PROCESSED) {
     auto path  = s_.recording_path.string();
     auto count = s_.recording_count;
     if (s_.recording_format == "png" || s_.recording_format == "jpg") {
-      auto motion_input = s_.recording_motion_compensation ? motion_result : result;
-      auto image = s_.recording_motion_compensation
-                       ? motion_compensated_export(motion_input)
-                       : memcpy(result, {Host});
-      if (s_.recording_motion_compensation)
-        image = memcpy(image, {Host});
-      average_image_write(image, {path, count, s_.recording_format, false});
+      if (s_.recording_motion_compensation) {
+        auto registered = motion_compensated_export(motion_result);
+        auto image      = memcpy(registered[0], {Host});
+        auto valid      = memcpy(registered[1], {Host});
+        average_image_write(image, valid, {path, count, s_.recording_format, false});
+      } else {
+        auto image = memcpy(result, {Host});
+        average_image_write(image, {path, count, s_.recording_format, false});
+      }
     } else {
       auto result_rec = memcpy(result, {Host});
       result_rec      = batched_queue(result_rec, {s_.cpu_out_size, 1, 1});
       if (s_.recording_format == "npy") {
-      npyfile_write(result_rec, {path, count, true});
+        npyfile_write(result_rec, {path, count, true});
       } else if (s_.recording_format == "holo") {
-      holofile_write(result_rec, {path, count, settings_to_old_json(s_), true});
+        holofile_write(result_rec, {path, count, settings_to_old_json(s_), true});
       } else {
         if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
           const auto square_size = std::max(result_rec.shape.at(1), result_rec.shape.at(2));
@@ -834,8 +841,8 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
               resize(result_rec, {static_cast<int>(square_size), static_cast<int>(square_size)});
         }
 
-        ffmpeg_write(result_rec, {path, count, static_cast<double>(s_.pp_fps),
-                                  s_.recording_format, s_.recording_codec});
+        ffmpeg_write(result_rec, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
+                                  s_.recording_codec});
       }
     }
   }

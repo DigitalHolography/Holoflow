@@ -440,14 +440,22 @@ void Manager::start_raw_record(std::filesystem::path record_path) {
       {"record_path", record_path},
   };
 
+  if (s_.recording_motion_compensation &&
+      !scheduler_->ui_try_send("registration", nlohmann::json{{"type", "start_recording"},
+                                                              {"record_path", record_path}})) {
+    logger()->error("[Manager::start_raw_record] Failed to enqueue registration start event");
+    emit raw_record_started_failure("Failed to start motion compensation");
+    return;
+  }
+
   // Send the recording event to the UI message queue inside the scheduler
   if (!scheduler_->ui_try_send("record", std::move(payload))) {
+    if (s_.recording_motion_compensation)
+      (void)scheduler_->ui_try_send("registration", nlohmann::json{{"type", "stop_recording"}});
     logger()->error("[Manager::start_raw_record] Failed to enqueue start_recording event");
     emit raw_record_started_failure("Failed to enqueue start_recording event");
     return;
   }
-  (void)scheduler_->ui_try_send(
-      "registration", nlohmann::json{{"type", "start_recording"}, {"record_path", record_path}});
 
   raw_recording_active_ = true;
   logger()->info("[Manager::start_raw_record] Recording request enqueued to path: {}",
@@ -473,7 +481,9 @@ void Manager::stop_raw_record() {
     emit raw_record_stopped_failure("Failed to enqueue stop_recording event");
     return;
   }
-  (void)scheduler_->ui_try_send("registration", nlohmann::json{{"type", "stop_recording"}});
+  if (s_.recording_motion_compensation &&
+      !scheduler_->ui_try_send("registration", nlohmann::json{{"type", "stop_recording"}}))
+    logger()->error("[Manager::stop_raw_record] Failed to enqueue registration stop event");
 
   raw_recording_active_ = false;
   logger()->info("[Manager::stop_raw_record] Stop request enqueued");
@@ -547,6 +557,10 @@ void Manager::poll_events() {
       }
 
       if (should_emit) {
+        if (s_.recording_motion_compensation &&
+            !scheduler_->ui_try_send("registration", nlohmann::json{{"type", "stop_recording"}}))
+          logger()->error(
+              "[Manager::poll_events] Failed to enqueue registration stop after completion");
         logger()->info("[Manager::poll_events] Recording finished successfully at {}", path_str);
         emit raw_record_stopped_success();
       }
@@ -567,6 +581,10 @@ void Manager::poll_events() {
       logger()->error("[Manager::poll_events] Recording failed at '{}': {}", path_str, message);
 
       if (should_emit) {
+        if (s_.recording_motion_compensation &&
+            !scheduler_->ui_try_send("registration", nlohmann::json{{"type", "stop_recording"}}))
+          logger()->error(
+              "[Manager::poll_events] Failed to enqueue registration stop after failure");
         emit raw_record_stopped_failure(QString::fromStdString(message));
       }
     }

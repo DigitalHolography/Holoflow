@@ -58,13 +58,21 @@ public:
 
     auto       &input      = ctx.inputs[0];
     const auto  batch      = static_cast<int>(input.desc.shape[0]);
-    const auto  frames     = std::min(settings_.count - frames_seen_, batch);
     const auto  height     = input.desc.shape[1];
     const auto  width      = input.desc.shape[2];
     const auto  pixel_size = holoflow::core::size_of(input.desc.dtype);
     const auto *base       = static_cast<const std::byte *>(input.data());
+    const auto *validity   = ctx.inputs.size() == 2
+                                 ? reinterpret_cast<const std::uint8_t *>(ctx.inputs[1].data())
+                                 : nullptr;
 
-    for (int frame = 0; frame < frames; ++frame) {
+    for (int frame = 0;
+         frame < batch && frames_seen_ < settings_.count && attempts_seen_ < 3 * settings_.count;
+         ++frame) {
+      ++attempts_seen_;
+      if (validity != nullptr && validity[frame] == 0)
+        continue;
+
       const auto *image = base + static_cast<std::size_t>(frame) * input.desc.strides[0];
       for (std::size_t y = 0; y < height; ++y) {
         const auto *row = image + y * input.desc.strides[1];
@@ -90,6 +98,16 @@ public:
         emit_event(ctx, "recording_failed", {{"message", error.what()}});
       }
       reset();
+      recording_ = false;
+    } else if (attempts_seen_ == 3 * settings_.count) {
+      (void)std::remove(settings_.path.c_str());
+      emit_event(
+          ctx, "recording_failed",
+          {{"message", "motion compensation accepted only " + std::to_string(frames_seen_) +
+                           " of " + std::to_string(settings_.count) + " requested frames after " +
+                           std::to_string(attempts_seen_) + " attempts"}});
+      reset();
+      recording_ = false;
     }
     return holoflow::core::OpResult::Ok;
   }
@@ -122,7 +140,7 @@ private:
         width, height,
         jpg ? QImage::Format_Grayscale8
             : (settings_.output_16bit ? QImage::Format_Grayscale16 : QImage::Format_Grayscale8));
-    const double divisor = static_cast<double>(settings_.count);
+    const double divisor   = static_cast<double>(settings_.count);
     double       min_value = 0.0;
     double       max_value = 255.0;
     if (input_.dtype == holoflow::core::DType::F32 && !settings_.output_16bit) {
@@ -130,8 +148,8 @@ private:
       max_value = std::numeric_limits<double>::lowest();
       for (const auto value : sum_) {
         const auto average = value / divisor;
-        min_value           = std::min(min_value, average);
-        max_value           = std::max(max_value, average);
+        min_value          = std::min(min_value, average);
+        max_value          = std::max(max_value, average);
       }
     }
     const double scale = max_value > min_value ? 255.0 / (max_value - min_value) : 0.0;
@@ -169,14 +187,16 @@ private:
 
   void reset() {
     std::fill(sum_.begin(), sum_.end(), 0.0);
-    frames_seen_ = 0;
+    frames_seen_   = 0;
+    attempts_seen_ = 0;
   }
 
   AverageImageSettings  settings_;
   holoflow::core::TDesc input_;
   std::vector<double>   sum_;
-  int                   frames_seen_ = 0;
-  bool                  recording_   = false;
+  int                   frames_seen_   = 0;
+  int                   attempts_seen_ = 0;
+  bool                  recording_     = false;
 };
 
 } // namespace
@@ -198,17 +218,24 @@ void from_json(const nlohmann::json &j, AverageImageSettings &settings) {
 holoflow::core::InferResult
 AverageImageFactory::infer(std::span<const holoflow::core::TDesc> inputs,
                            const nlohmann::json                  &jsettings) const {
-  check(inputs.size() == 1, "expected exactly one input tensor");
+  check(inputs.size() == 1 || inputs.size() == 2, "expected an image and optional validity tensor");
   const auto settings = jsettings.get<AverageImageSettings>();
   validate(settings, inputs[0]);
   check(settings.count % inputs[0].shape[0] == 0, "count must be divisible by batch size");
   check(!settings.output_16bit || inputs[0].dtype == holoflow::core::DType::F32 ||
             inputs[0].dtype == holoflow::core::DType::U16,
         "16-bit output requires U16 or F32 input");
-  return {.input_descs   = {inputs[0]},
+  if (inputs.size() == 2) {
+    check(inputs[1].mem_loc == holoflow::core::MemLoc::Host,
+          "validity tensor must be in Host memory");
+    check(inputs[1].dtype == holoflow::core::DType::U8, "validity tensor must be U8");
+    check(inputs[1].rank() == 1 && inputs[1].shape[0] == inputs[0].shape[0],
+          "validity tensor must contain one value per input frame");
+  }
+  return {.input_descs   = std::vector<holoflow::core::TDesc>(inputs.begin(), inputs.end()),
           .output_descs  = {},
           .in_place      = {},
-          .owned_inputs  = {false},
+          .owned_inputs  = std::vector<bool>(inputs.size(), false),
           .owned_outputs = {},
           .kind          = holoflow::core::TaskKind::Sync};
 }

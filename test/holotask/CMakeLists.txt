@@ -27,6 +27,7 @@ set(SOURCES
     normalize_test.cu
     pca_test.cu
     pct_clip_test.cu
+    registration_test.cu
     shack_hartmann_test.cu
     sliding_average_test.cu
     zernike_defocus_z_prop_test.cc

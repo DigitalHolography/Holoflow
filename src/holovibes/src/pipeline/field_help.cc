@@ -114,7 +114,7 @@ constexpr auto kRecordingCountConstraints              = std::to_array<const cha
 });
 constexpr auto kRecordingMotionCompensationConstraints = std::to_array<const char *>({
     "Available only for PNG and JPG image exports.",
-    "Aligns frames using translation-only phase correlation before averaging.",
+    "Experimentally aligns translation and small rotations before averaging.",
 });
 constexpr auto kAutofocusNbSubapsConstraints           = std::to_array<const char *>({
     "Must be strictly positive.",

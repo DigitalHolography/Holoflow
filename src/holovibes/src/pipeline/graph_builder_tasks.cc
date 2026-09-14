@@ -69,7 +69,6 @@ DEFINE_UNARY_SYNC_NODE (causal_slide_avg,                       "causal_slide_av
 DEFINE_UNARY_SYNC_NODE (reshape,                                "reshape",                             "Reshape",                         holonp::ReshapeSettings)
 DEFINE_UNARY_SYNC_NODE (convolution,                            "convolution",                         "Convolution",                     holotask::syncs::ConvolutionSettings)
 DEFINE_UNARY_SYNC_NODE (pct_clip,                               "pct_clip",                            "PctClip",                         holotask::syncs::PctClipSettings)
-DEFINE_UNARY_SYNC_NODE (registration,                           "registration",                        "Registration",                    holotask::syncs::RegistrationSettings)
 DEFINE_UNARY_SYNC_NODE (resize,                                  "resize",                              "Resize",                           holotask::syncs::ResizeSettings)
 DEFINE_UNARY_SYNC_NODE (wrap2pi,                                "wrap2pi",                             "Wrap2Pi",                         holotask::syncs::Wrap2PiSettings)
 DEFINE_UNARY_SYNC_NODE (zernike_from_slopes,                    "zernike_from_slopes",                 "ZernikeFromSlopes",               holotask::syncs::ZernikeFromSlopesSettings)
@@ -119,6 +118,27 @@ GraphBuilderTasks::TDesc GraphBuilderTasks::slide_avg(const TDesc &X, const TDes
   return std::move(make_nary_async_node("slide_avg", "SlidingAverage", "SlidingAverage",
                                         std::span<const TDesc>{inputs}, s)
                        .at(0));
+}
+
+std::vector<GraphBuilderTasks::TDesc>
+GraphBuilderTasks::registration(const TDesc &X, holotask::syncs::RegistrationSettings s) {
+  // Registration receives recording lifecycle events from Manager using this stable node id.
+  // The generic tracer appends a unique suffix to node names, which would make those events
+  // address a non-existent node (and leave the registration task permanently inactive).
+  HOLOVIBES_CHECK(X.producer.has_value());
+  HOLOVIBES_CHECK(reg_.is_sync_registered("Registration"));
+
+  constexpr std::string_view node_name = "registration";
+  holoflow::core::NodeSpec node_spec{
+      .name = std::string{node_name}, .kind = "Registration", .settings = nlohmann::json(s),
+      .debug = true};
+  auto v = boost::add_vertex(node_spec, g_);
+  boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, 0}, g_);
+
+  const auto &factory = reg_.get_sync("Registration");
+  const auto core_inputs = to_core_descs(std::span{&X, 1});
+  const auto infer = factory.infer(core_inputs, nlohmann::json(s));
+  return wrap_infer_outputs(node_name, v, infer);
 }
 
 std::vector<GraphBuilderTasks::TDesc>
@@ -265,6 +285,24 @@ void GraphBuilderTasks::average_image_write(const TDesc &X, tasks::sinks::Averag
   const auto &factory = reg_.get_sync(node_kind);
   const auto  inputs  = to_core_descs(std::span{&X, 1});
   (void)factory.infer(inputs, nlohmann::json(s));
+}
+
+void GraphBuilderTasks::average_image_write(const TDesc &X, const TDesc &Valid,
+                                            tasks::sinks::AverageImageSettings s) {
+  constexpr auto node_name = "record";
+  constexpr auto node_kind = "AverageImageWriter";
+  HOLOVIBES_CHECK(X.producer.has_value());
+  HOLOVIBES_CHECK(Valid.producer.has_value());
+  HOLOVIBES_CHECK(reg_.is_sync_registered(node_kind));
+  holoflow::core::NodeSpec node_spec{
+      .name = node_name, .kind = node_kind, .settings = nlohmann::json(s), .debug = false};
+  auto v = boost::add_vertex(node_spec, g_);
+  boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, 0}, g_);
+  boost::add_edge(Valid.producer->vertex, v, {Valid.producer->out_idx, 1}, g_);
+  const auto                &factory = reg_.get_sync(node_kind);
+  const std::array<TDesc, 2> inputs{X, Valid};
+  const auto                 core_inputs = to_core_descs(inputs);
+  (void)factory.infer(core_inputs, nlohmann::json(s));
 }
 
 } // namespace holovibes::pipeline

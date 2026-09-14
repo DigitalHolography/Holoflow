@@ -132,12 +132,14 @@ protected:
   void  npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s);
   void  ffmpeg_write(const TDesc &X, holotask::sinks::FfmpegSettings s);
   void  average_image_write(const TDesc &X, tasks::sinks::AverageImageSettings s);
+  void  average_image_write(const TDesc &X, const TDesc &Valid,
+                            tasks::sinks::AverageImageSettings s);
   TDesc ametek_s710_euresys_coaxlink_octo(holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings s);
   TDesc ametek_s711_euresys_coaxlink_qsfp_plus(holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
   TDesc convolution(const TDesc &X, holotask::syncs::ConvolutionSettings s);
   TDesc correct_phase(const TDesc &X, const TDesc &PhaseMask, holotask::syncs::CorrectPhaseSettings s);
   TDesc pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);
-  TDesc registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
+  std::vector<TDesc> registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
   TDesc wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
   std::vector<TDesc> shack_hartmann_slopes(const TDesc &X, holotask::syncs::ShackHartmannSlopeSettings s);
   TDesc zernike_from_slopes(const TDesc &X, holotask::syncs::ZernikeFromSlopesSettings s);
