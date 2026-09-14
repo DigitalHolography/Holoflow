@@ -58,6 +58,28 @@ TEST(SignalPlotSettingsTest, LegacyJsonRoundTripPreservesValues) {
   EXPECT_TRUE(restored.autofocus_use_graph_laplacian);
 }
 
+TEST(ExportSettingsTest, MotionCompensationRoundTripPreservesValue) {
+  Settings settings{};
+  settings.recording_motion_compensation = true;
+
+  const auto restored = old_json_to_settings(settings_to_old_json(settings), Settings{});
+
+  EXPECT_TRUE(restored.recording_motion_compensation);
+}
+
+TEST(ExportSettingsTest, MotionCompensationRejectsNonImageFormat) {
+  Settings settings{};
+  settings.recording_method               = RecordingMethod::RAW;
+  settings.recording_path                 = "capture.mp4";
+  settings.recording_count                = 1;
+  settings.recording_format               = "mp4";
+  settings.recording_motion_compensation = true;
+
+  const auto result = validate_settings(settings, {});
+
+  EXPECT_TRUE(has_issue(result, "recording_motion_compensation_invalid"));
+}
+
 TEST(AngularSpectrumPaddingSettingsTest, LegacyJsonRoundTripPreservesValues) {
   Settings settings{};
   settings.asp_padding_enabled = true;
