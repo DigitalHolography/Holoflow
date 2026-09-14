@@ -35,7 +35,6 @@
 #include "bug.hh"
 #include "graph_builder.hh"
 #include "holofile/holofile.hh"
-#include "holoflow/runtime/graph_display.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
@@ -469,6 +468,27 @@ void Manager::stop_raw_record() {
   emit raw_record_stopped_success();
 }
 
+// --- dump graph logs logic ---
+
+void Manager::update_graph_spec_dump_preferences(const GraphSpecDumpPreferences &prefs) {
+  graph_spec_dump_prefs_ = prefs;
+}
+
+void Manager::update_graph_compiled_dump_preferences(const GraphCompiledDumpPreferences &prefs) {
+  graph_compiled_dump_prefs_ = prefs;
+}
+
+void Manager::request_compiled_graph_visualization() {
+  if (!compiler_output_) {
+    emit graph_visualization_failed(
+        "No compiled pipeline graph is available. Start the pipeline first.");
+    return;
+  }
+
+  emit graph_visualization_ready(QString::fromStdString(holoflow::runtime::to_dot(
+      *compiler_output_, graph_compiled_dump_prefs_, "compiled_pipeline")));
+}
+
 // --- Polling logic ---
 void Manager::start_metrics_updates() {
   if (metrics_timer_ && !metrics_timer_->isActive())
@@ -600,6 +620,23 @@ void Manager::build_and_run() {
   Compiler compiler(registry_, config);
   compiler_output_ = compiler.compile(spec_, std::move(prev_output));
 
+  if (compiler_output_) {
+    using namespace std::chrono;
+
+    auto t    = floor<seconds>(system_clock::now());
+    auto date = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
+
+    // Write original GraphSpec
+    const std::filesystem::path log_dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString() + "/" +
+        QCoreApplication::applicationVersion().toStdString() + "/logs";
+
+    const auto dot_path = log_dir / std::format("compiled_{}.dot", date);
+
+    std::ofstream(dot_path)
+        << holoflow::runtime::to_dot(*compiler_output_, graph_compiled_dump_prefs_, "compiled_pipeline");
+  }
+
   run_compiled_graph();
 }
 
@@ -641,7 +678,7 @@ void Manager::dump_graph_logs(const std::filesystem::path &log_dir) {
   const auto json_path = log_dir / std::format("pipeline_{}.json", date);
   const auto dot_path  = log_dir / std::format("pipeline_{}.dot", date);
 
-  std::ofstream(dot_path) << holoflow::core::to_dot(spec_);
+  std::ofstream(dot_path) << holoflow::core::to_dot(spec_, graph_spec_dump_prefs_);
   std::ofstream(json_path) << holoflow::core::to_json(spec_).dump(2);
 
   logger()->info("[Manager::dump_graph_logs] Pre-compile pipeline graphs saved to {}",
@@ -661,6 +698,9 @@ void Manager::build_graph_spec() {
 
   settings_dirty_ = false;
   logger()->debug("[Manager::build_graph_spec] Graph spec built successfully");
+  dump_graph_logs(
+      QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString() + "/" +
+      QCoreApplication::applicationVersion().toStdString() + "/logs");
 }
 
 void Manager::reset_graph_spec() { spec_ = holoflow::core::GraphSpec{}; }
