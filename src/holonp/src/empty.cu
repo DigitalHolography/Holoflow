@@ -116,8 +116,8 @@ holoflow::core::InferResult EmptyFactory::infer(std::span<const holoflow::core::
       .owned_inputs  = {},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,
-      // Empty allocates storage but intentionally leaves its contents undefined.
-      .constness     = holoflow::core::ConstInferenceState::Mutable,
+      // Explicit override: execute this allocation only once per scheduler start.
+      .constness     = holoflow::core::ConstInferenceState::Constant,
   };
 }
 

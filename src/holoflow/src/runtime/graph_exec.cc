@@ -346,7 +346,7 @@ void Scheduler::run_section(int section_id) {
   try {
     // Constant nodes initialize their outputs once per scheduler start. They are
     // deliberately excluded from the recurring execution loop below.
-    std::vector<GraphPlan::vertex_descriptor> produced_const_outputs;
+    std::vector<GraphPlan::vertex_descriptor> completed_const_nodes;
     for (auto v : sec.const_sync_topo) {
       const auto idx = boost::get(boost::vertex_index, graph_, v);
       if (const_task_states_.at(idx) != core::ConstTaskState::ConstantNotComputed)
@@ -356,7 +356,7 @@ void Scheduler::run_section(int section_id) {
         acquire_owned_inputs(v);
         if (run_sync(v) == core::OpResult::Ok) {
           const_task_states_.at(idx) = core::ConstTaskState::ConstantComputed;
-          produced_const_outputs.push_back(v);
+          completed_const_nodes.push_back(v);
         }
       } catch (...) {
         rethrow_with_node_context(graph_, v, "execute_constant", section_id, sec.name);
@@ -366,7 +366,7 @@ void Scheduler::run_section(int section_id) {
         return;
     }
 
-    for (auto v : produced_const_outputs) {
+    for (auto v : completed_const_nodes) {
       try {
         release_owned_outputs(v);
       } catch (...) {
