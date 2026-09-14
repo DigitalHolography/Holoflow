@@ -217,7 +217,7 @@ TEST(AdjacencyListTest, TopologicalSortBasic) {
   g.add_edge(0, "v1 -> v2", 1);
 
   std::vector<size_t> v{};
-  std::vector<size_t> expected{0, 1};
+  std::vector<size_t> expected{1, 0};
   holoflow::core::topological_sort(g, std::back_inserter(v));
   EXPECT_EQ(v, expected);
 }
@@ -239,7 +239,7 @@ TEST(AdjacencyListTest, TopologicalSortBigger) {
   g.add_edge(2, "C -> D", 3);
 
   std::vector<size_t> v{};
-  std::vector<size_t> expected{1, 4, 0, 2, 3};
+  std::vector<size_t> expected{3, 2, 0, 4, 1};
   holoflow::core::topological_sort(g, std::back_inserter(v));
   EXPECT_EQ(v, expected);
 }

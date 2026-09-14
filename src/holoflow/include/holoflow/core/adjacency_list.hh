@@ -29,7 +29,10 @@ public:
   explicit DetectedCycleError() : std::runtime_error("detected unexpected cycle") {}
 };
 
-// TODO add make_*_range
+template <typename R, typename T>
+concept convertible_range_of =
+    std::ranges::range<R> && std::convertible_to<std::ranges::range_reference_t<R>, T>;
+
 template <typename G>
 concept Graph = requires(G g, const G gc, G::VertexProperties vp, G::VertexDescriptor d,
                          G::EdgeProperties ep, G::Edge e) {
@@ -58,6 +61,16 @@ concept Graph = requires(G g, const G gc, G::VertexProperties vp, G::VertexDescr
   std::forward_iterator<typename G::VertexIterator>;
   typename G::EdgeIterator;
   std::forward_iterator<typename G::EdgeIterator>;
+
+  { g.make_in_edges_range(d) } -> convertible_range_of<typename G::Edge>;
+  { g.make_out_edges_range(d) } -> convertible_range_of<typename G::Edge>;
+  { g.make_edges_range() } -> convertible_range_of<typename G::Edge>;
+  { g.make_vertices_range() } -> convertible_range_of<typename G::VertexDescriptor>;
+
+  { gc.make_in_edges_range(d) } -> convertible_range_of<typename G::Edge>;
+  { gc.make_out_edges_range(d) } -> convertible_range_of<typename G::Edge>;
+  { gc.make_edges_range() } -> convertible_range_of<typename G::Edge>;
+  { gc.make_vertices_range() } -> convertible_range_of<typename G::VertexDescriptor>;
 };
 
 template <typename VProps, typename EProps> class AdjacencyList {

@@ -417,7 +417,7 @@ void Compiler::Impl::build_graph_structure() {
     v_map[v] = g.add_vertex(np);
   }
 
-  for (auto e : gspec_->make_edges_range()) {
+  for (const auto &e : gspec_->make_edges_range()) {
     const auto &es  = e.properties;
     const auto  src = v_map.at(e.source);
     const auto  dst = v_map.at(e.target);
@@ -447,7 +447,7 @@ void Compiler::Impl::run_type_inference() {
     auto                     in_degree = g.in_degree(v);
     std::vector<core::TDesc> input_descs(in_degree);
 
-    for (auto e : g.make_in_edges_range(v)) {
+    for (const auto &e : g.make_in_edges_range(v)) {
       const auto &edge_plan = e.properties;
       if (edge_plan.spec.in_idx >= input_descs.size()) {
         throw CompilerException("Input index out of bounds");
@@ -458,7 +458,7 @@ void Compiler::Impl::run_type_inference() {
     const auto &factory = registry_.get(node.spec.kind);
     node.infer          = factory.infer(input_descs, node.spec.settings);
 
-    for (auto e : g.make_out_edges_range(v)) {
+    for (auto &e : g.make_out_edges_range(v)) {
       auto &edge_plan = e.properties;
       if (edge_plan.spec.out_idx >= node.infer.output_descs.size()) {
         throw CompilerException("Output index out of bounds");
@@ -483,7 +483,7 @@ void Compiler::Impl::assign_tensor_ids() {
     auto &node = g[v];
 
     node.in_tids.resize(node.infer.input_descs.size());
-    for (auto e : g.make_in_edges_range(v)) {
+    for (const auto &e : g.make_in_edges_range(v)) {
       const auto &ep               = e.properties;
       node.in_tids[ep.spec.in_idx] = ep.tid;
       res.tensor_descs[ep.tid]     = ep.desc;
@@ -496,7 +496,7 @@ void Compiler::Impl::assign_tensor_ids() {
       node.out_tids[i]      = tid;
       res.tensor_descs[tid] = node.infer.output_descs[i];
 
-      for (auto e : g.make_out_edges_range(v)) {
+      for (auto &e : g.make_out_edges_range(v)) {
         if (e.properties.spec.out_idx == static_cast<int>(i)) {
           e.properties.tid = tid;
         }
@@ -686,7 +686,7 @@ void Compiler::Impl::partition_sections() {
   auto &g         = out_->graph;
   auto  num_verts = g.num_vertices();
 
-  for (auto e : g.make_edges_range()) {
+  for (const auto &e : g.make_edges_range()) {
     const auto source = e.source;
     const auto target = e.target;
     if (g[source].infer.kind == core::TaskKind::Async &&
@@ -715,7 +715,7 @@ void Compiler::Impl::partition_sections() {
       parent[root_i] = root_j;
   };
 
-  for (auto e : g.make_edges_range()) {
+  for (const auto &e : g.make_edges_range()) {
     auto u = e.source;
     auto v = e.target;
     if (g[u].infer.kind == core::TaskKind::Sync && g[v].infer.kind == core::TaskKind::Sync) {
@@ -726,7 +726,7 @@ void Compiler::Impl::partition_sections() {
   for (auto v : g.make_vertices_range()) {
     if (g[v].infer.kind == core::TaskKind::Async) {
       std::vector<size_t> sync_preds;
-      for (auto e : g.make_in_edges_range(v)) {
+      for (const auto &e : g.make_in_edges_range(v)) {
         auto p = e.source;
         if (g[p].infer.kind == core::TaskKind::Sync)
           sync_preds.push_back(p);
@@ -737,7 +737,7 @@ void Compiler::Impl::partition_sections() {
       }
 
       std::vector<size_t> sync_succs;
-      for (auto e : g.make_out_edges_range(v)) {
+      for (const auto &e : g.make_out_edges_range(v)) {
         auto s = e.target;
         if (g[s].infer.kind == core::TaskKind::Sync)
           sync_succs.push_back(s);
@@ -783,7 +783,7 @@ void Compiler::Impl::partition_sections() {
       continue;
 
     std::set<size_t> unique_cons_sections;
-    for (auto e : g.make_out_edges_range(v)) {
+    for (const auto &e : g.make_out_edges_range(v)) {
       auto s = e.target;
       if (g[s].infer.kind == core::TaskKind::Sync) {
         unique_cons_sections.insert(get_section_id(s));
@@ -794,7 +794,7 @@ void Compiler::Impl::partition_sections() {
     }
 
     std::set<size_t> unique_prod_sections;
-    for (auto e : g.make_in_edges_range(v)) {
+    for (const auto &e : g.make_in_edges_range(v)) {
       auto p = e.source;
       if (g[p].infer.kind == core::TaskKind::Sync) {
         unique_prod_sections.insert(get_section_id(p));
@@ -983,7 +983,7 @@ void Compiler::Impl::instantiate_tasks() {
 
     } else if (np.infer.kind == core::TaskKind::Async) {
       void *prod_stream = nullptr;
-      for (auto e : g.make_in_edges_range(v)) {
+      for (const auto &e : g.make_in_edges_range(v)) {
         auto p = e.source;
         if (g[p].infer.kind == core::TaskKind::Sync) {
           size_t sid  = node_to_section_map_.at(g[p].spec.name);
@@ -993,7 +993,7 @@ void Compiler::Impl::instantiate_tasks() {
       }
 
       void *cons_stream = nullptr;
-      for (auto e : g.make_out_edges_range(v)) {
+      for (const auto &e : g.make_out_edges_range(v)) {
         auto s = e.target;
         if (g[s].infer.kind == core::TaskKind::Sync) {
           size_t sid  = node_to_section_map_.at(g[s].spec.name);
@@ -1184,7 +1184,7 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
 
   file << "\n";
 
-  for (auto e : g.make_edges_range()) {
+  for (const auto &e : g.make_edges_range()) {
     const auto  u  = e.source;
     const auto  v  = e.target;
     const auto &ep = e.properties;

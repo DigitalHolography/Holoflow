@@ -178,7 +178,7 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
 static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPlan &g,
                                  std::size_t desc_max_len = 200) {
   (void)desc_max_len;
-  for (auto e : g.make_edges_range()) {
+  for (const auto &e : g.make_edges_range()) {
     auto                     s  = e.source;
     auto                     t  = e.target;
     const runtime::EdgePlan &ep = e.properties;

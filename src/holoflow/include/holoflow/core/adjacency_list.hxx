@@ -171,35 +171,33 @@ inline size_t AdjacencyList<VProps, EProps>::out_degree(VertexDescriptor d) cons
 template <typename G, typename Inserter>
   requires Graph<G> && std::output_iterator<Inserter, typename G::VertexDescriptor>
 void topological_sort(const G &g, Inserter inserter) {
-  auto degree_range = std::ranges::views::transform(g.make_vertices_range(),
-                                                    [&](auto d) { return g.in_degree(d); });
-  auto in_degrees   = G::template VertexContainer<size_t>(degree_range.begin(), degree_range.end());
+  using Vertex = typename G::VertexDescriptor;
 
-  auto   nodes_with_no_incoming_edge = std::queue<size_t>();
-  size_t count                       = 0;
+  enum class NodeState : uint8_t { Unvisited = 0, Visiting = 1, Visited = 2 };
+  std::vector<NodeState> state(g.num_vertices(), NodeState::Unvisited);
 
-  for (size_t i = 0; i < in_degrees.size(); i++) {
-    if (in_degrees[i] == 0)
-      nodes_with_no_incoming_edge.emplace(i);
-  }
+  auto dfs = [&](auto &self, Vertex u) -> void {
+    state[u] = NodeState::Visiting;
 
-  while (nodes_with_no_incoming_edge.size() > 0) {
-    auto n = nodes_with_no_incoming_edge.front();
-    nodes_with_no_incoming_edge.pop();
+    for (auto e : g.make_out_edges_range(u)) {
+      Vertex v = e.target;
+      if (state[v] == NodeState::Visiting) {
+        throw DetectedCycleError();
+      }
+      if (state[v] == NodeState::Unvisited) {
+        self(self, v);
+      }
+    }
 
-    *inserter = n;
-    inserter++;
-    count++;
+    state[u]    = NodeState::Visited;
+    *inserter++ = u; // Emits sinks first, matching Boost's post-order output
+  };
 
-    for (auto e : g.make_out_edges_range(n)) {
-      in_degrees[e.target]--;
-      if (in_degrees[e.target] == 0)
-        nodes_with_no_incoming_edge.emplace(e.target);
+  for (auto u : g.make_vertices_range()) {
+    if (state[u] == NodeState::Unvisited) {
+      dfs(dfs, u);
     }
   }
-
-  if (count != g.num_vertices())
-    throw DetectedCycleError();
 }
 
 } // namespace holoflow::core
