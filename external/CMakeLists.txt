@@ -60,9 +60,6 @@ if(ENABLE_FETCHCONTENT)
         FetchContent_MakeAvailable(googletest)
     endif()
 
-    declare_persistent_dependency(boost "https://github.com/boostorg/boost.git" "boost-1.89.0")
-    FetchContent_MakeAvailable(boost)
-
     declare_persistent_dependency(nlohmann_json "https://github.com/nlohmann/json.git" "v3.12.0")
     FetchContent_MakeAvailable(nlohmann_json)
 
@@ -233,7 +230,6 @@ if(ENABLE_FETCHCONTENT)
 
 else()
     find_package(spdlog REQUIRED)
-    find_package(Boost REQUIRED COMPONENTS system filesystem thread)
     find_package(nlohmann_json REQUIRED)
     find_package(qtadvanceddockingsystem 5.0.0 EXACT REQUIRED)
 

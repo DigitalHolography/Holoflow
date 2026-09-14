@@ -7,7 +7,7 @@ Holoflow represents a pipeline as a directed graph of tasks. This page focuses o
 The graph type is:
 
 ```cpp
-using GraphSpec = boost::adjacency_list<..., NodeSpec, EdgeSpec>;
+using GraphSpec = holoflow::core::AdjacencyList<NodeSpec, EdgeSpec>;
 ```
 
 The public payload types are:
@@ -134,27 +134,26 @@ The source DOT is useful when debugging:
 ## C++ construction example
 
 ```cpp
-#include <boost/graph/adjacency_list.hpp>
 #include <holoflow/core/graph_spec.hh>
 
 holoflow::core::GraphSpec graph;
 
-auto src = boost::add_vertex(holoflow::core::NodeSpec{
+auto src = graph.add_vertex(holoflow::core::NodeSpec{
     .name = "src",
     .kind = "Source",
     .settings = {{"path", "input.bin"}}
-}, graph);
+});
 
-auto proc = boost::add_vertex(holoflow::core::NodeSpec{
+auto proc = graph.add_vertex(holoflow::core::NodeSpec{
     .name = "proc",
     .kind = "Process",
     .settings = {{"gain", 2.0}}
-}, graph);
+});
 
-boost::add_edge(src, proc, holoflow::core::EdgeSpec{
+graph.add_edge(src, holoflow::core::EdgeSpec{
     .out_idx = 0,
     .in_idx = 0,
-}, graph);
+}, proc);
 ```
 
 ## Source graph vs compiled graph

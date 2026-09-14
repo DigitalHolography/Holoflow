@@ -65,5 +65,4 @@ PUBLIC
     curaii
     spdlog::spdlog
     nlohmann_json::nlohmann_json
-    Boost::graph
 )

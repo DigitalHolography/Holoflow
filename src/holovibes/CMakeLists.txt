@@ -71,7 +71,6 @@ target_link_libraries(holovibes PRIVATE
     holofile
     spdlog::spdlog
     nlohmann_json::nlohmann_json
-    Boost::graph
     Qt6::Core
     Qt6::Widgets
     Qt6::Gui
