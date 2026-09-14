@@ -1,0 +1,146 @@
+digraph GraphPlan {
+  rankdir=TB;
+  compound=true;
+  newrank=true;
+  graph [nodesep=0.28, ranksep=0.75, pad=0.2, splines=polyline];
+  node [fontname="Helvetica", shape=box];
+  edge [fontname="Helvetica", fontsize=9];
+
+  node [shape=point, width=0, height=0, label="", style=invis];
+  L0; R0; L1; R1; L2; R2; L3a; R3a; L3b; R3b; L4; R4; L5; R5;
+  L0 -> L1 -> L2 -> L3a -> L3b -> L4 -> L5 [style=invis, weight=1000];
+  R0 -> R1 -> R2 -> R3a -> R3b -> R4 -> R5 [style=invis, weight=1000];
+
+  node [shape=box, style="rounded,filled", fillcolor="#ccffcc", color="#555555",
+        fontsize=10, margin="0.12,0.08"];
+  v0 [label="source_0\nHolofile"];
+  v1 [label="memcpy_1\nMemcpy"];
+  v3 [label="conversion_3\nConversion"];
+  v4 [label="reshape_4\nReshape"];
+  v6 [label="pca_6\nPca"];
+  v7 [label="filter_2d_7\nFilter2D"];
+  v9 [label="fresnel_diffraction_9\nFresnelDiffraction"];
+  v10 [label="mean_10\nMean"];
+  v11 [label="fftshift_11\nFFTShiftNp"];
+  v12 [label="flatfield_12\nFlatfield"];
+  v13 [label="mean_13\nMean"];
+  v15 [label="pct_clip_15\nPctClip"];
+  v16 [label="conversion_16\nConversion"];
+  v18 [label="xy_processed_display_18\nDisplayTensorXY"];
+
+  v2_in [label="batch_queue_2\nProducer / Write", shape=invhouse, fillcolor="#e6f2ff",
+         color="#0066cc", style="filled,dashed"];
+  v2_out [label="batch_queue_2\nConsumer / Read", shape=house, fillcolor="#ffe6e6",
+          color="#cc0000", style="filled,dashed"];
+  v5_in [label="batch_queue_5\nProducer / Write", shape=invhouse, fillcolor="#e6f2ff",
+         color="#0066cc", style="filled,dashed"];
+  v5_out [label="batch_queue_5\nConsumer / Read", shape=house, fillcolor="#ffe6e6",
+          color="#cc0000", style="filled,dashed"];
+  v8_in [label="dual_reader_batch_queue_8\nProducer / Write", shape=invhouse,
+         fillcolor="#e6f2ff", color="#0066cc", style="filled,dashed"];
+  v8_out [label="dual_reader_batch_queue_8\nConsumer / Read", shape=house,
+          fillcolor="#ffe6e6", color="#cc0000", style="filled,dashed"];
+  v14_in [label="slide_avg_14\nProducer / Write", shape=invhouse, fillcolor="#e6f2ff",
+          color="#0066cc", style="filled,dashed"];
+  v14_out [label="slide_avg_14\nConsumer / Read", shape=house, fillcolor="#ffe6e6",
+           color="#cc0000", style="filled,dashed"];
+  v17_in [label="batch_queue_17\nProducer / Write", shape=invhouse, fillcolor="#e6f2ff",
+          color="#0066cc", style="filled,dashed"];
+  v17_out [label="batch_queue_17\nConsumer / Read", shape=house, fillcolor="#ffe6e6",
+           color="#cc0000", style="filled,dashed"];
+
+  node [shape=box, style="rounded,filled", fillcolor="#fffdf5", color="#aaaaaa",
+        fontsize=8, margin="0.08,0.05"];
+  t0 [label="t0 / s0\nU8 · Host\n32×320×512",
+      tooltip="tid: 0\nslot: 0\nshape: [32,320,512]\ndtype: U8\nmem_loc: Host\nstrides: [163840,512,1]\noffset: 0"];
+  t1 [label="t1 / s1\nU8 · Device\n32×320×512",
+      tooltip="tid: 1\nslot: 1\nshape: [32,320,512]\ndtype: U8\nmem_loc: Device\nstrides: [163840,512,1]\noffset: 0"];
+  t2 [label="t2 / s2\nU8 · Device\n32×320×512",
+      tooltip="tid: 2\nslot: 2\nshape: [32,320,512]\ndtype: U8\nmem_loc: Device\nstrides: [163840,512,1]\noffset: 0"];
+  t3 [label="t3 / s3\nF32 · Device\n32×320×512",
+      tooltip="tid: 3\nslot: 3\nshape: [32,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [655360,2048,4]\noffset: 0"];
+  t4 [label="t4 / s3\nF32 · Device\n1×32×320×512",
+      tooltip="tid: 4\nslot: 3\nshape: [1,32,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [20971520,655360,2048,4]\noffset: 0"];
+  t5 [label="t5 / s4\nF32 · Device\n8×32×320×512",
+      tooltip="tid: 5\nslot: 4\nshape: [8,32,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [20971520,655360,2048,4]\noffset: 0"];
+  t6 [label="t6 / s5\nF32 · Device\n8×16×320×512",
+      tooltip="tid: 6\nslot: 5\nshape: [8,16,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [10485760,655360,2048,4]\noffset: 0"];
+  t7 [label="t7 / s6\nF32 · Device\n8×16×320×512",
+      tooltip="tid: 7\nslot: 6\nshape: [8,16,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [10485760,655360,2048,4]\noffset: 0"];
+  t8 [label="t8 / s7\nF32 · Device\n1×16×320×512",
+      tooltip="tid: 8\nslot: 7\nshape: [1,16,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [10485760,655360,2048,4]\noffset: 0"];
+  t11 [label="t11 / s10\nF32 · Device\n1×16×320×512",
+       tooltip="tid: 11\nslot: 10\nshape: [1,16,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [10485760,655360,2048,4]\noffset: 0"];
+  t12 [label="t12 / s11\nF32 · Device\n1×1×320×512",
+       tooltip="tid: 12\nslot: 11\nshape: [1,1,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [655360,655360,2048,4]\noffset: 0"];
+  t13 [label="t13 / s12\nF32 · Device\n1×1×320×512",
+       tooltip="tid: 13\nslot: 12\nshape: [1,1,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [655360,655360,2048,4]\noffset: 0"];
+  t14 [label="t14 / s13\nF32 · Device\n1×1×320×512",
+       tooltip="tid: 14\nslot: 13\nshape: [1,1,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [655360,655360,2048,4]\noffset: 0"];
+  t15 [label="t15 / s14\nF32 · Device\n1×320×512",
+       tooltip="tid: 15\nslot: 14\nshape: [1,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [655360,2048,4]\noffset: 0"];
+  t16 [label="t16 / s15\nF32 · Device\n1×320×512",
+       tooltip="tid: 16\nslot: 15\nshape: [1,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [655360,2048,4]\noffset: 0"];
+  t17 [label="t17 / s16\nF32 · Device\n1×320×512",
+       tooltip="tid: 17\nslot: 16\nshape: [1,320,512]\ndtype: F32\nmem_loc: Device\nstrides: [655360,2048,4]\noffset: 0"];
+  t18 [label="t18 / s17\nU8 · Device\n1×320×512",
+       tooltip="tid: 18\nslot: 17\nshape: [1,320,512]\ndtype: U8\nmem_loc: Device\nstrides: [163840,512,1]\noffset: 0"];
+  t19 [label="t19 / s18\nU8 · Device\n1×320×512",
+       tooltip="tid: 19\nslot: 18\nshape: [1,320,512]\ndtype: U8\nmem_loc: Device\nstrides: [163840,512,1]\noffset: 0"];
+
+  subgraph cluster_section_0 {
+    label="Section 0"; labelloc=t; labeljust=l; style=rounded; color=gray; bgcolor="#f8f8f8";
+    { rank=same; L0; v0; t0; v1; t1; v2_in; R0; }
+    L0 -> v0 -> t0 -> v1 -> t1 -> v2_in -> R0 [style=invis, weight=1000];
+  }
+  subgraph cluster_section_1 {
+    label="Section 1"; labelloc=t; labeljust=l; style=rounded; color=gray; bgcolor="#f8f8f8";
+    { rank=same; L1; v5_in; t4; v4; t3; v3; t2; v2_out; R1; }
+    L1 -> v5_in -> t4 -> v4 -> t3 -> v3 -> t2 -> v2_out -> R1 [style=invis, weight=1000];
+  }
+  subgraph cluster_section_2 {
+    label="Section 2"; labelloc=t; labeljust=l; style=rounded; color=gray; bgcolor="#f8f8f8";
+    { rank=same; L2; v5_out; t5; v6; t6; v7; t7; v8_in; R2; }
+    L2 -> v5_out -> t5 -> v6 -> t6 -> v7 -> t7 -> v8_in -> R2 [style=invis, weight=1000];
+  }
+  subgraph cluster_section_3 {
+    label="Section 3"; labelloc=t; labeljust=l; style=rounded; color=gray; bgcolor="#f8f8f8";
+    { rank=same; L3a; v11; t12; v10; t11; v9; t8; v8_out; R3a; }
+    L3a -> v11 -> t12 -> v10 -> t11 -> v9 -> t8 -> v8_out -> R3a [style=invis, weight=1000];
+    { rank=same; L3b; t13; v12; t14; v13; t15; v14_in; R3b; }
+    L3b -> t13 -> v12 -> t14 -> v13 -> t15 -> v14_in -> R3b [style=invis, weight=1000];
+  }
+  subgraph cluster_section_4 {
+    label="Section 4"; labelloc=t; labeljust=l; style=rounded; color=gray; bgcolor="#f8f8f8";
+    { rank=same; L4; v17_in; t18; v16; t17; v15; t16; v14_out; R4; }
+    L4 -> v17_in -> t18 -> v16 -> t17 -> v15 -> t16 -> v14_out -> R4 [style=invis, weight=1000];
+  }
+  subgraph cluster_section_5 {
+    label="Section 5"; labelloc=t; labeljust=l; style=rounded; color=gray; bgcolor="#f8f8f8";
+    { rank=same; L5; v17_out; t19; v18; R5; }
+    L5 -> v17_out -> t19 -> v18 -> R5 [style=invis, weight=1000];
+  }
+
+  edge [style=solid, color="#444444", fontcolor="#444444", penwidth=1.2,
+        arrowsize=0.65, arrowhead=vee, constraint=false];
+  v0:e -> t0:w [arrowhead=none]; t0:e -> v1:w; v1:e -> t1:w [arrowhead=none]; t1:e -> v2_in:w;
+  v2_out:w -> t2:e [arrowhead=none]; t2:w -> v3:e; v3:w -> t3:e [arrowhead=none];
+  t3:w -> v4:e; v4:w -> t4:e [arrowhead=none]; t4:w -> v5_in:e;
+  v5_out:e -> t5:w [arrowhead=none]; t5:e -> v6:w; v6:e -> t6:w [arrowhead=none];
+  t6:e -> v7:w; v7:e -> t7:w [arrowhead=none]; t7:e -> v8_in:w;
+  v8_out:w -> t8:e [arrowhead=none]; t8:w -> v9:e; v9:w -> t11:e [arrowhead=none];
+  t11:w -> v10:e; v10:w -> t12:e [arrowhead=none]; t12:w -> v11:e;
+  v11:s -> t13:n [arrowhead=none]; t13:e -> v12:w; v12:e -> t14:w [arrowhead=none];
+  t14:e -> v13:w; v13:e -> t15:w [arrowhead=none]; t15:e -> v14_in:w;
+  v14_out:w -> t16:e [arrowhead=none]; t16:w -> v15:e; v15:w -> t17:e [arrowhead=none];
+  t17:w -> v16:e; v16:w -> t18:e [arrowhead=none]; t18:w -> v17_in:e;
+  v17_out:e -> t19:w [arrowhead=none]; t19:e -> v18:w;
+
+  edge [style=dotted, color="#888888", fontcolor="#666666", penwidth=2,
+        arrowsize=0.7, arrowhead=none, constraint=false];
+  v2_in:s -> v2_out:n [xlabel="async"];
+  v5_in:s -> v5_out:n [xlabel="async"];
+  v8_in:s -> v8_out:n [xlabel="async"];
+  v14_in:s -> v14_out:n [xlabel="async"];
+  v17_in:s -> v17_out:n [xlabel="async"];
+}

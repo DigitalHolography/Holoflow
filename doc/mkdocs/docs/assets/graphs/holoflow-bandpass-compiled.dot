@@ -1,0 +1,67 @@
+digraph GraphPlan {
+  rankdir=TB;
+  compound=true;
+  newrank=true;
+  graph [nodesep=0.28, ranksep=0.75, pad=0.2, splines=polyline, bgcolor="transparent"];
+  node [fontname="Helvetica", shape=box];
+  edge [fontname="Helvetica", fontsize=9];
+
+  node [shape=point, width=0, height=0, label="", style=invis];
+  L0; R0; L1; R1; L2; R2;
+  L0 -> L1 -> L2 [style=invis, weight=1000];
+  R0 -> R1 -> R2 [style=invis, weight=1000];
+
+  node [shape=box, style="rounded,filled", fillcolor="#ccffcc", color="#555555",
+        fontsize=10, margin="0.12,0.08"];
+  v0 [label="load\nLoadNpy"];
+  v1 [label="upload\nMemcpy"];
+  v2 [label="fft\nRFFT2"];
+  v3 [label="mask\nBandpassMask"];
+  v4 [label="multiply\nMultiply"];
+  v5 [label="ifft\nIRFFT2"];
+  v6 [label="download\nMemcpy"];
+  v7 [label="save\nSaveNpy"];
+
+  node [shape=box, style="rounded,filled", fillcolor="#fffdf5", color="#aaaaaa",
+        fontsize=8, margin="0.08,0.05"];
+  t0 [label="t0 / s0\nF32 - Host\n1x512x512"];
+  t1 [label="t1 / s1\nF32 - Device\n1x512x512"];
+  t2 [label="t2 / s2\nCF32 - Device\n1x512x257"];
+  t3 [label="t3 / s3\nCF32 - Device\n1x512x257"];
+  t4 [label="t4 / s4\nCF32 - Device\n1x512x257"];
+  t5 [label="t5 / s5\nF32 - Device\n1x512x512"];
+  t6 [label="t6 / s6\nF32 - Host\n1x512x512"];
+
+  subgraph cluster_section_0 {
+    label="Section 0";
+    labelloc=t;
+    labeljust=l;
+    style=rounded;
+    color=gray;
+    bgcolor="#f8f8f8";
+
+    { rank=same; L0; v3; t3; R0; }
+    L0 -> v3 -> t3 -> R0 [style=invis, weight=1000];
+    { rank=same; L1; v0; t0; v1; t1; v2; t2; v4; R1; }
+    L1 -> v0 -> t0 -> v1 -> t1 -> v2 -> t2 -> v4 -> R1 [style=invis, weight=1000];
+    { rank=same; L2; v7; t6; v6; t5; v5; t4; R2; }
+    L2 -> v7 -> t6 -> v6 -> t5 -> v5 -> t4 -> R2 [style=invis, weight=1000];
+  }
+
+  edge [style=solid, color="#444444", fontcolor="#444444", penwidth=1.2,
+        arrowsize=0.65, arrowhead=normal, constraint=false];
+  v3:e -> t3:w;
+  t3:s -> v4:n;
+  v0:e -> t0:w;
+  t0:e -> v1:w;
+  v1:e -> t1:w;
+  t1:e -> v2:w;
+  v2:e -> t2:w;
+  t2:e -> v4:w;
+  v4:s -> t4:n;
+  t4:w -> v5:e;
+  v5:w -> t5:e;
+  t5:w -> v6:e;
+  v6:w -> t6:e;
+  t6:w -> v7:e;
+}

@@ -1,4 +1,5 @@
 site_name: Holoflow
+site_description: An open-source software stack for real-time digital holography
 repo_name: DigitalHolography/Holoflow
 repo_url: https://github.com/DigitalHolography/Holoflow
 edit_uri: edit/main/doc/mkdocs/docs/
@@ -6,13 +7,39 @@ edit_uri: edit/main/doc/mkdocs/docs/
 nav:
   - Home: index.md
   - About: about.md
-  - Coverage: coverage.md
-  - References: references.md
-  - Glossary: glossary.md
-
-  - Holovibes: 
-    - Overview: holovibes/index.md
-    - Tasks:
+  - Applications:
+    - Overview: applications/index.md
+    - Doppler Holography: applications/doppler-holography.md
+    - Doppler OCT: applications/doppler-oct.md
+    - Wavefront Analysis: applications/wavefront-analysis.md
+  - Learn:
+    - Overview: learn/index.md
+    - Heterodyne Detection: learn/heterodyne-detection.md
+  - Documentation:
+    - Overview: documentation/index.md
+    - Holovibes: holovibes/index.md
+    - Holoflow:
+      - holoflow/index.md
+      - Getting Started: holoflow/getting-started/index.md
+      - Concepts:
+        - holoflow/concepts/index.md
+        - Holoflow Task Model: holoflow/concepts/task-model.md
+        - Storage Ownership: holoflow/concepts/storage-ownership.md
+        - Events: holoflow/concepts/events.md
+      - Tutorials:
+        - holoflow/tutorials/index.md
+        - Build An LDH Pipeline: holoflow/tutorials/ldh-pipeline.md
+      - How-to Guides: holoflow/how-to-guides/index.md
+      - Runtime Internals:
+        - holoflow/runtime-internals/index.md
+        - Graph Compilation: holoflow/runtime-internals/graph-compilation.md
+      - API Reference: holoflow/reference/index.md
+    - Curaii: curaii/index.md
+    - Holofile: holofile/index.md
+  - Research: research/index.md
+  - Reference:
+    - Overview: reference/index.md
+    - Holovibes Tasks:
       - Sources:
         - Ametek s710 Euresys Coaxlink Octo: holovibes/tasks/sources/ametek_s710_euresys_coaxlink_octo.md
         - Ametek s711 Euresys Coaxlink QSFP+: holovibes/tasks/sources/ametek_s711_euresys_coaxlink_qsfp+.md
@@ -40,25 +67,13 @@ nav:
         - Batch Queue: holovibes/tasks/asyncs/batch_queue.md
         - Dual Reader Batch Queue: holovibes/tasks/asyncs/dual_reader_batch_queue.md
         - Sliding Average: holovibes/tasks/asyncs/sliding_average.md
-
-  - Holoflow:
-    - Overview: holoflow/index.md
-    - Architecture: holoflow/architecture.md
-    - Concepts:
-      - Graph And Data Model: holoflow/concepts/graph.md
-      - Task Model: holoflow/concepts/tasks.md
-      - Tensors And Storage: holoflow/concepts/tensors.md
-    - Runtime:
-      - Compiler: holoflow/runtime/compiler.md
-      - Scheduler: holoflow/runtime/scheduler.md
-    - Guides:
-      - Authoring Tasks: holoflow/guides/authoring.md
-      - Inspection And Debugging: holoflow/guides/inspection.md
-  - Curaii: curaii/index.md
-  - Holofile: holofile/index.md
+    - Glossary: glossary.md
+    - Bibliography: references.md
+    - Test Coverage: coverage.md
 
 theme:
   name: material
+  custom_dir: overrides
   palette:
     - media: "(prefers-color-scheme)"
       toggle:
@@ -81,7 +96,7 @@ theme:
   features:
     - navigation.tabs
     - navigation.tabs.sticky
-    - navigation.sections
+    # - navigation.sections
     - navigation.indexes
     - navigation.path
     - navigation.tracking
@@ -95,7 +110,7 @@ theme:
     - content.action.view
     - search.suggest
     - search.highlight
-    - toc.integrate
+    - toc.follow
 
 markdown_extensions:
   - abbr
@@ -112,11 +127,9 @@ markdown_extensions:
   - pymdownx.highlight:
       anchor_linenums: true
       linenums: true
-  - pymdownx.superfences:
-      custom_fences:
-        - name: mermaid
-          class: mermaid
-          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
   - pymdownx.snippets:
       auto_append:
         - docs/glossary.md:abbreviations
@@ -124,9 +137,11 @@ markdown_extensions:
 
 plugins:
   - search
-  - mermaid2
 
 extra_javascript:
   - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
+
+extra_css:
+  - assets/stylesheets/home.css
 
 use_directory_urls: false
