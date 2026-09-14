@@ -46,7 +46,6 @@ struct NodePlan {
   core::InferResult infer;    ///< Inference metadata.
   std::vector<int>  in_tids;  ///< Input tensor IDs.
   std::vector<int>  out_tids; ///< Output tensor IDs.
-  bool              is_const = false; ///< Whether the compiler deduced constant outputs.
 };
 
 struct EdgePlan {
