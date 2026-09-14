@@ -234,6 +234,12 @@ static void write_compiled_sections(std::ostringstream                  &ss,
     for (auto vd : sec.sync_topo)
       ss << "    v" << vd << ";\n";
 
+    if (!sec.const_sync_topo.empty()) {
+      ss << "    // const_sync_topo (once)\n";
+      for (auto vd : sec.const_sync_topo)
+        ss << "    v" << vd << ";\n";
+    }
+
     if (!sec.async_prod.empty()) {
       ss << "    // async_producers\n";
       for (auto vd : sec.async_prod)
