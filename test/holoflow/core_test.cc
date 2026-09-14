@@ -191,6 +191,8 @@ TEST(GraphSpecTest, DotOutputContainsEscapedLabelsAndEdgePorts) {
 
 TEST(AdjacencyListTest, BasicGraphConcept) {
   static_assert(holoflow::core::Graph<holoflow::core::AdjacencyList<std::string, std::string>>);
+  static_assert(holoflow::core::Graph<
+                holoflow::core::AdjacencyList<holoflow::core::NodeSpec, holoflow::core::EdgeSpec>>);
 }
 
 TEST(AdjacencyListTest, BasicGraphConstruction) {
@@ -207,6 +209,201 @@ TEST(AdjacencyListTest, BasicGraphConstruction) {
   EXPECT_EQ(g.edge_properties(e), "v1 -> v2");
   EXPECT_EQ(g.num_vertices(), 2);
   EXPECT_EQ(g.num_edges(), 1);
+}
+
+TEST(AdjacencyListTest, GraphVerticesRange) {
+
+  holoflow::core::AdjacencyList<std::string, std::string> g;
+  g.add_vertex("v1");
+  g.add_vertex("v2");
+  g.add_vertex("v3");
+  g.add_edge(0, "v1 -> v2", 1);
+
+  using VContainer =
+      std::vector<holoflow::core::AdjacencyList<std::string, std::string>::VertexDescriptor>;
+  VContainer expected = {0, 1, 2};
+  auto       vrange   = g.make_vertices_range();
+  auto       actual   = VContainer(vrange.begin(), vrange.end());
+  EXPECT_EQ(actual, expected);
+}
+
+TEST(AdjacencyListTest, GraphEdgesRange) {
+  using Graph      = holoflow::core::AdjacencyList<std::string, std::string>;
+  using EContainer = std::vector<holoflow::core::AdjacencyList<std::string, std::string>::Edge>;
+
+  EContainer expected = {Graph::Edge{1, 4, "B -> E"}, Graph::Edge{1, 2, "B -> C"},
+                         Graph::Edge{4, 2, "E -> C"}, Graph::Edge{4, 0, "E -> A"},
+                         Graph::Edge{0, 2, "A -> C"}, Graph::Edge{0, 3, "A -> D"},
+                         Graph::Edge{2, 3, "C -> D"}};
+  Graph      g;
+  g.add_vertex("A");
+  g.add_vertex("B");
+  g.add_vertex("C");
+  g.add_vertex("D");
+  g.add_vertex("E");
+  for (const auto &e : expected) {
+    g.add_edge(e.source, e.properties, e.target);
+  }
+
+  auto erange = g.make_edges_range();
+  auto actual = EContainer(erange.begin(), erange.end());
+  EXPECT_EQ(actual, expected);
+}
+
+TEST(AdjacencyListTest, GraphEdgesRangeMutability) {
+  using Graph      = holoflow::core::AdjacencyList<std::string, std::string>;
+  using EContainer = std::vector<holoflow::core::AdjacencyList<std::string, std::string>::Edge>;
+
+  EContainer edges = {Graph::Edge{1, 4, "B -> E"}, Graph::Edge{1, 2, "B -> C"},
+                      Graph::Edge{4, 2, "E -> C"}, Graph::Edge{4, 0, "E -> A"},
+                      Graph::Edge{0, 2, "A -> C"}, Graph::Edge{0, 3, "A -> D"},
+                      Graph::Edge{2, 3, "C -> D"}};
+  Graph      g;
+  g.add_vertex("A");
+  g.add_vertex("B");
+  g.add_vertex("C");
+  g.add_vertex("D");
+  g.add_vertex("E");
+  for (const auto &e : edges) {
+    g.add_edge(e.source, e.properties, e.target);
+  }
+
+  EContainer expected = {Graph::Edge{1, 4, ""}, Graph::Edge{1, 2, ""}, Graph::Edge{4, 2, ""},
+                         Graph::Edge{4, 0, ""}, Graph::Edge{0, 2, ""}, Graph::Edge{0, 3, ""},
+                         Graph::Edge{2, 3, ""}};
+
+  auto erange = g.make_edges_range();
+  for (auto &e : erange) {
+    e.properties = "";
+  }
+
+  auto actual = EContainer(erange.begin(), erange.end());
+  EXPECT_EQ(actual, expected);
+}
+
+TEST(AdjacencyListTest, GraphInEdgesRange) {
+  using Graph      = holoflow::core::AdjacencyList<std::string, std::string>;
+  using EContainer = std::vector<holoflow::core::AdjacencyList<std::string, std::string>::Edge>;
+
+  EContainer expected = {
+      Graph::Edge{1, 2, "B -> C"},
+      Graph::Edge{4, 2, "E -> C"},
+      Graph::Edge{0, 2, "A -> C"},
+  };
+
+  EContainer edges = {Graph::Edge{1, 4, "B -> E"}, Graph::Edge{1, 2, "B -> C"},
+                      Graph::Edge{4, 2, "E -> C"}, Graph::Edge{4, 0, "E -> A"},
+                      Graph::Edge{0, 2, "A -> C"}, Graph::Edge{0, 3, "A -> D"},
+                      Graph::Edge{2, 3, "C -> D"}};
+  Graph      g;
+  g.add_vertex("A");
+  g.add_vertex("B");
+  g.add_vertex("C");
+  g.add_vertex("D");
+  g.add_vertex("E");
+  for (const auto &e : edges) {
+    g.add_edge(e.source, e.properties, e.target);
+  }
+
+  auto erange = g.make_in_edges_range(2);
+  auto actual = EContainer(erange.begin(), erange.end());
+  EXPECT_EQ(actual, expected);
+}
+
+TEST(AdjacencyListTest, GraphInEdgesRangeMutability) {
+  using Graph      = holoflow::core::AdjacencyList<std::string, std::string>;
+  using EContainer = std::vector<holoflow::core::AdjacencyList<std::string, std::string>::Edge>;
+
+  EContainer expected = {
+      Graph::Edge{1, 2, ""},
+      Graph::Edge{4, 2, ""},
+      Graph::Edge{0, 2, ""},
+  };
+
+  EContainer edges = {Graph::Edge{1, 4, "B -> E"}, Graph::Edge{1, 2, "B -> C"},
+                      Graph::Edge{4, 2, "E -> C"}, Graph::Edge{4, 0, "E -> A"},
+                      Graph::Edge{0, 2, "A -> C"}, Graph::Edge{0, 3, "A -> D"},
+                      Graph::Edge{2, 3, "C -> D"}};
+  Graph      g;
+  g.add_vertex("A");
+  g.add_vertex("B");
+  g.add_vertex("C");
+  g.add_vertex("D");
+  g.add_vertex("E");
+  for (const auto &e : edges) {
+    g.add_edge(e.source, e.properties, e.target);
+  }
+
+  auto erange = g.make_in_edges_range(2);
+
+  for (auto &e : erange) {
+    e.properties = "";
+  }
+
+  auto erange2 = g.make_in_edges_range(2);
+  auto actual  = EContainer(erange2.begin(), erange2.end());
+  EXPECT_EQ(actual, expected);
+}
+
+TEST(AdjacencyListTest, GraphOutEdgesRange) {
+  using Graph      = holoflow::core::AdjacencyList<std::string, std::string>;
+  using EContainer = std::vector<holoflow::core::AdjacencyList<std::string, std::string>::Edge>;
+
+  EContainer expected = {
+      Graph::Edge{1, 4, "B -> E"},
+      Graph::Edge{1, 2, "B -> C"},
+  };
+
+  EContainer edges = {Graph::Edge{1, 4, "B -> E"}, Graph::Edge{1, 2, "B -> C"},
+                      Graph::Edge{4, 2, "E -> C"}, Graph::Edge{4, 0, "E -> A"},
+                      Graph::Edge{0, 2, "A -> C"}, Graph::Edge{0, 3, "A -> D"},
+                      Graph::Edge{2, 3, "C -> D"}};
+  Graph      g;
+  g.add_vertex("A");
+  g.add_vertex("B");
+  g.add_vertex("C");
+  g.add_vertex("D");
+  g.add_vertex("E");
+  for (const auto &e : edges) {
+    g.add_edge(e.source, e.properties, e.target);
+  }
+
+  auto erange = g.make_out_edges_range(1);
+  auto actual = EContainer(erange.begin(), erange.end());
+  EXPECT_EQ(actual, expected);
+}
+
+TEST(AdjacencyListTest, GraphOutEdgesRangeMutability) {
+  using Graph      = holoflow::core::AdjacencyList<std::string, std::string>;
+  using EContainer = std::vector<holoflow::core::AdjacencyList<std::string, std::string>::Edge>;
+
+  EContainer expected = {
+      Graph::Edge{1, 4, ""},
+      Graph::Edge{1, 2, ""},
+  };
+
+  EContainer edges = {Graph::Edge{1, 4, "B -> E"}, Graph::Edge{1, 2, "B -> C"},
+                      Graph::Edge{4, 2, "E -> C"}, Graph::Edge{4, 0, "E -> A"},
+                      Graph::Edge{0, 2, "A -> C"}, Graph::Edge{0, 3, "A -> D"},
+                      Graph::Edge{2, 3, "C -> D"}};
+  Graph      g;
+  g.add_vertex("A");
+  g.add_vertex("B");
+  g.add_vertex("C");
+  g.add_vertex("D");
+  g.add_vertex("E");
+  for (const auto &e : edges) {
+    g.add_edge(e.source, e.properties, e.target);
+  }
+
+  auto erange = g.make_out_edges_range(1);
+  for (auto &e : erange) {
+    e.properties = "";
+  }
+
+  auto erange2 = g.make_out_edges_range(1);
+  auto actual  = EContainer(erange2.begin(), erange2.end());
+  EXPECT_EQ(actual, expected);
 }
 
 TEST(AdjacencyListTest, TopologicalSortBasic) {
@@ -242,35 +439,6 @@ TEST(AdjacencyListTest, TopologicalSortBigger) {
   std::vector<size_t> expected{3, 2, 0, 4, 1};
   holoflow::core::topological_sort(g, std::back_inserter(v));
   EXPECT_EQ(v, expected);
-}
-
-TEST(AdjacencyListTest, EdgeIterator) {
-
-  holoflow::core::AdjacencyList<std::string, std::string> g;
-  g.add_vertex("A");
-  g.add_vertex("B");
-  g.add_vertex("C");
-  g.add_vertex("D");
-  g.add_vertex("E");
-  using EdgeTest =
-      std::tuple<holoflow::core::AdjacencyList<std::string, std::string>::VertexDescriptor,
-                 holoflow::core::AdjacencyList<std::string, std::string>::EdgeProperties,
-                 holoflow::core::AdjacencyList<std::string, std::string>::VertexDescriptor>;
-  auto edges = std::vector<EdgeTest>{std::tuple(1, "B -> E", 4), std::tuple(1, "B -> C", 2),
-                                     std::tuple(4, "E -> C", 2), std::tuple(4, "E -> A", 0),
-                                     std::tuple(0, "A -> C", 2), std::tuple(0, "A -> D", 3),
-                                     std::tuple(2, "C -> D", 3)};
-
-  for (auto e : edges) {
-    g.add_edge(std::get<0>(e), std::get<1>(e), std::get<2>(e));
-  }
-
-  auto edges_range = g.make_edges_range();
-
-  for (auto edge : edges_range) {
-    EdgeTest e = {edge.source, edge.properties, edge.target};
-    EXPECT_NE(std::ranges::find(edges, e), edges.end());
-  }
 }
 
 TEST(AdjacencyListTest, TopologicalSortCycle) {

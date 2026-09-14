@@ -84,6 +84,10 @@ public:
     VertexDescriptor source;
     VertexDescriptor target;
     EProps           properties;
+
+    bool operator==(const Edge &other) const {
+      return source == other.source && target == other.target && properties == other.properties;
+    }
   };
 
   struct Vertex {
