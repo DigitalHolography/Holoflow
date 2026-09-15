@@ -1,0 +1,56 @@
+digraph TaskLifecycle {
+  rankdir=TB;
+  compound=true;
+  newrank=true;
+  graph [nodesep=0.35, ranksep=0.7, pad=0.2, splines=polyline, bgcolor="transparent"];
+  node [fontname="Helvetica", shape=box, style="rounded,filled", fillcolor="#ccffcc",
+        color="#555555", fontsize=10, margin="0.12,0.08"];
+  edge [fontname="Helvetica", fontsize=9, color="#444444", fontcolor="#444444",
+        penwidth=1.2, arrowsize=0.65, arrowhead=vee];
+
+  subgraph cluster_compilation {
+    label="Compilation";
+    labelloc=t;
+    labeljust=l;
+    style=rounded;
+    color=gray;
+    bgcolor="#f8f8f8";
+
+    spec [label="NodeSpec"];
+    lookup [label="Registry lookup"];
+    infer [label="Factory infer"];
+    plan [label="Plan tensors, storage,\nand sections"];
+    create [label="Factory create\nor update"];
+    bind [label="Bind logger and\nowned-storage access"];
+
+    { rank=same; spec; lookup; infer; plan; create; bind; }
+    spec -> lookup -> infer -> plan -> create -> bind;
+  }
+
+  subgraph cluster_runtime {
+    label="Runtime loop";
+    labelloc=t;
+    labeljust=l;
+    style=rounded;
+    color=gray;
+    bgcolor="#f8f8f8";
+
+    contexts [label="Scheduler prepares\ncontexts"];
+    operation [label="Task operation"];
+    result [label="OpResult", shape=diamond, style=filled, fillcolor="#fffdf5",
+            color="#aaaaaa", margin="0.08,0.05"];
+    stop [label="Stop", fillcolor="#ffe6e6", color="#cc0000"];
+
+    { rank=same; stop; result; operation; contexts; }
+    stop -> result -> operation -> contexts [style=invis, weight=1000];
+    contexts -> operation [constraint=false];
+    operation -> result [constraint=false];
+    result -> operation [label="Ok", constraint=false];
+    result -> operation [label="NotReady\n(async only)", style=dashed, color="#0066cc",
+                         fontcolor="#0066cc", constraint=false];
+    result -> stop [label="Cancelled or Eof", color="#cc0000", fontcolor="#cc0000",
+                    constraint=false];
+  }
+
+  bind -> contexts [ltail=cluster_compilation, lhead=cluster_runtime];
+}

@@ -1,0 +1,57 @@
+digraph StorageOwnership {
+  rankdir=TB;
+  compound=true;
+  newrank=true;
+  graph [nodesep=0.35, ranksep=0.65, pad=0.2, splines=polyline, bgcolor="transparent"];
+  node [fontname="Helvetica", shape=box, style="rounded,filled", fillcolor="#ccffcc",
+        color="#555555", fontsize=10, margin="0.12,0.08"];
+  edge [fontname="Helvetica", fontsize=9, color="#444444", fontcolor="#444444",
+        penwidth=1.2, arrowsize=0.65, arrowhead=vee];
+
+  subgraph cluster_borrowed {
+    label="Borrowed storage";
+    labelloc=t;
+    labeljust=l;
+    style=rounded;
+    color=gray;
+    bgcolor="#f8f8f8";
+
+    compiler [label="Compiler allocates\nstorage", fillcolor="#fffdf5", color="#aaaaaa"];
+    view [label="Context TView", fillcolor="#fffdf5", color="#aaaaaa"];
+    borrowed_task [label="Task reads\nor writes"];
+    downstream [label="Downstream task"];
+
+    { rank=same; compiler; view; }
+    { rank=same; borrowed_task; downstream; }
+    compiler -> view -> borrowed_task -> downstream;
+  }
+
+  subgraph cluster_owned {
+    label="Task-owned storage";
+    labelloc=t;
+    labeljust=l;
+    style=rounded;
+    color=gray;
+    bgcolor="#f8f8f8";
+
+    buffer [label="Rate-limiter slot", shape=cylinder, fillcolor="#e6f2ff", color="#0066cc"];
+    input [label="Owned input TView", fillcolor="#fffdf5", color="#aaaaaa"];
+    upstream [label="Upstream writes\ndirectly"];
+    commit [label="try_push\ncommits slot"];
+    wait [label="Wait for deadline", fillcolor="#e6f2ff", color="#0066cc"];
+    output [label="Owned output TView", fillcolor="#fffdf5", color="#aaaaaa"];
+    consume [label="Downstream\nconsumption"];
+    recycle [label="release_output\nrecycles slot", fillcolor="#ffe6e6", color="#cc0000"];
+
+    { rank=same; buffer; input; upstream; commit; }
+    { rank=same; recycle; consume; output; wait; }
+    recycle -> consume -> output -> wait [style=invis, weight=1000];
+    buffer -> input [label="acquire_input\npoints at slot"];
+    input -> upstream -> commit;
+    commit -> wait [label="no copy"];
+    wait -> output [label="try_pop points at\nthe same slot", constraint=false];
+    output -> consume [constraint=false];
+    consume -> recycle [constraint=false];
+    recycle -> buffer [label="writable again"];
+  }
+}
