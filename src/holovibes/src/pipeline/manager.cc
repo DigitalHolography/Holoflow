@@ -48,6 +48,7 @@
 #include "holonp/divide.hh"
 #include "holonp/empty.hh"
 #include "holonp/equal.hh"
+#include "holonp/exp.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
@@ -228,6 +229,7 @@ void Manager::register_components() {
   reg_sync<DivideFactory>(registry_, "Divide");
   reg_sync<AddFactory>(registry_, "Add");
   reg_sync<EqualFactory>(registry_, "Equal");
+  reg_sync<ExpFactory>(registry_, "Exp");
   reg_sync<WhereFactory>(registry_, "Where");
   reg_sync<ReshapeFactory>(registry_, "Reshape");
   // clang-format on

@@ -29,6 +29,7 @@ set(SOURCES
     divide_test.cu
     empty_test.cu
     equal_test.cu
+    exp_test.cu
     fft2_test.cu
     fft_test.cu
     fftshift_test.cu

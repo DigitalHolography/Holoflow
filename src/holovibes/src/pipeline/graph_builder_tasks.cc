@@ -96,6 +96,7 @@ DEFINE_UNARY_SYNC_NODE (fft,                          "fft",                    
 DEFINE_UNARY_SYNC_NODE (fft2,                         "fft2",                         "FFT2",                            holonp::FFT2Settings)
 DEFINE_UNARY_SYNC_NODE (fftshift,                     "fftshift",                     "FFTShiftNp",                      holonp::FFTShiftSettings)
 DEFINE_UNARY_SYNC_NODE (abs,                          "abs",                          "Abs",                             holonp::AbsSettings)
+DEFINE_UNARY_SYNC_NODE (exp,                          "exp",                          "Exp",                             holonp::ExpSettings)
 DEFINE_UNARY_SYNC_NODE (mean,                         "mean",                         "Mean",                            holonp::MeanSettings)
 DEFINE_UNARY_SYNC_NODE (mean_abs,                     "mean_abs",                     "MeanAbs",                         holotask::syncs::MeanAbsSettings)
 DEFINE_UNARY_SYNC_NODE (min,                          "min",                          "Min",                             holonp::MinSettings)

@@ -27,6 +27,7 @@
 #include "holonp/divide.hh"
 #include "holonp/empty.hh"
 #include "holonp/equal.hh"
+#include "holonp/exp.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
@@ -142,6 +143,7 @@ protected:
   TDesc multiply(const TDesc &A, const TDesc &B, holonp::MultiplySettings s);
   TDesc subtract(const TDesc &A, const TDesc &B, holonp::SubtractSettings s);
   TDesc equal(const TDesc &A, const TDesc &B, holonp::EqualSettings s);
+  TDesc exp(const TDesc &X, holonp::ExpSettings s);
   TDesc where(const TDesc &Cond, const TDesc &X, const TDesc &Y, holonp::WhereSettings s);
   TDesc rfft(const TDesc &X, holonp::RFFTSettings s);
   TDesc rfft2(const TDesc &X, holonp::RFFT2Settings s);

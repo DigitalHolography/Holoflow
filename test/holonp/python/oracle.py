@@ -209,6 +209,10 @@ def _op_equal(inputs, settings):
     return [np.equal(inputs[0], inputs[1]).astype(np.uint8)]
 
 
+def _op_exp(inputs, settings):
+    return [np.exp(inputs[0])]
+
+
 def _op_zeros(inputs, settings):
     shape = tuple(int(d) for d in settings["shape"])
     dtype_name = settings.get("dtype", "F32")
@@ -350,6 +354,7 @@ _DISPATCH = {
     "multiply": _op_multiply,
     "divide": _op_divide,
     "equal": _op_equal,
+    "exp": _op_exp,
     "zeros": _op_zeros,
     "reshape": _op_reshape,
     "transpose": _op_transpose,
