@@ -15,7 +15,10 @@
 #include "holotask/syncs/registration.hh"
 
 #include <cub/cub.cuh>
+#include <math_constants.h>
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -36,11 +39,12 @@ namespace holotask::syncs {
 // -------------------------------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const RegistrationSettings &s) {
-  j = nlohmann::json{{"radius", s.radius}};
+  j = nlohmann::json{{"radius", s.radius}, {"max_shift_fraction", s.max_shift_fraction}};
 }
 
 void from_json(const nlohmann::json &j, RegistrationSettings &s) {
   j.at("radius").get_to(s.radius);
+  s.max_shift_fraction = j.value("max_shift_fraction", 0.25f);
 }
 
 namespace {
@@ -180,6 +184,36 @@ __global__ void ellipse_mask_kernel(uint8_t *oroi, int width, int height, float 
   oroi[idx]           = inside;
 }
 
+__global__ void limit_xcorr_shift_kernel(float *xcorr, int width, int height,
+                                         float max_shift_fraction) {
+  const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= width || y >= height) {
+    return;
+  }
+
+  const int signed_x = x < (width + 1) / 2 ? x : x - width;
+  const int signed_y = y < (height + 1) / 2 ? y : y - height;
+  const int max_x = static_cast<int>(max_shift_fraction * static_cast<float>(width));
+  const int max_y = static_cast<int>(max_shift_fraction * static_cast<float>(height));
+  if (abs(signed_x) > max_x || abs(signed_y) > max_y) {
+    xcorr[y * width + x] = -CUDART_INF_F;
+  }
+}
+
+__global__ void peak_display_kernel(float *output, int width, int height, float shift_x,
+                                    float shift_y) {
+  if (blockIdx.x != 0 || threadIdx.x != 0) {
+    return;
+  }
+
+  int x = static_cast<int>(roundf(shift_x));
+  int y = static_cast<int>(roundf(shift_y));
+  x     = (x % width + width) % width;
+  y     = (y % height + height) % height;
+  output[static_cast<size_t>(y) * width + static_cast<size_t>(x)] = 1.0f;
+}
+
 __global__ void extract_3x3_kernel(float *d_output, const float *d_input, int peak_x, int peak_y,
                                    int w, int h) {
   int idx = threadIdx.y * 3 + threadIdx.x;
@@ -245,6 +279,22 @@ public:
 
     center_mean(d_mean_centered_.get(), input_data, batch, height, width);
 
+    if (ctx.stream_epoch != nullptr) {
+      const auto epoch = ctx.stream_epoch->load(std::memory_order_acquire);
+      if (epoch != stream_epoch_) {
+        CUDA_CHECK(cudaMemcpyAsync(d_ref_.get(), d_mean_centered_.get(), input_desc_.num_bytes(),
+                                   cudaMemcpyDeviceToDevice, stream_));
+        CUDA_CHECK(cudaMemcpyAsync(output_data, input_data, input_desc_.num_bytes(),
+                                   cudaMemcpyDeviceToDevice, stream_));
+        if (ctx.outputs.size() > 1) {
+          CUDA_CHECK(cudaMemsetAsync(ctx.outputs[1].data(), 0, input_desc_.num_bytes(), stream_));
+        }
+        ref_initialized_ = true;
+        stream_epoch_ = epoch;
+        return holoflow::core::OpResult::Ok;
+      }
+    }
+
     if (!ref_initialized_) {
       CUDA_CHECK(cudaMemcpyAsync(d_ref_.get(), d_mean_centered_.get(), input_desc_.num_bytes(),
                                  cudaMemcpyDeviceToDevice, stream_));
@@ -252,7 +302,34 @@ public:
     }
 
     xcorr(d_xcorr_.get(), d_mean_centered_.get());
+    limit_xcorr(d_xcorr_.get(), width, height);
     auto [shift_x, shift_y] = get_shifts_subpixel(d_xcorr_.get(), width, height);
+
+    // The debug output is deliberately a peak map: a black image with one white pixel makes the
+    // detected displacement unambiguous and avoids stretching correlation noise across the view.
+    if (ctx.outputs.size() > 1) {
+      CUDA_CHECK(cudaMemsetAsync(ctx.outputs[1].data(), 0, input_desc_.num_bytes(), stream_));
+      peak_display_kernel<<<1, 1, 0, stream_>>>(reinterpret_cast<float *>(ctx.outputs[1].data()),
+                                                static_cast<int>(width), static_cast<int>(height),
+                                                shift_x, shift_y);
+      CUDA_CHECK(cudaGetLastError());
+    }
+
+    // A looped file has no explicit epoch marker in the task protocol. If the new first frame
+    // cannot be matched to the previous loop's reference inside the allowed search window, the
+    // peak is forced onto its boundary. Re-seed the reference and pass this frame through without
+    // applying a spurious correction; subsequent frames can then be registered normally.
+    const float max_shift_x = settings_.max_shift_fraction * static_cast<float>(width);
+    const float max_shift_y = settings_.max_shift_fraction * static_cast<float>(height);
+    const bool  boundary_peak = shift_x >= max_shift_x - 1.0f || shift_x <= -max_shift_x + 1.0f ||
+                               shift_y >= max_shift_y - 1.0f || shift_y <= -max_shift_y + 1.0f;
+    if (boundary_peak) {
+      CUDA_CHECK(cudaMemcpyAsync(d_ref_.get(), d_mean_centered_.get(), input_desc_.num_bytes(),
+                                 cudaMemcpyDeviceToDevice, stream_));
+      CUDA_CHECK(cudaMemcpyAsync(output_data, input_data, input_desc_.num_bytes(),
+                                 cudaMemcpyDeviceToDevice, stream_));
+      return holoflow::core::OpResult::Ok;
+    }
 
     apply_shifts(output_data, input_data, shift_x, shift_y, batch, height, width);
     return holoflow::core::OpResult::Ok;
@@ -284,6 +361,15 @@ private:
                                                                  static_cast<int>(freq_size_));
 
     CUFFT_CHECK(cufftExecC2R(c2r_handle_.get(), d_freq1_.get(), odata));
+    CUDA_CHECK(cudaGetLastError());
+  }
+
+  void limit_xcorr(float *xcorr, std::size_t width, std::size_t height) {
+    constexpr dim3 block_size(16, 16);
+    const dim3 grid_size(static_cast<unsigned int>((width + block_size.x - 1) / block_size.x),
+                         static_cast<unsigned int>((height + block_size.y - 1) / block_size.y));
+    limit_xcorr_shift_kernel<<<grid_size, block_size, 0, stream_>>>(
+        xcorr, static_cast<int>(width), static_cast<int>(height), settings_.max_shift_fraction);
     CUDA_CHECK(cudaGetLastError());
   }
 
@@ -373,6 +459,17 @@ private:
     float refined_dy = (h_samples[7] - h_samples[1]) /
                        (2.0f * (h_samples[1] + h_samples[7] - 2.0f * h_samples[4] + 1e-12f));
 
+    // A parabolic fit is only valid for a well-defined local maximum. Keep a bad fit from
+    // turning into an invalid interpolation coordinate and corrupting the displayed frame.
+    if (!std::isfinite(refined_dx)) {
+      refined_dx = 0.0f;
+    }
+    if (!std::isfinite(refined_dy)) {
+      refined_dy = 0.0f;
+    }
+    refined_dx = std::clamp(refined_dx, -0.5f, 0.5f);
+    refined_dy = std::clamp(refined_dy, -0.5f, 0.5f);
+
     return {shift_x + refined_dx, shift_y + refined_dy};
   }
 
@@ -395,6 +492,7 @@ private:
   cudaStream_t           stream_;
   DevPtr<float>          d_mean_centered_;
   bool                   ref_initialized_;
+  uint64_t               stream_epoch_ = 0;
   size_t                 freq_size_;
   curaii::CufftHandle    r2c_handle_;
   curaii::CufftHandle    c2r_handle_;
@@ -433,6 +531,8 @@ RegistrationFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(input_desc.dtype == holoflow::core::DType::F32, "Input must be F32 type");
   check(input_desc.mem_loc == holoflow::core::MemLoc::Device, "Input must be in device memory");
   check(settings.radius >= 0.0f && settings.radius <= 1.0f, "radius not in [0, 1]");
+  check(settings.max_shift_fraction > 0.0f && settings.max_shift_fraction < 0.5f,
+        "max_shift_fraction not in (0, 0.5)");
   check(is_c_contiguous(input_desc), "Input must be C-contiguous");
   if (input_desc.rank() == 3) {
     check(input_desc.shape[0] == 1, "Only batch size 1 is supported");
@@ -442,10 +542,10 @@ RegistrationFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
   return holoflow::core::InferResult{
       .input_descs   = {input_desc},
-      .output_descs  = {output_desc},
+      .output_descs  = {output_desc, output_desc},
       .in_place      = {},
       .owned_inputs  = {false},
-      .owned_outputs = {false},
+      .owned_outputs = {false, false},
       .kind          = holoflow::core::TaskKind::Sync,
   };
 }

@@ -132,6 +132,7 @@ Manager::Manager(
     ui::TensorDisplayWidget *processed_spectrum_widget,
     ui::TensorDisplayWidget *shack_hartmann_widget,
     ui::TensorDisplayWidget *shack_hartmann_xcorr_widget,
+    ui::TensorDisplayWidget *registration_xcorr_widget,
     ui::TensorDisplayWidget *zernike_phase_widget, ui::ZernikeHistoryWidget *zernike_history_widget)
     : autofocus_widget_(autofocus_widget), xy_processed_widget_(xy_processed_widget),
       xz_processed_widget_(xz_processed_widget), yz_processed_widget_(yz_processed_widget),
@@ -139,6 +140,7 @@ Manager::Manager(
       processed_spectrum_widget_(processed_spectrum_widget),
       shack_hartmann_widget_(shack_hartmann_widget),
       shack_hartmann_xcorr_widget_(shack_hartmann_xcorr_widget),
+      registration_xcorr_widget_(registration_xcorr_widget),
       zernike_phase_widget_(zernike_phase_widget), zernike_history_widget_(zernike_history_widget) {
 
   register_components();
@@ -169,6 +171,7 @@ void Manager::register_components() {
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum", processed_spectrum_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann", shack_hartmann_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorRegistrationXcorr", registration_xcorr_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase", zernike_phase_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(registry_, "DisplayZernikeCoefficients", autofocus_widget_);
   reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory", zernike_history_widget_);
@@ -402,6 +405,17 @@ void Manager::update_pipeline(const Settings &settings) {
     emit update_pipeline_success();
   } catch (const std::exception &e) {
     stop_zernike_history();
+    settings_dirty_ = true;
+    if (compiler_output_ != nullptr) {
+      try {
+        run_compiled_graph();
+        logger()->warn("[Manager::update_pipeline] New graph failed; resumed previous graph: {}",
+                       e.what());
+      } catch (const std::exception &resume_error) {
+        logger()->error("[Manager::update_pipeline] Failed to resume previous graph: {}",
+                        resume_error.what());
+      }
+    }
     const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
     logger()->error("[Manager::update_pipeline] {}", msg.toStdString());
     emit update_pipeline_failure(msg);
@@ -596,9 +610,12 @@ void Manager::build_and_run() {
   config.dump_dot_on_failure = dump_debug_graphs_;
   config.verbose_tracing     = dump_debug_graphs_;
 
-  auto     prev_output = std::move(compiler_output_);
   Compiler compiler(registry_, config);
-  compiler_output_ = compiler.compile(spec_, std::move(prev_output));
+  // Keep the previous compiled graph alive until the replacement has compiled successfully.
+  // This allows update_pipeline() to restart it if compilation fails, instead of leaving the UI
+  // with a stopped scheduler and no valid execution graph.
+  auto replacement    = compiler.compile(spec_);
+  compiler_output_    = std::move(replacement);
 
   run_compiled_graph();
 }

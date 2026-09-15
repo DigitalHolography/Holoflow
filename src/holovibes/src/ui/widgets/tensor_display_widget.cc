@@ -343,6 +343,16 @@ void TensorDisplayWidget::set_reticle_radius(double radius) {
   update();
 }
 
+void TensorDisplayWidget::set_registration_ellipse_enabled(bool enabled) {
+  registration_ellipse_enabled_ = enabled;
+  update();
+}
+
+void TensorDisplayWidget::set_registration_ellipse_radius(double radius) {
+  registration_ellipse_radius_ = qBound(0.05, radius, 1.0);
+  update();
+}
+
 void TensorDisplayWidget::show_waiting_placeholder(const QString &message) {
   waiting_label_->setText(message.isEmpty() ? tr("Waiting for data...") : message);
   waiting_label_->show();
@@ -373,6 +383,37 @@ void TensorDisplayWidget::drawReticle() {
   glUseProgram(reticle_prog_);
   glUniform4f(reticle_color_loc_, 1.0f, 0.0f, 0.0f, 1.0f); // Red color
 
+  glLineWidth(2.0f);
+  glDrawArrays(GL_LINE_STRIP, 0, segments + 1);
+  glLineWidth(1.0f);
+}
+
+void TensorDisplayWidget::drawRegistrationEllipse() {
+  if (!registration_ellipse_enabled_ || img_w_ <= 0 || img_h_ <= 0)
+    return;
+
+  const int segments = 64;
+  // The registration mask is defined in image coordinates with semi-axes proportional to the
+  // image width and height. In normalized OpenGL coordinates this is a circle; the image viewport
+  // then renders it as a horizontal ellipse for a 512x320 image and as a circle for 512x512.
+  const double radius_x = registration_ellipse_radius_;
+  const double radius_y = registration_ellipse_radius_;
+  std::vector<float> vertices;
+  vertices.reserve(static_cast<size_t>(segments + 1) * 2);
+
+  for (int i = 0; i <= segments; ++i) {
+    const float angle = 2.0f * 3.14159265359f * float(i) / float(segments);
+    vertices.push_back(static_cast<float>(std::cos(angle) * radius_x));
+    vertices.push_back(static_cast<float>(std::sin(angle) * radius_y));
+  }
+
+  glBindVertexArray(reticle_vao_);
+  glBindBuffer(GL_ARRAY_BUFFER, reticle_vbo_);
+  glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(float), vertices.data(), GL_DYNAMIC_DRAW);
+  glEnableVertexAttribArray(0);
+  glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
+  glUseProgram(reticle_prog_);
+  glUniform4f(reticle_color_loc_, 0.0f, 1.0f, 1.0f, 1.0f);
   glLineWidth(2.0f);
   glDrawArrays(GL_LINE_STRIP, 0, segments + 1);
   glLineWidth(1.0f);
@@ -414,6 +455,7 @@ void TensorDisplayWidget::paintGL() {
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
   drawReticle();
+  drawRegistrationEllipse();
 }
 
 } // namespace holovibes::ui

@@ -634,6 +634,7 @@ void MainWindow::refresh_visualization_availability() {
       autofocus->is_z5_enabled() || autofocus->is_z6_enabled() || autofocus->is_z7_enabled() ||
       autofocus->is_z8_enabled() || autofocus->is_z9_enabled() || autofocus->is_z10_enabled();
   const bool single_reference_slopes = !autofocus->use_graph_laplacian();
+  const bool registration_enabled = view_widget_->is_registration_enabled();
 
   const auto autofocus_message = tr("Enable Auto Focus to generate this visualization.");
   const auto zernike_order_message =
@@ -655,6 +656,7 @@ void MainWindow::refresh_visualization_availability() {
       {"shack_hartmann_xcorr",
        {autofocus_enabled && single_reference_slopes,
         autofocus_enabled ? xcorr_message : autofocus_message}},
+      {"registration_xcorr", {registration_enabled, registration_enabled ? QString{} : tr("Enable Registration to generate this visualization.")}},
       {"xy_raw", {true, {}}},
       {"raw_spectrum", {false, spectrum_message}},
       {"processed_spectrum", {false, spectrum_message}},
@@ -750,20 +752,9 @@ void MainWindow::configure_unsupported_features() {
     return;
   }
 
-  const QString registration_tooltip =
-      tr("Visible for planned support. The current pipeline does not support registration yet.");
   const QString convolution_tooltip =
       tr("Visible for planned support. The current pipeline does not support convolution kernels "
          "yet.");
-
-  {
-    QSignalBlocker blocker(view_widget_->registration_check());
-    view_widget_->set_registration_enabled(false);
-  }
-  view_widget_->registration_check()->setEnabled(false);
-  view_widget_->registration_check()->setToolTip(registration_tooltip);
-  view_widget_->registration_radius()->setEnabled(false);
-  view_widget_->registration_radius()->setToolTip(registration_tooltip);
 
   {
     QSignalBlocker blocker(render_widget_->convolution_combo());
@@ -889,6 +880,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("range_end", view_widget_->get_range_end());
   settings.setValue("registration", view_widget_->is_registration_enabled());
   settings.setValue("registration_radius", view_widget_->get_registration_radius());
+  settings.setValue("registration_ellipse", view_widget_->is_registration_ellipse_enabled());
   settings.setValue("reticle", view_widget_->is_reticle_enabled());
   settings.setValue("reticle_radius", view_widget_->get_reticle_radius());
   settings.setValue("pct", view_widget_->is_pct_enabled());
@@ -1039,6 +1031,8 @@ void MainWindow::restore_persistent_state() {
       settings.value("registration", view_widget_->is_registration_enabled()).toBool());
   view_widget_->registration_radius()->setValue(
       settings.value("registration_radius", view_widget_->get_registration_radius()).toDouble());
+  view_widget_->set_registration_ellipse_enabled(
+      settings.value("registration_ellipse", false).toBool());
   view_widget_->reticle_check()->setChecked(
       settings.value("reticle", view_widget_->is_reticle_enabled()).toBool());
   view_widget_->reticle_radius()->setValue(
@@ -1153,6 +1147,7 @@ void MainWindow::initialize_display_widgets() {
   processed_spectrum_widget_   = new TensorDisplayWidget(display_workspace_);
   shack_hartmann_widget_       = new TensorDisplayWidget(display_workspace_);
   shack_hartmann_xcorr_widget_ = new TensorDisplayWidget(display_workspace_);
+  registration_xcorr_widget_   = new TensorDisplayWidget(display_workspace_);
   zernike_phase_widget_        = new TensorDisplayWidget(display_workspace_);
   zernike_history_widget_      = new ZernikeHistoryWidget(display_workspace_);
 
@@ -1173,6 +1168,9 @@ void MainWindow::initialize_display_widgets() {
   display_workspace_->register_visualization({"shack_hartmann_xcorr", "Shack Hartmann XCorr",
                                               shack_hartmann_xcorr_widget_, "shack_hartmann",
                                               DockPlacement::Right, false});
+  display_workspace_->register_visualization({"registration_xcorr", "Registration XCorr",
+                                              registration_xcorr_widget_, "xy_processed",
+                                              DockPlacement::Tab, false});
 
   // Optional current displays use the same registry and visibility model. They default to tabs so
   // enabling one does not disturb the requested five-display hierarchy.
@@ -1216,13 +1214,28 @@ void MainWindow::initialize_display_widgets() {
       xy_processed_widget_->set_reticle_radius(value);
     }
   });
+  connect(view_widget_->registration_ellipse_check(), &QCheckBox::toggled, this,
+          [this](bool checked) {
+            xy_processed_widget_->set_registration_ellipse_enabled(checked);
+            if (checked) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  view_widget_->get_registration_radius());
+            }
+          });
+  connect(view_widget_->registration_radius(), qOverload<double>(&QDoubleSpinBox::valueChanged),
+          this, [this](double value) {
+            if (view_widget_->is_registration_ellipse_enabled()) {
+              xy_processed_widget_->set_registration_ellipse_radius(value);
+            }
+          });
 }
 
 void MainWindow::initialize_pipeline_manager() {
   pipeline_manager_ = new pipeline::Manager(
       render_widget_->autofocus_widget(), xy_processed_widget_, xz_processed_widget_,
       yz_processed_widget_, xy_raw_widget_, raw_spectrum_widget_, processed_spectrum_widget_,
-      shack_hartmann_widget_, shack_hartmann_xcorr_widget_, zernike_phase_widget_,
+      shack_hartmann_widget_, shack_hartmann_xcorr_widget_, registration_xcorr_widget_,
+      zernike_phase_widget_,
       zernike_history_widget_);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);

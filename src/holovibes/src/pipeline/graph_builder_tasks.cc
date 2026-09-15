@@ -81,6 +81,7 @@ DEFINE_SINK_SYNC_NODE  (xz_processed_display,         "xz_processed_display",   
 DEFINE_SINK_SYNC_NODE  (yz_processed_display,         "yz_processed_display",         "DisplayTensorYZ",                 tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE  (shack_hartmann_display,       "shack_hartmann_display",       "DisplayTensorShackHartmann",      tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE  (shack_hartmann_xcorr_display, "shack_hartmann_xcorr_display", "DisplayTensorShackHartmannXcorr", tasks::sinks::DisplayTensorSettings)
+DEFINE_SINK_SYNC_NODE  (registration_xcorr_display,   "registration_xcorr_display",   "DisplayTensorRegistrationXcorr", tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE  (zernike_phase_display,        "zernike_phase_display",        "DisplayTensorZernikePhase",       tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE  (zernike_coefficients_display, "zernike_coefficients_display", "DisplayZernikeCoefficients",      tasks::sinks::DisplayZernikeCoefficientsSettings)
 DEFINE_SINK_SYNC_NODE  (zernike_history_display,      "zernike_history_display",      "DisplaySignalHistory",            tasks::sinks::DisplaySignalHistorySettings)
@@ -133,6 +134,12 @@ GraphBuilderTasks::TDesc GraphBuilderTasks::multiply(const TDesc &A, const TDesc
   return std::move(
       make_nary_sync_node("multiply", "Multiply", "Multiply", std::span<const TDesc>{inputs}, s)
           .at(0));
+}
+
+std::vector<GraphBuilderTasks::TDesc>
+GraphBuilderTasks::registration_outputs(const TDesc &X,
+                                        holotask::syncs::RegistrationSettings s) {
+  return make_unary_sync_node("registration", "Registration", "Registration", X, s);
 }
 
 GraphBuilderTasks::TDesc
