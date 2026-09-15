@@ -28,6 +28,7 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -72,6 +73,28 @@ struct MemoryBlock {
   void *get(); ///< Returns a mutable pointer to the memory block.
 };
 
+/// One finite, eagerly constructed graph set. Only its section thread selects/launches variants.
+struct SectionCudaGraphs {
+  ~SectionCudaGraphs();
+  SectionCudaGraphs()                                     = default;
+  SectionCudaGraphs(const SectionCudaGraphs &)            = delete;
+  SectionCudaGraphs &operator=(const SectionCudaGraphs &) = delete;
+
+  std::vector<size_t>                                  storage_ids;
+  std::vector<std::vector<std::byte *>>                pointers;
+  std::vector<std::unordered_map<std::byte *, size_t>> pointer_indices;
+  std::vector<cudaGraphExec_t>                         executables;
+  size_t                                               variant_count = 0;
+  size_t node_count = 0; ///< Total nodes across executable variants, including conditional bodies.
+  double construction_ms = 0;
+  std::string fallback_reason;
+  bool        enabled = false;
+
+  void clear() noexcept;
+  [[nodiscard]] std::optional<size_t>
+  variant(const std::map<size_t, std::unique_ptr<core::Storage>> &storages) const;
+};
+
 struct ExecResouces {
   std::map<size_t, MemoryBlock>                    memory_blocks; ///< StorageID -> MemoryBlock.
   std::map<size_t, std::unique_ptr<core::Storage>> storages;      ///< StorageID -> Storage.
@@ -81,6 +104,8 @@ struct ExecResouces {
   std::map<std::string, std::unique_ptr<core::IOStorageAccess>> node_storage_adapters;
   std::map<size_t, curaii::CudaStream>                          streams; ///< CUDA streams by ID.
   std::map<std::string, std::unique_ptr<core::ITask>>           tasks;   ///< Task instances by ID.
+  // Declared last so graphs are destroyed before tasks, modules, streams, and buffers.
+  std::map<int, std::unique_ptr<SectionCudaGraphs>> section_cuda_graphs;
   // std::map<int, core::Tensor>                         tensors; ///< Allocated tensors by ID.
 };
 
@@ -117,6 +142,7 @@ struct NodeMetrics {
   double   host_throughput_bytes_per_second   = 0.0;
   double   device_throughput_bytes_per_second = 0.0;
   uint64_t sample_count                       = 0;
+  bool     individual_timing_available        = true;
 };
 
 class Scheduler {
@@ -128,6 +154,8 @@ public:
 
   void set_metrics_interval(std::chrono::milliseconds interval);
   [[nodiscard]] std::map<std::string, NodeMetrics> metrics() const;
+  /// Host submission timing/counts for section graph launches, not GPU execution duration.
+  [[nodiscard]] std::map<std::string, NodeMetrics> section_graph_metrics() const;
 
   void start();
   void request_stop();
@@ -236,9 +264,11 @@ private:
   };
 
   std::vector<NodeMetricAccumulator> metric_accumulators_;
+  std::vector<NodeMetricAccumulator> graph_metric_accumulators_;
 
   mutable std::mutex                 metrics_mutex_;
   std::map<std::string, NodeMetrics> latest_metrics_;
+  std::map<std::string, NodeMetrics> latest_section_graph_metrics_;
   std::chrono::milliseconds          metrics_interval_;
   std::atomic<bool>                  metrics_running_{false};
   std::thread                        metrics_thread_;
@@ -258,6 +288,13 @@ template <> struct fmt::formatter<holoflow::runtime::NodeMetrics> {
 
   template <typename FormatContext>
   auto format(const holoflow::runtime::NodeMetrics &m, FormatContext &ctx) const {
+    if (!m.individual_timing_available) {
+      return fmt::format_to(ctx.out(),
+                            "{{avg: n/a (section graph), rps: {:.3f}, host: {:.3f} B/s, device: "
+                            "{:.3f} B/s, samples: {}}}",
+                            m.runs_per_second, m.host_throughput_bytes_per_second,
+                            m.device_throughput_bytes_per_second, m.sample_count);
+    }
     return fmt::format_to(
         ctx.out(),
         "{{avg: {:.3f} ms, rps: {:.3f}, host: {:.3f} B/s, device: {:.3f} B/s, samples: {}}}",

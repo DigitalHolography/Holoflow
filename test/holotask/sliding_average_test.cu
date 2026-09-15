@@ -14,6 +14,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
 #include <atomic>
 #include <cstddef>
@@ -27,6 +28,7 @@
 #include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
+#include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/syncs/causal_sliding_average.hh"
@@ -114,6 +116,13 @@ TEST(DualReaderBatchQueueTest, EmitsCurrentDelayedAndValidityAtOneFrameCadence) 
   TestStorageAccess storage_access(infer.input_descs, infer.output_descs);
   task->bind_storage_access(&storage_access);
 
+  const auto inputs  = *task->owned_input_pointers(0);
+  const auto current = *task->owned_output_pointers(0);
+  const auto delayed = *task->owned_output_pointers(1);
+  EXPECT_EQ(inputs.size(), *infer.owned_input_pointer_counts[0]);
+  EXPECT_EQ(current.size(), *infer.owned_output_pointer_counts[0]);
+  EXPECT_EQ(delayed.size(), current.size() + 1);
+
   std::uint8_t valid_value = 0;
   Storage      valid_storage{MemLoc::Host, sizeof(valid_value),
                              reinterpret_cast<std::byte *>(&valid_value)};
@@ -130,6 +139,7 @@ TEST(DualReaderBatchQueueTest, EmitsCurrentDelayedAndValidityAtOneFrameCadence) 
   for (size_t batch = 0; batch < values.size() / 2; ++batch) {
     auto acquired = task->acquire_input(0);
     ASSERT_TRUE(acquired.has_value());
+    EXPECT_NE(std::find(inputs.begin(), inputs.end(), acquired->storage->ptr), inputs.end());
     std::memcpy(acquired->data(), values.data() + 2 * batch, input_desc.num_bytes());
     std::array                   input_views{*acquired};
     holoflow::core::AsyncPushCtx push_ctx{input_views, &cancelled};
@@ -138,6 +148,10 @@ TEST(DualReaderBatchQueueTest, EmitsCurrentDelayedAndValidityAtOneFrameCadence) 
     for (size_t offset = 0; offset < 2; ++offset) {
       const size_t n = 2 * batch + offset;
       ASSERT_EQ(task->try_pop(pop_ctx), OpResult::Ok);
+      EXPECT_NE(std::find(current.begin(), current.end(), output_views[0].storage->ptr),
+                current.end());
+      EXPECT_NE(std::find(delayed.begin(), delayed.end(), output_views[1].storage->ptr),
+                delayed.end());
       EXPECT_FLOAT_EQ(*reinterpret_cast<float *>(output_views[0].data()), values[n]);
       if (n == 0) {
         EXPECT_FLOAT_EQ(*reinterpret_cast<float *>(output_views[1].data()), 0.0f);
@@ -164,6 +178,7 @@ TEST(DualReaderBatchQueueTest, UnitWindowAliasesCurrentFrameAndIsImmediatelyVali
   task->bind_logger(spdlog::default_logger());
   TestStorageAccess storage_access(infer.input_descs, infer.output_descs);
   task->bind_storage_access(&storage_access);
+  EXPECT_EQ(task->owned_output_pointers(0), task->owned_output_pointers(1));
 
   auto acquired = task->acquire_input(0);
   ASSERT_TRUE(acquired.has_value());
@@ -189,6 +204,75 @@ TEST(DualReaderBatchQueueTest, UnitWindowAliasesCurrentFrameAndIsImmediatelyVali
   EXPECT_EQ(valid_value, std::uint8_t{1});
   task->release_output(0);
   task->release_output(1);
+}
+
+TEST(BatchQueuePointersTest, EnumerationMatchesAlignedWraparound) {
+  const TDesc                         desc({2}, DType::F32, MemLoc::Host);
+  const std::array                    descs{desc};
+  holotask::asyncs::BatchQueueFactory factory;
+  const nlohmann::json                settings = holotask::asyncs::BatchQueueSettings{5, 1, 1};
+  const auto                          inferred = factory.infer(descs, settings);
+  auto                                task     = factory.create(descs, settings, {});
+  TestStorageAccess                   access(inferred.input_descs, inferred.output_descs);
+  task->bind_storage_access(&access);
+  const auto inputs  = *task->owned_input_pointers(0);
+  const auto outputs = *task->owned_output_pointers(0);
+  EXPECT_EQ(inputs.size(), 4U);
+  EXPECT_EQ(outputs.size(), 8U);
+  EXPECT_EQ(inputs.size(), *inferred.owned_input_pointer_counts[0]);
+  EXPECT_EQ(outputs.size(), *inferred.owned_output_pointer_counts[0]);
+  std::atomic<bool> cancelled{false};
+  std::array        output_views{TView{inferred.output_descs[0], &access.owned_output_storage(0)}};
+  holoflow::core::AsyncPopCtx pop{output_views, &cancelled};
+  for (size_t batch = 0; batch < 12; ++batch) {
+    auto acquired = task->acquire_input(0);
+    ASSERT_TRUE(acquired);
+    EXPECT_EQ(acquired->storage->ptr, inputs[batch % inputs.size()]);
+    std::array                   input_views{*acquired};
+    holoflow::core::AsyncPushCtx push{input_views, &cancelled};
+    ASSERT_EQ(task->try_push(push), OpResult::Ok);
+    for (size_t j = 0; j < 2; ++j) {
+      ASSERT_EQ(task->try_pop(pop), OpResult::Ok);
+      EXPECT_EQ(output_views[0].storage->ptr, outputs[(batch * 2 + j) % outputs.size()]);
+      task->release_output(0);
+    }
+  }
+}
+
+TEST(SlidingAverageTest, PointerDomainsRemainStableThroughWarmupAndWraparound) {
+  const TDesc          desc({1, 1, 1}, DType::F32, MemLoc::Device);
+  const std::array     descs{desc};
+  const nlohmann::json settings = holotask::asyncs::SlidingAverageSettings{2, 3, 0};
+  holotask::asyncs::SlidingAverageFactory factory;
+  const auto                              inferred = factory.infer(descs, settings);
+  curaii::CudaStream                      stream;
+  auto              task = factory.create(descs, settings, {stream.get(), stream.get()});
+  TestStorageAccess access(inferred.input_descs, inferred.output_descs);
+  task->bind_storage_access(&access);
+  task->bind_logger(spdlog::default_logger());
+  const auto inputs  = *task->owned_input_pointers(0);
+  const auto outputs = *task->owned_output_pointers(0);
+  EXPECT_EQ(inputs, outputs);
+  EXPECT_EQ(inputs.size(), 5U);
+  EXPECT_EQ(inputs.size(), *inferred.owned_input_pointer_counts[0]);
+  std::atomic<bool> cancelled{false};
+  std::array        output_views{TView{inferred.output_descs[0], &access.owned_output_storage(0)}};
+  holoflow::core::AsyncPopCtx pop{output_views, &cancelled};
+  for (size_t frame = 0; frame < 17; ++frame) {
+    auto acquired = task->acquire_input(0);
+    ASSERT_TRUE(acquired);
+    EXPECT_EQ(acquired->storage->ptr, inputs[frame % inputs.size()]);
+    CUDA_CHECK(cudaMemsetAsync(acquired->data(), 0, sizeof(float), stream.get()));
+    std::array                   input_views{*acquired};
+    holoflow::core::AsyncPushCtx push{input_views, &cancelled};
+    ASSERT_EQ(task->try_push(push), OpResult::Ok);
+    if (task->try_pop(pop) == OpResult::Ok) {
+      EXPECT_NE(std::find(outputs.begin(), outputs.end(), output_views[0].storage->ptr),
+                outputs.end());
+      task->release_output(0);
+    }
+  }
+  EXPECT_EQ(task->owned_output_pointers(0), outputs);
 }
 
 TEST(SlidingAverageTest, DiscardsInvalidInputsBeforeFullWindowWarmup) {

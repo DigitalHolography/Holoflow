@@ -595,6 +595,16 @@ void Manager::build_and_run() {
   config.log_dir             = log_root;
   config.dump_dot_on_failure = dump_debug_graphs_;
   config.verbose_tracing     = dump_debug_graphs_;
+  const auto graph_limit     = qEnvironmentVariable("HOLOFLOW_MAX_SECTION_CUDA_GRAPHS");
+  if (!graph_limit.isEmpty()) {
+    bool       valid = false;
+    const auto limit = graph_limit.toULongLong(&valid);
+    if (!valid || graph_limit.trimmed().startsWith('-') ||
+        limit > (std::numeric_limits<size_t>::max)()) {
+      throw std::invalid_argument("HOLOFLOW_MAX_SECTION_CUDA_GRAPHS must be a nonnegative integer");
+    }
+    config.max_section_cuda_graphs = static_cast<size_t>(limit);
+  }
 
   auto     prev_output = std::move(compiler_output_);
   Compiler compiler(registry_, config);

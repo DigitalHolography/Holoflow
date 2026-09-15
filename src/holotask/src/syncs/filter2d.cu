@@ -315,6 +315,14 @@ public:
         d_spectrum_(std::move(d_spectrum)), d_caller_info_(std::move(d_caller_info)),
         filter_lto_(std::move(filter_lto)) {}
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    std::atomic<bool>       cancelled{false};
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, &cancelled, nullptr, nullptr};
+    (void)execute(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     if (idesc_.dtype == holoflow::core::DType::F32) {
       auto *idata = reinterpret_cast<float *>(ctx.inputs[0].data());

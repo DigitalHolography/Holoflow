@@ -40,6 +40,7 @@ add_executable(holoflow_runtime_test
     compiler_additional_test.cc
     compiler_test.cc
     functional_device_test.cu
+    section_cuda_graph_test.cu
     functional_test.cc
     scheduler_additional_test.cc
     scheduler_functional_test.cc

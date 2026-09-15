@@ -86,6 +86,21 @@ struct SyncCtx {
   holoflow_event::EventReader *event_reader; ///< Event reader for receiving events.
 };
 
+/// Recording-only context. The stream is already capturing into graph. Bindings are private
+/// copies: recording must not publish storage, retain these views, or advance host-side state.
+struct CudaGraphCtx {
+  std::span<TView> inputs;
+  std::span<TView> outputs;
+  cudaStream_t     stream;
+  cudaGraph_t      graph;
+
+  /// Current capture frontier, including edge data for explicit graph composition.
+  void dependencies(std::vector<cudaGraphNode_t>   &nodes,
+                    std::vector<cudaGraphEdgeData> &edges) const;
+  /// Replace the capture frontier after appending explicit nodes (e.g. a conditional node).
+  void set_dependencies(std::span<const cudaGraphNode_t> nodes) const;
+};
+
 /// Runtime execution context for an asynchronous task push operation.
 struct AsyncPushCtx {
   std::span<TView>   inputs;    ///< Scheduler-provided input views; some may be owned.
@@ -149,6 +164,11 @@ public:
   /// @throws std::out_of_range on bad index.
   virtual void release_output(int index);
 
+  /// Complete, stable set of storage-base addresses (before TDesc::offset), available after
+  /// construction. nullopt means unknown; only owned ports may be queried. Never acquires data.
+  virtual std::optional<std::vector<std::byte *>> owned_input_pointers(size_t index) const;
+  virtual std::optional<std::vector<std::byte *>> owned_output_pointers(size_t index) const;
+
   void bind_logger(std::shared_ptr<spdlog::logger> logger);
 
   void bind_storage_access(IOStorageAccess *storage_access);
@@ -187,6 +207,12 @@ public:
   /// Overwrites owned output slots in ctx.outputs.
   /// @returns control-flow result; errors via exceptions.
   [[nodiscard]] virtual OpResult execute(SyncCtx &ctx) = 0;
+
+  /// Opt-in promise: fixed bindings/configuration replay correctly without host-side execution,
+  /// events, control results, or ownership publication. GPU-side state/conditionals are allowed.
+  [[nodiscard]] virtual bool supports_cuda_graph() const noexcept { return false; }
+  /// Append work to the current top-level graph, never launch or embed a task-local graph.
+  virtual void record_cuda_graph(CudaGraphCtx &ctx);
 };
 
 /// @brief Interface for asynchronous (decoupled) tasks.
@@ -244,6 +270,9 @@ struct InferResult {
   /// Async producer capability. When true, try_push synchronizes its producer stream before any
   /// result that lets the scheduler advance. NotReady retries need not synchronize.
   bool synchronizes_producer_stream = false;
+  /// Optional per-port counts. An empty vector or nullopt entry means unknown.
+  std::vector<std::optional<size_t>> owned_input_pointer_counts;
+  std::vector<std::optional<size_t>> owned_output_pointer_counts;
 };
 
 /// Context for sync task creation.

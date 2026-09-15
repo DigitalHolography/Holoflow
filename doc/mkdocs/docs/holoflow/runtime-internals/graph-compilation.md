@@ -14,7 +14,7 @@ assumptions are called out explicitly.
 
 ## Compilation pipeline
 
-Compilation proceeds through twelve passes:
+Compilation proceeds through thirteen passes:
 
 | $j$ | Pass $P_j$ | State added or property established |
 | ---: | --- | --- |
@@ -30,6 +30,7 @@ Compilation proceeds through twelve passes:
 | 10 | Stream Assignment | Every section owns a CUDA stream |
 | 11 | Task Instantiation | Factories create or update one task per node |
 | 12 | Task Binding | Tasks receive storage access and logging services |
+| 13 | Section CUDA Graphs | Eligible sections receive eagerly instantiated pointer variants |
 
 Profiling and Graphviz output observe this process but do not modify its semantic result.
 
@@ -116,7 +117,7 @@ For a fixed registry $\Gamma$, the complete compiler is
 $$
 \operatorname{Compile}_{\Gamma}
 =
-P_{12}\circ P_{11}\circ\cdots\circ P_1.
+P_{13}\circ P_{12}\circ\cdots\circ P_1.
 $$
 
 ## Structure and inference

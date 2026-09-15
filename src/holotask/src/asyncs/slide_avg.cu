@@ -68,6 +68,21 @@ public:
   std::optional<holoflow::core::TView> acquire_input(int index) override;
   void                                 release_output(int index) override;
 
+  std::optional<std::vector<std::byte *>> owned_input_pointers(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("SlidingAverage input port");
+    std::vector<std::byte *> pointers;
+    for (size_t i = 0; i < nb_slots_; ++i)
+      pointers.push_back(d_buffer_.get() + i * element_size_);
+    return pointers;
+  }
+
+  std::optional<std::vector<std::byte *>> owned_output_pointers(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("SlidingAverage output port");
+    return owned_input_pointers(0);
+  }
+
   void update_streams(cudaStream_t producer_stream, cudaStream_t consumer_stream) {
     producer_stream_ = producer_stream;
     consumer_stream_ = consumer_stream;
@@ -288,6 +303,12 @@ SlidingAverageFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
       .owned_outputs                = {true},
       .kind                         = holoflow::core::TaskKind::Async,
       .synchronizes_producer_stream = true,
+      .owned_input_pointer_counts =
+          input_descs.size() == 1
+              ? std::vector<std::optional<size_t>>{settings.target_capacity + settings.window_size}
+              : std::vector<std::optional<size_t>>{settings.target_capacity + settings.window_size,
+                                                   std::nullopt},
+      .owned_output_pointer_counts = {settings.target_capacity + settings.window_size},
   };
 }
 

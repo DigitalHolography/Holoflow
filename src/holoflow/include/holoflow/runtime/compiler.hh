@@ -49,8 +49,9 @@ public:
     bool                  dump_dot_on_failure = true;
     bool                  verbose_tracing     = true;
     // Profiling toggles
-    bool        enable_profiling = true;
-    std::string trace_filename   = "trace_events.json";
+    bool        enable_profiling   = true;
+    std::string trace_filename     = "trace_events.json";
+    size_t max_section_cuda_graphs = 128; ///< Strict product cap per section; zero disables graphs.
   };
 
   explicit Compiler(core::Registry &registry, Config config = {});

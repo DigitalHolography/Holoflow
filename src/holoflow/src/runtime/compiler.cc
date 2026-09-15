@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holoflow/runtime/compiler.hh"
+#include "section_cuda_graph.hh"
 
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/breadth_first_search.hpp>
@@ -296,6 +297,14 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
   total_trace.emplace(trace_scope("Total Compilation", "lifecycle"));
 
   try {
+    if (prev_) {
+      // Stop/wait is the caller's responsibility. Drain before destroying executables whose
+      // modules and workspaces may be replaced by the task update pass.
+      for (auto &[id, stream] : prev_->resources.streams) {
+        CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+      }
+      prev_->resources.section_cuda_graphs.clear();
+    }
     run_pass("Validate Spec", [&] { validate_spec(); });
     run_pass("Build Graph Plan", [&] { build_graph_structure(); });
     run_pass("Type Inference", [&] { run_type_inference(); });
@@ -311,6 +320,31 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     run_pass("Stream Assignment", [&] { assign_streams(); });
     run_pass("Task Instantiation", [&] { instantiate_tasks(); });
     run_pass("Task Binding", [&] { bind_tasks(); });
+    run_pass("Section CUDA Graphs", [&] {
+      build_section_cuda_graphs(*out_, config_.max_section_cuda_graphs);
+      if (!config_.log_dir.empty()) {
+        nlohmann::json diagnostics = nlohmann::json::array();
+        for (const auto &sec : out_->sections) {
+          const auto    &graphs  = *out_->resources.section_cuda_graphs.at(sec.id);
+          nlohmann::json domains = nlohmann::json::array();
+          for (size_t i = 0; i < graphs.storage_ids.size(); ++i) {
+            domains.push_back({{"storage_id", graphs.storage_ids[i]},
+                               {"pointer_count", graphs.pointers[i].size()}});
+          }
+          diagnostics.push_back({{"section", sec.name},
+                                 {"enabled", graphs.enabled},
+                                 {"limit", config_.max_section_cuda_graphs},
+                                 {"domains", domains},
+                                 {"variants", graphs.executables.size()},
+                                 {"node_count", graphs.node_count},
+                                 {"construction_ms", graphs.construction_ms},
+                                 {"fallback_reason", graphs.fallback_reason}});
+        }
+        std::ofstream file(config_.log_dir / "section_cuda_graphs.json");
+        if (file)
+          file << diagnostics.dump(2);
+      }
+    });
 
     if (config_.dump_dot_on_failure) {
       run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_success.dot"); });

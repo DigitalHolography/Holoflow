@@ -157,6 +157,11 @@ std::map<std::string, NodeMetrics> Scheduler::metrics() const {
   return latest_metrics_;
 }
 
+std::map<std::string, NodeMetrics> Scheduler::section_graph_metrics() const {
+  std::lock_guard<std::mutex> lock(metrics_mutex_);
+  return latest_section_graph_metrics_;
+}
+
 void Scheduler::start() {
   logger()->info("[Scheduler::start] Starting scheduler");
   if (running_.exchange(true)) {
@@ -332,6 +337,7 @@ void Scheduler::run_section(int section_id) {
   try {
     while (!stop_.load()) {
       std::vector<GraphPlan::vertex_descriptor> produced_owned_outputs;
+      bool                                      graph_submitted = false;
       logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
 
       // 1. Outer Section Range
@@ -381,17 +387,39 @@ void Scheduler::run_section(int section_id) {
       // 4. Execute sync nodes
       if (!stop_.load()) {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Execute sync nodes", color_sync}};
-        for (auto v : sec.sync_topo) {
-          try {
-            if (run_sync(v) == core::OpResult::Ok) {
-              produced_owned_outputs.push_back(v);
-            }
-          } catch (...) {
-            rethrow_with_node_context(graph_, v, "execute_sync", section_id, sec.name);
+        auto                graph_it = res_.section_cuda_graphs.find(sec.id);
+        if (graph_it != res_.section_cuda_graphs.end() && graph_it->second->enabled) {
+          auto      &graphs  = *graph_it->second;
+          const auto variant = graphs.variant(res_.storages);
+          if (variant) {
+            const auto started = std::chrono::steady_clock::now();
+            CUDA_CHECK(cudaGraphLaunch(graphs.executables.at(*variant), stream));
+            graph_submitted = true;
+            auto &acc       = graph_metric_accumulators_.at(section_id);
+            acc.duration_ns.fetch_add(
+                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                          std::chrono::steady_clock::now() - started)
+                                          .count()),
+                std::memory_order_relaxed);
+            acc.run_count.fetch_add(1, std::memory_order_relaxed);
+          } else {
+            graphs.enabled         = false;
+            graphs.fallback_reason = "Runtime binding is outside the declared pointer set";
+            logger()->warn("[CUDA graphs] {}: {}", sec.name, graphs.fallback_reason);
           }
-          if (stop_.load())
-            break;
         }
+        if (!graph_submitted)
+          for (auto v : sec.sync_topo) {
+            try {
+              if (run_sync(v) == core::OpResult::Ok) {
+                produced_owned_outputs.push_back(v);
+              }
+            } catch (...) {
+              rethrow_with_node_context(graph_, v, "execute_sync", section_id, sec.name);
+            }
+            if (stop_.load())
+              break;
+          }
 
         // A compiler-ordered synchronizing producer runs first below, so its later barrier covers
         // both these kernels and its own CUDA launch while preserving safe publication by ordinary
@@ -416,6 +444,10 @@ void Scheduler::run_section(int section_id) {
       }
 
       // 6. Release only outputs produced successfully in this iteration.
+      // Cancellation can skip the producer which normally supplies the stream barrier.
+      if (graph_submitted && stop_.load()) {
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+      }
       {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Release owned outputs", color_release}};
         for (auto v : produced_owned_outputs) {
@@ -724,9 +756,12 @@ void Scheduler::reset_metrics_state() {
   auto num_vertices = boost::num_vertices(graph_);
   metric_accumulators_.clear();
   metric_accumulators_.resize(num_vertices);
+  graph_metric_accumulators_.clear();
+  graph_metric_accumulators_.resize(sections_.size());
 
   std::lock_guard<std::mutex> lock(metrics_mutex_);
   latest_metrics_.clear();
+  latest_section_graph_metrics_.clear();
   for (const auto &name : node_names_) {
     latest_metrics_.emplace(name, NodeMetrics{});
   }
@@ -802,8 +837,40 @@ void Scheduler::aggregate_metrics(double interval_seconds) {
     snapshot.emplace(node_names_.at(idx), metrics);
   }
 
+  std::map<std::string, NodeMetrics> section_snapshot;
+  for (size_t i = 0; i < sections_.size(); ++i) {
+    auto       &acc      = graph_metric_accumulators_[i];
+    const auto  runs     = acc.run_count.exchange(0, std::memory_order_relaxed);
+    const auto  duration = acc.duration_ns.exchange(0, std::memory_order_relaxed);
+    NodeMetrics section_metric;
+    section_metric.sample_count    = runs;
+    section_metric.runs_per_second = runs / interval_seconds;
+    if (runs)
+      section_metric.average_duration_ms = double(duration) / runs / 1e6;
+    section_snapshot.emplace(sections_[i].name, section_metric);
+    if (!runs)
+      continue;
+    for (auto v : sections_[i].sync_topo) {
+      const auto &np = graph_[v];
+      auto       &m  = snapshot.at(np.spec.name);
+      m.sample_count += runs;
+      m.runs_per_second += runs / interval_seconds;
+      m.individual_timing_available = false;
+      m.average_duration_ms         = 0;
+      auto bytes                    = [&](const auto &descs) {
+        for (const auto &desc : descs) {
+          auto &rate = desc.mem_loc == core::MemLoc::Device ? m.device_throughput_bytes_per_second
+                                                            : m.host_throughput_bytes_per_second;
+          rate += double(desc.num_bytes()) * runs / interval_seconds;
+        }
+      };
+      bytes(np.infer.input_descs);
+      bytes(np.infer.output_descs);
+    }
+  }
   std::lock_guard<std::mutex> lock(metrics_mutex_);
-  latest_metrics_ = std::move(snapshot);
+  latest_metrics_               = std::move(snapshot);
+  latest_section_graph_metrics_ = std::move(section_snapshot);
 }
 
 void Scheduler::record_node_sample(std::size_t idx, uint64_t duration_ns, uint64_t host_bytes,

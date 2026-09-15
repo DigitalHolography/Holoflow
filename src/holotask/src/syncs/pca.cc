@@ -288,6 +288,14 @@ public:
     }
   }
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    std::atomic<bool>       cancelled{false};
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, &cancelled, nullptr, nullptr};
+    (void)enqueue(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     nvtx3::scoped_range range("PCA Sync Task");
 

@@ -155,6 +155,14 @@ public:
         h_strides_(std::move(h_strides)), d_strides_(std::move(d_strides)),
         h_shifts_(std::move(h_shifts)), d_shifts_(std::move(d_shifts)) {}
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    std::atomic<bool>       cancelled{false};
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, &cancelled, nullptr, nullptr};
+    (void)execute(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
   const holoflow::core::TDesc &idesc() const { return idesc_; }

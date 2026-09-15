@@ -89,6 +89,26 @@ public:
     return holoflow::core::TView{.desc = input_desc_, .storage = &storage};
   }
 
+  std::optional<std::vector<std::byte *>> owned_input_pointers(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("DualReaderBatchQueue input port");
+    std::vector<std::byte *> pointers;
+    for (size_t i = 0; i < slot_count_; i += input_size_)
+      pointers.push_back(buffer_ + i * element_size_);
+    return pointers;
+  }
+
+  std::optional<std::vector<std::byte *>> owned_output_pointers(size_t index) const override {
+    if (index > 1)
+      throw std::out_of_range("DualReaderBatchQueue output port");
+    std::vector<std::byte *> pointers;
+    for (size_t i = 0; i < slot_count_; ++i)
+      pointers.push_back(buffer_ + i * element_size_);
+    if (index == 1 && delay_ != 0)
+      pointers.push_back(scratch_);
+    return pointers;
+  }
+
   void release_output(int index) override {
     if (index != 0 && index != 1) {
       throw std::out_of_range("DualReaderBatchQueue::release_output: invalid index");
@@ -219,13 +239,18 @@ DualReaderBatchQueueFactory::infer(std::span<const holoflow::core::TDesc> input_
   auto output     = input;
   output.shape[0] = 1;
   const holoflow::core::TDesc valid({1}, holoflow::core::DType::U8, holoflow::core::MemLoc::Host);
+  const size_t                delay = (settings.window_size - 1) / 2;
+  const size_t slots = lcm_above(input.shape[0], size_t{1},
+                                 settings.target_capacity + input.shape[0] + delay + size_t{1});
   return {
-      .input_descs   = {input},
-      .output_descs  = {output, output, valid},
-      .in_place      = {},
-      .owned_inputs  = {true},
-      .owned_outputs = {true, true, false},
-      .kind          = holoflow::core::TaskKind::Async,
+      .input_descs                 = {input},
+      .output_descs                = {output, output, valid},
+      .in_place                    = {},
+      .owned_inputs                = {true},
+      .owned_outputs               = {true, true, false},
+      .kind                        = holoflow::core::TaskKind::Async,
+      .owned_input_pointer_counts  = {slots / input.shape[0]},
+      .owned_output_pointer_counts = {slots, slots + (delay != 0 ? 1 : 0), std::nullopt},
   };
 }
 
