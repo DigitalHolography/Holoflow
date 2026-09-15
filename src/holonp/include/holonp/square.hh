@@ -16,12 +16,8 @@
 
 #include <nlohmann/json.hpp>
 #include <span>
-#include <vector>
 
-#include "curaii/cuda.hh"
 #include "holoflow/core/tasks.hh"
-
-template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 namespace holonp {
 

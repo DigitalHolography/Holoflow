@@ -43,6 +43,7 @@ set(SOURCES
     rfft2_test.cu
     rfft_test.cu
     slice_test.cu
+    square_test.cu
     subtract_test.cu
     transpose_test.cu
     where_test.cu

@@ -14,7 +14,16 @@
 
 #include "holonp/square.hh"
 
+#include <cstdint>
+#include <cstdlib>
+#include <stdexcept>
+#include <type_traits>
+#include <utility>
+#include <vector>
+
 #include <cuComplex.h>
+
+#include "curaii/cuda.hh"
 
 namespace holonp {
 
@@ -26,6 +35,8 @@ void to_json(nlohmann::json &j, const SquareSettings &) { j = nlohmann::json::ob
 void from_json(const nlohmann::json &, SquareSettings &) {}
 
 namespace {
+
+template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 // -------------------------------------------------------------------------------------------------
 // Helpers
@@ -56,7 +67,7 @@ __global__ void square_kernel(const T *__restrict__ a, T *__restrict__ out, size
 
 inline void check(bool cond, const std::string &msg) {
   if (!cond) {
-    throw std::invalid_argument("Add: " + msg);
+    throw std::invalid_argument("Square: " + msg);
   }
 }
 
@@ -83,31 +94,30 @@ bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// Add task implementation
+// Square task implementation
 // -------------------------------------------------------------------------------------------------
 
 class Square : public holoflow::core::ISyncTask {
 public:
-  Square(cudaStream_t stream, holoflow::core::DType dtype, size_t total_out, size_t ndim,
-         DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides,
-         std::vector<holoflow::core::TDesc> input_descs)
-      : stream_(stream), dtype_(dtype), total_out_(total_out), ndim_(ndim),
-        d_out_shape_(std::move(d_out_shape)), d_a_strides_(std::move(d_a_strides)),
-        input_descs_(std::move(input_descs)) {}
+  Square(SquareSettings settings, holoflow::core::TDesc idesc, cudaStream_t stream,
+         size_t total_out, size_t ndim, DevPtr<size_t> d_out_shape, DevPtr<size_t> d_a_strides)
+      : settings_(std::move(settings)), idesc_(std::move(idesc)), stream_(stream),
+        total_out_(total_out), ndim_(ndim), d_out_shape_(std::move(d_out_shape)),
+        d_a_strides_(std::move(d_a_strides)) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
-  const std::vector<holoflow::core::TDesc> &input_descs() const { return input_descs_; }
-  void                                      update_stream(cudaStream_t stream) { stream_ = stream; }
+  const holoflow::core::TDesc &idesc() const { return idesc_; }
+  void                         update_stream(cudaStream_t stream) { stream_ = stream; }
 
 private:
-  cudaStream_t                       stream_;
-  holoflow::core::DType              dtype_;
-  size_t                             total_out_;
-  size_t                             ndim_;
-  DevPtr<size_t>                     d_out_shape_;
-  DevPtr<size_t>                     d_a_strides_;
-  std::vector<holoflow::core::TDesc> input_descs_;
+  SquareSettings        settings_;
+  holoflow::core::TDesc idesc_;
+  cudaStream_t          stream_;
+  size_t                total_out_;
+  size_t                ndim_;
+  DevPtr<size_t>        d_out_shape_;
+  DevPtr<size_t>        d_a_strides_;
 };
 
 } // namespace
@@ -124,7 +134,7 @@ holoflow::core::OpResult Square::execute(holoflow::core::SyncCtx &ctx) {
                                                 (T *)ctx.outputs[0].data(), total_out_, ndim_,     \
                                                 d_out_shape_.get(), d_a_strides_.get())
 
-  switch (dtype_) {
+  switch (idesc_.dtype) {
   case holoflow::core::DType::F32:
     LAUNCH_TYPE(float);
     break;
@@ -138,37 +148,42 @@ holoflow::core::OpResult Square::execute(holoflow::core::SyncCtx &ctx) {
     LAUNCH_TYPE(uint8_t);
     break;
   default:
+    logger()->error("[Square::execute] unsupported dtype");
     std::abort();
   }
+
+  CUDA_CHECK(cudaGetLastError());
   return holoflow::core::OpResult::Ok;
 }
 
 // -------------------------------------------------------------------------------------------------
-// AddFactory
+// SquareFactory
 // -------------------------------------------------------------------------------------------------
 
 holoflow::core::InferResult SquareFactory::infer(std::span<const holoflow::core::TDesc> inputs,
                                                  const nlohmann::json &) const {
-  check(inputs.size() == 1, "expected exactly 1 input tensors");
+  check(inputs.size() == 1, "expected exactly 1 input tensor");
   check(inputs[0].mem_loc == holoflow::core::MemLoc::Device,
         "input tensor 0 must be in device memory");
 
-  const auto &a    = inputs[0];
-  size_t      ndim = a.shape.size();
+  const auto &a = inputs[0];
+  check(a.dtype == holoflow::core::DType::U8 || a.dtype == holoflow::core::DType::U16 ||
+            a.dtype == holoflow::core::DType::F32 || a.dtype == holoflow::core::DType::CF32,
+        "unsupported input dtype");
+  check(a.num_elements() > 0, "input tensor has zero elements");
 
-  std::vector<size_t> out_shape(ndim);
-  for (size_t i = 0; i < ndim; ++i) {
-    size_t ad    = (i < ndim - a.shape.size()) ? 1 : a.shape[i - (ndim - a.shape.size())];
-    out_shape[i] = ad;
+  const size_t elem_size = holoflow::core::size_of(a.dtype);
+  for (const auto stride : a.strides) {
+    check(stride % elem_size == 0, "input strides must be a multiple of the element size");
   }
 
-  holoflow::core::TDesc o(out_shape, a.dtype, holoflow::core::MemLoc::Device);
+  holoflow::core::TDesc o(a.shape, a.dtype, holoflow::core::MemLoc::Device);
 
   return holoflow::core::InferResult{
       .input_descs   = {a},
       .output_descs  = {o},
       .in_place      = {},
-      .owned_inputs  = {false, false},
+      .owned_inputs  = {false},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,
   };
@@ -182,30 +197,25 @@ SquareFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohm
   const auto &odesc = res.output_descs[0];
   size_t      ndim  = odesc.shape.size();
 
-  size_t              total = 1;
+  const size_t        total_out = odesc.num_elements();
   std::vector<size_t> a_strides_h(ndim);
   auto                as_raw = get_elem_strides(a);
 
   for (size_t i = 0; i < ndim; ++i) {
-    total *= odesc.shape[i];
-    auto map = [&](const auto &shape, const auto &strides) {
-      int axis = int(i) - (int(ndim) - int(shape.size()));
-      return (axis < 0 || shape[axis] == 1) ? 0 : strides[axis];
-    };
-    a_strides_h[i] = map(a.shape, as_raw);
+    a_strides_h[i] = as_raw[i];
   }
 
-  auto d_shape = curaii::make_unique_device_ptr<size_t>(ndim);
-  auto d_a_str = curaii::make_unique_device_ptr<size_t>(ndim);
+  auto d_shape = curaii::make_unique_device_ptr<size_t>(ndim, ctx.stream);
+  auto d_a_str = curaii::make_unique_device_ptr<size_t>(ndim, ctx.stream);
   auto bytes   = ndim * sizeof(size_t);
   auto h2d     = cudaMemcpyHostToDevice;
 
   CUDA_CHECK(cudaMemcpyAsync(d_shape.get(), odesc.shape.data(), bytes, h2d, ctx.stream));
   CUDA_CHECK(cudaMemcpyAsync(d_a_str.get(), a_strides_h.data(), bytes, h2d, ctx.stream));
 
-  return std::make_unique<Square>(ctx.stream, inputs[0].dtype, total, ndim, std::move(d_shape),
-                                  std::move(d_a_str),
-                                  std::vector<holoflow::core::TDesc>(inputs.begin(), inputs.end()));
+  const auto settings = j.get<SquareSettings>();
+  return std::make_unique<Square>(settings, a, ctx.stream, total_out, ndim, std::move(d_shape),
+                                  std::move(d_a_str));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -216,12 +226,11 @@ SquareFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   (void)infer(input_descs, jsettings);
 
   auto *old_square = dynamic_cast<Square *>(old_task.get());
-  if (old_square == nullptr || input_descs.size() != 2 || old_square->input_descs().size() != 2) {
+  if (old_square == nullptr || input_descs.size() != 1) {
     return create(input_descs, jsettings, ctx);
   }
 
-  if (same_desc(input_descs[0], old_square->input_descs()[0]) &&
-      same_desc(input_descs[1], old_square->input_descs()[1])) {
+  if (same_desc(input_descs[0], old_square->idesc())) {
     old_square->update_stream(ctx.stream);
     return old_task;
   }
