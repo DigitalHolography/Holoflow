@@ -278,6 +278,7 @@ HolofileFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
       .owned_inputs  = {},
       .owned_outputs = {owned_output},
       .kind          = holoflow::core::TaskKind::Sync,
+      .constness     = holoflow::core::ConstInferenceState::Mutable,
   };
 }
 
