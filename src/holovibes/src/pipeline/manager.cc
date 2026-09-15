@@ -62,6 +62,7 @@
 #include "holonp/rfft.hh"
 #include "holonp/rfft2.hh"
 #include "holonp/slice.hh"
+#include "holonp/square.hh"
 #include "holonp/subtract.hh"
 #include "holonp/transpose.hh"
 #include "holonp/where.hh"
@@ -232,6 +233,7 @@ void Manager::register_components() {
   reg_sync<ExpFactory>(registry_, "Exp");
   reg_sync<WhereFactory>(registry_, "Where");
   reg_sync<ReshapeFactory>(registry_, "Reshape");
+  reg_sync<SquareFactory>(registry_, "Square");
   // clang-format on
 }
 

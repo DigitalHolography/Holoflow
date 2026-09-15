@@ -41,6 +41,7 @@
 #include "holonp/rfft.hh"
 #include "holonp/rfft2.hh"
 #include "holonp/slice.hh"
+#include "holonp/square.hh"
 #include "holonp/subtract.hh"
 #include "holonp/transpose.hh"
 #include "holonp/where.hh"
@@ -161,6 +162,7 @@ protected:
   TDesc normalize(const TDesc &X, holotask::syncs::NormalizeSettings s);
   TDesc reshape(const TDesc &X, holonp::ReshapeSettings s);
   TDesc conj(const TDesc &X, holonp::ConjSettings s);
+  TDesc square(const TDesc &X, holonp::SquareSettings s);
   // clang-format on
 };
 
