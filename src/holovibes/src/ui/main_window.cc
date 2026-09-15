@@ -2093,8 +2093,8 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.cpu_in_size  = 4096;
     s.gpu_in_size  = 1024;
     s.cpu_rec_size = 4096;
-    s.cpu_out_size = 64;
-    s.gpu_out_size = 64;
+    s.cpu_out_size = 32;
+    s.gpu_out_size = 32;
   }
 
   // Import Settings

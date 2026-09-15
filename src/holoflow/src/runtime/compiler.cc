@@ -252,6 +252,7 @@ private:
   void        setup_logging();
   ScopedTrace trace_scope(std::string name, std::string category = "pass");
   void        dump_graphviz(const std::string &filename);
+  void        dump_json(const std::string &filename, const core::GraphSpec &gspec);
   template <class TaskInterface, class Factory, class Ctx>
   std::unique_ptr<core::ITask> create_or_update_task(Factory &factory, const NodePlan &np,
                                                      const Ctx &ctx);
@@ -291,6 +292,8 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
   gspec_ = &gspec;
   prev_  = std::move(prev);
   out_   = std::make_unique<CompilerOutput>();
+
+  dump_json("graph_spec.json", gspec);
 
   // Use optional to control exactly when the trace ends without double-destruction
   std::optional<ScopedTrace> total_trace;
@@ -1345,6 +1348,20 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
   }
 
   file << "}\n";
+}
+
+void Compiler::Impl::dump_json(const std::string &filename, const core::GraphSpec &gspec) {
+  if (config_.log_dir.empty()) {
+    return;
+  }
+
+  std::ofstream file(config_.log_dir / filename);
+  if (!file.is_open()) {
+    return;
+  }
+
+  nlohmann::json j = core::to_json(gspec);
+  file << j.dump(2);
 }
 
 // -------------------------------------------------------------------------------------------------
