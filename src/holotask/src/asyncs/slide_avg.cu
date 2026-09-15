@@ -54,12 +54,12 @@ public:
   SlidingAverage(SlidingAverageSettings settings, holoflow::core::TDesc idesc,
                  holoflow::core::TDesc odesc, cudaStream_t producer_stream,
                  cudaStream_t consumer_stream, size_t nb_slots, size_t element_size,
-                 DevPtr<std::byte> &&d_buffer, DevPtr<float> &&d_running_avg)
+                 DevPtr<std::byte> &&d_buffer, DevPtr<float> &&d_running_avg, bool has_validity)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), odesc_(std::move(odesc)),
         producer_stream_(producer_stream), consumer_stream_(consumer_stream), nb_slots_(nb_slots),
         element_size_(element_size), d_buffer_(std::move(d_buffer)),
         d_running_avg_(std::move(d_running_avg)), avg_idx_(nb_slots - settings_.window_size),
-        write_idx_(0), read_idx_(nb_slots - 1) {}
+        write_idx_(0), read_idx_(nb_slots - 1), has_validity_(has_validity) {}
 
   ~SlidingAverage() override = default;
 
@@ -87,10 +87,35 @@ public:
     producer_stream_ = producer_stream;
     consumer_stream_ = consumer_stream;
   }
+  void update_validity(bool has_validity) { has_validity_ = has_validity; }
+  std::optional<holoflow::core::PointerSequence>
+  owned_input_pointer_sequence(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("SlidingAverage input port");
+    if (has_validity_)
+      return std::nullopt; // Input validity can suppress advancement independently of iteration.
+    const size_t phase  = write_idx_.load(std::memory_order_relaxed);
+    auto         result = sequence(phase);
+    if (discarded_ < settings_.discard_first)
+      result.prefix.assign(settings_.discard_first - discarded_, phase);
+    return result;
+  }
+  std::optional<holoflow::core::PointerSequence>
+  owned_output_pointer_sequence(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("SlidingAverage output port");
+    return sequence(read_idx_.load(std::memory_order_relaxed));
+  }
   const SlidingAverageSettings &settings() const { return settings_; }
   const holoflow::core::TDesc  &idesc() const { return idesc_; }
 
 private:
+  holoflow::core::PointerSequence sequence(size_t phase) const {
+    holoflow::core::PointerSequence result;
+    for (size_t i = 0; i < nb_slots_; ++i)
+      result.cycle.push_back((phase + i) % nb_slots_);
+    return result;
+  }
   size_t writer_size() const;
   size_t reader_size() const;
 
@@ -107,6 +132,7 @@ private:
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> avg_idx_;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_idx_;
+  bool has_validity_;
 };
 
 bool is_contiguous(const holoflow::core::TDesc &desc) {
@@ -335,7 +361,7 @@ SlidingAverageFactory::create(std::span<const holoflow::core::TDesc> input_descs
   // Success
   return std::make_unique<SlidingAverage>(
       settings, idesc, result.output_descs[0], ctx.producer_stream, ctx.consumer_stream, nb_slots,
-      element_size, std::move(d_buffer), std::move(d_running_avg));
+      element_size, std::move(d_buffer), std::move(d_running_avg), input_descs.size() == 2);
 }
 
 std::unique_ptr<holoflow::core::IAsyncTask>
@@ -358,6 +384,7 @@ SlidingAverageFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_ta
       idesc.mem_loc == old_slide_avg->idesc().mem_loc &&
       idesc.offset == old_slide_avg->idesc().offset) {
     old_slide_avg->update_streams(ctx.producer_stream, ctx.consumer_stream);
+    old_slide_avg->update_validity(input_descs.size() == 2);
     return old_task;
   }
 

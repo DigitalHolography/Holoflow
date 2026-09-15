@@ -109,6 +109,32 @@ public:
     return pointers;
   }
 
+  std::optional<holoflow::core::PointerSequence>
+  owned_input_pointer_sequence(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("DualReaderBatchQueue input port");
+    holoflow::core::PointerSequence result;
+    const size_t                    count = slot_count_ / input_size_;
+    const size_t phase = write_idx_.load(std::memory_order_relaxed) / input_size_;
+    for (size_t i = 0; i < count; ++i)
+      result.cycle.push_back((phase + i) % count);
+    return result;
+  }
+
+  std::optional<holoflow::core::PointerSequence>
+  owned_output_pointer_sequence(size_t index) const override {
+    if (index > 1)
+      throw std::out_of_range("DualReaderBatchQueue output port");
+    holoflow::core::PointerSequence result;
+    if (index == 1 && sequence_ < delay_)
+      result.prefix.assign(delay_ - sequence_, slot_count_); // Startup scratch domain entry.
+    const size_t phase =
+        index == 0 ? current_read_idx_ : delayed_read_idx_.load(std::memory_order_relaxed);
+    for (size_t i = 0; i < slot_count_; ++i)
+      result.cycle.push_back((phase + i) % slot_count_);
+    return result;
+  }
+
   void release_output(int index) override {
     if (index != 0 && index != 1) {
       throw std::out_of_range("DualReaderBatchQueue::release_output: invalid index");

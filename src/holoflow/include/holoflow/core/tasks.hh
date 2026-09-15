@@ -129,6 +129,14 @@ public:
   [[nodiscard]] virtual Storage &owned_output_storage(size_t index) = 0;
 };
 
+/// Exact future binding order, relative to the next successful use while the task is paused.
+/// Indices refer to owned_*_pointers(). Retries do not advance; prefix is followed by cycle
+/// forever.
+struct PointerSequence {
+  std::vector<size_t> prefix;
+  std::vector<size_t> cycle;
+};
+
 /// @brief Abstract base interface for tasks with optional tensor ownership.
 ///
 /// Provides ownership hooks for inputs and outputs. Only indices declared as
@@ -168,6 +176,12 @@ public:
   /// construction. nullopt means unknown; only owned ports may be queried. Never acquires data.
   virtual std::optional<std::vector<std::byte *>> owned_input_pointers(size_t index) const;
   virtual std::optional<std::vector<std::byte *>> owned_output_pointers(size_t index) const;
+  virtual std::optional<PointerSequence>          owned_input_pointer_sequence(size_t) const {
+    return std::nullopt;
+  }
+  virtual std::optional<PointerSequence> owned_output_pointer_sequence(size_t) const {
+    return std::nullopt;
+  }
 
   void bind_logger(std::shared_ptr<spdlog::logger> logger);
 

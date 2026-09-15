@@ -323,30 +323,10 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     run_pass("Stream Assignment", [&] { assign_streams(); });
     run_pass("Task Instantiation", [&] { instantiate_tasks(); });
     run_pass("Task Binding", [&] { bind_tasks(); });
-    run_pass("Section CUDA Graphs", [&] {
-      build_section_cuda_graphs(*out_, config_.max_section_cuda_graphs);
-      if (!config_.log_dir.empty()) {
-        nlohmann::json diagnostics = nlohmann::json::array();
-        for (const auto &sec : out_->sections) {
-          const auto    &graphs  = *out_->resources.section_cuda_graphs.at(sec.id);
-          nlohmann::json domains = nlohmann::json::array();
-          for (size_t i = 0; i < graphs.storage_ids.size(); ++i) {
-            domains.push_back({{"storage_id", graphs.storage_ids[i]},
-                               {"pointer_count", graphs.pointers[i].size()}});
-          }
-          diagnostics.push_back({{"section", sec.name},
-                                 {"enabled", graphs.enabled},
-                                 {"limit", config_.max_section_cuda_graphs},
-                                 {"domains", domains},
-                                 {"variants", graphs.executables.size()},
-                                 {"node_count", graphs.node_count},
-                                 {"construction_ms", graphs.construction_ms},
-                                 {"fallback_reason", graphs.fallback_reason}});
-        }
-        std::ofstream file(config_.log_dir / "section_cuda_graphs.json");
-        if (file)
-          file << diagnostics.dump(2);
-      }
+    run_pass("Inspect Section CUDA Graphs", [&] {
+      out_->resources.max_section_cuda_graphs    = config_.max_section_cuda_graphs;
+      out_->resources.section_cuda_graph_log_dir = config_.log_dir;
+      refresh_section_cuda_graphs(out_->graph, out_->sections, out_->resources, false);
     });
 
     if (config_.dump_dot_on_failure) {

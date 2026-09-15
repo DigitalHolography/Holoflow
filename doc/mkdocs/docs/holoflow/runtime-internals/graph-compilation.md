@@ -30,7 +30,7 @@ Compilation proceeds through thirteen passes:
 | 10 | Stream Assignment | Every section owns a CUDA stream |
 | 11 | Task Instantiation | Factories create or update one task per node |
 | 12 | Task Binding | Tasks receive storage access and logging services |
-| 13 | Section CUDA Graphs | Eligible sections receive eagerly instantiated pointer variants |
+| 13 | Inspect Section CUDA Graphs | Complete domain/eligibility diagnostics and a reachable-variant plan; executables are prepared on scheduler start |
 
 Profiling and Graphviz output observe this process but do not modify its semantic result.
 

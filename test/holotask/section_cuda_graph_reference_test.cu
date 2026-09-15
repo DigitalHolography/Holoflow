@@ -150,6 +150,18 @@ std::vector<std::vector<unsigned char>> run_reference(bool full, size_t limit) {
   const double compile_ms =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
   CUDA_CHECK(cudaMemGetInfo(&free_after, &total));
+  Scheduler  scheduler(out->graph, out->sections, out->resources);
+  const auto preparing = std::chrono::steady_clock::now();
+  scheduler.start();
+  const double start_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - preparing)
+          .count();
+  CUDA_CHECK(cudaMemGetInfo(&free_after, &total));
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+  while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  scheduler.request_stop();
+  scheduler.wait();
   size_t              enabled = 0;
   std::vector<size_t> products;
   for (const auto &sec : out->sections) {
@@ -157,7 +169,8 @@ std::vector<std::vector<unsigned char>> run_reference(bool full, size_t limit) {
     if (graphs.enabled) {
       ++enabled;
       products.push_back(graphs.executables.size());
-    } else if (limit && out->graph[sec.sync_topo.front()].spec.kind != "ReferenceSource" &&
+    } else if (limit && !sec.sync_topo.empty() &&
+               out->graph[sec.sync_topo.front()].spec.kind != "ReferenceSource" &&
                out->graph[sec.sync_topo.front()].spec.kind != "ReferenceSink") {
       ADD_FAILURE() << sec.name << ": " << graphs.fallback_reason;
     }
@@ -165,20 +178,15 @@ std::vector<std::vector<unsigned char>> run_reference(bool full, size_t limit) {
   EXPECT_EQ(enabled, limit ? 4U : 0U);
   if (full && limit) {
     std::sort(products.begin(), products.end());
-    EXPECT_EQ(products, (std::vector<size_t>{21, 792, 2376, 4032}));
+    EXPECT_EQ(products, (std::vector<size_t>{21, 264, 504, 792}));
   }
-  Scheduler scheduler(out->graph, out->sections, out->resources);
-  scheduler.start();
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
-  while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
-  scheduler.request_stop();
-  scheduler.wait();
+
   EXPECT_EQ(state->frames.size(), state->target_frames);
   if (state->arrival.size() > 16) {
     const double seconds =
         std::chrono::duration<double>(state->arrival.back() - state->arrival[16]).count();
     std::cout << "Reference full=" << full << " cap=" << limit << " compile_ms=" << compile_ms
+              << " start_ms=" << start_ms
               << " allocated_MiB=" << (double(free_before) - double(free_after)) / (1024 * 1024)
               << " steady_frames_per_second=" << double(state->arrival.size() - 17) / seconds
               << '\n';

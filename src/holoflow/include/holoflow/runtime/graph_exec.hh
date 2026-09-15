@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cuda_runtime.h>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -80,15 +81,25 @@ struct SectionCudaGraphs {
   SectionCudaGraphs(const SectionCudaGraphs &)            = delete;
   SectionCudaGraphs &operator=(const SectionCudaGraphs &) = delete;
 
-  std::vector<size_t>                                  storage_ids;
-  std::vector<std::vector<std::byte *>>                pointers;
-  std::vector<std::unordered_map<std::byte *, size_t>> pointer_indices;
-  std::vector<cudaGraphExec_t>                         executables;
-  size_t                                               variant_count = 0;
+  std::vector<size_t>                   storage_ids;
+  std::vector<std::vector<std::byte *>> pointers;
+  using PointerTuple = std::vector<uintptr_t>;
+  std::map<PointerTuple, size_t> tuple_indices;
+  std::vector<size_t>            executable_node_counts;
+  std::vector<cudaGraphExec_t>   executables;
+  size_t                         variant_count = 0;
   size_t node_count = 0; ///< Total nodes across executable variants, including conditional bodies.
   double construction_ms = 0;
   std::string fallback_reason;
   bool        enabled = false;
+
+  // The executable set is changed only while stopped; snapshots never read that mutable state.
+  mutable std::mutex    diagnostic_mutex;
+  nlohmann::json        diagnostics = nlohmann::json::object();
+  std::atomic<uint64_t> launches{0}, ordinary_iterations{0}, pointer_misses{0}, tuple_misses{0};
+  uint64_t              refresh_count = 0;
+  [[nodiscard]] nlohmann::json snapshot() const;
+  void report_miss(const std::map<size_t, std::unique_ptr<core::Storage>> &storages);
 
   void clear() noexcept;
   [[nodiscard]] std::optional<size_t>
@@ -104,6 +115,8 @@ struct ExecResouces {
   std::map<std::string, std::unique_ptr<core::IOStorageAccess>> node_storage_adapters;
   std::map<size_t, curaii::CudaStream>                          streams; ///< CUDA streams by ID.
   std::map<std::string, std::unique_ptr<core::ITask>>           tasks;   ///< Task instances by ID.
+  size_t                                                        max_section_cuda_graphs = 0;
+  std::filesystem::path                                         section_cuda_graph_log_dir;
   // Declared last so graphs are destroyed before tasks, modules, streams, and buffers.
   std::map<int, std::unique_ptr<SectionCudaGraphs>> section_cuda_graphs;
   // std::map<int, core::Tensor>                         tensors; ///< Allocated tensors by ID.
@@ -156,6 +169,7 @@ public:
   [[nodiscard]] std::map<std::string, NodeMetrics> metrics() const;
   /// Host submission timing/counts for section graph launches, not GPU execution duration.
   [[nodiscard]] std::map<std::string, NodeMetrics> section_graph_metrics() const;
+  [[nodiscard]] nlohmann::json                     section_graph_diagnostics() const;
 
   void start();
   void request_stop();

@@ -3,11 +3,13 @@
 
 #pragma once
 
-#include "holoflow/runtime/compiler.hh"
+#include "holoflow/runtime/graph_exec.hh"
 
 namespace holoflow::runtime {
 
-/// Called after task binding, with the scheduler stopped and all prior work drained.
-void build_section_cuda_graphs(CompilerOutput &output, size_t limit);
+/// Inspection at compilation; eager preparation on every start, before any worker is created.
+void refresh_section_cuda_graphs(const GraphPlan &graph, const std::vector<Section> &sections,
+                                 ExecResouces &resources, bool instantiate);
+void write_section_cuda_graph_diagnostics(const ExecResouces &resources);
 
 } // namespace holoflow::runtime

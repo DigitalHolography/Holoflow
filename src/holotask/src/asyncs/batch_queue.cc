@@ -84,13 +84,33 @@ public:
   }
 
   const holoflow::core::TDesc &idesc() const { return idesc_; }
-  size_t                       nb_slots() const { return nb_slots_; }
-  size_t                       element_size() const { return element_size_; }
-  HostPtr<std::byte>           take_host_buffer() { return std::move(h_buf_); }
-  DevPtr<std::byte>            take_device_buffer() { return std::move(d_buf_); }
-  std::byte                   *buffer() const { return buf_; }
+  std::optional<holoflow::core::PointerSequence>
+  owned_input_pointer_sequence(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("BatchQueue input port");
+    return sequence(write_idx_.load(std::memory_order_relaxed) / input_size_,
+                    nb_slots_ / input_size_);
+  }
+  std::optional<holoflow::core::PointerSequence>
+  owned_output_pointer_sequence(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("BatchQueue output port");
+    return sequence(read_idx_.load(std::memory_order_relaxed) / settings_.output_stride,
+                    nb_slots_ / settings_.output_stride);
+  }
+  size_t             nb_slots() const { return nb_slots_; }
+  size_t             element_size() const { return element_size_; }
+  HostPtr<std::byte> take_host_buffer() { return std::move(h_buf_); }
+  DevPtr<std::byte>  take_device_buffer() { return std::move(d_buf_); }
+  std::byte         *buffer() const { return buf_; }
 
 private:
+  static holoflow::core::PointerSequence sequence(size_t phase, size_t count) {
+    holoflow::core::PointerSequence result;
+    for (size_t i = 0; i < count; ++i)
+      result.cycle.push_back((phase + i) % count);
+    return result;
+  }
   size_t writer_size() const;
   size_t reader_size() const;
 

@@ -34,6 +34,7 @@
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
 #include "logger.hh"
+#include "section_cuda_graph.hh"
 
 namespace holoflow::runtime {
 namespace {
@@ -162,6 +163,13 @@ std::map<std::string, NodeMetrics> Scheduler::section_graph_metrics() const {
   return latest_section_graph_metrics_;
 }
 
+nlohmann::json Scheduler::section_graph_diagnostics() const {
+  auto result = nlohmann::json::array();
+  for (const auto &[id, graphs] : res_.section_cuda_graphs)
+    result.push_back(graphs->snapshot());
+  return result;
+}
+
 void Scheduler::start() {
   logger()->info("[Scheduler::start] Starting scheduler");
   if (running_.exchange(true)) {
@@ -170,6 +178,14 @@ void Scheduler::start() {
   }
 
   stop_.store(false);
+  try {
+    for (const auto &[id, stream] : res_.streams)
+      CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+    refresh_section_cuda_graphs(graph_, sections_, res_, true);
+  } catch (...) {
+    running_.store(false);
+    throw;
+  }
   reset_metrics_state();
   start_metrics_thread();
   threads_.reserve(sections_.size());
@@ -205,6 +221,15 @@ void Scheduler::wait() {
   logger()->info("[Scheduler::wait] Scheduler stopped");
   running_.store(false);
   stop_metrics_thread();
+  write_section_cuda_graph_diagnostics(res_);
+  for (const auto &[id, graphs] : res_.section_cuda_graphs) {
+    const auto report = graphs->snapshot();
+    logger()->info("[CUDA graphs] {} shutdown: {} launches, {} ordinary iterations, {} pointer "
+                   "misses, {} tuple misses",
+                   report["section"].get<std::string>(), report["launches"].dump(),
+                   report["ordinary_iterations"].dump(), report["pointer_misses"].dump(),
+                   report["tuple_misses"].dump());
+  }
   // TODO: Is this really the best place to reset running_?
 }
 
@@ -395,7 +420,8 @@ void Scheduler::run_section(int section_id) {
             const auto started = std::chrono::steady_clock::now();
             CUDA_CHECK(cudaGraphLaunch(graphs.executables.at(*variant), stream));
             graph_submitted = true;
-            auto &acc       = graph_metric_accumulators_.at(section_id);
+            graphs.launches.fetch_add(1, std::memory_order_relaxed);
+            auto &acc = graph_metric_accumulators_.at(section_id);
             acc.duration_ns.fetch_add(
                 static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
                                           std::chrono::steady_clock::now() - started)
@@ -403,12 +429,12 @@ void Scheduler::run_section(int section_id) {
                 std::memory_order_relaxed);
             acc.run_count.fetch_add(1, std::memory_order_relaxed);
           } else {
-            graphs.enabled         = false;
-            graphs.fallback_reason = "Runtime binding is outside the declared pointer set";
-            logger()->warn("[CUDA graphs] {}: {}", sec.name, graphs.fallback_reason);
+            graphs.report_miss(res_.storages);
           }
         }
-        if (!graph_submitted)
+        if (!graph_submitted) {
+          if (graph_it != res_.section_cuda_graphs.end())
+            graph_it->second->ordinary_iterations.fetch_add(1, std::memory_order_relaxed);
           for (auto v : sec.sync_topo) {
             try {
               if (run_sync(v) == core::OpResult::Ok) {
@@ -420,7 +446,7 @@ void Scheduler::run_section(int section_id) {
             if (stop_.load())
               break;
           }
-
+        }
         // A compiler-ordered synchronizing producer runs first below, so its later barrier covers
         // both these kernels and its own CUDA launch while preserving safe publication by ordinary
         // producers. Sections without that capability retain the explicit scheduler barrier.
