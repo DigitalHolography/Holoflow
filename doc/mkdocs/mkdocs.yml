@@ -33,6 +33,7 @@ nav:
       - Runtime Internals:
         - holoflow/runtime-internals/index.md
         - Graph Compilation: holoflow/runtime-internals/graph-compilation.md
+        - Section-level CUDA Graphs: holoflow/runtime-internals/section-cuda-graphs.md
       - API Reference: holoflow/reference/index.md
     - Curaii: curaii/index.md
     - Holofile: holofile/index.md
