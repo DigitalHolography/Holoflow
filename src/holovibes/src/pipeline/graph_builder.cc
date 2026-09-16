@@ -18,6 +18,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <numbers>
 #include <optional>
 #include <spdlog/fmt/ranges.h>
 #include <stdexcept>
@@ -85,6 +86,7 @@ private:
   TDesc build_zernike_correction(const TDesc &FH, const TDesc &slopes, const ShackHartmannGeometry &geometry, bool is_last_pass, AberrationCorrectionState &state);
   void build_zernike_outputs(const AberrationCorrectionState &state, const ShackHartmannGeometry &geometry);
   TDesc build_spatial_propagation(const TDesc &FH);
+  TDesc fresnel_diffraction_numpy(const TDesc &FH);
   TDesc build_spatial_filter(const TDesc &FH_z);
   void build_xy_view(const TDesc &FH_z);
   void build_3d_cuts(const TDesc &FH_z);
@@ -621,6 +623,9 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_propagation(const TD
   using Filter  = holotask::syncs::AngularSpectrumSettings::Filter;
 
   if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
+    if (s_.fresnel_use_numpy) {
+      return fresnel_diffraction_numpy(FH);
+    }
     return fresnel_diffraction(FH, {.lambda           = s_.spacial_lambda,
                                     .dx               = s_.spacial_pixel_size,
                                     .dy               = s_.spacial_pixel_size,
@@ -656,6 +661,51 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_propagation(const TD
   }
 
   HOLOVIBES_UNREACHABLE();
+}
+
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::fresnel_diffraction_numpy(const TDesc &FH) {
+  if (FH.shape.size() < 2) {
+    throw std::invalid_argument("NumPy Fresnel diffraction requires at least two dimensions");
+  }
+  if (s_.spacial_lambda <= 0.0f || s_.spacial_z == 0.0f || s_.spacial_pixel_size <= 0.0f) {
+    throw std::invalid_argument("NumPy Fresnel diffraction requires valid optical parameters");
+  }
+
+  const size_t height = FH.shape[FH.shape.size() - 2];
+  const size_t width  = FH.shape[FH.shape.size() - 1];
+  const size_t size   = std::max(height, width);
+  const auto   offset_x = static_cast<double>((size - width) / 2);
+  const auto   offset_y = static_cast<double>((size - height) / 2);
+  const auto   half     = static_cast<double>(size) / 2.0;
+  const auto   dx       = static_cast<double>(s_.spacial_pixel_size);
+
+  const auto coordinate = [&](size_t extent, double offset) {
+    const double start = (offset - half) * dx;
+    const double stop  = start + (static_cast<double>(extent) - 0.5) * dx;
+    return arange({.start  = start,
+                   .stop   = stop,
+                   .step   = dx,
+                   .dtype  = holoflow::core::DType::F32,
+                   .device = holoflow::core::MemLoc::Device});
+  };
+
+  const auto x = coordinate(width, offset_x);
+  const auto y = coordinate(height, offset_y);
+  const std::array<TDesc, 2> axes{x, y};
+  const auto                   grids = meshgrid(axes, {.indexing = holonp::MeshgridIndexing::XY});
+  const auto                   radius_squared = add(square(grids[0], {}), square(grids[1], {}), {});
+
+  const auto phase_scale = asarray({.value  = static_cast<double>(std::numbers::pi_v<float>) /
+                                             (static_cast<double>(s_.spacial_lambda) * s_.spacial_z),
+                                    .dtype  = holoflow::core::DType::F32,
+                                    .device = holoflow::core::MemLoc::Device});
+  const auto imaginary = asarray({.value  = 0.0,
+                                  .imag   = 1.0,
+                                  .dtype  = holoflow::core::DType::CF32,
+                                  .device = holoflow::core::MemLoc::Device});
+  const auto lens = exp(multiply(multiply(radius_squared, phase_scale, {}), imaginary, {}), {});
+  const auto propagated = fft2(multiply(FH, lens, {}), {});
+  return abs(propagated, {});
 }
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_filter(const TDesc &FH_z) {

@@ -97,6 +97,7 @@ protected:
   TDesc zeros(holonp::ZerosSettings s);
   TDesc asarray(holonp::AsArraySettings s);
   TDesc arange(holonp::ArangeSettings s);
+  std::vector<TDesc> meshgrid(std::span<const TDesc> Xs, holonp::MeshgridSettings s);
   TDesc ascontiguousarray(const TDesc &X, holonp::AsContiguousArraySettings s);
   TDesc copy(const TDesc &X, holonp::CopySettings s);
   TDesc memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);

@@ -137,6 +137,11 @@ GraphBuilderTasks::TDesc GraphBuilderTasks::multiply(const TDesc &A, const TDesc
           .at(0));
 }
 
+std::vector<GraphBuilderTasks::TDesc>
+GraphBuilderTasks::meshgrid(std::span<const TDesc> Xs, holonp::MeshgridSettings s) {
+  return make_nary_sync_node("meshgrid", "Meshgrid", "Meshgrid", Xs, s);
+}
+
 GraphBuilderTasks::TDesc
 GraphBuilderTasks::cross_correlation2(const TDesc &Moving, const TDesc &Reference,
                                       holotask::syncs::CrossCorrelation2Settings s) {

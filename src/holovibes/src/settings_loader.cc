@@ -141,6 +141,7 @@ void write_image_rendering(json &j, const Settings &s) {
   rendering["propagation_distance"] = s.spacial_z;
 
   rendering["space_transformation"] = to_legacy_space_transform(s.spacial_method);
+  rendering["fresnel_use_numpy"]     = s.fresnel_use_numpy;
   rendering["angular_spectrum"]["padding"]["enabled"] = s.asp_padding_enabled;
   rendering["angular_spectrum"]["padding"]["width"]   = s.asp_padded_width;
   rendering["angular_spectrum"]["padding"]["height"]  = s.asp_padded_height;
@@ -212,6 +213,7 @@ void read_image_rendering(Settings &s, const json &rendering) {
   s.spacial_method = from_legacy_space_transform(val(rendering, "space_transformation", "NONE"));
   s.spacial_lambda = val(rendering, "lambda", s.spacial_lambda);
   s.spacial_z      = val(rendering, "propagation_distance", s.spacial_z);
+  s.fresnel_use_numpy = val(rendering, "fresnel_use_numpy", s.fresnel_use_numpy);
 
   const auto &angular_spectrum = child_or_empty(rendering, "angular_spectrum");
   const auto &padding          = child_or_empty(angular_spectrum, "padding");
