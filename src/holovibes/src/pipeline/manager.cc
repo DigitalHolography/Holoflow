@@ -623,18 +623,15 @@ void Manager::build_and_run() {
   if (compiler_output_) {
     using namespace std::chrono;
 
-    auto t    = floor<seconds>(system_clock::now());
-    auto date = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
-
     // Write original GraphSpec
     const std::filesystem::path log_dir =
         QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString() + "/" +
         QCoreApplication::applicationVersion().toStdString() + "/logs";
 
-    const auto dot_path = log_dir / std::format("compiled_{}.dot", date);
+    const auto dot_path = log_dir / "compiled.dot";
 
-    std::ofstream(dot_path)
-        << holoflow::runtime::to_dot(*compiler_output_, graph_compiled_dump_prefs_, "compiled_pipeline");
+    std::ofstream(dot_path) << holoflow::runtime::to_dot(
+        *compiler_output_, graph_compiled_dump_prefs_, "compiled_pipeline");
   }
 
   run_compiled_graph();
@@ -669,14 +666,9 @@ void Manager::run_compiled_graph() {
 }
 
 void Manager::dump_graph_logs(const std::filesystem::path &log_dir) {
-  using namespace std::chrono;
-
-  auto t    = floor<seconds>(system_clock::now());
-  auto date = std::format("{:%Y-%m-%d_%H-%M-%S}", t);
-
   // Write original GraphSpec
-  const auto json_path = log_dir / std::format("pipeline_{}.json", date);
-  const auto dot_path  = log_dir / std::format("pipeline_{}.dot", date);
+  const auto json_path = log_dir / "pipeline.json";
+  const auto dot_path  = log_dir / "pipeline.dot";
 
   std::ofstream(dot_path) << holoflow::core::to_dot(spec_, graph_spec_dump_prefs_);
   std::ofstream(json_path) << holoflow::core::to_json(spec_).dump(2);
