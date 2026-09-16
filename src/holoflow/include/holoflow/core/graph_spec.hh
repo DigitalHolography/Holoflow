@@ -61,9 +61,4 @@ nlohmann::json to_json(const GraphSpec &g, const GraphSpecWriteOptions &opts = {
 /// @return   Deserialized graph specification.
 GraphSpec from_json(const nlohmann::json &j);
 
-/// Serialize a graph specification to a dot format string.
-/// @param g     Graph specification to serialize.
-/// @return      Dot format representation of the graph specification.
-std::string to_dot(const GraphSpec &g);
-
 } // namespace holoflow::core
