@@ -152,6 +152,10 @@ def _op_arange(inputs, settings):
 
 def _op_asarray(inputs, settings):
     value = float(settings["value"])
+    imag = float(settings.get("imag", 0.0))
+    dtype_name = settings.get("dtype", "F32")
+    if dtype_name == "CF32":
+        return [np.array([value + 1j * imag], dtype=np.complex64)]
     return [np.array([value], dtype=np.float32)]
 
 

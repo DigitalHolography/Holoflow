@@ -16,6 +16,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <cuComplex.h>
 #include <filesystem>
 #include <vector>
 
@@ -56,6 +57,16 @@ static void expect_near_oracle(const std::vector<std::byte> &actual,
   EXPECT_NEAR(a[0], e[0], tol);
 }
 
+static void expect_complex_near_oracle(const std::vector<std::byte> &actual,
+                                       const std::vector<std::byte> &expected, float rtol = 1e-5f) {
+  ASSERT_EQ(actual.size(), expected.size());
+  ASSERT_EQ(actual.size(), sizeof(cuFloatComplex));
+  const auto *a = reinterpret_cast<const cuFloatComplex *>(actual.data());
+  const auto *e = reinterpret_cast<const cuFloatComplex *>(expected.data());
+  EXPECT_NEAR(cuCrealf(a[0]), cuCrealf(e[0]), rtol * std::max(std::abs(cuCrealf(e[0])), 1.0f));
+  EXPECT_NEAR(cuCimagf(a[0]), cuCimagf(e[0]), rtol * std::max(std::abs(cuCimagf(e[0])), 1.0f));
+}
+
 static void expect_matches_oracle(const std::vector<std::byte> &actual,
                                   const nlohmann::json         &settings) {
   holonp_test::OracleInput oi;
@@ -65,7 +76,11 @@ static void expect_matches_oracle(const std::vector<std::byte> &actual,
 
   const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
   ASSERT_EQ(oracle.output_bytes.size(), 1u);
-  expect_near_oracle(actual, oracle.output_bytes[0]);
+  if (settings.value("dtype", "F32") == "CF32") {
+    expect_complex_near_oracle(actual, oracle.output_bytes[0]);
+  } else {
+    expect_near_oracle(actual, oracle.output_bytes[0]);
+  }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -99,6 +114,16 @@ TEST_F(AsArrayInferTest, ExplicitDevice) {
 
   EXPECT_EQ(r.output_descs[0].shape, (std::vector<size_t>{1}));
   EXPECT_EQ(r.output_descs[0].dtype, DType::F32);
+  EXPECT_EQ(r.output_descs[0].mem_loc, MemLoc::Device);
+}
+
+TEST_F(AsArrayInferTest, ExplicitComplexDtype) {
+  auto j       = make_jsettings(3.0);
+  j["dtype"]   = "CF32";
+  j["imag"]    = -1.25;
+  const auto r = factory.infer({}, j);
+
+  EXPECT_EQ(r.output_descs[0].dtype, DType::CF32);
   EXPECT_EQ(r.output_descs[0].mem_loc, MemLoc::Device);
 }
 
@@ -142,6 +167,16 @@ TEST_F(AsArrayExecuteTest, PositiveValue) {
 
 TEST_F(AsArrayExecuteTest, NegativeFractionalValue) {
   const auto j   = make_jsettings(-0.125);
+  const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
+
+  ASSERT_EQ(run.output_bytes.size(), 1u);
+  expect_matches_oracle(run.output_bytes[0], j);
+}
+
+TEST_F(AsArrayExecuteTest, ComplexValue) {
+  auto j         = make_jsettings(1.5);
+  j["imag"]      = -2.25;
+  j["dtype"]     = "CF32";
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
