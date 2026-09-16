@@ -355,7 +355,7 @@ SectionPlan inspect_section(GraphContext &out, const Section &sec,
         for (auto ptr : *pointers) {
           if (!ptr || !unique.insert(ptr).second)
             throw std::invalid_argument("Null or duplicate pointer");
-          logger()->debug("[CUDA graphs] {} storage {} address {}", sec.name, sid,
+          logger()->trace("[CUDA graphs] {} storage {} address {}", sec.name, sid,
                           static_cast<void *>(ptr));
         }
         plan.pointers.push_back(std::move(*pointers));
