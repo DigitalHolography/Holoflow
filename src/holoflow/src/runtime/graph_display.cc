@@ -347,11 +347,13 @@ static void write_compiled_edges(std::ostringstream                    &ss,
         const bool  contains_source =
             g[u].infer.kind == core::TaskKind::Async
                 ? contains_vertex(section.async_cons, u)
-                : contains_vertex(section.sync_topo, u);
+                : contains_vertex(section.const_sync_topo, u) ||
+                      contains_vertex(section.sync_topo, u);
         const bool contains_target =
             g[v].infer.kind == core::TaskKind::Async
                 ? contains_vertex(section.async_prod, v)
-                : contains_vertex(section.sync_topo, v);
+                : contains_vertex(section.const_sync_topo, v) ||
+                      contains_vertex(section.sync_topo, v);
         if (contains_source && contains_target) {
           reverse_edge = section_positions[section_idx] % 2 != 0;
           break;
@@ -511,17 +513,21 @@ static void write_compiled_sections(std::ostringstream                  &ss,
                         "label=\"\", style=invis, group=section_layout_left];\n",
                         section_idx);
       append_visual_ids(sec.async_cons, "_out");
+      append_visual_ids(sec.const_sync_topo, "");
       append_visual_ids(sec.sync_topo, "");
       append_visual_ids(sec.async_prod, "_in");
     } else if (snake_layout && section_positions[section_idx] % 2 != 0) {
       append_visual_ids_reversed(sec.async_prod, "_in");
       append_visual_ids_reversed(sec.sync_topo, "");
+      append_visual_ids_reversed(sec.const_sync_topo, "");
       append_visual_ids_reversed(sec.async_cons, "_out");
     } else if (snake_layout) {
       append_visual_ids(sec.async_cons, "_out");
+      append_visual_ids(sec.const_sync_topo, "");
       append_visual_ids(sec.sync_topo, "");
       append_visual_ids(sec.async_prod, "_in");
     } else {
+      append_visual_ids(sec.const_sync_topo, "");
       append_visual_ids(sec.sync_topo, "");
       append_visual_ids(sec.async_prod, "_in");
       append_visual_ids(sec.async_cons, "_out");

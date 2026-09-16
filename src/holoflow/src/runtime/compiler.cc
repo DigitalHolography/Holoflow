@@ -14,6 +14,7 @@
 
 #include "holoflow/runtime/compiler.hh"
 
+#include <algorithm>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/graph/topological_sort.hpp>
@@ -260,6 +261,7 @@ private:
   void validate_spec();
   void build_graph_structure();
   void run_type_inference();
+  void deduce_const_tasks();
   void assign_tensor_ids();
   void assign_storage_ids();
   void verify_buffer_consistency();
@@ -300,6 +302,7 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     run_pass("Validate Spec", [&] { validate_spec(); });
     run_pass("Build Graph Plan", [&] { build_graph_structure(); });
     run_pass("Type Inference", [&] { run_type_inference(); });
+    run_pass("Const Deduction", [&] { deduce_const_tasks(); });
 
     run_pass("Tensor IDs", [&] { assign_tensor_ids(); });
     run_pass("Storage Mapping", [&] { assign_storage_ids(); });
@@ -483,6 +486,55 @@ void Compiler::Impl::run_type_inference() {
       }
       edge_plan.desc = node.infer.output_descs[edge_plan.spec.out_idx];
     }
+  }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Pass: Deduce constant tasks
+// -------------------------------------------------------------------------------------------------
+void Compiler::Impl::deduce_const_tasks() {
+  auto &g = out_->graph;
+
+  std::vector<GraphPlan::vertex_descriptor> topo;
+  boost::topological_sort(g, std::back_inserter(topo));
+
+  for (auto v : std::views::reverse(topo)) {
+    auto       &node      = g[v];
+    const auto  in_degree = boost::in_degree(v, g);
+    const auto  predecessor_const = [&] {
+      return std::ranges::all_of(
+          boost::make_iterator_range(boost::in_edges(v, g)), [&](auto edge) {
+            return g[boost::source(edge, g)].infer.constness == core::ConstInferenceState::Constant;
+          });
+    };
+
+    if (node.infer.kind == core::TaskKind::Async) {
+      node.infer.constness = core::ConstInferenceState::Mutable;
+      continue;
+    }
+
+    // A task with no outputs is a sink/side-effect. Even when its inputs are
+    // constant, executing it may still be required on every iteration.
+    if (node.infer.output_descs.empty()) {
+      node.infer.constness = core::ConstInferenceState::Mutable;
+      continue;
+    }
+
+    if (node.infer.constness == core::ConstInferenceState::Constant) {
+      if (in_degree != 0 && !predecessor_const()) {
+        throw CompilerException(std::format(
+            "Node '{}' is marked constant but has a non-constant predecessor", node.spec.name));
+      }
+      continue;
+    }
+
+    if (node.infer.constness == core::ConstInferenceState::Mutable) {
+      continue;
+    }
+
+    node.infer.constness = (in_degree != 0 && predecessor_const())
+                               ? core::ConstInferenceState::Constant
+                               : core::ConstInferenceState::Mutable;
   }
 }
 
@@ -874,7 +926,11 @@ void Compiler::Impl::partition_sections() {
     auto &np = g[v];
     if (np.infer.kind == core::TaskKind::Sync) {
       size_t sec_id = get_section_id(v);
-      out_->sections[sec_id].sync_topo.push_back(v);
+      if (np.infer.constness == core::ConstInferenceState::Constant) {
+        out_->sections[sec_id].const_sync_topo.push_back(v);
+      } else {
+        out_->sections[sec_id].sync_topo.push_back(v);
+      }
       node_to_section_map_[np.spec.name] = sec_id;
     }
   }
