@@ -13,9 +13,10 @@
 # limitations under the License.
 
 add_executable(holoflow_core_test
-    unit/core/core_additional_test.cc
-    unit/core/core_test.cc
-    #event_router_test.cc
+    unit/core/graph_spec_test.cc
+    unit/core/tensor_test.cc
+    unit/core/task_test.cc
+    unit/core/registry_test.cc
 )
 
 target_include_directories(holoflow_core_test
