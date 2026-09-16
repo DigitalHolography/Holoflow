@@ -524,6 +524,13 @@ public:
   explicit ShortTimeFresnelDiffraction(std::unique_ptr<ShortTimeFresnelDiffractionImpl> impl);
   ~ShortTimeFresnelDiffraction() override;
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)enqueue(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
   const holoflow::core::TDesc               &idesc() const;

@@ -195,7 +195,7 @@ void Manager::register_components() {
   reg_sync<syncs::Unfold2DFactory>(registry_, "Unfold2D");
   reg_sync<syncs::Wrap2PiFactory>(registry_, "Wrap2Pi");
   reg_sync<syncs::ShackHartmannSlopesFactory>(registry_, "ShackHartmannSlopes");
-  reg_sync<syncs::ZernikeDefocusZPropFactory>(registry_, "ZernikeDefocusZProp");
+  reg_async<syncs::ZernikeDefocusZPropFactory>(registry_, "ZernikeDefocusZProp");
   reg_sync<syncs::ZernikeFromSlopesFactory>(registry_, "ZernikeFromSlopes");
   reg_sync<syncs::ZernikePhaseFactory>(registry_, "ZernikePhase");
   reg_sync<ArangeFactory>(registry_, "Arange");

@@ -170,6 +170,8 @@ inline std::vector<size_t> ensure_strides(const holoflow::core::TDesc &desc) {
 
 class Slice : public holoflow::core::ISyncTask {
 public:
+  bool                     supports_cuda_graph() const noexcept override { return true; }
+  void                     record_cuda_graph(holoflow::core::CudaGraphCtx &) override {}
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 };
 

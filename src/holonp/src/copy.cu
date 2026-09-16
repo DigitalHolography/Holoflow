@@ -77,6 +77,13 @@ public:
         d_src_strides_(std::move(d_src_strides)), d_src_shape_(std::move(d_src_shape)),
         idesc_(std::move(idesc)) {}
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
   const holoflow::core::TDesc &idesc() const { return idesc_; }

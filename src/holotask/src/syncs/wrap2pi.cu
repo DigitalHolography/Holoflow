@@ -80,6 +80,13 @@ public:
   explicit Wrap2Pi(Wrap2PiSettings settings, cudaStream_t stream)
       : settings_(std::move(settings)), stream_(stream) {}
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     auto *idata = reinterpret_cast<const float *>(ctx.inputs[0].data());
     auto *odata = reinterpret_cast<float *>(ctx.outputs[0].data());

@@ -108,6 +108,50 @@ TEST(CausalSlidingAverageTest, EmitsPartialThenFullAveragesForArbitraryRank) {
   }
 }
 
+TEST(CausalSlidingAverageCudaGraph, ReplayAdvancesDeviceSampleCount) {
+  const TDesc                                         input_desc({1}, DType::F32, MemLoc::Device);
+  const holotask::syncs::CausalSlidingAverageSettings settings{3};
+  holotask::syncs::CausalSlidingAverageFactory        factory;
+  const std::array                                    input_descs{input_desc};
+  const auto infer = factory.infer(input_descs, nlohmann::json(settings));
+
+  curaii::CudaStream stream;
+  auto               task = factory.create(input_descs, nlohmann::json(settings), {stream.get()});
+  ASSERT_TRUE(task->supports_cuda_graph());
+
+  auto    input  = curaii::make_unique_device_ptr<float>(1);
+  auto    output = curaii::make_unique_device_ptr<float>(1);
+  Storage input_storage{MemLoc::Device, sizeof(float), reinterpret_cast<std::byte *>(input.get())};
+  Storage output_storage{MemLoc::Device, sizeof(float),
+                         reinterpret_cast<std::byte *>(output.get())};
+  std::array input_views{TView{input_desc, &input_storage}};
+  std::array output_views{TView{infer.output_descs[0], &output_storage}};
+
+  cudaGraph_t graph = nullptr;
+  CUDA_CHECK(cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeThreadLocal));
+  holoflow::core::CudaGraphCtx recording{input_views, output_views, stream.get(), nullptr};
+  task->record_cuda_graph(recording);
+  CUDA_CHECK(cudaStreamEndCapture(stream.get(), &graph));
+  cudaGraphExec_t executable = nullptr;
+  CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+
+  const std::array values{2.0f, 4.0f, 8.0f, 10.0f};
+  const std::array expected{2.0f, 3.0f, 14.0f / 3.0f, 22.0f / 3.0f};
+  for (size_t i = 0; i < values.size(); ++i) {
+    CUDA_CHECK(cudaMemcpyAsync(input.get(), &values[i], sizeof(float), cudaMemcpyHostToDevice,
+                               stream.get()));
+    CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
+    float actual = 0.0f;
+    CUDA_CHECK(cudaMemcpyAsync(&actual, output.get(), sizeof(float), cudaMemcpyDeviceToHost,
+                               stream.get()));
+    CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+    EXPECT_NEAR(actual, expected[i], 1e-6f);
+  }
+
+  CUDA_CHECK(cudaGraphExecDestroy(executable));
+  CUDA_CHECK(cudaGraphDestroy(graph));
+}
+
 TEST(DualReaderBatchQueueTest, EmitsCurrentDelayedAndValidityAtOneFrameCadence) {
   const TDesc                                          input_desc({2}, DType::F32, MemLoc::Host);
   const holotask::asyncs::DualReaderBatchQueueSettings settings{

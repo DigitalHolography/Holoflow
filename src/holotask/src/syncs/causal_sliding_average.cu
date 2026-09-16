@@ -40,13 +40,17 @@ bool is_contiguous(const holoflow::core::TDesc &desc) {
 }
 
 __global__ void causal_sliding_average_kernel(const float *input, float *output, float *history,
-                                              float *running_sum, size_t history_offset,
-                                              size_t element_count, float divisor) {
+                                              float *running_sum, const size_t *sample_count,
+                                              size_t window_size, size_t element_count) {
   const size_t idx = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (idx >= element_count) {
     return;
   }
 
+  const size_t count          = *sample_count;
+  const size_t history_offset = (count % window_size) * element_count;
+  const size_t sample_total   = count + size_t{1};
+  const float divisor = static_cast<float>(sample_total < window_size ? sample_total : window_size);
   const size_t history_idx = history_offset + idx;
   const float  old_value   = history[history_idx];
   const float  new_value   = input[idx];
@@ -56,6 +60,12 @@ __global__ void causal_sliding_average_kernel(const float *input, float *output,
   output[idx]              = new_sum / divisor;
 }
 
+__global__ void increment_sample_count_kernel(size_t *sample_count) {
+  if (blockIdx.x == 0 && threadIdx.x == 0) {
+    ++*sample_count;
+  }
+}
+
 class CausalSlidingAverage final : public holoflow::core::ISyncTask {
 public:
   CausalSlidingAverage(CausalSlidingAverageSettings settings, holoflow::core::TDesc desc,
@@ -63,38 +73,46 @@ public:
       : settings_(settings), desc_(std::move(desc)), stream_(stream),
         history_(
             curaii::make_unique_device_ptr<float>(settings_.window_size * desc_.num_elements())),
-        running_sum_(curaii::make_unique_device_ptr<float>(desc_.num_elements())) {
+        running_sum_(curaii::make_unique_device_ptr<float>(desc_.num_elements())),
+        sample_count_(curaii::make_unique_device_ptr<size_t>(1)) {
     CUDA_CHECK(cudaMemsetAsync(
         history_.get(), 0, settings_.window_size * desc_.num_elements() * sizeof(float), stream_));
     CUDA_CHECK(
         cudaMemsetAsync(running_sum_.get(), 0, desc_.num_elements() * sizeof(float), stream_));
+    CUDA_CHECK(cudaMemsetAsync(sample_count_.get(), 0, sizeof(size_t), stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_));
   }
 
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)enqueue(execution);
+  }
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override { return enqueue(ctx); }
+
+private:
+  holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx) {
     const size_t element_count = desc_.num_elements();
-    const size_t slot          = sample_count_ % settings_.window_size;
-    const auto   divisor =
-        static_cast<float>(std::min(sample_count_ + size_t{1}, settings_.window_size));
 
     constexpr int block_size = 256;
     const auto grid_size = static_cast<unsigned int>((element_count + block_size - 1) / block_size);
     causal_sliding_average_kernel<<<grid_size, block_size, 0, stream_>>>(
         reinterpret_cast<const float *>(ctx.inputs[0].data()),
         reinterpret_cast<float *>(ctx.outputs[0].data()), history_.get(), running_sum_.get(),
-        slot * element_count, element_count, divisor);
+        sample_count_.get(), settings_.window_size, element_count);
+    increment_sample_count_kernel<<<1, 1, 0, stream_>>>(sample_count_.get());
     CUDA_CHECK(cudaGetLastError());
-    ++sample_count_;
     return holoflow::core::OpResult::Ok;
   }
 
-private:
-  CausalSlidingAverageSettings     settings_;
-  holoflow::core::TDesc            desc_;
-  cudaStream_t                     stream_;
-  curaii::unique_device_ptr<float> history_;
-  curaii::unique_device_ptr<float> running_sum_;
-  size_t                           sample_count_ = 0;
+  CausalSlidingAverageSettings      settings_;
+  holoflow::core::TDesc             desc_;
+  cudaStream_t                      stream_;
+  curaii::unique_device_ptr<float>  history_;
+  curaii::unique_device_ptr<float>  running_sum_;
+  curaii::unique_device_ptr<size_t> sample_count_;
 };
 
 } // namespace

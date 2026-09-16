@@ -226,6 +226,15 @@ public:
       : settings_(std::move(settings)), kernel_settings_(make_kernel_settings(settings_)),
         stream_(stream) {}
 
+  bool supports_cuda_graph() const noexcept override {
+    return settings_.output == holoflow::core::MemLoc::Device;
+  }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     const auto *in_data  = reinterpret_cast<const float *>(ctx.inputs[0].data());
     auto       *out_data = reinterpret_cast<float *>(ctx.outputs[0].data());

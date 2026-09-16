@@ -90,6 +90,8 @@ class Transpose : public holoflow::core::ISyncTask {
 public:
   explicit Transpose(cudaStream_t stream) : stream_(stream) {}
 
+  bool                     supports_cuda_graph() const noexcept override { return true; }
+  void                     record_cuda_graph(holoflow::core::CudaGraphCtx &) override {}
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
   void                     update_stream(cudaStream_t stream) { stream_ = stream; }
 

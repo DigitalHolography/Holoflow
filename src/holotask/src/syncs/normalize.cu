@@ -377,6 +377,13 @@ public:
         d_red_axes_(std::move(red_axes)), d_red_strides_(std::move(red_strides)),
         d_group_mins_(std::move(group_mins)), d_group_maxs_(std::move(group_maxs)) {}
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)enqueue(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
   const NormalizeSettings     &settings() const { return settings_; }
