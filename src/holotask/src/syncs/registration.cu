@@ -165,12 +165,53 @@ __device__ bool in_ellipse(int x, int y, int width, int height, float radius) {
   return (dxs * dxs + dys * dys) <= r2;
 }
 
-__global__ void f32_sub_mean_kernel(float *odata, const float *idata, int count, float mean) {
-  int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= count) {
+__global__ void f32_preprocess_kernel(float *odata, const float *idata, int width, int height,
+                                      float mean, float radius) {
+  const int x = blockIdx.x * blockDim.x + threadIdx.x;
+  const int y = blockIdx.y * blockDim.y + threadIdx.y;
+  if (x >= width || y >= height) {
     return;
   }
-  odata[idx] = idata[idx] - mean;
+
+  const float cx     = 0.5f * static_cast<float>(width - 1);
+  const float cy     = 0.5f * static_cast<float>(height - 1);
+  const float minDim = static_cast<float>(min(width, height));
+  const float r      = radius * 0.5f * minDim;
+  const float sx     = minDim / static_cast<float>(width);
+  const float sy     = minDim / static_cast<float>(height);
+  const float dx     = (static_cast<float>(x) - cx) * sx;
+  const float dy     = (static_cast<float>(y) - cy) * sy;
+  const size_t idx   = static_cast<size_t>(y) * static_cast<size_t>(width) +
+                     static_cast<size_t>(x);
+
+  if (r <= 0.0f) {
+    odata[idx] = 0.0f;
+    return;
+  }
+
+  const float d2 = (dx * dx + dy * dy) / (r * r);
+
+  if (d2 > 1.0f) {
+    odata[idx] = 0.0f;
+    return;
+  }
+
+  const float taper = 0.5f * (1.0f + cosf(CUDART_PI_F * sqrtf(d2)));
+  odata[idx]        = (idata[idx] - mean) * taper;
+}
+
+__global__ void f32_ema_kernel(float *state, const float *sample, int count, float sample_weight) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < count) {
+    state[idx] = (1.0f - sample_weight) * state[idx] + sample_weight * sample[idx];
+  }
+}
+
+__global__ void f32_add_kernel(float *data, int count, float value) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < count) {
+    data[idx] += value;
+  }
 }
 
 __global__ void ellipse_mask_kernel(uint8_t *oroi, int width, int height, float radius) {
@@ -201,19 +242,6 @@ __global__ void limit_xcorr_shift_kernel(float *xcorr, int width, int height,
   }
 }
 
-__global__ void peak_display_kernel(float *output, int width, int height, float shift_x,
-                                    float shift_y) {
-  if (blockIdx.x != 0 || threadIdx.x != 0) {
-    return;
-  }
-
-  int x = static_cast<int>(roundf(shift_x));
-  int y = static_cast<int>(roundf(shift_y));
-  x     = (x % width + width) % width;
-  y     = (y % height + height) % height;
-  output[static_cast<size_t>(y) * width + static_cast<size_t>(x)] = 1.0f;
-}
-
 __global__ void extract_3x3_kernel(float *d_output, const float *d_input, int peak_x, int peak_y,
                                    int w, int h) {
   int idx = threadIdx.y * 3 + threadIdx.x;
@@ -240,7 +268,8 @@ public:
                holoflow::core::TDesc output_desc, cudaStream_t stream,
                DevPtr<float> d_mean_centered, bool ref_initialized, size_t freq_size,
                curaii::CufftHandle r2c_handle, curaii::CufftHandle c2r_handle, DevPtr<float> d_ref,
-               DevPtr<float> d_xcorr, DevPtr<cuFloatComplex> d_freq1,
+               DevPtr<float> d_xcorr, DevPtr<float> d_xcorr_smoothed,
+               DevPtr<cuFloatComplex> d_freq1,
                DevPtr<cuFloatComplex> d_freq2, size_t sum_tmp_bytes, DevPtr<uint8_t> d_sum_tmp,
                DevPtr<float> d_sum, size_t amax_tmp_bytes, DevPtr<uint8_t> d_amax_tmp,
                DevPtr<float> d_max, DevPtr<int64_t> d_max_idx, size_t select_tmp_bytes,
@@ -251,6 +280,7 @@ public:
         d_mean_centered_(std::move(d_mean_centered)), ref_initialized_(ref_initialized),
         freq_size_(freq_size), r2c_handle_(std::move(r2c_handle)),
         c2r_handle_(std::move(c2r_handle)), d_ref_(std::move(d_ref)), d_xcorr_(std::move(d_xcorr)),
+        d_xcorr_smoothed_(std::move(d_xcorr_smoothed)),
         d_freq1_(std::move(d_freq1)), d_freq2_(std::move(d_freq2)), sum_tmp_bytes_(sum_tmp_bytes),
         d_sum_tmp_(std::move(d_sum_tmp)), d_sum_(std::move(d_sum)), amax_tmp_bytes_(amax_tmp_bytes),
         d_amax_tmp_(std::move(d_amax_tmp)), d_max_(std::move(d_max)),
@@ -277,7 +307,7 @@ public:
     const auto height = input_desc_.shape[input_desc_.shape.size() - 2];
     const auto batch  = input_desc_.rank() == 3 ? input_desc_.shape[0] : 1;
 
-    center_mean(d_mean_centered_.get(), input_data, batch, height, width);
+    const float input_mean = center_mean(d_mean_centered_.get(), input_data, batch, height, width);
 
     if (ctx.stream_epoch != nullptr) {
       const auto epoch = ctx.stream_epoch->load(std::memory_order_acquire);
@@ -290,6 +320,7 @@ public:
           CUDA_CHECK(cudaMemsetAsync(ctx.outputs[1].data(), 0, input_desc_.num_bytes(), stream_));
         }
         ref_initialized_ = true;
+        xcorr_smoothed_initialized_ = false;
         stream_epoch_ = epoch;
         return holoflow::core::OpResult::Ok;
       }
@@ -302,18 +333,37 @@ public:
     }
 
     xcorr(d_xcorr_.get(), d_mean_centered_.get());
-    limit_xcorr(d_xcorr_.get(), width, height);
-    auto [shift_x, shift_y] = get_shifts_subpixel(d_xcorr_.get(), width, height);
 
-    // The debug output is deliberately a peak map: a black image with one white pixel makes the
-    // detected displacement unambiguous and avoids stretching correlation noise across the view.
-    if (ctx.outputs.size() > 1) {
-      CUDA_CHECK(cudaMemsetAsync(ctx.outputs[1].data(), 0, input_desc_.num_bytes(), stream_));
-      peak_display_kernel<<<1, 1, 0, stream_>>>(reinterpret_cast<float *>(ctx.outputs[1].data()),
-                                                static_cast<int>(width), static_cast<int>(height),
-                                                shift_x, shift_y);
+    // Average correlation maps over time so noise cannot move the selected peak from frame to
+    // frame. The reference and this state are reset when a source loops.
+    constexpr float kCorrelationSampleWeight = 0.25f;
+    const int       correlation_pixel_count  = static_cast<int>(width * height);
+    if (!xcorr_smoothed_initialized_) {
+      CUDA_CHECK(cudaMemcpyAsync(d_xcorr_smoothed_.get(), d_xcorr_.get(), input_desc_.num_bytes(),
+                                 cudaMemcpyDeviceToDevice, stream_));
+      xcorr_smoothed_initialized_ = true;
+    } else {
+      f32_ema_kernel<<<(correlation_pixel_count + 255) / 256, 256, 0, stream_>>>(
+          d_xcorr_smoothed_.get(), d_xcorr_.get(), correlation_pixel_count,
+          kCorrelationSampleWeight);
       CUDA_CHECK(cudaGetLastError());
     }
+
+    // Expose the complete correlation matrix for debugging. The display graph applies the FFT
+    // shift and converts the values for visualization; do not replace the matrix with an argmax
+    // marker here, since that hides the shape and quality of the correlation peak.
+    if (ctx.outputs.size() > 1) {
+      // Keep the debug view on the raw finite correlation result. The filtered map is used for
+      // displacement estimation only; exposing it here can make the preview appear black while
+      // its state is being initialized or reset at a stream boundary.
+      CUDA_CHECK(cudaMemcpyAsync(ctx.outputs[1].data(), d_xcorr_.get(), input_desc_.num_bytes(),
+                                 cudaMemcpyDeviceToDevice, stream_));
+    }
+
+    // Keep the search constraint for displacement estimation, but do not expose its -INF mask to
+    // the display. Min/max normalization of a matrix containing -INF produces NaNs and a black UI.
+    limit_xcorr(d_xcorr_smoothed_.get(), width, height);
+    auto [shift_x, shift_y] = get_shifts_subpixel(d_xcorr_smoothed_.get(), width, height);
 
     // A looped file has no explicit epoch marker in the task protocol. If the new first frame
     // cannot be matched to the previous loop's reference inside the allowed search window, the
@@ -332,6 +382,11 @@ public:
     }
 
     apply_shifts(output_data, input_data, shift_x, shift_y, batch, height, width);
+    const float output_mean = mean_in_roi(output_data, width * height);
+    const int   pixel_count = static_cast<int>(width * height);
+    f32_add_kernel<<<(pixel_count + 255) / 256, 256, 0, stream_>>>(
+        output_data, pixel_count, input_mean - output_mean);
+    CUDA_CHECK(cudaGetLastError());
     return holoflow::core::OpResult::Ok;
   }
 
@@ -373,14 +428,8 @@ private:
     CUDA_CHECK(cudaGetLastError());
   }
 
-  void center_mean(float *odata, const float *idata, std::size_t b, std::size_t h, std::size_t w) {
-    if (b != 1) {
-      return;
-    }
-
-    const size_t num_pixels = w * h;
+  float mean_in_roi(const float *idata, std::size_t num_pixels) {
     CUDA_CHECK(cudaMemsetAsync(d_selected_.get(), 0, num_pixels * sizeof(float), stream_));
-
     CUDA_CHECK(cub::DeviceSelect::Flagged(d_select_tmp_.get(), select_tmp_bytes_, idata,
                                           d_select_roi_.get(), d_selected_.get(),
                                           d_select_count_.get(), num_pixels, stream_));
@@ -390,7 +439,7 @@ private:
                                cudaMemcpyDeviceToHost, stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_));
     if (select_count == 0) {
-      return;
+      return 0.0f;
     }
 
     CUDA_CHECK(cub::DeviceReduce::Sum(d_sum_tmp_.get(), sum_tmp_bytes_, d_selected_.get(),
@@ -400,14 +449,32 @@ private:
     CUDA_CHECK(
         cudaMemcpyAsync(&sum_val, d_sum_.get(), sizeof(float), cudaMemcpyDeviceToHost, stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_));
+    return sum_val / static_cast<float>(select_count);
+  }
 
-    float         mean      = sum_val / static_cast<float>(select_count);
-    constexpr int block_dim = 256;
-    const size_t  grid_dim  = (num_pixels + block_dim - 1) / block_dim;
+  float center_mean(float *odata, const float *idata, std::size_t b, std::size_t h,
+                    std::size_t w) {
+    if (b != 1) {
+      return 0.0f;
+    }
 
-    f32_sub_mean_kernel<<<static_cast<unsigned int>(grid_dim), block_dim, 0, stream_>>>(
-        odata, idata, static_cast<int>(num_pixels), mean);
+    const size_t num_pixels = w * h;
+    const float mean = mean_in_roi(idata, num_pixels);
+    int select_count = 0;
+    CUDA_CHECK(cudaMemcpyAsync(&select_count, d_select_count_.get(), sizeof(int),
+                               cudaMemcpyDeviceToHost, stream_));
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
+    if (select_count == 0) {
+      return mean;
+    }
+    constexpr dim3 block_dim(16, 16);
+    const dim3     grid_dim(static_cast<unsigned int>((w + block_dim.x - 1) / block_dim.x),
+                        static_cast<unsigned int>((h + block_dim.y - 1) / block_dim.y));
+
+    f32_preprocess_kernel<<<grid_dim, block_dim, 0, stream_>>>(
+        odata, idata, static_cast<int>(w), static_cast<int>(h), mean, settings_.radius);
     CUDA_CHECK(cudaGetLastError());
+    return mean;
   }
 
   std::pair<int64_t, int64_t> get_shifts(float *xcorr, std::size_t b, std::size_t h,
@@ -498,6 +565,8 @@ private:
   curaii::CufftHandle    c2r_handle_;
   DevPtr<float>          d_ref_;
   DevPtr<float>          d_xcorr_;
+  DevPtr<float>          d_xcorr_smoothed_;
+  bool                   xcorr_smoothed_initialized_ = false;
   DevPtr<cuFloatComplex> d_freq1_;
   DevPtr<cuFloatComplex> d_freq2_;
   size_t                 sum_tmp_bytes_;
@@ -566,22 +635,29 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto d_mean_centered = make_unique_device_ptr<float>(W * H);
 
   bool   ref_initialized = false;
-  size_t freq_size       = H * W;
+  // cuFFT's 2D real-to-complex layout stores only W / 2 + 1 complex values per row.
+  // Using H * W here makes the frequency kernels read/write past the valid R2C spectrum and
+  // produces an invalid correlation matrix.
+  size_t freq_size = H * (W / 2 + 1);
 
   auto r2c_handle = curaii::CufftHandle();
   auto c2r_handle = curaii::CufftHandle();
 
   size_t r2c_ws = 0;
   size_t c2r_ws = 0;
-  CUFFT_CHECK(cufftMakePlan2d(r2c_handle.get(), static_cast<int>(W), static_cast<int>(H), CUFFT_R2C,
+  // cuFFT stores the second plan dimension contiguously. Our tensors are row-major [H][W], so
+  // H is the slow dimension (nx) and W is the fast dimension (ny). Reversing these dimensions
+  // produces a transposed/striped correlation map.
+  CUFFT_CHECK(cufftMakePlan2d(r2c_handle.get(), static_cast<int>(H), static_cast<int>(W), CUFFT_R2C,
                               &r2c_ws));
-  CUFFT_CHECK(cufftMakePlan2d(c2r_handle.get(), static_cast<int>(W), static_cast<int>(H), CUFFT_C2R,
+  CUFFT_CHECK(cufftMakePlan2d(c2r_handle.get(), static_cast<int>(H), static_cast<int>(W), CUFFT_C2R,
                               &c2r_ws));
   CUFFT_CHECK(cufftSetStream(r2c_handle.get(), ctx.stream));
   CUFFT_CHECK(cufftSetStream(c2r_handle.get(), ctx.stream));
 
   auto d_ref   = make_unique_device_ptr<float>(W * H);
   auto d_xcorr = make_unique_device_ptr<float>(W * H);
+  auto d_xcorr_smoothed = make_unique_device_ptr<float>(W * H);
   auto d_freq1 = make_unique_device_ptr<cuFloatComplex>(freq_size);
   auto d_freq2 = make_unique_device_ptr<cuFloatComplex>(freq_size);
 
@@ -629,7 +705,8 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   return std::make_unique<Registration>(
       settings, input_desc, result.output_descs[0], ctx.stream, std::move(d_mean_centered),
       ref_initialized, freq_size, std::move(r2c_handle), std::move(c2r_handle), std::move(d_ref),
-      std::move(d_xcorr), std::move(d_freq1), std::move(d_freq2), sum_tmp_bytes,
+      std::move(d_xcorr), std::move(d_xcorr_smoothed), std::move(d_freq1), std::move(d_freq2),
+      sum_tmp_bytes,
       std::move(d_sum_tmp), std::move(d_sum), amax_tmp_bytes, std::move(d_amax_tmp),
       std::move(d_max), std::move(d_max_idx), select_tmp_bytes, std::move(d_select_tmp),
       std::move(d_select_count), std::move(d_select_roi), std::move(d_selected));

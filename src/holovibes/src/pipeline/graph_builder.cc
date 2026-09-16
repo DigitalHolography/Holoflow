@@ -749,8 +749,11 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
   if (s_.pp_registration) {
     const auto outputs = registration_outputs(result, {.radius = s_.pp_registration_radius});
     result = outputs.at(0);
-    const auto output_shifted = fftshift(outputs.at(1), {{-2, -1}});
-    const auto output_converted = convert(output_shifted, {Target::U8, Strat::Scaled});
+    auto output_display = fftshift(outputs.at(1), {{-2, -1}});
+    // Match the Shack-Hartmann correlation preview. The registration output is a raw F32
+    // correlation matrix and must be normalized before conversion to U8 for display.
+    output_display = normalize(output_display, {{-2, -1}, 0.0f, 255.0f});
+    const auto output_converted = convert(output_display, {Target::U8, Strat::Scaled});
 
     registration_xcorr_display(output_converted, {});
   }
