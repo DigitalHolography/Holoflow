@@ -3,16 +3,16 @@
 
 |||
 |:---|:---|
-| Generated on: | 9/10/2026 - 2:42:00 PM |
+| Generated on: | 9/16/2026 - 1:44:14 PM |
 | Parser: | Cobertura |
 | Assemblies: | 7 |
 | Classes: | 11 |
-| Files: | 86 |
-| **Line coverage:** | 29.6% (3106 of 10481) |
-| Covered lines: | 3106 |
-| Uncovered lines: | 7375 |
-| Coverable lines: | 10481 |
-| Total lines: | 22855 |
+| Files: | 88 |
+| **Line coverage:** | 28.6% (3115 of 10858) |
+| Covered lines: | 3115 |
+| Uncovered lines: | 7743 |
+| Coverable lines: | 10858 |
+| Total lines: | 23669 |
 | Covered branches: | 0 |
 | Total branches: | 0 |
 | **Method coverage:** | [Feature is only available for sponsors](https://reportgenerator.io/pro) |
@@ -37,13 +37,13 @@
 |src|0%||
 
 </details>
-<details><summary>holoflow - 89.7%</summary>
+<details><summary>holoflow - 86.2%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holoflow**|**89.7%**|****|
+|**holoflow**|**86.2%**|****|
 |include|70.8%||
-|src|90%||
+|src|86.4%||
 
 </details>
 <details><summary>holoflow_event - 86.2%</summary>
@@ -72,11 +72,11 @@
 |src|43.4%||
 
 </details>
-<details><summary>holovibes - 6.6%</summary>
+<details><summary>holovibes - 6.3%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holovibes**|**6.6%**|****|
-|src|6.6%||
+|**holovibes**|**6.3%**|****|
+|src|6.3%||
 
 </details>
