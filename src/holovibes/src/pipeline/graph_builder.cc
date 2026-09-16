@@ -70,6 +70,7 @@ private:
 
   // clang-format off
   TDesc build_acquisition();
+  TDesc resize_video_for_export(TDesc video);
   TDesc short_time_fresnel_diffraction(const TDesc &field, size_t win_w, size_t win_h, size_t stride_x, size_t stride_y, float lam, float dx, float dy, float z_prop, PhaseReference phase_ref, bool skip_phase_shift = true);
   void build_raw_record(const TDesc &H);
   bool build_raw_view(const TDesc &H);
@@ -228,8 +229,38 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
 void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
   auto path          = s_.recording_path.string();
   auto count         = s_.recording_count;
-  auto settings_json = settings_to_old_json(s_);
-  holofile_write(H, {path, count, settings_json, true});
+  if (s_.recording_format == "npy") {
+    npyfile_write(H, {path, count, true});
+  } else if (s_.recording_format == "holo") {
+    holofile_write(H, {path, count, settings_to_old_json(s_), true});
+  } 
+  /*
+  else {
+    auto video = memcpy(H, {holotask::syncs::MemcpySettings::Target::Host});
+    const auto square_size = std::max(video.shape.at(1), video.shape.at(2));
+    video = resize_video_for_export(std::move(video));
+    ffmpeg_write(video, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
+                     s_.recording_codec});
+  }
+  */
+}
+
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::resize_video_for_export(TDesc video) {
+  const auto square_size = std::max(video.shape.at(1), video.shape.at(2));
+  const auto algorithm = s_.recording_resize_algorithm == "CudaBilinear"
+                             ? holotask::syncs::ResizeAlgorithm::CudaBilinear
+                             : holotask::syncs::ResizeAlgorithm::CpuBilinear;
+  if (algorithm == holotask::syncs::ResizeAlgorithm::CudaBilinear) {
+    video = memcpy(video, {holotask::syncs::MemcpySettings::Target::Device});
+  }
+
+  video = resize(video, {static_cast<int>(square_size), static_cast<int>(square_size),
+                         holotask::syncs::ResizeInterpolation::Bilinear, algorithm});
+
+  if (algorithm == holotask::syncs::ResizeAlgorithm::CudaBilinear) {
+    video = memcpy(video, {holotask::syncs::MemcpySettings::Target::Host});
+  }
+  return video;
 }
 
 bool GraphBuilder::Impl::build_raw_view(const TDesc &H) {
@@ -774,9 +805,23 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
 
     auto path              = s_.recording_path.string();
     auto count             = s_.recording_count;
-    auto settings_json     = settings_to_old_json(s_);
-    auto holofile_settings = HolofileSettings{path, count, settings_json, true};
-    holofile_write(result_rec, holofile_settings);
+    if (s_.recording_format == "npy") {
+      npyfile_write(result_rec, {path, count, true});
+    } else if (s_.recording_format == "holo") {
+      holofile_write(result_rec, {path, count, settings_to_old_json(s_), true});
+    } else {
+      /*
+      const auto square_size = std::max(result_rec.shape.at(1), result_rec.shape.at(2));
+      result_rec = resize(result_rec, {static_cast<int>(square_size), static_cast<int>(square_size)});
+      ffmpeg_write(result_rec, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
+                                s_.recording_codec});
+      */
+      if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
+        result_rec = resize_video_for_export(std::move(result_rec));
+      }
+
+      ffmpeg_write(result_rec, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format, s_.recording_codec});
+    }
   }
 }
 
