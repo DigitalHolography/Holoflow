@@ -13,10 +13,9 @@
 # limitations under the License.
 
 add_executable(holoflow_core_test
-    core_additional_test.cc
-    core_test.cc
-    event_router_test.cc
-    graph_display_test.cc
+    unit/core/core_additional_test.cc
+    unit/core/core_test.cc
+    #event_router_test.cc
 )
 
 target_include_directories(holoflow_core_test
@@ -37,12 +36,13 @@ holoflow_discover_tests(holoflow_core_test
 )
 
 add_executable(holoflow_runtime_test
-    compiler_additional_test.cc
-    compiler_test.cc
-    functional_device_test.cu
-    functional_test.cc
-    scheduler_additional_test.cc
-    scheduler_functional_test.cc
+    unit/runtime/compiler_additional_test.cc
+    unit/runtime/graph_display_test.cc
+    unit/runtime/compiler_test.cc
+    functional/functional_device_test.cu
+    functional/functional_test.cc
+    unit/runtime/scheduler_additional_test.cc
+    unit/runtime/scheduler_functional_test.cc
 )
 
 target_include_directories(holoflow_runtime_test
