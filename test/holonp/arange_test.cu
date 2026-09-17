@@ -17,7 +17,6 @@
 #include <atomic>
 #include <cmath>
 #include <cstdint>
-#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -29,7 +28,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/arange.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -38,8 +37,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-// Absolute path to oracle.py, baked in at compile time.
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 // -------------------------------------------------------------------------------------------------
 // Helpers
@@ -59,7 +56,7 @@ static nlohmann::json make_jsettings(double start, double stop, double step,
 }
 
 // Element-wise comparison: exact for integer types, toleranced for F32/CF32.
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -103,16 +100,16 @@ static void expect_near_oracle(const std::vector<std::byte> &actual,
   }
 }
 
-static void expect_matches_oracle(const std::vector<std::byte> &actual, DType dtype,
+static void expect_matches_reference(const std::vector<std::byte> &actual, DType dtype,
                                   const nlohmann::json &settings) {
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op        = "arange";
   oi.n_outputs = 1;
   oi.settings  = settings;
 
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  ASSERT_EQ(oracle.output_bytes.size(), 1u);
-  expect_near_oracle(actual, oracle.output_bytes[0], dtype);
+  const auto reference = holonp_test::invoke_reference(oi);
+  ASSERT_EQ(reference.output_bytes.size(), 1u);
+  expect_near_reference(actual, reference.output_bytes[0], dtype);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -207,7 +204,7 @@ TEST_F(ArangeInferTest, RejectsHostDevice) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// ArangeFactory: execution tests via NumPy oracle
+// ArangeFactory: execution tests via C++ reference
 // -------------------------------------------------------------------------------------------------
 
 class ArangeExecuteTest : public ::testing::Test {
@@ -223,7 +220,7 @@ TEST_F(ArangeExecuteTest, F32Simple) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], DType::F32, j);
+  expect_matches_reference(run.output_bytes[0], DType::F32, j);
 }
 
 TEST_F(ArangeExecuteTest, F32FractionalStep) {
@@ -232,7 +229,7 @@ TEST_F(ArangeExecuteTest, F32FractionalStep) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], DType::F32, j);
+  expect_matches_reference(run.output_bytes[0], DType::F32, j);
 }
 
 TEST_F(ArangeExecuteTest, F32NegativeStep) {
@@ -241,7 +238,7 @@ TEST_F(ArangeExecuteTest, F32NegativeStep) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], DType::F32, j);
+  expect_matches_reference(run.output_bytes[0], DType::F32, j);
 }
 
 TEST_F(ArangeExecuteTest, F32NonZeroStart) {
@@ -250,7 +247,7 @@ TEST_F(ArangeExecuteTest, F32NonZeroStart) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], DType::F32, j);
+  expect_matches_reference(run.output_bytes[0], DType::F32, j);
 }
 
 TEST_F(ArangeExecuteTest, U8Simple) {
@@ -259,7 +256,7 @@ TEST_F(ArangeExecuteTest, U8Simple) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], DType::U8, j);
+  expect_matches_reference(run.output_bytes[0], DType::U8, j);
 }
 
 TEST_F(ArangeExecuteTest, U16Simple) {
@@ -268,7 +265,7 @@ TEST_F(ArangeExecuteTest, U16Simple) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], DType::U16, j);
+  expect_matches_reference(run.output_bytes[0], DType::U16, j);
 }
 
 TEST_F(ArangeExecuteTest, CF32Simple) {
@@ -277,7 +274,7 @@ TEST_F(ArangeExecuteTest, CF32Simple) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], DType::CF32, j);
+  expect_matches_reference(run.output_bytes[0], DType::CF32, j);
 }
 
 TEST_F(ArangeExecuteTest, CF32FractionalStep) {
@@ -286,7 +283,7 @@ TEST_F(ArangeExecuteTest, CF32FractionalStep) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], DType::CF32, j);
+  expect_matches_reference(run.output_bytes[0], DType::CF32, j);
 }
 
 TEST_F(ArangeExecuteTest, OutputDescMatchesInfer) {
@@ -316,7 +313,7 @@ TEST_F(ArangeUpdateTest, ReusesArangeTask) {
   const auto run = holonp_test::run_sync_factory_update(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], DType::F32, j);
+  expect_matches_reference(run.output_bytes[0], DType::F32, j);
 }
 
 TEST_F(ArangeUpdateTest, RecreatesOnChangedSettings) {
@@ -348,7 +345,7 @@ TEST_F(ArangeUpdateTest, RecreatesOnChangedSettings) {
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
   const auto actual = out_buf.download();
-  expect_matches_oracle(actual, DType::F32, j_new);
+  expect_matches_reference(actual, DType::F32, j_new);
 }
 
 TEST_F(ArangeUpdateTest, RecreatesOnWrongTaskType) {
@@ -384,5 +381,5 @@ TEST_F(ArangeUpdateTest, RecreatesOnWrongTaskType) {
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
   const auto actual = out_buf.download();
-  expect_matches_oracle(actual, DType::F32, j);
+  expect_matches_reference(actual, DType::F32, j);
 }

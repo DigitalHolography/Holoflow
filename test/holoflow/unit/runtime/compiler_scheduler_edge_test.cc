@@ -308,6 +308,21 @@ TEST(CompilerTest, RejectsAnEdgeTargetingAUnavailableInputPort) {
   EXPECT_THROW((void)compiler.compile(graph), std::runtime_error);
 }
 
+TEST(CompilerTest, RejectsNegativeTensorPorts) {
+  auto state = std::make_shared<ExecutionState>();
+  auto registry = pipeline_registry(state);
+  holoflow::runtime::Compiler compiler(registry, {.dump_dot_on_failure = false});
+
+  for (const auto ports : {EdgeSpec{-1, 0}, EdgeSpec{0, -1}}) {
+    GraphSpec graph;
+    const auto source = add_vertex(NodeSpec{"source", "source", {}}, graph);
+    const auto sink   = add_vertex(NodeSpec{"sink", "sink", {}}, graph);
+    add_edge(source, sink, ports, graph);
+
+    EXPECT_THROW((void)compiler.compile(graph), std::runtime_error);
+  }
+}
+
 TEST(SchedulerTest, ExecutesNonCommutativeOperationsInCompiledOrder) {
   auto state = std::make_shared<ExecutionState>();
   auto registry = pipeline_registry(state);
@@ -357,6 +372,27 @@ TEST(SchedulerTest, ExecutesAnIsolatedTerminalNodeExactlyOnce) {
   scheduler.wait();
 
   EXPECT_EQ(state->terminal_calls, 1);
+  EXPECT_TRUE(scheduler.stop_requested());
+  EXPECT_FALSE(scheduler.is_running());
+}
+
+TEST(SchedulerTest, ExecutesDisconnectedTerminalNodesExactlyOnceEach) {
+  auto state = std::make_shared<ExecutionState>();
+  holoflow::core::Registry registry;
+  registry.register_sync("terminal", std::make_unique<TerminalFactory>(state));
+
+  GraphSpec graph;
+  add_vertex(NodeSpec{"first", "terminal", {}}, graph);
+  add_vertex(NodeSpec{"second", "terminal", {}}, graph);
+  holoflow::runtime::Compiler compiler(
+      registry, {.dump_dot_on_failure = false, .verbose_tracing = false, .enable_profiling = false});
+  auto output = compiler.compile(graph);
+
+  holoflow::runtime::Scheduler scheduler(output->graph, output->sections, output->resources);
+  scheduler.start();
+  scheduler.wait();
+
+  EXPECT_EQ(state->terminal_calls, 2);
   EXPECT_TRUE(scheduler.stop_requested());
   EXPECT_FALSE(scheduler.is_running());
 }

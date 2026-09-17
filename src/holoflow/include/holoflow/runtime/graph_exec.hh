@@ -187,6 +187,8 @@ private:
 private:
   std::atomic<bool>           running_{false}; ///< True if the scheduler is running.
   std::atomic<bool>           stop_{false};    ///< True if a stop has been requested.
+  std::size_t                 terminal_nodes_ = 0; ///< Number of graph terminal nodes.
+  std::atomic<std::size_t>    completed_terminal_nodes_{0}; ///< Terminal nodes that reached EOF.
   const GraphPlan            &graph_;          ///< The computational graph to execute.
   const std::vector<Section> &sections_;       ///< Execution sections.
   ExecResouces               &res_;            ///< Execution resources (streams, tasks, tensors).

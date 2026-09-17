@@ -62,6 +62,16 @@ TEST(TensorDescriptorTest, SerializesDtypeMemoryAndStrides) {
   EXPECT_THROW((void)nlohmann::json("bad").get<MemLoc>(), std::invalid_argument);
 }
 
+TEST(TensorDescriptorTest, SerializesStorageOffset) {
+  const TDesc original({2, 3}, DType::U16, MemLoc::Host, std::vector<size_t>{16, 4}, 9);
+  const auto  encoded = nlohmann::json(original);
+  const auto  decoded = encoded.get<TDesc>();
+
+  EXPECT_EQ(encoded.at("offset"), 9u);
+  EXPECT_EQ(decoded.offset, original.offset);
+  EXPECT_EQ(decoded.strides, original.strides);
+}
+
 TEST(TensorDescriptorTest, CoversEveryEnumAndConstructor) {
   using holoflow::core::DType;
   using holoflow::core::MemLoc;

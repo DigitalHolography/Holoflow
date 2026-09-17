@@ -18,7 +18,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -29,7 +28,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/copy.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -38,7 +37,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static TDesc device_desc(std::vector<size_t> shape, DType dtype) {
   return TDesc(std::move(shape), dtype, MemLoc::Device);
@@ -68,7 +66,7 @@ static std::vector<std::byte> make_strided_2d_bytes(const std::vector<T> &logica
   return out;
 }
 
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -121,39 +119,39 @@ TEST_F(CopyInferTest, RejectsHostInput) {
   EXPECT_THROW(factory.infer({&in, 1}, nlohmann::json::object()), std::invalid_argument);
 }
 
-class CopyOracleTest : public ::testing::Test {
+class CopyReferenceTest : public ::testing::Test {
 protected:
   holonp::CopyFactory factory;
 };
 
-TEST_F(CopyOracleTest, U8Contiguous) {
+TEST_F(CopyReferenceTest, U8Contiguous) {
   const TDesc in     = device_desc({6}, DType::U8);
   const auto  ibytes = as_bytes(std::vector<std::uint8_t>{1, 2, 3, 4, 5, 6});
   const auto  run =
       holonp_test::run_sync_factory(factory, {&in, 1}, {&ibytes, 1}, nlohmann::json::object());
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "copy";
   oi.n_outputs      = 1;
   oi.input_descs    = {in};
   oi.input_bytes    = {ibytes};
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::U8);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::U8);
 }
 
-TEST_F(CopyOracleTest, F32Strided) {
+TEST_F(CopyReferenceTest, F32Strided) {
   const TDesc in     = device_desc({2, 2}, DType::F32, {16, 4});
   const auto  ibytes = make_strided_2d_bytes<float>({1.5f, -2.0f, 3.25f, 4.5f}, 2, 2, 16);
   const auto  run =
       holonp_test::run_sync_factory(factory, {&in, 1}, {&ibytes, 1}, nlohmann::json::object());
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "copy";
   oi.n_outputs      = 1;
   oi.input_descs    = {in};
   oi.input_bytes    = {ibytes};
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }
 
 class CopyUpdateTest : public ::testing::Test {
@@ -167,13 +165,13 @@ TEST_F(CopyUpdateTest, ReusesCopyTask) {
   const auto  run    = holonp_test::run_sync_factory_update(factory, {&in, 1}, {&ibytes, 1},
                                                             nlohmann::json::object());
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "copy";
   oi.n_outputs      = 1;
   oi.input_descs    = {in};
   oi.input_bytes    = {ibytes};
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::U16);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::U16);
 }
 
 TEST_F(CopyUpdateTest, RecreatesOnWrongTaskType) {
@@ -209,12 +207,12 @@ TEST_F(CopyUpdateTest, RecreatesOnWrongTaskType) {
   EXPECT_NO_THROW((void)task->execute(ctx));
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "copy";
   oi.n_outputs      = 1;
   oi.input_descs    = {in};
   oi.input_bytes    = {ibytes};
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  const auto reference = holonp_test::invoke_reference(oi);
   const auto actual = out_buf.download();
-  expect_near_oracle(actual, oracle.output_bytes[0], DType::F32);
+  expect_near_reference(actual, reference.output_bytes[0], DType::F32);
 }
