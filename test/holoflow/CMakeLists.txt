@@ -38,6 +38,7 @@ holoflow_discover_tests(holoflow_core_test
 
 add_executable(holoflow_runtime_test
     unit/runtime/compiler_additional_test.cc
+    unit/runtime/compiler_scheduler_edge_test.cc
     unit/runtime/graph_display_test.cc
     unit/runtime/compiler_test.cc
     functional/functional_device_test.cu
