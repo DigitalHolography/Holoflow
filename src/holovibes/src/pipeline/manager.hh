@@ -164,6 +164,7 @@ private:
 
   GraphSpecDumpPreferences     graph_spec_dump_prefs_     = {};
   GraphCompiledDumpPreferences graph_compiled_dump_prefs_ = {};
+  std::filesystem::path         log_root_;
 
   /// @brief Toggles debug dumps of the pipeline (.dot, .json) to disk.
   bool dump_debug_graphs_ = true;

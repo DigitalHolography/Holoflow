@@ -30,6 +30,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <utility>
 #include <unordered_set>
 #include <vector>
 
@@ -209,7 +210,8 @@ static void write_compiled_graph_header(std::ostringstream                 &ss,
 
 static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPlan &g,
                                  const holoflow::runtime::ExecResouces &res,
-                                 const GraphCompiledDumpPreferences    &prefs) {
+                                 const GraphCompiledDumpPreferences    &prefs,
+                                 std::string_view                       failure_node) {
 
   auto fmt_id = [&](int tid) -> std::string {
     if (res.tid_to_sid.contains(tid)) {
@@ -274,16 +276,21 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
     }
 
     if (prefs.dump_node_kind) {
+      const bool is_failure_node = !failure_node.empty() && np.spec.name == failure_node;
       if (np.infer.kind == core::TaskKind::Async) {
         const std::string label_in = label_base.str() + "\n(Producer/Write)" + ids_line + "\n";
-        ss << std::format("  v{}_in [label=\"{}\", shape=invhouse, fillcolor=\"#e6f2ff\", "
-                          "color=\"#0066cc\", style=\"filled,dashed\"];\n",
-                          v, escape_for_label(label_in));
+        ss << std::format(
+            "  v{}_in [label=\"{}\", shape=invhouse, fillcolor=\"{}\", color=\"{}\", "
+            "penwidth={}, style=\"filled,dashed\"];\n",
+            v, escape_for_label(label_in), is_failure_node ? "#ff9999" : "#e6f2ff",
+            is_failure_node ? "#cc0000" : "#0066cc", is_failure_node ? 3 : 1);
 
         const std::string label_out = label_base.str() + "\n(Consumer/Read)" + ids_line + "\n";
-        ss << std::format("  v{}_out [label=\"{}\", shape=house, fillcolor=\"#ffe6e6\", "
-                          "color=\"#cc0000\", style=\"filled,dashed\"];\n",
-                          v, escape_for_label(label_out));
+        ss << std::format(
+            "  v{}_out [label=\"{}\", shape=house, fillcolor=\"{}\", color=\"{}\", "
+            "penwidth={}, style=\"filled,dashed\"];\n",
+            v, escape_for_label(label_out), is_failure_node ? "#ff9999" : "#ffe6e6",
+            is_failure_node ? "#cc0000" : "#cc0000", is_failure_node ? 3 : 1);
 
         if (uses_block_layout(prefs)) {
           ss << std::format("  v{}_in:e -> v{}_out:w [style=dotted, color=\"#888888\", "
@@ -297,8 +304,10 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
         }
       } else {
         const std::string label = label_base.str() + "\n(" + np.spec.kind + ")" + ids_line + "\n";
-        ss << std::format("  v{} [label=\"{}\", fillcolor=\"#ccffcc\"];\n", v,
-                          escape_for_label(label));
+        ss << std::format("  v{} [label=\"{}\", fillcolor=\"{}\", color=\"{}\", "
+                          "penwidth={}];\n",
+                          v, escape_for_label(label), is_failure_node ? "#ff9999" : "#ccffcc",
+                          is_failure_node ? "#cc0000" : "#333333", is_failure_node ? 3 : 1);
       }
     }
   }
@@ -562,13 +571,25 @@ static void write_compiled_sections(std::ostringstream                  &ss,
 
 std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
                    std::string filename) {
+  return to_dot(out, prefs, std::move(filename), {}, {});
+}
+
+std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
+                   std::string filename, std::string_view failure_node,
+                   std::string_view failure_context) {
   std::ostringstream ss;
   write_compiled_graph_header(ss, prefs, filename);
+
+  if (!failure_context.empty()) {
+    ss << std::format("  labelloc=\"t\";\n  label=\"{}\";\n",
+                      escape_for_label(std::string{"RUNTIME FAILURE\n"} +
+                                       std::string{failure_context}));
+  }
 
   if (prefs.dump_resource_info) {
     write_compiled_resources(ss, out.resources);
   }
-  write_compiled_nodes(ss, out.graph, out.resources, prefs);
+  write_compiled_nodes(ss, out.graph, out.resources, prefs, failure_node);
   ss << "\n";
   write_compiled_edges(ss, out.graph, out.resources, prefs, out.sections);
   ss << "\n";

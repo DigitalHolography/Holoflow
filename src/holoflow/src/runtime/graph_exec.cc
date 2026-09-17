@@ -86,13 +86,29 @@ std::string task_range_name(std::string_view operation, const core::NodeSpec &sp
   return std::format("{}: {} ({})", operation, spec.name, spec.kind);
 }
 
-[[noreturn]] inline void log_and_abort_current_exception(std::string_view thread_name) {
+[[noreturn]] inline void
+log_and_abort_current_exception(std::string_view thread_name, std::string_view node_name,
+                                const Scheduler::FailureCallback &failure_callback,
+                                std::atomic_flag                 &failure_dumped) {
+  std::string error_message;
   try {
     throw;
   } catch (const std::exception &e) {
+    error_message = e.what();
     logger()->critical("[{}] Fatal runtime exception:\n{}", thread_name, e.what());
   } catch (...) {
+    error_message = "<non-std exception>";
     logger()->critical("[{}] Fatal runtime exception: <non-std exception>", thread_name);
+  }
+
+  if (failure_callback && !failure_dumped.test_and_set(std::memory_order_relaxed)) {
+    try {
+      failure_callback(thread_name, node_name, error_message);
+    } catch (const std::exception &e) {
+      logger()->error("Failed to write runtime failure graph: {}", e.what());
+    } catch (...) {
+      logger()->error("Failed to write runtime failure graph: unknown error");
+    }
   }
 
   logger()->flush();
@@ -119,7 +135,22 @@ void *MemoryBlock::get() {
 
 Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
                      ExecResouces &resources, std::chrono::milliseconds metrics_interval)
-    : graph_(graph), sections_(sections), res_(resources), metrics_interval_(metrics_interval) {
+    : Scheduler(graph, sections, resources, metrics_interval, {}) {}
+
+Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
+                     ExecResouces &resources, std::chrono::milliseconds metrics_interval,
+                     FailureCallback failure_callback)
+    : graph_(graph), sections_(sections), res_(resources), metrics_interval_(metrics_interval),
+      failure_callback_(std::move(failure_callback)) {
+
+  if (failure_callback_) {
+    detail::set_bug_callback([this](std::string_view file, std::size_t line) {
+      if (!failure_dumped_.test_and_set(std::memory_order_relaxed)) {
+        failure_callback_("HOLOFLOW_BUG", detail::current_node_name(),
+                          std::format("Fatal bug at {}:{}", file, line));
+      }
+    });
+  }
 
   if (metrics_interval_.count() <= 0) {
     metrics_interval_ = std::chrono::milliseconds{1};
@@ -139,6 +170,7 @@ Scheduler::~Scheduler() {
   } else {
     stop_metrics_thread();
   }
+  detail::set_bug_callback({});
 }
 
 void Scheduler::set_metrics_interval(std::chrono::milliseconds interval) {
@@ -313,13 +345,15 @@ void Scheduler::run_router() {
     logger()->info("[Scheduler::run_router] Event router stopped");
   } catch (...) {
     stop_.store(true);
-    log_and_abort_current_exception("Scheduler::run_router");
+    log_and_abort_current_exception("Scheduler::run_router", {}, failure_callback_,
+                                    failure_dumped_);
   }
 }
 
 void Scheduler::run_section(int section_id) {
-  const auto &sec    = sections_.at(section_id);
-  auto        stream = sec.stream;
+  const auto      &sec    = sections_.at(section_id);
+  auto             stream = sec.stream;
+  std::string_view current_node_name;
 
   // Define a consistent, professional color palette for your timeline
   constexpr nvtx3::color color_section{0x555555}; // Dark Gray
@@ -343,6 +377,8 @@ void Scheduler::run_section(int section_id) {
       {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Acquire owned inputs", color_acquire}};
         for (auto v : sec.sync_topo) {
+          current_node_name           = graph_[v].spec.name;
+          detail::current_node_name() = current_node_name;
           try {
             acquire_owned_inputs(v);
           } catch (...) {
@@ -350,6 +386,8 @@ void Scheduler::run_section(int section_id) {
           }
         }
         for (auto v : sec.async_prod) {
+          current_node_name           = graph_[v].spec.name;
+          detail::current_node_name() = current_node_name;
           try {
             acquire_owned_inputs(v);
           } catch (...) {
@@ -366,6 +404,8 @@ void Scheduler::run_section(int section_id) {
       {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async consumers", color_async_c}};
         for (auto v : sec.async_cons) {
+          current_node_name           = graph_[v].spec.name;
+          detail::current_node_name() = current_node_name;
           try {
             if (run_async_cons(v) == core::OpResult::Ok) {
               produced_owned_outputs.push_back(v);
@@ -382,6 +422,8 @@ void Scheduler::run_section(int section_id) {
       if (!stop_.load()) {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Execute sync nodes", color_sync}};
         for (auto v : sec.sync_topo) {
+          current_node_name           = graph_[v].spec.name;
+          detail::current_node_name() = current_node_name;
           try {
             if (run_sync(v) == core::OpResult::Ok) {
               produced_owned_outputs.push_back(v);
@@ -405,6 +447,8 @@ void Scheduler::run_section(int section_id) {
       if (!stop_.load()) {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async producers", color_async_p}};
         for (auto v : sec.async_prod) {
+          current_node_name           = graph_[v].spec.name;
+          detail::current_node_name() = current_node_name;
           try {
             (void)run_async_prod(v);
           } catch (...) {
@@ -419,6 +463,8 @@ void Scheduler::run_section(int section_id) {
       {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Release owned outputs", color_release}};
         for (auto v : produced_owned_outputs) {
+          current_node_name           = graph_[v].spec.name;
+          detail::current_node_name() = current_node_name;
           try {
             release_owned_outputs(v);
           } catch (...) {
@@ -433,7 +479,8 @@ void Scheduler::run_section(int section_id) {
   } catch (...) {
     stop_.store(true);
     log_and_abort_current_exception(
-        std::format("Scheduler::run_section section={} id={}", sec.name, section_id));
+        std::format("Scheduler::run_section section={} id={}", sec.name, section_id),
+        current_node_name, failure_callback_, failure_dumped_);
   }
 }
 

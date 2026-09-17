@@ -590,6 +590,7 @@ void Manager::build_and_run() {
   build_graph_spec();
 
   std::filesystem::path log_root;
+  log_root_.clear();
   const auto app_data_dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
   if (!app_data_dir.isEmpty()) {
     log_root = std::filesystem::path(app_data_dir.toStdString()) /
@@ -605,6 +606,8 @@ void Manager::build_and_run() {
   } else {
     logger()->warn("[Manager::build_and_run] No writable application data directory is available");
   }
+
+  log_root_ = log_root;
 
   // TODO: What should be done about this verbose logging?
   // if (dump_debug_graphs_) {
@@ -656,7 +659,34 @@ void Manager::run_compiled_graph() {
                                     ? std::chrono::milliseconds{metrics_timer_->interval()}
                                     : std::chrono::milliseconds{1000};
 
-  scheduler_            = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval);
+  const Scheduler::FailureCallback failure_callback = [this](std::string_view thread_name,
+                                                             std::string_view node_name,
+                                                             std::string_view error_message) {
+    if (!compiler_output_ || log_root_.empty()) {
+      return;
+    }
+
+    const auto    failure_path = log_root_ / "runtime_failure.dot";
+    std::ofstream failure_file(failure_path);
+    if (!failure_file.is_open()) {
+      logger()->error("[Manager::run_compiled_graph] Failed to write runtime failure graph to {}",
+                      failure_path.string());
+      return;
+    }
+
+    const auto context = std::format("Thread: {}\nNode: {}\nError: {}", thread_name,
+                                     node_name.empty() ? "<unknown>" : node_name, error_message);
+    auto       failure_prefs     = graph_compiled_dump_prefs_;
+    failure_prefs.dump_node_name = true;
+    failure_prefs.dump_node_kind = true;
+    failure_file << holoflow::runtime::to_dot(*compiler_output_, failure_prefs, "runtime_failure",
+                                              node_name, context);
+    logger()->critical("[Manager::run_compiled_graph] Runtime failure graph saved to {}",
+                       failure_path.string());
+  };
+
+  scheduler_ =
+      std::make_unique<Scheduler>(graph, sections, resources, metrics_interval, failure_callback);
   raw_recording_active_ = false;
 
   scheduler_->start();

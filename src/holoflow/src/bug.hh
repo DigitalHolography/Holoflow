@@ -14,7 +14,40 @@
 
 #pragma once
 
+#include <cstddef>
+#include <functional>
+#include <string_view>
+#include <utility>
+
 #include <spdlog/spdlog.h>
+
+namespace holoflow::runtime::detail {
+
+using BugCallback = std::function<void(std::string_view file, std::size_t line)>;
+
+inline BugCallback &bug_callback() {
+  static BugCallback callback;
+  return callback;
+}
+
+inline void set_bug_callback(BugCallback callback) { bug_callback() = std::move(callback); }
+
+inline std::string_view &current_node_name() {
+  static thread_local std::string_view name;
+  return name;
+}
+
+inline void notify_bug(std::string_view file, std::size_t line) noexcept {
+  try {
+    if (bug_callback()) {
+      bug_callback()(file, line);
+    }
+  } catch (...) {
+    // A failure-reporting hook must never prevent the original abort.
+  }
+}
+
+} // namespace holoflow::runtime::detail
 
 // TODO: Move to a config file
 #define DH_ORG "Digital Holography"
@@ -29,6 +62,7 @@
     spdlog::critical(ANSI_RED "THIS IS A BUG!\nPlease report it to [{}] at [{}].\n" fmt            \
                               "\n(File: {}, Line: {})" ANSI_RESET,                                 \
                      DH_ORG, DH_CONTACT, ##__VA_ARGS__, __FILE__, __LINE__);                       \
+    holoflow::runtime::detail::notify_bug(__FILE__, __LINE__);                                    \
     std::abort();                                                                                  \
   } while (0)
 

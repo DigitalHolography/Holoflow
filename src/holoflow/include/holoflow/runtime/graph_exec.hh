@@ -21,12 +21,14 @@
 #include <cstddef>
 #include <cstdint>
 #include <cuda_runtime.h>
+#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <variant>
@@ -121,8 +123,15 @@ struct NodeMetrics {
 
 class Scheduler {
 public:
+  /// Called once before a fatal runtime abort, while the compiled graph is still available.
+  using FailureCallback =
+      std::function<void(std::string_view thread_name, std::string_view node_name,
+                         std::string_view error_message)>;
+
   Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
             std::chrono::milliseconds metrics_interval = std::chrono::milliseconds{1000});
+  Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
+            std::chrono::milliseconds metrics_interval, FailureCallback failure_callback);
 
   ~Scheduler();
 
@@ -187,6 +196,7 @@ private:
 private:
   std::atomic<bool>           running_{false}; ///< True if the scheduler is running.
   std::atomic<bool>           stop_{false};    ///< True if a stop has been requested.
+  std::atomic_flag             failure_dumped_ = ATOMIC_FLAG_INIT;
   const GraphPlan            &graph_;          ///< The computational graph to execute.
   const std::vector<Section> &sections_;       ///< Execution sections.
   ExecResouces               &res_;            ///< Execution resources (streams, tasks, tensors).
@@ -249,6 +259,7 @@ private:
 
   holoflow_event::Router                                     router_;
   std::map<std::string, holoflow_event::Router::NodeHandles> event_handles_;
+  FailureCallback                                             failure_callback_;
 };
 
 } // namespace holoflow::runtime
