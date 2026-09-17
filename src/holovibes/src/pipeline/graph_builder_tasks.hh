@@ -38,6 +38,13 @@
 #include "holonp/min.hh"
 #include "holonp/multiply.hh"
 #include "holonp/reshape.hh"
+#include "holonp/sum.hh"
+#include "holonp/std.hh"
+#include "holonp/var.hh"
+#include "holonp/argmin.hh"
+#include "holonp/math_unary.hh"
+#include "holonp/clip.hh"
+#include "holonp/elementwise_minmax.hh"
 #include "holonp/rfft.hh"
 #include "holonp/rfft2.hh"
 #include "holonp/slice.hh"
@@ -164,6 +171,19 @@ protected:
   TDesc reshape(const TDesc &X, holonp::ReshapeSettings s);
   TDesc conj(const TDesc &X, holonp::ConjSettings s);
   TDesc square(const TDesc &X, holonp::SquareSettings s);
+  TDesc sum(const TDesc &X, holonp::SumSettings s);
+  TDesc std(const TDesc &X, holonp::StdSettings s);
+  TDesc var(const TDesc &X, holonp::VarSettings s);
+  TDesc argmin(const TDesc &X, holonp::ArgminSettings s);
+  TDesc sqrt(const TDesc &X, holonp::SqrtSettings s);
+  TDesc real(const TDesc &X, holonp::RealSettings s);
+  TDesc imag(const TDesc &X, holonp::ImagSettings s);
+  TDesc angle(const TDesc &X, holonp::AngleSettings s);
+  TDesc log(const TDesc &X, holonp::LogSettings s);
+  TDesc isfinite(const TDesc &X, holonp::IsfiniteSettings s);
+  TDesc clip(const TDesc &X, holonp::ClipSettings s);
+  TDesc maximum(std::span<const TDesc> Xs, holonp::MaximumSettings s);
+  TDesc minimum(std::span<const TDesc> Xs, holonp::MinimumSettings s);
   // clang-format on
 };
 

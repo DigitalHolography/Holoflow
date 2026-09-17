@@ -66,6 +66,13 @@
 #include "holonp/transpose.hh"
 #include "holonp/where.hh"
 #include "holonp/zeros.hh"
+#include "holonp/sum.hh"
+#include "holonp/std.hh"
+#include "holonp/var.hh"
+#include "holonp/argmin.hh"
+#include "holonp/math_unary.hh"
+#include "holonp/clip.hh"
+#include "holonp/elementwise_minmax.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
@@ -203,6 +210,19 @@ void Manager::register_components() {
   reg_sync<AsArrayFactory>(registry_, "AsArray");
   reg_sync<AsContiguousArrayFactory>(registry_, "AsContiguousArray");
   reg_sync<CopyFactory>(registry_, "Copy");
+  reg_sync<SumFactory>(registry_, "Sum");
+  reg_sync<StdFactory>(registry_, "Std");
+  reg_sync<VarFactory>(registry_, "Var");
+  reg_sync<ArgminFactory>(registry_, "Argmin");
+  reg_sync<SqrtFactory>(registry_, "Sqrt");
+  reg_sync<RealFactory>(registry_, "Real");
+  reg_sync<ImagFactory>(registry_, "Imag");
+  reg_sync<AngleFactory>(registry_, "Angle");
+  reg_sync<LogFactory>(registry_, "Log");
+  reg_sync<IsfiniteFactory>(registry_, "Isfinite");
+  reg_sync<ClipFactory>(registry_, "Clip");
+  reg_sync<MaximumFactory>(registry_, "Maximum");
+  reg_sync<MinimumFactory>(registry_, "Minimum");
   reg_sync<EmptyFactory>(registry_, "Empty");
   reg_sync<ZerosFactory>(registry_, "Zeros");
   reg_sync<MeshgridFactory>(registry_, "Meshgrid");
