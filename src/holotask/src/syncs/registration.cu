@@ -265,8 +265,8 @@ __global__ void extract_3x3_kernel(float *d_output, const float *d_input, int pe
 class Registration : public holoflow::core::ISyncTask {
 public:
   Registration(RegistrationSettings settings, holoflow::core::TDesc input_desc,
-               holoflow::core::TDesc output_desc, cudaStream_t stream,
-               DevPtr<float> d_mean_centered, bool ref_initialized, size_t freq_size,
+               cudaStream_t stream, DevPtr<float> d_mean_centered, bool ref_initialized,
+               size_t freq_size,
                curaii::CufftHandle r2c_handle, curaii::CufftHandle c2r_handle, DevPtr<float> d_ref,
                DevPtr<float> d_xcorr, DevPtr<float> d_xcorr_smoothed,
                DevPtr<cuFloatComplex> d_freq1,
@@ -275,8 +275,7 @@ public:
                DevPtr<float> d_max, DevPtr<int64_t> d_max_idx, size_t select_tmp_bytes,
                DevPtr<uint8_t> d_select_tmp, DevPtr<int> d_select_count,
                DevPtr<uint8_t> d_select_roi, DevPtr<float> d_selected)
-      : settings_(std::move(settings)), input_desc_(std::move(input_desc)),
-        output_desc_(std::move(output_desc)), stream_(stream),
+      : settings_(std::move(settings)), input_desc_(std::move(input_desc)), stream_(stream),
         d_mean_centered_(std::move(d_mean_centered)), ref_initialized_(ref_initialized),
         freq_size_(freq_size), r2c_handle_(std::move(r2c_handle)),
         c2r_handle_(std::move(c2r_handle)), d_ref_(std::move(d_ref)), d_xcorr_(std::move(d_xcorr)),
@@ -555,7 +554,6 @@ private:
 
   RegistrationSettings   settings_;
   holoflow::core::TDesc  input_desc_;
-  holoflow::core::TDesc  output_desc_;
   cudaStream_t           stream_;
   DevPtr<float>          d_mean_centered_;
   bool                   ref_initialized_;
@@ -624,7 +622,7 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                             const nlohmann::json                  &jsettings,
                             const holoflow::core::SyncCreateCtx   &ctx) const {
   logger()->info("Creating Registration sync task");
-  auto result   = infer(input_descs, jsettings);
+  (void)infer(input_descs, jsettings);
   auto settings = jsettings.get<RegistrationSettings>();
 
   const auto &input_desc = input_descs[0];
@@ -703,8 +701,8 @@ RegistrationFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto d_sum_tmp = make_unique_device_ptr<uint8_t>(sum_tmp_bytes);
 
   return std::make_unique<Registration>(
-      settings, input_desc, result.output_descs[0], ctx.stream, std::move(d_mean_centered),
-      ref_initialized, freq_size, std::move(r2c_handle), std::move(c2r_handle), std::move(d_ref),
+      settings, input_desc, ctx.stream, std::move(d_mean_centered), ref_initialized, freq_size,
+      std::move(r2c_handle), std::move(c2r_handle), std::move(d_ref),
       std::move(d_xcorr), std::move(d_xcorr_smoothed), std::move(d_freq1), std::move(d_freq2),
       sum_tmp_bytes,
       std::move(d_sum_tmp), std::move(d_sum), amax_tmp_bytes, std::move(d_amax_tmp),
