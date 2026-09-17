@@ -36,6 +36,7 @@ add_subdirectory(holoflow)
 add_subdirectory(holonp)
 add_subdirectory(holotask)
 add_subdirectory(holovibes)
+add_subdirectory(holoflow_event)
 
 if(ENABLE_COVERAGE)
     add_test(
