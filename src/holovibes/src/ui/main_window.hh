@@ -159,6 +159,7 @@ private:
   TensorDisplayWidget  *processed_spectrum_widget_;
   TensorDisplayWidget  *shack_hartmann_widget_;
   TensorDisplayWidget  *shack_hartmann_xcorr_widget_;
+  TensorDisplayWidget  *registration_xcorr_widget_;
   TensorDisplayWidget  *zernike_phase_widget_;
   ZernikeHistoryWidget *zernike_history_widget_;
   // Application columns and central visualization workspace

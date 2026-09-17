@@ -120,6 +120,7 @@ protected:
   void  yz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  shack_hartmann_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  shack_hartmann_xcorr_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  void  registration_xcorr_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  zernike_phase_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  zernike_coefficients_display(const TDesc &X, tasks::sinks::DisplayZernikeCoefficientsSettings s);
   void  zernike_history_display(const TDesc &X, tasks::sinks::DisplaySignalHistorySettings s);
@@ -131,6 +132,7 @@ protected:
   TDesc correct_phase(const TDesc &X, const TDesc &PhaseMask, holotask::syncs::CorrectPhaseSettings s);
   TDesc pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);
   TDesc registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
+  std::vector<TDesc> registration_outputs(const TDesc &X, holotask::syncs::RegistrationSettings s);
   TDesc wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
   std::vector<TDesc> shack_hartmann_slopes(const TDesc &X, holotask::syncs::ShackHartmannSlopeSettings s);
   TDesc zernike_from_slopes(const TDesc &X, holotask::syncs::ZernikeFromSlopesSettings s);

@@ -51,6 +51,7 @@ public:
           ui::TensorDisplayWidget  *processed_spectrum_widget,
           ui::TensorDisplayWidget  *shack_hartmann_widget,
           ui::TensorDisplayWidget  *shack_hartmann_xcorr_widget,
+          ui::TensorDisplayWidget  *registration_xcorr_widget,
           ui::TensorDisplayWidget  *zernike_phase_widget,
           ui::ZernikeHistoryWidget *zernike_history_widget);
 
@@ -154,6 +155,7 @@ private:
   ui::TensorDisplayWidget  *processed_spectrum_widget_;
   ui::TensorDisplayWidget  *shack_hartmann_widget_;
   ui::TensorDisplayWidget  *shack_hartmann_xcorr_widget_;
+  ui::TensorDisplayWidget  *registration_xcorr_widget_;
   ui::TensorDisplayWidget  *zernike_phase_widget_;
   ui::ZernikeHistoryWidget *zernike_history_widget_;
 

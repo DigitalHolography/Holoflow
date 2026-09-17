@@ -44,6 +44,8 @@ public:
   void set_fixed_aspect(std::optional<QSize> size);
   void set_reticle_enabled(bool enabled);
   void set_reticle_radius(double radius);
+  void set_registration_ellipse_enabled(bool enabled);
+  void set_registration_ellipse_radius(double radius);
   void show_waiting_placeholder(const QString &message = {});
 
   /// Set the active colormap
@@ -75,6 +77,7 @@ private:
   void  initializeReticle();
   void  initializeColormaps();
   void  drawReticle();
+  void  drawRegistrationEllipse();
 
   GLuint tex_  = 0;
   GLuint vao_  = 0;
@@ -98,6 +101,8 @@ private:
 
   bool   reticle_enabled_ = false;
   double reticle_radius_  = 1.0;
+  bool   registration_ellipse_enabled_ = false;
+  double registration_ellipse_radius_  = 1.0;
 
   Colormap cmap_ = Colormap::Grayscale;
   float    vmin_ = 0.0f;

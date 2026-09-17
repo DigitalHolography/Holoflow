@@ -741,11 +741,22 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     result              = flatfield(result, flatfield_settings_from_cutoff_period(cutoff, dy, dx));
   }
 
-  if (s_.pp_registration) {
-    throw std::logic_error{"Registration is currently not supported"};
-  }
-
+  // Average the small temporal batch first to reduce noise before estimating the eye motion.
+  // Registration must happen before the configurable (larger) preview accumulation below;
+  // otherwise the large average would blur frames that are still misaligned.
   result = mean(result, {{0}, false}); // [1, H, W]
+
+  if (s_.pp_registration) {
+    const auto outputs = registration_outputs(result, {.radius = s_.pp_registration_radius});
+    result = outputs.at(0);
+    auto output_display = fftshift(outputs.at(1), {{-2, -1}});
+    // Match the Shack-Hartmann correlation preview. The registration output is a raw F32
+    // correlation matrix and must be normalized before conversion to U8 for display.
+    output_display = normalize(output_display, {{-2, -1}, 0.0f, 255.0f});
+    const auto output_converted = convert(output_display, {Target::U8, Strat::Scaled});
+
+    registration_xcorr_display(output_converted, {});
+  }
 
   // auto target_capacity = static_cast<size_t>(std::max(1, s_.gpu_out_size));
   auto target_capacity = 8ULL;
@@ -764,12 +775,11 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     result = pct_clip(result, pct_clip_settings);
   }
 
-  result = convert(result, {Target::U8, Strat::Scaled});
-  result = batched_queue(result, {s_.gpu_out_size, 1, 1});
-  xy_processed_display(result, {});
-
+  // Keep recording on an independent branch. Sharing the display queue with the writer makes
+  // the two consumers compete for the same temporal batches and can change the live preview.
   if (s_.recording_method == RecordingMethod::PROCESSED) {
-    auto result_rec = memcpy(result, {Host});
+    auto result_rec = convert(result, {Target::U8, Strat::Scaled});
+    result_rec      = memcpy(result_rec, {Host});
     result_rec      = batched_queue(result_rec, {s_.cpu_out_size, 1, 1});
 
     auto path              = s_.recording_path.string();
@@ -778,6 +788,10 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     auto holofile_settings = HolofileSettings{path, count, settings_json, true};
     holofile_write(result_rec, holofile_settings);
   }
+
+  result = convert(result, {Target::U8, Strat::Scaled});
+  result = batched_queue(result, {s_.gpu_out_size, 1, 1});
+  xy_processed_display(result, {});
 }
 
 void GraphBuilder::Impl::build_3d_cuts(const TDesc &FH_z) {

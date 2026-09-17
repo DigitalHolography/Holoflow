@@ -73,6 +73,9 @@ int    ViewWidget::get_range_start() const { return range_start_spin_->value(); 
 int    ViewWidget::get_range_end() const { return range_end_spin_->value(); }
 bool   ViewWidget::is_registration_enabled() const { return registration_check_->isChecked(); }
 double ViewWidget::get_registration_radius() const { return registration_radius_->value(); }
+bool ViewWidget::is_registration_ellipse_enabled() const {
+  return registration_ellipse_check_->isChecked();
+}
 bool   ViewWidget::is_reticle_enabled() const { return reticle_check_->isChecked(); }
 double ViewWidget::get_reticle_radius() const { return reticle_radius_->value(); }
 bool   ViewWidget::is_pct_enabled() const { return pct_check_->isChecked(); }
@@ -104,6 +107,9 @@ void ViewWidget::set_registration_enabled(bool enabled) {
   registration_check_->setChecked(enabled);
 }
 void ViewWidget::set_registration_radius(int value) { registration_radius_->setValue(value); }
+void ViewWidget::set_registration_ellipse_enabled(bool enabled) {
+  registration_ellipse_check_->setChecked(enabled);
+}
 void ViewWidget::set_pct_enabled(bool enabled) { pct_check_->setChecked(enabled); }
 void ViewWidget::set_pct_radius(double value) { pct_radius_->setValue(value); }
 
@@ -128,6 +134,7 @@ QSpinBox       *ViewWidget::range_start_spin() { return range_start_spin_; }
 QSpinBox       *ViewWidget::range_end_spin() { return range_end_spin_; }
 QCheckBox      *ViewWidget::registration_check() { return registration_check_; }
 QDoubleSpinBox *ViewWidget::registration_radius() { return registration_radius_; }
+QCheckBox *ViewWidget::registration_ellipse_check() { return registration_ellipse_check_; }
 QCheckBox      *ViewWidget::reticle_check() { return reticle_check_; }
 QDoubleSpinBox *ViewWidget::reticle_radius() { return reticle_radius_; }
 QCheckBox      *ViewWidget::pct_check() { return pct_check_; }
@@ -222,6 +229,10 @@ void ViewWidget::setup_ui() {
   post_layout->addWidget(registration_check_, 5, 0);
   registration_radius_ = create_double_spin_box(post_processing_group_, 0.05, 1.0, 0.05, 1.0);
   post_layout->addWidget(registration_radius_, 5, 1, 1, 2);
+
+  registration_ellipse_check_ =
+      new QCheckBox("Display registration ellipse", post_processing_group_);
+  post_layout->addWidget(registration_ellipse_check_, 6, 0, 1, 3);
 }
 
 void ViewWidget::connect_signals() {
