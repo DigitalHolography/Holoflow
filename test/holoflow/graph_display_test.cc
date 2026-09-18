@@ -68,3 +68,41 @@ TEST(CompiledGraphDisplayTest, RendersEmptyOutput) {
   EXPECT_NE(dot.find("// tasks:"), std::string::npos);
   EXPECT_NE(dot.find("}\n"), std::string::npos);
 }
+
+TEST(CompiledGraphDisplayTest, HighlightsRuntimeFailureNodeAndContext) {
+  holoflow::runtime::CompilerOutput output;
+  holoflow::runtime::NodePlan       source{
+      .spec     = {"source", "sync", {}},
+      .infer    = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync},
+      .in_tids  = {},
+      .out_tids = {0},
+  };
+  holoflow::runtime::NodePlan failing_node{
+      .spec     = {"failing_node", "sync", {}},
+      .infer    = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync},
+      .in_tids  = {0},
+      .out_tids = {},
+  };
+
+  const auto source_v = add_vertex(source, output.graph);
+  const auto failing_v = add_vertex(failing_node, output.graph);
+  add_edge(source_v, failing_v,
+           holoflow::runtime::EdgePlan{
+               {0, 0},
+               holoflow::core::TDesc({4}, holoflow::core::DType::F32,
+                                     holoflow::core::MemLoc::Host),
+               0,
+           },
+           output.graph);
+
+  const auto dot = holoflow::runtime::to_dot(
+      output, {}, "runtime_failure", "failing_node",
+      "Thread: Scheduler::run_section\nNode: failing_node\nError: test failure");
+
+  EXPECT_NE(dot.find("label=\"RUNTIME FAILURE\\nThread: Scheduler::run_section"),
+            std::string::npos);
+  EXPECT_NE(dot.find("label=\"failing_node\\n(sync)"), std::string::npos);
+  EXPECT_NE(dot.find("fillcolor=\"#ff9999\""), std::string::npos);
+  EXPECT_NE(dot.find("color=\"#cc0000\""), std::string::npos);
+  EXPECT_NE(dot.find("Error: test failure"), std::string::npos);
+}
