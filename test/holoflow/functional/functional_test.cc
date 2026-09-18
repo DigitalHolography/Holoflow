@@ -46,6 +46,27 @@ GraphSpec async_math_graph() {
   return graph;
 }
 
+GraphSpec representative_streaming_graph() {
+  GraphSpec graph;
+  auto      source          = add_vertex(NodeSpec{"source", "sequence", {}}, graph);
+  auto      double_bridge   = add_vertex(NodeSpec{"double-bridge", "bridge", {}}, graph);
+  auto      triple_bridge   = add_vertex(NodeSpec{"triple-bridge", "bridge", {}}, graph);
+  auto      double_branch   = add_vertex(NodeSpec{"double", "double", {}}, graph);
+  auto      triple_branch   = add_vertex(NodeSpec{"triple", "triple", {}}, graph);
+  auto      combine         = add_vertex(NodeSpec{"combine", "add", {}}, graph);
+  auto      normalize       = add_vertex(NodeSpec{"normalize", "normalize", {}}, graph);
+  auto      history         = add_vertex(NodeSpec{"history", "history", {}}, graph);
+  add_edge(source, double_bridge, EdgeSpec{0, 0}, graph);
+  add_edge(source, triple_bridge, EdgeSpec{0, 0}, graph);
+  add_edge(double_bridge, double_branch, EdgeSpec{0, 0}, graph);
+  add_edge(triple_bridge, triple_branch, EdgeSpec{0, 0}, graph);
+  add_edge(double_branch, combine, EdgeSpec{0, 0}, graph);
+  add_edge(triple_branch, combine, EdgeSpec{0, 1}, graph);
+  add_edge(combine, normalize, EdgeSpec{0, 0}, graph);
+  add_edge(normalize, history, EdgeSpec{0, 0}, graph);
+  return graph;
+}
+
 } // namespace
 
 TEST(FunctionalPipelineTest, CompilesAndExecutesHostVectorMath) {
@@ -76,6 +97,35 @@ TEST(FunctionalPipelineTest, CompilesAndExecutesHostVectorMath) {
   EXPECT_NE(state->last_sync_stream, nullptr);
 }
 
+TEST(FunctionalPipelineTest, ExecutesSmallPipelineWithinFloatingPointTolerance) {
+  auto                     state = std::make_shared<holoflow::test::MathState>();
+  holoflow::core::Registry registry;
+  registry.register_sync("lhs", std::make_unique<holoflow::test::VectorSourceFactory>(
+                                    std::vector<float>{0.1F, 0.2F}, state));
+  registry.register_sync("rhs", std::make_unique<holoflow::test::VectorSourceFactory>(
+                                    std::vector<float>{0.3F, 0.4F}, state));
+  registry.register_sync("add", std::make_unique<holoflow::test::AddFactory>(state));
+  registry.register_sync("scale", std::make_unique<holoflow::test::ScaleFactory>(0.7F, state));
+  registry.register_sync("sink", std::make_unique<holoflow::test::CollectFactory>(state));
+
+  holoflow::runtime::Compiler compiler(
+      registry,
+      {.dump_dot_on_failure = false, .verbose_tracing = false, .enable_profiling = false});
+  auto output = compiler.compile(sync_math_graph());
+  holoflow::runtime::Scheduler scheduler(output->graph, output->sections, output->resources);
+
+  scheduler.start();
+  scheduler.wait();
+
+  ASSERT_EQ(state->collected.size(), 2);
+  EXPECT_NEAR(state->collected[0], (0.1 + 0.3) * 0.7, 1e-6);
+  EXPECT_NEAR(state->collected[1], (0.2 + 0.4) * 0.7, 1e-6);
+  EXPECT_EQ(state->source_calls, 2);
+  EXPECT_EQ(state->add_calls, 1);
+  EXPECT_EQ(state->scale_calls, 1);
+  EXPECT_EQ(state->sink_calls, 1);
+}
+
 TEST(FunctionalPipelineTest, ExecutesAcrossAnAsyncBoundary) {
   auto                     state = std::make_shared<holoflow::test::MathState>();
   holoflow::core::Registry registry;
@@ -101,4 +151,49 @@ TEST(FunctionalPipelineTest, ExecutesAcrossAnAsyncBoundary) {
   EXPECT_NE(state->producer_stream, nullptr);
   EXPECT_NE(state->consumer_stream, nullptr);
   EXPECT_NE(state->producer_stream, state->consumer_stream);
+}
+
+TEST(FunctionalPipelineTest, ExecutesRepresentativeStreamingGraphWithinTolerance) {
+  constexpr size_t frame_count = 3;
+  const std::vector<float> base{0.1F, 0.2F};
+  auto                     state = std::make_shared<holoflow::test::MathState>();
+  holoflow::core::Registry registry;
+  registry.register_sync("sequence", std::make_unique<holoflow::test::SequenceSourceFactory>(
+                                         base, state));
+  registry.register_async("bridge", std::make_unique<holoflow::test::AsyncBridgeFactory>(
+                                      state, 0x5EEDU, 3));
+  registry.register_sync("double", std::make_unique<holoflow::test::ScaleFactory>(2.F, state));
+  registry.register_sync("triple", std::make_unique<holoflow::test::ScaleFactory>(3.F, state));
+  registry.register_sync("add", std::make_unique<holoflow::test::AddFactory>(state));
+  registry.register_sync("normalize",
+                         std::make_unique<holoflow::test::ScaleFactory>(0.1F, state));
+  registry.register_sync("history", std::make_unique<holoflow::test::HistoryCollectFactory>(
+                                           frame_count, state));
+
+  holoflow::runtime::Compiler compiler(
+      registry,
+      {.dump_dot_on_failure = false, .verbose_tracing = false, .enable_profiling = false});
+  auto output = compiler.compile(representative_streaming_graph());
+  holoflow::runtime::Scheduler scheduler(output->graph, output->sections, output->resources);
+
+  scheduler.start();
+  scheduler.wait();
+
+  ASSERT_EQ(state->collected_frames.size(), frame_count);
+  for (size_t frame = 0; frame < frame_count; ++frame) {
+    ASSERT_EQ(state->collected_frames[frame].size(), base.size());
+    for (size_t element = 0; element < base.size(); ++element) {
+      const auto expected = (base[element] + static_cast<float>(frame)) * 0.5F;
+      EXPECT_NEAR(state->collected_frames[frame][element], expected, 1e-6F)
+          << "frame=" << frame << " element=" << element;
+    }
+  }
+  // Asynchronous branches may allow a few extra source frames to be in flight when the history
+  // sink reaches its requested frame count and returns Eof.
+  EXPECT_GE(state->source_calls, frame_count);
+  EXPECT_EQ(state->add_calls, frame_count);
+  EXPECT_EQ(state->scale_calls, 3 * frame_count);
+  EXPECT_EQ(state->sink_calls, frame_count);
+  EXPECT_GT(state->async_push_calls, 0);
+  EXPECT_GT(state->async_pop_calls, 0);
 }
