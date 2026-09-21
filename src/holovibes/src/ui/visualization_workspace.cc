@@ -63,6 +63,13 @@ void show_waiting_placeholder(QWidget *widget) {
   }
 }
 
+QString workspace_settings_group(const QString &profile) {
+  return profile.isEmpty() || profile == QStringLiteral("default") ||
+                 profile == QStringLiteral("developer")
+             ? QStringLiteral("visualization_workspace")
+             : QStringLiteral("visualization_workspace/%1").arg(profile);
+}
+
 ads::DockWidgetArea dock_area_for(holovibes::ui::DockPlacement placement) {
   using holovibes::ui::DockPlacement;
   switch (placement) {
@@ -159,11 +166,11 @@ bool VisualizationWorkspace::register_visualization(VisualizationDescriptor desc
 
   entry->content_stack = new QStackedWidget(entry->dock_widget);
   entry->content_stack->setContentsMargins(0, 0, 0, 0);
-  entry->content_stack->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+  entry->content_stack->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   entry->content_stack->setMinimumSize(0, 0);
 
   entry->descriptor.widget->setMinimumSize(0, 0);
-  entry->descriptor.widget->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
+  entry->descriptor.widget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
   entry->content_stack->addWidget(entry->descriptor.widget);
 
   entry->placeholder = create_placeholder({}, entry->content_stack);
@@ -336,16 +343,18 @@ void VisualizationWorkspace::select_visualization(const QString &id) {
   emit selected_visualization_changed(id);
 }
 
-void VisualizationWorkspace::save_persistent_state(QSettings &settings) {
+void VisualizationWorkspace::save_persistent_state(QSettings &settings, const QString &profile) {
   if (!registration_finalized_ || default_layout_state_.isEmpty()) {
     return;
   }
+
+  active_profile_ = profile;
 
   if (pipeline_running_) {
     cache_active_layout();
   }
 
-  settings.beginGroup("visualization_workspace");
+  settings.beginGroup(workspace_settings_group(profile));
   settings.setValue("layout_state", last_active_layout_state_);
   for (const auto &entry : entries_) {
     settings.setValue(QString("view_preferences/%1").arg(entry->descriptor.id),
@@ -354,16 +363,21 @@ void VisualizationWorkspace::save_persistent_state(QSettings &settings) {
   settings.endGroup();
 }
 
-bool VisualizationWorkspace::restore_persistent_state(QSettings &settings) {
+bool VisualizationWorkspace::restore_persistent_state(QSettings &settings, const QString &profile) {
   if (!registration_finalized_) {
     return false;
   }
 
-  settings.beginGroup("visualization_workspace");
+  active_profile_ = profile;
+
+  const QString workspace_group = workspace_settings_group(profile);
+  const bool    has_saved_profile = settings.contains(workspace_group + QStringLiteral("/layout_state"));
+  settings.beginGroup(workspace_group);
   for (auto &entry : entries_) {
     entry->view_preference =
         settings
-            .value(QString("view_preferences/%1").arg(entry->descriptor.id), entry->view_preference)
+            .value(QString("view_preferences/%1").arg(entry->descriptor.id),
+                   has_saved_profile ? entry->view_preference : entry->descriptor.default_enabled)
             .toBool();
   }
 
@@ -553,7 +567,7 @@ void VisualizationWorkspace::reset_visualization_layout() {
 
 void VisualizationWorkspace::save_workspace_settings_now() {
   QSettings settings;
-  save_persistent_state(settings);
+  save_persistent_state(settings, active_profile_);
   settings.sync();
 }
 

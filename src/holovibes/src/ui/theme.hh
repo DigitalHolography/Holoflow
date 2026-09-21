@@ -19,5 +19,6 @@ class QApplication;
 namespace holovibes::ui {
 
 void apply_dark_clinical_theme(QApplication &app);
+void apply_light_clinical_theme(QApplication &app);
 
 } // namespace holovibes::ui

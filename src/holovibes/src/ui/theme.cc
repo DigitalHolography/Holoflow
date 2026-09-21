@@ -27,7 +27,7 @@ namespace holovibes::ui {
 
 namespace {
 
-struct ClinicalThemeColors {
+struct ClinicalDarkThemeColors {
   QString window           = QStringLiteral("#101215");
   QString panel            = QStringLiteral("#13181E");
   QString panel_dark       = QStringLiteral("#11161B");
@@ -62,6 +62,41 @@ struct ClinicalThemeColors {
   QString highlighted_text = QStringLiteral("#050608");
 };
 
+struct ClinicalLightThemeColors {
+  QString window           = QStringLiteral("#F5F7FA");
+  QString panel            = QStringLiteral("#FFFFFF");
+  QString panel_dark       = QStringLiteral("#E9EEF3");
+  QString surface          = QStringLiteral("#FFFFFF");
+  QString surface_alt      = QStringLiteral("#EEF2F6");
+  QString field            = QStringLiteral("#FFFFFF");
+  QString field_readonly   = QStringLiteral("#F1F4F7");
+  QString display          = QStringLiteral("#20252B");
+  QString border           = QStringLiteral("#CBD3DC");
+  QString border_strong    = QStringLiteral("#AEB9C5");
+  QString border_hover     = QStringLiteral("#8795A3");
+  QString button_hover     = QStringLiteral("#E2E8EE");
+  QString disabled         = QStringLiteral("#8793A0");
+  QString text             = QStringLiteral("#20252B");
+  QString text_muted       = QStringLiteral("#5D6976");
+  QString text_setting     = QStringLiteral("#4F5B68");
+  QString text_header      = QStringLiteral("#283440");
+  QString accent           = QStringLiteral("#168A86");
+  QString accent_hover     = QStringLiteral("#0F706D");
+  QString accent_dark      = QStringLiteral("#D5EFED");
+  QString status_success   = QStringLiteral("#218739");
+  QString status_warning   = QStringLiteral("#A56600");
+  QString danger           = QStringLiteral("#C9362B");
+  QString danger_border    = QStringLiteral("#B52B22");
+  QString danger_bg        = QStringLiteral("#FBE9E7");
+  QString error_text       = QStringLiteral("#8F261F");
+  QString error_bg         = QStringLiteral("#FDEDEC");
+  QString error_focus      = QStringLiteral("#D6453B");
+  QString error_check      = QStringLiteral("#E77870");
+  QString link             = QStringLiteral("#1268B3");
+  QString scroll           = QStringLiteral("#C3CCD5");
+  QString highlighted_text = QStringLiteral("#FFFFFF");
+};
+
 void set_palette_color(QPalette &palette, QPalette::ColorRole role, const QString &color) {
   palette.setColor(role, QColor(color));
 }
@@ -70,7 +105,7 @@ void set_disabled_palette_color(QPalette &palette, QPalette::ColorRole role, con
   palette.setColor(QPalette::Disabled, role, QColor(color));
 }
 
-QPalette build_palette(const ClinicalThemeColors &colors) {
+template <typename ThemeColors> QPalette build_palette(const ThemeColors &colors) {
   QPalette palette;
   set_palette_color(palette, QPalette::Window, colors.window);
   set_palette_color(palette, QPalette::WindowText, colors.text);
@@ -97,7 +132,7 @@ void replace_token(QString &style_sheet, const char *token, const QString &value
   style_sheet.replace(QStringLiteral("@%1@").arg(QString::fromLatin1(token)), value);
 }
 
-QString load_clinical_qss(const ClinicalThemeColors &colors) {
+template <typename ThemeColors> QString load_clinical_qss(const ThemeColors &colors) {
   QFile file(QStringLiteral(":/resources/holovibes/styles/clinical_dark.qss"));
   if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
     qWarning() << "Unable to load clinical theme stylesheet:" << file.errorString();
@@ -142,7 +177,15 @@ QString load_clinical_qss(const ClinicalThemeColors &colors) {
 } // namespace
 
 void apply_dark_clinical_theme(QApplication &app) {
-  const ClinicalThemeColors colors;
+  const ClinicalDarkThemeColors colors;
+
+  app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
+  app.setPalette(build_palette(colors));
+  app.setStyleSheet(load_clinical_qss(colors));
+}
+
+void apply_light_clinical_theme(QApplication &app) {
+  const ClinicalLightThemeColors colors;
 
   app.setStyle(QStyleFactory::create(QStringLiteral("Fusion")));
   app.setPalette(build_palette(colors));

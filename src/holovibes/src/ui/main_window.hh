@@ -29,6 +29,7 @@
 #include <QUrl>
 #include <QWidget>
 #include <optional>
+#include <vector>
 
 #include "pipeline/field_help.hh"
 #include "pipeline/manager.hh"
@@ -39,6 +40,11 @@
 #include "ui/widgets/import_widget.hh"
 #include "ui/widgets/system_monitor_widget.hh"
 #include "ui/widgets/view_widget.hh"
+
+class QAction;
+class QFrame;
+class QMenu;
+class QScrollArea;
 
 namespace holovibes::ui {
 
@@ -69,6 +75,9 @@ private slots:
   void on_raw_record_stopped_failure(const QString &error);
 
 private:
+  enum class LayoutMode { Developer, Clinical };
+  enum class ThemeMode { Dark, Light };
+
   ImportWidget                *import_widget_;
   ExportWidget                *export_widget_;
   ImageRenderingWidget        *render_widget_;
@@ -107,6 +116,11 @@ private:
   void connect_export_controls();
   void configure_window();
   void check_for_updates();
+  bool apply_preferences(const QString &layout_mode, const QString &theme_mode);
+  void apply_layout_mode(LayoutMode mode);
+  void update_layout_visibility();
+  void apply_theme(ThemeMode theme);
+  void update_developer_menu_visibility();
   void show_fft_frequency_tool();
   void show_preferences();
   void show_pipeline_graph();
@@ -122,6 +136,8 @@ private:
   QString sanitize_recording_token(const QString &value) const;
   QString recording_file_name(int acquisition_id) const;
   QString acquisition_label(int acquisition_id) const;
+  QString layout_mode_key() const;
+  QString theme_mode_key() const;
   void    update_acquisition_label();
   void    update_recording_path_preview();
   void    refresh_command_bar();
@@ -180,6 +196,17 @@ private:
   QToolButton            *update_indicator_           = nullptr;
   UpdateChecker          *update_checker_             = nullptr;
   GraphVisualizerWidget  *graph_visualizer_widget_    = nullptr;
+  QWidget                *controls_content_           = nullptr;
+  QWidget                *processing_column_          = nullptr;
+  QFrame                  *controls_divider_          = nullptr;
+  QScrollArea             *controls_scroll_           = nullptr;
+  QMenu                   *developer_debug_menu_      = nullptr;
+  QAction                 *fft_tool_action_           = nullptr;
+  std::vector<QWidget *>   command_status_widgets_;
+  int                      developer_controls_width_  = 430;
+  int                      clinical_controls_width_   = 360;
+  LayoutMode               layout_mode_               = LayoutMode::Developer;
+  ThemeMode                theme_mode_                = ThemeMode::Light;
   QUrl                    available_update_url_;
 };
 

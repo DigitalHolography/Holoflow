@@ -56,7 +56,7 @@ int main(int argc, char **argv) {
   QCoreApplication::setApplicationVersion(HOLOVIBES_VERSION_SEMVER2);
   holovibes::utils::setupAppData();
   QApplication app(argc, argv);
-  holovibes::ui::apply_dark_clinical_theme(app);
+  holovibes::ui::apply_light_clinical_theme(app);
 
   holovibes::ui::MainWindow main_window;
   app.setWindowIcon(QIcon(":/resources/holovibes/assets/holovibes_logo.png"));

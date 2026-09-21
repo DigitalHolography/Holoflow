@@ -67,8 +67,10 @@ public:
   void reset_visualization_content();
   void select_visualization(const QString &id);
 
-  void save_persistent_state(QSettings &settings);
-  bool restore_persistent_state(QSettings &settings);
+  void save_persistent_state(QSettings &settings,
+                             const QString &profile = QStringLiteral("default"));
+  bool restore_persistent_state(QSettings &settings,
+                                const QString &profile = QStringLiteral("default"));
 
 signals:
   void selected_visualization_changed(const QString &visualization_id);
@@ -100,6 +102,7 @@ private:
   bool                                registration_finalized_ = false;
   bool                                pipeline_running_       = false;
   bool                                applying_state_         = false;
+  QString                             active_profile_         = QStringLiteral("default");
 };
 
 } // namespace holovibes::ui

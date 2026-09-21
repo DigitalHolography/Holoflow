@@ -315,6 +315,9 @@ void TensorDisplayWidget::updateLetterboxViewport() {
     return;
   }
 
+  // Keep the configured display aspect ratio.  The tensor dimensions can
+  // include processing padding and are not necessarily the physical display
+  // ratio selected by the pipeline.
   const int aspect_w = fixed_aspect_size_ ? fixed_aspect_size_->width() : img_w_;
   const int aspect_h = fixed_aspect_size_ ? fixed_aspect_size_->height() : img_h_;
 

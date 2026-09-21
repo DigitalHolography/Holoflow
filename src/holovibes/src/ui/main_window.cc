@@ -15,6 +15,7 @@
 #include "ui/main_window.hh"
 
 #include <QAction>
+#include <QApplication>
 #include <QCheckBox>
 #include <QCloseEvent>
 #include <QComboBox>
@@ -68,8 +69,9 @@
 #include "holofile/holofile.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
-#include "ui/update_checker.hh"
 #include "ui/graph_visualizer_widget.hh"
+#include "ui/theme.hh"
+#include "ui/update_checker.hh"
 #include "ui/visualization_workspace.hh"
 #include "ui/widgets/selected_widget_settings_panel.hh"
 #include "ui/widgets/tensor_display_widget.hh"
@@ -400,12 +402,29 @@ public:
   using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
   // TODO : find the right import
 
-  PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager)
-      : QDialog(parent), manager_(manager) {
+  PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager,
+                    const QString &layout_mode, const QString &theme_mode,
+                    std::function<bool(const QString &, const QString &)> apply_handler)
+      : QDialog(parent), manager_(manager), apply_handler_(std::move(apply_handler)) {
     setWindowTitle(tr("Preferences"));
     setMinimumWidth(400);
 
     auto *dialog_layout = new QVBoxLayout(this);
+
+    auto *application_group = new QGroupBox(tr("Application"), this);
+    auto *application_form = new QFormLayout(application_group);
+    layout_mode_combo_ = create_combo_box(application_group, {});
+    layout_mode_combo_->addItem(tr("Developer"), QStringLiteral("developer"));
+    layout_mode_combo_->addItem(tr("Clinical"), QStringLiteral("clinical"));
+    layout_mode_combo_->setCurrentIndex(layout_mode_combo_->findData(layout_mode));
+    application_form->addRow(tr("Layout"), layout_mode_combo_);
+
+    theme_combo_ = create_combo_box(application_group, {});
+    theme_combo_->addItem(tr("Dark"), QStringLiteral("dark"));
+    theme_combo_->addItem(tr("Light"), QStringLiteral("light"));
+    theme_combo_->setCurrentIndex(theme_combo_->findData(theme_mode));
+    application_form->addRow(tr("Theme"), theme_combo_);
+    dialog_layout->addWidget(application_group);
 
     auto *splitter = new QSplitter(Qt::Horizontal, this);
 
@@ -425,7 +444,11 @@ public:
     apply_button_->setDisabled(true);
     dialog_layout->addWidget(button_box);
 
-    connect(apply_button_, &QPushButton::clicked, this, [this]() { update_preferences(); });
+    connect(apply_button_, &QPushButton::clicked, this, [this]() {
+      if (update_preferences()) {
+        accept();
+      }
+    });
     connect(button_box, &QDialogButtonBox::rejected, this, &QDialog::reject);
     connect_signals();
   }
@@ -506,8 +529,7 @@ private:
                        graph_compiled_dump_preferences_widgets_.rankdir_combo_);
 
     graph_compiled_dump_preferences_widgets_.layout_combo_ =
-        create_combo_box(this,
-                         QStringList{tr("Normal"), tr("Stairs"), tr("Block"), tr("Snake")});
+        create_combo_box(this, QStringList{tr("Normal"), tr("Stairs"), tr("Block"), tr("Snake")});
     graph_compiled_dump_preferences_widgets_.layout_combo_->setCurrentIndex(
         static_cast<int>(graph_compiled_dump_preferences.layout));
     graph_compiled_dump_preferences_widgets_.layout_combo_->setToolTip(
@@ -601,10 +623,9 @@ private:
     return group_box;
   }
 
-  void update_preferences() {
+  bool update_preferences() {
     // const auto &specs_ = nullptr;
     // holoflow::core::to_dot(specs_);
-    apply_button_->setEnabled(false);
     auto graph_spec_dump_preferences = GraphSpecDumpPreferences{
         .rankdir = graph_spec_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
                        ? GraphSpecDumpPreferences::Rankdir::LeftToRight
@@ -624,7 +645,7 @@ private:
         .rankdir = graph_compiled_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
                        ? GraphCompiledDumpPreferences::Rankdir::LeftToRight
                        : GraphCompiledDumpPreferences::Rankdir::TopToBottom,
-        .layout = static_cast<GraphCompiledDumpPreferences::Layout>(
+        .layout  = static_cast<GraphCompiledDumpPreferences::Layout>(
             graph_compiled_dump_preferences_widgets_.layout_combo_->currentIndex()),
 
         .floating_point_precision =
@@ -649,9 +670,23 @@ private:
 
     manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
     manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
+
+    if (apply_handler_ &&
+        !apply_handler_(layout_mode_combo_->currentData().toString(),
+                        theme_combo_->currentData().toString())) {
+      return false;
+    }
+
+    apply_button_->setEnabled(false);
+    return true;
   }
 
   void connect_signals() {
+    connect(layout_mode_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](int) { apply_button_->setEnabled(true); });
+    connect(theme_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this](int) { apply_button_->setEnabled(true); });
+
     connect(graph_spec_dump_preferences_widgets_.rankdir_combo_,
             qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](int) { apply_button_->setEnabled(true); });
@@ -700,13 +735,16 @@ private:
   }
 
   holovibes::pipeline::Manager &manager_;
+  std::function<bool(const QString &, const QString &)> apply_handler_;
 
   QPushButton *apply_button_ = nullptr;
+  QComboBox  *layout_mode_combo_ = nullptr;
+  QComboBox  *theme_combo_       = nullptr;
 
   struct GraphSpecDumpPreferencesWidgets {
     // dump preferences
     // rankdir: LR | TB
-    QComboBox *rankdir_combo_                  = nullptr;
+    QComboBox *rankdir_combo_                 = nullptr;
     QSpinBox  *floating_point_precision_spin_ = nullptr;
     // Nodes
     QCheckBox *node_name_checkbox_     = nullptr;
@@ -720,13 +758,13 @@ private:
   struct GraphCompiledDumpPreferencesWidgets {
     // dump preferences
     // rankdir: LR | TB
-    QComboBox *rankdir_combo_                  = nullptr;
-    QComboBox *layout_combo_                   = nullptr;
+    QComboBox *rankdir_combo_                 = nullptr;
+    QComboBox *layout_combo_                  = nullptr;
     QSpinBox  *floating_point_precision_spin_ = nullptr;
-    QCheckBox *node_name_checkbox_             = nullptr;
-    QCheckBox *node_kind_checkbox_             = nullptr;
-    QCheckBox *node_settings_checkbox_         = nullptr;
-    QCheckBox *node_in_out_tids_               = nullptr;
+    QCheckBox *node_name_checkbox_            = nullptr;
+    QCheckBox *node_kind_checkbox_            = nullptr;
+    QCheckBox *node_settings_checkbox_        = nullptr;
+    QCheckBox *node_in_out_tids_              = nullptr;
     // Edges
     QCheckBox *edge_indices_checkbox_ = nullptr;
     QCheckBox *edge_desc_checkbox_    = nullptr;
@@ -861,6 +899,8 @@ void MainWindow::setup_main_layout() {
     name_label->setObjectName("commandLabel");
     value_label = new QLabel(command_bar);
     value_label->setObjectName("commandValue");
+    command_status_widgets_.push_back(name_label);
+    command_status_widgets_.push_back(value_label);
     command_layout->addWidget(name_label);
     command_layout->addWidget(value_label);
     command_layout->addSpacing(12);
@@ -892,14 +932,14 @@ void MainWindow::setup_main_layout() {
   content_layout->setSpacing(8);
   main_layout->addWidget(content_row, 1);
 
-  auto *controls_content = new QWidget(content_row);
-  controls_content->setObjectName("controlsContent");
-  controls_content->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
-  auto *controls_layout = new QHBoxLayout(controls_content);
+  controls_content_ = new QWidget(content_row);
+  controls_content_->setObjectName("controlsContent");
+  controls_content_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Preferred);
+  auto *controls_layout = new QHBoxLayout(controls_content_);
   controls_layout->setContentsMargins(0, 0, 0, 0);
   controls_layout->setSpacing(12);
 
-  auto *acquisition_column = new QWidget(controls_content);
+  auto *acquisition_column = new QWidget(controls_content_);
   acquisition_column->setObjectName("controlsColumn");
   auto *acquisition_layout = new QVBoxLayout(acquisition_column);
   acquisition_layout->setContentsMargins(0, 0, 0, 0);
@@ -910,37 +950,39 @@ void MainWindow::setup_main_layout() {
   acquisition_layout->addWidget(view_widget_->post_processing_group());
   acquisition_layout->addStretch(1);
 
-  auto *processing_column = new QWidget(controls_content);
-  processing_column->setObjectName("controlsColumn");
-  auto *processing_layout = new QVBoxLayout(processing_column);
+  processing_column_ = new QWidget(controls_content_);
+  processing_column_->setObjectName("controlsColumn");
+  auto *processing_layout = new QVBoxLayout(processing_column_);
   processing_layout->setContentsMargins(0, 0, 0, 0);
   processing_layout->setSpacing(12);
   processing_layout->addWidget(render_widget_);
   processing_layout->addWidget(render_widget_->autofocus_widget());
   processing_layout->addStretch(1);
 
-  auto *controls_divider = new QFrame(controls_content);
-  controls_divider->setObjectName("controlsColumnDivider");
-  controls_divider->setFixedWidth(1);
-  controls_divider->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+  controls_divider_ = new QFrame(controls_content_);
+  controls_divider_->setObjectName("controlsColumnDivider");
+  controls_divider_->setFixedWidth(1);
+  controls_divider_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
 
   controls_layout->addWidget(acquisition_column);
-  controls_layout->addWidget(controls_divider);
-  controls_layout->addWidget(processing_column);
+  controls_layout->addWidget(controls_divider_);
+  controls_layout->addWidget(processing_column_);
 
-  auto *controls_scroll = new QScrollArea(content_row);
-  controls_scroll->setObjectName("controlsScrollArea");
-  controls_scroll->viewport()->setObjectName("controlsScrollViewport");
-  controls_scroll->setWidgetResizable(true);
-  controls_scroll->setFrameShape(QFrame::NoFrame);
-  controls_scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-  controls_scroll->setWidget(controls_content);
-  const int controls_width =
-      std::max(controls_content->sizeHint().width() +
-                   controls_scroll->verticalScrollBar()->sizeHint().width() + 12,
-               430);
-  controls_scroll->setFixedWidth(controls_width);
-  controls_scroll->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
+  controls_scroll_ = new QScrollArea(content_row);
+  controls_scroll_->setObjectName("controlsScrollArea");
+  controls_scroll_->viewport()->setObjectName("controlsScrollViewport");
+  controls_scroll_->setWidgetResizable(true);
+  controls_scroll_->setFrameShape(QFrame::NoFrame);
+  controls_scroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+  controls_scroll_->setWidget(controls_content_);
+  developer_controls_width_ = std::max(
+      controls_content_->sizeHint().width() + controls_scroll_->verticalScrollBar()->sizeHint().width() + 12,
+      430);
+  clinical_controls_width_ = std::max(
+      acquisition_column->sizeHint().width() + controls_scroll_->verticalScrollBar()->sizeHint().width() + 12,
+      360);
+  controls_scroll_->setFixedWidth(developer_controls_width_);
+  controls_scroll_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
 
   display_workspace_ = new VisualizationWorkspace(content_row);
 
@@ -962,7 +1004,7 @@ void MainWindow::setup_main_layout() {
   const int right_sidebar_width = std::max(280, right_sidebar_->sizeHint().width());
   right_sidebar_->setFixedWidth(right_sidebar_width);
 
-  content_layout->addWidget(controls_scroll, 0);
+  content_layout->addWidget(controls_scroll_, 0);
   content_layout->addWidget(display_workspace_, 1);
   content_layout->addWidget(right_sidebar_, 0);
 
@@ -1189,6 +1231,11 @@ void MainWindow::refresh_command_bar() {
 void MainWindow::save_persistent_state() {
   QSettings settings;
 
+  settings.beginGroup("application");
+  settings.setValue("layout_mode", layout_mode_key());
+  settings.setValue("theme", theme_mode_key());
+  settings.endGroup();
+
   settings.beginGroup("main_window");
   settings.setValue("geometry", saveGeometry());
   settings.endGroup();
@@ -1283,7 +1330,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("show_statistics", display_settings.show_statistics);
   settings.endGroup();
 
-  display_workspace_->save_persistent_state(settings);
+  display_workspace_->save_persistent_state(settings, layout_mode_key());
 
   settings.sync();
 }
@@ -1291,13 +1338,24 @@ void MainWindow::save_persistent_state() {
 void MainWindow::restore_persistent_state() {
   QSettings settings;
 
+  settings.beginGroup("application");
+  const QString saved_layout_mode =
+      settings.value("layout_mode", QStringLiteral("developer")).toString();
+  const QString saved_theme = settings.value("theme", QStringLiteral("light")).toString();
+  layout_mode_ = saved_layout_mode == QStringLiteral("clinical") ? LayoutMode::Clinical
+                                                                   : LayoutMode::Developer;
+  theme_mode_ = saved_theme == QStringLiteral("dark") ? ThemeMode::Dark : ThemeMode::Light;
+  settings.endGroup();
+  apply_theme(theme_mode_);
+
   settings.beginGroup("main_window");
   if (settings.contains("geometry")) {
     geometry_restored_ = restoreGeometry(settings.value("geometry").toByteArray());
   }
   settings.endGroup();
 
-  display_workspace_->restore_persistent_state(settings);
+  const bool visualization_layout_restored =
+      display_workspace_->restore_persistent_state(settings, layout_mode_key());
   std::optional<bool> legacy_raw_view;
   std::optional<bool> legacy_raw_spectrum;
   std::optional<bool> legacy_processed_spectrum;
@@ -1493,6 +1551,11 @@ void MainWindow::restore_persistent_state() {
   update_recording_path_preview();
   refresh_visualization_availability();
   display_workspace_->set_pipeline_running(false);
+  update_layout_visibility();
+  if (layout_mode_ == LayoutMode::Clinical && !visualization_layout_restored) {
+    display_workspace_->set_visualization_enabled(QStringLiteral("xy_processed"), true);
+    display_workspace_->select_visualization(QStringLiteral("xy_processed"));
+  }
 }
 
 void MainWindow::initialize_display_widgets() {
@@ -1638,7 +1701,6 @@ void MainWindow::connect_manager_signals() {
               graph_visualizer_widget_->show_error(error);
             }
           });
-
 }
 
 void MainWindow::connect_import_controls() {
@@ -1705,23 +1767,131 @@ void MainWindow::configure_window() {
   auto *view_menu = menuBar()->addMenu(tr("&View"));
   display_workspace_->populate_view_menu(view_menu);
   view_menu->addSeparator();
-  auto *debug_menu              = view_menu->addMenu(tr("Debug"));
+  developer_debug_menu_         = view_menu->addMenu(tr("Debug"));
+  auto *debug_menu              = developer_debug_menu_;
   auto *graph_visualizer_action = debug_menu->addAction(tr("Open Pipeline Graph..."));
   connect(graph_visualizer_action, &QAction::triggered, this, &MainWindow::show_pipeline_graph);
   auto *open_dot_action = debug_menu->addAction(tr("Open DOT File..."));
   connect(open_dot_action, &QAction::triggered, this, &MainWindow::open_dot_file);
 
   auto *tools_menu      = menuBar()->addMenu(tr("&Tools"));
-  auto *fft_tool_action = tools_menu->addAction(tr("FFT Frequency Range to Bins..."));
-  fft_tool_action->setShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+F")));
-  fft_tool_action->setShortcutContext(Qt::ApplicationShortcut);
-  connect(fft_tool_action, &QAction::triggered, this, &MainWindow::show_fft_frequency_tool);
+  fft_tool_action_      = tools_menu->addAction(tr("FFT Frequency Range to Bins..."));
+  fft_tool_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+F")));
+  fft_tool_action_->setShortcutContext(Qt::ApplicationShortcut);
+  connect(fft_tool_action_, &QAction::triggered, this, &MainWindow::show_fft_frequency_tool);
+
+  update_developer_menu_visibility();
 
   const QSize minimum_size(960, 640);
   const QSize default_size = minimum_size.expandedTo(QSize(1280, 800));
   setMinimumSize(minimum_size);
   if (!geometry_restored_) {
     resize(default_size);
+  }
+}
+
+QString MainWindow::layout_mode_key() const {
+  return layout_mode_ == LayoutMode::Clinical ? QStringLiteral("clinical")
+                                               : QStringLiteral("developer");
+}
+
+QString MainWindow::theme_mode_key() const {
+  return theme_mode_ == ThemeMode::Dark ? QStringLiteral("dark") : QStringLiteral("light");
+}
+
+bool MainWindow::apply_preferences(const QString &layout_mode, const QString &theme_mode) {
+  const LayoutMode requested_layout =
+      layout_mode == QStringLiteral("clinical") ? LayoutMode::Clinical : LayoutMode::Developer;
+  const ThemeMode requested_theme =
+      theme_mode == QStringLiteral("dark") ? ThemeMode::Dark : ThemeMode::Light;
+
+  if (export_in_progress_ && requested_layout != layout_mode_) {
+    QMessageBox::warning(this, tr("Layout change unavailable"),
+                         tr("The layout cannot be changed while recording is active."));
+    return false;
+  }
+
+  if (requested_theme != theme_mode_) {
+    apply_theme(requested_theme);
+  }
+  if (requested_layout != layout_mode_) {
+    apply_layout_mode(requested_layout);
+  }
+
+  save_persistent_state();
+  return true;
+}
+
+void MainWindow::apply_theme(ThemeMode theme) {
+  auto *app = qobject_cast<QApplication *>(QCoreApplication::instance());
+  if (app == nullptr) {
+    return;
+  }
+
+  if (theme == ThemeMode::Dark) {
+    apply_dark_clinical_theme(*app);
+  } else {
+    apply_light_clinical_theme(*app);
+  }
+  theme_mode_ = theme;
+}
+
+void MainWindow::apply_layout_mode(LayoutMode mode) {
+  if (mode == layout_mode_) {
+    update_layout_visibility();
+    return;
+  }
+
+  QSettings settings;
+  display_workspace_->save_persistent_state(settings, layout_mode_key());
+  layout_mode_ = mode;
+  const bool restored = display_workspace_->restore_persistent_state(settings, layout_mode_key());
+  update_layout_visibility();
+
+  if (mode == LayoutMode::Clinical && !restored) {
+    display_workspace_->set_visualization_enabled(QStringLiteral("xy_processed"), true);
+    display_workspace_->select_visualization(QStringLiteral("xy_processed"));
+  }
+
+  settings.sync();
+}
+
+void MainWindow::update_layout_visibility() {
+  const bool developer_layout = layout_mode_ == LayoutMode::Developer;
+
+  if (processing_column_ != nullptr) {
+    processing_column_->setVisible(developer_layout);
+  }
+  if (controls_divider_ != nullptr) {
+    controls_divider_->setVisible(developer_layout);
+  }
+  if (right_sidebar_ != nullptr) {
+    right_sidebar_->setVisible(developer_layout);
+  }
+  if (controls_scroll_ != nullptr) {
+    controls_scroll_->setFixedWidth(developer_layout ? developer_controls_width_
+                                                      : clinical_controls_width_);
+  }
+
+  for (auto *widget : command_status_widgets_) {
+    widget->setVisible(developer_layout);
+  }
+
+  if (controls_content_ != nullptr) {
+    controls_content_->adjustSize();
+  }
+  update_developer_menu_visibility();
+}
+
+void MainWindow::update_developer_menu_visibility() {
+  const bool developer_layout = layout_mode_ == LayoutMode::Developer;
+  if (developer_debug_menu_ != nullptr) {
+    developer_debug_menu_->setVisible(developer_layout);
+    developer_debug_menu_->setEnabled(developer_layout);
+  }
+  if (fft_tool_action_ != nullptr) {
+    fft_tool_action_->setVisible(developer_layout);
+    fft_tool_action_->setEnabled(developer_layout);
   }
 }
 
@@ -1743,9 +1913,11 @@ void MainWindow::show_pipeline_graph() {
   display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
   display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
 
-  auto request = [manager = pipeline_manager_]() { manager->request_compiled_graph_visualization(); };
-  HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, std::move(request),
-                                             Qt::QueuedConnection));
+  auto request = [manager = pipeline_manager_]() {
+    manager->request_compiled_graph_visualization();
+  };
+  HOLOVIBES_CHECK(
+      QMetaObject::invokeMethod(pipeline_manager_, std::move(request), Qt::QueuedConnection));
 }
 
 void MainWindow::open_dot_file() {
@@ -1792,7 +1964,10 @@ void MainWindow::show_fft_frequency_tool() {
 }
 
 void MainWindow::show_preferences() {
-  PreferencesDialog dialog(this, *pipeline_manager_);
+  PreferencesDialog dialog(this, *pipeline_manager_, layout_mode_key(), theme_mode_key(),
+                           [this](const QString &layout_mode, const QString &theme_mode) {
+                             return apply_preferences(layout_mode, theme_mode);
+                           });
   dialog.exec();
 }
 
