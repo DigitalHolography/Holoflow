@@ -9,7 +9,10 @@
 #include <gtest/gtest.h>
 
 #include <boost/graph/adjacency_list.hpp>
+#include <atomic>
+#include <chrono>
 #include <memory>
+#include <string_view>
 
 #include "holoflow/runtime/compiler.hh"
 #include "support/math_tasks.hh"
@@ -63,7 +66,13 @@ TEST(FunctionalPipelineTest, CompilesAndExecutesHostVectorMath) {
       registry,
       {.dump_dot_on_failure = false, .verbose_tracing = false, .enable_profiling = false});
   auto                         output = compiler.compile(sync_math_graph());
-  holoflow::runtime::Scheduler scheduler(output->graph, output->sections, output->resources);
+  std::atomic<int>             started{0};
+  std::atomic<int>             completed{0};
+  holoflow::runtime::Scheduler scheduler(
+      output->graph, output->sections, output->resources, std::chrono::milliseconds{1000}, {},
+      [&](std::string_view, bool node_completed) {
+        (node_completed ? completed : started).fetch_add(1, std::memory_order_relaxed);
+      });
 
   scheduler.start();
   scheduler.wait();
@@ -74,6 +83,8 @@ TEST(FunctionalPipelineTest, CompilesAndExecutesHostVectorMath) {
   EXPECT_EQ(state->scale_calls, 1);
   EXPECT_EQ(state->sink_calls, 1);
   EXPECT_NE(state->last_sync_stream, nullptr);
+  EXPECT_GE(started.load(), 5);
+  EXPECT_EQ(started.load(), completed.load());
 }
 
 TEST(FunctionalPipelineTest, ExecutesAcrossAnAsyncBoundary) {

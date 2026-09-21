@@ -106,3 +106,33 @@ TEST(CompiledGraphDisplayTest, HighlightsRuntimeFailureNodeAndContext) {
   EXPECT_NE(dot.find("color=\"#cc0000\""), std::string::npos);
   EXPECT_NE(dot.find("Error: test failure"), std::string::npos);
 }
+
+TEST(CompiledGraphDisplayTest, RendersRuntimeProgressStates) {
+  holoflow::runtime::CompilerOutput output;
+  holoflow::runtime::NodePlan       completed_node{
+      .spec  = {"completed", "sync", {}},
+      .infer = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync},
+  };
+  holoflow::runtime::NodePlan started_node{
+      .spec  = {"started", "sync", {}},
+      .infer = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync},
+  };
+  holoflow::runtime::NodePlan unreached_node{
+      .spec  = {"unreached", "sync", {}},
+      .infer = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync},
+  };
+  add_vertex(completed_node, output.graph);
+  add_vertex(started_node, output.graph);
+  add_vertex(unreached_node, output.graph);
+
+  const holoflow::runtime::RuntimeNodeStates states{
+      {"completed", holoflow::runtime::RuntimeNodeState::Completed},
+      {"started", holoflow::runtime::RuntimeNodeState::Started},
+  };
+  const auto dot = holoflow::runtime::to_dot(output, {}, "runtime_progress", {},
+                                             "Runtime progress checkpoint", states);
+
+  EXPECT_NE(dot.find("fillcolor=\"#ccffcc\""), std::string::npos);
+  EXPECT_NE(dot.find("fillcolor=\"#ffcc66\""), std::string::npos);
+  EXPECT_NE(dot.find("fillcolor=\"#d9d9d9\""), std::string::npos);
+}

@@ -15,8 +15,10 @@
 #pragma once
 
 #include <QObject>
+#include <chrono>
 #include <concepts>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -171,6 +173,9 @@ private:
 
   /// @brief Mutex to protect state shared between the main UI thread and pipeline callbacks.
   std::mutex mtx_;
+  holoflow::runtime::RuntimeNodeStates runtime_node_states_;
+  std::ofstream                         runtime_progress_log_;
+  std::chrono::steady_clock::time_point runtime_graph_last_dump_{};
   bool       settings_dirty_       = false;
   bool       raw_recording_active_ = false;
 
