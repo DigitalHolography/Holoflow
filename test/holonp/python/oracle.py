@@ -289,6 +289,35 @@ def _op_slice(inputs, settings):
             slices.append(slice(start, stop, step))
     return [x[tuple(slices)]]
 
+def _op_sum(inputs, settings):
+    x = inputs[0]
+    return [np.sum(x, axis=settings.get("axis"), keepdims=settings.get("keepdims", False)).astype(np.float32)]
+
+def _op_std(inputs, settings):
+    x = inputs[0]
+    return [np.std(x, axis=settings.get("axis"), keepdims=settings.get("keepdims", False)).astype(np.float32)]
+
+def _op_var(inputs, settings):
+    x = inputs[0]
+    return [np.var(x, axis=settings.get("axis"), keepdims=settings.get("keepdims", False)).astype(np.float32)]
+
+def _op_argmin(inputs, settings):
+    x = inputs[0]
+    result = np.array(np.argmin(x), dtype=np.uint16)
+    if settings.get("keepdims", False):
+        result = np.full([1] * x.ndim, result, dtype=np.uint16)
+    return [result]
+
+def _op_sqrt(inputs, settings): return [np.sqrt(inputs[0]).astype(np.float32)]
+def _op_real(inputs, settings): return [np.real(inputs[0]).astype(np.float32)]
+def _op_imag(inputs, settings): return [np.imag(inputs[0]).astype(np.float32)]
+def _op_angle(inputs, settings): return [np.angle(inputs[0]).astype(np.float32)]
+def _op_log(inputs, settings): return [np.log(inputs[0]).astype(np.float32)]
+def _op_isfinite(inputs, settings): return [np.isfinite(inputs[0]).astype(np.float32)]
+def _op_clip(inputs, settings): return [np.clip(inputs[0], settings["min"], settings["max"]).astype(np.float32)]
+def _op_maximum(inputs, settings): return [np.maximum(inputs[0], inputs[1]).astype(np.float32)]
+def _op_minimum(inputs, settings): return [np.minimum(inputs[0], inputs[1]).astype(np.float32)]
+
 def _numpy_norm(settings):
     norm = settings.get("norm", "backward")
     if isinstance(norm, str):
@@ -371,6 +400,19 @@ _DISPATCH = {
     "min": _op_min,
     "max": _op_max,
     "mean": _op_mean,
+    "sum": _op_sum,
+    "std": _op_std,
+    "var": _op_var,
+    "argmin": _op_argmin,
+    "sqrt": _op_sqrt,
+    "real": _op_real,
+    "imag": _op_imag,
+    "angle": _op_angle,
+    "log": _op_log,
+    "isfinite": _op_isfinite,
+    "clip": _op_clip,
+    "maximum": _op_maximum,
+    "minimum": _op_minimum,
     "meshgrid": _op_meshgrid,
     "slice": _op_slice,
     "fft": _op_fft,

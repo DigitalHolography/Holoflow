@@ -38,6 +38,7 @@ set(SOURCES
     mean_test.cu
     meshgrid_test.cu
     min_test.cu
+    new_ops_test.cu
     multiply_test.cu
     reshape_test.cu
     rfft2_test.cu
