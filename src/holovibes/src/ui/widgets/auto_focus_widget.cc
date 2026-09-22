@@ -204,6 +204,8 @@ void AutoFocusWidget::set_use_graph_laplacian(bool enabled) {
   update_mode_dependent_controls();
 }
 
+QCheckBox *AutoFocusWidget::enable_checkbox() { return enable_check_; }
+
 void AutoFocusWidget::clear_validation_styles() {
   clear_validation_error(nb_subaps_spin_);
   clear_validation_error(nb_iter_spin_);

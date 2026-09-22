@@ -47,6 +47,7 @@
 #include <QSignalBlocker>
 #include <QSizePolicy>
 #include <QSlider>
+#include <QSpacerItem>
 #include <QSpinBox>
 #include <QSplitter>
 #include <QStandardPaths>
@@ -959,6 +960,39 @@ void MainWindow::setup_main_layout() {
   processing_layout->addWidget(render_widget_->autofocus_widget());
   processing_layout->addStretch(1);
 
+  clinical_controls_column_ = new QWidget(controls_content_);
+  clinical_controls_column_->setObjectName("controlsColumn");
+  auto *clinical_layout = new QFormLayout(clinical_controls_column_);
+  clinical_layout->setContentsMargins(0, 0, 0, 0);
+  clinical_layout->setSpacing(8);
+
+  clinical_autofocus_check_ = new QCheckBox(tr("Enable auto focus"), clinical_controls_column_);
+  clinical_autofocus_check_->setChecked(render_widget_->autofocus_widget()->is_enabled());
+  clinical_layout->addRow(clinical_autofocus_check_);
+
+  clinical_focus_slider_ = new QSlider(Qt::Horizontal, clinical_controls_column_);
+  clinical_focus_slider_->setRange(render_widget_->focus_slider()->minimum(),
+                                   render_widget_->focus_slider()->maximum());
+  clinical_focus_slider_->setValue(render_widget_->focus_slider()->value());
+  clinical_focus_slider_->setToolTip(tr("Focus propagation distance in millimetres"));
+  clinical_layout->addRow(tr("Focus (mm):"), clinical_focus_slider_);
+  clinical_layout->addItem(new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding));
+
+  auto *autofocus = render_widget_->autofocus_widget();
+  connect(clinical_autofocus_check_, &QCheckBox::toggled, autofocus->enable_checkbox(),
+          &QCheckBox::setChecked);
+  connect(autofocus->enable_checkbox(), &QCheckBox::toggled, this, [this](bool enabled) {
+    QSignalBlocker blocker(clinical_autofocus_check_);
+    clinical_autofocus_check_->setChecked(enabled);
+  });
+
+  connect(clinical_focus_slider_, &QSlider::valueChanged, render_widget_->focus_slider(),
+          &QSlider::setValue);
+  connect(render_widget_->focus_slider(), &QSlider::valueChanged, this, [this](int value) {
+    QSignalBlocker blocker(clinical_focus_slider_);
+    clinical_focus_slider_->setValue(value);
+  });
+
   controls_divider_ = new QFrame(controls_content_);
   controls_divider_->setObjectName("controlsColumnDivider");
   controls_divider_->setFixedWidth(1);
@@ -967,6 +1001,7 @@ void MainWindow::setup_main_layout() {
   controls_layout->addWidget(acquisition_column);
   controls_layout->addWidget(controls_divider_);
   controls_layout->addWidget(processing_column_);
+  controls_layout->addWidget(clinical_controls_column_);
 
   controls_scroll_ = new QScrollArea(content_row);
   controls_scroll_->setObjectName("controlsScrollArea");
@@ -979,7 +1014,8 @@ void MainWindow::setup_main_layout() {
       controls_content_->sizeHint().width() + controls_scroll_->verticalScrollBar()->sizeHint().width() + 12,
       430);
   clinical_controls_width_ = std::max(
-      acquisition_column->sizeHint().width() + controls_scroll_->verticalScrollBar()->sizeHint().width() + 12,
+      acquisition_column->sizeHint().width() + clinical_controls_column_->sizeHint().width() +
+          controls_layout->spacing() + controls_scroll_->verticalScrollBar()->sizeHint().width() + 12,
       360);
   controls_scroll_->setFixedWidth(developer_controls_width_);
   controls_scroll_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
@@ -1859,8 +1895,17 @@ void MainWindow::apply_layout_mode(LayoutMode mode) {
 void MainWindow::update_layout_visibility() {
   const bool developer_layout = layout_mode_ == LayoutMode::Developer;
 
+  if (view_widget_ != nullptr) {
+    view_widget_->setVisible(developer_layout);
+  }
+  if (view_widget_ != nullptr && view_widget_->post_processing_group() != nullptr) {
+    view_widget_->post_processing_group()->setVisible(developer_layout);
+  }
   if (processing_column_ != nullptr) {
     processing_column_->setVisible(developer_layout);
+  }
+  if (clinical_controls_column_ != nullptr) {
+    clinical_controls_column_->setVisible(!developer_layout);
   }
   if (controls_divider_ != nullptr) {
     controls_divider_->setVisible(developer_layout);

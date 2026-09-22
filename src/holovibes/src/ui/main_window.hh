@@ -198,8 +198,11 @@ private:
   GraphVisualizerWidget  *graph_visualizer_widget_    = nullptr;
   QWidget                *controls_content_           = nullptr;
   QWidget                *processing_column_          = nullptr;
+  QWidget                *clinical_controls_column_   = nullptr;
   QFrame                  *controls_divider_          = nullptr;
   QScrollArea             *controls_scroll_           = nullptr;
+  QCheckBox               *clinical_autofocus_check_  = nullptr;
+  QSlider                 *clinical_focus_slider_     = nullptr;
   QMenu                   *developer_debug_menu_      = nullptr;
   QAction                 *fft_tool_action_           = nullptr;
   std::vector<QWidget *>   command_status_widgets_;

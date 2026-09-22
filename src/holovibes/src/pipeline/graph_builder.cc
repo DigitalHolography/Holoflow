@@ -563,7 +563,8 @@ void GraphBuilder::Impl::build_zernike_outputs(const AberrationCorrectionState &
   HOLOVIBES_CHECK(state.cumulative_phase_gpu.has_value());
 
   const auto &coeffs = *state.cumulative_coeffs_gpu;
-  const auto &phase  = *state.cumulative_phase_gpu;
+  logger()->info("Zernike coefficients shape: {}, strides: {}", coeffs.shape, coeffs.strides);
+  const auto &phase = *state.cumulative_phase_gpu;
 
   auto coeffs_reshaped = reshape(coeffs, {{1, static_cast<int64_t>(coeffs.shape.at(0))}});
   auto queue           = batched_queue(coeffs_reshaped, {s_.cpu_out_size, 1, 1});

@@ -86,6 +86,8 @@ public:
   void set_skip_subapertures_outside_pupil(bool skip);
   void set_use_graph_laplacian(bool enabled);
 
+  QCheckBox *enable_checkbox();
+
   void clear_validation_styles();
   void mark_nb_subaps_invalid();
   void mark_nb_iter_invalid();

@@ -95,6 +95,15 @@ TEST_F(ReshapeInferTest, ViewPathForContiguousInput) {
   EXPECT_EQ(r.output_descs[0].shape, (std::vector<size_t>{3, 2}));
 }
 
+TEST_F(ReshapeInferTest, PreservesByteStrideForSingletonDimensions) {
+  const TDesc in = device_desc({1}, DType::F32);
+  const auto  r  = factory.infer({&in, 1}, reshape_settings({1, 1}));
+
+  ASSERT_EQ(r.output_descs.size(), 1u);
+  EXPECT_EQ(r.output_descs[0].shape, (std::vector<size_t>{1, 1}));
+  EXPECT_EQ(r.output_descs[0].strides, (std::vector<size_t>{4, 4}));
+}
+
 TEST_F(ReshapeInferTest, CopyPathWhenForced) {
   const TDesc in = device_desc({2, 3}, DType::F32);
   auto        j  = reshape_settings({3, 2});
