@@ -620,14 +620,14 @@ void Manager::build_and_run() {
   log_root_ = log_root;
 
   // TODO: What should be done about this verbose logging?
-  // if (dump_debug_graphs_) {
+  // if (dump_runtime_failure_graphs_) {
   //   dump_graph_logs(log_root);
   // }
 
   CompilerConfig config;
   config.log_dir             = log_root;
-  config.dump_dot_on_failure = dump_debug_graphs_;
-  config.verbose_tracing     = dump_debug_graphs_;
+  config.dump_dot_on_failure = dump_runtime_failure_graphs_;
+  config.verbose_tracing     = dump_runtime_failure_graphs_;
 
   auto     prev_output = std::move(compiler_output_);
   Compiler compiler(registry_, config);
@@ -672,7 +672,7 @@ void Manager::run_compiled_graph() {
   const Scheduler::FailureCallback failure_callback = [this](std::string_view thread_name,
                                                              std::string_view node_name,
                                                              std::string_view error_message) {
-    if (!compiler_output_ || log_root_.empty()) {
+    if (!dump_runtime_failure_graphs_ || !compiler_output_ || log_root_.empty()) {
       return;
     }
 
@@ -698,7 +698,11 @@ void Manager::run_compiled_graph() {
   scheduler_ =
       std::make_unique<Scheduler>(graph, sections, resources, metrics_interval, failure_callback);
 #if defined(_WIN32)
-  install_windows_crash_handler();
+  if (dump_runtime_failure_graphs_) {
+    install_windows_crash_handler();
+  } else {
+    uninstall_windows_crash_handler();
+  }
 #endif
   raw_recording_active_ = false;
 
@@ -720,7 +724,7 @@ void Manager::uninstall_windows_crash_handler() {
 
 void Manager::dump_windows_crash_graph(unsigned long exception_code) noexcept {
   try {
-    if (!compiler_output_ || log_root_.empty()) {
+    if (!dump_runtime_failure_graphs_ || !compiler_output_ || log_root_.empty()) {
       return;
     }
 

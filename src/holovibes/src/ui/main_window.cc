@@ -418,6 +418,17 @@ public:
         setup_graph_compiled_dump_preferences(manager_.get_graph_compiled_dump_preferences());
     splitter->addWidget(graph_compiled_dump_group_box);
 
+    auto *runtime_failure_group_box = new QGroupBox(tr("Runtime Failure Diagnostics"), this);
+    auto *runtime_failure_form      = new QFormLayout();
+    runtime_failure_graph_checkbox_ = new QCheckBox(this);
+    runtime_failure_graph_checkbox_->setChecked(manager_.dump_runtime_failure_graphs());
+    runtime_failure_graph_checkbox_->setToolTip(
+        tr("Write runtime_failure.dot when a pipeline node reports an error or the process "
+           "terminates with a Windows exception."));
+    runtime_failure_form->addRow(tr("Dump graph on failure"), runtime_failure_graph_checkbox_);
+    runtime_failure_group_box->setLayout(runtime_failure_form);
+    splitter->addWidget(runtime_failure_group_box);
+
     dialog_layout->addWidget(splitter);
     // Apply / Close
     auto *button_box = new QDialogButtonBox(QDialogButtonBox::Close, this);
@@ -649,6 +660,7 @@ private:
 
     manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
     manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
+    manager_.set_dump_runtime_failure_graphs(runtime_failure_graph_checkbox_->isChecked());
   }
 
   void connect_signals() {
@@ -697,6 +709,8 @@ private:
             &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
     connect(graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_,
             &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
+    connect(runtime_failure_graph_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
   }
 
   holovibes::pipeline::Manager &manager_;
@@ -739,6 +753,7 @@ private:
     QCheckBox *resources_toggle_checkbox_ = nullptr;
   };
   GraphCompiledDumpPreferencesWidgets graph_compiled_dump_preferences_widgets_;
+  QCheckBox *runtime_failure_graph_checkbox_ = nullptr;
 };
 
 } // namespace
@@ -1189,6 +1204,12 @@ void MainWindow::refresh_command_bar() {
 void MainWindow::save_persistent_state() {
   QSettings settings;
 
+  settings.beginGroup("preferences");
+  settings.setValue("dump_runtime_failure_graphs",
+                    pipeline_manager_ ? pipeline_manager_->dump_runtime_failure_graphs()
+                                       : dump_runtime_failure_graphs_);
+  settings.endGroup();
+
   settings.beginGroup("main_window");
   settings.setValue("geometry", saveGeometry());
   settings.endGroup();
@@ -1290,6 +1311,11 @@ void MainWindow::save_persistent_state() {
 
 void MainWindow::restore_persistent_state() {
   QSettings settings;
+
+  settings.beginGroup("preferences");
+  dump_runtime_failure_graphs_ =
+      settings.value("dump_runtime_failure_graphs", false).toBool();
+  settings.endGroup();
 
   settings.beginGroup("main_window");
   if (settings.contains("geometry")) {
@@ -1581,6 +1607,7 @@ void MainWindow::initialize_pipeline_manager() {
       yz_processed_widget_, xy_raw_widget_, raw_spectrum_widget_, processed_spectrum_widget_,
       shack_hartmann_widget_, shack_hartmann_xcorr_widget_, zernike_phase_widget_,
       zernike_history_widget_);
+  pipeline_manager_->set_dump_runtime_failure_graphs(dump_runtime_failure_graphs_);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);
   pipeline_manager_thread_->start();

@@ -88,6 +88,14 @@ public:
   }
   void update_graph_compiled_dump_preferences(const GraphCompiledDumpPreferences &prefs);
 
+  /// @brief Returns whether failure diagnostics should be captured at runtime.
+  bool dump_runtime_failure_graphs() const noexcept { return dump_runtime_failure_graphs_; }
+
+  /// @brief Enables or disables runtime failure diagnostics.
+  void set_dump_runtime_failure_graphs(bool enabled) noexcept {
+    dump_runtime_failure_graphs_ = enabled;
+  }
+
   /// @brief Emits Graphviz DOT for the current compiled pipeline graph.
   void request_compiled_graph_visualization();
 
@@ -172,8 +180,8 @@ private:
   GraphCompiledDumpPreferences graph_compiled_dump_prefs_ = {};
   std::filesystem::path         log_root_;
 
-  /// @brief Toggles debug dumps of the pipeline (.dot, .json) to disk.
-  bool dump_debug_graphs_ = true;
+  /// @brief Toggles compiler/runtime failure diagnostics (.dot and tracing) to disk.
+  bool dump_runtime_failure_graphs_ = false;
 
   /// @brief Mutex to protect state shared between the main UI thread and pipeline callbacks.
   std::mutex mtx_;
