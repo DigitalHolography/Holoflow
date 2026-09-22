@@ -16,14 +16,11 @@
 
 #include <string>
 #include <string_view>
-#include <map>
 // could not forward declare GraphSpec because it is an alias
 #include "holoflow/core/graph_spec.hh"
 namespace holoflow::runtime {
 
 struct CompilerOutput;
-enum class RuntimeNodeState { Unreached, Started, Completed };
-using RuntimeNodeStates = std::map<std::string, RuntimeNodeState>;
 struct GraphCompiledDumpPreferences {
   enum class Rankdir { LeftToRight, TopToBottom };
   enum class Layout { Normal, Stairs, Block, Snake };
@@ -61,14 +58,10 @@ std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences
 /// @param filename  Graphviz graph identifier.
 /// @param failure_node Optional node name to highlight as the runtime failure location.
 /// @param failure_context Optional runtime failure details displayed as the graph title.
-/// @param node_states Optional per-node runtime checkpoint states.
 /// @return          DOT source as std::string.
 std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
                    std::string filename, std::string_view failure_node,
                    std::string_view failure_context);
-std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
-                   std::string filename, std::string_view failure_node,
-                   std::string_view failure_context, const RuntimeNodeStates &node_states);
 
 } // namespace holoflow::runtime
 

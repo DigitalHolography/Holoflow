@@ -35,6 +35,7 @@
 #include "bug.hh"
 #include "graph_builder.hh"
 #include "holofile/holofile.hh"
+#include "holoflow/runtime/windows_crash_handler.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
@@ -123,6 +124,12 @@ void reg_async(holoflow::core::Registry &r, std::string_view name, Args &&...arg
 }
 
 } // namespace
+
+Manager::~Manager() {
+#if defined(_WIN32)
+  uninstall_windows_crash_handler();
+#endif
+}
 
 Manager::Manager(
     ui::AutoFocusWidget *autofocus_widget, ui::TensorDisplayWidget *xy_processed_widget,
@@ -322,6 +329,9 @@ void Manager::stop_pipeline() {
     // Request an asynchronous stop and block until graph execution concludes safely.
     scheduler_->request_stop();
     scheduler_->wait();
+#if defined(_WIN32)
+    uninstall_windows_crash_handler();
+#endif
     stop_zernike_history();
 
     stop_metrics_updates();
@@ -659,97 +669,37 @@ void Manager::run_compiled_graph() {
                                     ? std::chrono::milliseconds{metrics_timer_->interval()}
                                     : std::chrono::milliseconds{1000};
 
-  {
-    std::lock_guard lock(mtx_);
-    runtime_node_states_.clear();
-    runtime_graph_last_dump_ = {};
-    runtime_progress_log_.close();
-    if (!log_root_.empty()) {
-      runtime_progress_log_.open(log_root_ / "runtime_progress.log",
-                                 std::ios::out | std::ios::trunc);
+  const Scheduler::FailureCallback failure_callback = [this](std::string_view thread_name,
+                                                             std::string_view node_name,
+                                                             std::string_view error_message) {
+    if (!compiler_output_ || log_root_.empty()) {
+      return;
     }
-  }
 
-  const auto dump_runtime_graph =
-      [this](const std::filesystem::path &path, std::string_view failure_node,
-             std::string_view context, const holoflow::runtime::RuntimeNodeStates &states) {
-        if (!compiler_output_) {
-          return;
-        }
+    const auto    failure_path = log_root_ / "runtime_failure.dot";
+    std::ofstream failure_file(failure_path);
+    if (!failure_file.is_open()) {
+      logger()->error("[Manager::run_compiled_graph] Failed to write runtime failure graph to {}",
+                      failure_path.string());
+      return;
+    }
 
-        std::ofstream graph_file(path);
-        if (!graph_file.is_open()) {
-          logger()->error("[Manager::run_compiled_graph] Failed to write runtime graph to {}",
-                          path.string());
-          return;
-        }
-
-        auto graph_prefs       = graph_compiled_dump_prefs_;
-        graph_prefs.dump_node_name = true;
-        graph_prefs.dump_node_kind = true;
-        graph_file << holoflow::runtime::to_dot(*compiler_output_, graph_prefs, path.stem().string(),
-                                                failure_node, context, states);
-      };
-
-  const Scheduler::ProgressCallback progress_callback =
-      [this, dump_runtime_graph](std::string_view node_name, bool completed) {
-        if (node_name.empty()) {
-          return;
-        }
-
-        holoflow::runtime::RuntimeNodeStates snapshot;
-        bool                                    should_dump = false;
-        {
-          std::lock_guard lock(mtx_);
-          runtime_node_states_[std::string{node_name}] =
-              completed ? holoflow::runtime::RuntimeNodeState::Completed
-                        : holoflow::runtime::RuntimeNodeState::Started;
-          if (runtime_progress_log_.is_open()) {
-            runtime_progress_log_ << (completed ? "COMPLETED " : "STARTED ") << node_name << '\n';
-            runtime_progress_log_.flush();
-          }
-
-          const auto now = std::chrono::steady_clock::now();
-          // Persist the full visualization at a bounded rate; the journal above still records
-          // every transition and is flushed immediately.
-          if (runtime_graph_last_dump_.time_since_epoch().count() == 0 ||
-              now - runtime_graph_last_dump_ >= std::chrono::milliseconds{100}) {
-            runtime_graph_last_dump_ = now;
-            snapshot                   = runtime_node_states_;
-            should_dump                = true;
-          }
-        }
-
-        if (should_dump && !log_root_.empty()) {
-          dump_runtime_graph(log_root_ / "runtime_progress.dot", {}, "Runtime progress checkpoint",
-                             snapshot);
-        }
-      };
-
-  const Scheduler::FailureCallback failure_callback =
-      [this, dump_runtime_graph](std::string_view thread_name, std::string_view node_name,
-                                 std::string_view error_message) {
-        if (log_root_.empty()) {
-          return;
-        }
-
-        holoflow::runtime::RuntimeNodeStates states;
-        {
-          std::lock_guard lock(mtx_);
-          states = runtime_node_states_;
-        }
-
-        const auto context = std::format("Thread: {}\nNode: {}\nError: {}", thread_name,
-                                         node_name.empty() ? "<unknown>" : node_name,
-                                         error_message);
-        dump_runtime_graph(log_root_ / "runtime_failure.dot", node_name, context, states);
-        logger()->critical("[Manager::run_compiled_graph] Runtime failure graph saved to {}",
-                           (log_root_ / "runtime_failure.dot").string());
+    const auto context = std::format("Thread: {}\nNode: {}\nError: {}", thread_name,
+                                     node_name.empty() ? "<unknown>" : node_name, error_message);
+    auto       failure_prefs     = graph_compiled_dump_prefs_;
+    failure_prefs.dump_node_name = true;
+    failure_prefs.dump_node_kind = true;
+    failure_file << holoflow::runtime::to_dot(*compiler_output_, failure_prefs, "runtime_failure",
+                                              node_name, context);
+    logger()->critical("[Manager::run_compiled_graph] Runtime failure graph saved to {}",
+                       failure_path.string());
   };
 
   scheduler_ =
-      std::make_unique<Scheduler>(graph, sections, resources, metrics_interval, failure_callback,
-                                  progress_callback);
+      std::make_unique<Scheduler>(graph, sections, resources, metrics_interval, failure_callback);
+#if defined(_WIN32)
+  install_windows_crash_handler();
+#endif
   raw_recording_active_ = false;
 
   scheduler_->start();
@@ -757,6 +707,46 @@ void Manager::run_compiled_graph() {
   poll_metrics();
   start_event_polling();
 }
+
+#if defined(_WIN32)
+void Manager::install_windows_crash_handler() {
+  holoflow::runtime::WindowsCrashHandler::install(
+      [this](unsigned long exception_code) { dump_windows_crash_graph(exception_code); });
+}
+
+void Manager::uninstall_windows_crash_handler() {
+  holoflow::runtime::WindowsCrashHandler::uninstall();
+}
+
+void Manager::dump_windows_crash_graph(unsigned long exception_code) noexcept {
+  try {
+    if (!compiler_output_ || log_root_.empty()) {
+      return;
+    }
+
+    const auto node_name = scheduler_ ? scheduler_->current_node_name() : std::string_view{};
+    const auto context = std::format(
+        "Windows exception: 0x{:08X}\\nNode: {}", exception_code,
+        node_name.empty() ? "<unknown>" : node_name);
+
+    auto failure_prefs     = graph_compiled_dump_prefs_;
+    failure_prefs.dump_node_name = true;
+    failure_prefs.dump_node_kind = true;
+
+    const auto failure_path = log_root_ / "runtime_failure.dot";
+    std::ofstream failure_file(failure_path, std::ios::trunc);
+    if (!failure_file.is_open()) {
+      return;
+    }
+
+    failure_file << holoflow::runtime::to_dot(*compiler_output_, failure_prefs, "runtime_failure",
+                                              node_name, context);
+    failure_file.flush();
+  } catch (...) {
+    // An unhandled-exception filter must never throw or prevent process termination.
+  }
+}
+#endif
 
 void Manager::dump_graph_logs(const std::filesystem::path &log_dir) {
   // Write original GraphSpec

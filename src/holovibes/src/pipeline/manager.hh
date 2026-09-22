@@ -15,10 +15,8 @@
 #pragma once
 
 #include <QObject>
-#include <chrono>
 #include <concepts>
 #include <filesystem>
-#include <fstream>
 #include <memory>
 #include <mutex>
 #include <nlohmann/json.hpp>
@@ -56,7 +54,7 @@ public:
           ui::TensorDisplayWidget  *zernike_phase_widget,
           ui::ZernikeHistoryWidget *zernike_history_widget);
 
-  ~Manager() override = default;
+  ~Manager() override;
 
   /// @brief Compiles and starts the pipeline graph.
   void start_pipeline();
@@ -146,6 +144,12 @@ private:
   // --- Logging Helpers ---
   void dump_graph_logs(const std::filesystem::path &log_dir);
 
+#if defined(_WIN32)
+  void install_windows_crash_handler();
+  void uninstall_windows_crash_handler();
+  void dump_windows_crash_graph(unsigned long exception_code) noexcept;
+#endif
+
   // --- UI Elements ---
   ui::AutoFocusWidget      *autofocus_widget_;
   ui::TensorDisplayWidget  *xy_processed_widget_;
@@ -173,9 +177,6 @@ private:
 
   /// @brief Mutex to protect state shared between the main UI thread and pipeline callbacks.
   std::mutex mtx_;
-  holoflow::runtime::RuntimeNodeStates runtime_node_states_;
-  std::ofstream                         runtime_progress_log_;
-  std::chrono::steady_clock::time_point runtime_graph_last_dump_{};
   bool       settings_dirty_       = false;
   bool       raw_recording_active_ = false;
 

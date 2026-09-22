@@ -127,16 +127,11 @@ public:
   using FailureCallback =
       std::function<void(std::string_view thread_name, std::string_view node_name,
                          std::string_view error_message)>;
-  using ProgressCallback =
-      std::function<void(std::string_view node_name, bool completed)>;
 
   Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
             std::chrono::milliseconds metrics_interval = std::chrono::milliseconds{1000});
   Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
             std::chrono::milliseconds metrics_interval, FailureCallback failure_callback);
-  Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
-            std::chrono::milliseconds metrics_interval, FailureCallback failure_callback,
-            ProgressCallback progress_callback);
 
   ~Scheduler();
 
@@ -149,6 +144,10 @@ public:
 
   bool is_running() const;
   bool stop_requested() const;
+
+  /// Returns the node currently executing on the calling scheduler thread.
+  /// The view remains valid while the compiled graph is alive.
+  [[nodiscard]] std::string_view current_node_name() const noexcept;
 
   [[nodiscard]] bool ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept;
 
@@ -168,7 +167,6 @@ private:
   static std::pair<uint64_t, uint64_t> sum_bytes(std::span<const core::TView> views);
 
   void run_router();
-  void report_node_progress(std::string_view node_name, bool completed) noexcept;
 
   void run_section(int section_id);
 
@@ -266,7 +264,6 @@ private:
   holoflow_event::Router                                     router_;
   std::map<std::string, holoflow_event::Router::NodeHandles> event_handles_;
   FailureCallback                                             failure_callback_;
-  ProgressCallback                                            progress_callback_;
 };
 
 } // namespace holoflow::runtime

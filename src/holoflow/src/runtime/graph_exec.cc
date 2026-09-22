@@ -140,14 +140,8 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
 Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
                      ExecResouces &resources, std::chrono::milliseconds metrics_interval,
                      FailureCallback failure_callback)
-    : Scheduler(graph, sections, resources, metrics_interval, std::move(failure_callback), {}) {}
-
-Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
-                     ExecResouces &resources, std::chrono::milliseconds metrics_interval,
-                     FailureCallback failure_callback, ProgressCallback progress_callback)
     : graph_(graph), sections_(sections), res_(resources), metrics_interval_(metrics_interval),
-      failure_callback_(std::move(failure_callback)),
-      progress_callback_(std::move(progress_callback)) {
+      failure_callback_(std::move(failure_callback)) {
 
   if (failure_callback_) {
     detail::set_bug_callback([this](std::string_view file, std::size_t line) {
@@ -167,17 +161,6 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
   init_tviews();
   build_event_handles();
   build_nodes_rts();
-}
-
-void Scheduler::report_node_progress(std::string_view node_name, bool completed) noexcept {
-  if (!progress_callback_) {
-    return;
-  }
-  try {
-    progress_callback_(node_name, completed);
-  } catch (...) {
-    logger()->error("Failed to record runtime node progress");
-  }
 }
 
 Scheduler::~Scheduler() {
@@ -255,6 +238,10 @@ void Scheduler::wait() {
 bool Scheduler::is_running() const { return running_.load(); }
 
 bool Scheduler::stop_requested() const { return stop_.load(); }
+
+std::string_view Scheduler::current_node_name() const noexcept {
+  return detail::current_node_name();
+}
 
 bool Scheduler::ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept {
   return router_.ui_try_send(node_id, std::move(data));
@@ -424,11 +411,9 @@ void Scheduler::run_section(int section_id) {
           current_node_name           = graph_[v].spec.name;
           detail::current_node_name() = current_node_name;
           try {
-            report_node_progress(current_node_name, false);
             if (run_async_cons(v) == core::OpResult::Ok) {
               produced_owned_outputs.push_back(v);
             }
-            report_node_progress(current_node_name, true);
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_async_consumer", section_id, sec.name);
           }
@@ -444,11 +429,9 @@ void Scheduler::run_section(int section_id) {
           current_node_name           = graph_[v].spec.name;
           detail::current_node_name() = current_node_name;
           try {
-            report_node_progress(current_node_name, false);
             if (run_sync(v) == core::OpResult::Ok) {
               produced_owned_outputs.push_back(v);
             }
-            report_node_progress(current_node_name, true);
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_sync", section_id, sec.name);
           }
@@ -471,9 +454,7 @@ void Scheduler::run_section(int section_id) {
           current_node_name           = graph_[v].spec.name;
           detail::current_node_name() = current_node_name;
           try {
-            report_node_progress(current_node_name, false);
             (void)run_async_prod(v);
-            report_node_progress(current_node_name, true);
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_async_producer", section_id, sec.name);
           }
