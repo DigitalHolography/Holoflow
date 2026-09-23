@@ -141,6 +141,7 @@ private:
   bool               export_in_progress_              = false;
   bool               geometry_restored_               = false;
   bool               dump_runtime_failure_graphs_     = false;
+  bool               failure_graph_available_         = false;
   double             last_input_fps_                  = 0.0;
   double             signal_plot_time_window_seconds_ = 8.0;
   QString            session_id_;

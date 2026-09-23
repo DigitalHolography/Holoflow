@@ -14,6 +14,8 @@
 
 #include "graph_builder_tracer.hh"
 
+#include <sstream>
+
 namespace holovibes::pipeline {
 
 GraphBuilderTracer::GraphBuilderTracer(holoflow::core::Registry &registry) : reg_(registry) {}
@@ -41,6 +43,41 @@ std::vector<holoflow::core::TDesc> GraphBuilderTracer::to_core_descs(std::span<c
     out.push_back(t.as_core());
   }
   return out;
+}
+
+std::string GraphBuilderTracer::failure_graph_dot(
+    const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+  if (!inference_failure_) {
+    return {};
+  }
+
+  const auto &failure = *inference_failure_;
+  const auto &node    = g_[failure.vertex];
+  std::string label   = node.name + " (" + node.kind + ")\nInference failed: " + failure.message;
+  for (size_t i = 0; i < failure.inputs.size(); ++i) {
+    const auto &input = failure.inputs[i];
+    const holoflow::core::TDesc contiguous{input.shape, input.dtype, input.mem_loc, input.offset};
+    label += "\nInput " + std::to_string(i) + ": shape=" + nlohmann::json(input.shape).dump() +
+             ", dtype=" + std::string(holoflow::core::to_string(input.dtype)) +
+             ", memory=" + std::string(holoflow::core::to_string(input.mem_loc)) +
+             "\n  byte strides=" + nlohmann::json(input.strides).dump() +
+             ", contiguous byte strides=" + nlohmann::json(contiguous.strides).dump() +
+             ", offset=" + std::to_string(input.offset);
+  }
+
+  auto dot = holoflow::core::to_dot(g_, prefs);
+  const auto end = dot.rfind('}');
+  if (end == std::string::npos) {
+    return {};
+  }
+
+  std::ostringstream annotation;
+  annotation << "  graph [label=\"Graph construction failed (partial graph)\", labelloc=t];\n"
+             << "  v" << failure.vertex << " [label=" << nlohmann::json(label).dump()
+             << ", style=\"filled,bold\", fillcolor=\"#ffe1e1\", color=\"#b00020\", "
+                "penwidth=2];\n";
+  dot.insert(end, annotation.str());
+  return dot;
 }
 
 } // namespace holovibes::pipeline

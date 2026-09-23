@@ -597,8 +597,6 @@ void Manager::build_and_run() {
   using CompilerConfig = holoflow::runtime::Compiler::Config;
   using Compiler       = holoflow::runtime::Compiler;
 
-  build_graph_spec();
-
   std::filesystem::path log_root;
   log_root_.clear();
   const auto app_data_dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
@@ -619,6 +617,16 @@ void Manager::build_and_run() {
 
   log_root_ = log_root;
 
+  // Previous failure graphs must not be mistaken for this attempt's diagnostics.
+  if (dump_runtime_failure_graphs_ && !log_root_.empty()) {
+    std::error_code remove_ec;
+    std::filesystem::remove(log_root_ / "graph_build_failure.dot", remove_ec);
+    std::filesystem::remove(log_root_ / "compilation_failure.dot", remove_ec);
+  }
+
+  // Prepare the log directory before graph construction can write a failure graph.
+  build_graph_spec();
+
   // TODO: What should be done about this verbose logging?
   // if (dump_runtime_failure_graphs_) {
   //   dump_graph_logs(log_root);
@@ -631,17 +639,36 @@ void Manager::build_and_run() {
 
   auto     prev_output = std::move(compiler_output_);
   Compiler compiler(registry_, config);
-  compiler_output_ = compiler.compile(spec_, std::move(prev_output));
+  try {
+    compiler_output_ = compiler.compile(spec_, std::move(prev_output));
+  } catch (const std::exception &e) {
+    std::string diagnostic_status;
+    if (!dump_runtime_failure_graphs_) {
+      diagnostic_status = "Failure graph diagnostics are disabled in Preferences.";
+    } else if (log_root_.empty()) {
+      diagnostic_status = "Failure graph was not saved because the application log folder "
+                          "could not be created.";
+    } else {
+      const auto failure_path = log_root_ / "compilation_failure.dot";
+      std::ifstream failure_file(failure_path, std::ios::binary);
+      if (failure_file.is_open()) {
+        const std::string dot{std::istreambuf_iterator<char>{failure_file},
+                              std::istreambuf_iterator<char>{}};
+        emit failure_graph_ready(QString::fromUtf8(
+            dot.data(), static_cast<qsizetype>(dot.size())));
+        diagnostic_status = std::format("Compilation failure graph: {}", failure_path.string());
+      } else {
+        diagnostic_status = std::format("Compilation failure graph was not written; expected: {}",
+                                        failure_path.string());
+      }
+    }
+    throw std::runtime_error(std::format("{}\n{}", e.what(), diagnostic_status));
+  }
 
   if (compiler_output_) {
     using namespace std::chrono;
 
-    // Write original GraphSpec
-    const std::filesystem::path log_dir =
-        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString() + "/" +
-        QCoreApplication::applicationVersion().toStdString() + "/logs";
-
-    const auto dot_path = log_dir / "compiled.dot";
+    const auto dot_path = log_root_ / "compiled.dot";
 
     std::ofstream(dot_path) << holoflow::runtime::to_dot(
         *compiler_output_, graph_compiled_dump_prefs_, "compiled_pipeline");
@@ -753,12 +780,32 @@ void Manager::dump_windows_crash_graph(unsigned long exception_code) noexcept {
 #endif
 
 void Manager::dump_graph_logs(const std::filesystem::path &log_dir) {
+  if (log_dir.empty()) {
+    logger()->warn("[Manager::dump_graph_logs] No writable application log directory is available");
+    return;
+  }
+
   // Write original GraphSpec
   const auto json_path = log_dir / "pipeline.json";
   const auto dot_path  = log_dir / "pipeline.dot";
 
-  std::ofstream(dot_path) << holoflow::core::to_dot(spec_, graph_spec_dump_prefs_);
-  std::ofstream(json_path) << holoflow::core::to_json(spec_).dump(2);
+  std::ofstream dot_file(dot_path);
+  std::ofstream json_file(json_path);
+  if (!dot_file.is_open() || !json_file.is_open()) {
+    logger()->error("[Manager::dump_graph_logs] Failed to open pipeline graph files in {}",
+                    log_dir.string());
+    return;
+  }
+
+  dot_file << holoflow::core::to_dot(spec_, graph_spec_dump_prefs_);
+  json_file << holoflow::core::to_json(spec_).dump(2);
+  dot_file.flush();
+  json_file.flush();
+  if (!dot_file.good() || !json_file.good()) {
+    logger()->error("[Manager::dump_graph_logs] Failed to write pipeline graph files in {}",
+                    log_dir.string());
+    return;
+  }
 
   logger()->info("[Manager::dump_graph_logs] Pre-compile pipeline graphs saved to {}",
                  log_dir.string());
@@ -773,13 +820,44 @@ void Manager::build_graph_spec() {
   guess_source_dims();
 
   GraphBuilder builder{s_, registry_};
-  spec_ = builder.build();
+  try {
+    spec_ = builder.build();
+  } catch (const std::exception &e) {
+    std::string diagnostic_status;
+    if (!dump_runtime_failure_graphs_) {
+      diagnostic_status = "Failure graph diagnostics are disabled in Preferences.";
+    } else if (log_root_.empty()) {
+      diagnostic_status = "Failure graph was not saved because the application log folder "
+                          "could not be created.";
+    } else {
+      const auto dot = builder.failure_graph_dot(graph_spec_dump_prefs_);
+      if (dot.empty()) {
+        diagnostic_status = "No task-inference failure node was available for a graph.";
+      } else {
+        const auto failure_path = log_root_ / "graph_build_failure.dot";
+        std::ofstream failure_file(failure_path, std::ios::binary | std::ios::trunc);
+        if (failure_file.is_open()) {
+          failure_file.write(dot.data(), static_cast<std::streamsize>(dot.size()));
+          failure_file.flush();
+        }
+        if (failure_file.good()) {
+          emit failure_graph_ready(
+              QString::fromUtf8(dot.data(), static_cast<qsizetype>(dot.size())));
+          diagnostic_status = std::format("Graph construction failure: {}", failure_path.string());
+          logger()->error("[Manager::build_graph_spec] Failure graph saved to {}",
+                          failure_path.string());
+        } else {
+          diagnostic_status = std::format("Failed to write graph construction failure: {}",
+                                          failure_path.string());
+        }
+      }
+    }
+    throw std::runtime_error(std::format("{}\n{}", e.what(), diagnostic_status));
+  }
 
   settings_dirty_ = false;
   logger()->debug("[Manager::build_graph_spec] Graph spec built successfully");
-  dump_graph_logs(
-      QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString() + "/" +
-      QCoreApplication::applicationVersion().toStdString() + "/logs");
+  dump_graph_logs(log_root_);
 }
 
 void Manager::reset_graph_spec() { spec_ = holoflow::core::GraphSpec{}; }

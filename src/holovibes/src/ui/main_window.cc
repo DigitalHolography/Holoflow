@@ -418,13 +418,14 @@ public:
         setup_graph_compiled_dump_preferences(manager_.get_graph_compiled_dump_preferences());
     splitter->addWidget(graph_compiled_dump_group_box);
 
-    auto *runtime_failure_group_box = new QGroupBox(tr("Runtime Failure Diagnostics"), this);
+    auto *runtime_failure_group_box = new QGroupBox(tr("Failure Diagnostics"), this);
     auto *runtime_failure_form      = new QFormLayout();
     runtime_failure_graph_checkbox_ = new QCheckBox(this);
     runtime_failure_graph_checkbox_->setChecked(manager_.dump_runtime_failure_graphs());
     runtime_failure_graph_checkbox_->setToolTip(
-        tr("Write runtime_failure.dot when a pipeline node reports an error or the process "
-           "terminates with a Windows exception."));
+        tr("Save graph_build_failure.dot when a task rejects an input while the pipeline is being "
+           "built, compilation_failure.dot for compiler errors, and runtime_failure.dot for "
+           "runtime errors and Windows exceptions."));
     runtime_failure_form->addRow(tr("Dump graph on failure"), runtime_failure_graph_checkbox_);
     runtime_failure_group_box->setLayout(runtime_failure_form);
     splitter->addWidget(runtime_failure_group_box);
@@ -1665,6 +1666,17 @@ void MainWindow::connect_manager_signals() {
               graph_visualizer_widget_->show_error(error);
             }
           });
+  connect(pipeline_manager_, &pipeline::Manager::failure_graph_ready, this,
+          [this](const QString &dot) {
+            if (graph_visualizer_widget_ == nullptr) {
+              return;
+            }
+            failure_graph_available_ = true;
+            graph_visualizer_widget_->set_reload_enabled(false);
+            display_workspace_->set_visualization_title(QStringLiteral("pipeline_graph"),
+                                                        tr("Failure Graph"));
+            graph_visualizer_widget_->render_dot(dot);
+          });
 
 }
 
@@ -1917,6 +1929,11 @@ void MainWindow::on_start_pipeline_failure(const QString &error) {
   export_widget_->set_stop_enabled(false);
   display_workspace_->set_pipeline_running(false);
   refresh_command_bar();
+  if (failure_graph_available_) {
+    display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
+    display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
+    failure_graph_available_ = false;
+  }
 
   show_pipeline_error_popup(tr("An error occurred while starting the pipeline:\n%1").arg(error));
 }
@@ -2085,6 +2102,11 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   export_widget_->set_stop_enabled(false);
   display_workspace_->set_pipeline_running(false);
   refresh_command_bar();
+  if (failure_graph_available_) {
+    display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
+    display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
+    failure_graph_available_ = false;
+  }
 
   show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
 }

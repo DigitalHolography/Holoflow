@@ -121,6 +121,7 @@ signals:
 
   // Graph visualization signals
   void graph_visualization_ready(const QString &dot);
+  void failure_graph_ready(const QString &dot);
   void graph_visualization_failed(const QString &error);
 
 private:

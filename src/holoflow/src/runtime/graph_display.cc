@@ -581,8 +581,11 @@ std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences
   write_compiled_graph_header(ss, prefs, filename);
 
   if (!failure_context.empty()) {
+    const auto failure_title = failure_context.starts_with("Compilation failed ")
+                                   ? "COMPILATION FAILURE\n"
+                                   : "RUNTIME FAILURE\n";
     ss << std::format("  labelloc=\"t\";\n  label=\"{}\";\n",
-                      escape_for_label(std::string{"RUNTIME FAILURE\n"} +
+                      escape_for_label(std::string{failure_title} +
                                        std::string{failure_context}));
   }
 
