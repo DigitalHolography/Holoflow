@@ -34,6 +34,8 @@
 #include "curaii/cuda.hh"
 #include "logger.hh"
 
+#include "holofile/holofile.hh"
+
 template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
 namespace holotask::sources {
@@ -593,10 +595,8 @@ private:
 
     // The writer publishes frames with release.
     // Acquire makes the corresponding frame write visible.
-    const auto write = write_index_.load(std::memory_order_acquire);
-
     // queue is empty
-    assert(current != write);
+    assert(current != write_index_.load(std::memory_order_acquire));
 
     const auto index = current % capacity_;
 
@@ -640,6 +640,50 @@ private:
   alignas(cache_line_size_) std::atomic<size_t> read_index_b_;
 };
 
+// read B
+// writing to stop will automaticly stop the record
+class Recorder {
+public:
+  Recorder(const std::string &file_path, size_t frame_count, CameraBufferQueue &queue,
+           std::atomic<bool> &stop, Euresys::EGrabber<> *egrabber)
+      : writer_{file_path, holofile::Header{}, holofile::Footer{}}, // TODO add header and footer
+        frame_to_record_{frame_count}, current_frame_{0}, queue_{queue}, stop_{stop},
+        egrabber_{egrabber} {}
+
+  void execute() {
+    auto stop = stop_.load(std::memory_order_acquire);
+    while (current_frame_ < frame_to_record_ && !stop) {
+      if (!queue_.empty()) {
+        const auto &frame  = queue_.read_b();
+        auto        buffer = Euresys::Buffer(frame);
+        auto       *base_v = buffer.getInfo<void *>(*egrabber_, GenTL::BUFFER_INFO_BASE);
+        auto       *base   = static_cast<uint8_t *>(base_v);
+
+        writer_.write_frames(base, 1);
+      }
+
+      stop = stop_.load(std::memory_order_acquire);
+    }
+
+    writer_.write_footer();
+  }
+
+  ~Recorder() { writer_.flush(); }
+
+private:
+  holofile::Writer writer_;
+  size_t frame_to_record_; // when unlimited it is set to std::numeric_limit<size_t>::max()
+  size_t current_frame_;
+  CameraBufferQueue   &queue_;
+  std::atomic<bool>   &stop_;
+  Euresys::EGrabber<> *egrabber_;
+};
+
+void recorder_worker(const std::string &file_path, size_t frame_count, CameraBufferQueue &queue,
+                     std::atomic<bool> &stop, Euresys::EGrabber<> *egrabber) {
+  Recorder rec{file_path, frame_count, queue, stop, egrabber};
+  rec.execute();
+}
 } // namespace
 
 // -------------------------------------------------------------------------------------------------
@@ -802,6 +846,10 @@ private:
   nlohmann::json                        cfg_;
   std::optional<Euresys::NewBufferData> pending_a_;
   std::optional<Euresys::NewBufferData> pending_b_;
+
+  // CameraBufferQueue buffer_queue_;
+  // std::thread recorder_worker_;
+  // std::atomic<bool> stop_record_;
 };
 
 // -------------------------------------------------------------------------------------------------
