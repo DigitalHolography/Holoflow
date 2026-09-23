@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/argmax.hh"
+#include "utils/tensor_common.hh"
 
 #include <algorithm>
 #include <cuComplex.h>
@@ -66,68 +67,6 @@ template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 inline void check(bool cond, const std::string &msg) {
   if (!cond)
     throw std::invalid_argument("Argmax: " + msg);
-}
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
-}
-
-int get_dtype_size(holoflow::core::DType dt) {
-  using namespace holoflow::core;
-  switch (dt) {
-  case DType::U8:
-    return 1;
-  case DType::U16:
-    return 2;
-  case DType::F32:
-    return 4;
-  case DType::CF32:
-    return 8;
-  default:
-    return 1;
-  }
-}
-
-std::vector<size_t> compute_compact_strides(std::span<const size_t> shape) {
-  if (shape.empty())
-    return {};
-  std::vector<size_t> strides(shape.size());
-  size_t              acc = 1;
-  for (int i = static_cast<int>(shape.size()) - 1; i >= 0; --i) {
-    strides[i] = acc;
-    acc *= shape[i];
-  }
-  return strides;
-}
-
-std::vector<size_t> bytes_to_elements(std::span<const size_t> byte_strides, int itemsize) {
-  std::vector<size_t> elem_strides;
-  elem_strides.reserve(byte_strides.size());
-  for (auto s : byte_strides) {
-    elem_strides.push_back(static_cast<size_t>(s) / static_cast<size_t>(itemsize));
-  }
-  return elem_strides;
-}
-
-std::vector<int> normalize_axes(std::span<const int> axes, int ndim) {
-  std::vector<int> out;
-  if (axes.empty()) {
-    out.resize(ndim);
-    std::iota(out.begin(), out.end(), 0);
-  } else {
-    out.reserve(axes.size());
-    for (int a : axes) {
-      int norm = (a < 0) ? a + ndim : a;
-      check(norm >= 0 && norm < ndim, "axis out of range");
-      out.push_back(norm);
-    }
-    std::sort(out.begin(), out.end());
-    if (std::unique(out.begin(), out.end()) != out.end()) {
-      throw std::invalid_argument("Argmax: duplicate axes");
-    }
-  }
-  return out;
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -293,7 +232,7 @@ holoflow::core::InferResult ArgmaxFactory::infer(std::span<const holoflow::core:
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be on Device");
 
   const int  ndim = static_cast<int>(idesc.shape.size());
-  const auto axes = normalize_axes(settings.axis, ndim);
+  const auto axes = utils::normalize_axes(settings.axis, ndim);
 
   std::vector<bool> is_reduced(ndim, false);
   for (int a : axes)
@@ -324,7 +263,8 @@ holoflow::core::InferResult ArgmaxFactory::infer(std::span<const holoflow::core:
 
   // Use constructor to default to compact strides
   // Fixed Output DType: U16
-  holoflow::core::TDesc odesc(out_shape, holoflow::core::DType::U16, idesc.mem_loc);
+  const auto odesc =
+      utils::make_contiguous_desc(out_shape, holoflow::core::DType::U16, idesc.mem_loc);
 
   return {.input_descs   = {idesc},
           .output_descs  = {odesc},
@@ -343,9 +283,9 @@ ArgmaxFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const auto  settings = jsettings.get<ArgmaxSettings>();
   const auto &idesc    = input_descs[0];
   const int   ndim     = static_cast<int>(idesc.shape.size());
-  const int   itemsize = get_dtype_size(idesc.dtype);
+  const int   itemsize = static_cast<int>(holoflow::core::size_of(idesc.dtype));
 
-  const auto        reduce_axes = normalize_axes(settings.axis, ndim);
+  const auto        reduce_axes = utils::normalize_axes(settings.axis, ndim);
   std::vector<bool> is_reduced(ndim, false);
   for (int a : reduce_axes)
     is_reduced[a] = true;
@@ -374,19 +314,19 @@ ArgmaxFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   // Input: Convert provided byte strides to element strides (size_t)
   std::vector<size_t> in_strides_elem;
   if (idesc.strides.empty()) {
-    in_strides_elem = compute_compact_strides(idesc.shape);
+    in_strides_elem = utils::compact_strides(idesc.shape);
   } else {
-    in_strides_elem = bytes_to_elements(idesc.strides, itemsize);
+    in_strides_elem = utils::bytes_to_elements(idesc.strides, itemsize);
   }
 
   // Output: We know output is contiguous (enforced in infer)
-  auto out_strides_elem = compute_compact_strides(out_shape);
+  auto out_strides_elem = utils::compact_strides(out_shape);
 
   // Reduction: Fake stride for iterating linear 'r'
   std::vector<size_t> red_dims_shape;
   for (int a : reduce_axes)
     red_dims_shape.push_back(idesc.shape[a]);
-  auto red_strides_elem = compute_compact_strides(red_dims_shape);
+  auto red_strides_elem = utils::compact_strides(red_dims_shape);
 
   size_t total_out = 1;
   for (auto d : out_shape)
@@ -429,7 +369,8 @@ ArgmaxFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   auto *old_argmax = dynamic_cast<Argmax *>(old_task.get());
   if (old_argmax != nullptr && input_descs.size() == 1) {
     const auto settings = jsettings.get<ArgmaxSettings>();
-    if (settings == old_argmax->settings() && same_desc(input_descs[0], old_argmax->idesc())) {
+    if (settings == old_argmax->settings() &&
+        utils::same_desc(input_descs[0], old_argmax->idesc())) {
       old_argmax->update_stream(ctx.stream);
       return old_task;
     }

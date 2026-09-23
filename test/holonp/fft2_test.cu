@@ -81,6 +81,24 @@ protected:
   holonp::FFT2Factory factory;
 };
 
+class IFFT2InferTest : public ::testing::Test {
+protected:
+  holonp::IFFT2Factory factory;
+};
+
+TEST_F(IFFT2InferTest, KeepsShapeAndDtype) {
+  const std::vector<TDesc> in = {device_desc({2, 3}, DType::CF32)};
+  const auto               r  = factory.infer(in, nlohmann::json::object());
+  EXPECT_EQ(r.kind, TaskKind::Sync);
+  EXPECT_EQ(r.output_descs[0].shape, (std::vector<size_t>{2, 3}));
+  EXPECT_EQ(r.output_descs[0].dtype, DType::CF32);
+}
+
+TEST_F(IFFT2InferTest, RejectsNonComplexInput) {
+  const std::vector<TDesc> in = {device_desc({2, 3}, DType::F32)};
+  EXPECT_THROW(factory.infer(in, nlohmann::json::object()), std::invalid_argument);
+}
+
 TEST_F(FFT2OracleTest, CF32DefaultAxes) {
   struct CF32 {
     float re, im;
@@ -94,6 +112,32 @@ TEST_F(FFT2OracleTest, CF32DefaultAxes) {
 
   holonp_test::OracleInput oi;
   oi.op             = "fft2";
+  oi.n_outputs      = 1;
+  oi.input_descs    = {d};
+  oi.input_bytes    = {data};
+  oi.settings       = j;
+  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  expect_cf32_near(run.output_bytes[0], oracle.output_bytes[0]);
+}
+
+class IFFT2OracleTest : public ::testing::Test {
+protected:
+  holonp::IFFT2Factory factory;
+};
+
+TEST_F(IFFT2OracleTest, CF32DefaultAxes) {
+  struct CF32 {
+    float re, im;
+  };
+  const TDesc d    = device_desc({2, 3}, DType::CF32);
+  const auto  data = as_bytes(
+      std::vector<CF32>{{1.f, 0.f}, {2.f, -1.f}, {3.f, 2.f}, {4.f, 0.f}, {0.f, 1.f}, {-2.f, -1.f}});
+  const auto j   = nlohmann::json::object();
+  const auto run = holonp_test::run_sync_factory(factory, std::vector<TDesc>{d},
+                                                 std::vector<std::vector<std::byte>>{data}, j);
+
+  holonp_test::OracleInput oi;
+  oi.op             = "ifft2";
   oi.n_outputs      = 1;
   oi.input_descs    = {d};
   oi.input_bytes    = {data};

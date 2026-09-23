@@ -34,7 +34,9 @@ set(SOURCES
     fft_test.cu
     fftshift_test.cu
     irfft2_test.cu
+    irfft_test.cu
     max_test.cu
+    matmul_test.cu
     mean_test.cu
     meshgrid_test.cu
     min_test.cu

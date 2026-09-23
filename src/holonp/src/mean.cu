@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/mean.hh"
+#include "utils/tensor_common.hh"
 
 #include <algorithm>
 #include <cstdint>
@@ -83,26 +84,6 @@ inline void check(bool cond, const std::string &msg) {
   }
 }
 
-bool is_c_contiguous(const holoflow::core::TDesc &desc) {
-  if (desc.shape.size() != desc.strides.size()) {
-    return false;
-  }
-
-  size_t expected = holoflow::core::size_of(desc.dtype);
-  for (size_t i = desc.shape.size(); i-- > 0;) {
-    if (desc.strides[i] != expected) {
-      return false;
-    }
-    expected *= desc.shape[i];
-  }
-  return true;
-}
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
-}
-
 inline size_t num_elements(std::span<const size_t> shape) {
   constexpr size_t max = std::numeric_limits<size_t>::max();
   size_t           n   = 1;
@@ -116,43 +97,6 @@ inline size_t num_elements(std::span<const size_t> shape) {
     n *= d;
   }
   return n;
-}
-
-inline std::vector<std::int64_t> make_contig_strides(std::span<const size_t> shape) {
-  const int                 ndim = static_cast<int>(shape.size());
-  std::vector<std::int64_t> strides(ndim, 1);
-  std::int64_t              acc = 1;
-  for (int i = ndim - 1; i >= 0; --i) {
-    strides[i] = acc;
-    acc *= static_cast<std::int64_t>(shape[static_cast<size_t>(i)]);
-  }
-  return strides;
-}
-
-inline std::vector<int> normalize_axes(std::span<const int> axes, int ndim) {
-  std::vector<int> out;
-  if (axes.empty()) {
-    if (ndim == 0) {
-      return out;
-    }
-    out.resize(ndim);
-    std::iota(out.begin(), out.end(), 0);
-    return out;
-  }
-
-  out.reserve(axes.size());
-  for (int a : axes) {
-    if (a < 0) {
-      a += ndim;
-    }
-    check(a >= 0 && a < ndim, "axis out of range");
-    out.push_back(a);
-  }
-
-  std::sort(out.begin(), out.end());
-  auto dup = std::adjacent_find(out.begin(), out.end());
-  check(dup == out.end(), "axes must be unique");
-  return out;
 }
 
 struct MeanPlan {
@@ -172,7 +116,7 @@ MeanPlan build_plan(const MeanSettings &settings, std::span<const size_t> shape)
   const int ndim = static_cast<int>(shape.size());
   check(ndim <= kMaxNDim, "input ndim too large");
 
-  const auto        reduce_axes = normalize_axes(settings.axis, ndim);
+  const auto        reduce_axes = utils::normalize_axes(settings.axis, ndim);
   std::vector<bool> reduce_mask(static_cast<size_t>(ndim), false);
   for (int a : reduce_axes) {
     reduce_mask[static_cast<size_t>(a)] = true;
@@ -238,8 +182,8 @@ MeanPlan build_plan(const MeanSettings &settings, std::span<const size_t> shape)
   plan.total_red = static_cast<std::int64_t>(total_red);
   plan.out_ndim  = static_cast<int>(plan.out_shape.size());
 
-  plan.in_strides  = make_contig_strides(shape);
-  plan.out_strides = make_contig_strides(plan.out_shape);
+  plan.in_strides  = utils::compact_strides_i64(shape);
+  plan.out_strides = utils::compact_strides_i64(plan.out_shape);
 
   plan.red_strides.resize(plan.reduce_axes.size(), 1);
   std::int64_t acc = 1;
@@ -413,16 +357,16 @@ holoflow::core::InferResult MeanFactory::infer(std::span<const holoflow::core::T
   const auto &idesc = input_descs[0];
 
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "only Device tensors are supported");
-  check(is_c_contiguous(idesc), "input must be C-contiguous");
+  check(utils::is_c_contiguous(idesc), "input must be C-contiguous");
   check(idesc.dtype == holoflow::core::DType::U8 || idesc.dtype == holoflow::core::DType::U16 ||
             idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::CF32,
         "unsupported input dtype");
 
   const auto plan = build_plan(settings, idesc.shape);
 
-  auto odtype = idesc.dtype == holoflow::core::DType::CF32 ? holoflow::core::DType::CF32
-                                                           : holoflow::core::DType::F32;
-  holoflow::core::TDesc odesc(plan.out_shape, odtype, idesc.mem_loc);
+  auto       odtype = idesc.dtype == holoflow::core::DType::CF32 ? holoflow::core::DType::CF32
+                                                                 : holoflow::core::DType::F32;
+  const auto odesc  = utils::make_contiguous_desc(plan.out_shape, odtype, idesc.mem_loc);
 
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
@@ -535,7 +479,8 @@ MeanFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     const auto &new_idesc    = input_descs[0];
     const auto &old_idesc    = old_mean->idesc();
 
-    bool can_reuse = (new_settings == old_mean->settings()) && same_desc(new_idesc, old_idesc);
+    bool can_reuse =
+        (new_settings == old_mean->settings()) && utils::same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_mean->update_stream(ctx.stream);

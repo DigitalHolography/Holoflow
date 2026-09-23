@@ -56,6 +56,7 @@ DEFINE_UNARY_SYNC_NODE (sum,                                    "sum",          
 DEFINE_UNARY_SYNC_NODE (std,                                    "std",                                 "Std",                             holonp::StdSettings)
 DEFINE_UNARY_SYNC_NODE (var,                                    "var",                                 "Var",                             holonp::VarSettings)
 DEFINE_UNARY_SYNC_NODE (argmin,                                 "argmin",                              "Argmin",                          holonp::ArgminSettings)
+DEFINE_UNARY_SYNC_NODE (argmax,                                 "argmax",                              "Argmax",                          holonp::ArgmaxSettings)
 DEFINE_UNARY_SYNC_NODE (sqrt,                                   "sqrt",                                "Sqrt",                            holonp::SqrtSettings)
 DEFINE_UNARY_SYNC_NODE (real,                                   "real",                                "Real",                            holonp::RealSettings)
 DEFINE_UNARY_SYNC_NODE (imag,                                   "imag",                                "Imag",                            holonp::ImagSettings)
@@ -103,22 +104,34 @@ DEFINE_NARY_SYNC_NODE  (minimum,                     "minimum",                 
 DEFINE_UNARY_SYNC_NODE (transpose,                    "transpose",                    "Transpose",                       holonp::TransposeSettings)
 DEFINE_UNARY_SYNC_NODE (conj,                         "conj",                         "Conj",                            holonp::ConjSettings)
 DEFINE_UNARY_SYNC_NODE (rfft,                         "rfft",                         "RFFT",                            holonp::RFFTSettings)
+DEFINE_UNARY_SYNC_NODE (irfft,                        "irfft",                        "IRFFT",                           holonp::IRFFTSettings)
 DEFINE_UNARY_SYNC_NODE (rfft2,                        "rfft2",                        "RFFT2",                           holonp::RFFT2Settings)
 DEFINE_UNARY_SYNC_NODE (irfft2,                       "irfft2",                       "IRFFT2",                          holonp::IRFFT2Settings)
 DEFINE_UNARY_SYNC_NODE (slice,                        "slice",                        "Slice",                           holonp::SliceSettings)
 DEFINE_UNARY_SYNC_NODE (fft,                          "fft",                          "FFT",                             holonp::FFTSettings)
+DEFINE_UNARY_SYNC_NODE (ifft,                         "ifft",                         "IFFT",                            holonp::FFTSettings)
 DEFINE_UNARY_SYNC_NODE (fft2,                         "fft2",                         "FFT2",                            holonp::FFT2Settings)
+DEFINE_UNARY_SYNC_NODE (ifft2,                        "ifft2",                        "IFFT2",                           holonp::FFT2Settings)
 DEFINE_UNARY_SYNC_NODE (fftshift,                     "fftshift",                     "FFTShiftNp",                      holonp::FFTShiftSettings)
+DEFINE_UNARY_SYNC_NODE (ifftshift,                    "ifftshift",                    "IFFTShiftNp",                     holonp::FFTShiftSettings)
 DEFINE_UNARY_SYNC_NODE (abs,                          "abs",                          "Abs",                             holonp::AbsSettings)
 DEFINE_UNARY_SYNC_NODE (exp,                          "exp",                          "Exp",                             holonp::ExpSettings)
 DEFINE_UNARY_SYNC_NODE (mean,                         "mean",                         "Mean",                            holonp::MeanSettings)
 DEFINE_UNARY_SYNC_NODE (mean_abs,                     "mean_abs",                     "MeanAbs",                         holotask::syncs::MeanAbsSettings)
 DEFINE_UNARY_SYNC_NODE (min,                          "min",                          "Min",                             holonp::MinSettings)
 DEFINE_UNARY_SYNC_NODE (max,                          "max",                          "Max",                             holonp::MaxSettings)
+DEFINE_UNARY_SYNC_NODE (median,                       "median",                       "Median",                          holonp::MedianSettings)
+DEFINE_UNARY_SYNC_NODE (quantile,                     "quantile",                     "Quantile",                        holonp::QuantileSettings)
+DEFINE_UNARY_SYNC_NODE (percentile,                   "percentile",                   "Percentile",                      holonp::PercentileSettings)
 DEFINE_UNARY_SYNC_NODE (normalize,                    "normalize",                    "Normalize",                       holotask::syncs::NormalizeSettings)
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                "batch_queue",                  "BatchQueue",                      holotask::asyncs::BatchQueueSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                    "slide_avg",                    "SlidingAverage",                  holotask::asyncs::SlidingAverageSettings)
 // clang-format on
+
+std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::histogram(const TDesc              &X,
+                                                                   holonp::HistogramSettings s) {
+  return make_unary_sync_node("histogram", "Histogram", "Histogram", X, s);
+}
 
 std::vector<GraphBuilderTasks::TDesc>
 GraphBuilderTasks::dual_reader_batch_queue(const TDesc                                   &X,
@@ -150,8 +163,59 @@ GraphBuilderTasks::TDesc GraphBuilderTasks::multiply(const TDesc &A, const TDesc
           .at(0));
 }
 
-std::vector<GraphBuilderTasks::TDesc>
-GraphBuilderTasks::meshgrid(std::span<const TDesc> Xs, holonp::MeshgridSettings s) {
+GraphBuilderTasks::TDesc GraphBuilderTasks::diff(const TDesc &X, holonp::DiffSettings s) {
+  return std::move(make_unary_sync_node("diff", "Diff", "Diff", X, s).at(0));
+}
+
+std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::gradient(const TDesc             &X,
+                                                                  holonp::GradientSettings s) {
+  return make_unary_sync_node("gradient", "Gradient", "Gradient", X, s);
+}
+
+std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::svd(const TDesc        &X,
+                                                             holonp::SVDSettings s) {
+  return make_unary_sync_node("svd", "SVD", "SVD", X, s);
+}
+
+GraphBuilderTasks::TDesc GraphBuilderTasks::pinv(const TDesc &X, holonp::PinvSettings s) {
+  return std::move(make_unary_sync_node("pinv", "Pinv", "Pinv", X, s).at(0));
+}
+
+std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::lstsq(const TDesc &A, const TDesc &B,
+                                                               holonp::LstsqSettings s) {
+  std::array<TDesc, 2> inputs{A, B};
+  return make_nary_sync_node("lstsq", "Lstsq", "Lstsq", std::span<const TDesc>{inputs}, s);
+}
+
+GraphBuilderTasks::TDesc GraphBuilderTasks::convolve(const TDesc &A, const TDesc &B,
+                                                     holonp::ConvolveSettings s) {
+  std::array<TDesc, 2> inputs{A, B};
+  return std::move(
+      make_nary_sync_node("convolve", "Convolve", "Convolve", std::span<const TDesc>{inputs}, s)
+          .at(0));
+}
+
+GraphBuilderTasks::TDesc GraphBuilderTasks::correlate(const TDesc &A, const TDesc &B,
+                                                      holonp::CorrelateSettings s) {
+  std::array<TDesc, 2> inputs{A, B};
+  return std::move(
+      make_nary_sync_node("correlate", "Correlate", "Correlate", std::span<const TDesc>{inputs}, s)
+          .at(0));
+}
+
+GraphBuilderTasks::TDesc GraphBuilderTasks::matmul(const TDesc &A, const TDesc &B,
+                                                   holonp::MatmulSettings s) {
+  std::array<TDesc, 2> inputs{A, B};
+  return std::move(
+      make_nary_sync_node("matmul", "Matmul", "Matmul", std::span<const TDesc>{inputs}, s).at(0));
+}
+
+GraphBuilderTasks::TDesc GraphBuilderTasks::norm(const TDesc &X, holonp::NormSettings s) {
+  return std::move(make_unary_sync_node("norm", "Norm", "Norm", X, s).at(0));
+}
+
+std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::meshgrid(std::span<const TDesc>   Xs,
+                                                                  holonp::MeshgridSettings s) {
   return make_nary_sync_node("meshgrid", "Meshgrid", "Meshgrid", Xs, s);
 }
 

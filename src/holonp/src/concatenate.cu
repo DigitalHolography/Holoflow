@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/concatenate.hh"
+#include "utils/tensor_common.hh"
 
 #include <cstdint>
 #include <limits>
@@ -86,14 +87,6 @@ inline std::int64_t checked_mul(std::int64_t a, std::int64_t b, const std::strin
   return a * b;
 }
 
-inline int normalize_axis(int axis, int ndim) {
-  if (axis < 0) {
-    axis += ndim;
-  }
-  check(axis >= 0 && axis < ndim, "axis out of range");
-  return axis;
-}
-
 ConcatenateInputPlan make_input_plan(const holoflow::core::TDesc &desc, std::int64_t axis_dim,
                                      std::int64_t axis_offset) {
   const auto ndim = static_cast<int>(desc.shape.size());
@@ -163,7 +156,8 @@ ConcatPlan build_plan(const ConcatenateSettings             &settings,
     check(static_cast<int>(desc.shape.size()) == ndim, "all inputs must share the same rank");
   }
 
-  const int axis = normalize_axis(*settings.axis, ndim);
+  const int axis = utils::normalize_axis(*settings.axis, ndim);
+  check(axis >= 0 && axis < ndim, "axis out of range");
 
   plan.out_shape = input_descs[0].shape;
 
@@ -227,11 +221,6 @@ __global__ void concat_kernel(const T *__restrict__ in, T *__restrict__ out, std
 
   const auto in_idx = logical_to_strided_offset(tid, input_plan);
   out[out_idx]      = in[in_idx];
-}
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -380,7 +369,7 @@ ConcatenateFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   const auto settings    = jsettings.get<ConcatenateSettings>();
   bool       same_inputs = settings == old_concat->settings();
   for (size_t i = 0; same_inputs && i < input_descs.size(); ++i) {
-    same_inputs = same_desc(input_descs[i], old_concat->input_descs()[i]);
+    same_inputs = utils::same_desc(input_descs[i], old_concat->input_descs()[i]);
   }
 
   if (same_inputs) {

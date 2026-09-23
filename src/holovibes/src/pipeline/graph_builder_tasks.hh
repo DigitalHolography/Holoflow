@@ -19,38 +19,53 @@
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
+#include "holonp/argmax.hh"
+#include "holonp/argmin.hh"
 #include "holonp/asarray.hh"
 #include "holonp/ascontiguousarray.hh"
+#include "holonp/clip.hh"
 #include "holonp/concatenate.hh"
 #include "holonp/conj.hh"
+#include "holonp/convolve.hh"
 #include "holonp/copy.hh"
+#include "holonp/correlate.hh"
+#include "holonp/diff.hh"
 #include "holonp/divide.hh"
+#include "holonp/elementwise_minmax.hh"
 #include "holonp/empty.hh"
 #include "holonp/equal.hh"
 #include "holonp/exp.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
+#include "holonp/gradient.hh"
+#include "holonp/histogram.hh"
+#include "holonp/irfft.hh"
 #include "holonp/irfft2.hh"
+#include "holonp/lstsq.hh"
+#include "holonp/math_unary.hh"
+#include "holonp/matmul.hh"
 #include "holonp/max.hh"
 #include "holonp/mean.hh"
+#include "holonp/median.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/min.hh"
 #include "holonp/multiply.hh"
+#include "holonp/norm.hh"
+#include "holonp/percentile.hh"
+#include "holonp/pinv.hh"
+#include "holonp/quantile.hh"
 #include "holonp/reshape.hh"
-#include "holonp/sum.hh"
-#include "holonp/std.hh"
-#include "holonp/var.hh"
-#include "holonp/argmin.hh"
-#include "holonp/math_unary.hh"
-#include "holonp/clip.hh"
-#include "holonp/elementwise_minmax.hh"
 #include "holonp/rfft.hh"
 #include "holonp/rfft2.hh"
 #include "holonp/slice.hh"
 #include "holonp/square.hh"
+#include "holonp/std.hh"
 #include "holonp/subtract.hh"
+#include "holonp/sum.hh"
+#include "holonp/svd.hh"
 #include "holonp/transpose.hh"
+#include "holonp/var.hh"
 #include "holonp/where.hh"
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
@@ -146,27 +161,44 @@ protected:
   TDesc zernike_from_slopes(const TDesc &X, holotask::syncs::ZernikeFromSlopesSettings s);
   TDesc zernike_phase(const TDesc &X, holotask::syncs::ZernikePhaseSettings s);
   TDesc concatenate(std::span<const TDesc> Xs, holonp::ConcatenateSettings s);
+  TDesc convolve(const TDesc &A, const TDesc &B, holonp::ConvolveSettings s);
+  TDesc correlate(const TDesc &A, const TDesc &B, holonp::CorrelateSettings s);
   TDesc transpose(const TDesc &X, holonp::TransposeSettings s);
   TDesc add(const TDesc &A, const TDesc &B, holonp::AddSettings s);
   TDesc divide(const TDesc &A, const TDesc &B, holonp::DivideSettings s);
+  TDesc diff(const TDesc &X, holonp::DiffSettings s);
+  std::vector<TDesc> gradient(const TDesc &X, holonp::GradientSettings s);
+  std::vector<TDesc> svd(const TDesc &X, holonp::SVDSettings s);
+  TDesc pinv(const TDesc &X, holonp::PinvSettings s);
+  std::vector<TDesc> lstsq(const TDesc &A, const TDesc &B, holonp::LstsqSettings s);
   TDesc multiply(const TDesc &A, const TDesc &B, holonp::MultiplySettings s);
+  TDesc matmul(const TDesc &A, const TDesc &B, holonp::MatmulSettings s);
+  TDesc norm(const TDesc &X, holonp::NormSettings s);
   TDesc subtract(const TDesc &A, const TDesc &B, holonp::SubtractSettings s);
   TDesc equal(const TDesc &A, const TDesc &B, holonp::EqualSettings s);
   TDesc exp(const TDesc &X, holonp::ExpSettings s);
   TDesc where(const TDesc &Cond, const TDesc &X, const TDesc &Y, holonp::WhereSettings s);
   TDesc rfft(const TDesc &X, holonp::RFFTSettings s);
+  TDesc irfft(const TDesc &X, holonp::IRFFTSettings s);
   TDesc rfft2(const TDesc &X, holonp::RFFT2Settings s);
   TDesc irfft2(const TDesc &X, holonp::IRFFT2Settings s);
   TDesc cross_correlation2(const TDesc &Moving, const TDesc &Reference, holotask::syncs::CrossCorrelation2Settings s);
   TDesc slice(const TDesc &X, holonp::SliceSettings s);
   TDesc fft(const TDesc &X, holonp::FFTSettings s);
+  TDesc ifft(const TDesc &X, holonp::FFTSettings s);
   TDesc fft2(const TDesc &X, holonp::FFT2Settings s);
+  TDesc ifft2(const TDesc &X, holonp::FFT2Settings s);
   TDesc fftshift(const TDesc &X, holonp::FFTShiftSettings s);
+  TDesc ifftshift(const TDesc &X, holonp::FFTShiftSettings s);
   TDesc abs(const TDesc &X, holonp::AbsSettings s);
   TDesc mean(const TDesc &X, holonp::MeanSettings s);
   TDesc mean_abs(const TDesc &X, holotask::syncs::MeanAbsSettings s);
   TDesc min(const TDesc &X, holonp::MinSettings s);
   TDesc max(const TDesc &X, holonp::MaxSettings s);
+  TDesc median(const TDesc &X, holonp::MedianSettings s);
+  TDesc quantile(const TDesc &X, holonp::QuantileSettings s);
+  TDesc percentile(const TDesc &X, holonp::PercentileSettings s);
+  std::vector<TDesc> histogram(const TDesc &X, holonp::HistogramSettings s);
   TDesc normalize(const TDesc &X, holotask::syncs::NormalizeSettings s);
   TDesc reshape(const TDesc &X, holonp::ReshapeSettings s);
   TDesc conj(const TDesc &X, holonp::ConjSettings s);
@@ -175,6 +207,7 @@ protected:
   TDesc std(const TDesc &X, holonp::StdSettings s);
   TDesc var(const TDesc &X, holonp::VarSettings s);
   TDesc argmin(const TDesc &X, holonp::ArgminSettings s);
+  TDesc argmax(const TDesc &X, holonp::ArgmaxSettings s);
   TDesc sqrt(const TDesc &X, holonp::SqrtSettings s);
   TDesc real(const TDesc &X, holonp::RealSettings s);
   TDesc imag(const TDesc &X, holonp::ImagSettings s);
