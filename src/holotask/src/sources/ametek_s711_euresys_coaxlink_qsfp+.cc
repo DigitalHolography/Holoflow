@@ -23,6 +23,7 @@
 #include <format>
 #include <fstream>
 #include <map>
+#include <new>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -518,6 +519,126 @@ holoflow::core::DType dtype_from_pixel_format(const std::string &pixel_format) {
   check(dtypes.contains(pixel_format), "unsupported PixelFormat: " + pixel_format);
   return dtypes.at(pixel_format);
 }
+
+class CameraBufferQueue {
+public:
+  using DType           = Euresys::NewBufferData;
+  using ReleaseCallback = std::function<void(DType &&)>;
+
+  CameraBufferQueue(size_t capacity, ReleaseCallback release_callback)
+      : capacity_{capacity}, data_{std::make_unique<DType[]>(capacity)},
+        release_callback_{std::move(release_callback)}, write_index_{0}, read_index_a_{0},
+        read_index_b_{0} {
+    // We use all slots, so capacity must be > 0.
+    if (capacity_ == 0) {
+      throw std::invalid_argument("CameraBufferQueue capacity must be > 0");
+    }
+  }
+
+  ~CameraBufferQueue() = default;
+
+  CameraBufferQueue(const CameraBufferQueue &)            = delete;
+  CameraBufferQueue &operator=(const CameraBufferQueue &) = delete;
+
+  void push(DType &&frame) {
+    const auto write = write_index_.load(std::memory_order_relaxed);
+
+    // The oldest reader determines which slots can be reused.
+    auto oldest = oldest_reader();
+
+    while (write - oldest >= capacity_) {
+      // Queue is full. Wait until at least one reader advances.
+      std::this_thread::yield();
+
+      oldest = oldest_reader();
+    }
+
+    data_[write % capacity_] = std::move(frame);
+
+    // Publishing the index makes the written frame visible to readers.
+    write_index_.store(write + 1, std::memory_order_release);
+  }
+
+  [[nodiscard]]
+  const DType &read_a() {
+    return read(read_index_a_, read_index_b_);
+  }
+
+  [[nodiscard]]
+  const DType &read_b() {
+    return read(read_index_b_, read_index_a_);
+  }
+
+  [[nodiscard]]
+  size_t size() const {
+    const auto write = write_index_.load(std::memory_order_acquire);
+    return write - oldest_reader<std::memory_order_relaxed>();
+  }
+
+  [[nodiscard]]
+  bool empty() const {
+    return size() == 0;
+  }
+
+  [[nodiscard]]
+  size_t capacity() const {
+    return capacity_;
+  }
+
+private:
+  [[nodiscard]]
+  const DType &read(std::atomic<size_t> &reader, std::atomic<size_t> &other_reader) {
+
+    const auto current = reader.load(std::memory_order_relaxed);
+
+    // The writer publishes frames with release.
+    // Acquire makes the corresponding frame write visible.
+    const auto write = write_index_.load(std::memory_order_acquire);
+
+    // queue is empty
+    assert(current != write);
+
+    const auto index = current % capacity_;
+
+    const DType &result = data_[index];
+
+    const auto other = other_reader.load(std::memory_order_acquire);
+
+    // If current > other_reader, the other reader is behind us,
+    // so this slot is still needed.
+    if (current < other) {
+      release_callback_(std::move(data_[index]));
+    }
+
+    // Publish that this reader has consumed this element.
+    reader.store(current + 1, std::memory_order_release);
+
+    return result;
+  }
+
+  template <std::memory_order order = std::memory_order_acquire>
+  [[nodiscard]]
+  size_t oldest_reader() const {
+    const auto a = read_index_a_.load(order);
+    const auto b = read_index_b_.load(order);
+
+    return min(a, b);
+  }
+
+private:
+  static constexpr size_t cache_line_size_ = std::hardware_destructive_interference_size;
+
+  const size_t capacity_;
+
+  std::unique_ptr<DType[]> data_;
+  ReleaseCallback          release_callback_;
+
+  alignas(cache_line_size_) std::atomic<size_t> write_index_;
+
+  alignas(cache_line_size_) std::atomic<size_t> read_index_a_;
+
+  alignas(cache_line_size_) std::atomic<size_t> read_index_b_;
+};
 
 } // namespace
 
