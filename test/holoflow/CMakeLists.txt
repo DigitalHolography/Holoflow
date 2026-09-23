@@ -17,6 +17,7 @@ add_executable(holoflow_core_test
     core_test.cc
     event_router_test.cc
     graph_display_test.cc
+    windows_crash_handler_test.cc
 )
 
 target_include_directories(holoflow_core_test
@@ -35,6 +36,17 @@ holoflow_discover_tests(holoflow_core_test
     LABELS fast
     TIMEOUT 10
 )
+
+if(WIN32)
+    add_executable(windows_crash_handler_helper
+        windows_crash_handler_helper.cc
+    )
+
+    target_link_libraries(windows_crash_handler_helper
+        PRIVATE
+        holoflow
+    )
+endif()
 
 add_executable(holoflow_runtime_test
     compiler_additional_test.cc

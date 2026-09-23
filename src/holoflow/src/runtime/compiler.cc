@@ -33,6 +33,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <variant>
+#include <string_view>
 
 #include "curaii/cuda.hh"
 #include "holoflow/core/graph_spec.hh"
@@ -240,6 +241,8 @@ private:
   Compiler::Config                config_;
   std::shared_ptr<spdlog::logger> logger_;
   CompilationProfiler             profiler_;
+  std::string                     failure_pass_name_;
+  std::string                     failure_node_name_;
 
   const core::GraphSpec          *gspec_ = nullptr;
   std::unique_ptr<CompilerOutput> prev_;
@@ -251,7 +254,8 @@ private:
   // --- Helpers ---
   void        setup_logging();
   ScopedTrace trace_scope(std::string name, std::string category = "pass");
-  void        dump_graphviz(const std::string &filename);
+  void dump_graphviz(const std::string &filename, std::string_view failure_node = {},
+                     std::string_view failure_context = {});
   template <class TaskInterface, class Factory, class Ctx>
   std::unique_ptr<core::ITask> create_or_update_task(Factory &factory, const NodePlan &np,
                                                      const Ctx &ctx);
@@ -272,6 +276,8 @@ private:
 
   // Generic Pass Runner
   template <typename Func> void run_pass(const char *name, Func &&fn) {
+    failure_pass_name_ = name;
+    failure_node_name_.clear();
     auto scope = trace_scope(name, "pass");
     fn();
   }
@@ -319,7 +325,12 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
   } catch (const std::exception &e) {
     logger_->error("Compilation Failed: {}", e.what());
     if (config_.dump_dot_on_failure) {
-      run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_failure.dot"); });
+      const auto context = std::format(
+          "Compilation failed during {}{}: {}", failure_pass_name_,
+          failure_node_name_.empty() ? "" : std::format(" at node '{}'", failure_node_name_),
+          e.what());
+      auto dump_trace = trace_scope("Dump Graphviz", "pass");
+      dump_graphviz("compilation_failure.dot", failure_node_name_, context);
     }
 
     total_trace.reset(); // Stop timer before throwing
@@ -376,7 +387,8 @@ ScopedTrace Compiler::Impl::trace_scope(std::string name, std::string category) 
                      config_.enable_profiling ? &profiler_ : nullptr);
 }
 
-void Compiler::Impl::dump_graphviz(const std::string &filename) {
+void Compiler::Impl::dump_graphviz(const std::string &filename, std::string_view failure_node,
+                                   std::string_view failure_context) {
   if (config_.log_dir.empty()) {
     return;
   }
@@ -387,7 +399,16 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
   }
 
   const auto graph_name = std::filesystem::path(filename).stem().string();
-  file << to_dot(*out_, GraphCompiledDumpPreferences{}, graph_name);
+  if (failure_node.empty() && failure_context.empty()) {
+    file << to_dot(*out_, GraphCompiledDumpPreferences{}, graph_name);
+  } else {
+    file << to_dot(*out_, GraphCompiledDumpPreferences{}, graph_name, failure_node,
+                   failure_context);
+    file.flush();
+    if (file.good()) {
+      logger_->error("Compilation failure graph saved to {}", (config_.log_dir / filename).string());
+    }
+  }
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -460,6 +481,7 @@ void Compiler::Impl::run_type_inference() {
 
   for (auto v : std::views::reverse(topo_order)) {
     auto &node       = g[v];
+    failure_node_name_ = node.spec.name;
     auto  node_trace = trace_scope(std::format("Infer: {}", node.spec.name), "detail");
 
     auto                     in_degree = boost::in_degree(v, g);

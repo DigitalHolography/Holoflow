@@ -6,7 +6,19 @@
 
 #include "bug.hh"
 
+#include <exception>
+
 namespace holovibes::pipeline {
+
+template <typename InferFn>
+auto GraphBuilderTracer::infer_node(V vertex, std::span<const TDesc> inputs, InferFn &&infer) {
+  try {
+    return infer();
+  } catch (const std::exception &e) {
+    inference_failure_ = InferenceFailure{vertex, to_core_descs(inputs), e.what()};
+    throw;
+  }
+}
 
 template <class InferResult>
 std::vector<GraphBuilderTracer::TDesc>
@@ -44,7 +56,9 @@ GraphBuilderTracer::make_source_sync_node(std::string_view node_name, std::strin
 
   auto       v       = boost::add_vertex(node_spec, g_);
   auto      &factory = reg_.get_sync(std::string{reg_key});
-  const auto infer   = factory.infer(std::span<const holoflow::core::TDesc>{}, nlohmann::json(s));
+  const auto infer   = infer_node(v, std::span<const TDesc>{}, [&] {
+    return factory.infer(std::span<const holoflow::core::TDesc>{}, nlohmann::json(s));
+  });
   return wrap_infer_outputs(node_name, v, infer);
 }
 
@@ -68,7 +82,9 @@ GraphBuilderTracer::make_unary_sync_node(std::string_view node_name, std::string
 
   auto      &factory     = reg_.get_sync(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});
-  const auto infer       = factory.infer(core_inputs, nlohmann::json(s));
+  const auto infer       = infer_node(v, std::span{&X, 1}, [&] {
+    return factory.infer(core_inputs, nlohmann::json(s));
+  });
   return wrap_infer_outputs(node_name, v, infer);
 }
 
@@ -98,7 +114,9 @@ GraphBuilderTracer::make_nary_sync_node(std::string_view node_name, std::string_
 
   auto      &factory     = reg_.get_sync(std::string{reg_key});
   const auto core_inputs = to_core_descs(inputs);
-  const auto infer       = factory.infer(core_inputs, nlohmann::json(s));
+  const auto infer       = infer_node(v, inputs, [&] {
+    return factory.infer(core_inputs, nlohmann::json(s));
+  });
   return wrap_infer_outputs(node_name, v, infer);
 }
 
@@ -122,7 +140,9 @@ GraphBuilderTracer::make_unary_async_node(std::string_view node_name, std::strin
 
   auto      &factory     = reg_.get_async(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});
-  const auto infer       = factory.infer(core_inputs, nlohmann::json(s));
+  const auto infer       = infer_node(v, std::span{&X, 1}, [&] {
+    return factory.infer(core_inputs, nlohmann::json(s));
+  });
   return wrap_infer_outputs(node_name, v, infer);
 }
 
@@ -152,7 +172,9 @@ GraphBuilderTracer::make_nary_async_node(std::string_view node_name, std::string
 
   auto      &factory     = reg_.get_async(std::string{reg_key});
   const auto core_inputs = to_core_descs(inputs);
-  const auto infer       = factory.infer(core_inputs, nlohmann::json(s));
+  const auto infer       = infer_node(v, inputs, [&] {
+    return factory.infer(core_inputs, nlohmann::json(s));
+  });
   return wrap_infer_outputs(node_name, v, infer);
 }
 

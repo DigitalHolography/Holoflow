@@ -54,7 +54,7 @@ public:
           ui::TensorDisplayWidget  *zernike_phase_widget,
           ui::ZernikeHistoryWidget *zernike_history_widget);
 
-  ~Manager() override = default;
+  ~Manager() override;
 
   /// @brief Compiles and starts the pipeline graph.
   void start_pipeline();
@@ -88,6 +88,14 @@ public:
   }
   void update_graph_compiled_dump_preferences(const GraphCompiledDumpPreferences &prefs);
 
+  /// @brief Returns whether failure diagnostics should be captured at runtime.
+  bool dump_runtime_failure_graphs() const noexcept { return dump_runtime_failure_graphs_; }
+
+  /// @brief Enables or disables runtime failure diagnostics.
+  void set_dump_runtime_failure_graphs(bool enabled) noexcept {
+    dump_runtime_failure_graphs_ = enabled;
+  }
+
   /// @brief Emits Graphviz DOT for the current compiled pipeline graph.
   void request_compiled_graph_visualization();
 
@@ -113,6 +121,7 @@ signals:
 
   // Graph visualization signals
   void graph_visualization_ready(const QString &dot);
+  void failure_graph_ready(const QString &dot);
   void graph_visualization_failed(const QString &error);
 
 private:
@@ -144,6 +153,12 @@ private:
   // --- Logging Helpers ---
   void dump_graph_logs(const std::filesystem::path &log_dir);
 
+#if defined(_WIN32)
+  void install_windows_crash_handler();
+  void uninstall_windows_crash_handler();
+  void dump_windows_crash_graph(unsigned long exception_code) noexcept;
+#endif
+
   // --- UI Elements ---
   ui::AutoFocusWidget      *autofocus_widget_;
   ui::TensorDisplayWidget  *xy_processed_widget_;
@@ -164,9 +179,10 @@ private:
 
   GraphSpecDumpPreferences     graph_spec_dump_prefs_     = {};
   GraphCompiledDumpPreferences graph_compiled_dump_prefs_ = {};
+  std::filesystem::path         log_root_;
 
-  /// @brief Toggles debug dumps of the pipeline (.dot, .json) to disk.
-  bool dump_debug_graphs_ = true;
+  /// @brief Toggles compiler/runtime failure diagnostics (.dot and tracing) to disk.
+  bool dump_runtime_failure_graphs_ = false;
 
   /// @brief Mutex to protect state shared between the main UI thread and pipeline callbacks.
   std::mutex mtx_;
