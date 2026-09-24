@@ -13,6 +13,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "curaii/cuda.hh"
 #include "curaii/cusolver.hh"
@@ -30,6 +31,24 @@ void from_json(const nlohmann::json &j, SVDSettings &s) {
 }
 
 namespace {
+
+__global__ void mark_svd_failure_kernel(const int *__restrict__ info, float *__restrict__ u,
+                                        float *__restrict__ s, float *__restrict__ vh, int u_size,
+                                        int s_size, int vh_size) {
+  const int index    = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
+  const int max_size = u_size > s_size ? (u_size > vh_size ? u_size : vh_size)
+                                       : (s_size > vh_size ? s_size : vh_size);
+  if (index >= max_size || *info == 0)
+    return;
+
+  const float invalid = __int_as_float(0x7fc00000);
+  if (index < u_size)
+    u[index] = invalid;
+  if (index < s_size)
+    s[index] = invalid;
+  if (index < vh_size)
+    vh[index] = invalid;
+}
 
 inline void check(bool condition, const std::string &message) {
   if (!condition)
@@ -66,6 +85,14 @@ public:
     CUSOLVER_CHECK(cusolverDnSgesvd(handle_, 'S', 'S', cols_, rows_, input_copy_.get(), cols_, s,
                                     vh, cols_, u, rank_, workspace_.get(), workspace_elements_,
                                     nullptr, info_.get()));
+    const int     u_size   = rows_ * rank_;
+    const int     s_size   = rank_;
+    const int     vh_size  = rank_ * cols_;
+    constexpr int block    = 256;
+    const int     max_size = std::max(u_size, std::max(s_size, vh_size));
+    const int     grid     = (max_size + block - 1) / block;
+    mark_svd_failure_kernel<<<grid, block, 0, stream_>>>(info_.get(), u, s, vh, u_size, s_size,
+                                                         vh_size);
     CUDA_CHECK(cudaGetLastError());
     return holoflow::core::OpResult::Ok;
   }

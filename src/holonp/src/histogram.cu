@@ -1,3 +1,17 @@
+// Copyright 2026 Digital Holography Foundation
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "holonp/histogram.hh"
 #include "utils/tensor_common.hh"
 
@@ -5,6 +19,7 @@
 #include <cstdint>
 #include <limits>
 #include <stdexcept>
+#include <utility>
 
 #include "curaii/cuda.hh"
 
@@ -26,8 +41,10 @@ void validate(std::span<const holoflow::core::TDesc> input_descs,
     throw std::invalid_argument("histogram bins must be positive");
   if (!std::isfinite(settings.min) || !std::isfinite(settings.max) || settings.min >= settings.max)
     throw std::invalid_argument("histogram range must be finite and increasing");
-  if (input.num_elements() > static_cast<size_t>(std::numeric_limits<std::int64_t>::max()))
-    throw std::invalid_argument("histogram input is too large");
+  constexpr std::uint64_t max_exact_float_integer = std::uint64_t{1} << 24;
+  if (input.num_elements() > max_exact_float_integer)
+    throw std::invalid_argument(
+        "histogram input exceeds the exact integer range of F32 count outputs");
 }
 
 __global__ void histogram_edges_kernel(float *edges, int bins, float min_value, float max_value) {

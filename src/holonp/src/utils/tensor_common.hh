@@ -64,9 +64,13 @@ inline std::vector<std::int64_t> compact_strides_i64(std::span<const size_t> sha
 }
 
 inline size_t product_shape(std::span<const size_t> shape) {
-  if (shape.empty())
-    return 0;
-  return std::accumulate(shape.begin(), shape.end(), size_t{1}, std::multiplies<>{});
+  size_t product = 1;
+  for (const size_t dimension : shape) {
+    if (dimension != 0 && product > std::numeric_limits<size_t>::max() / dimension)
+      throw std::overflow_error("tensor shape product overflows size_t");
+    product *= dimension;
+  }
+  return product;
 }
 
 inline int normalize_axis(int axis, int ndim) {

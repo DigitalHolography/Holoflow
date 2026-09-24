@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "curaii/cuda.hh"
@@ -39,7 +40,7 @@ struct Layout {
   size_t start;
 };
 
-Layout make_layout(size_t a_length, size_t b_length, const std::string &mode, Operation operation) {
+Layout make_layout(size_t a_length, size_t b_length, const std::string &mode) {
   check(mode == "full" || mode == "same" || mode == "valid",
         "mode must be 'full', 'same', or 'valid'");
   const size_t full_length = a_length + b_length - 1;
@@ -50,8 +51,7 @@ Layout make_layout(size_t a_length, size_t b_length, const std::string &mode, Op
             .start         = std::min(a_length, b_length) - 1};
 
   const size_t output_length = std::max(a_length, b_length);
-  const size_t start =
-      operation == Operation::Convolve ? (full_length - output_length) / 2 : (b_length - 1) / 2;
+  const size_t start         = (full_length - output_length) / 2;
   return {.output_length = output_length, .start = start};
 }
 
@@ -125,7 +125,7 @@ public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     const auto    a_strides = utils::get_elem_strides(a_desc_);
     const auto    b_strides = utils::get_elem_strides(b_desc_);
-    const auto    layout    = make_layout(a_desc_.shape[0], b_desc_.shape[0], mode_, operation_);
+    const auto    layout    = make_layout(a_desc_.shape[0], b_desc_.shape[0], mode_);
     constexpr int block     = 256;
     const int     grid      = static_cast<int>((layout.output_length + block - 1) / block);
     const bool    correlate = operation_ == Operation::Correlate;
@@ -180,7 +180,7 @@ holoflow::core::InferResult infer_common(std::span<const holoflow::core::TDesc> 
   check(a.shape[0] > 0 && b.shape[0] > 0, "inputs must be nonempty");
   const auto settings = operation == Operation::Convolve ? jsettings.get<ConvolveSettings>().mode
                                                          : jsettings.get<CorrelateSettings>().mode;
-  const auto layout   = make_layout(a.shape[0], b.shape[0], settings, operation);
+  const auto layout   = make_layout(a.shape[0], b.shape[0], settings);
   (void)operation_name;
   return {.input_descs   = {a, b},
           .output_descs  = {holoflow::core::TDesc({layout.output_length}, a.dtype,

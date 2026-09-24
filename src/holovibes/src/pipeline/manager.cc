@@ -179,25 +179,37 @@ Manager::Manager(
 }
 
 void Manager::register_components() {
-  // clang-format off
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::DualReaderBatchQueueFactory>(registry_, "DualReaderBatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ", yz_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum", raw_spectrum_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum", processed_spectrum_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann", shack_hartmann_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase", zernike_phase_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(registry_, "DisplayZernikeCoefficients", autofocus_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory", zernike_history_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY",
+                                                          xy_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ",
+                                                          xz_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ",
+                                                          yz_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw",
+                                                          xy_raw_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum",
+                                                          raw_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum",
+                                                          processed_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann",
+                                                          shack_hartmann_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(
+      registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase",
+                                                          zernike_phase_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(
+      registry_, "DisplayZernikeCoefficients", autofocus_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory",
+                                                                 zernike_history_widget_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
-  reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
-  reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS711EuresysCoaxlinkQSFP+");
+  reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_,
+                                                          "AmetekS710EuresysCoaxlinkOcto");
+  reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_,
+                                                          "AmetekS711EuresysCoaxlinkQSFP+");
   reg_sync<sources::FresnelQinFactory>(registry_, "FresnelQin");
   reg_sync<sources::FresnelQoutFactory>(registry_, "FresnelQout");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
@@ -284,7 +296,6 @@ void Manager::register_components() {
   reg_sync<WhereFactory>(registry_, "Where");
   reg_sync<ReshapeFactory>(registry_, "Reshape");
   reg_sync<SquareFactory>(registry_, "Square");
-  // clang-format on
 }
 
 void Manager::configure_zernike_history(bool start_run) {

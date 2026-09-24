@@ -13,6 +13,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "curaii/cuda.hh"
 #include "curaii/cusolver.hh"
@@ -37,11 +38,15 @@ inline void check(bool condition, const std::string &message) {
 
 __global__ void pinv_kernel(const float *__restrict__ ut, const float *__restrict__ s,
                             const float *__restrict__ vt, float *__restrict__ output, int rows,
-                            int cols, int rank, float rcond) {
+                            int cols, int rank, float rcond, const int *__restrict__ info) {
   const int output_index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
   const int output_size  = cols * rows;
   if (output_index >= output_size)
     return;
+  if (*info != 0) {
+    output[output_index] = __int_as_float(0x7fc00000);
+    return;
+  }
 
   const int   row       = output_index / rows;
   const int   col       = output_index % rows;
@@ -91,7 +96,7 @@ public:
     const int grid            = (output_elements + block - 1) / block;
     pinv_kernel<<<grid, block, 0, stream_>>>(ut_.get(), singular_values_.get(), vt_.get(),
                                              reinterpret_cast<float *>(ctx.outputs[0].data()),
-                                             rows_, cols_, rank_, settings_.rcond);
+                                             rows_, cols_, rank_, settings_.rcond, info_.get());
     CUDA_CHECK(cudaGetLastError());
     return holoflow::core::OpResult::Ok;
   }

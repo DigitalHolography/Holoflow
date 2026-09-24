@@ -13,6 +13,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include "curaii/cuda.hh"
 #include "curaii/cusolver.hh"
@@ -56,11 +57,18 @@ __global__ void lstsq_transpose_kernel(const float *__restrict__ input, float *_
 __global__ void lstsq_solution_kernel(const float *__restrict__ u, const float *__restrict__ s,
                                       const float *__restrict__ vt, const float *__restrict__ b,
                                       float *__restrict__ x, std::uint16_t *__restrict__ rank,
-                                      int rows, int cols, int rhs, int vector_rhs, float rcond) {
+                                      int rows, int cols, int rhs, int vector_rhs, float rcond,
+                                      const int *__restrict__ info) {
   const int index = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
   const int count = cols * rhs;
   if (index >= count)
     return;
+  if (*info != 0) {
+    x[index] = __int_as_float(0x7fc00000);
+    if (index == 0)
+      *rank = 0;
+    return;
+  }
 
   const int   parameter = index / rhs;
   const int   col       = index % rhs;
@@ -87,10 +95,16 @@ __global__ void lstsq_solution_kernel(const float *__restrict__ u, const float *
 
 __global__ void lstsq_residual_kernel(const float *__restrict__ a, const float *__restrict__ b,
                                       const float *__restrict__ x, float *__restrict__ residuals,
-                                      int rows, int cols, int rhs, int vector_rhs) {
+                                      int rows, int cols, int rhs, int vector_rhs,
+                                      const std::uint16_t *__restrict__ rank,
+                                      const int *__restrict__ info) {
   const int col = static_cast<int>(blockIdx.x * blockDim.x + threadIdx.x);
   if (col >= rhs)
     return;
+  if (*info != 0 || *rank < cols) {
+    residuals[col] = __int_as_float(0x7fc00000);
+    return;
+  }
 
   float residual = 0.0f;
   for (int q = 0; q < rows; ++q) {
@@ -152,17 +166,20 @@ public:
         reinterpret_cast<const float *>(ctx.inputs[1].data()),
         reinterpret_cast<float *>(ctx.outputs[0].data()),
         reinterpret_cast<std::uint16_t *>(ctx.outputs[2].data()), layout_.rows, layout_.cols,
-        layout_.rhs, layout_.vector_rhs, settings_.rcond);
+        layout_.rhs, layout_.vector_rhs, settings_.rcond, info_.get());
     CUDA_CHECK(cudaGetLastError());
 
-    const int residual_grid = (layout_.rhs + block - 1) / block;
-    lstsq_residual_kernel<<<residual_grid, block, 0, stream_>>>(
-        reinterpret_cast<const float *>(ctx.inputs[0].data()),
-        reinterpret_cast<const float *>(ctx.inputs[1].data()),
-        reinterpret_cast<const float *>(ctx.outputs[0].data()),
-        reinterpret_cast<float *>(ctx.outputs[1].data()), layout_.rows, layout_.cols, layout_.rhs,
-        layout_.vector_rhs);
-    CUDA_CHECK(cudaGetLastError());
+    if (layout_.rows > layout_.cols) {
+      const int residual_grid = (layout_.rhs + block - 1) / block;
+      lstsq_residual_kernel<<<residual_grid, block, 0, stream_>>>(
+          reinterpret_cast<const float *>(ctx.inputs[0].data()),
+          reinterpret_cast<const float *>(ctx.inputs[1].data()),
+          reinterpret_cast<const float *>(ctx.outputs[0].data()),
+          reinterpret_cast<float *>(ctx.outputs[1].data()), layout_.rows, layout_.cols, layout_.rhs,
+          layout_.vector_rhs, reinterpret_cast<const std::uint16_t *>(ctx.outputs[2].data()),
+          info_.get());
+      CUDA_CHECK(cudaGetLastError());
+    }
     return holoflow::core::OpResult::Ok;
   }
 
@@ -231,9 +248,9 @@ holoflow::core::InferResult LstsqFactory::infer(std::span<const holoflow::core::
   return {.input_descs   = {input_descs[0], input_descs[1]},
           .output_descs  = {holoflow::core::TDesc(x_shape, holoflow::core::DType::F32,
                                                   holoflow::core::MemLoc::Device),
-                            holoflow::core::TDesc({static_cast<size_t>(layout.rhs)},
-                                                  holoflow::core::DType::F32,
-                                                  holoflow::core::MemLoc::Device),
+                            holoflow::core::TDesc(
+                                {layout.rows > layout.cols ? static_cast<size_t>(layout.rhs) : 0},
+                                holoflow::core::DType::F32, holoflow::core::MemLoc::Device),
                             rank_desc,
                             holoflow::core::TDesc({static_cast<size_t>(layout.cols)},
                                                   holoflow::core::DType::F32,

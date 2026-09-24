@@ -22,6 +22,7 @@
 #include <numeric>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <cuComplex.h>
 
@@ -161,7 +162,7 @@ norm_kernel(const T *__restrict__ input, float *__restrict__ output, std::int64_
             const std::int64_t *__restrict__ output_strides,
             const int *__restrict__ output_to_input, const std::int64_t *__restrict__ input_strides,
             const int *__restrict__ reduction_axes,
-            const std::int64_t *__restrict__ reduction_strides, float ord) {
+            const std::int64_t *__restrict__ reduction_strides, double ord) {
   const auto output_index = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (output_index >= output_elements)
     return;
@@ -176,7 +177,8 @@ norm_kernel(const T *__restrict__ input, float *__restrict__ output, std::int64_
 
   const bool positive_inf = isinf(ord) && ord > 0.0f;
   const bool negative_inf = isinf(ord) && ord < 0.0f;
-  float      accumulator  = positive_inf ? 0.0f : (negative_inf ? INFINITY : 0.0f);
+  double     accumulator  = positive_inf ? 0.0 : (negative_inf ? INFINITY : 0.0);
+  double     scale        = 0.0;
   int        nonzero      = 0;
   for (std::int64_t reduction_index = 0; reduction_index < reduction_elements; ++reduction_index) {
     auto coordinate_index = reduction_index;
@@ -195,18 +197,35 @@ norm_kernel(const T *__restrict__ input, float *__restrict__ output, std::int64_
       accumulator = fmaxf(accumulator, value);
     else if (negative_inf)
       accumulator = fminf(accumulator, value);
-    else if (ord == 1.0f)
+    else if (ord == 1.0)
       accumulator += value;
-    else
-      accumulator += powf(value, ord);
+    else {
+      scale = fmax(scale, static_cast<double>(value));
+    }
   }
 
-  if (ord == 0.0f)
+  if (ord == 0.0)
     output[output_index] = static_cast<float>(nonzero);
-  else if (positive_inf || negative_inf || ord == 1.0f)
-    output[output_index] = accumulator;
-  else
-    output[output_index] = powf(accumulator, 1.0f / ord);
+  else if (positive_inf || negative_inf || ord == 1.0)
+    output[output_index] = static_cast<float>(accumulator);
+  else if (scale == 0.0)
+    output[output_index] = 0.0f;
+  else {
+    double scaled_sum = 0.0;
+    for (std::int64_t reduction_index = 0; reduction_index < reduction_elements;
+         ++reduction_index) {
+      auto coordinate_index = reduction_index;
+      auto input_offset     = input_base;
+      for (int i = 0; i < reduction_rank; ++i) {
+        const auto coordinate = coordinate_index / reduction_strides[i];
+        coordinate_index -= coordinate * reduction_strides[i];
+        input_offset += coordinate * input_strides[reduction_axes[i]];
+      }
+      const double value = magnitude(input[input_offset]);
+      scaled_sum += pow(value / scale, ord);
+    }
+    output[output_index] = static_cast<float>(scale * pow(scaled_sum, 1.0 / ord));
+  }
 }
 
 class Norm : public holoflow::core::ISyncTask {
@@ -238,16 +257,14 @@ public:
           reinterpret_cast<float *>(ctx.outputs[0].data()), plan_.output_elements,
           plan_.reduction_elements, static_cast<int>(plan_.output_shape.size()),
           static_cast<int>(plan_.axes.size()), output_strides.get(), output_to_input.get(),
-          input_strides.get(), reduction_axes.get(), reduction_strides.get(),
-          static_cast<float>(settings_.ord));
+          input_strides.get(), reduction_axes.get(), reduction_strides.get(), settings_.ord);
     } else {
       norm_kernel<<<grid_size, block_size, 0, stream_>>>(
           reinterpret_cast<const cuFloatComplex *>(ctx.inputs[0].data()),
           reinterpret_cast<float *>(ctx.outputs[0].data()), plan_.output_elements,
           plan_.reduction_elements, static_cast<int>(plan_.output_shape.size()),
           static_cast<int>(plan_.axes.size()), output_strides.get(), output_to_input.get(),
-          input_strides.get(), reduction_axes.get(), reduction_strides.get(),
-          static_cast<float>(settings_.ord));
+          input_strides.get(), reduction_axes.get(), reduction_strides.get(), settings_.ord);
     }
     CUDA_CHECK(cudaGetLastError());
     return holoflow::core::OpResult::Ok;
