@@ -19,14 +19,20 @@
 #include <EGrabber.h>
 #include <EuresysGenapiErrorFormats.h>
 
+#include <atomic>
+#include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <format>
 #include <fstream>
+#include <functional>
+#include <limits>
 #include <map>
 #include <new>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -522,40 +528,49 @@ holoflow::core::DType dtype_from_pixel_format(const std::string &pixel_format) {
   return dtypes.at(pixel_format);
 }
 
+struct CameraFrame {
+  Euresys::NewBufferData bank_a;
+  Euresys::NewBufferData bank_b;
+  std::byte             *base;
+};
+
 class CameraBufferQueue {
 public:
-  using DType           = Euresys::NewBufferData;
+  using DType           = CameraFrame;
   using ReleaseCallback = std::function<void(DType &&)>;
 
   CameraBufferQueue(size_t capacity, ReleaseCallback release_callback)
-      : capacity_{capacity}, data_{std::make_unique<DType[]>(capacity)},
-        release_callback_{std::move(release_callback)}, write_index_{0}, read_index_a_{0},
-        read_index_b_{0} {
+      : capacity_{capacity}, slots_{std::make_unique<Slot[]>(capacity)},
+        release_callback_{std::move(release_callback)} {
     // We use all slots, so capacity must be > 0.
     if (capacity_ == 0) {
       throw std::invalid_argument("CameraBufferQueue capacity must be > 0");
     }
   }
 
-  ~CameraBufferQueue() = default;
+  ~CameraBufferQueue() {
+    for (size_t i = 0; i < capacity_; ++i) {
+      auto &slot = slots_[i];
+      if (slot.readers.load(std::memory_order_relaxed) != 0) {
+        release_callback_(std::move(slot.data));
+      }
+    }
+  }
 
   CameraBufferQueue(const CameraBufferQueue &)            = delete;
   CameraBufferQueue &operator=(const CameraBufferQueue &) = delete;
 
   void push(DType &&frame) {
     const auto write = write_index_.load(std::memory_order_relaxed);
+    auto      &slot  = slots_[write % capacity_];
 
-    // The oldest reader determines which slots can be reused.
-    auto oldest = oldest_reader();
-
-    while (write - oldest >= capacity_) {
-      // Queue is full. Wait until at least one reader advances.
+    while (slot.readers.load(std::memory_order_acquire) != 0) {
       std::this_thread::yield();
-
-      oldest = oldest_reader();
     }
 
-    data_[write % capacity_] = std::move(frame);
+    slot.data               = std::move(frame);
+    const auto reader_count = reader_b_active_.load(std::memory_order_acquire) ? 2u : 1u;
+    slot.readers.store(reader_count, std::memory_order_release);
 
     // Publishing the index makes the written frame visible to readers.
     write_index_.store(write + 1, std::memory_order_release);
@@ -563,23 +578,40 @@ public:
 
   [[nodiscard]]
   const DType &read_a() {
-    return read(read_index_a_, read_index_b_);
+    return read(read_index_a_);
   }
 
   [[nodiscard]]
   const DType &read_b() {
-    return read(read_index_b_, read_index_a_);
+    return read(read_index_b_);
+  }
+
+  void release_a() { release(read_index_a_); }
+
+  void release_b() { release(read_index_b_); }
+
+  void subscribe_b() {
+    if (reader_b_active_.exchange(true, std::memory_order_acq_rel)) {
+      throw std::logic_error("CameraBufferQueue reader B is already active");
+    }
+    read_index_b_.store(write_index_.load(std::memory_order_acquire), std::memory_order_release);
+  }
+
+  void unsubscribe_b() {
+    if (!reader_b_active_.exchange(false, std::memory_order_acq_rel)) {
+      return;
+    }
+
+    const auto end = write_index_.load(std::memory_order_acquire);
+    while (read_index_b_.load(std::memory_order_relaxed) != end) {
+      release_b();
+    }
   }
 
   [[nodiscard]]
-  size_t size() const {
+  bool empty_b() const {
     const auto write = write_index_.load(std::memory_order_acquire);
-    return write - oldest_reader<std::memory_order_relaxed>();
-  }
-
-  [[nodiscard]]
-  bool empty() const {
-    return size() == 0;
+    return read_index_b_.load(std::memory_order_relaxed) == write;
   }
 
   [[nodiscard]]
@@ -588,56 +620,63 @@ public:
   }
 
 private:
-  [[nodiscard]]
-  const DType &read(std::atomic<size_t> &reader, std::atomic<size_t> &other_reader) {
+  struct Slot {
+    DType                 data;
+    std::atomic<unsigned> readers{0};
+  };
 
+  [[nodiscard]]
+  const DType &read(const std::atomic<size_t> &reader) const {
     const auto current = reader.load(std::memory_order_relaxed);
 
     // The writer publishes frames with release.
     // Acquire makes the corresponding frame write visible.
-    // queue is empty
     assert(current != write_index_.load(std::memory_order_acquire));
-
-    const auto index = current % capacity_;
-
-    const DType &result = data_[index];
-
-    const auto other = other_reader.load(std::memory_order_acquire);
-
-    // If current > other_reader, the other reader is behind us,
-    // so this slot is still needed.
-    if (current < other) {
-      release_callback_(std::move(data_[index]));
-    }
-
-    // Publish that this reader has consumed this element.
-    reader.store(current + 1, std::memory_order_release);
-
-    return result;
+    return slots_[current % capacity_].data;
   }
 
-  template <std::memory_order order = std::memory_order_acquire>
-  [[nodiscard]]
-  size_t oldest_reader() const {
-    const auto a = read_index_a_.load(order);
-    const auto b = read_index_b_.load(order);
+  void release(std::atomic<size_t> &reader) {
+    const auto current = reader.load(std::memory_order_relaxed);
+    auto      &slot    = slots_[current % capacity_];
+    auto       readers = slot.readers.load(std::memory_order_acquire);
 
-    return min(a, b);
+    for (;;) {
+      assert(readers != 0 && readers != releasing_);
+
+      // release the slot if readers reaches 0
+      // otherwise it decrements the reader counter
+      if (readers == 1) {
+        if (slot.readers.compare_exchange_weak(readers, releasing_, std::memory_order_acq_rel,
+                                               std::memory_order_acquire)) {
+          release_callback_(std::move(slot.data));
+          slot.readers.store(0, std::memory_order_release);
+          break;
+        }
+      } else if (slot.readers.compare_exchange_weak(readers, readers - 1, std::memory_order_acq_rel,
+                                                    std::memory_order_acquire)) {
+        break;
+      }
+    }
+
+    reader.store(current + 1, std::memory_order_release);
   }
 
 private:
-  static constexpr size_t cache_line_size_ = std::hardware_destructive_interference_size;
+  static constexpr size_t   cache_line_size_ = std::hardware_destructive_interference_size;
+  static constexpr unsigned releasing_       = std::numeric_limits<unsigned>::max();
 
   const size_t capacity_;
 
-  std::unique_ptr<DType[]> data_;
-  ReleaseCallback          release_callback_;
+  std::unique_ptr<Slot[]> slots_;
+  ReleaseCallback         release_callback_;
 
-  alignas(cache_line_size_) std::atomic<size_t> write_index_;
+  alignas(cache_line_size_) std::atomic<size_t> write_index_{0};
 
-  alignas(cache_line_size_) std::atomic<size_t> read_index_a_;
+  alignas(cache_line_size_) std::atomic<size_t> read_index_a_{0};
 
-  alignas(cache_line_size_) std::atomic<size_t> read_index_b_;
+  alignas(cache_line_size_) std::atomic<size_t> read_index_b_{0};
+
+  alignas(cache_line_size_) std::atomic<bool> reader_b_active_{false};
 };
 
 // read B
@@ -648,18 +687,23 @@ public:
            std::atomic<bool> &stop, Euresys::EGrabber<> *egrabber)
       : writer_{file_path, holofile::Header{}, holofile::Footer{}}, // TODO add header and footer
         frame_to_record_{frame_count}, current_frame_{0}, queue_{queue}, stop_{stop},
-        egrabber_{egrabber} {}
+        egrabber_{egrabber} {
+    queue_.subscribe_b();
+  }
 
   void execute() {
     auto stop = stop_.load(std::memory_order_acquire);
+    auto batch = std::vector<CameraBufferQueue::DType&>();
     while (current_frame_ < frame_to_record_ && !stop) {
-      if (!queue_.empty()) {
+      if (!queue_.empty_b()) {
         const auto &frame  = queue_.read_b();
-        auto        buffer = Euresys::Buffer(frame);
+        auto        buffer = Euresys::Buffer(frame.bank_a);
         auto       *base_v = buffer.getInfo<void *>(*egrabber_, GenTL::BUFFER_INFO_BASE);
         auto       *base   = static_cast<uint8_t *>(base_v);
 
-        writer_.write_frames(base, 1);
+        writer_.write_frames(base, 1); // TODO batch multiple frames together
+        queue_.release_b();
+        ++current_frame_;
       }
 
       stop = stop_.load(std::memory_order_acquire);
@@ -668,7 +712,10 @@ public:
     writer_.write_footer();
   }
 
-  ~Recorder() { writer_.flush(); }
+  ~Recorder() {
+    queue_.unsubscribe_b();
+    writer_.flush();
+  }
 
 private:
   holofile::Writer writer_;
@@ -709,7 +756,11 @@ public:
       : settings_(settings), runtime_cfg_(std::move(runtime_cfg)), buffers_(std::move(buffers)),
         gentl_(std::move(gentl)), grabber_a_(std::move(grabber_a)),
         grabber_b_(std::move(grabber_b)), buffer_size_(buffer_size), running_(false),
-        cfg_(std::move(normalized_cfg)) {
+        cfg_(std::move(normalized_cfg)),
+        buffer_queue_(runtime_cfg_.nb_buffers, [this](CameraFrame &&frame) {
+          requeue_buffer_noexcept(*grabber_a_, frame.bank_a, "bank A");
+          requeue_buffer_noexcept(*grabber_b_, frame.bank_b, "bank B");
+        }) {
     HOLOVIBES_CHECK(gentl_ != nullptr);
     HOLOVIBES_CHECK(grabber_a_ != nullptr);
     HOLOVIBES_CHECK(grabber_b_ != nullptr);
@@ -741,14 +792,13 @@ public:
       throw std::out_of_range("AmetekS711EuresysCoaxlinkQSFP task has only one output at index 0");
     }
 
-    if (!pending_a_.has_value() || !pending_b_.has_value()) {
-      throw std::logic_error("release_output called with no pending two-bank frame");
+    if (!output_active_) {
+      throw std::logic_error("release_output called with no active frame");
     }
 
-    Euresys::Buffer(*pending_a_).push(*grabber_a_);
-    Euresys::Buffer(*pending_b_).push(*grabber_b_);
-    pending_a_.reset();
-    pending_b_.reset();
+    buffer_queue_.release_a();
+    storage_access().owned_output_storage(0).ptr = nullptr;
+    output_active_                               = false;
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
@@ -756,8 +806,7 @@ public:
     constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
     constexpr auto TIMESTAMP = GenTL::BUFFER_INFO_TIMESTAMP;
 
-    HOLOVIBES_CHECK(!pending_a_.has_value() && !pending_b_.has_value(),
-                    "execute called while previous buffer pair is still held");
+    HOLOVIBES_CHECK(!output_active_, "execute called while previous frame is still held");
 
     if (!running_) {
       // S711 Banks_AB must start bank B first, then bank A.
@@ -807,16 +856,22 @@ public:
                           static_cast<void *>(base_a), static_cast<void *>(base_b)));
         }
 
-        auto &storage = storage_access().owned_output_storage(0);
-        storage.ptr   = base_a;
+        buffer_queue_.push(CameraFrame{
+            .bank_a = std::move(data_a),
+            .bank_b = std::move(*data_b),
+            .base   = base_a,
+        });
+
+        const auto &frame   = buffer_queue_.read_a();
+        auto       &storage = storage_access().owned_output_storage(0);
+        storage.ptr         = frame.base;
 
         ctx.outputs[0] = holoflow::core::TView{
             .desc    = ctx.outputs[0].desc,
             .storage = &storage,
         };
 
-        pending_a_ = std::move(data_a);
-        pending_b_ = std::move(*data_b);
+        output_active_ = true;
         return holoflow::core::OpResult::Ok;
 
       } catch (const Euresys::genapi_error &err) {
@@ -844,10 +899,9 @@ private:
   std::size_t                           buffer_size_;
   bool                                  running_;
   nlohmann::json                        cfg_;
-  std::optional<Euresys::NewBufferData> pending_a_;
-  std::optional<Euresys::NewBufferData> pending_b_;
+  CameraBufferQueue                     buffer_queue_;
+  bool                                  output_active_{false};
 
-  // CameraBufferQueue buffer_queue_;
   // std::thread recorder_worker_;
   // std::atomic<bool> stop_record_;
 };
