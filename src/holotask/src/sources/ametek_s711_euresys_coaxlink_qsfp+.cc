@@ -19,10 +19,13 @@
 #include <EGrabber.h>
 #include <EuresysGenapiErrorFormats.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <cstring>
 #include <format>
 #include <fstream>
+#include <limits>
 #include <map>
 #include <optional>
 #include <sstream>
@@ -66,6 +69,46 @@ bool log_due(Clock::time_point &last_log) {
   last_log = now;
   return true;
 }
+
+int64_t signed_delta(uint64_t a, uint64_t b) {
+  const auto magnitude = a >= b ? a - b : b - a;
+  const auto bounded   = static_cast<int64_t>(
+      (std::min)(magnitude, static_cast<uint64_t>((std::numeric_limits<int64_t>::max)())));
+  return a >= b ? bounded : -bounded;
+}
+
+template <typename T> std::string show(const std::optional<T> &value) {
+  return value.has_value() ? std::to_string(*value) : "unavailable";
+}
+
+template <typename T>
+std::string show_change(const std::optional<T> &value, const std::optional<T> &baseline) {
+  if (!value || !baseline) {
+    return "n/a";
+  }
+  if (*value < *baseline) {
+    return "reset/wrap";
+  }
+  return std::to_string(*value - *baseline);
+}
+
+template <typename T>
+std::string show_counter(const std::optional<T> &value, const std::optional<T> &previous,
+                         const std::optional<T> &update_baseline) {
+  if (!value) {
+    return "unavailable";
+  }
+  return std::format("{} (interval +{}, update +{})", *value, show_change(value, previous),
+                     show_change(value, update_baseline));
+}
+
+struct BankCounters {
+  std::optional<int64_t>  rejected_frames;
+  std::optional<int64_t>  broken_frames;
+  std::optional<uint64_t> underrun_buffers;
+  std::optional<size_t>   queued_buffers;
+  std::optional<size_t>   awaiting_buffers;
+};
 
 void check(bool condition, const std::string &msg) {
   if (!condition) {
@@ -606,7 +649,18 @@ public:
                       "camera buffer: bank A pending={}, bank B pending={}",
                       pending_a_.has_value(), pending_b_.has_value());
     }
-    if (!running_ || !log_due(last_lifecycle_log_)) {
+    if (!running_) {
+      return;
+    }
+    if (!replacing) {
+      ++update_epoch_;
+      update_a_                = read_bank_counters(*grabber_a_, "A");
+      update_b_                = read_bank_counters(*grabber_b_, "B");
+      first_pair_after_update_ = true;
+      first_pair_update_summary_.reset();
+      resume_counters_pending_ = false;
+    }
+    if (!log_due(last_lifecycle_log_)) {
       return;
     }
     if (replacing) {
@@ -614,8 +668,224 @@ public:
                      "grabbers are still acquiring");
     } else {
       logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::update] reusing a task whose grabbers "
-                     "kept acquiring during the pipeline update; queued frames may be stale");
+                     "kept acquiring during the pipeline update; epoch={}, queued frames may be "
+                     "stale",
+                     update_epoch_);
     }
+  }
+
+  template <typename T, typename Reader>
+  std::optional<T> read_diagnostic(Reader &&read, const char *label) {
+    try {
+      return read();
+    } catch (const std::exception &e) {
+      if (log_due(last_diagnostic_error_log_)) {
+        logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::diagnostics] {} unavailable: {}", label,
+                       e.what());
+      }
+      return std::nullopt;
+    }
+  }
+
+  BankCounters read_bank_counters(Euresys::EGrabber<> &grabber, const char *bank) {
+    const auto rejected = std::format("bank {} RejectedFrame", bank);
+    const auto broken   = std::format("bank {} BrokenFrame", bank);
+    const auto underrun = std::format("bank {} buffer underruns", bank);
+    const auto queued   = std::format("bank {} queued buffers", bank);
+    const auto awaiting = std::format("bank {} awaiting buffers", bank);
+    return {
+        .rejected_frames = read_diagnostic<int64_t>(
+            [&] { return grabber.getInteger<Euresys::StreamModule>("EventCount[RejectedFrame]"); },
+            rejected.c_str()),
+        .broken_frames = read_diagnostic<int64_t>(
+            [&] { return grabber.getInteger<Euresys::StreamModule>("EventCount[BrokenFrame]"); },
+            broken.c_str()),
+        .underrun_buffers = read_diagnostic<uint64_t>(
+            [&] {
+              return grabber.getInfo<Euresys::StreamModule, uint64_t>(
+                  GenTL::STREAM_INFO_NUM_UNDERRUN);
+            },
+            underrun.c_str()),
+        .queued_buffers = read_diagnostic<size_t>(
+            [&] {
+              return grabber.getInfo<Euresys::StreamModule, size_t>(GenTL::STREAM_INFO_NUM_QUEUED);
+            },
+            queued.c_str()),
+        .awaiting_buffers = read_diagnostic<size_t>(
+            [&] {
+              return grabber.getInfo<Euresys::StreamModule, size_t>(
+                  GenTL::STREAM_INFO_NUM_AWAIT_DELIVERY);
+            },
+            awaiting.c_str()),
+    };
+  }
+
+  std::string part_timing(Euresys::Buffer &buffer_a, Euresys::Buffer &buffer_b,
+                          uint64_t delivered_a, uint64_t delivered_b) {
+    if (delivered_a != runtime_cfg_.buffer_part_count ||
+        delivered_b != runtime_cfg_.buffer_part_count) {
+      return "incomplete pair";
+    }
+    constexpr auto PART_TIMESTAMPS = Euresys::ge::BUFFER_INFO_CUSTOM_PART_TIMESTAMPS;
+    const auto     a               = read_diagnostic<std::vector<char>>(
+        [&] { return buffer_a.getInfo<std::vector<char>>(*grabber_a_, PART_TIMESTAMPS); },
+        "bank A part timestamps");
+    const auto b = read_diagnostic<std::vector<char>>(
+        [&] { return buffer_b.getInfo<std::vector<char>>(*grabber_b_, PART_TIMESTAMPS); },
+        "bank B part timestamps");
+    const auto expected_bytes = runtime_cfg_.buffer_part_count * sizeof(uint64_t);
+    if (!a || !b || a->size() != expected_bytes || b->size() != expected_bytes) {
+      if (a && b && log_due(last_diagnostic_error_log_)) {
+        logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::diagnostics] part timestamp sizes "
+                       "A={}, B={}, expected={}",
+                       a->size(), b->size(), expected_bytes);
+      }
+      return "unavailable";
+    }
+
+    uint64_t first_a = 0, first_b = 0, last_a = 0, last_b = 0;
+    int64_t  min_delta = 0, max_delta = 0;
+    for (size_t i = 0; i < runtime_cfg_.buffer_part_count; ++i) {
+      uint64_t ts_a, ts_b;
+      std::memcpy(&ts_a, a->data() + i * sizeof(uint64_t), sizeof(uint64_t));
+      std::memcpy(&ts_b, b->data() + i * sizeof(uint64_t), sizeof(uint64_t));
+      const auto delta = signed_delta(ts_a, ts_b);
+      if (i == 0) {
+        first_a   = ts_a;
+        first_b   = ts_b;
+        min_delta = max_delta = delta;
+      } else {
+        min_delta = (std::min)(min_delta, delta);
+        max_delta = (std::max)(max_delta, delta);
+      }
+      last_a = ts_a;
+      last_b = ts_b;
+    }
+    return std::format("first A/B={}/{}, last A/B={}/{}, A-B first/last={}/{}, range=[{},{}] us",
+                       first_a, first_b, last_a, last_b, signed_delta(first_a, first_b),
+                       signed_delta(last_a, last_b), min_delta, max_delta);
+  }
+
+  void record_frame_id(const std::optional<uint64_t> &current, std::optional<uint64_t> &previous,
+                       uint64_t &max_step, uint64_t &regressions) {
+    if (!current) {
+      previous.reset();
+      return;
+    }
+    if (previous) {
+      if (*current < *previous) {
+        ++regressions;
+      } else {
+        max_step = (std::max)(max_step, *current - *previous);
+      }
+    }
+    previous = current;
+  }
+
+  void log_bank_diagnostics(const char *bank, const std::optional<uint64_t> &frame_id,
+                            uint64_t max_step, uint64_t regressions, const BankCounters &current,
+                            BankCounters &previous, const BankCounters &update_baseline) {
+    logger()->info(
+        "[AmetekS711EuresysCoaxlinkQSFP::diagnostics] epoch={} bank {}: frame ID={}, "
+        "max raw ID step={}, ID decreases/wraps={}, rejected frames={}, broken frames={}, "
+        "lost buffers (underrun)={}, queued buffers={}, awaiting delivery={}",
+        update_epoch_, bank, show(frame_id), max_step, regressions,
+        show_counter(current.rejected_frames, previous.rejected_frames,
+                     update_baseline.rejected_frames),
+        show_counter(current.broken_frames, previous.broken_frames, update_baseline.broken_frames),
+        show_counter(current.underrun_buffers, previous.underrun_buffers,
+                     update_baseline.underrun_buffers),
+        show(current.queued_buffers), show(current.awaiting_buffers));
+    previous = current;
+  }
+
+  void log_resume_counters(const char *bank, const BankCounters &resumed,
+                           const BankCounters &at_update) {
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFP::diagnostics] epoch={} first resumed bank "
+                   "{}: rejected frames={} (since update +{}), broken frames={} (since update "
+                   "+{}), lost buffers={} (since update +{}), queued update/resume={}/{}, "
+                   "awaiting update/resume={}/{}",
+                   update_epoch_, bank, show(resumed.rejected_frames),
+                   show_change(resumed.rejected_frames, at_update.rejected_frames),
+                   show(resumed.broken_frames),
+                   show_change(resumed.broken_frames, at_update.broken_frames),
+                   show(resumed.underrun_buffers),
+                   show_change(resumed.underrun_buffers, at_update.underrun_buffers),
+                   show(at_update.queued_buffers), show(resumed.queued_buffers),
+                   show(at_update.awaiting_buffers), show(resumed.awaiting_buffers));
+  }
+
+  void record_pair_diagnostics(Euresys::Buffer &buffer_a, Euresys::Buffer &buffer_b,
+                               uint64_t delivered_a, uint64_t delivered_b, uint64_t ts_a,
+                               uint64_t ts_b, const Euresys::NewBufferData &data_a,
+                               const Euresys::NewBufferData &data_b) {
+    const auto read_frame_id = [&](Euresys::Buffer &buffer, Euresys::EGrabber<> &grabber,
+                                   const char *label, Clock::time_point &retry_at) {
+      if (Clock::now() < retry_at) {
+        return std::optional<uint64_t>{};
+      }
+      auto frame_id = read_diagnostic<uint64_t>(
+          [&] { return buffer.getInfo<uint64_t>(grabber, GenTL::BUFFER_INFO_FRAMEID); }, label);
+      if (!frame_id) {
+        // An unsupported info command must not throw on every high-rate buffer.
+        retry_at = Clock::now() + std::chrono::seconds(1);
+      }
+      return frame_id;
+    };
+    const auto frame_a = read_frame_id(buffer_a, *grabber_a_, "bank A frame ID", frame_id_retry_a_);
+    const auto frame_b = read_frame_id(buffer_b, *grabber_b_, "bank B frame ID", frame_id_retry_b_);
+    record_frame_id(frame_a, previous_frame_a_, max_frame_step_a_, frame_regressions_a_);
+    record_frame_id(frame_b, previous_frame_b_, max_frame_step_b_, frame_regressions_b_);
+
+    const auto delta = signed_delta(ts_a, ts_b);
+    if (!pair_delta_seen_) {
+      min_pair_delta_ = max_pair_delta_ = delta;
+      pair_delta_seen_                  = true;
+    } else {
+      min_pair_delta_ = (std::min)(min_pair_delta_, delta);
+      max_pair_delta_ = (std::max)(max_pair_delta_, delta);
+    }
+
+    const bool due = log_due(last_diagnostic_log_);
+    if (first_pair_after_update_) {
+      resume_a_                = read_bank_counters(*grabber_a_, "A");
+      resume_b_                = read_bank_counters(*grabber_b_, "B");
+      resume_counters_pending_ = true;
+      first_pair_update_summary_ =
+          std::format("A/B ts={}/{}, A-B={} us, event A-B={} us, frame IDs={}/{}, parts: {}", ts_a,
+                      ts_b, delta, signed_delta(data_a.timestamp, data_b.timestamp), show(frame_a),
+                      show(frame_b), part_timing(buffer_a, buffer_b, delivered_a, delivered_b));
+      first_pair_after_update_ = false;
+    }
+    if (!due) {
+      return;
+    }
+
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFP::diagnostics] epoch={} latest A/B ts="
+                   "{}/{}, signed A-B={} us, interval range=[{},{}] us, event A-B={} us, "
+                   "first after update={}, parts: {}",
+                   update_epoch_, ts_a, ts_b, delta, min_pair_delta_, max_pair_delta_,
+                   signed_delta(data_a.timestamp, data_b.timestamp),
+                   first_pair_update_summary_.value_or("n/a"),
+                   part_timing(buffer_a, buffer_b, delivered_a, delivered_b));
+
+    const auto counters_a = read_bank_counters(*grabber_a_, "A");
+    const auto counters_b = read_bank_counters(*grabber_b_, "B");
+    log_bank_diagnostics("A", frame_a, max_frame_step_a_, frame_regressions_a_, counters_a,
+                         previous_counters_a_, update_a_);
+    log_bank_diagnostics("B", frame_b, max_frame_step_b_, frame_regressions_b_, counters_b,
+                         previous_counters_b_, update_b_);
+    if (resume_counters_pending_) {
+      log_resume_counters("A", resume_a_, update_a_);
+      log_resume_counters("B", resume_b_, update_b_);
+      resume_counters_pending_ = false;
+    }
+    first_pair_update_summary_.reset();
+    update_a_         = {};
+    update_b_         = {};
+    max_frame_step_a_ = max_frame_step_b_ = 0;
+    frame_regressions_a_ = frame_regressions_b_ = 0;
+    pair_delta_seen_                            = false;
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
@@ -670,6 +940,15 @@ public:
           requeue_buffer_noexcept(*grabber_a_, data_a, "bank A", last_requeue_error_log_);
           requeue_buffer_noexcept(*grabber_b_, *data_b, "bank B", last_requeue_error_log_);
           throw;
+        }
+
+        try {
+          record_pair_diagnostics(buffer_a, buffer_b, delivered_a, delivered_b, ts_a, ts_b, data_a,
+                                  *data_b);
+        } catch (const std::exception &e) {
+          if (log_due(last_diagnostic_error_log_)) {
+            logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::diagnostics] failed: {}", e.what());
+          }
         }
 
         if (base_a != base_b || delivered_a != runtime_cfg_.buffer_part_count ||
@@ -755,9 +1034,32 @@ private:
   Clock::time_point                     last_requeue_error_log_{};
   Clock::time_point                     last_lifecycle_log_{};
   Clock::time_point                     last_pending_update_log_{};
+  Clock::time_point                     last_diagnostic_log_{};
+  Clock::time_point                     last_diagnostic_error_log_{};
   uint64_t                              rejected_pairs_since_log_ = 0;
   uint64_t                              accepted_pairs_since_log_ = 0;
   uint64_t                              max_ts_delta_since_log_   = 0;
+  uint64_t                              update_epoch_             = 0;
+  bool                                  first_pair_after_update_  = false;
+  std::optional<std::string>            first_pair_update_summary_;
+  BankCounters                          previous_counters_a_;
+  BankCounters                          previous_counters_b_;
+  BankCounters                          update_a_;
+  BankCounters                          update_b_;
+  BankCounters                          resume_a_;
+  BankCounters                          resume_b_;
+  bool                                  resume_counters_pending_ = false;
+  std::optional<uint64_t>               previous_frame_a_;
+  std::optional<uint64_t>               previous_frame_b_;
+  Clock::time_point                     frame_id_retry_a_{};
+  Clock::time_point                     frame_id_retry_b_{};
+  uint64_t                              max_frame_step_a_    = 0;
+  uint64_t                              max_frame_step_b_    = 0;
+  uint64_t                              frame_regressions_a_ = 0;
+  uint64_t                              frame_regressions_b_ = 0;
+  bool                                  pair_delta_seen_     = false;
+  int64_t                               min_pair_delta_      = 0;
+  int64_t                               max_pair_delta_      = 0;
 };
 
 // -------------------------------------------------------------------------------------------------
