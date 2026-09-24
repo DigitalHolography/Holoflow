@@ -7,6 +7,7 @@ Supported behaviors and guarantees:
 - Maps supported pixel formats (`Mono8` → `uint8`, `Mono16` → `uint16`) to output tensor dtype.
 - Configures the camera (device, remote, stream modules) using GenApi calls and sets up announced host buffers followed by a streaming grabber.
 - Produces an output tensor shape `(BufferPartCount, Height, Width)` in host memory; the factory validates the config file and the available camera before creating the task.
+- Publishes a two-bank buffer only when both banks report the same host buffer address and each reports `BufferPartCount` delivered parts. Rejected buffers are requeued; accepted-pair metadata and rejection warnings are logged at most once per second.
 
 !!! warning
     The configuration file at `cfg_path` must exist and be readable by the process. The node will throw if the file cannot be opened or does not contain a supported `PixelFormat`. Also ensure the camera hardware is present and accessible; missing hardware or insufficient privileges will cause creation to fail.
@@ -31,7 +32,7 @@ The output tensor bytes reflect raw camera frame parts as configured by `BufferP
 This task does not support inplace operation.
 
 ## Ownership
-This task does not own any inputs or outputs.
+This task owns its output buffers. The scheduler releases each output after downstream use, at which point the task requeues the buffer to both grabbers.
 
 ---
 ## Settings

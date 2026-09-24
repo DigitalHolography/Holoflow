@@ -19,6 +19,7 @@
 #include <EGrabber.h>
 #include <EuresysGenapiErrorFormats.h>
 
+#include <chrono>
 #include <cstdint>
 #include <format>
 #include <fstream>
@@ -54,6 +55,17 @@ void from_json(const nlohmann::json &j, AmetekS711EuresysCoaxlinkQSFPSettings &s
 // -------------------------------------------------------------------------------------------------
 
 namespace {
+
+using Clock = std::chrono::steady_clock;
+
+bool log_due(Clock::time_point &last_log) {
+  const auto now = Clock::now();
+  if (last_log != Clock::time_point{} && now - last_log < std::chrono::seconds(1)) {
+    return false;
+  }
+  last_log = now;
+  return true;
+}
 
 void check(bool condition, const std::string &msg) {
   if (!condition) {
@@ -499,13 +511,15 @@ HostPtr<uint8_t> allocate_shared_buffers(Euresys::EGrabber<> &grabber_a,
 }
 
 void requeue_buffer_noexcept(Euresys::EGrabber<> &grabber, const Euresys::NewBufferData &data,
-                             const char *label) {
+                             const char *label, Clock::time_point &last_error_log) {
   try {
     Euresys::Buffer(data).push(grabber);
   } catch (const std::exception &e) {
-    logger()->error(
-        "[AmetekS711EuresysCoaxlinkQSFP] failed to requeue {} buffer while handling an error: {}",
-        label, e.what());
+    if (log_due(last_error_log)) {
+      logger()->error(
+          "[AmetekS711EuresysCoaxlinkQSFP] failed to requeue {} buffer while handling an error: {}",
+          label, e.what());
+    }
   }
 }
 
@@ -586,6 +600,24 @@ public:
     pending_b_.reset();
   }
 
+  void log_update_lifecycle(bool replacing) {
+    if ((pending_a_.has_value() || pending_b_.has_value()) && log_due(last_pending_update_log_)) {
+      logger()->error("[AmetekS711EuresysCoaxlinkQSFP::update] updating with an unreleased "
+                      "camera buffer: bank A pending={}, bank B pending={}",
+                      pending_a_.has_value(), pending_b_.has_value());
+    }
+    if (!running_ || !log_due(last_lifecycle_log_)) {
+      return;
+    }
+    if (replacing) {
+      logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::update] replacing a task while its "
+                     "grabbers are still acquiring");
+    } else {
+      logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::update] reusing a task whose grabbers "
+                     "kept acquiring during the pipeline update; queued frames may be stale");
+    }
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     using namespace Euresys;
     constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
@@ -612,34 +644,64 @@ public:
         try {
           data_b = grabber_b_->pop(timeout_ms);
         } catch (...) {
-          requeue_buffer_noexcept(*grabber_a_, data_a, "bank A");
+          requeue_buffer_noexcept(*grabber_a_, data_a, "bank A", last_requeue_error_log_);
           throw;
         }
 
         auto buffer_a = Buffer(data_a);
         auto buffer_b = Buffer(*data_b);
 
-        const auto delivered_a = buffer_a.getInfo<uint64_t>(*grabber_a_, DELIVERED);
-        const auto delivered_b = buffer_b.getInfo<uint64_t>(*grabber_b_, DELIVERED);
-        const auto ts_a        = buffer_a.getInfo<uint64_t>(*grabber_a_, TIMESTAMP);
-        const auto ts_b        = buffer_b.getInfo<uint64_t>(*grabber_b_, TIMESTAMP);
+        uint64_t   delivered_a;
+        uint64_t   delivered_b;
+        uint64_t   ts_a;
+        uint64_t   ts_b;
+        std::byte *base_a;
+        std::byte *base_b;
+        try {
+          delivered_a = buffer_a.getInfo<uint64_t>(*grabber_a_, DELIVERED);
+          delivered_b = buffer_b.getInfo<uint64_t>(*grabber_b_, DELIVERED);
+          ts_a        = buffer_a.getInfo<uint64_t>(*grabber_a_, TIMESTAMP);
+          ts_b        = buffer_b.getInfo<uint64_t>(*grabber_b_, TIMESTAMP);
+          base_a      = static_cast<std::byte *>(
+              buffer_a.getInfo<void *>(*grabber_a_, GenTL::BUFFER_INFO_BASE));
+          base_b = static_cast<std::byte *>(
+              buffer_b.getInfo<void *>(*grabber_b_, GenTL::BUFFER_INFO_BASE));
+        } catch (...) {
+          requeue_buffer_noexcept(*grabber_a_, data_a, "bank A", last_requeue_error_log_);
+          requeue_buffer_noexcept(*grabber_b_, *data_b, "bank B", last_requeue_error_log_);
+          throw;
+        }
 
-        auto *base_a_v = buffer_a.getInfo<void *>(*grabber_a_, GenTL::BUFFER_INFO_BASE);
-        auto *base_b_v = buffer_b.getInfo<void *>(*grabber_b_, GenTL::BUFFER_INFO_BASE);
-        auto *base_a   = static_cast<std::byte *>(base_a_v);
-        auto *base_b   = static_cast<std::byte *>(base_b_v);
+        if (base_a != base_b || delivered_a != runtime_cfg_.buffer_part_count ||
+            delivered_b != runtime_cfg_.buffer_part_count) {
+          ++rejected_pairs_since_log_;
+          if (log_due(last_rejected_log_)) {
+            logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::execute] rejected {} two-bank "
+                           "buffer pair(s): latest bank A base={}, delivered={}, ts={} | bank B "
+                           "base={}, delivered={}, ts={} | expected delivered={}",
+                           rejected_pairs_since_log_, static_cast<void *>(base_a), delivered_a,
+                           ts_a, static_cast<void *>(base_b), delivered_b, ts_b,
+                           runtime_cfg_.buffer_part_count);
+            rejected_pairs_since_log_ = 0;
+          }
+          requeue_buffer_noexcept(*grabber_a_, data_a, "bank A", last_requeue_error_log_);
+          requeue_buffer_noexcept(*grabber_b_, *data_b, "bank B", last_requeue_error_log_);
+          continue;
+        }
 
-        logger()->trace("[AmetekS711EuresysCoaxlinkQSFP::execute] bankA: delivered={}, ts={}, "
-                        "base={} | bankB: delivered={}, ts={}, base={}",
-                        delivered_a, ts_a, static_cast<void *>(base_a), delivered_b, ts_b,
-                        static_cast<void *>(base_b));
-
-        if (base_a != base_b) {
-          requeue_buffer_noexcept(*grabber_a_, data_a, "bank A");
-          requeue_buffer_noexcept(*grabber_b_, *data_b, "bank B");
-          throw std::runtime_error(
-              std::format("two-bank frame mismatch: bank A base {} != bank B base {}",
-                          static_cast<void *>(base_a), static_cast<void *>(base_b)));
+        const auto ts_delta = ts_a >= ts_b ? ts_a - ts_b : ts_b - ts_a;
+        ++accepted_pairs_since_log_;
+        if (ts_delta > max_ts_delta_since_log_) {
+          max_ts_delta_since_log_ = ts_delta;
+        }
+        if (log_due(last_pair_log_)) {
+          logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] accepted {} two-bank "
+                         "buffer pair(s): latest base={}, delivered={}, bank A ts={}, bank B "
+                         "ts={}, max ts delta={} us",
+                         accepted_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a,
+                         ts_b, max_ts_delta_since_log_);
+          accepted_pairs_since_log_ = 0;
+          max_ts_delta_since_log_   = 0;
         }
 
         auto &storage = storage_access().owned_output_storage(0);
@@ -655,12 +717,18 @@ public:
         return holoflow::core::OpResult::Ok;
 
       } catch (const Euresys::genapi_error &err) {
-        logger()->error("[AmetekS711EuresysCoaxlinkQSFP::execute] GenApi error: {}",
-                        format_genapi_error(err));
+        if (log_due(last_error_log_)) {
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::execute] GenApi error: {}",
+                          format_genapi_error(err));
+        }
       } catch (const Euresys::gentl_error &err) {
-        logger()->error("[AmetekS711EuresysCoaxlinkQSFP::execute] GenTL error: {}", err.what());
+        if (log_due(last_error_log_)) {
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::execute] GenTL error: {}", err.what());
+        }
       } catch (const std::exception &err) {
-        logger()->error("[AmetekS711EuresysCoaxlinkQSFP::execute] error: {}", err.what());
+        if (log_due(last_error_log_)) {
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::execute] error: {}", err.what());
+        }
       }
     }
 
@@ -681,6 +749,15 @@ private:
   nlohmann::json                        cfg_;
   std::optional<Euresys::NewBufferData> pending_a_;
   std::optional<Euresys::NewBufferData> pending_b_;
+  Clock::time_point                     last_rejected_log_{};
+  Clock::time_point                     last_pair_log_{};
+  Clock::time_point                     last_error_log_{};
+  Clock::time_point                     last_requeue_error_log_{};
+  Clock::time_point                     last_lifecycle_log_{};
+  Clock::time_point                     last_pending_update_log_{};
+  uint64_t                              rejected_pairs_since_log_ = 0;
+  uint64_t                              accepted_pairs_since_log_ = 0;
+  uint64_t                              max_ts_delta_since_log_   = 0;
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -768,9 +845,11 @@ AmetekS711EuresysCoaxlinkQSFPFactory::update(std::unique_ptr<holoflow::core::ISy
   const auto new_cfg     = normalized_cfg_json(runtime_cfg);
 
   if (new_cfg == old->get_cfg()) {
+    old->log_update_lifecycle(false);
     return old_task;
   }
 
+  old->log_update_lifecycle(true);
   return create(input_descs, jsettings, ctx);
 }
 
