@@ -29,19 +29,24 @@ set(SOURCES
     divide_test.cu
     empty_test.cu
     equal_test.cu
+    exp_test.cu
     fft2_test.cu
     fft_test.cu
     fftshift_test.cu
     irfft2_test.cu
+    irfft_test.cu
     max_test.cu
+    matmul_test.cu
     mean_test.cu
     meshgrid_test.cu
     min_test.cu
+    new_ops_test.cu
     multiply_test.cu
     reshape_test.cu
     rfft2_test.cu
     rfft_test.cu
     slice_test.cu
+    square_test.cu
     subtract_test.cu
     transpose_test.cu
     where_test.cu

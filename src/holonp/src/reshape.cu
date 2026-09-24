@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/reshape.hh"
+#include "utils/tensor_common.hh"
 
 #include "curaii/cuda.hh"
 
@@ -185,11 +186,6 @@ __global__ void reshape_copy_kernel(const std::byte *__restrict__ src, std::byte
   }
 }
 
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
-}
-
 // -------------------------------------------------------------------------------------------------
 // Reshape task implementation
 // -------------------------------------------------------------------------------------------------
@@ -351,7 +347,8 @@ ReshapeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     const auto &new_idesc    = input_descs[0];
     const auto &old_idesc    = old_reshape->idesc();
 
-    bool can_reuse = (new_settings == old_reshape->settings()) && same_desc(new_idesc, old_idesc);
+    bool can_reuse =
+        (new_settings == old_reshape->settings()) && utils::same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_reshape->update_stream(ctx.stream);

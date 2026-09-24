@@ -87,6 +87,7 @@ struct Settings {
   float         spacial_lambda;
   float         spacial_z;
   float         spacial_pixel_size;
+  bool          fresnel_use_numpy   = true; ///< Use the graph-composed CUDA NumPy Fresnel path.
   bool          asp_padding_enabled = false;
   int           asp_padded_width    = 1024;
   int           asp_padded_height   = 1024;

@@ -156,9 +156,8 @@ size_t TDesc::num_elements() const {
 }
 
 size_t TDesc::num_bytes() const {
-  if (shape.empty()) {
-    return 0;
-  }
+  if (shape.empty())
+    return strides.empty() ? 0 : strides[0];
 
   return strides[0] * shape[0];
 }

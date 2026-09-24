@@ -1,0 +1,3 @@
+#pragma once
+#include "holonp/sum.hh"
+namespace holonp { using ArgminSettings=SumSettings; class ArgminFactory:public holoflow::core::ISyncTaskFactory { public: holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc>,const nlohmann::json&) const override; std::unique_ptr<holoflow::core::ISyncTask> create(std::span<const holoflow::core::TDesc>,const nlohmann::json&,const holoflow::core::SyncCreateCtx&) const override; std::unique_ptr<holoflow::core::ISyncTask> update(std::unique_ptr<holoflow::core::ISyncTask>,std::span<const holoflow::core::TDesc>,const nlohmann::json&,const holoflow::core::SyncCreateCtx&) const override; }; }
