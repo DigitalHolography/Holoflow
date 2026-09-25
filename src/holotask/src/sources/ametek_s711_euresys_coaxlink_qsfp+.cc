@@ -928,9 +928,10 @@ public:
               .storage = &storage,
           };
         }
+        return holoflow::core::OpResult::Ok;
     }
     acquisition_stop_.store(true, std::memory_order_release);
-    return holoflow::core::OpResult::Ok;
+    return holoflow::core::OpResult::Cancelled;
   }
 
   const nlohmann::json &get_cfg() const { return cfg_; }
@@ -1076,6 +1077,7 @@ private:
         if (acquisition_.load(std::memory_order_acquire)) {
           if(log_due(last_acquisition_log_)) {
             logger()->warn(
+                "[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] "
                 "acquisition thread produced a new buffer pair while the previous one is still "
                 "held");
           }
