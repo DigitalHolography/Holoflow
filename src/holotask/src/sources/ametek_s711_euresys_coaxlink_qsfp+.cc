@@ -908,7 +908,11 @@ public:
       grabber_a_->start();
       running_ = true;
       // TODO start acquisition thread
-      acquisition_thread_ = std::thread([this] { acquisition_loop(); });
+      acquisition_thread_ = std::thread([this] {
+        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] Starting acquisition thread");
+        acquisition_loop();
+        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] Stopping acquisition thread");
+       });
     }
 
     while (!ctx.cancelled->load()) {
@@ -1030,7 +1034,7 @@ private:
             delivered_b != runtime_cfg_.buffer_part_count) {
           ++rejected_pairs_since_log_;
           if (log_due(last_rejected_log_)) {
-            logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::execute] rejected {} two-bank "
+            logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] rejected {} two-bank "
                            "buffer pair(s): latest bank A base={}, delivered={}, ts={} | bank B "
                            "base={}, delivered={}, ts={} | expected delivered={}",
                            rejected_pairs_since_log_, static_cast<void *>(base_a), delivered_a,
@@ -1049,7 +1053,7 @@ private:
           max_ts_delta_since_log_ = ts_delta;
         }
         if (log_due(last_pair_log_)) {
-          logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] accepted {} two-bank "
+          logger()->info("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] accepted {} two-bank "
                          "buffer pair(s): latest base={}, delivered={}, bank A ts={}, bank B "
                          "ts={}, max ts delta={} us",
                          accepted_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a,
@@ -1070,22 +1074,22 @@ private:
         } else {
           pending_a_ = std::move(data_a);
           pending_b_ = std::move(*data_b);
-          aquisition_ready_.store(true, std::memory_order_release);
+          acquisition_ready_.store(true, std::memory_order_release);
         }
         return holoflow::core::OpResult::Ok;
 
       } catch (const Euresys::genapi_error &err) {
         if (log_due(last_error_log_)) {
-          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::execute] GenApi error: {}",
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] GenApi error: {}",
                           format_genapi_error(err));
         }
       } catch (const Euresys::gentl_error &err) {
         if (log_due(last_error_log_)) {
-          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::execute] GenTL error: {}", err.what());
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] GenTL error: {}", err.what());
         }
       } catch (const std::exception &err) {
         if (log_due(last_error_log_)) {
-          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::execute] error: {}", err.what());
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] error: {}", err.what());
         }
       }
     }
