@@ -18,7 +18,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -29,7 +28,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/where.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -38,7 +37,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static TDesc device_desc(std::vector<size_t> shape, DType dtype) {
   return TDesc(std::move(shape), dtype, MemLoc::Device);
@@ -50,7 +48,7 @@ template <typename T> static std::vector<std::byte> as_bytes(const std::vector<T
   return out;
 }
 
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -101,12 +99,12 @@ TEST_F(WhereInferTest, RejectsInvalidInputTypesOrCount) {
   EXPECT_THROW(factory.infer(none, nlohmann::json::object()), std::invalid_argument);
 }
 
-class WhereOracleTest : public ::testing::Test {
+class WhereReferenceTest : public ::testing::Test {
 protected:
   holonp::WhereFactory factory;
 };
 
-TEST_F(WhereOracleTest, F32Broadcast) {
+TEST_F(WhereReferenceTest, F32Broadcast) {
   const TDesc                               cond = device_desc({2, 1}, DType::U8);
   const TDesc                               x    = device_desc({2, 3}, DType::F32);
   const TDesc                               y    = device_desc({3}, DType::F32);
@@ -117,16 +115,16 @@ TEST_F(WhereOracleTest, F32Broadcast) {
   };
   const auto run = holonp_test::run_sync_factory(factory, std::vector<TDesc>{cond, x, y}, data,
                                                  nlohmann::json::object());
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "where";
   oi.n_outputs      = 1;
   oi.input_descs    = {cond, x, y};
   oi.input_bytes    = data;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }
 
-TEST_F(WhereOracleTest, U16SameShape) {
+TEST_F(WhereReferenceTest, U16SameShape) {
   const TDesc                               cond = device_desc({4}, DType::U8);
   const TDesc                               x    = device_desc({4}, DType::U16);
   const TDesc                               y    = device_desc({4}, DType::U16);
@@ -137,13 +135,13 @@ TEST_F(WhereOracleTest, U16SameShape) {
   };
   const auto run = holonp_test::run_sync_factory(factory, std::vector<TDesc>{cond, x, y}, data,
                                                  nlohmann::json::object());
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "where";
   oi.n_outputs      = 1;
   oi.input_descs    = {cond, x, y};
   oi.input_bytes    = data;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::U16);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::U16);
 }
 
 class WhereUpdateTest : public ::testing::Test {
@@ -162,13 +160,13 @@ TEST_F(WhereUpdateTest, ReusesWhereTask) {
   };
   const auto run = holonp_test::run_sync_factory_update(factory, std::vector<TDesc>{cond, x, y},
                                                         data, nlohmann::json::object());
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "where";
   oi.n_outputs      = 1;
   oi.input_descs    = {cond, x, y};
   oi.input_bytes    = data;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }
 
 TEST_F(WhereUpdateTest, RecreatesOnWrongTaskType) {
@@ -213,11 +211,11 @@ TEST_F(WhereUpdateTest, RecreatesOnWrongTaskType) {
   EXPECT_NO_THROW((void)task->execute(ctx));
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "where";
   oi.n_outputs      = 1;
   oi.input_descs    = {cond, x, y};
   oi.input_bytes    = {bc, bx, by};
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(out_buf.download(), oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(out_buf.download(), reference.output_bytes[0], DType::F32);
 }

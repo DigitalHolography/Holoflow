@@ -12,23 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-enable_testing()
+add_executable(holoflow_event_test
+    event_router_test.cc
+)
 
-include(Testing)
+target_include_directories(holoflow_event_test
+    PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
 
-add_subdirectory(holoflow)
-add_subdirectory(holonp)
-add_subdirectory(holotask)
-add_subdirectory(holovibes)
-add_subdirectory(holoflow_event)
+target_link_libraries(holoflow_event_test
+    PRIVATE
+    holoflow
+    holoflow_event
+    GTest::gtest_main
+)
 
-if(ENABLE_COVERAGE)
-    add_test(
-        NAME coverage::production_image
-        COMMAND holovibes --coverage-probe
-    )
-    set_tests_properties(coverage::production_image PROPERTIES
-        LABELS coverage
-        TIMEOUT 10
-    )
-endif()
+holoflow_discover_tests(holoflow_event_test
+    LABELS fast
+    TIMEOUT 10
+)

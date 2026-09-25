@@ -17,7 +17,6 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -28,7 +27,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/equal.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -37,7 +36,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static TDesc device_desc(std::vector<size_t> shape, DType dtype) {
   return TDesc(std::move(shape), dtype, MemLoc::Device);
@@ -81,12 +79,12 @@ TEST_F(EqualInferTest, RejectsBadInputs) {
   EXPECT_THROW(factory.infer(host, nlohmann::json::object()), std::invalid_argument);
 }
 
-class EqualOracleTest : public ::testing::Test {
+class EqualReferenceTest : public ::testing::Test {
 protected:
   holonp::EqualFactory factory;
 };
 
-TEST_F(EqualOracleTest, F32Broadcast) {
+TEST_F(EqualReferenceTest, F32Broadcast) {
   const TDesc                               a    = device_desc({2, 3}, DType::F32);
   const TDesc                               b    = device_desc({3}, DType::F32);
   const std::vector<std::vector<std::byte>> data = {
@@ -95,16 +93,16 @@ TEST_F(EqualOracleTest, F32Broadcast) {
   };
   const auto run = holonp_test::run_sync_factory(factory, std::vector<TDesc>{a, b}, data,
                                                  nlohmann::json::object());
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "equal";
   oi.n_outputs      = 1;
   oi.input_descs    = {a, b};
   oi.input_bytes    = data;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_eq_u8(run.output_bytes[0], oracle.output_bytes[0]);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_eq_u8(run.output_bytes[0], reference.output_bytes[0]);
 }
 
-TEST_F(EqualOracleTest, U16SameShape) {
+TEST_F(EqualReferenceTest, U16SameShape) {
   const TDesc                               a    = device_desc({4}, DType::U16);
   const TDesc                               b    = device_desc({4}, DType::U16);
   const std::vector<std::vector<std::byte>> data = {
@@ -113,13 +111,13 @@ TEST_F(EqualOracleTest, U16SameShape) {
   };
   const auto run = holonp_test::run_sync_factory(factory, std::vector<TDesc>{a, b}, data,
                                                  nlohmann::json::object());
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "equal";
   oi.n_outputs      = 1;
   oi.input_descs    = {a, b};
   oi.input_bytes    = data;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_eq_u8(run.output_bytes[0], oracle.output_bytes[0]);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_eq_u8(run.output_bytes[0], reference.output_bytes[0]);
 }
 
 class EqualUpdateTest : public ::testing::Test {
@@ -136,13 +134,13 @@ TEST_F(EqualUpdateTest, ReusesEqualTask) {
   };
   const auto run = holonp_test::run_sync_factory_update(factory, std::vector<TDesc>{a, b}, data,
                                                         nlohmann::json::object());
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "equal";
   oi.n_outputs      = 1;
   oi.input_descs    = {a, b};
   oi.input_bytes    = data;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_eq_u8(run.output_bytes[0], oracle.output_bytes[0]);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_eq_u8(run.output_bytes[0], reference.output_bytes[0]);
 }
 
 TEST_F(EqualUpdateTest, RecreatesOnWrongTaskType) {
@@ -182,11 +180,11 @@ TEST_F(EqualUpdateTest, RecreatesOnWrongTaskType) {
   EXPECT_NO_THROW((void)task->execute(ctx));
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "equal";
   oi.n_outputs      = 1;
   oi.input_descs    = {a, b};
   oi.input_bytes    = {ba, bb};
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_eq_u8(out_buf.download(), oracle.output_bytes[0]);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_eq_u8(out_buf.download(), reference.output_bytes[0]);
 }

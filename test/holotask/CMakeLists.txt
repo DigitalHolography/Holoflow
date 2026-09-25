@@ -20,7 +20,9 @@ set(SOURCES
     flatfield_test.cu
     filter2d_test.cu
     fresnel_diffraction_test.cu
+    headless_nodes_test.cu
     holofile_sink_test.cc
+    production_pipeline_test.cu
     normalize_test.cu
     pca_test.cu
     pct_clip_test.cu
@@ -42,6 +44,7 @@ target_include_directories(${TARGET}
 target_link_libraries(${TARGET}
     PRIVATE
     holotask
+    holonp
     GTest::gtest_main
 )
 

@@ -17,7 +17,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -26,7 +25,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/meshgrid.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 
 using holoflow::core::DType;
@@ -34,7 +33,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static TDesc device_desc(std::vector<size_t> shape, DType dtype) {
   return TDesc(std::move(shape), dtype, MemLoc::Device);
@@ -46,7 +44,7 @@ template <typename T> static std::vector<std::byte> as_bytes(const std::vector<T
   return out;
 }
 
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -98,12 +96,12 @@ TEST_F(MeshgridInferTest, RejectsUnsupportedSparseTrue) {
                std::invalid_argument);
 }
 
-class MeshgridOracleTest : public ::testing::Test {
+class MeshgridReferenceTest : public ::testing::Test {
 protected:
   holonp::MeshgridFactory factory;
 };
 
-TEST_F(MeshgridOracleTest, F32XYTwoInputs) {
+TEST_F(MeshgridReferenceTest, F32XYTwoInputs) {
   const TDesc                               x    = device_desc({2}, DType::F32);
   const TDesc                               y    = device_desc({3}, DType::F32);
   const std::vector<std::vector<std::byte>> data = {
@@ -114,20 +112,20 @@ TEST_F(MeshgridOracleTest, F32XYTwoInputs) {
 
   const auto run = holonp_test::run_sync_factory(factory, std::vector<TDesc>{x, y}, data, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "meshgrid";
   oi.n_outputs      = 2;
   oi.input_descs    = {x, y};
   oi.input_bytes    = data;
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  const auto reference = holonp_test::invoke_reference(oi);
   ASSERT_EQ(run.output_bytes.size(), 2u);
-  ASSERT_EQ(oracle.output_bytes.size(), 2u);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
-  expect_near_oracle(run.output_bytes[1], oracle.output_bytes[1], DType::F32);
+  ASSERT_EQ(reference.output_bytes.size(), 2u);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
+  expect_near_reference(run.output_bytes[1], reference.output_bytes[1], DType::F32);
 }
 
-TEST_F(MeshgridOracleTest, U16IJThreeInputs) {
+TEST_F(MeshgridReferenceTest, U16IJThreeInputs) {
   const TDesc                               a    = device_desc({2}, DType::U16);
   const TDesc                               b    = device_desc({3}, DType::U16);
   const TDesc                               c    = device_desc({2}, DType::U16);
@@ -140,18 +138,18 @@ TEST_F(MeshgridOracleTest, U16IJThreeInputs) {
 
   const auto run = holonp_test::run_sync_factory(factory, std::vector<TDesc>{a, b, c}, data, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "meshgrid";
   oi.n_outputs      = 3;
   oi.input_descs    = {a, b, c};
   oi.input_bytes    = data;
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  const auto reference = holonp_test::invoke_reference(oi);
   ASSERT_EQ(run.output_bytes.size(), 3u);
-  ASSERT_EQ(oracle.output_bytes.size(), 3u);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::U16);
-  expect_near_oracle(run.output_bytes[1], oracle.output_bytes[1], DType::U16);
-  expect_near_oracle(run.output_bytes[2], oracle.output_bytes[2], DType::U16);
+  ASSERT_EQ(reference.output_bytes.size(), 3u);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::U16);
+  expect_near_reference(run.output_bytes[1], reference.output_bytes[1], DType::U16);
+  expect_near_reference(run.output_bytes[2], reference.output_bytes[2], DType::U16);
 }
 
 class MeshgridUpdateTest : public ::testing::Test {
@@ -170,14 +168,14 @@ TEST_F(MeshgridUpdateTest, ReusesTaskWithSameConfig) {
 
   const auto run = holonp_test::run_sync_factory_update(factory, std::vector<TDesc>{x, y}, data, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "meshgrid";
   oi.n_outputs      = 2;
   oi.input_descs    = {x, y};
   oi.input_bytes    = data;
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  const auto reference = holonp_test::invoke_reference(oi);
   ASSERT_EQ(run.output_bytes.size(), 2u);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
-  expect_near_oracle(run.output_bytes[1], oracle.output_bytes[1], DType::F32);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
+  expect_near_reference(run.output_bytes[1], reference.output_bytes[1], DType::F32);
 }

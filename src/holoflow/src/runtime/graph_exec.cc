@@ -125,6 +125,12 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
     metrics_interval_ = std::chrono::milliseconds{1};
   }
 
+  for (const auto vertex : boost::make_iterator_range(boost::vertices(graph_))) {
+    if (boost::out_degree(vertex, graph_) == 0) {
+      ++terminal_nodes_;
+    }
+  }
+
   // init_tensor_tables();
   // bind_resource_tensors();
   init_tviews();
@@ -165,6 +171,7 @@ void Scheduler::start() {
   }
 
   stop_.store(false);
+  completed_terminal_nodes_.store(0);
   reset_metrics_state();
   start_metrics_thread();
   threads_.reserve(sections_.size());
@@ -330,6 +337,19 @@ void Scheduler::run_section(int section_id) {
   constexpr nvtx3::color color_release{0xFF4500}; // Orange Red
 
   try {
+    bool reached_eof = false;
+    auto handle_eof = [&](GraphPlan::vertex_descriptor vertex) {
+      reached_eof = true;
+      if (boost::out_degree(vertex, graph_) != 0) {
+        stop_.store(true);
+        return false;
+      }
+
+      if (completed_terminal_nodes_.fetch_add(1) + 1 == terminal_nodes_) {
+        stop_.store(true);
+      }
+      return true;
+    };
     while (!stop_.load()) {
       std::vector<GraphPlan::vertex_descriptor> produced_owned_outputs;
       logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
@@ -367,8 +387,12 @@ void Scheduler::run_section(int section_id) {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async consumers", color_async_c}};
         for (auto v : sec.async_cons) {
           try {
-            if (run_async_cons(v) == core::OpResult::Ok) {
+            const auto result = run_async_cons(v);
+            if (result == core::OpResult::Ok) {
               produced_owned_outputs.push_back(v);
+            } else if (result == core::OpResult::Eof) {
+              if (!handle_eof(v))
+                break;
             }
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_async_consumer", section_id, sec.name);
@@ -379,12 +403,16 @@ void Scheduler::run_section(int section_id) {
       }
 
       // 4. Execute sync nodes
-      if (!stop_.load()) {
+      if (!stop_.load() && !reached_eof) {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Execute sync nodes", color_sync}};
         for (auto v : sec.sync_topo) {
           try {
-            if (run_sync(v) == core::OpResult::Ok) {
+            const auto result = run_sync(v);
+            if (result == core::OpResult::Ok) {
               produced_owned_outputs.push_back(v);
+            } else if (result == core::OpResult::Eof) {
+              if (!handle_eof(v))
+                break;
             }
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_sync", section_id, sec.name);
@@ -402,11 +430,14 @@ void Scheduler::run_section(int section_id) {
       }
 
       // 5. Execute async producers
-      if (!stop_.load()) {
+      if (!stop_.load() && !reached_eof) {
         nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async producers", color_async_p}};
         for (auto v : sec.async_prod) {
           try {
-            (void)run_async_prod(v);
+            if (run_async_prod(v) == core::OpResult::Eof) {
+              if (!handle_eof(v))
+                break;
+            }
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_async_producer", section_id, sec.name);
           }
@@ -427,9 +458,10 @@ void Scheduler::run_section(int section_id) {
         }
       }
 
-      if (stop_.load())
+      if (stop_.load() || reached_eof)
         break;
     }
+
   } catch (...) {
     stop_.store(true);
     log_and_abort_current_exception(
@@ -597,7 +629,6 @@ core::OpResult Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
     break;
   case core::OpResult::Eof:
     logger()->debug("[Scheduler::run_sync] Node '{}' reached end of stream", np.spec.name);
-    stop_.store(true);
     break;
   case core::OpResult::NotReady:
     logger()->error(
@@ -652,7 +683,6 @@ core::OpResult Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
     break;
   case core::OpResult::Eof:
     logger()->debug("[Scheduler::run_async_cons] Node '{}' reached end of stream", np.spec.name);
-    stop_.store(true);
     break;
   case core::OpResult::NotReady:
     HOLOFLOW_UNREACHABLE();
@@ -701,7 +731,6 @@ core::OpResult Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
     break;
   case core::OpResult::Eof:
     logger()->debug("[Scheduler::run_async_prod] Node '{}' reached end of stream", np.spec.name);
-    stop_.store(true);
     break;
   case core::OpResult::NotReady:
     HOLOFLOW_UNREACHABLE();

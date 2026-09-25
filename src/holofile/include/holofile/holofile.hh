@@ -138,6 +138,8 @@ public:
 
   void   write_frames(const uint8_t *data, std::size_t frame_count);
   void   write_footer();
+
+  void flush();
   size_t tell() const;
 
 private:

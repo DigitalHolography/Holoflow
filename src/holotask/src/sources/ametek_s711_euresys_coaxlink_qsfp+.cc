@@ -21,22 +21,30 @@
 #include <EuresysGenapiErrorFormats.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cassert>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <format>
 #include <fstream>
+#include <functional>
 #include <limits>
 #include <map>
+#include <new>
 #include <optional>
 #include <sstream>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
 #include "bug.hh"
 #include "curaii/cuda.hh"
 #include "logger.hh"
+
+#include "holofile/holofile.hh"
 
 template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
@@ -577,6 +585,209 @@ holoflow::core::DType dtype_from_pixel_format(const std::string &pixel_format) {
   return dtypes.at(pixel_format);
 }
 
+struct CameraFrame {
+  Euresys::NewBufferData bank_a;
+  Euresys::NewBufferData bank_b;
+  std::byte             *base;
+};
+
+class CameraBufferQueue {
+public:
+  using DType           = CameraFrame;
+  using ReleaseCallback = std::function<void(DType &&)>;
+
+  CameraBufferQueue(size_t capacity, ReleaseCallback release_callback)
+      : capacity_{capacity}, slots_{std::make_unique<Slot[]>(capacity)},
+        release_callback_{std::move(release_callback)} {
+    // We use all slots, so capacity must be > 0.
+    if (capacity_ == 0) {
+      throw std::invalid_argument("CameraBufferQueue capacity must be > 0");
+    }
+  }
+
+  ~CameraBufferQueue() {
+    for (size_t i = 0; i < capacity_; ++i) {
+      auto &slot = slots_[i];
+      if (slot.readers.load(std::memory_order_relaxed) != 0) {
+        release_callback_(std::move(slot.data));
+      }
+    }
+  }
+
+  CameraBufferQueue(const CameraBufferQueue &)            = delete;
+  CameraBufferQueue &operator=(const CameraBufferQueue &) = delete;
+
+  void push(DType &&frame) {
+    const auto write = write_index_.load(std::memory_order_relaxed);
+    auto      &slot  = slots_[write % capacity_];
+
+    while (slot.readers.load(std::memory_order_acquire) != 0) {
+      std::this_thread::yield();
+    }
+
+    slot.data               = std::move(frame);
+    const auto reader_count = reader_b_active_.load(std::memory_order_acquire) ? 2u : 1u;
+    slot.readers.store(reader_count, std::memory_order_release);
+
+    // Publishing the index makes the written frame visible to readers.
+    write_index_.store(write + 1, std::memory_order_release);
+  }
+
+  [[nodiscard]]
+  const DType &read_a() {
+    return read(read_index_a_);
+  }
+
+  [[nodiscard]]
+  const DType &read_b() {
+    return read(read_index_b_);
+  }
+
+  void release_a() { release(read_index_a_); }
+
+  void release_b() { release(read_index_b_); }
+
+  void subscribe_b() {
+    if (reader_b_active_.exchange(true, std::memory_order_acq_rel)) {
+      throw std::logic_error("CameraBufferQueue reader B is already active");
+    }
+    read_index_b_.store(write_index_.load(std::memory_order_acquire), std::memory_order_release);
+  }
+
+  void unsubscribe_b() {
+    if (!reader_b_active_.exchange(false, std::memory_order_acq_rel)) {
+      return;
+    }
+
+    const auto end = write_index_.load(std::memory_order_acquire);
+    while (read_index_b_.load(std::memory_order_relaxed) != end) {
+      release_b();
+    }
+  }
+
+  [[nodiscard]]
+  bool empty_b() const {
+    const auto write = write_index_.load(std::memory_order_acquire);
+    return read_index_b_.load(std::memory_order_relaxed) == write;
+  }
+
+  [[nodiscard]]
+  size_t capacity() const {
+    return capacity_;
+  }
+
+private:
+  struct Slot {
+    DType                 data;
+    std::atomic<unsigned> readers{0};
+  };
+
+  [[nodiscard]]
+  const DType &read(const std::atomic<size_t> &reader) const {
+    const auto current = reader.load(std::memory_order_relaxed);
+
+    // The writer publishes frames with release.
+    // Acquire makes the corresponding frame write visible.
+    assert(current != write_index_.load(std::memory_order_acquire));
+    return slots_[current % capacity_].data;
+  }
+
+  void release(std::atomic<size_t> &reader) {
+    const auto current = reader.load(std::memory_order_relaxed);
+    auto      &slot    = slots_[current % capacity_];
+    auto       readers = slot.readers.load(std::memory_order_acquire);
+
+    for (;;) {
+      assert(readers != 0 && readers != releasing_);
+
+      // release the slot if readers reaches 0
+      // otherwise it decrements the reader counter
+      if (readers == 1) {
+        if (slot.readers.compare_exchange_weak(readers, releasing_, std::memory_order_acq_rel,
+                                               std::memory_order_acquire)) {
+          release_callback_(std::move(slot.data));
+          slot.readers.store(0, std::memory_order_release);
+          break;
+        }
+      } else if (slot.readers.compare_exchange_weak(readers, readers - 1, std::memory_order_acq_rel,
+                                                    std::memory_order_acquire)) {
+        break;
+      }
+    }
+
+    reader.store(current + 1, std::memory_order_release);
+  }
+
+private:
+  static constexpr size_t   cache_line_size_ = std::hardware_destructive_interference_size;
+  static constexpr unsigned releasing_       = std::numeric_limits<unsigned>::max();
+
+  const size_t capacity_;
+
+  std::unique_ptr<Slot[]> slots_;
+  ReleaseCallback         release_callback_;
+
+  alignas(cache_line_size_) std::atomic<size_t> write_index_{0};
+
+  alignas(cache_line_size_) std::atomic<size_t> read_index_a_{0};
+
+  alignas(cache_line_size_) std::atomic<size_t> read_index_b_{0};
+
+  alignas(cache_line_size_) std::atomic<bool> reader_b_active_{false};
+};
+
+// read B
+// writing to stop will automaticly stop the record
+class Recorder {
+public:
+  Recorder(const std::string &file_path, size_t frame_count, CameraBufferQueue &queue,
+           std::atomic<bool> &stop, Euresys::EGrabber<> *egrabber)
+      : writer_{file_path, holofile::Header{}, holofile::Footer{}}, // TODO add header and footer
+        frame_to_record_{frame_count}, current_frame_{0}, queue_{queue}, stop_{stop},
+        egrabber_{egrabber} {
+    queue_.subscribe_b();
+  }
+
+  void execute() {
+    auto stop = stop_.load(std::memory_order_acquire);
+    auto batch = std::vector<CameraBufferQueue::DType&>();
+    while (current_frame_ < frame_to_record_ && !stop) {
+      if (!queue_.empty_b()) {
+        const auto &frame  = queue_.read_b();
+        auto        buffer = Euresys::Buffer(frame.bank_a);
+        auto       *base_v = buffer.getInfo<void *>(*egrabber_, GenTL::BUFFER_INFO_BASE);
+        auto       *base   = static_cast<uint8_t *>(base_v);
+
+        writer_.write_frames(base, 1); // TODO batch multiple frames together
+        queue_.release_b();
+        ++current_frame_;
+      }
+
+      stop = stop_.load(std::memory_order_acquire);
+    }
+
+    writer_.write_footer();
+  }
+
+  ~Recorder() {
+    queue_.unsubscribe_b();
+    writer_.flush();
+  }
+
+private:
+  holofile::Writer writer_;
+  size_t frame_to_record_; // when unlimited it is set to std::numeric_limit<size_t>::max()
+  size_t current_frame_;
+  CameraBufferQueue   &queue_;
+  std::atomic<bool>   &stop_;
+  Euresys::EGrabber<> *egrabber_;
+};
+
+void recorder_worker(const std::string &file_path, size_t frame_count, CameraBufferQueue &queue,
+                     std::atomic<bool> &stop, Euresys::EGrabber<> *egrabber) {
+  Recorder rec{file_path, frame_count, queue, stop, egrabber};
+  rec.execute();
+}
 } // namespace
 
 // -------------------------------------------------------------------------------------------------
@@ -602,7 +813,11 @@ public:
       : settings_(settings), runtime_cfg_(std::move(runtime_cfg)), buffers_(std::move(buffers)),
         gentl_(std::move(gentl)), grabber_a_(std::move(grabber_a)),
         grabber_b_(std::move(grabber_b)), buffer_size_(buffer_size), running_(false),
-        cfg_(std::move(normalized_cfg)) {
+        cfg_(std::move(normalized_cfg)),
+        buffer_queue_(runtime_cfg_.nb_buffers, [this](CameraFrame &&frame) {
+          requeue_buffer_noexcept(*grabber_a_, frame.bank_a, "bank A");
+          requeue_buffer_noexcept(*grabber_b_, frame.bank_b, "bank B");
+        }) {
     HOLOVIBES_CHECK(gentl_ != nullptr);
     HOLOVIBES_CHECK(grabber_a_ != nullptr);
     HOLOVIBES_CHECK(grabber_b_ != nullptr);
@@ -983,6 +1198,8 @@ private:
   bool                       pair_delta_seen_     = false;
   int64_t                    min_pair_delta_      = 0;
   int64_t                    max_pair_delta_      = 0;
+
+  CameraBufferQueue                     buffer_queue_;
 
   // acquisition thread
   std::thread       acquisition_thread_;
