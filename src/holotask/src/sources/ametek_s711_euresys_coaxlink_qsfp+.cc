@@ -612,7 +612,7 @@ public:
   ~AmetekS711EuresysCoaxlinkQSFP() override {
     try {
       if (running_) {
-        acquisition_stopped_.store(true, std::memory_order_release);
+        acquisition_stop_.store(true, std::memory_order_release);
         acquisition_thread_.join();
         grabber_a_->stop();
         grabber_b_->stop();
@@ -636,22 +636,26 @@ public:
       throw std::out_of_range("AmetekS711EuresysCoaxlinkQSFP task has only one output at index 0");
     }
 
-    if (!pending_a_.has_value() || !pending_b_.has_value()) {
+    auto pending_a = pending_a_.load(std::memory_order_acquire);
+    auto pending_b = pending_b_.load(std::memory_order_acquire);
+    if (!pending_a.has_value() || !pending_b.has_value()) {
       throw std::logic_error("release_output called with no pending two-bank frame");
     }
 
-    Euresys::Buffer(*pending_a_).push(*grabber_a_);
-    Euresys::Buffer(*pending_b_).push(*grabber_b_);
-    pending_a_.reset();
-    pending_b_.reset();
-    acquisition_ready_.store(false, std::memory_order_release);
+    Euresys::Buffer(*pending_a).push(*grabber_a_);
+    Euresys::Buffer(*pending_b).push(*grabber_b_);
+    pending_a_.store(std::nullopt, std::memory_order_release);
+    pending_b_.store(std::nullopt, std::memory_order_release);
+    acquisition_.store(nullptr, std::memory_order_release);
   }
 
   void log_update_lifecycle(bool replacing) {
-    if ((pending_a_.has_value() || pending_b_.has_value()) && log_due(last_pending_update_log_)) {
+    auto pending_a_has_value = pending_a_.load().has_value();
+    auto pending_b_has_value = pending_b_.load().has_value();
+    if ((pending_a_has_value || pending_b_has_value) && log_due(last_pending_update_log_)) {
       logger()->error("[AmetekS711EuresysCoaxlinkQSFP::update] updating with an unreleased "
                       "camera buffer: bank A pending={}, bank B pending={}",
-                      pending_a_.has_value(), pending_b_.has_value());
+                      pending_a_has_value, pending_b_has_value);
     }
     if (!running_) {
       return;
@@ -893,22 +897,20 @@ public:
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    using namespace Euresys;
-    constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
-    constexpr auto TIMESTAMP = GenTL::BUFFER_INFO_TIMESTAMP;
-
-    HOLOVIBES_CHECK(!pending_a_.has_value() && !pending_b_.has_value(),
+    HOLOVIBES_CHECK(!pending_a_.load().has_value() && !pending_b_.load().has_value(),
                     "execute called while previous buffer pair is still held");
 
     if (!running_) {
       // S711 Banks_AB must start bank B first, then bank A.
+
       grabber_b_->enableEvent<Euresys::NewBufferData>();
       grabber_b_->start();
       grabber_a_->enableEvent<Euresys::NewBufferData>();
       grabber_a_->start();
       running_ = true;
-      // TODO start acquisition thread
+
       acquisition_thread_ = std::thread([this] {
+        acquisition_stop_.store(false, std::memory_order_release);
         logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] Starting acquisition thread");
         acquisition_loop();
         logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] Stopping acquisition thread");
@@ -916,9 +918,10 @@ public:
     }
 
     while (!ctx.cancelled->load()) {
-        if (acquisition_ready_.load(std::memory_order_acquire) && !pending_a_.has_value() && !pending_b_.has_value()) {
+        auto base = acquisition_.load(std::memory_order_acquire);
+        if (base) {
           auto &storage = storage_access().owned_output_storage(0);
-          storage.ptr   = base_a;
+          storage.ptr   = base;
 
           ctx.outputs[0] = holoflow::core::TView{
               .desc    = ctx.outputs[0].desc,
@@ -926,7 +929,8 @@ public:
           };
         }
     }
-    return holoflow::core::OpResult::Cancelled;
+    acquisition_stop_.store(true, std::memory_order_release);
+    return holoflow::core::OpResult::Ok;
   }
 
   const nlohmann::json &get_cfg() const { return cfg_; }
@@ -941,8 +945,8 @@ private:
   std::size_t                           buffer_size_;
   bool                                  running_;
   nlohmann::json                        cfg_;
-  std::optional<Euresys::NewBufferData> pending_a_;
-  std::optional<Euresys::NewBufferData> pending_b_;
+  std::atomic<std::optional<Euresys::NewBufferData>> pending_a_;
+  std::atomic<std::optional<Euresys::NewBufferData>> pending_b_;
 
   // Diagnostics state
   Clock::time_point          last_rejected_log_{};
@@ -953,6 +957,7 @@ private:
   Clock::time_point          last_pending_update_log_{};
   Clock::time_point          last_diagnostic_log_{};
   Clock::time_point          last_diagnostic_error_log_{};
+  Clock::time_point          last_acquisition_log_{};
   uint64_t                   rejected_pairs_since_log_ = 0;
   uint64_t                   accepted_pairs_since_log_ = 0;
   uint64_t                   max_ts_delta_since_log_   = 0;
@@ -980,10 +985,14 @@ private:
 
   // acquisition thread
   std::thread       acquisition_thread_;
-  std::atomic<bool> acquisition_ready_ = false;
+  std::atomic<std::byte*> acquisition_ = nullptr;
   std::atomic<bool> acquisition_stop_  = false;
 
   void acquisition_loop() {
+    using namespace Euresys;
+    constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
+    constexpr auto TIMESTAMP = GenTL::BUFFER_INFO_TIMESTAMP;
+
     while (!acquisition_stop_.load(std::memory_order_acquire)) {
       try {
         const auto timeout_ms = runtime_cfg_.pop_timeout_ms;
@@ -1064,20 +1073,20 @@ private:
 
         // just discard all frames if the previous one is still held by the pipeline
         // TODO buffer them and throw only when a certain threshold is reached
-        if (pending_a_.has_value() || pending_b_.has_value()) {
-          logger()->warn(
-              "acquisition thread produced a new buffer pair while the previous one is still "
-              "held");
+        if (acquisition_.load(std::memory_order_acquire)) {
+          if(log_due(last_acquisition_log_)) {
+            logger()->warn(
+                "acquisition thread produced a new buffer pair while the previous one is still "
+                "held");
+          }
           requeue_buffer_noexcept(*grabber_a_, data_a, "bank A", last_requeue_error_log_);
           requeue_buffer_noexcept(*grabber_b_, *data_b, "bank B", last_requeue_error_log_);
 
         } else {
-          pending_a_ = std::move(data_a);
-          pending_b_ = std::move(*data_b);
-          acquisition_ready_.store(true, std::memory_order_release);
+          pending_a_.store(std::move(data_a), std::memory_order_release);
+          pending_b_.store(std::move(*data_b), std::memory_order_release);
+          acquisition_.store(base_a, std::memory_order_release);
         }
-        return holoflow::core::OpResult::Ok;
-
       } catch (const Euresys::genapi_error &err) {
         if (log_due(last_error_log_)) {
           logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] GenApi error: {}",
@@ -1085,11 +1094,13 @@ private:
         }
       } catch (const Euresys::gentl_error &err) {
         if (log_due(last_error_log_)) {
-          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] GenTL error: {}", err.what());
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] GenTL error: {}",
+                          err.what());
         }
       } catch (const std::exception &err) {
         if (log_due(last_error_log_)) {
-          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] error: {}", err.what());
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] error: {}",
+                          err.what());
         }
       }
     }

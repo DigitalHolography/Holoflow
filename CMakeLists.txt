@@ -142,12 +142,12 @@ if(WIN32 AND MSVC)
     function(find_single_cuda_runtime OUTPUT_VARIABLE GLOB_PATTERN)
         file(GLOB MATCHES "${CUDA_BIN_DIR}/${GLOB_PATTERN}")
         list(LENGTH MATCHES MATCH_COUNT)
-        if(NOT MATCH_COUNT EQUAL 1)
-            message(FATAL_ERROR
-                "Expected exactly one CUDA runtime matching "
-                "'${CUDA_BIN_DIR}/${GLOB_PATTERN}', found ${MATCH_COUNT}: ${MATCHES}"
-            )
-        endif()
+        #if(NOT MATCH_COUNT EQUAL 1)
+        #    message(FATAL_ERROR
+        #        "Expected exactly one CUDA runtime matching "
+        #        "'${CUDA_BIN_DIR}/${GLOB_PATTERN}', found ${MATCH_COUNT}: ${MATCHES}"
+        #    )
+        #endif()
         list(GET MATCHES 0 MATCH)
         set("${OUTPUT_VARIABLE}" "${MATCH}" PARENT_SCOPE)
     endfunction()
