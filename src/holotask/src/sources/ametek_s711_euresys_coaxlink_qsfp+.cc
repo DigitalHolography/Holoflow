@@ -30,6 +30,8 @@
 #include <format>
 #include <fstream>
 #include <functional>
+#undef max
+#undef min
 #include <limits>
 #include <map>
 #include <new>
@@ -676,6 +678,33 @@ public:
     return capacity_;
   }
 
+  [[nodiscard]]
+  size_t size() const {
+    auto w = write_index_.load();
+    auto a = read_index_a_.load();
+    auto oldest = a;
+    if (reader_b_active_.load()) {
+      auto b = read_index_b_.load();
+      oldest = std::min(a, b);
+    }
+
+    std::ptrdiff_t diff = w - oldest;
+    return diff < 0 ? diff + capacity_ : diff;
+  }
+
+  [[nodiscard]]
+  bool empty() const {
+    auto w = write_index_.load();
+    auto a = read_index_a_.load();
+    auto oldest = a;
+    if (reader_b_active_.load()) {
+      auto b = read_index_b_.load();
+      oldest = std::min(a, b);
+    }
+
+    return w == oldest;
+  }
+
 private:
   struct Slot {
     DType                 data;
@@ -684,11 +713,14 @@ private:
 
   [[nodiscard]]
   const DType &read(const std::atomic<size_t> &reader) const {
-    const auto current = reader.load(std::memory_order_relaxed);
+    auto current = reader.load(std::memory_order_relaxed);
 
-    // The writer publishes frames with release.
-    // Acquire makes the corresponding frame write visible.
-    assert(current != write_index_.load(std::memory_order_acquire));
+    // wait for data to be available
+    while (current == write_index_.load(std::memory_order_acquire)) {
+      std::this_thread::yield();
+      current = reader.load(std::memory_order_relaxed);
+    }
+
     return slots_[current % capacity_].data;
   }
 
@@ -736,6 +768,7 @@ private:
   alignas(cache_line_size_) std::atomic<bool> reader_b_active_{false};
 };
 
+/*
 // read B
 // writing to stop will automaticly stop the record
 class Recorder {
@@ -750,7 +783,7 @@ public:
 
   void execute() {
     auto stop = stop_.load(std::memory_order_acquire);
-    auto batch = std::vector<CameraBufferQueue::DType&>();
+    auto batch = std::vector<CameraBufferQueue::DType&>(); TODO use * instead of &
     while (current_frame_ < frame_to_record_ && !stop) {
       if (!queue_.empty_b()) {
         const auto &frame  = queue_.read_b();
@@ -788,6 +821,7 @@ void recorder_worker(const std::string &file_path, size_t frame_count, CameraBuf
   Recorder rec{file_path, frame_count, queue, stop, egrabber};
   rec.execute();
 }
+*/
 } // namespace
 
 // -------------------------------------------------------------------------------------------------
@@ -815,8 +849,8 @@ public:
         grabber_b_(std::move(grabber_b)), buffer_size_(buffer_size), running_(false),
         cfg_(std::move(normalized_cfg)),
         buffer_queue_(runtime_cfg_.nb_buffers, [this](CameraFrame &&frame) {
-          requeue_buffer_noexcept(*grabber_a_, frame.bank_a, "bank A");
-          requeue_buffer_noexcept(*grabber_b_, frame.bank_b, "bank B");
+          requeue_buffer_noexcept(*grabber_a_, frame.bank_a, "bank A", last_requeue_error_log_);
+          requeue_buffer_noexcept(*grabber_b_, frame.bank_b, "bank B", last_requeue_error_log_);
         }) {
     HOLOVIBES_CHECK(gentl_ != nullptr);
     HOLOVIBES_CHECK(grabber_a_ != nullptr);
@@ -851,33 +885,20 @@ public:
       throw std::out_of_range("AmetekS711EuresysCoaxlinkQSFP task has only one output at index 0");
     }
 
-    auto pending_a = pending_a_.load(std::memory_order_acquire);
-    auto pending_b = pending_b_.load(std::memory_order_acquire);
-    if (!pending_a.has_value() || !pending_b.has_value()) {
-      throw std::logic_error("release_output called with no pending two-bank frame");
-    }
-
-    Euresys::Buffer(*pending_a).push(*grabber_a_);
-    Euresys::Buffer(*pending_b).push(*grabber_b_);
-    pending_a_.store(std::nullopt, std::memory_order_release);
-    pending_b_.store(std::nullopt, std::memory_order_release);
-    acquisition_.store(nullptr, std::memory_order_release);
+    buffer_queue_.release_a();
+    storage_access().owned_output_storage(0).ptr = nullptr;
   }
 
   void log_update_lifecycle(bool replacing) {
-    auto pending_a_has_value = pending_a_.load().has_value();
-    auto pending_b_has_value = pending_b_.load().has_value();
-    if ((pending_a_has_value || pending_b_has_value) && log_due(last_pending_update_log_)) {
-      logger()->error("[AmetekS711EuresysCoaxlinkQSFP::update] updating with an unreleased "
-                      "camera buffer: bank A pending={}, bank B pending={}",
-                      pending_a_has_value, pending_b_has_value);
+    if (!buffer_queue_.empty() && log_due(last_pending_update_log_)) {
+      logger()->error("[AmetekS711EuresysCoaxlinkQSFP::update] updating with unreleased frames: {}", buffer_queue_.size());
     }
     if (!running_) {
       return;
     }
     if (!replacing) {
       ++update_epoch_;
-      update_a_                = read_bank_counters(*grabber_a_, "A");
+      update_a_                = read_bank_counters(*grabber_a_, "A"); // add mutex on these to prevent data race
       update_b_                = read_bank_counters(*grabber_b_, "B");
       first_pair_after_update_ = true;
       first_pair_update_summary_.reset();
@@ -1112,9 +1133,6 @@ public:
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    HOLOVIBES_CHECK(!pending_a_.load().has_value() && !pending_b_.load().has_value(),
-                    "execute called while previous buffer pair is still held");
-
     if (!running_) {
       // S711 Banks_AB must start bank B first, then bank A.
 
@@ -1133,10 +1151,10 @@ public:
     }
 
     while (!ctx.cancelled->load()) {
-        auto base = acquisition_.load(std::memory_order_acquire);
-        if (base) {
+        auto& next = buffer_queue_.read_a();
+        if (next.base) {
           auto &storage = storage_access().owned_output_storage(0);
-          storage.ptr   = base;
+          storage.ptr   = next.base;
 
           ctx.outputs[0] = holoflow::core::TView{
               .desc    = ctx.outputs[0].desc,
@@ -1161,8 +1179,6 @@ private:
   std::size_t                           buffer_size_;
   bool                                  running_;
   nlohmann::json                        cfg_;
-  std::atomic<std::optional<Euresys::NewBufferData>> pending_a_;
-  std::atomic<std::optional<Euresys::NewBufferData>> pending_b_;
 
   // Diagnostics state
   Clock::time_point          last_rejected_log_{};
@@ -1200,10 +1216,10 @@ private:
   int64_t                    max_pair_delta_      = 0;
 
   CameraBufferQueue                     buffer_queue_;
+  static constexpr  size_t              buffer_queue_safety_buffers_count_ = 10; //TODO allocate more buffers to prevent filled queue
 
   // acquisition thread
   std::thread       acquisition_thread_;
-  std::atomic<std::byte*> acquisition_ = nullptr;
   std::atomic<bool> acquisition_stop_  = false;
 
   void acquisition_loop() {
@@ -1289,9 +1305,7 @@ private:
           max_ts_delta_since_log_   = 0;
         }
 
-        // just discard all frames if the previous one is still held by the pipeline
-        // TODO buffer them and throw only when a certain threshold is reached
-        if (acquisition_.load(std::memory_order_acquire)) {
+        if (buffer_queue_.size() >= runtime_cfg_.nb_buffers - buffer_queue_safety_buffers_count_) {
           if(log_due(last_acquisition_log_)) {
             logger()->warn(
                 "[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] "
@@ -1302,9 +1316,7 @@ private:
           requeue_buffer_noexcept(*grabber_b_, *data_b, "bank B", last_requeue_error_log_);
 
         } else {
-          pending_a_.store(std::move(data_a), std::memory_order_release);
-          pending_b_.store(std::move(*data_b), std::memory_order_release);
-          acquisition_.store(base_a, std::memory_order_release);
+          buffer_queue_.push({data_a, *data_b, base_a});
         }
       } catch (const Euresys::genapi_error &err) {
         if (log_due(last_error_log_)) {
