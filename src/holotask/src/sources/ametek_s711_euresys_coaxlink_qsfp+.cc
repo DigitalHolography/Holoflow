@@ -14,6 +14,7 @@
 
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 
+//#define HOLOTASK_HAS_EGRABBER 1
 #ifdef HOLOTASK_HAS_EGRABBER
 
 #include <EGrabber.h>
@@ -611,6 +612,8 @@ public:
   ~AmetekS711EuresysCoaxlinkQSFP() override {
     try {
       if (running_) {
+        acquisition_stopped_.store(true, std::memory_order_release);
+        acquisition_thread_.join();
         grabber_a_->stop();
         grabber_b_->stop();
       }
@@ -641,6 +644,7 @@ public:
     Euresys::Buffer(*pending_b_).push(*grabber_b_);
     pending_a_.reset();
     pending_b_.reset();
+    acquisition_ready_.store(false, std::memory_order_release);
   }
 
   void log_update_lifecycle(bool replacing) {
@@ -903,9 +907,80 @@ public:
       grabber_a_->enableEvent<Euresys::NewBufferData>();
       grabber_a_->start();
       running_ = true;
+      // TODO start acquisition thread
+      acquisition_thread_ = std::thread([this] { acquisition_loop(); });
     }
 
     while (!ctx.cancelled->load()) {
+        if (acquisition_ready_.load(std::memory_order_acquire) && !pending_a_.has_value() && !pending_b_.has_value()) {
+          auto &storage = storage_access().owned_output_storage(0);
+          storage.ptr   = base_a;
+
+          ctx.outputs[0] = holoflow::core::TView{
+              .desc    = ctx.outputs[0].desc,
+              .storage = &storage,
+          };
+        }
+    }
+    return holoflow::core::OpResult::Cancelled;
+  }
+
+  const nlohmann::json &get_cfg() const { return cfg_; }
+
+private:
+  AmetekS711EuresysCoaxlinkQSFPSettings settings_;
+  RuntimeConfig                         runtime_cfg_;
+  HostPtr<uint8_t>                      buffers_;
+  std::unique_ptr<Euresys::EGenTL>      gentl_;
+  std::unique_ptr<Euresys::EGrabber<>>  grabber_a_;
+  std::unique_ptr<Euresys::EGrabber<>>  grabber_b_;
+  std::size_t                           buffer_size_;
+  bool                                  running_;
+  nlohmann::json                        cfg_;
+  std::optional<Euresys::NewBufferData> pending_a_;
+  std::optional<Euresys::NewBufferData> pending_b_;
+
+  // Diagnostics state
+  Clock::time_point          last_rejected_log_{};
+  Clock::time_point          last_pair_log_{};
+  Clock::time_point          last_error_log_{};
+  Clock::time_point          last_requeue_error_log_{};
+  Clock::time_point          last_lifecycle_log_{};
+  Clock::time_point          last_pending_update_log_{};
+  Clock::time_point          last_diagnostic_log_{};
+  Clock::time_point          last_diagnostic_error_log_{};
+  uint64_t                   rejected_pairs_since_log_ = 0;
+  uint64_t                   accepted_pairs_since_log_ = 0;
+  uint64_t                   max_ts_delta_since_log_   = 0;
+  uint64_t                   update_epoch_             = 0;
+  bool                       first_pair_after_update_  = false;
+  std::optional<std::string> first_pair_update_summary_;
+  BankCounters               previous_counters_a_;
+  BankCounters               previous_counters_b_;
+  BankCounters               update_a_;
+  BankCounters               update_b_;
+  BankCounters               resume_a_;
+  BankCounters               resume_b_;
+  bool                       resume_counters_pending_ = false;
+  std::optional<uint64_t>    previous_frame_a_;
+  std::optional<uint64_t>    previous_frame_b_;
+  Clock::time_point          frame_id_retry_a_{};
+  Clock::time_point          frame_id_retry_b_{};
+  uint64_t                   max_frame_step_a_    = 0;
+  uint64_t                   max_frame_step_b_    = 0;
+  uint64_t                   frame_regressions_a_ = 0;
+  uint64_t                   frame_regressions_b_ = 0;
+  bool                       pair_delta_seen_     = false;
+  int64_t                    min_pair_delta_      = 0;
+  int64_t                    max_pair_delta_      = 0;
+
+  // acquisition thread
+  std::thread       acquisition_thread_;
+  std::atomic<bool> acquisition_ready_ = false;
+  std::atomic<bool> acquisition_stop_  = false;
+
+  void acquisition_loop() {
+    while (!acquisition_stop_.load(std::memory_order_acquire)) {
       try {
         const auto timeout_ms = runtime_cfg_.pop_timeout_ms;
 
@@ -983,16 +1058,20 @@ public:
           max_ts_delta_since_log_   = 0;
         }
 
-        auto &storage = storage_access().owned_output_storage(0);
-        storage.ptr   = base_a;
+        // just discard all frames if the previous one is still held by the pipeline
+        // TODO buffer them and throw only when a certain threshold is reached
+        if (pending_a_.has_value() || pending_b_.has_value()) {
+          logger()->warn(
+              "acquisition thread produced a new buffer pair while the previous one is still "
+              "held");
+          requeue_buffer_noexcept(*grabber_a_, data_a, "bank A", last_requeue_error_log_);
+          requeue_buffer_noexcept(*grabber_b_, *data_b, "bank B", last_requeue_error_log_);
 
-        ctx.outputs[0] = holoflow::core::TView{
-            .desc    = ctx.outputs[0].desc,
-            .storage = &storage,
-        };
-
-        pending_a_ = std::move(data_a);
-        pending_b_ = std::move(*data_b);
+        } else {
+          pending_a_ = std::move(data_a);
+          pending_b_ = std::move(*data_b);
+          aquisition_ready_.store(true, std::memory_order_release);
+        }
         return holoflow::core::OpResult::Ok;
 
       } catch (const Euresys::genapi_error &err) {
@@ -1010,56 +1089,7 @@ public:
         }
       }
     }
-
-    return holoflow::core::OpResult::Cancelled;
   }
-
-  const nlohmann::json &get_cfg() const { return cfg_; }
-
-private:
-  AmetekS711EuresysCoaxlinkQSFPSettings settings_;
-  RuntimeConfig                         runtime_cfg_;
-  HostPtr<uint8_t>                      buffers_;
-  std::unique_ptr<Euresys::EGenTL>      gentl_;
-  std::unique_ptr<Euresys::EGrabber<>>  grabber_a_;
-  std::unique_ptr<Euresys::EGrabber<>>  grabber_b_;
-  std::size_t                           buffer_size_;
-  bool                                  running_;
-  nlohmann::json                        cfg_;
-  std::optional<Euresys::NewBufferData> pending_a_;
-  std::optional<Euresys::NewBufferData> pending_b_;
-  Clock::time_point                     last_rejected_log_{};
-  Clock::time_point                     last_pair_log_{};
-  Clock::time_point                     last_error_log_{};
-  Clock::time_point                     last_requeue_error_log_{};
-  Clock::time_point                     last_lifecycle_log_{};
-  Clock::time_point                     last_pending_update_log_{};
-  Clock::time_point                     last_diagnostic_log_{};
-  Clock::time_point                     last_diagnostic_error_log_{};
-  uint64_t                              rejected_pairs_since_log_ = 0;
-  uint64_t                              accepted_pairs_since_log_ = 0;
-  uint64_t                              max_ts_delta_since_log_   = 0;
-  uint64_t                              update_epoch_             = 0;
-  bool                                  first_pair_after_update_  = false;
-  std::optional<std::string>            first_pair_update_summary_;
-  BankCounters                          previous_counters_a_;
-  BankCounters                          previous_counters_b_;
-  BankCounters                          update_a_;
-  BankCounters                          update_b_;
-  BankCounters                          resume_a_;
-  BankCounters                          resume_b_;
-  bool                                  resume_counters_pending_ = false;
-  std::optional<uint64_t>               previous_frame_a_;
-  std::optional<uint64_t>               previous_frame_b_;
-  Clock::time_point                     frame_id_retry_a_{};
-  Clock::time_point                     frame_id_retry_b_{};
-  uint64_t                              max_frame_step_a_    = 0;
-  uint64_t                              max_frame_step_b_    = 0;
-  uint64_t                              frame_regressions_a_ = 0;
-  uint64_t                              frame_regressions_b_ = 0;
-  bool                                  pair_delta_seen_     = false;
-  int64_t                               min_pair_delta_      = 0;
-  int64_t                               max_pair_delta_      = 0;
 };
 
 // -------------------------------------------------------------------------------------------------
