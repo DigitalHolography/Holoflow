@@ -34,6 +34,7 @@
 #undef min
 #include <limits>
 #include <map>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <sstream>
@@ -120,6 +121,11 @@ struct BankCounters {
   std::optional<size_t>   queued_buffers;
   std::optional<size_t>   awaiting_buffers;
 };
+
+class MTGrabber;
+void requeue_buffer_noexcept(MTGrabber &grabber, const Euresys::NewBufferData &data,
+                             const char *label, Clock::time_point &last_error_log,
+                             std::mutex &last_error_log_mutex);
 
 void check(bool condition, const std::string &msg) {
   if (!condition) {
@@ -554,13 +560,15 @@ private:
     if (enqueue_callback_.has_value())
       enqueue_callback_->operator()(static_cast<size_t>(name_), data);
     else
-      requeue_buffer_noexcept(*this, data, "no enqueue callback set", last_error_log_);
+      requeue_buffer_noexcept(*this, data, "no enqueue callback set", last_error_log_,
+                              last_error_log_mutex_);
   }
 
 private:
   EGrabberName                         name_;
   std::optional<EnqueueBufferCallback> enqueue_callback_;
   Clock::time_point                    last_error_log_;
+  std::mutex                           last_error_log_mutex_;
 };
 
 /**
@@ -595,10 +603,12 @@ HostPtr<uint8_t> allocate_shared_buffers(MTGrabber &grabber_a, MTGrabber &grabbe
 }
 
 void requeue_buffer_noexcept(MTGrabber &grabber, const Euresys::NewBufferData &data,
-                             const char *label, Clock::time_point &last_error_log) {
+                             const char *label, Clock::time_point &last_error_log,
+                             std::mutex &last_error_log_mutex) {
   try {
     Euresys::Buffer(data).push(grabber);
   } catch (const std::exception &e) {
+    const std::lock_guard lock(last_error_log_mutex);
     if (log_due(last_error_log)) {
       logger()->error(
           "[AmetekS711EuresysCoaxlinkQSFP] failed to requeue {} buffer while handling an error: {}",
@@ -616,12 +626,6 @@ holoflow::core::DType dtype_from_pixel_format(const std::string &pixel_format) {
   check(dtypes.contains(pixel_format), "unsupported PixelFormat: " + pixel_format);
   return dtypes.at(pixel_format);
 }
-
-struct CameraFrame {
-  Euresys::NewBufferData bank_a;
-  Euresys::NewBufferData bank_b;
-  std::byte             *base;
-};
 
 struct CameraFrame {
   Euresys::NewBufferData bank_a;
@@ -713,6 +717,19 @@ public:
   void push(size_t producer, const Euresys::NewBufferData &frame) {
     assert(producer < producer_count);
 
+    const auto release_frame = [&] {
+      if (producer == 0) {
+        part0_release_callback_(frame);
+      } else {
+        part1_release_callback_(frame);
+      }
+    };
+
+    if (closed_.load(std::memory_order_acquire)) {
+      release_frame();
+      return;
+    }
+
     const size_t generation =
         producer_write_index_[producer].fetch_add(1, std::memory_order_relaxed);
 
@@ -723,8 +740,14 @@ public:
      * This prevents it from wrapping around and touching a slot
      * that may still belong to an older generation.
      */
-    while (generation >= oldest_read_index() + capacity_) {
+    while (!closed_.load(std::memory_order_acquire) &&
+           generation >= oldest_read_index() + capacity_) {
       std::this_thread::yield();
+    }
+
+    if (closed_.load(std::memory_order_acquire)) {
+      release_frame();
+      return;
     }
 
     auto &slot = slots_[generation % capacity_];
@@ -795,14 +818,20 @@ public:
   }
 
   [[nodiscard]]
-  const DType &read_a() {
-    return read(read_index_a_);
+  const DType *read_a(const std::atomic<bool> &cancelled) {
+    return read(read_index_a_, &cancelled);
   }
 
   [[nodiscard]]
   const DType &read_b() {
-    return read(read_index_b_);
+    const auto *frame = read(read_index_b_, nullptr);
+    if (frame == nullptr) {
+      throw std::runtime_error("CameraBufferQueue closed while waiting for reader B");
+    }
+    return *frame;
   }
+
+  void close() { closed_.store(true, std::memory_order_release); }
 
   void release_a() { release(read_index_a_); }
 
@@ -1017,14 +1046,22 @@ private:
   }
 
   [[nodiscard]]
-  const DType &read(std::atomic<size_t> &reader) const {
+  const DType *read(std::atomic<size_t> &reader, const std::atomic<bool> *cancelled) const {
     size_t current = reader.load(std::memory_order_relaxed);
 
     for (;;) {
+      if (cancelled != nullptr && cancelled->load(std::memory_order_acquire)) {
+        return nullptr;
+      }
+
       /*
        * Wait until at least one generation has been published.
-       */
+      */
       while (current == write_index_.load(std::memory_order_acquire)) {
+        if (closed_.load(std::memory_order_acquire) ||
+            (cancelled != nullptr && cancelled->load(std::memory_order_acquire))) {
+          return nullptr;
+        }
         std::this_thread::yield();
 
         current = reader.load(std::memory_order_relaxed);
@@ -1039,7 +1076,7 @@ private:
          * The acquire above synchronizes with the producer's
          * publication of Ready.
          */
-        return slot.data;
+        return &slot.data;
       }
 
       /*
@@ -1131,6 +1168,8 @@ private:
   static constexpr unsigned releasing_ = std::numeric_limits<unsigned>::max();
 
   const size_t capacity_;
+
+  std::atomic<bool> closed_{false};
 
   /*
    * Each slot is independently stateful.
@@ -1256,18 +1295,22 @@ public:
         buffer_queue_(
             runtime_cfg_.nb_buffers,
             [this](const auto &data) {
-              requeue_buffer_noexcept(*grabber_a_, data, "bank A", last_requeue_error_log_);
+              requeue_buffer_noexcept(*grabber_a_, data, "bank A", last_requeue_error_log_,
+                                      requeue_error_mutex_);
             },
             [this](const auto &data) {
-              requeue_buffer_noexcept(*grabber_b_, data, "bank B", last_requeue_error_log_);
+              requeue_buffer_noexcept(*grabber_b_, data, "bank B", last_requeue_error_log_,
+                                      requeue_error_mutex_);
             },
             [this](const auto &part0, const auto &part1) {
               auto buf  = Euresys::Buffer(part0);
               auto base = static_cast<std::byte *>(
                   buf.getInfo<void *>(*this->grabber_a_, GenTL::BUFFER_INFO_BASE));
               if (!validate_buffer_data(part0, part1)) {
-                requeue_buffer_noexcept(*grabber_a_, part0, "bank A", last_requeue_error_log_);
-                requeue_buffer_noexcept(*grabber_b_, part1, "bank B", last_requeue_error_log_);
+                requeue_buffer_noexcept(*grabber_a_, part0, "bank A", last_requeue_error_log_,
+                                        requeue_error_mutex_);
+                requeue_buffer_noexcept(*grabber_b_, part1, "bank B", last_requeue_error_log_,
+                                        requeue_error_mutex_);
 
                 return std::optional<CameraBufferQueue::DType>();
               }
@@ -1289,6 +1332,7 @@ public:
   }
 
   ~AmetekS711EuresysCoaxlinkQSFP() override {
+    buffer_queue_.close();
     try {
       if (running_) {
         grabber_a_->stop();
@@ -1318,6 +1362,7 @@ public:
   }
 
   void log_update_lifecycle(bool replacing) {
+    const std::lock_guard lock(diagnostics_mutex_);
     if (!buffer_queue_.empty() && log_due(last_pending_update_log_)) {
       logger()->error("[AmetekS711EuresysCoaxlinkQSFP::update] updating with unreleased frames: {}",
                       buffer_queue_.size());
@@ -1570,10 +1615,13 @@ public:
     }
 
     while (!ctx.cancelled->load()) {
-      auto &next = buffer_queue_.read_a();
-      if (next.base) {
+      const auto *next = buffer_queue_.read_a(*ctx.cancelled);
+      if (next == nullptr) {
+        return holoflow::core::OpResult::Cancelled;
+      }
+      if (next->base) {
         auto &storage = storage_access().owned_output_storage(0);
-        storage.ptr   = next.base;
+        storage.ptr   = next->base;
 
         ctx.outputs[0] = holoflow::core::TView{
             .desc    = ctx.outputs[0].desc,
@@ -1590,6 +1638,7 @@ public:
 private:
   bool validate_buffer_data(const Euresys::NewBufferData &data_a,
                             const Euresys::NewBufferData &data_b) {
+    const std::lock_guard lock(diagnostics_mutex_);
     using namespace Euresys;
     constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
     constexpr auto TIMESTAMP = GenTL::BUFFER_INFO_TIMESTAMP;
@@ -1694,6 +1743,8 @@ private:
   nlohmann::json                        cfg_;
 
   // Diagnostics state
+  std::mutex                 diagnostics_mutex_;
+  std::mutex                 requeue_error_mutex_;
   Clock::time_point          last_rejected_log_{};
   Clock::time_point          last_pair_log_{};
   Clock::time_point          last_error_log_{};
