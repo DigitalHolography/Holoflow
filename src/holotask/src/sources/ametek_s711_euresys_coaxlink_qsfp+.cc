@@ -924,7 +924,8 @@ private:
     std::atomic<SlotState> state{SlotState::Empty};
 
     /*
-     * Number of readers currently owning `data`.
+     * Number of readers that still own a Ready frame or need to
+     * acknowledge a Dropped generation.
      *
      * 0 -> no reader
      * 1 -> reader A
@@ -963,13 +964,13 @@ private:
     slot.part0.reset();
     slot.part1.reset();
 
+    const unsigned reader_count = reader_b_active_.load(std::memory_order_acquire) ? 2u : 1u;
+
     if (assembled.has_value()) {
       /*
        * Move rather than copy the assembled CameraFrame.
        */
       slot.data = std::move(*assembled);
-
-      const unsigned reader_count = reader_b_active_.load(std::memory_order_acquire) ? 2u : 1u;
 
       slot.readers.store(reader_count, std::memory_order_release);
 
@@ -984,8 +985,10 @@ private:
        * The assembler has already handled both buffers.
        *
        * This generation is nevertheless COMPLETE from the
-       * queue's ordering perspective. Readers will skip it.
+       * queue's ordering perspective. Readers will skip it, and
+       * the final reader will recycle the slot.
        */
+      slot.readers.store(reader_count, std::memory_order_release);
       slot.state.store(SlotState::Dropped, std::memory_order_release);
     }
 
@@ -1082,14 +1085,12 @@ private:
       /*
        * A dropped generation has no CameraFrame to return.
        *
-       * It also has no readers, so we can immediately recycle
-       * the slot once we have consumed this generation.
+       * Keep the slot marked as dropped until every active reader
+       * has consumed this generation.
        */
       assert(state == SlotState::Dropped);
 
-      slot.parts_ready.store(0, std::memory_order_relaxed);
-
-      slot.state.store(SlotState::Empty, std::memory_order_release);
+      acknowledge_dropped(slot);
 
       current++;
 
@@ -1101,6 +1102,12 @@ private:
     const size_t current = reader.load(std::memory_order_relaxed);
 
     auto &slot = slots_[current % capacity_];
+
+    if (slot.state.load(std::memory_order_acquire) == SlotState::Dropped) {
+      acknowledge_dropped(slot);
+      reader.store(current + 1, std::memory_order_release);
+      return;
+    }
 
     unsigned readers = slot.readers.load(std::memory_order_acquire);
 
@@ -1160,6 +1167,15 @@ private:
   void release_callback(DType &&data) {
     part0_release_callback_(data.bank_a);
     part1_release_callback_(data.bank_b);
+  }
+
+  void acknowledge_dropped(Slot &slot) {
+    const unsigned remaining = slot.readers.fetch_sub(1, std::memory_order_acq_rel);
+    assert(remaining != 0);
+    if (remaining == 1) {
+      slot.parts_ready.store(0, std::memory_order_relaxed);
+      slot.state.store(SlotState::Empty, std::memory_order_release);
+    }
   }
 
 private:
