@@ -525,16 +525,20 @@ void Compiler::Impl::deduce_const_tasks() {
         throw CompilerException(std::format(
             "Node '{}' is marked constant but has a non-constant predecessor", node.spec.name));
       }
-      continue;
+    } else if (node.infer.constness == core::ConstInferenceState::Undefined) {
+      node.infer.constness = (in_degree != 0 && predecessor_const())
+                                 ? core::ConstInferenceState::Constant
+                                 : core::ConstInferenceState::Mutable;
     }
 
-    if (node.infer.constness == core::ConstInferenceState::Mutable) {
-      continue;
+    // The one-time path cannot safely release or reacquire owned task memory.
+    // Keep such tasks in the recurring path; this also makes their descendants
+    // mutable as they are visited later in topological order.
+    if (node.infer.constness == core::ConstInferenceState::Constant &&
+        (std::ranges::any_of(node.infer.owned_inputs, [](bool owned) { return owned; }) ||
+         std::ranges::any_of(node.infer.owned_outputs, [](bool owned) { return owned; }))) {
+      node.infer.constness = core::ConstInferenceState::Mutable;
     }
-
-    node.infer.constness = (in_degree != 0 && predecessor_const())
-                               ? core::ConstInferenceState::Constant
-                               : core::ConstInferenceState::Mutable;
   }
 }
 

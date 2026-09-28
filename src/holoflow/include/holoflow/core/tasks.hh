@@ -232,7 +232,9 @@ enum class TaskKind {
   Async, /// Asynchronous
 };
 
-/// Constness state deduced by the compiler from task metadata and graph inputs.
+/// Whether a synchronous task may be initialized once and have its output reused.
+/// Factories marking a task Constant promise that its output is stable for the
+/// scheduler's lifetime and that it has no per-iteration side effects.
 enum class ConstInferenceState : uint8_t {
   Undefined,
   Constant,

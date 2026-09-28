@@ -130,7 +130,7 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
   init_tviews();
   build_event_handles();
   build_nodes_rts();
-  reset_const_task_states();
+  init_const_task_states();
 }
 
 Scheduler::~Scheduler() {
@@ -166,8 +166,17 @@ void Scheduler::start() {
   }
 
   stop_.store(false);
-  reset_const_task_states();
+  {
+    std::lock_guard lock(const_init_mutex_);
+    const_init_sections_ready_ = 0;
+    const_init_complete_      = sections_.empty();
+  }
   reset_metrics_state();
+  if (sections_.empty()) {
+    stop_.store(true);
+    running_.store(false);
+    return;
+  }
   start_metrics_thread();
   threads_.reserve(sections_.size());
   for (size_t i = 0; i < sections_.size(); i++) {
@@ -305,7 +314,7 @@ void Scheduler::build_nodes_rts() {
   }
 }
 
-void Scheduler::reset_const_task_states() {
+void Scheduler::init_const_task_states() {
   const auto num_vertices = boost::num_vertices(graph_);
   const_task_states_.assign(num_vertices, core::ConstTaskState::NotConstant);
 
@@ -348,6 +357,9 @@ void Scheduler::run_section(int section_id) {
     // deliberately excluded from the recurring execution loop below.
     std::vector<GraphPlan::vertex_descriptor> completed_const_nodes;
     for (auto v : sec.const_sync_topo) {
+      if (stop_.load())
+        break;
+
       const auto idx = boost::get(boost::vertex_index, graph_, v);
       if (const_task_states_.at(idx) != core::ConstTaskState::ConstantNotComputed)
         continue;
@@ -361,9 +373,6 @@ void Scheduler::run_section(int section_id) {
       } catch (...) {
         rethrow_with_node_context(graph_, v, "execute_constant", section_id, sec.name);
       }
-
-      if (stop_.load())
-        return;
     }
 
     for (auto v : completed_const_nodes) {
@@ -376,13 +385,36 @@ void Scheduler::run_section(int section_id) {
 
     CUDA_CHECK(cudaStreamSynchronize(stream));
 
-    bool any_recurring_work = false;
-    for (const auto &section : sections_) {
-      any_recurring_work = any_recurring_work || !section.sync_topo.empty() ||
-                           !section.async_cons.empty() || !section.async_prod.empty();
+    const bool any_recurring_work = std::any_of(
+        sections_.begin(), sections_.end(), [](const Section &section) {
+          return !section.sync_topo.empty() || !section.async_cons.empty() ||
+                 !section.async_prod.empty();
+        });
+
+    // All sections must finish initializing constants before any of them can
+    // enter the recurring loop or stop the scheduler for a constant-only graph.
+    {
+      std::unique_lock lock(const_init_mutex_);
+      ++const_init_sections_ready_;
+      if (const_init_sections_ready_ == sections_.size()) {
+        const_init_complete_ = true;
+        if (!any_recurring_work && !stop_.load()) {
+          stop_.store(true);
+        }
+        const_init_cv_.notify_all();
+      } else {
+        const_init_cv_.wait(lock, [this] {
+          return const_init_complete_ || stop_.load();
+        });
+      }
     }
-    if (!any_recurring_work) {
-      stop_.store(true);
+
+    if (stop_.load()) {
+      return;
+    }
+    const bool section_has_recurring_work = !sec.sync_topo.empty() || !sec.async_cons.empty() ||
+                                            !sec.async_prod.empty();
+    if (!section_has_recurring_work) {
       return;
     }
 
