@@ -532,6 +532,37 @@ void apply_cfg(Euresys::EGrabberCameraInfo &info, const RuntimeConfig &cfg) {
   apply_stream(bank_b_index, cfg.offsets[1]);
 }
 
+class MTGrabber : public Euresys::EGrabber<Euresys::CallbackMultiThread> {
+public:
+  enum class EGrabberName : uint8_t { A = 0, B = 1 };
+  using EnqueueBufferCallback =
+      std::function<void(size_t producer_id, const Euresys::NewBufferData &)>;
+
+  MTGrabber(Euresys::EGrabberCameraInfo info, EGrabberName name,
+            std::optional<EnqueueBufferCallback> enqueue_callback = std::nullopt)
+      : EGrabber<Euresys::CallbackMultiThread>(info), name_{name},
+        enqueue_callback_{enqueue_callback} {
+    enableEvent<Euresys::NewBufferData>();
+  }
+
+  void set_enqueue_callback(EnqueueBufferCallback &&enqueue_callback) {
+    enqueue_callback_ = std::move(enqueue_callback);
+  }
+
+private:
+  virtual void onNewBufferEvent(const Euresys::NewBufferData &data) override {
+    if (enqueue_callback_.has_value())
+      enqueue_callback_->operator()(static_cast<size_t>(name_), data);
+    else
+      requeue_buffer_noexcept(*this, data, "no enqueue callback set", last_error_log_);
+  }
+
+private:
+  EGrabberName                         name_;
+  std::optional<EnqueueBufferCallback> enqueue_callback_;
+  Clock::time_point                    last_error_log_;
+};
+
 /**
  * Allocate a host-resident buffer pool and announce the exact same buffer slots
  * to both banks.
@@ -540,9 +571,8 @@ void apply_cfg(Euresys::EGrabberCameraInfo &info, const RuntimeConfig &cfg) {
  * final frame because the stream geometry has already been configured with the
  * appropriate StripeOffset / StripePitch / StripeArrangement values.
  */
-HostPtr<uint8_t> allocate_shared_buffers(Euresys::EGrabber<> &grabber_a,
-                                         Euresys::EGrabber<> &grabber_b, std::size_t nb_buffers,
-                                         std::size_t buffer_size) {
+HostPtr<uint8_t> allocate_shared_buffers(MTGrabber &grabber_a, MTGrabber &grabber_b,
+                                         std::size_t nb_buffers, std::size_t buffer_size) {
   logger()->info(
       "[AmetekS711EuresysCoaxlinkQSFPFactory] allocating {} shared host buffers of size {} bytes",
       nb_buffers, buffer_size);
@@ -564,7 +594,7 @@ HostPtr<uint8_t> allocate_shared_buffers(Euresys::EGrabber<> &grabber_a,
   return buffers;
 }
 
-void requeue_buffer_noexcept(Euresys::EGrabber<> &grabber, const Euresys::NewBufferData &data,
+void requeue_buffer_noexcept(MTGrabber &grabber, const Euresys::NewBufferData &data,
                              const char *label, Clock::time_point &last_error_log) {
   try {
     Euresys::Buffer(data).push(grabber);
@@ -593,16 +623,29 @@ struct CameraFrame {
   std::byte             *base;
 };
 
+struct CameraFrame {
+  Euresys::NewBufferData bank_a;
+  Euresys::NewBufferData bank_b;
+  std::byte             *base{};
+};
+
 class CameraBufferQueue {
 public:
-  using DType                                 = CameraFrame;
-  using ReleaseCallback                       = std::function<void(DType &&)>;
-  static constexpr size_t safety_padding_size = 10;
+  using DType                     = CameraFrame;
+  using BufferDataReleaseCallback = std::function<void(const Euresys::NewBufferData &)>;
+  using BufferAssemblerCallback   = std::function<std::optional<CameraFrame>(
+      Euresys::NewBufferData &&, Euresys::NewBufferData &&)>;
 
-  CameraBufferQueue(size_t capacity, ReleaseCallback release_callback)
+  static constexpr size_t producer_count      = 2;
+  static constexpr size_t safety_padding_size = 16;
+
+  CameraBufferQueue(size_t capacity, BufferDataReleaseCallback part0_release_callback,
+                    BufferDataReleaseCallback part1_release_callback,
+                    BufferAssemblerCallback   buffer_assembler_callback)
       : capacity_{capacity}, slots_{std::make_unique<Slot[]>(capacity)},
-        release_callback_{std::move(release_callback)} {
-    // We use all slots, so capacity must be > 0.
+        part0_release_callback_{std::move(part0_release_callback)},
+        part1_release_callback_{std::move(part1_release_callback)},
+        buffer_assembler_callback_{std::move(buffer_assembler_callback)} {
     if (capacity_ == 0) {
       throw std::invalid_argument("CameraBufferQueue capacity must be > 0");
     }
@@ -611,29 +654,144 @@ public:
   ~CameraBufferQueue() {
     for (size_t i = 0; i < capacity_; ++i) {
       auto &slot = slots_[i];
-      if (slot.readers.load(std::memory_order_relaxed) != 0) {
-        release_callback_(std::move(slot.data));
+
+      const auto state = slot.state.load(std::memory_order_relaxed);
+
+      /*
+       * A partially assembled generation still owns whichever
+       * buffers have arrived.
+       */
+      if (state == SlotState::Collecting) {
+        if (slot.part0.has_value()) {
+          part0_release_callback_(*slot.part0);
+          slot.part0.reset();
+        }
+
+        if (slot.part1.has_value()) {
+          part1_release_callback_(*slot.part1);
+          slot.part1.reset();
+        }
+
+        continue;
       }
+
+      /*
+       * A Ready frame is owned by the queue/readers.
+       */
+      if (state == SlotState::Ready) {
+        if (slot.readers.load(std::memory_order_relaxed) != 0) {
+          release_callback(std::move(slot.data));
+        }
+
+        continue;
+      }
+
+      /*
+       * Dropped means the assembler already dealt with both
+       * buffers. There is nothing left for us to release.
+       */
     }
   }
 
   CameraBufferQueue(const CameraBufferQueue &)            = delete;
   CameraBufferQueue &operator=(const CameraBufferQueue &) = delete;
 
-  void push(DType &&frame) {
-    const auto write = write_index_.load(std::memory_order_relaxed);
-    auto      &slot  = slots_[write % capacity_];
+  CameraBufferQueue(CameraBufferQueue &&)            = delete;
+  CameraBufferQueue &operator=(CameraBufferQueue &&) = delete;
 
-    while (slot.readers.load(std::memory_order_acquire) != 0) {
+  /**
+   * Push one half of a frame.
+   *
+   * producer must be 0 or 1.
+   *
+   * The nth frame submitted by producer 0 is paired with the
+   * nth frame submitted by producer 1.
+   *
+   * The input NewBufferData is copied into the slot because the
+   * Euresys callback gives us a const reference.
+   */
+  void push(size_t producer, const Euresys::NewBufferData &frame) {
+    assert(producer < producer_count);
+
+    const size_t generation =
+        producer_write_index_[producer].fetch_add(1, std::memory_order_relaxed);
+
+    /*
+     * Don't allow this producer to get more than `capacity`
+     * generations ahead of the oldest consumer.
+     *
+     * This prevents it from wrapping around and touching a slot
+     * that may still belong to an older generation.
+     */
+    while (generation >= oldest_read_index() + capacity_) {
       std::this_thread::yield();
     }
 
-    slot.data               = std::move(frame);
-    const auto reader_count = reader_b_active_.load(std::memory_order_acquire) ? 2u : 1u;
-    slot.readers.store(reader_count, std::memory_order_release);
+    auto &slot = slots_[generation % capacity_];
 
-    // Publishing the index makes the written frame visible to readers.
-    write_index_.store(write + 1, std::memory_order_release);
+    /*
+     * Claim the slot.
+     *
+     * Exactly one of the two producers will transition:
+     *
+     *     Empty -> Collecting
+     *
+     * The other producer will observe Collecting.
+     */
+    SlotState expected = SlotState::Empty;
+
+    if (slot.state.compare_exchange_strong(expected, SlotState::Collecting,
+                                           std::memory_order_acq_rel, std::memory_order_acquire)) {
+
+      /*
+       * We are the first producer for this generation.
+       *
+       * A freshly reused slot must have no stale producer state.
+       */
+      assert(slot.parts_ready.load(std::memory_order_relaxed) == 0);
+      assert(!slot.part0.has_value());
+      assert(!slot.part1.has_value());
+      assert(slot.readers.load(std::memory_order_relaxed) == 0);
+    } else {
+      /*
+       * The only valid state here is Collecting.
+       *
+       * Ready/Dropped would mean the other producer already
+       * completed this generation, which is impossible for the
+       * matching generation unless the pairing assumption was
+       * violated.
+       */
+      assert(expected == SlotState::Collecting);
+    }
+
+    /*
+     * Store our half.
+     *
+     * Producer 0 and producer 1 write different optional objects,
+     * so there is no data race between these assignments.
+     */
+    if (producer == 0) {
+      slot.part0 = frame;
+    } else {
+      slot.part1 = frame;
+    }
+
+    /*
+     * Publish that our producer has arrived.
+     *
+     * The release/acquire synchronization here ensures that the
+     * second producer sees the first producer's NewBufferData.
+     */
+    const unsigned bit = 1u << static_cast<unsigned>(producer);
+
+    const unsigned previous = slot.parts_ready.fetch_or(bit, std::memory_order_acq_rel);
+
+    /*
+     * We are the second producer.
+     */
+    if ((previous | bit) == producer_mask()) {
+      complete_generation(generation, slot);
+    }
   }
 
   [[nodiscard]]
@@ -654,6 +812,12 @@ public:
     if (reader_b_active_.exchange(true, std::memory_order_acq_rel)) {
       throw std::logic_error("CameraBufferQueue reader B is already active");
     }
+
+    /*
+     * B starts at the current publication point, so it doesn't
+     * consume frames that were already published before it
+     * subscribed.
+     */
     read_index_b_.store(write_index_.load(std::memory_order_acquire), std::memory_order_release);
   }
 
@@ -663,6 +827,7 @@ public:
     }
 
     const auto end = write_index_.load(std::memory_order_acquire);
+
     while (read_index_b_.load(std::memory_order_relaxed) != end) {
       release_b();
     }
@@ -671,6 +836,7 @@ public:
   [[nodiscard]]
   bool empty_b() const {
     const auto write = write_index_.load(std::memory_order_acquire);
+
     return read_index_b_.load(std::memory_order_relaxed) == write;
   }
 
@@ -679,88 +845,326 @@ public:
     return capacity_;
   }
 
+  /**
+   * Number of published generations that have not yet been
+   * consumed by the oldest active reader.
+   *
+   * This includes dropped generations until a reader skips them.
+   */
   [[nodiscard]]
   size_t size() const {
-    auto w      = write_index_.load();
-    auto a      = read_index_a_.load();
-    auto oldest = a;
-    if (reader_b_active_.load()) {
-      auto b = read_index_b_.load();
-      oldest = std::min(a, b);
-    }
+    const auto w = write_index_.load(std::memory_order_acquire);
 
-    std::ptrdiff_t diff = w - oldest;
-    return diff < 0 ? diff + capacity_ : diff;
+    return w - oldest_read_index();
   }
 
   [[nodiscard]]
   bool empty() const {
-    auto w      = write_index_.load();
-    auto a      = read_index_a_.load();
-    auto oldest = a;
-    if (reader_b_active_.load()) {
-      auto b = read_index_b_.load();
-      oldest = std::min(a, b);
-    }
-
-    return w == oldest;
+    return size() == 0;
   }
 
 private:
+  enum class SlotState : unsigned char {
+    Empty,
+    Collecting,
+    Ready,
+    Dropped,
+  };
+
   struct Slot {
-    DType                 data;
+    /*
+     * Valid only when state == Ready.
+     */
+    DType data;
+
+    /*
+     * Valid only while state == Collecting.
+     */
+    std::optional<Euresys::NewBufferData> part0;
+    std::optional<Euresys::NewBufferData> part1;
+
+    /*
+     * bit 0 -> producer 0 arrived
+     * bit 1 -> producer 1 arrived
+     */
+    std::atomic<unsigned> parts_ready{0};
+
+    /*
+     * Slot lifetime state.
+     */
+    std::atomic<SlotState> state{SlotState::Empty};
+
+    /*
+     * Number of readers currently owning `data`.
+     *
+     * 0 -> no reader
+     * 1 -> reader A
+     * 2 -> readers A+B
+     * releasing_ -> final reader is releasing
+     */
     std::atomic<unsigned> readers{0};
   };
 
-  [[nodiscard]]
-  const DType &read(const std::atomic<size_t> &reader) const {
-    auto current = reader.load(std::memory_order_relaxed);
+  static constexpr unsigned producer_mask() { return (1u << producer_count) - 1u; }
 
-    // wait for data to be available
-    while (current == write_index_.load(std::memory_order_acquire)) {
-      std::this_thread::yield();
-      current = reader.load(std::memory_order_relaxed);
+  /**
+   * Called by the second producer.
+   *
+   * The assembler takes ownership of both NewBufferData objects.
+   *
+   * IMPORTANT:
+   *
+   * If the assembler returns std::nullopt, it is responsible for
+   * releasing/requeueing both buffers itself.
+   */
+  void complete_generation(size_t generation, Slot &slot) {
+    assert(slot.parts_ready.load(std::memory_order_acquire) == producer_mask());
+
+    assert(slot.part0.has_value());
+    assert(slot.part1.has_value());
+
+    auto assembled = buffer_assembler_callback_(std::move(*slot.part0), std::move(*slot.part1));
+
+    /*
+     * The assembler now owns the two input buffers regardless
+     * of whether it succeeded.
+     *
+     * Therefore the queue must NOT release them.
+     */
+    slot.part0.reset();
+    slot.part1.reset();
+
+    if (assembled.has_value()) {
+      /*
+       * Move rather than copy the assembled CameraFrame.
+       */
+      slot.data = std::move(*assembled);
+
+      const unsigned reader_count = reader_b_active_.load(std::memory_order_acquire) ? 2u : 1u;
+
+      slot.readers.store(reader_count, std::memory_order_release);
+
+      /*
+       * The complete CameraFrame is now visible.
+       */
+      slot.state.store(SlotState::Ready, std::memory_order_release);
+    } else {
+      /*
+       * Assembly failed.
+       *
+       * The assembler has already handled both buffers.
+       *
+       * This generation is nevertheless COMPLETE from the
+       * queue's ordering perspective. Readers will skip it.
+       */
+      slot.state.store(SlotState::Dropped, std::memory_order_release);
     }
 
-    return slots_[current % capacity_].data;
+    /*
+     * Make this generation, and any consecutive generations that
+     * have already completed, visible to readers.
+     */
+    publish_completed(generation);
+  }
+
+  /**
+   * Advance write_index through every consecutive completed slot.
+   *
+   * A producer can finish generation N+1 before generation N.
+   * Therefore we cannot simply publish `generation + 1`.
+   */
+  void publish_completed(size_t /*generation*/) {
+    for (;;) {
+      size_t current = write_index_.load(std::memory_order_acquire);
+
+      auto &slot = slots_[current % capacity_];
+
+      const SlotState state = slot.state.load(std::memory_order_acquire);
+
+      /*
+       * This generation has not completed yet.
+       */
+      if (state == SlotState::Empty || state == SlotState::Collecting) {
+        return;
+      }
+
+      /*
+       * Ready and Dropped are both completed generations.
+       *
+       * Publish them in sequence.
+       */
+      if (write_index_.compare_exchange_weak(current, current + 1, std::memory_order_release,
+                                             std::memory_order_acquire)) {
+        continue;
+      }
+    }
+  }
+
+  /**
+   * Return the oldest reader position.
+   */
+  [[nodiscard]]
+  size_t oldest_read_index() const {
+    const auto a = read_index_a_.load(std::memory_order_acquire);
+
+    if (!reader_b_active_.load(std::memory_order_acquire)) {
+      return a;
+    }
+
+    const auto b = read_index_b_.load(std::memory_order_acquire);
+
+    return std::min(a, b);
+  }
+
+  [[nodiscard]]
+  const DType &read(std::atomic<size_t> &reader) const {
+    size_t current = reader.load(std::memory_order_relaxed);
+
+    for (;;) {
+      /*
+       * Wait until at least one generation has been published.
+       */
+      while (current == write_index_.load(std::memory_order_acquire)) {
+        std::this_thread::yield();
+
+        current = reader.load(std::memory_order_relaxed);
+      }
+
+      auto &slot = slots_[current % capacity_];
+
+      const SlotState state = slot.state.load(std::memory_order_acquire);
+
+      if (state == SlotState::Ready) {
+        /*
+         * The acquire above synchronizes with the producer's
+         * publication of Ready.
+         */
+        return slot.data;
+      }
+
+      /*
+       * A dropped generation has no CameraFrame to return.
+       *
+       * It also has no readers, so we can immediately recycle
+       * the slot once we have consumed this generation.
+       */
+      assert(state == SlotState::Dropped);
+
+      slot.parts_ready.store(0, std::memory_order_relaxed);
+
+      slot.state.store(SlotState::Empty, std::memory_order_release);
+
+      current++;
+
+      reader.store(current, std::memory_order_release);
+    }
   }
 
   void release(std::atomic<size_t> &reader) {
-    const auto current = reader.load(std::memory_order_relaxed);
-    auto      &slot    = slots_[current % capacity_];
-    auto       readers = slot.readers.load(std::memory_order_acquire);
+    const size_t current = reader.load(std::memory_order_relaxed);
+
+    auto &slot = slots_[current % capacity_];
+
+    unsigned readers = slot.readers.load(std::memory_order_acquire);
 
     for (;;) {
-      assert(readers != 0 && readers != releasing_);
+      assert(readers != 0);
+      assert(readers != releasing_);
 
-      // release the slot if readers reaches 0
-      // otherwise it decrements the reader counter
       if (readers == 1) {
+        /*
+         * We are the last reader.
+         *
+         * Temporarily mark the slot as releasing so another
+         * reader/reuser cannot race with the callback.
+         */
         if (slot.readers.compare_exchange_weak(readers, releasing_, std::memory_order_acq_rel,
                                                std::memory_order_acquire)) {
-          release_callback_(std::move(slot.data));
+
+          release_callback(std::move(slot.data));
+
+          /*
+           * No producer parts should remain after successful
+           * assembly.
+           */
+          assert(!slot.part0.has_value());
+          assert(!slot.part1.has_value());
+
+          slot.parts_ready.store(0, std::memory_order_relaxed);
+
+          /*
+           * The frame is no longer available.
+           */
+          slot.state.store(SlotState::Empty, std::memory_order_release);
+
+          /*
+           * Finally make the slot reusable.
+           */
           slot.readers.store(0, std::memory_order_release);
+
           break;
         }
-      } else if (slot.readers.compare_exchange_weak(readers, readers - 1, std::memory_order_acq_rel,
-                                                    std::memory_order_acquire)) {
-        break;
+      } else {
+        if (slot.readers.compare_exchange_weak(readers, readers - 1, std::memory_order_acq_rel,
+                                               std::memory_order_acquire)) {
+          break;
+        }
       }
     }
 
     reader.store(current + 1, std::memory_order_release);
   }
 
+  /**
+   * Release both buffers contained in a complete CameraFrame.
+   *
+   * This is only called for a successfully assembled frame.
+   */
+  void release_callback(DType &&data) {
+    part0_release_callback_(data.bank_a);
+    part1_release_callback_(data.bank_b);
+  }
+
 private:
-  static constexpr size_t   cache_line_size_ = std::hardware_destructive_interference_size;
-  static constexpr unsigned releasing_       = std::numeric_limits<unsigned>::max();
+  static constexpr size_t cache_line_size_ = std::hardware_destructive_interference_size;
+
+  static constexpr unsigned releasing_ = std::numeric_limits<unsigned>::max();
 
   const size_t capacity_;
 
+  /*
+   * Each slot is independently stateful.
+   *
+   * In practice you may want to pad Slot itself to a cache line
+   * if profiling shows significant false sharing between adjacent
+   * slots.
+   */
   std::unique_ptr<Slot[]> slots_;
-  ReleaseCallback         release_callback_;
 
+  BufferDataReleaseCallback part0_release_callback_;
+
+  BufferDataReleaseCallback part1_release_callback_;
+
+  /*
+   * If assembly fails, this callback is responsible for dealing
+   * with both input buffers.
+   */
+  BufferAssemblerCallback buffer_assembler_callback_;
+
+  /*
+   * Number of COMPLETE generations visible to readers.
+   */
   alignas(cache_line_size_) std::atomic<size_t> write_index_{0};
+
+  /*
+   * Independent generation counters for the two producers.
+   *
+   * The pairing contract is:
+   *
+   *   producer 0 generation N
+   *          <-> producer 1 generation N
+   */
+  alignas(cache_line_size_) std::atomic<size_t> producer_write_index_[producer_count]{0, 0};
 
   alignas(cache_line_size_) std::atomic<size_t> read_index_a_{0};
 
@@ -841,29 +1245,52 @@ class AmetekS711EuresysCoaxlinkQSFP : public holoflow::core::ISyncTask {
 public:
   AmetekS711EuresysCoaxlinkQSFP(const AmetekS711EuresysCoaxlinkQSFPSettings &settings,
                                 RuntimeConfig runtime_cfg, HostPtr<uint8_t> &&buffers,
-                                std::unique_ptr<Euresys::EGenTL>     &&gentl,
-                                std::unique_ptr<Euresys::EGrabber<>> &&grabber_a,
-                                std::unique_ptr<Euresys::EGrabber<>> &&grabber_b,
-                                std::size_t buffer_size, nlohmann::json normalized_cfg)
+                                std::unique_ptr<Euresys::EGenTL> &&gentl,
+                                std::unique_ptr<MTGrabber>       &&grabber_a,
+                                std::unique_ptr<MTGrabber> &&grabber_b, std::size_t buffer_size,
+                                nlohmann::json normalized_cfg)
       : settings_(settings), runtime_cfg_(std::move(runtime_cfg)), buffers_(std::move(buffers)),
         gentl_(std::move(gentl)), grabber_a_(std::move(grabber_a)),
         grabber_b_(std::move(grabber_b)), buffer_size_(buffer_size), running_(false),
         cfg_(std::move(normalized_cfg)),
-        buffer_queue_(runtime_cfg_.nb_buffers, [this](CameraFrame &&frame) {
-          requeue_buffer_noexcept(*grabber_a_, frame.bank_a, "bank A", last_requeue_error_log_);
-          requeue_buffer_noexcept(*grabber_b_, frame.bank_b, "bank B", last_requeue_error_log_);
-        }) {
+        buffer_queue_(
+            runtime_cfg_.nb_buffers,
+            [this](const auto &data) {
+              requeue_buffer_noexcept(*grabber_a_, data, "bank A", last_requeue_error_log_);
+            },
+            [this](const auto &data) {
+              requeue_buffer_noexcept(*grabber_b_, data, "bank B", last_requeue_error_log_);
+            },
+            [this](const auto &part0, const auto &part1) {
+              auto buf  = Euresys::Buffer(part0);
+              auto base = static_cast<std::byte *>(
+                  buf.getInfo<void *>(*this->grabber_a_, GenTL::BUFFER_INFO_BASE));
+              if (!validate_buffer_data(part0, part1)) {
+                requeue_buffer_noexcept(*grabber_a_, part0, "bank A", last_requeue_error_log_);
+                requeue_buffer_noexcept(*grabber_b_, part1, "bank B", last_requeue_error_log_);
+
+                return std::optional<CameraBufferQueue::DType>();
+              }
+
+              auto res = std::optional<CameraBufferQueue::DType>(
+                  {.bank_a = std::move(part0), .bank_b = std::move(part1), .base = base});
+
+              return res;
+            }) {
     HOLOVIBES_CHECK(gentl_ != nullptr);
     HOLOVIBES_CHECK(grabber_a_ != nullptr);
     HOLOVIBES_CHECK(grabber_b_ != nullptr);
     HOLOVIBES_CHECK(buffers_ != nullptr);
+
+    grabber_a_->set_enqueue_callback(
+        [this](size_t producer_id, const auto &data) { buffer_queue_.push(producer_id, data); });
+    grabber_b_->set_enqueue_callback(
+        [this](size_t producer_id, const auto &data) { buffer_queue_.push(producer_id, data); });
   }
 
   ~AmetekS711EuresysCoaxlinkQSFP() override {
     try {
       if (running_) {
-        acquisition_stop_.store(true, std::memory_order_release);
-        acquisition_thread_.join();
         grabber_a_->stop();
         grabber_b_->stop();
       }
@@ -933,7 +1360,7 @@ public:
     }
   }
 
-  BankCounters read_bank_counters(Euresys::EGrabber<> &grabber, const char *bank) {
+  BankCounters read_bank_counters(MTGrabber &grabber, const char *bank) {
     const auto rejected = std::format("bank {} RejectedFrame", bank);
     const auto broken   = std::format("bank {} BrokenFrame", bank);
     const auto underrun = std::format("bank {} buffer underruns", bank);
@@ -1065,8 +1492,8 @@ public:
                                uint64_t delivered_a, uint64_t delivered_b, uint64_t ts_a,
                                uint64_t ts_b, const Euresys::NewBufferData &data_a,
                                const Euresys::NewBufferData &data_b) {
-    const auto read_frame_id = [&](Euresys::Buffer &buffer, Euresys::EGrabber<> &grabber,
-                                   const char *label, Clock::time_point &retry_at) {
+    const auto read_frame_id = [&](Euresys::Buffer &buffer, MTGrabber &grabber, const char *label,
+                                   Clock::time_point &retry_at) {
       if (Clock::now() < retry_at) {
         return std::optional<uint64_t>{};
       }
@@ -1137,19 +1564,9 @@ public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     if (!running_) {
       // S711 Banks_AB must start bank B first, then bank A.
-
-      grabber_b_->enableEvent<Euresys::NewBufferData>();
       grabber_b_->start();
-      grabber_a_->enableEvent<Euresys::NewBufferData>();
       grabber_a_->start();
       running_ = true;
-
-      acquisition_thread_ = std::thread([this] {
-        acquisition_stop_.store(false, std::memory_order_release);
-        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] Starting acquisition thread");
-        acquisition_loop();
-        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] Stopping acquisition thread");
-      });
     }
 
     while (!ctx.cancelled->load()) {
@@ -1165,19 +1582,113 @@ public:
       }
       return holoflow::core::OpResult::Ok;
     }
-    acquisition_stop_.store(true, std::memory_order_release);
     return holoflow::core::OpResult::Cancelled;
   }
 
   const nlohmann::json &get_cfg() const { return cfg_; }
 
 private:
+  bool validate_buffer_data(const Euresys::NewBufferData &data_a,
+                            const Euresys::NewBufferData &data_b) {
+    using namespace Euresys;
+    constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
+    constexpr auto TIMESTAMP = GenTL::BUFFER_INFO_TIMESTAMP;
+
+    const auto timeout_ms = runtime_cfg_.pop_timeout_ms;
+
+    auto buffer_a = Buffer(data_a);
+    auto buffer_b = Buffer(data_b);
+
+    uint64_t   delivered_a;
+    uint64_t   delivered_b;
+    uint64_t   ts_a;
+    uint64_t   ts_b;
+    std::byte *base_a;
+    std::byte *base_b;
+    try {
+      delivered_a = buffer_a.getInfo<uint64_t>(*grabber_a_, DELIVERED);
+      delivered_b = buffer_b.getInfo<uint64_t>(*grabber_b_, DELIVERED);
+      ts_a        = buffer_a.getInfo<uint64_t>(*grabber_a_, TIMESTAMP);
+      ts_b        = buffer_b.getInfo<uint64_t>(*grabber_b_, TIMESTAMP);
+      base_a =
+          static_cast<std::byte *>(buffer_a.getInfo<void *>(*grabber_a_, GenTL::BUFFER_INFO_BASE));
+      base_b =
+          static_cast<std::byte *>(buffer_b.getInfo<void *>(*grabber_b_, GenTL::BUFFER_INFO_BASE));
+
+      try {
+        record_pair_diagnostics(buffer_a, buffer_b, delivered_a, delivered_b, ts_a, ts_b, data_a,
+                                data_b);
+      } catch (const std::exception &e) {
+        if (log_due(last_diagnostic_error_log_)) {
+          logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::diagnostics] failed: {}", e.what());
+        }
+      }
+
+      if (base_a != base_b || delivered_a != runtime_cfg_.buffer_part_count ||
+          delivered_b != runtime_cfg_.buffer_part_count) {
+        ++rejected_pairs_since_log_;
+        if (log_due(last_rejected_log_)) {
+          logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] rejected {} two-bank "
+                         "buffer pair(s): latest bank A base={}, delivered={}, ts={} | bank B "
+                         "base={}, delivered={}, ts={} | expected delivered={}",
+                         rejected_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a,
+                         static_cast<void *>(base_b), delivered_b, ts_b,
+                         runtime_cfg_.buffer_part_count);
+          rejected_pairs_since_log_ = 0;
+        }
+        return false;
+      }
+
+      const auto ts_delta = ts_a >= ts_b ? ts_a - ts_b : ts_b - ts_a;
+      ++accepted_pairs_since_log_;
+      if (ts_delta > max_ts_delta_since_log_) {
+        max_ts_delta_since_log_ = ts_delta;
+      }
+      if (log_due(last_pair_log_)) {
+        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] accepted {} two-bank "
+                       "buffer pair(s): latest base={}, delivered={}, bank A ts={}, bank B "
+                       "ts={}, max ts delta={} us",
+                       accepted_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a,
+                       ts_b, max_ts_delta_since_log_);
+        accepted_pairs_since_log_ = 0;
+        max_ts_delta_since_log_   = 0;
+      }
+
+      if (buffer_queue_.size() >= runtime_cfg_.nb_buffers) {
+        if (log_due(last_acquisition_log_)) {
+          logger()->warn(
+              "[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] "
+              "acquisition thread produced a new buffer pair while the previous one is still "
+              "held");
+        }
+      } else {
+        return true;
+      }
+    } catch (const Euresys::genapi_error &err) {
+      if (log_due(last_error_log_)) {
+        logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] GenApi error: {}",
+                        format_genapi_error(err));
+      }
+    } catch (const Euresys::gentl_error &err) {
+      if (log_due(last_error_log_)) {
+        logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] GenTL error: {}",
+                        err.what());
+      }
+    } catch (const std::exception &err) {
+      if (log_due(last_error_log_)) {
+        logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] error: {}", err.what());
+      }
+    }
+    return false;
+  }
+
+private:
   AmetekS711EuresysCoaxlinkQSFPSettings settings_;
   RuntimeConfig                         runtime_cfg_;
   HostPtr<uint8_t>                      buffers_;
   std::unique_ptr<Euresys::EGenTL>      gentl_;
-  std::unique_ptr<Euresys::EGrabber<>>  grabber_a_;
-  std::unique_ptr<Euresys::EGrabber<>>  grabber_b_;
+  std::unique_ptr<MTGrabber>            grabber_a_;
+  std::unique_ptr<MTGrabber>            grabber_b_;
   std::size_t                           buffer_size_;
   bool                                  running_;
   nlohmann::json                        cfg_;
@@ -1218,126 +1729,6 @@ private:
   int64_t                    max_pair_delta_      = 0;
 
   CameraBufferQueue buffer_queue_;
-
-  // acquisition thread
-  std::thread       acquisition_thread_;
-  std::atomic<bool> acquisition_stop_ = false;
-
-  void acquisition_loop() {
-    using namespace Euresys;
-    constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
-    constexpr auto TIMESTAMP = GenTL::BUFFER_INFO_TIMESTAMP;
-
-    while (!acquisition_stop_.load(std::memory_order_acquire)) {
-      try {
-        const auto timeout_ms = runtime_cfg_.pop_timeout_ms;
-
-        auto                                  data_a = grabber_a_->pop(timeout_ms);
-        std::optional<Euresys::NewBufferData> data_b;
-        try {
-          data_b = grabber_b_->pop(timeout_ms);
-        } catch (...) {
-          requeue_buffer_noexcept(*grabber_a_, data_a, "bank A", last_requeue_error_log_);
-          throw;
-        }
-
-        auto buffer_a = Buffer(data_a);
-        auto buffer_b = Buffer(*data_b);
-
-        uint64_t   delivered_a;
-        uint64_t   delivered_b;
-        uint64_t   ts_a;
-        uint64_t   ts_b;
-        std::byte *base_a;
-        std::byte *base_b;
-        try {
-          delivered_a = buffer_a.getInfo<uint64_t>(*grabber_a_, DELIVERED);
-          delivered_b = buffer_b.getInfo<uint64_t>(*grabber_b_, DELIVERED);
-          ts_a        = buffer_a.getInfo<uint64_t>(*grabber_a_, TIMESTAMP);
-          ts_b        = buffer_b.getInfo<uint64_t>(*grabber_b_, TIMESTAMP);
-          base_a      = static_cast<std::byte *>(
-              buffer_a.getInfo<void *>(*grabber_a_, GenTL::BUFFER_INFO_BASE));
-          base_b = static_cast<std::byte *>(
-              buffer_b.getInfo<void *>(*grabber_b_, GenTL::BUFFER_INFO_BASE));
-        } catch (...) {
-          requeue_buffer_noexcept(*grabber_a_, data_a, "bank A", last_requeue_error_log_);
-          requeue_buffer_noexcept(*grabber_b_, *data_b, "bank B", last_requeue_error_log_);
-          throw;
-        }
-
-        try {
-          record_pair_diagnostics(buffer_a, buffer_b, delivered_a, delivered_b, ts_a, ts_b, data_a,
-                                  *data_b);
-        } catch (const std::exception &e) {
-          if (log_due(last_diagnostic_error_log_)) {
-            logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::diagnostics] failed: {}", e.what());
-          }
-        }
-
-        if (base_a != base_b || delivered_a != runtime_cfg_.buffer_part_count ||
-            delivered_b != runtime_cfg_.buffer_part_count) {
-          ++rejected_pairs_since_log_;
-          if (log_due(last_rejected_log_)) {
-            logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] rejected {} two-bank "
-                           "buffer pair(s): latest bank A base={}, delivered={}, ts={} | bank B "
-                           "base={}, delivered={}, ts={} | expected delivered={}",
-                           rejected_pairs_since_log_, static_cast<void *>(base_a), delivered_a,
-                           ts_a, static_cast<void *>(base_b), delivered_b, ts_b,
-                           runtime_cfg_.buffer_part_count);
-            rejected_pairs_since_log_ = 0;
-          }
-          requeue_buffer_noexcept(*grabber_a_, data_a, "bank A", last_requeue_error_log_);
-          requeue_buffer_noexcept(*grabber_b_, *data_b, "bank B", last_requeue_error_log_);
-          continue;
-        }
-
-        const auto ts_delta = ts_a >= ts_b ? ts_a - ts_b : ts_b - ts_a;
-        ++accepted_pairs_since_log_;
-        if (ts_delta > max_ts_delta_since_log_) {
-          max_ts_delta_since_log_ = ts_delta;
-        }
-        if (log_due(last_pair_log_)) {
-          logger()->info("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] accepted {} two-bank "
-                         "buffer pair(s): latest base={}, delivered={}, bank A ts={}, bank B "
-                         "ts={}, max ts delta={} us",
-                         accepted_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a,
-                         ts_b, max_ts_delta_since_log_);
-          accepted_pairs_since_log_ = 0;
-          max_ts_delta_since_log_   = 0;
-        }
-
-        // there is a safety padding to prevent frame drop see:
-        // CameraBufferQueue::safety_padding_size
-        if (buffer_queue_.size() >= runtime_cfg_.nb_buffers) {
-          if (log_due(last_acquisition_log_)) {
-            logger()->warn(
-                "[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] "
-                "acquisition thread produced a new buffer pair while the camera buffer is full");
-          }
-          requeue_buffer_noexcept(*grabber_a_, data_a, "bank A", last_requeue_error_log_);
-          requeue_buffer_noexcept(*grabber_b_, *data_b, "bank B", last_requeue_error_log_);
-
-        } else {
-          buffer_queue_.push({data_a, *data_b, base_a});
-        }
-      } catch (const Euresys::genapi_error &err) {
-        if (log_due(last_error_log_)) {
-          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] GenApi error: {}",
-                          format_genapi_error(err));
-        }
-      } catch (const Euresys::gentl_error &err) {
-        if (log_due(last_error_log_)) {
-          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] GenTL error: {}",
-                          err.what());
-        }
-      } catch (const std::exception &err) {
-        if (log_due(last_error_log_)) {
-          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] error: {}",
-                          err.what());
-        }
-      }
-    }
-  }
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -1391,8 +1782,11 @@ AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDe
   const auto bank_a_index = find_grabber_index_for_bank(*camera_info, 0);
   const auto bank_b_index = find_grabber_index_for_bank(*camera_info, 1);
 
-  auto grabber_a = std::make_unique<Euresys::EGrabber<>>(camera_info->grabbers[bank_a_index]);
-  auto grabber_b = std::make_unique<Euresys::EGrabber<>>(camera_info->grabbers[bank_b_index]);
+  // TODO change to MTGrabbers
+  auto grabber_a =
+      std::make_unique<MTGrabber>(camera_info->grabbers[bank_a_index], MTGrabber::EGrabberName::A);
+  auto grabber_b =
+      std::make_unique<MTGrabber>(camera_info->grabbers[bank_b_index], MTGrabber::EGrabberName::B);
 
   const holoflow::core::TDesc odesc(
       {runtime_cfg.buffer_part_count, runtime_cfg.final_height, runtime_cfg.width},
