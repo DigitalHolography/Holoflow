@@ -4,10 +4,15 @@
 #include <cmath>
 #include <cuComplex.h>
 #include <stdexcept>
+
 namespace holonp {
+
 void to_json(nlohmann::json &j, const UnaryMathSettings &) { j = nlohmann::json::object(); }
+
 void from_json(const nlohmann::json &, UnaryMathSettings &) {}
+
 void to_json(nlohmann::json &j, const ClipSettings &s) { j = {{"min", s.min}, {"max", s.max}}; }
+
 void from_json(const nlohmann::json &j, ClipSettings &s) {
   s.min = j.value("min", 0.f);
   s.max = j.value("max", 1.f);
@@ -56,8 +61,8 @@ __device__ cuFloatComplex apply_complex(cuFloatComplex x, Op o) {
   if (o != Op::Sqrt)
     return make_cuFloatComplex(0.0f, 0.0f);
   const float magnitude = hypotf(x.x, x.y);
-  const float real = sqrtf(fmaxf(0.0f, (magnitude + x.x) * 0.5f));
-  const float imag = copysignf(sqrtf(fmaxf(0.0f, (magnitude - x.x) * 0.5f)), x.y);
+  const float real      = sqrtf(fmaxf(0.0f, (magnitude + x.x) * 0.5f));
+  const float imag      = copysignf(sqrtf(fmaxf(0.0f, (magnitude - x.x) * 0.5f)), x.y);
   return make_cuFloatComplex(real, imag);
 }
 
@@ -87,8 +92,7 @@ public:
     } else if (d_.dtype == holoflow::core::DType::CF32) {
       kernel<<<g, b, 0, s_>>>((cuFloatComplex *)c.inputs[0].data(), (float *)c.outputs[0].data(), n,
                               o_, l_, h_);
-    }
-    else
+    } else
       kernel<<<g, b, 0, s_>>>((float *)c.inputs[0].data(), (float *)c.outputs[0].data(), n, o_, l_,
                               h_);
     CUDA_CHECK(cudaGetLastError());
@@ -111,16 +115,15 @@ holoflow::core::InferResult inf(std::span<const holoflow::core::TDesc> i, Op o,
     throw std::invalid_argument("holonp log: complex input is not supported");
   if (o == Op::Clip)
     (void)j.get<ClipSettings>();
-  return {
-      .input_descs   = {i[0]},
-      .output_descs  = {{i[0].shape,
-                         o == Op::Sqrt && i[0].dtype == holoflow::core::DType::CF32
-                             ? holoflow::core::DType::CF32
-                             : holoflow::core::DType::F32,
-                         holoflow::core::MemLoc::Device}},
-      .owned_inputs  = {false},
-      .owned_outputs = {false},
-      .kind          = holoflow::core::TaskKind::Sync};
+  return {.input_descs   = {i[0]},
+          .output_descs  = {{i[0].shape,
+                             o == Op::Sqrt && i[0].dtype == holoflow::core::DType::CF32
+                                 ? holoflow::core::DType::CF32
+                                 : holoflow::core::DType::F32,
+                             holoflow::core::MemLoc::Device}},
+          .owned_inputs  = {false},
+          .owned_outputs = {false},
+          .kind          = holoflow::core::TaskKind::Sync};
 }
 
 template <Op O>
@@ -159,6 +162,6 @@ std::unique_ptr<holoflow::core::ISyncTask> ct(std::span<const holoflow::core::TD
   }
 } // namespace
 I(Sqrt, Op::Sqrt)
-I(Real, Op::Real) I(Imag, Op::Imag) I(Angle, Op::Angle) I(Log, Op::Log) I(Isfinite, Op::Finite)
-    I(Clip, Op::Clip)
+I(Real, Op::Real)
+I(Imag, Op::Imag) I(Angle, Op::Angle) I(Log, Op::Log) I(Isfinite, Op::Finite) I(Clip, Op::Clip)
 } // namespace holonp

@@ -671,9 +671,9 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::fresnel_diffraction_numpy(const TD
     throw std::invalid_argument("NumPy Fresnel diffraction requires valid optical parameters");
   }
 
-  const size_t height = FH.shape[FH.shape.size() - 2];
-  const size_t width  = FH.shape[FH.shape.size() - 1];
-  const size_t size   = std::max(height, width);
+  const size_t height   = FH.shape[FH.shape.size() - 2];
+  const size_t width    = FH.shape[FH.shape.size() - 1];
+  const size_t size     = std::max(height, width);
   const auto   offset_x = static_cast<double>((size - width) / 2);
   const auto   offset_y = static_cast<double>((size - height) / 2);
   const auto   half     = static_cast<double>(size) / 2.0;
@@ -689,16 +689,17 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::fresnel_diffraction_numpy(const TD
                    .device = holoflow::core::MemLoc::Device});
   };
 
-  const auto x = coordinate(width, offset_x);
-  const auto y = coordinate(height, offset_y);
+  const auto                 x = coordinate(width, offset_x);
+  const auto                 y = coordinate(height, offset_y);
   const std::array<TDesc, 2> axes{x, y};
-  const auto                   grids = meshgrid(axes, {.indexing = holonp::MeshgridIndexing::XY});
-  const auto                   radius_squared = add(square(grids[0], {}), square(grids[1], {}), {});
+  const auto                 grids = meshgrid(axes, {.indexing = holonp::MeshgridIndexing::XY});
+  const auto                 radius_squared = add(square(grids[0], {}), square(grids[1], {}), {});
 
-  const auto phase_scale = asarray({.value  = static_cast<double>(std::numbers::pi_v<float>) /
-                                             (static_cast<double>(s_.spacial_lambda) * s_.spacial_z),
-                                    .dtype  = holoflow::core::DType::F32,
-                                    .device = holoflow::core::MemLoc::Device});
+  const auto phase_scale =
+      asarray({.value  = static_cast<double>(std::numbers::pi_v<float>) /
+                         (static_cast<double>(s_.spacial_lambda) * s_.spacial_z),
+               .dtype  = holoflow::core::DType::F32,
+               .device = holoflow::core::MemLoc::Device});
   const auto imaginary = asarray({.value  = 0.0,
                                   .imag   = 1.0,
                                   .dtype  = holoflow::core::DType::CF32,
