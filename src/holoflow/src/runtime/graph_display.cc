@@ -304,11 +304,9 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
   }
 }
 
-static std::vector<size_t>
-get_section_layout_order(const std::vector<runtime::Section> &sections);
+static std::vector<size_t> get_section_layout_order(const std::vector<runtime::Section> &sections);
 
-static void write_compiled_edges(std::ostringstream                    &ss,
-                                 const runtime::GraphPlan              &g,
+static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPlan &g,
                                  const holoflow::runtime::ExecResouces &res,
                                  const GraphCompiledDumpPreferences    &prefs,
                                  const std::vector<runtime::Section>   &sections) {
@@ -343,15 +341,13 @@ static void write_compiled_edges(std::ostringstream                    &ss,
     bool reverse_edge = false;
     if (uses_snake_layout(prefs)) {
       for (size_t section_idx = 0; section_idx < sections.size(); ++section_idx) {
-        const auto &section = sections[section_idx];
-        const bool  contains_source =
-            g[u].infer.kind == core::TaskKind::Async
-                ? contains_vertex(section.async_cons, u)
-                : contains_vertex(section.sync_topo, u);
-        const bool contains_target =
-            g[v].infer.kind == core::TaskKind::Async
-                ? contains_vertex(section.async_prod, v)
-                : contains_vertex(section.sync_topo, v);
+        const auto &section         = sections[section_idx];
+        const bool  contains_source = g[u].infer.kind == core::TaskKind::Async
+                                          ? contains_vertex(section.async_cons, u)
+                                          : contains_vertex(section.sync_topo, u);
+        const bool  contains_target = g[v].infer.kind == core::TaskKind::Async
+                                          ? contains_vertex(section.async_prod, v)
+                                          : contains_vertex(section.sync_topo, v);
         if (contains_source && contains_target) {
           reverse_edge = section_positions[section_idx] % 2 != 0;
           break;
@@ -366,8 +362,7 @@ static void write_compiled_edges(std::ostringstream                    &ss,
     }
     edge_lbl << "\\n" << format_tdesc(ep.desc);
 
-    ss << std::format("  {} -> {} ", reverse_edge ? v_vis : u_vis,
-                      reverse_edge ? u_vis : v_vis);
+    ss << std::format("  {} -> {} ", reverse_edge ? v_vis : u_vis, reverse_edge ? u_vis : v_vis);
     if (reverse_edge) {
       ss << "[dir=back]";
     }

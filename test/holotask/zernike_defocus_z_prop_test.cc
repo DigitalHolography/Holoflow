@@ -94,7 +94,7 @@ TEST(ZernikeDefocusZPropSettingsTest, RoundTripsConfiguredInterval) {
 
 TEST(ZernikeDefocusZPropInferTest, RejectsInvalidIntervals) {
   holotask::syncs::ZernikeDefocusZPropFactory factory;
-  const std::vector<TDesc>                     inputs{input_desc()};
+  const std::vector<TDesc>                    inputs{input_desc()};
 
   for (const double interval : {0.0, -1.0, std::numeric_limits<double>::infinity(),
                                 std::numeric_limits<double>::quiet_NaN()}) {
@@ -107,7 +107,7 @@ TEST(ZernikeDefocusZPropExecutionTest, ExecutesImmediatelyAndThenAtConfiguredInt
   const auto                                  desc = input_desc();
   const std::vector<TDesc>                    input_descs{desc};
   const auto                                  task_settings = settings(0.02);
-  auto task = factory.create(input_descs, task_settings, {});
+  auto                                        task = factory.create(input_descs, task_settings, {});
 
   auto sink   = std::make_shared<CountingSink>();
   auto logger = std::make_shared<spdlog::logger>("zernike-defocus-z-prop-test", sink);
@@ -117,8 +117,8 @@ TEST(ZernikeDefocusZPropExecutionTest, ExecutesImmediatelyAndThenAtConfiguredInt
   input.upload(as_bytes(0.25f));
   std::vector<holoflow::core::TView> input_views{input.view()};
   std::vector<holoflow::core::TView> output_views;
-  std::atomic<bool>                   cancelled{false};
-  holoflow::core::SyncCtx ctx{
+  std::atomic<bool>                  cancelled{false};
+  holoflow::core::SyncCtx            ctx{
       .inputs       = input_views,
       .outputs      = output_views,
       .cancelled    = &cancelled,

@@ -146,15 +146,14 @@ __global__ void recover_phase_correlation_peaks(const float *__restrict__ maps,
     return;
   }
 
-  const size_t pixels_per_map = height * width;
-  const float *map            = maps + map_index * pixels_per_map;
+  const size_t                 pixels_per_map = height * width;
+  const float                 *map            = maps + map_index * pixels_per_map;
   detail::PhaseCorrelationPeak local_peak{-FLT_MAX, 0};
   for (size_t pixel = threadIdx.x; pixel < pixels_per_map; pixel += blockDim.x) {
     local_peak = detail::select_phase_correlation_peak(local_peak, {map[pixel], pixel});
   }
 
-  __shared__ detail::PhaseCorrelationPeak
-      shared_peaks[detail::kPhaseCorrelationPeakBlockSize];
+  __shared__ detail::PhaseCorrelationPeak shared_peaks[detail::kPhaseCorrelationPeakBlockSize];
   const auto peak = detail::reduce_phase_correlation_peak(local_peak, shared_peaks);
   if (threadIdx.x != 0) {
     return;
@@ -289,9 +288,8 @@ private:
   void try_capture(holoflow::core::SyncCtx                         &ctx,
                    const detail::ShackHartmannCudaGraph::Addresses &addresses) {
     try {
-      const bool captured = graph_.capture(stream_, addresses, [&]() {
-        return enqueue(ctx) == holoflow::core::OpResult::Ok;
-      });
+      const bool captured = graph_.capture(
+          stream_, addresses, [&]() { return enqueue(ctx) == holoflow::core::OpResult::Ok; });
       if (!captured) {
         graph_capture_enabled_ = false;
       }

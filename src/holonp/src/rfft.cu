@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/rfft.hh"
+#include "utils/tensor_common.hh"
 
 #include <cmath>
 #include <limits>
@@ -55,40 +56,6 @@ inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("RFFT: " + msg);
   }
-}
-
-bool is_c_contiguous(const holoflow::core::TDesc &desc) {
-  if (desc.shape.size() != desc.strides.size()) {
-    return false;
-  }
-
-  size_t expected = holoflow::core::size_of(desc.dtype);
-  for (size_t i = desc.shape.size(); i-- > 0;) {
-    if (desc.strides[i] != expected) {
-      return false;
-    }
-    expected *= desc.shape[i];
-  }
-  return true;
-}
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
-}
-
-inline size_t product_shape(std::span<const size_t> shape) {
-  if (shape.empty()) {
-    return 0;
-  }
-  return std::accumulate(shape.begin(), shape.end(), size_t{1}, std::multiplies<>{});
-}
-
-inline int normalize_axis(int axis, int ndim) {
-  if (axis < 0) {
-    axis += ndim;
-  }
-  return axis;
 }
 
 inline float norm_scale(FftNorm norm, size_t n_fft) {
@@ -178,17 +145,17 @@ holoflow::core::InferResult RFFTFactory::infer(std::span<const holoflow::core::T
   const auto &idesc = input_descs[0];
 
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "only Device tensors are supported");
-  check(is_c_contiguous(idesc), "input must be C-contiguous");
+  check(utils::is_c_contiguous(idesc), "input must be C-contiguous");
   check(idesc.dtype == holoflow::core::DType::F32, "input dtype must be F32");
 
   const int ndim = static_cast<int>(idesc.shape.size());
   check(ndim > 0, "input ndim must be > 0");
   check(ndim <= kMaxNDim, "input ndim too large");
 
-  const int axis = normalize_axis(settings.axis, ndim);
+  const int axis = utils::normalize_axis(settings.axis, ndim);
   check(axis >= 0 && axis < ndim, "axis out of range");
 
-  const auto total = product_shape(idesc.shape);
+  const auto total = utils::product_shape(idesc.shape);
   check(total > 0, "input tensor has zero elements");
 
   const auto n_fft = idesc.shape[static_cast<size_t>(axis)];
@@ -222,10 +189,10 @@ RFFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const auto settings = jsettings.get<RFFTSettings>();
 
   const auto &idesc    = input_descs[0];
-  const auto  total_in = product_shape(idesc.shape);
+  const auto  total_in = utils::product_shape(idesc.shape);
   const int   ndim     = static_cast<int>(idesc.shape.size());
 
-  const int axis = normalize_axis(settings.axis, ndim);
+  const int axis = utils::normalize_axis(settings.axis, ndim);
   check(axis >= 0 && axis < ndim, "axis out of range");
 
   const auto n_fft = idesc.shape[static_cast<size_t>(axis)];
@@ -306,7 +273,7 @@ RFFTFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   auto *old_rfft = dynamic_cast<RFFT *>(old_task.get());
   if (old_rfft != nullptr && input_descs.size() == 1) {
     const auto settings = jsettings.get<RFFTSettings>();
-    if (settings == old_rfft->settings() && same_desc(input_descs[0], old_rfft->idesc())) {
+    if (settings == old_rfft->settings() && utils::same_desc(input_descs[0], old_rfft->idesc())) {
       old_rfft->update_stream(ctx.stream);
       return old_task;
     }

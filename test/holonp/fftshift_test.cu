@@ -83,6 +83,11 @@ protected:
   holonp::FFTShiftFactory factory;
 };
 
+class IFFTShiftInferTest : public ::testing::Test {
+protected:
+  holonp::IFFTShiftFactory factory;
+};
+
 TEST_F(FFTShiftInferTest, KeepsInputDescriptor) {
   const std::vector<TDesc> in = {device_desc({3, 4}, DType::F32)};
   const auto               r  = factory.infer(in, nlohmann::json::object());
@@ -95,6 +100,14 @@ TEST_F(FFTShiftInferTest, RejectsDuplicateAxes) {
   const std::vector<TDesc> in = {device_desc({3, 4}, DType::F32)};
   EXPECT_THROW(factory.infer(in, nlohmann::json{{"axes", std::vector<int>{1, 1}}}),
                std::invalid_argument);
+}
+
+TEST_F(IFFTShiftInferTest, KeepsInputDescriptor) {
+  const std::vector<TDesc> in = {device_desc({3, 4}, DType::F32)};
+  const auto               r  = factory.infer(in, nlohmann::json{{"axes", std::vector<int>{0}}});
+  EXPECT_EQ(r.kind, TaskKind::Sync);
+  EXPECT_EQ(r.output_descs[0].shape, (std::vector<size_t>{3, 4}));
+  EXPECT_EQ(r.output_descs[0].dtype, DType::F32);
 }
 
 class FFTShiftOracleTest : public ::testing::Test {
@@ -118,6 +131,30 @@ TEST_F(FFTShiftOracleTest, F32SingleAxis) {
   oi.settings       = j;
   const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
   expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+}
+
+class IFFTShiftOracleTest : public ::testing::Test {
+protected:
+  holonp::IFFTShiftFactory factory;
+};
+
+TEST_F(IFFTShiftOracleTest, F32OddAxis) {
+  const TDesc d = device_desc({3, 4}, DType::F32);
+  const auto  data =
+      as_bytes(std::vector<float>{0.f, 1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f, 10.f, 11.f});
+  const auto j   = nlohmann::json{{"axes", std::vector<int>{0}}};
+  const auto run = holonp_test::run_sync_factory(factory, std::vector<TDesc>{d},
+                                                 std::vector<std::vector<std::byte>>{data}, j);
+
+  holonp_test::OracleInput oi;
+  oi.op             = "ifftshift";
+  oi.n_outputs      = 1;
+  oi.input_descs    = {d};
+  oi.input_bytes    = {data};
+  oi.settings       = j;
+  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  ASSERT_EQ(run.output_bytes[0].size(), oracle.output_bytes[0].size());
+  EXPECT_EQ(run.output_bytes[0], oracle.output_bytes[0]);
 }
 
 class FFTShiftUpdateTest : public ::testing::Test {
