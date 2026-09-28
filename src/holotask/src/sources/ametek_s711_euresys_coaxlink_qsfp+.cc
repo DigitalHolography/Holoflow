@@ -34,6 +34,7 @@
 #undef min
 #include <limits>
 #include <map>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <sstream>
@@ -569,6 +570,8 @@ void requeue_buffer_noexcept(Euresys::EGrabber<> &grabber, const Euresys::NewBuf
   try {
     Euresys::Buffer(data).push(grabber);
   } catch (const std::exception &e) {
+    static std::mutex     error_log_mutex;
+    const std::lock_guard lock(error_log_mutex);
     if (log_due(last_error_log)) {
       logger()->error(
           "[AmetekS711EuresysCoaxlinkQSFP] failed to requeue {} buffer while handling an error: {}",
@@ -860,7 +863,7 @@ public:
 
   ~AmetekS711EuresysCoaxlinkQSFP() override {
     try {
-      if (running_) {
+      if (running_.load(std::memory_order_acquire)) {
         acquisition_stop_.store(true, std::memory_order_release);
         acquisition_thread_.join();
         grabber_a_->stop();
@@ -890,15 +893,16 @@ public:
   }
 
   void log_update_lifecycle(bool replacing) {
+    const std::lock_guard lock(diagnostics_mutex_);
     if (!buffer_queue_.empty() && log_due(last_pending_update_log_)) {
       logger()->error("[AmetekS711EuresysCoaxlinkQSFP::update] updating with unreleased frames: {}", buffer_queue_.size());
     }
-    if (!running_) {
+    if (!running_.load(std::memory_order_acquire)) {
       return;
     }
     if (!replacing) {
       ++update_epoch_;
-      update_a_                = read_bank_counters(*grabber_a_, "A"); // add mutex on these to prevent data race
+      update_a_                = read_bank_counters(*grabber_a_, "A");
       update_b_                = read_bank_counters(*grabber_b_, "B");
       first_pair_after_update_ = true;
       first_pair_update_summary_.reset();
@@ -1063,6 +1067,7 @@ public:
                                uint64_t delivered_a, uint64_t delivered_b, uint64_t ts_a,
                                uint64_t ts_b, const Euresys::NewBufferData &data_a,
                                const Euresys::NewBufferData &data_b) {
+    const std::lock_guard lock(diagnostics_mutex_);
     const auto read_frame_id = [&](Euresys::Buffer &buffer, Euresys::EGrabber<> &grabber,
                                    const char *label, Clock::time_point &retry_at) {
       if (Clock::now() < retry_at) {
@@ -1133,14 +1138,14 @@ public:
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    if (!running_) {
+    if (!running_.load(std::memory_order_acquire)) {
       // S711 Banks_AB must start bank B first, then bank A.
 
       grabber_b_->enableEvent<Euresys::NewBufferData>();
       grabber_b_->start();
       grabber_a_->enableEvent<Euresys::NewBufferData>();
       grabber_a_->start();
-      running_ = true;
+      running_.store(true, std::memory_order_release);
 
       acquisition_thread_ = std::thread([this] {
         acquisition_stop_.store(false, std::memory_order_release);
@@ -1177,7 +1182,7 @@ private:
   std::unique_ptr<Euresys::EGrabber<>>  grabber_a_;
   std::unique_ptr<Euresys::EGrabber<>>  grabber_b_;
   std::size_t                           buffer_size_;
-  bool                                  running_;
+  std::atomic<bool>                     running_;
   nlohmann::json                        cfg_;
 
   // Diagnostics state
@@ -1190,6 +1195,7 @@ private:
   Clock::time_point          last_diagnostic_log_{};
   Clock::time_point          last_diagnostic_error_log_{};
   Clock::time_point          last_acquisition_log_{};
+  std::mutex                 diagnostics_mutex_;
   uint64_t                   rejected_pairs_since_log_ = 0;
   uint64_t                   accepted_pairs_since_log_ = 0;
   uint64_t                   max_ts_delta_since_log_   = 0;
@@ -1250,6 +1256,7 @@ private:
         std::byte *base_a;
         std::byte *base_b;
         try {
+          const std::lock_guard lock(diagnostics_mutex_);
           delivered_a = buffer_a.getInfo<uint64_t>(*grabber_a_, DELIVERED);
           delivered_b = buffer_b.getInfo<uint64_t>(*grabber_b_, DELIVERED);
           ts_a        = buffer_a.getInfo<uint64_t>(*grabber_a_, TIMESTAMP);
