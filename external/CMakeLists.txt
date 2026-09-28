@@ -39,11 +39,10 @@ if(ENABLE_FETCHCONTENT)
         )
     endmacro()
 
-    macro(declare_persistent_archive NAME URL HASH)
+    macro(declare_persistent_archive NAME URL)
         FetchContent_Declare(
             ${NAME}
             URL         ${URL}
-            URL_HASH    ${HASH}
             SOURCE_DIR  "${FETCHCONTENT_BASE_DIR}/${NAME}-src"
             BINARY_DIR  "${FETCHCONTENT_BASE_DIR}/${NAME}-build"
             SUBBUILD_DIR "${FETCHCONTENT_BASE_DIR}/${NAME}-subbuild"
@@ -52,11 +51,9 @@ if(ENABLE_FETCHCONTENT)
     endmacro()
 
     if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-        set(FFMPEG_VERSION "n8.1.2-50-g1a748fe2cd")
         declare_persistent_archive(
             ffmpeg
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-03-13-17/ffmpeg-n8.1.2-50-g1a748fe2cd-win64-lgpl-shared-8.1.zip"
-            "SHA256=383f173d39cf610ba7d1d56bf22941f5e9470dd5ebfcf76a152e8a6f6235fe68"
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-lgpl-shared-8.1.zip"
         )
         FetchContent_MakeAvailable(ffmpeg)
 
