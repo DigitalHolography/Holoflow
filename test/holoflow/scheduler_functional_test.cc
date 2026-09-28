@@ -116,7 +116,8 @@ bool contains_node(const GraphPlan &graph, const auto &vertices, std::string_vie
 
 const Section *sync_section_for(const CompilerOutput &output, std::string_view name) {
   auto it = std::ranges::find_if(output.sections, [&](const Section &section) {
-    return contains_node(output.graph, section.sync_topo, name);
+    return contains_node(output.graph, section.const_sync_topo, name) ||
+           contains_node(output.graph, section.sync_topo, name);
   });
   return it == output.sections.end() ? nullptr : std::addressof(*it);
 }

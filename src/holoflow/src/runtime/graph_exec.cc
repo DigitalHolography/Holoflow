@@ -130,6 +130,7 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
   init_tviews();
   build_event_handles();
   build_nodes_rts();
+  init_const_task_states();
 }
 
 Scheduler::~Scheduler() {
@@ -165,7 +166,17 @@ void Scheduler::start() {
   }
 
   stop_.store(false);
+  {
+    std::lock_guard lock(const_init_mutex_);
+    const_init_sections_ready_ = 0;
+    const_init_complete_      = sections_.empty();
+  }
   reset_metrics_state();
+  if (sections_.empty()) {
+    stop_.store(true);
+    running_.store(false);
+    return;
+  }
   start_metrics_thread();
   threads_.reserve(sections_.size());
   for (size_t i = 0; i < sections_.size(); i++) {
@@ -303,6 +314,18 @@ void Scheduler::build_nodes_rts() {
   }
 }
 
+void Scheduler::init_const_task_states() {
+  const auto num_vertices = boost::num_vertices(graph_);
+  const_task_states_.assign(num_vertices, core::ConstTaskState::NotConstant);
+
+  for (auto v : boost::make_iterator_range(boost::vertices(graph_))) {
+    if (graph_[v].infer.constness == core::ConstInferenceState::Constant) {
+      const auto idx = boost::get(boost::vertex_index, graph_, v);
+      const_task_states_.at(idx) = core::ConstTaskState::ConstantNotComputed;
+    }
+  }
+}
+
 void Scheduler::run_router() {
   try {
     logger()->info("[Scheduler::run_router] Starting event router");
@@ -330,6 +353,71 @@ void Scheduler::run_section(int section_id) {
   constexpr nvtx3::color color_release{0xFF4500}; // Orange Red
 
   try {
+    // Constant nodes initialize their outputs once per scheduler start. They are
+    // deliberately excluded from the recurring execution loop below.
+    std::vector<GraphPlan::vertex_descriptor> completed_const_nodes;
+    for (auto v : sec.const_sync_topo) {
+      if (stop_.load())
+        break;
+
+      const auto idx = boost::get(boost::vertex_index, graph_, v);
+      if (const_task_states_.at(idx) != core::ConstTaskState::ConstantNotComputed)
+        continue;
+
+      try {
+        acquire_owned_inputs(v);
+        if (run_sync(v) == core::OpResult::Ok) {
+          const_task_states_.at(idx) = core::ConstTaskState::ConstantComputed;
+          completed_const_nodes.push_back(v);
+        }
+      } catch (...) {
+        rethrow_with_node_context(graph_, v, "execute_constant", section_id, sec.name);
+      }
+    }
+
+    for (auto v : completed_const_nodes) {
+      try {
+        release_owned_outputs(v);
+      } catch (...) {
+        rethrow_with_node_context(graph_, v, "release_constant_outputs", section_id, sec.name);
+      }
+    }
+
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    const bool any_recurring_work = std::any_of(
+        sections_.begin(), sections_.end(), [](const Section &section) {
+          return !section.sync_topo.empty() || !section.async_cons.empty() ||
+                 !section.async_prod.empty();
+        });
+
+    // All sections must finish initializing constants before any of them can
+    // enter the recurring loop or stop the scheduler for a constant-only graph.
+    {
+      std::unique_lock lock(const_init_mutex_);
+      ++const_init_sections_ready_;
+      if (const_init_sections_ready_ == sections_.size()) {
+        const_init_complete_ = true;
+        if (!any_recurring_work && !stop_.load()) {
+          stop_.store(true);
+        }
+        const_init_cv_.notify_all();
+      } else {
+        const_init_cv_.wait(lock, [this] {
+          return const_init_complete_ || stop_.load();
+        });
+      }
+    }
+
+    if (stop_.load()) {
+      return;
+    }
+    const bool section_has_recurring_work = !sec.sync_topo.empty() || !sec.async_cons.empty() ||
+                                            !sec.async_prod.empty();
+    if (!section_has_recurring_work) {
+      return;
+    }
+
     while (!stop_.load()) {
       std::vector<GraphPlan::vertex_descriptor> produced_owned_outputs;
       logger()->trace("[Scheduler::run_section] Running section {}", sec.name);

@@ -92,6 +92,7 @@ struct Section {
   std::vector<GraphPlan::vertex_descriptor> async_cons; ///< Asynchronous consumer nodes.
   std::vector<GraphPlan::vertex_descriptor> async_prod; ///< Asynchronous producer nodes
   bool has_synchronizing_async_producer = false; ///< Producer supplies the section stream barrier.
+  std::vector<GraphPlan::vertex_descriptor> const_sync_topo; ///< Constant synchronous nodes, once.
 };
 
 struct SyncRt {
@@ -144,6 +145,7 @@ private:
   void init_tviews();
   void build_event_handles();
   void build_nodes_rts();
+  void init_const_task_states();
   void reset_metrics_state();
   void start_metrics_thread();
   void stop_metrics_thread();
@@ -197,6 +199,12 @@ private:
 
   std::vector<NodeRt>      node_rts_; ///< Runtime data for each node.
   std::vector<std::string> node_names_;
+  std::vector<core::ConstTaskState> const_task_states_;
+
+  std::mutex              const_init_mutex_;
+  std::condition_variable const_init_cv_;
+  std::size_t             const_init_sections_ready_ = 0;
+  bool                    const_init_complete_      = false;
 
   struct NodeMetricAccumulator {
     std::atomic<uint64_t> duration_ns{0};
