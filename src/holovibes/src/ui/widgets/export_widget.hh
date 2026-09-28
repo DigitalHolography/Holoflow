@@ -31,6 +31,9 @@ public:
 
   // Getters
   QString get_image_type() const;
+  QString get_format() const;
+  QString get_codec() const;
+  QString get_resize_algorithm() const;
   QString get_file_path() const;
   QString get_tag() const;
   bool    is_frame_count_enabled() const;
@@ -40,7 +43,9 @@ public:
   // Setters
   void set_file_path(const QString &path);
   void set_frame_count(int count);
+  void set_frame_batch_size(int batch_size);
   void set_image_type(const QString &type);
+  void set_resize_algorithm(const QString &algorithm);
   void setChecked(bool checked);
 
   // Control button state
@@ -54,6 +59,9 @@ public:
 
   // Access to widgets for connection setup
   QComboBox   *image_type_combo();
+  QComboBox   *format_combo();
+  QComboBox   *codec_combo();
+  QComboBox   *resize_algorithm_combo();
   QLineEdit   *file_line_edit();
   QPushButton *browse_button();
   QComboBox   *tag_combo();
@@ -73,16 +81,23 @@ signals:
 private:
   void setup_ui();
   void connect_signals();
+  void update_codec_choices();
   void set_export_controls_enabled(bool enabled);
 
   QCheckBox   *enable_check_;
   QWidget     *content_container_;
   QComboBox   *image_type_combo_;
+  QComboBox   *format_combo_;
+  QComboBox   *codec_combo_;
+  QComboBox   *resize_algorithm_combo_;
   QLineEdit   *file_line_edit_;
   QPushButton *browse_button_;
   QComboBox   *tag_combo_;
   QCheckBox   *frames_check_;
   QSpinBox    *frames_spin_;
+  QPushButton *frames_lower_button_;
+  QPushButton *frames_higher_button_;
+  int          frame_batch_size_ = 1;
   QPushButton *record_button_;
   QPushButton *stop_button_;
   QPushButton *stop_fan_button_;
