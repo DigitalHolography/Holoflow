@@ -113,13 +113,6 @@ private:
   QComboBox *camera_combo_;
   QComboBox *camera_config_combo_;
 
-  // TODO add getters + connections
-  QLineEdit   *camera_raw_record_file_name_;
-  QPushButton *camera_raw_record_browse_;
-  QSpinBox    *camera_raw_record_frame_count_;
-  QPushButton *camera_raw_record_start_button_;
-  QPushButton *camera_raw_record_stop_button_;
-
   // Control buttons
   QPushButton *start_button_;
   QPushButton *stop_button_;

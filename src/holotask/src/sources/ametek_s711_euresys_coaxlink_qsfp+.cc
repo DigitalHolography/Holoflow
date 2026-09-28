@@ -14,7 +14,7 @@
 
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 
-//#define HOLOTASK_HAS_EGRABBER 1
+// #define HOLOTASK_HAS_EGRABBER 1
 #ifdef HOLOTASK_HAS_EGRABBER
 
 #include <EGrabber.h>
@@ -595,8 +595,9 @@ struct CameraFrame {
 
 class CameraBufferQueue {
 public:
-  using DType           = CameraFrame;
-  using ReleaseCallback = std::function<void(DType &&)>;
+  using DType                                 = CameraFrame;
+  using ReleaseCallback                       = std::function<void(DType &&)>;
+  static constexpr size_t safety_padding_size = 10;
 
   CameraBufferQueue(size_t capacity, ReleaseCallback release_callback)
       : capacity_{capacity}, slots_{std::make_unique<Slot[]>(capacity)},
@@ -680,8 +681,8 @@ public:
 
   [[nodiscard]]
   size_t size() const {
-    auto w = write_index_.load();
-    auto a = read_index_a_.load();
+    auto w      = write_index_.load();
+    auto a      = read_index_a_.load();
     auto oldest = a;
     if (reader_b_active_.load()) {
       auto b = read_index_b_.load();
@@ -694,8 +695,8 @@ public:
 
   [[nodiscard]]
   bool empty() const {
-    auto w = write_index_.load();
-    auto a = read_index_a_.load();
+    auto w      = write_index_.load();
+    auto a      = read_index_a_.load();
     auto oldest = a;
     if (reader_b_active_.load()) {
       auto b = read_index_b_.load();
@@ -891,15 +892,16 @@ public:
 
   void log_update_lifecycle(bool replacing) {
     if (!buffer_queue_.empty() && log_due(last_pending_update_log_)) {
-      logger()->error("[AmetekS711EuresysCoaxlinkQSFP::update] updating with unreleased frames: {}", buffer_queue_.size());
+      logger()->error("[AmetekS711EuresysCoaxlinkQSFP::update] updating with unreleased frames: {}",
+                      buffer_queue_.size());
     }
     if (!running_) {
       return;
     }
     if (!replacing) {
       ++update_epoch_;
-      update_a_                = read_bank_counters(*grabber_a_, "A"); // add mutex on these to prevent data race
-      update_b_                = read_bank_counters(*grabber_b_, "B");
+      update_a_ = read_bank_counters(*grabber_a_, "A"); // add mutex on these to prevent data race
+      update_b_ = read_bank_counters(*grabber_b_, "B");
       first_pair_after_update_ = true;
       first_pair_update_summary_.reset();
       resume_counters_pending_ = false;
@@ -1147,21 +1149,21 @@ public:
         logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] Starting acquisition thread");
         acquisition_loop();
         logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] Stopping acquisition thread");
-       });
+      });
     }
 
     while (!ctx.cancelled->load()) {
-        auto& next = buffer_queue_.read_a();
-        if (next.base) {
-          auto &storage = storage_access().owned_output_storage(0);
-          storage.ptr   = next.base;
+      auto &next = buffer_queue_.read_a();
+      if (next.base) {
+        auto &storage = storage_access().owned_output_storage(0);
+        storage.ptr   = next.base;
 
-          ctx.outputs[0] = holoflow::core::TView{
-              .desc    = ctx.outputs[0].desc,
-              .storage = &storage,
-          };
-        }
-        return holoflow::core::OpResult::Ok;
+        ctx.outputs[0] = holoflow::core::TView{
+            .desc    = ctx.outputs[0].desc,
+            .storage = &storage,
+        };
+      }
+      return holoflow::core::OpResult::Ok;
     }
     acquisition_stop_.store(true, std::memory_order_release);
     return holoflow::core::OpResult::Cancelled;
@@ -1215,12 +1217,11 @@ private:
   int64_t                    min_pair_delta_      = 0;
   int64_t                    max_pair_delta_      = 0;
 
-  CameraBufferQueue                     buffer_queue_;
-  static constexpr  size_t              buffer_queue_safety_buffers_count_ = 10; //TODO allocate more buffers to prevent filled queue
+  CameraBufferQueue buffer_queue_;
 
   // acquisition thread
   std::thread       acquisition_thread_;
-  std::atomic<bool> acquisition_stop_  = false;
+  std::atomic<bool> acquisition_stop_ = false;
 
   void acquisition_loop() {
     using namespace Euresys;
@@ -1305,12 +1306,13 @@ private:
           max_ts_delta_since_log_   = 0;
         }
 
-        if (buffer_queue_.size() >= runtime_cfg_.nb_buffers - buffer_queue_safety_buffers_count_) {
-          if(log_due(last_acquisition_log_)) {
+        // there is a safety padding to prevent frame drop see:
+        // CameraBufferQueue::safety_padding_size
+        if (buffer_queue_.size() >= runtime_cfg_.nb_buffers) {
+          if (log_due(last_acquisition_log_)) {
             logger()->warn(
                 "[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] "
-                "acquisition thread produced a new buffer pair while the previous one is still "
-                "held");
+                "acquisition thread produced a new buffer pair while the camera buffer is full");
           }
           requeue_buffer_noexcept(*grabber_a_, data_a, "bank A", last_requeue_error_log_);
           requeue_buffer_noexcept(*grabber_b_, *data_b, "bank B", last_requeue_error_log_);
@@ -1397,8 +1399,9 @@ AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDe
       dtype_from_pixel_format(runtime_cfg.pixel_format), holoflow::core::MemLoc::Host);
 
   auto buffer_size = odesc.num_bytes();
-  auto buffers =
-      allocate_shared_buffers(*grabber_a, *grabber_b, runtime_cfg.nb_buffers, buffer_size);
+  auto buffers     = allocate_shared_buffers(
+      *grabber_a, *grabber_b, runtime_cfg.nb_buffers + CameraBufferQueue::safety_padding_size,
+      buffer_size);
 
   return std::make_unique<AmetekS711EuresysCoaxlinkQSFP>(
       settings, runtime_cfg, std::move(buffers), std::move(gentl), std::move(grabber_a),

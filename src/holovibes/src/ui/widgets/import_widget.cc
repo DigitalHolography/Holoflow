@@ -246,26 +246,6 @@ QWidget *ImportWidget::create_camera_page() {
   grid->addWidget(camera_config_combo_, row, 1);
   ++row;
 
-  grid->addWidget(new QLabel("Raw record file name", page), row, 0);
-  camera_raw_record_file_name_ = new QLineEdit(page);
-  camera_raw_record_file_name_->setReadOnly(true);
-  grid->addWidget(camera_raw_record_file_name_, row, 1);
-  camera_raw_record_browse_ = new QPushButton("...", page);
-  grid->addWidget(camera_raw_record_browse_, row, 2);
-  ++row;
-
-  grid->addWidget(new QLabel("Raw record frame count", page), row, 0);
-  camera_raw_record_frame_count_ = create_spin_box(page, 0, std::numeric_limits<int>::max(), 0);
-  camera_raw_record_frame_count_->setSpecialValueText("Unlimited");
-  grid->addWidget(camera_raw_record_frame_count_, row, 1);
-  ++row;
-  camera_raw_record_start_button_ = new QPushButton("Start Raw record", page);
-  camera_raw_record_stop_button_  = new QPushButton("Stop Raw record", page);
-  camera_raw_record_stop_button_->setEnabled(false);
-  grid->addWidget(camera_raw_record_start_button_, row, 0);
-  grid->addWidget(camera_raw_record_stop_button_, row, 1);
-  ++row;
-
   grid->setRowStretch(row, 1);
 
   return page;
