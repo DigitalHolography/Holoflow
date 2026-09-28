@@ -893,7 +893,6 @@ public:
   }
 
   void log_update_lifecycle(bool replacing) {
-    const std::lock_guard lock(diagnostics_mutex_);
     if (!buffer_queue_.empty() && log_due(last_pending_update_log_)) {
       logger()->error("[AmetekS711EuresysCoaxlinkQSFP::update] updating with unreleased frames: {}", buffer_queue_.size());
     }
@@ -901,12 +900,9 @@ public:
       return;
     }
     if (!replacing) {
-      ++update_epoch_;
-      update_a_                = read_bank_counters(*grabber_a_, "A");
-      update_b_                = read_bank_counters(*grabber_b_, "B");
-      first_pair_after_update_ = true;
-      first_pair_update_summary_.reset();
-      resume_counters_pending_ = false;
+      // EGrabber diagnostics are collected by the acquisition thread, never by the
+      // thread applying the pipeline update.
+      update_snapshot_request_.fetch_add(1, std::memory_order_release);
     }
     if (!log_due(last_lifecycle_log_)) {
       return;
@@ -916,11 +912,100 @@ public:
                      "grabbers are still acquiring");
     } else {
       logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::update] reusing a task whose grabbers "
-                     "kept acquiring during the pipeline update; epoch={}, queued frames may be "
-                     "stale",
-                     update_epoch_);
+                     "kept acquiring during the pipeline update; queued frames may be stale");
     }
   }
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    if (!running_.load(std::memory_order_acquire)) {
+      // S711 Banks_AB must start bank B first, then bank A.
+
+      grabber_b_->enableEvent<Euresys::NewBufferData>();
+      grabber_b_->start();
+      grabber_a_->enableEvent<Euresys::NewBufferData>();
+      grabber_a_->start();
+      running_.store(true, std::memory_order_release);
+
+      acquisition_thread_ = std::thread([this] {
+        acquisition_stop_.store(false, std::memory_order_release);
+        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] Starting acquisition thread");
+        acquisition_loop();
+        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] Stopping acquisition thread");
+       });
+    }
+
+    while (!ctx.cancelled->load()) {
+        auto& next = buffer_queue_.read_a();
+        if (next.base) {
+          auto &storage = storage_access().owned_output_storage(0);
+          storage.ptr   = next.base;
+
+          ctx.outputs[0] = holoflow::core::TView{
+              .desc    = ctx.outputs[0].desc,
+              .storage = &storage,
+          };
+        }
+        return holoflow::core::OpResult::Ok;
+    }
+    acquisition_stop_.store(true, std::memory_order_release);
+    return holoflow::core::OpResult::Cancelled;
+  }
+
+  const nlohmann::json &get_cfg() const { return cfg_; }
+
+private:
+  AmetekS711EuresysCoaxlinkQSFPSettings settings_;
+  RuntimeConfig                         runtime_cfg_;
+  HostPtr<uint8_t>                      buffers_;
+  std::unique_ptr<Euresys::EGenTL>      gentl_;
+  std::unique_ptr<Euresys::EGrabber<>>  grabber_a_;
+  std::unique_ptr<Euresys::EGrabber<>>  grabber_b_;
+  std::size_t                           buffer_size_;
+  std::atomic<bool>                     running_;
+  nlohmann::json                        cfg_;
+
+  // Logging and acquisition-diagnostic state
+  Clock::time_point          last_rejected_log_{};
+  Clock::time_point          last_pair_log_{};
+  Clock::time_point          last_error_log_{};
+  Clock::time_point          last_requeue_error_log_{};
+  Clock::time_point          last_lifecycle_log_{};
+  Clock::time_point          last_pending_update_log_{};
+  Clock::time_point          last_acquisition_log_{};
+  uint64_t                   rejected_pairs_since_log_ = 0;
+  uint64_t                   accepted_pairs_since_log_ = 0;
+  uint64_t                   max_ts_delta_since_log_   = 0;
+  Clock::time_point          last_diagnostic_log_{};
+  Clock::time_point          last_diagnostic_error_log_{};
+  std::atomic<uint64_t>      update_snapshot_request_{0};
+  uint64_t                   update_epoch_             = 0;
+  bool                       first_pair_after_update_  = false;
+  std::optional<std::string> first_pair_update_summary_;
+  BankCounters               previous_counters_a_;
+  BankCounters               previous_counters_b_;
+  BankCounters               update_a_;
+  BankCounters               update_b_;
+  BankCounters               resume_a_;
+  BankCounters               resume_b_;
+  bool                       resume_counters_pending_ = false;
+  std::optional<uint64_t>    previous_frame_a_;
+  std::optional<uint64_t>    previous_frame_b_;
+  Clock::time_point          frame_id_retry_a_{};
+  Clock::time_point          frame_id_retry_b_{};
+  uint64_t                   max_frame_step_a_    = 0;
+  uint64_t                   max_frame_step_b_    = 0;
+  uint64_t                   frame_regressions_a_ = 0;
+  uint64_t                   frame_regressions_b_ = 0;
+  bool                       pair_delta_seen_     = false;
+  int64_t                    min_pair_delta_      = 0;
+  int64_t                    max_pair_delta_      = 0;
+
+  CameraBufferQueue                     buffer_queue_;
+  static constexpr  size_t              buffer_queue_safety_buffers_count_ = 10; //TODO allocate more buffers to prevent filled queue
+
+  // acquisition thread
+  std::thread       acquisition_thread_;
+  std::atomic<bool> acquisition_stop_  = false;
 
   template <typename T, typename Reader>
   std::optional<T> read_diagnostic(Reader &&read, const char *label) {
@@ -966,6 +1051,20 @@ public:
             },
             awaiting.c_str()),
     };
+  }
+
+  void snapshot_update_counters_if_requested() {
+    const auto requested_epoch = update_snapshot_request_.load(std::memory_order_acquire);
+    if (requested_epoch == update_epoch_) {
+      return;
+    }
+
+    update_epoch_             = requested_epoch;
+    update_a_                 = read_bank_counters(*grabber_a_, "A");
+    update_b_                 = read_bank_counters(*grabber_b_, "B");
+    first_pair_after_update_  = true;
+    first_pair_update_summary_.reset();
+    resume_counters_pending_  = false;
   }
 
   std::string part_timing(Euresys::Buffer &buffer_a, Euresys::Buffer &buffer_b,
@@ -1067,7 +1166,7 @@ public:
                                uint64_t delivered_a, uint64_t delivered_b, uint64_t ts_a,
                                uint64_t ts_b, const Euresys::NewBufferData &data_a,
                                const Euresys::NewBufferData &data_b) {
-    const std::lock_guard lock(diagnostics_mutex_);
+    const bool due = log_due(last_diagnostic_log_);
     const auto read_frame_id = [&](Euresys::Buffer &buffer, Euresys::EGrabber<> &grabber,
                                    const char *label, Clock::time_point &retry_at) {
       if (Clock::now() < retry_at) {
@@ -1076,15 +1175,18 @@ public:
       auto frame_id = read_diagnostic<uint64_t>(
           [&] { return buffer.getInfo<uint64_t>(grabber, GenTL::BUFFER_INFO_FRAMEID); }, label);
       if (!frame_id) {
-        // An unsupported info command must not throw on every high-rate buffer.
         retry_at = Clock::now() + std::chrono::seconds(1);
       }
       return frame_id;
     };
-    const auto frame_a = read_frame_id(buffer_a, *grabber_a_, "bank A frame ID", frame_id_retry_a_);
-    const auto frame_b = read_frame_id(buffer_b, *grabber_b_, "bank B frame ID", frame_id_retry_b_);
-    record_frame_id(frame_a, previous_frame_a_, max_frame_step_a_, frame_regressions_a_);
-    record_frame_id(frame_b, previous_frame_b_, max_frame_step_b_, frame_regressions_b_);
+    std::optional<uint64_t> frame_a;
+    std::optional<uint64_t> frame_b;
+    if (due || first_pair_after_update_) {
+      frame_a = read_frame_id(buffer_a, *grabber_a_, "bank A frame ID", frame_id_retry_a_);
+      frame_b = read_frame_id(buffer_b, *grabber_b_, "bank B frame ID", frame_id_retry_b_);
+      record_frame_id(frame_a, previous_frame_a_, max_frame_step_a_, frame_regressions_a_);
+      record_frame_id(frame_b, previous_frame_b_, max_frame_step_b_, frame_regressions_b_);
+    }
 
     const auto delta = signed_delta(ts_a, ts_b);
     if (!pair_delta_seen_) {
@@ -1095,7 +1197,6 @@ public:
       max_pair_delta_ = (std::max)(max_pair_delta_, delta);
     }
 
-    const bool due = log_due(last_diagnostic_log_);
     if (first_pair_after_update_) {
       resume_a_                = read_bank_counters(*grabber_a_, "A");
       resume_b_                = read_bank_counters(*grabber_b_, "B");
@@ -1112,7 +1213,7 @@ public:
 
     logger()->info("[AmetekS711EuresysCoaxlinkQSFP::diagnostics] epoch={} latest A/B ts="
                    "{}/{}, signed A-B={} us, interval range=[{},{}] us, event A-B={} us, "
-                   "first after update={}, parts: {}",
+                   "first after update snapshot={}, parts: {}",
                    update_epoch_, ts_a, ts_b, delta, min_pair_delta_, max_pair_delta_,
                    signed_delta(data_a.timestamp, data_b.timestamp),
                    first_pair_update_summary_.value_or("n/a"),
@@ -1130,103 +1231,12 @@ public:
       resume_counters_pending_ = false;
     }
     first_pair_update_summary_.reset();
-    update_a_         = {};
-    update_b_         = {};
-    max_frame_step_a_ = max_frame_step_b_ = 0;
-    frame_regressions_a_ = frame_regressions_b_ = 0;
-    pair_delta_seen_                            = false;
+    update_a_             = {};
+    update_b_             = {};
+    max_frame_step_a_     = max_frame_step_b_ = 0;
+    frame_regressions_a_  = frame_regressions_b_ = 0;
+    pair_delta_seen_      = false;
   }
-
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    if (!running_.load(std::memory_order_acquire)) {
-      // S711 Banks_AB must start bank B first, then bank A.
-
-      grabber_b_->enableEvent<Euresys::NewBufferData>();
-      grabber_b_->start();
-      grabber_a_->enableEvent<Euresys::NewBufferData>();
-      grabber_a_->start();
-      running_.store(true, std::memory_order_release);
-
-      acquisition_thread_ = std::thread([this] {
-        acquisition_stop_.store(false, std::memory_order_release);
-        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] Starting acquisition thread");
-        acquisition_loop();
-        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] Stopping acquisition thread");
-       });
-    }
-
-    while (!ctx.cancelled->load()) {
-        auto& next = buffer_queue_.read_a();
-        if (next.base) {
-          auto &storage = storage_access().owned_output_storage(0);
-          storage.ptr   = next.base;
-
-          ctx.outputs[0] = holoflow::core::TView{
-              .desc    = ctx.outputs[0].desc,
-              .storage = &storage,
-          };
-        }
-        return holoflow::core::OpResult::Ok;
-    }
-    acquisition_stop_.store(true, std::memory_order_release);
-    return holoflow::core::OpResult::Cancelled;
-  }
-
-  const nlohmann::json &get_cfg() const { return cfg_; }
-
-private:
-  AmetekS711EuresysCoaxlinkQSFPSettings settings_;
-  RuntimeConfig                         runtime_cfg_;
-  HostPtr<uint8_t>                      buffers_;
-  std::unique_ptr<Euresys::EGenTL>      gentl_;
-  std::unique_ptr<Euresys::EGrabber<>>  grabber_a_;
-  std::unique_ptr<Euresys::EGrabber<>>  grabber_b_;
-  std::size_t                           buffer_size_;
-  std::atomic<bool>                     running_;
-  nlohmann::json                        cfg_;
-
-  // Diagnostics state
-  Clock::time_point          last_rejected_log_{};
-  Clock::time_point          last_pair_log_{};
-  Clock::time_point          last_error_log_{};
-  Clock::time_point          last_requeue_error_log_{};
-  Clock::time_point          last_lifecycle_log_{};
-  Clock::time_point          last_pending_update_log_{};
-  Clock::time_point          last_diagnostic_log_{};
-  Clock::time_point          last_diagnostic_error_log_{};
-  Clock::time_point          last_acquisition_log_{};
-  std::mutex                 diagnostics_mutex_;
-  uint64_t                   rejected_pairs_since_log_ = 0;
-  uint64_t                   accepted_pairs_since_log_ = 0;
-  uint64_t                   max_ts_delta_since_log_   = 0;
-  uint64_t                   update_epoch_             = 0;
-  bool                       first_pair_after_update_  = false;
-  std::optional<std::string> first_pair_update_summary_;
-  BankCounters               previous_counters_a_;
-  BankCounters               previous_counters_b_;
-  BankCounters               update_a_;
-  BankCounters               update_b_;
-  BankCounters               resume_a_;
-  BankCounters               resume_b_;
-  bool                       resume_counters_pending_ = false;
-  std::optional<uint64_t>    previous_frame_a_;
-  std::optional<uint64_t>    previous_frame_b_;
-  Clock::time_point          frame_id_retry_a_{};
-  Clock::time_point          frame_id_retry_b_{};
-  uint64_t                   max_frame_step_a_    = 0;
-  uint64_t                   max_frame_step_b_    = 0;
-  uint64_t                   frame_regressions_a_ = 0;
-  uint64_t                   frame_regressions_b_ = 0;
-  bool                       pair_delta_seen_     = false;
-  int64_t                    min_pair_delta_      = 0;
-  int64_t                    max_pair_delta_      = 0;
-
-  CameraBufferQueue                     buffer_queue_;
-  static constexpr  size_t              buffer_queue_safety_buffers_count_ = 10; //TODO allocate more buffers to prevent filled queue
-
-  // acquisition thread
-  std::thread       acquisition_thread_;
-  std::atomic<bool> acquisition_stop_  = false;
 
   void acquisition_loop() {
     using namespace Euresys;
@@ -1235,6 +1245,7 @@ private:
 
     while (!acquisition_stop_.load(std::memory_order_acquire)) {
       try {
+        snapshot_update_counters_if_requested();
         const auto timeout_ms = runtime_cfg_.pop_timeout_ms;
 
         auto                                  data_a = grabber_a_->pop(timeout_ms);
@@ -1256,7 +1267,6 @@ private:
         std::byte *base_a;
         std::byte *base_b;
         try {
-          const std::lock_guard lock(diagnostics_mutex_);
           delivered_a = buffer_a.getInfo<uint64_t>(*grabber_a_, DELIVERED);
           delivered_b = buffer_b.getInfo<uint64_t>(*grabber_b_, DELIVERED);
           ts_a        = buffer_a.getInfo<uint64_t>(*grabber_a_, TIMESTAMP);
@@ -1299,15 +1309,13 @@ private:
 
         const auto ts_delta = ts_a >= ts_b ? ts_a - ts_b : ts_b - ts_a;
         ++accepted_pairs_since_log_;
-        if (ts_delta > max_ts_delta_since_log_) {
-          max_ts_delta_since_log_ = ts_delta;
-        }
+        max_ts_delta_since_log_ = (std::max)(max_ts_delta_since_log_, ts_delta);
         if (log_due(last_pair_log_)) {
           logger()->info("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] accepted {} two-bank "
                          "buffer pair(s): latest base={}, delivered={}, bank A ts={}, bank B "
                          "ts={}, max ts delta={} us",
-                         accepted_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a,
-                         ts_b, max_ts_delta_since_log_);
+                         accepted_pairs_since_log_, static_cast<void *>(base_a), delivered_a,
+                         ts_a, ts_b, max_ts_delta_since_log_);
           accepted_pairs_since_log_ = 0;
           max_ts_delta_since_log_   = 0;
         }
