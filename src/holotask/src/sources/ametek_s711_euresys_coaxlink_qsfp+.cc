@@ -544,7 +544,7 @@ public:
   using EnqueueBufferCallback =
       std::function<void(size_t producer_id, const Euresys::NewBufferData &)>;
 
-  MTGrabber(Euresys::EGrabberCameraInfo info, EGrabberName name,
+  MTGrabber(Euresys::EGrabberInfo info, EGrabberName name,
             std::optional<EnqueueBufferCallback> enqueue_callback = std::nullopt)
       : EGrabber<Euresys::CallbackMultiThread>(info), name_{name},
         enqueue_callback_{enqueue_callback} {
@@ -1049,7 +1049,7 @@ private:
   }
 
   [[nodiscard]]
-  const DType *read(std::atomic<size_t> &reader, const std::atomic<bool> *cancelled) const {
+  const DType *read(std::atomic<size_t> &reader, const std::atomic<bool> *cancelled) {
     size_t current = reader.load(std::memory_order_relaxed);
 
     for (;;) {
@@ -1658,8 +1658,6 @@ private:
     using namespace Euresys;
     constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
     constexpr auto TIMESTAMP = GenTL::BUFFER_INFO_TIMESTAMP;
-
-    const auto timeout_ms = runtime_cfg_.pop_timeout_ms;
 
     auto buffer_a = Buffer(data_a);
     auto buffer_b = Buffer(data_b);
