@@ -21,6 +21,8 @@
 #include "holoflow/core/tensor.hh"
 #include "support/math_tasks.hh"
 
+#include "holoflow/runtime/graph_display.hh"
+
 namespace {
 
 class ExposedTask final : public holoflow::core::ISyncTask {

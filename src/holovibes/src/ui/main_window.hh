@@ -46,6 +46,7 @@ class ZernikeHistoryWidget;
 class SelectedWidgetSettingsPanel;
 class VisualizationWorkspace;
 class UpdateChecker;
+class GraphVisualizerWidget;
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
@@ -107,6 +108,9 @@ private:
   void configure_window();
   void check_for_updates();
   void show_fft_frequency_tool();
+  void show_preferences();
+  void show_pipeline_graph();
+  void open_dot_file();
 
   void    refresh_visualization_availability();
   void    select_configurable_widget(ZernikeHistoryWidget *widget);
@@ -175,6 +179,7 @@ private:
   QWidget                *right_sidebar_              = nullptr;
   QToolButton            *update_indicator_           = nullptr;
   UpdateChecker          *update_checker_             = nullptr;
+  GraphVisualizerWidget  *graph_visualizer_widget_    = nullptr;
   QUrl                    available_update_url_;
 };
 

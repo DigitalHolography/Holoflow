@@ -27,6 +27,8 @@
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
 
+#include "holoflow/runtime/graph_display.hh"
+
 namespace {
 
 using holoflow::core::DType;

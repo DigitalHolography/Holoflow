@@ -25,6 +25,7 @@
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
 #include "holoflow/runtime/compiler.hh"
+#include "holoflow/runtime/graph_display.hh"
 #include "holoflow/runtime/graph_exec.hh"
 #include "pipeline/settings.hh"
 
@@ -73,6 +74,23 @@ public:
   /// @brief Sends an event to the pipeline to stop writing raw data.
   void stop_raw_record();
 
+  using GraphSpecDumpPreferences     = holoflow::core::GraphSpecDumpPreferences;
+  using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
+
+  /// @brief Returns the current graph spec dump preferences
+  const GraphSpecDumpPreferences &get_graph_spec_dump_preferences() const {
+    return graph_spec_dump_prefs_;
+  }
+  void update_graph_spec_dump_preferences(const GraphSpecDumpPreferences &prefs);
+
+  const GraphCompiledDumpPreferences &get_graph_compiled_dump_preferences() const {
+    return graph_compiled_dump_prefs_;
+  }
+  void update_graph_compiled_dump_preferences(const GraphCompiledDumpPreferences &prefs);
+
+  /// @brief Emits Graphviz DOT for the current compiled pipeline graph.
+  void request_compiled_graph_visualization();
+
 signals:
   // Lifecycle signals
   void start_pipeline_success();
@@ -92,6 +110,10 @@ signals:
   void raw_record_started_failure(const QString &error);
   void raw_record_stopped_success();
   void raw_record_stopped_failure(const QString &error);
+
+  // Graph visualization signals
+  void graph_visualization_ready(const QString &dot);
+  void graph_visualization_failed(const QString &error);
 
 private:
   using V = holoflow::core::GraphSpec::vertex_descriptor;
@@ -139,6 +161,9 @@ private:
   Settings s_;
   int      src_width_  = 0;
   int      src_height_ = 0;
+
+  GraphSpecDumpPreferences     graph_spec_dump_prefs_     = {};
+  GraphCompiledDumpPreferences graph_compiled_dump_prefs_ = {};
 
   /// @brief Toggles debug dumps of the pipeline (.dot, .json) to disk.
   bool dump_debug_graphs_ = true;
