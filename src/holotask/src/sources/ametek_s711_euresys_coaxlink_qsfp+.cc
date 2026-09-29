@@ -581,14 +581,16 @@ private:
  */
 HostPtr<uint8_t> allocate_shared_buffers(MTGrabber &grabber_a, MTGrabber &grabber_b,
                                          std::size_t nb_buffers, std::size_t buffer_size) {
+  constexpr size_t safety_padding_size = 16;
+  size_t actual_nb_buffers = nb_buffers + safety_padding_size;
   logger()->info(
-      "[AmetekS711EuresysCoaxlinkQSFPFactory] allocating {} shared host buffers of size {} bytes",
-      nb_buffers, buffer_size);
+      "[AmetekS711EuresysCoaxlinkQSFPFactory] allocating {} ({} + {}) shared host buffers of size {} bytes",
+      actual_nb_buffers, nb_buffers, safety_padding_size, buffer_size);
 
-  const auto total_size = buffer_size * nb_buffers;
+  const auto total_size = buffer_size * actual_nb_buffers;
   auto       buffers    = curaii::make_unique_host_ptr<uint8_t>(total_size);
 
-  for (std::size_t buf_idx = 0; buf_idx < nb_buffers; ++buf_idx) {
+  for (std::size_t buf_idx = 0; buf_idx < actual_nb_buffers; ++buf_idx) {
     auto *base = buffers.get() + buf_idx * buffer_size;
 
     grabber_a.announceAndQueue(Euresys::UserMemory(base, buffer_size));
@@ -626,12 +628,6 @@ holoflow::core::DType dtype_from_pixel_format(const std::string &pixel_format) {
   check(dtypes.contains(pixel_format), "unsupported PixelFormat: " + pixel_format);
   return dtypes.at(pixel_format);
 }
-
-struct CameraFrame {
-  Euresys::NewBufferData bank_a;
-  Euresys::NewBufferData bank_b;
-  std::byte             *base{};
-};
 
 struct CameraFrame {
   Euresys::NewBufferData bank_a;
@@ -2152,7 +2148,7 @@ AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDe
 
   auto buffer_size = odesc.num_bytes();
   auto buffers     = allocate_shared_buffers(
-      *grabber_a, *grabber_b, runtime_cfg.nb_buffers + CameraBufferQueue::safety_padding_size,
+      *grabber_a, *grabber_b, runtime_cfg.nb_buffers,
       buffer_size);
 
   return std::make_unique<AmetekS711EuresysCoaxlinkQSFP>(
