@@ -633,6 +633,12 @@ struct CameraFrame {
   std::byte             *base{};
 };
 
+struct CameraFrame {
+  Euresys::NewBufferData bank_a;
+  Euresys::NewBufferData bank_b;
+  std::byte             *base{};
+};
+
 class CameraBufferQueue {
 public:
   using DType                     = CameraFrame;
@@ -640,13 +646,14 @@ public:
   using BufferAssemblerCallback   = std::function<std::optional<CameraFrame>(
       Euresys::NewBufferData &&, Euresys::NewBufferData &&)>;
 
-  static constexpr size_t producer_count      = 2;
-  static constexpr size_t safety_padding_size = 16;
+  static constexpr size_t producer_count = 2;
 
-  CameraBufferQueue(size_t capacity, BufferDataReleaseCallback part0_release_callback,
+  CameraBufferQueue(size_t capacity,
+                    BufferDataReleaseCallback part0_release_callback,
                     BufferDataReleaseCallback part1_release_callback,
                     BufferAssemblerCallback   buffer_assembler_callback)
-      : capacity_{capacity}, slots_{std::make_unique<Slot[]>(capacity)},
+      : capacity_{capacity},
+        slots_{std::make_unique<Slot[]>(capacity)},
         part0_release_callback_{std::move(part0_release_callback)},
         part1_release_callback_{std::move(part1_release_callback)},
         buffer_assembler_callback_{std::move(buffer_assembler_callback)} {
@@ -656,16 +663,20 @@ public:
   }
 
   ~CameraBufferQueue() {
+    closed_.store(true, std::memory_order_release);
+
     for (size_t i = 0; i < capacity_; ++i) {
       auto &slot = slots_[i];
 
-      const auto state = slot.state.load(std::memory_order_relaxed);
+      const auto state =
+          slot.state.load(std::memory_order_relaxed);
 
-      /*
-       * A partially assembled generation still owns whichever
-       * buffers have arrived.
-       */
       if (state == SlotState::Collecting) {
+        /*
+         * One or both producers may have arrived.
+         *
+         * The queue still owns whichever buffers are present.
+         */
         if (slot.part0.has_value()) {
           part0_release_callback_(*slot.part0);
           slot.part0.reset();
@@ -679,10 +690,10 @@ public:
         continue;
       }
 
-      /*
-       * A Ready frame is owned by the queue/readers.
-       */
       if (state == SlotState::Ready) {
+        /*
+         * A Ready frame belongs to the queue/readers.
+         */
         if (slot.readers.load(std::memory_order_relaxed) != 0) {
           release_callback(std::move(slot.data));
         }
@@ -691,8 +702,14 @@ public:
       }
 
       /*
-       * Dropped means the assembler already dealt with both
-       * buffers. There is nothing left for us to release.
+       * Dropped:
+       *
+       * The assembler already took ownership of both input
+       * buffers and is responsible for releasing/requeueing them.
+       *
+       * Empty:
+       *
+       * Nothing to release.
        */
     }
   }
@@ -706,13 +723,8 @@ public:
   /**
    * Push one half of a frame.
    *
-   * producer must be 0 or 1.
-   *
    * The nth frame submitted by producer 0 is paired with the
    * nth frame submitted by producer 1.
-   *
-   * The input NewBufferData is copied into the slot because the
-   * Euresys callback gives us a const reference.
    */
   void push(size_t producer, const Euresys::NewBufferData &frame) {
     assert(producer < producer_count);
@@ -725,73 +737,116 @@ public:
       }
     };
 
+    /*
+     * Once closed, don't accept new buffers.
+     */
     if (closed_.load(std::memory_order_acquire)) {
       release_frame();
       return;
     }
-
-    const size_t generation =
-        producer_write_index_[producer].fetch_add(1, std::memory_order_relaxed);
 
     /*
-     * Don't allow this producer to get more than `capacity`
-     * generations ahead of the oldest consumer.
-     *
-     * This prevents it from wrapping around and touching a slot
-     * that may still belong to an older generation.
+     * Each producer gets its own monotonically increasing
+     * generation number.
      */
-    while (!closed_.load(std::memory_order_acquire) &&
-           generation >= oldest_read_index() + capacity_) {
-      std::this_thread::yield();
-    }
-
-    if (closed_.load(std::memory_order_acquire)) {
-      release_frame();
-      return;
-    }
+    const size_t generation =
+        producer_write_index_[producer].fetch_add(
+            1,
+            std::memory_order_relaxed);
 
     auto &slot = slots_[generation % capacity_];
 
     /*
-     * Claim the slot.
+     * Claim the slot for this generation.
      *
-     * Exactly one of the two producers will transition:
+     * This is the important part of the protocol:
      *
-     *     Empty -> Collecting
+     *     invalid_generation -> generation
      *
-     * The other producer will observe Collecting.
+     * Only one producer can perform this transition.
      */
-    SlotState expected = SlotState::Empty;
+    for (;;) {
+      if (closed_.load(std::memory_order_acquire)) {
+        release_frame();
+        return;
+      }
 
-    if (slot.state.compare_exchange_strong(expected, SlotState::Collecting,
-                                           std::memory_order_acq_rel, std::memory_order_acquire)) {
+      size_t expected = invalid_generation;
+
+      if (slot.generation.compare_exchange_weak(
+              expected,
+              generation,
+              std::memory_order_acq_rel,
+              std::memory_order_acquire)) {
+
+        /*
+         * We are the first producer for this generation.
+         */
+        assert(
+            slot.state.load(std::memory_order_relaxed) ==
+            SlotState::Empty);
+
+        assert(
+            slot.parts_ready.load(std::memory_order_relaxed) == 0);
+
+        assert(!slot.part0.has_value());
+        assert(!slot.part1.has_value());
+
+        assert(
+            slot.readers.load(std::memory_order_relaxed) == 0);
+
+        slot.state.store(
+            SlotState::Collecting,
+            std::memory_order_release);
+
+        break;
+      }
 
       /*
-       * We are the first producer for this generation.
+       * The slot already belongs to some generation.
        *
-       * A freshly reused slot must have no stale producer state.
+       * It is possible that this is our generation: the other
+       * producer got here first.
        */
-      assert(slot.parts_ready.load(std::memory_order_relaxed) == 0);
-      assert(!slot.part0.has_value());
-      assert(!slot.part1.has_value());
-      assert(slot.readers.load(std::memory_order_relaxed) == 0);
-    } else {
+      if (expected == generation) {
+        /*
+         * The first producer has claimed the slot.
+         *
+         * Wait until it has initialized the Collecting state.
+         */
+        while (
+            slot.state.load(std::memory_order_acquire) ==
+            SlotState::Empty) {
+
+          if (closed_.load(std::memory_order_acquire)) {
+            release_frame();
+            return;
+          }
+
+          std::this_thread::yield();
+        }
+
+        assert(
+            slot.state.load(std::memory_order_acquire) ==
+            SlotState::Collecting);
+
+        break;
+      }
+
       /*
-       * The only valid state here is Collecting.
+       * This slot belongs to another generation.
        *
-       * Ready/Dropped would mean the other producer already
-       * completed this generation, which is impossible for the
-       * matching generation unless the pairing assumption was
-       * violated.
+       * This is normal when a producer gets ahead of the other
+       * producer or when the queue is full.
        */
-      assert(expected == SlotState::Collecting);
+      std::this_thread::yield();
     }
 
     /*
      * Store our half.
      *
-     * Producer 0 and producer 1 write different optional objects,
-     * so there is no data race between these assignments.
+     * Producer 0 only touches part0.
+     * Producer 1 only touches part1.
      */
     if (producer == 0) {
       slot.part0 = frame;
@@ -801,72 +856,101 @@ public:
 
     /*
      * Publish that our producer has arrived.
-     *
-     * The release/acquire synchronization here ensures that the
-     * second producer sees the first producer's NewBufferData.
      */
-    const unsigned bit = 1u << static_cast<unsigned>(producer);
+    const unsigned bit =
+        1u << static_cast<unsigned>(producer);
 
-    const unsigned previous = slot.parts_ready.fetch_or(bit, std::memory_order_acq_rel);
+    const unsigned previous =
+        slot.parts_ready.fetch_or(
+            bit,
+            std::memory_order_acq_rel);
 
     /*
-     * We are the second producer.
+     * Only the second producer assembles the frame.
      */
     if ((previous | bit) == producer_mask()) {
       complete_generation(generation, slot);
     }
   }
 
+  /**
+   * Read the next frame for reader A.
+   *
+   * Returns nullptr if cancelled or the queue is closed before
+   * another frame becomes available.
+   */
   [[nodiscard]]
   const DType *read_a(const std::atomic<bool> &cancelled) {
     return read(read_index_a_, &cancelled);
   }
 
+  /**
+   * Read the next frame for reader B.
+   *
+   * Throws if the queue is closed while waiting.
+   */
   [[nodiscard]]
   const DType &read_b() {
     const auto *frame = read(read_index_b_, nullptr);
+
     if (frame == nullptr) {
-      throw std::runtime_error("CameraBufferQueue closed while waiting for reader B");
+      throw std::runtime_error(
+          "CameraBufferQueue closed while waiting for reader B");
     }
+
     return *frame;
   }
 
-  void close() { closed_.store(true, std::memory_order_release); }
+  void close() {
+    closed_.store(true, std::memory_order_release);
+  }
 
-  void release_a() { release(read_index_a_); }
+  void release_a() {
+    release(read_index_a_);
+  }
 
-  void release_b() { release(read_index_b_); }
+  void release_b() {
+    release(read_index_b_);
+  }
 
   void subscribe_b() {
-    if (reader_b_active_.exchange(true, std::memory_order_acq_rel)) {
-      throw std::logic_error("CameraBufferQueue reader B is already active");
+    if (reader_b_active_.exchange(
+            true,
+            std::memory_order_acq_rel)) {
+      throw std::logic_error(
+          "CameraBufferQueue reader B is already active");
     }
 
     /*
-     * B starts at the current publication point, so it doesn't
-     * consume frames that were already published before it
-     * subscribed.
+     * B starts at the current publication point.
      */
-    read_index_b_.store(write_index_.load(std::memory_order_acquire), std::memory_order_release);
+    read_index_b_.store(
+        write_index_.load(std::memory_order_acquire),
+        std::memory_order_release);
   }
 
   void unsubscribe_b() {
-    if (!reader_b_active_.exchange(false, std::memory_order_acq_rel)) {
+    if (!reader_b_active_.exchange(
+            false,
+            std::memory_order_acq_rel)) {
       return;
     }
 
-    const auto end = write_index_.load(std::memory_order_acquire);
+    const auto end =
+        write_index_.load(std::memory_order_acquire);
 
-    while (read_index_b_.load(std::memory_order_relaxed) != end) {
+    while (
+        read_index_b_.load(std::memory_order_relaxed) != end) {
       release_b();
     }
   }
 
   [[nodiscard]]
   bool empty_b() const {
-    const auto write = write_index_.load(std::memory_order_acquire);
-
-    return read_index_b_.load(std::memory_order_relaxed) == write;
+    return read_index_b_.load(
+               std::memory_order_relaxed) ==
+           write_index_.load(
+               std::memory_order_acquire);
   }
 
   [[nodiscard]]
@@ -877,14 +961,16 @@ public:
   /**
    * Number of published generations that have not yet been
    * consumed by the oldest active reader.
-   *
-   * This includes dropped generations until a reader skips them.
    */
   [[nodiscard]]
   size_t size() const {
-    const auto w = write_index_.load(std::memory_order_acquire);
+    const auto write =
+        write_index_.load(std::memory_order_acquire);
 
-    return w - oldest_read_index();
+    const auto oldest =
+        oldest_read_index();
+
+    return write - oldest;
   }
 
   [[nodiscard]]
@@ -900,14 +986,34 @@ private:
     Dropped,
   };
 
+  static constexpr size_t invalid_generation =
+      std::numeric_limits<size_t>::max();
+
+  static constexpr unsigned releasing_ =
+      std::numeric_limits<unsigned>::max();
+
+  static constexpr unsigned producer_mask() {
+    return (1u << producer_count) - 1u;
+  }
+
   struct Slot {
     /*
-     * Valid only when state == Ready.
+     * Generation currently owning this slot.
+     *
+     * invalid_generation means that the slot is reusable.
+     *
+     * This is the authoritative mechanism preventing a fast
+     * producer from overwriting a still-collecting generation.
+     */
+    std::atomic<size_t> generation{invalid_generation};
+
+    /*
+     * Valid when state == Ready.
      */
     DType data;
 
     /*
-     * Valid only while state == Collecting.
+     * Valid when state == Collecting.
      */
     std::optional<Euresys::NewBufferData> part0;
     std::optional<Euresys::NewBufferData> part1;
@@ -919,197 +1025,335 @@ private:
     std::atomic<unsigned> parts_ready{0};
 
     /*
-     * Slot lifetime state.
+     * Lifetime state of this generation.
      */
     std::atomic<SlotState> state{SlotState::Empty};
 
     /*
-     * Number of readers that still own a Ready frame or need to
-     * acknowledge a Dropped generation.
+     * Number of readers owning this generation.
      *
-     * 0 -> no reader
-     * 1 -> reader A
-     * 2 -> readers A+B
-     * releasing_ -> final reader is releasing
+     * 0:
+     *     no readers
+     *
+     * 1:
+     *     reader A OR reader B
+     *
+     * 2:
+     *     readers A+B
+     *
+     * releasing_:
+     *     the final reader is currently releasing the frame
      */
     std::atomic<unsigned> readers{0};
   };
-
-  static constexpr unsigned producer_mask() { return (1u << producer_count) - 1u; }
 
   /**
    * Called by the second producer.
    *
    * The assembler takes ownership of both NewBufferData objects.
    *
-   * IMPORTANT:
-   *
-   * If the assembler returns std::nullopt, it is responsible for
-   * releasing/requeueing both buffers itself.
+   * If the assembler returns nullopt, it is responsible for
+   * releasing/requeueing both buffers.
    */
   void complete_generation(size_t generation, Slot &slot) {
-    assert(slot.parts_ready.load(std::memory_order_acquire) == producer_mask());
+    assert(
+        slot.generation.load(std::memory_order_acquire) ==
+        generation);
+
+    assert(
+        slot.state.load(std::memory_order_acquire) ==
+        SlotState::Collecting);
+
+    assert(
+        slot.parts_ready.load(std::memory_order_acquire) ==
+        producer_mask());
 
     assert(slot.part0.has_value());
     assert(slot.part1.has_value());
 
-    auto assembled = buffer_assembler_callback_(std::move(*slot.part0), std::move(*slot.part1));
+    /*
+     * The assembler takes ownership of both buffers.
+     */
+    auto assembled =
+        buffer_assembler_callback_(
+            std::move(*slot.part0),
+            std::move(*slot.part1));
 
     /*
-     * The assembler now owns the two input buffers regardless
-     * of whether it succeeded.
+     * The queue no longer owns these buffers.
      *
-     * Therefore the queue must NOT release them.
+     * This is true whether assembly succeeded or failed.
      */
     slot.part0.reset();
     slot.part1.reset();
 
-    const unsigned reader_count = reader_b_active_.load(std::memory_order_acquire) ? 2u : 1u;
+    const unsigned reader_count =
+        reader_b_active_.load(std::memory_order_acquire)
+            ? 2u
+            : 1u;
 
     if (assembled.has_value()) {
       /*
-       * Move rather than copy the assembled CameraFrame.
+       * Successfully assembled frame.
        */
       slot.data = std::move(*assembled);
 
-      slot.readers.store(reader_count, std::memory_order_release);
+      slot.readers.store(
+          reader_count,
+          std::memory_order_relaxed);
 
       /*
-       * The complete CameraFrame is now visible.
+       * Publish the complete frame.
+       *
+       * Everything written above becomes visible to readers
+       * through this release/acquire pair.
        */
-      slot.state.store(SlotState::Ready, std::memory_order_release);
+      slot.state.store(
+          SlotState::Ready,
+          std::memory_order_release);
     } else {
       /*
        * Assembly failed.
        *
-       * The assembler has already handled both buffers.
+       * The assembler already handled both input buffers.
        *
-       * This generation is nevertheless COMPLETE from the
-       * queue's ordering perspective. Readers will skip it, and
-       * the final reader will recycle the slot.
+       * This generation is nevertheless considered completed
+       * from the ordering perspective. Readers will skip it.
        */
-      slot.readers.store(reader_count, std::memory_order_release);
-      slot.state.store(SlotState::Dropped, std::memory_order_release);
+      slot.readers.store(
+          reader_count,
+          std::memory_order_relaxed);
+
+      slot.state.store(
+          SlotState::Dropped,
+          std::memory_order_release);
     }
 
     /*
-     * Make this generation, and any consecutive generations that
-     * have already completed, visible to readers.
+     * Make this generation and any consecutive completed
+     * generations visible to readers.
      */
-    publish_completed(generation);
+    publish_completed();
   }
 
   /**
-   * Advance write_index through every consecutive completed slot.
+   * Advance write_index through all consecutive completed
+   * generations.
    *
-   * A producer can finish generation N+1 before generation N.
-   * Therefore we cannot simply publish `generation + 1`.
+   * Example:
+   *
+   *     generation 0 = Collecting
+   *     generation 1 = Ready
+   *     generation 2 = Ready
+   *
+   * write_index remains 0.
+   *
+   * Once generation 0 becomes Ready/Dropped, this function
+   * advances:
+   *
+   *     0 -> 1 -> 2 -> 3
    */
-  void publish_completed(size_t /*generation*/) {
+  void publish_completed() {
     for (;;) {
-      size_t current = write_index_.load(std::memory_order_acquire);
+      const size_t current =
+          write_index_.load(std::memory_order_acquire);
 
-      auto &slot = slots_[current % capacity_];
-
-      const SlotState state = slot.state.load(std::memory_order_acquire);
+      auto &slot =
+          slots_[current % capacity_];
 
       /*
-       * This generation has not completed yet.
+       * Make sure this is actually the slot for `current`.
+       *
+       * This also protects against stale state from a reused slot.
        */
-      if (state == SlotState::Empty || state == SlotState::Collecting) {
+      const size_t generation =
+          slot.generation.load(std::memory_order_acquire);
+
+      if (generation != current) {
+        return;
+      }
+
+      const SlotState state =
+          slot.state.load(std::memory_order_acquire);
+
+      if (state == SlotState::Empty ||
+          state == SlotState::Collecting) {
+        /*
+         * The next generation isn't complete yet.
+         */
         return;
       }
 
       /*
-       * Ready and Dropped are both completed generations.
-       *
-       * Publish them in sequence.
+       * Ready or Dropped.
        */
-      if (write_index_.compare_exchange_weak(current, current + 1, std::memory_order_release,
-                                             std::memory_order_acquire)) {
+      size_t expected = current;
+
+      if (write_index_.compare_exchange_strong(
+              expected,
+              current + 1,
+              std::memory_order_release,
+              std::memory_order_acquire)) {
         continue;
       }
     }
   }
 
   /**
-   * Return the oldest reader position.
+   * Return the oldest active reader position.
    */
   [[nodiscard]]
   size_t oldest_read_index() const {
-    const auto a = read_index_a_.load(std::memory_order_acquire);
+    const auto a =
+        read_index_a_.load(
+            std::memory_order_acquire);
 
-    if (!reader_b_active_.load(std::memory_order_acquire)) {
+    if (!reader_b_active_.load(
+            std::memory_order_acquire)) {
       return a;
     }
 
-    const auto b = read_index_b_.load(std::memory_order_acquire);
+    const auto b =
+        read_index_b_.load(
+            std::memory_order_acquire);
 
     return std::min(a, b);
   }
 
+  /**
+   * Read the next published generation.
+   *
+   * Dropped generations are consumed internally and skipped.
+   */
   [[nodiscard]]
-  const DType *read(std::atomic<size_t> &reader, const std::atomic<bool> *cancelled) {
-    size_t current = reader.load(std::memory_order_relaxed);
+  const DType *read(
+      std::atomic<size_t> &reader,
+      const std::atomic<bool> *cancelled) {
+
+    size_t current =
+        reader.load(std::memory_order_relaxed);
 
     for (;;) {
-      if (cancelled != nullptr && cancelled->load(std::memory_order_acquire)) {
+      /*
+       * Cancellation is only used by reader A.
+       */
+      if (cancelled != nullptr &&
+          cancelled->load(std::memory_order_acquire)) {
         return nullptr;
       }
 
       /*
-       * Wait until at least one generation has been published.
-      */
-      while (current == write_index_.load(std::memory_order_acquire)) {
-        if (closed_.load(std::memory_order_acquire) ||
-            (cancelled != nullptr && cancelled->load(std::memory_order_acquire))) {
+       * Wait for a published generation.
+       */
+      while (
+          current ==
+          write_index_.load(
+              std::memory_order_acquire)) {
+
+        if (closed_.load(
+                std::memory_order_acquire)) {
           return nullptr;
         }
+
+        if (cancelled != nullptr &&
+            cancelled->load(
+                std::memory_order_acquire)) {
+          return nullptr;
+        }
+
         std::this_thread::yield();
 
-        current = reader.load(std::memory_order_relaxed);
+        current =
+            reader.load(
+                std::memory_order_relaxed);
       }
 
-      auto &slot = slots_[current % capacity_];
+      auto &slot =
+          slots_[current % capacity_];
 
-      const SlotState state = slot.state.load(std::memory_order_acquire);
+      /*
+       * This is the important validation that was missing from
+       * the previous implementation.
+       *
+       * A published generation must still own its slot.
+       */
+      const size_t generation =
+          slot.generation.load(
+              std::memory_order_acquire);
+
+      assert(generation == current);
+
+      const SlotState state =
+          slot.state.load(
+              std::memory_order_acquire);
 
       if (state == SlotState::Ready) {
         /*
-         * The acquire above synchronizes with the producer's
-         * publication of Ready.
+         * The acquire on state synchronizes with the producer's
+         * release store of Ready.
          */
         return &slot.data;
       }
 
+      if (state == SlotState::Dropped) {
+        /*
+         * No CameraFrame exists for this generation.
+         *
+         * Consume our reader ownership and move on.
+         */
+        acknowledge_dropped(slot);
+
+        reader.store(
+            current + 1,
+            std::memory_order_release);
+
+        current++;
+        continue;
+      }
+
       /*
-       * A dropped generation has no CameraFrame to return.
-       *
-       * Keep the slot marked as dropped until every active reader
-       * has consumed this generation.
+       * A reader must never observe Empty or Collecting for a
+       * generation that write_index has published.
        */
-      assert(state == SlotState::Dropped);
-
-      acknowledge_dropped(slot);
-
-      current++;
-
-      reader.store(current, std::memory_order_release);
+      assert(false && "Published generation is not complete");
     }
   }
 
+  /**
+   * Release a Ready or Dropped generation.
+   */
   void release(std::atomic<size_t> &reader) {
-    const size_t current = reader.load(std::memory_order_relaxed);
+    const size_t current =
+        reader.load(std::memory_order_relaxed);
 
-    auto &slot = slots_[current % capacity_];
+    auto &slot =
+        slots_[current % capacity_];
 
-    if (slot.state.load(std::memory_order_acquire) == SlotState::Dropped) {
+    const size_t generation =
+        slot.generation.load(
+            std::memory_order_acquire);
+
+    assert(generation == current);
+
+    const SlotState state =
+        slot.state.load(
+            std::memory_order_acquire);
+
+    if (state == SlotState::Dropped) {
       acknowledge_dropped(slot);
-      reader.store(current + 1, std::memory_order_release);
+
+      reader.store(
+          current + 1,
+          std::memory_order_release);
+
       return;
     }
 
-    unsigned readers = slot.readers.load(std::memory_order_acquire);
+    assert(state == SlotState::Ready);
+
+    unsigned readers =
+        slot.readers.load(
+            std::memory_order_acquire);
 
     for (;;) {
       assert(readers != 0);
@@ -1117,116 +1361,165 @@ private:
 
       if (readers == 1) {
         /*
-         * We are the last reader.
+         * We are the final reader.
          *
-         * Temporarily mark the slot as releasing so another
-         * reader/reuser cannot race with the callback.
+         * Claim the final release operation.
          */
-        if (slot.readers.compare_exchange_weak(readers, releasing_, std::memory_order_acq_rel,
-                                               std::memory_order_acquire)) {
-
-          release_callback(std::move(slot.data));
+        if (slot.readers.compare_exchange_strong(
+                readers,
+                releasing_,
+                std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
 
           /*
-           * No producer parts should remain after successful
-           * assembly.
+           * No other reader can access the frame now.
            */
+          release_callback(
+              std::move(slot.data));
+
           assert(!slot.part0.has_value());
           assert(!slot.part1.has_value());
 
-          slot.parts_ready.store(0, std::memory_order_relaxed);
+          slot.parts_ready.store(
+              0,
+              std::memory_order_relaxed);
 
           /*
-           * The frame is no longer available.
+           * The generation is no longer readable.
            */
-          slot.state.store(SlotState::Empty, std::memory_order_release);
+          slot.state.store(
+              SlotState::Empty,
+              std::memory_order_release);
 
           /*
-           * Finally make the slot reusable.
+           * Finally release ownership of the slot.
+           *
+           * A producer waiting on this generation can now claim
+           * it with CAS(invalid_generation -> new_generation).
            */
-          slot.readers.store(0, std::memory_order_release);
+          slot.generation.store(
+              invalid_generation,
+              std::memory_order_release);
+
+          slot.readers.store(
+              0,
+              std::memory_order_release);
 
           break;
         }
       } else {
-        if (slot.readers.compare_exchange_weak(readers, readers - 1, std::memory_order_acq_rel,
-                                               std::memory_order_acquire)) {
+        /*
+         * Another reader still owns the frame.
+         */
+        if (slot.readers.compare_exchange_strong(
+                readers,
+                readers - 1,
+                std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
           break;
         }
       }
     }
 
-    reader.store(current + 1, std::memory_order_release);
+    reader.store(
+        current + 1,
+        std::memory_order_release);
   }
 
   /**
-   * Release both buffers contained in a complete CameraFrame.
+   * A dropped generation still has reader ownership.
    *
-   * This is only called for a successfully assembled frame.
+   * Once the final reader acknowledges it, the slot becomes
+   * reusable.
+   */
+  void acknowledge_dropped(Slot &slot) {
+    const unsigned remaining =
+        slot.readers.fetch_sub(
+            1,
+            std::memory_order_acq_rel);
+
+    assert(remaining != 0);
+    assert(remaining != releasing_);
+
+    if (remaining == 1) {
+      /*
+       * Last reader of the dropped generation.
+       */
+      slot.parts_ready.store(
+          0,
+          std::memory_order_relaxed);
+
+      slot.state.store(
+          SlotState::Empty,
+          std::memory_order_release);
+
+      slot.generation.store(
+          invalid_generation,
+          std::memory_order_release);
+
+      slot.readers.store(
+          0,
+          std::memory_order_release);
+    }
+  }
+
+  /**
+   * Release both buffers belonging to a successfully assembled
+   * CameraFrame.
    */
   void release_callback(DType &&data) {
     part0_release_callback_(data.bank_a);
     part1_release_callback_(data.bank_b);
   }
 
-  void acknowledge_dropped(Slot &slot) {
-    const unsigned remaining = slot.readers.fetch_sub(1, std::memory_order_acq_rel);
-    assert(remaining != 0);
-    if (remaining == 1) {
-      slot.parts_ready.store(0, std::memory_order_relaxed);
-      slot.state.store(SlotState::Empty, std::memory_order_release);
-    }
-  }
-
 private:
-  static constexpr size_t cache_line_size_ = std::hardware_destructive_interference_size;
-
-  static constexpr unsigned releasing_ = std::numeric_limits<unsigned>::max();
+  static constexpr size_t cache_line_size =
+      std::hardware_destructive_interference_size;
 
   const size_t capacity_;
 
   std::atomic<bool> closed_{false};
 
-  /*
-   * Each slot is independently stateful.
-   *
-   * In practice you may want to pad Slot itself to a cache line
-   * if profiling shows significant false sharing between adjacent
-   * slots.
-   */
   std::unique_ptr<Slot[]> slots_;
 
   BufferDataReleaseCallback part0_release_callback_;
-
   BufferDataReleaseCallback part1_release_callback_;
 
   /*
-   * If assembly fails, this callback is responsible for dealing
-   * with both input buffers.
+   * The assembler owns both input buffers once called.
+   *
+   * On failure it must requeue/release them itself.
    */
   BufferAssemblerCallback buffer_assembler_callback_;
 
   /*
-   * Number of COMPLETE generations visible to readers.
+   * First unpublished generation.
+   *
+   * Readers only see generations < write_index_.
    */
-  alignas(cache_line_size_) std::atomic<size_t> write_index_{0};
+  alignas(cache_line_size)
+  std::atomic<size_t> write_index_{0};
 
   /*
-   * Independent generation counters for the two producers.
-   *
-   * The pairing contract is:
-   *
-   *   producer 0 generation N
-   *          <-> producer 1 generation N
+   * Independent producer generation counters.
    */
-  alignas(cache_line_size_) std::atomic<size_t> producer_write_index_[producer_count]{0, 0};
+  alignas(cache_line_size)
+  std::atomic<size_t>
+      producer_write_index_[producer_count]{0, 0};
 
-  alignas(cache_line_size_) std::atomic<size_t> read_index_a_{0};
+  /*
+   * Reader positions.
+   */
+  alignas(cache_line_size)
+  std::atomic<size_t> read_index_a_{0};
 
-  alignas(cache_line_size_) std::atomic<size_t> read_index_b_{0};
+  alignas(cache_line_size)
+  std::atomic<size_t> read_index_b_{0};
 
-  alignas(cache_line_size_) std::atomic<bool> reader_b_active_{false};
+  alignas(cache_line_size)
+  std::atomic<bool> reader_b_active_{false};
 };
+
 
 /*
 // read B
