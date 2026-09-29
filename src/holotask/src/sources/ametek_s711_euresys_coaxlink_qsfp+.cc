@@ -843,7 +843,8 @@ public:
      * Only the second producer assembles the frame.
      */
     if ((previous | bit) == producer_mask()) {
-      complete_generation(generation, slot);
+      assert(slot.generation.load(std::memory_order_acquire) == generation);
+      complete_generation(slot);
     }
   }
 
@@ -1005,9 +1006,7 @@ private:
    * If the assembler returns nullopt, it is responsible for
    * releasing/requeueing both buffers.
    */
-  void complete_generation(size_t generation, Slot &slot) {
-    assert(slot.generation.load(std::memory_order_acquire) == generation);
-
+  void complete_generation(Slot &slot) {
     assert(slot.state.load(std::memory_order_acquire) == SlotState::Collecting);
 
     assert(slot.parts_ready.load(std::memory_order_acquire) == producer_mask());
@@ -1181,7 +1180,9 @@ private:
        *
        * A published generation must still own its slot.
        */
+      #ifndef NDEBUG
       const size_t generation = slot.generation.load(std::memory_order_acquire);
+      #endif
 
       assert(generation == current);
 
@@ -1225,7 +1226,9 @@ private:
 
     auto &slot = slots_[current % capacity_];
 
+    #ifndef NDEBUG
     const size_t generation = slot.generation.load(std::memory_order_acquire);
+    #endif
 
     assert(generation == current);
 
