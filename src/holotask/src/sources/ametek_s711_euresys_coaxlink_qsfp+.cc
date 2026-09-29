@@ -582,10 +582,10 @@ private:
 HostPtr<uint8_t> allocate_shared_buffers(MTGrabber &grabber_a, MTGrabber &grabber_b,
                                          std::size_t nb_buffers, std::size_t buffer_size) {
   constexpr size_t safety_padding_size = 16;
-  size_t actual_nb_buffers = nb_buffers + safety_padding_size;
-  logger()->info(
-      "[AmetekS711EuresysCoaxlinkQSFPFactory] allocating {} ({} + {}) shared host buffers of size {} bytes",
-      actual_nb_buffers, nb_buffers, safety_padding_size, buffer_size);
+  size_t           actual_nb_buffers   = nb_buffers + safety_padding_size;
+  logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] allocating {} ({} + {}) shared host "
+                 "buffers of size {} bytes",
+                 actual_nb_buffers, nb_buffers, safety_padding_size, buffer_size);
 
   const auto total_size = buffer_size * actual_nb_buffers;
   auto       buffers    = curaii::make_unique_host_ptr<uint8_t>(total_size);
@@ -644,12 +644,10 @@ public:
 
   static constexpr size_t producer_count = 2;
 
-  CameraBufferQueue(size_t capacity,
-                    BufferDataReleaseCallback part0_release_callback,
+  CameraBufferQueue(size_t capacity, BufferDataReleaseCallback part0_release_callback,
                     BufferDataReleaseCallback part1_release_callback,
                     BufferAssemblerCallback   buffer_assembler_callback)
-      : capacity_{capacity},
-        slots_{std::make_unique<Slot[]>(capacity)},
+      : capacity_{capacity}, slots_{std::make_unique<Slot[]>(capacity)},
         part0_release_callback_{std::move(part0_release_callback)},
         part1_release_callback_{std::move(part1_release_callback)},
         buffer_assembler_callback_{std::move(buffer_assembler_callback)} {
@@ -664,8 +662,7 @@ public:
     for (size_t i = 0; i < capacity_; ++i) {
       auto &slot = slots_[i];
 
-      const auto state =
-          slot.state.load(std::memory_order_relaxed);
+      const auto state = slot.state.load(std::memory_order_relaxed);
 
       if (state == SlotState::Collecting) {
         /*
@@ -746,9 +743,7 @@ public:
      * generation number.
      */
     const size_t generation =
-        producer_write_index_[producer].fetch_add(
-            1,
-            std::memory_order_relaxed);
+        producer_write_index_[producer].fetch_add(1, std::memory_order_relaxed);
 
     auto &slot = slots_[generation % capacity_];
 
@@ -769,31 +764,22 @@ public:
 
       size_t expected = invalid_generation;
 
-      if (slot.generation.compare_exchange_weak(
-              expected,
-              generation,
-              std::memory_order_acq_rel,
-              std::memory_order_acquire)) {
+      if (slot.generation.compare_exchange_weak(expected, generation, std::memory_order_acq_rel,
+                                                std::memory_order_acquire)) {
 
         /*
          * We are the first producer for this generation.
          */
-        assert(
-            slot.state.load(std::memory_order_relaxed) ==
-            SlotState::Empty);
+        assert(slot.state.load(std::memory_order_relaxed) == SlotState::Empty);
 
-        assert(
-            slot.parts_ready.load(std::memory_order_relaxed) == 0);
+        assert(slot.parts_ready.load(std::memory_order_relaxed) == 0);
 
         assert(!slot.part0.has_value());
         assert(!slot.part1.has_value());
 
-        assert(
-            slot.readers.load(std::memory_order_relaxed) == 0);
+        assert(slot.readers.load(std::memory_order_acquire) == 0);
 
-        slot.state.store(
-            SlotState::Collecting,
-            std::memory_order_release);
+        slot.state.store(SlotState::Collecting, std::memory_order_release);
 
         break;
       }
@@ -810,9 +796,7 @@ public:
          *
          * Wait until it has initialized the Collecting state.
          */
-        while (
-            slot.state.load(std::memory_order_acquire) ==
-            SlotState::Empty) {
+        while (slot.state.load(std::memory_order_acquire) == SlotState::Empty) {
 
           if (closed_.load(std::memory_order_acquire)) {
             release_frame();
@@ -822,9 +806,7 @@ public:
           std::this_thread::yield();
         }
 
-        assert(
-            slot.state.load(std::memory_order_acquire) ==
-            SlotState::Collecting);
+        assert(slot.state.load(std::memory_order_acquire) == SlotState::Collecting);
 
         break;
       }
@@ -853,13 +835,9 @@ public:
     /*
      * Publish that our producer has arrived.
      */
-    const unsigned bit =
-        1u << static_cast<unsigned>(producer);
+    const unsigned bit = 1u << static_cast<unsigned>(producer);
 
-    const unsigned previous =
-        slot.parts_ready.fetch_or(
-            bit,
-            std::memory_order_acq_rel);
+    const unsigned previous = slot.parts_ready.fetch_or(bit, std::memory_order_acq_rel);
 
     /*
      * Only the second producer assembles the frame.
@@ -890,63 +868,45 @@ public:
     const auto *frame = read(read_index_b_, nullptr);
 
     if (frame == nullptr) {
-      throw std::runtime_error(
-          "CameraBufferQueue closed while waiting for reader B");
+      throw std::runtime_error("CameraBufferQueue closed while waiting for reader B");
     }
 
     return *frame;
   }
 
-  void close() {
-    closed_.store(true, std::memory_order_release);
-  }
+  void close() { closed_.store(true, std::memory_order_release); }
 
-  void release_a() {
-    release(read_index_a_);
-  }
+  void release_a() { release(read_index_a_); }
 
-  void release_b() {
-    release(read_index_b_);
-  }
+  void release_b() { release(read_index_b_); }
 
   void subscribe_b() {
-    if (reader_b_active_.exchange(
-            true,
-            std::memory_order_acq_rel)) {
-      throw std::logic_error(
-          "CameraBufferQueue reader B is already active");
+    if (reader_b_active_.exchange(true, std::memory_order_acq_rel)) {
+      throw std::logic_error("CameraBufferQueue reader B is already active");
     }
 
     /*
      * B starts at the current publication point.
      */
-    read_index_b_.store(
-        write_index_.load(std::memory_order_acquire),
-        std::memory_order_release);
+    read_index_b_.store(write_index_.load(std::memory_order_acquire), std::memory_order_release);
   }
 
   void unsubscribe_b() {
-    if (!reader_b_active_.exchange(
-            false,
-            std::memory_order_acq_rel)) {
+    if (!reader_b_active_.exchange(false, std::memory_order_acq_rel)) {
       return;
     }
 
-    const auto end =
-        write_index_.load(std::memory_order_acquire);
+    const auto end = write_index_.load(std::memory_order_acquire);
 
-    while (
-        read_index_b_.load(std::memory_order_relaxed) != end) {
+    while (read_index_b_.load(std::memory_order_relaxed) != end) {
       release_b();
     }
   }
 
   [[nodiscard]]
   bool empty_b() const {
-    return read_index_b_.load(
-               std::memory_order_relaxed) ==
-           write_index_.load(
-               std::memory_order_acquire);
+    return read_index_b_.load(std::memory_order_relaxed) ==
+           write_index_.load(std::memory_order_acquire);
   }
 
   [[nodiscard]]
@@ -960,11 +920,9 @@ public:
    */
   [[nodiscard]]
   size_t size() const {
-    const auto write =
-        write_index_.load(std::memory_order_acquire);
+    const auto write = write_index_.load(std::memory_order_acquire);
 
-    const auto oldest =
-        oldest_read_index();
+    const auto oldest = oldest_read_index();
 
     return write - oldest;
   }
@@ -982,15 +940,11 @@ private:
     Dropped,
   };
 
-  static constexpr size_t invalid_generation =
-      std::numeric_limits<size_t>::max();
+  static constexpr size_t invalid_generation = std::numeric_limits<size_t>::max();
 
-  static constexpr unsigned releasing_ =
-      std::numeric_limits<unsigned>::max();
+  static constexpr unsigned releasing_ = std::numeric_limits<unsigned>::max();
 
-  static constexpr unsigned producer_mask() {
-    return (1u << producer_count) - 1u;
-  }
+  static constexpr unsigned producer_mask() { return (1u << producer_count) - 1u; }
 
   struct Slot {
     /*
@@ -1052,17 +1006,11 @@ private:
    * releasing/requeueing both buffers.
    */
   void complete_generation(size_t generation, Slot &slot) {
-    assert(
-        slot.generation.load(std::memory_order_acquire) ==
-        generation);
+    assert(slot.generation.load(std::memory_order_acquire) == generation);
 
-    assert(
-        slot.state.load(std::memory_order_acquire) ==
-        SlotState::Collecting);
+    assert(slot.state.load(std::memory_order_acquire) == SlotState::Collecting);
 
-    assert(
-        slot.parts_ready.load(std::memory_order_acquire) ==
-        producer_mask());
+    assert(slot.parts_ready.load(std::memory_order_acquire) == producer_mask());
 
     assert(slot.part0.has_value());
     assert(slot.part1.has_value());
@@ -1070,10 +1018,7 @@ private:
     /*
      * The assembler takes ownership of both buffers.
      */
-    auto assembled =
-        buffer_assembler_callback_(
-            std::move(*slot.part0),
-            std::move(*slot.part1));
+    auto assembled = buffer_assembler_callback_(std::move(*slot.part0), std::move(*slot.part1));
 
     /*
      * The queue no longer owns these buffers.
@@ -1083,10 +1028,7 @@ private:
     slot.part0.reset();
     slot.part1.reset();
 
-    const unsigned reader_count =
-        reader_b_active_.load(std::memory_order_acquire)
-            ? 2u
-            : 1u;
+    const unsigned reader_count = reader_b_active_.load(std::memory_order_acquire) ? 2u : 1u;
 
     if (assembled.has_value()) {
       /*
@@ -1094,9 +1036,7 @@ private:
        */
       slot.data = std::move(*assembled);
 
-      slot.readers.store(
-          reader_count,
-          std::memory_order_relaxed);
+      slot.readers.store(reader_count, std::memory_order_relaxed);
 
       /*
        * Publish the complete frame.
@@ -1104,9 +1044,7 @@ private:
        * Everything written above becomes visible to readers
        * through this release/acquire pair.
        */
-      slot.state.store(
-          SlotState::Ready,
-          std::memory_order_release);
+      slot.state.store(SlotState::Ready, std::memory_order_release);
     } else {
       /*
        * Assembly failed.
@@ -1116,13 +1054,9 @@ private:
        * This generation is nevertheless considered completed
        * from the ordering perspective. Readers will skip it.
        */
-      slot.readers.store(
-          reader_count,
-          std::memory_order_relaxed);
+      slot.readers.store(reader_count, std::memory_order_relaxed);
 
-      slot.state.store(
-          SlotState::Dropped,
-          std::memory_order_release);
+      slot.state.store(SlotState::Dropped, std::memory_order_release);
     }
 
     /*
@@ -1151,29 +1085,24 @@ private:
    */
   void publish_completed() {
     for (;;) {
-      const size_t current =
-          write_index_.load(std::memory_order_acquire);
+      const size_t current = write_index_.load(std::memory_order_acquire);
 
-      auto &slot =
-          slots_[current % capacity_];
+      auto &slot = slots_[current % capacity_];
 
       /*
        * Make sure this is actually the slot for `current`.
        *
        * This also protects against stale state from a reused slot.
        */
-      const size_t generation =
-          slot.generation.load(std::memory_order_acquire);
+      const size_t generation = slot.generation.load(std::memory_order_acquire);
 
       if (generation != current) {
         return;
       }
 
-      const SlotState state =
-          slot.state.load(std::memory_order_acquire);
+      const SlotState state = slot.state.load(std::memory_order_acquire);
 
-      if (state == SlotState::Empty ||
-          state == SlotState::Collecting) {
+      if (state == SlotState::Empty || state == SlotState::Collecting) {
         /*
          * The next generation isn't complete yet.
          */
@@ -1185,11 +1114,8 @@ private:
        */
       size_t expected = current;
 
-      if (write_index_.compare_exchange_strong(
-              expected,
-              current + 1,
-              std::memory_order_release,
-              std::memory_order_acquire)) {
+      if (write_index_.compare_exchange_strong(expected, current + 1, std::memory_order_release,
+                                               std::memory_order_acquire)) {
         continue;
       }
     }
@@ -1200,18 +1126,13 @@ private:
    */
   [[nodiscard]]
   size_t oldest_read_index() const {
-    const auto a =
-        read_index_a_.load(
-            std::memory_order_acquire);
+    const auto a = read_index_a_.load(std::memory_order_acquire);
 
-    if (!reader_b_active_.load(
-            std::memory_order_acquire)) {
+    if (!reader_b_active_.load(std::memory_order_acquire)) {
       return a;
     }
 
-    const auto b =
-        read_index_b_.load(
-            std::memory_order_acquire);
+    const auto b = read_index_b_.load(std::memory_order_acquire);
 
     return std::min(a, b);
   }
@@ -1222,50 +1143,37 @@ private:
    * Dropped generations are consumed internally and skipped.
    */
   [[nodiscard]]
-  const DType *read(
-      std::atomic<size_t> &reader,
-      const std::atomic<bool> *cancelled) {
+  const DType *read(std::atomic<size_t> &reader, const std::atomic<bool> *cancelled) {
 
-    size_t current =
-        reader.load(std::memory_order_relaxed);
+    size_t current = reader.load(std::memory_order_relaxed);
 
     for (;;) {
       /*
        * Cancellation is only used by reader A.
        */
-      if (cancelled != nullptr &&
-          cancelled->load(std::memory_order_acquire)) {
+      if (cancelled != nullptr && cancelled->load(std::memory_order_acquire)) {
         return nullptr;
       }
 
       /*
        * Wait for a published generation.
        */
-      while (
-          current ==
-          write_index_.load(
-              std::memory_order_acquire)) {
+      while (current == write_index_.load(std::memory_order_acquire)) {
 
-        if (closed_.load(
-                std::memory_order_acquire)) {
+        if (closed_.load(std::memory_order_acquire)) {
           return nullptr;
         }
 
-        if (cancelled != nullptr &&
-            cancelled->load(
-                std::memory_order_acquire)) {
+        if (cancelled != nullptr && cancelled->load(std::memory_order_acquire)) {
           return nullptr;
         }
 
         std::this_thread::yield();
 
-        current =
-            reader.load(
-                std::memory_order_relaxed);
+        current = reader.load(std::memory_order_relaxed);
       }
 
-      auto &slot =
-          slots_[current % capacity_];
+      auto &slot = slots_[current % capacity_];
 
       /*
        * This is the important validation that was missing from
@@ -1273,15 +1181,11 @@ private:
        *
        * A published generation must still own its slot.
        */
-      const size_t generation =
-          slot.generation.load(
-              std::memory_order_acquire);
+      const size_t generation = slot.generation.load(std::memory_order_acquire);
 
       assert(generation == current);
 
-      const SlotState state =
-          slot.state.load(
-              std::memory_order_acquire);
+      const SlotState state = slot.state.load(std::memory_order_acquire);
 
       if (state == SlotState::Ready) {
         /*
@@ -1299,9 +1203,7 @@ private:
          */
         acknowledge_dropped(slot);
 
-        reader.store(
-            current + 1,
-            std::memory_order_release);
+        reader.store(current + 1, std::memory_order_release);
 
         current++;
         continue;
@@ -1319,37 +1221,27 @@ private:
    * Release a Ready or Dropped generation.
    */
   void release(std::atomic<size_t> &reader) {
-    const size_t current =
-        reader.load(std::memory_order_relaxed);
+    const size_t current = reader.load(std::memory_order_relaxed);
 
-    auto &slot =
-        slots_[current % capacity_];
+    auto &slot = slots_[current % capacity_];
 
-    const size_t generation =
-        slot.generation.load(
-            std::memory_order_acquire);
+    const size_t generation = slot.generation.load(std::memory_order_acquire);
 
     assert(generation == current);
 
-    const SlotState state =
-        slot.state.load(
-            std::memory_order_acquire);
+    const SlotState state = slot.state.load(std::memory_order_acquire);
 
     if (state == SlotState::Dropped) {
       acknowledge_dropped(slot);
 
-      reader.store(
-          current + 1,
-          std::memory_order_release);
+      reader.store(current + 1, std::memory_order_release);
 
       return;
     }
 
     assert(state == SlotState::Ready);
 
-    unsigned readers =
-        slot.readers.load(
-            std::memory_order_acquire);
+    unsigned readers = slot.readers.load(std::memory_order_acquire);
 
     for (;;) {
       assert(readers != 0);
@@ -1361,31 +1253,24 @@ private:
          *
          * Claim the final release operation.
          */
-        if (slot.readers.compare_exchange_strong(
-                readers,
-                releasing_,
-                std::memory_order_acq_rel,
-                std::memory_order_acquire)) {
+        if (slot.readers.compare_exchange_strong(readers, releasing_, std::memory_order_acq_rel,
+                                                 std::memory_order_acquire)) {
 
           /*
            * No other reader can access the frame now.
            */
-          release_callback(
-              std::move(slot.data));
+          release_callback(std::move(slot.data));
 
           assert(!slot.part0.has_value());
           assert(!slot.part1.has_value());
 
-          slot.parts_ready.store(
-              0,
-              std::memory_order_relaxed);
+          slot.parts_ready.store(0, std::memory_order_relaxed);
 
+          slot.readers.store(0, std::memory_order_release);
           /*
            * The generation is no longer readable.
            */
-          slot.state.store(
-              SlotState::Empty,
-              std::memory_order_release);
+          slot.state.store(SlotState::Empty, std::memory_order_release);
 
           /*
            * Finally release ownership of the slot.
@@ -1393,13 +1278,7 @@ private:
            * A producer waiting on this generation can now claim
            * it with CAS(invalid_generation -> new_generation).
            */
-          slot.generation.store(
-              invalid_generation,
-              std::memory_order_release);
-
-          slot.readers.store(
-              0,
-              std::memory_order_release);
+          slot.generation.store(invalid_generation, std::memory_order_release);
 
           break;
         }
@@ -1407,19 +1286,14 @@ private:
         /*
          * Another reader still owns the frame.
          */
-        if (slot.readers.compare_exchange_strong(
-                readers,
-                readers - 1,
-                std::memory_order_acq_rel,
-                std::memory_order_acquire)) {
+        if (slot.readers.compare_exchange_strong(readers, readers - 1, std::memory_order_acq_rel,
+                                                 std::memory_order_acquire)) {
           break;
         }
       }
     }
 
-    reader.store(
-        current + 1,
-        std::memory_order_release);
+    reader.store(current + 1, std::memory_order_release);
   }
 
   /**
@@ -1429,10 +1303,7 @@ private:
    * reusable.
    */
   void acknowledge_dropped(Slot &slot) {
-    const unsigned remaining =
-        slot.readers.fetch_sub(
-            1,
-            std::memory_order_acq_rel);
+    const unsigned remaining = slot.readers.fetch_sub(1, std::memory_order_acq_rel);
 
     assert(remaining != 0);
     assert(remaining != releasing_);
@@ -1441,21 +1312,13 @@ private:
       /*
        * Last reader of the dropped generation.
        */
-      slot.parts_ready.store(
-          0,
-          std::memory_order_relaxed);
+      slot.parts_ready.store(0, std::memory_order_relaxed);
 
-      slot.state.store(
-          SlotState::Empty,
-          std::memory_order_release);
+      slot.state.store(SlotState::Empty, std::memory_order_release);
 
-      slot.generation.store(
-          invalid_generation,
-          std::memory_order_release);
+      slot.generation.store(invalid_generation, std::memory_order_release);
 
-      slot.readers.store(
-          0,
-          std::memory_order_release);
+      slot.readers.store(0, std::memory_order_release);
     }
   }
 
@@ -1469,8 +1332,7 @@ private:
   }
 
 private:
-  static constexpr size_t cache_line_size =
-      std::hardware_destructive_interference_size;
+  static constexpr size_t cache_line_size = std::hardware_destructive_interference_size;
 
   const size_t capacity_;
 
@@ -1493,29 +1355,22 @@ private:
    *
    * Readers only see generations < write_index_.
    */
-  alignas(cache_line_size)
-  std::atomic<size_t> write_index_{0};
+  alignas(cache_line_size) std::atomic<size_t> write_index_{0};
 
   /*
    * Independent producer generation counters.
    */
-  alignas(cache_line_size)
-  std::atomic<size_t>
-      producer_write_index_[producer_count]{0, 0};
+  alignas(cache_line_size) std::atomic<size_t> producer_write_index_[producer_count]{0, 0};
 
   /*
    * Reader positions.
    */
-  alignas(cache_line_size)
-  std::atomic<size_t> read_index_a_{0};
+  alignas(cache_line_size) std::atomic<size_t> read_index_a_{0};
 
-  alignas(cache_line_size)
-  std::atomic<size_t> read_index_b_{0};
+  alignas(cache_line_size) std::atomic<size_t> read_index_b_{0};
 
-  alignas(cache_line_size)
-  std::atomic<bool> reader_b_active_{false};
+  alignas(cache_line_size) std::atomic<bool> reader_b_active_{false};
 };
-
 
 /*
 // read B
@@ -2147,9 +2002,8 @@ AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDe
       dtype_from_pixel_format(runtime_cfg.pixel_format), holoflow::core::MemLoc::Host);
 
   auto buffer_size = odesc.num_bytes();
-  auto buffers     = allocate_shared_buffers(
-      *grabber_a, *grabber_b, runtime_cfg.nb_buffers,
-      buffer_size);
+  auto buffers =
+      allocate_shared_buffers(*grabber_a, *grabber_b, runtime_cfg.nb_buffers, buffer_size);
 
   return std::make_unique<AmetekS711EuresysCoaxlinkQSFP>(
       settings, runtime_cfg, std::move(buffers), std::move(gentl), std::move(grabber_a),
