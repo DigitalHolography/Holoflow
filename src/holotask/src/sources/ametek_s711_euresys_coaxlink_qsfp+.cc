@@ -122,8 +122,8 @@ struct BankCounters {
   std::optional<size_t>   awaiting_buffers;
 };
 
-class MTGrabber;
-void requeue_buffer_noexcept(MTGrabber &grabber, const Euresys::NewBufferData &data,
+class Grabber;
+void requeue_buffer_noexcept(Grabber &grabber, const Euresys::NewBufferData &data,
                              const char *label, Clock::time_point &last_error_log,
                              std::mutex &last_error_log_mutex);
 
@@ -538,15 +538,15 @@ void apply_cfg(Euresys::EGrabberCameraInfo &info, const RuntimeConfig &cfg) {
   apply_stream(bank_b_index, cfg.offsets[1]);
 }
 
-class MTGrabber : public Euresys::EGrabber<Euresys::CallbackMultiThread> {
+class Grabber : public Euresys::EGrabber<Euresys::CallbackSingleThread> {
 public:
   enum class EGrabberName : uint8_t { A = 0, B = 1 };
   using EnqueueBufferCallback =
       std::function<void(size_t producer_id, const Euresys::NewBufferData &)>;
 
-  MTGrabber(Euresys::EGrabberInfo info, EGrabberName name,
+  Grabber(Euresys::EGrabberInfo info, EGrabberName name,
             std::optional<EnqueueBufferCallback> enqueue_callback = std::nullopt)
-      : EGrabber<Euresys::CallbackMultiThread>(info), name_{name},
+      : EGrabber<Euresys::CallbackSingleThread>(info), name_{name},
         enqueue_callback_{enqueue_callback} {
     enableEvent<Euresys::NewBufferData>();
   }
@@ -579,7 +579,7 @@ private:
  * final frame because the stream geometry has already been configured with the
  * appropriate StripeOffset / StripePitch / StripeArrangement values.
  */
-HostPtr<uint8_t> allocate_shared_buffers(MTGrabber &grabber_a, MTGrabber &grabber_b,
+HostPtr<uint8_t> allocate_shared_buffers(Grabber &grabber_a, Grabber &grabber_b,
                                          std::size_t nb_buffers, std::size_t buffer_size) {
   constexpr size_t safety_padding_size = 16;
   size_t           actual_nb_buffers   = nb_buffers + safety_padding_size;
@@ -604,7 +604,7 @@ HostPtr<uint8_t> allocate_shared_buffers(MTGrabber &grabber_a, MTGrabber &grabbe
   return buffers;
 }
 
-void requeue_buffer_noexcept(MTGrabber &grabber, const Euresys::NewBufferData &data,
+void requeue_buffer_noexcept(Grabber &grabber, const Euresys::NewBufferData &data,
                              const char *label, Clock::time_point &last_error_log,
                              std::mutex &last_error_log_mutex) {
   try {
@@ -1445,8 +1445,8 @@ public:
   AmetekS711EuresysCoaxlinkQSFP(const AmetekS711EuresysCoaxlinkQSFPSettings &settings,
                                 RuntimeConfig runtime_cfg, HostPtr<uint8_t> &&buffers,
                                 std::unique_ptr<Euresys::EGenTL> &&gentl,
-                                std::unique_ptr<MTGrabber>       &&grabber_a,
-                                std::unique_ptr<MTGrabber> &&grabber_b, std::size_t buffer_size,
+                                std::unique_ptr<Grabber>       &&grabber_a,
+                                std::unique_ptr<Grabber> &&grabber_b, std::size_t buffer_size,
                                 nlohmann::json normalized_cfg)
       : settings_(settings), runtime_cfg_(std::move(runtime_cfg)), buffers_(std::move(buffers)),
         gentl_(std::move(gentl)), grabber_a_(std::move(grabber_a)),
@@ -1565,7 +1565,7 @@ public:
     }
   }
 
-  BankCounters read_bank_counters(MTGrabber &grabber, const char *bank) {
+  BankCounters read_bank_counters(Grabber &grabber, const char *bank) {
     const auto rejected = std::format("bank {} RejectedFrame", bank);
     const auto broken   = std::format("bank {} BrokenFrame", bank);
     const auto underrun = std::format("bank {} buffer underruns", bank);
@@ -1697,7 +1697,7 @@ public:
                                uint64_t delivered_a, uint64_t delivered_b, uint64_t ts_a,
                                uint64_t ts_b, const Euresys::NewBufferData &data_a,
                                const Euresys::NewBufferData &data_b) {
-    const auto read_frame_id = [&](Euresys::Buffer &buffer, MTGrabber &grabber, const char *label,
+    const auto read_frame_id = [&](Euresys::Buffer &buffer, Grabber &grabber, const char *label,
                                    Clock::time_point &retry_at) {
       if (Clock::now() < retry_at) {
         return std::optional<uint64_t>{};
@@ -1894,8 +1894,8 @@ private:
   RuntimeConfig                         runtime_cfg_;
   HostPtr<uint8_t>                      buffers_;
   std::unique_ptr<Euresys::EGenTL>      gentl_;
-  std::unique_ptr<MTGrabber>            grabber_a_;
-  std::unique_ptr<MTGrabber>            grabber_b_;
+  std::unique_ptr<Grabber>            grabber_a_;
+  std::unique_ptr<Grabber>            grabber_b_;
   std::size_t                           buffer_size_;
   bool                                  running_;
   nlohmann::json                        cfg_;
@@ -1991,11 +1991,11 @@ AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDe
   const auto bank_a_index = find_grabber_index_for_bank(*camera_info, 0);
   const auto bank_b_index = find_grabber_index_for_bank(*camera_info, 1);
 
-  // TODO change to MTGrabbers
+  // TODO change to Grabbers
   auto grabber_a =
-      std::make_unique<MTGrabber>(camera_info->grabbers[bank_a_index], MTGrabber::EGrabberName::A);
+      std::make_unique<Grabber>(camera_info->grabbers[bank_a_index], Grabber::EGrabberName::A);
   auto grabber_b =
-      std::make_unique<MTGrabber>(camera_info->grabbers[bank_b_index], MTGrabber::EGrabberName::B);
+      std::make_unique<Grabber>(camera_info->grabbers[bank_b_index], Grabber::EGrabberName::B);
 
   const holoflow::core::TDesc odesc(
       {runtime_cfg.buffer_part_count, runtime_cfg.final_height, runtime_cfg.width},
