@@ -545,7 +545,7 @@ public:
       std::function<void(size_t producer_id, const Euresys::NewBufferData &)>;
 
   Grabber(Euresys::EGrabberInfo info, EGrabberName name,
-            std::optional<EnqueueBufferCallback> enqueue_callback = std::nullopt)
+          std::optional<EnqueueBufferCallback> enqueue_callback = std::nullopt)
       : EGrabber<Euresys::CallbackSingleThread>(info), name_{name},
         enqueue_callback_{enqueue_callback} {
     enableEvent<Euresys::NewBufferData>();
@@ -1445,7 +1445,7 @@ public:
   AmetekS711EuresysCoaxlinkQSFP(const AmetekS711EuresysCoaxlinkQSFPSettings &settings,
                                 RuntimeConfig runtime_cfg, HostPtr<uint8_t> &&buffers,
                                 std::unique_ptr<Euresys::EGenTL> &&gentl,
-                                std::unique_ptr<Grabber>       &&grabber_a,
+                                std::unique_ptr<Grabber>         &&grabber_a,
                                 std::unique_ptr<Grabber> &&grabber_b, std::size_t buffer_size,
                                 nlohmann::json normalized_cfg)
       : settings_(settings), runtime_cfg_(std::move(runtime_cfg)), buffers_(std::move(buffers)),
@@ -1644,22 +1644,6 @@ public:
                        signed_delta(last_a, last_b), min_delta, max_delta);
   }
 
-  void record_frame_id(const std::optional<uint64_t> &current, std::optional<uint64_t> &previous,
-                       uint64_t &max_step, uint64_t &regressions) {
-    if (!current) {
-      previous.reset();
-      return;
-    }
-    if (previous) {
-      if (*current < *previous) {
-        ++regressions;
-      } else {
-        max_step = (std::max)(max_step, *current - *previous);
-      }
-    }
-    previous = current;
-  }
-
   void log_bank_diagnostics(const char *bank, const std::optional<uint64_t> &frame_id,
                             uint64_t max_step, uint64_t regressions, const BankCounters &current,
                             BankCounters &previous, const BankCounters &update_baseline) {
@@ -1691,79 +1675,6 @@ public:
                    show_change(resumed.underrun_buffers, at_update.underrun_buffers),
                    show(at_update.queued_buffers), show(resumed.queued_buffers),
                    show(at_update.awaiting_buffers), show(resumed.awaiting_buffers));
-  }
-
-  void record_pair_diagnostics(Euresys::Buffer &buffer_a, Euresys::Buffer &buffer_b,
-                               uint64_t delivered_a, uint64_t delivered_b, uint64_t ts_a,
-                               uint64_t ts_b, const Euresys::NewBufferData &data_a,
-                               const Euresys::NewBufferData &data_b) {
-    const auto read_frame_id = [&](Euresys::Buffer &buffer, Grabber &grabber, const char *label,
-                                   Clock::time_point &retry_at) {
-      if (Clock::now() < retry_at) {
-        return std::optional<uint64_t>{};
-      }
-      auto frame_id = read_diagnostic<uint64_t>(
-          [&] { return buffer.getInfo<uint64_t>(grabber, GenTL::BUFFER_INFO_FRAMEID); }, label);
-      if (!frame_id) {
-        // An unsupported info command must not throw on every high-rate buffer.
-        retry_at = Clock::now() + std::chrono::seconds(1);
-      }
-      return frame_id;
-    };
-    const auto frame_a = read_frame_id(buffer_a, *grabber_a_, "bank A frame ID", frame_id_retry_a_);
-    const auto frame_b = read_frame_id(buffer_b, *grabber_b_, "bank B frame ID", frame_id_retry_b_);
-    record_frame_id(frame_a, previous_frame_a_, max_frame_step_a_, frame_regressions_a_);
-    record_frame_id(frame_b, previous_frame_b_, max_frame_step_b_, frame_regressions_b_);
-
-    const auto delta = signed_delta(ts_a, ts_b);
-    if (!pair_delta_seen_) {
-      min_pair_delta_ = max_pair_delta_ = delta;
-      pair_delta_seen_                  = true;
-    } else {
-      min_pair_delta_ = (std::min)(min_pair_delta_, delta);
-      max_pair_delta_ = (std::max)(max_pair_delta_, delta);
-    }
-
-    const bool due = log_due(last_diagnostic_log_);
-    if (first_pair_after_update_) {
-      resume_a_                = read_bank_counters(*grabber_a_, "A");
-      resume_b_                = read_bank_counters(*grabber_b_, "B");
-      resume_counters_pending_ = true;
-      first_pair_update_summary_ =
-          std::format("A/B ts={}/{}, A-B={} us, event A-B={} us, frame IDs={}/{}, parts: {}", ts_a,
-                      ts_b, delta, signed_delta(data_a.timestamp, data_b.timestamp), show(frame_a),
-                      show(frame_b), part_timing(buffer_a, buffer_b, delivered_a, delivered_b));
-      first_pair_after_update_ = false;
-    }
-    if (!due) {
-      return;
-    }
-
-    logger()->info("[AmetekS711EuresysCoaxlinkQSFP::diagnostics] epoch={} latest A/B ts="
-                   "{}/{}, signed A-B={} us, interval range=[{},{}] us, event A-B={} us, "
-                   "first after update={}, parts: {}",
-                   update_epoch_, ts_a, ts_b, delta, min_pair_delta_, max_pair_delta_,
-                   signed_delta(data_a.timestamp, data_b.timestamp),
-                   first_pair_update_summary_.value_or("n/a"),
-                   part_timing(buffer_a, buffer_b, delivered_a, delivered_b));
-
-    const auto counters_a = read_bank_counters(*grabber_a_, "A");
-    const auto counters_b = read_bank_counters(*grabber_b_, "B");
-    log_bank_diagnostics("A", frame_a, max_frame_step_a_, frame_regressions_a_, counters_a,
-                         previous_counters_a_, update_a_);
-    log_bank_diagnostics("B", frame_b, max_frame_step_b_, frame_regressions_b_, counters_b,
-                         previous_counters_b_, update_b_);
-    if (resume_counters_pending_) {
-      log_resume_counters("A", resume_a_, update_a_);
-      log_resume_counters("B", resume_b_, update_b_);
-      resume_counters_pending_ = false;
-    }
-    first_pair_update_summary_.reset();
-    update_a_         = {};
-    update_b_         = {};
-    max_frame_step_a_ = max_frame_step_b_ = 0;
-    frame_regressions_a_ = frame_regressions_b_ = 0;
-    pair_delta_seen_                            = false;
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
@@ -1806,40 +1717,27 @@ private:
     auto buffer_a = Buffer(data_a);
     auto buffer_b = Buffer(data_b);
 
-    uint64_t   delivered_a;
-    uint64_t   delivered_b;
-    uint64_t   ts_a;
-    uint64_t   ts_b;
-    std::byte *base_a;
-    std::byte *base_b;
     try {
-      delivered_a = buffer_a.getInfo<uint64_t>(*grabber_a_, DELIVERED);
-      delivered_b = buffer_b.getInfo<uint64_t>(*grabber_b_, DELIVERED);
-      ts_a        = buffer_a.getInfo<uint64_t>(*grabber_a_, TIMESTAMP);
-      ts_b        = buffer_b.getInfo<uint64_t>(*grabber_b_, TIMESTAMP);
-      base_a =
+      uint64_t   delivered_a = buffer_a.getInfo<uint64_t>(*grabber_a_, DELIVERED);
+      uint64_t   delivered_b = buffer_b.getInfo<uint64_t>(*grabber_b_, DELIVERED);
+      uint64_t   ts_a        = buffer_a.getInfo<uint64_t>(*grabber_a_, TIMESTAMP);
+      uint64_t   ts_b        = buffer_b.getInfo<uint64_t>(*grabber_b_, TIMESTAMP);
+      std::byte *base_a =
           static_cast<std::byte *>(buffer_a.getInfo<void *>(*grabber_a_, GenTL::BUFFER_INFO_BASE));
-      base_b =
+      std::byte *base_b =
           static_cast<std::byte *>(buffer_b.getInfo<void *>(*grabber_b_, GenTL::BUFFER_INFO_BASE));
-
-      try {
-        record_pair_diagnostics(buffer_a, buffer_b, delivered_a, delivered_b, ts_a, ts_b, data_a,
-                                data_b);
-      } catch (const std::exception &e) {
-        if (log_due(last_diagnostic_error_log_)) {
-          logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::diagnostics] failed: {}", e.what());
-        }
-      }
+      const auto frame_id_a = buffer_a.getInfo<uint64_t>(*grabber_a_, GenTL::BUFFER_INFO_FRAMEID);
+      const auto frame_id_b = buffer_b.getInfo<uint64_t>(*grabber_b_, GenTL::BUFFER_INFO_FRAMEID);
 
       if (base_a != base_b || delivered_a != runtime_cfg_.buffer_part_count ||
-          delivered_b != runtime_cfg_.buffer_part_count) {
+          delivered_b != runtime_cfg_.buffer_part_count || frame_id_a != frame_id_b) {
         ++rejected_pairs_since_log_;
         if (log_due(last_rejected_log_)) {
           logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] rejected {} two-bank "
-                         "buffer pair(s): latest bank A base={}, delivered={}, ts={} | bank B "
-                         "base={}, delivered={}, ts={} | expected delivered={}",
-                         rejected_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a,
-                         static_cast<void *>(base_b), delivered_b, ts_b,
+                         "buffer pair(s): latest bank A base={}, delivered={}, ts={}, frame_id={} | bank B "
+                         "base={}, delivered={}, ts={}, frame_id={} | expected delivered={}",
+                         rejected_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a, frame_id_a,
+                         static_cast<void *>(base_b), delivered_b, ts_b, frame_id_b,
                          runtime_cfg_.buffer_part_count);
           rejected_pairs_since_log_ = 0;
         }
@@ -1861,16 +1759,7 @@ private:
         max_ts_delta_since_log_   = 0;
       }
 
-      if (buffer_queue_.size() >= runtime_cfg_.nb_buffers) {
-        if (log_due(last_acquisition_log_)) {
-          logger()->warn(
-              "[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] "
-              "acquisition thread produced a new buffer pair while the previous one is still "
-              "held");
-        }
-      } else {
-        return true;
-      }
+      return true;
     } catch (const Euresys::genapi_error &err) {
       if (log_due(last_error_log_)) {
         logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] GenApi error: {}",
@@ -1894,8 +1783,8 @@ private:
   RuntimeConfig                         runtime_cfg_;
   HostPtr<uint8_t>                      buffers_;
   std::unique_ptr<Euresys::EGenTL>      gentl_;
-  std::unique_ptr<Grabber>            grabber_a_;
-  std::unique_ptr<Grabber>            grabber_b_;
+  std::unique_ptr<Grabber>              grabber_a_;
+  std::unique_ptr<Grabber>              grabber_b_;
   std::size_t                           buffer_size_;
   bool                                  running_;
   nlohmann::json                        cfg_;
@@ -1925,10 +1814,6 @@ private:
   BankCounters               resume_a_;
   BankCounters               resume_b_;
   bool                       resume_counters_pending_ = false;
-  std::optional<uint64_t>    previous_frame_a_;
-  std::optional<uint64_t>    previous_frame_b_;
-  Clock::time_point          frame_id_retry_a_{};
-  Clock::time_point          frame_id_retry_b_{};
   uint64_t                   max_frame_step_a_    = 0;
   uint64_t                   max_frame_step_b_    = 0;
   uint64_t                   frame_regressions_a_ = 0;
