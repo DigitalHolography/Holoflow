@@ -1174,15 +1174,15 @@ private:
 
       auto &slot = slots_[current % capacity_];
 
-      /*
-       * This is the important validation that was missing from
-       * the previous implementation.
-       *
-       * A published generation must still own its slot.
-       */
-      #ifndef NDEBUG
+/*
+ * This is the important validation that was missing from
+ * the previous implementation.
+ *
+ * A published generation must still own its slot.
+ */
+#ifndef NDEBUG
       const size_t generation = slot.generation.load(std::memory_order_acquire);
-      #endif
+#endif
 
       assert(generation == current);
 
@@ -1226,9 +1226,9 @@ private:
 
     auto &slot = slots_[current % capacity_];
 
-    #ifndef NDEBUG
+#ifndef NDEBUG
     const size_t generation = slot.generation.load(std::memory_order_acquire);
-    #endif
+#endif
 
     assert(generation == current);
 
@@ -1375,60 +1375,6 @@ private:
   alignas(cache_line_size) std::atomic<bool> reader_b_active_{false};
 };
 
-/*
-// read B
-// writing to stop will automaticly stop the record
-class Recorder {
-public:
-  Recorder(const std::string &file_path, size_t frame_count, CameraBufferQueue &queue,
-           std::atomic<bool> &stop, Euresys::EGrabber<> *egrabber)
-      : writer_{file_path, holofile::Header{}, holofile::Footer{}}, // TODO add header and footer
-        frame_to_record_{frame_count}, current_frame_{0}, queue_{queue}, stop_{stop},
-        egrabber_{egrabber} {
-    queue_.subscribe_b();
-  }
-
-  void execute() {
-    auto stop = stop_.load(std::memory_order_acquire);
-    auto batch = std::vector<CameraBufferQueue::DType&>(); TODO use * instead of &
-    while (current_frame_ < frame_to_record_ && !stop) {
-      if (!queue_.empty_b()) {
-        const auto &frame  = queue_.read_b();
-        auto        buffer = Euresys::Buffer(frame.bank_a);
-        auto       *base_v = buffer.getInfo<void *>(*egrabber_, GenTL::BUFFER_INFO_BASE);
-        auto       *base   = static_cast<uint8_t *>(base_v);
-
-        writer_.write_frames(base, 1); // TODO batch multiple frames together
-        queue_.release_b();
-        ++current_frame_;
-      }
-
-      stop = stop_.load(std::memory_order_acquire);
-    }
-
-    writer_.write_footer();
-  }
-
-  ~Recorder() {
-    queue_.unsubscribe_b();
-    writer_.flush();
-  }
-
-private:
-  holofile::Writer writer_;
-  size_t frame_to_record_; // when unlimited it is set to std::numeric_limit<size_t>::max()
-  size_t current_frame_;
-  CameraBufferQueue   &queue_;
-  std::atomic<bool>   &stop_;
-  Euresys::EGrabber<> *egrabber_;
-};
-
-void recorder_worker(const std::string &file_path, size_t frame_count, CameraBufferQueue &queue,
-                     std::atomic<bool> &stop, Euresys::EGrabber<> *egrabber) {
-  Recorder rec{file_path, frame_count, queue, stop, egrabber};
-  rec.execute();
-}
-*/
 } // namespace
 
 // -------------------------------------------------------------------------------------------------
@@ -1736,12 +1682,13 @@ private:
           delivered_b != runtime_cfg_.buffer_part_count || frame_id_a != frame_id_b) {
         ++rejected_pairs_since_log_;
         if (log_due(last_rejected_log_)) {
-          logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] rejected {} two-bank "
-                         "buffer pair(s): latest bank A base={}, delivered={}, ts={}, frame_id={} | bank B "
-                         "base={}, delivered={}, ts={}, frame_id={} | expected delivered={}",
-                         rejected_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a, frame_id_a,
-                         static_cast<void *>(base_b), delivered_b, ts_b, frame_id_b,
-                         runtime_cfg_.buffer_part_count);
+          logger()->warn(
+              "[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] rejected {} two-bank "
+              "buffer pair(s): latest bank A base={}, delivered={}, ts={}, frame_id={} | bank B "
+              "base={}, delivered={}, ts={}, frame_id={} | expected delivered={}",
+              rejected_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a, frame_id_a,
+              static_cast<void *>(base_b), delivered_b, ts_b, frame_id_b,
+              runtime_cfg_.buffer_part_count);
           rejected_pairs_since_log_ = 0;
         }
         return false;
@@ -1817,13 +1764,13 @@ private:
   BankCounters               resume_a_;
   BankCounters               resume_b_;
   bool                       resume_counters_pending_ = false;
-  uint64_t                   max_frame_step_a_    = 0;
-  uint64_t                   max_frame_step_b_    = 0;
-  uint64_t                   frame_regressions_a_ = 0;
-  uint64_t                   frame_regressions_b_ = 0;
-  bool                       pair_delta_seen_     = false;
-  int64_t                    min_pair_delta_      = 0;
-  int64_t                    max_pair_delta_      = 0;
+  uint64_t                   max_frame_step_a_        = 0;
+  uint64_t                   max_frame_step_b_        = 0;
+  uint64_t                   frame_regressions_a_     = 0;
+  uint64_t                   frame_regressions_b_     = 0;
+  bool                       pair_delta_seen_         = false;
+  int64_t                    min_pair_delta_          = 0;
+  int64_t                    max_pair_delta_          = 0;
 
   CameraBufferQueue buffer_queue_;
 };
