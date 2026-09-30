@@ -15,11 +15,14 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 // could not forward declare GraphSpec because it is an alias
 #include "holoflow/core/graph_spec.hh"
 namespace holoflow::runtime {
 
 struct CompilerOutput;
+enum class GraphFailureKind { Compilation, Runtime };
+
 struct GraphCompiledDumpPreferences {
   enum class Rankdir { LeftToRight, TopToBottom };
   enum class Layout { Normal, Stairs, Block, Snake };
@@ -51,7 +54,17 @@ struct GraphCompiledDumpPreferences {
 /// @param prefs     Preferences for controlling the output format.
 /// @return          DOT source as std::string.
 std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs = {},
-                   std::string filename = "compiled");
+                   std::string_view filename = "compiled");
+
+/// Serialize a compiled graph with a failure annotation.
+/// @param filename  Graphviz graph identifier.
+/// @param failure_node Optional node name to highlight as the failure location.
+/// @param failure_context Failure details displayed as the graph title.
+/// @param failure_kind Whether compilation or runtime failed.
+/// @return          DOT source as std::string.
+std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
+                   std::string_view filename, std::string_view failure_node,
+                   std::string_view failure_context, GraphFailureKind failure_kind);
 
 } // namespace holoflow::runtime
 

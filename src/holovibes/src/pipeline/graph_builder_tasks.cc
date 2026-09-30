@@ -209,7 +209,9 @@ void GraphBuilderTasks::holofile_write(const TDesc &X, holotask::sinks::Holofile
 
   auto      &factory     = reg_.get_sync(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});
-  (void)factory.infer(core_inputs, nlohmann::json(s));
+  (void)infer_node(v, std::span{&X, 1}, [&] {
+    return factory.infer(core_inputs, nlohmann::json(s));
+  });
 }
 
 } // namespace holovibes::pipeline

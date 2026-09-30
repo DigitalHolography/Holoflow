@@ -43,6 +43,11 @@ public:
 
   holoflow::core::GraphSpec build();
 
+  [[nodiscard]] std::string failure_graph_dot(
+      const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+    return GraphBuilderTracer::failure_graph_dot(prefs);
+  }
+
 private:
   struct ShackHartmannGeometry {
     size_t frame_width;
@@ -130,6 +135,11 @@ GraphBuilder::GraphBuilder(GraphBuilder &&) noexcept            = default;
 GraphBuilder &GraphBuilder::operator=(GraphBuilder &&) noexcept = default;
 
 holoflow::core::GraphSpec GraphBuilder::build() { return impl_->build(); }
+
+std::string GraphBuilder::failure_graph_dot(
+    const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+  return impl_->failure_graph_dot(prefs);
+}
 
 GraphBuilder::Impl::Impl(const Settings &settings, holoflow::core::Registry &registry)
     : GraphBuilderTasks(registry), s_(settings) {}
