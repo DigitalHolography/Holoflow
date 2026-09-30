@@ -193,6 +193,7 @@ private:
   QLabel                 *recording_status_label_     = nullptr;
   VisualizationWorkspace *display_workspace_          = nullptr;
   QWidget                *right_sidebar_              = nullptr;
+  QWidget                *clinical_guidance_panel_    = nullptr;
   QToolButton            *update_indicator_           = nullptr;
   UpdateChecker          *update_checker_             = nullptr;
   GraphVisualizerWidget  *graph_visualizer_widget_    = nullptr;

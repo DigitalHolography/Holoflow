@@ -31,6 +31,7 @@
 #include <QFileInfoList>
 #include <QFormLayout>
 #include <QFrame>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QKeySequence>
@@ -1037,7 +1038,43 @@ void MainWindow::setup_main_layout() {
   right_sidebar_layout->addWidget(monitor_widget_);
   right_sidebar_layout->addWidget(selected_widget_settings_panel_, 1);
 
-  const int right_sidebar_width = std::max(280, right_sidebar_->sizeHint().width());
+  clinical_guidance_panel_ = new QWidget(right_sidebar_);
+  clinical_guidance_panel_->setObjectName("clinicalGuidancePanel");
+  auto *clinical_guidance_layout = new QVBoxLayout(clinical_guidance_panel_);
+  clinical_guidance_layout->setContentsMargins(0, 0, 0, 0);
+  clinical_guidance_layout->setSpacing(12);
+
+  auto add_guidance_placeholder = [&](const QString &title, const QString &placeholder_text) {
+    auto *group = new QGroupBox(title, clinical_guidance_panel_);
+    auto *layout = new QVBoxLayout(group);
+    layout->setContentsMargins(8, 8, 8, 8);
+
+    auto *placeholder = new QLabel(placeholder_text, group);
+    placeholder->setObjectName("clinicalImagePlaceholder");
+    placeholder->setAlignment(Qt::AlignCenter);
+    placeholder->setWordWrap(true);
+    placeholder->setMinimumHeight(145);
+    placeholder->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    placeholder->setStyleSheet(
+        QStringLiteral("QLabel#clinicalImagePlaceholder {"
+                       "background-color: #e2e5e8;"
+                       "color: #59636d;"
+                       "border: 1px dashed #9aa3ab;"
+                       "border-radius: 4px;"
+                       "padding: 8px;"
+                       "}"));
+    layout->addWidget(placeholder);
+    clinical_guidance_layout->addWidget(group, 1);
+  };
+
+  add_guidance_placeholder(tr("Expected acquisition"),
+                           tr("Example image will be added here"));
+  add_guidance_placeholder(tr("Patient positioning"),
+                           tr("Positioning schematic will be added here"));
+  clinical_guidance_layout->addStretch(1);
+  right_sidebar_layout->addWidget(clinical_guidance_panel_, 1);
+
+  const int right_sidebar_width = std::max(300, right_sidebar_->sizeHint().width());
   right_sidebar_->setFixedWidth(right_sidebar_width);
 
   content_layout->addWidget(controls_scroll_, 0);
@@ -1911,7 +1948,16 @@ void MainWindow::update_layout_visibility() {
     controls_divider_->setVisible(developer_layout);
   }
   if (right_sidebar_ != nullptr) {
-    right_sidebar_->setVisible(developer_layout);
+    right_sidebar_->setVisible(true);
+  }
+  if (monitor_widget_ != nullptr) {
+    monitor_widget_->setVisible(developer_layout);
+  }
+  if (selected_widget_settings_panel_ != nullptr) {
+    selected_widget_settings_panel_->setVisible(developer_layout);
+  }
+  if (clinical_guidance_panel_ != nullptr) {
+    clinical_guidance_panel_->setVisible(!developer_layout);
   }
   if (controls_scroll_ != nullptr) {
     controls_scroll_->setFixedWidth(developer_layout ? developer_controls_width_
