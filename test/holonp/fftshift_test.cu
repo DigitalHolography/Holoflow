@@ -17,7 +17,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -26,7 +25,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/fftshift.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 
 using holoflow::core::DType;
@@ -34,7 +33,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static TDesc device_desc(std::vector<size_t> shape, DType dtype) {
   return TDesc(std::move(shape), dtype, MemLoc::Device);
@@ -46,7 +44,7 @@ template <typename T> static std::vector<std::byte> as_bytes(const std::vector<T
   return out;
 }
 
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -97,12 +95,12 @@ TEST_F(FFTShiftInferTest, RejectsDuplicateAxes) {
                std::invalid_argument);
 }
 
-class FFTShiftOracleTest : public ::testing::Test {
+class FFTShiftReferenceTest : public ::testing::Test {
 protected:
   holonp::FFTShiftFactory factory;
 };
 
-TEST_F(FFTShiftOracleTest, F32SingleAxis) {
+TEST_F(FFTShiftReferenceTest, F32SingleAxis) {
   const TDesc d = device_desc({3, 4}, DType::F32);
   const auto  data =
       as_bytes(std::vector<float>{1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f, 10.f, 11.f, 12.f});
@@ -110,14 +108,14 @@ TEST_F(FFTShiftOracleTest, F32SingleAxis) {
   const auto run = holonp_test::run_sync_factory(factory, std::vector<TDesc>{d},
                                                  std::vector<std::vector<std::byte>>{data}, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "fftshift";
   oi.n_outputs      = 1;
   oi.input_descs    = {d};
   oi.input_bytes    = {data};
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }
 
 class FFTShiftUpdateTest : public ::testing::Test {
@@ -133,12 +131,12 @@ TEST_F(FFTShiftUpdateTest, ReusesTaskWithSameConfig) {
   const auto run = holonp_test::run_sync_factory_update(
       factory, std::vector<TDesc>{d}, std::vector<std::vector<std::byte>>{data}, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "fftshift";
   oi.n_outputs      = 1;
   oi.input_descs    = {d};
   oi.input_bytes    = {data};
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }

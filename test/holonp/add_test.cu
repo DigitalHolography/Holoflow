@@ -18,7 +18,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -29,7 +28,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/add.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -38,8 +37,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-// Absolute path to oracle.py, baked in at compile time.
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 // -------------------------------------------------------------------------------------------------
 // Helpers
@@ -56,7 +53,7 @@ template <typename T> static std::vector<std::byte> as_bytes(const std::vector<T
 }
 
 // Element-wise comparison: exact for integer types, toleranced for F32/CF32.
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -219,14 +216,14 @@ TEST_F(AddInferTest, RejectsInput1InHostMemory) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// AddFactory: execution tests via NumPy oracle
+// AddFactory: execution tests via C++ reference
 // -------------------------------------------------------------------------------------------------
 
-class AddOracleTest : public ::testing::Test {
+class AddReferenceTest : public ::testing::Test {
 protected:
   holonp::AddFactory factory;
 
-  // Helper: run factory + oracle and compare two same-shape contiguous device tensors.
+  // Helper: run factory + reference and compare two same-shape contiguous device tensors.
   template <typename T>
   void check(DType dtype, const std::vector<size_t> &shape_a, const std::vector<T> &host_a,
              const std::vector<size_t> &shape_b, const std::vector<T> &host_b) {
@@ -240,50 +237,50 @@ protected:
     const auto run =
         holonp_test::run_sync_factory(factory, input_descs, input_data, nlohmann::json::object());
 
-    holonp_test::OracleInput oi;
+    holonp_test::ReferenceInput oi;
     oi.op             = "add";
     oi.n_outputs      = 1;
     oi.input_descs    = {da, db};
     oi.input_bytes    = {ibytes_a, ibytes_b};
-    const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+    const auto reference = holonp_test::invoke_reference(oi);
 
     ASSERT_EQ(run.output_bytes.size(), 1u);
-    ASSERT_EQ(oracle.output_bytes.size(), 1u);
-    expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], dtype);
+    ASSERT_EQ(reference.output_bytes.size(), 1u);
+    expect_near_reference(run.output_bytes[0], reference.output_bytes[0], dtype);
   }
 };
 
-TEST_F(AddOracleTest, F32SameShape) {
+TEST_F(AddReferenceTest, F32SameShape) {
   check(DType::F32, {4}, std::vector<float>{1.0f, -2.0f, 3.5f, 0.0f}, {4},
         std::vector<float>{0.5f, 1.0f, -1.5f, 2.0f});
 }
 
-TEST_F(AddOracleTest, F32TwoDim) {
+TEST_F(AddReferenceTest, F32TwoDim) {
   check(DType::F32, {2, 3}, std::vector<float>{1.f, 2.f, 3.f, 4.f, 5.f, 6.f}, {2, 3},
         std::vector<float>{-1.f, -2.f, -3.f, -4.f, -5.f, -6.f});
 }
 
-TEST_F(AddOracleTest, F32BroadcastScalarToVector) {
+TEST_F(AddReferenceTest, F32BroadcastScalarToVector) {
   check(DType::F32, {4}, std::vector<float>{1.0f, 2.0f, 3.0f, 4.0f}, {1},
         std::vector<float>{10.0f});
 }
 
-TEST_F(AddOracleTest, F32BroadcastRowToMatrix) {
+TEST_F(AddReferenceTest, F32BroadcastRowToMatrix) {
   check(DType::F32, {3, 3}, std::vector<float>{1.f, 2.f, 3.f, 4.f, 5.f, 6.f, 7.f, 8.f, 9.f}, {1, 3},
         std::vector<float>{10.f, 20.f, 30.f});
 }
 
-TEST_F(AddOracleTest, U8SameShape) {
+TEST_F(AddReferenceTest, U8SameShape) {
   check(DType::U8, {4}, std::vector<std::uint8_t>{0, 10, 100, 200}, {4},
         std::vector<std::uint8_t>{1, 20, 50, 55});
 }
 
-TEST_F(AddOracleTest, U16SameShape) {
+TEST_F(AddReferenceTest, U16SameShape) {
   check(DType::U16, {4}, std::vector<std::uint16_t>{0, 100, 1000, 60000}, {4},
         std::vector<std::uint16_t>{1, 200, 500, 5000});
 }
 
-TEST_F(AddOracleTest, CF32SameShape) {
+TEST_F(AddReferenceTest, CF32SameShape) {
   struct CF32 {
     float re, im;
   };
@@ -301,16 +298,16 @@ TEST_F(AddOracleTest, CF32SameShape) {
   const auto run =
       holonp_test::run_sync_factory(factory, input_descs, input_data, nlohmann::json::object());
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "add";
   oi.n_outputs      = 1;
   oi.input_descs    = {da, db};
   oi.input_bytes    = {ibytes_a, ibytes_b};
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  const auto reference = holonp_test::invoke_reference(oi);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  ASSERT_EQ(oracle.output_bytes.size(), 1u);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::CF32);
+  ASSERT_EQ(reference.output_bytes.size(), 1u);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::CF32);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -335,15 +332,15 @@ TEST_F(AddUpdateTest, ReusesAddTask) {
 
   const auto run = holonp_test::run_sync_factory_update(factory, input_descs, input_data, settings);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "add";
   oi.n_outputs      = 1;
   oi.input_descs    = {idesc, idesc};
   oi.input_bytes    = {abytes, bbytes};
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  const auto reference = holonp_test::invoke_reference(oi);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }
 
 TEST_F(AddUpdateTest, RecreatesOnWrongTaskType) {
@@ -395,12 +392,12 @@ TEST_F(AddUpdateTest, RecreatesOnWrongTaskType) {
 
   const auto actual = out_buf.download();
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "add";
   oi.n_outputs      = 1;
   oi.input_descs    = {idesc, idesc};
   oi.input_bytes    = {abytes, bbytes};
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  const auto reference = holonp_test::invoke_reference(oi);
 
-  expect_near_oracle(actual, oracle.output_bytes[0], DType::F32);
+  expect_near_reference(actual, reference.output_bytes[0], DType::F32);
 }

@@ -309,6 +309,8 @@ void Writer::write_frames(const uint8_t *data, std::size_t frame_count) {
   }
 }
 
+void Writer::flush() { fflush(impl_->file.get()); }
+
 size_t Writer::tell() const { return impl_->frame_index; }
 
 } // namespace holofile

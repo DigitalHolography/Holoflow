@@ -17,7 +17,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -26,14 +25,13 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/slice.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 
 using holoflow::core::DType;
 using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static TDesc device_desc(std::vector<size_t> shape, DType dtype) {
   return TDesc(std::move(shape), dtype, MemLoc::Device);
@@ -45,7 +43,7 @@ template <typename T> static std::vector<std::byte> as_bytes(const std::vector<T
   return out;
 }
 
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -114,12 +112,12 @@ TEST_F(SliceInferTest, RejectsOutOfRangeIndex) {
   EXPECT_THROW(factory.infer(std::vector<TDesc>{in}, j), std::out_of_range);
 }
 
-class SliceOracleTest : public ::testing::Test {
+class SliceReferenceTest : public ::testing::Test {
 protected:
   holonp::SliceFactory factory;
 };
 
-TEST_F(SliceOracleTest, InferredDescriptorMaterializationMatchesNumpySlice) {
+TEST_F(SliceReferenceTest, InferredDescriptorMaterializationMatchesReferenceSlice) {
   const TDesc in = device_desc({3, 4}, DType::F32);
   const auto  j  = nlohmann::json{
         {"slices",
@@ -134,20 +132,20 @@ TEST_F(SliceOracleTest, InferredDescriptorMaterializationMatchesNumpySlice) {
   const auto infer    = factory.infer(std::vector<TDesc>{in}, j);
   const auto out_desc = infer.output_descs[0];
 
-  holonp_test::OracleInput materialize;
+  holonp_test::ReferenceInput materialize;
   materialize.op          = "ascontiguousarray";
   materialize.n_outputs   = 1;
   materialize.input_descs = {out_desc};
   materialize.input_bytes = {input_bytes};
-  const auto view_bytes   = holonp_test::invoke_oracle(materialize, kOracleScript);
+  const auto view_bytes   = holonp_test::invoke_reference(materialize);
 
-  holonp_test::OracleInput expected;
+  holonp_test::ReferenceInput expected;
   expected.op          = "slice";
   expected.n_outputs   = 1;
   expected.input_descs = {in};
   expected.input_bytes = {input_bytes};
   expected.settings    = j;
-  const auto oracle    = holonp_test::invoke_oracle(expected, kOracleScript);
+  const auto reference    = holonp_test::invoke_reference(expected);
 
-  expect_near_oracle(view_bytes.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  expect_near_reference(view_bytes.output_bytes[0], reference.output_bytes[0], DType::F32);
 }

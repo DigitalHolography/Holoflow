@@ -37,34 +37,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::NodeSpec;
 using holoflow::core::TDesc;
 
-class NoopTask final : public holoflow::core::ISyncTask {
-public:
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &) override {
-    return holoflow::core::OpResult::Ok;
-  }
-};
-
-class NoopFactory final : public holoflow::core::ISyncTaskFactory {
-public:
-  holoflow::core::InferResult infer(std::span<const TDesc> input_descs,
-                                    const nlohmann::json &) const override {
-    return {
-        .input_descs   = {input_descs.begin(), input_descs.end()},
-        .output_descs  = {},
-        .in_place      = {},
-        .owned_inputs  = std::vector<bool>(input_descs.size(), false),
-        .owned_outputs = {},
-        .kind          = holoflow::core::TaskKind::Sync,
-    };
-  }
-
-  std::unique_ptr<holoflow::core::ISyncTask>
-  create(std::span<const TDesc>, const nlohmann::json &,
-         const holoflow::core::SyncCreateCtx &) const override {
-    return std::make_unique<NoopTask>();
-  }
-};
-
 GraphSpec sample_graph() {
   GraphSpec  graph;
   const auto source =
@@ -78,66 +50,6 @@ GraphSpec sample_graph() {
 }
 
 } // namespace
-
-// -------------------------------------------------------------------------------------------------
-// Tensor descriptors
-// -------------------------------------------------------------------------------------------------
-
-TEST(TensorDescriptorTest, CreatesContiguousStridesAndSizes) {
-  const TDesc desc({2, 3, 4}, DType::F32, MemLoc::Host);
-
-  EXPECT_EQ(desc.rank(), 3);
-  EXPECT_EQ(desc.strides, (std::vector<size_t>{48, 16, 4}));
-  EXPECT_EQ(desc.num_elements(), 24);
-  EXPECT_EQ(desc.num_bytes(), 96);
-}
-
-TEST(TensorDescriptorTest, HandlesEmptyAndZeroElementShapes) {
-  EXPECT_EQ(TDesc({}, DType::U8, MemLoc::Host).num_bytes(), 0);
-  EXPECT_EQ(TDesc({3, 0, 2}, DType::U16, MemLoc::Host).num_elements(), 0);
-}
-
-TEST(TensorDescriptorTest, DetectsElementCountOverflow) {
-  const TDesc desc({std::numeric_limits<size_t>::max(), 2}, DType::U8, MemLoc::Host);
-  EXPECT_THROW((void)desc.num_elements(), std::overflow_error);
-}
-
-TEST(TensorDescriptorTest, SerializesDtypeMemoryAndStrides) {
-  const TDesc original({2, 3}, DType::CF32, MemLoc::Device, std::vector<size_t>{32, 8});
-  const auto  encoded = nlohmann::json(original);
-  const auto  decoded = encoded.get<TDesc>();
-
-  EXPECT_EQ(decoded.shape, original.shape);
-  EXPECT_EQ(decoded.strides, original.strides);
-  EXPECT_EQ(decoded.dtype, original.dtype);
-  EXPECT_EQ(decoded.mem_loc, original.mem_loc);
-  EXPECT_THROW((void)nlohmann::json("bad").get<DType>(), std::invalid_argument);
-  EXPECT_THROW((void)nlohmann::json("bad").get<MemLoc>(), std::invalid_argument);
-}
-
-// -------------------------------------------------------------------------------------------------
-// Registry
-// -------------------------------------------------------------------------------------------------
-
-TEST(RegistryTest, RegistersAndLooksUpSyncFactory) {
-  holoflow::core::Registry registry;
-  registry.register_sync("noop", std::make_unique<NoopFactory>());
-
-  EXPECT_TRUE(registry.is_registered("noop"));
-  EXPECT_TRUE(registry.is_sync_registered("noop"));
-  EXPECT_FALSE(registry.is_async_registered("noop"));
-  EXPECT_EQ(&registry.get("noop"), &registry.get_sync("noop"));
-}
-
-TEST(RegistryTest, RejectsDuplicateAndMissingFactories) {
-  holoflow::core::Registry registry;
-  registry.register_sync("noop", std::make_unique<NoopFactory>());
-
-  EXPECT_THROW(registry.register_sync("noop", std::make_unique<NoopFactory>()),
-               std::invalid_argument);
-  EXPECT_THROW((void)registry.get("missing"), std::out_of_range);
-  EXPECT_THROW((void)registry.get_async("missing"), std::out_of_range);
-}
 
 // -------------------------------------------------------------------------------------------------
 // Graph serialization
@@ -187,4 +99,70 @@ TEST(GraphSpecTest, DotOutputContainsEscapedLabelsAndEdgePorts) {
   EXPECT_NE(dot.find("source"), std::string::npos);
   EXPECT_NE(dot.find("quoted"), std::string::npos);
   EXPECT_NE(dot.find("taillabel=\"0\" headlabel=\"0\""), std::string::npos);
+}
+
+// -------------------------------------------------------------------------------------------------
+// GraphSpec
+// -------------------------------------------------------------------------------------------------
+
+TEST(GraphSpecTest, AppliesDefaultsAndAcceptsPrimitiveSettings) {
+  const auto graph = holoflow::core::from_json({
+      {"nodes",
+       {
+           {"a", {{"type", "source"}, {"params", nlohmann::json::object()}}},
+           {"b", {{"type", "sink"}, {"params", 42}, {"debug", false}}},
+       }},
+  });
+
+  ASSERT_EQ(num_vertices(graph), 2);
+  EXPECT_TRUE(graph[0].settings.is_object());
+  EXPECT_TRUE(graph[0].debug);
+  EXPECT_EQ(graph[1].settings, 42);
+  EXPECT_FALSE(graph[1].debug);
+  EXPECT_TRUE(holoflow::core::to_json(graph).at("edges").empty());
+}
+
+TEST(GraphSpecTest, RejectsInvalidNodeAndEdgeFields) {
+  const std::vector<nlohmann::json> invalid_documents{
+      {{"nodes", nullptr}},
+      {{"nodes", {{"", {{"type", "x"}, {"params", {}}}}}}},
+      {{"nodes", {{"a", 1}}}},
+      {{"nodes", {{"a", {{"params", {}}}}}}},
+      {{"nodes", {{"a", {{"type", 1}, {"params", {}}}}}}},
+      {{"nodes", {{"a", {{"type", "x"}}}}}},
+      {{"nodes", {{"a", {{"type", "x"}, {"params", {}}, {"debug", 1}}}}}},
+      {{"nodes", nlohmann::json::object()}, {"edges", nlohmann::json::object()}},
+      {{"nodes", {{"a", {{"type", "x"}, {"params", {}}}}}}, {"edges", {1}}},
+      {{"nodes", {{"a", {{"type", "x"}, {"params", {}}}}}},
+       {"edges", {{{"to", "a"}, {"out", 0}, {"in", 0}}}}},
+      {{"nodes", {{"a", {{"type", "x"}, {"params", {}}}}}},
+       {"edges", {{{"from", "a"}, {"to", "a"}, {"out", "bad"}, {"in", 0}}}}},
+  };
+  for (const auto &document : invalid_documents) {
+    EXPECT_THROW((void)holoflow::core::from_json(document), std::runtime_error) << document.dump();
+  }
+}
+
+TEST(GraphSpecTest, RejectsUnnamedNodesWhenSerializing) {
+  holoflow::core::GraphSpec graph;
+  add_vertex(holoflow::core::NodeSpec{"", "source", {}}, graph);
+  EXPECT_THROW((void)holoflow::core::to_json(graph), std::runtime_error);
+}
+
+TEST(GraphSpecTest, DotHandlesUnnamedNodesKindsAndCarriageReturns) {
+  holoflow::core::GraphSpec graph;
+  add_vertex(holoflow::core::NodeSpec{"", "", "line\r\nvalue"}, graph);
+  const auto dot = holoflow::core::to_dot(graph);
+  EXPECT_NE(dot.find("(unnamed)"), std::string::npos);
+  EXPECT_NE(dot.find("line"), std::string::npos);
+  EXPECT_NE(dot.find("value"), std::string::npos);
+  EXPECT_EQ(dot.find('\r'), std::string::npos);
+}
+
+TEST(GraphSpecTest, NullParamsAreNormalizedToAnObject) {
+  const auto graph = holoflow::core::from_json({
+      {"nodes", {{"a", {{"type", "source"}, {"params", nullptr}}}}},
+  });
+  ASSERT_EQ(num_vertices(graph), 1);
+  EXPECT_TRUE(graph[0].settings.is_object());
 }

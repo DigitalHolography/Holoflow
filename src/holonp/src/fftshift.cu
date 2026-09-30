@@ -256,7 +256,7 @@ FFTShiftFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     h_shifts.get()[i] = 0;
   }
   for (int a : axes) {
-    h_shifts.get()[a] = h_shape.get()[a] / 2;
+    h_shifts.get()[a] = (h_shape.get()[a] + 1) / 2;
   }
 
   auto d_shape   = curaii::make_unique_device_ptr<std::int64_t>(ndim);

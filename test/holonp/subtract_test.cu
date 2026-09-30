@@ -18,7 +18,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -29,7 +28,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/subtract.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -38,7 +37,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static TDesc device_desc(std::vector<size_t> shape, DType dtype) {
   return TDesc(std::move(shape), dtype, MemLoc::Device);
@@ -50,7 +48,7 @@ template <typename T> static std::vector<std::byte> as_bytes(const std::vector<T
   return out;
 }
 
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -98,7 +96,7 @@ TEST_F(SubtractInferTest, RejectsBadInputs) {
   EXPECT_THROW(factory.infer(mismatch, nlohmann::json::object()), std::invalid_argument);
 }
 
-class SubtractOracleTest : public ::testing::Test {
+class SubtractReferenceTest : public ::testing::Test {
 protected:
   holonp::SubtractFactory factory;
 
@@ -114,31 +112,31 @@ protected:
     const auto                                run =
         holonp_test::run_sync_factory(factory, input_descs, input_data, nlohmann::json::object());
 
-    holonp_test::OracleInput oi;
+    holonp_test::ReferenceInput oi;
     oi.op             = "subtract";
     oi.n_outputs      = 1;
     oi.input_descs    = input_descs;
     oi.input_bytes    = input_data;
-    const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-    expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], dtype);
+    const auto reference = holonp_test::invoke_reference(oi);
+    expect_near_reference(run.output_bytes[0], reference.output_bytes[0], dtype);
   }
 };
 
-TEST_F(SubtractOracleTest, F32SameShape) {
+TEST_F(SubtractReferenceTest, F32SameShape) {
   check(DType::F32, {4}, std::vector<float>{4.f, 3.f, 2.f, 1.f}, {4},
         std::vector<float>{1.f, 1.f, 1.f, 1.f});
 }
 
-TEST_F(SubtractOracleTest, F32Broadcast) {
+TEST_F(SubtractReferenceTest, F32Broadcast) {
   check(DType::F32, {2, 3}, std::vector<float>{1, 2, 3, 4, 5, 6}, {3}, std::vector<float>{1, 2, 3});
 }
 
-TEST_F(SubtractOracleTest, U8SameShape) {
+TEST_F(SubtractReferenceTest, U8SameShape) {
   check(DType::U8, {4}, std::vector<std::uint8_t>{10, 20, 30, 40}, {4},
         std::vector<std::uint8_t>{1, 2, 3, 4});
 }
 
-TEST_F(SubtractOracleTest, CF32SameShape) {
+TEST_F(SubtractReferenceTest, CF32SameShape) {
   struct CF32 {
     float re, im;
   };
@@ -162,13 +160,13 @@ TEST_F(SubtractUpdateTest, ReusesSubtractTask) {
   const auto run =
       holonp_test::run_sync_factory_update(factory, descs, data, nlohmann::json::object());
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "subtract";
   oi.n_outputs      = 1;
   oi.input_descs    = descs;
   oi.input_bytes    = data;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }
 
 TEST_F(SubtractUpdateTest, RecreatesOnWrongTaskType) {
@@ -208,11 +206,11 @@ TEST_F(SubtractUpdateTest, RecreatesOnWrongTaskType) {
   EXPECT_NO_THROW((void)task->execute(ctx));
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "subtract";
   oi.n_outputs      = 1;
   oi.input_descs    = {da, db};
   oi.input_bytes    = {ba, bb};
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(out_buf.download(), oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(out_buf.download(), reference.output_bytes[0], DType::F32);
 }
