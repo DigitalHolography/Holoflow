@@ -627,11 +627,6 @@ void Manager::build_and_run() {
   // Prepare the log directory before graph construction can write a failure graph.
   build_graph_spec();
 
-  // TODO: What should be done about this verbose logging?
-  // if (dump_runtime_failure_graphs_) {
-  //   dump_graph_logs(log_root);
-  // }
-
   CompilerConfig config;
   config.log_dir             = log_root;
   config.dump_dot_on_failure = dump_runtime_failure_graphs_;
@@ -649,13 +644,12 @@ void Manager::build_and_run() {
       diagnostic_status = "Failure graph was not saved because the application log folder "
                           "could not be created.";
     } else {
-      const auto failure_path = log_root_ / "compilation_failure.dot";
-      std::ifstream failure_file(failure_path, std::ios::binary);
+      const auto    failure_path = log_root_ / "compilation_failure.dot";
+      std::ifstream failure_file(failure_path);
       if (failure_file.is_open()) {
         const std::string dot{std::istreambuf_iterator<char>{failure_file},
                               std::istreambuf_iterator<char>{}};
-        emit failure_graph_ready(QString::fromUtf8(
-            dot.data(), static_cast<qsizetype>(dot.size())));
+        emit failure_graph_ready(QString::fromUtf8(dot.data(), static_cast<qsizetype>(dot.size())));
         diagnostic_status = std::format("Compilation failure graph: {}", failure_path.string());
       } else {
         diagnostic_status = std::format("Compilation failure graph was not written; expected: {}",
@@ -717,7 +711,8 @@ void Manager::run_compiled_graph() {
     failure_prefs.dump_node_name = true;
     failure_prefs.dump_node_kind = true;
     failure_file << holoflow::runtime::to_dot(*compiler_output_, failure_prefs, "runtime_failure",
-                                              node_name, context);
+                                              node_name, context,
+                                              holoflow::runtime::GraphFailureKind::Runtime);
     logger()->critical("[Manager::run_compiled_graph] Runtime failure graph saved to {}",
                        failure_path.string());
   };
@@ -756,22 +751,22 @@ void Manager::dump_windows_crash_graph(unsigned long exception_code) noexcept {
     }
 
     const auto node_name = scheduler_ ? scheduler_->current_node_name() : std::string_view{};
-    const auto context = std::format(
-        "Windows exception: 0x{:08X}\\nNode: {}", exception_code,
-        node_name.empty() ? "<unknown>" : node_name);
+    const auto context   = std::format("Windows exception: 0x{:08X}\\nNode: {}", exception_code,
+                                       node_name.empty() ? "<unknown>" : node_name);
 
-    auto failure_prefs     = graph_compiled_dump_prefs_;
+    auto failure_prefs           = graph_compiled_dump_prefs_;
     failure_prefs.dump_node_name = true;
     failure_prefs.dump_node_kind = true;
 
-    const auto failure_path = log_root_ / "runtime_failure.dot";
+    const auto    failure_path = log_root_ / "runtime_failure.dot";
     std::ofstream failure_file(failure_path, std::ios::trunc);
     if (!failure_file.is_open()) {
       return;
     }
 
     failure_file << holoflow::runtime::to_dot(*compiler_output_, failure_prefs, "runtime_failure",
-                                              node_name, context);
+                                              node_name, context,
+                                              holoflow::runtime::GraphFailureKind::Runtime);
     failure_file.flush();
   } catch (...) {
     // An unhandled-exception filter must never throw or prevent process termination.
@@ -834,8 +829,8 @@ void Manager::build_graph_spec() {
       if (dot.empty()) {
         diagnostic_status = "No task-inference failure node was available for a graph.";
       } else {
-        const auto failure_path = log_root_ / "graph_build_failure.dot";
-        std::ofstream failure_file(failure_path, std::ios::binary | std::ios::trunc);
+        const auto    failure_path = log_root_ / "graph_build_failure.dot";
+        std::ofstream failure_file(failure_path, std::ios::trunc);
         if (failure_file.is_open()) {
           failure_file.write(dot.data(), static_cast<std::streamsize>(dot.size()));
           failure_file.flush();
@@ -847,8 +842,8 @@ void Manager::build_graph_spec() {
           logger()->error("[Manager::build_graph_spec] Failure graph saved to {}",
                           failure_path.string());
         } else {
-          diagnostic_status = std::format("Failed to write graph construction failure: {}",
-                                          failure_path.string());
+          diagnostic_status =
+              std::format("Failed to write graph construction failure: {}", failure_path.string());
         }
       }
     }

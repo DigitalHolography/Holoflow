@@ -97,7 +97,8 @@ TEST(CompiledGraphDisplayTest, HighlightsRuntimeFailureNodeAndContext) {
 
   const auto dot = holoflow::runtime::to_dot(
       output, {}, "runtime_failure", "failing_node",
-      "Thread: Scheduler::run_section\nNode: failing_node\nError: test failure");
+      "Thread: Scheduler::run_section\nNode: failing_node\nError: test failure",
+      holoflow::runtime::GraphFailureKind::Runtime);
 
   EXPECT_NE(dot.find("label=\"RUNTIME FAILURE\\nThread: Scheduler::run_section"),
             std::string::npos);
@@ -105,4 +106,15 @@ TEST(CompiledGraphDisplayTest, HighlightsRuntimeFailureNodeAndContext) {
   EXPECT_NE(dot.find("fillcolor=\"#ff9999\""), std::string::npos);
   EXPECT_NE(dot.find("color=\"#cc0000\""), std::string::npos);
   EXPECT_NE(dot.find("Error: test failure"), std::string::npos);
+}
+
+TEST(CompiledGraphDisplayTest, UsesExplicitCompilationFailureKind) {
+  holoflow::runtime::CompilerOutput output;
+  const auto dot = holoflow::runtime::to_dot(
+      output, {}, "compilation_failure", {}, "Unexpected validation error",
+      holoflow::runtime::GraphFailureKind::Compilation);
+
+  EXPECT_NE(dot.find("COMPILATION FAILURE"), std::string::npos);
+  EXPECT_NE(dot.find("Unexpected validation error"), std::string::npos);
+  EXPECT_EQ(dot.find("RUNTIME FAILURE"), std::string::npos);
 }

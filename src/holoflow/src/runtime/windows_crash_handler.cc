@@ -17,6 +17,8 @@
 #include <atomic>
 #include <utility>
 
+#include "logger.hh"
+
 #if defined(_WIN32)
 #define NOMINMAX
 #include <windows.h>
@@ -61,6 +63,8 @@ void WindowsCrashHandler::install(Callback new_callback) {
   }
 #else
   (void)new_callback;
+  logger()->warn("[WindowsCrashHandler::install] Windows crash handling is unavailable because "
+                 "_WIN32 is not defined");
 #endif
 }
 

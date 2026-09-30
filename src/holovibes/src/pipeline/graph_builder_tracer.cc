@@ -53,16 +53,17 @@ std::string GraphBuilderTracer::failure_graph_dot(
 
   const auto &failure = *inference_failure_;
   const auto &node    = g_[failure.vertex];
-  std::string label   = node.name + " (" + node.kind + ")\nInference failed: " + failure.message;
+  std::ostringstream label;
+  label << node.name << " (" << node.kind << ")\nInference failed: " << failure.message;
   for (size_t i = 0; i < failure.inputs.size(); ++i) {
     const auto &input = failure.inputs[i];
     const holoflow::core::TDesc contiguous{input.shape, input.dtype, input.mem_loc, input.offset};
-    label += "\nInput " + std::to_string(i) + ": shape=" + nlohmann::json(input.shape).dump() +
-             ", dtype=" + std::string(holoflow::core::to_string(input.dtype)) +
-             ", memory=" + std::string(holoflow::core::to_string(input.mem_loc)) +
-             "\n  byte strides=" + nlohmann::json(input.strides).dump() +
-             ", contiguous byte strides=" + nlohmann::json(contiguous.strides).dump() +
-             ", offset=" + std::to_string(input.offset);
+    label << "\nInput " << i << ": shape=" << nlohmann::json(input.shape)
+          << ", dtype=" << holoflow::core::to_string(input.dtype)
+          << ", memory=" << holoflow::core::to_string(input.mem_loc)
+          << "\n  byte strides=" << nlohmann::json(input.strides)
+          << ", contiguous byte strides=" << nlohmann::json(contiguous.strides)
+          << ", offset=" << input.offset;
   }
 
   auto dot = holoflow::core::to_dot(g_, prefs);
@@ -73,7 +74,7 @@ std::string GraphBuilderTracer::failure_graph_dot(
 
   std::ostringstream annotation;
   annotation << "  graph [label=\"Graph construction failed (partial graph)\", labelloc=t];\n"
-             << "  v" << failure.vertex << " [label=" << nlohmann::json(label).dump()
+             << "  v" << failure.vertex << " [label=" << nlohmann::json(label.str()).dump()
              << ", style=\"filled,bold\", fillcolor=\"#ffe1e1\", color=\"#b00020\", "
                 "penwidth=2];\n";
   dot.insert(end, annotation.str());
