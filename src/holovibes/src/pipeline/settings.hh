@@ -81,6 +81,7 @@ struct Settings {
   std::optional<int>    load_fps_limit;
   double                input_sampling_frequency_hz = 1.0e6 / 27.0;
   std::filesystem::path camera_config_path;
+  bool enable_camera_buffer_record = false;
 
   // Spacial Propagation
   SpacialMethod spacial_method;

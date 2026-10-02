@@ -865,14 +865,8 @@ public:
    * Throws if the queue is closed while waiting.
    */
   [[nodiscard]]
-  const DType &read_b() {
-    const auto *frame = read(read_index_b_, nullptr);
-
-    if (frame == nullptr) {
-      throw std::runtime_error("CameraBufferQueue closed while waiting for reader B");
-    }
-
-    return *frame;
+  const DType *read_b(const std::atomic<bool> &cancelled) {
+    return read(read_index_b_, &cancelled);
   }
 
   void close() { closed_.store(true, std::memory_order_release); }
@@ -1142,7 +1136,7 @@ private:
    * Dropped generations are consumed internally and skipped.
    */
   [[nodiscard]]
-  const DType *read(std::atomic<size_t> &reader, const std::atomic<bool> *cancelled) {
+  const DType *read(std::atomic<size_t> &reader, const std::atomic<bool> &cancelled) {
 
     size_t current = reader.load(std::memory_order_relaxed);
 
@@ -1150,7 +1144,7 @@ private:
       /*
        * Cancellation is only used by reader A.
        */
-      if (cancelled != nullptr && cancelled->load(std::memory_order_acquire)) {
+      if (cancelled.load(std::memory_order_acquire)) {
         return nullptr;
       }
 
@@ -1163,7 +1157,7 @@ private:
           return nullptr;
         }
 
-        if (cancelled != nullptr && cancelled->load(std::memory_order_acquire)) {
+        if (cancelled.load(std::memory_order_acquire)) {
           return nullptr;
         }
 
@@ -1174,15 +1168,15 @@ private:
 
       auto &slot = slots_[current % capacity_];
 
-      /*
-       * This is the important validation that was missing from
-       * the previous implementation.
-       *
-       * A published generation must still own its slot.
-       */
-      #ifndef NDEBUG
+/*
+ * This is the important validation that was missing from
+ * the previous implementation.
+ *
+ * A published generation must still own its slot.
+ */
+#ifndef NDEBUG
       const size_t generation = slot.generation.load(std::memory_order_acquire);
-      #endif
+#endif
 
       assert(generation == current);
 
@@ -1226,9 +1220,9 @@ private:
 
     auto &slot = slots_[current % capacity_];
 
-    #ifndef NDEBUG
+#ifndef NDEBUG
     const size_t generation = slot.generation.load(std::memory_order_acquire);
-    #endif
+#endif
 
     assert(generation == current);
 
@@ -1375,38 +1369,36 @@ private:
   alignas(cache_line_size) std::atomic<bool> reader_b_active_{false};
 };
 
-/*
 // read B
 // writing to stop will automaticly stop the record
 class Recorder {
 public:
-  Recorder(const std::string &file_path, size_t frame_count, CameraBufferQueue &queue,
-           std::atomic<bool> &stop, Euresys::EGrabber<> *egrabber)
-      : writer_{file_path, holofile::Header{}, holofile::Footer{}}, // TODO add header and footer
-        frame_to_record_{frame_count}, current_frame_{0}, queue_{queue}, stop_{stop},
-        egrabber_{egrabber} {
+  struct RecordingGeometry {
+    uint8_t bits_per_pixel;
+    size_t  frame_width;
+    size_t  frame_height;
+  };
+
+  Recorder(const std::string &file_path, uint32_t frame_count, size_t buffer_part_count,
+           CameraBufferQueue &queue, const std::atomic_flag &stop, const RecordingGeometry &g,
+           const nlohmann::json &pipeline_settings)
+      : writer_{file_path,
+                holofile::Header{
+                    .magic_number   = holofile::Header::MAGIC_NUMBER_LE,
+                    .version        = holofile::Header::CURRENT_VERSION,
+                    .bits_per_pixel = g.bits_per_pixel,
+                    .frame_width    = static_cast<uint32_t>(g.frame_width),
+                    .frame_height   = static_cast<uint32_t>(g.frame_height),
+                    .frame_count    = frame_count,
+                    .data_size_in_bytes =
+                        frame_count * g.frame_height * g.frame_width * g.bits_per_pixel / 8,
+                    .endianness = holofile::Header::LITTLE_ENDIAN,
+                },
+                holofile::Footer{pipeline_settings}},
+        frame_to_record_{frame_count}, buffer_part_count_{buffer_part_count}, current_frame_{0},
+        queue_{queue}, stop_{stop} {
+    assert(frame_count % buffer_part_count == 0);
     queue_.subscribe_b();
-  }
-
-  void execute() {
-    auto stop = stop_.load(std::memory_order_acquire);
-    auto batch = std::vector<CameraBufferQueue::DType&>(); TODO use * instead of &
-    while (current_frame_ < frame_to_record_ && !stop) {
-      if (!queue_.empty_b()) {
-        const auto &frame  = queue_.read_b();
-        auto        buffer = Euresys::Buffer(frame.bank_a);
-        auto       *base_v = buffer.getInfo<void *>(*egrabber_, GenTL::BUFFER_INFO_BASE);
-        auto       *base   = static_cast<uint8_t *>(base_v);
-
-        writer_.write_frames(base, 1); // TODO batch multiple frames together
-        queue_.release_b();
-        ++current_frame_;
-      }
-
-      stop = stop_.load(std::memory_order_acquire);
-    }
-
-    writer_.write_footer();
   }
 
   ~Recorder() {
@@ -1414,21 +1406,51 @@ public:
     writer_.flush();
   }
 
+  size_t execute(std::stop_token cancelled) {
+    while (current_frame_ < frame_to_record_ && !stop_.test() && !cancelled.stop_requested()) {
+      if (!queue_.empty_b()) {
+        const auto *frame = queue_.read_b(cancelled.stop_requested())->base;
+
+        if (frame) {
+          // const std::byte* -> const uint8_t * is safe
+          writer_.write_frames(reinterpret_cast<const uint8_t *>(frame), buffer_part_count_);
+          queue_.release_b();
+          current_frame_ += buffer_part_count_;
+        }
+      }
+    }
+
+    writer_.write_footer();
+
+    return current_frame_;
+  }
+
 private:
-  holofile::Writer writer_;
-  size_t frame_to_record_; // when unlimited it is set to std::numeric_limit<size_t>::max()
-  size_t current_frame_;
-  CameraBufferQueue   &queue_;
-  std::atomic<bool>   &stop_;
-  Euresys::EGrabber<> *egrabber_;
+  holofile::Writer        writer_;
+  size_t                  frame_to_record_;
+  size_t                  buffer_part_count_;
+  size_t                  current_frame_;
+  CameraBufferQueue      &queue_;
+  const std::atomic_flag &stop_;
 };
 
-void recorder_worker(const std::string &file_path, size_t frame_count, CameraBufferQueue &queue,
-                     std::atomic<bool> &stop, Euresys::EGrabber<> *egrabber) {
-  Recorder rec{file_path, frame_count, queue, stop, egrabber};
-  rec.execute();
+void recorder_worker(const holotask::sources::RecordSettings &settings,
+                     const Recorder::RecordingGeometry &g, size_t buffer_part_count,
+                     CameraBufferQueue &queue, const std::atomic_flag &stop,
+                     std::stop_token cancelled, std::atomic<bool> &recording,
+                     std::function<void(size_t)> finished_callback) {
+  Recorder rec{settings.file_path,
+               static_cast<uint32_t>(settings.recording_count),
+               buffer_part_count,
+               queue,
+               stop,
+               g,
+               settings.pipeline_config};
+  recording.store(true, std::memory_order_release);
+  auto frames_written = rec.execute(cancelled);
+  recording.store(false, std::memory_order_release);
+  finished_callback(frames_written);
 }
-*/
 } // namespace
 
 // -------------------------------------------------------------------------------------------------
@@ -1504,6 +1526,121 @@ public:
     } catch (const std::exception &e) {
       logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::~AmetekS711EuresysCoaxlinkQSFP] {}",
                      e.what());
+    }
+  }
+
+  void emit_finished_event(holoflow::core::SyncCtx &ctx, size_t frames_written) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "recording_finished"},
+                {"path", settings_.record_settings->file_path},
+                {"frames_written", frames_written},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit recording_finished event");
+  }
+
+  void emit_failed_event(holoflow::core::SyncCtx &ctx, const std::string &message) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "recording_failed"},
+                {"path", settings_.record_settings->file_path},
+                {"message", message},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit recording_failed event");
+  }
+
+  void start_raw_record(holoflow::core::SyncCtx &ctx) {
+    recording_.store(true, std::memory_order_release);
+    record_thread_ = std::jthread([this, &ctx](std::stop_token cancelled) {
+      recorder_worker(*settings_.record_settings,
+                      {static_cast<uint8_t>(runtime_cfg_.bytes_per_pixel * 8), runtime_cfg_.width,
+                       runtime_cfg_.camera_height()},
+                      runtime_cfg_.buffer_part_count, buffer_queue_, stop_record_, cancelled,
+                      recording_,
+                      [this, &ctx](size_t written) { emit_finished_event(ctx, written); });
+    });
+  }
+
+  void stop_raw_record() {
+    recording_.store(false, std::memory_order_release);
+    record_thread_->request_stop();
+  }
+
+  void handle_events(holoflow::core::SyncCtx &ctx) {
+    if (!ctx.event_reader)
+      return;
+
+    while (true) {
+      auto event = ctx.event_reader->try_pop();
+      if (!event.has_value())
+        break;
+
+      HOLOVIBES_CHECK(event->direction == holoflow_event::EventDirection::ToNode,
+                      "Unexpected event direction");
+
+      const auto type = event->data.at("type").get<std::string>();
+
+      if (type == "start_recording") {
+        if (recording_.load(std::memory_order_acquire)) {
+          logger()->error(
+              "[AmetekS711EuresysCoaxlinkQSFP] Ignoring duplicate start_recording event");
+          emit_failed_event(ctx, "Recording already in progress");
+          continue;
+        }
+
+        const auto record_path = event->data.value("record_path", std::string{});
+        if (record_path.empty()) {
+          logger()->error(
+              "[AmetekS711EuresysCoaxlinkQSFP] Rejecting start_recording event with empty path");
+          emit_failed_event(ctx, "Cannot start recording: empty path");
+          continue;
+        }
+
+        if (settings_.record_settings->recording_count <= 0) {
+          const auto message = "Cannot start recording: invalid frame count (" +
+                               std::to_string(settings_.record_settings->recording_count) + ")";
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP] {}", message);
+          emit_failed_event(ctx, message);
+          continue;
+        }
+
+        settings_.record_settings->file_path = record_path;
+        start_raw_record(ctx);
+
+      } else if (type == "stop_recording") {
+        if (!recording_.load(std::memory_order_acquire)) {
+          logger()->warn(
+              "[AmetekS711EuresysCoaxlinkQSFP] Ignoring stop_recording event while idle");
+          continue;
+        }
+
+        stop_raw_record();
+
+        if (!settings_.record_settings->file_path.empty() &&
+            std::remove(settings_.record_settings->file_path.c_str()) != 0 && errno != ENOENT) {
+          std::error_code ec(errno, std::generic_category());
+          logger()->error(
+              "[AmetekS711EuresysCoaxlinkQSFP] Failed to remove incomplete recording at {}: {}",
+              settings_.record_settings->file_path, ec.message());
+          emit_failed_event(ctx, "Failed to remove incomplete recording at " +
+                                     settings_.record_settings->file_path + ": " + ec.message());
+        }
+
+      } else {
+        HOLOVIBES_BUG("Unknown event type: {}", type);
+      }
     }
   }
 
@@ -1681,6 +1818,9 @@ public:
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    if (settings_.record_settings.has_value())
+      handle_events(ctx);
+
     if (!running_) {
       // S711 Banks_AB must start bank B first, then bank A.
       grabber_b_->start();
@@ -1736,12 +1876,13 @@ private:
           delivered_b != runtime_cfg_.buffer_part_count || frame_id_a != frame_id_b) {
         ++rejected_pairs_since_log_;
         if (log_due(last_rejected_log_)) {
-          logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] rejected {} two-bank "
-                         "buffer pair(s): latest bank A base={}, delivered={}, ts={}, frame_id={} | bank B "
-                         "base={}, delivered={}, ts={}, frame_id={} | expected delivered={}",
-                         rejected_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a, frame_id_a,
-                         static_cast<void *>(base_b), delivered_b, ts_b, frame_id_b,
-                         runtime_cfg_.buffer_part_count);
+          logger()->warn(
+              "[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] rejected {} two-bank "
+              "buffer pair(s): latest bank A base={}, delivered={}, ts={}, frame_id={} | bank B "
+              "base={}, delivered={}, ts={}, frame_id={} | expected delivered={}",
+              rejected_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a, frame_id_a,
+              static_cast<void *>(base_b), delivered_b, ts_b, frame_id_b,
+              runtime_cfg_.buffer_part_count);
           rejected_pairs_since_log_ = 0;
         }
         return false;
@@ -1817,15 +1958,18 @@ private:
   BankCounters               resume_a_;
   BankCounters               resume_b_;
   bool                       resume_counters_pending_ = false;
-  uint64_t                   max_frame_step_a_    = 0;
-  uint64_t                   max_frame_step_b_    = 0;
-  uint64_t                   frame_regressions_a_ = 0;
-  uint64_t                   frame_regressions_b_ = 0;
-  bool                       pair_delta_seen_     = false;
-  int64_t                    min_pair_delta_      = 0;
-  int64_t                    max_pair_delta_      = 0;
+  uint64_t                   max_frame_step_a_        = 0;
+  uint64_t                   max_frame_step_b_        = 0;
+  uint64_t                   frame_regressions_a_     = 0;
+  uint64_t                   frame_regressions_b_     = 0;
+  bool                       pair_delta_seen_         = false;
+  int64_t                    min_pair_delta_          = 0;
+  int64_t                    max_pair_delta_          = 0;
 
-  CameraBufferQueue buffer_queue_;
+  CameraBufferQueue           buffer_queue_;
+  std::atomic_flag            stop_record_ = ATOMIC_FLAG_INIT;
+  std::atomic<bool>           recording_   = false;
+  std::optional<std::jthread> record_thread_;
 };
 
 // -------------------------------------------------------------------------------------------------

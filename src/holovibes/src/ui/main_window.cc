@@ -68,12 +68,13 @@
 #include "holofile/holofile.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
-#include "ui/update_checker.hh"
 #include "ui/graph_visualizer_widget.hh"
+#include "ui/update_checker.hh"
 #include "ui/visualization_workspace.hh"
 #include "ui/widgets/selected_widget_settings_panel.hh"
 #include "ui/widgets/tensor_display_widget.hh"
 #include "ui/widgets/zernike_history_widget.hh"
+
 
 namespace {
 
@@ -419,6 +420,16 @@ public:
     splitter->addWidget(graph_compiled_dump_group_box);
 
     dialog_layout->addWidget(splitter);
+
+    auto *group_camera      = new QGroupBox(tr("Camera"), this);
+    auto *input_form_camera = new QFormLayout();
+    input_form_camera->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
+    enable_camera_buffer_record_ = new QCheckBox(this);
+    enable_camera_buffer_record_->setToolTip(tr("This make the record use the camera's buffers instead of copies"));
+    input_form_camera->addRow(tr("Enable camera buffer record"), enable_camera_buffer_record_);
+    group_camera->setLayout(input_form_camera);
+    dialog_layout->addWidget(group_camera);
+
     // Apply / Close
     auto *button_box = new QDialogButtonBox(QDialogButtonBox::Close, this);
     apply_button_    = button_box->addButton(tr("Apply"), QDialogButtonBox::ActionRole);
@@ -506,8 +517,7 @@ private:
                        graph_compiled_dump_preferences_widgets_.rankdir_combo_);
 
     graph_compiled_dump_preferences_widgets_.layout_combo_ =
-        create_combo_box(this,
-                         QStringList{tr("Normal"), tr("Stairs"), tr("Block"), tr("Snake")});
+        create_combo_box(this, QStringList{tr("Normal"), tr("Stairs"), tr("Block"), tr("Snake")});
     graph_compiled_dump_preferences_widgets_.layout_combo_->setCurrentIndex(
         static_cast<int>(graph_compiled_dump_preferences.layout));
     graph_compiled_dump_preferences_widgets_.layout_combo_->setToolTip(
@@ -624,7 +634,7 @@ private:
         .rankdir = graph_compiled_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
                        ? GraphCompiledDumpPreferences::Rankdir::LeftToRight
                        : GraphCompiledDumpPreferences::Rankdir::TopToBottom,
-        .layout = static_cast<GraphCompiledDumpPreferences::Layout>(
+        .layout  = static_cast<GraphCompiledDumpPreferences::Layout>(
             graph_compiled_dump_preferences_widgets_.layout_combo_->currentIndex()),
 
         .floating_point_precision =
@@ -649,6 +659,7 @@ private:
 
     manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
     manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
+    manager_.update_camera_preferences(enable_camera_buffer_record_->isChecked());
   }
 
   void connect_signals() {
@@ -697,6 +708,8 @@ private:
             &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
     connect(graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_,
             &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
+    connect(enable_camera_buffer_record_,
+            &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
   }
 
   holovibes::pipeline::Manager &manager_;
@@ -706,7 +719,7 @@ private:
   struct GraphSpecDumpPreferencesWidgets {
     // dump preferences
     // rankdir: LR | TB
-    QComboBox *rankdir_combo_                  = nullptr;
+    QComboBox *rankdir_combo_                 = nullptr;
     QSpinBox  *floating_point_precision_spin_ = nullptr;
     // Nodes
     QCheckBox *node_name_checkbox_     = nullptr;
@@ -720,13 +733,13 @@ private:
   struct GraphCompiledDumpPreferencesWidgets {
     // dump preferences
     // rankdir: LR | TB
-    QComboBox *rankdir_combo_                  = nullptr;
-    QComboBox *layout_combo_                   = nullptr;
+    QComboBox *rankdir_combo_                 = nullptr;
+    QComboBox *layout_combo_                  = nullptr;
     QSpinBox  *floating_point_precision_spin_ = nullptr;
-    QCheckBox *node_name_checkbox_             = nullptr;
-    QCheckBox *node_kind_checkbox_             = nullptr;
-    QCheckBox *node_settings_checkbox_         = nullptr;
-    QCheckBox *node_in_out_tids_               = nullptr;
+    QCheckBox *node_name_checkbox_            = nullptr;
+    QCheckBox *node_kind_checkbox_            = nullptr;
+    QCheckBox *node_settings_checkbox_        = nullptr;
+    QCheckBox *node_in_out_tids_              = nullptr;
     // Edges
     QCheckBox *edge_indices_checkbox_ = nullptr;
     QCheckBox *edge_desc_checkbox_    = nullptr;
@@ -739,6 +752,7 @@ private:
     QCheckBox *resources_toggle_checkbox_ = nullptr;
   };
   GraphCompiledDumpPreferencesWidgets graph_compiled_dump_preferences_widgets_;
+  QCheckBox                          *enable_camera_buffer_record_ = nullptr;
 };
 
 } // namespace
@@ -1638,7 +1652,6 @@ void MainWindow::connect_manager_signals() {
               graph_visualizer_widget_->show_error(error);
             }
           });
-
 }
 
 void MainWindow::connect_import_controls() {
@@ -1743,9 +1756,11 @@ void MainWindow::show_pipeline_graph() {
   display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
   display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
 
-  auto request = [manager = pipeline_manager_]() { manager->request_compiled_graph_visualization(); };
-  HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, std::move(request),
-                                             Qt::QueuedConnection));
+  auto request = [manager = pipeline_manager_]() {
+    manager->request_compiled_graph_visualization();
+  };
+  HOLOVIBES_CHECK(
+      QMetaObject::invokeMethod(pipeline_manager_, std::move(request), Qt::QueuedConnection));
 }
 
 void MainWindow::open_dot_file() {
@@ -2639,7 +2654,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     QString     appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
     QString     convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels/";
     std::string kernel_path             = convolutionsKernelsPath.toStdString() +
-                                          render_widget_->get_convolution().toStdString() + ".json";
+                              render_widget_->get_convolution().toStdString() + ".json";
 
     s.pp_fps       = 60;
     s.pp_fft_shift = s.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;

@@ -88,6 +88,8 @@ public:
   }
   void update_graph_compiled_dump_preferences(const GraphCompiledDumpPreferences &prefs);
 
+  void update_camera_preferences(bool enable_camera_buffer_record);
+
   /// @brief Emits Graphviz DOT for the current compiled pipeline graph.
   void request_compiled_graph_visualization();
 
@@ -144,6 +146,8 @@ private:
   // --- Logging Helpers ---
   void dump_graph_logs(const std::filesystem::path &log_dir);
 
+  const std::string& get_record_node_name();
+
   // --- UI Elements ---
   ui::AutoFocusWidget      *autofocus_widget_;
   ui::TensorDisplayWidget  *xy_processed_widget_;
@@ -163,7 +167,7 @@ private:
   int      src_height_ = 0;
 
   GraphSpecDumpPreferences     graph_spec_dump_prefs_     = {};
-  GraphCompiledDumpPreferences graph_compiled_dump_prefs_ = {};
+  GraphCompiledDumpPreferences graph_compiled_dump_prefs_   = {};
 
   /// @brief Toggles debug dumps of the pipeline (.dot, .json) to disk.
   bool dump_debug_graphs_ = true;

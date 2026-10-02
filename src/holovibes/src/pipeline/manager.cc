@@ -407,6 +407,17 @@ void Manager::update_pipeline(const Settings &settings) {
   }
 }
 
+const std::string& Manager::get_record_node_name()
+{
+  static const std::string source = "source";
+  static const std::string record = "record";
+
+  if (s_.enable_camera_buffer_record && s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP && s_.recording_method == RecordingMethod::RAW)
+    return source; 
+
+  return record;
+}
+
 void Manager::start_raw_record(std::filesystem::path record_path) {
   std::lock_guard lock(mtx_);
   if (!scheduler_ || !scheduler_->is_running()) {
@@ -432,7 +443,7 @@ void Manager::start_raw_record(std::filesystem::path record_path) {
   };
 
   // Send the recording event to the UI message queue inside the scheduler
-  if (!scheduler_->ui_try_send("record", std::move(payload))) {
+  if (!scheduler_->ui_try_send(get_record_node_name(), std::move(payload))) {
     logger()->error("[Manager::start_raw_record] Failed to enqueue start_recording event");
     emit raw_record_started_failure("Failed to enqueue start_recording event");
     return;
@@ -457,7 +468,7 @@ void Manager::stop_raw_record() {
   }
 
   nlohmann::json payload{{"type", "stop_recording"}};
-  if (!scheduler_->ui_try_send("record", std::move(payload))) {
+  if (!scheduler_->ui_try_send(get_record_node_name(), std::move(payload))) {
     logger()->error("[Manager::stop_raw_record] Failed to enqueue stop_recording event");
     emit raw_record_stopped_failure("Failed to enqueue stop_recording event");
     return;
@@ -476,6 +487,10 @@ void Manager::update_graph_spec_dump_preferences(const GraphSpecDumpPreferences 
 
 void Manager::update_graph_compiled_dump_preferences(const GraphCompiledDumpPreferences &prefs) {
   graph_compiled_dump_prefs_ = prefs;
+}
+
+void Manager::update_camera_preferences(bool enable_camera_buffer_record) {
+  s_.enable_camera_buffer_record = enable_camera_buffer_record;
 }
 
 void Manager::request_compiled_graph_visualization() {
