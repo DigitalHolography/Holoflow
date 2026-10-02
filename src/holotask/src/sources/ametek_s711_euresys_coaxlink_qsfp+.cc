@@ -1370,7 +1370,6 @@ private:
 };
 
 // read B
-// writing to stop will automaticly stop the record
 class Recorder {
 public:
   struct RecordingGeometry {
@@ -1380,7 +1379,7 @@ public:
   };
 
   Recorder(const std::string &file_path, uint32_t frame_count, size_t buffer_part_count,
-           CameraBufferQueue &queue, const std::atomic_flag &stop, const RecordingGeometry &g,
+           CameraBufferQueue &queue, const RecordingGeometry &g,
            const nlohmann::json &pipeline_settings)
       : writer_{file_path,
                 holofile::Header{
@@ -1396,7 +1395,7 @@ public:
                 },
                 holofile::Footer{pipeline_settings}},
         frame_to_record_{frame_count}, buffer_part_count_{buffer_part_count}, current_frame_{0},
-        queue_{queue}, stop_{stop} {
+        queue_{queue} {
     assert(frame_count % buffer_part_count == 0);
     queue_.subscribe_b();
   }
@@ -1407,13 +1406,14 @@ public:
   }
 
   size_t execute(std::stop_token cancelled) {
-    while (current_frame_ < frame_to_record_ && !stop_.test() && !cancelled.stop_requested()) {
+    while (current_frame_ < frame_to_record_ && !cancelled.stop_requested()) {
       if (!queue_.empty_b()) {
         const auto *frame = queue_.read_b(cancelled.stop_requested())->base;
 
         if (frame) {
           // const std::byte* -> const uint8_t * is safe
-          writer_.write_frames(reinterpret_cast<const uint8_t *>(frame), buffer_part_count_);
+          auto to_write = std::min(buffer_part_count_, frame_to_record_ - current_frame_);
+          writer_.write_frames(reinterpret_cast<const uint8_t *>(frame), to_write);
           queue_.release_b();
           current_frame_ += buffer_part_count_;
         }
@@ -1426,24 +1426,21 @@ public:
   }
 
 private:
-  holofile::Writer        writer_;
-  size_t                  frame_to_record_;
-  size_t                  buffer_part_count_;
-  size_t                  current_frame_;
-  CameraBufferQueue      &queue_;
-  const std::atomic_flag &stop_;
+  holofile::Writer   writer_;
+  size_t             frame_to_record_;
+  size_t             buffer_part_count_;
+  size_t             current_frame_;
+  CameraBufferQueue &queue_;
 };
 
 void recorder_worker(const holotask::sources::RecordSettings &settings,
                      const Recorder::RecordingGeometry &g, size_t buffer_part_count,
-                     CameraBufferQueue &queue, const std::atomic_flag &stop,
-                     std::stop_token cancelled, std::atomic<bool> &recording,
-                     std::function<void(size_t)> finished_callback) {
+                     CameraBufferQueue &queue, std::stop_token cancelled,
+                     std::atomic<bool> &recording, std::function<void(size_t)> finished_callback) {
   Recorder rec{settings.file_path,
                static_cast<uint32_t>(settings.recording_count),
                buffer_part_count,
                queue,
-               stop,
                g,
                settings.pipeline_config};
   recording.store(true, std::memory_order_release);
@@ -1567,8 +1564,7 @@ public:
       recorder_worker(*settings_.record_settings,
                       {static_cast<uint8_t>(runtime_cfg_.bytes_per_pixel * 8), runtime_cfg_.width,
                        runtime_cfg_.camera_height()},
-                      runtime_cfg_.buffer_part_count, buffer_queue_, stop_record_, cancelled,
-                      recording_,
+                      runtime_cfg_.buffer_part_count, buffer_queue_, cancelled, recording_,
                       [this, &ctx](size_t written) { emit_finished_event(ctx, written); });
     });
   }
@@ -1967,8 +1963,7 @@ private:
   int64_t                    max_pair_delta_          = 0;
 
   CameraBufferQueue           buffer_queue_;
-  std::atomic_flag            stop_record_ = ATOMIC_FLAG_INIT;
-  std::atomic<bool>           recording_   = false;
+  std::atomic<bool>           recording_ = false;
   std::optional<std::jthread> record_thread_;
 };
 
