@@ -39,9 +39,11 @@
 #include <QLineEdit>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QResizeEvent>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
@@ -84,6 +86,34 @@ namespace {
 constexpr int  kLargeSpinMax             = 1024 * 1024;
 constexpr int  kTopBarHeight             = 30;
 constexpr auto kDefaultSamplingFrequency = 37'000.0;
+
+class AspectRatioPixmapLabel final : public QLabel {
+public:
+  using QLabel::QLabel;
+
+  void set_source_pixmap(const QPixmap &pixmap) {
+    source_pixmap_ = pixmap;
+    setText(QString{});
+    update_scaled_pixmap();
+  }
+
+protected:
+  void resizeEvent(QResizeEvent *event) override {
+    QLabel::resizeEvent(event);
+    update_scaled_pixmap();
+  }
+
+private:
+  void update_scaled_pixmap() {
+    if (source_pixmap_.isNull() || contentsRect().isEmpty()) {
+      return;
+    }
+    QLabel::setPixmap(source_pixmap_.scaled(contentsRect().size(), Qt::KeepAspectRatio,
+                                            Qt::SmoothTransformation));
+  }
+
+  QPixmap source_pixmap_;
+};
 
 QSpinBox *create_spin_box(QWidget *parent, int minimum, int maximum, int value) {
   auto *spin_box = new QSpinBox(parent);
@@ -414,8 +444,8 @@ public:
     auto *dialog_layout = new QVBoxLayout(this);
 
     auto *application_group = new QGroupBox(tr("Application"), this);
-    auto *application_form = new QFormLayout(application_group);
-    layout_mode_combo_ = create_combo_box(application_group, {});
+    auto *application_form  = new QFormLayout(application_group);
+    layout_mode_combo_      = create_combo_box(application_group, {});
     layout_mode_combo_->addItem(tr("Developer"), QStringLiteral("developer"));
     layout_mode_combo_->addItem(tr("Clinical"), QStringLiteral("clinical"));
     layout_mode_combo_->setCurrentIndex(layout_mode_combo_->findData(layout_mode));
@@ -428,18 +458,21 @@ public:
     application_form->addRow(tr("Theme"), theme_combo_);
     dialog_layout->addWidget(application_group);
 
-    auto *splitter = new QSplitter(Qt::Horizontal, this);
+    graph_preferences_visible_ = layout_mode != QStringLiteral("clinical");
+    if (graph_preferences_visible_) {
+      auto *splitter = new QSplitter(Qt::Horizontal, this);
 
-    // Dump preferences
-    auto *graph_spec_dump_group_box =
-        setup_graph_spec_dump_preferences(manager_.get_graph_spec_dump_preferences());
-    splitter->addWidget(graph_spec_dump_group_box);
+      // Dump preferences
+      auto *graph_spec_dump_group_box =
+          setup_graph_spec_dump_preferences(manager_.get_graph_spec_dump_preferences());
+      splitter->addWidget(graph_spec_dump_group_box);
 
-    auto *graph_compiled_dump_group_box =
-        setup_graph_compiled_dump_preferences(manager_.get_graph_compiled_dump_preferences());
-    splitter->addWidget(graph_compiled_dump_group_box);
+      auto *graph_compiled_dump_group_box =
+          setup_graph_compiled_dump_preferences(manager_.get_graph_compiled_dump_preferences());
+      splitter->addWidget(graph_compiled_dump_group_box);
 
-    dialog_layout->addWidget(splitter);
+      dialog_layout->addWidget(splitter);
+    }
     // Apply / Close
     auto *button_box = new QDialogButtonBox(QDialogButtonBox::Close, this);
     apply_button_    = button_box->addButton(tr("Apply"), QDialogButtonBox::ActionRole);
@@ -628,54 +661,57 @@ private:
   bool update_preferences() {
     // const auto &specs_ = nullptr;
     // holoflow::core::to_dot(specs_);
-    auto graph_spec_dump_preferences = GraphSpecDumpPreferences{
-        .rankdir = graph_spec_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
-                       ? GraphSpecDumpPreferences::Rankdir::LeftToRight
-                       : GraphSpecDumpPreferences::Rankdir::TopToBottom,
+    if (graph_preferences_visible_) {
+      auto graph_spec_dump_preferences = GraphSpecDumpPreferences{
+          .rankdir = graph_spec_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
+                         ? GraphSpecDumpPreferences::Rankdir::LeftToRight
+                         : GraphSpecDumpPreferences::Rankdir::TopToBottom,
 
-        .floating_point_precision =
-            graph_spec_dump_preferences_widgets_.floating_point_precision_spin_->value(),
+          .floating_point_precision =
+              graph_spec_dump_preferences_widgets_.floating_point_precision_spin_->value(),
 
-        .dump_node_name = graph_spec_dump_preferences_widgets_.node_name_checkbox_->isChecked(),
-        .dump_node_kind = graph_spec_dump_preferences_widgets_.node_kind_checkbox_->isChecked(),
-        .dump_node_settings =
-            graph_spec_dump_preferences_widgets_.node_settings_checkbox_->isChecked(),
-        .dump_edge_indices =
-            graph_spec_dump_preferences_widgets_.edge_indices_checkbox_->isChecked()};
+          .dump_node_name = graph_spec_dump_preferences_widgets_.node_name_checkbox_->isChecked(),
+          .dump_node_kind = graph_spec_dump_preferences_widgets_.node_kind_checkbox_->isChecked(),
+          .dump_node_settings =
+              graph_spec_dump_preferences_widgets_.node_settings_checkbox_->isChecked(),
+          .dump_edge_indices =
+              graph_spec_dump_preferences_widgets_.edge_indices_checkbox_->isChecked()};
 
-    auto graph_compiled_dump_preferences = GraphCompiledDumpPreferences{
-        .rankdir = graph_compiled_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
-                       ? GraphCompiledDumpPreferences::Rankdir::LeftToRight
-                       : GraphCompiledDumpPreferences::Rankdir::TopToBottom,
-        .layout  = static_cast<GraphCompiledDumpPreferences::Layout>(
-            graph_compiled_dump_preferences_widgets_.layout_combo_->currentIndex()),
+      auto graph_compiled_dump_preferences = GraphCompiledDumpPreferences{
+          .rankdir = graph_compiled_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
+                         ? GraphCompiledDumpPreferences::Rankdir::LeftToRight
+                         : GraphCompiledDumpPreferences::Rankdir::TopToBottom,
+          .layout  = static_cast<GraphCompiledDumpPreferences::Layout>(
+              graph_compiled_dump_preferences_widgets_.layout_combo_->currentIndex()),
 
-        .floating_point_precision =
-            graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_->value(),
+          .floating_point_precision =
+              graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_->value(),
 
-        .dump_node_name = graph_compiled_dump_preferences_widgets_.node_name_checkbox_->isChecked(),
-        .dump_node_kind = graph_compiled_dump_preferences_widgets_.node_kind_checkbox_->isChecked(),
-        .dump_node_settings =
-            graph_compiled_dump_preferences_widgets_.node_settings_checkbox_->isChecked(),
-        .dump_node_in_out_tids =
-            graph_compiled_dump_preferences_widgets_.node_in_out_tids_->isChecked(),
-        .dump_edge_indices =
-            graph_compiled_dump_preferences_widgets_.edge_indices_checkbox_->isChecked(),
-        .dump_edge_descriptions =
-            graph_compiled_dump_preferences_widgets_.edge_desc_checkbox_->isChecked(),
-        .dump_section_info =
-            graph_compiled_dump_preferences_widgets_.section_toggle_checkbox_->isChecked(),
-        .dump_section_stream_addr =
-            graph_compiled_dump_preferences_widgets_.section_stream_addr_checkbox_->isChecked(),
-        .dump_resource_info =
-            graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_->isChecked()};
+          .dump_node_name =
+              graph_compiled_dump_preferences_widgets_.node_name_checkbox_->isChecked(),
+          .dump_node_kind =
+              graph_compiled_dump_preferences_widgets_.node_kind_checkbox_->isChecked(),
+          .dump_node_settings =
+              graph_compiled_dump_preferences_widgets_.node_settings_checkbox_->isChecked(),
+          .dump_node_in_out_tids =
+              graph_compiled_dump_preferences_widgets_.node_in_out_tids_->isChecked(),
+          .dump_edge_indices =
+              graph_compiled_dump_preferences_widgets_.edge_indices_checkbox_->isChecked(),
+          .dump_edge_descriptions =
+              graph_compiled_dump_preferences_widgets_.edge_desc_checkbox_->isChecked(),
+          .dump_section_info =
+              graph_compiled_dump_preferences_widgets_.section_toggle_checkbox_->isChecked(),
+          .dump_section_stream_addr =
+              graph_compiled_dump_preferences_widgets_.section_stream_addr_checkbox_->isChecked(),
+          .dump_resource_info =
+              graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_->isChecked()};
 
-    manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
-    manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
+      manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
+      manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
+    }
 
-    if (apply_handler_ &&
-        !apply_handler_(layout_mode_combo_->currentData().toString(),
-                        theme_combo_->currentData().toString())) {
+    if (apply_handler_ && !apply_handler_(layout_mode_combo_->currentData().toString(),
+                                          theme_combo_->currentData().toString())) {
       return false;
     }
 
@@ -689,59 +725,62 @@ private:
     connect(theme_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
             [this](int) { apply_button_->setEnabled(true); });
 
-    connect(graph_spec_dump_preferences_widgets_.rankdir_combo_,
-            qOverload<int>(&QComboBox::currentIndexChanged), this,
-            [this](int) { apply_button_->setEnabled(true); });
-    connect(graph_spec_dump_preferences_widgets_.floating_point_precision_spin_,
-            qOverload<int>(&QSpinBox::valueChanged), this,
-            [this](int) { apply_button_->setEnabled(true); });
-    connect(graph_spec_dump_preferences_widgets_.node_name_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_spec_dump_preferences_widgets_.node_kind_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_spec_dump_preferences_widgets_.node_settings_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_spec_dump_preferences_widgets_.edge_indices_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
+    if (graph_preferences_visible_) {
+      connect(graph_spec_dump_preferences_widgets_.rankdir_combo_,
+              qOverload<int>(&QComboBox::currentIndexChanged), this,
+              [this](int) { apply_button_->setEnabled(true); });
+      connect(graph_spec_dump_preferences_widgets_.floating_point_precision_spin_,
+              qOverload<int>(&QSpinBox::valueChanged), this,
+              [this](int) { apply_button_->setEnabled(true); });
+      connect(graph_spec_dump_preferences_widgets_.node_name_checkbox_, &QCheckBox::toggled, this,
+              [this](bool) { apply_button_->setEnabled(true); });
+      connect(graph_spec_dump_preferences_widgets_.node_kind_checkbox_, &QCheckBox::toggled, this,
+              [this](bool) { apply_button_->setEnabled(true); });
+      connect(graph_spec_dump_preferences_widgets_.node_settings_checkbox_, &QCheckBox::toggled,
+              this, [this](bool) { apply_button_->setEnabled(true); });
+      connect(graph_spec_dump_preferences_widgets_.edge_indices_checkbox_, &QCheckBox::toggled,
+              this, [this](bool) { apply_button_->setEnabled(true); });
 
-    connect(graph_compiled_dump_preferences_widgets_.rankdir_combo_,
-            qOverload<int>(&QComboBox::currentIndexChanged), this,
-            [this](int) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.layout_combo_,
-            qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
-              graph_compiled_dump_preferences_widgets_.rankdir_combo_->setEnabled(
-                  index == static_cast<int>(GraphCompiledDumpPreferences::Layout::Normal));
-              apply_button_->setEnabled(true);
-            });
-    connect(graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_,
-            qOverload<int>(&QSpinBox::valueChanged), this,
-            [this](int) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.node_name_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.node_kind_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.node_settings_checkbox_, &QCheckBox::toggled,
-            this, [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.node_in_out_tids_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.edge_indices_checkbox_, &QCheckBox::toggled,
-            this, [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.edge_desc_checkbox_, &QCheckBox::toggled, this,
-            [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.section_toggle_checkbox_, &QCheckBox::toggled,
-            this, [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.section_stream_addr_checkbox_,
-            &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
-    connect(graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_,
-            &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
+      connect(graph_compiled_dump_preferences_widgets_.rankdir_combo_,
+              qOverload<int>(&QComboBox::currentIndexChanged), this,
+              [this](int) { apply_button_->setEnabled(true); });
+      connect(graph_compiled_dump_preferences_widgets_.layout_combo_,
+              qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int index) {
+                graph_compiled_dump_preferences_widgets_.rankdir_combo_->setEnabled(
+                    index == static_cast<int>(GraphCompiledDumpPreferences::Layout::Normal));
+                apply_button_->setEnabled(true);
+              });
+      connect(graph_compiled_dump_preferences_widgets_.floating_point_precision_spin_,
+              qOverload<int>(&QSpinBox::valueChanged), this,
+              [this](int) { apply_button_->setEnabled(true); });
+      connect(graph_compiled_dump_preferences_widgets_.node_name_checkbox_, &QCheckBox::toggled,
+              this, [this](bool) { apply_button_->setEnabled(true); });
+      connect(graph_compiled_dump_preferences_widgets_.node_kind_checkbox_, &QCheckBox::toggled,
+              this, [this](bool) { apply_button_->setEnabled(true); });
+      connect(graph_compiled_dump_preferences_widgets_.node_settings_checkbox_, &QCheckBox::toggled,
+              this, [this](bool) { apply_button_->setEnabled(true); });
+      connect(graph_compiled_dump_preferences_widgets_.node_in_out_tids_, &QCheckBox::toggled, this,
+              [this](bool) { apply_button_->setEnabled(true); });
+      connect(graph_compiled_dump_preferences_widgets_.edge_indices_checkbox_, &QCheckBox::toggled,
+              this, [this](bool) { apply_button_->setEnabled(true); });
+      connect(graph_compiled_dump_preferences_widgets_.edge_desc_checkbox_, &QCheckBox::toggled,
+              this, [this](bool) { apply_button_->setEnabled(true); });
+      connect(graph_compiled_dump_preferences_widgets_.section_toggle_checkbox_,
+              &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
+      connect(graph_compiled_dump_preferences_widgets_.section_stream_addr_checkbox_,
+              &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
+      connect(graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_,
+              &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
+    }
   }
 
-  holovibes::pipeline::Manager &manager_;
+  holovibes::pipeline::Manager                         &manager_;
   std::function<bool(const QString &, const QString &)> apply_handler_;
 
-  QPushButton *apply_button_ = nullptr;
-  QComboBox  *layout_mode_combo_ = nullptr;
-  QComboBox  *theme_combo_       = nullptr;
+  QPushButton *apply_button_              = nullptr;
+  QComboBox   *layout_mode_combo_         = nullptr;
+  QComboBox   *theme_combo_               = nullptr;
+  bool         graph_preferences_visible_ = false;
 
   struct GraphSpecDumpPreferencesWidgets {
     // dump preferences
@@ -948,9 +987,6 @@ void MainWindow::setup_main_layout() {
   acquisition_layout->setSpacing(12);
   acquisition_layout->addWidget(import_widget_);
   acquisition_layout->addWidget(export_widget_);
-  acquisition_layout->addWidget(view_widget_);
-  acquisition_layout->addWidget(view_widget_->post_processing_group());
-  acquisition_layout->addStretch(1);
 
   processing_column_ = new QWidget(controls_content_);
   processing_column_->setObjectName("controlsColumn");
@@ -994,6 +1030,11 @@ void MainWindow::setup_main_layout() {
     clinical_focus_slider_->setValue(value);
   });
 
+  acquisition_layout->addWidget(clinical_controls_column_);
+  acquisition_layout->addWidget(view_widget_);
+  acquisition_layout->addWidget(view_widget_->post_processing_group());
+  acquisition_layout->addStretch(1);
+
   controls_divider_ = new QFrame(controls_content_);
   controls_divider_->setObjectName("controlsColumnDivider");
   controls_divider_->setFixedWidth(1);
@@ -1002,7 +1043,6 @@ void MainWindow::setup_main_layout() {
   controls_layout->addWidget(acquisition_column);
   controls_layout->addWidget(controls_divider_);
   controls_layout->addWidget(processing_column_);
-  controls_layout->addWidget(clinical_controls_column_);
 
   controls_scroll_ = new QScrollArea(content_row);
   controls_scroll_->setObjectName("controlsScrollArea");
@@ -1011,13 +1051,14 @@ void MainWindow::setup_main_layout() {
   controls_scroll_->setFrameShape(QFrame::NoFrame);
   controls_scroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
   controls_scroll_->setWidget(controls_content_);
-  developer_controls_width_ = std::max(
-      controls_content_->sizeHint().width() + controls_scroll_->verticalScrollBar()->sizeHint().width() + 12,
-      430);
-  clinical_controls_width_ = std::max(
-      acquisition_column->sizeHint().width() + clinical_controls_column_->sizeHint().width() +
-          controls_layout->spacing() + controls_scroll_->verticalScrollBar()->sizeHint().width() + 12,
-      360);
+  developer_controls_width_ =
+      std::max(controls_content_->sizeHint().width() +
+                   controls_scroll_->verticalScrollBar()->sizeHint().width() + 12,
+               430);
+  clinical_controls_width_ =
+      std::max(acquisition_column->sizeHint().width() +
+                   controls_scroll_->verticalScrollBar()->sizeHint().width() + 12,
+               360);
   controls_scroll_->setFixedWidth(developer_controls_width_);
   controls_scroll_->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Expanding);
 
@@ -1044,33 +1085,42 @@ void MainWindow::setup_main_layout() {
   clinical_guidance_layout->setContentsMargins(0, 0, 0, 0);
   clinical_guidance_layout->setSpacing(12);
 
-  auto add_guidance_placeholder = [&](const QString &title, const QString &placeholder_text) {
-    auto *group = new QGroupBox(title, clinical_guidance_panel_);
+  auto add_guidance_placeholder = [&](const QString &title, const QString &placeholder_text,
+                                      const QString &image_resource) {
+    auto *group  = new QGroupBox(title, clinical_guidance_panel_);
     auto *layout = new QVBoxLayout(group);
     layout->setContentsMargins(8, 8, 8, 8);
 
-    auto *placeholder = new QLabel(placeholder_text, group);
+    auto *placeholder = new AspectRatioPixmapLabel(placeholder_text, group);
     placeholder->setObjectName("clinicalImagePlaceholder");
     placeholder->setAlignment(Qt::AlignCenter);
     placeholder->setWordWrap(true);
     placeholder->setMinimumHeight(145);
     placeholder->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    placeholder->setStyleSheet(
-        QStringLiteral("QLabel#clinicalImagePlaceholder {"
-                       "background-color: #e2e5e8;"
-                       "color: #59636d;"
-                       "border: 1px dashed #9aa3ab;"
-                       "border-radius: 4px;"
-                       "padding: 8px;"
-                       "}"));
+    placeholder->setStyleSheet(QStringLiteral("QLabel#clinicalImagePlaceholder {"
+                                              "background-color: #e2e5e8;"
+                                              "color: #59636d;"
+                                              "border: 1px dashed #9aa3ab;"
+                                              "border-radius: 4px;"
+                                              "padding: 8px;"
+                                              "}"));
+    if (!image_resource.isEmpty()) {
+      const QPixmap image(image_resource);
+      if (!image.isNull()) {
+        placeholder->set_source_pixmap(image);
+      } else {
+        placeholder->setText(tr("Unable to load image"));
+      }
+    }
     layout->addWidget(placeholder);
     clinical_guidance_layout->addWidget(group, 1);
   };
 
-  add_guidance_placeholder(tr("Expected acquisition"),
-                           tr("Example image will be added here"));
+  add_guidance_placeholder(
+      tr("Expected acquisition"), tr("Example image will be added here"),
+      QStringLiteral(":/resources/holovibes/assets/Clinical_usage_processed_eye_exemple.png"));
   add_guidance_placeholder(tr("Patient positioning"),
-                           tr("Positioning schematic will be added here"));
+                           tr("Positioning schematic will be added here"), QString{});
   clinical_guidance_layout->addStretch(1);
   right_sidebar_layout->addWidget(clinical_guidance_panel_, 1);
 
@@ -1416,8 +1466,8 @@ void MainWindow::restore_persistent_state() {
       settings.value("layout_mode", QStringLiteral("developer")).toString();
   const QString saved_theme = settings.value("theme", QStringLiteral("light")).toString();
   layout_mode_ = saved_layout_mode == QStringLiteral("clinical") ? LayoutMode::Clinical
-                                                                   : LayoutMode::Developer;
-  theme_mode_ = saved_theme == QStringLiteral("dark") ? ThemeMode::Dark : ThemeMode::Light;
+                                                                 : LayoutMode::Developer;
+  theme_mode_  = saved_theme == QStringLiteral("dark") ? ThemeMode::Dark : ThemeMode::Light;
   settings.endGroup();
   apply_theme(theme_mode_);
 
@@ -1847,8 +1897,8 @@ void MainWindow::configure_window() {
   auto *open_dot_action = debug_menu->addAction(tr("Open DOT File..."));
   connect(open_dot_action, &QAction::triggered, this, &MainWindow::open_dot_file);
 
-  auto *tools_menu      = menuBar()->addMenu(tr("&Tools"));
-  fft_tool_action_      = tools_menu->addAction(tr("FFT Frequency Range to Bins..."));
+  auto *tools_menu = menuBar()->addMenu(tr("&Tools"));
+  fft_tool_action_ = tools_menu->addAction(tr("FFT Frequency Range to Bins..."));
   fft_tool_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+F")));
   fft_tool_action_->setShortcutContext(Qt::ApplicationShortcut);
   connect(fft_tool_action_, &QAction::triggered, this, &MainWindow::show_fft_frequency_tool);
@@ -1865,7 +1915,7 @@ void MainWindow::configure_window() {
 
 QString MainWindow::layout_mode_key() const {
   return layout_mode_ == LayoutMode::Clinical ? QStringLiteral("clinical")
-                                               : QStringLiteral("developer");
+                                              : QStringLiteral("developer");
 }
 
 QString MainWindow::theme_mode_key() const {
@@ -1917,7 +1967,7 @@ void MainWindow::apply_layout_mode(LayoutMode mode) {
 
   QSettings settings;
   display_workspace_->save_persistent_state(settings, layout_mode_key());
-  layout_mode_ = mode;
+  layout_mode_        = mode;
   const bool restored = display_workspace_->restore_persistent_state(settings, layout_mode_key());
   update_layout_visibility();
 
@@ -1961,7 +2011,7 @@ void MainWindow::update_layout_visibility() {
   }
   if (controls_scroll_ != nullptr) {
     controls_scroll_->setFixedWidth(developer_layout ? developer_controls_width_
-                                                      : clinical_controls_width_);
+                                                     : clinical_controls_width_);
   }
 
   for (auto *widget : command_status_widgets_) {
