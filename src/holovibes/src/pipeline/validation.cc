@@ -331,6 +331,12 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
   }
 
   if (settings.recording_method != RecordingMethod::NONE) {
+    if (settings.recording_motion_compensation && settings.recording_format != "png" &&
+        settings.recording_format != "jpg") {
+      add_issue(result, ValidationSeverity::Error, "recording_motion_compensation_invalid",
+                "Motion compensation is only available for PNG and JPG image exports.",
+                {SettingsField::RecordingMotionCompensation});
+    }
     if (settings.recording_path.empty()) {
       add_issue(result, ValidationSeverity::Error, "recording_path_empty",
                 "A recording output path must be selected.", {SettingsField::RecordingPath});

@@ -47,7 +47,9 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
+#include "holotask/sinks/npyfile.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
@@ -69,6 +71,7 @@
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
+#include "holotask/syncs/resize.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 #include "holotask/syncs/unfold2d.hh"
@@ -76,6 +79,7 @@
 #include "holotask/syncs/zernike_defocus_z_prop.hh"
 #include "holotask/syncs/zernike_from_slopes.hh"
 #include "holotask/syncs/zernike_phase.hh"
+#include "tasks/sinks/average_image.hh"
 #include "tasks/sinks/display_signal_history.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
@@ -125,12 +129,17 @@ protected:
   void  zernike_history_display(const TDesc &X, tasks::sinks::DisplaySignalHistorySettings s);
   void  zernike_defocus_z_prop(const TDesc &X, holotask::syncs::ZernikeDefocusZPropSettings s);
   void  holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
+  void  npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s);
+  void  ffmpeg_write(const TDesc &X, holotask::sinks::FfmpegSettings s);
+  void  average_image_write(const TDesc &X, tasks::sinks::AverageImageSettings s);
+  void  average_image_write(const TDesc &X, const TDesc &Valid,
+                            tasks::sinks::AverageImageSettings s);
   TDesc ametek_s710_euresys_coaxlink_octo(holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings s);
   TDesc ametek_s711_euresys_coaxlink_qsfp_plus(holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
   TDesc convolution(const TDesc &X, holotask::syncs::ConvolutionSettings s);
   TDesc correct_phase(const TDesc &X, const TDesc &PhaseMask, holotask::syncs::CorrectPhaseSettings s);
   TDesc pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);
-  TDesc registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
+  std::vector<TDesc> registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
   TDesc wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
   std::vector<TDesc> shack_hartmann_slopes(const TDesc &X, holotask::syncs::ShackHartmannSlopeSettings s);
   TDesc zernike_from_slopes(const TDesc &X, holotask::syncs::ZernikeFromSlopesSettings s);
@@ -158,6 +167,7 @@ protected:
   TDesc max(const TDesc &X, holonp::MaxSettings s);
   TDesc normalize(const TDesc &X, holotask::syncs::NormalizeSettings s);
   TDesc reshape(const TDesc &X, holonp::ReshapeSettings s);
+  TDesc resize(const TDesc &X, holotask::syncs::ResizeSettings s);
   TDesc conj(const TDesc &X, holonp::ConjSettings s);
   // clang-format on
 };
