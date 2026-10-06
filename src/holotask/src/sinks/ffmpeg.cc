@@ -15,6 +15,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 extern "C" {
 #include <libavcodec/avcodec.h>
@@ -27,6 +28,7 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#include "../syncs/resize_cuda.cuh"
 #include "holoflow/core/tensor.hh"
 #include "holotask/sinks/ffmpeg_formats.hh"
 #include "recording_geometry.hh"
@@ -49,6 +51,11 @@ void check_ffmpeg(int result, const char *operation) {
 void check(bool condition, const std::string &message) {
   if (!condition)
     throw std::invalid_argument("FfmpegFactory error: " + message);
+}
+
+void check_cuda(cudaError_t result, const char *operation) {
+  if (result != cudaSuccess)
+    throw std::runtime_error(std::string(operation) + " failed: " + cudaGetErrorString(result));
 }
 
 AVPixelFormat input_pixel_format(const detail::RecordingGeometry &geometry) {
@@ -99,6 +106,9 @@ void validate_ffmpeg_settings(const FfmpegSettings            &settings,
   check(std::isfinite(settings.fps) && settings.fps > 0.0, "fps must be finite and positive");
   check(!settings.format.empty(), "format must not be empty");
   check(!settings.codec.empty(), "codec must not be empty");
+  check(!settings.resize_to_square || settings.resize_algorithm == "CpuBilinear" ||
+            settings.resize_algorithm == "CudaBilinear",
+        "unsupported resize algorithm: " + settings.resize_algorithm);
 
   check(ffmpeg_codec_is_compatible(settings.format, settings.codec),
         "codec '" + settings.codec + "' is not supported for format '" + settings.format + "'");
@@ -116,8 +126,18 @@ void validate_ffmpeg_settings(const FfmpegSettings            &settings,
 
 class FfmpegWriter final : public detail::RecordingSink {
 public:
-  FfmpegWriter(FfmpegSettings settings, detail::RecordingGeometry geometry)
-      : settings_(std::move(settings)), geometry_(geometry) {}
+  FfmpegWriter(FfmpegSettings settings, detail::RecordingGeometry geometry,
+               holoflow::core::TDesc input_desc, cudaStream_t stream)
+      : settings_(std::move(settings)), geometry_(geometry), input_desc_(std::move(input_desc)),
+        cuda_stream_(stream),
+        output_width_(
+            settings_.resize_to_square
+                ? static_cast<int>(std::max(geometry_.frame_width, geometry_.frame_height))
+                : static_cast<int>(geometry_.frame_width)),
+        output_height_(
+            settings_.resize_to_square
+                ? static_cast<int>(std::max(geometry_.frame_width, geometry_.frame_height))
+                : static_cast<int>(geometry_.frame_height)) {}
 
   ~FfmpegWriter() override { release(); }
 
@@ -128,14 +148,39 @@ public:
 
     try {
       initialize();
-      auto       &input        = ctx.inputs[0];
-      const auto  batch_size   = static_cast<int>(input.desc.shape[0]);
-      const auto  frame_count  = std::min(settings_.count - frames_buffered_, batch_size);
-      const auto  frame_stride = input.desc.strides[0];
-      const auto *data         = reinterpret_cast<const std::uint8_t *>(input.data());
+      auto       &input       = ctx.inputs[0];
+      const auto  batch_size  = static_cast<int>(input.desc.shape[0]);
+      const auto  frame_count = std::min(settings_.count - frames_buffered_, batch_size);
+      const auto *data        = reinterpret_cast<const std::uint8_t *>(input.data());
+      std::vector<std::uint8_t> resized;
+      std::size_t               frame_stride = input.desc.strides[0];
+      std::size_t               row_stride   = input.desc.strides[1];
+
+      if (settings_.resize_to_square && settings_.resize_algorithm == "CudaBilinear") {
+        const auto bytes_per_pixel = geometry_.bits_per_pixel / 8;
+        const auto output_frame_bytes =
+            static_cast<std::size_t>(output_width_) * output_height_ * bytes_per_pixel;
+        resized.resize(static_cast<std::size_t>(batch_size) * output_frame_bytes);
+        if (!device_input_ || !device_output_)
+          throw std::runtime_error("CUDA resize buffers are not initialized");
+        check_cuda(cudaMemcpyAsync(device_input_->data(), input.data(), input.desc.num_bytes(),
+                                   cudaMemcpyHostToDevice, cuda_stream_),
+                   "cudaMemcpyAsync (resize input)");
+        holotask::syncs::detail::launch_resize_bilinear_cuda(
+            device_input_->data(), device_output_->data(), static_cast<std::size_t>(batch_size),
+            geometry_.frame_height, geometry_.frame_width, input.desc.strides[0],
+            input.desc.strides[1], output_height_, output_width_, bytes_per_pixel, cuda_stream_);
+        check_cuda(cudaMemcpyAsync(resized.data(), device_output_->data(), resized.size(),
+                                   cudaMemcpyDeviceToHost, cuda_stream_),
+                   "cudaMemcpyAsync (resize output)");
+        check_cuda(cudaStreamSynchronize(cuda_stream_), "cudaStreamSynchronize (resize output)");
+        data         = resized.data();
+        frame_stride = output_frame_bytes;
+        row_stride   = static_cast<std::size_t>(output_width_) * bytes_per_pixel;
+      }
 
       for (int index = 0; index < frame_count; ++index) {
-        encode_frame(data + static_cast<std::size_t>(index) * frame_stride, input.desc.strides[1]);
+        encode_frame(data + static_cast<std::size_t>(index) * frame_stride, row_stride);
         ++frames_buffered_;
       }
 
@@ -155,9 +200,14 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
-  bool can_reuse(const FfmpegSettings &settings, detail::RecordingGeometry geometry) const {
+  bool can_reuse(const FfmpegSettings &settings, detail::RecordingGeometry geometry,
+                 const holoflow::core::TDesc &input_desc) const {
     return settings.count == settings_.count && settings.fps == settings_.fps &&
            settings.format == settings_.format && settings.codec == settings_.codec &&
+           settings.resize_to_square == settings_.resize_to_square &&
+           settings.resize_algorithm == settings_.resize_algorithm &&
+           input_desc.shape == input_desc_.shape && input_desc.strides == input_desc_.strides &&
+           input_desc.dtype == input_desc_.dtype && input_desc.mem_loc == input_desc_.mem_loc &&
            detail::same_geometry(geometry, geometry_);
   }
 
@@ -165,6 +215,8 @@ public:
     settings_ = std::move(settings);
     update_recording_path(settings_.path);
   }
+
+  void update_stream(cudaStream_t stream) { cuda_stream_ = stream; }
 
 protected:
   void on_recording_stopped() override { release(); }
@@ -176,6 +228,15 @@ private:
       return;
 
     validate_ffmpeg_settings(settings_, geometry_);
+    if (settings_.resize_to_square && settings_.resize_algorithm == "CudaBilinear") {
+      auto input_device_desc    = input_desc_;
+      input_device_desc.mem_loc = holoflow::core::MemLoc::Device;
+      device_input_             = std::make_unique<holoflow::core::Tensor>(input_device_desc);
+      device_output_            = std::make_unique<holoflow::core::Tensor>(
+          holoflow::core::TDesc({input_desc_.shape[0], static_cast<std::size_t>(output_height_),
+                                 static_cast<std::size_t>(output_width_)},
+                                input_desc_.dtype, holoflow::core::MemLoc::Device));
+    }
     const auto *codec    = avcodec_find_encoder_by_name(settings_.codec.c_str());
     output_pixel_format_ = choose_pixel_format(codec, geometry_);
 
@@ -192,8 +253,8 @@ private:
 
     codec_context_->codec_id     = codec->id;
     codec_context_->codec_type   = AVMEDIA_TYPE_VIDEO;
-    codec_context_->width        = static_cast<int>(geometry_.frame_width);
-    codec_context_->height       = static_cast<int>(geometry_.frame_height);
+    codec_context_->width        = static_cast<int>(output_width_);
+    codec_context_->height       = static_cast<int>(output_height_);
     codec_context_->pix_fmt      = output_pixel_format_;
     codec_context_->framerate    = av_d2q(settings_.fps, 100000);
     codec_context_->time_base    = av_inv_q(codec_context_->framerate);
@@ -227,10 +288,15 @@ private:
     frame_->height = codec_context_->height;
     check_ffmpeg(av_frame_get_buffer(frame_, 32), "av_frame_get_buffer");
 
-    sws_context_ =
-        sws_getContext(codec_context_->width, codec_context_->height, input_pixel_format(geometry_),
-                       codec_context_->width, codec_context_->height, output_pixel_format_,
-                       SWS_BILINEAR, nullptr, nullptr, nullptr);
+    const bool cuda_resized =
+        settings_.resize_to_square && settings_.resize_algorithm == "CudaBilinear";
+    const int sws_input_width =
+        cuda_resized ? output_width_ : static_cast<int>(geometry_.frame_width);
+    const int sws_input_height =
+        cuda_resized ? output_height_ : static_cast<int>(geometry_.frame_height);
+    sws_context_ = sws_getContext(sws_input_width, sws_input_height, input_pixel_format(geometry_),
+                                  codec_context_->width, codec_context_->height,
+                                  output_pixel_format_, SWS_BILINEAR, nullptr, nullptr, nullptr);
     if (sws_context_ == nullptr)
       throw std::runtime_error("sws_getContext failed");
   }
@@ -239,7 +305,11 @@ private:
     check_ffmpeg(av_frame_make_writable(frame_), "av_frame_make_writable");
     const std::uint8_t *source[]        = {data, nullptr, nullptr, nullptr};
     const int           source_stride[] = {static_cast<int>(row_stride), 0, 0, 0};
-    if (sws_scale(sws_context_, source, source_stride, 0, codec_context_->height, frame_->data,
+    const bool          cuda_resized =
+        settings_.resize_to_square && settings_.resize_algorithm == "CudaBilinear";
+    const int source_height =
+        cuda_resized ? output_height_ : static_cast<int>(geometry_.frame_height);
+    if (sws_scale(sws_context_, source, source_stride, 0, source_height, frame_->data,
                   frame_->linesize) <= 0)
       throw std::runtime_error("sws_scale failed");
 
@@ -283,17 +353,25 @@ private:
     }
     format_context_ = nullptr;
     stream_         = nullptr;
+    device_output_.reset();
+    device_input_.reset();
   }
 
-  FfmpegSettings            settings_;
-  detail::RecordingGeometry geometry_;
-  AVFormatContext          *format_context_      = nullptr;
-  AVCodecContext           *codec_context_       = nullptr;
-  AVStream                 *stream_              = nullptr;
-  AVFrame                  *frame_               = nullptr;
-  AVPacket                 *packet_              = nullptr;
-  SwsContext               *sws_context_         = nullptr;
-  AVPixelFormat             output_pixel_format_ = AV_PIX_FMT_NONE;
+  FfmpegSettings                          settings_;
+  detail::RecordingGeometry               geometry_;
+  holoflow::core::TDesc                   input_desc_;
+  cudaStream_t                            cuda_stream_ = static_cast<cudaStream_t>(0);
+  int                                     output_width_;
+  int                                     output_height_;
+  std::unique_ptr<holoflow::core::Tensor> device_input_;
+  std::unique_ptr<holoflow::core::Tensor> device_output_;
+  AVFormatContext                        *format_context_      = nullptr;
+  AVCodecContext                         *codec_context_       = nullptr;
+  AVStream                               *stream_              = nullptr;
+  AVFrame                                *frame_               = nullptr;
+  AVPacket                               *packet_              = nullptr;
+  SwsContext                             *sws_context_         = nullptr;
+  AVPixelFormat                           output_pixel_format_ = AV_PIX_FMT_NONE;
 };
 
 } // namespace
@@ -303,7 +381,9 @@ void to_json(nlohmann::json &j, const FfmpegSettings &settings) {
        {"count", settings.count},
        {"fps", settings.fps},
        {"format", settings.format},
-       {"codec", settings.codec}};
+       {"codec", settings.codec},
+       {"resize_to_square", settings.resize_to_square},
+       {"resize_algorithm", settings.resize_algorithm}};
 }
 
 void from_json(const nlohmann::json &j, FfmpegSettings &settings) {
@@ -312,6 +392,10 @@ void from_json(const nlohmann::json &j, FfmpegSettings &settings) {
   j.at("fps").get_to(settings.fps);
   j.at("format").get_to(settings.format);
   j.at("codec").get_to(settings.codec);
+  if (j.contains("resize_to_square"))
+    j.at("resize_to_square").get_to(settings.resize_to_square);
+  if (j.contains("resize_algorithm"))
+    j.at("resize_algorithm").get_to(settings.resize_algorithm);
 }
 
 holoflow::core::InferResult FfmpegFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
@@ -348,10 +432,11 @@ holoflow::core::InferResult FfmpegFactory::infer(std::span<const holoflow::core:
 std::unique_ptr<holoflow::core::ISyncTask>
 FfmpegFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                       const nlohmann::json                  &jsettings,
-                      const holoflow::core::SyncCreateCtx &) const {
+                      const holoflow::core::SyncCreateCtx   &ctx) const {
   infer(input_descs, jsettings);
   return std::make_unique<FfmpegWriter>(jsettings.get<FfmpegSettings>(),
-                                        detail::recording_geometry_from_desc(input_descs[0]));
+                                        detail::recording_geometry_from_desc(input_descs[0]),
+                                        input_descs[0], ctx.stream);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -366,10 +451,11 @@ FfmpegFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   infer(input_descs, jsettings);
   const auto settings = jsettings.get<FfmpegSettings>();
   const auto geometry = detail::recording_geometry_from_desc(input_descs[0]);
-  if (!writer->can_reuse(settings, geometry))
+  if (!writer->can_reuse(settings, geometry, input_descs[0]))
     return create(input_descs, jsettings, ctx);
 
   writer->update_settings(settings);
+  writer->update_stream(ctx.stream);
   return old_task;
 }
 
