@@ -60,7 +60,7 @@ if(ENABLE_FETCHCONTENT)
         )
         FetchContent_MakeAvailable(ffmpeg)
 
-        set(FFMPEG_ROOT "${ffmpeg_SOURCE_DIR}/ffmpeg-${FFMPEG_VERSION}-win64-lgpl-shared-8.1")
+        set(FFMPEG_ROOT "${ffmpeg_SOURCE_DIR}")
         foreach(FFMPEG_DIRECTORY IN ITEMS include lib bin)
             if(NOT IS_DIRECTORY "${FFMPEG_ROOT}/${FFMPEG_DIRECTORY}")
                 message(FATAL_ERROR
