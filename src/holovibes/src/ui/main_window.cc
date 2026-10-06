@@ -63,6 +63,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <utility>
 
 #include "bug.hh"
 #include "holofile/holofile.hh"
@@ -399,10 +400,11 @@ class PreferencesDialog : public QDialog {
 public:
   using GraphSpecDumpPreferences     = holoflow::core::GraphSpecDumpPreferences;
   using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
-  // TODO : find the right import
+  using ApplyCallback                = std::function<void(bool enable_camera_buffer_record)>;
 
-  PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager)
-      : QDialog(parent), manager_(manager) {
+  PreferencesDialog(QWidget *parent, ApplyCallback &&apply_callback,
+                    holovibes::pipeline::Manager &manager)
+      : QDialog(parent), manager_(manager), apply_callback_{std::forward<ApplyCallback>(apply_callback)} {
     setWindowTitle(tr("Preferences"));
     setMinimumWidth(400);
 
@@ -425,7 +427,8 @@ public:
     auto *input_form_camera = new QFormLayout();
     input_form_camera->setFieldGrowthPolicy(QFormLayout::ExpandingFieldsGrow);
     enable_camera_buffer_record_ = new QCheckBox(this);
-    enable_camera_buffer_record_->setToolTip(tr("This make the record use the camera's buffers instead of copies"));
+    enable_camera_buffer_record_->setToolTip(
+        tr("This make the record use the camera's buffers instead of copies"));
     input_form_camera->addRow(tr("Enable camera buffer record"), enable_camera_buffer_record_);
     group_camera->setLayout(input_form_camera);
     dialog_layout->addWidget(group_camera);
@@ -659,7 +662,8 @@ private:
 
     manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
     manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
-    manager_.update_camera_preferences(enable_camera_buffer_record_->isChecked());
+
+    apply_callback_(enable_camera_buffer_record_->isChecked());
   }
 
   void connect_signals() {
@@ -708,8 +712,8 @@ private:
             &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
     connect(graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_,
             &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
-    connect(enable_camera_buffer_record_,
-            &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
+    connect(enable_camera_buffer_record_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
   }
 
   holovibes::pipeline::Manager &manager_;
@@ -753,6 +757,8 @@ private:
   };
   GraphCompiledDumpPreferencesWidgets graph_compiled_dump_preferences_widgets_;
   QCheckBox                          *enable_camera_buffer_record_ = nullptr;
+
+  ApplyCallback apply_callback_;
 };
 
 } // namespace
@@ -1807,7 +1813,9 @@ void MainWindow::show_fft_frequency_tool() {
 }
 
 void MainWindow::show_preferences() {
-  PreferencesDialog dialog(this, *pipeline_manager_);
+  PreferencesDialog dialog(this, [this](bool enable_camera_buffer_record){
+    enable_camera_buffer_record_ = enable_camera_buffer_record;
+  }, *pipeline_manager_);
   dialog.exec();
 }
 
@@ -2524,6 +2532,8 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
   using namespace holovibes::pipeline;
 
   Settings s;
+
+  s.enable_camera_buffer_record = enable_camera_buffer_record_;
 
   // Advanced Settings
   {

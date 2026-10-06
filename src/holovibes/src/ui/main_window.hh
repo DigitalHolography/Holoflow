@@ -181,6 +181,10 @@ private:
   UpdateChecker          *update_checker_             = nullptr;
   GraphVisualizerWidget  *graph_visualizer_widget_    = nullptr;
   QUrl                    available_update_url_;
+
+  // preferences / settings
+  // TODO move or add struct
+  bool enable_camera_buffer_record_ = false;
 };
 
 } // namespace holovibes::ui

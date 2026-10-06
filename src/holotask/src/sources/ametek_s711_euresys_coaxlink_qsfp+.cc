@@ -855,8 +855,8 @@ public:
    * another frame becomes available.
    */
   [[nodiscard]]
-  const DType *read_a(const std::atomic<bool> &cancelled) {
-    return read(read_index_a_, &cancelled);
+  const DType *read_a(const std::atomic<bool> *cancelled = nullptr) {
+    return read(read_index_a_, cancelled);
   }
 
   /**
@@ -865,11 +865,14 @@ public:
    * Throws if the queue is closed while waiting.
    */
   [[nodiscard]]
-  const DType *read_b(const std::atomic<bool> &cancelled) {
-    return read(read_index_b_, &cancelled);
+  const DType *read_b(const std::atomic<bool> *cancelled = nullptr) {
+    return read(read_index_b_, cancelled);
   }
 
-  void close() { closed_.store(true, std::memory_order_release); }
+  void close() {
+    logger()->info("[CameraBufferQueue::close] queue closed");
+    closed_.store(true, std::memory_order_release);
+  }
 
   void release_a() { release(read_index_a_); }
 
@@ -1136,15 +1139,13 @@ private:
    * Dropped generations are consumed internally and skipped.
    */
   [[nodiscard]]
-  const DType *read(std::atomic<size_t> &reader, const std::atomic<bool> &cancelled) {
+  const DType *read(std::atomic<size_t> &reader, const std::atomic<bool> *cancelled) {
 
     size_t current = reader.load(std::memory_order_relaxed);
 
     for (;;) {
-      /*
-       * Cancellation is only used by reader A.
-       */
-      if (cancelled.load(std::memory_order_acquire)) {
+      if (cancelled && cancelled->load(std::memory_order_acquire)) {
+        logger()->info("[CameraBufferQueue::read] reader: {} cancelled", current == 0 ? 'A' : 'B');
         return nullptr;
       }
 
@@ -1157,7 +1158,8 @@ private:
           return nullptr;
         }
 
-        if (cancelled.load(std::memory_order_acquire)) {
+        if (cancelled && cancelled->load(std::memory_order_acquire)) {
+          logger()->info("[CameraBufferQueue::read] reader: {} cancelled", current == 0 ? 'A' : 'B');
           return nullptr;
         }
 
@@ -1408,7 +1410,7 @@ public:
   size_t execute(std::stop_token cancelled) {
     while (current_frame_ < frame_to_record_ && !cancelled.stop_requested()) {
       if (!queue_.empty_b()) {
-        const auto *frame = queue_.read_b(cancelled.stop_requested())->base;
+        const auto *frame = queue_.read_b()->base;
 
         if (frame) {
           // const std::byte* -> const uint8_t * is safe
@@ -1437,6 +1439,7 @@ void recorder_worker(const holotask::sources::RecordSettings &settings,
                      const Recorder::RecordingGeometry &g, size_t buffer_part_count,
                      CameraBufferQueue &queue, std::stop_token cancelled,
                      std::atomic<bool> &recording, std::function<void(size_t)> finished_callback) {
+  logger()->info("[Recorder] started recorder thread");
   Recorder rec{settings.file_path,
                static_cast<uint32_t>(settings.recording_count),
                buffer_part_count,
@@ -1447,6 +1450,7 @@ void recorder_worker(const holotask::sources::RecordSettings &settings,
   auto frames_written = rec.execute(cancelled);
   recording.store(false, std::memory_order_release);
   finished_callback(frames_written);
+  logger()->info("[Recorder] stopped recorder thread");
 }
 } // namespace
 
@@ -1511,6 +1515,10 @@ public:
         [this](size_t producer_id, const auto &data) { buffer_queue_.push(producer_id, data); });
     grabber_b_->set_enqueue_callback(
         [this](size_t producer_id, const auto &data) { buffer_queue_.push(producer_id, data); });
+
+    if (settings.record_settings.has_value())
+      logger()->debug(
+          "[AmetekS711EuresysCoaxlinkQSFP::AmetekS711EuresysCoaxlinkQSFP] raw record is enabled");
   }
 
   ~AmetekS711EuresysCoaxlinkQSFP() override {
@@ -1567,16 +1575,27 @@ public:
                       runtime_cfg_.buffer_part_count, buffer_queue_, cancelled, recording_,
                       [this, &ctx](size_t written) { emit_finished_event(ctx, written); });
     });
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFP:start_raw_record] started raw record");
   }
 
   void stop_raw_record() {
-    recording_.store(false, std::memory_order_release);
-    record_thread_->request_stop();
+    if (recording_.load()) {
+      assert(record_thread_.has_value());
+      recording_.store(false, std::memory_order_release);
+      record_thread_->request_stop();
+      record_thread_->join();
+      logger()->info("[AmetekS711EuresysCoaxlinkQSFP:stop_raw_record] stopped raw record");
+    } else
+      logger()->info("[AmetekS711EuresysCoaxlinkQSFP:stop_raw_record] raw record is not active");
   }
 
   void handle_events(holoflow::core::SyncCtx &ctx) {
-    if (!ctx.event_reader)
+    if (!ctx.event_reader) {
+      if (log_due(last_event_log_))
+        logger()->warn(
+            "[AmetekS711EuresysCoaxlinkQSFP::handle_events] the given ctx has no event receiver");
       return;
+    }
 
     while (true) {
       auto event = ctx.event_reader->try_pop();
@@ -1588,18 +1607,19 @@ public:
 
       const auto type = event->data.at("type").get<std::string>();
 
+      logger()->debug("[AmetekS711EuresysCoaxlinkQSFP::handle_events] received event: {}", type);
       if (type == "start_recording") {
         if (recording_.load(std::memory_order_acquire)) {
-          logger()->error(
-              "[AmetekS711EuresysCoaxlinkQSFP] Ignoring duplicate start_recording event");
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::handle_events] Ignoring duplicate "
+                          "start_recording event");
           emit_failed_event(ctx, "Recording already in progress");
           continue;
         }
 
         const auto record_path = event->data.value("record_path", std::string{});
         if (record_path.empty()) {
-          logger()->error(
-              "[AmetekS711EuresysCoaxlinkQSFP] Rejecting start_recording event with empty path");
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::handle_events] Rejecting "
+                          "start_recording event with empty path");
           emit_failed_event(ctx, "Cannot start recording: empty path");
           continue;
         }
@@ -1607,7 +1627,7 @@ public:
         if (settings_.record_settings->recording_count <= 0) {
           const auto message = "Cannot start recording: invalid frame count (" +
                                std::to_string(settings_.record_settings->recording_count) + ")";
-          logger()->error("[AmetekS711EuresysCoaxlinkQSFP] {}", message);
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::handle_events] {}", message);
           emit_failed_event(ctx, message);
           continue;
         }
@@ -1617,8 +1637,8 @@ public:
 
       } else if (type == "stop_recording") {
         if (!recording_.load(std::memory_order_acquire)) {
-          logger()->warn(
-              "[AmetekS711EuresysCoaxlinkQSFP] Ignoring stop_recording event while idle");
+          logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::handle_events] Ignoring stop_recording "
+                         "event while idle");
           continue;
         }
 
@@ -1627,9 +1647,9 @@ public:
         if (!settings_.record_settings->file_path.empty() &&
             std::remove(settings_.record_settings->file_path.c_str()) != 0 && errno != ENOENT) {
           std::error_code ec(errno, std::generic_category());
-          logger()->error(
-              "[AmetekS711EuresysCoaxlinkQSFP] Failed to remove incomplete recording at {}: {}",
-              settings_.record_settings->file_path, ec.message());
+          logger()->error("[AmetekS711EuresysCoaxlinkQSFP::handle_events] Failed to remove "
+                          "incomplete recording at {}: {}",
+                          settings_.record_settings->file_path, ec.message());
           emit_failed_event(ctx, "Failed to remove incomplete recording at " +
                                      settings_.record_settings->file_path + ": " + ec.message());
         }
@@ -1825,7 +1845,7 @@ public:
     }
 
     while (!ctx.cancelled->load()) {
-      const auto *next = buffer_queue_.read_a(*ctx.cancelled);
+      const auto *next = buffer_queue_.read_a(ctx.cancelled); // return null if cancelled
       if (next == nullptr) {
         return holoflow::core::OpResult::Cancelled;
       }
@@ -1840,6 +1860,8 @@ public:
       }
       return holoflow::core::OpResult::Ok;
     }
+
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] cancelled");
     return holoflow::core::OpResult::Cancelled;
   }
 
@@ -1873,7 +1895,7 @@ private:
         ++rejected_pairs_since_log_;
         if (log_due(last_rejected_log_)) {
           logger()->warn(
-              "[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] rejected {} two-bank "
+              "[AmetekS711EuresysCoaxlinkQSFP::validate_buffer_data] rejected {} two-bank "
               "buffer pair(s): latest bank A base={}, delivered={}, ts={}, frame_id={} | bank B "
               "base={}, delivered={}, ts={}, frame_id={} | expected delivered={}",
               rejected_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a, frame_id_a,
@@ -1890,7 +1912,7 @@ private:
         max_ts_delta_since_log_ = ts_delta;
       }
       if (log_due(last_pair_log_)) {
-        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] accepted {} two-bank "
+        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::validate_buffer_data] accepted {} two-bank "
                        "buffer pair(s): latest base={}, delivered={}, bank A ts={}, bank B "
                        "ts={}, max ts delta={} us",
                        accepted_pairs_since_log_, static_cast<void *>(base_a), delivered_a, ts_a,
@@ -1941,6 +1963,7 @@ private:
   Clock::time_point          last_diagnostic_log_{};
   Clock::time_point          last_diagnostic_error_log_{};
   Clock::time_point          last_acquisition_log_{};
+  Clock::time_point          last_event_log_{};
   uint64_t                   rejected_pairs_since_log_ = 0;
   uint64_t                   accepted_pairs_since_log_ = 0;
   uint64_t                   max_ts_delta_since_log_   = 0;

@@ -88,8 +88,6 @@ public:
   }
   void update_graph_compiled_dump_preferences(const GraphCompiledDumpPreferences &prefs);
 
-  void update_camera_preferences(bool enable_camera_buffer_record);
-
   /// @brief Emits Graphviz DOT for the current compiled pipeline graph.
   void request_compiled_graph_visualization();
 

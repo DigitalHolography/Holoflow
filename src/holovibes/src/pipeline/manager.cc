@@ -390,6 +390,7 @@ void Manager::update_pipeline(const Settings &settings) {
 
   try {
     // Seamless restart mechanism
+    logger()->debug("[Manager::update_pipeline] scheduler is running, restarting...");
     scheduler_->request_stop();
     scheduler_->wait();
     raw_recording_active_ = false;
@@ -487,10 +488,6 @@ void Manager::update_graph_spec_dump_preferences(const GraphSpecDumpPreferences 
 
 void Manager::update_graph_compiled_dump_preferences(const GraphCompiledDumpPreferences &prefs) {
   graph_compiled_dump_prefs_ = prefs;
-}
-
-void Manager::update_camera_preferences(bool enable_camera_buffer_record) {
-  s_.enable_camera_buffer_record = enable_camera_buffer_record;
 }
 
 void Manager::request_compiled_graph_visualization() {

@@ -222,8 +222,9 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
   }
 
   if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
-    if (s_.recording_method == RecordingMethod::RAW && s_.enable_camera_buffer_record)
+    if (s_.recording_method == RecordingMethod::RAW && s_.enable_camera_buffer_record) {
       return ametek_s711_euresys_coaxlink_qsfp_plus({cam_path, holotask::sources::RecordSettings {s_.recording_path.string(), s_.recording_count, settings_to_old_json(s_)}});
+    }
     else
       return ametek_s711_euresys_coaxlink_qsfp_plus({cam_path, std::nullopt});
   }
