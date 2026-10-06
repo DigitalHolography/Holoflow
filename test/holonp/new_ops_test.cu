@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <gtest/gtest.h>
 #include <nlohmann/json.hpp>
+#include <numeric>
 #include <stdexcept>
 #include <vector>
 
@@ -130,6 +131,26 @@ TEST(NewReductionTest, AxisAndKeepdimsMatchOracle) {
   expect_oracle(variance, "var", input, data, {{"axis", 0}, {"keepdims", true}});
 }
 
+TEST(NewReductionTest, RejectsHostMemoryInputs) {
+  const std::vector<TDesc> input{TDesc({2, 3}, DType::F32, MemLoc::Host)};
+
+  holonp::SumFactory sum;
+  EXPECT_THROW(sum.infer(input, {}), std::invalid_argument);
+  holonp::StdFactory standard;
+  EXPECT_THROW(standard.infer(input, {}), std::invalid_argument);
+  holonp::VarFactory variance;
+  EXPECT_THROW(variance.infer(input, {}), std::invalid_argument);
+  holonp::ArgminFactory argmin;
+  EXPECT_THROW(argmin.infer(input, {}), std::invalid_argument);
+}
+
+TEST(NewReductionTest, SumSettingsRoundTripPreservesAxesAndKeepdims) {
+  const holonp::SumSettings settings{{0, 2}, true};
+  const auto                restored = nlohmann::json(settings).get<holonp::SumSettings>();
+
+  EXPECT_EQ(restored, settings);
+}
+
 TEST(NewReductionTest, HonorsNonContiguousInputStrides) {
   TDesc input     = desc({2, 3});
   input.strides   = {16, 4};
@@ -161,6 +182,33 @@ TEST(NewReductionTest, MedianAndQuantileMatchNumpy) {
   const auto                 invalid = nlohmann::json{{"q", 1.1f}};
   const std::array<TDesc, 1> descriptors{input};
   EXPECT_THROW(quantile.infer(descriptors, invalid), std::invalid_argument);
+}
+
+TEST(NewQuantileTest, HandlesGlobalAxisAndInterpolationCases) {
+  const TDesc             input = desc({2, 4});
+  const auto              data  = bytes(std::vector<float>{7.f, 1.f, 4.f, 2.f, 9.f, 3.f, 8.f, 6.f});
+  holonp::QuantileFactory quantile;
+
+  expect_oracle(quantile, "quantile", input, data, {{"q", 0.5f}});
+  expect_oracle(quantile, "quantile", input, data, {{"q", 0.75f}, {"axis", 0}, {"keepdims", true}});
+  expect_oracle(quantile, "quantile", input, data, {{"q", 0.f}, {"axis", 1}, {"keepdims", false}});
+  expect_oracle(quantile, "quantile", input, data, {{"q", 1.f}, {"axis", 1}, {"keepdims", false}});
+}
+
+TEST(NewQuantileTest, HandlesLargeReductionInput) {
+  constexpr size_t   size = 8192;
+  std::vector<float> values(size);
+  std::iota(values.begin(), values.end(), 0.f);
+  const TDesc input = desc({size});
+  const auto  data  = bytes(values);
+
+  holonp::QuantileFactory quantile;
+  const auto              descriptors = std::vector<TDesc>{input};
+  const auto              inputs      = std::vector<std::vector<std::byte>>{data};
+  const auto run = holonp_test::run_sync_factory(quantile, descriptors, inputs, {{"q", 0.5f}});
+  ASSERT_EQ(run.output_bytes[0].size(), sizeof(float));
+  EXPECT_FLOAT_EQ(*reinterpret_cast<const float *>(run.output_bytes[0].data()),
+                  static_cast<float>(size - 1) / 2.f);
 }
 
 TEST(NewStatisticsTest, PercentileAndHistogramMatchNumpy) {

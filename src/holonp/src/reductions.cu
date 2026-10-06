@@ -279,8 +279,8 @@ holoflow::core::InferResult reduction_infer(std::span<const holoflow::core::TDes
                                             const nlohmann::json                  &json,
                                             holoflow::core::DType                  output_dtype) {
   if (inputs.size() != 1 || inputs[0].dtype != holoflow::core::DType::F32 ||
-      inputs[0].num_elements() == 0)
-    throw std::invalid_argument("reduction requires non-empty F32 input");
+      inputs[0].mem_loc != holoflow::core::MemLoc::Device || inputs[0].num_elements() == 0)
+    throw std::invalid_argument("reduction requires non-empty device F32 input");
   const auto settings = json.get<SettingsType>();
   const auto plan     = make_plan(inputs[0], {settings.axis, settings.keepdims});
   const auto output_desc =
@@ -303,8 +303,10 @@ reduction_create(std::span<const holoflow::core::TDesc> inputs, const nlohmann::
 
 void to_json(nlohmann::json &j, const SumSettings &s) { serialize_axes(j, {s.axis, s.keepdims}); }
 void from_json(const nlohmann::json &j, SumSettings &s) {
-  auto &settings = reinterpret_cast<ReductionSettings &>(s);
+  ReductionSettings settings;
   parse_axes(j, settings);
+  s.axis     = std::move(settings.axis);
+  s.keepdims = settings.keepdims;
 }
 
 holoflow::core::InferResult SumFactory::infer(std::span<const holoflow::core::TDesc> inputs,
