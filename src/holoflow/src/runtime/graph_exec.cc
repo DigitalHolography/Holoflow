@@ -15,11 +15,13 @@
 #define NOMINMAX
 
 #include "holoflow/runtime/graph_exec.hh"
+#include "holoflow/runtime/tracing.hh"
 
 #include <algorithm>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graph_traits.hpp>
 #include <chrono>
+#include <format>
 #include <map>
 #include <mutex>
 #include <nvtx3/nvtx3.hpp>
@@ -121,6 +123,7 @@ void *MemoryBlock::get() {
 Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
                      ExecResouces &resources, std::chrono::milliseconds metrics_interval)
     : graph_(graph), sections_(sections), res_(resources), metrics_interval_(metrics_interval) {
+  tracing::ScopedTrace trace("Initialize Scheduler", "scheduler");
 
   if (metrics_interval_.count() <= 0) {
     metrics_interval_ = std::chrono::milliseconds{1};
@@ -128,9 +131,18 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
 
   // init_tensor_tables();
   // bind_resource_tensors();
-  init_tviews();
-  build_event_handles();
-  build_nodes_rts();
+  {
+    tracing::ScopedTrace scope("Initialize Tensor Views", "scheduler");
+    init_tviews();
+  }
+  {
+    tracing::ScopedTrace scope("Build Event Handles", "scheduler");
+    build_event_handles();
+  }
+  {
+    tracing::ScopedTrace scope("Build Node Runtime State", "scheduler");
+    build_nodes_rts();
+  }
 }
 
 Scheduler::~Scheduler() {
@@ -171,6 +183,7 @@ nlohmann::json Scheduler::section_graph_diagnostics() const {
 }
 
 void Scheduler::start() {
+  tracing::ScopedTrace trace("Scheduler Start", "scheduler");
   logger()->info("[Scheduler::start] Starting scheduler");
   if (running_.exchange(true)) {
     logger()->warn("[Scheduler::start] Scheduler is already running");
@@ -179,15 +192,31 @@ void Scheduler::start() {
 
   stop_.store(false);
   try {
-    for (const auto &[id, stream] : res_.streams)
-      CUDA_CHECK(cudaStreamSynchronize(stream.get()));
-    refresh_section_cuda_graphs(graph_, sections_, res_, true);
+    {
+      tracing::ScopedTrace drain("Drain Startup CUDA Streams", "scheduler");
+      for (const auto &[id, stream] : res_.streams) {
+        tracing::ScopedTrace stream_trace(std::format("Synchronize Startup Stream {}", id),
+                                          "detail");
+        CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+      }
+    }
+    {
+      tracing::ScopedTrace graphs("Prepare Startup CUDA Graphs", "scheduler");
+      refresh_section_cuda_graphs(graph_, sections_, res_, true);
+    }
   } catch (...) {
     running_.store(false);
     throw;
   }
-  reset_metrics_state();
-  start_metrics_thread();
+  {
+    tracing::ScopedTrace scope("Reset Scheduler Metrics", "scheduler");
+    reset_metrics_state();
+  }
+  {
+    tracing::ScopedTrace scope("Start Metrics Thread", "scheduler");
+    start_metrics_thread();
+  }
+  tracing::ScopedTrace workers("Create Scheduler Workers", "scheduler");
   threads_.reserve(sections_.size());
   for (size_t i = 0; i < sections_.size(); i++) {
     threads_.emplace_back(&Scheduler::run_section, this, static_cast<int>(i));
@@ -197,6 +226,7 @@ void Scheduler::start() {
 }
 
 void Scheduler::request_stop() {
+  tracing::ScopedTrace trace("Scheduler Request Stop", "scheduler");
   logger()->info("[Scheduler::request_stop] Requesting scheduler to stop");
   if (!running_.load()) {
     logger()->warn("[Scheduler::request_stop] Scheduler is not running");
@@ -209,18 +239,26 @@ void Scheduler::request_stop() {
 }
 
 void Scheduler::wait() {
+  tracing::ScopedTrace trace("Scheduler Wait", "scheduler");
   logger()->info("[Scheduler::wait] Waiting for scheduler to stop");
   for (auto &t : threads_) {
     auto tid = GetThreadId(static_cast<HANDLE>(t.native_handle()));
     logger()->debug("[Scheduler::wait] Joining thread {}...", tid);
-    t.join();
+    {
+      tracing::ScopedTrace join(std::format("Join Worker {}", tid), "detail");
+      t.join();
+    }
     logger()->debug("[Scheduler::wait] Thread {} joined", tid);
   }
 
   threads_.clear();
   logger()->info("[Scheduler::wait] Scheduler stopped");
   running_.store(false);
-  stop_metrics_thread();
+  {
+    tracing::ScopedTrace metrics("Stop Metrics Thread", "scheduler");
+    stop_metrics_thread();
+  }
+  tracing::ScopedTrace diagnostics("Write Shutdown CUDA Graph Diagnostics", "scheduler");
   write_section_cuda_graph_diagnostics(res_);
   for (const auto &[id, graphs] : res_.section_cuda_graphs) {
     const auto report = graphs->snapshot();
@@ -334,6 +372,7 @@ void Scheduler::build_nodes_rts() {
 }
 
 void Scheduler::run_router() {
+  tracing::set_thread_name("Scheduler Router");
   try {
     logger()->info("[Scheduler::run_router] Starting event router");
     while (!stop_.load()) {
@@ -348,8 +387,9 @@ void Scheduler::run_router() {
 }
 
 void Scheduler::run_section(int section_id) {
-  const auto &sec    = sections_.at(section_id);
-  auto        stream = sec.stream;
+  const auto &sec = sections_.at(section_id);
+  tracing::set_thread_name(std::format("Section {}: {}", section_id, sec.name));
+  auto stream = sec.stream;
 
   // Define a consistent, professional color palette for your timeline
   constexpr nvtx3::color color_section{0x555555}; // Dark Gray
@@ -817,6 +857,7 @@ void Scheduler::stop_metrics_thread() {
 }
 
 void Scheduler::metrics_loop() {
+  tracing::set_thread_name("Scheduler Metrics");
   auto                         last = std::chrono::steady_clock::now();
   std::unique_lock<std::mutex> lock(metrics_thread_mutex_);
   while (metrics_running_.load()) {

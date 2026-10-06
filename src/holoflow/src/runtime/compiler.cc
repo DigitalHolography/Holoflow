@@ -13,23 +13,20 @@
 // limitations under the License.
 
 #include "holoflow/runtime/compiler.hh"
+#include "holoflow/runtime/tracing.hh"
 #include "section_cuda_graph.hh"
 
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/graph/topological_sort.hpp>
-#include <chrono>
 #include <format>
 #include <fstream>
 #include <iostream>
-#include <mutex>
 #include <numeric>
-#include <nvtx3/nvtx3.hpp>
 #include <queue>
 #include <ranges>
 #include <set>
 #include <stack>
-#include <thread>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -57,135 +54,7 @@ public:
   using std::runtime_error::runtime_error;
 };
 
-// -------------------------------------------------------------------------------------------------
-// Profiling Data Structures
-// -------------------------------------------------------------------------------------------------
-
-struct TraceEvent {
-  std::string name;
-  std::string category;
-  long long   start_us;
-  long long   dur_us;
-  uint32_t    tid;
-};
-
-class CompilationProfiler {
-public:
-  void add_event(std::string name, std::string category, long long start_us, long long dur_us) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    uint32_t tid = static_cast<uint32_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
-    events_.push_back({std::move(name), std::move(category), start_us, dur_us, tid});
-  }
-
-  void log_summary(std::shared_ptr<spdlog::logger> &logger) const {
-    if (!logger || events_.empty())
-      return;
-
-    double total_time_ms = 0.0;
-    for (const auto &ev : events_) {
-      if (ev.name == "Total Compilation") {
-        total_time_ms = ev.dur_us / 1000.0;
-        break;
-      }
-    }
-
-    logger->info("{:=^60}", " Compilation Passes Summary ");
-    logger->info("{:<30} | {:>12} | {:>10}", "Pass Name", "Time (ms)", "% Total");
-    logger->info("{:-^60}", "");
-
-    for (const auto &ev : events_) {
-      if (ev.category != "pass" && ev.name != "Total Compilation")
-        continue;
-
-      double dur_ms  = ev.dur_us / 1000.0;
-      double percent = (total_time_ms > 0) ? (dur_ms / total_time_ms) * 100.0 : 0.0;
-
-      if (ev.name == "Total Compilation") {
-        logger->info("{:-^60}", "");
-      }
-      logger->info("{:<30} | {:>12.3f} | {:>9.2f}%", ev.name, dur_ms, percent);
-    }
-    logger->info("{:=^60}", "");
-  }
-
-  void dump_chrome_tracing(const std::filesystem::path &filepath) const {
-    std::ofstream out(filepath);
-    if (!out.is_open())
-      return;
-
-    out << "[\n";
-    for (size_t i = 0; i < events_.size(); ++i) {
-      const auto &ev = events_[i];
-      out << "  {"
-          << "\"name\": \"" << ev.name << "\", "
-          << "\"cat\": \"" << ev.category << "\", "
-          << "\"ph\": \"X\", "
-          << "\"ts\": " << ev.start_us << ", "
-          << "\"dur\": " << ev.dur_us << ", "
-          << "\"pid\": 1, "
-          << "\"tid\": " << ev.tid << "}";
-      if (i < events_.size() - 1)
-        out << ",";
-      out << "\n";
-    }
-    out << "]\n";
-  }
-
-private:
-  std::vector<TraceEvent> events_;
-  std::mutex              mutex_;
-};
-
-// -------------------------------------------------------------------------------------------------
-// Observability & Scoped Tracer
-// -------------------------------------------------------------------------------------------------
-
-class ScopedTrace {
-public:
-  using Clock       = std::chrono::steady_clock;
-  using SystemClock = std::chrono::system_clock;
-
-  ScopedTrace(std::string name, std::string category, std::shared_ptr<spdlog::logger> logger,
-              CompilationProfiler *profiler)
-      : name_(std::move(name)), category_(std::move(category)), logger_(std::move(logger)),
-        profiler_(profiler) {
-
-    start_time_ = Clock::now();
-    start_us_   = std::chrono::time_point_cast<std::chrono::microseconds>(SystemClock::now())
-                      .time_since_epoch()
-                      .count();
-
-    if (logger_ && category_ == "pass") {
-      logger_->trace(">> Begin Pass: {}", name_);
-    }
-
-    nvtxRangePush(name_.c_str());
-  }
-
-  ~ScopedTrace() {
-    auto end_time = Clock::now();
-    auto dur_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_).count();
-
-    if (logger_ && category_ == "pass") {
-      logger_->info("<< End Pass:   {} ({:.3f} ms)", name_, dur_us / 1000.0);
-    }
-
-    if (profiler_) {
-      profiler_->add_event(name_, category_, start_us_, dur_us);
-    }
-
-    nvtxRangePop();
-  }
-
-private:
-  std::string                     name_;
-  std::string                     category_;
-  std::shared_ptr<spdlog::logger> logger_;
-  CompilationProfiler            *profiler_;
-  Clock::time_point               start_time_;
-  long long                       start_us_;
-};
+using tracing::ScopedTrace;
 
 // -------------------------------------------------------------------------------------------------
 // Storage Adapter for owning tasks
@@ -240,7 +109,6 @@ private:
   core::Registry                 &registry_;
   Compiler::Config                config_;
   std::shared_ptr<spdlog::logger> logger_;
-  CompilationProfiler             profiler_;
 
   const core::GraphSpec          *gspec_ = nullptr;
   std::unique_ptr<CompilerOutput> prev_;
@@ -285,29 +153,44 @@ private:
 
 Compiler::Impl::Impl(core::Registry &registry, Compiler::Config config)
     : registry_(registry), config_(std::move(config)) {
+  ScopedTrace initialization("Compiler Initialization");
+  ScopedTrace logging("Setup Compiler Logging");
   setup_logging();
 }
 
 std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec          &gspec,
                                                     std::unique_ptr<CompilerOutput> prev) {
-  gspec_ = &gspec;
-  prev_  = std::move(prev);
-  out_   = std::make_unique<CompilerOutput>();
-
-  dump_json("graph_spec.json", gspec);
-
-  // Use optional to control exactly when the trace ends without double-destruction
+  tracing::Capture capture(config_.log_dir.empty() ? std::filesystem::path{}
+                                                   : config_.log_dir / config_.trace_filename,
+                           config_.enable_profiling);
   std::optional<ScopedTrace> total_trace;
-  total_trace.emplace(trace_scope("Total Compilation", "lifecycle"));
+  total_trace.emplace("Total Compilation");
 
   try {
+    run_pass("Initialize Compilation", [&] {
+      gspec_ = &gspec;
+      prev_  = std::move(prev);
+      out_   = std::make_unique<CompilerOutput>();
+    });
+    run_pass("Dump Graph Spec", [&] { dump_json("graph_spec.json", gspec); });
     if (prev_) {
       // Stop/wait is the caller's responsibility. Drain before destroying executables whose
       // modules and workspaces may be replaced by the task update pass.
-      for (auto &[id, stream] : prev_->resources.streams) {
-        CUDA_CHECK(cudaStreamSynchronize(stream.get()));
-      }
-      prev_->resources.section_cuda_graphs.clear();
+      run_pass("Drain Previous CUDA Streams", [&] {
+        for (auto &[id, stream] : prev_->resources.streams) {
+          auto scope = trace_scope(std::format("Synchronize Previous Stream {}", id), "detail");
+          CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+        }
+      });
+      run_pass("Destroy Previous CUDA Graphs", [&] {
+        auto &graphs = prev_->resources.section_cuda_graphs;
+        while (!graphs.empty()) {
+          auto it = graphs.begin();
+          auto scope =
+              trace_scope(std::format("Destroy Previous Section Graphs {}", it->first), "detail");
+          graphs.erase(it);
+        }
+      });
     }
     run_pass("Validate Spec", [&] { validate_spec(); });
     run_pass("Build Graph Plan", [&] { build_graph_structure(); });
@@ -339,7 +222,8 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
       run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_failure.dot"); });
     }
 
-    total_trace.reset(); // Stop timer before throwing
+    total_trace->set_outcome(tracing::Outcome::Failure);
+    total_trace.reset(); // Close the measured scope before cleanup/export.
 
     try {
       CUDA_CHECK(cudaDeviceSynchronize());
@@ -357,18 +241,8 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     throw;
   }
 
-  // Stop the total compilation timer safely
+  total_trace->set_outcome(tracing::Outcome::Success);
   total_trace.reset();
-
-  if (config_.enable_profiling) {
-    // profiler_.log_summary(logger_);
-    run_pass("Dump log summary", [&] { profiler_.log_summary(logger_); });
-    if (!config_.log_dir.empty()) {
-      // profiler_.dump_chrome_tracing(config_.log_dir / config_.trace_filename);
-      run_pass("Dump Chrome Tracing",
-               [&] { profiler_.dump_chrome_tracing(config_.log_dir / config_.trace_filename); });
-    }
-  }
 
   return std::move(out_);
 }
@@ -389,8 +263,7 @@ void Compiler::Impl::setup_logging() {
 }
 
 ScopedTrace Compiler::Impl::trace_scope(std::string name, std::string category) {
-  return ScopedTrace(std::move(name), std::move(category), logger_,
-                     config_.enable_profiling ? &profiler_ : nullptr);
+  return ScopedTrace(std::move(name), category);
 }
 
 void Compiler::Impl::dump_graphviz(const std::string &filename) {

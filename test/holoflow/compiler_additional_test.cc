@@ -8,9 +8,14 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+
+#include "holoflow/runtime/tracing.hh"
+#include "support/native_trace.hh"
 #include <boost/graph/adjacency_list.hpp>
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <span>
 
@@ -165,27 +170,52 @@ TEST(CompilerTest, ReusesTaskStreamAndExactSizeHostAllocation) {
   EXPECT_EQ(second->resources.streams.begin()->second.get(), first_stream);
 }
 
-TEST(CompilerTest, EmitsLogsTraceAndSuccessGraph) {
+TEST(CompilerTest, EmitsLogsNativeTraceAndSuccessGraph) {
   auto                     tracking = std::make_shared<TrackingState>();
   holoflow::core::Registry registry;
   registry.register_sync("source", std::make_unique<TrackingSourceFactory>(tracking));
   registry.register_sync("sink", std::make_unique<SinkFactory>());
-  const auto unique_suffix = std::chrono::steady_clock::now().time_since_epoch().count();
-  const auto directory = std::filesystem::temp_directory_path() /
-                         ("holoflow-compiler-observability-test-" + std::to_string(unique_suffix));
-
+  const auto directory = trace_test::temporary_path("holoflow-native-compiler-");
   {
     holoflow::runtime::Compiler compiler(registry, {.log_dir             = directory,
                                                     .dump_dot_on_failure = true,
                                                     .verbose_tracing     = false,
-                                                    .enable_profiling    = true,
-                                                    .trace_filename      = "trace.json"});
-    ASSERT_NE(compiler.compile(source_sink_graph()), nullptr);
+                                                    .trace_filename      = "trace.perfetto-trace"});
+    auto                        output = compiler.compile(source_sink_graph());
+    ASSERT_NE(output, nullptr);
+    output = compiler.compile(source_sink_graph(), std::move(output));
+    ASSERT_NE(output, nullptr);
+    if (holoflow::runtime::tracing::Session::available()) {
+      const auto trace    = trace_test::read(directory / "trace.perfetto-trace");
+      auto       position = [&](const std::string &name) {
+        size_t index = trace.slices.size();
+        size_t count = 0;
+        for (size_t i = 0; i < trace.slices.size(); ++i) {
+          if (trace.slices[i].name == name) {
+            index = i;
+            ++count;
+          }
+          EXPECT_TRUE(trace.slices[i].complete);
+        }
+        EXPECT_EQ(count, 1) << name;
+        return index;
+      };
+      const auto validation = position("Validate Spec");
+      for (const auto *name : {"Initialize Compilation", "Dump Graph Spec",
+                               "Drain Previous CUDA Streams", "Destroy Previous CUDA Graphs"})
+        EXPECT_LT(position(name), validation);
+      EXPECT_EQ(position("Total Compilation"), 0);
+      EXPECT_EQ(trace.slices[0].outcome, "success");
+    }
   }
-
   EXPECT_TRUE(std::filesystem::exists(directory / "compiler.log"));
   EXPECT_TRUE(std::filesystem::exists(directory / "compilation_success.dot"));
-  EXPECT_TRUE(std::filesystem::exists(directory / "trace.json"));
+  EXPECT_EQ(std::filesystem::exists(directory / "trace.perfetto-trace"),
+            holoflow::runtime::tracing::Session::available());
+  std::ifstream     input(directory / "compiler.log");
+  const std::string logs{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+  EXPECT_EQ(logs.find("End Pass"), std::string::npos);
+  EXPECT_EQ(logs.find("Compilation Passes Summary"), std::string::npos);
 }
 
 TEST(CompilerTest, RejectsMultipleOwnersOfOneTensor) {
@@ -194,4 +224,106 @@ TEST(CompilerTest, RejectsMultipleOwnersOfOneTensor) {
   registry.register_sync("sink", std::make_unique<OwnedSinkFactory>());
   holoflow::runtime::Compiler compiler(registry, {.dump_dot_on_failure = false});
   EXPECT_THROW((void)compiler.compile(source_sink_graph()), std::runtime_error);
+}
+
+TEST(CompilerTest, ProfilingDisabledDoesNotWriteTrace) {
+  holoflow::core::Registry registry;
+  const auto               directory =
+      std::filesystem::temp_directory_path() /
+      ("holoflow-no-profiling-test-" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  {
+    holoflow::runtime::Compiler compiler(
+        registry, {.log_dir = directory, .dump_dot_on_failure = false, .enable_profiling = false});
+    EXPECT_NE(compiler.compile({}), nullptr);
+    EXPECT_FALSE(std::filesystem::exists(directory / "trace_events.perfetto-trace"));
+  }
+}
+
+TEST(CompilerTest, FailureExportsCompletedPreparationAndValidationSpans) {
+  holoflow::core::Registry registry;
+  const auto               directory =
+      std::filesystem::temp_directory_path() /
+      ("holoflow-failed-trace-test-" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  holoflow::runtime::Compiler compiler(registry,
+                                       {.log_dir = directory, .dump_dot_on_failure = false});
+  GraphSpec                   invalid;
+  add_vertex(NodeSpec{"missing", "missing", {}}, invalid);
+  EXPECT_THROW((void)compiler.compile(invalid), std::runtime_error);
+  if (holoflow::runtime::tracing::Session::available()) {
+    const auto trace      = trace_test::read(directory / "trace_events.perfetto-trace");
+    bool       validation = false;
+    bool       total      = false;
+    for (const auto &slice : trace.slices) {
+      validation |= slice.name == "Validate Spec";
+      total |= slice.name == "Total Compilation" && slice.outcome == "failure";
+      EXPECT_TRUE(slice.complete);
+    }
+    EXPECT_TRUE(validation);
+    EXPECT_TRUE(total);
+  }
+}
+
+TEST(CompilerTest, TraceExportFailureDoesNotFailCompilation) {
+  holoflow::core::Registry registry;
+  const auto               directory =
+      std::filesystem::temp_directory_path() /
+      ("holoflow-trace-export-failure-test-" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  holoflow::runtime::Compiler compiler(
+      registry, {.log_dir = directory, .dump_dot_on_failure = false, .trace_filename = "."});
+  EXPECT_NE(compiler.compile({}), nullptr);
+}
+
+TEST(CompilerTest, ExplicitSessionCapturesCompilationSchedulerStartupStopAndResume) {
+  if (!holoflow::runtime::tracing::Session::available())
+    GTEST_SKIP() << "SDK disabled";
+  auto                     state = std::make_shared<TrackingState>();
+  holoflow::core::Registry registry;
+  registry.register_sync("source", std::make_unique<TrackingSourceFactory>(state));
+  registry.register_sync("sink", std::make_unique<SinkFactory>());
+  const auto directory = trace_test::temporary_path("holoflow-explicit-lifecycle-");
+  auto       session   = holoflow::runtime::tracing::Session::start();
+  ASSERT_NE(session, nullptr);
+  {
+    holoflow::runtime::tracing::ScopedTrace lifecycle("Test Pipeline Lifecycle");
+    holoflow::runtime::Compiler             compiler(
+        registry,
+        {.log_dir = directory, .dump_dot_on_failure = false, .max_section_cuda_graphs = 0});
+    auto output = compiler.compile(source_sink_graph());
+    for (int run = 0; run < 2; ++run) {
+      holoflow::runtime::Scheduler scheduler(output->graph, output->sections, output->resources);
+      scheduler.start();
+      scheduler.request_stop();
+      scheduler.wait();
+    }
+    EXPECT_TRUE(holoflow::runtime::tracing::Session::active());
+    EXPECT_FALSE(std::filesystem::exists(directory / "trace_events.perfetto-trace"));
+  }
+  session->stop_and_save(directory / "lifecycle.perfetto-trace");
+  const auto trace = trace_test::read(directory / "lifecycle.perfetto-trace");
+  for (const auto *name :
+       {"Initialize Scheduler", "Drain Startup CUDA Streams", "Prepare Startup CUDA Graphs",
+        "Create Scheduler Workers", "Scheduler Request Stop", "Scheduler Wait",
+        "Stop Metrics Thread", "Write Shutdown CUDA Graph Diagnostics"}) {
+    size_t count = 0;
+    for (const auto &slice : trace.slices)
+      count += slice.name == name;
+    EXPECT_EQ(count, 2) << name;
+  }
+  for (const auto *name :
+       {"Collect CUDA Graph Storage Owners", "Inspect CUDA Graph Sections",
+        "Inspect CUDA Graph Task Eligibility", "Inspect CUDA Graph Storage Domains",
+        "Prepare CUDA Graph Sections", "Install CUDA Graph Cache"}) {
+    EXPECT_TRUE(std::any_of(trace.slices.begin(), trace.slices.end(), [name](const auto &slice) {
+      return slice.name == name && slice.complete;
+    })) << name;
+  }
+  bool joined = false;
+  for (const auto &slice : trace.slices) {
+    joined |= slice.name.starts_with("Join Worker ");
+    EXPECT_TRUE(slice.complete);
+  }
+  EXPECT_TRUE(joined);
 }

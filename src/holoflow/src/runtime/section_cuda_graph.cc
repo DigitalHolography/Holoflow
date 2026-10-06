@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "../logger.hh"
+#include "holoflow/runtime/tracing.hh"
 
 namespace holoflow::runtime {
 
@@ -411,7 +412,8 @@ namespace {
 // one malformed pointer contract ultimately makes the refresh fail.
 InspectionBatch inspect_sections(GraphContext &context, const std::vector<Section> &sections,
                                  const StorageOwners &owners, bool instantiate) {
-  InspectionBatch batch;
+  tracing::ScopedTrace trace("Inspect CUDA Graph Sections", "detail");
+  InspectionBatch      batch;
   batch.plans.reserve(sections.size());
 
   for (const auto &section : sections) {
@@ -447,7 +449,8 @@ InspectionBatch inspect_sections(GraphContext &context, const std::vector<Sectio
 // Compiler-owned storages do not appear in this map and are treated as single-pointer domains later
 // during section inspection.
 StorageOwners collect_storage_owners(GraphContext &context) {
-  StorageOwners owners;
+  tracing::ScopedTrace trace("Collect CUDA Graph Storage Owners", "detail");
+  StorageOwners        owners;
 
   for (const auto vertex : boost::make_iterator_range(boost::vertices(context.graph))) {
     const auto &node = context.graph[vertex];
@@ -487,6 +490,8 @@ void collect_owned_ports(GraphContext &context, const NodePlan &node, PortDirect
 // specialization. Inspection never executes section tasks.
 SectionPlan inspect_section(GraphContext &context, const Section &section,
                             const StorageOwners &owners) {
+  tracing::ScopedTrace trace(
+      std::format("Inspect CUDA Graph Section {}: {}", section.id, section.name), "detail");
   SectionPlan plan;
   plan.report = make_section_report(section, context.resources.max_section_cuda_graphs);
 
@@ -523,7 +528,8 @@ SectionPlan inspect_section(GraphContext &context, const Section &section,
 // recording and no task owns an output storage. Unsupported sections are still inspected further so
 // diagnostics can report their pointer-domain shape.
 std::set<size_t> inspect_tasks(GraphContext &context, const Section &section, SectionPlan &plan) {
-  std::set<size_t> storage_ids;
+  tracing::ScopedTrace trace("Inspect CUDA Graph Task Eligibility", "detail");
+  std::set<size_t>     storage_ids;
 
   for (const auto vertex : section.sync_topo) {
     const auto &node     = context.graph[vertex];
@@ -560,6 +566,7 @@ std::set<size_t> inspect_tasks(GraphContext &context, const Section &section, Se
 bool inspect_storage_domains(GraphContext &context, const Section &section,
                              const StorageOwners &owners, const std::set<size_t> &storage_ids,
                              SectionPlan &plan) {
+  tracing::ScopedTrace  trace("Inspect CUDA Graph Storage Domains", "detail");
   std::optional<size_t> raw_product       = 1;
   bool                  has_unknown_count = false;
 
@@ -659,6 +666,7 @@ void inspect_domain_owner(StorageDomain &domain, const StorageOwner *owner, Sect
 // started, all domains are inspected even if an earlier one fails so diagnostics remain complete.
 void enumerate_pointer_domains(GraphContext &context, const Section &section,
                                const StorageOwners &owners, SectionPlan &plan) {
+  tracing::ScopedTrace trace("Enumerate CUDA Graph Pointer Domains", "detail");
   for (size_t i = 0; i < plan.domains.size(); ++i) {
     auto &domain        = plan.domains[i];
     auto &domain_report = plan.report["domains"][i];
@@ -756,7 +764,8 @@ bool valid_pointer_sequence(const core::PointerSequence &sequence,
 //   3. Enumerate distinct states reachable from the declared sequences.
 //   4. Expand the unordered domains over those states.
 void plan_tuples(SectionPlan &plan, size_t limit) {
-  const auto horizon = compute_sequence_horizon(plan);
+  tracing::ScopedTrace trace("Plan CUDA Graph Pointer Tuples", "detail");
+  const auto           horizon = compute_sequence_horizon(plan);
   report_sequence_horizon(plan, horizon);
 
   const auto cartesian = compute_cartesian_domain(plan, horizon.exact, limit);
@@ -928,6 +937,7 @@ size_t pointer_index_at(const core::PointerSequence &sequence, size_t step) {
 // Prepare inspected sections and keep each diagnostics snapshot synchronized with its latest state.
 void prepare_sections(GraphContext &context, const std::vector<Section> &sections,
                       std::vector<SectionPlan> &plans, bool instantiate) {
+  tracing::ScopedTrace trace("Prepare CUDA Graph Sections", "detail");
   for (size_t i = 0; i < sections.size(); ++i) {
     const auto &section = sections[i];
     auto       &plan    = plans[i];
@@ -957,6 +967,8 @@ void prepare_sections(GraphContext &context, const std::vector<Section> &section
 // both caches before falling back to ordinary execution.
 void prepare_section(GraphContext &context, const Section &section, SectionPlan &plan,
                      SectionCudaGraphs &graphs) {
+  tracing::ScopedTrace trace(
+      std::format("Prepare CUDA Graph Section {}: {}", section.id, section.name), "detail");
   auto      &report        = plan.report;
   const auto started       = std::chrono::steady_clock::now();
   const auto previous_size = graphs.executables.size();
@@ -973,8 +985,11 @@ void prepare_section(GraphContext &context, const Section &section, SectionPlan 
     report["status"]          = "fallback";
     report["fallback_reason"] = error.what();
 
-    replacement.clear();
-    graphs.clear();
+    {
+      tracing::ScopedTrace cleanup("Clear Failed CUDA Graph Caches", "detail");
+      replacement.clear();
+      graphs.clear();
+    }
     recover_section_stream(section, report);
   }
 
@@ -1006,10 +1021,13 @@ void build_graph_variants(GraphContext &context, const Section &section, Section
   replacement.executable_node_counts.reserve(desired.size());
 
   for (const auto &tuple : desired) {
+    tracing::ScopedTrace variant_trace(
+        std::format("Prepare CUDA Graph Variant {}", replacement.executables.size()), "detail");
     replacement.tuple_indices.emplace(tuple, replacement.executables.size());
 
     const auto old = current.tuple_indices.find(tuple);
     if (old != current.tuple_indices.end() && current.executables[old->second]) {
+      tracing::ScopedTrace reuse("Reuse Cached CUDA Graph Variant", "detail");
       replacement.executables.push_back(current.executables[old->second]);
       current.executables[old->second] = nullptr;
       replacement.executable_node_counts.push_back(current.executable_node_counts[old->second]);
@@ -1030,6 +1048,7 @@ void build_graph_variants(GraphContext &context, const Section &section, Section
 
 // Convert planned pointer-index tuples into the concrete address tuples used as graph-cache keys.
 std::vector<PointerTuple> resolve_pointer_tuples(const SectionPlan &plan) {
+  tracing::ScopedTrace      trace("Resolve CUDA Graph Pointer Tuples", "detail");
   std::vector<PointerTuple> tuples;
   tuples.reserve(plan.tuples.size());
 
@@ -1053,7 +1072,8 @@ std::vector<PointerTuple> resolve_pointer_tuples(const SectionPlan &plan) {
 // temporarily double the executable-memory budget.
 size_t discard_obsolete_variants(SectionCudaGraphs &current, const SectionCudaGraphs &replacement,
                                  const std::set<PointerTuple> &desired) {
-  size_t discarded = 0;
+  tracing::ScopedTrace trace("Discard Obsolete CUDA Graph Variants", "detail");
+  size_t               discarded = 0;
 
   for (const auto &[tuple, index] : current.tuple_indices) {
     const bool same_domains = current.storage_ids == replacement.storage_ids;
@@ -1086,37 +1106,54 @@ void record_variant(GraphContext &context, const Section &section, SectionCudaGr
 
   try {
     report["failure_stage"] = "capture_begin";
-    CUDA_CHECK(cudaGraphCreate(&graph, 0));
-    CUDA_CHECK(cudaStreamBeginCaptureToGraph(section.stream, graph, nullptr, nullptr, 0,
-                                             cudaStreamCaptureModeThreadLocal));
-    capturing = true;
+    {
+      tracing::ScopedTrace begin("Begin CUDA Graph Capture", "detail");
+      CUDA_CHECK(cudaGraphCreate(&graph, 0));
+      CUDA_CHECK(cudaStreamBeginCaptureToGraph(section.stream, graph, nullptr, nullptr, 0,
+                                               cudaStreamCaptureModeThreadLocal));
+      capturing = true;
+    }
 
     record_section_tasks(context, section, bindings, graph, report);
 
     report["failure_stage"] = "capture_end";
     cudaGraph_t captured    = nullptr;
-    const auto  end_result  = cudaStreamEndCapture(section.stream, &captured);
-    capturing               = false;
+    {
+      tracing::ScopedTrace end("End CUDA Graph Capture", "detail");
+      const auto           end_result = cudaStreamEndCapture(section.stream, &captured);
+      capturing                       = false;
 
-    // EndCapture transfers the completed graph back to the caller, or destroys it when capture was
-    // invalidated. From this point onward `captured` is the graph whose ownership must be managed.
-    graph = captured;
-    CUDA_CHECK(end_result);
+      // EndCapture returns the completed graph or destroys it when capture was invalidated.
+      // Preserve the returned ownership before checking the capture result.
+      graph = captured;
+      CUDA_CHECK(end_result);
+    }
 
     report["failure_stage"] = "validate_graph";
-    const size_t node_count = validate_recorded_graph(graph);
+    size_t node_count;
+    {
+      tracing::ScopedTrace validate("Validate Recorded CUDA Graph", "detail");
+      node_count = validate_recorded_graph(graph);
+    }
 
     report["failure_stage"] = "instantiate";
-    CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+    {
+      tracing::ScopedTrace instantiate("Instantiate CUDA Graph", "detail");
+      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+    }
 
     graphs.executables.push_back(executable);
     executable = nullptr;
     graphs.executable_node_counts.push_back(node_count);
     graphs.node_count += node_count;
 
-    CUDA_CHECK_NT(cudaGraphDestroy(graph));
-    graph = nullptr;
+    {
+      tracing::ScopedTrace destroy("Destroy Temporary CUDA Graph", "detail");
+      CUDA_CHECK_NT(cudaGraphDestroy(graph));
+      graph = nullptr;
+    }
   } catch (...) {
+    tracing::ScopedTrace cleanup("Clean Up Failed CUDA Graph Capture", "detail");
     if (capturing) {
       cudaGraph_t captured = nullptr;
       (void)cudaStreamEndCapture(section.stream, &captured);
@@ -1136,10 +1173,13 @@ void record_variant(GraphContext &context, const Section &section, SectionCudaGr
 // capture. Task errors are annotated with the task name before leaving the recording layer.
 void record_section_tasks(GraphContext &context, const Section &section, StorageBindings &bindings,
                           cudaGraph_t graph, nlohmann::json &report) {
+  tracing::ScopedTrace trace("Record CUDA Graph Tasks", "detail");
   for (const auto vertex : section.sync_topo) {
-    const auto &node    = context.graph[vertex];
-    auto        inputs  = make_views(context, bindings, node.in_tids);
-    auto        outputs = make_views(context, bindings, node.out_tids);
+    const auto          &node = context.graph[vertex];
+    tracing::ScopedTrace task_trace(std::format("Record CUDA Graph Task: {}", node.spec.name),
+                                    "detail");
+    auto                 inputs  = make_views(context, bindings, node.in_tids);
+    auto                 outputs = make_views(context, bindings, node.out_tids);
 
     core::CudaGraphCtx graph_context{inputs, outputs, section.stream, graph};
     report["failure_stage"]  = "record";
@@ -1163,7 +1203,8 @@ void record_section_tasks(GraphContext &context, const Section &section, Storage
 // therefore describe the desired specialization while preserving runtime state.
 StorageBindings make_variant_bindings(GraphContext &context, const SectionCudaGraphs &graphs,
                                       const PointerTuple &tuple) {
-  StorageBindings bindings;
+  tracing::ScopedTrace trace("Prepare CUDA Graph Variant Bindings", "detail");
+  StorageBindings      bindings;
 
   for (size_t i = graphs.storage_ids.size(); i-- > 0;) {
     const auto storage_id = graphs.storage_ids[i];
@@ -1239,6 +1280,7 @@ void initialize_graph_cache_domains(const SectionPlan &plan, SectionCudaGraphs &
 // Move graph-cache state field-by-field because SectionCudaGraphs also contains synchronization and
 // accounting members that must stay attached to the existing section object.
 void install_graph_cache(SectionCudaGraphs &destination, SectionCudaGraphs &source) {
+  tracing::ScopedTrace trace("Install CUDA Graph Cache", "detail");
   destination.clear();
   destination.storage_ids            = std::move(source.storage_ids);
   destination.pointers               = std::move(source.pointers);
@@ -1255,6 +1297,7 @@ void install_graph_cache(SectionCudaGraphs &destination, SectionCudaGraphs &sour
 // usable; the graph optimization can then fall back normally. A synchronization failure indicates a
 // poisoned CUDA context and is escalated to the caller.
 void recover_section_stream(const Section &section, nlohmann::json &report) {
+  tracing::ScopedTrace trace("Recover CUDA Graph Section Stream", "detail");
   try {
     CUDA_CHECK(cudaStreamSynchronize(section.stream));
   } catch (...) {
@@ -1393,7 +1436,8 @@ void write_diagnostics_file(const ExecResouces &resources) {
   if (resources.section_cuda_graph_log_dir.empty())
     return;
 
-  auto diagnostics = nlohmann::json::array();
+  tracing::ScopedTrace trace("Write CUDA Graph Diagnostics", "detail");
+  auto                 diagnostics = nlohmann::json::array();
   for (const auto &entry : resources.section_cuda_graphs)
     diagnostics.push_back(entry.second->snapshot());
 

@@ -66,3 +66,8 @@ PUBLIC
     nlohmann_json::nlohmann_json
     Boost::graph
 )
+
+if(ENABLE_PERFETTO)
+    target_link_libraries(holoflow PRIVATE perfetto_sdk)
+    target_compile_definitions(holoflow PRIVATE HOLOFLOW_ENABLE_PERFETTO)
+endif()

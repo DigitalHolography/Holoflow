@@ -13,6 +13,7 @@
 #include <vector>
 
 #include "holoflow/runtime/compiler.hh"
+#include "holoflow/runtime/tracing.hh"
 
 namespace {
 using namespace holoflow::core;
@@ -700,3 +701,30 @@ TEST_F(SectionCudaGraphTest, StopRequestedDuringPreparationIsNotLost) {
 }
 
 } // namespace
+
+TEST_F(SectionCudaGraphTest, CapturesStartupVariantConstructionAndReuse) {
+  if (!tracing::Session::available())
+    GTEST_SKIP() << "SDK disabled";
+  auto       out = compile(6);
+  const auto directory =
+      std::filesystem::temp_directory_path() /
+      ("holoflow-startup-detail-" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+  for (bool details : {true, false}) {
+    auto session = tracing::Session::start({.include_details = details});
+    ASSERT_NE(session, nullptr);
+    for (int start = 0; start < 2; ++start) {
+      Scheduler scheduler(out->graph, out->sections, out->resources);
+      scheduler.start();
+      scheduler.request_stop();
+      scheduler.wait();
+    }
+    const auto report = out->resources.section_cuda_graphs.begin()->second->snapshot();
+    EXPECT_EQ(report["reused"], 6);
+    EXPECT_EQ(report["created"], 0);
+    const auto path = directory / (details ? "detailed.perfetto-trace" : "filtered.perfetto-trace");
+    session->stop_and_save(path);
+    EXPECT_GT(std::filesystem::file_size(path), 0U);
+  }
+  EXPECT_EQ(state->recordings, 12);
+}

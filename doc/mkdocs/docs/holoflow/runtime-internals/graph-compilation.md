@@ -733,3 +733,100 @@ declared in `src/holoflow/include/holoflow/runtime/graph_exec.hh`.
 The most direct behavioral tests are `test/holoflow/compiler_test.cc`,
 `test/holoflow/compiler_additional_test.cc`, and the compiler-related cases in
 `test/holoflow/scheduler_functional_test.cc`.
+## Profiling compilation and pipeline lifecycle
+
+Holoflow uses the Perfetto v58.2 C++ SDK with its Windows in-process backend. Native binary traces
+open directly in [Perfetto UI](https://ui.perfetto.dev/) or Trace Processor. Instrumentation also emits
+NVTX ranges. Operational errors and warnings remain in spdlog; handwritten JSON traces, per-pass
+timing messages, and compilation timing summaries have been replaced by SDK events.
+
+### Automatic files
+
+The application saves captures under `<AppLocalDataLocation>/<application-version>/logs`:
+
+| File | Capture |
+| --- | --- |
+| `pipeline_update_trace.perfetto-trace` | Latest update, including stop, rebuild, and restart when running |
+| `pipeline_start_trace.perfetto-trace` | Latest cold start |
+| `pipeline_stop_trace.perfetto-trace` | Latest stop or pause |
+| `pipeline_resume_trace.perfetto-trace` | Latest resume of an unchanged compiled graph |
+| `trace_events.perfetto-trace` | Latest standalone compilation with profiling enabled and a nonempty log directory |
+
+Each operation starts a native session before its measured scope and manager mutex acquisition.
+The measured scope closes and the lock releases before flushing, stopping, and exporting. The next
+capture of the same operation overwrites its file, including failures and early returns. Session
+setup, flush, and file I/O add latency to the call but are outside its measured lifecycle slice.
+
+Only one application-owned session records at a time. If a lifecycle operation or standalone
+compilation encounters an active session, it contributes events to that session and neither stops
+it nor writes a separate file. This avoids competing captures around nested compilation. Overlapping
+operations on different threads also share the first active session; an explicit session is the
+preferred way to cover a concurrent sequence deliberately. `Compiler::Config::enable_profiling`
+controls automatic standalone capture, while `trace_filename` selects the native output name.
+It does not suppress instrumentation inside an already active session.
+
+`Total Compilation` starts before state initialization and graph-spec dumping. `Drain Previous CUDA
+Streams` and `Destroy Previous CUDA Graphs` precede `Validate Spec`, with detail slices identifying
+streams and sections. The enclosing lifecycle covers history-widget calls, graph construction and
+dumps, compiler construction/logging setup, scheduler initialization, startup CUDA graph preparation,
+worker joins, and shutdown diagnostics. Root slices carry `outcome` annotations (`success` or
+`failure`); other scopes default to `completed` and mark exception unwinding as failure.
+Worker names identify section, router, and metrics threads when named during recording.
+
+### Developer sessions
+
+The public API does not expose SDK types:
+
+```cpp
+#include "holoflow/runtime/tracing.hh"
+
+using namespace holoflow::runtime::tracing;
+auto session = Session::start({.buffer_size_kb = 16 * 1024, .include_details = true});
+if (session) {
+  // Exercise operations; their automatic captures join this session.
+  // Close measured scopes and finish instrumented work before stopping.
+  session->stop_and_save("experiment.perfetto-trace");
+}
+```
+
+`Session::start()` returns null if another session owns recording or the SDK is disabled. Invalid
+configuration or setup failure throws. `stop_and_save()` stops recording before file I/O and throws
+on export failure; ownership is released even if the file cannot be written. Destroying a session
+stops recording without exporting. Automatic `Capture` guards log errors and preserve operation
+results. Check `Session::available()` and `Session::active()` when needed.
+
+Categories are `holoflow.lifecycle`, `holoflow.compiler`, `holoflow.scheduler`, and
+`holoflow.detail`. Developer sessions can disable details with `include_details = false`.
+The default 16 MiB buffer discards new data when full, preserving the beginning of a capture.
+An oversized capture can lose later events; inspect buffer statistics in Trace Processor:
+
+```sql
+SELECT * FROM stats
+WHERE (severity = 'data_loss' AND value != 0)
+   OR (name = 'traced_buf_chunks_discarded' AND value != 0);
+```
+
+### Build and interpretation
+
+`ENABLE_PERFETTO` defaults to `ON`. FetchContent downloads a pinned archive with a SHA-256 checksum.
+With `ENABLE_FETCHCONTENT=OFF`, set `PERFETTO_SDK_DIR` to the extracted v58.2 SDK directory.
+`-DENABLE_PERFETTO=OFF` builds without the SDK and native files while retaining NVTX and operational
+logging. Perfetto headers stay private to the runtime implementation. No daemon, protobuf package,
+compression library, or recording UI is required.
+
+Durations measure CPU wall time. CUDA synchronization slices measure host waits, not GPU kernel
+execution; use NVIDIA tooling for GPU attribution. Automatic recording begins at manager entry,
+so Qt queue delay before entry and time to the first processed frame are excluded. An explicit
+session started earlier can support that investigation once request/frame boundaries are
+instrumented. Recurring worker events, counters, and cross-thread flows remain future additions.
+The SDK supports these features without extending our own trace format.
+
+See the official [Tracing SDK](https://perfetto.dev/docs/instrumentation/tracing-sdk),
+[Track Events](https://perfetto.dev/docs/instrumentation/track-events), and
+[buffer documentation](https://perfetto.dev/docs/concepts/buffers).
+
+Startup CUDA-graph preparation includes detail spans for section eligibility and pointer planning,
+variant construction or cache reuse, task recording, capture completion, validation, and instantiation.
+Section spans include IDs and names; variant and task spans identify the work within each section.
+These spans also appear during compilation where the same preparation helpers are used, and are
+suppressed when a developer session sets `include_details = false`.
