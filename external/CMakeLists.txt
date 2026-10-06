@@ -52,15 +52,15 @@ if(ENABLE_FETCHCONTENT)
     endmacro()
 
     if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
-        set(FFMPEG_VERSION "n8.1.2-50-g1a748fe2cd")
+        set(FFMPEG_VERSION "n8.1.3-9-g29e619e767")
         declare_persistent_archive(
             ffmpeg
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-03-13-17/ffmpeg-n8.1.2-50-g1a748fe2cd-win64-lgpl-shared-8.1.zip"
-            "SHA256=383f173d39cf610ba7d1d56bf22941f5e9470dd5ebfcf76a152e8a6f6235fe68"
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n8.1.3-9-g29e619e767-win64-lgpl-shared-8.1.zip"
+            "SHA256=3e47bda1607740550141e37c0e49d1e5182b34699f15adfd137ee266d346811a"
         )
         FetchContent_MakeAvailable(ffmpeg)
 
-        set(FFMPEG_ROOT "${ffmpeg_SOURCE_DIR}")
+        set(FFMPEG_ROOT "${ffmpeg_SOURCE_DIR}/ffmpeg-${FFMPEG_VERSION}-win64-lgpl-shared-8.1")
         foreach(FFMPEG_DIRECTORY IN ITEMS include lib bin)
             if(NOT IS_DIRECTORY "${FFMPEG_ROOT}/${FFMPEG_DIRECTORY}")
                 message(FATAL_ERROR
