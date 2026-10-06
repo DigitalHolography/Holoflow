@@ -28,6 +28,7 @@ namespace holonp {
 
 struct FFTShiftSettings {
   std::vector<int> axes;
+  bool             inverse = false;
 
   bool operator==(const FFTShiftSettings &) const = default;
 };
@@ -40,6 +41,21 @@ void from_json(const nlohmann::json &j, FFTShiftSettings &s);
 // -------------------------------------------------------------------------------------------------
 
 class FFTShiftFactory : public holoflow::core::ISyncTaskFactory {
+public:
+  holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
+                                    const nlohmann::json &jsettings) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+         std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+};
+
+class IFFTShiftFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;

@@ -64,12 +64,8 @@ void from_json(const nlohmann::json &j, HolofileSettings::LoadKind &lk) {
 
 void to_json(nlohmann::json &j, const HolofileSettings &hs) {
   j = {
-      {"path", hs.path},
-      {"load_kind", hs.load_kind},
-      {"start_frame", hs.start_frame},
-      {"end_frame", hs.end_frame},
-      {"batch_size", hs.batch_size},
-      {"keep_cursor", hs.keep_cursor},
+      {"path", hs.path},           {"load_kind", hs.load_kind},   {"start_frame", hs.start_frame},
+      {"end_frame", hs.end_frame}, {"batch_size", hs.batch_size}, {"keep_cursor", hs.keep_cursor},
   };
 
   if (hs.max_fps.has_value()) {
@@ -156,8 +152,8 @@ public:
       return true;
     }
 
-    auto batch_period = std::chrono::duration_cast<Clock::duration>(
-        std::chrono::duration<double>(static_cast<double>(settings.batch_size) / *settings.max_fps));
+    auto batch_period = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
+        static_cast<double>(settings.batch_size) / *settings.max_fps));
 
     if (batch_period <= Clock::duration::zero()) {
       batch_period = Clock::duration{1};
@@ -416,16 +412,16 @@ HolofileFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   }
 
   // Construct task directly
-  auto task       = std::make_unique<Holofile>();
-  task->settings  = settings;
-  task->reader    = std::move(reader);
-  task->header    = header;
-  task->frame_idx = frame_idx;
-  task->odesc     = infer.output_descs[0];
-  task->buf       = buf;
-  task->h_buf     = std::move(h_buf);
-  task->d_buf     = std::move(d_buf);
-  task->stream    = ctx.stream;
+  auto task              = std::make_unique<Holofile>();
+  task->settings         = settings;
+  task->reader           = std::move(reader);
+  task->header           = header;
+  task->frame_idx        = frame_idx;
+  task->odesc            = infer.output_descs[0];
+  task->buf              = buf;
+  task->h_buf            = std::move(h_buf);
+  task->d_buf            = std::move(d_buf);
+  task->stream           = ctx.stream;
   task->next_batch_start = pace_same ? old_holofile->next_batch_start : std::nullopt;
 
   return task;

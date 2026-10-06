@@ -68,8 +68,8 @@
 #include "holofile/holofile.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
-#include "ui/update_checker.hh"
 #include "ui/graph_visualizer_widget.hh"
+#include "ui/update_checker.hh"
 #include "ui/visualization_workspace.hh"
 #include "ui/widgets/selected_widget_settings_panel.hh"
 #include "ui/widgets/tensor_display_widget.hh"
@@ -506,8 +506,7 @@ private:
                        graph_compiled_dump_preferences_widgets_.rankdir_combo_);
 
     graph_compiled_dump_preferences_widgets_.layout_combo_ =
-        create_combo_box(this,
-                         QStringList{tr("Normal"), tr("Stairs"), tr("Block"), tr("Snake")});
+        create_combo_box(this, QStringList{tr("Normal"), tr("Stairs"), tr("Block"), tr("Snake")});
     graph_compiled_dump_preferences_widgets_.layout_combo_->setCurrentIndex(
         static_cast<int>(graph_compiled_dump_preferences.layout));
     graph_compiled_dump_preferences_widgets_.layout_combo_->setToolTip(
@@ -624,7 +623,7 @@ private:
         .rankdir = graph_compiled_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
                        ? GraphCompiledDumpPreferences::Rankdir::LeftToRight
                        : GraphCompiledDumpPreferences::Rankdir::TopToBottom,
-        .layout = static_cast<GraphCompiledDumpPreferences::Layout>(
+        .layout  = static_cast<GraphCompiledDumpPreferences::Layout>(
             graph_compiled_dump_preferences_widgets_.layout_combo_->currentIndex()),
 
         .floating_point_precision =
@@ -706,7 +705,7 @@ private:
   struct GraphSpecDumpPreferencesWidgets {
     // dump preferences
     // rankdir: LR | TB
-    QComboBox *rankdir_combo_                  = nullptr;
+    QComboBox *rankdir_combo_                 = nullptr;
     QSpinBox  *floating_point_precision_spin_ = nullptr;
     // Nodes
     QCheckBox *node_name_checkbox_     = nullptr;
@@ -720,13 +719,13 @@ private:
   struct GraphCompiledDumpPreferencesWidgets {
     // dump preferences
     // rankdir: LR | TB
-    QComboBox *rankdir_combo_                  = nullptr;
-    QComboBox *layout_combo_                   = nullptr;
+    QComboBox *rankdir_combo_                 = nullptr;
+    QComboBox *layout_combo_                  = nullptr;
     QSpinBox  *floating_point_precision_spin_ = nullptr;
-    QCheckBox *node_name_checkbox_             = nullptr;
-    QCheckBox *node_kind_checkbox_             = nullptr;
-    QCheckBox *node_settings_checkbox_         = nullptr;
-    QCheckBox *node_in_out_tids_               = nullptr;
+    QCheckBox *node_name_checkbox_            = nullptr;
+    QCheckBox *node_kind_checkbox_            = nullptr;
+    QCheckBox *node_settings_checkbox_        = nullptr;
+    QCheckBox *node_in_out_tids_              = nullptr;
     // Edges
     QCheckBox *edge_indices_checkbox_ = nullptr;
     QCheckBox *edge_desc_checkbox_    = nullptr;
@@ -1638,7 +1637,6 @@ void MainWindow::connect_manager_signals() {
               graph_visualizer_widget_->show_error(error);
             }
           });
-
 }
 
 void MainWindow::connect_import_controls() {
@@ -1743,9 +1741,11 @@ void MainWindow::show_pipeline_graph() {
   display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
   display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
 
-  auto request = [manager = pipeline_manager_]() { manager->request_compiled_graph_visualization(); };
-  HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, std::move(request),
-                                             Qt::QueuedConnection));
+  auto request = [manager = pipeline_manager_]() {
+    manager->request_compiled_graph_visualization();
+  };
+  HOLOVIBES_CHECK(
+      QMetaObject::invokeMethod(pipeline_manager_, std::move(request), Qt::QueuedConnection));
 }
 
 void MainWindow::open_dot_file() {

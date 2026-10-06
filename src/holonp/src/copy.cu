@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/copy.hh"
+#include "utils/tensor_common.hh"
 
 #include <cstddef>
 #include <cstdint>
@@ -30,11 +31,6 @@ inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("Copy: " + msg);
   }
-}
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
 }
 
 __global__ void copy_kernel(const std::byte *__restrict__ src, std::byte *__restrict__ dst,
@@ -166,7 +162,7 @@ CopyFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   }
 
   const auto &idesc = input_descs[0];
-  if (same_desc(idesc, old_copy->idesc())) {
+  if (utils::same_desc(idesc, old_copy->idesc())) {
     old_copy->update_stream(ctx.stream);
     return old_task;
   }

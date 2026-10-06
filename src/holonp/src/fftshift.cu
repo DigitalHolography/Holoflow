@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/fftshift.hh"
+#include "utils/tensor_common.hh"
 
 #include <algorithm>
 #include <numeric>
@@ -23,7 +24,9 @@
 
 namespace holonp {
 
-void to_json(nlohmann::json &j, const FFTShiftSettings &s) { j = nlohmann::json{{"axes", s.axes}}; }
+void to_json(nlohmann::json &j, const FFTShiftSettings &s) {
+  j = nlohmann::json{{"axes", s.axes}, {"inverse", s.inverse}};
+}
 
 void from_json(const nlohmann::json &j, FFTShiftSettings &s) {
   if (j.contains("axes") && !j.at("axes").is_null()) {
@@ -31,6 +34,7 @@ void from_json(const nlohmann::json &j, FFTShiftSettings &s) {
   } else {
     s.axes.clear();
   }
+  s.inverse = j.value("inverse", false);
 }
 
 namespace {
@@ -44,67 +48,6 @@ inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("FFTShift: " + msg);
   }
-}
-
-bool is_c_contiguous(const holoflow::core::TDesc &desc) {
-  if (desc.shape.size() != desc.strides.size()) {
-    return false;
-  }
-
-  size_t expected = holoflow::core::size_of(desc.dtype);
-  for (size_t i = desc.shape.size(); i-- > 0;) {
-    if (desc.strides[i] != expected) {
-      return false;
-    }
-    expected *= desc.shape[i];
-  }
-  return true;
-}
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
-}
-
-inline size_t product_shape(std::span<const size_t> shape) {
-  if (shape.empty()) {
-    return 0;
-  }
-  return std::accumulate(shape.begin(), shape.end(), size_t{1}, std::multiplies<>{});
-}
-
-inline std::vector<int> normalize_axes(const std::vector<int> &axes, int ndim) {
-  if (axes.empty()) {
-    std::vector<int> out(ndim);
-    std::iota(out.begin(), out.end(), 0);
-    return out;
-  }
-
-  std::vector<int> out;
-  out.reserve(axes.size());
-  for (int a : axes) {
-    if (a < 0) {
-      a += ndim;
-    }
-    check(a >= 0 && a < ndim, "axis out of range");
-    out.push_back(a);
-  }
-
-  std::ranges::sort(out);
-  auto dup = std::adjacent_find(out.begin(), out.end());
-  check(dup == out.end(), "axes must be unique");
-  return out;
-}
-
-inline std::vector<std::int64_t> make_contig_strides(std::span<const size_t> shape) {
-  const int                 ndim = static_cast<int>(shape.size());
-  std::vector<std::int64_t> strides(ndim, 1);
-  std::int64_t              acc = 1;
-  for (int i = ndim - 1; i >= 0; --i) {
-    strides[i] = acc;
-    acc *= static_cast<std::int64_t>(shape[static_cast<size_t>(i)]);
-  }
-  return strides;
 }
 
 __global__ void fftshift_nd_contig_kernel_u8(const std::uint8_t *__restrict__ in,
@@ -205,16 +148,16 @@ FFTShiftFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   const auto &idesc = input_descs[0];
 
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "only Device tensors are supported");
-  check(is_c_contiguous(idesc), "input must be C-contiguous");
+  check(utils::is_c_contiguous(idesc), "input must be C-contiguous");
 
   const int ndim = static_cast<int>(idesc.shape.size());
   check(ndim > 0, "input ndim must be > 0");
   check(ndim <= kMaxNDim, "input ndim too large");
 
   (void)size_of(idesc.dtype);
-  (void)normalize_axes(settings.axes, ndim);
+  (void)utils::normalize_axes(settings.axes, ndim);
 
-  const auto total = product_shape(idesc.shape);
+  const auto total = utils::product_shape(idesc.shape);
   check(total > 0, "input tensor has zero elements");
 
   return holoflow::core::InferResult{
@@ -236,16 +179,16 @@ FFTShiftFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   const auto &idesc = input_descs[0];
   const int   ndim  = static_cast<int>(idesc.shape.size());
-  const auto  total = product_shape(idesc.shape);
+  const auto  total = utils::product_shape(idesc.shape);
 
-  const auto axes = normalize_axes(settings.axes, ndim);
+  const auto axes = utils::normalize_axes(settings.axes, ndim);
 
   auto h_shape = curaii::make_unique_host_ptr<std::int64_t>(ndim);
   for (int i = 0; i < ndim; ++i) {
     h_shape.get()[i] = static_cast<std::int64_t>(idesc.shape[static_cast<size_t>(i)]);
   }
 
-  const auto strides_vec = make_contig_strides(idesc.shape);
+  const auto strides_vec = utils::compact_strides_i64(idesc.shape);
   auto       h_strides   = curaii::make_unique_host_ptr<std::int64_t>(ndim);
   for (int i = 0; i < ndim; ++i) {
     h_strides.get()[i] = strides_vec[static_cast<size_t>(i)];
@@ -256,7 +199,8 @@ FFTShiftFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     h_shifts.get()[i] = 0;
   }
   for (int a : axes) {
-    h_shifts.get()[a] = h_shape.get()[a] / 2;
+    const auto half   = h_shape.get()[a] / 2;
+    h_shifts.get()[a] = settings.inverse ? half : h_shape.get()[a] - half;
   }
 
   auto d_shape   = curaii::make_unique_device_ptr<std::int64_t>(ndim);
@@ -289,7 +233,8 @@ FFTShiftFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     const auto &new_idesc    = input_descs[0];
     const auto &old_idesc    = old_fftshift->idesc();
 
-    bool can_reuse = (new_settings == old_fftshift->settings()) && same_desc(new_idesc, old_idesc);
+    bool can_reuse =
+        (new_settings == old_fftshift->settings()) && utils::same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_fftshift->update_stream(ctx.stream);
@@ -299,6 +244,36 @@ FFTShiftFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 
   // Fallback: Structural change detected or invalid old task.
   return create(input_descs, jsettings, ctx);
+}
+
+namespace {
+nlohmann::json inverse_settings(const nlohmann::json &settings) {
+  auto result       = settings;
+  result["inverse"] = true;
+  return result;
+}
+} // namespace
+
+holoflow::core::InferResult
+IFFTShiftFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
+                        const nlohmann::json                  &jsettings) const {
+  return FFTShiftFactory{}.infer(input_descs, inverse_settings(jsettings));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+IFFTShiftFactory::create(std::span<const holoflow::core::TDesc> input_descs,
+                         const nlohmann::json                  &jsettings,
+                         const holoflow::core::SyncCreateCtx   &ctx) const {
+  return FFTShiftFactory{}.create(input_descs, inverse_settings(jsettings), ctx);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+IFFTShiftFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                         std::span<const holoflow::core::TDesc>     input_descs,
+                         const nlohmann::json                      &jsettings,
+                         const holoflow::core::SyncCreateCtx       &ctx) const {
+  return FFTShiftFactory{}.update(std::move(old_task), input_descs, inverse_settings(jsettings),
+                                  ctx);
 }
 
 } // namespace holonp
