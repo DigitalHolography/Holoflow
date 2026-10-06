@@ -1814,6 +1814,7 @@ void MainWindow::show_fft_frequency_tool() {
 
 void MainWindow::show_preferences() {
   PreferencesDialog dialog(this, [this](bool enable_camera_buffer_record){
+    logger()->debug("[MainWindow::show_preferences] enable_camera_buffer_record: {}", enable_camera_buffer_record);
     enable_camera_buffer_record_ = enable_camera_buffer_record;
   }, *pipeline_manager_);
   dialog.exec();

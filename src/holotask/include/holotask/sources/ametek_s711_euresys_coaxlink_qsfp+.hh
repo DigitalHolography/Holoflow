@@ -31,6 +31,9 @@ struct RecordSettings
   nlohmann::json pipeline_config;
 };
 
+void to_json(nlohmann::json &j, const RecordSettings &s);
+void from_json(const nlohmann::json &j, RecordSettings &s);
+
 struct AmetekS711EuresysCoaxlinkQSFPSettings {
   std::string cfg_path; ///< Path to JSON configuration file for Phantom S711.
 

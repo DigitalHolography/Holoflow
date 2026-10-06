@@ -222,11 +222,14 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
   }
 
   if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
+    holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings settings{.cfg_path = cam_path};
     if (s_.recording_method == RecordingMethod::RAW && s_.enable_camera_buffer_record) {
-      return ametek_s711_euresys_coaxlink_qsfp_plus({cam_path, holotask::sources::RecordSettings {s_.recording_path.string(), s_.recording_count, settings_to_old_json(s_)}});
+      settings.record_settings = holotask::sources::RecordSettings{
+          .file_path       = s_.recording_path.string(),
+          .recording_count = s_.recording_count,
+          .pipeline_config = settings_to_old_json(s_)};
     }
-    else
-      return ametek_s711_euresys_coaxlink_qsfp_plus({cam_path, std::nullopt});
+    return ametek_s711_euresys_coaxlink_qsfp_plus(settings);
   }
 
   HOLOVIBES_UNREACHABLE();

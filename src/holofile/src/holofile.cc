@@ -16,6 +16,7 @@
 
 #include <bit>
 #include <cstdio>
+#include <stdexcept>
 #include <system_error>
 #include <utility>
 
@@ -303,9 +304,7 @@ void Writer::write_frames(const uint8_t *data, std::size_t frame_count) {
     throw std::system_error(ec, "Failed to write frames:");
   }
   if (frames_written != frame_count) {
-    logger()->critical("Unrecoverable error: fwrite() failed to write the "
-                       "requested number of frames.");
-    std::exit(EXIT_FAILURE);
+    throw std::runtime_error("fwrite() failed to write the requested number of frames");
   }
 }
 
