@@ -297,6 +297,7 @@ void Writer::write_frames(const uint8_t *data, std::size_t frame_count) {
   size_t bytes_per_frame  = bits_per_frame / 8;
 
   size_t frames_written = fwrite(data, bytes_per_frame, frame_count, impl_->file.get());
+  //logger()->debug("[Writer::write_frames] frames_written: {}, bytes_per_frame: {}", frames_written, bytes_per_frame);
   impl_->frame_index += frames_written;
 
   if (ferror(impl_->file.get())) {

@@ -1423,6 +1423,7 @@ public:
     if (buffer_part_count == 0)
       throw std::invalid_argument("Cannot record with zero buffer parts");
     queue_.subscribe_b();
+    logger()->info("Create recorder with width: {}, height: {}, bits_per_pixel: {}, frame_count: {}", g.frame_width, g.frame_height, g.bits_per_pixel, frame_count);
   }
 
   ~Recorder() {
@@ -1431,6 +1432,7 @@ public:
   }
 
   size_t execute(std::stop_token cancelled) {
+    batch_ = 0;
     std::atomic<bool> stop_requested{false};
     std::stop_callback on_stop(cancelled, [&] {
       stop_requested.store(true, std::memory_order_release);
@@ -1450,6 +1452,8 @@ public:
       writer_.write_frames(reinterpret_cast<const uint8_t *>(frame->base), to_write);
       queue_.release_b();
       current_frame_ += to_write;
+      ++batch_;
+      //logger()->debug("[Recorder::execute] batch: {}, current_frame: {}, to_write: {}", batch_, current_frame_, to_write);
     }
 
     if (!cancelled.stop_requested())
@@ -1460,6 +1464,7 @@ public:
 private:
   holofile::Writer   writer_;
   size_t             frame_to_record_;
+  size_t             batch_;
   size_t             buffer_part_count_;
   size_t             current_frame_;
   CameraBufferQueue &queue_;
@@ -1629,7 +1634,7 @@ public:
         event_ctx.event_writer = &event_writer;
         recorder_worker(record_settings,
                         {static_cast<uint8_t>(runtime_cfg_.bytes_per_pixel * 8),
-                         runtime_cfg_.width, runtime_cfg_.camera_height()},
+                         runtime_cfg_.width, runtime_cfg_.final_height},
                         runtime_cfg_.buffer_part_count, buffer_queue_, cancelled, recording_,
                         [this, &event_ctx](size_t written) {
                           emit_finished_event(event_ctx, written);

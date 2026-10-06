@@ -184,7 +184,7 @@ private:
 
   // preferences / settings
   // TODO move or add struct
-  bool enable_camera_buffer_record_ = false;
+  bool enable_camera_buffer_record_ = true;
 };
 
 } // namespace holovibes::ui
