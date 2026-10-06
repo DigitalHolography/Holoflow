@@ -70,6 +70,7 @@ DEFINE_UNARY_SYNC_NODE (reshape,                                "reshape",      
 DEFINE_UNARY_SYNC_NODE (convolution,                            "convolution",                         "Convolution",                     holotask::syncs::ConvolutionSettings)
 DEFINE_UNARY_SYNC_NODE (pct_clip,                               "pct_clip",                            "PctClip",                         holotask::syncs::PctClipSettings)
 DEFINE_UNARY_SYNC_NODE (registration,                           "registration",                        "Registration",                    holotask::syncs::RegistrationSettings)
+DEFINE_UNARY_SYNC_NODE (resize,                                  "resize",                              "Resize",                           holotask::syncs::ResizeSettings)
 DEFINE_UNARY_SYNC_NODE (wrap2pi,                                "wrap2pi",                             "Wrap2Pi",                         holotask::syncs::Wrap2PiSettings)
 DEFINE_UNARY_SYNC_NODE (zernike_from_slopes,                    "zernike_from_slopes",                 "ZernikeFromSlopes",               holotask::syncs::ZernikeFromSlopesSettings)
 DEFINE_UNARY_SYNC_NODE (zernike_phase,                          "zernike_phase",                       "ZernikePhase",                    holotask::syncs::ZernikePhaseSettings)
@@ -210,6 +211,46 @@ void GraphBuilderTasks::holofile_write(const TDesc &X, holotask::sinks::Holofile
   auto      &factory     = reg_.get_sync(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});
   (void)factory.infer(core_inputs, nlohmann::json(s));
+}
+
+void GraphBuilderTasks::npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s) {
+  constexpr auto node_name = "record";
+  constexpr auto node_kind = "NpyfileWriter";
+  HOLOVIBES_CHECK(X.producer.has_value());
+  HOLOVIBES_CHECK(reg_.is_sync_registered(node_kind));
+
+  holoflow::core::NodeSpec node_spec{
+      .name     = node_name,
+      .kind     = node_kind,
+      .settings = nlohmann::json(s),
+      .debug    = false,
+  };
+  auto v = boost::add_vertex(node_spec, g_);
+  boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, 0}, g_);
+
+  const auto &factory = reg_.get_sync(node_kind);
+  const auto  inputs  = to_core_descs(std::span{&X, 1});
+  (void)factory.infer(inputs, nlohmann::json(s));
+}
+
+void GraphBuilderTasks::ffmpeg_write(const TDesc &X, holotask::sinks::FfmpegSettings s) {
+  constexpr auto node_name = "record";
+  constexpr auto node_kind = "FfmpegWriter";
+  HOLOVIBES_CHECK(X.producer.has_value());
+  HOLOVIBES_CHECK(reg_.is_sync_registered(node_kind));
+
+  holoflow::core::NodeSpec node_spec{
+      .name     = node_name,
+      .kind     = node_kind,
+      .settings = nlohmann::json(s),
+      .debug    = false,
+  };
+  auto v = boost::add_vertex(node_spec, g_);
+  boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, 0}, g_);
+
+  const auto &factory = reg_.get_sync(node_kind);
+  const auto  inputs  = to_core_descs(std::span{&X, 1});
+  (void)factory.infer(inputs, nlohmann::json(s));
 }
 
 } // namespace holovibes::pipeline

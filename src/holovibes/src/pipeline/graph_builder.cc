@@ -226,10 +226,17 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
 }
 
 void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
-  auto path          = s_.recording_path.string();
-  auto count         = s_.recording_count;
-  auto settings_json = settings_to_old_json(s_);
-  holofile_write(H, {path, count, settings_json, true});
+  auto path  = s_.recording_path.string();
+  auto count = s_.recording_count;
+  if (s_.recording_format == "npy") {
+    npyfile_write(H, {path, count, true});
+  } else if (s_.recording_format == "holo") {
+    holofile_write(H, {path, count, settings_to_old_json(s_), true});
+  } else {
+    auto video = memcpy(H, {holotask::syncs::MemcpySettings::Target::Host});
+    ffmpeg_write(video, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
+                         s_.recording_codec, true, s_.recording_resize_algorithm});
+  }
 }
 
 bool GraphBuilder::Impl::build_raw_view(const TDesc &H) {
@@ -772,11 +779,18 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     auto result_rec = memcpy(result, {Host});
     result_rec      = batched_queue(result_rec, {s_.cpu_out_size, 1, 1});
 
-    auto path              = s_.recording_path.string();
-    auto count             = s_.recording_count;
-    auto settings_json     = settings_to_old_json(s_);
-    auto holofile_settings = HolofileSettings{path, count, settings_json, true};
-    holofile_write(result_rec, holofile_settings);
+    auto path  = s_.recording_path.string();
+    auto count = s_.recording_count;
+    if (s_.recording_format == "npy") {
+      npyfile_write(result_rec, {path, count, true});
+    } else if (s_.recording_format == "holo") {
+      holofile_write(result_rec, {path, count, settings_to_old_json(s_), true});
+    } else {
+      const bool resize_to_square = s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;
+      ffmpeg_write(result_rec,
+                   {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
+                    s_.recording_codec, resize_to_square, s_.recording_resize_algorithm});
+    }
   }
 }
 
