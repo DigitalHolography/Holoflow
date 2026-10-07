@@ -7,6 +7,7 @@
 #include <chrono>
 #include <fstream>
 #include <functional>
+#include <iostream>
 #include <limits>
 #include <memory>
 #include <thread>
@@ -190,6 +191,8 @@ private:
     std::vector<std::byte *> result;
     for (size_t i = 0; i < count_; ++i)
       result.push_back(reinterpret_cast<std::byte *>(buffers_[port * (count_ + 1) + i].get()));
+    if (settings_.value("reverse_enumeration", false))
+      std::reverse(result.begin(), result.end());
     if (bad_)
       result[0] = nullptr;
     return result;
@@ -604,10 +607,14 @@ TEST_F(SectionCudaGraphTest, RecompilationChangesParametersAndRebuildsGraphs) {
 TEST_F(SectionCudaGraphTest, CompatibleRecompilationRetainsExecutableHandles) {
   auto out = compile();
   run(*out);
-  const auto handles    = out->resources.section_cuda_graphs.begin()->second->executables;
-  const int  recordings = state->recordings;
-  out                   = compile(128, std::move(out));
-  auto &graphs          = *out->resources.section_cuda_graphs.begin()->second;
+  const auto  handles         = out->resources.section_cuda_graphs.begin()->second->executables;
+  const int   recordings      = state->recordings;
+  const auto &original        = *out->resources.section_cuda_graphs.begin()->second;
+  const auto *tuple_node      = &*original.tuple_indices.begin();
+  const auto *executable_data = original.executables.data();
+  const auto *node_count_data = original.executable_node_counts.data();
+  out                         = compile(128, std::move(out));
+  auto &graphs                = *out->resources.section_cuda_graphs.begin()->second;
   EXPECT_EQ(graphs.executables, handles);
   EXPECT_TRUE(graphs.snapshot()["carried_from_previous_compilation"]);
   EXPECT_EQ(graphs.snapshot()["compilation_generation"], 2);
@@ -616,9 +623,84 @@ TEST_F(SectionCudaGraphTest, CompatibleRecompilationRetainsExecutableHandles) {
   run(*out);
   EXPECT_EQ(graphs.snapshot()["created"], 0);
   EXPECT_EQ(graphs.snapshot()["reused"], handles.size());
+  EXPECT_EQ(graphs.snapshot()["discarded"], 0);
+  EXPECT_EQ(&*graphs.tuple_indices.begin(), tuple_node);
+  EXPECT_EQ(graphs.executables.data(), executable_data);
+  EXPECT_EQ(graphs.executable_node_counts.data(), node_count_data);
   EXPECT_EQ(state->recordings, recordings);
   for (size_t i = 0; i < state->results.size(); ++i)
     EXPECT_FLOAT_EQ(state->results[i], 2.F * i + 1);
+}
+
+TEST_F(SectionCudaGraphTest, ReorderedPointerEnumerationRetainsCacheAndRefreshesMetadata) {
+  auto out = compile();
+  run(*out);
+  auto       &graphs     = *out->resources.section_cuda_graphs.begin()->second;
+  const auto  handles    = graphs.executables;
+  const auto  pointers   = graphs.pointers;
+  const auto *tuple_node = &*graphs.tuple_indices.begin();
+  const int   recordings = state->recordings;
+  spec[source].settings["reverse_enumeration"] = true;
+  spec[sink].settings["reverse_enumeration"]   = true;
+  out                                          = compile(128, std::move(out));
+  state->frames                                = 26;
+  run(*out);
+  EXPECT_EQ(graphs.executables, handles);
+  EXPECT_EQ(&*graphs.tuple_indices.begin(), tuple_node);
+  EXPECT_EQ(graphs.snapshot()["reused"], handles.size());
+  EXPECT_EQ(graphs.snapshot()["created"], 0);
+  EXPECT_EQ(graphs.snapshot()["discarded"], 0);
+  EXPECT_EQ(state->recordings, recordings);
+  ASSERT_EQ(graphs.pointers.size(), pointers.size());
+  for (size_t i = 0; i < pointers.size(); ++i) {
+    auto expected = pointers[i];
+    std::reverse(expected.begin(), expected.end());
+    EXPECT_EQ(graphs.pointers[i], expected);
+  }
+  for (size_t i = 0; i < state->results.size(); ++i)
+    EXPECT_FLOAT_EQ(state->results[i], 2.F * i + 1);
+}
+
+TEST_F(SectionCudaGraphTest, EqualCardinalityDifferentTuplesReplaceCache) {
+  spec[source].settings = {{"count", 2}, {"ordered", true}};
+  spec[sink].settings   = {{"count", 2}, {"ordered", true}};
+  auto out              = compile(2);
+  run(*out);
+  const auto old_tuples        = out->resources.section_cuda_graphs.begin()->second->tuple_indices;
+  const int  recordings        = state->recordings;
+  spec[sink].settings["phase"] = 1;
+  out                          = compile(2, std::move(out));
+  state->frames                = 26;
+  run(*out);
+  const auto &graphs = *out->resources.section_cuda_graphs.begin()->second;
+  EXPECT_EQ(graphs.executables.size(), old_tuples.size());
+  EXPECT_EQ(graphs.snapshot()["reused"], 0);
+  EXPECT_EQ(graphs.snapshot()["created"], 2);
+  EXPECT_EQ(graphs.snapshot()["discarded"], 2);
+  EXPECT_EQ(state->recordings, recordings + 4);
+  for (const auto &[tuple, index] : old_tuples)
+    EXPECT_FALSE(graphs.tuple_indices.contains(tuple));
+  for (size_t i = 0; i < state->results.size(); ++i)
+    EXPECT_FLOAT_EQ(state->results[i], 2.F * i + 1);
+}
+
+TEST_F(SectionCudaGraphTest, MissingExecutableRejectsWholeCacheRetention) {
+  auto out = compile();
+  run(*out);
+  auto        &graphs     = *out->resources.section_cuda_graphs.begin()->second;
+  const size_t count      = graphs.executables.size();
+  const int    recordings = state->recordings;
+  CUDA_CHECK(cudaGraphExecDestroy(graphs.executables.front()));
+  graphs.executables.front() = nullptr;
+  out                        = compile(128, std::move(out));
+  state->frames              = 26;
+  run(*out);
+  EXPECT_EQ(graphs.snapshot()["reused"], count - 1);
+  EXPECT_EQ(graphs.snapshot()["created"], 1);
+  EXPECT_EQ(graphs.snapshot()["discarded"], 0);
+  EXPECT_EQ(state->recordings, recordings + 2);
+  for (auto executable : graphs.executables)
+    EXPECT_NE(executable, nullptr);
 }
 
 TEST_F(SectionCudaGraphTest, DefaultPolicyInvalidatesBeforeTaskDestruction) {
@@ -1264,8 +1346,11 @@ TEST_F(SectionCudaGraphTest, StopRequestedDuringPreparationIsNotLost) {
 TEST_F(SectionCudaGraphTest, CapturesStartupVariantConstructionAndReuse) {
   if (!tracing::Session::available())
     GTEST_SKIP() << "SDK disabled";
-  auto       out = compile(6);
-  const auto directory =
+  spec[source].settings["count"] = 40;
+  spec[sink].settings["count"]   = 33;
+  constexpr size_t variants      = 1320;
+  auto             out           = compile(variants);
+  const auto       directory =
       std::filesystem::temp_directory_path() /
       ("holoflow-startup-detail-" +
        std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
@@ -1277,13 +1362,19 @@ TEST_F(SectionCudaGraphTest, CapturesStartupVariantConstructionAndReuse) {
       scheduler.start();
       scheduler.request_stop();
       scheduler.wait();
+      const auto &graphs = *out->resources.section_cuda_graphs.begin()->second;
+      std::cout << "Graph preparation: details=" << details << " start=" << start
+                << " construction_ms=" << graphs.construction_ms
+                << " reused=" << graphs.snapshot()["reused"]
+                << " created=" << graphs.snapshot()["created"] << '\n';
     }
     const auto report = out->resources.section_cuda_graphs.begin()->second->snapshot();
-    EXPECT_EQ(report["reused"], 6);
+    EXPECT_EQ(report["reused"], variants);
     EXPECT_EQ(report["created"], 0);
+    EXPECT_EQ(report["discarded"], 0);
     const auto path = directory / (details ? "detailed.perfetto-trace" : "filtered.perfetto-trace");
     session->stop_and_save(path);
     EXPECT_GT(std::filesystem::file_size(path), 0U);
   }
-  EXPECT_EQ(state->recordings, 12);
+  EXPECT_EQ(state->recordings, 2 * variants);
 }

@@ -94,6 +94,7 @@ struct SectionPlan {
   std::vector<IndexTuple>    tuples;
   nlohmann::json             report;
   std::string                fatal;
+  bool                       cache_was_enabled = false;
 
   void invalid(const std::string &message) {
     block(message);
@@ -221,6 +222,8 @@ void prepare_sections(GraphContext &context, const std::vector<Section> &section
 void prepare_section(GraphContext &context, const Section &section, SectionPlan &plan,
                      SectionCudaGraphs &graphs);
 
+bool cached_tuples_match(const SectionPlan &plan, const SectionCudaGraphs &graphs);
+
 void build_graph_variants(GraphContext &context, const Section &section, SectionPlan &plan,
                           SectionCudaGraphs &current, SectionCudaGraphs &replacement,
                           VariantRefreshStats &stats);
@@ -271,6 +274,8 @@ void update_preparation_report(nlohmann::json &report, const SectionCudaGraphs &
 
 void log_preparation_summary(const Section &section, const SectionPlan &plan,
                              const SectionCudaGraphs &graphs);
+
+void log_pass_summary(const std::vector<SectionPlan> &plans, bool instantiate, double elapsed_ms);
 
 void publish_diagnostics(SectionCudaGraphs &graphs, const nlohmann::json &report);
 
@@ -481,6 +486,7 @@ InspectionBatch inspect_sections(GraphContext &context, const std::vector<Sectio
     plan.report["inspection_ms"]                  = elapsed_ms;
     plan.report["inspection_reused"]              = false;
 
+    plan.cache_was_enabled = graphs.enabled;
     graphs.enabled         = false;
     graphs.fallback_reason = plan.report["fallback_reason"].get<std::string>();
     publish_diagnostics(graphs, plan.report);
@@ -674,10 +680,13 @@ StorageDomain inspect_storage_domain(GraphContext &context, const Section &secti
     }
   }
 
-  logger()->info("[CUDA graphs] {} storage {} owner {}: declared {}, order {}", section.name,
-                 storage_id, domain_report["owner"].get<std::string>(),
-                 domain_report["declared_count"].dump(),
-                 domain_report["sequence"].get<std::string>());
+  if (logger()->should_log(spdlog::level::debug)) {
+    tracing::ScopedTrace trace("Log CUDA Graph Diagnostics", "detail");
+    logger()->debug("[CUDA graphs] {} storage {} owner {}: declared {}, order {}", section.name,
+                    storage_id, domain_report["owner"].get<std::string>(),
+                    domain_report["declared_count"].dump(),
+                    domain_report["sequence"].get<std::string>());
+  }
 
   plan.report["domains"].push_back(std::move(domain_report));
   return domain;
@@ -984,7 +993,9 @@ size_t pointer_index_at(const core::PointerSequence &sequence, size_t step) {
 // Prepare inspected sections and keep each diagnostics snapshot synchronized with its latest state.
 void prepare_sections(GraphContext &context, const std::vector<Section> &sections,
                       std::vector<SectionPlan> &plans, bool instantiate) {
-  tracing::ScopedTrace trace("Prepare CUDA Graph Sections", "detail");
+  tracing::ScopedTrace trace(
+      instantiate ? "Prepare CUDA Graph Sections" : "Publish CUDA Graph Inspection", "detail");
+  const auto started = std::chrono::steady_clock::now();
   for (size_t i = 0; i < sections.size(); ++i) {
     const auto &section = sections[i];
     auto       &plan    = plans[i];
@@ -1005,6 +1016,10 @@ void prepare_sections(GraphContext &context, const std::vector<Section> &section
     publish_diagnostics(graphs, plan.report);
     log_preparation_summary(section, plan, graphs);
   }
+  log_pass_summary(
+      plans, instantiate,
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
+          .count());
 }
 
 // Build or refresh all executable graph variants for one already-inspected section.
@@ -1022,11 +1037,22 @@ void prepare_section(GraphContext &context, const Section &section, SectionPlan 
 
   VariantRefreshStats stats;
   SectionCudaGraphs   replacement;
-  initialize_graph_cache_domains(plan, replacement);
+  bool                retained = false;
 
   try {
-    if (plan.eligible())
-      build_graph_variants(context, section, plan, graphs, replacement, stats);
+    if (plan.eligible() && cached_tuples_match(plan, graphs)) {
+      tracing::ScopedTrace reuse("Retain Cached CUDA Graph Section", "detail");
+      graphs.pointers.resize(plan.domains.size());
+      for (size_t i = 0; i < plan.domains.size(); ++i)
+        graphs.pointers[i] = plan.domains[i].pointers;
+      stats.reused   = graphs.executables.size();
+      graphs.enabled = true;
+      retained       = true;
+    } else {
+      initialize_graph_cache_domains(plan, replacement);
+      if (plan.eligible())
+        build_graph_variants(context, section, plan, graphs, replacement, stats);
+    }
   } catch (const std::exception &error) {
     plan.block(error.what());
     report["status"]          = "fallback";
@@ -1040,10 +1066,12 @@ void prepare_section(GraphContext &context, const Section &section, SectionPlan 
     recover_section_stream(section, report);
   }
 
-  if (!replacement.enabled)
-    stats.discarded = previous_size + stats.created;
+  if (!retained) {
+    if (!replacement.enabled)
+      stats.discarded = previous_size + stats.created;
 
-  install_graph_cache(graphs, replacement);
+    install_graph_cache(graphs, replacement);
+  }
 
   graphs.variant_count   = plan.tuples.size();
   graphs.fallback_reason = report["fallback_reason"].get<std::string>();
@@ -1051,6 +1079,37 @@ void prepare_section(GraphContext &context, const Section &section, SectionPlan 
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
 
   update_preparation_report(report, graphs, stats);
+}
+
+// Unique planned index tuples and unique addresses within every domain make the resolved tuples
+// unique too. Equal cardinality plus complete membership therefore proves set equality, regardless
+// of pointer-enumeration order. Validate without modifying the live cache or allocating per tuple.
+bool cached_tuples_match(const SectionPlan &plan, const SectionCudaGraphs &graphs) {
+  tracing::ScopedTrace trace("Validate Cached CUDA Graph Tuples", "detail");
+  // Inspection disables launches while publishing a pending plan. Only a cache that was enabled
+  // before that inspection is eligible for retention; runtime fallback must take the normal path.
+  if (!plan.cache_was_enabled || graphs.storage_ids.size() != plan.domains.size() ||
+      graphs.tuple_indices.size() != plan.tuples.size() ||
+      graphs.executables.size() != plan.tuples.size() ||
+      graphs.executable_node_counts.size() != plan.tuples.size())
+    return false;
+
+  for (size_t i = 0; i < plan.domains.size(); ++i) {
+    if (graphs.storage_ids[i] != plan.domains[i].storage_id)
+      return false;
+  }
+
+  PointerTuple tuple(plan.domains.size());
+  for (const auto &indices : plan.tuples) {
+    for (size_t i = 0; i < indices.size(); ++i)
+      tuple[i] = reinterpret_cast<uintptr_t>(plan.domains[i].pointers.at(indices[i]));
+    const auto found = graphs.tuple_indices.find(tuple);
+    if (found == graphs.tuple_indices.end() || found->second >= graphs.executables.size() ||
+        !graphs.executables[found->second])
+      return false;
+  }
+
+  return true;
 }
 
 // ---- Executable variants ------------------------------------------------------------------------
@@ -1068,13 +1127,10 @@ void build_graph_variants(GraphContext &context, const Section &section, Section
   replacement.executable_node_counts.reserve(desired.size());
 
   for (const auto &tuple : desired) {
-    tracing::ScopedTrace variant_trace(
-        std::format("Prepare CUDA Graph Variant {}", replacement.executables.size()), "detail");
     replacement.tuple_indices.emplace(tuple, replacement.executables.size());
 
     const auto old = current.tuple_indices.find(tuple);
     if (old != current.tuple_indices.end() && current.executables[old->second]) {
-      tracing::ScopedTrace reuse("Reuse Cached CUDA Graph Variant", "detail");
       replacement.executables.push_back(current.executables[old->second]);
       current.executables[old->second] = nullptr;
       replacement.executable_node_counts.push_back(current.executable_node_counts[old->second]);
@@ -1083,6 +1139,8 @@ void build_graph_variants(GraphContext &context, const Section &section, Section
       continue;
     }
 
+    tracing::ScopedTrace variant_trace(
+        std::format("Prepare CUDA Graph Variant {}", replacement.executables.size()), "detail");
     plan.report["variant_index"] = replacement.executables.size();
     record_variant(context, section, replacement, tuple, plan.report);
     ++stats.created;
@@ -1120,10 +1178,10 @@ std::vector<PointerTuple> resolve_pointer_tuples(const SectionPlan &plan) {
 size_t discard_obsolete_variants(SectionCudaGraphs &current, const SectionCudaGraphs &replacement,
                                  const std::set<PointerTuple> &desired) {
   tracing::ScopedTrace trace("Discard Obsolete CUDA Graph Variants", "detail");
-  size_t               discarded = 0;
+  size_t               discarded    = 0;
+  const bool           same_domains = current.storage_ids == replacement.storage_ids;
 
   for (const auto &[tuple, index] : current.tuple_indices) {
-    const bool same_domains = current.storage_ids == replacement.storage_ids;
     if (same_domains && desired.contains(tuple))
       continue;
 
@@ -1386,6 +1444,7 @@ nlohmann::json make_section_report(const Section &section, size_t graph_limit) {
 
 nlohmann::json make_domain_report(const ExecResouces &resources, size_t storage_id,
                                   std::optional<size_t> declared_count) {
+  tracing::ScopedTrace trace("Build CUDA Graph Domain Diagnostics", "detail");
   auto report = nlohmann::json{{"storage_id", storage_id},
                                {"tensor_ids", nlohmann::json::array()},
                                {"declared_count", declared_count ? nlohmann::json(*declared_count)
@@ -1460,14 +1519,38 @@ void update_preparation_report(nlohmann::json &report, const SectionCudaGraphs &
   report["construction_ms"] = graphs.construction_ms;
 }
 
-// Log the concise per-section preparation summary used during runtime/compiler diagnostics.
+// Keep per-section details available without formatting JSON when debug logging is disabled.
 void log_preparation_summary(const Section &section, const SectionPlan &plan,
                              const SectionCudaGraphs &graphs) {
-  logger()->info("[CUDA graphs] {}: raw {}, pruned {}, built {}, reused {}, {} ms; {}; blockers {}",
-                 section.name, plan.report["raw_cartesian_count"].dump(),
-                 plan.report["pruned_count"].dump(), graphs.executables.size(),
-                 plan.report["reused"].dump(), plan.report["preparation_ms"].dump(),
-                 plan.report["status"].get<std::string>(), plan.report["blockers"].dump());
+  if (!logger()->should_log(spdlog::level::debug))
+    return;
+  tracing::ScopedTrace trace("Log CUDA Graph Diagnostics", "detail");
+  logger()->debug(
+      "[CUDA graphs] {}: raw {}, pruned {}, built {}, reused {}, {} ms; {}; blockers {}",
+      section.name, plan.report["raw_cartesian_count"].dump(), plan.report["pruned_count"].dump(),
+      graphs.executables.size(), plan.report["reused"].dump(), plan.report["preparation_ms"].dump(),
+      plan.report["status"].get<std::string>(), plan.report["blockers"].dump());
+}
+
+// One aggregate info message replaces synchronous console writes for every storage and section.
+void log_pass_summary(const std::vector<SectionPlan> &plans, bool instantiate, double elapsed_ms) {
+  if (!logger()->should_log(spdlog::level::info))
+    return;
+  tracing::ScopedTrace trace("Log CUDA Graph Diagnostics", "detail");
+  size_t               eligible = 0, ready = 0, reused = 0, created = 0, discarded = 0;
+  for (const auto &plan : plans) {
+    eligible += plan.eligible();
+    ready += plan.report["enabled"].get<bool>();
+    reused += plan.report["reused"].get<size_t>();
+    created += plan.report["created"].get<size_t>();
+    discarded += plan.report["discarded"].get<size_t>();
+  }
+  if (instantiate)
+    logger()->info("[CUDA graphs] preparation: {} sections, {} ready, {} reused, {} created, "
+                   "{} discarded, {} ms",
+                   plans.size(), ready, reused, created, discarded, elapsed_ms);
+  else
+    logger()->info("[CUDA graphs] inspection: {} sections, {} eligible", plans.size(), eligible);
 }
 
 // ---- Publication --------------------------------------------------------------------------------

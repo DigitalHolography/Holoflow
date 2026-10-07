@@ -330,14 +330,22 @@ TEST(CompilerTest, ExplicitSessionCapturesCompilationSchedulerStartupStopAndResu
       count += slice.name == name;
     EXPECT_EQ(count, 2) << name;
   }
-  for (const auto *name :
-       {"Collect CUDA Graph Storage Owners", "Inspect CUDA Graph Sections",
-        "Inspect CUDA Graph Task Eligibility", "Inspect CUDA Graph Storage Domains",
-        "Prepare CUDA Graph Sections", "Install CUDA Graph Cache"}) {
+  for (const auto *name : {"Collect CUDA Graph Storage Owners", "Inspect CUDA Graph Sections",
+                           "Inspect CUDA Graph Task Eligibility",
+                           "Inspect CUDA Graph Storage Domains", "Publish CUDA Graph Inspection",
+                           "Prepare CUDA Graph Sections", "Install CUDA Graph Cache"}) {
     EXPECT_TRUE(std::any_of(trace.slices.begin(), trace.slices.end(), [name](const auto &slice) {
       return slice.name == name && slice.complete;
     })) << name;
   }
+  EXPECT_EQ(std::count_if(
+                trace.slices.begin(), trace.slices.end(),
+                [](const auto &slice) { return slice.name == "Publish CUDA Graph Inspection"; }),
+            1);
+  EXPECT_EQ(
+      std::count_if(trace.slices.begin(), trace.slices.end(),
+                    [](const auto &slice) { return slice.name == "Prepare CUDA Graph Sections"; }),
+      2);
   bool joined = false;
   for (const auto &slice : trace.slices) {
     joined |= slice.name.starts_with("Join Worker ");

@@ -18,6 +18,7 @@ add_executable(holoflow_core_test
     diagnostics_file_writer_test.cc
     event_router_test.cc
     graph_display_test.cc
+    logger_test.cc
     tracing_test.cc
 )
 

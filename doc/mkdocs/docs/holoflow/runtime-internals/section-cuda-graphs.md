@@ -14,10 +14,15 @@ All synchronous tasks must opt in, and their storage must have finite known poin
 Unsupported tasks, unknown domains and oversized products select ordinary execution for the
 entire section. Other sections remain eligible. Task-local graphs remain available in fallback.
 
-Compilation inspects all sections but does not instantiate executables. Every scheduler start,
-including resume, refreshes domains and sequences from paused task state and eagerly prepares all
-eligible sections before creating worker threads. Matching executables are reused across compatible
-compilations and resumes; obsolete variants are discarded before missing ones are created.
+Compilation inspects all sections but does not instantiate executables. The first scheduler start
+consumes that inspection; starts after abort or EOF inspect current task state again. Cooperative
+pause/resume skips preparation entirely. Eligible sections are eagerly prepared before worker
+threads are created. Matching executables are reused across compatible compilations and restarts;
+obsolete variants are discarded before missing ones are created.
+When the ordered storage IDs and entire reachable address-tuple set match an enabled cache, its
+tuple map, executable arrays and handles stay in place. Validation uses one scratch tuple rather
+than allocating a set and rebuilding the cache. Enumeration order can change without preventing
+reuse; pointer-domain metadata is refreshed. Partial matches use the normal replacement path.
 There is no first-use capture or per-launch parameter update. Distinct storage IDs contribute
 dimensions; tensor aliases share a dimension. Compiler-owned storage contributes one pointer.
 Only storage referenced by synchronous tasks contributes, excluding unused async output ports.
@@ -49,8 +54,17 @@ failure stage and recording task, inspection/construction/preparation time, node
 reuse/create/discard counts. `planned` at compilation does not mean executables have been built;
 `ready` is reported only after successful start-time preparation.
 
-Normal logs summarize sections, storage counts, transitions and shutdown counters. Raw addresses
-are debug-only. `Scheduler::section_graph_diagnostics()` returns thread-safe JSON snapshots with
+Normal logs include one aggregate summary per inspection/preparation pass, plus transitions and
+shutdown counters. Individual storage and section reports are guarded debug logs; enumerated
+addresses are trace-only. Full detail remains in JSON diagnostics. Compilation's report-only pass is traced as
+`Publish CUDA Graph Inspection`, separately from `Prepare CUDA Graph Sections` at startup.
+Fully cached sections emit aggregate validation/reuse scopes; per-variant preparation scopes cover
+actual capture and instantiation. Domain-report construction and log emission have separate scopes.
+The Holoflow console logger queues formatted messages for one dedicated worker. Console output and
+warning/error flushing happen there; JSON argument and message formatting remain on the caller.
+Its 8,192-message queue preserves order without dropping messages, waiting only when full. The
+worker persists across updates and drains queued messages during orderly process shutdown.
+`Scheduler::section_graph_diagnostics()` returns thread-safe JSON snapshots with
 graph launches, ordinary iterations, pointer/tuple misses and refresh counts. Counters are cumulative
 for the compiled graph lifetime, including resumes. There is no per-frame diagnostic logging.
 
