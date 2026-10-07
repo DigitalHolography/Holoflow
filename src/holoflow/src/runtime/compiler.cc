@@ -339,17 +339,9 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
     return;
   }
 
-  std::error_code error;
-  std::filesystem::create_directories(config_.log_dir, error);
-  if (error)
-    return;
-  std::ofstream file(config_.log_dir / filename);
-  if (!file.is_open()) {
-    return;
-  }
-
   const auto graph_name = std::filesystem::path(filename).stem().string();
-  file << to_dot(*out_, GraphCompiledDumpPreferences{}, graph_name);
+  if (out_)
+    dump_compiled_graph_async(config_.log_dir / filename, *out_, {}, graph_name);
 }
 
 // -------------------------------------------------------------------------------------------------

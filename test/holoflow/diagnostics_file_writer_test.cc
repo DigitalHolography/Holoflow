@@ -3,6 +3,7 @@
 
 #include <gtest/gtest.h>
 
+#include "holoflow/runtime/compiler.hh"
 #include "holoflow/runtime/diagnostics.hh"
 #include "support/native_trace.hh"
 #include <chrono>
@@ -179,6 +180,54 @@ TEST(DiagnosticsFileWriterTest, GraphDumpsOwnSnapshotsAndPreserveSerialization) 
   EXPECT_EQ(read("pipeline.json"), expected_json);
   EXPECT_EQ(read("graph_spec.json"), expected_json);
   EXPECT_EQ(read("pipeline.dot"), expected_dot);
+}
+
+TEST(DiagnosticsFileWriterTest, CompiledGraphDumpOwnsMetadataAndDefersRendering) {
+  auto &writer = holoflow::runtime::section_diagnostics_file_writer();
+  writer.flush();
+  const auto         directory = trace_test::temporary_path("holoflow-compiled-snapshot-");
+  std::promise<void> started, release;
+  auto               starting = started.get_future();
+  auto               released = release.get_future();
+  writer.submit_text(directory / "block.txt", [&] {
+    started.set_value();
+    EXPECT_EQ(released.wait_for(3s), std::future_status::ready);
+    return std::string{};
+  });
+  EXPECT_EQ(starting.wait_for(3s), std::future_status::ready);
+  std::string expected;
+  {
+    holoflow::runtime::CompilerOutput output;
+    holoflow::runtime::NodePlan       source{
+        .spec     = {"source", "snapshot_source", {{"value", 1.234567}}},
+        .infer    = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync},
+        .out_tids = {0},
+    };
+    auto node = add_vertex(source, output.graph);
+    output.resources.tid_to_sid.emplace(0, 7);
+    output.resources.tasks.emplace("snapshot_task", nullptr);
+    output.sections.push_back({.id        = 2,
+                               .name      = "snapshot_section",
+                               .stream    = reinterpret_cast<cudaStream_t>(uintptr_t{0x1234}),
+                               .sync_topo = {node}});
+    holoflow::runtime::GraphCompiledDumpPreferences preferences;
+    preferences.layout = holoflow::runtime::GraphCompiledDumpPreferences::Layout::Snake;
+    preferences.floating_point_precision = 3;
+    expected = holoflow::runtime::to_dot(output, preferences, "owned_compiled");
+    holoflow::runtime::dump_compiled_graph_async(directory / "compiled.dot", output, preferences,
+                                                 "owned_compiled");
+    output.graph[node].spec.name = "changed_source";
+    output.sections.clear();
+    preferences.dump_resource_info = false;
+  }
+  EXPECT_FALSE(std::filesystem::exists(directory / "compiled.dot"));
+  release.set_value();
+  writer.flush();
+  std::ifstream     file(directory / "compiled.dot");
+  const std::string actual{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+  EXPECT_EQ(actual, expected);
+  EXPECT_NE(actual.find("snapshot_task"), std::string::npos);
+  EXPECT_NE(actual.find("snapshot_section"), std::string::npos);
 }
 
 } // namespace

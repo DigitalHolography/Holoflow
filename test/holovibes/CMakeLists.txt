@@ -15,6 +15,8 @@
 set(TARGET holovibes_test)
 
 set(SOURCES
+    logger_test.cc
+    ../../src/holovibes/src/logger.cc
     signal_history_test.cc
     signal_history_dispatcher_test.cc
     settings_test.cc
@@ -36,6 +38,7 @@ target_include_directories(${TARGET}
 target_link_libraries(${TARGET}
     PRIVATE
     project_options
+    holoflow
     nlohmann_json::nlohmann_json
     GTest::gtest_main
     Qt6::Core

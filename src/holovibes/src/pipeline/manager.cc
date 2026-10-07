@@ -715,48 +715,47 @@ void Manager::build_and_run() {
   using CompilerConfig = holoflow::runtime::Compiler::Config;
   using Compiler       = holoflow::runtime::Compiler;
 
-  build_graph_spec();
-
-  std::filesystem::path      log_root;
-  std::optional<ScopedTrace> preparation;
-  preparation.emplace("Prepare Compiler Configuration");
-  const auto app_data_dir = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-  if (!app_data_dir.isEmpty()) {
-    log_root = std::filesystem::path(app_data_dir.toStdString()) /
-               QCoreApplication::applicationVersion().toStdString() / "logs";
-
-    std::error_code log_ec;
-    std::filesystem::create_directories(log_root, log_ec);
-    if (log_ec) {
-      logger()->warn("[Manager::build_and_run] Failed to create log directory '{}': {}",
-                     log_root.string(), log_ec.message());
-      log_root.clear();
+  std::filesystem::path log_root;
+  {
+    ScopedTrace resolution("Resolve Pipeline Log Path");
+    const auto  app_data_dir =
+        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    if (!app_data_dir.isEmpty()) {
+      log_root = std::filesystem::path(app_data_dir.toStdString()) /
+                 QCoreApplication::applicationVersion().toStdString() / "logs";
+    } else {
+      logger()->warn(
+          "[Manager::build_and_run] No writable application data directory is available");
     }
-  } else {
-    logger()->warn("[Manager::build_and_run] No writable application data directory is available");
   }
 
-  // TODO: What should be done about this verbose logging?
-  // if (dump_debug_graphs_) {
-  //   dump_graph_logs(log_root);
-  // }
+  build_graph_spec(log_root);
 
   CompilerConfig config;
-  config.log_dir             = log_root;
-  config.dump_dot_on_failure = dump_debug_graphs_;
-  config.verbose_tracing     = dump_debug_graphs_;
-  const auto graph_limit     = qEnvironmentVariable("HOLOFLOW_MAX_SECTION_CUDA_GRAPHS");
-  if (!graph_limit.isEmpty()) {
-    bool       valid = false;
-    const auto limit = graph_limit.toULongLong(&valid);
-    if (!valid || graph_limit.trimmed().startsWith('-') ||
-        limit > (std::numeric_limits<size_t>::max)()) {
-      throw std::invalid_argument("HOLOFLOW_MAX_SECTION_CUDA_GRAPHS must be a nonnegative integer");
+  {
+    ScopedTrace preparation("Prepare Compiler Configuration");
+    {
+      ScopedTrace assignment("Assign Compiler Configuration", "detail");
+      config.log_dir             = log_root;
+      config.dump_dot_on_failure = dump_debug_graphs_;
+      config.verbose_tracing     = dump_debug_graphs_;
     }
-    config.max_section_cuda_graphs = static_cast<size_t>(limit);
+    {
+      ScopedTrace environment("Read CUDA Graph Limit", "detail");
+      const auto  graph_limit = qEnvironmentVariable("HOLOFLOW_MAX_SECTION_CUDA_GRAPHS");
+      if (!graph_limit.isEmpty()) {
+        bool       valid = false;
+        const auto limit = graph_limit.toULongLong(&valid);
+        if (!valid || graph_limit.trimmed().startsWith('-') ||
+            limit > (std::numeric_limits<size_t>::max)()) {
+          throw std::invalid_argument(
+              "HOLOFLOW_MAX_SECTION_CUDA_GRAPHS must be a nonnegative integer");
+        }
+        config.max_section_cuda_graphs = static_cast<size_t>(limit);
+      }
+    }
   }
 
-  preparation.reset();
   // The scheduler holds references into the previous compilation. Destroy it before migration.
   scheduler_.reset();
   auto     prev_output = std::move(compiler_output_);
@@ -766,19 +765,10 @@ void Manager::build_and_run() {
     compiler_output_ = compiler.compile(spec_, std::move(prev_output));
   }
 
-  if (compiler_output_) {
-    using namespace std::chrono;
-
-    // Write original GraphSpec
-    const std::filesystem::path log_dir =
-        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString() + "/" +
-        QCoreApplication::applicationVersion().toStdString() + "/logs";
-
-    const auto dot_path = log_dir / "compiled.dot";
-
+  if (compiler_output_ && !log_root.empty()) {
     ScopedTrace dump("Dump Compiled Graph");
-    std::ofstream(dot_path) << holoflow::runtime::to_dot(
-        *compiler_output_, graph_compiled_dump_prefs_, "compiled_pipeline");
+    holoflow::runtime::dump_compiled_graph_async(log_root / "compiled.dot", *compiler_output_,
+                                                 graph_compiled_dump_prefs_, "compiled_pipeline");
   }
 
   run_compiled_graph();
@@ -833,31 +823,46 @@ void Manager::run_compiled_graph() {
 
 void Manager::dump_graph_logs(const std::filesystem::path &log_dir) {
   ScopedTrace trace("Dump Pipeline Graph Logs");
+  if (log_dir.empty())
+    return;
   holoflow::runtime::dump_pipeline_graph_async(log_dir, spec_, graph_spec_dump_prefs_);
+  ScopedTrace logging("Log Pipeline Graph Dump Submission", "detail");
   logger()->info("[Manager::dump_graph_logs] Pre-compile pipeline graph dumps queued for {}",
                  log_dir.string());
 }
 
-void Manager::build_graph_spec() {
+void Manager::build_graph_spec(const std::filesystem::path &log_dir) {
   ScopedTrace trace("Build Graph Spec");
-  logger()->info("[Manager::build_graph_spec] Building graph spec...");
+  {
+    ScopedTrace logging("Log Graph Spec Build Start", "detail");
+    logger()->info("[Manager::build_graph_spec] Building graph spec...");
+  }
   HOLOVIBES_CHECK(settings_dirty_, "Settings are not dirty, no need to rebuild graph spec");
 
   reset_graph_spec();
   guess_optimizations();
   guess_source_dims();
 
-  GraphBuilder builder{s_, registry_};
+  std::optional<GraphBuilder> builder;
+  {
+    ScopedTrace construction("Create Graph Builder", "detail");
+    builder.emplace(s_, registry_);
+  }
   {
     ScopedTrace scope("Build Graph Nodes");
-    spec_ = builder.build();
+    spec_ = builder->build();
+  }
+  {
+    ScopedTrace destruction("Destroy Graph Builder", "detail");
+    builder.reset();
   }
 
   settings_dirty_ = false;
-  logger()->debug("[Manager::build_graph_spec] Graph spec built successfully");
-  dump_graph_logs(
-      QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation).toStdString() + "/" +
-      QCoreApplication::applicationVersion().toStdString() + "/logs");
+  {
+    ScopedTrace logging("Log Graph Spec Build Completion", "detail");
+    logger()->debug("[Manager::build_graph_spec] Graph spec built successfully");
+  }
+  dump_graph_logs(log_dir);
 }
 
 void Manager::reset_graph_spec() {

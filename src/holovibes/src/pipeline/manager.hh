@@ -134,7 +134,7 @@ private:
   // --- Graph Management ---
   void build_and_run();
   void run_compiled_graph();
-  void build_graph_spec();
+  void build_graph_spec(const std::filesystem::path &log_dir);
   void reset_graph_spec();
   void guess_optimizations();
   void guess_source_dims();

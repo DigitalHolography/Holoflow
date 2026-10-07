@@ -12,5 +12,9 @@ namespace holoflow::runtime {
 void dump_graph_spec_async(const std::filesystem::path &json_path, const core::GraphSpec &graph);
 void dump_pipeline_graph_async(const std::filesystem::path &log_dir, const core::GraphSpec &graph,
                                const core::GraphSpecDumpPreferences &preferences);
+// Best-effort capture/submission; background failures also warn without affecting compilation.
+void dump_compiled_graph_async(const std::filesystem::path &dot_path, const CompilerOutput &output,
+                               const GraphCompiledDumpPreferences &preferences = {},
+                               std::string graph_name = "compiled") noexcept;
 
 } // namespace holoflow::runtime

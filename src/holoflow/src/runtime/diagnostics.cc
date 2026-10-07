@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "holoflow/runtime/diagnostics.hh"
+#include "../logger.hh"
 #include "diagnostics_file_writer.hh"
 #include "holoflow/runtime/tracing.hh"
 #include <memory>
@@ -31,5 +32,29 @@ void dump_pipeline_graph_async(const std::filesystem::path &log_dir, const core:
     tracing::ScopedTrace format("Format Pipeline Graph DOT", "detail");
     return core::to_dot(*snapshot, preferences);
   });
+}
+
+void dump_compiled_graph_async(const std::filesystem::path &dot_path, const CompilerOutput &output,
+                               const GraphCompiledDumpPreferences &preferences,
+                               std::string                         graph_name) noexcept {
+  try {
+    std::shared_ptr<const GraphCompiledDumpSnapshot> snapshot;
+    {
+      tracing::ScopedTrace copy("Copy Compiled Graph Snapshot", "detail");
+      snapshot = make_graph_compiled_dump_snapshot(output);
+    }
+    tracing::ScopedTrace submit("Submit Compiled Graph Dump", "detail");
+    section_diagnostics_file_writer().submit_text(
+        dot_path,
+        [snapshot = std::move(snapshot), preferences, graph_name = std::move(graph_name)] {
+          tracing::ScopedTrace format("Format Compiled Graph DOT", "detail");
+          return to_dot(*snapshot, preferences, graph_name);
+        });
+  } catch (...) {
+    try {
+      holoflow::logger()->warn("Could not submit compiled graph dump for background writing");
+    } catch (...) {
+    }
+  }
 }
 } // namespace holoflow::runtime

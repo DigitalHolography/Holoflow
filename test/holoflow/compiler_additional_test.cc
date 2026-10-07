@@ -37,7 +37,7 @@ using holoflow::core::TDesc;
 bool background_slice(const std::string &name) {
   return name == "Format CUDA Graph Diagnostics" || name == "Write CUDA Graph Diagnostics File" ||
          name == "Format Graph Spec JSON" || name == "Format Pipeline Graph DOT" ||
-         name == "Write Diagnostic Text File";
+         name == "Format Compiled Graph DOT" || name == "Write Diagnostic Text File";
 }
 
 GraphSpec source_sink_graph() {
@@ -374,15 +374,25 @@ TEST(CompilerTest, LoggingAndCompilationDoNotWaitForDiagnosticWrites) {
     const auto                  start = std::chrono::steady_clock::now();
     holoflow::runtime::Compiler compiler(
         registry,
-        {.log_dir = directory / "output", .dump_dot_on_failure = false, .enable_profiling = false});
+        {.log_dir = directory / "output", .dump_dot_on_failure = true, .enable_profiling = false});
     setup_ms +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
     EXPECT_NE(compiler.compile({}), nullptr);
+  }
+  GraphSpec invalid;
+  add_vertex(NodeSpec{"missing", "missing_factory", {}}, invalid);
+  {
+    holoflow::runtime::Compiler compiler(
+        registry,
+        {.log_dir = directory / "output", .dump_dot_on_failure = true, .enable_profiling = false});
+    EXPECT_THROW((void)compiler.compile(invalid), std::runtime_error);
   }
   EXPECT_FALSE(std::filesystem::exists(directory / "output"));
   release.set_value();
   writer.flush();
   EXPECT_TRUE(std::filesystem::exists(directory / "output" / "compiler.log"));
+  EXPECT_TRUE(std::filesystem::exists(directory / "output" / "compilation_success.dot"));
+  EXPECT_TRUE(std::filesystem::exists(directory / "output" / "compilation_failure.dot"));
   std::cout << "Compiler logging setup: mean_ms=" << setup_ms / 20 << '\n';
 }
 

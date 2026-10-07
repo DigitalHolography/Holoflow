@@ -60,9 +60,15 @@ addresses are trace-only. Full detail remains in JSON diagnostics. Compilation's
 `Publish CUDA Graph Inspection`, separately from `Prepare CUDA Graph Sections` at startup.
 Fully cached sections emit aggregate validation/reuse scopes; per-variant preparation scopes cover
 actual capture and instantiation. Domain-report construction and log emission have separate scopes.
-The Holoflow console logger queues formatted messages for one dedicated worker. Console output and
+Compiled graph DOT dumps use the same background writer. Snapshot capture copies graph plans,
+sections, tensor-to-stream mappings, resource names and numeric stream addresses; it retains no
+CUDA resources or task instances. Success and failure dumps remain valid after compiler output is
+destroyed. Rendering and directory creation run on the worker, and pending files coalesce by path.
+The manager resolves its log directory once per build and reuses it for pipeline and compiled dumps.
+
+The Holoflow and Holovibes console loggers each queue formatted messages for a dedicated worker. Console output and
 warning/error flushing happen there; JSON argument and message formatting remain on the caller.
-Its 8,192-message queue preserves order without dropping messages, waiting only when full. The
+Each 8,192-message queue preserves order without dropping messages, waiting only when full. The
 worker persists across updates and drains queued messages during orderly process shutdown.
 `Scheduler::section_graph_diagnostics()` returns thread-safe JSON snapshots with
 graph launches, ordinary iterations, pointer/tuple misses and refresh counts. Counters are cumulative
