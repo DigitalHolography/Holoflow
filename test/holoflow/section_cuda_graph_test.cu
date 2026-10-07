@@ -12,6 +12,7 @@
 #include <thread>
 #include <vector>
 
+#include "../../src/holoflow/src/runtime/diagnostics_file_writer.hh"
 #include "holoflow/runtime/compiler.hh"
 #include "holoflow/runtime/tracing.hh"
 
@@ -882,6 +883,7 @@ TEST_F(SectionCudaGraphTest, JsonReportSurvivesInvalidEnumerationAndRecordingFai
   spec[source].settings["bad"] = true;
   EXPECT_THROW(compile(), std::invalid_argument);
   auto read_report = [&]() {
+    section_diagnostics_file_writer().flush();
     std::ifstream  file(log_directory / "section_cuda_graphs.json");
     nlohmann::json report;
     file >> report;

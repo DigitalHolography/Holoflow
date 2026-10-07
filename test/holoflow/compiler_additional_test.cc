@@ -19,6 +19,7 @@
 #include <memory>
 #include <span>
 
+#include "../../src/holoflow/src/runtime/diagnostics_file_writer.hh"
 #include "holoflow/runtime/compiler.hh"
 #include "support/math_tasks.hh"
 
@@ -195,7 +196,10 @@ TEST(CompilerTest, EmitsLogsNativeTraceAndSuccessGraph) {
             index = i;
             ++count;
           }
-          EXPECT_TRUE(trace.slices[i].complete);
+          // Background file writes can outlive an automatic compilation capture.
+          if (trace.slices[i].name != "Format CUDA Graph Diagnostics" &&
+              trace.slices[i].name != "Write CUDA Graph Diagnostics File")
+            EXPECT_TRUE(trace.slices[i].complete);
         }
         EXPECT_EQ(count, 1) << name;
         return index;
@@ -207,8 +211,9 @@ TEST(CompilerTest, EmitsLogsNativeTraceAndSuccessGraph) {
       const auto carry = position("Carry Compatible Section CUDA Graphs");
       EXPECT_LT(position("Task Binding"), carry);
       EXPECT_LT(carry, position("Inspect Section CUDA Graphs"));
-      EXPECT_EQ(position("Total Compilation"), 0);
-      EXPECT_EQ(trace.slices[0].outcome, "success");
+      const auto total = position("Total Compilation");
+      EXPECT_LT(total, position("Initialize Compilation"));
+      EXPECT_EQ(trace.slices[total].outcome, "success");
     }
   }
   EXPECT_TRUE(std::filesystem::exists(directory / "compiler.log"));
@@ -304,12 +309,13 @@ TEST(CompilerTest, ExplicitSessionCapturesCompilationSchedulerStartupStopAndResu
     EXPECT_TRUE(holoflow::runtime::tracing::Session::active());
     EXPECT_FALSE(std::filesystem::exists(directory / "trace_events.perfetto-trace"));
   }
+  holoflow::runtime::section_diagnostics_file_writer().flush();
   session->stop_and_save(directory / "lifecycle.perfetto-trace");
   const auto trace = trace_test::read(directory / "lifecycle.perfetto-trace");
   for (const auto *name :
        {"Initialize Scheduler", "Drain Startup CUDA Streams", "Prepare Startup CUDA Graphs",
         "Create Scheduler Workers", "Scheduler Request Stop", "Scheduler Wait",
-        "Stop Metrics Thread", "Write Shutdown CUDA Graph Diagnostics"}) {
+        "Stop Metrics Thread", "Submit Shutdown CUDA Graph Diagnostics"}) {
     size_t count = 0;
     for (const auto &slice : trace.slices)
       count += slice.name == name;

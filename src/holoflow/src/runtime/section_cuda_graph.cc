@@ -2,13 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include "section_cuda_graph.hh"
+#include "diagnostics_file_writer.hh"
 
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <format>
-#include <fstream>
 #include <limits>
 #include <map>
 #include <memory>
@@ -318,7 +318,7 @@ void refresh_section_cuda_graphs(const GraphPlan &graph, const std::vector<Secti
   write_diagnostics_file(resources);
 }
 
-// Serialize the latest CUDA-graph diagnostics for all sections when logging is enabled.
+// Queue the latest CUDA-graph diagnostics for all sections when logging is enabled.
 void write_section_cuda_graph_diagnostics(const ExecResouces &resources) {
   write_diagnostics_file(resources);
 }
@@ -1434,22 +1434,21 @@ void publish_diagnostics(SectionCudaGraphs &graphs, const nlohmann::json &report
   graphs.diagnostics = report;
 }
 
-// Write all section diagnostics to disk if a diagnostics directory is configured.
+// Snapshot and submit diagnostics without formatting JSON or waiting for disk I/O.
 void write_diagnostics_file(const ExecResouces &resources) {
   if (resources.section_cuda_graph_log_dir.empty())
     return;
 
-  tracing::ScopedTrace trace("Write CUDA Graph Diagnostics", "detail");
-  auto                 diagnostics = nlohmann::json::array();
-  for (const auto &entry : resources.section_cuda_graphs)
-    diagnostics.push_back(entry.second->snapshot());
-
-  std::ofstream file(resources.section_cuda_graph_log_dir / "section_cuda_graphs.json");
-  if (file) {
-    file << diagnostics.dump(2);
-  } else {
-    logger()->warn("[CUDA graphs] Could not write section_cuda_graphs.json");
+  auto diagnostics = nlohmann::json::array();
+  {
+    tracing::ScopedTrace trace("Snapshot CUDA Graph Diagnostics", "detail");
+    for (const auto &entry : resources.section_cuda_graphs)
+      diagnostics.push_back(entry.second->snapshot());
   }
+
+  tracing::ScopedTrace submission("Submit CUDA Graph Diagnostics", "detail");
+  section_diagnostics_file_writer().submit(
+      resources.section_cuda_graph_log_dir / "section_cuda_graphs.json", std::move(diagnostics));
 }
 
 // ---- Binding misses -----------------------------------------------------------------------------

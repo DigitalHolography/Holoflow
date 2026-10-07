@@ -33,8 +33,17 @@ enumerated count when available, and optional sequence. Skipped enumeration and 
 are explicit; they are not represented as zero. Oversized or incompatible sections do not enumerate
 potentially enormous pointer domains just to obtain diagnostics.
 
-With `log_dir` configured, `section_cuda_graphs.json` is written at compilation, each start and
-shutdown. Reports survive graph fallback and are written before graph-preparation errors propagate.
+With `log_dir` configured, snapshots for `section_cuda_graphs.json` are submitted at compilation,
+each start and shutdown, including before graph-preparation errors propagate. Snapshot capture
+remains synchronous; an independent worker formats JSON and writes files without accessing pipeline
+resources. Only the newest pending report per destination is retained; an executing write finishes
+before the newer report. The file is eventually updated, while in-memory diagnostics remain
+immediately available. Orderly process shutdown drains pending writes; abrupt termination may lose
+them. Tests and explicit readers can flush the internal writer before reading or deleting a report.
+Background formatting/I/O failures produce warnings and do not stop subsequent writes. The snapshot,
+submission, formatting and file-write trace scopes distinguish caller cost from background work;
+background scopes may outlive an automatic lifecycle capture.
+Reports survive graph fallback.
 They include raw Cartesian and pruned counts (with unknown/overflow/limit status), blockers,
 failure stage and recording task, inspection/construction/preparation time, nodes, and executable
 reuse/create/discard counts. `planned` at compilation does not mean executables have been built;

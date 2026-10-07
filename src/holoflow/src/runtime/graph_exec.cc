@@ -258,7 +258,7 @@ void Scheduler::wait() {
     tracing::ScopedTrace metrics("Stop Metrics Thread", "scheduler");
     stop_metrics_thread();
   }
-  tracing::ScopedTrace diagnostics("Write Shutdown CUDA Graph Diagnostics", "scheduler");
+  tracing::ScopedTrace diagnostics("Submit Shutdown CUDA Graph Diagnostics", "scheduler");
   write_section_cuda_graph_diagnostics(res_);
   for (const auto &[id, graphs] : res_.section_cuda_graphs) {
     const auto report = graphs->snapshot();

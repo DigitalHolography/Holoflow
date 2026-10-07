@@ -17,7 +17,7 @@ void refresh_section_cuda_graphs(const GraphPlan &graph, const std::vector<Secti
 
 // ---- Diagnostics -------------------------------------------------------------------------------
 
-/// Write current section snapshots when a diagnostics directory is configured.
+/// Queue an owned copy of current section snapshots when a diagnostics directory is configured.
 void write_section_cuda_graph_diagnostics(const ExecResouces &resources);
 
 } // namespace holoflow::runtime
