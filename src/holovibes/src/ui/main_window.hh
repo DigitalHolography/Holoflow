@@ -205,6 +205,7 @@ private:
   QCheckBox               *clinical_autofocus_check_  = nullptr;
   QSlider                 *clinical_focus_slider_     = nullptr;
   QMenu                   *developer_debug_menu_      = nullptr;
+  QMenu                   *tools_menu_               = nullptr;
   QAction                 *fft_tool_action_           = nullptr;
   std::vector<QWidget *>   command_status_widgets_;
   int                      developer_controls_width_  = 430;

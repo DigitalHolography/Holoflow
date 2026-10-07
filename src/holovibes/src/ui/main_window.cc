@@ -1897,8 +1897,8 @@ void MainWindow::configure_window() {
   auto *open_dot_action = debug_menu->addAction(tr("Open DOT File..."));
   connect(open_dot_action, &QAction::triggered, this, &MainWindow::open_dot_file);
 
-  auto *tools_menu = menuBar()->addMenu(tr("&Tools"));
-  fft_tool_action_ = tools_menu->addAction(tr("FFT Frequency Range to Bins..."));
+  tools_menu_      = menuBar()->addMenu(tr("&Tools"));
+  fft_tool_action_ = tools_menu_->addAction(tr("FFT Frequency Range to Bins..."));
   fft_tool_action_->setShortcut(QKeySequence(QStringLiteral("Ctrl+Alt+F")));
   fft_tool_action_->setShortcutContext(Qt::ApplicationShortcut);
   connect(fft_tool_action_, &QAction::triggered, this, &MainWindow::show_fft_frequency_tool);
@@ -2029,6 +2029,10 @@ void MainWindow::update_developer_menu_visibility() {
   if (developer_debug_menu_ != nullptr) {
     developer_debug_menu_->setVisible(developer_layout);
     developer_debug_menu_->setEnabled(developer_layout);
+  }
+  if (tools_menu_ != nullptr) {
+    tools_menu_->menuAction()->setVisible(developer_layout);
+    tools_menu_->menuAction()->setEnabled(developer_layout);
   }
   if (fft_tool_action_ != nullptr) {
     fft_tool_action_->setVisible(developer_layout);
