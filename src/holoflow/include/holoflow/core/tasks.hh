@@ -157,7 +157,10 @@ struct PointerSequence {
 ///   - Context TViews share that stable Storage and observe pointer updates directly.
 ///   - After downstream consumption, scheduler calls @ref release_output(int).
 ///   - The task controls pointer cleanup and the lifetime of its owned memory.
-/// @todo Define rollback semantics on cancellation before use.
+/// A cooperative pause retains acquired inputs and popped outputs until resume completes use.
+/// An operation returning Cancelled must be retryable with the same views: it must not commit
+/// consumption, publication, or CUDA work that would be duplicated on retry. Return Ok once
+/// work has been submitted, even if cancellation was requested during that successful operation.
 class ITask {
 public:
   virtual ~ITask() = default;

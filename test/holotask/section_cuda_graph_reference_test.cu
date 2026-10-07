@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <functional>
 #include <gtest/gtest.h>
 #include <iostream>
 #include <thread>
@@ -28,6 +29,8 @@ using namespace holoflow::core;
 using namespace holoflow::runtime;
 
 struct ReferenceState {
+  bool                                               pause_at_target = false;
+  std::function<void(size_t)>                        frame_hook;
   size_t                                             target_frames = 96;
   std::vector<std::vector<unsigned char>>            frames;
   std::vector<std::chrono::steady_clock::time_point> arrival;
@@ -54,8 +57,12 @@ public:
                                cudaMemcpyDeviceToHost, stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_));
     state_->frames.push_back(std::move(frame));
+    if (state_->frame_hook)
+      state_->frame_hook(state_->frames.size());
     state_->arrival.push_back(std::chrono::steady_clock::now());
-    return state_->frames.size() >= state_->target_frames ? OpResult::Eof : OpResult::Ok;
+    return !state_->pause_at_target && state_->frames.size() >= state_->target_frames
+               ? OpResult::Eof
+               : OpResult::Ok;
   }
 
 private:
@@ -209,11 +216,11 @@ void compare_reference(bool full) {
 
 TEST(SectionGraphReference, SmallPipelineMatchesOrdinaryExecution) { compare_reference(false); }
 
-std::vector<std::vector<unsigned char>> run_compatible_update(size_t limit,
-                                                              bool   dual_reader = false) {
+std::vector<std::vector<unsigned char>>
+run_compatible_update(size_t limit, bool dual_reader = false, bool sliding = false) {
   auto state    = std::make_shared<ReferenceState>();
   auto registry = reference_registry(state);
-  auto spec     = holoflow::core::from_json({
+  auto json     = nlohmann::json{
       {"nodes",
        {
            {"source",
@@ -244,12 +251,22 @@ std::vector<std::vector<unsigned char>> run_compatible_update(size_t limit,
            {{"from", "byte"}, {"to", "output_queue"}, {"out", 0}, {"in", 0}},
            {{"from", "output_queue"}, {"to", "sink"}, {"out", 0}, {"in", 0}},
        }},
-  });
+  };
+  if (sliding) {
+    json["nodes"]["average"] = {{"type", "SlidingAverage"},
+                                {"params", {{"target_capacity", 8}, {"window_size", 32}}}};
+    for (auto &edge : json["edges"])
+      if (edge["from"] == "flatfield" && edge["to"] == "byte")
+        edge["to"] = "average";
+    json["edges"].push_back({{"from", "average"}, {"to", "byte"}, {"out", 0}, {"in", 0}});
+  }
+  auto spec = holoflow::core::from_json(json);
   if (dual_reader)
     for (auto vertex : boost::make_iterator_range(boost::vertices(spec)))
       if (spec[vertex].name == "input_queue") {
         spec[vertex].kind     = "DualReaderBatchQueue";
-        spec[vertex].settings = holotask::asyncs::DualReaderBatchQueueSettings{4, 3};
+        spec[vertex].settings = sliding ? holotask::asyncs::DualReaderBatchQueueSettings{26, 1}
+                                        : holotask::asyncs::DualReaderBatchQueueSettings{4, 3};
       }
   Compiler::Config config;
   config.max_section_cuda_graphs   = limit;
@@ -268,19 +285,41 @@ std::vector<std::vector<unsigned char>> run_compatible_update(size_t limit,
       out = Compiler(registry, config).compile(spec, std::move(out));
     }
     Scheduler scheduler(out->graph, out->sections, out->resources);
+    if (sliding && iteration == 0) {
+      state->pause_at_target = true;
+      state->frame_hook      = [&](size_t count) {
+        if (count == 8 || count == 12 || count == 16)
+          scheduler.request_pause();
+      };
+      for (int pause = 0; pause < 2; ++pause) {
+        scheduler.start();
+        const auto pause_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < pause_deadline)
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (!scheduler.stop_requested())
+          scheduler.request_stop();
+        scheduler.wait();
+        EXPECT_EQ(state->frames.size(), pause == 0 ? 8U : 12U);
+      }
+    }
     scheduler.start();
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
     while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    scheduler.request_stop();
+    if (!scheduler.stop_requested())
+      scheduler.request_stop();
     scheduler.wait();
+    state->frame_hook      = {};
+    state->pause_at_target = false;
     EXPECT_EQ(state->frames.size(), state->target_frames);
     for (const auto &section : out->sections) {
       if (out->graph[section.sync_topo.front()].spec.name != "float")
         continue;
       const auto &graphs = *out->resources.section_cuda_graphs.at(section.id);
       if (!iteration) {
-        original_handles    = graphs.executables;
+        original_handles = graphs.executables;
+        if (sliding && limit)
+          EXPECT_EQ(original_handles.size(), 280U);
         initial_preparation = graphs.construction_ms;
       } else if (limit) {
         EXPECT_TRUE(graphs.carried_from_previous_compilation);
@@ -310,6 +349,17 @@ TEST(SectionGraphReference, CompatibleUpdateMatchesOrdinaryExecutionAndRetainsBa
 TEST(SectionGraphReference, CompatibleUpdateRetainsDualReaderBatchQueueGraphs) {
   const auto ordinary = run_compatible_update(0, true);
   const auto graphs   = run_compatible_update(128, true);
+  ASSERT_EQ(graphs.size(), ordinary.size());
+  for (size_t frame = 0; frame < graphs.size(); ++frame) {
+    ASSERT_EQ(graphs[frame].size(), ordinary[frame].size());
+    for (size_t pixel = 0; pixel < graphs[frame].size(); ++pixel)
+      EXPECT_LE(std::abs(int(graphs[frame][pixel]) - int(ordinary[frame][pixel])), 2);
+  }
+}
+
+TEST(SectionGraphReference, DualReaderAndSlidingAverageRetain280GraphsAcrossPauseAndUpdate) {
+  const auto ordinary = run_compatible_update(0, true, true);
+  const auto graphs   = run_compatible_update(2048, true, true);
   ASSERT_EQ(graphs.size(), ordinary.size());
   for (size_t frame = 0; frame < graphs.size(); ++frame) {
     ASSERT_EQ(graphs[frame].size(), ordinary[frame].size());

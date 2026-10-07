@@ -176,6 +176,8 @@ public:
   [[nodiscard]] nlohmann::json                     section_graph_diagnostics() const;
 
   void start();
+  /// Suspend with acquired buffers and completed operations retained for start().
+  void request_pause();
   void request_stop();
   void wait();
 
@@ -207,16 +209,15 @@ private:
   /// Owning tasks publish memory by updating their compiler-provided Storage;
   /// all scheduler TViews retain pointers to that stable Storage object.
   /// This function blocks until all owned inputs are acquired.
-  /// @warning If stop_ is set while waiting, the function returns early,
-  /// and some owned inputs may not be acquired.
+  /// On interruption, port identifies the next input to acquire on resume.
   /// @warning This function must be called on a synchronous or asynchronous
   /// producer node only.
-  void acquire_owned_inputs(GraphPlan::vertex_descriptor v);
+  void acquire_owned_inputs(GraphPlan::vertex_descriptor v, size_t &port);
 
   /// This function releases all owned outputs for the given node.
   /// Pointer cleanup remains the owning task's responsibility.
-  /// This function does not block.
-  void release_owned_outputs(GraphPlan::vertex_descriptor v);
+  /// This function does not block. Port tracks partial release across a pause.
+  void release_owned_outputs(GraphPlan::vertex_descriptor v, size_t &port);
 
   /// Executes a synchronous node.
   /// @warning This function must be called on a synchronous node only.
@@ -231,11 +232,23 @@ private:
   [[nodiscard]] core::OpResult run_async_prod(GraphPlan::vertex_descriptor v);
 
 private:
-  std::atomic<bool>           running_{false}; ///< True if the scheduler is running.
-  std::atomic<bool>           stop_{false};    ///< True if a stop has been requested.
-  const GraphPlan            &graph_;          ///< The computational graph to execute.
-  const std::vector<Section> &sections_;       ///< Execution sections.
-  ExecResouces               &res_;            ///< Execution resources (streams, tasks, tensors).
+  std::atomic<bool> running_{false}; ///< True if the scheduler is running.
+  std::atomic<bool> stop_{false};    ///< True if a stop has been requested.
+  std::atomic<bool> paused_{false};
+  std::atomic<bool> aborted_{false};
+  struct SectionCheckpoint {
+    enum class Stage { AcquireSync, AcquireProducer, Pop, Compute, Barrier, Push, Release };
+    Stage                                     stage               = Stage::AcquireSync;
+    size_t                                    node                = 0;
+    size_t                                    port                = 0;
+    bool                                      computation_started = false;
+    bool                                      graph_submitted     = false;
+    std::vector<GraphPlan::vertex_descriptor> produced;
+  };
+  std::vector<SectionCheckpoint> checkpoints_;
+  const GraphPlan               &graph_;    ///< The computational graph to execute.
+  const std::vector<Section>    &sections_; ///< Execution sections.
+  ExecResouces                  &res_;      ///< Execution resources (streams, tasks, tensors).
 
   /// Stable TViews for all tensors by their IDs. Copies across node contexts
   /// observe ownership changes through their shared Storage pointers.

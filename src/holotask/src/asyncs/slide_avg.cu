@@ -88,6 +88,16 @@ public:
     consumer_stream_ = consumer_stream;
   }
   void update_validity(bool has_validity) { has_validity_ = has_validity; }
+  void reset() {
+    // Recompilation starts a new history while retaining graph-captured allocations.
+    CUDA_CHECK(cudaMemsetAsync(d_buffer_.get(), 0, nb_slots_ * element_size_, producer_stream_));
+    CUDA_CHECK(cudaMemsetAsync(d_running_avg_.get(), 0, element_size_, producer_stream_));
+    CUDA_CHECK(cudaStreamSynchronize(producer_stream_));
+    avg_idx_.store(nb_slots_ - settings_.window_size, std::memory_order_relaxed);
+    write_idx_.store(0, std::memory_order_relaxed);
+    read_idx_.store(nb_slots_ - 1, std::memory_order_relaxed);
+    discarded_ = 0;
+  }
   std::optional<holoflow::core::PointerSequence>
   owned_input_pointer_sequence(size_t index) const override {
     if (index != 0)
@@ -387,6 +397,7 @@ SlidingAverageFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_ta
       idesc.offset == old_slide_avg->idesc().offset) {
     old_slide_avg->update_streams(ctx.producer_stream, ctx.consumer_stream);
     old_slide_avg->update_validity(input_descs.size() == 2);
+    old_slide_avg->reset();
     return old_task;
   }
 

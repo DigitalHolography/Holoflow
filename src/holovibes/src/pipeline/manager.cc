@@ -404,10 +404,10 @@ void Manager::stop_pipeline() {
   }
 
   try {
-    // Request an asynchronous stop and block until graph execution concludes safely.
+    // Preserve pending operations and buffer ownership for unchanged resume.
     {
       ScopedTrace scope("Request Scheduler Stop");
-      scheduler_->request_stop();
+      scheduler_->request_pause();
     }
     {
       ScopedTrace scope("Wait for Scheduler Stop");
@@ -756,6 +756,8 @@ void Manager::build_and_run() {
   }
 
   preparation.reset();
+  // The scheduler holds references into the previous compilation. Destroy it before migration.
+  scheduler_.reset();
   auto     prev_output = std::move(compiler_output_);
   Compiler compiler(registry_, config);
   {
@@ -795,13 +797,6 @@ void Manager::run_compiled_graph() {
     stop_event_polling();
   }
 
-  // A fresh scheduler runtime avoids retaining cancelled queue acquisitions while the compiled
-  // graph, task objects, source cursor, and allocated resources remain intact across a pause.
-  {
-    ScopedTrace scope("Destroy Previous Scheduler");
-    scheduler_.reset();
-  }
-
   auto &graph     = compiler_output_->graph;
   auto &sections  = compiler_output_->sections;
   auto &resources = compiler_output_->resources;
@@ -812,7 +807,8 @@ void Manager::run_compiled_graph() {
 
   {
     ScopedTrace scope("Create Scheduler");
-    scheduler_ = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval);
+    if (!scheduler_)
+      scheduler_ = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval);
   }
   raw_recording_active_ = false;
 

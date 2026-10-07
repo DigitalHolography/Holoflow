@@ -146,7 +146,7 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
 }
 
 Scheduler::~Scheduler() {
-  if (is_running()) {
+  if (is_running() || paused_.load()) {
     request_stop();
     wait();
   } else {
@@ -190,7 +190,12 @@ void Scheduler::start() {
     return;
   }
 
+  const bool resume = paused_.exchange(false) && !aborted_.load();
+  aborted_.store(false);
   stop_.store(false);
+  if (!resume) {
+    checkpoints_.assign(sections_.size(), SectionCheckpoint{});
+  }
   try {
     {
       tracing::ScopedTrace drain("Drain Startup CUDA Streams", "scheduler");
@@ -200,7 +205,7 @@ void Scheduler::start() {
         CUDA_CHECK(cudaStreamSynchronize(stream.get()));
       }
     }
-    {
+    if (!resume) {
       tracing::ScopedTrace graphs("Prepare Startup CUDA Graphs", "scheduler");
       refresh_section_cuda_graphs(graph_, sections_, res_, true);
     }
@@ -225,11 +230,21 @@ void Scheduler::start() {
   threads_.emplace_back(&Scheduler::run_router, this);
 }
 
+void Scheduler::request_pause() {
+  if (!running_.load() || stop_.load())
+    return;
+  paused_.store(true);
+  stop_.store(true);
+}
+
 void Scheduler::request_stop() {
   tracing::ScopedTrace trace("Scheduler Request Stop", "scheduler");
   logger()->info("[Scheduler::request_stop] Requesting scheduler to stop");
+  aborted_.store(true);
+  const bool was_paused = paused_.exchange(false);
   if (!running_.load()) {
-    logger()->warn("[Scheduler::request_stop] Scheduler is not running");
+    if (!was_paused)
+      logger()->warn("[Scheduler::request_stop] Scheduler is not running");
     return;
   }
   if (stop_.exchange(true)) {
@@ -252,6 +267,24 @@ void Scheduler::wait() {
   }
 
   threads_.clear();
+  {
+    tracing::ScopedTrace drain("Drain Stopped CUDA Streams", "scheduler");
+    for (const auto &[id, stream] : res_.streams)
+      CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  }
+  // A pause may already have joined its workers. Abort/destruction must still return held
+  // outputs (including camera DMA buffers) before compatible tasks migrate to a new compilation.
+  if (aborted_.load()) {
+    for (auto &checkpoint : checkpoints_) {
+      const bool   releasing = checkpoint.stage == SectionCheckpoint::Stage::Release;
+      const size_t first     = releasing ? checkpoint.node : 0;
+      for (size_t i = first; i < checkpoint.produced.size(); ++i) {
+        size_t port = releasing && i == first ? checkpoint.port : 0;
+        release_owned_outputs(checkpoint.produced[i], port);
+      }
+      checkpoint = SectionCheckpoint{};
+    }
+  }
   logger()->info("[Scheduler::wait] Scheduler stopped");
   running_.store(false);
   {
@@ -389,146 +422,147 @@ void Scheduler::run_router() {
 void Scheduler::run_section(int section_id) {
   const auto &sec = sections_.at(section_id);
   tracing::set_thread_name(std::format("Section {}: {}", section_id, sec.name));
-  auto stream = sec.stream;
-
-  // Define a consistent, professional color palette for your timeline
-  constexpr nvtx3::color color_section{0x555555}; // Dark Gray
-  constexpr nvtx3::color color_acquire{0xFF8C00}; // Dark Orange
-  constexpr nvtx3::color color_async_c{0x1E90FF}; // Dodger Blue
-  constexpr nvtx3::color color_sync{0x32CD32};    // Lime Green
-  constexpr nvtx3::color color_async_p{0x8A2BE2}; // Blue Violet
-  constexpr nvtx3::color color_release{0xFF4500}; // Orange Red
-
+  auto &checkpoint   = checkpoints_.at(section_id);
+  using Stage        = SectionCheckpoint::Stage;
+  const auto advance = [&](Stage next) {
+    checkpoint.stage = next;
+    checkpoint.node  = 0;
+    checkpoint.port  = 0;
+  };
   try {
     while (!stop_.load()) {
-      std::vector<GraphPlan::vertex_descriptor> produced_owned_outputs;
-      bool                                      graph_submitted = false;
-      logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
-
-      // 1. Outer Section Range
-      // Automatically popped at the end of this while-loop iteration,
-      // safely handling the 'break' statements below.
-      nvtx3::scoped_range section_range{nvtx3::event_attributes{sec.name.c_str(), color_section}};
-
-      // 2. Acquire owned inputs
-      {
-        nvtx3::scoped_range r{nvtx3::event_attributes{"Acquire owned inputs", color_acquire}};
-        for (auto v : sec.sync_topo) {
-          try {
-            acquire_owned_inputs(v);
-          } catch (...) {
-            rethrow_with_node_context(graph_, v, "acquire_owned_inputs", section_id, sec.name);
-          }
+      nvtx3::scoped_range section_range{sec.name.c_str()};
+      switch (checkpoint.stage) {
+      case Stage::AcquireSync:
+      case Stage::AcquireProducer: {
+        const auto &nodes = checkpoint.stage == Stage::AcquireSync ? sec.sync_topo : sec.async_prod;
+        if (checkpoint.node == nodes.size()) {
+          advance(checkpoint.stage == Stage::AcquireSync ? Stage::AcquireProducer : Stage::Pop);
+          break;
         }
-        for (auto v : sec.async_prod) {
-          try {
-            acquire_owned_inputs(v);
-          } catch (...) {
-            rethrow_with_node_context(graph_, v, "acquire_owned_inputs", section_id, sec.name);
-          }
+        const auto v = nodes[checkpoint.node];
+        try {
+          acquire_owned_inputs(v, checkpoint.port);
+        } catch (...) {
+          rethrow_with_node_context(graph_, v, "acquire_owned_inputs", section_id, sec.name);
         }
-      } // <-- Range automatically pops here
-
-      if (stop_.load()) {
-        break; // Safe! `section_range` will cleanly pop on its way out.
+        if (checkpoint.port == graph_[v].infer.owned_inputs.size()) {
+          ++checkpoint.node;
+          checkpoint.port = 0;
+        }
+        break;
       }
-
-      // 3. Execute async consumers
-      {
-        nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async consumers", color_async_c}};
-        for (auto v : sec.async_cons) {
+      case Stage::Pop:
+        if (checkpoint.node == sec.async_cons.size()) {
+          advance(Stage::Compute);
+          break;
+        }
+        {
+          const auto v = sec.async_cons[checkpoint.node];
           try {
             if (run_async_cons(v) == core::OpResult::Ok) {
-              produced_owned_outputs.push_back(v);
+              checkpoint.produced.push_back(v);
+              ++checkpoint.node;
             }
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_async_consumer", section_id, sec.name);
           }
-          if (stop_.load())
-            break;
         }
-      }
-
-      // 4. Execute sync nodes
-      if (!stop_.load()) {
-        nvtx3::scoped_range r{nvtx3::event_attributes{"Execute sync nodes", color_sync}};
-        auto                graph_it = res_.section_cuda_graphs.find(sec.id);
-        if (graph_it != res_.section_cuda_graphs.end() && graph_it->second->enabled) {
-          auto      &graphs  = *graph_it->second;
-          const auto variant = graphs.variant(res_.storages);
-          if (variant) {
-            const auto started = std::chrono::steady_clock::now();
-            CUDA_CHECK(cudaGraphLaunch(graphs.executables.at(*variant), stream));
-            graph_submitted = true;
-            graphs.launches.fetch_add(1, std::memory_order_relaxed);
-            auto &acc = graph_metric_accumulators_.at(section_id);
-            acc.duration_ns.fetch_add(
-                static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                          std::chrono::steady_clock::now() - started)
-                                          .count()),
-                std::memory_order_relaxed);
-            acc.run_count.fetch_add(1, std::memory_order_relaxed);
-          } else {
-            graphs.report_miss(res_.storages);
-          }
-        }
-        if (!graph_submitted) {
-          if (graph_it != res_.section_cuda_graphs.end())
-            graph_it->second->ordinary_iterations.fetch_add(1, std::memory_order_relaxed);
-          for (auto v : sec.sync_topo) {
-            try {
-              if (run_sync(v) == core::OpResult::Ok) {
-                produced_owned_outputs.push_back(v);
-              }
-            } catch (...) {
-              rethrow_with_node_context(graph_, v, "execute_sync", section_id, sec.name);
+        break;
+      case Stage::Compute: {
+        auto graph_it = res_.section_cuda_graphs.find(sec.id);
+        if (!checkpoint.computation_started) {
+          checkpoint.computation_started = true;
+          if (graph_it != res_.section_cuda_graphs.end() && graph_it->second->enabled) {
+            auto      &graphs  = *graph_it->second;
+            const auto variant = graphs.variant(res_.storages);
+            if (variant) {
+              const auto started = std::chrono::steady_clock::now();
+              CUDA_CHECK(cudaGraphLaunch(graphs.executables.at(*variant), sec.stream));
+              checkpoint.graph_submitted = true;
+              graphs.launches.fetch_add(1, std::memory_order_relaxed);
+              auto &acc = graph_metric_accumulators_.at(section_id);
+              acc.duration_ns.fetch_add(
+                  static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                            std::chrono::steady_clock::now() - started)
+                                            .count()),
+                  std::memory_order_relaxed);
+              acc.run_count.fetch_add(1, std::memory_order_relaxed);
+            } else {
+              graphs.report_miss(res_.storages);
             }
-            if (stop_.load())
-              break;
           }
+          if (!checkpoint.graph_submitted && graph_it != res_.section_cuda_graphs.end())
+            graph_it->second->ordinary_iterations.fetch_add(1, std::memory_order_relaxed);
         }
-        // A compiler-ordered synchronizing producer runs first below, so its later barrier covers
-        // both these kernels and its own CUDA launch while preserving safe publication by ordinary
-        // producers. Sections without that capability retain the explicit scheduler barrier.
-        if (!sec.has_synchronizing_async_producer) {
-          CUDA_CHECK(cudaStreamSynchronize(stream));
+        if (checkpoint.graph_submitted || checkpoint.node == sec.sync_topo.size()) {
+          advance(Stage::Barrier);
+          break;
         }
+        const auto v = sec.sync_topo[checkpoint.node];
+        try {
+          if (run_sync(v) == core::OpResult::Ok) {
+            checkpoint.produced.push_back(v);
+            ++checkpoint.node;
+          }
+        } catch (...) {
+          rethrow_with_node_context(graph_, v, "execute_sync", section_id, sec.name);
+        }
+        break;
       }
-
-      // 5. Execute async producers
-      if (!stop_.load()) {
-        nvtx3::scoped_range r{nvtx3::event_attributes{"Execute async producers", color_async_p}};
-        for (auto v : sec.async_prod) {
+      case Stage::Barrier:
+        if (!sec.has_synchronizing_async_producer)
+          CUDA_CHECK(cudaStreamSynchronize(sec.stream));
+        advance(Stage::Push);
+        break;
+      case Stage::Push:
+        if (checkpoint.node == sec.async_prod.size()) {
+          advance(Stage::Release);
+          break;
+        }
+        {
+          const auto v = sec.async_prod[checkpoint.node];
           try {
-            (void)run_async_prod(v);
+            if (run_async_prod(v) == core::OpResult::Ok)
+              ++checkpoint.node;
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_async_producer", section_id, sec.name);
           }
-          if (stop_.load())
-            break;
         }
-      }
-
-      // 6. Release only outputs produced successfully in this iteration.
-      // Cancellation can skip the producer which normally supplies the stream barrier.
-      if (graph_submitted && stop_.load()) {
-        CUDA_CHECK(cudaStreamSynchronize(stream));
-      }
-      {
-        nvtx3::scoped_range r{nvtx3::event_attributes{"Release owned outputs", color_release}};
-        for (auto v : produced_owned_outputs) {
+        break;
+      case Stage::Release:
+        if (checkpoint.node == checkpoint.produced.size()) {
+          checkpoint = SectionCheckpoint{};
+          break;
+        }
+        {
+          const auto v = checkpoint.produced[checkpoint.node];
           try {
-            release_owned_outputs(v);
+            release_owned_outputs(v, checkpoint.port);
           } catch (...) {
             rethrow_with_node_context(graph_, v, "release_owned_outputs", section_id, sec.name);
           }
+          if (checkpoint.port == graph_[v].infer.owned_outputs.size()) {
+            ++checkpoint.node;
+            checkpoint.port = 0;
+          }
         }
-      }
-
-      if (stop_.load())
         break;
+      }
+    }
+    // Abort/EOF retain the old cleanup semantics. Pause keeps every pending port and operation.
+    if (!paused_.load() || aborted_.load()) {
+      CUDA_CHECK(cudaStreamSynchronize(sec.stream));
+      const size_t first = checkpoint.stage == Stage::Release ? checkpoint.node : 0;
+      for (size_t i = first; i < checkpoint.produced.size(); ++i) {
+        size_t port = checkpoint.stage == Stage::Release && i == first ? checkpoint.port : 0;
+        release_owned_outputs(checkpoint.produced[i], port);
+      }
+      checkpoint = SectionCheckpoint{};
     }
   } catch (...) {
+    aborted_.store(true);
+    paused_.store(false);
     stop_.store(true);
     log_and_abort_current_exception(
         std::format("Scheduler::run_section section={} id={}", sec.name, section_id));
@@ -631,7 +665,7 @@ void Scheduler::run_section(int section_id) {
 //   }
 // }
 
-void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v) {
+void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v, size_t &port) {
   const auto  idx        = boost::get(boost::vertex_index, graph_, v);
   const auto &np         = graph_[v];
   auto       &nrt        = node_rts_.at(idx);
@@ -640,10 +674,13 @@ void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v) {
                                ? static_cast<core::ITask *>(std::get<SyncRt>(nrt).task)
                                : static_cast<core::ITask *>(std::get<AsyncRt>(nrt).task);
 
-  for (size_t i = 0; i < owned_mask.size(); i++) {
+  for (; port < owned_mask.size(); ++port) {
+    const auto i = port;
     if (!owned_mask.at(i))
       continue;
 
+    if (stop_.load())
+      return;
     std::optional<core::TView> tview = task->acquire_input(static_cast<int>(i));
     while (!tview.has_value()) {
       if (stop_.load())
@@ -653,7 +690,7 @@ void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v) {
   }
 }
 
-void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v) {
+void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v, size_t &port) {
   const auto  idx        = boost::get(boost::vertex_index, graph_, v);
   const auto &np         = graph_[v];
   auto       &nrt        = node_rts_.at(idx);
@@ -662,10 +699,13 @@ void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v) {
                                ? static_cast<core::ITask *>(std::get<SyncRt>(nrt).task)
                                : static_cast<core::ITask *>(std::get<AsyncRt>(nrt).task);
 
-  for (size_t i = 0; i < owned_mask.size(); i++) {
+  for (; port < owned_mask.size(); ++port) {
+    const auto i = port;
     if (!owned_mask.at(i))
       continue;
 
+    if (stop_.load() && paused_.load() && !aborted_.load())
+      return;
     task->release_output(static_cast<int>(i));
   }
 }
@@ -690,14 +730,20 @@ core::OpResult Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
 
   switch (r) {
   case core::OpResult::Cancelled:
+    if (!paused_.load())
+      aborted_.store(true);
     logger()->debug("[Scheduler::run_sync] Node '{}' execution cancelled", np.spec.name);
     stop_.store(true);
     break;
   case core::OpResult::Eof:
+    aborted_.store(true);
+    paused_.store(false);
     logger()->debug("[Scheduler::run_sync] Node '{}' reached end of stream", np.spec.name);
     stop_.store(true);
     break;
   case core::OpResult::NotReady:
+    aborted_.store(true);
+    paused_.store(false);
     logger()->error(
         "[Scheduler::run_sync] The synchronous task '{}' returned NotReady, which is not allowed",
         np.spec.name);
@@ -745,10 +791,14 @@ core::OpResult Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
 
   switch (r) {
   case core::OpResult::Cancelled:
+    if (!paused_.load())
+      aborted_.store(true);
     logger()->debug("[Scheduler::run_async_cons] Node '{}' execution cancelled", np.spec.name);
     stop_.store(true);
     break;
   case core::OpResult::Eof:
+    aborted_.store(true);
+    paused_.store(false);
     logger()->debug("[Scheduler::run_async_cons] Node '{}' reached end of stream", np.spec.name);
     stop_.store(true);
     break;
@@ -794,10 +844,14 @@ core::OpResult Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
 
   switch (r) {
   case core::OpResult::Cancelled:
+    if (!paused_.load())
+      aborted_.store(true);
     logger()->debug("[Scheduler::run_async_prod] Node '{}' execution cancelled", np.spec.name);
     stop_.store(true);
     break;
   case core::OpResult::Eof:
+    aborted_.store(true);
+    paused_.store(false);
     logger()->debug("[Scheduler::run_async_prod] Node '{}' reached end of stream", np.spec.name);
     stop_.store(true);
     break;

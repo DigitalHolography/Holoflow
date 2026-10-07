@@ -21,21 +21,26 @@ using namespace holoflow::core;
 using namespace holoflow::runtime;
 
 struct State {
-  int                   frame        = 0;
-  int                   frames       = 13;
-  int                   executions   = 0;
-  int                   recordings   = 0;
-  int                   acquisitions = 0;
-  int                   source_uses = 0, sink_uses = 0;
-  bool                  stop_after_pop             = false;
-  bool                  recorded_after_acquisition = false;
-  bool                  unexpected_pointer         = false;
-  bool                  unexpected_tuple           = false;
-  std::vector<float>    results;
-  std::function<void()> sequence_query_hook;
-  bool                  explicit_updates = true;
-  const void           *watched_task     = nullptr;
-  std::function<void()> destruction_probe;
+  bool                              cancel_sync_once = false;
+  int                               frame            = 0;
+  int                               frames           = 13;
+  int                               executions       = 0;
+  int                               recordings       = 0;
+  int                               acquisitions     = 0;
+  int                               source_uses = 0, sink_uses = 0;
+  bool                              stop_after_pop             = false;
+  bool                              recorded_after_acquisition = false;
+  bool                              unexpected_pointer         = false;
+  bool                              unexpected_tuple           = false;
+  std::vector<float>                results;
+  std::function<void()>             sequence_query_hook;
+  std::function<void(const char *)> operation_hook;
+  bool                              blocked_pop      = false;
+  bool                              blocked_push     = false;
+  bool                              blocked_acquire  = false;
+  bool                              explicit_updates = true;
+  const void                       *watched_task     = nullptr;
+  std::function<void()>             destruction_probe;
 };
 
 class Boundary : public IAsyncTask {
@@ -44,22 +49,36 @@ public:
            bool bad, nlohmann::json settings)
       : source_(source), count_(count), desc_(desc), stream_(stream), state_(state), bad_(bad),
         settings_(settings) {
-    for (size_t i = 0; i <= count; ++i)
+    for (size_t i = 0; i < (count + 1) * settings_.value("ports", 1); ++i)
       buffers_.push_back(curaii::make_unique_device_ptr<float>(2));
   }
-  std::optional<std::vector<std::byte *>> owned_input_pointers(size_t) const override {
-    return pointers();
+  std::optional<std::vector<std::byte *>> owned_input_pointers(size_t index) const override {
+    return pointers(index);
   }
-  std::optional<std::vector<std::byte *>> owned_output_pointers(size_t) const override {
-    return pointers();
+  std::optional<std::vector<std::byte *>> owned_output_pointers(size_t index) const override {
+    return pointers(index);
   }
-  std::optional<TView> acquire_input(int) override {
+  std::optional<TView> acquire_input(int index) override {
+    if (state_->blocked_acquire) {
+      if (state_->operation_hook)
+        state_->operation_hook("blocked acquire");
+      return std::nullopt;
+    }
     ++state_->acquisitions;
-    auto &storage = storage_access().owned_input_storage(0);
-    storage.ptr   = reinterpret_cast<std::byte *>(buffers_[slot(state_->sink_uses)].get());
+    auto &storage = storage_access().owned_input_storage(index);
+    storage.ptr   = reinterpret_cast<std::byte *>(
+        buffers_[index * (count_ + 1) + slot(state_->sink_uses)].get());
+    if (state_->operation_hook)
+      state_->operation_hook(settings_.value("ports", 1) == 2 && index == 0 ? "acquire first"
+                                                                            : "acquire");
     return TView{desc_, &storage};
   }
   OpResult try_pop(AsyncPopCtx &ctx) override {
+    if (state_->blocked_pop) {
+      if (state_->operation_hook)
+        state_->operation_hook("blocked pop");
+      return OpResult::NotReady;
+    }
     auto        &storage = storage_access().owned_output_storage(0);
     const size_t slot = state_->unexpected_pointer && state_->frame == 2
                             ? count_
@@ -70,6 +89,15 @@ public:
     CUDA_CHECK(cudaMemcpyAsync(storage.ptr + desc_.offset, &value_, sizeof(float),
                                cudaMemcpyHostToDevice, stream_));
     ctx.outputs[0] = {desc_, &storage};
+    if (settings_.value("ports", 1) == 2) {
+      auto &second = storage_access().owned_output_storage(1);
+      second.ptr   = reinterpret_cast<std::byte *>(buffers_[count_ + 1 + slot].get());
+      CUDA_CHECK(cudaMemcpyAsync(second.ptr + desc_.offset, &value_, sizeof(float),
+                                 cudaMemcpyHostToDevice, stream_));
+      ctx.outputs[1] = {desc_, &second};
+    }
+    if (state_->operation_hook)
+      state_->operation_hook("pop");
     if (state_->stop_after_pop) {
       CUDA_CHECK(cudaStreamSynchronize(stream_));
       state_->stop_after_pop = false;
@@ -78,20 +106,34 @@ public:
     return OpResult::Ok;
   }
   OpResult try_push(AsyncPushCtx &ctx) override {
+    if (state_->blocked_push) {
+      if (state_->operation_hook)
+        state_->operation_hook("blocked push");
+      return OpResult::NotReady;
+    }
     float result;
     CUDA_CHECK(cudaMemcpyAsync(&result, ctx.inputs[0].data(), sizeof(float), cudaMemcpyDeviceToHost,
                                stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_));
     state_->results.push_back(result);
     ++state_->sink_uses;
+    if (state_->operation_hook)
+      state_->operation_hook("push");
     storage_access().owned_input_storage(0).ptr = nullptr;
+    if (settings_.value("ports", 1) == 2)
+      storage_access().owned_input_storage(1).ptr = nullptr;
     return state_->results.size() == static_cast<size_t>(state_->frames) ? OpResult::Eof
                                                                          : OpResult::Ok;
   }
-  void release_output(int) override {
-    storage_access().owned_output_storage(0).ptr = nullptr;
-    ++state_->frame;
-    ++state_->source_uses;
+  void release_output(int index) override {
+    storage_access().owned_output_storage(index).ptr = nullptr;
+    if (index + 1 == settings_.value("ports", 1)) {
+      ++state_->frame;
+      ++state_->source_uses;
+    }
+    if (state_->operation_hook)
+      state_->operation_hook(settings_.value("ports", 1) == 2 && index == 0 ? "release first"
+                                                                            : "release");
   }
 
   std::optional<PointerSequence> owned_input_pointer_sequence(size_t) const override {
@@ -143,10 +185,10 @@ private:
     }
     return result;
   }
-  std::vector<std::byte *> pointers() const {
+  std::vector<std::byte *> pointers(size_t port) const {
     std::vector<std::byte *> result;
     for (size_t i = 0; i < count_; ++i)
-      result.push_back(reinterpret_cast<std::byte *>(buffers_[i].get()));
+      result.push_back(reinterpret_cast<std::byte *>(buffers_[port * (count_ + 1) + i].get()));
     if (bad_)
       result[0] = nullptr;
     return result;
@@ -186,6 +228,17 @@ public:
       result.input_descs                = {desc};
       result.owned_inputs               = {true};
       result.owned_input_pointer_counts = {declared};
+    }
+    if (settings.value("ports", 1) == 2) {
+      if (source_) {
+        result.output_descs.push_back(desc);
+        result.owned_outputs.push_back(true);
+        result.owned_output_pointer_counts.push_back(declared);
+      } else {
+        result.input_descs.push_back(desc);
+        result.owned_inputs.push_back(true);
+        result.owned_input_pointer_counts.push_back(declared);
+      }
     }
     return result;
   }
@@ -243,8 +296,16 @@ public:
     return !settings_.value("unsupported", false);
   }
   OpResult execute(SyncCtx &ctx) override {
+    if (state_->cancel_sync_once) {
+      state_->cancel_sync_once = false;
+      if (state_->operation_hook)
+        state_->operation_hook("cancel sync");
+      return OpResult::Cancelled;
+    }
     ++state_->executions;
     enqueue(ctx.inputs, ctx.outputs, stream_);
+    if (state_->operation_hook)
+      state_->operation_hook("sync");
     return OpResult::Ok;
   }
   void record_cuda_graph(CudaGraphCtx &ctx) override {
@@ -829,6 +890,209 @@ TEST_F(SectionCudaGraphTest, PlanningBudgetUsesConservativeCartesianFallback) {
   EXPECT_TRUE(report.contains("planning_note"));
   run(*out);
   EXPECT_EQ(state->executions, 0);
+}
+
+TEST_F(SectionCudaGraphTest, PauseRetainsEveryCompletedOperationAndGraphVariant) {
+  // The 28/40 cycle has 280 reachable tuples; even a one-sided phase change loses them all.
+  for (const bool use_graphs : {false, true}) {
+    for (const auto point : {"acquire", "pop", "sync", "blocked push", "push", "release",
+                             "blocked acquire", "blocked pop", "cancel sync"}) {
+      if (use_graphs && (std::string(point) == "sync" || std::string(point) == "cancel sync"))
+        continue;
+      SCOPED_TRACE(std::string(point) + (use_graphs ? " graphs" : " ordinary"));
+      state->frame = state->source_uses = state->sink_uses = state->executions = 0;
+      state->acquisitions                                                      = 0;
+      state->results.clear();
+      spec[source].settings = {{"count", 28}, {"ordered", true}};
+      spec[sink].settings   = {{"count", 40}, {"ordered", true}};
+      auto      out         = compile(use_graphs ? 280 : 0);
+      Scheduler scheduler(out->graph, out->sections, out->resources);
+      bool      triggered     = false;
+      state->cancel_sync_once = std::string(point) == "cancel sync";
+      state->blocked_acquire  = std::string(point) == "blocked acquire";
+      state->blocked_pop      = std::string(point) == "blocked pop";
+      state->blocked_push     = std::string(point) == "blocked push";
+      state->operation_hook   = [&](const char *operation) {
+        if (!triggered && std::string(operation) == point) {
+          triggered = true;
+          scheduler.request_pause();
+        }
+      };
+      scheduler.start();
+      auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      if (!scheduler.stop_requested())
+        scheduler.request_stop();
+      scheduler.wait();
+      ASSERT_TRUE(triggered);
+      const auto recordings  = state->recordings;
+      const auto handles     = use_graphs
+                                   ? out->resources.section_cuda_graphs.begin()->second->executables
+                                   : std::vector<cudaGraphExec_t>{};
+      state->operation_hook  = {};
+      state->blocked_acquire = state->blocked_pop = state->blocked_push = false;
+      scheduler.start();
+      deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+      while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      if (!scheduler.stop_requested())
+        scheduler.request_stop();
+      scheduler.wait();
+      ASSERT_EQ(state->results.size(), state->frames);
+      EXPECT_EQ(state->source_uses, state->frames);
+      EXPECT_EQ(state->sink_uses, state->frames);
+      EXPECT_EQ(state->acquisitions, state->frames);
+      for (size_t i = 0; i < state->results.size(); ++i)
+        EXPECT_FLOAT_EQ(state->results[i], 2.F * i + 1);
+      EXPECT_EQ(state->recordings, recordings);
+      if (use_graphs) {
+        const auto &graphs = *out->resources.section_cuda_graphs.begin()->second;
+        EXPECT_EQ(graphs.executables, handles);
+        EXPECT_EQ(graphs.snapshot()["tuple_misses"], 0);
+        EXPECT_EQ(graphs.snapshot()["ordinary_iterations"], 0);
+        EXPECT_EQ(graphs.snapshot()["launches"], state->frames);
+      } else {
+        EXPECT_EQ(state->executions, 2 * state->frames);
+      }
+    }
+  }
+}
+
+TEST_F(SectionCudaGraphTest, PauseRetainsPartiallyAcquiredAndReleasedPorts) {
+  spec[source].settings["ports"] = 2;
+  spec[sink].settings["ports"]   = 2;
+  const auto branch = add_vertex(NodeSpec{"branch", "compute", nlohmann::json::object()}, spec);
+  add_edge(source, branch, EdgeSpec{1, 0}, spec);
+  add_edge(branch, sink, EdgeSpec{0, 1}, spec);
+  auto      out = compile(0);
+  Scheduler scheduler(out->graph, out->sections, out->resources);
+  int       pauses      = 0;
+  state->operation_hook = [&](const char *point) {
+    if ((pauses == 0 && std::string(point) == "acquire first") ||
+        (pauses == 1 && std::string(point) == "release first")) {
+      ++pauses;
+      scheduler.request_pause();
+    }
+  };
+  for (int run = 0; run < 3; ++run) {
+    scheduler.start();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (!scheduler.stop_requested())
+      scheduler.request_stop();
+    scheduler.wait();
+    if (run == 0)
+      EXPECT_EQ(state->acquisitions, 1);
+    if (run == 1)
+      EXPECT_EQ(state->source_uses, 0);
+  }
+  state->operation_hook = {};
+  EXPECT_EQ(pauses, 2);
+  ASSERT_EQ(state->results.size(), state->frames);
+  EXPECT_EQ(state->acquisitions, 2 * state->frames);
+  EXPECT_EQ(state->source_uses, state->frames);
+  for (size_t i = 0; i < state->results.size(); ++i)
+    EXPECT_FLOAT_EQ(state->results[i], 2.F * i + 1);
+}
+
+TEST_F(SectionCudaGraphTest, PausePreservesOrdinaryFallbackAfterTupleMiss) {
+  spec[source].settings   = {{"count", 4}, {"ordered", true}};
+  spec[sink].settings     = {{"count", 4}, {"ordered", true}};
+  auto out                = compile(4);
+  state->unexpected_tuple = true;
+  Scheduler scheduler(out->graph, out->sections, out->resources);
+  state->operation_hook = [&](const char *point) {
+    if (std::string(point) == "push" && state->results.size() == 3)
+      scheduler.request_pause();
+  };
+  scheduler.start();
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  if (!scheduler.stop_requested())
+    scheduler.request_stop();
+  scheduler.wait();
+  ASSERT_EQ(state->results.size(), 3U);
+  auto &graphs = *out->resources.section_cuda_graphs.begin()->second;
+  EXPECT_FALSE(graphs.enabled);
+  const auto recordings = state->recordings;
+  state->operation_hook = {};
+  scheduler.start();
+  deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  if (!scheduler.stop_requested())
+    scheduler.request_stop();
+  scheduler.wait();
+  EXPECT_FALSE(graphs.enabled);
+  EXPECT_EQ(state->recordings, recordings);
+  EXPECT_EQ(graphs.snapshot()["tuple_misses"], 1);
+  EXPECT_EQ(graphs.snapshot()["launches"], 2);
+  ASSERT_EQ(state->results.size(), state->frames);
+  for (size_t i = 0; i < state->results.size(); ++i)
+    EXPECT_FLOAT_EQ(state->results[i], 2.F * i + 1);
+}
+
+TEST_F(SectionCudaGraphTest, EofOverridesConcurrentPauseAndReleasesOutputs) {
+  spec[source].settings = {{"count", 4}, {"ordered", true}};
+  spec[sink].settings   = {{"count", 4}, {"ordered", true}};
+  state->frames         = 1;
+  auto      out         = compile(4);
+  Scheduler scheduler(out->graph, out->sections, out->resources);
+  state->operation_hook = [&](const char *point) {
+    if (std::string(point) == "push")
+      scheduler.request_pause();
+  };
+  scheduler.start();
+  auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  if (!scheduler.stop_requested())
+    scheduler.request_stop();
+  scheduler.wait();
+  EXPECT_EQ(state->source_uses, 1);
+  state->operation_hook      = {};
+  state->frames              = 2;
+  int queries                = 0;
+  state->sequence_query_hook = [&] { ++queries; };
+  scheduler.start();
+  deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  if (!scheduler.stop_requested())
+    scheduler.request_stop();
+  scheduler.wait();
+  state->sequence_query_hook = {};
+  EXPECT_GT(queries, 0);
+  ASSERT_EQ(state->results.size(), 2U);
+  EXPECT_FLOAT_EQ(state->results[0], 1.F);
+  EXPECT_FLOAT_EQ(state->results[1], 3.F);
+  EXPECT_EQ(state->source_uses, 2);
+}
+
+TEST_F(SectionCudaGraphTest, DestroyingPausedSchedulerReleasesHeldOutputsOnce) {
+  auto out = compile();
+  {
+    Scheduler scheduler(out->graph, out->sections, out->resources);
+    state->operation_hook = [&](const char *point) {
+      if (std::string(point) == "pop")
+        scheduler.request_pause();
+    };
+    scheduler.start();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (!scheduler.stop_requested())
+      scheduler.request_stop();
+    scheduler.wait();
+    ASSERT_TRUE(state->results.empty());
+    EXPECT_EQ(state->source_uses, 0);
+    state->operation_hook = {};
+  }
+  EXPECT_EQ(state->source_uses, 1);
+  EXPECT_EQ(state->sink_uses, 0);
 }
 
 TEST_F(SectionCudaGraphTest, ResumeRefreshesPhaseAfterCooperativeStopBetweenPopAndPush) {

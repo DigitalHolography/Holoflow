@@ -697,4 +697,63 @@ TEST(SlidingAverageTest, ProducesMultiElementAveragesAcrossRingWraparound) {
   }
 }
 
+TEST(SlidingAverageTest, CompatibleUpdateResetsHistoryAndPhaseWithoutReplacingBuffers) {
+  const TDesc                                    desc({1, 1, 1}, DType::F32, MemLoc::Device);
+  const std::array                               inputs{desc};
+  const holotask::asyncs::SlidingAverageSettings settings{4, 3, 2};
+  holotask::asyncs::SlidingAverageFactory        factory;
+  const auto                           inferred = factory.infer(inputs, nlohmann::json(settings));
+  curaii::CudaStream                   producer, consumer;
+  const holoflow::core::AsyncCreateCtx create_ctx{producer.get(), consumer.get()};
+  auto task = factory.create(inputs, nlohmann::json(settings), create_ctx);
+  task->bind_logger(spdlog::default_logger());
+  TestStorageAccess storage(inferred.input_descs, inferred.output_descs);
+  task->bind_storage_access(&storage);
+  const auto        pointers       = *task->owned_input_pointers(0);
+  const auto        initial_input  = *task->owned_input_pointer_sequence(0);
+  const auto        initial_output = *task->owned_output_pointer_sequence(0);
+  std::atomic<bool> cancelled{false};
+  std::array        outputs{TView{inferred.output_descs[0], &storage.owned_output_storage(0)}};
+  holoflow::core::AsyncPopCtx pop{outputs, &cancelled};
+  auto                        feed = [&](float value) {
+    auto view = task->acquire_input(0);
+    EXPECT_TRUE(view.has_value());
+    if (!view)
+      return;
+    CUDA_CHECK(cudaMemcpy(view->data(), &value, sizeof(value), cudaMemcpyHostToDevice));
+    std::array                   views{*view};
+    holoflow::core::AsyncPushCtx push{views, &cancelled};
+    EXPECT_EQ(task->try_push(push), OpResult::Ok);
+  };
+  for (int i = 0; i < 14; ++i) {
+    feed(100.F + i);
+    if (task->try_pop(pop) == OpResult::Ok)
+      task->release_output(0);
+  }
+  // Leave a popped buffer held, as a paused section would do before recompilation.
+  feed(200.F);
+  ASSERT_EQ(task->try_pop(pop), OpResult::Ok);
+  auto *original = task.get();
+  task           = factory.update(std::move(task), inputs, nlohmann::json(settings), create_ctx);
+  EXPECT_EQ(task.get(), original);
+  EXPECT_EQ(*task->owned_input_pointers(0), pointers);
+  EXPECT_EQ(task->owned_input_pointer_sequence(0)->prefix, initial_input.prefix);
+  EXPECT_EQ(task->owned_input_pointer_sequence(0)->cycle, initial_input.cycle);
+  EXPECT_EQ(task->owned_output_pointer_sequence(0)->cycle, initial_output.cycle);
+  // Compiler binds new empty storages after update; reproduce that lifecycle here.
+  TestStorageAccess reset_storage(inferred.input_descs, inferred.output_descs);
+  task->bind_storage_access(&reset_storage);
+  outputs[0] = TView{inferred.output_descs[0], &reset_storage.owned_output_storage(0)};
+  for (const auto value : {900.F, 800.F, 3.F, 5.F}) {
+    feed(value);
+    EXPECT_EQ(task->try_pop(pop), OpResult::NotReady);
+  }
+  feed(7.F);
+  ASSERT_EQ(task->try_pop(pop), OpResult::Ok);
+  float result = 0;
+  CUDA_CHECK(cudaMemcpy(&result, outputs[0].data(), sizeof(result), cudaMemcpyDeviceToHost));
+  EXPECT_FLOAT_EQ(result, 5.F);
+  task->release_output(0);
+}
+
 } // namespace

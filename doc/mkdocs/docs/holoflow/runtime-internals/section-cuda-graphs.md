@@ -156,13 +156,28 @@ before submission and resumes ordinary execution. Diagnostics identify the stora
 indices involved. Recording/instantiation failures discard partial sets; a poisoned CUDA context cannot
 use fallback. Launch errors never trigger duplicate ordinary execution.
 
-Every start replans from current queue phases, so partial advancement during cooperative shutdown
-does not by itself cause fallback after resume. Matching variants are retained. Recompilation drains
-prior streams and selectively destroys dependent executables before incompatible resource updates.
-Unused compiler allocations remain alive until their dependent caches are retired.
-Callers must stop/wait before recompiling and
-keep `CompilerOutput` alive throughout scheduler use. Cancellation drains submitted graph work
-before releasing its buffers even when the usual producer barrier is skipped.
+`Scheduler::request_pause()` interrupts readiness polls and suspends each section at its next
+operation boundary. The scheduler retains acquired input ports, popped outputs, successful sync
+operations, graph submissions, pushes and partially released ports. `wait()` joins workers and
+drains all CUDA streams before returning. Resume must call `start()` on the **same scheduler**:
+it continues the checkpoints without repeating successful operations or preparing graphs again.
+This also preserves sections that already fell back to ordinary execution. Future live-camera
+frames remain subject to the camera's buffering limits.
+
+`request_stop()`, EOF and unsolicited task cancellation abort execution. A subsequent start
+replans from current queue phases; matching variants are retained, but phase changes can replace
+the entire reachable tuple set. A task returning `Cancelled` during pause must be retryable with
+the same views and must not already have committed consumption, publication or CUDA work.
+Successful operations return `Ok` even when a concurrent pause was requested.
+
+The manager preserves its scheduler for unchanged stop/pause and resume. Aborting or destroying
+a paused scheduler releases its remaining owned output ports, including held camera DMA buffers.
+Recompilation destroys the stopped scheduler before migrating resources and starts fresh queue history. BatchQueue,
+DualReaderBatchQueue and SlidingAverage retain compatible allocations but reset logical cursors;
+SlidingAverage also clears its ring, running average and discard count. This restores coherent
+pointer phases without sacrificing compatible section executables. Callers must stop/wait before
+recompiling and keep `CompilerOutput` alive throughout scheduler use. Cancellation drains CUDA
+work before releasing produced buffers when the usual producer barrier was skipped.
 
 Node metrics retain counts and throughput, with `individual_timing_available=false` for intervals
 containing graph launches. Individual durations are unavailable, not measured zero cost.
