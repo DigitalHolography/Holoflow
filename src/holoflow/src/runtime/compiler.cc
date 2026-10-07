@@ -13,6 +13,8 @@
 // limitations under the License.
 
 #include "holoflow/runtime/compiler.hh"
+#include "diagnostics_file_writer.hh"
+#include "holoflow/runtime/diagnostics.hh"
 #include "holoflow/runtime/tracing.hh"
 #include "section_cuda_graph.hh"
 
@@ -32,6 +34,7 @@
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <variant>
 
 #include "curaii/cuda.hh"
@@ -41,7 +44,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holoflow/runtime/graph_display.hh"
 #include "holoflow/runtime/graph_exec.hh"
-#include "spdlog/sinks/basic_file_sink.h"
+#include "spdlog/sinks/base_sink.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
 #include "spdlog/spdlog.h"
 
@@ -57,6 +60,29 @@ public:
 };
 
 using tracing::ScopedTrace;
+
+namespace {
+class CompilerLogBufferSink final : public spdlog::sinks::base_sink<std::mutex> {
+public:
+  void clear() {
+    std::lock_guard lock(mutex_);
+    buffer_.clear();
+  }
+  std::string take() {
+    std::lock_guard lock(mutex_);
+    return std::exchange(buffer_, {});
+  }
+
+private:
+  void sink_it_(const spdlog::details::log_msg &message) override {
+    spdlog::memory_buf_t text;
+    formatter_->format(message, text);
+    buffer_.append(text.data(), text.size());
+  }
+  void        flush_() override {}
+  std::string buffer_;
+};
+} // namespace
 
 // -------------------------------------------------------------------------------------------------
 // Storage Adapter for owning tasks
@@ -115,9 +141,10 @@ public:
 
 private:
   // --- State ---
-  core::Registry                 &registry_;
-  Compiler::Config                config_;
-  std::shared_ptr<spdlog::logger> logger_;
+  core::Registry                        &registry_;
+  Compiler::Config                       config_;
+  std::shared_ptr<spdlog::logger>        logger_;
+  std::shared_ptr<CompilerLogBufferSink> log_buffer_;
 
   const core::GraphSpec          *gspec_ = nullptr;
   std::unique_ptr<CompilerOutput> prev_;
@@ -131,6 +158,7 @@ private:
 
   // --- Helpers ---
   void        setup_logging();
+  void        publish_log() noexcept;
   ScopedTrace trace_scope(std::string name, std::string category = "pass");
   void        dump_graphviz(const std::string &filename);
   void        dump_json(const std::string &filename, const core::GraphSpec &gspec);
@@ -174,6 +202,13 @@ Compiler::Impl::Impl(core::Registry &registry, Compiler::Config config)
 
 std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec          &gspec,
                                                     std::unique_ptr<CompilerOutput> prev) {
+  if (log_buffer_)
+    log_buffer_->clear();
+  // Publish on every exit, including exceptions during failure reporting/cleanup.
+  struct LogPublication {
+    Impl &compiler;
+    ~LogPublication() { compiler.publish_log(); }
+  } log_publication{*this};
   tracing::Capture capture(config_.log_dir.empty() ? std::filesystem::path{}
                                                    : config_.log_dir / config_.trace_filename,
                            config_.enable_profiling);
@@ -262,18 +297,37 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
 }
 
 void Compiler::Impl::setup_logging() {
-  if (spdlog::get("compiler")) {
+  {
+    ScopedTrace retirement("Retire Compiler Logger", "detail");
     spdlog::drop("compiler");
   }
-
   if (!config_.log_dir.empty()) {
-    std::filesystem::create_directories(config_.log_dir);
-    auto path = config_.log_dir / "compiler.log";
-    logger_   = spdlog::basic_logger_mt("compiler", path.string(), true);
+    ScopedTrace buffer("Create Compiler Log Buffer", "detail");
+    log_buffer_ = std::make_shared<CompilerLogBufferSink>();
+    logger_     = std::make_shared<spdlog::logger>("compiler", log_buffer_);
+    spdlog::initialize_logger(logger_);
   } else {
     logger_ = spdlog::stdout_color_mt("compiler");
   }
+  ScopedTrace configuration("Configure Compiler Logger", "detail");
   logger_->set_level(config_.verbose_tracing ? spdlog::level::trace : spdlog::level::info);
+}
+
+void Compiler::Impl::publish_log() noexcept {
+  if (!log_buffer_)
+    return;
+  try {
+    ScopedTrace submission("Submit Compiler Log", "detail");
+    section_diagnostics_file_writer().submit_text(
+        config_.log_dir / "compiler.log",
+        [text = log_buffer_->take()]() mutable { return std::move(text); });
+  } catch (...) {
+    // Diagnostic failures must not mask a successful compilation or its original exception.
+    try {
+      spdlog::warn("Could not submit compiler log for background writing");
+    } catch (...) {
+    }
+  }
 }
 
 ScopedTrace Compiler::Impl::trace_scope(std::string name, std::string category) {
@@ -285,6 +339,10 @@ void Compiler::Impl::dump_graphviz(const std::string &filename) {
     return;
   }
 
+  std::error_code error;
+  std::filesystem::create_directories(config_.log_dir, error);
+  if (error)
+    return;
   std::ofstream file(config_.log_dir / filename);
   if (!file.is_open()) {
     return;
@@ -1229,17 +1287,8 @@ void Compiler::Impl::bind_tasks() {
 
 // -------------------------------------------------------------------------------------------------
 void Compiler::Impl::dump_json(const std::string &filename, const core::GraphSpec &gspec) {
-  if (config_.log_dir.empty()) {
-    return;
-  }
-
-  std::ofstream file(config_.log_dir / filename);
-  if (!file.is_open()) {
-    return;
-  }
-
-  nlohmann::json j = core::to_json(gspec);
-  file << j.dump(2);
+  if (!config_.log_dir.empty())
+    dump_graph_spec_async(config_.log_dir / filename, gspec);
 }
 
 // -------------------------------------------------------------------------------------------------

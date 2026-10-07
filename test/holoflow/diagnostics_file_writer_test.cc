@@ -3,6 +3,8 @@
 
 #include <gtest/gtest.h>
 
+#include "holoflow/runtime/diagnostics.hh"
+#include "support/native_trace.hh"
 #include <chrono>
 #include <filesystem>
 #include <fstream>
@@ -105,6 +107,78 @@ TEST(DiagnosticsFileWriterTest, RealIoFailureStillAllowsAReadableReport) {
     EXPECT_EQ(actual, expected);
   }
   std::filesystem::remove_all(directory);
+}
+
+TEST(DiagnosticsFileWriterTest, TextRenderingRunsInBackgroundAndCoalescesPendingFiles) {
+  const auto            directory = trace_test::temporary_path("holoflow-text-writer-");
+  DiagnosticsFileWriter writer;
+  std::promise<void>    started, release;
+  auto                  starting = started.get_future();
+  auto                  released = release.get_future();
+  writer.submit_text(directory / "block.txt", [&] {
+    started.set_value();
+    EXPECT_EQ(released.wait_for(3s), std::future_status::ready);
+    return std::string{"block"};
+  });
+  ASSERT_EQ(starting.wait_for(3s), std::future_status::ready);
+  std::vector<int> rendered;
+  for (int i = 1; i <= 3; ++i)
+    writer.submit_text(directory / "report.txt", [&, i] {
+      rendered.push_back(i);
+      return std::to_string(i);
+    });
+  EXPECT_TRUE(rendered.empty());
+  release.set_value();
+  writer.flush();
+  EXPECT_EQ(rendered, (std::vector<int>{3}));
+  writer.submit_text(directory / "bad.txt",
+                     []() -> std::string { throw std::runtime_error("render"); });
+  writer.submit_text(directory / "good.txt", [] { return std::string{"ready"}; });
+  writer.flush();
+  std::ifstream file(directory / "good.txt");
+  std::string   text;
+  file >> text;
+  EXPECT_EQ(text, "ready");
+}
+
+TEST(DiagnosticsFileWriterTest, GraphDumpsOwnSnapshotsAndPreserveSerialization) {
+  auto &writer = holoflow::runtime::section_diagnostics_file_writer();
+  writer.flush();
+  const auto         directory = trace_test::temporary_path("holoflow-graph-snapshots-");
+  std::promise<void> started, release;
+  auto               starting = started.get_future();
+  auto               released = release.get_future();
+  writer.submit_text(directory / "block.txt", [&] {
+    started.set_value();
+    EXPECT_EQ(released.wait_for(3s), std::future_status::ready);
+    return std::string{};
+  });
+  ASSERT_EQ(starting.wait_for(3s), std::future_status::ready);
+  std::string expected_json, expected_dot;
+  {
+    holoflow::core::GraphSpec graph;
+    auto a = add_vertex(holoflow::core::NodeSpec{"source", "Source", {{"value", 42}}}, graph);
+    auto b = add_vertex(holoflow::core::NodeSpec{"sink", "Sink", {}}, graph);
+    add_edge(a, b, holoflow::core::EdgeSpec{0, 0}, graph);
+    holoflow::core::GraphSpecDumpPreferences preferences;
+    preferences.dump_node_settings = false;
+    expected_json                  = holoflow::core::to_json(graph).dump(2);
+    expected_dot                   = holoflow::core::to_dot(graph, preferences);
+    holoflow::runtime::dump_pipeline_graph_async(directory, graph, preferences);
+    holoflow::runtime::dump_graph_spec_async(directory / "graph_spec.json", graph);
+    graph[a].settings["value"]     = 99;
+    preferences.dump_node_settings = true;
+  }
+  EXPECT_FALSE(std::filesystem::exists(directory / "pipeline.json"));
+  release.set_value();
+  writer.flush();
+  auto read = [&](const char *name) {
+    std::ifstream file(directory / name);
+    return std::string{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+  };
+  EXPECT_EQ(read("pipeline.json"), expected_json);
+  EXPECT_EQ(read("graph_spec.json"), expected_json);
+  EXPECT_EQ(read("pipeline.dot"), expected_dot);
 }
 
 } // namespace

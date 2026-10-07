@@ -16,6 +16,8 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <future>
+#include <iostream>
 #include <memory>
 #include <span>
 
@@ -31,6 +33,12 @@ using holoflow::core::InferResult;
 using holoflow::core::NodeSpec;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
+
+bool background_slice(const std::string &name) {
+  return name == "Format CUDA Graph Diagnostics" || name == "Write CUDA Graph Diagnostics File" ||
+         name == "Format Graph Spec JSON" || name == "Format Pipeline Graph DOT" ||
+         name == "Write Diagnostic Text File";
+}
 
 GraphSpec source_sink_graph() {
   GraphSpec graph;
@@ -197,8 +205,7 @@ TEST(CompilerTest, EmitsLogsNativeTraceAndSuccessGraph) {
             ++count;
           }
           // Background file writes can outlive an automatic compilation capture.
-          if (trace.slices[i].name != "Format CUDA Graph Diagnostics" &&
-              trace.slices[i].name != "Write CUDA Graph Diagnostics File")
+          if (!background_slice(trace.slices[i].name))
             EXPECT_TRUE(trace.slices[i].complete);
         }
         EXPECT_EQ(count, 1) << name;
@@ -216,6 +223,7 @@ TEST(CompilerTest, EmitsLogsNativeTraceAndSuccessGraph) {
       EXPECT_EQ(trace.slices[total].outcome, "success");
     }
   }
+  holoflow::runtime::section_diagnostics_file_writer().flush();
   EXPECT_TRUE(std::filesystem::exists(directory / "compiler.log"));
   EXPECT_TRUE(std::filesystem::exists(directory / "compilation_success.dot"));
   EXPECT_EQ(std::filesystem::exists(directory / "trace.perfetto-trace"),
@@ -266,7 +274,8 @@ TEST(CompilerTest, FailureExportsCompletedPreparationAndValidationSpans) {
     for (const auto &slice : trace.slices) {
       validation |= slice.name == "Validate Spec";
       total |= slice.name == "Total Compilation" && slice.outcome == "failure";
-      EXPECT_TRUE(slice.complete);
+      if (!background_slice(slice.name))
+        EXPECT_TRUE(slice.complete);
     }
     EXPECT_TRUE(validation);
     EXPECT_TRUE(total);
@@ -335,4 +344,61 @@ TEST(CompilerTest, ExplicitSessionCapturesCompilationSchedulerStartupStopAndResu
     EXPECT_TRUE(slice.complete);
   }
   EXPECT_TRUE(joined);
+}
+
+TEST(CompilerTest, LoggingAndCompilationDoNotWaitForDiagnosticWrites) {
+  using namespace std::chrono_literals;
+  auto &writer = holoflow::runtime::section_diagnostics_file_writer();
+  writer.flush();
+  const auto         directory = trace_test::temporary_path("holoflow-buffered-compiler-");
+  std::promise<void> started, release;
+  auto               starting = started.get_future();
+  auto               released = release.get_future();
+  writer.submit_text(directory / "block.txt", [&] {
+    started.set_value();
+    EXPECT_EQ(released.wait_for(5s), std::future_status::ready);
+    return std::string{};
+  });
+  ASSERT_EQ(starting.wait_for(3s), std::future_status::ready);
+  holoflow::core::Registry registry;
+  double                   setup_ms = 0;
+  for (int i = 0; i < 20; ++i) {
+    const auto                  start = std::chrono::steady_clock::now();
+    holoflow::runtime::Compiler compiler(
+        registry,
+        {.log_dir = directory / "output", .dump_dot_on_failure = false, .enable_profiling = false});
+    setup_ms +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+    EXPECT_NE(compiler.compile({}), nullptr);
+  }
+  EXPECT_FALSE(std::filesystem::exists(directory / "output"));
+  release.set_value();
+  writer.flush();
+  EXPECT_TRUE(std::filesystem::exists(directory / "output" / "compiler.log"));
+  std::cout << "Compiler logging setup: mean_ms=" << setup_ms / 20 << '\n';
+}
+
+TEST(CompilerTest, BufferedLogContainsOnlyLatestCompilationAndIncludesFailures) {
+  auto                    &writer    = holoflow::runtime::section_diagnostics_file_writer();
+  const auto               directory = trace_test::temporary_path("holoflow-latest-compiler-log-");
+  holoflow::core::Registry registry;
+  holoflow::runtime::Compiler compiler(
+      registry, {.log_dir = directory, .dump_dot_on_failure = false, .enable_profiling = false});
+  auto read_log = [&] {
+    writer.flush();
+    std::ifstream file(directory / "compiler.log");
+    return std::string{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+  };
+  GraphSpec invalid;
+  auto      node = add_vertex(NodeSpec{"missing", "first_missing", {}}, invalid);
+  EXPECT_THROW((void)compiler.compile(invalid), std::runtime_error);
+  EXPECT_NE(read_log().find("first_missing"), std::string::npos);
+  invalid[node].kind = "second_missing";
+  EXPECT_THROW((void)compiler.compile(invalid), std::runtime_error);
+  auto log = read_log();
+  EXPECT_NE(log.find("Compilation Failed"), std::string::npos);
+  EXPECT_NE(log.find("second_missing"), std::string::npos);
+  EXPECT_EQ(log.find("first_missing"), std::string::npos);
+  EXPECT_NE(compiler.compile({}), nullptr);
+  EXPECT_EQ(read_log().find("Compilation Failed"), std::string::npos);
 }

@@ -14,6 +14,16 @@
 namespace holoflow::runtime {
 namespace {
 
+void write_text(const std::filesystem::path &path, const std::string &text) {
+  if (!path.parent_path().empty())
+    std::filesystem::create_directories(path.parent_path());
+  std::ofstream file;
+  file.exceptions(std::ios::failbit | std::ios::badbit);
+  file.open(path);
+  file << text;
+  file.close();
+}
+
 void write_file(const std::filesystem::path &path, const nlohmann::json &report) {
   std::string text;
   {
@@ -21,11 +31,7 @@ void write_file(const std::filesystem::path &path, const nlohmann::json &report)
     text = report.dump(2);
   }
   tracing::ScopedTrace io("Write CUDA Graph Diagnostics File", "detail");
-  std::ofstream        file;
-  file.exceptions(std::ios::failbit | std::ios::badbit);
-  file.open(path);
-  file << text;
-  file.close();
+  write_text(path, text);
 }
 
 } // namespace
@@ -44,10 +50,18 @@ DiagnosticsFileWriter::~DiagnosticsFileWriter() {
 }
 
 void DiagnosticsFileWriter::submit(std::filesystem::path path, nlohmann::json report) {
+  enqueue(std::move(path), std::move(report));
+}
+
+void DiagnosticsFileWriter::submit_text(std::filesystem::path path, Render render) {
+  enqueue(std::move(path), std::move(render));
+}
+
+void DiagnosticsFileWriter::enqueue(std::filesystem::path path, Job job) {
   path = std::filesystem::absolute(path).lexically_normal();
   {
     std::lock_guard lock(mutex_);
-    pending_.insert_or_assign(std::move(path), std::move(report));
+    pending_.insert_or_assign(std::move(path), std::move(job));
   }
   changed_.notify_all();
 }
@@ -58,10 +72,10 @@ void DiagnosticsFileWriter::flush() {
 }
 
 void DiagnosticsFileWriter::run() {
-  tracing::set_thread_name("CUDA Graph Diagnostics Writer");
+  tracing::set_thread_name("Diagnostics File Writer");
   for (;;) {
     std::filesystem::path path;
-    nlohmann::json        report;
+    Job                   job;
     {
       std::unique_lock lock(mutex_);
       changed_.wait(lock, [this] { return stopping_ || !pending_.empty(); });
@@ -69,19 +83,25 @@ void DiagnosticsFileWriter::run() {
         return;
       auto next = pending_.extract(pending_.begin());
       path      = std::move(next.key());
-      report    = std::move(next.mapped());
+      job       = std::move(next.mapped());
       writing_  = true;
     }
     try {
-      write_(path, report);
+      if (const auto *report = std::get_if<nlohmann::json>(&job)) {
+        write_(path, *report);
+      } else {
+        const auto           text = std::get<Render>(job)();
+        tracing::ScopedTrace io("Write Diagnostic Text File", "detail");
+        write_text(path, text);
+      }
     } catch (const std::exception &error) {
       try {
-        logger_->warn("[CUDA graphs] Could not write {}: {}", path.string(), error.what());
+        logger_->warn("[Diagnostics] Could not write {}: {}", path.string(), error.what());
       } catch (...) {
       }
     } catch (...) {
       try {
-        logger_->warn("[CUDA graphs] Could not write diagnostics: unknown error");
+        logger_->warn("[Diagnostics] Could not write diagnostics: unknown error");
       } catch (...) {
       }
     }

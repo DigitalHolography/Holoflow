@@ -289,6 +289,24 @@ std::optional<size_t> checked_product(std::optional<size_t> value, size_t factor
 
 } // namespace
 
+// Owns only inspected values; no task, graph, or scheduler references escape inspection.
+struct SectionCudaGraphInspection {
+  uint64_t                 compilation_generation = 0;
+  size_t                   max_variants           = 0;
+  std::vector<int>         section_ids;
+  std::vector<SectionPlan> plans;
+
+  bool matches(const ExecResouces &resources, const std::vector<Section> &sections) const {
+    if (compilation_generation != resources.compilation_generation ||
+        max_variants != resources.max_section_cuda_graphs || section_ids.size() != sections.size())
+      return false;
+    for (size_t i = 0; i < sections.size(); ++i)
+      if (section_ids[i] != sections[i].id)
+        return false;
+    return true;
+  }
+};
+
 // -------------------------------------------------------------------------------------------------
 // Section graph refresh
 // -------------------------------------------------------------------------------------------------
@@ -305,16 +323,41 @@ std::optional<size_t> checked_product(std::optional<size_t> value, size_t factor
 // are reported for all sections before the first one is thrown to the caller.
 void refresh_section_cuda_graphs(const GraphPlan &graph, const std::vector<Section> &sections,
                                  ExecResouces &resources, bool instantiate) {
-  GraphContext context{graph, resources};
-  const auto   owners = collect_storage_owners(context);
-  auto         batch  = inspect_sections(context, sections, owners, instantiate);
+  GraphContext    context{graph, resources};
+  auto            cached = std::exchange(resources.section_cuda_graph_inspection, {});
+  InspectionBatch batch;
+  if (instantiate && cached && cached->matches(resources, sections)) {
+    tracing::ScopedTrace reuse("Reuse Compiled CUDA Graph Inspection", "detail");
+    batch.plans = std::move(cached->plans);
+    for (size_t i = 0; i < sections.size(); ++i) {
+      auto &graphs                             = section_graph_cache(resources, sections[i].id);
+      auto &report                             = batch.plans[i].report;
+      report["compiled_inspection_ms"]         = report["inspection_ms"];
+      report["inspection_ms"]                  = 0.0;
+      report["inspection_reused"]              = true;
+      report["refresh_count"]                  = ++graphs.refresh_count;
+      report["cached_variants_before_refresh"] = graphs.executables.size();
+      publish_diagnostics(graphs, report);
+    }
+  } else {
+    const auto owners = collect_storage_owners(context);
+    batch             = inspect_sections(context, sections, owners, instantiate);
+  }
 
   write_diagnostics_file(resources);
-
   if (!batch.first_fatal.empty())
     throw std::invalid_argument(batch.first_fatal);
 
   prepare_sections(context, sections, batch.plans, instantiate);
+  if (!instantiate) {
+    auto inspection                    = std::make_shared<SectionCudaGraphInspection>();
+    inspection->compilation_generation = resources.compilation_generation;
+    inspection->max_variants           = resources.max_section_cuda_graphs;
+    for (const auto &section : sections)
+      inspection->section_ids.push_back(section.id);
+    inspection->plans                       = std::move(batch.plans);
+    resources.section_cuda_graph_inspection = std::move(inspection);
+  }
   write_diagnostics_file(resources);
 }
 
@@ -436,6 +479,7 @@ InspectionBatch inspect_sections(GraphContext &context, const std::vector<Sectio
     plan.report["refresh_count"]                  = graphs.refresh_count;
     plan.report["cached_variants_before_refresh"] = graphs.executables.size();
     plan.report["inspection_ms"]                  = elapsed_ms;
+    plan.report["inspection_reused"]              = false;
 
     graphs.enabled         = false;
     graphs.fallback_reason = plan.report["fallback_reason"].get<std::string>();

@@ -37,6 +37,7 @@
 #include "bug.hh"
 #include "graph_builder.hh"
 #include "holofile/holofile.hh"
+#include "holoflow/runtime/diagnostics.hh"
 #include "holoflow/runtime/tracing.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
@@ -832,14 +833,8 @@ void Manager::run_compiled_graph() {
 
 void Manager::dump_graph_logs(const std::filesystem::path &log_dir) {
   ScopedTrace trace("Dump Pipeline Graph Logs");
-  // Write original GraphSpec
-  const auto json_path = log_dir / "pipeline.json";
-  const auto dot_path  = log_dir / "pipeline.dot";
-
-  std::ofstream(dot_path) << holoflow::core::to_dot(spec_, graph_spec_dump_prefs_);
-  std::ofstream(json_path) << holoflow::core::to_json(spec_).dump(2);
-
-  logger()->info("[Manager::dump_graph_logs] Pre-compile pipeline graphs saved to {}",
+  holoflow::runtime::dump_pipeline_graph_async(log_dir, spec_, graph_spec_dump_prefs_);
+  logger()->info("[Manager::dump_graph_logs] Pre-compile pipeline graph dumps queued for {}",
                  log_dir.string());
 }
 

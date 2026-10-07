@@ -11,7 +11,8 @@ namespace holoflow::runtime {
 // Section graph refresh
 // -------------------------------------------------------------------------------------------------
 
-/// Inspect at compilation; when instantiate is true, prepare eagerly before workers start.
+/// Inspect at compilation and retain a one-use plan. First startup prepares that plan;
+/// later non-paused starts inspect current queue phases before preparing variants.
 void refresh_section_cuda_graphs(const GraphPlan &graph, const std::vector<Section> &sections,
                                  ExecResouces &resources, bool instantiate);
 

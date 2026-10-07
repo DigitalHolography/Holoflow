@@ -150,6 +150,15 @@ unspecified. None of these declarations change queue execution behavior.
 
 ## Replay, lifetime and metrics
 
+Compilation retains the validated section inspection plan, including pointer domains and reachable
+tuples. The first scheduler start consumes that plan to prepare executables without repeating owner
+collection, eligibility checks, pointer enumeration or tuple planning. It is tied to the compilation
+generation, graph cap and section IDs, and is not carried across recompilation. Tasks and compiled
+bindings must remain unchanged between compilation and first start. Subsequent starts after abort
+or EOF inspect current queue phases again; cooperative pause/resume skips preparation entirely.
+Diagnostics mark first-start reuse with `inspection_reused=true` and `inspection_ms=0`, preserving
+the original measurement as `compiled_inspection_ms`.
+
 After acquisition and async consumption, the scheduler maps current addresses to a variant.
 An unexpected pointer or a tuple outside the prepared combinations disables that section's graphs
 before submission and resumes ordinary execution. Diagnostics identify the storages and domain

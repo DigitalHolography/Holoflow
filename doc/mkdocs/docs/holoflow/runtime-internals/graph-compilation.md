@@ -830,3 +830,21 @@ variant construction or cache reuse, task recording, capture completion, validat
 Section spans include IDs and names; variant and task spans identify the work within each section.
 These spans also appear during compilation where the same preparation helpers are used, and are
 suppressed when a developer session sets `include_details = false`.
+
+## Background diagnostic files
+
+Pipeline JSON/DOT and graph-spec JSON dumps copy the graph specification on the calling thread.
+The shared diagnostics worker performs serialization and file I/O; only the latest pending job
+for each file is retained. Snapshots own graph values and display preferences, so compilation
+and later edits can proceed without waiting for the dumps. Missing output directories are created
+by the worker, and file failures are reported without failing the pipeline.
+
+Compiler logging uses an owned memory sink when a log directory is configured. Setup does not
+open or truncate files. At the end of each successful or failed compilation, the completed log is
+submitted to the same worker, replacing `compiler.log` with the latest compilation's messages.
+The buffer resets for repeated calls on the same compiler. With no log directory, stdout logging
+is unchanged. An unfinished compiler log is lost if the process crashes during compilation.
+
+Diagnostic files are eventually available. Tests that read them explicitly flush the worker;
+pipeline updates never flush or join it. Process shutdown drains pending jobs. Trace scopes
+separate caller-side snapshots/logger setup from background formatting and writing.

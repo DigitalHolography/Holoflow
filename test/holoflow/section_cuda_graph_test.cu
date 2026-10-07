@@ -34,6 +34,7 @@ struct State {
   bool                              unexpected_tuple           = false;
   std::vector<float>                results;
   std::function<void()>             sequence_query_hook;
+  std::function<void()>             recording_hook;
   std::function<void(const char *)> operation_hook;
   bool                              blocked_pop      = false;
   bool                              blocked_push     = false;
@@ -310,6 +311,8 @@ public:
   }
   void record_cuda_graph(CudaGraphCtx &ctx) override {
     ++state_->recordings;
+    if (state_->recording_hook)
+      state_->recording_hook();
     if (settings_.value("unused_handle", false)) {
       // CUDA rejects an unused conditional handle during instantiation, after capture succeeds.
       cudaGraphConditionalHandle handle;
@@ -753,11 +756,11 @@ TEST_F(SectionCudaGraphTest, UnrelatedSectionSurvivesCapturedArgumentChange) {
   {
     Scheduler scheduler(out->graph, out->sections, out->resources);
     // Request cancellation during preparation, so both caches are populated but no work executes.
-    state->sequence_query_hook = [&] { scheduler.request_stop(); };
+    state->recording_hook = [&] { scheduler.request_stop(); };
     scheduler.start();
     scheduler.wait();
   }
-  state->sequence_query_hook = {};
+  state->recording_hook = {};
   std::vector<cudaGraphExec_t> handles;
   int                          preserved_id = -1;
   for (const auto &section : out->sections)
@@ -1186,15 +1189,68 @@ TEST_F(SectionCudaGraphTest, InstantiationFailureRetainsDomainsAndRestoresOrdina
   EXPECT_EQ(state->executions, 26);
 }
 
+TEST_F(SectionCudaGraphTest, FirstStartupUsesCompiledInspectionAndRestartReinspects) {
+  int queries                 = 0;
+  state->sequence_query_hook  = [&] { ++queries; };
+  auto       out              = compile();
+  const auto compiled_queries = queries;
+  ASSERT_GT(compiled_queries, 0);
+  ASSERT_NE(out->resources.section_cuda_graph_inspection, nullptr);
+  EXPECT_EQ(state->recordings, 0);
+  run(*out);
+  EXPECT_EQ(queries, compiled_queries);
+  EXPECT_EQ(out->resources.section_cuda_graph_inspection, nullptr);
+  EXPECT_TRUE(diagnostics[0]["inspection_reused"].get<bool>());
+  EXPECT_EQ(diagnostics[0]["inspection_ms"], 0.0);
+  EXPECT_TRUE(diagnostics[0].contains("compiled_inspection_ms"));
+  state->frames = 26;
+  run(*out);
+  EXPECT_GT(queries, compiled_queries);
+  EXPECT_FALSE(diagnostics[0]["inspection_reused"].get<bool>());
+  EXPECT_EQ(diagnostics[0]["refresh_count"], 2);
+  state->sequence_query_hook = {};
+}
+
+TEST_F(SectionCudaGraphTest, RecompilationRetainsFreshInspectionForStartup) {
+  int queries                = 0;
+  state->sequence_query_hook = [&] { ++queries; };
+  auto out                   = compile();
+  run(*out);
+  ASSERT_EQ(out->resources.section_cuda_graph_inspection, nullptr);
+  out                         = compile(128, std::move(out));
+  const auto compiled_queries = queries;
+  ASSERT_NE(out->resources.section_cuda_graph_inspection, nullptr);
+  state->frames = 26;
+  run(*out);
+  EXPECT_EQ(queries, compiled_queries);
+  EXPECT_TRUE(diagnostics[0]["inspection_reused"].get<bool>());
+  EXPECT_EQ(diagnostics[0]["created"], 0);
+  EXPECT_EQ(diagnostics[0]["reused"], 6);
+  state->sequence_query_hook = {};
+}
+
+TEST_F(SectionCudaGraphTest, ChangedGraphCapInvalidatesCompiledInspection) {
+  auto out                               = compile();
+  int  queries                           = 0;
+  state->sequence_query_hook             = [&] { ++queries; };
+  out->resources.max_section_cuda_graphs = 1;
+  run(*out);
+  EXPECT_GT(queries, 0);
+  EXPECT_FALSE(diagnostics[0]["inspection_reused"].get<bool>());
+  EXPECT_FALSE(diagnostics[0]["enabled"].get<bool>());
+  EXPECT_GT(state->executions, 0);
+  state->sequence_query_hook = {};
+}
+
 TEST_F(SectionCudaGraphTest, StopRequestedDuringPreparationIsNotLost) {
   auto out = compile();
   {
     Scheduler scheduler(out->graph, out->sections, out->resources);
-    state->sequence_query_hook = [&] { scheduler.request_stop(); };
+    state->recording_hook = [&] { scheduler.request_stop(); };
     scheduler.start();
     EXPECT_TRUE(scheduler.stop_requested());
     scheduler.wait();
-    state->sequence_query_hook = {};
+    state->recording_hook = {};
   }
   EXPECT_EQ(state->frame, 0);
   EXPECT_EQ(state->acquisitions, 0);
