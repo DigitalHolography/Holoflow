@@ -165,10 +165,12 @@ TransposeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                          std::span<const holoflow::core::TDesc>     input_descs,
                          const nlohmann::json                      &jsettings,
                          const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   auto *old_transpose = dynamic_cast<Transpose *>(old_task.get());
   if (old_transpose == nullptr || input_descs.size() != 1) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 

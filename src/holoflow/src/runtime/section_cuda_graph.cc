@@ -344,11 +344,14 @@ std::optional<size_t> SectionCudaGraphs::variant(const StorageMap &storages) con
 nlohmann::json SectionCudaGraphs::snapshot() const {
   std::lock_guard lock(diagnostic_mutex);
 
-  auto result                   = diagnostics;
-  result["launches"]            = launches.load(std::memory_order_relaxed);
-  result["ordinary_iterations"] = ordinary_iterations.load(std::memory_order_relaxed);
-  result["pointer_misses"]      = pointer_misses.load(std::memory_order_relaxed);
-  result["tuple_misses"]        = tuple_misses.load(std::memory_order_relaxed);
+  auto result                                 = diagnostics;
+  result["launches"]                          = launches.load(std::memory_order_relaxed);
+  result["ordinary_iterations"]               = ordinary_iterations.load(std::memory_order_relaxed);
+  result["pointer_misses"]                    = pointer_misses.load(std::memory_order_relaxed);
+  result["tuple_misses"]                      = tuple_misses.load(std::memory_order_relaxed);
+  result["compilation_generation"]            = compilation_generation;
+  result["carried_from_previous_compilation"] = carried_from_previous_compilation;
+  result["compilation_invalidation_reason"]   = compilation_invalidation_reason;
   return result;
 }
 

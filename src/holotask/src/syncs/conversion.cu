@@ -764,10 +764,12 @@ ConversionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                           std::span<const holoflow::core::TDesc>     input_descs,
                           const nlohmann::json                      &jsettings,
                           const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   auto *old_conversion = dynamic_cast<Conversion *>(old_task.get());
   if (old_conversion == nullptr) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -783,6 +785,8 @@ ConversionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     old_conversion->update_stream(ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

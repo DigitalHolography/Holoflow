@@ -478,6 +478,7 @@ ShackHartmannSlopesFactory::update(std::unique_ptr<holoflow::core::ISyncTask> ol
                                    std::span<const holoflow::core::TDesc>     input_descs,
                                    const nlohmann::json                      &jsettings,
                                    const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   auto *old_slopes = dynamic_cast<detail::ShackHartmannSlopesTaskBase *>(old_task.get());
@@ -488,6 +489,8 @@ ShackHartmannSlopesFactory::update(std::unique_ptr<holoflow::core::ISyncTask> ol
       return old_task;
     }
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

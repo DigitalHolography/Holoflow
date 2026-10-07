@@ -369,10 +369,12 @@ SlidingAverageFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_ta
                               std::span<const holoflow::core::TDesc>      input_descs,
                               const nlohmann::json                       &jsettings,
                               const holoflow::core::AsyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   auto *old_slide_avg = dynamic_cast<SlidingAverage *>(old_task.get());
   if (old_slide_avg == nullptr) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -387,6 +389,8 @@ SlidingAverageFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_ta
     old_slide_avg->update_validity(input_descs.size() == 2);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

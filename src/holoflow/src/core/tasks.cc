@@ -85,6 +85,7 @@ std::unique_ptr<ISyncTask> ISyncTaskFactory::update(std::unique_ptr<ISyncTask>,
                                                     std::span<const TDesc> input_descs,
                                                     const nlohmann::json  &jsettings,
                                                     const SyncCreateCtx   &ctx) const {
+  ctx.invalidate_execution();
   return create(input_descs, jsettings, ctx);
 }
 
@@ -92,6 +93,7 @@ std::unique_ptr<IAsyncTask> IAsyncTaskFactory::update(std::unique_ptr<IAsyncTask
                                                       std::span<const TDesc> input_descs,
                                                       const nlohmann::json  &jsettings,
                                                       const AsyncCreateCtx  &ctx) const {
+  ctx.invalidate_execution();
   return create(input_descs, jsettings, ctx);
 }
 

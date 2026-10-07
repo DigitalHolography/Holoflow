@@ -201,9 +201,12 @@ TEST(CompilerTest, EmitsLogsNativeTraceAndSuccessGraph) {
         return index;
       };
       const auto validation = position("Validate Spec");
-      for (const auto *name : {"Initialize Compilation", "Dump Graph Spec",
-                               "Drain Previous CUDA Streams", "Destroy Previous CUDA Graphs"})
+      for (const auto *name :
+           {"Initialize Compilation", "Dump Graph Spec", "Drain Previous CUDA Streams"})
         EXPECT_LT(position(name), validation);
+      const auto carry = position("Carry Compatible Section CUDA Graphs");
+      EXPECT_LT(position("Task Binding"), carry);
+      EXPECT_LT(carry, position("Inspect Section CUDA Graphs"));
       EXPECT_EQ(position("Total Compilation"), 0);
       EXPECT_EQ(trace.slices[0].outcome, "success");
     }

@@ -16,8 +16,8 @@ entire section. Other sections remain eligible. Task-local graphs remain availab
 
 Compilation inspects all sections but does not instantiate executables. Every scheduler start,
 including resume, refreshes domains and sequences from paused task state and eagerly prepares all
-eligible sections before creating worker threads. Matching executables are reused within the same
-compiled resource generation; obsolete variants are discarded before missing ones are created.
+eligible sections before creating worker threads. Matching executables are reused across compatible
+compilations and resumes; obsolete variants are discarded before missing ones are created.
 There is no first-use capture or per-launch parameter update. Distinct storage IDs contribute
 dimensions; tensor aliases share a dimension. Compiler-owned storage contributes one pointer.
 Only storage referenced by synchronous tasks contributes, excluding unused async output ports.
@@ -44,6 +44,37 @@ Normal logs summarize sections, storage counts, transitions and shutdown counter
 are debug-only. `Scheduler::section_graph_diagnostics()` returns thread-safe JSON snapshots with
 graph launches, ordinary iterations, pointer/tuple misses and refresh counts. Counters are cumulative
 for the compiled graph lifetime, including resumes. There is no per-frame diagnostic logging.
+
+Compilation reports `compilation_generation`, `carried_from_previous_compilation`, and
+`compilation_invalidation_reason`. Runtime counters and refresh counts restart for each compilation;
+they remain cumulative across unchanged resumes.
+
+## Factory updates and reuse
+
+Factories use a single `update()` path. The default `execution_update_policy()` is
+`ExecutionUpdatePolicy::AlwaysInvalidate`: the compiler destroys dependent section executables
+before invoking the update. Audited factories can return `ExplicitInvalidation` instead.
+
+An explicit factory creates `ExecutionUpdateGuard guard(ctx.execution_invalidation)` before update
+locals. It calls `ctx.invalidate_execution()` **before** changing captured arguments, replacing
+directly captured resources, or releasing incompatible resources. The guard invalidates on exceptions
+before the owned task parameter is destroyed. Keep captured resources in that parameter until all
+fallible work succeeds; temporary owners can unwind before the guard. The handle must not be retained in task state;
+standalone calls and creation may omit it. Invalidation is idempotent and non-throwing.
+
+Device-data updates can preserve captures, as with Fresnel distance and compatible Flatfield sigma
+changes. Keeping the task object is not sufficient: PCA settings changes invalidate captured GEMM
+arguments. Conversely, BatchQueue can transfer its buffer into a new queue object without invalidating
+captures. Its cursors still reset, and startup replans reachable tuples. A new BatchQueue allocation,
+DualReaderBatchQueue allocation changes, and CausalSlidingAverage recreation invalidate dependent graphs.
+DualReaderBatchQueue retains both its ring and startup scratch allocations when their exact byte
+sizes and memory location match. Updates discard queued frames, reset both readers and validity
+warmup, and zero startup scratch. Startup replans pointer sequences for the new window settings.
+
+The compiler separately checks ordered tasks, boundary membership, wiring, descriptors including
+offsets, storage aliases/IDs, and stream identity. This version does not remap renumbered storage IDs.
+Future fusion must extend execution-plan compatibility with generated-kernel identities, grouping,
+and specialization constants; factory resource preservation cannot override a changed lowered plan.
 
 ## Optional task interfaces
 
@@ -118,8 +149,9 @@ use fallback. Launch errors never trigger duplicate ordinary execution.
 
 Every start replans from current queue phases, so partial advancement during cooperative shutdown
 does not by itself cause fallback after resume. Matching variants are retained. Recompilation drains
-prior streams and destroys executables before
-updating tasks, modules, workspaces or allocations. Callers must stop/wait before recompiling and
+prior streams and selectively destroys dependent executables before incompatible resource updates.
+Unused compiler allocations remain alive until their dependent caches are retired.
+Callers must stop/wait before recompiling and
 keep `CompilerOutput` alive throughout scheduler use. Cancellation drains submitted graph work
 before releasing its buffers even when the usual producer barrier is skipped.
 

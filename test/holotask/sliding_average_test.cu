@@ -152,6 +152,43 @@ TEST(CausalSlidingAverageCudaGraph, ReplayAdvancesDeviceSampleCount) {
   CUDA_CHECK(cudaGraphDestroy(graph));
 }
 
+TEST(BatchQueueUpdateTest, TransfersAllocationResetsCursorsAndInvalidatesBeforeReallocation) {
+  using namespace holoflow::core;
+  const std::array                    input_descs{TDesc({1}, DType::F32, MemLoc::Host)};
+  holotask::asyncs::BatchQueueFactory factory;
+  nlohmann::json                      settings = holotask::asyncs::BatchQueueSettings{4, 1, 1};
+  const auto                          infer    = factory.infer(input_descs, settings);
+  auto                                task     = factory.create(input_descs, settings, {});
+  TestStorageAccess                   access(infer.input_descs, infer.output_descs);
+  task->bind_storage_access(&access);
+  const auto pointers = *task->owned_input_pointers(0);
+  auto       acquired = task->acquire_input(0);
+  ASSERT_TRUE(acquired);
+  std::array        inputs{*acquired};
+  std::atomic<bool> cancelled{false};
+  AsyncPushCtx      push{inputs, &cancelled};
+  ASSERT_EQ(task->try_push(push), OpResult::Ok);
+  EXPECT_EQ(sequence_at(*task->owned_input_pointer_sequence(0), 0), 1);
+
+  int                   invalidations = 0;
+  ExecutionInvalidation invalidation{[&]() noexcept { ++invalidations; }};
+  const AsyncCreateCtx  ctx{.execution_invalidation = &invalidation};
+  task = factory.update(std::move(task), input_descs, settings, ctx);
+  task->bind_storage_access(&access);
+  EXPECT_EQ(invalidations, 0);
+  EXPECT_EQ(*task->owned_input_pointers(0), pointers);
+  EXPECT_EQ(sequence_at(*task->owned_input_pointer_sequence(0), 0), 0);
+  std::array  outputs{TView{infer.output_descs[0], &access.owned_output_storage(0)}};
+  AsyncPopCtx pop{outputs, &cancelled};
+  EXPECT_EQ(task->try_pop(pop), OpResult::NotReady);
+
+  settings["target_capacity"] = 8;
+  task                        = factory.update(std::move(task), input_descs, settings, ctx);
+  EXPECT_EQ(invalidations, 1);
+  EXPECT_TRUE(invalidation.invalidated);
+  EXPECT_NE(task->owned_input_pointers(0)->front(), pointers.front());
+}
+
 TEST(DualReaderBatchQueueTest, EmitsCurrentDelayedAndValidityAtOneFrameCadence) {
   const TDesc                                          input_desc({2}, DType::F32, MemLoc::Host);
   const holotask::asyncs::DualReaderBatchQueueSettings settings{
@@ -263,6 +300,140 @@ TEST(DualReaderBatchQueueTest, UnitWindowAliasesCurrentFrameAndIsImmediatelyVali
   EXPECT_EQ(valid_value, std::uint8_t{1});
   task->release_output(0);
   task->release_output(1);
+}
+
+TEST(DualReaderBatchQueueUpdateTest, RetainsBuffersAndResetsHeldReadersOnHostAndDevice) {
+  for (const auto location : {MemLoc::Host, MemLoc::Device}) {
+    SCOPED_TRACE(static_cast<int>(location));
+    curaii::CudaStream                    stream;
+    holoflow::core::ExecutionInvalidation invalidation;
+    holoflow::core::AsyncCreateCtx        create_ctx{stream.get(), stream.get(), &invalidation};
+    holotask::asyncs::DualReaderBatchQueueFactory  factory;
+    const std::array                               descs{TDesc({2}, DType::F32, location)};
+    holotask::asyncs::DualReaderBatchQueueSettings settings{4, 3};
+    auto                                           infer = factory.infer(descs, settings);
+    auto              task = factory.create(descs, settings, create_ctx);
+    TestStorageAccess access(infer.input_descs, infer.output_descs);
+    task->bind_storage_access(&access);
+    const auto        inputs  = task->owned_input_pointers(0);
+    const auto        current = task->owned_output_pointers(0);
+    const auto        delayed = task->owned_output_pointers(1);
+    std::uint8_t      valid   = 0;
+    Storage           valid_storage{MemLoc::Host, 1, reinterpret_cast<std::byte *>(&valid)};
+    std::array        outputs{TView{infer.output_descs[0], &access.owned_output_storage(0)},
+                              TView{infer.output_descs[1], &access.owned_output_storage(1)},
+                              TView{infer.output_descs[2], &valid_storage}};
+    std::atomic<bool> cancelled{false};
+    holoflow::core::AsyncPopCtx pop{outputs, &cancelled};
+    auto                        push = [&] {
+      auto acquired = task->acquire_input(0);
+      ASSERT_TRUE(acquired);
+      const std::array values{10.F, 11.F};
+      if (location == MemLoc::Host)
+        std::memcpy(acquired->data(), values.data(), sizeof(values));
+      else {
+        CUDA_CHECK(cudaMemcpyAsync(acquired->data(), values.data(), sizeof(values),
+                                   cudaMemcpyHostToDevice, stream.get()));
+        CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+      }
+      std::array                   views{*acquired};
+      holoflow::core::AsyncPushCtx ctx{views, &cancelled};
+      ASSERT_EQ(task->try_push(ctx), OpResult::Ok);
+    };
+    push();
+    ASSERT_EQ(task->try_pop(pop), OpResult::Ok);
+    task->release_output(0); // Simulate a stopped section still holding its delayed output.
+    auto *scratch = delayed->back();
+    if (location == MemLoc::Host)
+      std::memset(scratch, 1, sizeof(float));
+    else {
+      CUDA_CHECK(cudaMemsetAsync(scratch, 1, sizeof(float), stream.get()));
+      CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+    }
+
+    // All these settings have eight slots and the same scratch size.
+    for (const auto next : {settings, holotask::asyncs::DualReaderBatchQueueSettings{4, 4},
+                            holotask::asyncs::DualReaderBatchQueueSettings{5, 1}, settings}) {
+      task = factory.update(std::move(task), descs, next, create_ctx);
+      EXPECT_FALSE(invalidation.invalidated);
+      EXPECT_EQ(task->owned_input_pointers(0), inputs);
+      EXPECT_EQ(task->owned_output_pointers(0), current);
+      const auto new_delayed = *task->owned_output_pointers(1);
+      EXPECT_EQ(new_delayed.size(), current->size() + (next.window_size > 2 ? 1 : 0));
+      if (next.window_size > 2)
+        EXPECT_EQ(new_delayed.back(), scratch);
+      float zero = -1;
+      if (location == MemLoc::Host)
+        std::memcpy(&zero, scratch, sizeof(zero));
+      else
+        CUDA_CHECK(cudaMemcpy(&zero, scratch, sizeof(zero), cudaMemcpyDeviceToHost));
+      EXPECT_FLOAT_EQ(zero, 0);
+      task->bind_storage_access(&access);
+      EXPECT_EQ(task->try_pop(pop), OpResult::NotReady);
+      EXPECT_EQ(task->owned_input_pointer_sequence(0)->cycle.front(), 0);
+      EXPECT_EQ(task->owned_output_pointer_sequence(0)->cycle.front(), 0);
+      EXPECT_EQ(task->owned_output_pointer_sequence(1)->prefix.size(), (next.window_size - 1) / 2);
+      for (size_t frame = 0; frame < 4; ++frame) {
+        if (frame % 2 == 0)
+          push();
+        ASSERT_EQ(task->try_pop(pop), OpResult::Ok);
+        EXPECT_EQ(valid, frame >= next.window_size - 1 ? 1 : 0);
+        const size_t delay = (next.window_size - 1) / 2;
+        for (size_t port = 0; port < 2; ++port) {
+          float value = -1;
+          if (location == MemLoc::Host)
+            std::memcpy(&value, outputs[port].data(), sizeof(value));
+          else
+            CUDA_CHECK(
+                cudaMemcpy(&value, outputs[port].data(), sizeof(value), cudaMemcpyDeviceToHost));
+          const float expected = port == 1 && frame < delay
+                                     ? 0.F
+                                     : 10.F + float((frame - (port == 1 ? delay : 0)) % 2);
+          EXPECT_FLOAT_EQ(value, expected);
+        }
+        task->release_output(1);
+        task->release_output(0);
+      }
+    }
+  }
+}
+
+TEST(DualReaderBatchQueueUpdateTest, InvalidatesBeforeReallocationAndOnInvalidSettings) {
+  holotask::asyncs::DualReaderBatchQueueFactory factory;
+  const std::array                              initial_descs{TDesc({2}, DType::F32, MemLoc::Host)};
+  const holotask::asyncs::DualReaderBatchQueueSettings initial{4, 3};
+  for (int scenario = 0; scenario < 4; ++scenario) {
+    SCOPED_TRACE(scenario);
+    auto                                  task    = factory.create(initial_descs, initial, {});
+    auto                                 *ring    = task->owned_input_pointers(0)->front();
+    auto                                 *scratch = task->owned_output_pointers(1)->back();
+    holoflow::core::ExecutionInvalidation invalidation{[&] {
+      // Captured allocations are still live when invalidation runs.
+      *ring    = std::byte{42};
+      *scratch = std::byte{42};
+    }};
+    auto                                  descs    = initial_descs;
+    auto                                  settings = initial;
+    if (scenario == 0)
+      settings.target_capacity = 20;
+    else if (scenario == 1) {
+      descs[0] = TDesc({2}, DType::CF32, MemLoc::Host);
+      settings = {1, 1}; // Same ring byte count, different scratch byte count.
+    } else if (scenario == 2)
+      descs[0] = TDesc({2}, DType::F32, MemLoc::Device);
+    else
+      settings.window_size = 0;
+    if (scenario == 3)
+      EXPECT_THROW(factory.update(std::move(task), descs, settings,
+                                  {.execution_invalidation = &invalidation}),
+                   std::invalid_argument);
+    else {
+      task = factory.update(std::move(task), descs, settings,
+                            {.execution_invalidation = &invalidation});
+      EXPECT_NE(task, nullptr);
+    }
+    EXPECT_TRUE(invalidation.invalidated);
+  }
 }
 
 TEST(BatchQueuePointersTest, EnumerationMatchesAlignedWraparound) {

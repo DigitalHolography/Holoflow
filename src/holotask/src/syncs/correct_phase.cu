@@ -214,10 +214,12 @@ CorrectPhaseFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                             std::span<const holoflow::core::TDesc>     input_descs,
                             const nlohmann::json                      &jsettings,
                             const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   auto *old_correct_phase = dynamic_cast<CorrectPhase *>(old_task.get());
   if (old_correct_phase == nullptr) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -226,6 +228,8 @@ CorrectPhaseFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     old_correct_phase->update_stream(ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

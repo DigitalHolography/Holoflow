@@ -32,6 +32,9 @@ struct State {
   bool                  unexpected_tuple           = false;
   std::vector<float>    results;
   std::function<void()> sequence_query_hook;
+  bool                  explicit_updates = true;
+  const void           *watched_task     = nullptr;
+  std::function<void()> destruction_probe;
 };
 
 class Boundary : public IAsyncTask {
@@ -96,6 +99,14 @@ public:
   std::optional<PointerSequence> owned_output_pointer_sequence(size_t) const override {
     return sequence();
   }
+  bool compatible(const nlohmann::json &settings) const {
+    return settings.value("count", size_t{2}) == count_ && settings.value("bad", false) == bad_;
+  }
+  void reconfigure(nlohmann::json settings, cudaStream_t stream, TDesc desc) {
+    settings_ = std::move(settings);
+    stream_   = stream;
+    desc_     = std::move(desc);
+  }
 
 private:
   PointerSequence base_sequence() const {
@@ -152,11 +163,17 @@ private:
 
 class BoundaryFactory : public IAsyncTaskFactory {
 public:
+  ExecutionUpdatePolicy execution_update_policy() const noexcept override {
+    return state_->explicit_updates ? ExecutionUpdatePolicy::ExplicitInvalidation
+                                    : ExecutionUpdatePolicy::AlwaysInvalidate;
+  }
   BoundaryFactory(bool source, std::shared_ptr<State> state) : source_(source), state_(state) {}
   InferResult infer(std::span<const TDesc> inputs, const nlohmann::json &settings) const override {
     const auto  count    = settings.value("count", size_t{2});
     const auto  declared = settings.value("declared", count);
-    const TDesc desc     = source_ ? TDesc({1}, DType::F32, MemLoc::Device, size_t{4}) : inputs[0];
+    const TDesc desc =
+        source_ ? TDesc({1}, DType::F32, MemLoc::Device, settings.value("offset", size_t{4}))
+                : inputs[0];
     InferResult result;
     result.kind = TaskKind::Async;
     if (source_) {
@@ -179,6 +196,22 @@ public:
                                       source_ ? ctx.consumer_stream : ctx.producer_stream, state_,
                                       settings.value("bad", false), settings);
   }
+  std::unique_ptr<IAsyncTask> update(std::unique_ptr<IAsyncTask> old_task,
+                                     std::span<const TDesc> inputs, const nlohmann::json &settings,
+                                     const AsyncCreateCtx &ctx) const override {
+    ExecutionUpdateGuard guard(ctx.execution_invalidation);
+    if (!state_->explicit_updates)
+      EXPECT_TRUE(ctx.execution_invalidation->invalidated);
+    auto *old = dynamic_cast<Boundary *>(old_task.get());
+    if (old && old->compatible(settings)) {
+      const auto inferred = infer(inputs, settings);
+      old->reconfigure(settings, source_ ? ctx.consumer_stream : ctx.producer_stream,
+                       source_ ? inferred.output_descs[0] : inputs[0]);
+      return old_task;
+    }
+    ctx.invalidate_execution();
+    return create(inputs, settings, ctx);
+  }
 
 private:
   bool                   source_;
@@ -197,7 +230,15 @@ class Compute : public ISyncTask {
 public:
   Compute(cudaStream_t stream, std::shared_ptr<State> state, nlohmann::json settings)
       : stream_(stream), state_(state), settings_(settings) {}
-  bool supports_cuda_graph() const noexcept override {
+  ~Compute() override {
+    if (state_->watched_task == this) {
+      state_->watched_task = nullptr;
+      state_->destruction_probe();
+    }
+  }
+  const nlohmann::json &settings() const { return settings_; }
+  void                  update_stream(cudaStream_t stream) { stream_ = stream; }
+  bool                  supports_cuda_graph() const noexcept override {
     return !settings_.value("unsupported", false);
   }
   OpResult execute(SyncCtx &ctx) override {
@@ -276,6 +317,10 @@ private:
 
 class ComputeFactory : public ISyncTaskFactory {
 public:
+  ExecutionUpdatePolicy execution_update_policy() const noexcept override {
+    return state_->explicit_updates ? ExecutionUpdatePolicy::ExplicitInvalidation
+                                    : ExecutionUpdatePolicy::AlwaysInvalidate;
+  }
   explicit ComputeFactory(std::shared_ptr<State> state) : state_(state) {}
   InferResult infer(std::span<const TDesc> inputs, const nlohmann::json &settings) const override {
     auto output = inputs[0];
@@ -291,6 +336,20 @@ public:
   std::unique_ptr<ISyncTask> create(std::span<const TDesc>, const nlohmann::json &settings,
                                     const SyncCreateCtx &ctx) const override {
     return std::make_unique<Compute>(ctx.stream, state_, settings);
+  }
+  std::unique_ptr<ISyncTask> update(std::unique_ptr<ISyncTask> old_task,
+                                    std::span<const TDesc> inputs, const nlohmann::json &settings,
+                                    const SyncCreateCtx &ctx) const override {
+    ExecutionUpdateGuard guard(ctx.execution_invalidation);
+    if (settings.value("throw_update", false))
+      throw std::runtime_error("deliberate update failure");
+    auto *old = dynamic_cast<Compute *>(old_task.get());
+    if (old && old->settings() == settings) {
+      old->update_stream(ctx.stream);
+      return old_task;
+    }
+    ctx.invalidate_execution();
+    return create(inputs, settings, ctx);
   }
 
 private:
@@ -475,6 +534,184 @@ TEST_F(SectionCudaGraphTest, RecompilationChangesParametersAndRebuildsGraphs) {
   ASSERT_TRUE(out->resources.section_cuda_graphs.begin()->second->enabled);
   for (size_t i = 0; i < state->results.size(); ++i)
     EXPECT_FLOAT_EQ(state->results[i], 3.F * i + 1);
+}
+
+TEST_F(SectionCudaGraphTest, CompatibleRecompilationRetainsExecutableHandles) {
+  auto out = compile();
+  run(*out);
+  const auto handles    = out->resources.section_cuda_graphs.begin()->second->executables;
+  const int  recordings = state->recordings;
+  out                   = compile(128, std::move(out));
+  auto &graphs          = *out->resources.section_cuda_graphs.begin()->second;
+  EXPECT_EQ(graphs.executables, handles);
+  EXPECT_TRUE(graphs.snapshot()["carried_from_previous_compilation"]);
+  EXPECT_EQ(graphs.snapshot()["compilation_generation"], 2);
+  EXPECT_EQ(graphs.snapshot()["launches"], 0);
+  state->frames = 26;
+  run(*out);
+  EXPECT_EQ(graphs.snapshot()["created"], 0);
+  EXPECT_EQ(graphs.snapshot()["reused"], handles.size());
+  EXPECT_EQ(state->recordings, recordings);
+  for (size_t i = 0; i < state->results.size(); ++i)
+    EXPECT_FLOAT_EQ(state->results[i], 2.F * i + 1);
+}
+
+TEST_F(SectionCudaGraphTest, DefaultPolicyInvalidatesBeforeTaskDestruction) {
+  auto out = compile();
+  run(*out);
+  auto &graphs                  = *out->resources.section_cuda_graphs.begin()->second;
+  state->explicit_updates       = false;
+  state->watched_task           = out->resources.tasks.at("first").get();
+  state->destruction_probe      = [&] { EXPECT_TRUE(graphs.executables.empty()); };
+  spec[first].settings["scale"] = 3.F;
+  out                           = compile(128, std::move(out));
+  EXPECT_EQ(state->watched_task, nullptr);
+  EXPECT_FALSE(
+      out->resources.section_cuda_graphs.begin()->second->carried_from_previous_compilation);
+  state->frames = 26;
+  run(*out);
+  for (size_t i = 13; i < state->results.size(); ++i)
+    EXPECT_FLOAT_EQ(state->results[i], 3.F * i + 1);
+}
+
+TEST_F(SectionCudaGraphTest, ThrowingExplicitUpdateInvalidatesBeforeTaskDestruction) {
+  auto out = compile();
+  run(*out);
+  auto &graphs             = *out->resources.section_cuda_graphs.begin()->second;
+  bool  probed             = false;
+  state->watched_task      = out->resources.tasks.at("first").get();
+  state->destruction_probe = [&] {
+    probed = true;
+    EXPECT_TRUE(graphs.executables.empty());
+  };
+  spec[first].settings["throw_update"] = true;
+  EXPECT_THROW(compile(128, std::move(out)), std::runtime_error);
+  EXPECT_TRUE(probed);
+}
+
+TEST_F(SectionCudaGraphTest, DescriptorOffsetChangeRejectsCacheCarryover) {
+  auto out = compile();
+  run(*out);
+  spec[source].settings["offset"] = 0;
+  out                             = compile(128, std::move(out));
+  const auto &graphs              = *out->resources.section_cuda_graphs.begin()->second;
+  EXPECT_FALSE(graphs.carried_from_previous_compilation);
+  EXPECT_EQ(graphs.compilation_invalidation_reason, "descriptor_or_binding_change");
+  state->frames = 26;
+  run(*out);
+  for (size_t i = 0; i < state->results.size(); ++i)
+    EXPECT_FLOAT_EQ(state->results[i], 2.F * i + 1);
+}
+
+TEST_F(SectionCudaGraphTest, RecompilationReusesOverlappingReachableTuples) {
+  spec[source].settings = {{"count", 2}, {"ordered", true}};
+  spec[sink].settings   = {{"count", 2}, {"ordered", true}};
+  auto out              = compile(4);
+  run(*out);
+  const auto old_handles = out->resources.section_cuda_graphs.begin()->second->executables;
+  ASSERT_EQ(old_handles.size(), 2);
+  spec[sink].settings["cycle"] = {0, 0, 1, 1};
+  out                          = compile(4, std::move(out));
+  state->frames                = 26;
+  run(*out);
+  const auto &graphs = *out->resources.section_cuda_graphs.begin()->second;
+  EXPECT_EQ(graphs.snapshot()["reused"], 2);
+  EXPECT_EQ(graphs.snapshot()["created"], 2);
+  EXPECT_EQ(graphs.snapshot()["discarded"], 0);
+  EXPECT_EQ(graphs.snapshot()["tuple_misses"], 0);
+  for (auto handle : old_handles)
+    EXPECT_NE(std::find(graphs.executables.begin(), graphs.executables.end(), handle),
+              graphs.executables.end());
+}
+
+TEST_F(SectionCudaGraphTest, StreamReplacementRejectsCacheCarryover) {
+  auto out = compile();
+  run(*out);
+  curaii::CudaStream replacement;
+  out->resources.streams.begin()->second = std::move(replacement);
+  out                                    = compile(128, std::move(out));
+  const auto &graphs                     = *out->resources.section_cuda_graphs.begin()->second;
+  EXPECT_FALSE(graphs.carried_from_previous_compilation);
+  EXPECT_EQ(graphs.compilation_invalidation_reason, "stream_change");
+  state->frames = 26;
+  run(*out);
+}
+
+TEST_F(SectionCudaGraphTest, RenumberedStorageRejectsCacheCarryover) {
+  auto out = compile();
+  run(*out);
+  add_vertex(NodeSpec{"unused_source", "source", {{"count", 1}}}, spec);
+  out                = compile(128, std::move(out));
+  const auto &graphs = *out->resources.section_cuda_graphs.begin()->second;
+  EXPECT_FALSE(graphs.carried_from_previous_compilation);
+  EXPECT_EQ(graphs.compilation_invalidation_reason, "descriptor_or_binding_change");
+  state->frames = 26;
+  run(*out);
+}
+
+TEST_F(SectionCudaGraphTest, RewiredSectionRejectsCacheCarryover) {
+  auto out = compile();
+  run(*out);
+  remove_edge(source, first, spec);
+  remove_edge(first, last, spec);
+  remove_edge(last, sink, spec);
+  add_edge(source, last, EdgeSpec{0, 0}, spec);
+  add_edge(last, first, EdgeSpec{0, 0}, spec);
+  add_edge(first, sink, EdgeSpec{0, 0}, spec);
+  out = compile(128, std::move(out));
+  EXPECT_FALSE(
+      out->resources.section_cuda_graphs.begin()->second->carried_from_previous_compilation);
+  state->frames = 26;
+  run(*out);
+  for (size_t i = 13; i < state->results.size(); ++i)
+    EXPECT_FLOAT_EQ(state->results[i], 2.F * (i + 1));
+}
+
+TEST_F(SectionCudaGraphTest, AliasingChangeRejectsCacheCarryover) {
+  auto out = compile();
+  run(*out);
+  spec[first].settings["alias"] = true;
+  out                           = compile(128, std::move(out));
+  EXPECT_FALSE(
+      out->resources.section_cuda_graphs.begin()->second->carried_from_previous_compilation);
+  state->frames = 26;
+  run(*out);
+  for (size_t i = 0; i < state->results.size(); ++i)
+    EXPECT_FLOAT_EQ(state->results[i], 2.F * i + 1);
+}
+
+TEST_F(SectionCudaGraphTest, UnrelatedSectionSurvivesCapturedArgumentChange) {
+  auto source2  = add_vertex(NodeSpec{"source2", "source", {{"count", 1}}}, spec);
+  auto compute2 = add_vertex(NodeSpec{"compute2", "compute", {{"scale", 4.F}}}, spec);
+  auto sink2    = add_vertex(NodeSpec{"sink2", "sink", {{"count", 1}}}, spec);
+  add_edge(source2, compute2, EdgeSpec{0, 0}, spec);
+  add_edge(compute2, sink2, EdgeSpec{0, 0}, spec);
+  auto out = compile();
+  // Prepare all sections without racing two synthetic sinks sharing the fixture's frame cursor.
+  {
+    Scheduler scheduler(out->graph, out->sections, out->resources);
+    // Request cancellation during preparation, so both caches are populated but no work executes.
+    state->sequence_query_hook = [&] { scheduler.request_stop(); };
+    scheduler.start();
+    scheduler.wait();
+  }
+  state->sequence_query_hook = {};
+  std::vector<cudaGraphExec_t> handles;
+  int                          preserved_id = -1;
+  for (const auto &section : out->sections)
+    if (out->graph[section.sync_topo.front()].spec.name == "compute2") {
+      preserved_id = section.id;
+      handles      = out->resources.section_cuda_graphs.at(section.id)->executables;
+    }
+  ASSERT_FALSE(handles.empty());
+  spec[first].settings["scale"] = 3.F;
+  out                           = compile(128, std::move(out));
+  EXPECT_EQ(out->resources.section_cuda_graphs.at(preserved_id)->executables, handles);
+  EXPECT_TRUE(
+      out->resources.section_cuda_graphs.at(preserved_id)->carried_from_previous_compilation);
+  for (const auto &[id, graphs] : out->resources.section_cuda_graphs)
+    if (id != preserved_id)
+      EXPECT_FALSE(graphs->carried_from_previous_compilation);
 }
 
 TEST_F(SectionCudaGraphTest, AliasedRotatingStorageIsOnlyOneProductDimension) {

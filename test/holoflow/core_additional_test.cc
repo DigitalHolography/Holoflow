@@ -140,6 +140,25 @@ TEST(TaskFactoryTest, DefaultUpdatesRecreateSyncAndAsyncTasks) {
   EXPECT_NE(async_factory.update(nullptr, {}, nlohmann::json::object(), {}).get(), nullptr);
 }
 
+TEST(TaskFactoryTest, InvalidationIsIdempotentAndGuardPreservesNormalUpdates) {
+  using namespace holoflow::core;
+  int                   calls = 0;
+  ExecutionInvalidation invalidation{[&]() noexcept { ++calls; }};
+  {
+    ExecutionUpdateGuard guard(&invalidation);
+  }
+  EXPECT_EQ(calls, 0);
+  EXPECT_THROW(([&] {
+                 ExecutionUpdateGuard guard(&invalidation);
+                 throw std::runtime_error("update failure");
+               }()),
+               std::runtime_error);
+  EXPECT_EQ(calls, 1);
+  SyncCreateCtx{.execution_invalidation = &invalidation}.invalidate_execution();
+  AsyncCreateCtx{.execution_invalidation = &invalidation}.invalidate_execution();
+  EXPECT_EQ(calls, 1);
+}
+
 TEST(GraphSpecTest, AppliesDefaultsAndAcceptsPrimitiveSettings) {
   const auto graph = holoflow::core::from_json({
       {"nodes",

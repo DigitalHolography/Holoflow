@@ -102,7 +102,11 @@ public:
   size_t             element_size() const { return element_size_; }
   HostPtr<std::byte> take_host_buffer() { return std::move(h_buf_); }
   DevPtr<std::byte>  take_device_buffer() { return std::move(d_buf_); }
-  std::byte         *buffer() const { return buf_; }
+  void               take_buffers_from(BatchQueue &other) noexcept {
+    h_buf_ = std::move(other.h_buf_);
+    d_buf_ = std::move(other.d_buf_);
+  }
+  std::byte *buffer() const { return buf_; }
 
 private:
   static holoflow::core::PointerSequence sequence(size_t phase, size_t count) {
@@ -319,11 +323,13 @@ BatchQueueFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
                           std::span<const holoflow::core::TDesc>      input_descs,
                           const nlohmann::json                       &jsettings,
                           const holoflow::core::AsyncCreateCtx       &ctx) const {
-  auto infer    = this->infer(input_descs, jsettings);
-  auto settings = jsettings.get<BatchQueueSettings>();
-  auto old_bq   = dynamic_cast<BatchQueue *>(old_task.get());
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
+  auto                                 infer    = this->infer(input_descs, jsettings);
+  auto                                 settings = jsettings.get<BatchQueueSettings>();
+  auto                                 old_bq   = dynamic_cast<BatchQueue *>(old_task.get());
   if (old_bq == nullptr) {
-    return this->create(input_descs, jsettings, ctx);
+    ctx.invalidate_execution();
+    return create(input_descs, jsettings, ctx);
   }
 
   // Update
@@ -339,14 +345,19 @@ BatchQueueFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
 
   if (same_buffer) {
     logger()->debug("[BatchQueueFactory::update] Reusing existing BatchQueue task");
-    return std::make_unique<BatchQueue>(settings, input_descs[0], infer.output_descs[0],
-                                        old_bq->take_host_buffer(), old_bq->take_device_buffer(),
-                                        old_bq->buffer(), nb_slots, input_size, element_size);
+    // Allocate/copy descriptors before transferring captured buffers: a construction failure must
+    // leave them owned by old_task until the exception guard invalidates dependent executables.
+    auto replacement = std::make_unique<BatchQueue>(
+        settings, input_descs[0], infer.output_descs[0], HostPtr<std::byte>{}, DevPtr<std::byte>{},
+        old_bq->buffer(), nb_slots, input_size, element_size);
+    replacement->take_buffers_from(*old_bq);
+    return replacement;
   }
 
   // Fallback to recreate
   logger()->debug("[BatchQueueFactory::update] Recreating BatchQueue task");
-  return this->create(input_descs, jsettings, ctx);
+  ctx.invalidate_execution();
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holotask::asyncs

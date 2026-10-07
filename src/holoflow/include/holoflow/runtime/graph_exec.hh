@@ -97,7 +97,10 @@ struct SectionCudaGraphs {
   mutable std::mutex    diagnostic_mutex;
   nlohmann::json        diagnostics = nlohmann::json::object();
   std::atomic<uint64_t> launches{0}, ordinary_iterations{0}, pointer_misses{0}, tuple_misses{0};
-  uint64_t              refresh_count = 0;
+  uint64_t              refresh_count                     = 0;
+  uint64_t              compilation_generation            = 0;
+  bool                  carried_from_previous_compilation = false;
+  std::string           compilation_invalidation_reason;
   [[nodiscard]] nlohmann::json snapshot() const;
   void report_miss(const std::map<size_t, std::unique_ptr<core::Storage>> &storages);
 
@@ -117,6 +120,7 @@ struct ExecResouces {
   std::map<std::string, std::unique_ptr<core::ITask>>           tasks;   ///< Task instances by ID.
   size_t                                                        max_section_cuda_graphs = 0;
   std::filesystem::path                                         section_cuda_graph_log_dir;
+  uint64_t                                                      compilation_generation = 0;
   // Declared last so graphs are destroyed before tasks, modules, streams, and buffers.
   std::map<int, std::unique_ptr<SectionCudaGraphs>> section_cuda_graphs;
   // std::map<int, core::Tensor>                         tensors; ///< Allocated tensors by ID.

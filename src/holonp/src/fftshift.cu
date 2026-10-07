@@ -289,6 +289,7 @@ FFTShiftFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                         std::span<const holoflow::core::TDesc>     input_descs,
                         const nlohmann::json                      &jsettings,
                         const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
 
   auto *old_fftshift = dynamic_cast<FFTShift *>(old_task.get());
   if (old_fftshift != nullptr && input_descs.size() == 1) {
@@ -306,6 +307,7 @@ FFTShiftFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   }
 
   // Fallback: Structural change detected or invalid old task.
+  ctx.invalidate_execution();
   return create(input_descs, jsettings, ctx);
 }
 

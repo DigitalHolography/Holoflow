@@ -442,10 +442,12 @@ PctClipFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                        std::span<const holoflow::core::TDesc>     input_descs,
                        const nlohmann::json                      &jsettings,
                        const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)this->infer(input_descs, jsettings);
 
   auto *old_pct_clip = dynamic_cast<PctClip *>(old_task.get());
   if (old_pct_clip == nullptr) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -461,6 +463,8 @@ PctClipFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     old_pct_clip->update_stream(ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

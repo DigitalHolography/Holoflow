@@ -208,6 +208,116 @@ void compare_reference(bool full) {
 }
 
 TEST(SectionGraphReference, SmallPipelineMatchesOrdinaryExecution) { compare_reference(false); }
+
+std::vector<std::vector<unsigned char>> run_compatible_update(size_t limit,
+                                                              bool   dual_reader = false) {
+  auto state    = std::make_shared<ReferenceState>();
+  auto registry = reference_registry(state);
+  auto spec     = holoflow::core::from_json({
+      {"nodes",
+       {
+           {"source",
+            {{"type", "ReferenceSource"},
+             {"params", {{"batch_size", 1}, {"height", 8}, {"width", 8}}}}},
+           {"copy", {{"type", "Memcpy"}, {"params", {{"target", "Device"}}}}},
+           {"input_queue",
+            {{"type", "BatchQueue"},
+             {"params", {{"target_capacity", 4}, {"output_size", 1}, {"output_stride", 1}}}}},
+           {"float",
+            {{"type", "Conversion"}, {"params", {{"target", "F32"}, {"strategy", "Real"}}}}},
+           {"flatfield",
+            {{"type", "Flatfield"}, {"params", {{"sigma_y", 0.75F}, {"sigma_x", 1.F}}}}},
+           {"byte",
+            {{"type", "Conversion"}, {"params", {{"target", "U8"}, {"strategy", "Scaled"}}}}},
+           {"output_queue",
+            {{"type", "BatchQueue"},
+             {"params", {{"target_capacity", 4}, {"output_size", 1}, {"output_stride", 1}}}}},
+           {"sink", {{"type", "ReferenceSink"}, {"params", nlohmann::json::object()}}},
+       }},
+      {"edges",
+       {
+           {{"from", "source"}, {"to", "copy"}, {"out", 0}, {"in", 0}},
+           {{"from", "copy"}, {"to", "input_queue"}, {"out", 0}, {"in", 0}},
+           {{"from", "input_queue"}, {"to", "float"}, {"out", 0}, {"in", 0}},
+           {{"from", "float"}, {"to", "flatfield"}, {"out", 0}, {"in", 0}},
+           {{"from", "flatfield"}, {"to", "byte"}, {"out", 0}, {"in", 0}},
+           {{"from", "byte"}, {"to", "output_queue"}, {"out", 0}, {"in", 0}},
+           {{"from", "output_queue"}, {"to", "sink"}, {"out", 0}, {"in", 0}},
+       }},
+  });
+  if (dual_reader)
+    for (auto vertex : boost::make_iterator_range(boost::vertices(spec)))
+      if (spec[vertex].name == "input_queue") {
+        spec[vertex].kind     = "DualReaderBatchQueue";
+        spec[vertex].settings = holotask::asyncs::DualReaderBatchQueueSettings{4, 3};
+      }
+  Compiler::Config config;
+  config.max_section_cuda_graphs   = limit;
+  config.enable_profiling          = false;
+  config.verbose_tracing           = false;
+  config.dump_dot_on_failure       = false;
+  auto                         out = Compiler(registry, config).compile(spec);
+  std::vector<cudaGraphExec_t> original_handles;
+  double                       initial_preparation = 0;
+  for (int iteration = 0; iteration < 2; ++iteration) {
+    state->target_frames = (iteration + 1) * 16;
+    if (iteration) {
+      for (auto vertex : boost::make_iterator_range(boost::vertices(spec)))
+        if (spec[vertex].name == "flatfield")
+          spec[vertex].settings = holotask::syncs::FlatfieldSettings{1.F, 1.25F};
+      out = Compiler(registry, config).compile(spec, std::move(out));
+    }
+    Scheduler scheduler(out->graph, out->sections, out->resources);
+    scheduler.start();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    scheduler.request_stop();
+    scheduler.wait();
+    EXPECT_EQ(state->frames.size(), state->target_frames);
+    for (const auto &section : out->sections) {
+      if (out->graph[section.sync_topo.front()].spec.name != "float")
+        continue;
+      const auto &graphs = *out->resources.section_cuda_graphs.at(section.id);
+      if (!iteration) {
+        original_handles    = graphs.executables;
+        initial_preparation = graphs.construction_ms;
+      } else if (limit) {
+        EXPECT_TRUE(graphs.carried_from_previous_compilation);
+        EXPECT_EQ(graphs.executables, original_handles);
+        EXPECT_EQ(graphs.snapshot()["created"], 0);
+        EXPECT_EQ(graphs.snapshot()["reused"], original_handles.size());
+        std::cout << "Compatible update: initial_construction_ms=" << initial_preparation
+                  << " update_construction_ms=" << graphs.construction_ms
+                  << " reused=" << original_handles.size() << " created=0\n";
+      }
+    }
+  }
+  return state->frames;
+}
+
+TEST(SectionGraphReference, CompatibleUpdateMatchesOrdinaryExecutionAndRetainsBatchQueueGraphs) {
+  const auto ordinary = run_compatible_update(0);
+  const auto graphs   = run_compatible_update(128);
+  ASSERT_EQ(graphs.size(), ordinary.size());
+  for (size_t frame = 0; frame < graphs.size(); ++frame) {
+    ASSERT_EQ(graphs[frame].size(), ordinary[frame].size());
+    for (size_t pixel = 0; pixel < graphs[frame].size(); ++pixel)
+      EXPECT_LE(std::abs(int(graphs[frame][pixel]) - int(ordinary[frame][pixel])), 2);
+  }
+}
+
+TEST(SectionGraphReference, CompatibleUpdateRetainsDualReaderBatchQueueGraphs) {
+  const auto ordinary = run_compatible_update(0, true);
+  const auto graphs   = run_compatible_update(128, true);
+  ASSERT_EQ(graphs.size(), ordinary.size());
+  for (size_t frame = 0; frame < graphs.size(); ++frame) {
+    ASSERT_EQ(graphs[frame].size(), ordinary[frame].size());
+    for (size_t pixel = 0; pixel < graphs[frame].size(); ++pixel)
+      EXPECT_LE(std::abs(int(graphs[frame][pixel]) - int(ordinary[frame][pixel])), 2);
+  }
+}
+
 TEST(SectionGraphReference, PerformanceFullReference) { compare_reference(true); }
 
 } // namespace

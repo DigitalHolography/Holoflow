@@ -536,6 +536,7 @@ ZernikeFromSlopesFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_
                                  std::span<const holoflow::core::TDesc>     input_descs,
                                  const nlohmann::json                      &jsettings,
                                  const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   const auto  settings = jsettings.get<ZernikeFromSlopesSettings>();
@@ -552,6 +553,8 @@ ZernikeFromSlopesFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_
     old_gpu->update_stream(ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

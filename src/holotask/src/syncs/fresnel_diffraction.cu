@@ -685,8 +685,10 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
                                   std::span<const holoflow::core::TDesc>     input_descs,
                                   const nlohmann::json                      &jsettings,
                                   const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   auto *old_fresnel = dynamic_cast<FresnelDiffraction *>(old_task.get());
   if (old_fresnel == nullptr || input_descs.size() != 1) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -712,6 +714,8 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
     old_fresnel->update_propagation_distance(settings, ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

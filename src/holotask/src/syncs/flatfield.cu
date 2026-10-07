@@ -847,11 +847,13 @@ FlatfieldFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                          std::span<const holoflow::core::TDesc>     input_descs,
                          const nlohmann::json                      &jsettings,
                          const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)this->infer(input_descs, jsettings);
 
   auto *old_flatfield = dynamic_cast<Flatfield *>(old_task.get());
   if (old_flatfield == nullptr) {
     logger()->debug("[FlatfieldFactory::update] old task is not a Flatfield; creating new task");
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -865,6 +867,7 @@ FlatfieldFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   if (!same_desc) {
     logger()->debug(
         "[FlatfieldFactory::update] tensor descriptor changed; creating new Flatfield task");
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -885,6 +888,7 @@ FlatfieldFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     logger()->debug(
         "[FlatfieldFactory::update] sigma change switches spatial/FFT implementation; creating new "
         "Flatfield task");
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 

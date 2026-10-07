@@ -16,6 +16,7 @@
 #include "holoflow/runtime/tracing.hh"
 #include "section_cuda_graph.hh"
 
+#include <algorithm>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/graph/topological_sort.hpp>
@@ -27,6 +28,7 @@
 #include <ranges>
 #include <set>
 #include <stack>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
@@ -100,6 +102,13 @@ core::Storage &TaskStorageAdapter::owned_output_storage(size_t index) {
 class Compiler::Impl {
 public:
   Impl(core::Registry &registry, Compiler::Config config);
+  ~Impl() {
+    // Also covers exceptions raised while reporting a compilation failure.
+    if (out_)
+      out_->resources.section_cuda_graphs.clear();
+    if (prev_)
+      prev_->resources.section_cuda_graphs.clear();
+  }
 
   std::unique_ptr<CompilerOutput> run(const core::GraphSpec          &gspec,
                                       std::unique_ptr<CompilerOutput> prev);
@@ -113,6 +122,9 @@ private:
   const core::GraphSpec          *gspec_ = nullptr;
   std::unique_ptr<CompilerOutput> prev_;
   std::unique_ptr<CompilerOutput> out_;
+  // Unused allocations stay alive until their executable dependencies have been retired.
+  std::multimap<std::pair<core::MemLoc, size_t>, MemoryBlock> retired_blocks_;
+  uint64_t                                                    compilation_generation_ = 1;
 
   // Auxiliary Map: Node Name -> Section ID
   std::unordered_map<std::string, size_t> node_to_section_map_;
@@ -139,6 +151,8 @@ private:
   void assign_streams();
   void instantiate_tasks();
   void bind_tasks();
+  void invalidate_task_graphs(std::string_view name) noexcept;
+  void carry_section_cuda_graphs();
 
   // Generic Pass Runner
   template <typename Func> void run_pass(const char *name, Func &&fn) {
@@ -168,27 +182,18 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
 
   try {
     run_pass("Initialize Compilation", [&] {
-      gspec_ = &gspec;
-      prev_  = std::move(prev);
-      out_   = std::make_unique<CompilerOutput>();
+      gspec_                  = &gspec;
+      prev_                   = std::move(prev);
+      out_                    = std::make_unique<CompilerOutput>();
+      compilation_generation_ = prev_ ? prev_->resources.compilation_generation + 1 : 1;
     });
     run_pass("Dump Graph Spec", [&] { dump_json("graph_spec.json", gspec); });
     if (prev_) {
-      // Stop/wait is the caller's responsibility. Drain before destroying executables whose
-      // modules and workspaces may be replaced by the task update pass.
+      // Stop/wait is the caller's responsibility. Drain before any dependent resources change.
       run_pass("Drain Previous CUDA Streams", [&] {
         for (auto &[id, stream] : prev_->resources.streams) {
           auto scope = trace_scope(std::format("Synchronize Previous Stream {}", id), "detail");
           CUDA_CHECK(cudaStreamSynchronize(stream.get()));
-        }
-      });
-      run_pass("Destroy Previous CUDA Graphs", [&] {
-        auto &graphs = prev_->resources.section_cuda_graphs;
-        while (!graphs.empty()) {
-          auto it = graphs.begin();
-          auto scope =
-              trace_scope(std::format("Destroy Previous Section Graphs {}", it->first), "detail");
-          graphs.erase(it);
         }
       });
     }
@@ -207,6 +212,7 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     run_pass("Stream Assignment", [&] { assign_streams(); });
     run_pass("Task Instantiation", [&] { instantiate_tasks(); });
     run_pass("Task Binding", [&] { bind_tasks(); });
+    run_pass("Carry Compatible Section CUDA Graphs", [&] { carry_section_cuda_graphs(); });
     run_pass("Inspect Section CUDA Graphs", [&] {
       out_->resources.max_section_cuda_graphs    = config_.max_section_cuda_graphs;
       out_->resources.section_cuda_graph_log_dir = config_.log_dir;
@@ -230,6 +236,14 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     } catch (const std::exception &cuda_e) {
       logger_->error("CUDA error during cleanup: {}", cuda_e.what());
     }
+
+    // Clear graphs before releasing tasks or retired buffers, including partially transferred
+    // state.
+    if (out_)
+      out_->resources.section_cuda_graphs.clear();
+    if (prev_)
+      prev_->resources.section_cuda_graphs.clear();
+    retired_blocks_.clear();
 
     try {
       CUDA_CHECK(cudaGetLastError());
@@ -598,7 +612,8 @@ void Compiler::Impl::allocate_buffers() {
 
   // 3. Build a pool of scavengable blocks from prev_
   // Key: {MemLoc, size_in_bytes}
-  std::multimap<std::pair<core::MemLoc, size_t>, MemoryBlock> free_blocks;
+  auto &free_blocks = retired_blocks_;
+  free_blocks.clear();
   if (prev_) {
     for (auto &[prev_sid, block] : prev_->resources.memory_blocks) {
       free_blocks.emplace(std::make_pair(block.mem_loc, block.size_bytes), std::move(block));
@@ -616,9 +631,15 @@ void Compiler::Impl::allocate_buffers() {
     storage->ptr     = nullptr;
 
     if (!user_managed_sids.contains(sid)) {
-      MemoryBlock block;
-      auto        pool_key = std::make_pair(desc.mem_loc, desc.num_bytes());
-      auto        it       = free_blocks.find(pool_key);
+      MemoryBlock                 block;
+      core::ExecutionInvalidation allocation_failure{[this]() noexcept {
+        if (prev_)
+          prev_->resources.section_cuda_graphs.clear();
+      }};
+      // A scavenged block may temporarily be local before insertion into the output map.
+      core::ExecutionUpdateGuard allocation_guard(&allocation_failure);
+      auto                       pool_key = std::make_pair(desc.mem_loc, desc.num_bytes());
+      auto                       it       = free_blocks.find(pool_key);
 
       if (it != free_blocks.end()) {
         // We found an exact match! Scavenge it.
@@ -666,8 +687,7 @@ void Compiler::Impl::allocate_buffers() {
     }
   }
 
-  // Any blocks left inside `free_blocks` will naturally go out of scope here and
-  // safely deallocate, meaning memory for removed nodes is properly cleaned up.
+  // Leftovers are retired only after dependent graph caches have been destroyed.
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -873,6 +893,9 @@ std::unique_ptr<To> dynamic_unique_ptr_cast(std::unique_ptr<From> &&ptr) noexcep
 template <class TaskInterface, class Factory, class Ctx>
 std::unique_ptr<core::ITask>
 Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, const Ctx &ctx) {
+  // Construct the callback before moving any captured task out of the previous resource map.
+  core::ExecutionInvalidation invalidation{
+      [this, &np]() noexcept { invalidate_task_graphs(np.spec.name); }};
 
   // 1. Helper to synchronize the correct streams based on Ctx type
   auto sync_streams = [&]() {
@@ -906,8 +929,16 @@ Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, cons
 
   // 3. Helper to accurately profile Task Updating
   auto do_update = [&](std::unique_ptr<TaskInterface> prev_task) {
-    auto scope = trace_scope(std::format("Update Task: {}", np.spec.name), "detail");
-    auto task  = factory.update(std::move(prev_task), np.infer.input_descs, np.spec.settings, ctx);
+    core::ExecutionUpdateGuard ownership_guard(&invalidation);
+    auto scope      = trace_scope(std::format("Update Task: {}", np.spec.name), "detail");
+    auto update_ctx = ctx;
+    update_ctx.execution_invalidation = &invalidation;
+    if (factory.execution_update_policy() == core::ExecutionUpdatePolicy::AlwaysInvalidate)
+      invalidation.invalidate();
+    auto task =
+        factory.update(std::move(prev_task), np.infer.input_descs, np.spec.settings, update_ctx);
+    // A post-update synchronization error must invalidate before the returned task is unwound.
+    core::ExecutionUpdateGuard update_guard(&invalidation);
     sync_streams();
     return task;
   };
@@ -942,9 +973,12 @@ Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, cons
   }
 
   if (!found_in_prev_graph || kind_mismatch) {
+    invalidate_task_graphs(np.spec.name);
     return do_create();
   }
 
+  if (!dynamic_cast<TaskInterface *>(prev_ptr_ref->get()))
+    invalidate_task_graphs(np.spec.name);
   auto prev_task_typed = dynamic_unique_ptr_cast<TaskInterface>(std::move(*prev_ptr_ref));
 
   if (!prev_task_typed) {
@@ -952,6 +986,162 @@ Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, cons
   }
 
   return do_update(std::move(prev_task_typed));
+}
+
+// -------------------------------------------------------------------------------------------------
+// Execution cache compatibility
+// -------------------------------------------------------------------------------------------------
+
+void Compiler::Impl::invalidate_task_graphs(std::string_view name) noexcept {
+  if (!prev_)
+    return;
+  for (const auto &section : prev_->sections) {
+    auto it = prev_->resources.section_cuda_graphs.find(section.id);
+    if (it == prev_->resources.section_cuda_graphs.end())
+      continue;
+    auto &graphs  = *it->second;
+    bool  depends = false;
+    for (auto v : section.sync_topo)
+      depends |= prev_->graph[v].spec.name == name;
+    for (auto v : boost::make_iterator_range(boost::vertices(prev_->graph))) {
+      const auto &node = prev_->graph[v];
+      if (node.spec.name != name)
+        continue;
+      auto owns_domain = [&](const auto &tids, const auto &owned) {
+        for (size_t port = 0; port < tids.size(); ++port) {
+          if (!owned[port])
+            continue;
+          auto sid = prev_->resources.tid_to_sid.at(tids[port]);
+          if (std::ranges::find(graphs.storage_ids, sid) != graphs.storage_ids.end())
+            return true;
+        }
+        return false;
+      };
+      depends |= owns_domain(node.in_tids, node.infer.owned_inputs) ||
+                 owns_domain(node.out_tids, node.infer.owned_outputs);
+    }
+    if (!depends)
+      continue;
+    graphs.clear();
+    try {
+      graphs.compilation_invalidation_reason = "task_update: " + std::string(name);
+      logger_->info("[CUDA graphs] Invalidated section {} before updating {}", section.name, name);
+    } catch (...) {
+      // Invalidation also runs during exception unwinding; reporting must never block cleanup.
+    }
+  }
+}
+
+namespace {
+
+// This describes the current unfused recording plan, independently of factory configuration.
+// Future lowering/fusion must include generated-kernel identity and specialization constants here.
+nlohmann::json section_structure(const CompilerOutput &output, const Section &section) {
+  auto                  result = nlohmann::json::array();
+  std::set<std::string> names;
+  for (const auto *vertices : {&section.sync_topo, &section.async_cons, &section.async_prod}) {
+    auto tasks = nlohmann::json::array();
+    for (auto v : *vertices) {
+      const auto &node = output.graph[v];
+      tasks.push_back({node.spec.name, node.spec.kind});
+      names.insert(node.spec.name);
+    }
+    result.push_back(std::move(tasks));
+  }
+  std::set<std::tuple<std::string, int, std::string, int>> wiring;
+  for (auto edge : boost::make_iterator_range(boost::edges(output.graph))) {
+    const auto &source = output.graph[boost::source(edge, output.graph)].spec.name;
+    const auto &target = output.graph[boost::target(edge, output.graph)].spec.name;
+    if (names.contains(source) || names.contains(target)) {
+      const auto &ports = output.graph[edge].spec;
+      wiring.emplace(source, ports.out_idx, target, ports.in_idx);
+    }
+  }
+  result.push_back(wiring);
+  return result;
+}
+
+nlohmann::json section_bindings(const CompilerOutput &output, const Section &section) {
+  auto result = nlohmann::json::array();
+  for (auto v : section.sync_topo) {
+    const auto &node     = output.graph[v];
+    auto        bindings = nlohmann::json::array();
+    for (const auto *tids : {&node.in_tids, &node.out_tids}) {
+      auto ports = nlohmann::json::array();
+      for (int tid : *tids) {
+        const auto &desc = output.resources.tensor_descs.at(tid);
+        // The public TDesc serializer intentionally excludes offsets; captures cannot exclude them.
+        ports.push_back({output.resources.tid_to_sid.at(tid), desc, desc.offset});
+      }
+      bindings.push_back(std::move(ports));
+    }
+    bindings.push_back(node.infer.owned_inputs);
+    bindings.push_back(node.infer.owned_outputs);
+    result.push_back(std::move(bindings));
+  }
+  return result;
+}
+
+} // namespace
+
+void Compiler::Impl::carry_section_cuda_graphs() {
+  out_->resources.compilation_generation = compilation_generation_;
+  // Destroy executables referencing allocations that will not survive compilation, before free.
+  if (prev_) {
+    for (auto &[id, graphs] : prev_->resources.section_cuda_graphs) {
+      bool retires_resource = false;
+      for (auto &[key, block] : retired_blocks_)
+        for (const auto &domain : graphs->pointers)
+          retires_resource |=
+              std::ranges::find(domain, static_cast<std::byte *>(block.get())) != domain.end();
+      if (retires_resource) {
+        graphs->clear();
+        graphs->compilation_invalidation_reason = "resource_retirement";
+      }
+    }
+  }
+  for (const auto &section : out_->sections) {
+    auto        graphs = std::make_unique<SectionCudaGraphs>();
+    std::string reason = prev_ ? "section_structure" : "initial_compilation";
+    if (prev_) {
+      for (const auto &old_section : prev_->sections) {
+        if (section_structure(*prev_, old_section) != section_structure(*out_, section))
+          continue;
+        auto it = prev_->resources.section_cuda_graphs.find(old_section.id);
+        if (it == prev_->resources.section_cuda_graphs.end())
+          continue;
+        if (old_section.stream != section.stream)
+          reason = "stream_change";
+        else if (section_bindings(*prev_, old_section) != section_bindings(*out_, section))
+          reason = "descriptor_or_binding_change";
+        else if (it->second->executables.empty())
+          reason = it->second->compilation_invalidation_reason.empty()
+                       ? "no_cached_executables"
+                       : it->second->compilation_invalidation_reason;
+        else {
+          graphs = std::move(it->second);
+          prev_->resources.section_cuda_graphs.erase(it);
+          graphs->carried_from_previous_compilation = true;
+          reason.clear();
+        }
+        break;
+      }
+    }
+    graphs->compilation_generation          = compilation_generation_;
+    graphs->compilation_invalidation_reason = std::move(reason);
+    graphs->launches.store(0);
+    graphs->ordinary_iterations.store(0);
+    graphs->pointer_misses.store(0);
+    graphs->tuple_misses.store(0);
+    graphs->refresh_count = 0;
+    logger_->info("[CUDA graphs] {} compilation {}: carried {}, reason {}", section.name,
+                  compilation_generation_, graphs->carried_from_previous_compilation,
+                  graphs->compilation_invalidation_reason);
+    out_->resources.section_cuda_graphs.emplace(section.id, std::move(graphs));
+  }
+  if (prev_)
+    prev_->resources.section_cuda_graphs.clear();
+  retired_blocks_.clear();
 }
 
 void Compiler::Impl::instantiate_tasks() {

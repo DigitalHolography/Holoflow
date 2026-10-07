@@ -65,6 +65,8 @@
 
 #include <atomic>
 #include <cuda_runtime.h>
+#include <exception>
+#include <functional>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -289,9 +291,47 @@ struct InferResult {
   std::vector<std::optional<size_t>> owned_output_pointer_counts;
 };
 
-/// Context for sync task creation.
+enum class ExecutionUpdatePolicy { AlwaysInvalidate, ExplicitInvalidation };
+
+/// Compiler-owned, update-scoped invalidation of all executables depending on a task.
+/// The callback must not throw. Standalone factory calls may omit this handle.
+struct ExecutionInvalidation {
+  std::function<void()> callback;
+  bool                  invalidated = false;
+
+  void invalidate() noexcept {
+    if (!invalidated) {
+      invalidated = true;
+      if (callback)
+        callback();
+    }
+  }
+};
+
+/// Invalidates on unwind before the update's old_task parameter is destroyed. Captured ownership
+/// must stay in old_task until all fallible work succeeds; local owners unwind before this guard.
+class ExecutionUpdateGuard {
+public:
+  explicit ExecutionUpdateGuard(ExecutionInvalidation *invalidation) noexcept
+      : invalidation_(invalidation), exceptions_(std::uncaught_exceptions()) {}
+  ~ExecutionUpdateGuard() noexcept {
+    if (invalidation_ && std::uncaught_exceptions() > exceptions_)
+      invalidation_->invalidate();
+  }
+
+private:
+  ExecutionInvalidation *invalidation_;
+  int                    exceptions_;
+};
+
+/// Context for sync task creation and updates.
 struct SyncCreateCtx {
-  cudaStream_t stream = static_cast<cudaStream_t>(0); ///< CUDA stream for task execution
+  cudaStream_t           stream = static_cast<cudaStream_t>(0); ///< CUDA stream for task execution
+  ExecutionInvalidation *execution_invalidation = nullptr;
+  void                   invalidate_execution() const noexcept {
+    if (execution_invalidation)
+      execution_invalidation->invalidate();
+  }
 };
 
 /// Context for async task creation.
@@ -299,13 +339,24 @@ struct AsyncCreateCtx {
   /// CUDA streams for producer side.
   cudaStream_t producer_stream = static_cast<cudaStream_t>(0);
   /// CUDA streams for consumer side.
-  cudaStream_t consumer_stream = static_cast<cudaStream_t>(0);
+  cudaStream_t           consumer_stream        = static_cast<cudaStream_t>(0);
+  ExecutionInvalidation *execution_invalidation = nullptr;
+  void                   invalidate_execution() const noexcept {
+    if (execution_invalidation)
+      execution_invalidation->invalidate();
+  }
 };
 
 /// Base factory interface. Provides common inference API.
 class ITaskFactory {
 public:
   virtual ~ITaskFactory() = default;
+
+  /// Explicit factories must invalidate before altering captured operations/resources, and guard
+  /// exception paths. Device data and ownership transfers may preserve execution compatibility.
+  virtual ExecutionUpdatePolicy execution_update_policy() const noexcept {
+    return ExecutionUpdatePolicy::AlwaysInvalidate;
+  }
 
   /// Infer metadata for a task without constructing it.
   ///

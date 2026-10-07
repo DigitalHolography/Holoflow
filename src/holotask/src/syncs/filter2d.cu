@@ -481,10 +481,12 @@ Filter2DFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                         std::span<const holoflow::core::TDesc>     input_descs,
                         const nlohmann::json                      &jsettings,
                         const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)this->infer(input_descs, jsettings);
 
   auto *old_filter = dynamic_cast<Filter2D *>(old_task.get());
   if (old_filter == nullptr) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -500,6 +502,8 @@ Filter2DFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     old_filter->update_stream(ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }
