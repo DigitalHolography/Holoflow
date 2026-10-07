@@ -107,6 +107,7 @@
 #include "tasks/sinks/display_zernike_coefficients.hh"
 #include "ui/widgets/auto_focus_widget.hh"
 #include "ui/widgets/zernike_history_widget.hh"
+#include <QPointer>
 
 using namespace holotask;
 using namespace holonp;
@@ -180,7 +181,8 @@ Manager::Manager(
       processed_spectrum_widget_(processed_spectrum_widget),
       shack_hartmann_widget_(shack_hartmann_widget),
       shack_hartmann_xcorr_widget_(shack_hartmann_xcorr_widget),
-      zernike_phase_widget_(zernike_phase_widget), zernike_history_widget_(zernike_history_widget) {
+      zernike_phase_widget_(zernike_phase_widget), zernike_history_widget_(zernike_history_widget),
+      history_dispatchers_(std::make_shared<ui::SignalHistoryDispatcherProvider>()) {
 
   register_components();
 
@@ -212,7 +214,7 @@ void Manager::register_components() {
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase", zernike_phase_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(registry_, "DisplayZernikeCoefficients", autofocus_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory", zernike_history_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory", history_dispatchers_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
@@ -286,13 +288,35 @@ void Manager::configure_zernike_history(bool start_run) {
     throw std::invalid_argument("derived signal plot sample time must be positive and finite");
   }
 
-  auto configure = [widget = zernike_history_widget_, indexes, time_window_seconds, start_run]() {
-    if (start_run) {
-      widget->start_run(time_window_seconds, indexes);
-    } else {
-      widget->set_series(indexes);
-      widget->set_time_window_seconds(time_window_seconds);
-    }
+  if (start_run) {
+    ScopedTrace submission("Queue History Widget Reset");
+    if (history_dispatchers_->current)
+      history_dispatchers_->current->cancel();
+    const QPointer<ui::ZernikeHistoryWidget> widget    = zernike_history_widget_;
+    const auto                               requested = std::chrono::steady_clock::now();
+    history_dispatchers_->current = std::make_shared<ui::SignalHistoryDispatcher>(
+        zernike_history_widget_,
+        [widget, indexes, time_window_seconds, requested] {
+          ScopedTrace reset("Reset History Widget (GUI)");
+          logger()->debug("History reset GUI queue delay: {} ms",
+                          std::chrono::duration<double, std::milli>(
+                              std::chrono::steady_clock::now() - requested)
+                              .count());
+          if (widget)
+            widget->start_run(time_window_seconds, indexes);
+        },
+        [widget](std::vector<ui::ZernikeHistorySample> samples) {
+          ScopedTrace delivery("Deliver History Samples (GUI)");
+          if (widget)
+            widget->append_samples(std::move(samples));
+        });
+    HOLOVIBES_CHECK(history_dispatchers_->current->queue_reset());
+    return;
+  }
+
+  auto configure = [widget = zernike_history_widget_, indexes, time_window_seconds]() {
+    widget->set_series(indexes);
+    widget->set_time_window_seconds(time_window_seconds);
   };
 
   if (QThread::currentThread() == zernike_history_widget_->thread()) {
@@ -304,9 +328,11 @@ void Manager::configure_zernike_history(bool start_run) {
                                             Qt::BlockingQueuedConnection));
 }
 
-void Manager::stop_zernike_history() {
+void Manager::stop_zernike_history(bool cancel_run) {
   ScopedTrace trace("Stop History Widget");
-  auto        stop = [widget = zernike_history_widget_]() { widget->stop_run(); };
+  if (cancel_run && history_dispatchers_->current)
+    history_dispatchers_->current->cancel();
+  auto stop = [widget = zernike_history_widget_]() { widget->stop_run(); };
   if (QThread::currentThread() == zernike_history_widget_->thread()) {
     stop();
     return;
@@ -352,7 +378,7 @@ void Manager::start_pipeline() {
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
     emit start_pipeline_success();
   } catch (const std::exception &e) {
-    stop_zernike_history();
+    stop_zernike_history(true);
     const QString msg = QString("Failed to start pipeline: %1").arg(e.what());
     logger()->error("[Manager::start_pipeline] {}", msg.toStdString());
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
@@ -499,7 +525,7 @@ void Manager::update_pipeline(const Settings &settings) {
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
     emit update_pipeline_success();
   } catch (const std::exception &e) {
-    stop_zernike_history();
+    stop_zernike_history(true);
     const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
     logger()->error("[Manager::update_pipeline] {}", msg.toStdString());
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);

@@ -14,16 +14,11 @@
 
 #include "display_signal_history.hh"
 
-#include <QMetaObject>
-#include <QPointer>
-
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <iterator>
 #include <memory>
-#include <mutex>
 #include <stdexcept>
 #include <utility>
 #include <vector>
@@ -32,7 +27,7 @@
 #include "cuda_runtime_api.h"
 #include "logger.hh"
 #include "ui/widgets/signal_history.hh"
-#include "ui/widgets/zernike_history_widget.hh"
+#include "ui/widgets/signal_history_dispatcher.hh"
 
 namespace holovibes::tasks::sinks {
 
@@ -49,72 +44,6 @@ void check(bool condition, const std::string &msg) {
   }
 }
 
-class SignalHistoryDispatcher : public std::enable_shared_from_this<SignalHistoryDispatcher> {
-public:
-  explicit SignalHistoryDispatcher(QPointer<holovibes::ui::ZernikeHistoryWidget> widget)
-      : widget_(std::move(widget)) {}
-
-  void enqueue(std::vector<holovibes::ui::ZernikeHistorySample> samples) {
-    bool should_schedule = false;
-    {
-      std::lock_guard lock(mutex_);
-      pending_.insert(pending_.end(), std::make_move_iterator(samples.begin()),
-                      std::make_move_iterator(samples.end()));
-      if (!scheduled_) {
-        scheduled_      = true;
-        should_schedule = true;
-      }
-    }
-
-    if (!should_schedule || widget_.isNull()) {
-      return;
-    }
-
-    auto self = shared_from_this();
-    if (!QMetaObject::invokeMethod(
-            widget_.data(), [self]() { self->drain(); }, Qt::QueuedConnection)) {
-      std::lock_guard lock(mutex_);
-      scheduled_ = false;
-    }
-  }
-
-  void configure(std::vector<int> indexes, double time_window_seconds) {
-    if (widget_.isNull()) {
-      return;
-    }
-
-    QPointer<holovibes::ui::ZernikeHistoryWidget> safe_widget = widget_;
-    QMetaObject::invokeMethod(
-        widget_.data(),
-        [safe_widget, indexes = std::move(indexes), time_window_seconds]() {
-          if (!safe_widget.isNull()) {
-            safe_widget->set_series(indexes);
-            safe_widget->set_time_window_seconds(time_window_seconds);
-          }
-        },
-        Qt::QueuedConnection);
-  }
-
-private:
-  void drain() {
-    std::vector<holovibes::ui::ZernikeHistorySample> samples;
-    {
-      std::lock_guard lock(mutex_);
-      samples.swap(pending_);
-      scheduled_ = false;
-    }
-
-    if (!widget_.isNull() && !samples.empty()) {
-      widget_->append_samples(std::move(samples));
-    }
-  }
-
-  QPointer<holovibes::ui::ZernikeHistoryWidget>    widget_;
-  std::mutex                                       mutex_;
-  std::vector<holovibes::ui::ZernikeHistorySample> pending_;
-  bool                                             scheduled_ = false;
-};
-
 // -------------------------------------------------------------------------------------------------
 // DisplaySignalHistoryTask
 // -------------------------------------------------------------------------------------------------
@@ -122,12 +51,10 @@ private:
 class DisplaySignalHistoryTask : public holoflow::core::ISyncTask {
 public:
   DisplaySignalHistoryTask(DisplaySignalHistorySettings settings, holoflow::core::TDesc idesc,
-                           QPointer<holovibes::ui::ZernikeHistoryWidget> widget,
-                           cudaStream_t                                  stream)
+                           std::shared_ptr<holovibes::ui::SignalHistoryDispatcher> dispatcher,
+                           cudaStream_t                                            stream)
       : settings_(std::move(settings)), idesc_(std::move(idesc)),
-        dispatcher_(std::make_shared<SignalHistoryDispatcher>(std::move(widget))), stream_(stream) {
-    dispatcher_->configure(settings_.indexes, settings_.time_window_seconds);
-  }
+        dispatcher_(std::move(dispatcher)), stream_(stream) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     if (received_sample_index_++ < settings_.discard_first) {
@@ -173,12 +100,12 @@ public:
   }
 
 private:
-  DisplaySignalHistorySettings             settings_;
-  holoflow::core::TDesc                    idesc_;
-  std::shared_ptr<SignalHistoryDispatcher> dispatcher_;
-  cudaStream_t                             stream_;
-  uint64_t                                 received_sample_index_ = 0;
-  uint64_t                                 valid_sample_index_    = 0;
+  DisplaySignalHistorySettings                            settings_;
+  holoflow::core::TDesc                                   idesc_;
+  std::shared_ptr<holovibes::ui::SignalHistoryDispatcher> dispatcher_;
+  cudaStream_t                                            stream_;
+  uint64_t                                                received_sample_index_ = 0;
+  uint64_t                                                valid_sample_index_    = 0;
 };
 
 } // namespace
@@ -200,10 +127,10 @@ void from_json(const nlohmann::json &j, DisplaySignalHistorySettings &settings) 
 }
 
 DisplaySignalHistoryFactory::DisplaySignalHistoryFactory(
-    holovibes::ui::ZernikeHistoryWidget *widget)
-    : widget_(widget) {
-  HOLOVIBES_CHECK(widget_ != nullptr,
-                  "DisplaySignalHistoryFactory requires a valid widget pointer");
+    std::shared_ptr<holovibes::ui::SignalHistoryDispatcherProvider> dispatchers)
+    : dispatchers_(std::move(dispatchers)) {
+  HOLOVIBES_CHECK(dispatchers_ != nullptr,
+                  "DisplaySignalHistoryFactory requires a dispatcher provider");
 }
 
 holoflow::core::InferResult
@@ -239,8 +166,10 @@ DisplaySignalHistoryFactory::create(std::span<const holoflow::core::TDesc> input
                                     const holoflow::core::SyncCreateCtx   &ctx) const {
   auto settings = jsettings.get<DisplaySignalHistorySettings>();
   infer(input_descs, jsettings);
-  return std::make_unique<DisplaySignalHistoryTask>(std::move(settings), input_descs[0], widget_,
-                                                    ctx.stream);
+  HOLOVIBES_CHECK(dispatchers_->current != nullptr,
+                  "History run must be prepared before compilation");
+  return std::make_unique<DisplaySignalHistoryTask>(std::move(settings), input_descs[0],
+                                                    dispatchers_->current, ctx.stream);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask> DisplaySignalHistoryFactory::update(

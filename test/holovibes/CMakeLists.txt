@@ -16,12 +16,14 @@ set(TARGET holovibes_test)
 
 set(SOURCES
     signal_history_test.cc
+    signal_history_dispatcher_test.cc
     settings_test.cc
     update_checker_test.cc
     ../../src/holovibes/src/pipeline/validation.cc
     ../../src/holovibes/src/settings_loader.cc
     ../../src/holovibes/src/ui/update_checker.cc
     ../../src/holovibes/src/ui/widgets/signal_history.cc
+    ../../src/holovibes/src/ui/widgets/signal_history_dispatcher.cc
 )
 
 add_executable(${TARGET} ${SOURCES})

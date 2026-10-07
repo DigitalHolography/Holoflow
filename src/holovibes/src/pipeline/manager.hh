@@ -33,6 +33,7 @@ namespace holovibes::ui {
 class AutoFocusWidget;
 class TensorDisplayWidget;
 class ZernikeHistoryWidget;
+struct SignalHistoryDispatcherProvider;
 } // namespace holovibes::ui
 
 class QTimer;
@@ -139,23 +140,24 @@ private:
   void guess_source_dims();
   void configure_zernike_history(bool start_run);
   void resume_zernike_history();
-  void stop_zernike_history();
+  void stop_zernike_history(bool cancel_run = false);
 
   // --- Logging Helpers ---
   void dump_graph_logs(const std::filesystem::path &log_dir);
 
   // --- UI Elements ---
-  ui::AutoFocusWidget      *autofocus_widget_;
-  ui::TensorDisplayWidget  *xy_processed_widget_;
-  ui::TensorDisplayWidget  *xz_processed_widget_;
-  ui::TensorDisplayWidget  *yz_processed_widget_;
-  ui::TensorDisplayWidget  *xy_raw_widget_;
-  ui::TensorDisplayWidget  *raw_spectrum_widget_;
-  ui::TensorDisplayWidget  *processed_spectrum_widget_;
-  ui::TensorDisplayWidget  *shack_hartmann_widget_;
-  ui::TensorDisplayWidget  *shack_hartmann_xcorr_widget_;
-  ui::TensorDisplayWidget  *zernike_phase_widget_;
-  ui::ZernikeHistoryWidget *zernike_history_widget_;
+  ui::AutoFocusWidget                                 *autofocus_widget_;
+  ui::TensorDisplayWidget                             *xy_processed_widget_;
+  ui::TensorDisplayWidget                             *xz_processed_widget_;
+  ui::TensorDisplayWidget                             *yz_processed_widget_;
+  ui::TensorDisplayWidget                             *xy_raw_widget_;
+  ui::TensorDisplayWidget                             *raw_spectrum_widget_;
+  ui::TensorDisplayWidget                             *processed_spectrum_widget_;
+  ui::TensorDisplayWidget                             *shack_hartmann_widget_;
+  ui::TensorDisplayWidget                             *shack_hartmann_xcorr_widget_;
+  ui::TensorDisplayWidget                             *zernike_phase_widget_;
+  ui::ZernikeHistoryWidget                            *zernike_history_widget_;
+  std::shared_ptr<ui::SignalHistoryDispatcherProvider> history_dispatchers_;
 
   // --- State & Configuration ---
   Settings s_;
