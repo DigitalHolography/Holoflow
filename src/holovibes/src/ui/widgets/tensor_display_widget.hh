@@ -28,6 +28,7 @@
 #include "holoflow/core/tensor.hh"
 
 class QLabel;
+class QTimer;
 
 namespace holovibes::ui {
 
@@ -44,7 +45,8 @@ public:
   void set_fixed_aspect(std::optional<QSize> size);
   void set_reticle_enabled(bool enabled);
   void set_reticle_radius(double radius);
-  void show_waiting_placeholder(const QString &message = {});
+  /// Keep the last frame briefly while waiting for replacement data; nonpositive delays clear now.
+  void show_waiting_placeholder(const QString &message = {}, int delay_ms = 300);
 
   /// Set the active colormap
   void set_colormap(Colormap cmap);
@@ -75,6 +77,7 @@ private:
   void  initializeReticle();
   void  initializeColormaps();
   void  drawReticle();
+  void  apply_waiting_placeholder();
 
   GLuint tex_  = 0;
   GLuint vao_  = 0;
@@ -108,6 +111,8 @@ private:
 
   std::optional<QSize> fixed_aspect_size_{std::nullopt};
   QLabel              *waiting_label_ = nullptr;
+  QTimer              *waiting_timer_ = nullptr;
+  QString              pending_waiting_message_;
 };
 
 } // namespace holovibes::ui

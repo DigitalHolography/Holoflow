@@ -206,6 +206,14 @@ public:
   Reshape(ReshapeSettings settings, holoflow::core::TDesc idesc)
       : is_view_(true), settings_(std::move(settings)), idesc_(std::move(idesc)) {}
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    std::atomic<bool>       cancelled{false};
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, &cancelled, nullptr, nullptr};
+    (void)execute(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
   const holoflow::core::TDesc &idesc() const { return idesc_; }
@@ -343,6 +351,7 @@ ReshapeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                        std::span<const holoflow::core::TDesc>     input_descs,
                        const nlohmann::json                      &jsettings,
                        const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
 
   auto *old_reshape = dynamic_cast<Reshape *>(old_task.get());
 
@@ -358,6 +367,8 @@ ReshapeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
       return old_task;
     }
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

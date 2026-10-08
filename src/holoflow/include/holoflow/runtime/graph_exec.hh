@@ -21,6 +21,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cuda_runtime.h>
+#include <filesystem>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -28,6 +29,7 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <utility>
 #include <variant>
 #include <vector>
@@ -72,6 +74,43 @@ struct MemoryBlock {
   void *get(); ///< Returns a mutable pointer to the memory block.
 };
 
+/// One finite, eagerly constructed graph set. Only its section thread selects/launches variants.
+struct SectionCudaGraphs {
+  ~SectionCudaGraphs();
+  SectionCudaGraphs()                                     = default;
+  SectionCudaGraphs(const SectionCudaGraphs &)            = delete;
+  SectionCudaGraphs &operator=(const SectionCudaGraphs &) = delete;
+
+  std::vector<size_t>                   storage_ids;
+  std::vector<std::vector<std::byte *>> pointers;
+  using PointerTuple = std::vector<uintptr_t>;
+  std::map<PointerTuple, size_t> tuple_indices;
+  std::vector<size_t>            executable_node_counts;
+  std::vector<cudaGraphExec_t>   executables;
+  size_t                         variant_count = 0;
+  size_t node_count = 0; ///< Total nodes across executable variants, including conditional bodies.
+  double construction_ms = 0;
+  std::string fallback_reason;
+  bool        enabled = false;
+
+  // The executable set is changed only while stopped; snapshots never read that mutable state.
+  mutable std::mutex    diagnostic_mutex;
+  nlohmann::json        diagnostics = nlohmann::json::object();
+  std::atomic<uint64_t> launches{0}, ordinary_iterations{0}, pointer_misses{0}, tuple_misses{0};
+  uint64_t              refresh_count                     = 0;
+  uint64_t              compilation_generation            = 0;
+  bool                  carried_from_previous_compilation = false;
+  std::string           compilation_invalidation_reason;
+  [[nodiscard]] nlohmann::json snapshot() const;
+  void report_miss(const std::map<size_t, std::unique_ptr<core::Storage>> &storages);
+
+  void clear() noexcept;
+  [[nodiscard]] std::optional<size_t>
+  variant(const std::map<size_t, std::unique_ptr<core::Storage>> &storages) const;
+};
+
+struct SectionCudaGraphInspection;
+
 struct ExecResouces {
   std::map<size_t, MemoryBlock>                    memory_blocks; ///< StorageID -> MemoryBlock.
   std::map<size_t, std::unique_ptr<core::Storage>> storages;      ///< StorageID -> Storage.
@@ -81,6 +120,13 @@ struct ExecResouces {
   std::map<std::string, std::unique_ptr<core::IOStorageAccess>> node_storage_adapters;
   std::map<size_t, curaii::CudaStream>                          streams; ///< CUDA streams by ID.
   std::map<std::string, std::unique_ptr<core::ITask>>           tasks;   ///< Task instances by ID.
+  size_t                                                        max_section_cuda_graphs = 0;
+  std::filesystem::path                                         section_cuda_graph_log_dir;
+  uint64_t                                                      compilation_generation = 0;
+  // One-use plan for the first start; compilation has already validated these pointer domains.
+  std::shared_ptr<SectionCudaGraphInspection> section_cuda_graph_inspection;
+  // Declared last so graphs are destroyed before tasks, modules, streams, and buffers.
+  std::map<int, std::unique_ptr<SectionCudaGraphs>> section_cuda_graphs;
   // std::map<int, core::Tensor>                         tensors; ///< Allocated tensors by ID.
 };
 
@@ -117,6 +163,7 @@ struct NodeMetrics {
   double   host_throughput_bytes_per_second   = 0.0;
   double   device_throughput_bytes_per_second = 0.0;
   uint64_t sample_count                       = 0;
+  bool     individual_timing_available        = true;
 };
 
 class Scheduler {
@@ -128,8 +175,13 @@ public:
 
   void set_metrics_interval(std::chrono::milliseconds interval);
   [[nodiscard]] std::map<std::string, NodeMetrics> metrics() const;
+  /// Host submission timing/counts for section graph launches, not GPU execution duration.
+  [[nodiscard]] std::map<std::string, NodeMetrics> section_graph_metrics() const;
+  [[nodiscard]] nlohmann::json                     section_graph_diagnostics() const;
 
   void start();
+  /// Suspend with acquired buffers and completed operations retained for start().
+  void request_pause();
   void request_stop();
   void wait();
 
@@ -161,16 +213,15 @@ private:
   /// Owning tasks publish memory by updating their compiler-provided Storage;
   /// all scheduler TViews retain pointers to that stable Storage object.
   /// This function blocks until all owned inputs are acquired.
-  /// @warning If stop_ is set while waiting, the function returns early,
-  /// and some owned inputs may not be acquired.
+  /// On interruption, port identifies the next input to acquire on resume.
   /// @warning This function must be called on a synchronous or asynchronous
   /// producer node only.
-  void acquire_owned_inputs(GraphPlan::vertex_descriptor v);
+  void acquire_owned_inputs(GraphPlan::vertex_descriptor v, size_t &port);
 
   /// This function releases all owned outputs for the given node.
   /// Pointer cleanup remains the owning task's responsibility.
-  /// This function does not block.
-  void release_owned_outputs(GraphPlan::vertex_descriptor v);
+  /// This function does not block. Port tracks partial release across a pause.
+  void release_owned_outputs(GraphPlan::vertex_descriptor v, size_t &port);
 
   /// Executes a synchronous node.
   /// @warning This function must be called on a synchronous node only.
@@ -185,11 +236,23 @@ private:
   [[nodiscard]] core::OpResult run_async_prod(GraphPlan::vertex_descriptor v);
 
 private:
-  std::atomic<bool>           running_{false}; ///< True if the scheduler is running.
-  std::atomic<bool>           stop_{false};    ///< True if a stop has been requested.
-  const GraphPlan            &graph_;          ///< The computational graph to execute.
-  const std::vector<Section> &sections_;       ///< Execution sections.
-  ExecResouces               &res_;            ///< Execution resources (streams, tasks, tensors).
+  std::atomic<bool> running_{false}; ///< True if the scheduler is running.
+  std::atomic<bool> stop_{false};    ///< True if a stop has been requested.
+  std::atomic<bool> paused_{false};
+  std::atomic<bool> aborted_{false};
+  struct SectionCheckpoint {
+    enum class Stage { AcquireSync, AcquireProducer, Pop, Compute, Barrier, Push, Release };
+    Stage                                     stage               = Stage::AcquireSync;
+    size_t                                    node                = 0;
+    size_t                                    port                = 0;
+    bool                                      computation_started = false;
+    bool                                      graph_submitted     = false;
+    std::vector<GraphPlan::vertex_descriptor> produced;
+  };
+  std::vector<SectionCheckpoint> checkpoints_;
+  const GraphPlan               &graph_;    ///< The computational graph to execute.
+  const std::vector<Section>    &sections_; ///< Execution sections.
+  ExecResouces                  &res_;      ///< Execution resources (streams, tasks, tensors).
 
   /// Stable TViews for all tensors by their IDs. Copies across node contexts
   /// observe ownership changes through their shared Storage pointers.
@@ -236,9 +299,11 @@ private:
   };
 
   std::vector<NodeMetricAccumulator> metric_accumulators_;
+  std::vector<NodeMetricAccumulator> graph_metric_accumulators_;
 
   mutable std::mutex                 metrics_mutex_;
   std::map<std::string, NodeMetrics> latest_metrics_;
+  std::map<std::string, NodeMetrics> latest_section_graph_metrics_;
   std::chrono::milliseconds          metrics_interval_;
   std::atomic<bool>                  metrics_running_{false};
   std::thread                        metrics_thread_;
@@ -258,6 +323,13 @@ template <> struct fmt::formatter<holoflow::runtime::NodeMetrics> {
 
   template <typename FormatContext>
   auto format(const holoflow::runtime::NodeMetrics &m, FormatContext &ctx) const {
+    if (!m.individual_timing_available) {
+      return fmt::format_to(ctx.out(),
+                            "{{avg: n/a (section graph), rps: {:.3f}, host: {:.3f} B/s, device: "
+                            "{:.3f} B/s, samples: {}}}",
+                            m.runs_per_second, m.host_throughput_bytes_per_second,
+                            m.device_throughput_bytes_per_second, m.sample_count);
+    }
     return fmt::format_to(
         ctx.out(),
         "{{avg: {:.3f} ms, rps: {:.3f}, host: {:.3f} B/s, device: {:.3f} B/s, samples: {}}}",

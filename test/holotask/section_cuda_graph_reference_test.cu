@@ -1,0 +1,433 @@
+// Copyright 2026 Digital Holography Foundation
+// SPDX-License-Identifier: Apache-2.0
+
+#include <algorithm>
+#include <array>
+#include <chrono>
+#include <fstream>
+#include <functional>
+#include <gtest/gtest.h>
+#include <iostream>
+#include <thread>
+
+#include "holoflow/runtime/compiler.hh"
+#include "holonp/fftshift.hh"
+#include "holonp/mean.hh"
+#include "holonp/reshape.hh"
+#include "holotask/asyncs/batch_queue.hh"
+#include "holotask/asyncs/dual_reader_batch_queue.hh"
+#include "holotask/asyncs/slide_avg.hh"
+#include "holotask/syncs/causal_sliding_average.hh"
+#include "holotask/syncs/conversion.hh"
+#include "holotask/syncs/filter2d.hh"
+#include "holotask/syncs/flatfield.hh"
+#include "holotask/syncs/fresnel_diffraction.hh"
+#include "holotask/syncs/memcpy.hh"
+#include "holotask/syncs/pca.hh"
+#include "holotask/syncs/pct_clip.hh"
+#include "holotask/syncs/shack_hartmann_slopes.hh"
+
+namespace {
+using namespace holoflow::core;
+using namespace holoflow::runtime;
+
+struct ReferenceState {
+  bool                                               pause_at_target = false;
+  std::function<void(size_t)>                        frame_hook;
+  size_t                                             target_frames = 96;
+  std::vector<std::vector<unsigned char>>            frames;
+  std::vector<std::chrono::steady_clock::time_point> arrival;
+};
+
+class ReferenceTask : public ISyncTask {
+public:
+  ReferenceTask(bool source, cudaStream_t stream, std::shared_ptr<ReferenceState> state)
+      : source_(source), stream_(stream), state_(state) {}
+  OpResult execute(SyncCtx &ctx) override {
+    if (source_) {
+      auto *output = reinterpret_cast<unsigned char *>(ctx.outputs[0].data());
+      for (size_t i = 0; i < ctx.outputs[0].desc.num_elements(); ++i) {
+        // Deterministic changing input, independent of queue scheduling.
+        random_ ^= random_ << 13;
+        random_ ^= random_ >> 17;
+        random_ ^= random_ << 5;
+        output[i] = static_cast<unsigned char>(random_);
+      }
+      return OpResult::Ok;
+    }
+    std::vector<unsigned char> frame(ctx.inputs[0].desc.num_bytes());
+    CUDA_CHECK(cudaMemcpyAsync(frame.data(), ctx.inputs[0].data(), frame.size(),
+                               cudaMemcpyDeviceToHost, stream_));
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
+    state_->frames.push_back(std::move(frame));
+    if (state_->frame_hook)
+      state_->frame_hook(state_->frames.size());
+    state_->arrival.push_back(std::chrono::steady_clock::now());
+    return !state_->pause_at_target && state_->frames.size() >= state_->target_frames
+               ? OpResult::Eof
+               : OpResult::Ok;
+  }
+
+private:
+  bool                            source_;
+  cudaStream_t                    stream_;
+  std::shared_ptr<ReferenceState> state_;
+  uint32_t                        random_ = 42;
+};
+
+class ReferenceFactory : public ISyncTaskFactory {
+public:
+  ReferenceFactory(bool source, std::shared_ptr<ReferenceState> state)
+      : source_(source), state_(state) {}
+  InferResult infer(std::span<const TDesc> inputs, const nlohmann::json &settings) const override {
+    if (source_) {
+      return {{},
+              {TDesc({settings.at("batch_size").get<size_t>(), settings.at("height").get<size_t>(),
+                      settings.at("width").get<size_t>()},
+                     DType::U8, MemLoc::Host)},
+              {},
+              {},
+              {false},
+              TaskKind::Sync};
+    }
+    return {{inputs.begin(), inputs.end()}, {}, {}, {false}, {}, TaskKind::Sync};
+  }
+  std::unique_ptr<ISyncTask> create(std::span<const TDesc>, const nlohmann::json &,
+                                    const SyncCreateCtx &ctx) const override {
+    return std::make_unique<ReferenceTask>(source_, ctx.stream, state_);
+  }
+
+private:
+  bool                            source_;
+  std::shared_ptr<ReferenceState> state_;
+};
+
+Registry reference_registry(const std::shared_ptr<ReferenceState> &state) {
+  Registry registry;
+  registry.register_sync("ReferenceSource", std::make_unique<ReferenceFactory>(true, state));
+  registry.register_sync("ReferenceSink", std::make_unique<ReferenceFactory>(false, state));
+  registry.register_sync("Memcpy", std::make_unique<holotask::syncs::MemcpyFactory>());
+  registry.register_sync("Conversion", std::make_unique<holotask::syncs::ConversionFactory>());
+  registry.register_sync("Reshape", std::make_unique<holonp::ReshapeFactory>());
+  registry.register_sync("Pca", std::make_unique<holotask::syncs::PcaFactory>());
+  registry.register_sync("Filter2D", std::make_unique<holotask::syncs::Filter2DFactory>());
+  registry.register_sync("FresnelDiffraction",
+                         std::make_unique<holotask::syncs::FresnelDiffractionFactory>());
+  registry.register_sync("Mean", std::make_unique<holonp::MeanFactory>());
+  registry.register_sync("FFTShiftNp", std::make_unique<holonp::FFTShiftFactory>());
+  registry.register_sync("Flatfield", std::make_unique<holotask::syncs::FlatfieldFactory>());
+  registry.register_sync("PctClip", std::make_unique<holotask::syncs::PctClipFactory>());
+  registry.register_async("BatchQueue", std::make_unique<holotask::asyncs::BatchQueueFactory>());
+  registry.register_async("DualReaderBatchQueue",
+                          std::make_unique<holotask::asyncs::DualReaderBatchQueueFactory>());
+  registry.register_async("SlidingAverage",
+                          std::make_unique<holotask::asyncs::SlidingAverageFactory>());
+  registry.register_sync("CausalSlidingAverage",
+                         std::make_unique<holotask::syncs::CausalSlidingAverageFactory>());
+  registry.register_sync("ShackHartmannSlopes",
+                         std::make_unique<holotask::syncs::ShackHartmannSlopesFactory>());
+  return registry;
+}
+
+GraphSpec reference_spec(bool full) {
+  std::ifstream  file(HOLOFLOW_REFERENCE_SPEC);
+  nlohmann::json json;
+  file >> json;
+  if (!full) {
+    auto &nodes                                                     = json["nodes"];
+    nodes["source_0"]["params"]["height"]                           = 8;
+    nodes["source_0"]["params"]["width"]                            = 16;
+    nodes["reshape_4"]["params"]["shape"]                           = {1, 32, 8, 16};
+    nodes["batch_queue_2"]["params"]["target_capacity"]             = 64;
+    nodes["batch_queue_5"]["params"]["target_capacity"]             = 8;
+    nodes["dual_reader_batch_queue_8"]["params"]["target_capacity"] = 2;
+    nodes["dual_reader_batch_queue_8"]["params"]["window_size"]     = 3;
+    nodes["slide_avg_14"]["params"]["target_capacity"]              = 2;
+    nodes["slide_avg_14"]["params"]["window_size"]                  = 3;
+    nodes["batch_queue_17"]["params"]["target_capacity"]            = 3;
+  }
+  return holoflow::core::from_json(json);
+}
+
+std::vector<std::vector<unsigned char>> run_reference(bool full, size_t limit) {
+  auto             state    = std::make_shared<ReferenceState>();
+  auto             registry = reference_registry(state);
+  Compiler::Config config;
+  config.max_section_cuda_graphs = limit;
+  config.enable_profiling        = false;
+  config.verbose_tracing         = false;
+  config.dump_dot_on_failure     = false;
+  size_t free_before, free_after, total;
+  CUDA_CHECK(cudaMemGetInfo(&free_before, &total));
+  const auto   started = std::chrono::steady_clock::now();
+  auto         out     = Compiler(registry, config).compile(reference_spec(full));
+  const double compile_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+  CUDA_CHECK(cudaMemGetInfo(&free_after, &total));
+  Scheduler  scheduler(out->graph, out->sections, out->resources);
+  const auto preparing = std::chrono::steady_clock::now();
+  scheduler.start();
+  const double start_ms =
+      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - preparing)
+          .count();
+  CUDA_CHECK(cudaMemGetInfo(&free_after, &total));
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+  while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  scheduler.request_stop();
+  scheduler.wait();
+  size_t              enabled = 0;
+  std::vector<size_t> products;
+  for (const auto &sec : out->sections) {
+    const auto &graphs = *out->resources.section_cuda_graphs.at(sec.id);
+    if (graphs.enabled) {
+      ++enabled;
+      products.push_back(graphs.executables.size());
+    } else if (limit && !sec.sync_topo.empty() &&
+               out->graph[sec.sync_topo.front()].spec.kind != "ReferenceSource" &&
+               out->graph[sec.sync_topo.front()].spec.kind != "ReferenceSink") {
+      ADD_FAILURE() << sec.name << ": " << graphs.fallback_reason;
+    }
+  }
+  EXPECT_EQ(enabled, limit ? 4U : 0U);
+  if (full && limit) {
+    std::sort(products.begin(), products.end());
+    EXPECT_EQ(products, (std::vector<size_t>{21, 264, 504, 792}));
+  }
+
+  EXPECT_EQ(state->frames.size(), state->target_frames);
+  if (state->arrival.size() > 16) {
+    const double seconds =
+        std::chrono::duration<double>(state->arrival.back() - state->arrival[16]).count();
+    std::cout << "Reference full=" << full << " cap=" << limit << " compile_ms=" << compile_ms
+              << " start_ms=" << start_ms
+              << " allocated_MiB=" << (double(free_before) - double(free_after)) / (1024 * 1024)
+              << " steady_frames_per_second=" << double(state->arrival.size() - 17) / seconds
+              << '\n';
+  }
+  return state->frames;
+}
+
+void compare_reference(bool full) {
+  const auto ordinary = run_reference(full, 0);
+  const auto graphs   = run_reference(full, full ? 4096 : 128);
+  ASSERT_EQ(ordinary.size(), graphs.size());
+  for (size_t i = 0; i < ordinary.size(); ++i) {
+    ASSERT_EQ(ordinary[i].size(), graphs[i].size());
+    int maximum_error = 0;
+    for (size_t j = 0; j < ordinary[i].size(); ++j)
+      maximum_error = std::max(maximum_error, std::abs(int(ordinary[i][j]) - int(graphs[i][j])));
+    EXPECT_LE(maximum_error, 2) << "frame " << i;
+  }
+}
+
+TEST(SectionGraphReference, SmallPipelineMatchesOrdinaryExecution) { compare_reference(false); }
+
+std::vector<std::vector<unsigned char>> run_compatible_update(size_t limit,
+                                                              bool   dual_reader = false,
+                                                              bool   sliding     = false,
+                                                              bool   aberration  = false) {
+  auto state    = std::make_shared<ReferenceState>();
+  auto registry = reference_registry(state);
+  auto json     = nlohmann::json{
+      {"nodes",
+       {
+           {"source",
+            {{"type", "ReferenceSource"},
+             {"params", {{"batch_size", 1}, {"height", 8}, {"width", 8}}}}},
+           {"copy", {{"type", "Memcpy"}, {"params", {{"target", "Device"}}}}},
+           {"input_queue",
+            {{"type", "BatchQueue"},
+             {"params", {{"target_capacity", 4}, {"output_size", 1}, {"output_stride", 1}}}}},
+           {"float",
+            {{"type", "Conversion"}, {"params", {{"target", "F32"}, {"strategy", "Real"}}}}},
+           {"flatfield",
+            {{"type", "Flatfield"}, {"params", {{"sigma_y", 0.75F}, {"sigma_x", 1.F}}}}},
+           {"byte",
+            {{"type", "Conversion"}, {"params", {{"target", "U8"}, {"strategy", "Scaled"}}}}},
+           {"output_queue",
+            {{"type", "BatchQueue"},
+             {"params", {{"target_capacity", 4}, {"output_size", 1}, {"output_stride", 1}}}}},
+           {"sink", {{"type", "ReferenceSink"}, {"params", nlohmann::json::object()}}},
+       }},
+      {"edges",
+       {
+           {{"from", "source"}, {"to", "copy"}, {"out", 0}, {"in", 0}},
+           {{"from", "copy"}, {"to", "input_queue"}, {"out", 0}, {"in", 0}},
+           {{"from", "input_queue"}, {"to", "float"}, {"out", 0}, {"in", 0}},
+           {{"from", "float"}, {"to", "flatfield"}, {"out", 0}, {"in", 0}},
+           {{"from", "flatfield"}, {"to", "byte"}, {"out", 0}, {"in", 0}},
+           {{"from", "byte"}, {"to", "output_queue"}, {"out", 0}, {"in", 0}},
+           {{"from", "output_queue"}, {"to", "sink"}, {"out", 0}, {"in", 0}},
+       }},
+  };
+  if (aberration) {
+    json["nodes"]["source"]["params"]["height"] = 24;
+    json["nodes"]["source"]["params"]["width"]  = 24;
+    json["nodes"].erase("flatfield");
+    json["nodes"]["sensor_shape"]   = {{"type", "Reshape"},
+                                       {"params", {{"shape", {1, 3, 3, 8, 8}}, {"copy", false}}}};
+    json["nodes"]["causal_average"] = {
+        {"type", "CausalSlidingAverage"},
+        {"params", holotask::syncs::CausalSlidingAverageSettings{3}}};
+    holotask::syncs::ShackHartmannSlopeSettings settings{
+        .mode                            = holotask::syncs::ShackHartmannSlopeMode::FullPairwise,
+        .lambda                          = 8.0f,
+        .dx                              = 1.0f,
+        .dy                              = 1.0f,
+        .z                               = 2.0f,
+        .subaperture_height              = 8,
+        .subaperture_width               = 8,
+        .stride_y                        = 8,
+        .stride_x                        = 8,
+        .correlation_roi                 = {.rx = 10.0f, .ry = 10.0f},
+        .skip_subapertures_outside_pupil = false,
+        .pair_batch_size                 = 16};
+    json["nodes"]["slopes"]       = {{"type", "ShackHartmannSlopes"}, {"params", settings}};
+    json["nodes"]["slopes_shape"] = {{"type", "Reshape"},
+                                     {"params", {{"shape", {1, 3, 6}}, {"copy", false}}}};
+    for (auto &edge : json["edges"]) {
+      if (edge["to"] == "flatfield")
+        edge["to"] = "sensor_shape";
+      if (edge["from"] == "flatfield")
+        edge["from"] = "slopes_shape";
+    }
+    for (const auto &[from, to] :
+         std::array{std::pair{"sensor_shape", "causal_average"},
+                    std::pair{"causal_average", "slopes"}, std::pair{"slopes", "slopes_shape"}})
+      json["edges"].push_back({{"from", from}, {"to", to}, {"out", 0}, {"in", 0}});
+  }
+  if (sliding) {
+    json["nodes"]["average"] = {{"type", "SlidingAverage"},
+                                {"params", {{"target_capacity", 8}, {"window_size", 32}}}};
+    for (auto &edge : json["edges"])
+      if (edge["from"] == "flatfield" && edge["to"] == "byte")
+        edge["to"] = "average";
+    json["edges"].push_back({{"from", "average"}, {"to", "byte"}, {"out", 0}, {"in", 0}});
+  }
+  auto spec = holoflow::core::from_json(json);
+  if (dual_reader)
+    for (auto vertex : boost::make_iterator_range(boost::vertices(spec)))
+      if (spec[vertex].name == "input_queue") {
+        spec[vertex].kind     = "DualReaderBatchQueue";
+        spec[vertex].settings = sliding ? holotask::asyncs::DualReaderBatchQueueSettings{26, 1}
+                                        : holotask::asyncs::DualReaderBatchQueueSettings{4, 3};
+      }
+  Compiler::Config config;
+  config.max_section_cuda_graphs   = limit;
+  config.enable_profiling          = false;
+  config.verbose_tracing           = false;
+  config.dump_dot_on_failure       = false;
+  auto                         out = Compiler(registry, config).compile(spec);
+  std::vector<cudaGraphExec_t> original_handles;
+  double                       initial_preparation = 0;
+  for (int iteration = 0; iteration < 2; ++iteration) {
+    state->target_frames = (iteration + 1) * 16;
+    if (iteration) {
+      for (auto vertex : boost::make_iterator_range(boost::vertices(spec)))
+        if (aberration && spec[vertex].name == "slopes")
+          spec[vertex].settings["z"] = 7.25f;
+        else if (!aberration && spec[vertex].name == "flatfield")
+          spec[vertex].settings = holotask::syncs::FlatfieldSettings{1.F, 1.25F};
+      out = Compiler(registry, config).compile(spec, std::move(out));
+    }
+    Scheduler scheduler(out->graph, out->sections, out->resources);
+    if (sliding && iteration == 0) {
+      state->pause_at_target = true;
+      state->frame_hook      = [&](size_t count) {
+        if (count == 8 || count == 12 || count == 16)
+          scheduler.request_pause();
+      };
+      for (int pause = 0; pause < 2; ++pause) {
+        scheduler.start();
+        const auto pause_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < pause_deadline)
+          std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (!scheduler.stop_requested())
+          scheduler.request_stop();
+        scheduler.wait();
+        EXPECT_EQ(state->frames.size(), pause == 0 ? 8U : 12U);
+      }
+    }
+    scheduler.start();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    if (!scheduler.stop_requested())
+      scheduler.request_stop();
+    scheduler.wait();
+    state->frame_hook      = {};
+    state->pause_at_target = false;
+    EXPECT_EQ(state->frames.size(), state->target_frames);
+    for (const auto &section : out->sections) {
+      if (out->graph[section.sync_topo.front()].spec.name != "float")
+        continue;
+      const auto &graphs = *out->resources.section_cuda_graphs.at(section.id);
+      if (!iteration) {
+        original_handles = graphs.executables;
+        if (sliding && limit)
+          EXPECT_EQ(original_handles.size(), 280U);
+        initial_preparation = graphs.construction_ms;
+      } else if (limit) {
+        EXPECT_TRUE(graphs.carried_from_previous_compilation);
+        EXPECT_EQ(graphs.executables, original_handles);
+        EXPECT_EQ(graphs.snapshot()["created"], 0);
+        EXPECT_EQ(graphs.snapshot()["reused"], original_handles.size());
+        EXPECT_EQ(graphs.snapshot()["pointer_misses"], 0);
+        EXPECT_EQ(graphs.snapshot()["tuple_misses"], 0);
+        std::cout << "Compatible update: initial_construction_ms=" << initial_preparation
+                  << " update_construction_ms=" << graphs.construction_ms
+                  << " reused=" << original_handles.size() << " created=0\n";
+      }
+    }
+  }
+  return state->frames;
+}
+
+TEST(SectionGraphReference, CompatibleUpdateMatchesOrdinaryExecutionAndRetainsBatchQueueGraphs) {
+  const auto ordinary = run_compatible_update(0);
+  const auto graphs   = run_compatible_update(128);
+  ASSERT_EQ(graphs.size(), ordinary.size());
+  for (size_t frame = 0; frame < graphs.size(); ++frame) {
+    ASSERT_EQ(graphs[frame].size(), ordinary[frame].size());
+    for (size_t pixel = 0; pixel < graphs[frame].size(); ++pixel)
+      EXPECT_LE(std::abs(int(graphs[frame][pixel]) - int(ordinary[frame][pixel])), 2);
+  }
+}
+
+TEST(SectionGraphReference, CompatibleUpdateRetainsDualReaderBatchQueueGraphs) {
+  const auto ordinary = run_compatible_update(0, true);
+  const auto graphs   = run_compatible_update(128, true);
+  ASSERT_EQ(graphs.size(), ordinary.size());
+  for (size_t frame = 0; frame < graphs.size(); ++frame) {
+    ASSERT_EQ(graphs[frame].size(), ordinary[frame].size());
+    for (size_t pixel = 0; pixel < graphs[frame].size(); ++pixel)
+      EXPECT_LE(std::abs(int(graphs[frame][pixel]) - int(ordinary[frame][pixel])), 2);
+  }
+}
+
+TEST(SectionGraphReference, DualReaderAndSlidingAverageRetain280GraphsAcrossPauseAndUpdate) {
+  const auto ordinary = run_compatible_update(0, true, true);
+  const auto graphs   = run_compatible_update(2048, true, true);
+  ASSERT_EQ(graphs.size(), ordinary.size());
+  for (size_t frame = 0; frame < graphs.size(); ++frame) {
+    ASSERT_EQ(graphs[frame].size(), ordinary[frame].size());
+    for (size_t pixel = 0; pixel < graphs[frame].size(); ++pixel)
+      EXPECT_LE(std::abs(int(graphs[frame][pixel]) - int(ordinary[frame][pixel])), 2);
+  }
+}
+
+TEST(SectionGraphReference, DistanceUpdateRetainsDualReaderCausalAverageAndSlopesGraphs) {
+  const auto ordinary = run_compatible_update(0, true, false, true);
+  const auto graphs   = run_compatible_update(128, true, false, true);
+  ASSERT_EQ(graphs.size(), ordinary.size());
+  for (size_t frame = 0; frame < graphs.size(); ++frame) {
+    ASSERT_EQ(graphs[frame].size(), ordinary[frame].size());
+    for (size_t pixel = 0; pixel < graphs[frame].size(); ++pixel)
+      EXPECT_LE(std::abs(int(graphs[frame][pixel]) - int(ordinary[frame][pixel])), 2);
+  }
+}
+
+TEST(SectionGraphReference, PerformanceFullReference) { compare_reference(true); }
+
+} // namespace

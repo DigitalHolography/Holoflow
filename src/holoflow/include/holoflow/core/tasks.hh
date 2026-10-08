@@ -65,6 +65,8 @@
 
 #include <atomic>
 #include <cuda_runtime.h>
+#include <exception>
+#include <functional>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
@@ -84,6 +86,21 @@ struct SyncCtx {
   std::atomic<bool>           *cancelled; ///< Non-null cancellation flag.
   holoflow_event::EventWriter *event_writer; ///< Event writer for emitting events.
   holoflow_event::EventReader *event_reader; ///< Event reader for receiving events.
+};
+
+/// Recording-only context. The stream is already capturing into graph. Bindings are private
+/// copies: recording must not publish storage, retain these views, or advance host-side state.
+struct CudaGraphCtx {
+  std::span<TView> inputs;
+  std::span<TView> outputs;
+  cudaStream_t     stream;
+  cudaGraph_t      graph;
+
+  /// Current capture frontier, including edge data for explicit graph composition.
+  void dependencies(std::vector<cudaGraphNode_t>   &nodes,
+                    std::vector<cudaGraphEdgeData> &edges) const;
+  /// Replace the capture frontier after appending explicit nodes (e.g. a conditional node).
+  void set_dependencies(std::span<const cudaGraphNode_t> nodes) const;
 };
 
 /// Runtime execution context for an asynchronous task push operation.
@@ -114,6 +131,14 @@ public:
   [[nodiscard]] virtual Storage &owned_output_storage(size_t index) = 0;
 };
 
+/// Exact future binding order, relative to the next successful use while the task is paused.
+/// Indices refer to owned_*_pointers(). Retries do not advance; prefix is followed by cycle
+/// forever.
+struct PointerSequence {
+  std::vector<size_t> prefix;
+  std::vector<size_t> cycle;
+};
+
 /// @brief Abstract base interface for tasks with optional tensor ownership.
 ///
 /// Provides ownership hooks for inputs and outputs. Only indices declared as
@@ -132,7 +157,10 @@ public:
 ///   - Context TViews share that stable Storage and observe pointer updates directly.
 ///   - After downstream consumption, scheduler calls @ref release_output(int).
 ///   - The task controls pointer cleanup and the lifetime of its owned memory.
-/// @todo Define rollback semantics on cancellation before use.
+/// A cooperative pause retains acquired inputs and popped outputs until resume completes use.
+/// An operation returning Cancelled must be retryable with the same views: it must not commit
+/// consumption, publication, or CUDA work that would be duplicated on retry. Return Ok once
+/// work has been submitted, even if cancellation was requested during that successful operation.
 class ITask {
 public:
   virtual ~ITask() = default;
@@ -148,6 +176,17 @@ public:
   /// Release a produced **owned** output at @p index after downstream use.
   /// @throws std::out_of_range on bad index.
   virtual void release_output(int index);
+
+  /// Complete, stable set of storage-base addresses (before TDesc::offset), available after
+  /// construction. nullopt means unknown; only owned ports may be queried. Never acquires data.
+  virtual std::optional<std::vector<std::byte *>> owned_input_pointers(size_t index) const;
+  virtual std::optional<std::vector<std::byte *>> owned_output_pointers(size_t index) const;
+  virtual std::optional<PointerSequence>          owned_input_pointer_sequence(size_t) const {
+    return std::nullopt;
+  }
+  virtual std::optional<PointerSequence> owned_output_pointer_sequence(size_t) const {
+    return std::nullopt;
+  }
 
   void bind_logger(std::shared_ptr<spdlog::logger> logger);
 
@@ -187,6 +226,12 @@ public:
   /// Overwrites owned output slots in ctx.outputs.
   /// @returns control-flow result; errors via exceptions.
   [[nodiscard]] virtual OpResult execute(SyncCtx &ctx) = 0;
+
+  /// Opt-in promise: fixed bindings/configuration replay correctly without host-side execution,
+  /// events, control results, or ownership publication. GPU-side state/conditionals are allowed.
+  [[nodiscard]] virtual bool supports_cuda_graph() const noexcept { return false; }
+  /// Append work to the current top-level graph, never launch or embed a task-local graph.
+  virtual void record_cuda_graph(CudaGraphCtx &ctx);
 };
 
 /// @brief Interface for asynchronous (decoupled) tasks.
@@ -244,11 +289,52 @@ struct InferResult {
   /// Async producer capability. When true, try_push synchronizes its producer stream before any
   /// result that lets the scheduler advance. NotReady retries need not synchronize.
   bool synchronizes_producer_stream = false;
+  /// Optional per-port counts. An empty vector or nullopt entry means unknown.
+  std::vector<std::optional<size_t>> owned_input_pointer_counts;
+  std::vector<std::optional<size_t>> owned_output_pointer_counts;
 };
 
-/// Context for sync task creation.
+enum class ExecutionUpdatePolicy { AlwaysInvalidate, ExplicitInvalidation };
+
+/// Compiler-owned, update-scoped invalidation of all executables depending on a task.
+/// The callback must not throw. Standalone factory calls may omit this handle.
+struct ExecutionInvalidation {
+  std::function<void()> callback;
+  bool                  invalidated = false;
+
+  void invalidate() noexcept {
+    if (!invalidated) {
+      invalidated = true;
+      if (callback)
+        callback();
+    }
+  }
+};
+
+/// Invalidates on unwind before the update's old_task parameter is destroyed. Captured ownership
+/// must stay in old_task until all fallible work succeeds; local owners unwind before this guard.
+class ExecutionUpdateGuard {
+public:
+  explicit ExecutionUpdateGuard(ExecutionInvalidation *invalidation) noexcept
+      : invalidation_(invalidation), exceptions_(std::uncaught_exceptions()) {}
+  ~ExecutionUpdateGuard() noexcept {
+    if (invalidation_ && std::uncaught_exceptions() > exceptions_)
+      invalidation_->invalidate();
+  }
+
+private:
+  ExecutionInvalidation *invalidation_;
+  int                    exceptions_;
+};
+
+/// Context for sync task creation and updates.
 struct SyncCreateCtx {
-  cudaStream_t stream = static_cast<cudaStream_t>(0); ///< CUDA stream for task execution
+  cudaStream_t           stream = static_cast<cudaStream_t>(0); ///< CUDA stream for task execution
+  ExecutionInvalidation *execution_invalidation = nullptr;
+  void                   invalidate_execution() const noexcept {
+    if (execution_invalidation)
+      execution_invalidation->invalidate();
+  }
 };
 
 /// Context for async task creation.
@@ -256,13 +342,24 @@ struct AsyncCreateCtx {
   /// CUDA streams for producer side.
   cudaStream_t producer_stream = static_cast<cudaStream_t>(0);
   /// CUDA streams for consumer side.
-  cudaStream_t consumer_stream = static_cast<cudaStream_t>(0);
+  cudaStream_t           consumer_stream        = static_cast<cudaStream_t>(0);
+  ExecutionInvalidation *execution_invalidation = nullptr;
+  void                   invalidate_execution() const noexcept {
+    if (execution_invalidation)
+      execution_invalidation->invalidate();
+  }
 };
 
 /// Base factory interface. Provides common inference API.
 class ITaskFactory {
 public:
   virtual ~ITaskFactory() = default;
+
+  /// Explicit factories must invalidate before altering captured operations/resources, and guard
+  /// exception paths. Device data and ownership transfers may preserve execution compatibility.
+  virtual ExecutionUpdatePolicy execution_update_policy() const noexcept {
+    return ExecutionUpdatePolicy::AlwaysInvalidate;
+  }
 
   /// Infer metadata for a task without constructing it.
   ///

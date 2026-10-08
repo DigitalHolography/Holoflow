@@ -126,35 +126,44 @@ ZPropEstimate estimate_z_prop_from_a4(float a4_rad, const ZernikeDefocusZPropSet
 // ZernikeDefocusZProp task implementation
 // -------------------------------------------------------------------------------------------------
 
-class ZernikeDefocusZProp : public holoflow::core::ISyncTask {
+class ZernikeDefocusZProp : public holoflow::core::IAsyncTask {
 public:
   ZernikeDefocusZProp(ZernikeDefocusZPropSettings settings, holoflow::core::TDesc idesc,
                       cudaStream_t stream)
       : settings_(std::move(settings)), idesc_(std::move(idesc)), stream_(stream) {}
 
-  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    const auto now = std::chrono::steady_clock::now();
-    if (now < next_execution_) {
+  holoflow::core::OpResult try_push(holoflow::core::AsyncPushCtx &ctx) override {
+    const auto now            = std::chrono::steady_clock::now();
+    const bool should_execute = now >= next_execution_;
+
+    const float *src    = nullptr;
+    float        a4_rad = 0.0f;
+    if (should_execute) {
+      next_execution_ = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+                                  std::chrono::duration<double>(settings_.interval_seconds));
+
+      auto      &input       = ctx.inputs[0];
+      const auto a4_position = defocus_position(settings_.indexes);
+      src                    = reinterpret_cast<const float *>(input.data()) + a4_position;
+      switch (input.desc.mem_loc) {
+      case holoflow::core::MemLoc::Host:
+        break;
+      case holoflow::core::MemLoc::Device:
+        CUDA_CHECK(cudaMemcpyAsync(&a4_rad, src, sizeof(float), cudaMemcpyDeviceToHost, stream_));
+        break;
+      default:
+        throw std::logic_error("Unsupported memory location for Zernike defocus z_prop estimate");
+      }
+    }
+
+    // This sink is ordered before ordinary async producers. Its barrier both makes the
+    // coefficients readable and protects them until queues publish and release their inputs.
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
+    if (!should_execute) {
       return holoflow::core::OpResult::Ok;
     }
-    next_execution_ = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
-                                std::chrono::duration<double>(settings_.interval_seconds));
-
-    auto       &input       = ctx.inputs[0];
-    const auto  a4_position = defocus_position(settings_.indexes);
-    const auto *src         = reinterpret_cast<const float *>(input.data()) + a4_position;
-
-    float a4_rad = 0.0f;
-    switch (input.desc.mem_loc) {
-    case holoflow::core::MemLoc::Host:
+    if (ctx.inputs[0].desc.mem_loc == holoflow::core::MemLoc::Host) {
       a4_rad = *src;
-      break;
-    case holoflow::core::MemLoc::Device:
-      CUDA_CHECK(cudaMemcpyAsync(&a4_rad, src, sizeof(float), cudaMemcpyDeviceToHost, stream_));
-      CUDA_CHECK(cudaStreamSynchronize(stream_));
-      break;
-    default:
-      throw std::logic_error("Unsupported memory location for Zernike defocus z_prop estimate");
     }
 
     if (!std::isfinite(a4_rad)) {
@@ -176,6 +185,10 @@ public:
                    a4_rad, estimate.delta_inv_z, settings_.z_curr, estimate.z_new,
                    estimate.delta_z_mm, settings_.pupil_radius);
     return holoflow::core::OpResult::Ok;
+  }
+
+  holoflow::core::OpResult try_pop(holoflow::core::AsyncPopCtx &) override {
+    return holoflow::core::OpResult::NotReady;
   }
 
   const ZernikeDefocusZPropSettings &settings() const { return settings_; }
@@ -228,30 +241,32 @@ ZernikeDefocusZPropFactory::infer(std::span<const holoflow::core::TDesc> input_d
         "Input coefficient count must match configured indexes size");
 
   return holoflow::core::InferResult{
-      .input_descs   = {idesc},
-      .output_descs  = {},
-      .in_place      = {},
-      .owned_inputs  = {false},
-      .owned_outputs = {},
-      .kind          = holoflow::core::TaskKind::Sync,
+      .input_descs                  = {idesc},
+      .output_descs                 = {},
+      .in_place                     = {},
+      .owned_inputs                 = {false},
+      .owned_outputs                = {},
+      .kind                         = holoflow::core::TaskKind::Async,
+      .synchronizes_producer_stream = true,
   };
 }
 
-std::unique_ptr<holoflow::core::ISyncTask>
+std::unique_ptr<holoflow::core::IAsyncTask>
 ZernikeDefocusZPropFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                    const nlohmann::json                  &jsettings,
-                                   const holoflow::core::SyncCreateCtx   &ctx) const {
+                                   const holoflow::core::AsyncCreateCtx  &ctx) const {
   (void)infer(input_descs, jsettings);
 
   auto settings = jsettings.get<ZernikeDefocusZPropSettings>();
-  return std::make_unique<ZernikeDefocusZProp>(std::move(settings), input_descs[0], ctx.stream);
+  return std::make_unique<ZernikeDefocusZProp>(std::move(settings), input_descs[0],
+                                               ctx.producer_stream);
 }
 
-std::unique_ptr<holoflow::core::ISyncTask>
-ZernikeDefocusZPropFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
-                                   std::span<const holoflow::core::TDesc>     input_descs,
-                                   const nlohmann::json                      &jsettings,
-                                   const holoflow::core::SyncCreateCtx       &ctx) const {
+std::unique_ptr<holoflow::core::IAsyncTask>
+ZernikeDefocusZPropFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
+                                   std::span<const holoflow::core::TDesc>      input_descs,
+                                   const nlohmann::json                       &jsettings,
+                                   const holoflow::core::AsyncCreateCtx       &ctx) const {
   (void)infer(input_descs, jsettings);
 
   auto *old = dynamic_cast<ZernikeDefocusZProp *>(old_task.get());
@@ -261,7 +276,7 @@ ZernikeDefocusZPropFactory::update(std::unique_ptr<holoflow::core::ISyncTask> ol
 
   auto settings = jsettings.get<ZernikeDefocusZPropSettings>();
   if (settings == old->settings() && same_desc(input_descs[0], old->idesc())) {
-    old->update_stream(ctx.stream);
+    old->update_stream(ctx.producer_stream);
     return old_task;
   }
 

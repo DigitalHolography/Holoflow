@@ -9,3 +9,5 @@ The [Holoflow Task Model](../concepts/task-model.md) introduces the public contr
 
 - [Graph Compilation](graph-compilation.md) explains how a `GraphSpec` becomes an executable
   graph, including the contract established by each compiler pass.
+- [Section CUDA graphs](section-cuda-graphs.md) covers optional recording, pointer domains,
+  eager construction, replay and fallback.

@@ -65,14 +65,56 @@ public:
   holoflow::core::OpResult             try_push(holoflow::core::AsyncPushCtx &ctx) override;
   holoflow::core::OpResult             try_pop(holoflow::core::AsyncPopCtx &ctx) override;
 
+  std::optional<std::vector<std::byte *>> owned_input_pointers(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("BatchQueue input port");
+    std::vector<std::byte *> pointers;
+    for (size_t i = 0; i < nb_slots_; i += input_size_)
+      pointers.push_back(buf_ + i * element_size_);
+    return pointers;
+  }
+
+  std::optional<std::vector<std::byte *>> owned_output_pointers(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("BatchQueue output port");
+    std::vector<std::byte *> pointers;
+    for (size_t i = 0; i < nb_slots_; i += settings_.output_stride)
+      pointers.push_back(buf_ + i * element_size_);
+    return pointers;
+  }
+
   const holoflow::core::TDesc &idesc() const { return idesc_; }
-  size_t                       nb_slots() const { return nb_slots_; }
-  size_t                       element_size() const { return element_size_; }
-  HostPtr<std::byte>           take_host_buffer() { return std::move(h_buf_); }
-  DevPtr<std::byte>            take_device_buffer() { return std::move(d_buf_); }
-  std::byte                   *buffer() const { return buf_; }
+  std::optional<holoflow::core::PointerSequence>
+  owned_input_pointer_sequence(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("BatchQueue input port");
+    return sequence(write_idx_.load(std::memory_order_relaxed) / input_size_,
+                    nb_slots_ / input_size_);
+  }
+  std::optional<holoflow::core::PointerSequence>
+  owned_output_pointer_sequence(size_t index) const override {
+    if (index != 0)
+      throw std::out_of_range("BatchQueue output port");
+    return sequence(read_idx_.load(std::memory_order_relaxed) / settings_.output_stride,
+                    nb_slots_ / settings_.output_stride);
+  }
+  size_t             nb_slots() const { return nb_slots_; }
+  size_t             element_size() const { return element_size_; }
+  HostPtr<std::byte> take_host_buffer() { return std::move(h_buf_); }
+  DevPtr<std::byte>  take_device_buffer() { return std::move(d_buf_); }
+  void               take_buffers_from(BatchQueue &other) noexcept {
+    h_buf_ = std::move(other.h_buf_);
+    d_buf_ = std::move(other.d_buf_);
+  }
+  std::byte *buffer() const { return buf_; }
 
 private:
+  static holoflow::core::PointerSequence sequence(size_t phase, size_t count) {
+    holoflow::core::PointerSequence result;
+    for (size_t i = 0; i < count; ++i)
+      result.cycle.push_back((phase + i) % count);
+    return result;
+  }
   size_t writer_size() const;
   size_t reader_size() const;
 
@@ -202,6 +244,7 @@ BatchQueueFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   // Validate
   check(input_descs.size() == 1, "BatchQueue task must have exactly one input");
   check(input_descs[0].rank() > 0, "BatchQueue task input must have rank > 0");
+  check(input_descs[0].shape[0] > 0, "BatchQueue task input batch must be positive");
   check(is_contiguous(input_descs[0]), "BatchQueue task input must be contiguous");
   check(settings.target_capacity > 0, "BatchQueue task target capacity must be > 0");
   check(settings.output_size > 0, "BatchQueue task output size must be > 0");
@@ -210,15 +253,20 @@ BatchQueueFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(is_factor, "BatchQueue task output stride must be a multiple of output size");
 
   // Success
-  auto odesc     = input_descs[0];
-  odesc.shape[0] = settings.output_size;
+  auto odesc       = input_descs[0];
+  odesc.shape[0]   = settings.output_size;
+  const auto slots = static_cast<size_t>(
+      lcm_above(static_cast<int>(input_descs[0].shape[0]), settings.output_stride,
+                settings.target_capacity + static_cast<int>(input_descs[0].shape[0])));
   return holoflow::core::InferResult{
-      .input_descs   = {input_descs[0]},
-      .output_descs  = {odesc},
-      .in_place      = {},
-      .owned_inputs  = {true},
-      .owned_outputs = {true},
-      .kind          = holoflow::core::TaskKind::Async,
+      .input_descs                 = {input_descs[0]},
+      .output_descs                = {odesc},
+      .in_place                    = {},
+      .owned_inputs                = {true},
+      .owned_outputs               = {true},
+      .kind                        = holoflow::core::TaskKind::Async,
+      .owned_input_pointer_counts  = {slots / input_descs[0].shape[0]},
+      .owned_output_pointer_counts = {slots / settings.output_stride},
   };
 }
 
@@ -275,11 +323,13 @@ BatchQueueFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
                           std::span<const holoflow::core::TDesc>      input_descs,
                           const nlohmann::json                       &jsettings,
                           const holoflow::core::AsyncCreateCtx       &ctx) const {
-  auto infer    = this->infer(input_descs, jsettings);
-  auto settings = jsettings.get<BatchQueueSettings>();
-  auto old_bq   = dynamic_cast<BatchQueue *>(old_task.get());
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
+  auto                                 infer    = this->infer(input_descs, jsettings);
+  auto                                 settings = jsettings.get<BatchQueueSettings>();
+  auto                                 old_bq   = dynamic_cast<BatchQueue *>(old_task.get());
   if (old_bq == nullptr) {
-    return this->create(input_descs, jsettings, ctx);
+    ctx.invalidate_execution();
+    return create(input_descs, jsettings, ctx);
   }
 
   // Update
@@ -291,18 +341,23 @@ BatchQueueFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
   size_t element_size = static_cast<int>(input_descs[0].num_bytes() / input_size);
   size_t bytes        = nb_slots * element_size;
   bool   same_buffer  = (bytes == old_bq->nb_slots() * old_bq->element_size()) &&
-                     (input_descs[0].mem_loc == old_bq->idesc().mem_loc);
+                        (input_descs[0].mem_loc == old_bq->idesc().mem_loc);
 
   if (same_buffer) {
     logger()->debug("[BatchQueueFactory::update] Reusing existing BatchQueue task");
-    return std::make_unique<BatchQueue>(settings, input_descs[0], infer.output_descs[0],
-                                        old_bq->take_host_buffer(), old_bq->take_device_buffer(),
-                                        old_bq->buffer(), nb_slots, input_size, element_size);
+    // Allocate/copy descriptors before transferring captured buffers: a construction failure must
+    // leave them owned by old_task until the exception guard invalidates dependent executables.
+    auto replacement = std::make_unique<BatchQueue>(
+        settings, input_descs[0], infer.output_descs[0], HostPtr<std::byte>{}, DevPtr<std::byte>{},
+        old_bq->buffer(), nb_slots, input_size, element_size);
+    replacement->take_buffers_from(*old_bq);
+    return replacement;
   }
 
   // Fallback to recreate
   logger()->debug("[BatchQueueFactory::update] Recreating BatchQueue task");
-  return this->create(input_descs, jsettings, ctx);
+  ctx.invalidate_execution();
+  return create(input_descs, jsettings, ctx);
 }
 
 } // namespace holotask::asyncs
