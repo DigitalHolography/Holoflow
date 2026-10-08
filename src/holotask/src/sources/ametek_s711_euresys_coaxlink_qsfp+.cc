@@ -50,7 +50,7 @@ void from_json(const nlohmann::json &j, AmetekS711EuresysCoaxlinkQSFPSettings &s
 
 } // namespace holotask::sources
 
-// #define HOLOTASK_HAS_EGRABBER 1
+#define HOLOTASK_HAS_EGRABBER 1
 #ifdef HOLOTASK_HAS_EGRABBER
 
 #include <EGrabber.h>
@@ -990,6 +990,7 @@ class AmetekS711EuresysCoaxlinkQSFP : public holoflow::core::ISyncTask {
 public:
   AmetekS711EuresysCoaxlinkQSFP(const AmetekS711EuresysCoaxlinkQSFPSettings &settings,
                                 RuntimeConfig runtime_cfg, HostPtr<uint8_t> &&buffers,
+                                std::size_t buffer_count,
                                 std::unique_ptr<Euresys::EGenTL> &&gentl,
                                 std::unique_ptr<Grabber>         &&grabber_a,
                                 std::unique_ptr<Grabber> &&grabber_b, std::size_t buffer_size,
@@ -998,7 +999,8 @@ public:
         gentl_(std::move(gentl)), grabber_a_(std::move(grabber_a)),
         grabber_b_(std::move(grabber_b)), buffer_size_(buffer_size), running_(false),
         cfg_(std::move(normalized_cfg)),
-        buffer_queue_(runtime_cfg_.nb_buffers,
+        // if record is enabled, it allocates enough buffers for it
+        buffer_queue_(buffer_count
                       [this](const CameraFrame &frame) { requeue_frame(frame); }) {
     HOLOVIBES_CHECK(gentl_ != nullptr);
     HOLOVIBES_CHECK(grabber_a_ != nullptr);
@@ -1398,7 +1400,7 @@ private:
           // failure before the recorder can report successful completion.
           const std::lock_guard lock(recording_mutex_);
           result = buffer_queue_.try_push(frame);
-          // fail record only if there is not enough buffers to finish record
+          // TODO fail record only if there is not enough buffers to finish record
           if (result == CameraBufferQueue::PushResult::Full && recording_session_)
             recording_failed = recording_session_->fail(overflow_message);
         }
@@ -1612,11 +1614,16 @@ AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDe
       dtype_from_pixel_format(runtime_cfg.pixel_format), holoflow::core::MemLoc::Host);
 
   auto buffer_size = odesc.num_bytes();
+  auto record_buffer_needed = settings.record_settings.has_value() ? settings.record_settings->recording_count / runtime_cfg_.buffer_part_count : 0;
+  if (record_buffer_needed % runtime_cfg_.nb_buffers != 0) {
+    record_buffer_needed += runtime_cfg_.nb_buffers - (record_buffer_needed % runtime_cfg_.nb_buffers);
+  }
+  auto buffer_count = std::max(record_buffer_needed, runtime_cfg_.nb_buffers);
   auto buffers =
-      allocate_shared_buffers(*grabber_a, *grabber_b, runtime_cfg.nb_buffers, buffer_size);
+      allocate_shared_buffers(*grabber_a, *grabber_b, buffer_count, buffer_size);
 
   return std::make_unique<AmetekS711EuresysCoaxlinkQSFP>(
-      settings, runtime_cfg, std::move(buffers), std::move(gentl), std::move(grabber_a),
+      settings, runtime_cfg, std::move(buffers), buffer_count, std::move(gentl), std::move(grabber_a),
       std::move(grabber_b), buffer_size, normalized_cfg_json(runtime_cfg));
 }
 
