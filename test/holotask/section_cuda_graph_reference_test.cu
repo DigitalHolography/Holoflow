@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <fstream>
 #include <functional>
@@ -16,6 +17,7 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/syncs/causal_sliding_average.hh"
 #include "holotask/syncs/conversion.hh"
 #include "holotask/syncs/filter2d.hh"
 #include "holotask/syncs/flatfield.hh"
@@ -23,6 +25,7 @@
 #include "holotask/syncs/memcpy.hh"
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
+#include "holotask/syncs/shack_hartmann_slopes.hh"
 
 namespace {
 using namespace holoflow::core;
@@ -119,6 +122,10 @@ Registry reference_registry(const std::shared_ptr<ReferenceState> &state) {
                           std::make_unique<holotask::asyncs::DualReaderBatchQueueFactory>());
   registry.register_async("SlidingAverage",
                           std::make_unique<holotask::asyncs::SlidingAverageFactory>());
+  registry.register_sync("CausalSlidingAverage",
+                         std::make_unique<holotask::syncs::CausalSlidingAverageFactory>());
+  registry.register_sync("ShackHartmannSlopes",
+                         std::make_unique<holotask::syncs::ShackHartmannSlopesFactory>());
   return registry;
 }
 
@@ -216,8 +223,10 @@ void compare_reference(bool full) {
 
 TEST(SectionGraphReference, SmallPipelineMatchesOrdinaryExecution) { compare_reference(false); }
 
-std::vector<std::vector<unsigned char>>
-run_compatible_update(size_t limit, bool dual_reader = false, bool sliding = false) {
+std::vector<std::vector<unsigned char>> run_compatible_update(size_t limit,
+                                                              bool   dual_reader = false,
+                                                              bool   sliding     = false,
+                                                              bool   aberration  = false) {
   auto state    = std::make_shared<ReferenceState>();
   auto registry = reference_registry(state);
   auto json     = nlohmann::json{
@@ -252,6 +261,42 @@ run_compatible_update(size_t limit, bool dual_reader = false, bool sliding = fal
            {{"from", "output_queue"}, {"to", "sink"}, {"out", 0}, {"in", 0}},
        }},
   };
+  if (aberration) {
+    json["nodes"]["source"]["params"]["height"] = 24;
+    json["nodes"]["source"]["params"]["width"]  = 24;
+    json["nodes"].erase("flatfield");
+    json["nodes"]["sensor_shape"]   = {{"type", "Reshape"},
+                                       {"params", {{"shape", {1, 3, 3, 8, 8}}, {"copy", false}}}};
+    json["nodes"]["causal_average"] = {
+        {"type", "CausalSlidingAverage"},
+        {"params", holotask::syncs::CausalSlidingAverageSettings{3}}};
+    holotask::syncs::ShackHartmannSlopeSettings settings{
+        .mode                            = holotask::syncs::ShackHartmannSlopeMode::FullPairwise,
+        .lambda                          = 8.0f,
+        .dx                              = 1.0f,
+        .dy                              = 1.0f,
+        .z                               = 2.0f,
+        .subaperture_height              = 8,
+        .subaperture_width               = 8,
+        .stride_y                        = 8,
+        .stride_x                        = 8,
+        .correlation_roi                 = {.rx = 10.0f, .ry = 10.0f},
+        .skip_subapertures_outside_pupil = false,
+        .pair_batch_size                 = 16};
+    json["nodes"]["slopes"]       = {{"type", "ShackHartmannSlopes"}, {"params", settings}};
+    json["nodes"]["slopes_shape"] = {{"type", "Reshape"},
+                                     {"params", {{"shape", {1, 3, 6}}, {"copy", false}}}};
+    for (auto &edge : json["edges"]) {
+      if (edge["to"] == "flatfield")
+        edge["to"] = "sensor_shape";
+      if (edge["from"] == "flatfield")
+        edge["from"] = "slopes_shape";
+    }
+    for (const auto &[from, to] :
+         std::array{std::pair{"sensor_shape", "causal_average"},
+                    std::pair{"causal_average", "slopes"}, std::pair{"slopes", "slopes_shape"}})
+      json["edges"].push_back({{"from", from}, {"to", to}, {"out", 0}, {"in", 0}});
+  }
   if (sliding) {
     json["nodes"]["average"] = {{"type", "SlidingAverage"},
                                 {"params", {{"target_capacity", 8}, {"window_size", 32}}}};
@@ -280,7 +325,9 @@ run_compatible_update(size_t limit, bool dual_reader = false, bool sliding = fal
     state->target_frames = (iteration + 1) * 16;
     if (iteration) {
       for (auto vertex : boost::make_iterator_range(boost::vertices(spec)))
-        if (spec[vertex].name == "flatfield")
+        if (aberration && spec[vertex].name == "slopes")
+          spec[vertex].settings["z"] = 7.25f;
+        else if (!aberration && spec[vertex].name == "flatfield")
           spec[vertex].settings = holotask::syncs::FlatfieldSettings{1.F, 1.25F};
       out = Compiler(registry, config).compile(spec, std::move(out));
     }
@@ -326,6 +373,8 @@ run_compatible_update(size_t limit, bool dual_reader = false, bool sliding = fal
         EXPECT_EQ(graphs.executables, original_handles);
         EXPECT_EQ(graphs.snapshot()["created"], 0);
         EXPECT_EQ(graphs.snapshot()["reused"], original_handles.size());
+        EXPECT_EQ(graphs.snapshot()["pointer_misses"], 0);
+        EXPECT_EQ(graphs.snapshot()["tuple_misses"], 0);
         std::cout << "Compatible update: initial_construction_ms=" << initial_preparation
                   << " update_construction_ms=" << graphs.construction_ms
                   << " reused=" << original_handles.size() << " created=0\n";
@@ -360,6 +409,17 @@ TEST(SectionGraphReference, CompatibleUpdateRetainsDualReaderBatchQueueGraphs) {
 TEST(SectionGraphReference, DualReaderAndSlidingAverageRetain280GraphsAcrossPauseAndUpdate) {
   const auto ordinary = run_compatible_update(0, true, true);
   const auto graphs   = run_compatible_update(2048, true, true);
+  ASSERT_EQ(graphs.size(), ordinary.size());
+  for (size_t frame = 0; frame < graphs.size(); ++frame) {
+    ASSERT_EQ(graphs[frame].size(), ordinary[frame].size());
+    for (size_t pixel = 0; pixel < graphs[frame].size(); ++pixel)
+      EXPECT_LE(std::abs(int(graphs[frame][pixel]) - int(ordinary[frame][pixel])), 2);
+  }
+}
+
+TEST(SectionGraphReference, DistanceUpdateRetainsDualReaderCausalAverageAndSlopesGraphs) {
+  const auto ordinary = run_compatible_update(0, true, false, true);
+  const auto graphs   = run_compatible_update(128, true, false, true);
   ASSERT_EQ(graphs.size(), ordinary.size());
   for (size_t frame = 0; frame < graphs.size(); ++frame) {
     ASSERT_EQ(graphs[frame].size(), ordinary[frame].size());

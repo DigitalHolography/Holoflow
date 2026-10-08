@@ -267,6 +267,8 @@ public:
   const ShackHartmannSlopeSettings &settings() const override { return settings_; }
   const holoflow::core::TDesc      &input_desc() const override { return input_desc_; }
 
+  void update_propagation_distance(float distance) noexcept override { settings_.z = distance; }
+
   void update_stream(cudaStream_t stream) override {
     if (stream_ == stream) {
       return;
@@ -338,15 +340,15 @@ private:
         reinterpret_cast<const float *>(xcorr_view.data()), measured_shifts_.get(), sample_count,
         height, width);
 
-    const float delta_out_x =
-        settings_.lambda * settings_.z / (static_cast<float>(width) * settings_.dx);
-    const float delta_out_y =
-        settings_.lambda * settings_.z / (static_cast<float>(height) * settings_.dy);
+    // The propagated pixel pitch is lambda*z/(N*pitch); conversion to slope divides by z.
+    // Cancel that distance so distance-only updates leave captured kernel arguments unchanged.
+    const float slope_per_pixel_x = settings_.lambda / (static_cast<float>(width) * settings_.dx);
+    const float slope_per_pixel_y = settings_.lambda / (static_cast<float>(height) * settings_.dy);
 
     const size_t center_index = (sy / 2) * sx + sx / 2;
     recover_zero_mean_slopes<<<1, 1, 0, stream_>>>(
         measured_shifts_.get(), active_.get(), reinterpret_cast<float *>(ctx.outputs[0].data()),
-        sample_count, center_index, delta_out_x / settings_.z, delta_out_y / settings_.z);
+        sample_count, center_index, slope_per_pixel_x, slope_per_pixel_y);
 
     CUDA_CHECK(cudaGetLastError());
     return holoflow::core::OpResult::Ok;
@@ -483,9 +485,13 @@ ShackHartmannSlopesFactory::update(std::unique_ptr<holoflow::core::ISyncTask> ol
 
   auto *old_slopes = dynamic_cast<detail::ShackHartmannSlopesTaskBase *>(old_task.get());
   if (old_slopes != nullptr && input_descs.size() == 1) {
-    const auto settings = jsettings.get<ShackHartmannSlopeSettings>();
-    if (settings == old_slopes->settings() && same_desc(input_descs[0], old_slopes->input_desc())) {
+    const auto settings            = jsettings.get<ShackHartmannSlopeSettings>();
+    auto       compatible_settings = settings;
+    compatible_settings.z          = old_slopes->settings().z;
+    if (compatible_settings == old_slopes->settings() &&
+        same_desc(input_descs[0], old_slopes->input_desc())) {
       old_slopes->update_stream(ctx.stream);
+      old_slopes->update_propagation_distance(settings.z);
       return old_task;
     }
   }

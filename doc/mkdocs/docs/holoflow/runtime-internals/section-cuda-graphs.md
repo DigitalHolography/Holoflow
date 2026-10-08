@@ -95,7 +95,15 @@ Device-data updates can preserve captures, as with Fresnel distance and compatib
 changes. Keeping the task object is not sufficient: PCA settings changes invalidate captured GEMM
 arguments. Conversely, BatchQueue can transfer its buffer into a new queue object without invalidating
 captures. Its cursors still reset, and startup replans reachable tuples. A new BatchQueue allocation,
-DualReaderBatchQueue allocation changes, and CausalSlidingAverage recreation invalidate dependent graphs.
+DualReaderBatchQueue allocation changes, and incompatible CausalSlidingAverage updates invalidate
+dependent graphs. CausalSlidingAverage retains its history, running sum and device sample counter
+when settings and descriptors (including offsets) match. Compatible updates reset this device data
+on the update stream; the compiler synchronizes before execution resumes, and existing captures
+keep using the same allocations.
+ShackHartmannSlopes retains its task, FFT plans and captures for propagation-distance-only changes
+in both slope modes. Its pixel-to-slope factors are `lambda/(width*dx)` and `lambda/(height*dy)`:
+propagation distance cancels, so changing it does not alter captured kernel arguments. Other slope
+settings and descriptor changes still invalidate.
 DualReaderBatchQueue retains both its ring and startup scratch allocations when their exact byte
 sizes and memory location match. Updates discard queued frames, reset both readers and validity
 warmup, and zero startup scratch. Startup replans pointer sequences for the new window settings.

@@ -43,6 +43,7 @@ public:
   virtual const ShackHartmannSlopeSettings &settings() const                   = 0;
   virtual const holoflow::core::TDesc      &input_desc() const                 = 0;
   virtual void                              update_stream(cudaStream_t stream) = 0;
+  virtual void update_propagation_distance(float distance) noexcept            = 0;
 };
 
 inline curaii::CufftHandle make_dense_cfft2_plan(size_t height, size_t width, size_t batch,
@@ -331,6 +332,8 @@ public:
   const ShackHartmannSlopeSettings &settings() const override { return settings_; }
   const holoflow::core::TDesc      &input_desc() const override { return input_desc_; }
 
+  void update_propagation_distance(float distance) noexcept override { settings_.z = distance; }
+
   void update_stream(cudaStream_t stream) override {
     if (stream_ == stream) {
       return;
@@ -372,12 +375,10 @@ private:
     CUFFT_CHECK(cufftXtExec(forward_plan_.get(), active_spectra_.get(), active_spectra_.get(),
                             CUFFT_FORWARD));
 
-    const float delta_out_x =
-        settings_.lambda * settings_.z / (static_cast<float>(width) * settings_.dx);
-    const float delta_out_y =
-        settings_.lambda * settings_.z / (static_cast<float>(height) * settings_.dy);
-    const float slope_per_pixel_x = delta_out_x / settings_.z;
-    const float slope_per_pixel_y = delta_out_y / settings_.z;
+    // The propagated pixel pitch is lambda*z/(N*pitch); conversion to slope divides by z.
+    // Cancel that distance so distance-only updates leave captured kernel arguments unchanged.
+    const float slope_per_pixel_x = settings_.lambda / (static_cast<float>(width) * settings_.dx);
+    const float slope_per_pixel_y = settings_.lambda / (static_cast<float>(height) * settings_.dy);
     const float inverse_fft_scale = 1.0f / static_cast<float>(pixels_per_image);
 
     for (size_t edge_offset = 0; edge_offset < edge_count_; edge_offset += pair_capacity_) {

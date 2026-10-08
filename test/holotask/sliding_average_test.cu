@@ -135,21 +135,95 @@ TEST(CausalSlidingAverageCudaGraph, ReplayAdvancesDeviceSampleCount) {
   cudaGraphExec_t executable = nullptr;
   CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
 
-  const std::array values{2.0f, 4.0f, 8.0f, 10.0f};
-  const std::array expected{2.0f, 3.0f, 14.0f / 3.0f, 22.0f / 3.0f};
-  for (size_t i = 0; i < values.size(); ++i) {
-    CUDA_CHECK(cudaMemcpyAsync(input.get(), &values[i], sizeof(float), cudaMemcpyHostToDevice,
-                               stream.get()));
-    CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
-    float actual = 0.0f;
-    CUDA_CHECK(cudaMemcpyAsync(&actual, output.get(), sizeof(float), cudaMemcpyDeviceToHost,
-                               stream.get()));
-    CUDA_CHECK(cudaStreamSynchronize(stream.get()));
-    EXPECT_NEAR(actual, expected[i], 1e-6f);
+  int                                   invalidations = 0;
+  holoflow::core::ExecutionInvalidation invalidation{[&]() noexcept { ++invalidations; }};
+  curaii::CudaStream                    alternate_stream;
+  auto                                 *original_task = task.get();
+  const std::array                      values{2.0f, 4.0f, 8.0f, 10.0f};
+  const std::array                      expected{2.0f, 3.0f, 14.0f / 3.0f, 22.0f / 3.0f};
+  // Each pass warms up and wraps the history. Compatible updates must start it afresh while the
+  // executable recorded before the update still refers to the same internal device allocations.
+  for (int pass = 0; pass < 3; ++pass) {
+    auto active_stream = pass == 1 ? alternate_stream.get() : stream.get();
+    if (pass) {
+      task = factory.update(std::move(task), input_descs, settings,
+                            {.stream = active_stream, .execution_invalidation = &invalidation});
+      EXPECT_EQ(task.get(), original_task);
+      EXPECT_EQ(invalidations, 0);
+    }
+    for (size_t i = 0; i < values.size(); ++i) {
+      CUDA_CHECK(cudaMemcpyAsync(input.get(), &values[i], sizeof(float), cudaMemcpyHostToDevice,
+                                 active_stream));
+      if (pass == 2 && i == 0) {
+        holoflow::core::SyncCtx execution{input_views, output_views};
+        EXPECT_EQ(task->execute(execution), OpResult::Ok);
+      } else {
+        CUDA_CHECK(cudaGraphLaunch(executable, active_stream));
+      }
+      float actual = 0.0f;
+      CUDA_CHECK(cudaMemcpyAsync(&actual, output.get(), sizeof(float), cudaMemcpyDeviceToHost,
+                                 active_stream));
+      CUDA_CHECK(cudaStreamSynchronize(active_stream));
+      EXPECT_NEAR(actual, expected[i], 1e-6f) << "pass " << pass << ", sample " << i;
+    }
   }
 
   CUDA_CHECK(cudaGraphExecDestroy(executable));
   CUDA_CHECK(cudaGraphDestroy(graph));
+}
+
+TEST(CausalSlidingAverageTest, IncompatibleUpdatesInvalidateAndExceptionsPreserveOrdering) {
+  using namespace holoflow::core;
+  const std::array                             inputs{TDesc({1}, DType::F32, MemLoc::Device)};
+  holotask::syncs::CausalSlidingAverageFactory factory;
+  curaii::CudaStream                           stream;
+  auto task = factory.create(inputs, holotask::syncs::CausalSlidingAverageSettings{3},
+                             {.stream = stream.get()});
+  EXPECT_EQ(factory.execution_update_policy(), ExecutionUpdatePolicy::ExplicitInvalidation);
+  int                   invalidations = 0;
+  ExecutionInvalidation invalidation{[&]() noexcept { ++invalidations; }};
+  const SyncCreateCtx   ctx{.stream = stream.get(), .execution_invalidation = &invalidation};
+  auto                 *original = task.get();
+  task = factory.update(std::move(task), inputs, holotask::syncs::CausalSlidingAverageSettings{4},
+                        ctx);
+  EXPECT_NE(task.get(), original);
+  EXPECT_EQ(invalidations, 1);
+  invalidation.invalidated = false;
+  const std::array resized{TDesc({2}, DType::F32, MemLoc::Device)};
+  original = task.get();
+  task = factory.update(std::move(task), resized, holotask::syncs::CausalSlidingAverageSettings{4},
+                        ctx);
+  EXPECT_NE(task.get(), original);
+  EXPECT_EQ(invalidations, 2);
+  invalidation.invalidated = false;
+  const std::array offset{TDesc({2}, DType::F32, MemLoc::Device, sizeof(float))};
+  task = factory.update(std::move(task), offset, holotask::syncs::CausalSlidingAverageSettings{4},
+                        ctx);
+  EXPECT_EQ(invalidations, 3);
+
+  class DestructionProbe final : public ISyncTask {
+  public:
+    explicit DestructionProbe(const ExecutionInvalidation &invalidation)
+        : invalidation_(invalidation) {}
+    ~DestructionProbe() override { EXPECT_TRUE(invalidation_.invalidated); }
+    OpResult execute(SyncCtx &) override { return OpResult::Ok; }
+
+  private:
+    const ExecutionInvalidation &invalidation_;
+  };
+  for (size_t window : {size_t{3}, size_t{0}}) {
+    invalidation.invalidated = false;
+    auto probe               = std::make_unique<DestructionProbe>(invalidation);
+    if (window) {
+      task = factory.update(std::move(probe), inputs,
+                            holotask::syncs::CausalSlidingAverageSettings{window}, ctx);
+    } else {
+      EXPECT_THROW((void)factory.update(std::move(probe), inputs,
+                                        holotask::syncs::CausalSlidingAverageSettings{window}, ctx),
+                   std::invalid_argument);
+    }
+    EXPECT_TRUE(invalidation.invalidated);
+  }
 }
 
 TEST(BatchQueueUpdateTest, TransfersAllocationResetsCursorsAndInvalidatesBeforeReallocation) {

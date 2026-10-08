@@ -75,12 +75,22 @@ public:
             curaii::make_unique_device_ptr<float>(settings_.window_size * desc_.num_elements())),
         running_sum_(curaii::make_unique_device_ptr<float>(desc_.num_elements())),
         sample_count_(curaii::make_unique_device_ptr<size_t>(1)) {
+    reset();
+    CUDA_CHECK(cudaStreamSynchronize(stream_));
+  }
+
+  const CausalSlidingAverageSettings &settings() const { return settings_; }
+  const holoflow::core::TDesc        &desc() const { return desc_; }
+  void                                update_stream(cudaStream_t stream) { stream_ = stream; }
+
+  // Updates reset device data without changing any captured pointer or kernel argument. The
+  // compiler synchronizes the update stream before allowing execution to resume.
+  void reset() {
     CUDA_CHECK(cudaMemsetAsync(
         history_.get(), 0, settings_.window_size * desc_.num_elements() * sizeof(float), stream_));
     CUDA_CHECK(
         cudaMemsetAsync(running_sum_.get(), 0, desc_.num_elements() * sizeof(float), stream_));
     CUDA_CHECK(cudaMemsetAsync(sample_count_.get(), 0, sizeof(size_t), stream_));
-    CUDA_CHECK(cudaStreamSynchronize(stream_));
   }
 
   bool supports_cuda_graph() const noexcept override { return true; }
@@ -155,9 +165,28 @@ CausalSlidingAverageFactory::create(std::span<const holoflow::core::TDesc> input
                                                 input_descs[0], ctx.stream);
 }
 
-std::unique_ptr<holoflow::core::ISyncTask> CausalSlidingAverageFactory::update(
-    std::unique_ptr<holoflow::core::ISyncTask>, std::span<const holoflow::core::TDesc> input_descs,
-    const nlohmann::json &jsettings, const holoflow::core::SyncCreateCtx &ctx) const {
+std::unique_ptr<holoflow::core::ISyncTask>
+CausalSlidingAverageFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                                    std::span<const holoflow::core::TDesc>     input_descs,
+                                    const nlohmann::json                      &jsettings,
+                                    const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
+  (void)infer(input_descs, jsettings);
+  const auto settings = jsettings.get<CausalSlidingAverageSettings>();
+  auto      *old      = dynamic_cast<CausalSlidingAverage *>(old_task.get());
+  if (old != nullptr && settings == old->settings()) {
+    const auto &input    = input_descs[0];
+    const auto &previous = old->desc();
+    if (input.shape == previous.shape && input.strides == previous.strides &&
+        input.dtype == previous.dtype && input.mem_loc == previous.mem_loc &&
+        input.offset == previous.offset) {
+      old->update_stream(ctx.stream);
+      old->reset();
+      return old_task;
+    }
+  }
+
+  ctx.invalidate_execution();
   return create(input_descs, jsettings, ctx);
 }
 
