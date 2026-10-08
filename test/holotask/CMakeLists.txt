@@ -15,7 +15,6 @@
 set(TARGET holotask_test)
 
 set(SOURCES
-    camera_buffer_queue_test.cc
     angular_spectrum_test.cu
     conversion_test.cu
     flatfield_test.cu
