@@ -14,6 +14,7 @@
 
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 
+#include <format>
 #include <functional>
 #include <optional>
 #include <utility>
@@ -50,7 +51,7 @@ void from_json(const nlohmann::json &j, AmetekS711EuresysCoaxlinkQSFPSettings &s
 
 } // namespace holotask::sources
 
-#define HOLOTASK_HAS_EGRABBER 1
+// #define HOLOTASK_HAS_EGRABBER 1
 #ifdef HOLOTASK_HAS_EGRABBER
 
 #include <EGrabber.h>
@@ -787,12 +788,12 @@ public:
   }
 
 private:
-  std::mutex       mutex_;
-  std::stop_source stop_;
-  bool             accepting_failure_ = true;
-  std::string      failure_;
-  size_t           to_write_;
-  size_t           written_ = 0;
+  mutable std::mutex mutex_;
+  std::stop_source   stop_;
+  bool               accepting_failure_ = true;
+  std::string        failure_;
+  size_t             to_write_;
+  size_t             written_ = 0;
 };
 
 // Called only after the writer has been destroyed, including on Windows where
@@ -815,28 +816,83 @@ inline std::string remove_incomplete_camera_recording(const std::string &path,
  */
 HostPtr<uint8_t> allocate_shared_buffers(Grabber &grabber_a, Grabber &grabber_b,
                                          std::size_t nb_buffers, std::size_t buffer_size) {
-  constexpr size_t safety_padding_size = 16;
-  size_t           actual_nb_buffers   = nb_buffers + safety_padding_size;
-  logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] allocating {} ({} + {}) shared host "
-                 "buffers of size {} bytes",
+  constexpr std::size_t safety_padding_size = 16;
+  const std::size_t     actual_nb_buffers   = nb_buffers + safety_padding_size;
+
+  logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] allocating {} ({} + {}) shared "
+                 "host buffers of size {} bytes",
                  actual_nb_buffers, nb_buffers, safety_padding_size, buffer_size);
 
   const auto total_size = buffer_size * actual_nb_buffers;
-  auto       buffers    = curaii::make_unique_host_ptr<uint8_t>(total_size);
 
-  for (std::size_t buf_idx = 0; buf_idx < actual_nb_buffers; ++buf_idx) {
-    auto *base = buffers.get() + buf_idx * buffer_size;
+  auto buffers = curaii::make_unique_host_ptr<uint8_t>(total_size);
 
-    grabber_a.announceAndQueue(Euresys::UserMemory(base, buffer_size));
-    grabber_b.announceAndQueue(Euresys::UserMemory(base, buffer_size));
+  Euresys::UserMemory memory(buffers.get(), total_size);
 
-    logger()->debug("[AmetekS711EuresysCoaxlinkQSFPFactory] announced shared buffer {} at address "
-                    "{} to both grabbers",
-                    buf_idx, static_cast<void *>(base));
+  Euresys::UserMemoryArray memory_array(memory, buffer_size);
+
+  using Clock = std::chrono::steady_clock;
+
+  // --------------------------------------------------------------------------
+  // Grabber A
+  // --------------------------------------------------------------------------
+  {
+    const auto start = Clock::now();
+
+    const auto range_a = grabber_a.announceAndQueue(memory_array);
+
+    const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] grabber A: "
+                   "announceAndQueue {} buffers took {:.3f} ms "
+                   "(range {}..{}, {} buffers)",
+                   actual_nb_buffers, elapsed, range_a.begin, range_a.end, range_a.size());
+  }
+
+  // --------------------------------------------------------------------------
+  // Grabber B
+  // --------------------------------------------------------------------------
+  {
+    const auto start = Clock::now();
+
+    const auto range_b = grabber_b.announceAndQueue(memory_array);
+
+    const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] grabber B: "
+                   "announceAndQueue {} buffers took {:.3f} ms "
+                   "(range {}..{}, {} buffers)",
+                   actual_nb_buffers, elapsed, range_b.begin, range_b.end, range_b.size());
   }
 
   return buffers;
 }
+
+// HostPtr<uint8_t> allocate_shared_buffers(Grabber &grabber_a, Grabber &grabber_b,
+//                                          std::size_t nb_buffers, std::size_t buffer_size) {
+//   constexpr size_t safety_padding_size = 16;
+//   size_t           actual_nb_buffers   = nb_buffers + safety_padding_size;
+//   logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] allocating {} ({} + {}) shared host "
+//                  "buffers of size {} bytes",
+//                  actual_nb_buffers, nb_buffers, safety_padding_size, buffer_size);
+
+//   const auto total_size = buffer_size * actual_nb_buffers;
+//   auto       buffers    = curaii::make_unique_host_ptr<uint8_t>(total_size);
+
+//   for (std::size_t buf_idx = 0; buf_idx < actual_nb_buffers; ++buf_idx) {
+//     auto *base = buffers.get() + buf_idx * buffer_size;
+
+//     grabber_a.announceAndQueue(Euresys::UserMemory(base, buffer_size));
+//     grabber_b.announceAndQueue(Euresys::UserMemory(base, buffer_size));
+
+//     logger()->debug("[AmetekS711EuresysCoaxlinkQSFPFactory] announced shared buffer {} at address
+//     "
+//                     "{} to both grabbers",
+//                     buf_idx, static_cast<void *>(base));
+//   }
+
+//   return buffers;
+// }
 
 void requeue_buffer_noexcept(Grabber &grabber, const Euresys::NewBufferData &data,
                              const char *label, Clock::time_point &last_error_log,
@@ -923,7 +979,7 @@ public:
       writer_.write_frames(reinterpret_cast<const uint8_t *>(frame->base), to_write);
       queue_.release_b();
       current_frame_ += to_write;
-      session.register_write(to_write);
+      session_.register_write(to_write);
       ++batch_;
       // logger()->debug("[Recorder::execute] batch: {}, current_frame: {}, to_write: {}", batch_,
       // current_frame_, to_write);
@@ -941,7 +997,7 @@ private:
   size_t             buffer_part_count_;
   size_t             current_frame_;
   CameraBufferQueue &queue_;
-  RecordingSesssion &session_;
+  RecordingSession  &session_;
 };
 
 void recorder_worker(const holotask::sources::RecordSettings &settings,
@@ -1017,7 +1073,7 @@ public:
         grabber_b_(std::move(grabber_b)), buffer_size_(buffer_size), running_(false),
         cfg_(std::move(normalized_cfg)),
         // if record is enabled, it allocates enough buffers for it
-        buffer_queue_(buffer_count[this](const CameraFrame &frame) { requeue_frame(frame); }) {
+        buffer_queue_(buffer_count, [this](const CameraFrame &frame) { requeue_frame(frame); }) {
     HOLOVIBES_CHECK(gentl_ != nullptr);
     HOLOVIBES_CHECK(grabber_a_ != nullptr);
     HOLOVIBES_CHECK(grabber_b_ != nullptr);
@@ -1081,7 +1137,7 @@ public:
     // Join a completed recorder before replacing its thread and settings.
     stop_raw_record();
     const auto record_settings = *settings_.record_settings;
-    auto       session = std::make_shared<RecordingSession>(record_settings->recording_count);
+    auto       session = std::make_shared<RecordingSession>(record_settings.recording_count);
     {
       const std::lock_guard lock(recording_mutex_);
       recording_session_ = session;
@@ -1400,15 +1456,21 @@ private:
         if (cancelled.stop_requested())
           break;
 
-        auto base = validate_buffer_data(pending.a(), pending.b());
+        auto base             = validate_buffer_data(pending.a(), pending.b());
         if (!base.has_value()) {
           pending.release();
+          if (recording_session_ && recording_session_->fail("frame not validated during record"))
+          {
+            logger()->error("[AmetekS711EuresysCoaxlinkQSFP] frame not validated while recording");
+            emit_failed_event(ctx, "frame not validated while recording");
+          }
           continue;
         }
+
+        bool recording_failed = false;
         auto                          buffer = Euresys::Buffer(pending.a());
         CameraFrame                   frame{pending.a(), pending.b(), *base};
         CameraBufferQueue::PushResult result;
-        bool                          recording_failed = false;
         static const std::string      overflow_message =
             "Camera buffer queue is full; recording cancelled because a frame was dropped";
         {
@@ -1416,8 +1478,16 @@ private:
           // failure before the recorder can report successful completion.
           const std::lock_guard lock(recording_mutex_);
           result = buffer_queue_.try_push(frame);
-          if (result == CameraBufferQueue::PushResult::Full && recording_session_ && recording_session_->get_remaining_to_write() > buffer_queue_.size()) {
-            recording_failed = recording_session_->fail(overflow_message);
+          if (recording_session_) {
+            auto rem =
+                recording_session_->get_remaining_to_write() / runtime_cfg_.buffer_part_count;
+            auto recording_fail = rem > buffer_queue_.size();
+
+            if (result == CameraBufferQueue::PushResult::Full && recording_fail) {
+              recording_failed = recording_session_->fail(
+                  std::format("{} (buffer queue size: {}, remaining to write: {})",
+                              overflow_message, rem, buffer_queue_.size()));
+            }
           }
         }
         if (result == CameraBufferQueue::PushResult::Accepted) {
@@ -1632,13 +1702,13 @@ AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDe
   auto buffer_size = odesc.num_bytes();
   auto record_buffer_needed =
       settings.record_settings.has_value()
-          ? settings.record_settings->recording_count / runtime_cfg_.buffer_part_count
+          ? settings.record_settings->recording_count / runtime_cfg.buffer_part_count
           : 0;
-  if (record_buffer_needed % runtime_cfg_.nb_buffers != 0) {
+  if (record_buffer_needed % runtime_cfg.nb_buffers != 0) {
     record_buffer_needed +=
-        runtime_cfg_.nb_buffers - (record_buffer_needed % runtime_cfg_.nb_buffers);
+        runtime_cfg.nb_buffers - (record_buffer_needed % runtime_cfg.nb_buffers);
   }
-  auto buffer_count = std::max(record_buffer_needed, runtime_cfg_.nb_buffers);
+  auto buffer_count = std::max(record_buffer_needed, runtime_cfg.nb_buffers);
   auto buffers      = allocate_shared_buffers(*grabber_a, *grabber_b, buffer_count, buffer_size);
 
   return std::make_unique<AmetekS711EuresysCoaxlinkQSFP>(
@@ -1663,6 +1733,7 @@ AmetekS711EuresysCoaxlinkQSFPFactory::update(std::unique_ptr<holoflow::core::ISy
   const auto runtime_cfg = parse_cfg(raw_cfg);
   const auto new_cfg     = normalized_cfg_json(runtime_cfg);
 
+  // TODO check settings and recreate queues and buffer if needed
   if (new_cfg == old->get_cfg()) {
     old->update_settings(settings);
     old->log_update_lifecycle(false);
