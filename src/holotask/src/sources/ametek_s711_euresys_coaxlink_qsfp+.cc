@@ -751,6 +751,8 @@ public:
     std::string failure;
   };
 
+  explicit RecordingSession(size_t to_write) : to_write_(to_write) {}
+
   std::stop_token token() const { return stop_.get_token(); }
   void            request_stop() { stop_.request_stop(); }
 
@@ -773,11 +775,24 @@ public:
     return {completed, !failure_.empty(), std::move(error)};
   }
 
+  void register_write(size_t bytes) {
+    const std::lock_guard lock(mutex_);
+    written_ += bytes;
+  }
+
+  size_t get_remaining_to_write() const {
+    const std::lock_guard lock(mutex_);
+    assert(to_write_ >= written_);
+    return to_write_ - written_;
+  }
+
 private:
   std::mutex       mutex_;
   std::stop_source stop_;
   bool             accepting_failure_ = true;
   std::string      failure_;
+  size_t           to_write_;
+  size_t           written_ = 0;
 };
 
 // Called only after the writer has been destroyed, including on Windows where
@@ -859,7 +874,7 @@ public:
 
   Recorder(const std::string &file_path, uint32_t frame_count, size_t buffer_part_count,
            CameraBufferQueue &queue, const RecordingGeometry &g,
-           const nlohmann::json &pipeline_settings)
+           const nlohmann::json &pipeline_settings, RecordingSession &session)
       : writer_{file_path,
                 holofile::Header{
                     .magic_number   = holofile::Header::MAGIC_NUMBER_LE,
@@ -874,7 +889,7 @@ public:
                 },
                 holofile::Footer{pipeline_settings}},
         frame_to_record_{frame_count}, buffer_part_count_{buffer_part_count}, current_frame_{0},
-        queue_{queue} {
+        queue_{queue}, session_{session} {
     if (buffer_part_count == 0)
       throw std::invalid_argument("Cannot record with zero buffer parts");
     logger()->info(
@@ -908,6 +923,7 @@ public:
       writer_.write_frames(reinterpret_cast<const uint8_t *>(frame->base), to_write);
       queue_.release_b();
       current_frame_ += to_write;
+      session.register_write(to_write);
       ++batch_;
       // logger()->debug("[Recorder::execute] batch: {}, current_frame: {}, to_write: {}", batch_,
       // current_frame_, to_write);
@@ -925,6 +941,7 @@ private:
   size_t             buffer_part_count_;
   size_t             current_frame_;
   CameraBufferQueue &queue_;
+  RecordingSesssion &session_;
 };
 
 void recorder_worker(const holotask::sources::RecordSettings &settings,
@@ -942,7 +959,8 @@ void recorder_worker(const holotask::sources::RecordSettings &settings,
                  buffer_part_count,
                  queue,
                  g,
-                 settings.pipeline_config};
+                 settings.pipeline_config,
+                 session};
     frames_written = rec.execute(cancelled);
   } catch (const std::exception &e) {
     failure = e.what();
@@ -990,9 +1008,8 @@ class AmetekS711EuresysCoaxlinkQSFP : public holoflow::core::ISyncTask {
 public:
   AmetekS711EuresysCoaxlinkQSFP(const AmetekS711EuresysCoaxlinkQSFPSettings &settings,
                                 RuntimeConfig runtime_cfg, HostPtr<uint8_t> &&buffers,
-                                std::size_t buffer_count,
-                                std::unique_ptr<Euresys::EGenTL> &&gentl,
-                                std::unique_ptr<Grabber>         &&grabber_a,
+                                std::size_t buffer_count, std::unique_ptr<Euresys::EGenTL> &&gentl,
+                                std::unique_ptr<Grabber> &&grabber_a,
                                 std::unique_ptr<Grabber> &&grabber_b, std::size_t buffer_size,
                                 nlohmann::json normalized_cfg)
       : settings_(settings), runtime_cfg_(std::move(runtime_cfg)), buffers_(std::move(buffers)),
@@ -1000,8 +1017,7 @@ public:
         grabber_b_(std::move(grabber_b)), buffer_size_(buffer_size), running_(false),
         cfg_(std::move(normalized_cfg)),
         // if record is enabled, it allocates enough buffers for it
-        buffer_queue_(buffer_count
-                      [this](const CameraFrame &frame) { requeue_frame(frame); }) {
+        buffer_queue_(buffer_count[this](const CameraFrame &frame) { requeue_frame(frame); }) {
     HOLOVIBES_CHECK(gentl_ != nullptr);
     HOLOVIBES_CHECK(grabber_a_ != nullptr);
     HOLOVIBES_CHECK(grabber_b_ != nullptr);
@@ -1065,7 +1081,7 @@ public:
     // Join a completed recorder before replacing its thread and settings.
     stop_raw_record();
     const auto record_settings = *settings_.record_settings;
-    auto       session         = std::make_shared<RecordingSession>();
+    auto       session = std::make_shared<RecordingSession>(record_settings->recording_count);
     {
       const std::lock_guard lock(recording_mutex_);
       recording_session_ = session;
@@ -1400,9 +1416,9 @@ private:
           // failure before the recorder can report successful completion.
           const std::lock_guard lock(recording_mutex_);
           result = buffer_queue_.try_push(frame);
-          // TODO fail record only if there is not enough buffers to finish record
-          if (result == CameraBufferQueue::PushResult::Full && recording_session_)
+          if (result == CameraBufferQueue::PushResult::Full && recording_session_ && recording_session_->get_remaining_to_write() > buffer_queue_.size()) {
             recording_failed = recording_session_->fail(overflow_message);
+          }
         }
         if (result == CameraBufferQueue::PushResult::Accepted) {
           pending.transfer();
@@ -1614,17 +1630,20 @@ AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDe
       dtype_from_pixel_format(runtime_cfg.pixel_format), holoflow::core::MemLoc::Host);
 
   auto buffer_size = odesc.num_bytes();
-  auto record_buffer_needed = settings.record_settings.has_value() ? settings.record_settings->recording_count / runtime_cfg_.buffer_part_count : 0;
+  auto record_buffer_needed =
+      settings.record_settings.has_value()
+          ? settings.record_settings->recording_count / runtime_cfg_.buffer_part_count
+          : 0;
   if (record_buffer_needed % runtime_cfg_.nb_buffers != 0) {
-    record_buffer_needed += runtime_cfg_.nb_buffers - (record_buffer_needed % runtime_cfg_.nb_buffers);
+    record_buffer_needed +=
+        runtime_cfg_.nb_buffers - (record_buffer_needed % runtime_cfg_.nb_buffers);
   }
   auto buffer_count = std::max(record_buffer_needed, runtime_cfg_.nb_buffers);
-  auto buffers =
-      allocate_shared_buffers(*grabber_a, *grabber_b, buffer_count, buffer_size);
+  auto buffers      = allocate_shared_buffers(*grabber_a, *grabber_b, buffer_count, buffer_size);
 
   return std::make_unique<AmetekS711EuresysCoaxlinkQSFP>(
-      settings, runtime_cfg, std::move(buffers), buffer_count, std::move(gentl), std::move(grabber_a),
-      std::move(grabber_b), buffer_size, normalized_cfg_json(runtime_cfg));
+      settings, runtime_cfg, std::move(buffers), buffer_count, std::move(gentl),
+      std::move(grabber_a), std::move(grabber_b), buffer_size, normalized_cfg_json(runtime_cfg));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
