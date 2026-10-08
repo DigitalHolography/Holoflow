@@ -14,10 +14,9 @@
 
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 
-#include "camera_buffer_pair.hh"
-#include "camera_buffer_queue.hh"
-#include "camera_recording_session.hh"
-
+#include <functional>
+#include <optional>
+#include <utility>
 namespace holotask::sources {
 
 // -------------------------------------------------------------------------------------------------
@@ -72,12 +71,12 @@ void from_json(const nlohmann::json &j, AmetekS711EuresysCoaxlinkQSFPSettings &s
 #include <limits>
 #include <map>
 #include <memory>
-#include <stop_token>
 #include <mutex>
 #include <new>
 #include <optional>
 #include <sstream>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <utility>
@@ -566,14 +565,6 @@ void apply_cfg(Euresys::EGrabberCameraInfo &info, const RuntimeConfig &cfg) {
   apply_stream(bank_b_index, cfg.offsets[1]);
 }
 
-struct CameraFrame {
-  Euresys::NewBufferData bank_a;
-  Euresys::NewBufferData bank_b;
-  std::byte             *base{};
-};
-
-using CameraBufferQueue = detail::CameraBufferQueue<CameraFrame>;
-
 class Grabber : public Euresys::EGrabber<Euresys::CallbackOnDemand> {
 public:
   enum class EGrabberName : uint8_t { A = 0, B = 1 };
@@ -583,7 +574,221 @@ public:
   }
 };
 
-using RecordingSession = detail::CameraRecordingSession;
+struct CameraFrame {
+  Euresys::NewBufferData bank_a;
+  Euresys::NewBufferData bank_b;
+  std::byte             *base{};
+};
+
+class CameraBufferPair {
+public:
+  using BufferData = Euresys::NewBufferData;
+  explicit CameraBufferPair(Grabber &grabber_a, Grabber &grabber_b)
+      : grabber_a_{grabber_a}, grabber_b_{grabber_b} {}
+  ~CameraBufferPair() { release(); }
+
+  CameraBufferPair(const CameraBufferPair &)            = delete;
+  CameraBufferPair &operator=(const CameraBufferPair &) = delete;
+  CameraBufferPair(CameraBufferPair &&other)            = delete;
+  CameraBufferPair &operator=(CameraBufferPair &&other) = delete;
+
+  inline void poll(uint64_t timeout) {
+    if (!a_)
+      a_ = grabber_a_.pop(timeout);
+    if (!b_)
+      b_ = grabber_b_.pop(timeout);
+  }
+
+  const BufferData &a() const { return a_.value(); }
+  const BufferData &b() const { return b_.value(); }
+  void              transfer() {
+    a_.reset();
+    b_.reset();
+  }
+
+  void release() {
+    if (a_) {
+      requeue_buffer_noexcept(grabber_a_, *a_, "bank A", last_requeue_error_log_,
+                              requeue_error_mutex_);
+      a_.reset();
+    }
+    if (b_) {
+      requeue_buffer_noexcept(grabber_b_, *b_, "bank B", last_requeue_error_log_,
+                              requeue_error_mutex_);
+      b_.reset();
+    }
+  }
+
+private:
+  Grabber                  &grabber_a_;
+  Grabber                  &grabber_b_;
+  std::optional<BufferData> a_, b_;
+  std::mutex                requeue_error_mutex_;
+  Clock::time_point         last_requeue_error_log_;
+};
+
+class CameraBufferQueue {
+public:
+  enum class PushResult { Accepted, Full, Closed };
+
+  CameraBufferQueue(size_t capacity, std::function<void(const CameraFrame &)> release)
+      : slots_(capacity), release_(std::move(release)) {
+    if (capacity == 0)
+      throw std::invalid_argument("CameraBufferQueue capacity must be > 0");
+  }
+
+  ~CameraBufferQueue() {
+    // The producer and readers must be joined before destruction.
+    for (auto &slot : slots_)
+      if (slot.readers != 0)
+        release_(slot.frame);
+  }
+
+  CameraBufferQueue(const CameraBufferQueue &)            = delete;
+  CameraBufferQueue &operator=(const CameraBufferQueue &) = delete;
+  CameraBufferQueue(CameraBufferQueue &&)                 = delete;
+  CameraBufferQueue &operator=(CameraBufferQueue &&)      = delete;
+
+  [[nodiscard]] PushResult try_push(const CameraFrame &frame) {
+    {
+      const std::lock_guard lock(mutex_);
+      if (closed_)
+        return PushResult::Closed;
+      auto &slot = slots_[write_ % slots_.size()];
+      if (slot.readers != 0)
+        return PushResult::Full;
+      slot.frame   = frame;
+      slot.readers = reader_b_active_ ? 2 : 1;
+      ++write_;
+    }
+    available_.notify_all();
+    return PushResult::Accepted;
+  }
+
+  const CameraFrame *read_a(const std::atomic<bool> *cancelled = nullptr) {
+    return read(read_a_, cancelled);
+  }
+  const CameraFrame *read_b(const std::atomic<bool> *cancelled = nullptr) {
+    return read(read_b_, cancelled);
+  }
+  void release_a() {
+    const std::lock_guard lock(mutex_);
+    release(read_a_);
+  }
+  void release_b() {
+    const std::lock_guard lock(mutex_);
+    release(read_b_);
+  }
+  void subscribe_b() {
+    const std::lock_guard lock(mutex_);
+    if (reader_b_active_)
+      throw std::logic_error("CameraBufferQueue reader B is already active");
+    read_b_          = write_;
+    reader_b_active_ = true;
+  }
+  void unsubscribe_b() {
+    const std::lock_guard lock(mutex_);
+    if (!reader_b_active_)
+      return;
+    reader_b_active_ = false;
+    while (read_b_ != write_)
+      release(read_b_);
+  }
+  void close() {
+    {
+      const std::lock_guard lock(mutex_);
+      closed_ = true;
+    }
+    available_.notify_all();
+  }
+  size_t capacity() const { return slots_.size(); }
+  size_t size() const {
+    const std::lock_guard lock(mutex_);
+    const auto            oldest = reader_b_active_ && read_b_ < read_a_ ? read_b_ : read_a_;
+    return write_ - oldest;
+  }
+  bool empty() const { return size() == 0; }
+
+private:
+  struct Slot {
+    CameraFrame frame{};
+    unsigned    readers = 0;
+  };
+  const CameraFrame *read(const size_t &index, const std::atomic<bool> *cancelled) {
+    std::unique_lock lock(mutex_);
+    // Timed waits also observe external pipeline cancellation without requiring
+    // its owner to notify this queue.
+    while (!closed_ && !(cancelled && cancelled->load(std::memory_order_acquire))) {
+      if (index != write_)
+        return &slots_[index % slots_.size()].frame;
+      available_.wait_for(lock, std::chrono::milliseconds(10));
+    }
+    return nullptr;
+  }
+  void release(size_t &index) {
+    if (index == write_)
+      throw std::logic_error("CameraBufferQueue release without a frame");
+    auto &slot = slots_[index % slots_.size()];
+    if (--slot.readers == 0)
+      release_(slot.frame);
+    ++index;
+  }
+
+private:
+  mutable std::mutex                       mutex_;
+  std::condition_variable                  available_;
+  std::vector<Slot>                        slots_;
+  std::function<void(const CameraFrame &)> release_;
+  size_t                                   write_ = 0, read_a_ = 0, read_b_ = 0;
+  bool                                     closed_ = false, reader_b_active_ = false;
+};
+
+class RecordingSession {
+public:
+  struct Result {
+    bool        completed;
+    bool        discard_file;
+    std::string failure;
+  };
+
+  std::stop_token token() const { return stop_.get_token(); }
+  void            request_stop() { stop_.request_stop(); }
+
+  // Failure and completion claim the same boundary, so only one can win.
+  bool fail(const std::string &message) {
+    const std::lock_guard lock(mutex_);
+    if (!accepting_failure_ || !failure_.empty() || stop_.stop_requested())
+      return false;
+    failure_ = message;
+    stop_.request_stop();
+    return true;
+  }
+
+  Result finish(std::string error = {}) {
+    const std::lock_guard lock(mutex_);
+    accepting_failure_ = false;
+    if (!failure_.empty())
+      error = failure_;
+    const bool completed = !stop_.stop_requested() && error.empty();
+    return {completed, !failure_.empty(), std::move(error)};
+  }
+
+private:
+  std::mutex       mutex_;
+  std::stop_source stop_;
+  bool             accepting_failure_ = true;
+  std::string      failure_;
+};
+
+// Called only after the writer has been destroyed, including on Windows where
+// an open recording cannot be deleted.
+inline std::string remove_incomplete_camera_recording(const std::string &path,
+                                                      std::string        failure) {
+  if (!path.empty() && std::remove(path.c_str()) != 0 && errno != ENOENT)
+    failure += "; failed to remove incomplete recording: " +
+               std::error_code(errno, std::generic_category()).message();
+  return failure;
+}
 
 /**
  * Allocate a host-resident buffer pool and announce the exact same buffer slots
@@ -750,7 +955,7 @@ void recorder_worker(const holotask::sources::RecordSettings &settings,
   failure     = std::move(result.failure);
   if (!failure.empty()) {
     if (result.discard_file)
-      failure = detail::remove_incomplete_camera_recording(settings.file_path, std::move(failure));
+      failure = remove_incomplete_camera_recording(settings.file_path, std::move(failure));
     logger()->error("[Recorder] recording failed: {}", failure);
   }
   try {
@@ -1087,7 +1292,7 @@ public:
       handle_events(ctx);
 
     if (!running_)
-      start_acquisition();
+      start_acquisition(ctx);
 
     while (!ctx.cancelled->load()) {
       const auto *next = buffer_queue_.read_a(ctx.cancelled); // return null if cancelled
@@ -1113,7 +1318,7 @@ public:
   const nlohmann::json &get_cfg() const { return cfg_; }
 
 private:
-  void start_acquisition() {
+  void start_acquisition(holoflow::core::SyncCtx &ctx) {
     bool started_b = false, started_a = false;
     try {
       // S711 Banks_AB must start bank B first, then bank A.
@@ -1122,7 +1327,7 @@ private:
       grabber_a_->start();
       started_a = true;
       acquisition_thread_.emplace(
-          [this](std::stop_token cancelled) { acquisition_loop(cancelled); });
+          [this, &ctx](std::stop_token cancelled) { acquisition_loop(cancelled, ctx); });
       running_ = true;
     } catch (...) {
       if (started_a)
@@ -1163,19 +1368,12 @@ private:
       logger()->error("[AmetekS711EuresysCoaxlinkQSFP] {}", message);
   }
 
-  void acquisition_loop(std::stop_token cancelled) {
-    detail::CameraBufferPair<Euresys::NewBufferData> pending{
-        [this](size_t bank, const Euresys::NewBufferData &data) {
-          requeue_buffer_noexcept(bank == 0 ? *grabber_a_ : *grabber_b_, data,
-                                  bank == 0 ? "bank A" : "bank B", last_requeue_error_log_,
-                                  requeue_error_mutex_);
-        }};
+  void acquisition_loop(std::stop_token cancelled, holoflow::core::SyncCtx &ctx) {
+    CameraBufferPair pending{*grabber_a_.get(), *grabber_b_.get()};
     try {
       while (!cancelled.stop_requested()) {
         try {
-          // TODO remove lambda and pass grabbers to remove indirect call
-          pending.poll([this] { return grabber_a_->pop(100); },
-                       [this] { return grabber_b_->pop(100); });
+          pending.poll(100);
         } catch (const Euresys::gentl_error &e) {
           if (e.gc_err == GenTL::GC_ERR_TIMEOUT)
             continue;
@@ -1183,14 +1381,14 @@ private:
         }
         if (cancelled.stop_requested())
           break;
-        if (!validate_buffer_data(pending.a(), pending.b())) {
+
+        auto base = validate_buffer_data(pending.a(), pending.b());
+        if (!base.has_value()) {
           pending.release();
           continue;
         }
-        auto        buffer = Euresys::Buffer(pending.a());
-        CameraFrame frame{
-            pending.a(), pending.b(),
-            static_cast<std::byte *>(buffer.getInfo<void *>(*grabber_a_, GenTL::BUFFER_INFO_BASE))};
+        auto                          buffer = Euresys::Buffer(pending.a());
+        CameraFrame                   frame{pending.a(), pending.b(), *base};
         CameraBufferQueue::PushResult result;
         bool                          recording_failed = false;
         static const std::string      overflow_message =
@@ -1200,10 +1398,9 @@ private:
           // failure before the recorder can report successful completion.
           const std::lock_guard lock(recording_mutex_);
           result = buffer_queue_.try_push(frame);
-          if (result == CameraBufferQueue::PushResult::Full && recording_session_) {
+          // fail record only if there is not enough buffers to finish record
+          if (result == CameraBufferQueue::PushResult::Full && recording_session_)
             recording_failed = recording_session_->fail(overflow_message);
-            // TODO emit failed event
-          }
         }
         if (result == CameraBufferQueue::PushResult::Accepted) {
           pending.transfer();
@@ -1211,8 +1408,10 @@ private:
           pending.release();
           if (result == CameraBufferQueue::PushResult::Closed)
             break;
-          if (recording_failed)
+          if (recording_failed) {
             logger()->error("[AmetekS711EuresysCoaxlinkQSFP] {}", overflow_message);
+            emit_failed_event(ctx, overflow_message);
+          }
         }
       }
     } catch (const std::exception &e) {
@@ -1227,8 +1426,8 @@ private:
     pending.release();
   }
 
-  bool validate_buffer_data(const Euresys::NewBufferData &data_a,
-                            const Euresys::NewBufferData &data_b) {
+  std::optional<std::byte *> validate_buffer_data(const Euresys::NewBufferData &data_a,
+                                                  const Euresys::NewBufferData &data_b) {
     const std::lock_guard lock(diagnostics_mutex_);
     using namespace Euresys;
     constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
@@ -1262,7 +1461,7 @@ private:
               runtime_cfg_.buffer_part_count);
           rejected_pairs_since_log_ = 0;
         }
-        return false;
+        return std::nullopt;
       }
 
       const auto ts_delta = ts_a >= ts_b ? ts_a - ts_b : ts_b - ts_a;
@@ -1280,7 +1479,7 @@ private:
         max_ts_delta_since_log_   = 0;
       }
 
-      return true;
+      return base_a;
     } catch (const Euresys::genapi_error &err) {
       if (log_due(last_error_log_)) {
         logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] GenApi error: {}",
@@ -1296,7 +1495,7 @@ private:
         logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] error: {}", err.what());
       }
     }
-    return false;
+    return std::nullopt;
   }
 
 private:
