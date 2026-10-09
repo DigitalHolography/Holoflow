@@ -115,6 +115,9 @@ signals:
   void graph_visualization_ready(const QString &dot);
   void graph_visualization_failed(const QString &error);
 
+  // monitor signals
+  void update_record(size_t recorded_frames);
+
 private:
   using V = holoflow::core::GraphSpec::vertex_descriptor;
 

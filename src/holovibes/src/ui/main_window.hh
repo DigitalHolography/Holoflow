@@ -86,6 +86,8 @@ private:
   void on_update_pipeline_success();
   void on_update_pipeline_failure(const QString &error);
 
+  void on_update_record(size_t frame_recorded);
+
   bool                        validate_inputs();
   void                        apply_validation_result(const pipeline::ValidationResult &result);
   void                        refresh_validation_tooltips(const pipeline::ValidationResult &result);

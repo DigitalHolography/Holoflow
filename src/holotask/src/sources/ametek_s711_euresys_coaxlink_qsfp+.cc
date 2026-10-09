@@ -994,11 +994,14 @@ public:
     writer_.flush();
   }
 
-  size_t execute(std::stop_token cancelled) {
+  size_t execute(std::stop_token cancelled, std::function<void(size_t)> poll_metrics) {
     batch_ = 0;
     std::atomic<bool>  stop_requested{false};
     std::stop_callback on_stop(cancelled,
                                [&] { stop_requested.store(true, std::memory_order_release); });
+
+    Clock::time_point last_poll     = Clock::now();
+    constexpr auto    poll_interval = std::chrono::milliseconds(500);
 
     while (current_frame_ < frame_to_record_ && !cancelled.stop_requested()) {
       const auto *frame = queue_.read_b(&stop_requested);
@@ -1016,8 +1019,11 @@ public:
       current_frame_ += to_write;
       session_.register_write(to_write);
       ++batch_;
-      // logger()->debug("[Recorder::execute] batch: {}, current_frame: {}, to_write: {}", batch_,
-      // current_frame_, to_write);
+
+      auto now = Clock::now();
+      if (now - last_poll > poll_interval) {
+        poll_metrics(current_frame_);
+      }
     }
 
     if (!cancelled.stop_requested())
@@ -1038,7 +1044,9 @@ private:
 void recorder_worker(const holotask::sources::RecordSettings &settings,
                      const Recorder::RecordingGeometry &g, size_t buffer_part_count,
                      CameraBufferQueue &queue, RecordingSession &session,
-                     std::atomic<bool> &recording, std::function<void(size_t)> finished_callback,
+                     std::atomic<bool>                       &recording,
+                     std::function<void(size_t)>              poll_metrics_callback,
+                     std::function<void(size_t)>              finished_callback,
                      std::function<void(const std::string &)> failed_callback) {
   logger()->info("[Recorder] started recorder thread");
   const auto  cancelled      = session.token();
@@ -1052,7 +1060,7 @@ void recorder_worker(const holotask::sources::RecordSettings &settings,
                  g,
                  settings.pipeline_config,
                  session};
-    frames_written = rec.execute(cancelled);
+    frames_written = rec.execute(cancelled, poll_metrics_callback);
   } catch (const std::exception &e) {
     failure = e.what();
   } catch (...) {
@@ -1146,6 +1154,22 @@ public:
                     "Failed to emit recording_finished event");
   }
 
+  void emit_update_event(holoflow::core::SyncCtx &ctx, size_t frames_written) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "recording_update"},
+                {"frame_recorded", frames_written},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit recording_update event");
+  }
+
+
   void emit_failed_event(holoflow::core::SyncCtx &ctx, const std::string &message,
                          const std::string &path) {
     auto event = holoflow_event::Event{
@@ -1189,6 +1213,9 @@ public:
             {static_cast<uint8_t>(runtime_cfg_.bytes_per_pixel * 8), runtime_cfg_.width,
              runtime_cfg_.final_height},
             runtime_cfg_.buffer_part_count, buffer_queue_, *session, recording_,
+            [this, &event_ctx](size_t recorded_frames) {
+              emit_update_event(event_ctx, recorded_frames);
+            },
             [this, &event_ctx, &record_settings](size_t written) {
               emit_finished_event(event_ctx, written, record_settings.file_path);
             },

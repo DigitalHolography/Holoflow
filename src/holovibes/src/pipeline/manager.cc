@@ -555,7 +555,11 @@ void Manager::poll_events() {
 
     std::string type = event->data.value("type", "");
 
-    if (type == "recording_finished") {
+    if (type == "recording_update") {
+      size_t frame_recorded = event->data.value("frame_recorded", 0);
+      emit update_record(frame_recorded);
+    }
+    else if (type == "recording_finished") {
       std::string path_str    = event->data.value("path", "");
       bool        should_emit = false;
 

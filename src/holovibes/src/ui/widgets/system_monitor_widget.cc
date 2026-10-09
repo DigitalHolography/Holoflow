@@ -101,7 +101,7 @@ void SystemMonitorWidget::setup_ui() {
 
   configure_bar(&input_queue_bar_, "Input Queue", 48, 64);
   configure_bar(&output_queue_bar_, "Output Queue", 22, 64);
-  configure_bar(&record_queue_bar_, "Record Queue", 12, 32);
+  configure_bar(&record_queue_bar_, "Record Queue", 0, 1);
 
   layout->addWidget(queue_group);
 }

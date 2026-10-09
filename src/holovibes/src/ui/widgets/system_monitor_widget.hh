@@ -52,6 +52,10 @@ public:
     record_queue_bar_->setValue(value);
   }
 
+  void update_record_queue(int value) {
+    record_queue_bar_->setValue(value);
+  }
+
 private:
   void setup_ui();
 

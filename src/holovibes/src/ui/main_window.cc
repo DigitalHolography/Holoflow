@@ -1614,6 +1614,9 @@ void MainWindow::connect_manager_signals() {
   connect(pipeline_manager_, &pipeline::Manager::update_pipeline_failure, this,
           &MainWindow::on_update_pipeline_failure);
 
+  connect(pipeline_manager_, &pipeline::Manager::update_record, this,
+          &MainWindow::on_update_record);
+
   connect(pipeline_manager_, &pipeline::Manager::metrics_updated, this,
           &MainWindow::on_metrics_updated, Qt::QueuedConnection);
 
@@ -2066,6 +2069,11 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
 }
 
+void MainWindow::on_update_record(size_t frame_recorded)
+{
+  monitor_widget_->update_record_queue(static_cast<int>(frame_recorded));
+}
+
 void MainWindow::closeEvent(QCloseEvent *event) {
   save_persistent_state();
 
@@ -2161,7 +2169,10 @@ void MainWindow::on_export_record_clicked() {
     frame_count = static_cast<size_t>(export_widget_->get_frame_count());
   }
 
-  auto start = [mgr = pipeline_manager_, record_path]() { mgr->start_raw_record(record_path); };
+  auto start = [mgr = pipeline_manager_, record_path, record_size = frame_count.has_value() ? *frame_count : 1, monitor = monitor_widget_]() { 
+    mgr->start_raw_record(record_path); 
+    monitor->set_record_queue(0, static_cast<int>(record_size));
+  };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
 }
 
@@ -2206,6 +2217,8 @@ void MainWindow::on_raw_record_stopped_success() {
   }
   export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(false);
+
+  monitor_widget_->set_record_queue(0, 1);
   refresh_command_bar();
 }
 
