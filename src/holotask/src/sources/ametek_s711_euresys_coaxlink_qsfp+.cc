@@ -18,8 +18,30 @@
 #include <functional>
 #include <optional>
 #include <utility>
+
+#include <spdlog/fmt/fmt.h>
+
+template <>
+struct fmt::formatter<holotask::sources::RecordSettings> : fmt::formatter<std::string_view> {
+  auto format(const holotask::sources::RecordSettings &r, fmt::format_context &ctx) const {
+    return fmt::format_to(ctx.out(), "{{ file_path: {}, recording_count: {} }}", r.file_path,
+                          r.recording_count);
+  }
+};
+
+template <typename T> struct fmt::formatter<std::optional<T>> : fmt::formatter<std::string_view> {
+  auto format(const std::optional<T> &o, fmt::format_context &ctx) const {
+    if (!o.has_value())
+      return fmt::format_to(ctx.out(), "None");
+    return fmt::format_to(ctx.out(), "{}", *o);
+  }
+};
+
 namespace holotask::sources {
 
+bool RecordSettings::requires_rebuild(const RecordSettings &old) const {
+  return recording_count > old.recording_count;
+}
 // -------------------------------------------------------------------------------------------------
 // JSON serialization
 // -------------------------------------------------------------------------------------------------
@@ -1287,7 +1309,8 @@ public:
   void log_update_lifecycle(bool replacing) {
     const std::lock_guard lock(diagnostics_mutex_);
     if (!buffer_queue_.empty() && log_due(last_pending_update_log_)) {
-      logger()->error("[AmetekS711EuresysCoaxlinkQSFP::update] updating with unreleased frames: {}",
+      logger()->error("[AmetekS711EuresysCoaxlinkQSFP::log_update_lifecycle] updating with "
+                      "unreleased frames: {}",
                       buffer_queue_.size());
     }
     if (!running_) {
@@ -1301,17 +1324,20 @@ public:
       first_pair_update_summary_.reset();
       resume_counters_pending_ = false;
     }
+
     if (!log_due(last_lifecycle_log_)) {
       return;
     }
     if (replacing) {
-      logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::update] replacing a task while its "
-                     "grabbers are still acquiring");
+      logger()->warn(
+          "[AmetekS711EuresysCoaxlinkQSFP::log_update_lifecycle] replacing a task while its "
+          "grabbers are still acquiring");
     } else {
-      logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::update] reusing a task whose grabbers "
-                     "kept acquiring during the pipeline update; epoch={}, queued frames may be "
-                     "stale",
-                     update_epoch_);
+      logger()->warn(
+          "[AmetekS711EuresysCoaxlinkQSFP::log_update_lifecycle] reusing a task whose grabbers "
+          "kept acquiring during the pipeline update; epoch={}, queued frames may be "
+          "stale",
+          update_epoch_);
     }
   }
 
@@ -1391,6 +1417,8 @@ public:
 
   const nlohmann::json &get_cfg() const { return cfg_; }
 
+  const AmetekS711EuresysCoaxlinkQSFPSettings &get_settings() const { return settings_; }
+
 private:
   void start_acquisition(holoflow::core::SyncCtx &ctx) {
     bool started_b = false, started_a = false;
@@ -1456,19 +1484,18 @@ private:
         if (cancelled.stop_requested())
           break;
 
-        auto base             = validate_buffer_data(pending.a(), pending.b());
+        auto base = validate_buffer_data(pending.a(), pending.b());
         if (!base.has_value()) {
           pending.release();
-          if (recording_session_ && recording_session_->fail("frame not validated during record"))
-          {
+          if (recording_session_ && recording_session_->fail("frame not validated during record")) {
             logger()->error("[AmetekS711EuresysCoaxlinkQSFP] frame not validated while recording");
             emit_failed_event(ctx, "frame not validated while recording");
           }
           continue;
         }
 
-        bool recording_failed = false;
-        auto                          buffer = Euresys::Buffer(pending.a());
+        bool                          recording_failed = false;
+        auto                          buffer           = Euresys::Buffer(pending.a());
         CameraFrame                   frame{pending.a(), pending.b(), *base};
         CameraBufferQueue::PushResult result;
         static const std::string      overflow_message =
@@ -1733,14 +1760,37 @@ AmetekS711EuresysCoaxlinkQSFPFactory::update(std::unique_ptr<holoflow::core::ISy
   const auto runtime_cfg = parse_cfg(raw_cfg);
   const auto new_cfg     = normalized_cfg_json(runtime_cfg);
 
-  // TODO check settings and recreate queues and buffer if needed
-  if (new_cfg == old->get_cfg()) {
+  // if record was enabled and is disabled in new settings, we don't need to rebuild
+  auto record_settings_changed =
+      settings.record_settings.has_value() && !old->get_settings().record_settings.has_value() ||
+      settings.record_settings->requires_rebuild(*old->get_settings().record_settings);
+
+  auto config_changed = new_cfg != old->get_cfg();
+  auto need_rebuild   = record_settings_changed || config_changed;
+
+  if (!need_rebuild) {
     old->update_settings(settings);
     old->log_update_lifecycle(false);
     return old_task;
   }
+  if (config_changed) {
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory::update] config changed");
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory::update] old cfg: {}",
+                   old->get_cfg().dump(2));
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory::update] new cfg: {}", new_cfg.dump(2));
+  }
+
+  if (record_settings_changed) {
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory::update] record settings changed and "
+                   "requires a rebuild");
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory::update] old record settings: {}",
+                   old->get_settings().record_settings);
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory::update] new record settings: {}",
+                   settings.record_settings);
+  }
 
   old->log_update_lifecycle(true);
+  old_task.reset(); // destroy old task and release all the buffers
   return create(input_descs, jsettings, ctx);
 }
 
