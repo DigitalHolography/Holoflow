@@ -1309,7 +1309,7 @@ public:
   void log_update_lifecycle(bool replacing) {
     const std::lock_guard lock(diagnostics_mutex_);
     if (!buffer_queue_.empty() && log_due(last_pending_update_log_)) {
-      logger()->error("[AmetekS711EuresysCoaxlinkQSFP::log_update_lifecycle] updating with "
+      logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::log_update_lifecycle] updating with "
                       "unreleased frames: {}",
                       buffer_queue_.size());
     }

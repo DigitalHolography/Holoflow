@@ -214,16 +214,13 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
                           .keep_cursor = false});
   }
 
-  if (s_.recording_method == RecordingMethod::RAW && s_.enable_camera_buffer_record && s_.import_source != ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP)
-    logger()->warn("[GraphBuilder] the camera buffer record is only available on AMETEK_S711_EURESYS_COAXLINK_QSFP");
-
   if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
     return ametek_s710_euresys_coaxlink_octo({cam_path});
   }
 
   if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
     holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings settings{.cfg_path = cam_path};
-    if (s_.recording_method == RecordingMethod::RAW && s_.enable_camera_buffer_record) {
+    if (s_.recording_method == RecordingMethod::RAW) {
       settings.record_settings = holotask::sources::RecordSettings{
           .file_path       = s_.recording_path.string(),
           .recording_count = s_.recording_count,
@@ -236,7 +233,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
 }
 
 void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
-  if (s_.enable_camera_buffer_record && s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP)
+  if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP)
     return;
 
   auto path          = s_.recording_path.string();

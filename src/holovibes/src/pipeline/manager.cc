@@ -413,7 +413,7 @@ const std::string& Manager::get_record_node_name()
   static const std::string source = "source_0";
   static const std::string record = "record";
 
-  if (s_.enable_camera_buffer_record && s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP && s_.recording_method == RecordingMethod::RAW)
+  if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP && s_.recording_method == RecordingMethod::RAW)
     return source; 
 
   return record;
