@@ -650,6 +650,19 @@ private:
   Clock::time_point         last_requeue_error_log_;
 };
 
+class SpinLock {
+public:
+  void lock() {
+    while (lock_.exchange(true))
+      ;
+  }
+
+  void unlock() { lock_.store(false, std::memory_order_release); }
+
+private:
+  std::atomic<bool> lock_{false};
+};
+
 class CameraBufferQueue {
 public:
   enum class PushResult { Accepted, Full, Closed };
@@ -758,8 +771,8 @@ private:
   }
 
 private:
-  mutable std::mutex                       mutex_;
-  std::condition_variable                  available_;
+  mutable SpinLock                         mutex_;
+  std::condition_variable_any              available_;
   std::vector<Slot>                        slots_;
   std::function<void(const CameraFrame &)> release_;
   size_t                                   write_ = 0, read_a_ = 0, read_b_ = 0;
@@ -1310,8 +1323,8 @@ public:
     const std::lock_guard lock(diagnostics_mutex_);
     if (!buffer_queue_.empty() && log_due(last_pending_update_log_)) {
       logger()->warn("[AmetekS711EuresysCoaxlinkQSFP::log_update_lifecycle] updating with "
-                      "unreleased frames: {}",
-                      buffer_queue_.size());
+                     "unreleased frames: {}",
+                     buffer_queue_.size());
     }
     if (!running_) {
       return;
