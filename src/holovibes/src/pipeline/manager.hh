@@ -117,6 +117,7 @@ signals:
 
   // monitor signals
   void update_record(size_t recorded_frames);
+  void update_acquisition(size_t acquired_frames);
 
 private:
   using V = holoflow::core::GraphSpec::vertex_descriptor;

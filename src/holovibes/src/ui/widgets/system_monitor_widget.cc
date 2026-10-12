@@ -16,9 +16,93 @@
 
 #include <QGridLayout>
 #include <QLabel>
+#include <QPaintEvent>
+#include <QPainter>
+#include <QStyleOptionProgressBar>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace holovibes::ui {
+
+class MultiProgressBar : public QProgressBar {
+  Q_OBJECT
+
+public:
+  explicit MultiProgressBar(QWidget *parent = nullptr) : QProgressBar(parent) {
+    setRange(0, 1);
+    setTextVisible(true);
+    setMinimumHeight(20);
+     setSizePolicy(
+        QSizePolicy::Expanding,
+        QSizePolicy::Fixed
+    );
+  }
+
+  void set_progress(int first, int second) {
+    first_progress_  = std::clamp(first, 0, maximum());
+    second_progress_ = std::clamp(second, 0, maximum());
+
+    update();
+  }
+
+  void set_first(int first) {
+    first_progress_  = std::clamp(first, 0, maximum());
+    update();
+  }
+
+  void set_second(int second) {
+    second_progress_  = std::clamp(second, 0, maximum());
+    update();
+  }
+
+protected:
+  void paintEvent(QPaintEvent *) override {
+    QPainter painter(this);
+
+    QStyleOptionProgressBar opt;
+    initStyleOption(&opt);
+
+    // 1. Draw the native Qt progress bar background/frame.
+    QStyleOptionProgressBar bg = opt;
+    bg.progress                = 0;
+    bg.textVisible             = false;
+
+    style()->drawControl(QStyle::CE_ProgressBar, &bg, &painter, this);
+
+    // 2. Draw the two colored sections.
+    QStyleOptionProgressBar groove = opt;
+    QRect contents = style()->subElementRect(QStyle::SE_ProgressBarContents, &opt, this);
+
+    if (maximum() > 0 && !contents.isEmpty()) {
+      qreal unit = qreal(contents.width()) / maximum();
+
+      int first_width  = qRound(first_progress_ * unit);
+      int second_width = qRound(second_progress_ * unit);
+
+      painter.save();
+      painter.setClipRect(contents);
+
+      painter.fillRect(QRect(contents.left(), contents.top(), first_width, contents.height()),
+                       first_color_);
+
+      painter.fillRect(
+          QRect(contents.left(), contents.top(), second_width, contents.height()),
+          second_color_);
+
+      painter.restore();
+    }
+
+    // 3. Draw centered value / maximum text.
+    painter.setPen(opt.palette.color(QPalette::Text));
+    painter.drawText(rect(), Qt::AlignCenter, QString("%1/%3 acq, %2/%3 rec").arg(first_progress_).arg(second_progress_).arg(maximum()));
+  }
+
+private:
+  static inline QColor first_color_      = QColor("#27AE60");
+  static inline QColor second_color_     = QColor("#3498DB");
+  int                  first_progress_   = 0;
+  int                  second_progress_  = 0;
+};
 
 SystemMonitorWidget::SystemMonitorWidget(QWidget *parent) : QGroupBox("SYSTEM MONITOR", parent) {
   setup_ui();
@@ -101,7 +185,9 @@ void SystemMonitorWidget::setup_ui() {
 
   configure_bar(&input_queue_bar_, "Input Queue", 48, 64);
   configure_bar(&output_queue_bar_, "Output Queue", 22, 64);
-  configure_bar(&record_queue_bar_, "Record Queue", 0, 1);
+  queue_layout->addWidget(new QLabel("Record Queue 0", queue_group));
+  record_queue_bar_ = new MultiProgressBar(queue_group);
+  queue_layout->addWidget(record_queue_bar_);
 
   layout->addWidget(queue_group);
 }
@@ -125,4 +211,18 @@ void SystemMonitorWidget::update_metrics(double input_fps) {
   pipeline_latency_value_->setText("N/A");
 }
 
+void SystemMonitorWidget::set_record_queue(int first, int second, int max) {
+  record_queue_bar_->setMaximum(max);
+  record_queue_bar_->set_progress(first, second);
+}
+
+void SystemMonitorWidget::update_record_queue_acquired(int first) {
+  record_queue_bar_->set_first(first);
+}
+
+void SystemMonitorWidget::update_record_queue_recorded(int second) {
+  record_queue_bar_->set_second(second);
+}
 } // namespace holovibes::ui
+
+#include "system_monitor_widget.moc"

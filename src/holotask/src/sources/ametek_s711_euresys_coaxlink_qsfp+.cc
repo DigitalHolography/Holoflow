@@ -868,66 +868,28 @@ HostPtr<uint8_t> allocate_shared_buffers(Grabber &grabber_a, Grabber &grabber_b,
 
   using Clock = std::chrono::steady_clock;
 
-  // --------------------------------------------------------------------------
-  // Grabber A
-  // --------------------------------------------------------------------------
   {
-    const auto start = Clock::now();
+    Clock::time_point last_announce_log;
+    const auto        start = Clock::now();
+    for (std::size_t buf_idx = 0; buf_idx < nb_buffers; ++buf_idx) {
+      auto *base = buffers.get() + buf_idx * buffer_size;
 
-    const auto range_a = grabber_a.announceAndQueue(memory_array);
+      grabber_a.announceAndQueue(Euresys::UserMemory(base, buffer_size));
+      grabber_b.announceAndQueue(Euresys::UserMemory(base, buffer_size));
 
+      if (log_due(last_announce_log)) {
+        logger()->debug(
+            "[AmetekS711EuresysCoaxlinkQSFPFactory] announced shared buffer {}/{} at address "
+            "{} to both grabbers",
+            buf_idx, nb_buffers, static_cast<void *>(base));
+      }
+    }
     const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
-
-    logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] grabber A: "
-                   "announceAndQueue {} buffers took {:.3f} ms "
-                   "(range {}..{}, {} buffers)",
-                   actual_nb_buffers, elapsed, range_a.begin, range_a.end, range_a.size());
+    logger()->info(
+        "[AmetekS711EuresysCoaxlinkQSFPFactory] grabber announceAndQueue took {:.3f} ms ", elapsed);
   }
-
-  // --------------------------------------------------------------------------
-  // Grabber B
-  // --------------------------------------------------------------------------
-  {
-    const auto start = Clock::now();
-
-    const auto range_b = grabber_b.announceAndQueue(memory_array);
-
-    const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
-
-    logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] grabber B: "
-                   "announceAndQueue {} buffers took {:.3f} ms "
-                   "(range {}..{}, {} buffers)",
-                   actual_nb_buffers, elapsed, range_b.begin, range_b.end, range_b.size());
-  }
-
   return buffers;
 }
-
-// HostPtr<uint8_t> allocate_shared_buffers(Grabber &grabber_a, Grabber &grabber_b,
-//                                          std::size_t nb_buffers, std::size_t buffer_size) {
-//   constexpr size_t safety_padding_size = 16;
-//   size_t           actual_nb_buffers   = nb_buffers + safety_padding_size;
-//   logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] allocating {} ({} + {}) shared host "
-//                  "buffers of size {} bytes",
-//                  actual_nb_buffers, nb_buffers, safety_padding_size, buffer_size);
-
-//   const auto total_size = buffer_size * actual_nb_buffers;
-//   auto       buffers    = curaii::make_unique_host_ptr<uint8_t>(total_size);
-
-//   for (std::size_t buf_idx = 0; buf_idx < actual_nb_buffers; ++buf_idx) {
-//     auto *base = buffers.get() + buf_idx * buffer_size;
-
-//     grabber_a.announceAndQueue(Euresys::UserMemory(base, buffer_size));
-//     grabber_b.announceAndQueue(Euresys::UserMemory(base, buffer_size));
-
-//     logger()->debug("[AmetekS711EuresysCoaxlinkQSFPFactory] announced shared buffer {} at address
-//     "
-//                     "{} to both grabbers",
-//                     buf_idx, static_cast<void *>(base));
-//   }
-
-//   return buffers;
-// }
 
 void requeue_buffer_noexcept(Grabber &grabber, const Euresys::NewBufferData &data,
                              const char *label, Clock::time_point &last_error_log,
@@ -1154,7 +1116,7 @@ public:
                     "Failed to emit recording_finished event");
   }
 
-  void emit_update_event(holoflow::core::SyncCtx &ctx, size_t frames_written) {
+  void emit_record_update_event(holoflow::core::SyncCtx &ctx, size_t frames_written) {
     auto event = holoflow_event::Event{
         .direction = holoflow_event::EventDirection::ToUi,
         .node_id   = "",
@@ -1169,6 +1131,20 @@ public:
                     "Failed to emit recording_update event");
   }
 
+  void emit_acquisistion_update_event(holoflow::core::SyncCtx &ctx, size_t frames) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "acquisition_update"},
+                {"frame_acquired", frames},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit recording_update event");
+  }
 
   void emit_failed_event(holoflow::core::SyncCtx &ctx, const std::string &message,
                          const std::string &path) {
@@ -1214,7 +1190,7 @@ public:
              runtime_cfg_.final_height},
             runtime_cfg_.buffer_part_count, buffer_queue_, *session, recording_,
             [this, &event_ctx](size_t recorded_frames) {
-              emit_update_event(event_ctx, recorded_frames);
+              emit_record_update_event(event_ctx, recorded_frames);
             },
             [this, &event_ctx, &record_settings](size_t written) {
               emit_finished_event(event_ctx, written, record_settings.file_path);
@@ -1511,7 +1487,11 @@ private:
   }
 
   void acquisition_loop(std::stop_token cancelled, holoflow::core::SyncCtx &ctx) {
-    CameraBufferPair pending{*grabber_a_.get(), *grabber_b_.get()};
+    CameraBufferPair  pending{*grabber_a_.get(), *grabber_b_.get()};
+    Clock::time_point last_update_event;
+    constexpr auto    update_event_interval = std::chrono::milliseconds(500);
+    size_t            acquired              = 0;
+    const auto        frame_per_buffer = runtime_cfg_.nb_buffers * runtime_cfg_.buffer_part_count;
     try {
       while (!cancelled.stop_requested()) {
         try {
@@ -1559,6 +1539,15 @@ private:
         }
         if (result == CameraBufferQueue::PushResult::Accepted) {
           pending.transfer();
+          if (recording_.load(std::memory_order_acquire)) {
+            acquired += frame_per_buffer;
+            auto now     = Clock::now();
+            auto elapsed = now - last_update_event;
+            if (elapsed >= update_event_interval) {
+              emit_acquisistion_update_event(ctx, acquired);
+              last_update_event = now;
+            }
+          }
         } else {
           pending.release();
           if (result == CameraBufferQueue::PushResult::Closed)

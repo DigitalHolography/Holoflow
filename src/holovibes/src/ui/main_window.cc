@@ -1617,6 +1617,9 @@ void MainWindow::connect_manager_signals() {
   connect(pipeline_manager_, &pipeline::Manager::update_record, this,
           &MainWindow::on_update_record);
 
+  connect(pipeline_manager_, &pipeline::Manager::update_acquisition, this,
+          &MainWindow::on_update_acquisition);
+
   connect(pipeline_manager_, &pipeline::Manager::metrics_updated, this,
           &MainWindow::on_metrics_updated, Qt::QueuedConnection);
 
@@ -2071,7 +2074,12 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
 
 void MainWindow::on_update_record(size_t frame_recorded)
 {
-  monitor_widget_->update_record_queue(static_cast<int>(frame_recorded));
+  monitor_widget_->update_record_queue_recorded(static_cast<int>(frame_recorded));
+}
+
+void MainWindow::on_update_acquisition(size_t frame_acquired)
+{
+  monitor_widget_->update_record_queue_acquired(static_cast<int>(frame_acquired));
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
@@ -2171,7 +2179,7 @@ void MainWindow::on_export_record_clicked() {
 
   auto start = [mgr = pipeline_manager_, record_path, record_size = frame_count.has_value() ? *frame_count : 1, monitor = monitor_widget_]() { 
     mgr->start_raw_record(record_path); 
-    monitor->set_record_queue(0, static_cast<int>(record_size));
+    monitor->set_record_queue(0, 0, static_cast<int>(record_size));
   };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
 }
@@ -2218,7 +2226,7 @@ void MainWindow::on_raw_record_stopped_success() {
   export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(false);
 
-  monitor_widget_->set_record_queue(0, 1);
+  monitor_widget_->set_record_queue(0, 0, 1);
   refresh_command_bar();
 }
 

@@ -20,6 +20,8 @@
 
 namespace holovibes::ui {
 
+class MultiProgressBar;
+
 class SystemMonitorWidget : public QGroupBox {
   Q_OBJECT
 
@@ -43,18 +45,15 @@ public:
     input_queue_bar_->setMaximum(max);
     input_queue_bar_->setValue(value);
   }
+
   void set_output_queue(int value, int max) {
     output_queue_bar_->setMaximum(max);
     output_queue_bar_->setValue(value);
   }
-  void set_record_queue(int value, int max) {
-    record_queue_bar_->setMaximum(max);
-    record_queue_bar_->setValue(value);
-  }
 
-  void update_record_queue(int value) {
-    record_queue_bar_->setValue(value);
-  }
+  void set_record_queue(int first, int second, int max);
+  void update_record_queue_acquired(int first);
+  void update_record_queue_recorded(int second);
 
 private:
   void setup_ui();
@@ -72,9 +71,9 @@ private:
   QLabel *pipeline_latency_value_;
 
   // Queue progress bars
-  QProgressBar *input_queue_bar_;
-  QProgressBar *output_queue_bar_;
-  QProgressBar *record_queue_bar_;
+  QProgressBar     *input_queue_bar_;
+  QProgressBar     *output_queue_bar_;
+  MultiProgressBar *record_queue_bar_;
 };
 
 } // namespace holovibes::ui
