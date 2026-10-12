@@ -680,6 +680,17 @@ public:
         release_(slot.frame);
   }
 
+  void clear() {
+    const std::lock_guard lock(mutex_);
+    for (auto &slot : slots_)
+      if (slot.readers != 0)
+        release_(slot.frame);
+
+    write_  = 0;
+    read_a_ = 0;
+    read_b_ = 0;
+  }
+
   CameraBufferQueue(const CameraBufferQueue &)            = delete;
   CameraBufferQueue &operator=(const CameraBufferQueue &) = delete;
   CameraBufferQueue(CameraBufferQueue &&)                 = delete;
@@ -1413,7 +1424,7 @@ public:
     while (!ctx.cancelled->load()) {
       const auto *next = buffer_queue_.read_a(ctx.cancelled); // return null if cancelled
       if (next == nullptr) {
-        return holoflow::core::OpResult::Cancelled;
+        break;
       }
       if (next->base) {
         auto &storage = storage_access().owned_output_storage(0);
@@ -1428,6 +1439,8 @@ public:
     }
 
     logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] cancelled");
+    stop_raw_record();
+    buffer_queue_.clear();
     return holoflow::core::OpResult::Cancelled;
   }
 
