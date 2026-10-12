@@ -94,12 +94,12 @@ protected:
 
     // 3. Draw centered value / maximum text.
     painter.setPen(opt.palette.color(QPalette::Text));
-    painter.drawText(rect(), Qt::AlignCenter, QString("%1/%3 acq, %2/%3 rec").arg(first_progress_).arg(second_progress_).arg(maximum()));
+    painter.drawText(rect(), Qt::AlignCenter, QString("%1 acq %2 rec / %3").arg(first_progress_).arg(second_progress_).arg(maximum()));
   }
 
 private:
-  static inline QColor first_color_      = QColor("#27AE60");
-  static inline QColor second_color_     = QColor("#3498DB");
+  static inline QColor first_color_      = QColor("#2DA6A1");
+  static inline QColor second_color_     = QColor("#3FB950");
   int                  first_progress_   = 0;
   int                  second_progress_  = 0;
 };
