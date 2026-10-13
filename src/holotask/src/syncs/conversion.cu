@@ -380,6 +380,14 @@ public:
         d_max_temp_storage_(std::move(d_max_temp_storage)), d_max_(std::move(d_max)),
         stream_(stream) {}
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    std::atomic<bool>       cancelled{false};
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, &cancelled, nullptr, nullptr};
+    (void)enqueue(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     const GraphAddresses addresses{ctx.inputs[0].data(), ctx.outputs[0].data()};
     if (stream_ == nullptr) {
@@ -756,10 +764,12 @@ ConversionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                           std::span<const holoflow::core::TDesc>     input_descs,
                           const nlohmann::json                      &jsettings,
                           const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   auto *old_conversion = dynamic_cast<Conversion *>(old_task.get());
   if (old_conversion == nullptr) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -775,6 +785,8 @@ ConversionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     old_conversion->update_stream(ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <memory>
 #include <string>
 #include <string_view>
 // could not forward declare GraphSpec because it is an alias
@@ -21,6 +22,7 @@
 namespace holoflow::runtime {
 
 struct CompilerOutput;
+struct GraphCompiledDumpSnapshot;
 enum class GraphFailureKind { Compilation, Runtime };
 
 struct GraphCompiledDumpPreferences {
@@ -65,6 +67,18 @@ std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences
 std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
                    std::string_view filename, std::string_view failure_node,
                    std::string_view failure_context, GraphFailureKind failure_kind);
+
+// Own only diagnostic values, including stream addresses as numbers. No CUDA resources or task
+// references survive capture, so snapshots can be rendered after the compiler output is destroyed.
+std::shared_ptr<const GraphCompiledDumpSnapshot>
+make_graph_compiled_dump_snapshot(const CompilerOutput &out);
+std::string to_dot(const GraphCompiledDumpSnapshot    &snapshot,
+                   const GraphCompiledDumpPreferences &prefs    = {},
+                   std::string                         filename = "compiled");
+std::string to_dot(const GraphCompiledDumpSnapshot    &snapshot,
+                   const GraphCompiledDumpPreferences &prefs, std::string filename,
+                   std::string_view failure_node, std::string_view failure_context,
+                   GraphFailureKind failure_kind);
 
 } // namespace holoflow::runtime
 

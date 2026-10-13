@@ -22,6 +22,7 @@
 #include <QPaintEvent>
 #include <QPainter>
 #include <QStyleOption>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
@@ -84,6 +85,11 @@ TensorDisplayWidget::TensorDisplayWidget(QWidget *p) : QOpenGLWidget(p) {
   waiting_label_->setWordWrap(true);
   waiting_label_->setAttribute(Qt::WA_TransparentForMouseEvents);
   layout->addWidget(waiting_label_, 1);
+
+  waiting_timer_ = new QTimer(this);
+  waiting_timer_->setSingleShot(true);
+  waiting_timer_->setTimerType(Qt::PreciseTimer);
+  connect(waiting_timer_, &QTimer::timeout, this, &TensorDisplayWidget::apply_waiting_placeholder);
 }
 
 void TensorDisplayWidget::set_fixed_aspect(std::optional<QSize> size) {
@@ -300,6 +306,7 @@ void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
   updateTexture(reinterpret_cast<const void *>(bytes.constData()), w, h, dtype);
   doneCurrent();
 
+  waiting_timer_->stop();
   waiting_label_->hide();
   update();
   emit tensorDisplayed();
@@ -343,8 +350,22 @@ void TensorDisplayWidget::set_reticle_radius(double radius) {
   update();
 }
 
-void TensorDisplayWidget::show_waiting_placeholder(const QString &message) {
-  waiting_label_->setText(message.isEmpty() ? tr("Waiting for data...") : message);
+void TensorDisplayWidget::show_waiting_placeholder(const QString &message, int delay_ms) {
+  pending_waiting_message_ = message.isEmpty() ? tr("Waiting for data...") : message;
+  if (delay_ms > 0 && texture_storage_allocated_ && img_w_ > 0 && img_h_ > 0) {
+    // Workspace refreshes can repeat this request. Preserve the original deadline so a missing
+    // replacement frame eventually clears the display even while the workspace keeps updating.
+    if (!waiting_timer_->isActive())
+      waiting_timer_->start(delay_ms);
+    return;
+  }
+
+  waiting_timer_->stop();
+  apply_waiting_placeholder();
+}
+
+void TensorDisplayWidget::apply_waiting_placeholder() {
+  waiting_label_->setText(pending_waiting_message_);
   waiting_label_->show();
   img_w_ = 0;
   img_h_ = 0;

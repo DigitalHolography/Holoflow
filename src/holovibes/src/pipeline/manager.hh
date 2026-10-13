@@ -33,6 +33,7 @@ namespace holovibes::ui {
 class AutoFocusWidget;
 class TensorDisplayWidget;
 class ZernikeHistoryWidget;
+struct SignalHistoryDispatcherProvider;
 } // namespace holovibes::ui
 
 class QTimer;
@@ -142,13 +143,13 @@ private:
   // --- Graph Management ---
   void build_and_run();
   void run_compiled_graph();
-  void build_graph_spec();
+  void build_graph_spec(const std::filesystem::path &log_dir);
   void reset_graph_spec();
   void guess_optimizations();
   void guess_source_dims();
   void configure_zernike_history(bool start_run);
   void resume_zernike_history();
-  void stop_zernike_history();
+  void stop_zernike_history(bool cancel_run = false);
 
   // --- Logging Helpers ---
   void dump_graph_logs(const std::filesystem::path &log_dir);
@@ -160,17 +161,18 @@ private:
 #endif
 
   // --- UI Elements ---
-  ui::AutoFocusWidget      *autofocus_widget_;
-  ui::TensorDisplayWidget  *xy_processed_widget_;
-  ui::TensorDisplayWidget  *xz_processed_widget_;
-  ui::TensorDisplayWidget  *yz_processed_widget_;
-  ui::TensorDisplayWidget  *xy_raw_widget_;
-  ui::TensorDisplayWidget  *raw_spectrum_widget_;
-  ui::TensorDisplayWidget  *processed_spectrum_widget_;
-  ui::TensorDisplayWidget  *shack_hartmann_widget_;
-  ui::TensorDisplayWidget  *shack_hartmann_xcorr_widget_;
-  ui::TensorDisplayWidget  *zernike_phase_widget_;
-  ui::ZernikeHistoryWidget *zernike_history_widget_;
+  ui::AutoFocusWidget                                 *autofocus_widget_;
+  ui::TensorDisplayWidget                             *xy_processed_widget_;
+  ui::TensorDisplayWidget                             *xz_processed_widget_;
+  ui::TensorDisplayWidget                             *yz_processed_widget_;
+  ui::TensorDisplayWidget                             *xy_raw_widget_;
+  ui::TensorDisplayWidget                             *raw_spectrum_widget_;
+  ui::TensorDisplayWidget                             *processed_spectrum_widget_;
+  ui::TensorDisplayWidget                             *shack_hartmann_widget_;
+  ui::TensorDisplayWidget                             *shack_hartmann_xcorr_widget_;
+  ui::TensorDisplayWidget                             *zernike_phase_widget_;
+  ui::ZernikeHistoryWidget                            *zernike_history_widget_;
+  std::shared_ptr<ui::SignalHistoryDispatcherProvider> history_dispatchers_;
 
   // --- State & Configuration ---
   Settings s_;
@@ -180,6 +182,9 @@ private:
   GraphSpecDumpPreferences     graph_spec_dump_prefs_     = {};
   GraphCompiledDumpPreferences graph_compiled_dump_prefs_ = {};
   std::filesystem::path         log_root_;
+
+  /// @brief Enables the main branch's pipeline debug dumps and compiler tracing.
+  bool dump_debug_graphs_ = true;
 
   /// @brief Toggles compiler/runtime failure diagnostics (.dot and tracing) to disk.
   bool dump_runtime_failure_graphs_ = false;

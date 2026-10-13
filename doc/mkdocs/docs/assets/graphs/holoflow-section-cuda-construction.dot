@@ -1,0 +1,42 @@
+digraph SectionConstruction {
+  graph [rankdir=TB, bgcolor="white", pad=0.3, nodesep=0.4, ranksep=0.4,
+         fontname="Helvetica", fontsize=13];
+  node [shape=box, style="rounded,filled", fillcolor="#dcfce7", color="#64748b",
+        fontname="Helvetica", fontsize=12, fontcolor="#172033", margin="0.18,0.10"];
+  edge [fontname="Helvetica", fontsize=11, color="#64748b", fontcolor="#334155",
+        arrowsize=0.7];
+  subgraph cluster_compile {
+    label="COMPILATION: inspect, without instantiation";
+    style=rounded; color="#94a3b8"; fontcolor="#334155";
+    inspect [label="Check task eligibility + storage contracts"];
+    plan [label="Plan reachable index tuples\nResolve finite pointer domains"];
+    retain [label="Retain one-use inspection plan", fillcolor="#dbeafe"];
+    inspect -> plan -> retain;
+  }
+  subgraph cluster_start {
+    label="STARTUP: prepare before creating workers";
+    style=rounded; color="#94a3b8"; fontcolor="#334155";
+    input [label="Consume first-start plan\nOr reinspect phases on restart"];
+    eligible [label="Eligible and within cap?", shape=diamond, fillcolor="#fef3c7"];
+    compare [label="Compare desired address tuples\nwith cached executables", fillcolor="#dbeafe"];
+    reuse [label="Retain compatible matches\nDiscard obsolete variants first", fillcolor="#dbeafe"];
+    missing [label="Any missing tuples?", shape=diamond, fillcolor="#fef3c7"];
+    capture [label="For each missing tuple:\nprivate bindings → capture task work", fillcolor="#dbeafe"];
+    instantiate [label="Validate → instantiate executable\nDestroy temporary graph description", fillcolor="#dbeafe"];
+    ready [label="Graph set ready", fillcolor="#dbeafe"];
+    fallback [label="Ordinary execution for this section", fillcolor="#fee2e2"];
+    workers [label="Start section workers"];
+    input -> eligible;
+    eligible -> compare [label="yes"];
+    eligible -> fallback [label="no"];
+    compare -> reuse -> missing;
+    missing -> capture [label="yes"];
+    capture -> instantiate -> ready;
+    missing -> ready [label="no"];
+    capture -> fallback [label="failure + successful\nstream recovery", style=dashed];
+    instantiate -> fallback [style=dashed];
+    ready -> workers;
+    fallback -> workers;
+  }
+  retain -> input;
+}
