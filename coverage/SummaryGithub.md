@@ -3,16 +3,16 @@
 
 |||
 |:---|:---|
-| Generated on: | 10/13/2026 - 2:30:37 PM |
+| Generated on: | 10/13/2026 - 4:57:20 PM |
 | Parser: | Cobertura |
 | Assemblies: | 7 |
-| Classes: | 11 |
-| Files: | 88 |
-| **Line coverage:** | 28.6% (3113 of 10858) |
-| Covered lines: | 3113 |
-| Uncovered lines: | 7745 |
-| Coverable lines: | 10858 |
-| Total lines: | 23669 |
+| Classes: | 12 |
+| Files: | 117 |
+| **Line coverage:** | 38.4% (4806 of 12511) |
+| Covered lines: | 4806 |
+| Uncovered lines: | 7705 |
+| Coverable lines: | 12511 |
+| Total lines: | 28551 |
 | Covered branches: | 0 |
 | Total branches: | 0 |
 | **Method coverage:** | [Feature is only available for sponsors](https://reportgenerator.io/pro) |
@@ -20,13 +20,13 @@
 </details>
 
 ## Coverage
-<details><summary>curaii - 32.9%</summary>
+<details><summary>curaii - 42%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**curaii**|**32.9%**|****|
+|**curaii**|**42%**|****|
 |include|100%||
-|src|28.8%||
+|src|38.4%||
 
 </details>
 <details><summary>holofile - 0%</summary>
@@ -37,13 +37,13 @@
 |src|0%||
 
 </details>
-<details><summary>holoflow - 86.1%</summary>
+<details><summary>holoflow - 92%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holoflow**|**86.1%**|****|
-|include|70.8%||
-|src|86.3%||
+|**holoflow**|**92%**|****|
+|include|100%||
+|src|91.9%||
 
 </details>
 <details><summary>holoflow_event - 86.2%</summary>
@@ -55,28 +55,29 @@
 |src|84%||
 
 </details>
-<details><summary>holonp - 61.5%</summary>
+<details><summary>holonp - 52.6%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holonp**|**61.5%**|****|
-|src|61.5%||
+|**holonp**|**52.6%**|****|
+|include|0%||
+|src|59.7%||
 
 </details>
-<details><summary>holotask - 43.5%</summary>
+<details><summary>holotask - 53.2%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holotask**|**43.5%**|****|
-|include|80%||
-|src|43.4%||
+|**holotask**|**53.2%**|****|
+|include|7.1%||
+|src|54.3%||
 
 </details>
-<details><summary>holovibes - 6.3%</summary>
+<details><summary>holovibes - 7.1%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holovibes**|**6.3%**|****|
-|src|6.3%||
+|**holovibes**|**7.1%**|****|
+|src|7.1%||
 
 </details>

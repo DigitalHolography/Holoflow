@@ -1,0 +1,2895 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="An open-source software stack for real-time digital holography">
+      
+      
+      
+      
+        <link rel="prev" href="graph-compilation.html">
+      
+      
+        <link rel="next" href="section-cuda-graphs-reference.html">
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.21">
+    
+    
+      
+        <title>Section-level CUDA Graphs - Holoflow</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.2a3383ac.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/home.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#section-cuda-graphs" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow md-header--lifted" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../index.html" title="Holoflow" class="md-header__button md-logo" aria-label="Holoflow" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Holoflow
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Section-level CUDA Graphs
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to light mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Switch to light mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="m14.3 16-.7-2h-3.2l-.7 2H7.8L11 7h2l3.2 9zM20 8.69V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12zm-9.15 3.96h2.3L12 9z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to dark mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Switch to dark mode" for="__palette_2" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Switch to system preference"  type="radio" name="__palette" id="__palette_2">
+    
+      <label class="md-header__button md-icon" title="Switch to system preference" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/DigitalHolography/Holoflow" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DigitalHolography/Holoflow
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+    
+      
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../about.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  About
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../applications/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Applications
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../learn/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Learn
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../../documentation/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Documentation
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../research/index.html" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Research
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../reference/index.html" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+    
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../index.html" title="Holoflow" class="md-nav__button md-logo" aria-label="Holoflow" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Holoflow
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/DigitalHolography/Holoflow" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.0.1 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    DigitalHolography/Holoflow
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Home
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../about.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    About
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../applications/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Applications
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Applications
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../applications/doppler-holography.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Doppler Holography
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../applications/doppler-oct.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Doppler OCT
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../applications/wavefront-analysis.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Wavefront Analysis
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../learn/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Learn
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4" id="__nav_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            Learn
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../learn/heterodyne-detection.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Heterodyne Detection
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../documentation/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Documentation
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5" id="__nav_5_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            Documentation
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Holovibes
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Holoflow
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3" id="__nav_5_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_5_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5_3">
+            <span class="md-nav__icon md-icon"></span>
+            Holoflow
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Getting Started
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../concepts/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Concepts
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_3" id="__nav_5_3_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            Concepts
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/task-model.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Holoflow Task Model
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/storage-ownership.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Storage Ownership
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../concepts/events.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Events
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../tutorials/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Tutorials
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_4" id="__nav_5_3_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            Tutorials
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorials/ldh-pipeline.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Build An LDH Pipeline
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how-to-guides/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    How-to Guides
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5_3_6" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Runtime Internals
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_5_3_6" id="__nav_5_3_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_5_3_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5_3_6">
+            <span class="md-nav__icon md-icon"></span>
+            Runtime Internals
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="graph-compilation.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Graph Compilation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Section-level CUDA Graphs
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="section-cuda-graphs.html" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Section-level CUDA Graphs
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-cuda-graphs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why CUDA graphs?
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-section-iteration" class="md-nav__link">
+    <span class="md-ellipsis">
+      One section iteration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#construct-the-graph-set-before-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      Construct the graph set before execution
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-cache-several-graphs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why cache several graphs?
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Why cache several graphs?">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bindings-rotate-kernel-arguments-stay-concrete" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bindings rotate, kernel arguments stay concrete
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#find-the-reachable-tuples" class="md-nav__link">
+    <span class="md-ellipsis">
+      Find the reachable tuples
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifetime-reuse-and-invalidation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lifetime, reuse, and invalidation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#read-the-reports" class="md-nav__link">
+    <span class="md-ellipsis">
+      Read the reports
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="section-cuda-graphs-reference.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    CUDA Graph Contracts and Reference
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    API Reference
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../curaii/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Curaii
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holofile/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Holofile
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../research/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Research
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/index.html" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    Reference
+    
+  </span>
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_2" id="__nav_7_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Holovibes Tasks
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2">
+            <span class="md-nav__icon md-icon"></span>
+            Holovibes Tasks
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2_1" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_2_1" id="__nav_7_2_1_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Sources
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_7_2_1_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2_1">
+            <span class="md-nav__icon md-icon"></span>
+            Sources
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/sources/ametek_s710_euresys_coaxlink_octo.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Ametek s710 Euresys Coaxlink Octo
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/sources/ametek_s711_euresys_coaxlink_qsfp%2B.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Ametek s711 Euresys Coaxlink QSFP+
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/sources/holofile.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Holofile
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_2_2" id="__nav_7_2_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Sinks
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_7_2_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2_2">
+            <span class="md-nav__icon md-icon"></span>
+            Sinks
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/sinks/display_tensor.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Display Tensor
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/sinks/holofile.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Holofile
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_2_3" id="__nav_7_2_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Synchronous
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_7_2_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2_3">
+            <span class="md-nav__icon md-icon"></span>
+            Synchronous
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/angular_spectrum.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Angular Spectrum
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/average.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Average
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/causal_sliding_average.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Causal Sliding Average
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/conversion.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Conversion
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/convolution.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Convolution
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/fft_shift.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    FFT Shift
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/filter2d.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Filter 2D
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/fresnel_diffraction.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Fresnel Diffraction
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/memcpy.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Memcpy
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/pca.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    PCA
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/pct_clip.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Percentile Clip
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/registration.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Registration
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/reshape.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Reshape
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/rotation.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Rotation
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/syncs/stft.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    STFT
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_2_4" id="__nav_7_2_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Asynchronous
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_7_2_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2_4">
+            <span class="md-nav__icon md-icon"></span>
+            Asynchronous
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/asyncs/batch_queue.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Batch Queue
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/asyncs/dual_reader_batch_queue.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Dual Reader Batch Queue
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../holovibes/tasks/asyncs/sliding_average.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Sliding Average
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../glossary.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Glossary
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../references.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Bibliography
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../coverage.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Test Coverage
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#why-cuda-graphs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why CUDA graphs?
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#one-section-iteration" class="md-nav__link">
+    <span class="md-ellipsis">
+      One section iteration
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#construct-the-graph-set-before-execution" class="md-nav__link">
+    <span class="md-ellipsis">
+      Construct the graph set before execution
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-cache-several-graphs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why cache several graphs?
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Why cache several graphs?">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#bindings-rotate-kernel-arguments-stay-concrete" class="md-nav__link">
+    <span class="md-ellipsis">
+      Bindings rotate, kernel arguments stay concrete
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#find-the-reachable-tuples" class="md-nav__link">
+    <span class="md-ellipsis">
+      Find the reachable tuples
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#lifetime-reuse-and-invalidation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Lifetime, reuse, and invalidation
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#read-the-reports" class="md-nav__link">
+    <span class="md-ellipsis">
+      Read the reports
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/DigitalHolography/Holoflow/edit/main/doc/mkdocs/docs/holoflow/runtime-internals/section-cuda-graphs.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+    
+      
+    
+    <a href="https://github.com/DigitalHolography/Holoflow/raw/main/doc/mkdocs/docs/holoflow/runtime-internals/section-cuda-graphs.md" title="View source of this page" class="md-content__button md-icon">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17 18c.56 0 1 .44 1 1s-.44 1-1 1-1-.44-1-1 .44-1 1-1m0-3c-2.73 0-5.06 1.66-6 4 .94 2.34 3.27 4 6 4s5.06-1.66 6-4c-.94-2.34-3.27-4-6-4m0 6.5a2.5 2.5 0 0 1-2.5-2.5 2.5 2.5 0 0 1 2.5-2.5 2.5 2.5 0 0 1 2.5 2.5 2.5 2.5 0 0 1-2.5 2.5M9.27 20H6V4h7v5h5v4.07c.7.08 1.36.25 2 .49V8l-6-6H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h4.5a8.2 8.2 0 0 1-1.23-2"/></svg>
+    </a>
+  
+
+
+<h1 id="section-cuda-graphs">Section <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> graphs<a class="headerlink" href="#section-cuda-graphs" title="Permanent link">&para;</a></h1>
+<p>A section can submit its synchronous <abbr title="Graphics processing unit">GPU</abbr> work with one <code>cudaGraphLaunch</code>, instead of
+calling every task on the host for every iteration. The <abbr title="Graphics processing unit">GPU</abbr> still runs the same kernels;
+Holoflow changes how their work is submitted.</p>
+<p>This page follows the execution path, then explains the finite graph set behind that single
+launch. The <a href="section-cuda-graphs-reference.html">contracts and reference</a> cover configuration,
+task interfaces, updates, diagnostics, and validation.</p>
+<h2 id="why-cuda-graphs">Why <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> graphs?<a class="headerlink" href="#why-cuda-graphs" title="Permanent link">&para;</a></h2>
+<p>A <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> graph describes <abbr title="Graphics processing unit">GPU</abbr> operations and the dependencies between them. A node can represent
+a kernel, a copy, or another supported operation; an edge says which work must precede it.
+<abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> <strong>instantiates</strong> that description into an executable that can be launched repeatedly.
+Capture records operations into a graph rather than executing a frame.</p>
+<p>For short kernels, the <abbr title="Central processing unit">CPU</abbr> can spend enough time preparing and submitting each operation
+that the <abbr title="Graphics processing unit">GPU</abbr> finishes one kernel before the next is ready. Graphs move much of that setup into
+instantiation and submit the recorded workflow together.
+See <a href="https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/cuda-graphs.html">NVIDIA's <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> Graphs guide</a>.</p>
+<p><a href="../../assets/images/holoflow-section-cuda-timeline.svg"><img alt="CPU API calls and GPU kernels without and with a CUDA graph, on the same illustrative time scale" src="../../assets/images/holoflow-section-cuda-timeline.svg" /></a></p>
+<p><em>Same kernels and kernel durations in both panels. The spaces between <abbr title="Graphics processing unit">GPU</abbr> blocks are submission
+gaps. This is an illustrative timeline, not an Nsight measurement.</em></p>
+<div class="admonition tip">
+<p class="admonition-title">One submission for the captured compute</p>
+<p>One <code>cudaGraphLaunch</code> replaces the section's repeated compute submissions. Short kernels
+can run more tightly packed, with less host launch overhead and fewer gaps between them.</p>
+</div>
+<p>Graphs do not fuse kernels or make their arithmetic faster. Dependencies and <abbr title="Graphics processing unit">GPU</abbr> scheduling
+still apply, and a workload already dominated by long-running kernels may see little benefit.
+Acquisition, asynchronous queue operations, barriers, and release remain outside the section
+graph. An asynchronous producer may also launch <abbr title="Graphics processing unit">GPU</abbr> work, such as SlidingAverage's producer kernel.</p>
+<h2 id="one-section-iteration">One section iteration<a class="headerlink" href="#one-section-iteration" title="Permanent link">&para;</a></h2>
+<p>Each section has its own worker thread. It first establishes the current buffer bindings, then
+chooses how to run the synchronous compute.</p>
+<p><a href="../../assets/images/holoflow-section-cuda-execution.svg"><img alt="Section iteration: acquire and pop, select a graph or ordinary compute, synchronize, push, release, and repeat" src="../../assets/images/holoflow-section-cuda-execution.svg" /></a></p>
+<p><em>Blue nodes describe the graph path. The surrounding host operations are shared by both paths.</em></p>
+<p>The lookup key is the ordered tuple of current <code>Storage::ptr</code> addresses. A hit selects one
+prepared executable. A miss disables graph execution for that section and runs the ordinary
+task loop <strong>before any graph submission</strong>. Unknown individual addresses are pointer misses;
+known addresses in an unprepared combination are tuple misses. Other sections can keep using graphs.</p>
+<p>A graph launch failure does not retry the same iteration through ordinary execution: that could
+duplicate <abbr title="Graphics processing unit">GPU</abbr> work. A cooperative pause saves progress at operation boundaries, including acquired
+ports, completed pops, submitted graphs, pushes, and releases. Resuming the same scheduler
+continues that checkpoint without repeating successful operations.</p>
+<h2 id="construct-the-graph-set-before-execution">Construct the graph set before execution<a class="headerlink" href="#construct-the-graph-set-before-execution" title="Permanent link">&para;</a></h2>
+<p>Graph preparation happens while execution is stopped. Every synchronous task must support recording,
+and every referenced storage must have a finite, known pointer domain. Unsupported tasks, missing
+domains, or too many variants select ordinary execution for the whole section.</p>
+<p><a href="../../assets/images/holoflow-section-cuda-construction.svg"><img alt="Compilation inspects and plans tuples; startup reuses matching executables and records missing variants before starting workers" src="../../assets/images/holoflow-section-cuda-construction.svg" /></a></p>
+<p><em>Compilation plans; startup prepares. Capture and instantiation happen only for missing variants.</em></p>
+<p>Compilation inspects the sections and retains a one-use plan. The first start consumes it without
+repeating inspection. For each eligible section, preparation compares the desired address tuples
+with the cached ones: retain matches, destroy obsolete variants, then construct missing variants.
+An unchanged enabled set can be retained in place, even if enumeration order changed.</p>
+<p>For each missing tuple, the runtime creates <strong>private recording bindings</strong>, captures every
+synchronous task's <abbr title="Graphics processing unit">GPU</abbr> work in topological order, validates the graph, and instantiates an executable.
+Recording must not acquire buffers, publish storage, consume events, or advance task state.
+The temporary graph description is destroyed; the executable stays in the cache.</p>
+<p>Workers start only after preparation. There is no capture on the first frame and no per-launch
+parameter update. Capture or instantiation failure clears partial executable sets and selects
+ordinary execution if stream recovery succeeds; an unusable <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> context propagates an error.
+Malformed pointer contracts fail validation rather than silently selecting fallback.</p>
+<h2 id="why-cache-several-graphs">Why cache several graphs?<a class="headerlink" href="#why-cache-several-graphs" title="Permanent link">&para;</a></h2>
+<h3 id="bindings-rotate-kernel-arguments-stay-concrete">Bindings rotate, kernel arguments stay concrete<a class="headerlink" href="#bindings-rotate-kernel-arguments-stay-concrete" title="Permanent link">&para;</a></h3>
+<p>A queue can expose a different address each iteration. A captured kernel argument still contains
+the address recorded during construction; updating the host-side <code>Storage::ptr</code> does not change
+that argument.</p>
+<p>Passing a pointer-to-pointer would require kernels to accept a device-side address table and
+dereference it. Holoflow does not control every task's or <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> library's kernel interface, so it
+cannot impose that convention. It records one executable for each needed combination of concrete
+addresses and chooses the matching executable at runtime.</p>
+<p>A <strong>pointer domain</strong> is the finite list of addresses a storage may expose. A <strong>tuple</strong> chooses
+one address from each domain, in storage-ID order. Only storage used by synchronous tasks contributes
+a dimension. Tensor aliases share their storage's dimension; compiler-owned storage has one address.
+The cache borrows these allocations and owns its <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> executable handles and lookup metadata.</p>
+<h3 id="find-the-reachable-tuples">Find the reachable tuples<a class="headerlink" href="#find-the-reachable-tuples" title="Permanent link">&para;</a></h3>
+<p>The Cartesian product assumes that every combination is possible. Queue order often makes that
+an overestimate. Owners can declare a <code>PointerSequence</code>: a finite <code>prefix</code>, followed by a repeating
+<code>cycle</code>. Its entries are <strong>indices into the pointer domain</strong>, not addresses or port numbers.</p>
+<p>Consider two storages:</p>
+<table>
+<thead>
+<tr>
+<th>Storage</th>
+<th>Domain</th>
+<th>Prefix</th>
+<th>Cycle</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A</td>
+<td><code>a0, a1, a2, a3, scratch</code></td>
+<td><code>[4, 4]</code></td>
+<td><code>[0, 1, 2, 3]</code></td>
+</tr>
+<tr>
+<td>B</td>
+<td><code>b0, b1, b2, b3, b4, b5</code></td>
+<td><code>[]</code></td>
+<td><code>[0, 1, 2, 3, 4, 5]</code></td>
+</tr>
+</tbody>
+</table>
+<p>The next successful section iteration is step zero. Both sequences advance together; failed
+readiness polls do not advance the logical step. These declarations describe bindings without
+running tasks or dequeuing buffers.</p>
+<p><a href="../../assets/images/holoflow-section-cuda-tuples.svg"><img alt="Fourteen simulated steps cover the scratch prefix and joint cycle; the grid shows fourteen reachable address pairs out of thirty" src="../../assets/images/holoflow-section-cuda-tuples.svg" /></a></p>
+<p><em>Orange cells are startup tuples; blue cells belong to the repeating part. White cells are not
+reachable from these starting phases. Step 14 repeats step 2.</em></p>
+<p>After the longest prefix finishes, every sequence is periodic. Their combined state repeats after
+the least common multiple of their cycle lengths, even when the cycles begin at different steps.
+Thus a sufficient finite <strong>horizon</strong> is:</p>
+<div class="arithmatex">\[
+H = \max_i |\mathrm{prefix}_i| + \operatorname{lcm}_i |\mathrm{cycle}_i|
+\]</div>
+<p>Here, <code>H = 2 + lcm(4, 6) = 14</code>. Simulating steps <code>0..13</code> finds two startup pairs and twelve
+cyclic pairs: <strong>14 variants instead of 5 × 6 = 30</strong>. A horizon counts simulated steps; deduplication
+can produce fewer variants when indices or tuples repeat.</p>
+<p>The planner performs four operations:</p>
+<ol>
+<li>Compute the longest prefix and joint period with checked arithmetic.</li>
+<li>Simulate sequence-controlled domains over the horizon and deduplicate index tuples.</li>
+<li>Expand every domain without a sequence as an independent Cartesian dimension.</li>
+<li>Resolve domain indices to actual addresses for executable construction and cache lookup.</li>
+</ol>
+<p>For an additional unordered storage C with two addresses, each of the 14 pairs needs both C choices:
+<strong>28 variants</strong>. A missing sequence means conservative expansion, not exclusion.</p>
+<p>If the horizon exceeds the <strong>1,000,000-step planning budget</strong>, all domains use Cartesian expansion.
+The graph cap is separate: it limits the final variant count, including unordered expansion.
+The default is <strong>4,096 per section</strong>; zero disables graphs. The planner rejects excessive counts
+before allocating a large graph set. Counts add across sections and do not directly measure memory.</p>
+<p>Current queue phases matter. Restarting from a different phase can change the reachable tuple set.
+The planner combines sequences only within one section, never between independently progressing
+producer and consumer sections.</p>
+<h2 id="lifetime-reuse-and-invalidation">Lifetime, reuse, and invalidation<a class="headerlink" href="#lifetime-reuse-and-invalidation" title="Permanent link">&para;</a></h2>
+<p><a href="../../assets/images/holoflow-section-cuda-lifecycle.svg"><img alt="Graph-set lifecycle: preparation, running, pause and resume, restart replanning, compatible recompilation, and destruction" src="../../assets/images/holoflow-section-cuda-lifecycle.svg" /></a></p>
+<p><em>Pause preserves the checkpoint and graph set. Restart and recompilation can change which variants are needed.</em></p>
+<table>
+<thead>
+<tr>
+<th>Event</th>
+<th>What happens to the graph set?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>First start</td>
+<td>Consume the compilation inspection and eagerly prepare variants.</td>
+</tr>
+<tr>
+<td>Pause → resume</td>
+<td>Retain buffers, checkpoints, and executables; skip graph preparation. A section that fell back stays in fallback.</td>
+</tr>
+<tr>
+<td>Stop or EOF → restart</td>
+<td>Inspect current phases again; reuse matching variants, discard obsolete ones, and construct missing ones.</td>
+</tr>
+<tr>
+<td>Compatible recompilation</td>
+<td>Carry over compatible executables, then plan from updated task state.</td>
+</tr>
+<tr>
+<td>Captured operation/resource changes</td>
+<td>Invalidate dependent executables before changing or releasing captured resources.</td>
+</tr>
+<tr>
+<td>Cache destruction</td>
+<td>Destroy executable handles before tasks, streams, and buffers.</td>
+</tr>
+</tbody>
+</table>
+<p>Reuse requires compatible section structure, bindings, descriptors, streams, and captured operations
+and resources. Keeping the same task object alone is insufficient. Conversely, device-data updates
+can preserve an executable when its captured arguments and allocations remain valid.</p>
+<p>The default factory update policy invalidates before <code>update()</code>. An audited factory can use explicit
+invalidation to preserve compatible executables, but must invalidate before incompatible changes
+and protect exception paths. Details and examples are in the
+<a href="section-cuda-graphs-reference.html#factory-updates-and-reuse">factory update reference</a>.</p>
+<h2 id="read-the-reports">Read the reports<a class="headerlink" href="#read-the-reports" title="Permanent link">&para;</a></h2>
+<p><code>Scheduler::section_graph_diagnostics()</code> exposes planned and prepared counts, reuse/create/discard
+counts, fallback reasons, and launch/miss counters. Host graph-submission timing is not <abbr title="Graphics processing unit">GPU</abbr> execution
+duration. See the <a href="section-cuda-graphs-reference.html#diagnostics">diagnostics</a> and
+<a href="section-cuda-graphs-reference.html#reference-validation">reference validation</a> for measurement guidance.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+    
+      
+      <nav class="md-footer__inner md-grid" aria-label="Footer" >
+        
+          
+          <a href="graph-compilation.html" class="md-footer__link md-footer__link--prev" aria-label="Previous: Graph Compilation">
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+            </div>
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Previous
+              </span>
+              <div class="md-ellipsis">
+                Graph Compilation
+              </div>
+            </div>
+          </a>
+        
+        
+          
+          <a href="section-cuda-graphs-reference.html" class="md-footer__link md-footer__link--next" aria-label="Next: CUDA Graph Contracts and Reference">
+            <div class="md-footer__title">
+              <span class="md-footer__direction">
+                Next
+              </span>
+              <div class="md-ellipsis">
+                CUDA Graph Contracts and Reference
+              </div>
+            </div>
+            <div class="md-footer__button md-icon">
+              
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M4 11v2h12l-5.5 5.5 1.42 1.42L19.84 12l-7.92-7.92L10.5 5.5 16 11z"/></svg>
+            </div>
+          </a>
+        
+      </nav>
+    
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.tabs", "navigation.tabs.sticky", "navigation.indexes", "navigation.path", "navigation.tracking", "navigation.top", "navigation.footer", "content.code.annotate", "content.code.copy", "content.code.select", "content.tooltips", "content.action.edit", "content.action.view", "search.suggest", "search.highlight", "toc.follow"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>

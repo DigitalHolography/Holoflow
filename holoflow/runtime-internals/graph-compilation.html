@@ -14,7 +14,7 @@
         <link rel="prev" href="index.html">
       
       
-        <link rel="next" href="../reference/index.html">
+        <link rel="next" href="section-cuda-graphs.html">
       
       
       <link rel="icon" href="../../assets/images/favicon.png">
@@ -1144,6 +1144,10 @@
       
         
       
+        
+      
+        
+      
     
     
     
@@ -1489,10 +1493,107 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#profiling-compilation-and-pipeline-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Profiling compilation and pipeline lifecycle
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Profiling compilation and pipeline lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#automatic-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Automatic files
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#developer-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Developer sessions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-and-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Build and interpretation
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#background-diagnostic-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Background diagnostic files
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="section-cuda-graphs.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Section-level CUDA Graphs
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="section-cuda-graphs-reference.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    CUDA Graph Contracts and Reference
+    
+  </span>
+  
+
+      </a>
     </li>
   
 
@@ -2862,6 +2963,57 @@
   
 </li>
       
+        <li class="md-nav__item">
+  <a href="#profiling-compilation-and-pipeline-lifecycle" class="md-nav__link">
+    <span class="md-ellipsis">
+      Profiling compilation and pipeline lifecycle
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Profiling compilation and pipeline lifecycle">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#automatic-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Automatic files
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#developer-sessions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Developer sessions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-and-interpretation" class="md-nav__link">
+    <span class="md-ellipsis">
+      Build and interpretation
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#background-diagnostic-files" class="md-nav__link">
+    <span class="md-ellipsis">
+      Background diagnostic files
+    </span>
+  </a>
+  
+</li>
+      
     </ul>
   
 </nav>
@@ -2907,7 +3059,7 @@ assumptions are called out explicitly.</p>
 the entire scheduler lifetime.</p>
 </div>
 <h2 id="compilation-pipeline">Compilation pipeline<a class="headerlink" href="#compilation-pipeline" title="Permanent link">&para;</a></h2>
-<p>Compilation proceeds through twelve passes:</p>
+<p>Compilation proceeds through thirteen passes:</p>
 <table>
 <thead>
 <tr>
@@ -2976,6 +3128,11 @@ the entire scheduler lifetime.</p>
 <td style="text-align: right;">12</td>
 <td>Task Binding</td>
 <td>Tasks receive storage access and logging services</td>
+</tr>
+<tr>
+<td style="text-align: right;">13</td>
+<td>Inspect Section <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> Graphs</td>
+<td>Complete domain/eligibility diagnostics and a reachable-variant plan; executables are prepared on scheduler start</td>
 </tr>
 </tbody>
 </table>
@@ -3123,7 +3280,7 @@ P_j:X_{j-1}\rightharpoonup X_j.
 <div class="arithmatex">\[
 \operatorname{Compile}_{\Gamma}
 =
-P_{12}\circ P_{11}\circ\cdots\circ P_1.
+P_{13}\circ P_{12}\circ\cdots\circ P_1.
 \]</div>
 <h2 id="structure-and-inference">Structure and inference<a class="headerlink" href="#structure-and-inference" title="Permanent link">&para;</a></h2>
 <h3 id="structural-validity">Structural validity<a class="headerlink" href="#structural-validity" title="Permanent link">&para;</a></h3>
@@ -3609,6 +3766,130 @@ declared in <code>src/holoflow/include/holoflow/runtime/graph_exec.hh</code>.</p
 <p>The most direct behavioral tests are <code>test/holoflow/compiler_test.cc</code>,
 <code>test/holoflow/compiler_additional_test.cc</code>, and the compiler-related cases in
 <code>test/holoflow/scheduler_functional_test.cc</code>.</p>
+<h2 id="profiling-compilation-and-pipeline-lifecycle">Profiling compilation and pipeline lifecycle<a class="headerlink" href="#profiling-compilation-and-pipeline-lifecycle" title="Permanent link">&para;</a></h2>
+<p>Holoflow uses the Perfetto v58.2 C++ SDK with its Windows in-process backend. Native binary traces
+open directly in <a href="https://ui.perfetto.dev/">Perfetto UI</a> or Trace Processor. Instrumentation also emits
+NVTX ranges. Operational errors and warnings remain in spdlog; handwritten JSON traces, per-pass
+timing messages, and compilation timing summaries have been replaced by SDK events.</p>
+<h3 id="automatic-files">Automatic files<a class="headerlink" href="#automatic-files" title="Permanent link">&para;</a></h3>
+<p>The application saves captures under <code>&lt;AppLocalDataLocation&gt;/&lt;application-version&gt;/logs</code>:</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Capture</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pipeline_update_trace.perfetto-trace</code></td>
+<td>Latest update, including stop, rebuild, and restart when running</td>
+</tr>
+<tr>
+<td><code>pipeline_start_trace.perfetto-trace</code></td>
+<td>Latest cold start</td>
+</tr>
+<tr>
+<td><code>pipeline_stop_trace.perfetto-trace</code></td>
+<td>Latest stop or pause</td>
+</tr>
+<tr>
+<td><code>pipeline_resume_trace.perfetto-trace</code></td>
+<td>Latest resume of an unchanged compiled graph</td>
+</tr>
+<tr>
+<td><code>trace_events.perfetto-trace</code></td>
+<td>Latest standalone compilation with profiling enabled and a nonempty log directory</td>
+</tr>
+</tbody>
+</table>
+<p>Each operation starts a native session before its measured scope and manager mutex acquisition.
+The measured scope closes and the lock releases before flushing, stopping, and exporting. The next
+capture of the same operation overwrites its file, including failures and early returns. Session
+setup, flush, and file I/O add latency to the call but are outside its measured lifecycle slice.</p>
+<p>Only one application-owned session records at a time. If a lifecycle operation or standalone
+compilation encounters an active session, it contributes events to that session and neither stops
+it nor writes a separate file. This avoids competing captures around nested compilation. Overlapping
+operations on different threads also share the first active session; an explicit session is the
+preferred way to cover a concurrent sequence deliberately. <code>Compiler::Config::enable_profiling</code>
+controls automatic standalone capture, while <code>trace_filename</code> selects the native output name.
+It does not suppress instrumentation inside an already active session.</p>
+<p><code>Total Compilation</code> starts before state initialization and graph-spec dumping. <code>Drain Previous CUDA
+Streams</code> and <code>Destroy Previous CUDA Graphs</code> precede <code>Validate Spec</code>, with detail slices identifying
+streams and sections. The enclosing lifecycle covers history-widget calls, graph construction and
+dumps, compiler construction/logging setup, scheduler initialization, startup <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> graph preparation,
+worker joins, and shutdown diagnostics. Root slices carry <code>outcome</code> annotations (<code>success</code> or
+<code>failure</code>); other scopes default to <code>completed</code> and mark exception unwinding as failure.
+Worker names identify section, router, and metrics threads when named during recording.</p>
+<h3 id="developer-sessions">Developer sessions<a class="headerlink" href="#developer-sessions" title="Permanent link">&para;</a></h3>
+<p>The public API does not expose SDK types:</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-1-1">1</a></span>
+<span class="normal"><a href="#__codelineno-1-2">2</a></span>
+<span class="normal"><a href="#__codelineno-1-3">3</a></span>
+<span class="normal"><a href="#__codelineno-1-4">4</a></span>
+<span class="normal"><a href="#__codelineno-1-5">5</a></span>
+<span class="normal"><a href="#__codelineno-1-6">6</a></span>
+<span class="normal"><a href="#__codelineno-1-7">7</a></span>
+<span class="normal"><a href="#__codelineno-1-8">8</a></span>
+<span class="normal"><a href="#__codelineno-1-9">9</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1"></a><span class="cp">#include</span><span class="w"> </span><span class="cpf">"holoflow/runtime/tracing.hh"</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2"></a>
+<a id="__codelineno-1-3" name="__codelineno-1-3"></a><span class="k">using</span><span class="w"> </span><span class="k">namespace</span><span class="w"> </span><span class="nn">holoflow</span><span class="o">::</span><span class="nn">runtime</span><span class="o">::</span><span class="nn">tracing</span><span class="p">;</span>
+<a id="__codelineno-1-4" name="__codelineno-1-4"></a><span class="k">auto</span><span class="w"> </span><span class="n">session</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">Session</span><span class="o">::</span><span class="n">start</span><span class="p">({.</span><span class="n">buffer_size_kb</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="mi">16</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="mi">1024</span><span class="p">,</span><span class="w"> </span><span class="p">.</span><span class="n">include_details</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="nb">true</span><span class="p">});</span>
+<a id="__codelineno-1-5" name="__codelineno-1-5"></a><span class="k">if</span><span class="w"> </span><span class="p">(</span><span class="n">session</span><span class="p">)</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-6" name="__codelineno-1-6"></a><span class="w">  </span><span class="c1">// Exercise operations; their automatic captures join this session.</span>
+<a id="__codelineno-1-7" name="__codelineno-1-7"></a><span class="w">  </span><span class="c1">// Close measured scopes and finish instrumented work before stopping.</span>
+<a id="__codelineno-1-8" name="__codelineno-1-8"></a><span class="w">  </span><span class="n">session</span><span class="o">-&gt;</span><span class="n">stop_and_save</span><span class="p">(</span><span class="s">"experiment.perfetto-trace"</span><span class="p">);</span>
+<a id="__codelineno-1-9" name="__codelineno-1-9"></a><span class="p">}</span>
+</code></pre></div></td></tr></table></div>
+<p><code>Session::start()</code> returns null if another session owns recording or the SDK is disabled. Invalid
+configuration or setup failure throws. <code>stop_and_save()</code> stops recording before file I/O and throws
+on export failure; ownership is released even if the file cannot be written. Destroying a session
+stops recording without exporting. Automatic <code>Capture</code> guards log errors and preserve operation
+results. Check <code>Session::available()</code> and <code>Session::active()</code> when needed.</p>
+<p>Categories are <code>holoflow.lifecycle</code>, <code>holoflow.compiler</code>, <code>holoflow.scheduler</code>, and
+<code>holoflow.detail</code>. Developer sessions can disable details with <code>include_details = false</code>.
+The default 16 MiB buffer discards new data when full, preserving the beginning of a capture.
+An oversized capture can lose later events; inspect buffer statistics in Trace Processor:</p>
+<div class="highlight"><table class="highlighttable"><tr><td class="linenos"><div class="linenodiv"><pre><span></span><span class="normal"><a href="#__codelineno-2-1">1</a></span>
+<span class="normal"><a href="#__codelineno-2-2">2</a></span>
+<span class="normal"><a href="#__codelineno-2-3">3</a></span></pre></div></td><td class="code"><div><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">stats</span>
+<a id="__codelineno-2-2" name="__codelineno-2-2"></a><span class="k">WHERE</span><span class="w"> </span><span class="p">(</span><span class="n">severity</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'data_loss'</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="mi">0</span><span class="p">)</span>
+<a id="__codelineno-2-3" name="__codelineno-2-3"></a><span class="w">   </span><span class="k">OR</span><span class="w"> </span><span class="p">(</span><span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">'traced_buf_chunks_discarded'</span><span class="w"> </span><span class="k">AND</span><span class="w"> </span><span class="n">value</span><span class="w"> </span><span class="o">!=</span><span class="w"> </span><span class="mi">0</span><span class="p">);</span>
+</code></pre></div></td></tr></table></div>
+<h3 id="build-and-interpretation">Build and interpretation<a class="headerlink" href="#build-and-interpretation" title="Permanent link">&para;</a></h3>
+<p><code>ENABLE_PERFETTO</code> defaults to <code>ON</code>. FetchContent downloads a pinned archive with a SHA-256 checksum.
+With <code>ENABLE_FETCHCONTENT=OFF</code>, set <code>PERFETTO_SDK_DIR</code> to the extracted v58.2 SDK directory.
+<code>-DENABLE_PERFETTO=OFF</code> builds without the SDK and native files while retaining NVTX and operational
+logging. Perfetto headers stay private to the runtime implementation. No daemon, protobuf package,
+compression library, or recording UI is required.</p>
+<p>Durations measure <abbr title="Central processing unit">CPU</abbr> wall time. <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr> synchronization slices measure host waits, not <abbr title="Graphics processing unit">GPU</abbr> kernel
+execution; use NVIDIA tooling for <abbr title="Graphics processing unit">GPU</abbr> attribution. Automatic recording begins at manager entry,
+so Qt queue delay before entry and time to the first processed frame are excluded. An explicit
+session started earlier can support that investigation once request/frame boundaries are
+instrumented. Recurring worker events, counters, and cross-thread flows remain future additions.
+The SDK supports these features without extending our own trace format.</p>
+<p>See the official <a href="https://perfetto.dev/docs/instrumentation/tracing-sdk">Tracing SDK</a>,
+<a href="https://perfetto.dev/docs/instrumentation/track-events">Track Events</a>, and
+<a href="https://perfetto.dev/docs/concepts/buffers">buffer documentation</a>.</p>
+<p>Startup <abbr title="NVIDIA's parallel computing platform and programming model for GPU acceleration">CUDA</abbr>-graph preparation includes detail spans for section eligibility and pointer planning,
+variant construction or cache reuse, task recording, capture completion, validation, and instantiation.
+Section spans include IDs and names; variant and task spans identify the work within each section.
+These spans also appear during compilation where the same preparation helpers are used, and are
+suppressed when a developer session sets <code>include_details = false</code>.</p>
+<h2 id="background-diagnostic-files">Background diagnostic files<a class="headerlink" href="#background-diagnostic-files" title="Permanent link">&para;</a></h2>
+<p>Pipeline JSON/DOT and graph-spec JSON dumps copy the graph specification on the calling thread.
+The shared diagnostics worker performs serialization and file I/O; only the latest pending job
+for each file is retained. Snapshots own graph values and display preferences, so compilation
+and later edits can proceed without waiting for the dumps. Missing output directories are created
+by the worker, and file failures are reported without failing the pipeline.</p>
+<p>Compiler logging uses an owned memory sink when a log directory is configured. Setup does not
+open or truncate files. At the end of each successful or failed compilation, the completed log is
+submitted to the same worker, replacing <code>compiler.log</code> with the latest compilation's messages.
+The buffer resets for repeated calls on the same compiler. With no log directory, stdout logging
+is unchanged. An unfinished compiler log is lost if the process crashes during compilation.</p>
+<p>Diagnostic files are eventually available. Tests that read them explicitly flush the worker;
+pipeline updates never flush or join it. Process shutdown drains pending jobs. Trace scopes
+separate caller-side snapshots/logger setup from background formatting and writing.</p>
 
 
 
@@ -3661,13 +3942,13 @@ declared in <code>src/holoflow/include/holoflow/runtime/graph_exec.hh</code>.</p
         
         
           
-          <a href="../reference/index.html" class="md-footer__link md-footer__link--next" aria-label="Next: API Reference">
+          <a href="section-cuda-graphs.html" class="md-footer__link md-footer__link--next" aria-label="Next: Section-level CUDA Graphs">
             <div class="md-footer__title">
               <span class="md-footer__direction">
                 Next
               </span>
               <div class="md-ellipsis">
-                API Reference
+                Section-level CUDA Graphs
               </div>
             </div>
             <div class="md-footer__button md-icon">
