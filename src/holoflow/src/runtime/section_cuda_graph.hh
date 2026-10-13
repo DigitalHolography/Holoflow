@@ -3,7 +3,7 @@
 
 #pragma once
 
-#include "holoflow/runtime/graph_exec.hh"
+#include "holoflow/runtime/graph_exec_types.hh"
 
 namespace holoflow::runtime {
 

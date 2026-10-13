@@ -14,148 +14,20 @@
 
 #pragma once
 
-#include <atomic>
-#include <boost/graph/adjacency_list.hpp>
 #include <chrono>
-#include <condition_variable>
-#include <cstddef>
 #include <cstdint>
-#include <cuda_runtime.h>
-#include <filesystem>
 #include <map>
 #include <memory>
-#include <mutex>
+#include <nlohmann/json.hpp>
 #include <optional>
-#include <span>
+#include <spdlog/fmt/fmt.h>
 #include <string>
-#include <thread>
-#include <unordered_map>
-#include <utility>
-#include <variant>
 #include <vector>
 
-#include "curaii/cuda.hh"
-#include "driver_types.h"
-#include "holoflow/core/graph_spec.hh"
-#include "holoflow/core/tasks.hh"
-#include "holoflow/core/tensor.hh"
+#include "holoflow/runtime/graph_exec_types.hh"
 #include "holoflow_event/router.hh"
 
 namespace holoflow::runtime {
-
-struct NodePlan {
-  core::NodeSpec    spec;     ///< Node specification.
-  core::InferResult infer;    ///< Inference metadata.
-  std::vector<int>  in_tids;  ///< Input tensor IDs.
-  std::vector<int>  out_tids; ///< Output tensor IDs.
-};
-
-struct EdgePlan {
-  core::EdgeSpec spec; ///< Edge specification.
-  core::TDesc    desc; ///< Tensor descriptor.
-  int            tid;  ///< Tensor ID.
-};
-
-using GraphPlan = boost::adjacency_list<boost::vecS,           // OutEdgeList
-                                        boost::vecS,           // VertexList
-                                        boost::bidirectionalS, // Directed graph
-                                        NodePlan,              // Vertex properties
-                                        EdgePlan               // Edge properties
-                                        >;
-
-/// Represents a block of memory used during graph execution.
-struct MemoryBlock {
-  core::MemLoc mem_loc;    ///< Memory location (host or device).
-  size_t       size_bytes; ///< Size of the memory block in bytes.
-
-  curaii::unique_host_ptr<std::byte>   h_data; ///< Host memory (if applicable).
-  curaii::unique_device_ptr<std::byte> d_data; ///< Device memory (if applicable).
-
-  void *get(); ///< Returns a mutable pointer to the memory block.
-};
-
-/// One finite, eagerly constructed graph set. Only its section thread selects/launches variants.
-struct SectionCudaGraphs {
-  ~SectionCudaGraphs();
-  SectionCudaGraphs()                                     = default;
-  SectionCudaGraphs(const SectionCudaGraphs &)            = delete;
-  SectionCudaGraphs &operator=(const SectionCudaGraphs &) = delete;
-
-  std::vector<size_t>                   storage_ids;
-  std::vector<std::vector<std::byte *>> pointers;
-  using PointerTuple = std::vector<uintptr_t>;
-  std::map<PointerTuple, size_t> tuple_indices;
-  std::vector<size_t>            executable_node_counts;
-  std::vector<cudaGraphExec_t>   executables;
-  size_t                         variant_count = 0;
-  size_t node_count = 0; ///< Total nodes across executable variants, including conditional bodies.
-  double construction_ms = 0;
-  std::string fallback_reason;
-  bool        enabled = false;
-
-  // The executable set is changed only while stopped; snapshots never read that mutable state.
-  mutable std::mutex    diagnostic_mutex;
-  nlohmann::json        diagnostics = nlohmann::json::object();
-  std::atomic<uint64_t> launches{0}, ordinary_iterations{0}, pointer_misses{0}, tuple_misses{0};
-  uint64_t              refresh_count                     = 0;
-  uint64_t              compilation_generation            = 0;
-  bool                  carried_from_previous_compilation = false;
-  std::string           compilation_invalidation_reason;
-  [[nodiscard]] nlohmann::json snapshot() const;
-  void report_miss(const std::map<size_t, std::unique_ptr<core::Storage>> &storages);
-
-  void clear() noexcept;
-  [[nodiscard]] std::optional<size_t>
-  variant(const std::map<size_t, std::unique_ptr<core::Storage>> &storages) const;
-};
-
-struct SectionCudaGraphInspection;
-
-struct ExecResouces {
-  std::map<size_t, MemoryBlock>                    memory_blocks; ///< StorageID -> MemoryBlock.
-  std::map<size_t, std::unique_ptr<core::Storage>> storages;      ///< StorageID -> Storage.
-  std::map<size_t, core::TDesc>                    tensor_descs;  ///< TensorID -> TDesc.
-  std::map<size_t, size_t>                         tid_to_sid;    ///< TensorID -> StorageID.
-
-  std::map<std::string, std::unique_ptr<core::IOStorageAccess>> node_storage_adapters;
-  std::map<size_t, curaii::CudaStream>                          streams; ///< CUDA streams by ID.
-  std::map<std::string, std::unique_ptr<core::ITask>>           tasks;   ///< Task instances by ID.
-  size_t                                                        max_section_cuda_graphs = 0;
-  std::filesystem::path                                         section_cuda_graph_log_dir;
-  uint64_t                                                      compilation_generation = 0;
-  // One-use plan for the first start; compilation has already validated these pointer domains.
-  std::shared_ptr<SectionCudaGraphInspection> section_cuda_graph_inspection;
-  // Declared last so graphs are destroyed before tasks, modules, streams, and buffers.
-  std::map<int, std::unique_ptr<SectionCudaGraphs>> section_cuda_graphs;
-  // std::map<int, core::Tensor>                         tensors; ///< Allocated tensors by ID.
-};
-
-struct Section {
-  int                                       id;         ///< Section ID.
-  std::string                               name;       ///< Section name (for logging).
-  cudaStream_t                              stream;     ///< CUDA stream for this section.
-  std::vector<GraphPlan::vertex_descriptor> sync_topo;  ///< Synchronous nodes in topological order.
-  std::vector<GraphPlan::vertex_descriptor> async_cons; ///< Asynchronous consumer nodes.
-  std::vector<GraphPlan::vertex_descriptor> async_prod; ///< Asynchronous producer nodes
-  bool has_synchronizing_async_producer = false; ///< Producer supplies the section stream barrier.
-};
-
-struct SyncRt {
-  core::ISyncTask         *task = nullptr;
-  std::vector<core::TView> in_views;
-  std::vector<core::TView> out_views;
-  core::SyncCtx            ctx{};
-};
-
-struct AsyncRt {
-  core::IAsyncTask        *task = nullptr;
-  std::vector<core::TView> in_views;
-  std::vector<core::TView> out_views;
-  core::AsyncPushCtx       pctx{};
-  core::AsyncPopCtx        xctx{};
-};
-
-using NodeRt = std::variant<SyncRt, AsyncRt>;
 
 struct NodeMetrics {
   double   average_duration_ms                = 0.0;
@@ -192,128 +64,14 @@ public:
 
   [[nodiscard]] std::optional<holoflow_event::Event> ui_try_receive() noexcept;
 
-private:
-  void init_tviews();
-  void build_event_handles();
-  void build_nodes_rts();
-  void reset_metrics_state();
-  void start_metrics_thread();
-  void stop_metrics_thread();
-  void metrics_loop();
-  void aggregate_metrics(double interval_seconds);
-  void record_node_sample(std::size_t idx, uint64_t duration_ns, uint64_t host_bytes,
-                          uint64_t device_bytes);
-  static std::pair<uint64_t, uint64_t> sum_bytes(std::span<const core::TView> views);
-
-  void run_router();
-
-  void run_section(int section_id);
-
-  /// This function acquires all owned inputs for the given node.
-  /// Owning tasks publish memory by updating their compiler-provided Storage;
-  /// all scheduler TViews retain pointers to that stable Storage object.
-  /// This function blocks until all owned inputs are acquired.
-  /// On interruption, port identifies the next input to acquire on resume.
-  /// @warning This function must be called on a synchronous or asynchronous
-  /// producer node only.
-  void acquire_owned_inputs(GraphPlan::vertex_descriptor v, size_t &port);
-
-  /// This function releases all owned outputs for the given node.
-  /// Pointer cleanup remains the owning task's responsibility.
-  /// This function does not block. Port tracks partial release across a pause.
-  void release_owned_outputs(GraphPlan::vertex_descriptor v, size_t &port);
-
-  /// Executes a synchronous node.
-  /// @warning This function must be called on a synchronous node only.
-  [[nodiscard]] core::OpResult run_sync(GraphPlan::vertex_descriptor v);
-
-  /// Executes an asynchronous consumer node.
-  /// @warning This function must be called on an asynchronous consumer node only.
-  [[nodiscard]] core::OpResult run_async_cons(GraphPlan::vertex_descriptor v);
-
-  /// Executes an asynchronous producer node.
-  /// @warning This function must be called on an asynchronous producer node only.
-  [[nodiscard]] core::OpResult run_async_prod(GraphPlan::vertex_descriptor v);
+  Scheduler(const Scheduler &)            = delete;
+  Scheduler &operator=(const Scheduler &) = delete;
+  Scheduler(Scheduler &&)                 = delete;
+  Scheduler &operator=(Scheduler &&)      = delete;
 
 private:
-  std::atomic<bool> running_{false}; ///< True if the scheduler is running.
-  std::atomic<bool> stop_{false};    ///< True if a stop has been requested.
-  std::atomic<bool> paused_{false};
-  std::atomic<bool> aborted_{false};
-  struct SectionCheckpoint {
-    enum class Stage { AcquireSync, AcquireProducer, Pop, Compute, Barrier, Push, Release };
-    Stage                                     stage               = Stage::AcquireSync;
-    size_t                                    node                = 0;
-    size_t                                    port                = 0;
-    bool                                      computation_started = false;
-    bool                                      graph_submitted     = false;
-    std::vector<GraphPlan::vertex_descriptor> produced;
-  };
-  std::vector<SectionCheckpoint> checkpoints_;
-  const GraphPlan               &graph_;    ///< The computational graph to execute.
-  const std::vector<Section>    &sections_; ///< Execution sections.
-  ExecResouces                  &res_;      ///< Execution resources (streams, tasks, tensors).
-
-  /// Stable TViews for all tensors by their IDs. Copies across node contexts
-  /// observe ownership changes through their shared Storage pointers.
-  std::vector<core::TView> tviews_;
-
-  std::vector<NodeRt>      node_rts_; ///< Runtime data for each node.
-  std::vector<std::string> node_names_;
-
-  struct NodeMetricAccumulator {
-    std::atomic<uint64_t> duration_ns{0};
-    std::atomic<uint64_t> run_count{0};
-    std::atomic<uint64_t> host_bytes{0};
-    std::atomic<uint64_t> device_bytes{0};
-
-    NodeMetricAccumulator() = default;
-
-    NodeMetricAccumulator(const NodeMetricAccumulator &other) {
-      duration_ns.store(other.duration_ns.load(std::memory_order_relaxed),
-                        std::memory_order_relaxed);
-      run_count.store(other.run_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      host_bytes.store(other.host_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      device_bytes.store(other.device_bytes.load(std::memory_order_relaxed),
-                         std::memory_order_relaxed);
-    }
-
-    NodeMetricAccumulator &operator=(const NodeMetricAccumulator &other) {
-      if (this == &other) {
-        return *this;
-      }
-      duration_ns.store(other.duration_ns.load(std::memory_order_relaxed),
-                        std::memory_order_relaxed);
-      run_count.store(other.run_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      host_bytes.store(other.host_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      device_bytes.store(other.device_bytes.load(std::memory_order_relaxed),
-                         std::memory_order_relaxed);
-      return *this;
-    }
-
-    NodeMetricAccumulator(NodeMetricAccumulator &&other) noexcept : NodeMetricAccumulator(other) {}
-
-    NodeMetricAccumulator &operator=(NodeMetricAccumulator &&other) noexcept {
-      return (*this = other);
-    }
-  };
-
-  std::vector<NodeMetricAccumulator> metric_accumulators_;
-  std::vector<NodeMetricAccumulator> graph_metric_accumulators_;
-
-  mutable std::mutex                 metrics_mutex_;
-  std::map<std::string, NodeMetrics> latest_metrics_;
-  std::map<std::string, NodeMetrics> latest_section_graph_metrics_;
-  std::chrono::milliseconds          metrics_interval_;
-  std::atomic<bool>                  metrics_running_{false};
-  std::thread                        metrics_thread_;
-  std::condition_variable            metrics_cv_;
-  mutable std::mutex                 metrics_thread_mutex_;
-
-  std::vector<std::thread> threads_; ///< Threads for each section.
-
-  holoflow_event::Router                                     router_;
-  std::map<std::string, holoflow_event::Router::NodeHandles> event_handles_;
+  class Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 } // namespace holoflow::runtime

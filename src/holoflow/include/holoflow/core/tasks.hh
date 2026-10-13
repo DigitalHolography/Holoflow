@@ -91,15 +91,39 @@ struct SyncCtx {
 /// Recording-only context. The stream is already capturing into graph. Bindings are private
 /// copies: recording must not publish storage, retain these views, or advance host-side state.
 struct CudaGraphCtx {
+  /// Input views for this task's ports, in port order; not all inputs in the section graph.
   std::span<TView> inputs;
+  /// Output views for this task's ports, in port order, bound to private recording storage.
   std::span<TView> outputs;
-  cudaStream_t     stream;
-  cudaGraph_t      graph;
+  /// Section stream with capture already active; enqueue this task's CUDA work here.
+  cudaStream_t stream;
+  /// Shared section graph receiving the capture, including work recorded by other tasks.
+  /// Borrowed handle for appending explicit nodes; the runtime owns its lifetime.
+  cudaGraph_t graph;
 
-  /// Current capture frontier, including edge data for explicit graph composition.
+  /// Copy the current capture frontier into nodes and edges, replacing their contents.
+  /// These are the dependencies for the next captured operation, not every graph node.
+  /// edges[i] describes the dependency from nodes[i]; preserve both when adding explicit nodes.
+  /// @code
+  /// std::vector<cudaGraphNode_t> nodes;
+  /// std::vector<cudaGraphEdgeData> edges;
+  /// ctx.dependencies(nodes, edges);
+  /// cudaGraphNodeParams params{};
+  /// params.type = cudaGraphNodeTypeEmpty;
+  /// cudaGraphNode_t node;
+  /// CUDA_CHECK(cudaGraphAddNode(&node, ctx.graph, nodes.data(), edges.data(),
+  ///                             nodes.size(), &params));
+  /// @endcode
   void dependencies(std::vector<cudaGraphNode_t>   &nodes,
                     std::vector<cudaGraphEdgeData> &edges) const;
   /// Replace the capture frontier after appending explicit nodes (e.g. a conditional node).
+  /// Subsequent work captured on stream depends on these nodes using default edge data.
+  /// Appending a node to graph alone does not update the stream's capture frontier.
+  /// @code
+  /// // After adding node to ctx.graph with the dependencies shown above:
+  /// ctx.set_dependencies(std::span{&node, size_t{1}});
+  /// // Kernels or copies subsequently enqueued on ctx.stream now depend on node.
+  /// @endcode
   void set_dependencies(std::span<const cudaGraphNode_t> nodes) const;
 };
 
@@ -132,11 +156,14 @@ public:
 };
 
 /// Exact future binding order, relative to the next successful use while the task is paused.
-/// Indices refer to owned_*_pointers(). Retries do not advance; prefix is followed by cycle
-/// forever.
+/// Values are zero-based indices into the vector returned by owned_input_pointers(port) or
+/// owned_output_pointers(port) for the same port, not pointer addresses or port indices.
+/// Retries do not advance; prefix is followed by cycle forever.
+/// For example, prefix {2} and cycle {0, 1} select pointers[2], pointers[0], pointers[1],
+/// pointers[0], pointers[1], ... from that port's pointer vector.
 struct PointerSequence {
-  std::vector<size_t> prefix;
-  std::vector<size_t> cycle;
+  std::vector<size_t> prefix; ///< Finite startup sequence of pointer indices; may be empty.
+  std::vector<size_t> cycle;  ///< Non-empty sequence of pointer indices repeated after prefix.
 };
 
 /// @brief Abstract base interface for tasks with optional tensor ownership.
@@ -294,14 +321,27 @@ struct InferResult {
   std::vector<std::optional<size_t>> owned_output_pointer_counts;
 };
 
-enum class ExecutionUpdatePolicy { AlwaysInvalidate, ExplicitInvalidation };
+/// Controls how dependent executables are invalidated during a task update.
+enum class ExecutionUpdatePolicy {
+  /// The compiler invalidates before calling update(), even if the task is reused unchanged.
+  AlwaysInvalidate,
+  /// The factory may preserve compatible executables. It must call ctx.invalidate_execution()
+  /// before changing captured operations or resources, and guard exception paths with
+  /// ExecutionUpdateGuard so invalidation occurs before captured resources are destroyed.
+  ExplicitInvalidation
+};
 
-/// Compiler-owned, update-scoped invalidation of all executables depending on a task.
-/// The callback must not throw. Standalone factory calls may omit this handle.
+/// Compiler-owned, update-scoped invalidation of all executables depending on one task.
+///
+/// The compiler supplies one instance while creating or updating that task. Calling
+/// invalidate() marks the update as having changed execution-relevant state and invokes the
+/// callback once. The callback must not throw. A factory called outside the compiler may leave
+/// the callback empty and use the object only as a local, idempotent flag.
 struct ExecutionInvalidation {
   std::function<void()> callback;
   bool                  invalidated = false;
 
+  /// Invalidate dependent executables, if this has not already been done for the update.
   void invalidate() noexcept {
     if (!invalidated) {
       invalidated = true;
@@ -311,8 +351,14 @@ struct ExecutionInvalidation {
   }
 };
 
-/// Invalidates on unwind before the update's old_task parameter is destroyed. Captured ownership
-/// must stay in old_task until all fallible work succeeds; local owners unwind before this guard.
+/// RAII guard for exception paths in a task update.
+///
+/// Construct it in the update function after obtaining the invalidation handle. If an exception
+/// leaves the guarded scope, it invalidates dependent executables; normal return does nothing.
+/// The pointer is non-owning and may be null. Because function parameters are destroyed after the
+/// function body, this guard runs while the update's old_task parameter is still alive. Keep any
+/// execution resources captured by old_task there until fallible update work has completed; local
+/// replacement owners declared after this guard are destroyed before the guard runs.
 class ExecutionUpdateGuard {
 public:
   explicit ExecutionUpdateGuard(ExecutionInvalidation *invalidation) noexcept
@@ -329,7 +375,9 @@ private:
 
 /// Context for sync task creation and updates.
 struct SyncCreateCtx {
-  cudaStream_t           stream = static_cast<cudaStream_t>(0); ///< CUDA stream for task execution
+  cudaStream_t stream = static_cast<cudaStream_t>(0); ///< CUDA stream for task execution
+  /// Borrowed invalidation handle supplied by the compiler during updates. Null during initial
+  /// creation or when omitted by standalone callers; invalidate_execution() then does nothing.
   ExecutionInvalidation *execution_invalidation = nullptr;
   void                   invalidate_execution() const noexcept {
     if (execution_invalidation)
@@ -342,7 +390,9 @@ struct AsyncCreateCtx {
   /// CUDA streams for producer side.
   cudaStream_t producer_stream = static_cast<cudaStream_t>(0);
   /// CUDA streams for consumer side.
-  cudaStream_t           consumer_stream        = static_cast<cudaStream_t>(0);
+  cudaStream_t consumer_stream = static_cast<cudaStream_t>(0);
+  /// Borrowed invalidation handle supplied by the compiler during updates. Null during initial
+  /// creation or when omitted by standalone callers; invalidate_execution() then does nothing.
   ExecutionInvalidation *execution_invalidation = nullptr;
   void                   invalidate_execution() const noexcept {
     if (execution_invalidation)

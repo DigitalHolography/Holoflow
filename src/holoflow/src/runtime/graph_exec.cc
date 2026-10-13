@@ -18,13 +18,26 @@
 #include "holoflow/runtime/tracing.hh"
 
 #include <algorithm>
+#include <array>
+#include <atomic>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/graph_traits.hpp>
 #include <chrono>
+#include <condition_variable>
+#include <cstdlib>
+#include <exception>
 #include <format>
 #include <map>
 #include <mutex>
 #include <nvtx3/nvtx3.hpp>
+#include <ranges>
+#include <set>
+#include <span>
+#include <stdexcept>
+#include <string_view>
+#include <thread>
+#include <utility>
+#include <variant>
 #include <vector>
 #include <windows.h>
 
@@ -120,8 +133,180 @@ void *MemoryBlock::get() {
   return ptr;
 }
 
-Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
-                     ExecResouces &resources, std::chrono::milliseconds metrics_interval)
+class Scheduler::Impl {
+public:
+  Impl(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
+       std::chrono::milliseconds metrics_interval = std::chrono::milliseconds{1000});
+
+  ~Impl();
+
+  void set_metrics_interval(std::chrono::milliseconds interval);
+  [[nodiscard]] std::map<std::string, NodeMetrics> metrics() const;
+  /// Host submission timing/counts for section graph launches, not GPU execution duration.
+  [[nodiscard]] std::map<std::string, NodeMetrics> section_graph_metrics() const;
+  [[nodiscard]] nlohmann::json                     section_graph_diagnostics() const;
+
+  void start();
+  /// Suspend with acquired buffers and completed operations retained for start().
+  void request_pause();
+  void request_stop();
+  void wait();
+
+  bool is_running() const;
+  bool stop_requested() const;
+
+  [[nodiscard]] bool ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept;
+
+  [[nodiscard]] std::optional<holoflow_event::Event> ui_try_receive() noexcept;
+
+private:
+  struct SyncRt {
+    core::ISyncTask         *task = nullptr;
+    std::vector<core::TView> in_views;
+    std::vector<core::TView> out_views;
+    core::SyncCtx            ctx{};
+  };
+
+  struct AsyncRt {
+    core::IAsyncTask        *task = nullptr;
+    std::vector<core::TView> in_views;
+    std::vector<core::TView> out_views;
+    core::AsyncPushCtx       pctx{};
+    core::AsyncPopCtx        xctx{};
+  };
+
+  using NodeRt = std::variant<SyncRt, AsyncRt>;
+
+  void init_tviews();
+  void build_event_handles();
+  void build_nodes_rts();
+  void reset_metrics_state();
+  void start_metrics_thread();
+  void stop_metrics_thread();
+  void metrics_loop();
+  void aggregate_metrics(double interval_seconds);
+  void record_node_sample(std::size_t idx, uint64_t duration_ns, uint64_t host_bytes,
+                          uint64_t device_bytes);
+  static std::pair<uint64_t, uint64_t> sum_bytes(std::span<const core::TView> views);
+
+  void run_router();
+
+  void run_section(int section_id);
+
+  /// This function acquires all owned inputs for the given node.
+  /// Owning tasks publish memory by updating their compiler-provided Storage;
+  /// all scheduler TViews retain pointers to that stable Storage object.
+  /// Waits for each owned input to become available, unless interrupted by a stop request.
+  /// @param[in,out] port Next input port to process; starts at 0 and skips non-owned ports.
+  /// Preserved on interruption to avoid duplicate acquisition. Equals owned_inputs.size() on
+  /// completion; reset to 0 for the next node.
+  /// @warning This function must be called on a synchronous or asynchronous
+  /// producer node only.
+  void acquire_owned_inputs(GraphPlan::vertex_descriptor v, size_t &port);
+
+  /// This function releases all owned outputs for the given node.
+  /// Pointer cleanup remains the owning task's responsibility.
+  /// This function does not block; a pause request may interrupt it between releases.
+  /// @param[in,out] port Next output port to process; starts at 0 and skips non-owned ports.
+  /// Preserved on pause to avoid duplicate release. Equals owned_outputs.size() on completion;
+  /// reset to 0 for the next node.
+  void release_owned_outputs(GraphPlan::vertex_descriptor v, size_t &port);
+
+  /// Executes a synchronous node.
+  /// @warning This function must be called on a synchronous node only.
+  [[nodiscard]] core::OpResult run_sync(GraphPlan::vertex_descriptor v);
+
+  /// Executes an asynchronous consumer node.
+  /// @warning This function must be called on an asynchronous consumer node only.
+  [[nodiscard]] core::OpResult run_async_cons(GraphPlan::vertex_descriptor v);
+
+  /// Executes an asynchronous producer node.
+  /// @warning This function must be called on an asynchronous producer node only.
+  [[nodiscard]] core::OpResult run_async_prod(GraphPlan::vertex_descriptor v);
+
+private:
+  std::atomic<bool> running_{false}; ///< True if the scheduler is running.
+  std::atomic<bool> stop_{false};    ///< True if a stop has been requested.
+  std::atomic<bool> paused_{false};
+  std::atomic<bool> aborted_{false};
+  struct SectionCheckpoint {
+    enum class Stage { AcquireSync, AcquireProducer, Pop, Compute, Barrier, Push, Release };
+    Stage                                     stage               = Stage::AcquireSync;
+    size_t                                    node                = 0;
+    size_t                                    port                = 0;
+    bool                                      computation_started = false;
+    bool                                      graph_submitted     = false;
+    std::vector<GraphPlan::vertex_descriptor> produced;
+  };
+  std::vector<SectionCheckpoint> checkpoints_;
+  const GraphPlan               &graph_;    ///< The computational graph to execute.
+  const std::vector<Section>    &sections_; ///< Execution sections.
+  ExecResouces                  &res_;      ///< Execution resources (streams, tasks, tensors).
+
+  /// Stable TViews for all tensors by their IDs. Copies across node contexts
+  /// observe ownership changes through their shared Storage pointers.
+  std::vector<core::TView> tviews_;
+
+  std::vector<NodeRt>      node_rts_; ///< Runtime data for each node.
+  std::vector<std::string> node_names_;
+
+  struct NodeMetricAccumulator {
+    std::atomic<uint64_t> duration_ns{0};
+    std::atomic<uint64_t> run_count{0};
+    std::atomic<uint64_t> host_bytes{0};
+    std::atomic<uint64_t> device_bytes{0};
+
+    NodeMetricAccumulator() = default;
+
+    NodeMetricAccumulator(const NodeMetricAccumulator &other) {
+      duration_ns.store(other.duration_ns.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+      run_count.store(other.run_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      host_bytes.store(other.host_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      device_bytes.store(other.device_bytes.load(std::memory_order_relaxed),
+                         std::memory_order_relaxed);
+    }
+
+    NodeMetricAccumulator &operator=(const NodeMetricAccumulator &other) {
+      if (this == &other) {
+        return *this;
+      }
+      duration_ns.store(other.duration_ns.load(std::memory_order_relaxed),
+                        std::memory_order_relaxed);
+      run_count.store(other.run_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      host_bytes.store(other.host_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
+      device_bytes.store(other.device_bytes.load(std::memory_order_relaxed),
+                         std::memory_order_relaxed);
+      return *this;
+    }
+
+    NodeMetricAccumulator(NodeMetricAccumulator &&other) noexcept : NodeMetricAccumulator(other) {}
+
+    NodeMetricAccumulator &operator=(NodeMetricAccumulator &&other) noexcept {
+      return (*this = other);
+    }
+  };
+
+  std::vector<NodeMetricAccumulator> metric_accumulators_;
+  std::vector<NodeMetricAccumulator> graph_metric_accumulators_;
+
+  mutable std::mutex                 metrics_mutex_;
+  std::map<std::string, NodeMetrics> latest_metrics_;
+  std::map<std::string, NodeMetrics> latest_section_graph_metrics_;
+  std::chrono::milliseconds          metrics_interval_;
+  std::atomic<bool>                  metrics_running_{false};
+  std::thread                        metrics_thread_;
+  std::condition_variable            metrics_cv_;
+  mutable std::mutex                 metrics_thread_mutex_;
+
+  std::vector<std::thread> threads_; ///< Threads for each section.
+
+  holoflow_event::Router                                     router_;
+  std::map<std::string, holoflow_event::Router::NodeHandles> event_handles_;
+};
+
+Scheduler::Impl::Impl(const GraphPlan &graph, const std::vector<Section> &sections,
+                      ExecResouces &resources, std::chrono::milliseconds metrics_interval)
     : graph_(graph), sections_(sections), res_(resources), metrics_interval_(metrics_interval) {
   tracing::ScopedTrace trace("Initialize Scheduler", "scheduler");
 
@@ -145,7 +330,7 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
   }
 }
 
-Scheduler::~Scheduler() {
+Scheduler::Impl::~Impl() {
   if (is_running() || paused_.load()) {
     request_stop();
     wait();
@@ -154,7 +339,7 @@ Scheduler::~Scheduler() {
   }
 }
 
-void Scheduler::set_metrics_interval(std::chrono::milliseconds interval) {
+void Scheduler::Impl::set_metrics_interval(std::chrono::milliseconds interval) {
   if (interval.count() <= 0) {
     interval = std::chrono::milliseconds{1};
   }
@@ -165,24 +350,24 @@ void Scheduler::set_metrics_interval(std::chrono::milliseconds interval) {
   metrics_cv_.notify_all();
 }
 
-std::map<std::string, NodeMetrics> Scheduler::metrics() const {
+std::map<std::string, NodeMetrics> Scheduler::Impl::metrics() const {
   std::lock_guard<std::mutex> lock(metrics_mutex_);
   return latest_metrics_;
 }
 
-std::map<std::string, NodeMetrics> Scheduler::section_graph_metrics() const {
+std::map<std::string, NodeMetrics> Scheduler::Impl::section_graph_metrics() const {
   std::lock_guard<std::mutex> lock(metrics_mutex_);
   return latest_section_graph_metrics_;
 }
 
-nlohmann::json Scheduler::section_graph_diagnostics() const {
+nlohmann::json Scheduler::Impl::section_graph_diagnostics() const {
   auto result = nlohmann::json::array();
   for (const auto &[id, graphs] : res_.section_cuda_graphs)
     result.push_back(graphs->snapshot());
   return result;
 }
 
-void Scheduler::start() {
+void Scheduler::Impl::start() {
   tracing::ScopedTrace trace("Scheduler Start", "scheduler");
   logger()->info("[Scheduler::start] Starting scheduler");
   if (running_.exchange(true)) {
@@ -224,20 +409,20 @@ void Scheduler::start() {
   tracing::ScopedTrace workers("Create Scheduler Workers", "scheduler");
   threads_.reserve(sections_.size());
   for (size_t i = 0; i < sections_.size(); i++) {
-    threads_.emplace_back(&Scheduler::run_section, this, static_cast<int>(i));
+    threads_.emplace_back(&Scheduler::Impl::run_section, this, static_cast<int>(i));
   }
 
-  threads_.emplace_back(&Scheduler::run_router, this);
+  threads_.emplace_back(&Scheduler::Impl::run_router, this);
 }
 
-void Scheduler::request_pause() {
+void Scheduler::Impl::request_pause() {
   if (!running_.load() || stop_.load())
     return;
   paused_.store(true);
   stop_.store(true);
 }
 
-void Scheduler::request_stop() {
+void Scheduler::Impl::request_stop() {
   tracing::ScopedTrace trace("Scheduler Request Stop", "scheduler");
   logger()->info("[Scheduler::request_stop] Requesting scheduler to stop");
   aborted_.store(true);
@@ -253,7 +438,7 @@ void Scheduler::request_stop() {
   }
 }
 
-void Scheduler::wait() {
+void Scheduler::Impl::wait() {
   tracing::ScopedTrace trace("Scheduler Wait", "scheduler");
   logger()->info("[Scheduler::wait] Waiting for scheduler to stop");
   for (auto &t : threads_) {
@@ -304,19 +489,19 @@ void Scheduler::wait() {
   // TODO: Is this really the best place to reset running_?
 }
 
-bool Scheduler::is_running() const { return running_.load(); }
+bool Scheduler::Impl::is_running() const { return running_.load(); }
 
-bool Scheduler::stop_requested() const { return stop_.load(); }
+bool Scheduler::Impl::stop_requested() const { return stop_.load(); }
 
-bool Scheduler::ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept {
+bool Scheduler::Impl::ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept {
   return router_.ui_try_send(node_id, std::move(data));
 }
 
-std::optional<holoflow_event::Event> Scheduler::ui_try_receive() noexcept {
+std::optional<holoflow_event::Event> Scheduler::Impl::ui_try_receive() noexcept {
   return router_.ui_try_receive();
 }
 
-void Scheduler::init_tviews() {
+void Scheduler::Impl::init_tviews() {
   auto nb_tids = count_distinct_tids(graph_);
   tviews_.assign(nb_tids, core::TView{});
 
@@ -342,7 +527,7 @@ void Scheduler::init_tviews() {
 // }
 // }
 
-void Scheduler::build_event_handles() {
+void Scheduler::Impl::build_event_handles() {
   event_handles_.clear();
   for (auto v : boost::make_iterator_range(boost::vertices(graph_))) {
     const auto &np = graph_[v];
@@ -350,7 +535,7 @@ void Scheduler::build_event_handles() {
   }
 }
 
-void Scheduler::build_nodes_rts() {
+void Scheduler::Impl::build_nodes_rts() {
   const auto num_vertices = boost::num_vertices(graph_);
   node_rts_.resize(num_vertices);
   node_names_.resize(num_vertices);
@@ -404,7 +589,7 @@ void Scheduler::build_nodes_rts() {
   }
 }
 
-void Scheduler::run_router() {
+void Scheduler::Impl::run_router() {
   tracing::set_thread_name("Scheduler Router");
   try {
     logger()->info("[Scheduler::run_router] Starting event router");
@@ -419,7 +604,7 @@ void Scheduler::run_router() {
   }
 }
 
-void Scheduler::run_section(int section_id) {
+void Scheduler::Impl::run_section(int section_id) {
   const auto &sec = sections_.at(section_id);
   tracing::set_thread_name(std::format("Section {}: {}", section_id, sec.name));
   auto &checkpoint   = checkpoints_.at(section_id);
@@ -665,7 +850,7 @@ void Scheduler::run_section(int section_id) {
 //   }
 // }
 
-void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v, size_t &port) {
+void Scheduler::Impl::acquire_owned_inputs(GraphPlan::vertex_descriptor v, size_t &port) {
   const auto  idx        = boost::get(boost::vertex_index, graph_, v);
   const auto &np         = graph_[v];
   auto       &nrt        = node_rts_.at(idx);
@@ -690,7 +875,7 @@ void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v, size_t &por
   }
 }
 
-void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v, size_t &port) {
+void Scheduler::Impl::release_owned_outputs(GraphPlan::vertex_descriptor v, size_t &port) {
   const auto  idx        = boost::get(boost::vertex_index, graph_, v);
   const auto &np         = graph_[v];
   auto       &nrt        = node_rts_.at(idx);
@@ -710,7 +895,7 @@ void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v, size_t &po
   }
 }
 
-core::OpResult Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
+core::OpResult Scheduler::Impl::run_sync(GraphPlan::vertex_descriptor v) {
   using clock     = std::chrono::high_resolution_clock;
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
@@ -766,7 +951,7 @@ core::OpResult Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
   return r;
 }
 
-core::OpResult Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
+core::OpResult Scheduler::Impl::run_async_cons(GraphPlan::vertex_descriptor v) {
   using clock     = std::chrono::high_resolution_clock;
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
@@ -819,7 +1004,7 @@ core::OpResult Scheduler::run_async_cons(GraphPlan::vertex_descriptor v) {
   return r;
 }
 
-core::OpResult Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
+core::OpResult Scheduler::Impl::run_async_prod(GraphPlan::vertex_descriptor v) {
   using clock     = std::chrono::high_resolution_clock;
   const auto  idx = boost::get(boost::vertex_index, graph_, v);
   const auto &np  = graph_[v];
@@ -872,7 +1057,7 @@ core::OpResult Scheduler::run_async_prod(GraphPlan::vertex_descriptor v) {
   return r;
 }
 
-void Scheduler::reset_metrics_state() {
+void Scheduler::Impl::reset_metrics_state() {
   auto num_vertices = boost::num_vertices(graph_);
   metric_accumulators_.clear();
   metric_accumulators_.resize(num_vertices);
@@ -887,7 +1072,7 @@ void Scheduler::reset_metrics_state() {
   }
 }
 
-void Scheduler::start_metrics_thread() {
+void Scheduler::Impl::start_metrics_thread() {
   if (metrics_interval_.count() <= 0) {
     return;
   }
@@ -895,10 +1080,10 @@ void Scheduler::start_metrics_thread() {
   if (!metrics_running_.compare_exchange_strong(expected, true)) {
     return;
   }
-  metrics_thread_ = std::thread(&Scheduler::metrics_loop, this);
+  metrics_thread_ = std::thread(&Scheduler::Impl::metrics_loop, this);
 }
 
-void Scheduler::stop_metrics_thread() {
+void Scheduler::Impl::stop_metrics_thread() {
   bool expected = true;
   if (!metrics_running_.compare_exchange_strong(expected, false)) {
     return;
@@ -910,7 +1095,7 @@ void Scheduler::stop_metrics_thread() {
   metrics_thread_ = std::thread();
 }
 
-void Scheduler::metrics_loop() {
+void Scheduler::Impl::metrics_loop() {
   tracing::set_thread_name("Scheduler Metrics");
   auto                         last = std::chrono::steady_clock::now();
   std::unique_lock<std::mutex> lock(metrics_thread_mutex_);
@@ -929,7 +1114,7 @@ void Scheduler::metrics_loop() {
   aggregate_metrics(elapsed);
 }
 
-void Scheduler::aggregate_metrics(double interval_seconds) {
+void Scheduler::Impl::aggregate_metrics(double interval_seconds) {
   if (interval_seconds <= 0.0) {
     interval_seconds = static_cast<double>(metrics_interval_.count()) / 1000.0;
   }
@@ -994,8 +1179,8 @@ void Scheduler::aggregate_metrics(double interval_seconds) {
   latest_section_graph_metrics_ = std::move(section_snapshot);
 }
 
-void Scheduler::record_node_sample(std::size_t idx, uint64_t duration_ns, uint64_t host_bytes,
-                                   uint64_t device_bytes) {
+void Scheduler::Impl::record_node_sample(std::size_t idx, uint64_t duration_ns, uint64_t host_bytes,
+                                         uint64_t device_bytes) {
   auto &acc = metric_accumulators_.at(idx);
   acc.duration_ns.fetch_add(duration_ns, std::memory_order_relaxed);
   acc.run_count.fetch_add(1, std::memory_order_relaxed);
@@ -1003,7 +1188,7 @@ void Scheduler::record_node_sample(std::size_t idx, uint64_t duration_ns, uint64
   acc.device_bytes.fetch_add(device_bytes, std::memory_order_relaxed);
 }
 
-std::pair<uint64_t, uint64_t> Scheduler::sum_bytes(std::span<const core::TView> views) {
+std::pair<uint64_t, uint64_t> Scheduler::Impl::sum_bytes(std::span<const core::TView> views) {
   uint64_t host_total   = 0;
   uint64_t device_total = 0;
   for (const auto &view : views) {
@@ -1015,6 +1200,50 @@ std::pair<uint64_t, uint64_t> Scheduler::sum_bytes(std::span<const core::TView> 
     }
   }
   return {host_total, device_total};
+}
+
+// -------------------------------------------------------------------------------------------------
+// Public API PIMPL forwarding
+// -------------------------------------------------------------------------------------------------
+
+Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
+                     ExecResouces &resources, std::chrono::milliseconds metrics_interval)
+    : impl_(std::make_unique<Impl>(graph, sections, resources, metrics_interval)) {}
+
+Scheduler::~Scheduler() = default;
+
+void Scheduler::set_metrics_interval(std::chrono::milliseconds interval) {
+  impl_->set_metrics_interval(interval);
+}
+
+std::map<std::string, NodeMetrics> Scheduler::metrics() const { return impl_->metrics(); }
+
+std::map<std::string, NodeMetrics> Scheduler::section_graph_metrics() const {
+  return impl_->section_graph_metrics();
+}
+
+nlohmann::json Scheduler::section_graph_diagnostics() const {
+  return impl_->section_graph_diagnostics();
+}
+
+void Scheduler::start() { impl_->start(); }
+
+void Scheduler::request_pause() { impl_->request_pause(); }
+
+void Scheduler::request_stop() { impl_->request_stop(); }
+
+void Scheduler::wait() { impl_->wait(); }
+
+bool Scheduler::is_running() const { return impl_->is_running(); }
+
+bool Scheduler::stop_requested() const { return impl_->stop_requested(); }
+
+bool Scheduler::ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept {
+  return impl_->ui_try_send(node_id, std::move(data));
+}
+
+std::optional<holoflow_event::Event> Scheduler::ui_try_receive() noexcept {
+  return impl_->ui_try_receive();
 }
 
 } // namespace holoflow::runtime
