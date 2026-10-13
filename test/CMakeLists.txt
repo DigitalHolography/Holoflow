@@ -44,6 +44,8 @@ if(ENABLE_COVERAGE)
     )
     set_tests_properties(coverage::production_image PROPERTIES
         LABELS coverage
-        TIMEOUT 10
+        # Native coverage instrumentation of the complete production image can
+        # take substantially longer than the probe itself on Windows runners.
+        TIMEOUT 120
     )
 endif()
