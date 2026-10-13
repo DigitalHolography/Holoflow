@@ -1,0 +1,30 @@
+digraph SectionExecution {
+  graph [rankdir=TB, bgcolor="white", pad=0.3, nodesep=0.4, ranksep=0.35,
+         fontname="Helvetica", fontsize=13];
+  node [shape=box, style="rounded,filled", fillcolor="#dcfce7", color="#64748b",
+        fontname="Helvetica", fontsize=12, fontcolor="#172033", margin="0.18,0.10"];
+  edge [fontname="Helvetica", fontsize=11, color="#64748b", fontcolor="#334155",
+        arrowsize=0.7];
+  acquire [label="Acquire owned inputs\nSync tasks + async producers"];
+  pop [label="Pop async consumers\nEstablish current buffer bindings"];
+  enabled [label="Graph set enabled?", shape=diamond, fillcolor="#fef3c7"];
+  lookup [label="Look up current address tuple", fillcolor="#dbeafe"];
+  hit [label="Prepared tuple?", shape=diamond, fillcolor="#fef3c7"];
+  launch [label="cudaGraphLaunch\nOne captured compute submission", fillcolor="#dbeafe"];
+  miss [label="Report miss + disable graph set\nNo graph has been submitted", fillcolor="#fee2e2"];
+  ordinary [label="Run synchronous tasks normally"];
+  barrier [label="Section stream barrier\nOr barrier supplied by async producer"];
+  push [label="Push async producers"];
+  release [label="Release produced owned outputs"];
+  acquire -> pop -> enabled;
+  enabled -> lookup [label="yes"];
+  enabled -> ordinary [label="no"];
+  lookup -> hit;
+  hit -> launch [label="hit"];
+  hit -> miss [label="miss"];
+  miss -> ordinary;
+  launch -> barrier;
+  ordinary -> barrier;
+  barrier -> push -> release;
+  release -> acquire [label="next iteration", constraint=false];
+}
