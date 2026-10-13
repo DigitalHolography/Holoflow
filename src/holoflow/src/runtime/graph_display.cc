@@ -26,6 +26,7 @@
 #include <iomanip>
 #include <memory>
 #include <queue>
+#include <span>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -39,6 +40,12 @@ namespace {
 
 using namespace holoflow::core;
 using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
+
+struct CompiledGraphDumpMetadata {
+  std::vector<size_t>      stream_ids;
+  std::vector<std::string> task_names;
+  std::vector<uintptr_t>   section_stream_addresses;
+};
 
 static std::string replace_newlines_escaped_with_l(const std::string &s) {
   std::string out;
@@ -168,6 +175,39 @@ std::string format_tdesc(const TDesc &d) {
 } // namespace
 namespace holoflow::runtime {
 
+struct GraphCompiledDumpSnapshot {
+  GraphPlan                 graph;
+  std::vector<Section>      sections;
+  std::map<size_t, size_t>  tid_to_sid;
+  CompiledGraphDumpMetadata metadata;
+};
+
+static CompiledGraphDumpMetadata snapshot_compiled_metadata(const CompilerOutput &out) {
+  CompiledGraphDumpMetadata metadata;
+  metadata.stream_ids.reserve(out.resources.streams.size());
+  for (const auto &[id, stream] : out.resources.streams)
+    metadata.stream_ids.push_back(id);
+  metadata.task_names.reserve(out.resources.tasks.size());
+  for (const auto &[name, task] : out.resources.tasks)
+    metadata.task_names.push_back(name);
+  metadata.section_stream_addresses.reserve(out.sections.size());
+  for (const auto &section : out.sections)
+    metadata.section_stream_addresses.push_back(reinterpret_cast<uintptr_t>(section.stream));
+  return metadata;
+}
+
+std::shared_ptr<const GraphCompiledDumpSnapshot>
+make_graph_compiled_dump_snapshot(const CompilerOutput &out) {
+  auto snapshot        = std::make_shared<GraphCompiledDumpSnapshot>();
+  snapshot->graph      = out.graph;
+  snapshot->sections   = out.sections;
+  snapshot->tid_to_sid = out.resources.tid_to_sid;
+  snapshot->metadata   = snapshot_compiled_metadata(out);
+  for (auto &section : snapshot->sections)
+    section.stream = nullptr;
+  return snapshot;
+}
+
 static bool uses_section_layout(const GraphCompiledDumpPreferences &prefs) {
   return prefs.dump_section_info && prefs.layout != GraphCompiledDumpPreferences::Layout::Normal;
 }
@@ -208,12 +248,12 @@ static void write_compiled_graph_header(std::ostringstream                 &ss,
 }
 
 static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPlan &g,
-                                 const holoflow::runtime::ExecResouces &res,
-                                 const GraphCompiledDumpPreferences    &prefs) {
+                                 const std::map<size_t, size_t>     &tid_to_sid,
+                                 const GraphCompiledDumpPreferences &prefs) {
 
   auto fmt_id = [&](int tid) -> std::string {
-    if (res.tid_to_sid.contains(tid)) {
-      return std::format("{}(s:{})", tid, res.tid_to_sid.at(tid));
+    if (tid_to_sid.contains(tid)) {
+      return std::format("{}(s:{})", tid, tid_to_sid.at(tid));
     }
     return std::to_string(tid);
   };
@@ -256,10 +296,10 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
         std::string id_text = fmt_id(out_tid);
 
         bool is_alias = false;
-        if (res.tid_to_sid.count(out_tid)) {
-          const size_t out_sid = res.tid_to_sid.at(out_tid);
+        if (tid_to_sid.count(out_tid)) {
+          const size_t out_sid = tid_to_sid.at(out_tid);
           for (int in_tid : np.in_tids) {
-            if (res.tid_to_sid.count(in_tid) && res.tid_to_sid.at(in_tid) == out_sid) {
+            if (tid_to_sid.count(in_tid) && tid_to_sid.at(in_tid) == out_sid) {
               is_alias = true;
               break;
             }
@@ -304,14 +344,12 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
   }
 }
 
-static std::vector<size_t>
-get_section_layout_order(const std::vector<runtime::Section> &sections);
+static std::vector<size_t> get_section_layout_order(const std::vector<runtime::Section> &sections);
 
-static void write_compiled_edges(std::ostringstream                    &ss,
-                                 const runtime::GraphPlan              &g,
-                                 const holoflow::runtime::ExecResouces &res,
-                                 const GraphCompiledDumpPreferences    &prefs,
-                                 const std::vector<runtime::Section>   &sections) {
+static void write_compiled_edges(std::ostringstream &ss, const runtime::GraphPlan &g,
+                                 const std::map<size_t, size_t>      &tid_to_sid,
+                                 const GraphCompiledDumpPreferences  &prefs,
+                                 const std::vector<runtime::Section> &sections) {
 
   auto get_visual_id = [&](size_t v, bool is_source) -> std::string {
     if (g[v].infer.kind == core::TaskKind::Async) {
@@ -343,15 +381,13 @@ static void write_compiled_edges(std::ostringstream                    &ss,
     bool reverse_edge = false;
     if (uses_snake_layout(prefs)) {
       for (size_t section_idx = 0; section_idx < sections.size(); ++section_idx) {
-        const auto &section = sections[section_idx];
-        const bool  contains_source =
-            g[u].infer.kind == core::TaskKind::Async
-                ? contains_vertex(section.async_cons, u)
-                : contains_vertex(section.sync_topo, u);
-        const bool contains_target =
-            g[v].infer.kind == core::TaskKind::Async
-                ? contains_vertex(section.async_prod, v)
-                : contains_vertex(section.sync_topo, v);
+        const auto &section         = sections[section_idx];
+        const bool  contains_source = g[u].infer.kind == core::TaskKind::Async
+                                          ? contains_vertex(section.async_cons, u)
+                                          : contains_vertex(section.sync_topo, u);
+        const bool  contains_target = g[v].infer.kind == core::TaskKind::Async
+                                          ? contains_vertex(section.async_prod, v)
+                                          : contains_vertex(section.sync_topo, v);
         if (contains_source && contains_target) {
           reverse_edge = section_positions[section_idx] % 2 != 0;
           break;
@@ -361,13 +397,12 @@ static void write_compiled_edges(std::ostringstream                    &ss,
 
     std::ostringstream edge_lbl;
     edge_lbl << "tid:" << ep.tid;
-    if (res.tid_to_sid.count(ep.tid)) {
-      edge_lbl << " (s:" << res.tid_to_sid.at(ep.tid) << ")";
+    if (tid_to_sid.count(ep.tid)) {
+      edge_lbl << " (s:" << tid_to_sid.at(ep.tid) << ")";
     }
     edge_lbl << "\\n" << format_tdesc(ep.desc);
 
-    ss << std::format("  {} -> {} ", reverse_edge ? v_vis : u_vis,
-                      reverse_edge ? u_vis : v_vis);
+    ss << std::format("  {} -> {} ", reverse_edge ? v_vis : u_vis, reverse_edge ? u_vis : v_vis);
     if (reverse_edge) {
       ss << "[dir=back]";
     }
@@ -384,14 +419,13 @@ static void write_compiled_edges(std::ostringstream                    &ss,
   }
 }
 
-static void write_compiled_resources(std::ostringstream                    &ss,
-                                     const holoflow::runtime::ExecResouces &res) {
+static void write_compiled_resources(std::ostringstream              &ss,
+                                     const CompiledGraphDumpMetadata &metadata) {
   ss << "  // --- resources summary ---\n";
 
   ss << "  // streams: ";
   bool first = true;
-  for (const auto &[id, stream] : res.streams) {
-    (void)stream;
+  for (const auto id : metadata.stream_ids) {
     ss << (first ? "" : ", ") << id;
     first = false;
   }
@@ -399,8 +433,7 @@ static void write_compiled_resources(std::ostringstream                    &ss,
 
   ss << "  // tasks: ";
   first = true;
-  for (const auto &[name, task] : res.tasks) {
-    (void)task;
+  for (const auto &name : metadata.task_names) {
     ss << (first ? "" : ", ") << name;
     first = false;
   }
@@ -462,7 +495,8 @@ static std::vector<size_t> get_section_layout_order(const std::vector<runtime::S
 
 static void write_compiled_sections(std::ostringstream                  &ss,
                                     const std::vector<runtime::Section> &sections,
-                                    const GraphCompiledDumpPreferences  &prefs) {
+                                    const GraphCompiledDumpPreferences  &prefs,
+                                    std::span<const uintptr_t>           stream_addresses) {
   const bool row_layout   = uses_section_layout(prefs);
   const bool block_layout = uses_block_layout(prefs);
   const bool snake_layout = uses_snake_layout(prefs);
@@ -484,7 +518,7 @@ static void write_compiled_sections(std::ostringstream                  &ss,
       ss << ": " << escape_for_label(sec.name);
     }
     if (prefs.dump_section_stream_addr) {
-      ss << std::format(" (Stream {})", (void *)sec.stream);
+      ss << std::format(" (Stream {})", reinterpret_cast<void *>(stream_addresses[section_idx]));
     }
     ss << std::format("\\l\";\n");
 
@@ -560,23 +594,39 @@ static void write_compiled_sections(std::ostringstream                  &ss,
   }
 }
 
-std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
-                   std::string filename) {
+static std::string render_compiled_graph(const GraphPlan                    &graph,
+                                         const std::vector<Section>         &sections,
+                                         const std::map<size_t, size_t>     &tid_to_sid,
+                                         const CompiledGraphDumpMetadata    &metadata,
+                                         const GraphCompiledDumpPreferences &prefs,
+                                         const std::string                  &filename) {
   std::ostringstream ss;
   write_compiled_graph_header(ss, prefs, filename);
 
   if (prefs.dump_resource_info) {
-    write_compiled_resources(ss, out.resources);
+    write_compiled_resources(ss, metadata);
   }
-  write_compiled_nodes(ss, out.graph, out.resources, prefs);
+  write_compiled_nodes(ss, graph, tid_to_sid, prefs);
   ss << "\n";
-  write_compiled_edges(ss, out.graph, out.resources, prefs, out.sections);
+  write_compiled_edges(ss, graph, tid_to_sid, prefs, sections);
   ss << "\n";
   if (prefs.dump_section_info) {
-    write_compiled_sections(ss, out.sections, prefs);
+    write_compiled_sections(ss, sections, prefs, metadata.section_stream_addresses);
   }
   ss << "}\n";
   return ss.str();
+}
+
+std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
+                   std::string filename) {
+  return render_compiled_graph(out.graph, out.sections, out.resources.tid_to_sid,
+                               snapshot_compiled_metadata(out), prefs, filename);
+}
+
+std::string to_dot(const GraphCompiledDumpSnapshot    &snapshot,
+                   const GraphCompiledDumpPreferences &prefs, std::string filename) {
+  return render_compiled_graph(snapshot.graph, snapshot.sections, snapshot.tid_to_sid,
+                               snapshot.metadata, prefs, filename);
 }
 
 } // namespace holoflow::runtime

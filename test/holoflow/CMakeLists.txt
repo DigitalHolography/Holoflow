@@ -15,8 +15,11 @@
 add_executable(holoflow_core_test
     core_additional_test.cc
     core_test.cc
+    diagnostics_file_writer_test.cc
     event_router_test.cc
     graph_display_test.cc
+    logger_test.cc
+    tracing_test.cc
 )
 
 target_include_directories(holoflow_core_test
@@ -40,6 +43,7 @@ add_executable(holoflow_runtime_test
     compiler_additional_test.cc
     compiler_test.cc
     functional_device_test.cu
+    section_cuda_graph_test.cu
     functional_test.cc
     scheduler_additional_test.cc
     scheduler_functional_test.cc
@@ -61,3 +65,10 @@ holoflow_discover_tests(holoflow_runtime_test
     TIMEOUT 60
     RESOURCE_LOCK holoflow_gpu
 )
+
+if(ENABLE_PERFETTO)
+    foreach(target holoflow_core_test holoflow_runtime_test)
+        target_link_libraries(${target} PRIVATE perfetto_sdk)
+        target_compile_definitions(${target} PRIVATE HOLOFLOW_TEST_PERFETTO)
+    endforeach()
+endif()

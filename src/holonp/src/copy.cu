@@ -77,6 +77,13 @@ public:
         d_src_strides_(std::move(d_src_strides)), d_src_shape_(std::move(d_src_shape)),
         idesc_(std::move(idesc)) {}
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
   const holoflow::core::TDesc &idesc() const { return idesc_; }
@@ -158,10 +165,12 @@ CopyFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                     std::span<const holoflow::core::TDesc>     input_descs,
                     const nlohmann::json                      &jsettings,
                     const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   auto *old_copy = dynamic_cast<Copy *>(old_task.get());
   if (old_copy == nullptr || input_descs.size() != 1) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -170,6 +179,8 @@ CopyFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     old_copy->update_stream(ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

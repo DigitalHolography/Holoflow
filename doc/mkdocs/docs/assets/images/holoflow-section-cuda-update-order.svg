@@ -1,0 +1,44 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="537pt" height="122pt" viewBox="0.00 0.00 537.00 122.00" role="img" aria-labelledby="figure-title figure-description">
+<desc id="figure-description">Later local owners unwind before the guard; the guard invalidates executables before the old task parameter releases captured resources.</desc><title id="figure-title">Exception unwinding during a factory update</title><g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(18 104.03)">
+<title>UpdateUnwind</title>
+<polygon fill="white" stroke="none" points="-18,18 -18,-104.03 518.8,-104.03 518.8,18 -18,18" />
+<text xml:space="preserve" text-anchor="middle" x="250.4" y="-68.73" font-family="Helvetica,sans-Serif" font-size="14.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">An exception leaves update()</text>
+
+<g id="node1" class="node">
+<title>local</title>
+<path fill="#fef3c7" stroke="#64748b" d="M139.35,-62.28C139.35,-62.28 12,-62.28 12,-62.28 6,-62.28 0,-56.28 0,-50.28 0,-50.28 0,-12 0,-12 0,-6 6,0 12,0 12,0 139.35,0 139.35,0 145.35,0 151.35,-6 151.35,-12 151.35,-12 151.35,-50.28 151.35,-50.28 151.35,-56.28 145.35,-62.28 139.35,-62.28" />
+<text xml:space="preserve" text-anchor="middle" x="75.68" y="-41.29" font-family="Helvetica,sans-Serif" font-size="13.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">1. Destroy later locals</text>
+<text xml:space="preserve" text-anchor="middle" x="75.68" y="-26.29" font-family="Helvetica,sans-Serif" font-size="13.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">A replacement owner</text>
+<text xml:space="preserve" text-anchor="middle" x="75.68" y="-11.29" font-family="Helvetica,sans-Serif" font-size="13.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">unwinds first</text>
+</g>
+
+<g id="node2" class="node">
+<title>guard</title>
+<path fill="#dbeafe" stroke="#64748b" d="M315.2,-62.28C315.2,-62.28 192.35,-62.28 192.35,-62.28 186.35,-62.28 180.35,-56.28 180.35,-50.28 180.35,-50.28 180.35,-12 180.35,-12 180.35,-6 186.35,0 192.35,0 192.35,0 315.2,0 315.2,0 321.2,0 327.2,-6 327.2,-12 327.2,-12 327.2,-50.28 327.2,-50.28 327.2,-56.28 321.2,-62.28 315.2,-62.28" />
+<text xml:space="preserve" text-anchor="middle" x="253.78" y="-41.29" font-family="Helvetica,sans-Serif" font-size="13.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">2. Destroy the guard</text>
+<text xml:space="preserve" text-anchor="middle" x="253.78" y="-26.29" font-family="Helvetica,sans-Serif" font-size="13.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Invalidate dependent</text>
+<text xml:space="preserve" text-anchor="middle" x="253.78" y="-11.29" font-family="Helvetica,sans-Serif" font-size="13.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">executables</text>
+</g>
+
+<g id="edge1" class="edge">
+<title>local-&gt;guard</title>
+<path fill="none" stroke="#64748b" d="M151.61,-31.14C158.19,-31.14 164.88,-31.14 171.51,-31.14" />
+<polygon fill="#64748b" stroke="#64748b" points="171.35,-33.59 178.35,-31.14 171.35,-28.69 171.35,-33.59" />
+</g>
+
+<g id="node3" class="node">
+<title>parameter</title>
+<path fill="#dcfce7" stroke="#64748b" d="M488.8,-62.28C488.8,-62.28 368.2,-62.28 368.2,-62.28 362.2,-62.28 356.2,-56.28 356.2,-50.28 356.2,-50.28 356.2,-12 356.2,-12 356.2,-6 362.2,0 368.2,0 368.2,0 488.8,0 488.8,0 494.8,0 500.8,-6 500.8,-12 500.8,-12 500.8,-50.28 500.8,-50.28 500.8,-56.28 494.8,-62.28 488.8,-62.28" />
+<text xml:space="preserve" text-anchor="middle" x="428.5" y="-41.29" font-family="Helvetica,sans-Serif" font-size="13.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">3. Destroy old_task</text>
+<text xml:space="preserve" text-anchor="middle" x="428.5" y="-26.29" font-family="Helvetica,sans-Serif" font-size="13.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Release its captured</text>
+<text xml:space="preserve" text-anchor="middle" x="428.5" y="-11.29" font-family="Helvetica,sans-Serif" font-size="13.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">resources</text>
+</g>
+
+<g id="edge2" class="edge">
+<title>guard-&gt;parameter</title>
+<path fill="none" stroke="#64748b" d="M327.53,-31.14C334.14,-31.14 340.86,-31.14 347.53,-31.14" />
+<polygon fill="#64748b" stroke="#64748b" points="347.43,-33.59 354.43,-31.14 347.43,-28.69 347.43,-33.59" />
+</g>
+</g>
+</svg>

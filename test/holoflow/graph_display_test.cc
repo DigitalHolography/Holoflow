@@ -68,3 +68,32 @@ TEST(CompiledGraphDisplayTest, RendersEmptyOutput) {
   EXPECT_NE(dot.find("// tasks:"), std::string::npos);
   EXPECT_NE(dot.find("}\n"), std::string::npos);
 }
+
+TEST(CompiledGraphDisplayTest, SnapshotMatchesEmptyAndPartialOutputAcrossPreferences) {
+  holoflow::runtime::CompilerOutput output;
+  auto empty = holoflow::runtime::make_graph_compiled_dump_snapshot(output);
+  EXPECT_EQ(holoflow::runtime::to_dot(*empty), holoflow::runtime::to_dot(output));
+  holoflow::runtime::NodePlan node{.spec  = {"source", "partial", {{"value", 1.23456789}}},
+                                   .infer = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync}};
+  auto                        vertex = add_vertex(node, output.graph);
+  output.sections.push_back({.id        = 4,
+                             .name      = "partial",
+                             .stream    = reinterpret_cast<cudaStream_t>(uintptr_t{0x5678}),
+                             .sync_topo = {vertex}});
+  auto snapshot     = holoflow::runtime::make_graph_compiled_dump_snapshot(output);
+  using Preferences = holoflow::runtime::GraphCompiledDumpPreferences;
+  for (auto layout : {Preferences::Layout::Normal, Preferences::Layout::Stairs,
+                      Preferences::Layout::Block, Preferences::Layout::Snake}) {
+    for (bool details : {false, true}) {
+      Preferences prefs;
+      prefs.layout                   = layout;
+      prefs.rankdir                  = Preferences::Rankdir::TopToBottom;
+      prefs.floating_point_precision = 3;
+      prefs.dump_section_stream_addr = details;
+      prefs.dump_resource_info       = details;
+      prefs.dump_node_settings       = details;
+      EXPECT_EQ(holoflow::runtime::to_dot(*snapshot, prefs, "partial"),
+                holoflow::runtime::to_dot(output, prefs, "partial"));
+    }
+  }
+}

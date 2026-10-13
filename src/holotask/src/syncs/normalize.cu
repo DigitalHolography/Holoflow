@@ -377,6 +377,13 @@ public:
         d_red_axes_(std::move(red_axes)), d_red_strides_(std::move(red_strides)),
         d_group_mins_(std::move(group_mins)), d_group_maxs_(std::move(group_maxs)) {}
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)enqueue(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
   const NormalizeSettings     &settings() const { return settings_; }
@@ -574,6 +581,7 @@ NormalizeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                          std::span<const holoflow::core::TDesc>     input_descs,
                          const nlohmann::json                      &jsettings,
                          const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
 
   auto *old_norm = dynamic_cast<Normalize *>(old_task.get());
   if (old_norm != nullptr && input_descs.size() == 1) {
@@ -591,6 +599,7 @@ NormalizeFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   }
 
   // Fallback: Structural change detected or invalid old task.
+  ctx.invalidate_execution();
   return create(input_descs, jsettings, ctx);
 }
 

@@ -524,6 +524,13 @@ public:
   explicit ShortTimeFresnelDiffraction(std::unique_ptr<ShortTimeFresnelDiffractionImpl> impl);
   ~ShortTimeFresnelDiffraction() override;
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)enqueue(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
 
   const holoflow::core::TDesc               &idesc() const;
@@ -853,9 +860,12 @@ ShortTimeFresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISync
                                            std::span<const holoflow::core::TDesc>     input_descs,
                                            const nlohmann::json                      &jsettings,
                                            const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   auto *old = dynamic_cast<ShortTimeFresnelDiffraction *>(old_task.get());
-  if (old == nullptr)
+  if (old == nullptr) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
+  }
 
   auto inf = infer(input_descs, jsettings);
   (void)inf;
@@ -876,6 +886,8 @@ ShortTimeFresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISync
     old->update_propagation_distance(s, ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }
