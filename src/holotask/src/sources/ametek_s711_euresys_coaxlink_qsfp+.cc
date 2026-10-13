@@ -675,20 +675,21 @@ public:
 
   ~CameraBufferQueue() {
     // The producer and readers must be joined before destruction.
-    for (auto &slot : slots_)
-      if (slot.readers != 0)
-        release_(slot.frame);
+    clear();
   }
 
   void clear() {
     const std::lock_guard lock(mutex_);
     for (auto &slot : slots_)
-      if (slot.readers != 0)
+      if (slot.readers != 0) {
         release_(slot.frame);
+        slot.readers = 0;
+      }
 
     write_  = 0;
     read_a_ = 0;
     read_b_ = 0;
+    available_.notify_all();
   }
 
   CameraBufferQueue(const CameraBufferQueue &)            = delete;
@@ -879,27 +880,63 @@ HostPtr<uint8_t> allocate_shared_buffers(Grabber &grabber_a, Grabber &grabber_b,
 
   using Clock = std::chrono::steady_clock;
 
+  // --------------------------------------------------------------------------
+  // Grabber A
+  // --------------------------------------------------------------------------
   {
-    Clock::time_point last_announce_log;
-    const auto        start = Clock::now();
-    for (std::size_t buf_idx = 0; buf_idx < nb_buffers; ++buf_idx) {
-      auto *base = buffers.get() + buf_idx * buffer_size;
+    const auto start = Clock::now();
 
-      grabber_a.announceAndQueue(Euresys::UserMemory(base, buffer_size));
-      grabber_b.announceAndQueue(Euresys::UserMemory(base, buffer_size));
+    const auto range_a = grabber_a.announceAndQueue(memory_array);
 
-      if (log_due(last_announce_log)) {
-        logger()->debug(
-            "[AmetekS711EuresysCoaxlinkQSFPFactory] announced shared buffer {}/{} at address "
-            "{} to both grabbers",
-            buf_idx, nb_buffers, static_cast<void *>(base));
-      }
-    }
     const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
-    logger()->info(
-        "[AmetekS711EuresysCoaxlinkQSFPFactory] grabber announceAndQueue took {:.3f} ms ", elapsed);
+
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] grabber A: "
+                   "announceAndQueue {} buffers took {:.3f} ms "
+                   "(range {}..{}, {} buffers)",
+                   actual_nb_buffers, elapsed, range_a.begin, range_a.end, range_a.size());
   }
+
+  // --------------------------------------------------------------------------
+  // Grabber B
+  // --------------------------------------------------------------------------
+  {
+    const auto start = Clock::now();
+
+    const auto range_b = grabber_b.announceAndQueue(memory_array);
+
+    const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFPFactory] grabber B: "
+                   "announceAndQueue {} buffers took {:.3f} ms "
+                   "(range {}..{}, {} buffers)",
+                   actual_nb_buffers, elapsed, range_b.begin, range_b.end, range_b.size());
+  }
+
   return buffers;
+
+  //using Clock = std::chrono::steady_clock;
+
+  //{
+  //  Clock::time_point last_announce_log;
+  //  const auto        start = Clock::now();
+  //  for (std::size_t buf_idx = 0; buf_idx < nb_buffers; ++buf_idx) {
+  //    auto *base = buffers.get() + buf_idx * buffer_size;
+
+  //    grabber_a.announceAndQueue(Euresys::UserMemory(base, buffer_size));
+  //    grabber_b.announceAndQueue(Euresys::UserMemory(base, buffer_size));
+
+  //    if (log_due(last_announce_log)) {
+  //      logger()->debug(
+  //          "[AmetekS711EuresysCoaxlinkQSFPFactory] announced shared buffer {}/{} at address "
+  //          "{} to both grabbers",
+  //          buf_idx, nb_buffers, static_cast<void *>(base));
+  //    }
+  //  }
+  //  const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+  //  logger()->info(
+  //      "[AmetekS711EuresysCoaxlinkQSFPFactory] grabber announceAndQueue took {:.3f} ms ", elapsed);
+  //}
+  //return buffers;
 }
 
 void requeue_buffer_noexcept(Grabber &grabber, const Euresys::NewBufferData &data,
@@ -1102,12 +1139,10 @@ public:
       acquisition_thread_->join();
       acquisition_thread_.reset();
     }
-    buffer_queue_.close();
     stop_raw_record();
-    if (running_) {
-      stop_grabber(*grabber_a_, "bank A");
-      stop_grabber(*grabber_b_, "bank B");
-    }
+    buffer_queue_.close();
+    buffer_queue_.clear();
+    stop_acquisition();
   }
 
   void emit_finished_event(holoflow::core::SyncCtx &ctx, size_t frames_written,
@@ -1340,7 +1375,7 @@ public:
                      "unreleased frames: {}",
                      buffer_queue_.size());
     }
-    if (!running_) {
+    if (!running_.load(std::memory_order_acquire)) {
       return;
     }
     if (!replacing) {
@@ -1418,7 +1453,7 @@ public:
     if (settings_.record_settings.has_value())
       handle_events(ctx);
 
-    if (!running_)
+    if (!running_.load(std::memory_order_acquire))
       start_acquisition(ctx);
 
     while (!ctx.cancelled->load()) {
@@ -1440,6 +1475,8 @@ public:
 
     logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] cancelled");
     stop_raw_record();
+    running_.store(false, std::memory_order_release);
+    stop_acquisition();
     buffer_queue_.clear();
     return holoflow::core::OpResult::Cancelled;
   }
@@ -1447,6 +1484,20 @@ public:
   const nlohmann::json &get_cfg() const { return cfg_; }
 
   const AmetekS711EuresysCoaxlinkQSFPSettings &get_settings() const { return settings_; }
+
+  void stop_acquisition() {
+    if (!acquisition_thread_.has_value()) {
+      logger()->warn(
+          "[AmetekS711EuresysCoaxlinkQSFP::stop_acquisition] acquisition is not running");
+    } else {
+      acquisition_thread_->request_stop();
+      acquisition_thread_->join();
+      acquisition_thread_.reset();
+    }
+    stop_grabber(*grabber_a_, "bank A");
+    stop_grabber(*grabber_b_, "bank B");
+    running_.store(false);
+  }
 
 private:
   void start_acquisition(holoflow::core::SyncCtx &ctx) {
@@ -1459,7 +1510,7 @@ private:
       started_a = true;
       acquisition_thread_.emplace(
           [this, &ctx](std::stop_token cancelled) { acquisition_loop(cancelled, ctx); });
-      running_ = true;
+      running_.store(true);
     } catch (...) {
       if (started_a)
         stop_grabber(*grabber_a_, "bank A");
@@ -1475,6 +1526,7 @@ private:
   void stop_grabber(Grabber &grabber, const char *bank) noexcept {
     try {
       grabber.stop();
+      logger()->info("[AmetekS711EuresysCoaxlinkQSFP::stop_grabber] stopped {}", bank);
     } catch (const std::exception &e) {
       logger()->error("[AmetekS711EuresysCoaxlinkQSFP] failed to stop {}: {}", bank, e.what());
     }
@@ -1504,7 +1556,6 @@ private:
     Clock::time_point last_update_event;
     constexpr auto    update_event_interval = std::chrono::milliseconds(500);
     size_t            acquired              = 0;
-    const auto        frame_per_buffer = runtime_cfg_.nb_buffers * runtime_cfg_.buffer_part_count;
     try {
       while (!cancelled.stop_requested()) {
         try {
@@ -1553,7 +1604,7 @@ private:
         if (result == CameraBufferQueue::PushResult::Accepted) {
           pending.transfer();
           if (recording_.load(std::memory_order_acquire)) {
-            acquired += frame_per_buffer;
+            acquired += runtime_cfg_.buffer_part_count;
             auto now     = Clock::now();
             auto elapsed = now - last_update_event;
             if (elapsed >= update_event_interval) {
@@ -1663,7 +1714,7 @@ private:
   std::unique_ptr<Grabber>              grabber_a_;
   std::unique_ptr<Grabber>              grabber_b_;
   std::size_t                           buffer_size_;
-  bool                                  running_;
+  std::atomic<bool>                     running_;
   nlohmann::json                        cfg_;
 
   // Diagnostics state
@@ -1752,9 +1803,9 @@ AmetekS711EuresysCoaxlinkQSFPFactory::create(std::span<const holoflow::core::TDe
   check(camera_info.has_value(),
         std::format("could not find {} camera", runtime_cfg.camera_model_name));
 
-  dump_state(*camera_info, "before");
+  //dump_state(*camera_info, "before");
   apply_cfg(*camera_info, runtime_cfg);
-  dump_state(*camera_info, "after");
+  //dump_state(*camera_info, "after");
 
   const auto bank_a_index = find_grabber_index_for_bank(*camera_info, 0);
   const auto bank_b_index = find_grabber_index_for_bank(*camera_info, 1);
@@ -1813,6 +1864,7 @@ AmetekS711EuresysCoaxlinkQSFPFactory::update(std::unique_ptr<holoflow::core::ISy
   if (!need_rebuild) {
     old->update_settings(settings);
     old->log_update_lifecycle(false);
+    old->stop_acquisition();
     return old_task;
   }
   if (config_changed) {
