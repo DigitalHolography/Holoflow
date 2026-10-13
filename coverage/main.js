@@ -302,7 +302,7 @@ var assemblies = [
     "name": "holoflow",
     "classes": [
       { "name": "include", "rp": "holoflow_include.html", "cl": 17, "ucl": 7, "cal": 24, "tl": 735, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
-      { "name": "src", "rp": "holoflow_src.html", "cl": 1468, "ucl": 230, "cal": 1698, "tl": 3227, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holoflow_src.html", "cl": 1466, "ucl": 232, "cal": 1698, "tl": 3227, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
   {
     "name": "holoflow_event",
