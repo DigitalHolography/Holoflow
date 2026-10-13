@@ -44,6 +44,10 @@ void from_json(const nlohmann::json &j, TransposeSettings &s);
 
 class TransposeFactory : public holoflow::core::ISyncTaskFactory {
 public:
+  holoflow::core::ExecutionUpdatePolicy execution_update_policy() const noexcept override {
+    return holoflow::core::ExecutionUpdatePolicy::ExplicitInvalidation;
+  }
+
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
 

@@ -249,3 +249,32 @@ endif()
 if (ENABLE_DOCS)
     find_package(Doxygen REQUIRED)
 endif()
+
+# The SDK amalgamation has no CMake project and does not require protobuf at runtime.
+if(ENABLE_PERFETTO)
+    if(ENABLE_FETCHCONTENT)
+        declare_persistent_archive(
+            perfetto
+            "https://github.com/google/perfetto/releases/download/v58.2/perfetto-cpp-sdk-src.zip"
+            "SHA256=e56126ff81f0f914d35fe03c72419d147acf2890f36fbda7d4558fd5b84c4b09"
+        )
+        FetchContent_MakeAvailable(perfetto)
+        set(PERFETTO_SDK_DIR "${perfetto_SOURCE_DIR}")
+    else()
+        set(PERFETTO_SDK_DIR "" CACHE PATH "Directory containing Perfetto v58.2 perfetto.h/perfetto.cc")
+        if(NOT EXISTS "${PERFETTO_SDK_DIR}/perfetto.h" OR
+           NOT EXISTS "${PERFETTO_SDK_DIR}/perfetto.cc")
+            message(FATAL_ERROR "ENABLE_PERFETTO requires PERFETTO_SDK_DIR or ENABLE_FETCHCONTENT")
+        endif()
+    endif()
+    find_package(Threads REQUIRED)
+    add_library(perfetto_sdk STATIC "${PERFETTO_SDK_DIR}/perfetto.cc")
+    set_target_properties(perfetto_sdk PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+    target_include_directories(perfetto_sdk SYSTEM PUBLIC "${PERFETTO_SDK_DIR}")
+    target_compile_features(perfetto_sdk PUBLIC cxx_std_17)
+    target_compile_definitions(perfetto_sdk PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(perfetto_sdk PRIVATE /bigobj /permissive- /Zc:preprocessor)
+    target_link_libraries(perfetto_sdk PUBLIC Threads::Threads ws2_32)
+    install(FILES "${PERFETTO_SDK_DIR}/perfetto.h"
+        DESTINATION share/licenses RENAME Perfetto-SDK-source-and-license.txt COMPONENT dependencies)
+endif()
