@@ -86,6 +86,7 @@ Recorder::Recorder(const std::string &file_path, uint32_t frame_count, size_t bu
 
 Recorder::~Recorder() {
   queue_.unsubscribe_b();
+  queue_.clear_b();
   writer_.flush();
 }
 

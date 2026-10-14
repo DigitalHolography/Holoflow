@@ -116,10 +116,12 @@ void CameraBufferQueue::release_a() {
   const std::lock_guard lock(mutex_);
   release(read_a_);
 }
+
 void CameraBufferQueue::release_b() {
   const std::lock_guard lock(mutex_);
   release(read_b_);
 }
+
 void CameraBufferQueue::subscribe_b() {
   const std::lock_guard lock(mutex_);
   if (reader_b_active_)
@@ -127,14 +129,19 @@ void CameraBufferQueue::subscribe_b() {
   read_b_          = write_;
   reader_b_active_ = true;
 }
+
 void CameraBufferQueue::unsubscribe_b() {
   const std::lock_guard lock(mutex_);
   if (!reader_b_active_)
     return;
   reader_b_active_ = false;
+}
+
+void CameraBufferQueue::clear_b() {
   while (read_b_ != write_)
     release(read_b_);
 }
+
 void CameraBufferQueue::close() {
   {
     const std::lock_guard lock(mutex_);

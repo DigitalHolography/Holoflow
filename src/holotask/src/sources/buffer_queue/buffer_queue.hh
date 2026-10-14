@@ -97,6 +97,8 @@ public:
   void subscribe_b();
   void unsubscribe_b();
 
+  void clear_b();
+
   void close();
 
   size_t capacity() const { return slots_.size(); }

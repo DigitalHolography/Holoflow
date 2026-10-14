@@ -1194,13 +1194,18 @@ private:
               emit_acquisistion_update_event(ctx, acquired);
               last_update_event = now;
             }
+
+            if(acquired >= settings_.record_settings->recording_count) {
+              buffer_queue_.unsubscribe_b();
+              logger()->info("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] record acquisition is finished without any frame drop ({} frames acquired)", acquired);
+            }
           }
         } else {
           pending.release();
           if (result == CameraBufferQueue::PushResult::Closed)
             break;
           if (recording_failed) {
-            logger()->error("[AmetekS711EuresysCoaxlinkQSFP] {}", overflow_message);
+            logger()->error("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] {}", overflow_message);
             emit_failed_event(ctx, overflow_message);
           }
         }
