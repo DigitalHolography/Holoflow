@@ -102,13 +102,29 @@ std::string task_range_name(std::string_view operation, const core::NodeSpec &sp
   return std::format("{}: {} ({})", operation, spec.name, spec.kind);
 }
 
-[[noreturn]] inline void log_and_abort_current_exception(std::string_view thread_name) {
+[[noreturn]] inline void
+log_and_abort_current_exception(std::string_view thread_name, std::string_view node_name,
+                                const Scheduler::FailureCallback &failure_callback,
+                                std::atomic_flag                 &failure_dumped) {
+  std::string error_message;
   try {
     throw;
   } catch (const std::exception &e) {
+    error_message = e.what();
     logger()->critical("[{}] Fatal runtime exception:\n{}", thread_name, e.what());
   } catch (...) {
+    error_message = "<non-std exception>";
     logger()->critical("[{}] Fatal runtime exception: <non-std exception>", thread_name);
+  }
+
+  if (failure_callback && !failure_dumped.test_and_set(std::memory_order_relaxed)) {
+    try {
+      failure_callback(thread_name, node_name, error_message);
+    } catch (const std::exception &e) {
+      logger()->error("Failed to write runtime failure graph: {}", e.what());
+    } catch (...) {
+      logger()->error("Failed to write runtime failure graph: unknown error");
+    }
   }
 
   logger()->flush();
@@ -136,7 +152,7 @@ void *MemoryBlock::get() {
 class Scheduler::Impl {
 public:
   Impl(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
-       std::chrono::milliseconds metrics_interval = std::chrono::milliseconds{1000});
+       std::chrono::milliseconds metrics_interval, Scheduler::FailureCallback failure_callback);
 
   ~Impl();
 
@@ -154,6 +170,7 @@ public:
 
   bool is_running() const;
   bool stop_requested() const;
+  [[nodiscard]] std::string_view current_node_name() const noexcept;
 
   [[nodiscard]] bool ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept;
 
@@ -303,12 +320,27 @@ private:
 
   holoflow_event::Router                                     router_;
   std::map<std::string, holoflow_event::Router::NodeHandles> event_handles_;
+  std::atomic_flag                                           failure_dumped_ = ATOMIC_FLAG_INIT;
+  Scheduler::FailureCallback                                 failure_callback_;
 };
 
 Scheduler::Impl::Impl(const GraphPlan &graph, const std::vector<Section> &sections,
-                      ExecResouces &resources, std::chrono::milliseconds metrics_interval)
-    : graph_(graph), sections_(sections), res_(resources), metrics_interval_(metrics_interval) {
+                      ExecResouces &resources, std::chrono::milliseconds metrics_interval,
+                      Scheduler::FailureCallback failure_callback)
+    : graph_(graph), sections_(sections), res_(resources), metrics_interval_(metrics_interval),
+      failure_callback_(std::move(failure_callback)) {
   tracing::ScopedTrace trace("Initialize Scheduler", "scheduler");
+
+  if (failure_callback_) {
+    detail::set_bug_callback([this](std::string_view file, std::size_t line) {
+      if (!failure_dumped_.test_and_set(std::memory_order_relaxed)) {
+        failure_callback_("HOLOFLOW_BUG", detail::current_node_name(),
+                          std::format("Fatal bug at {}:{}", file, line));
+      }
+    });
+  } else {
+    detail::set_bug_callback({});
+  }
 
   if (metrics_interval_.count() <= 0) {
     metrics_interval_ = std::chrono::milliseconds{1};
@@ -337,6 +369,7 @@ Scheduler::Impl::~Impl() {
   } else {
     stop_metrics_thread();
   }
+  detail::set_bug_callback({});
 }
 
 void Scheduler::Impl::set_metrics_interval(std::chrono::milliseconds interval) {
@@ -493,6 +526,10 @@ bool Scheduler::Impl::is_running() const { return running_.load(); }
 
 bool Scheduler::Impl::stop_requested() const { return stop_.load(); }
 
+std::string_view Scheduler::Impl::current_node_name() const noexcept {
+  return detail::current_node_name();
+}
+
 bool Scheduler::Impl::ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept {
   return router_.ui_try_send(node_id, std::move(data));
 }
@@ -600,7 +637,8 @@ void Scheduler::Impl::run_router() {
     logger()->info("[Scheduler::run_router] Event router stopped");
   } catch (...) {
     stop_.store(true);
-    log_and_abort_current_exception("Scheduler::run_router");
+    log_and_abort_current_exception("Scheduler::run_router", {}, failure_callback_,
+                                    failure_dumped_);
   }
 }
 
@@ -614,8 +652,12 @@ void Scheduler::Impl::run_section(int section_id) {
     checkpoint.node  = 0;
     checkpoint.port  = 0;
   };
+  std::string_view current_node_name;
+  detail::current_node_name() = {};
   try {
     while (!stop_.load()) {
+      current_node_name = {};
+      detail::current_node_name() = {};
       nvtx3::scoped_range section_range{sec.name.c_str()};
       switch (checkpoint.stage) {
       case Stage::AcquireSync:
@@ -626,6 +668,8 @@ void Scheduler::Impl::run_section(int section_id) {
           break;
         }
         const auto v = nodes[checkpoint.node];
+        current_node_name = graph_[v].spec.name;
+        detail::current_node_name() = current_node_name;
         try {
           acquire_owned_inputs(v, checkpoint.port);
         } catch (...) {
@@ -644,6 +688,8 @@ void Scheduler::Impl::run_section(int section_id) {
         }
         {
           const auto v = sec.async_cons[checkpoint.node];
+          current_node_name = graph_[v].spec.name;
+          detail::current_node_name() = current_node_name;
           try {
             if (run_async_cons(v) == core::OpResult::Ok) {
               checkpoint.produced.push_back(v);
@@ -656,6 +702,8 @@ void Scheduler::Impl::run_section(int section_id) {
         break;
       case Stage::Compute: {
         auto graph_it = res_.section_cuda_graphs.find(sec.id);
+        current_node_name = {};
+        detail::current_node_name() = {};
         if (!checkpoint.computation_started) {
           checkpoint.computation_started = true;
           if (graph_it != res_.section_cuda_graphs.end() && graph_it->second->enabled) {
@@ -685,6 +733,8 @@ void Scheduler::Impl::run_section(int section_id) {
           break;
         }
         const auto v = sec.sync_topo[checkpoint.node];
+        current_node_name = graph_[v].spec.name;
+        detail::current_node_name() = current_node_name;
         try {
           if (run_sync(v) == core::OpResult::Ok) {
             checkpoint.produced.push_back(v);
@@ -696,6 +746,8 @@ void Scheduler::Impl::run_section(int section_id) {
         break;
       }
       case Stage::Barrier:
+        current_node_name = {};
+        detail::current_node_name() = {};
         if (!sec.has_synchronizing_async_producer)
           CUDA_CHECK(cudaStreamSynchronize(sec.stream));
         advance(Stage::Push);
@@ -707,6 +759,8 @@ void Scheduler::Impl::run_section(int section_id) {
         }
         {
           const auto v = sec.async_prod[checkpoint.node];
+          current_node_name = graph_[v].spec.name;
+          detail::current_node_name() = current_node_name;
           try {
             if (run_async_prod(v) == core::OpResult::Ok)
               ++checkpoint.node;
@@ -722,6 +776,8 @@ void Scheduler::Impl::run_section(int section_id) {
         }
         {
           const auto v = checkpoint.produced[checkpoint.node];
+          current_node_name = graph_[v].spec.name;
+          detail::current_node_name() = current_node_name;
           try {
             release_owned_outputs(v, checkpoint.port);
           } catch (...) {
@@ -737,9 +793,13 @@ void Scheduler::Impl::run_section(int section_id) {
     }
     // Abort/EOF retain the old cleanup semantics. Pause keeps every pending port and operation.
     if (!paused_.load() || aborted_.load()) {
+      current_node_name = {};
+      detail::current_node_name() = {};
       CUDA_CHECK(cudaStreamSynchronize(sec.stream));
       const size_t first = checkpoint.stage == Stage::Release ? checkpoint.node : 0;
       for (size_t i = first; i < checkpoint.produced.size(); ++i) {
+        current_node_name = graph_[checkpoint.produced[i]].spec.name;
+        detail::current_node_name() = current_node_name;
         size_t port = checkpoint.stage == Stage::Release && i == first ? checkpoint.port : 0;
         release_owned_outputs(checkpoint.produced[i], port);
       }
@@ -750,7 +810,8 @@ void Scheduler::Impl::run_section(int section_id) {
     paused_.store(false);
     stop_.store(true);
     log_and_abort_current_exception(
-        std::format("Scheduler::run_section section={} id={}", sec.name, section_id));
+        std::format("Scheduler::run_section section={} id={}", sec.name, section_id),
+        current_node_name, failure_callback_, failure_dumped_);
   }
 }
 
@@ -1208,7 +1269,13 @@ std::pair<uint64_t, uint64_t> Scheduler::Impl::sum_bytes(std::span<const core::T
 
 Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
                      ExecResouces &resources, std::chrono::milliseconds metrics_interval)
-    : impl_(std::make_unique<Impl>(graph, sections, resources, metrics_interval)) {}
+    : Scheduler(graph, sections, resources, metrics_interval, {}) {}
+
+Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
+                     ExecResouces &resources, std::chrono::milliseconds metrics_interval,
+                     FailureCallback failure_callback)
+    : impl_(std::make_unique<Impl>(graph, sections, resources, metrics_interval,
+                                  std::move(failure_callback))) {}
 
 Scheduler::~Scheduler() = default;
 
@@ -1237,6 +1304,10 @@ void Scheduler::wait() { impl_->wait(); }
 bool Scheduler::is_running() const { return impl_->is_running(); }
 
 bool Scheduler::stop_requested() const { return impl_->stop_requested(); }
+
+std::string_view Scheduler::current_node_name() const noexcept {
+  return impl_->current_node_name();
+}
 
 bool Scheduler::ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept {
   return impl_->ui_try_send(node_id, std::move(data));

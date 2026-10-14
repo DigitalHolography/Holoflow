@@ -16,5 +16,10 @@ void dump_pipeline_graph_async(const std::filesystem::path &log_dir, const core:
 void dump_compiled_graph_async(const std::filesystem::path &dot_path, const CompilerOutput &output,
                                const GraphCompiledDumpPreferences &preferences = {},
                                std::string graph_name = "compiled") noexcept;
+void dump_compiled_graph_async(const std::filesystem::path &dot_path, const CompilerOutput &output,
+                               const GraphCompiledDumpPreferences &preferences,
+                               std::string graph_name, std::string failure_node,
+                               std::string failure_context,
+                               GraphFailureKind failure_kind) noexcept;
 
 } // namespace holoflow::runtime

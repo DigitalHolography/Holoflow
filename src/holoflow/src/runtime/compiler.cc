@@ -23,13 +23,14 @@
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/graph/topological_sort.hpp>
 #include <format>
-#include <fstream>
 #include <iostream>
+#include <mutex>
 #include <numeric>
 #include <queue>
 #include <ranges>
 #include <set>
 #include <stack>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
@@ -145,6 +146,8 @@ private:
   Compiler::Config                       config_;
   std::shared_ptr<spdlog::logger>        logger_;
   std::shared_ptr<CompilerLogBufferSink> log_buffer_;
+  std::string                            failure_pass_name_;
+  std::string                            failure_node_name_;
 
   const core::GraphSpec          *gspec_ = nullptr;
   std::unique_ptr<CompilerOutput> prev_;
@@ -160,7 +163,8 @@ private:
   void        setup_logging();
   void        publish_log() noexcept;
   ScopedTrace trace_scope(std::string name, std::string category = "pass");
-  void        dump_graphviz(const std::string &filename);
+  void        dump_graphviz(std::string_view filename, std::string_view failure_node = {},
+                            std::string_view failure_context = {});
   void        dump_json(const std::string &filename, const core::GraphSpec &gspec);
   template <class TaskInterface, class Factory, class Ctx>
   std::unique_ptr<core::ITask> create_or_update_task(Factory &factory, const NodePlan &np,
@@ -184,6 +188,8 @@ private:
 
   // Generic Pass Runner
   template <typename Func> void run_pass(const char *name, Func &&fn) {
+    failure_pass_name_ = name;
+    failure_node_name_.clear();
     auto scope = trace_scope(name, "pass");
     fn();
   }
@@ -260,7 +266,12 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
   } catch (const std::exception &e) {
     logger_->error("Compilation Failed: {}", e.what());
     if (config_.dump_dot_on_failure) {
-      run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_failure.dot"); });
+      const auto context = std::format(
+          "Compilation failed during {}{}: {}", failure_pass_name_,
+          failure_node_name_.empty() ? "" : std::format(" at node '{}'", failure_node_name_),
+          e.what());
+      auto dump_trace = trace_scope("Dump Graphviz", "pass");
+      dump_graphviz("compilation_failure.dot", failure_node_name_, context);
     }
 
     total_trace->set_outcome(tracing::Outcome::Failure);
@@ -334,14 +345,27 @@ ScopedTrace Compiler::Impl::trace_scope(std::string name, std::string category) 
   return ScopedTrace(std::move(name), category);
 }
 
-void Compiler::Impl::dump_graphviz(const std::string &filename) {
+void Compiler::Impl::dump_graphviz(std::string_view filename, std::string_view failure_node,
+                                   std::string_view failure_context) {
   if (config_.log_dir.empty()) {
+    logger_->warn("Graphviz dump '{}' skipped: no log directory is configured", filename);
     return;
   }
 
-  const auto graph_name = std::filesystem::path(filename).stem().string();
-  if (out_)
-    dump_compiled_graph_async(config_.log_dir / filename, *out_, {}, graph_name);
+  if (!out_) {
+    logger_->warn("Graphviz dump '{}' skipped: compilation output is unavailable", filename);
+    return;
+  }
+
+  const auto dump_path = config_.log_dir / std::string{filename};
+  const auto graph_name = dump_path.stem().string();
+  if (!out_)
+    return;
+
+  dump_compiled_graph_async(dump_path, *out_, {}, graph_name, std::string{failure_node},
+                            std::string{failure_context}, GraphFailureKind::Compilation);
+  if (!failure_node.empty() || !failure_context.empty())
+    logger_->info("Compilation failure graph queued for {}", dump_path.string());
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -413,8 +437,9 @@ void Compiler::Impl::run_type_inference() {
   }
 
   for (auto v : std::views::reverse(topo_order)) {
-    auto &node       = g[v];
-    auto  node_trace = trace_scope(std::format("Infer: {}", node.spec.name), "detail");
+    auto &node         = g[v];
+    failure_node_name_ = node.spec.name;
+    auto node_trace    = trace_scope(std::format("Infer: {}", node.spec.name), "detail");
 
     auto                     in_degree = boost::in_degree(v, g);
     std::vector<core::TDesc> input_descs(in_degree);

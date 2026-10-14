@@ -37,6 +37,7 @@
 #include "bug.hh"
 #include "graph_builder.hh"
 #include "holofile/holofile.hh"
+#include "holoflow/runtime/windows_crash_handler.hh"
 #include "holoflow/runtime/diagnostics.hh"
 #include "holoflow/runtime/tracing.hh"
 #include "holonp/abs.hh"
@@ -167,6 +168,12 @@ void reg_async(holoflow::core::Registry &r, std::string_view name, Args &&...arg
 }
 
 } // namespace
+
+Manager::~Manager() {
+#if defined(_WIN32)
+  uninstall_windows_crash_handler();
+#endif
+}
 
 Manager::Manager(
     ui::AutoFocusWidget *autofocus_widget, ui::TensorDisplayWidget *xy_processed_widget,
@@ -405,15 +412,18 @@ void Manager::stop_pipeline() {
   }
 
   try {
-    // Preserve pending operations and buffer ownership for unchanged resume.
+    // Retain the compiled graph and pending operations so the UI can resume without rebuilding.
     {
-      ScopedTrace scope("Request Scheduler Stop");
+      ScopedTrace scope("Request Scheduler Pause");
       scheduler_->request_pause();
     }
     {
-      ScopedTrace scope("Wait for Scheduler Stop");
+      ScopedTrace scope("Wait for Scheduler Pause");
       scheduler_->wait();
     }
+#if defined(_WIN32)
+    uninstall_windows_crash_handler();
+#endif
     stop_zernike_history();
 
     {
@@ -716,6 +726,7 @@ void Manager::build_and_run() {
   using Compiler       = holoflow::runtime::Compiler;
 
   std::filesystem::path log_root;
+  log_root_.clear();
   {
     ScopedTrace resolution("Resolve Pipeline Log Path");
     const auto  app_data_dir =
@@ -723,12 +734,30 @@ void Manager::build_and_run() {
     if (!app_data_dir.isEmpty()) {
       log_root = std::filesystem::path(app_data_dir.toStdString()) /
                  QCoreApplication::applicationVersion().toStdString() / "logs";
+      std::error_code log_ec;
+      std::filesystem::create_directories(log_root, log_ec);
+      if (log_ec) {
+        logger()->warn("[Manager::build_and_run] Failed to create log directory '{}': {}",
+                       log_root.string(), log_ec.message());
+        log_root.clear();
+      }
     } else {
       logger()->warn(
           "[Manager::build_and_run] No writable application data directory is available");
     }
   }
 
+  log_root_ = log_root;
+
+  // Previous failure graphs must not be mistaken for this attempt's diagnostics.
+  if (dump_runtime_failure_graphs_ && !log_root_.empty()) {
+    std::error_code remove_ec;
+    std::filesystem::remove(log_root_ / "graph_build_failure.dot", remove_ec);
+    std::filesystem::remove(log_root_ / "compilation_failure.dot", remove_ec);
+    std::filesystem::remove(log_root_ / "runtime_failure.dot", remove_ec);
+  }
+
+  // Prepare the log directory before graph construction can write a failure graph.
   build_graph_spec(log_root);
 
   CompilerConfig config;
@@ -737,8 +766,8 @@ void Manager::build_and_run() {
     {
       ScopedTrace assignment("Assign Compiler Configuration", "detail");
       config.log_dir             = log_root;
-      config.dump_dot_on_failure = dump_debug_graphs_;
-      config.verbose_tracing     = dump_debug_graphs_;
+      config.dump_dot_on_failure = dump_debug_graphs_ || dump_runtime_failure_graphs_;
+      config.verbose_tracing     = dump_debug_graphs_ || dump_runtime_failure_graphs_;
     }
     {
       ScopedTrace environment("Read CUDA Graph Limit", "detail");
@@ -760,9 +789,32 @@ void Manager::build_and_run() {
   scheduler_.reset();
   auto     prev_output = std::move(compiler_output_);
   Compiler compiler(registry_, config);
-  {
-    ScopedTrace scope("Compile Pipeline");
-    compiler_output_ = compiler.compile(spec_, std::move(prev_output));
+  try {
+    {
+      ScopedTrace scope("Compile Pipeline");
+      compiler_output_ = compiler.compile(spec_, std::move(prev_output));
+    }
+  } catch (const std::exception &e) {
+    std::string diagnostic_status;
+    if (!dump_runtime_failure_graphs_ && !dump_debug_graphs_) {
+      diagnostic_status = "Failure graph diagnostics are disabled in Preferences.";
+    } else if (log_root_.empty()) {
+      diagnostic_status = "Failure graph was not saved because the application log folder "
+                          "could not be created.";
+    } else {
+      const auto    failure_path = log_root_ / "compilation_failure.dot";
+      std::ifstream failure_file(failure_path);
+      if (failure_file.is_open()) {
+        const std::string dot{std::istreambuf_iterator<char>{failure_file},
+                              std::istreambuf_iterator<char>{}};
+        emit failure_graph_ready(QString::fromUtf8(dot.data(), static_cast<qsizetype>(dot.size())));
+        diagnostic_status = std::format("Compilation failure graph: {}", failure_path.string());
+      } else {
+        diagnostic_status = std::format("Compilation failure graph was not written; expected: {}",
+                                        failure_path.string());
+      }
+    }
+    throw std::runtime_error(std::format("{}\n{}", e.what(), diagnostic_status));
   }
 
   if (compiler_output_ && !log_root.empty()) {
@@ -796,11 +848,47 @@ void Manager::run_compiled_graph() {
                                     ? std::chrono::milliseconds{metrics_timer_->interval()}
                                     : std::chrono::milliseconds{1000};
 
+  const Scheduler::FailureCallback failure_callback = [this](std::string_view thread_name,
+                                                             std::string_view node_name,
+                                                             std::string_view error_message) {
+    if (!dump_runtime_failure_graphs_ || !compiler_output_ || log_root_.empty()) {
+      return;
+    }
+
+    const auto    failure_path = log_root_ / "runtime_failure.dot";
+    std::ofstream failure_file(failure_path);
+    if (!failure_file.is_open()) {
+      logger()->error("[Manager::run_compiled_graph] Failed to write runtime failure graph to {}",
+                      failure_path.string());
+      return;
+    }
+
+    const auto context = std::format("Thread: {}\nNode: {}\nError: {}", thread_name,
+                                     node_name.empty() ? "<unknown>" : node_name, error_message);
+    auto       failure_prefs     = graph_compiled_dump_prefs_;
+    failure_prefs.dump_node_name = true;
+    failure_prefs.dump_node_kind = true;
+    failure_file << holoflow::runtime::to_dot(*compiler_output_, failure_prefs, "runtime_failure",
+                                              node_name, context,
+                                              holoflow::runtime::GraphFailureKind::Runtime);
+    logger()->critical("[Manager::run_compiled_graph] Runtime failure graph saved to {}",
+                       failure_path.string());
+  };
+
   {
     ScopedTrace scope("Create Scheduler");
-    if (!scheduler_)
-      scheduler_ = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval);
+    if (!scheduler_) {
+      scheduler_ = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval,
+                                               failure_callback);
+    }
   }
+#if defined(_WIN32)
+  if (dump_runtime_failure_graphs_) {
+    install_windows_crash_handler();
+  } else {
+    uninstall_windows_crash_handler();
+  }
+#endif
   raw_recording_active_ = false;
 
   {
@@ -820,6 +908,46 @@ void Manager::run_compiled_graph() {
     start_event_polling();
   }
 }
+
+#if defined(_WIN32)
+void Manager::install_windows_crash_handler() {
+  holoflow::runtime::WindowsCrashHandler::install(
+      [this](unsigned long exception_code) { dump_windows_crash_graph(exception_code); });
+}
+
+void Manager::uninstall_windows_crash_handler() {
+  holoflow::runtime::WindowsCrashHandler::uninstall();
+}
+
+void Manager::dump_windows_crash_graph(unsigned long exception_code) noexcept {
+  try {
+    if (!dump_runtime_failure_graphs_ || !compiler_output_ || log_root_.empty()) {
+      return;
+    }
+
+    const auto node_name = scheduler_ ? scheduler_->current_node_name() : std::string_view{};
+    const auto context   = std::format("Windows exception: 0x{:08X}\\nNode: {}", exception_code,
+                                       node_name.empty() ? "<unknown>" : node_name);
+
+    auto failure_prefs           = graph_compiled_dump_prefs_;
+    failure_prefs.dump_node_name = true;
+    failure_prefs.dump_node_kind = true;
+
+    const auto    failure_path = log_root_ / "runtime_failure.dot";
+    std::ofstream failure_file(failure_path, std::ios::trunc);
+    if (!failure_file.is_open()) {
+      return;
+    }
+
+    failure_file << holoflow::runtime::to_dot(*compiler_output_, failure_prefs, "runtime_failure",
+                                              node_name, context,
+                                              holoflow::runtime::GraphFailureKind::Runtime);
+    failure_file.flush();
+  } catch (...) {
+    // An unhandled-exception filter must never throw or prevent process termination.
+  }
+}
+#endif
 
 void Manager::dump_graph_logs(const std::filesystem::path &log_dir) {
   ScopedTrace trace("Dump Pipeline Graph Logs");
@@ -844,14 +972,50 @@ void Manager::build_graph_spec(const std::filesystem::path &log_dir) {
   guess_source_dims();
 
   std::optional<GraphBuilder> builder;
-  {
-    ScopedTrace construction("Create Graph Builder", "detail");
-    builder.emplace(s_, registry_);
+  try {
+    {
+      ScopedTrace construction("Create Graph Builder", "detail");
+      builder.emplace(s_, registry_);
+    }
+    {
+      ScopedTrace scope("Build Graph Nodes");
+      spec_ = builder->build();
+    }
+  } catch (const std::exception &e) {
+    std::string diagnostic_status;
+    if (!dump_runtime_failure_graphs_) {
+      diagnostic_status = "Failure graph diagnostics are disabled in Preferences.";
+    } else if (log_dir.empty()) {
+      diagnostic_status = "Failure graph was not saved because the application log folder "
+                          "could not be created.";
+    } else if (!builder.has_value()) {
+      diagnostic_status = "Graph construction failed before a partial graph was available.";
+    } else {
+      const auto dot = builder->failure_graph_dot(graph_spec_dump_prefs_);
+      if (dot.empty()) {
+        diagnostic_status = "No task-inference failure node was available for a graph.";
+      } else {
+        const auto    failure_path = log_dir / "graph_build_failure.dot";
+        std::ofstream failure_file(failure_path, std::ios::trunc);
+        if (failure_file.is_open()) {
+          failure_file.write(dot.data(), static_cast<std::streamsize>(dot.size()));
+          failure_file.flush();
+        }
+        if (failure_file.good()) {
+          emit failure_graph_ready(
+              QString::fromUtf8(dot.data(), static_cast<qsizetype>(dot.size())));
+          diagnostic_status = std::format("Graph construction failure: {}", failure_path.string());
+          logger()->error("[Manager::build_graph_spec] Failure graph saved to {}",
+                          failure_path.string());
+        } else {
+          diagnostic_status =
+              std::format("Failed to write graph construction failure: {}", failure_path.string());
+        }
+      }
+    }
+    throw std::runtime_error(std::format("{}\n{}", e.what(), diagnostic_status));
   }
-  {
-    ScopedTrace scope("Build Graph Nodes");
-    spec_ = builder->build();
-  }
+
   {
     ScopedTrace destruction("Destroy Graph Builder", "detail");
     builder.reset();

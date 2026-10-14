@@ -15,6 +15,7 @@
 set(TARGET holovibes_test)
 
 set(SOURCES
+    graph_builder_failure_test.cc
     logger_test.cc
     ../../src/holovibes/src/logger.cc
     signal_history_test.cc
@@ -22,6 +23,7 @@ set(SOURCES
     settings_test.cc
     update_checker_test.cc
     ../../src/holovibes/src/pipeline/validation.cc
+    ../../src/holovibes/src/pipeline/graph_builder_tracer.cc
     ../../src/holovibes/src/settings_loader.cc
     ../../src/holovibes/src/ui/update_checker.cc
     ../../src/holovibes/src/ui/widgets/signal_history.cc
@@ -39,6 +41,7 @@ target_link_libraries(${TARGET}
     PRIVATE
     project_options
     holoflow
+    holotask
     nlohmann_json::nlohmann_json
     GTest::gtest_main
     Qt6::Core
