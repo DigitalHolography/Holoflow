@@ -43,6 +43,11 @@ public:
 
   holoflow::core::GraphSpec build();
 
+  [[nodiscard]] std::string failure_graph_dot(
+      const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+    return GraphBuilderTracer::failure_graph_dot(prefs);
+  }
+
 private:
   struct ShackHartmannGeometry {
     size_t frame_width;
@@ -130,6 +135,11 @@ GraphBuilder::GraphBuilder(GraphBuilder &&) noexcept            = default;
 GraphBuilder &GraphBuilder::operator=(GraphBuilder &&) noexcept = default;
 
 holoflow::core::GraphSpec GraphBuilder::build() { return impl_->build(); }
+
+std::string GraphBuilder::failure_graph_dot(
+    const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+  return impl_->failure_graph_dot(prefs);
+}
 
 GraphBuilder::Impl::Impl(const Settings &settings, holoflow::core::Registry &registry)
     : GraphBuilderTasks(registry), s_(settings) {}
@@ -270,7 +280,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
   // Time-frequency analysis then operates along axis 1 (the T dimension).
   // The output is [N_pre, Nz, Hy, Hx], which feeds directly into the post-TFA queue.
 
-  int     N_pre = 8;
+  int     N_pre = 4;
   int64_t T     = static_cast<int64_t>(H.shape.at(0));
   int64_t Hy    = static_cast<int64_t>(H.shape.at(1));
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));

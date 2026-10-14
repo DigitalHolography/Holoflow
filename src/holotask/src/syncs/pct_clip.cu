@@ -247,6 +247,14 @@ public:
         sort_tmp_bytes_(sort_tmp_bytes), d_sort_tmp_(std::move(d_sort_tmp)),
         d_roi_(std::move(d_roi)), stream_(stream) {}
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    std::atomic<bool>       cancelled{false};
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, &cancelled, nullptr, nullptr};
+    (void)enqueue(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     const PctClipCudaGraph::Addresses addresses{ctx.inputs[0].data(), ctx.outputs[0].data()};
     if (stream_ == nullptr) {
@@ -434,10 +442,12 @@ PctClipFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                        std::span<const holoflow::core::TDesc>     input_descs,
                        const nlohmann::json                      &jsettings,
                        const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)this->infer(input_descs, jsettings);
 
   auto *old_pct_clip = dynamic_cast<PctClip *>(old_task.get());
   if (old_pct_clip == nullptr) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -453,6 +463,8 @@ PctClipFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     old_pct_clip->update_stream(ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

@@ -68,8 +68,8 @@
 #include "holofile/holofile.hh"
 #include "logger.hh"
 #include "settings_loader.hh"
-#include "ui/update_checker.hh"
 #include "ui/graph_visualizer_widget.hh"
+#include "ui/update_checker.hh"
 #include "ui/visualization_workspace.hh"
 #include "ui/widgets/selected_widget_settings_panel.hh"
 #include "ui/widgets/tensor_display_widget.hh"
@@ -418,6 +418,18 @@ public:
         setup_graph_compiled_dump_preferences(manager_.get_graph_compiled_dump_preferences());
     splitter->addWidget(graph_compiled_dump_group_box);
 
+    auto *runtime_failure_group_box = new QGroupBox(tr("Failure Diagnostics"), this);
+    auto *runtime_failure_form      = new QFormLayout();
+    runtime_failure_graph_checkbox_ = new QCheckBox(this);
+    runtime_failure_graph_checkbox_->setChecked(manager_.dump_runtime_failure_graphs());
+    runtime_failure_graph_checkbox_->setToolTip(
+        tr("Save graph_build_failure.dot when a task rejects an input while the pipeline is being "
+           "built, compilation_failure.dot for compiler errors, and runtime_failure.dot for "
+           "runtime errors and Windows exceptions."));
+    runtime_failure_form->addRow(tr("Dump graph on failure"), runtime_failure_graph_checkbox_);
+    runtime_failure_group_box->setLayout(runtime_failure_form);
+    splitter->addWidget(runtime_failure_group_box);
+
     dialog_layout->addWidget(splitter);
     // Apply / Close
     auto *button_box = new QDialogButtonBox(QDialogButtonBox::Close, this);
@@ -506,8 +518,7 @@ private:
                        graph_compiled_dump_preferences_widgets_.rankdir_combo_);
 
     graph_compiled_dump_preferences_widgets_.layout_combo_ =
-        create_combo_box(this,
-                         QStringList{tr("Normal"), tr("Stairs"), tr("Block"), tr("Snake")});
+        create_combo_box(this, QStringList{tr("Normal"), tr("Stairs"), tr("Block"), tr("Snake")});
     graph_compiled_dump_preferences_widgets_.layout_combo_->setCurrentIndex(
         static_cast<int>(graph_compiled_dump_preferences.layout));
     graph_compiled_dump_preferences_widgets_.layout_combo_->setToolTip(
@@ -624,7 +635,7 @@ private:
         .rankdir = graph_compiled_dump_preferences_widgets_.rankdir_combo_->currentText() == "LR"
                        ? GraphCompiledDumpPreferences::Rankdir::LeftToRight
                        : GraphCompiledDumpPreferences::Rankdir::TopToBottom,
-        .layout = static_cast<GraphCompiledDumpPreferences::Layout>(
+        .layout  = static_cast<GraphCompiledDumpPreferences::Layout>(
             graph_compiled_dump_preferences_widgets_.layout_combo_->currentIndex()),
 
         .floating_point_precision =
@@ -649,6 +660,7 @@ private:
 
     manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
     manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
+    manager_.set_dump_runtime_failure_graphs(runtime_failure_graph_checkbox_->isChecked());
   }
 
   void connect_signals() {
@@ -697,6 +709,8 @@ private:
             &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
     connect(graph_compiled_dump_preferences_widgets_.resources_toggle_checkbox_,
             &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
+    connect(runtime_failure_graph_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
   }
 
   holovibes::pipeline::Manager &manager_;
@@ -706,7 +720,7 @@ private:
   struct GraphSpecDumpPreferencesWidgets {
     // dump preferences
     // rankdir: LR | TB
-    QComboBox *rankdir_combo_                  = nullptr;
+    QComboBox *rankdir_combo_                 = nullptr;
     QSpinBox  *floating_point_precision_spin_ = nullptr;
     // Nodes
     QCheckBox *node_name_checkbox_     = nullptr;
@@ -720,13 +734,13 @@ private:
   struct GraphCompiledDumpPreferencesWidgets {
     // dump preferences
     // rankdir: LR | TB
-    QComboBox *rankdir_combo_                  = nullptr;
-    QComboBox *layout_combo_                   = nullptr;
+    QComboBox *rankdir_combo_                 = nullptr;
+    QComboBox *layout_combo_                  = nullptr;
     QSpinBox  *floating_point_precision_spin_ = nullptr;
-    QCheckBox *node_name_checkbox_             = nullptr;
-    QCheckBox *node_kind_checkbox_             = nullptr;
-    QCheckBox *node_settings_checkbox_         = nullptr;
-    QCheckBox *node_in_out_tids_               = nullptr;
+    QCheckBox *node_name_checkbox_            = nullptr;
+    QCheckBox *node_kind_checkbox_            = nullptr;
+    QCheckBox *node_settings_checkbox_        = nullptr;
+    QCheckBox *node_in_out_tids_              = nullptr;
     // Edges
     QCheckBox *edge_indices_checkbox_ = nullptr;
     QCheckBox *edge_desc_checkbox_    = nullptr;
@@ -739,6 +753,7 @@ private:
     QCheckBox *resources_toggle_checkbox_ = nullptr;
   };
   GraphCompiledDumpPreferencesWidgets graph_compiled_dump_preferences_widgets_;
+  QCheckBox *runtime_failure_graph_checkbox_ = nullptr;
 };
 
 } // namespace
@@ -1189,6 +1204,12 @@ void MainWindow::refresh_command_bar() {
 void MainWindow::save_persistent_state() {
   QSettings settings;
 
+  settings.beginGroup("preferences");
+  settings.setValue("dump_runtime_failure_graphs",
+                    pipeline_manager_ ? pipeline_manager_->dump_runtime_failure_graphs()
+                                       : dump_runtime_failure_graphs_);
+  settings.endGroup();
+
   settings.beginGroup("main_window");
   settings.setValue("geometry", saveGeometry());
   settings.endGroup();
@@ -1290,6 +1311,11 @@ void MainWindow::save_persistent_state() {
 
 void MainWindow::restore_persistent_state() {
   QSettings settings;
+
+  settings.beginGroup("preferences");
+  dump_runtime_failure_graphs_ =
+      settings.value("dump_runtime_failure_graphs", false).toBool();
+  settings.endGroup();
 
   settings.beginGroup("main_window");
   if (settings.contains("geometry")) {
@@ -1581,6 +1607,7 @@ void MainWindow::initialize_pipeline_manager() {
       yz_processed_widget_, xy_raw_widget_, raw_spectrum_widget_, processed_spectrum_widget_,
       shack_hartmann_widget_, shack_hartmann_xcorr_widget_, zernike_phase_widget_,
       zernike_history_widget_);
+  pipeline_manager_->set_dump_runtime_failure_graphs(dump_runtime_failure_graphs_);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);
   pipeline_manager_thread_->start();
@@ -1638,7 +1665,17 @@ void MainWindow::connect_manager_signals() {
               graph_visualizer_widget_->show_error(error);
             }
           });
-
+  connect(pipeline_manager_, &pipeline::Manager::failure_graph_ready, this,
+          [this](const QString &dot) {
+            if (graph_visualizer_widget_ == nullptr) {
+              return;
+            }
+            failure_graph_available_ = true;
+            graph_visualizer_widget_->set_reload_enabled(false);
+            display_workspace_->set_visualization_title(QStringLiteral("pipeline_graph"),
+                                                        tr("Failure Graph"));
+            graph_visualizer_widget_->render_dot(dot);
+          });
 }
 
 void MainWindow::connect_import_controls() {
@@ -1743,9 +1780,11 @@ void MainWindow::show_pipeline_graph() {
   display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
   display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
 
-  auto request = [manager = pipeline_manager_]() { manager->request_compiled_graph_visualization(); };
-  HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, std::move(request),
-                                             Qt::QueuedConnection));
+  auto request = [manager = pipeline_manager_]() {
+    manager->request_compiled_graph_visualization();
+  };
+  HOLOVIBES_CHECK(
+      QMetaObject::invokeMethod(pipeline_manager_, std::move(request), Qt::QueuedConnection));
 }
 
 void MainWindow::open_dot_file() {
@@ -1890,6 +1929,11 @@ void MainWindow::on_start_pipeline_failure(const QString &error) {
   export_widget_->set_stop_enabled(false);
   display_workspace_->set_pipeline_running(false);
   refresh_command_bar();
+  if (failure_graph_available_) {
+    display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
+    display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
+    failure_graph_available_ = false;
+  }
 
   show_pipeline_error_popup(tr("An error occurred while starting the pipeline:\n%1").arg(error));
 }
@@ -2058,6 +2102,11 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   export_widget_->set_stop_enabled(false);
   display_workspace_->set_pipeline_running(false);
   refresh_command_bar();
+  if (failure_graph_available_) {
+    display_workspace_->set_visualization_enabled(QStringLiteral("pipeline_graph"), true);
+    display_workspace_->select_visualization(QStringLiteral("pipeline_graph"));
+    failure_graph_available_ = false;
+  }
 
   show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
 }
@@ -2515,8 +2564,8 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.cpu_in_size  = 4096;
     s.gpu_in_size  = 1024;
     s.cpu_rec_size = 4096;
-    s.cpu_out_size = 64;
-    s.gpu_out_size = 64;
+    s.cpu_out_size = 32;
+    s.gpu_out_size = 32;
   }
 
   // Import Settings

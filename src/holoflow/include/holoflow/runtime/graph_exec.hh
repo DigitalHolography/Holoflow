@@ -14,103 +14,22 @@
 
 #pragma once
 
-#include <atomic>
-#include <boost/graph/adjacency_list.hpp>
 #include <chrono>
-#include <condition_variable>
-#include <cstddef>
 #include <cstdint>
-#include <cuda_runtime.h>
+#include <functional>
 #include <map>
 #include <memory>
-#include <mutex>
+#include <nlohmann/json.hpp>
 #include <optional>
-#include <span>
+#include <spdlog/fmt/fmt.h>
 #include <string>
-#include <thread>
-#include <utility>
-#include <variant>
+#include <string_view>
 #include <vector>
 
-#include "curaii/cuda.hh"
-#include "driver_types.h"
-#include "holoflow/core/graph_spec.hh"
-#include "holoflow/core/tasks.hh"
-#include "holoflow/core/tensor.hh"
+#include "holoflow/runtime/graph_exec_types.hh"
 #include "holoflow_event/router.hh"
 
 namespace holoflow::runtime {
-
-struct NodePlan {
-  core::NodeSpec    spec;     ///< Node specification.
-  core::InferResult infer;    ///< Inference metadata.
-  std::vector<int>  in_tids;  ///< Input tensor IDs.
-  std::vector<int>  out_tids; ///< Output tensor IDs.
-};
-
-struct EdgePlan {
-  core::EdgeSpec spec; ///< Edge specification.
-  core::TDesc    desc; ///< Tensor descriptor.
-  int            tid;  ///< Tensor ID.
-};
-
-using GraphPlan = boost::adjacency_list<boost::vecS,           // OutEdgeList
-                                        boost::vecS,           // VertexList
-                                        boost::bidirectionalS, // Directed graph
-                                        NodePlan,              // Vertex properties
-                                        EdgePlan               // Edge properties
-                                        >;
-
-/// Represents a block of memory used during graph execution.
-struct MemoryBlock {
-  core::MemLoc mem_loc;    ///< Memory location (host or device).
-  size_t       size_bytes; ///< Size of the memory block in bytes.
-
-  curaii::unique_host_ptr<std::byte>   h_data; ///< Host memory (if applicable).
-  curaii::unique_device_ptr<std::byte> d_data; ///< Device memory (if applicable).
-
-  void *get(); ///< Returns a mutable pointer to the memory block.
-};
-
-struct ExecResouces {
-  std::map<size_t, MemoryBlock>                    memory_blocks; ///< StorageID -> MemoryBlock.
-  std::map<size_t, std::unique_ptr<core::Storage>> storages;      ///< StorageID -> Storage.
-  std::map<size_t, core::TDesc>                    tensor_descs;  ///< TensorID -> TDesc.
-  std::map<size_t, size_t>                         tid_to_sid;    ///< TensorID -> StorageID.
-
-  std::map<std::string, std::unique_ptr<core::IOStorageAccess>> node_storage_adapters;
-  std::map<size_t, curaii::CudaStream>                          streams; ///< CUDA streams by ID.
-  std::map<std::string, std::unique_ptr<core::ITask>>           tasks;   ///< Task instances by ID.
-  // std::map<int, core::Tensor>                         tensors; ///< Allocated tensors by ID.
-};
-
-struct Section {
-  int                                       id;         ///< Section ID.
-  std::string                               name;       ///< Section name (for logging).
-  cudaStream_t                              stream;     ///< CUDA stream for this section.
-  std::vector<GraphPlan::vertex_descriptor> sync_topo;  ///< Synchronous nodes in topological order.
-  std::vector<GraphPlan::vertex_descriptor> async_cons; ///< Asynchronous consumer nodes.
-  std::vector<GraphPlan::vertex_descriptor> async_prod; ///< Asynchronous producer nodes
-  bool has_synchronizing_async_producer = false; ///< Producer supplies the section stream barrier.
-  std::vector<GraphPlan::vertex_descriptor> const_sync_topo; ///< Constant synchronous nodes, once.
-};
-
-struct SyncRt {
-  core::ISyncTask         *task = nullptr;
-  std::vector<core::TView> in_views;
-  std::vector<core::TView> out_views;
-  core::SyncCtx            ctx{};
-};
-
-struct AsyncRt {
-  core::IAsyncTask        *task = nullptr;
-  std::vector<core::TView> in_views;
-  std::vector<core::TView> out_views;
-  core::AsyncPushCtx       pctx{};
-  core::AsyncPopCtx        xctx{};
-};
-
-using NodeRt = std::variant<SyncRt, AsyncRt>;
 
 struct NodeMetrics {
   double   average_duration_ms                = 0.0;
@@ -118,145 +37,54 @@ struct NodeMetrics {
   double   host_throughput_bytes_per_second   = 0.0;
   double   device_throughput_bytes_per_second = 0.0;
   uint64_t sample_count                       = 0;
+  bool     individual_timing_available        = true;
 };
 
 class Scheduler {
 public:
+  /// Called once before a fatal runtime abort, while the compiled graph is still available.
+  using FailureCallback =
+      std::function<void(std::string_view thread_name, std::string_view node_name,
+                         std::string_view error_message)>;
+
   Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
             std::chrono::milliseconds metrics_interval = std::chrono::milliseconds{1000});
+  Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
+            std::chrono::milliseconds metrics_interval, FailureCallback failure_callback);
 
   ~Scheduler();
 
   void set_metrics_interval(std::chrono::milliseconds interval);
   [[nodiscard]] std::map<std::string, NodeMetrics> metrics() const;
+  /// Host submission timing/counts for section graph launches, not GPU execution duration.
+  [[nodiscard]] std::map<std::string, NodeMetrics> section_graph_metrics() const;
+  [[nodiscard]] nlohmann::json                     section_graph_diagnostics() const;
 
   void start();
+  /// Suspend with acquired buffers and completed operations retained for start().
+  void request_pause();
   void request_stop();
   void wait();
 
   bool is_running() const;
   bool stop_requested() const;
 
+  /// Returns the node currently executing on the calling scheduler thread.
+  /// The view remains valid while the compiled graph is alive.
+  [[nodiscard]] std::string_view current_node_name() const noexcept;
+
   [[nodiscard]] bool ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept;
 
   [[nodiscard]] std::optional<holoflow_event::Event> ui_try_receive() noexcept;
 
-private:
-  void init_tviews();
-  void build_event_handles();
-  void build_nodes_rts();
-  void init_const_task_states();
-  void reset_metrics_state();
-  void start_metrics_thread();
-  void stop_metrics_thread();
-  void metrics_loop();
-  void aggregate_metrics(double interval_seconds);
-  void record_node_sample(std::size_t idx, uint64_t duration_ns, uint64_t host_bytes,
-                          uint64_t device_bytes);
-  static std::pair<uint64_t, uint64_t> sum_bytes(std::span<const core::TView> views);
-
-  void run_router();
-
-  void run_section(int section_id);
-
-  /// This function acquires all owned inputs for the given node.
-  /// Owning tasks publish memory by updating their compiler-provided Storage;
-  /// all scheduler TViews retain pointers to that stable Storage object.
-  /// This function blocks until all owned inputs are acquired.
-  /// @warning If stop_ is set while waiting, the function returns early,
-  /// and some owned inputs may not be acquired.
-  /// @warning This function must be called on a synchronous or asynchronous
-  /// producer node only.
-  void acquire_owned_inputs(GraphPlan::vertex_descriptor v);
-
-  /// This function releases all owned outputs for the given node.
-  /// Pointer cleanup remains the owning task's responsibility.
-  /// This function does not block.
-  void release_owned_outputs(GraphPlan::vertex_descriptor v);
-
-  /// Executes a synchronous node.
-  /// @warning This function must be called on a synchronous node only.
-  [[nodiscard]] core::OpResult run_sync(GraphPlan::vertex_descriptor v);
-
-  /// Executes an asynchronous consumer node.
-  /// @warning This function must be called on an asynchronous consumer node only.
-  [[nodiscard]] core::OpResult run_async_cons(GraphPlan::vertex_descriptor v);
-
-  /// Executes an asynchronous producer node.
-  /// @warning This function must be called on an asynchronous producer node only.
-  [[nodiscard]] core::OpResult run_async_prod(GraphPlan::vertex_descriptor v);
+  Scheduler(const Scheduler &)            = delete;
+  Scheduler &operator=(const Scheduler &) = delete;
+  Scheduler(Scheduler &&)                 = delete;
+  Scheduler &operator=(Scheduler &&)      = delete;
 
 private:
-  std::atomic<bool>           running_{false}; ///< True if the scheduler is running.
-  std::atomic<bool>           stop_{false};    ///< True if a stop has been requested.
-  const GraphPlan            &graph_;          ///< The computational graph to execute.
-  const std::vector<Section> &sections_;       ///< Execution sections.
-  ExecResouces               &res_;            ///< Execution resources (streams, tasks, tensors).
-
-  /// Stable TViews for all tensors by their IDs. Copies across node contexts
-  /// observe ownership changes through their shared Storage pointers.
-  std::vector<core::TView> tviews_;
-
-  std::vector<NodeRt>      node_rts_; ///< Runtime data for each node.
-  std::vector<std::string> node_names_;
-  std::vector<core::ConstTaskState> const_task_states_;
-
-  std::mutex              const_init_mutex_;
-  std::condition_variable const_init_cv_;
-  std::size_t             const_init_sections_ready_ = 0;
-  bool                    const_init_complete_      = false;
-
-  struct NodeMetricAccumulator {
-    std::atomic<uint64_t> duration_ns{0};
-    std::atomic<uint64_t> run_count{0};
-    std::atomic<uint64_t> host_bytes{0};
-    std::atomic<uint64_t> device_bytes{0};
-
-    NodeMetricAccumulator() = default;
-
-    NodeMetricAccumulator(const NodeMetricAccumulator &other) {
-      duration_ns.store(other.duration_ns.load(std::memory_order_relaxed),
-                        std::memory_order_relaxed);
-      run_count.store(other.run_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      host_bytes.store(other.host_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      device_bytes.store(other.device_bytes.load(std::memory_order_relaxed),
-                         std::memory_order_relaxed);
-    }
-
-    NodeMetricAccumulator &operator=(const NodeMetricAccumulator &other) {
-      if (this == &other) {
-        return *this;
-      }
-      duration_ns.store(other.duration_ns.load(std::memory_order_relaxed),
-                        std::memory_order_relaxed);
-      run_count.store(other.run_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      host_bytes.store(other.host_bytes.load(std::memory_order_relaxed), std::memory_order_relaxed);
-      device_bytes.store(other.device_bytes.load(std::memory_order_relaxed),
-                         std::memory_order_relaxed);
-      return *this;
-    }
-
-    NodeMetricAccumulator(NodeMetricAccumulator &&other) noexcept : NodeMetricAccumulator(other) {}
-
-    NodeMetricAccumulator &operator=(NodeMetricAccumulator &&other) noexcept {
-      return (*this = other);
-    }
-  };
-
-  std::vector<NodeMetricAccumulator> metric_accumulators_;
-
-  mutable std::mutex                 metrics_mutex_;
-  std::map<std::string, NodeMetrics> latest_metrics_;
-  std::chrono::milliseconds          metrics_interval_;
-  std::atomic<bool>                  metrics_running_{false};
-  std::thread                        metrics_thread_;
-  std::condition_variable            metrics_cv_;
-  mutable std::mutex                 metrics_thread_mutex_;
-
-  std::vector<std::thread> threads_; ///< Threads for each section.
-
-  holoflow_event::Router                                     router_;
-  std::map<std::string, holoflow_event::Router::NodeHandles> event_handles_;
+  class Impl;
+  std::unique_ptr<Impl> impl_;
 };
 
 } // namespace holoflow::runtime
@@ -266,6 +94,13 @@ template <> struct fmt::formatter<holoflow::runtime::NodeMetrics> {
 
   template <typename FormatContext>
   auto format(const holoflow::runtime::NodeMetrics &m, FormatContext &ctx) const {
+    if (!m.individual_timing_available) {
+      return fmt::format_to(ctx.out(),
+                            "{{avg: n/a (section graph), rps: {:.3f}, host: {:.3f} B/s, device: "
+                            "{:.3f} B/s, samples: {}}}",
+                            m.runs_per_second, m.host_throughput_bytes_per_second,
+                            m.device_throughput_bytes_per_second, m.sample_count);
+    }
     return fmt::format_to(
         ctx.out(),
         "{{avg: {:.3f} ms, rps: {:.3f}, host: {:.3f} B/s, device: {:.3f} B/s, samples: {}}}",
