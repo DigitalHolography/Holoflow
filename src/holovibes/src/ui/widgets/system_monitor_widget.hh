@@ -20,8 +20,6 @@
 
 namespace holovibes::ui {
 
-class MultiProgressBar;
-
 class SystemMonitorWidget : public QGroupBox {
   Q_OBJECT
 
@@ -51,11 +49,6 @@ public:
     output_queue_bar_->setValue(value);
   }
 
-  void set_record_queue(int first, int second, int max);
-  void update_record_writing_speed(size_t first);
-  void update_record_queue_acquired(int first);
-  void update_record_queue_recorded(int second);
-
 private:
   void setup_ui();
 
@@ -75,8 +68,6 @@ private:
   QProgressBar *input_queue_bar_;
   QProgressBar *output_queue_bar_;
 
-  QLabel           *record_writing_speed_value_;
-  MultiProgressBar *record_queue_bar_;
 };
 
 } // namespace holovibes::ui

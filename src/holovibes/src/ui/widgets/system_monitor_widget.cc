@@ -14,101 +14,11 @@
 
 #include "ui/widgets/system_monitor_widget.hh"
 
-#include <QGridLayout>
 #include <QLabel>
-#include <QPaintEvent>
-#include <QPainter>
-#include <QPainterPath>
-#include <QStyleOptionProgressBar>
 #include <QVBoxLayout>
 #include <algorithm>
 
 namespace holovibes::ui {
-
-class MultiProgressBar : public QProgressBar {
-  Q_OBJECT
-
-public:
-  explicit MultiProgressBar(QWidget *parent = nullptr) : QProgressBar(parent) {
-    setRange(0, 1);
-    setTextVisible(true);
-    setMinimumHeight(20);
-    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-  }
-
-  void set_progress(int first, int second) {
-    first_progress_  = std::clamp(first, 0, maximum());
-    second_progress_ = std::clamp(second, 0, maximum());
-
-    update();
-  }
-
-  void set_first(int first) {
-    first_progress_ = std::clamp(first, 0, maximum());
-    update();
-  }
-
-  void set_second(int second) {
-    second_progress_ = std::clamp(second, 0, maximum());
-    update();
-  }
-
-protected:
-  void paintEvent(QPaintEvent *) override {
-    QPainter painter(this);
-
-    QStyleOptionProgressBar opt;
-    initStyleOption(&opt);
-
-    // 1. Draw the native Qt progress bar background/frame.
-    QStyleOptionProgressBar bg = opt;
-    bg.progress                = 0;
-    bg.textVisible             = false;
-
-    style()->drawControl(QStyle::CE_ProgressBar, &bg, &painter, this);
-
-    // 2. Draw the two colored sections with rounded corners.
-    QRect contents = style()->subElementRect(QStyle::SE_ProgressBarContents, &opt, this);
-
-    if (maximum() > 0 && !contents.isEmpty()) {
-      qreal unit = qreal(contents.width()) / maximum();
-
-      int first_width  = qRound(first_progress_ * unit);
-      int second_width = qRound(second_progress_ * unit);
-
-      painter.save();
-      painter.setRenderHint(QPainter::Antialiasing, true);
-
-      // Clip everything to the rounded progress bar shape.
-      QPainterPath clipPath;
-      qreal        radius = contents.height() / 2.0;
-      clipPath.addRoundedRect(contents, radius, radius);
-      painter.setClipPath(clipPath);
-
-      // First progress section.
-      painter.fillRect(QRect(contents.left(), contents.top(), first_width, contents.height()),
-                       first_color_);
-
-      // Second progress section.
-      painter.fillRect(QRect(contents.left(), contents.top(), second_width, contents.height()),
-                       second_color_);
-
-      painter.restore();
-    }
-
-    // 3. Draw centered value / maximum text.
-    painter.setPen(opt.palette.color(QPalette::Text));
-    painter.drawText(
-        rect(), Qt::AlignCenter,
-        QString("%1 acq %2 rec / %3").arg(first_progress_).arg(second_progress_).arg(maximum()));
-  }
-
-private:
-  static inline QColor first_color_     = QColor("#2DA6A1");
-  static inline QColor second_color_    = QColor("#3FB950");
-  int                  first_progress_  = 0;
-  int                  second_progress_ = 0;
-};
 
 SystemMonitorWidget::SystemMonitorWidget(QWidget *parent) : QGroupBox("SYSTEM MONITOR", parent) {
   setup_ui();
@@ -192,18 +102,7 @@ void SystemMonitorWidget::setup_ui() {
   configure_bar(&input_queue_bar_, "Input Queue", 48, 64);
   configure_bar(&output_queue_bar_, "Output Queue", 22, 64);
 
-  auto *record_group  = new QGroupBox("Record", this);
-  auto *record_layout = new QGridLayout(record_group);
-
-  record_layout->addWidget(new QLabel("Record Queue 0", record_group), 0, 0);
-  record_layout->addWidget(new QLabel("Writing Speed:", record_group), 1, 0);
-  record_writing_speed_value_ = new QLabel("N/A", record_group);
-  record_layout->addWidget(record_writing_speed_value_, 1, 1);
-  record_queue_bar_ = new MultiProgressBar(record_group);
-  record_layout->addWidget(record_queue_bar_);
-
   layout->addWidget(queue_group);
-  layout->addWidget(record_group);
 }
 
 void SystemMonitorWidget::update_metrics(double input_fps) {
@@ -225,23 +124,4 @@ void SystemMonitorWidget::update_metrics(double input_fps) {
   pipeline_latency_value_->setText("N/A");
 }
 
-void SystemMonitorWidget::set_record_queue(int first, int second, int max) {
-  record_queue_bar_->setMaximum(max);
-  record_queue_bar_->set_progress(first, second);
-}
-
-void SystemMonitorWidget::update_record_writing_speed(size_t first) {
-  auto str = QString("%1 frames/s").arg(QString::number(first));
-  record_writing_speed_value_->setText(str);
-}
-
-void SystemMonitorWidget::update_record_queue_acquired(int first) {
-  record_queue_bar_->set_first(first);
-}
-
-void SystemMonitorWidget::update_record_queue_recorded(int second) {
-  record_queue_bar_->set_second(second);
-}
 } // namespace holovibes::ui
-
-#include "system_monitor_widget.moc"

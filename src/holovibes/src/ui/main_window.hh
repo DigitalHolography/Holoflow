@@ -37,6 +37,7 @@
 #include "ui/widgets/export_widget.hh"
 #include "ui/widgets/image_rendering_widget.hh"
 #include "ui/widgets/import_widget.hh"
+#include "ui/widgets/record_monitor_widget.hh"
 #include "ui/widgets/system_monitor_widget.hh"
 #include "ui/widgets/view_widget.hh"
 
@@ -74,6 +75,7 @@ private:
   ImageRenderingWidget        *render_widget_;
   ViewWidget                  *view_widget_;
   SystemMonitorWidget         *monitor_widget_;
+  RecordMonitorWidget         *record_widget_;
   SelectedWidgetSettingsPanel *selected_widget_settings_panel_;
 
   void show_pipeline_error_popup(const QString &message);

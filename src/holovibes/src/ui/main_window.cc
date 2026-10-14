@@ -955,8 +955,14 @@ void MainWindow::setup_main_layout() {
   monitor_widget_ = new SystemMonitorWidget(right_sidebar_);
   monitor_widget_->setObjectName("systemMonitorPanel");
   monitor_widget_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+
+  record_widget_ = new RecordMonitorWidget(right_sidebar_);
+  record_widget_->setObjectName("recordMonitorPanel");
+  record_widget_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+
   selected_widget_settings_panel_ = new SelectedWidgetSettingsPanel(right_sidebar_);
   right_sidebar_layout->addWidget(monitor_widget_);
+  right_sidebar_layout->addWidget(record_widget_);
   right_sidebar_layout->addWidget(selected_widget_settings_panel_, 1);
 
   const int right_sidebar_width = std::max(280, right_sidebar_->sizeHint().width());
@@ -2070,12 +2076,12 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
 }
 
 void MainWindow::on_update_record(size_t frame_recorded, size_t writing_speed) {
-  monitor_widget_->update_record_queue_recorded(static_cast<int>(frame_recorded));
-  monitor_widget_->update_record_writing_speed(writing_speed);
+  record_widget_->update_record_queue_recorded(0, static_cast<int>(frame_recorded));
+  record_widget_->update_record_writing_speed(0, writing_speed);
 }
 
 void MainWindow::on_update_acquisition(size_t frame_acquired) {
-  monitor_widget_->update_record_queue_acquired(static_cast<int>(frame_acquired));
+  record_widget_->update_record_queue_acquired(0, static_cast<int>(frame_acquired));
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
@@ -2175,9 +2181,9 @@ void MainWindow::on_export_record_clicked() {
 
   auto start = [mgr         = pipeline_manager_, record_path,
                 record_size = frame_count.has_value() ? *frame_count : 1,
-                monitor     = monitor_widget_]() {
+                monitor     = record_widget_]() {
     mgr->start_raw_record(record_path);
-    monitor->set_record_queue(0, 0, static_cast<int>(record_size));
+    monitor->set_record_queue(0, 0, 0, static_cast<int>(record_size));
   };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
 }
@@ -2224,7 +2230,7 @@ void MainWindow::on_raw_record_stopped_success() {
   export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(false);
 
-  monitor_widget_->set_record_queue(0, 0, 1);
+  record_widget_->set_record_queue(0, 0, 0, 1);
   refresh_command_bar();
 }
 
