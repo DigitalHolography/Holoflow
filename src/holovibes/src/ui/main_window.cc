@@ -1567,7 +1567,7 @@ void MainWindow::initialize_display_widgets() {
                                               "xy_processed", DockPlacement::Tab, false});
   display_workspace_->register_visualization({"pipeline_graph", "Pipeline Graph",
                                               graph_visualizer_widget_, "xy_processed",
-                                              DockPlacement::Tab, false});
+                                              DockPlacement::Tab, false, false});
   display_workspace_->finalize_registration();
 
   connect(display_workspace_, &VisualizationWorkspace::selected_visualization_changed, this,
@@ -1582,6 +1582,8 @@ void MainWindow::initialize_display_widgets() {
           });
   connect(graph_visualizer_widget_, &GraphVisualizerWidget::reload_requested, this,
           &MainWindow::show_pipeline_graph);
+  connect(graph_visualizer_widget_, &GraphVisualizerWidget::open_file_requested, this,
+          &MainWindow::open_dot_file);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this,
           &MainWindow::refresh_visualization_availability);
 
