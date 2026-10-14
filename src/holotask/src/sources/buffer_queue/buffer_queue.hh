@@ -24,6 +24,7 @@
 #include <optional>
 #include <vector>
 
+#include "circular_queue.hh"
 
 namespace holotask::sources {
 
@@ -35,8 +36,7 @@ struct CameraFrame {
 
 class CameraBufferPair {
 public:
-
-  using Clock = std::chrono::steady_clock;
+  using Clock      = std::chrono::steady_clock;
   using BufferData = Euresys::NewBufferData;
   CameraBufferPair(Grabber &grabber_a, Grabber &grabber_b);
   ~CameraBufferPair();
@@ -75,14 +75,17 @@ class CameraBufferQueue {
 public:
   enum class PushResult { Accepted, Full, Closed };
 
+  using ReadyQueue = CircularQueue<size_t>;
+  using FreeQueue  = CircularQueue<size_t>;
+
   CameraBufferQueue(size_t capacity, std::function<void(const CameraFrame &)> release);
   ~CameraBufferQueue();
 
   CameraBufferQueue(const CameraBufferQueue &)            = delete;
   CameraBufferQueue &operator=(const CameraBufferQueue &) = delete;
 
-  CameraBufferQueue(CameraBufferQueue &&)                 = delete;
-  CameraBufferQueue &operator=(CameraBufferQueue &&)      = delete;
+  CameraBufferQueue(CameraBufferQueue &&)            = delete;
+  CameraBufferQueue &operator=(CameraBufferQueue &&) = delete;
 
   void clear();
 
@@ -103,23 +106,26 @@ public:
 
   size_t capacity() const { return slots_.size(); }
   size_t size() const;
-  bool empty() const { return size() == 0; }
+  bool   empty() const { return size() == 0; }
 
 private:
   struct Slot {
     CameraFrame frame{};
     unsigned    readers = 0;
   };
-  const CameraFrame *read(const size_t &index, const std::atomic<bool> *cancelled);
-  void release(size_t &index);
+  const CameraFrame *read(ReadyQueue &queue, const std::atomic<bool> *cancelled);
+  void               release(size_t index);
 
 private:
   mutable SpinLock                         mutex_;
   std::condition_variable_any              available_;
   std::vector<Slot>                        slots_;
   std::function<void(const CameraFrame &)> release_;
-  size_t                                   write_ = 0, read_a_ = 0, read_b_ = 0;
   bool                                     closed_ = false, reader_b_active_ = false;
+
+  ReadyQueue ready_queue_a_;
+  ReadyQueue ready_queue_b_;
+  FreeQueue  free_queue_;
 };
 
 } // namespace holotask::sources

@@ -14,6 +14,10 @@
 
 #include "buffer_queue.hh"
 
+#include <cassert>
+#undef min
+#undef max
+#include <limits>
 namespace holotask::sources {
 
 // -------------------------------------------------------------------------------------------------
@@ -65,9 +69,13 @@ void SpinLock::unlock() { lock_.store(false, std::memory_order_release); }
 
 CameraBufferQueue::CameraBufferQueue(size_t                                   capacity,
                                      std::function<void(const CameraFrame &)> release)
-    : slots_(capacity), release_(std::move(release)) {
+    : slots_(capacity), release_(std::move(release)), ready_queue_a_{capacity},
+      ready_queue_b_{capacity}, free_queue_{capacity} {
   if (capacity == 0)
     throw std::invalid_argument("CameraBufferQueue capacity must be > 0");
+
+  for (size_t i = 0; i < capacity; ++i)
+    free_queue_.push(i);
 }
 
 CameraBufferQueue::~CameraBufferQueue() {
@@ -83,9 +91,12 @@ void CameraBufferQueue::clear() {
       slot.readers = 0;
     }
 
-  write_  = 0;
-  read_a_ = 0;
-  read_b_ = 0;
+  ready_queue_a_.clear();
+  ready_queue_b_.clear();
+  free_queue_.clear();
+  for (size_t i = 0; i < slots_.size(); ++i)
+    free_queue_.push(i);
+
   available_.notify_all();
 }
 
@@ -94,39 +105,62 @@ void CameraBufferQueue::clear() {
     const std::lock_guard lock(mutex_);
     if (closed_)
       return PushResult::Closed;
-    auto &slot = slots_[write_ % slots_.size()];
-    if (slot.readers != 0)
+
+    size_t write_index = std::numeric_limits<size_t>::max();
+    if (!free_queue_.peek(write_index))
       return PushResult::Full;
-    slot.frame   = frame;
-    slot.readers = reader_b_active_ ? 2 : 1;
-    ++write_;
+
+    free_queue_.pop();
+
+    auto &slot = slots_[write_index];
+    assert(slot.readers == 0);
+
+    slot.frame          = frame;
+    const bool pushed_a = ready_queue_a_.push(write_index);
+    assert(pushed_a);
+
+    if (reader_b_active_) {
+      const bool pushed_b = ready_queue_b_.push(write_index);
+      assert(pushed_b);
+    }
+
+    slot.readers = reader_b_active_ ? 2u : 1u;
   }
+
   available_.notify_all();
   return PushResult::Accepted;
 }
 
 const CameraFrame *CameraBufferQueue::read_a(const std::atomic<bool> *cancelled) {
-  return read(read_a_, cancelled);
+  return read(ready_queue_a_, cancelled);
 }
 const CameraFrame *CameraBufferQueue::read_b(const std::atomic<bool> *cancelled) {
-  return read(read_b_, cancelled);
+  return read(ready_queue_b_, cancelled);
 }
 
 void CameraBufferQueue::release_a() {
   const std::lock_guard lock(mutex_);
-  release(read_a_);
+  auto                  index = std::numeric_limits<size_t>::max();
+  while (!ready_queue_a_.peek(index))
+    ;
+  release(index);
+  ready_queue_a_.pop();
 }
 
 void CameraBufferQueue::release_b() {
   const std::lock_guard lock(mutex_);
-  release(read_b_);
+  auto                  index = std::numeric_limits<size_t>::max();
+  while (!ready_queue_b_.peek(index))
+    ;
+
+  release(index);
+  ready_queue_b_.pop();
 }
 
 void CameraBufferQueue::subscribe_b() {
   const std::lock_guard lock(mutex_);
   if (reader_b_active_)
     throw std::logic_error("CameraBufferQueue reader B is already active");
-  read_b_          = write_;
   reader_b_active_ = true;
 }
 
@@ -138,8 +172,12 @@ void CameraBufferQueue::unsubscribe_b() {
 }
 
 void CameraBufferQueue::clear_b() {
-  while (read_b_ != write_)
-    release(read_b_);
+  std::lock_guard lock(mutex_);
+  size_t          index = std::numeric_limits<size_t>::max();
+  while (ready_queue_b_.peek(index)) {
+    release(index);
+    ready_queue_b_.pop();
+  }
 }
 
 void CameraBufferQueue::close() {
@@ -152,29 +190,31 @@ void CameraBufferQueue::close() {
 
 size_t CameraBufferQueue::size() const {
   const std::lock_guard lock(mutex_);
-  const auto            oldest = reader_b_active_ && read_b_ < read_a_ ? read_b_ : read_a_;
-  return write_ - oldest;
+  return slots_.size() - free_queue_.size();
 }
 
-const CameraFrame *CameraBufferQueue::read(const size_t            &index,
-                                           const std::atomic<bool> *cancelled) {
+size_t CameraBufferQueue::capacity() const { return slots_.size(); }
+
+const CameraFrame *CameraBufferQueue::read(ReadyQueue &queue, const std::atomic<bool> *cancelled) {
   std::unique_lock lock(mutex_);
   // Timed waits also observe external pipeline cancellation without requiring
   // its owner to notify this queue.
   while (!closed_ && !(cancelled && cancelled->load(std::memory_order_acquire))) {
-    if (index != write_)
-      return &slots_[index % slots_.size()].frame;
+    size_t index = std::numeric_limits<size_t>::max();
+    if (queue.peek(index))
+      return &slots_[index].frame;
     available_.wait_for(lock, std::chrono::milliseconds(10));
   }
   return nullptr;
 }
-void CameraBufferQueue::release(size_t &index) {
-  if (index == write_)
-    throw std::logic_error("CameraBufferQueue release without a frame");
-  auto &slot = slots_[index % slots_.size()];
-  if (--slot.readers == 0)
+
+void CameraBufferQueue::release(size_t index) {
+  auto &slot = slots_[index];
+  if (--slot.readers == 0) {
     release_(slot.frame);
-  ++index;
+    const bool pushed = free_queue_.push(index);
+    assert(pushed);
+  }
 }
 
 } // namespace holotask::sources
