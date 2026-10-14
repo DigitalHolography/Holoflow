@@ -116,6 +116,8 @@ private:
   const CameraFrame *read(ReadyQueue &queue, const std::atomic<bool> *cancelled);
   void               release(size_t index);
 
+  void fill_free_list();
+
 private:
   mutable SpinLock                         mutex_;
   std::condition_variable_any              available_;

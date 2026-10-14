@@ -15,6 +15,7 @@
 #pragma once
 
 #include "circular_queue.hh"
+#include <cassert>
 
 namespace holotask::sources {
 
@@ -45,14 +46,11 @@ template <typename T> [[nodiscard]] bool CircularQueue<T>::push(T &&value) noexc
   return true;
 }
 
-template <typename T> [[nodiscard]] bool CircularQueue<T>::pop() noexcept {
-  if (empty())
-    return false;
+template <typename T> void CircularQueue<T>::pop() noexcept {
+  assert(!empty());
 
   head_ = next(head_);
   --size_;
-
-  return true;
 }
 
 template <typename T> [[nodiscard]] bool CircularQueue<T>::peek(T &value) const noexcept {

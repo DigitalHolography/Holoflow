@@ -74,8 +74,15 @@ CameraBufferQueue::CameraBufferQueue(size_t                                   ca
   if (capacity == 0)
     throw std::invalid_argument("CameraBufferQueue capacity must be > 0");
 
-  for (size_t i = 0; i < capacity; ++i)
-    free_queue_.push(i);
+  fill_free_list();
+}
+
+void CameraBufferQueue::fill_free_list() {
+  for (size_t i = 0; i < slots_.size(); ++i) {
+    auto pushed = free_queue_.push(i);
+    assert(pushed);
+    (void)pushed; // for release build to avoid unused variable warning
+  }
 }
 
 CameraBufferQueue::~CameraBufferQueue() {
@@ -94,8 +101,8 @@ void CameraBufferQueue::clear() {
   ready_queue_a_.clear();
   ready_queue_b_.clear();
   free_queue_.clear();
-  for (size_t i = 0; i < slots_.size(); ++i)
-    free_queue_.push(i);
+
+  fill_free_list();
 
   available_.notify_all();
 }
@@ -192,8 +199,6 @@ size_t CameraBufferQueue::size() const {
   const std::lock_guard lock(mutex_);
   return slots_.size() - free_queue_.size();
 }
-
-size_t CameraBufferQueue::capacity() const { return slots_.size(); }
 
 const CameraFrame *CameraBufferQueue::read(ReadyQueue &queue, const std::atomic<bool> *cancelled) {
   std::unique_lock lock(mutex_);

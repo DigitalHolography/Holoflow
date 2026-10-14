@@ -36,7 +36,7 @@ public:
   [[nodiscard]] bool push(const T &value) noexcept;
   [[nodiscard]] bool push(T &&value) noexcept;
 
-  [[nodiscard]] bool pop() noexcept;
+  void               pop() noexcept;
   [[nodiscard]] bool peek(T &value) const noexcept;
 
   [[nodiscard]] bool empty() const noexcept;
