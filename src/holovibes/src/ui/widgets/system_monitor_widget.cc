@@ -18,6 +18,7 @@
 #include <QLabel>
 #include <QPaintEvent>
 #include <QPainter>
+#include <QPainterPath>
 #include <QStyleOptionProgressBar>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -32,10 +33,7 @@ public:
     setRange(0, 1);
     setTextVisible(true);
     setMinimumHeight(20);
-     setSizePolicy(
-        QSizePolicy::Expanding,
-        QSizePolicy::Fixed
-    );
+    setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
   }
 
   void set_progress(int first, int second) {
@@ -46,12 +44,12 @@ public:
   }
 
   void set_first(int first) {
-    first_progress_  = std::clamp(first, 0, maximum());
+    first_progress_ = std::clamp(first, 0, maximum());
     update();
   }
 
   void set_second(int second) {
-    second_progress_  = std::clamp(second, 0, maximum());
+    second_progress_ = std::clamp(second, 0, maximum());
     update();
   }
 
@@ -69,8 +67,7 @@ protected:
 
     style()->drawControl(QStyle::CE_ProgressBar, &bg, &painter, this);
 
-    // 2. Draw the two colored sections.
-    QStyleOptionProgressBar groove = opt;
+    // 2. Draw the two colored sections with rounded corners.
     QRect contents = style()->subElementRect(QStyle::SE_ProgressBarContents, &opt, this);
 
     if (maximum() > 0 && !contents.isEmpty()) {
@@ -80,28 +77,37 @@ protected:
       int second_width = qRound(second_progress_ * unit);
 
       painter.save();
-      painter.setClipRect(contents);
+      painter.setRenderHint(QPainter::Antialiasing, true);
 
+      // Clip everything to the rounded progress bar shape.
+      QPainterPath clipPath;
+      qreal        radius = contents.height() / 2.0;
+      clipPath.addRoundedRect(contents, radius, radius);
+      painter.setClipPath(clipPath);
+
+      // First progress section.
       painter.fillRect(QRect(contents.left(), contents.top(), first_width, contents.height()),
                        first_color_);
 
-      painter.fillRect(
-          QRect(contents.left(), contents.top(), second_width, contents.height()),
-          second_color_);
+      // Second progress section.
+      painter.fillRect(QRect(contents.left(), contents.top(), second_width, contents.height()),
+                       second_color_);
 
       painter.restore();
     }
 
     // 3. Draw centered value / maximum text.
     painter.setPen(opt.palette.color(QPalette::Text));
-    painter.drawText(rect(), Qt::AlignCenter, QString("%1 acq %2 rec / %3").arg(first_progress_).arg(second_progress_).arg(maximum()));
+    painter.drawText(
+        rect(), Qt::AlignCenter,
+        QString("%1 acq %2 rec / %3").arg(first_progress_).arg(second_progress_).arg(maximum()));
   }
 
 private:
-  static inline QColor first_color_      = QColor("#2DA6A1");
-  static inline QColor second_color_     = QColor("#3FB950");
-  int                  first_progress_   = 0;
-  int                  second_progress_  = 0;
+  static inline QColor first_color_     = QColor("#2DA6A1");
+  static inline QColor second_color_    = QColor("#3FB950");
+  int                  first_progress_  = 0;
+  int                  second_progress_ = 0;
 };
 
 SystemMonitorWidget::SystemMonitorWidget(QWidget *parent) : QGroupBox("SYSTEM MONITOR", parent) {
