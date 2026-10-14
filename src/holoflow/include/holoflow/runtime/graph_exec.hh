@@ -16,12 +16,14 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <memory>
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <spdlog/fmt/fmt.h>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "holoflow/runtime/graph_exec_types.hh"
@@ -40,8 +42,15 @@ struct NodeMetrics {
 
 class Scheduler {
 public:
+  /// Called once before a fatal runtime abort, while the compiled graph is still available.
+  using FailureCallback =
+      std::function<void(std::string_view thread_name, std::string_view node_name,
+                         std::string_view error_message)>;
+
   Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
             std::chrono::milliseconds metrics_interval = std::chrono::milliseconds{1000});
+  Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
+            std::chrono::milliseconds metrics_interval, FailureCallback failure_callback);
 
   ~Scheduler();
 
@@ -59,6 +68,10 @@ public:
 
   bool is_running() const;
   bool stop_requested() const;
+
+  /// Returns the node currently executing on the calling scheduler thread.
+  /// The view remains valid while the compiled graph is alive.
+  [[nodiscard]] std::string_view current_node_name() const noexcept;
 
   [[nodiscard]] bool ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept;
 

@@ -37,6 +37,14 @@ void dump_pipeline_graph_async(const std::filesystem::path &log_dir, const core:
 void dump_compiled_graph_async(const std::filesystem::path &dot_path, const CompilerOutput &output,
                                const GraphCompiledDumpPreferences &preferences,
                                std::string                         graph_name) noexcept {
+  dump_compiled_graph_async(dot_path, output, preferences, std::move(graph_name), {}, {},
+                            GraphFailureKind::Runtime);
+}
+
+void dump_compiled_graph_async(const std::filesystem::path &dot_path, const CompilerOutput &output,
+                               const GraphCompiledDumpPreferences &preferences,
+                               std::string graph_name, std::string failure_node,
+                               std::string failure_context, GraphFailureKind failure_kind) noexcept {
   try {
     std::shared_ptr<const GraphCompiledDumpSnapshot> snapshot;
     {
@@ -46,9 +54,12 @@ void dump_compiled_graph_async(const std::filesystem::path &dot_path, const Comp
     tracing::ScopedTrace submit("Submit Compiled Graph Dump", "detail");
     section_diagnostics_file_writer().submit_text(
         dot_path,
-        [snapshot = std::move(snapshot), preferences, graph_name = std::move(graph_name)] {
+        [snapshot = std::move(snapshot), preferences, graph_name = std::move(graph_name),
+         failure_node = std::move(failure_node), failure_context = std::move(failure_context),
+         failure_kind] {
           tracing::ScopedTrace format("Format Compiled Graph DOT", "detail");
-          return to_dot(*snapshot, preferences, graph_name);
+          return to_dot(*snapshot, preferences, graph_name, failure_node, failure_context,
+                        failure_kind);
         });
   } catch (...) {
     try {

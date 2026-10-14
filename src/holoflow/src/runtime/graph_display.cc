@@ -41,6 +41,18 @@ namespace {
 using namespace holoflow::core;
 using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
 
+constexpr std::string_view kFailureFillColor         = "#ff9999";
+constexpr std::string_view kFailureBorderColor       = "#cc0000";
+constexpr std::string_view kAsyncProducerFillColor   = "#e6f2ff";
+constexpr std::string_view kAsyncProducerBorderColor = "#0066cc";
+constexpr std::string_view kAsyncConsumerFillColor   = "#ffe6e6";
+constexpr std::string_view kAsyncConsumerBorderColor = "#cc0000";
+constexpr std::string_view kAsyncSignalColor         = "#888888";
+constexpr std::string_view kSyncFillColor            = "#ccffcc";
+constexpr std::string_view kSyncBorderColor          = "#333333";
+constexpr std::string_view kSectionBorderColor       = "gray";
+constexpr std::string_view kSectionFillColor         = "#f8f8f8";
+
 struct CompiledGraphDumpMetadata {
   std::vector<size_t>      stream_ids;
   std::vector<std::string> task_names;
@@ -222,7 +234,7 @@ static bool uses_snake_layout(const GraphCompiledDumpPreferences &prefs) {
 
 static void write_compiled_graph_header(std::ostringstream                 &ss,
                                         const GraphCompiledDumpPreferences &prefs,
-                                        const std::string &title = "holoflow_compiled_graph") {
+                                        std::string_view title = "holoflow_compiled_graph") {
   ss << "digraph " << title << " {\n";
   if (!uses_section_layout(prefs) &&
       prefs.rankdir == GraphCompiledDumpPreferences::Rankdir::LeftToRight)
@@ -249,7 +261,8 @@ static void write_compiled_graph_header(std::ostringstream                 &ss,
 
 static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPlan &g,
                                  const std::map<size_t, size_t>     &tid_to_sid,
-                                 const GraphCompiledDumpPreferences &prefs) {
+                                 const GraphCompiledDumpPreferences &prefs,
+                                 std::string_view                    failure_node) {
 
   auto fmt_id = [&](int tid) -> std::string {
     if (tid_to_sid.contains(tid)) {
@@ -314,31 +327,41 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
     }
 
     if (prefs.dump_node_kind) {
+      const bool is_failure_node = !failure_node.empty() && np.spec.name == failure_node;
       if (np.infer.kind == core::TaskKind::Async) {
         const std::string label_in = label_base.str() + "\n(Producer/Write)" + ids_line + "\n";
-        ss << std::format("  v{}_in [label=\"{}\", shape=invhouse, fillcolor=\"#e6f2ff\", "
-                          "color=\"#0066cc\", style=\"filled,dashed\"];\n",
-                          v, escape_for_label(label_in));
+        ss << std::format("  v{}_in [label=\"{}\", shape=invhouse, fillcolor=\"{}\", color=\"{}\", "
+                          "penwidth={}, style=\"filled,dashed\"];\n",
+                          v, escape_for_label(label_in),
+                          is_failure_node ? kFailureFillColor : kAsyncProducerFillColor,
+                          is_failure_node ? kFailureBorderColor : kAsyncProducerBorderColor,
+                          is_failure_node ? 3 : 1);
 
         const std::string label_out = label_base.str() + "\n(Consumer/Read)" + ids_line + "\n";
-        ss << std::format("  v{}_out [label=\"{}\", shape=house, fillcolor=\"#ffe6e6\", "
-                          "color=\"#cc0000\", style=\"filled,dashed\"];\n",
-                          v, escape_for_label(label_out));
+        ss << std::format("  v{}_out [label=\"{}\", shape=house, fillcolor=\"{}\", color=\"{}\", "
+                          "penwidth={}, style=\"filled,dashed\"];\n",
+                          v, escape_for_label(label_out),
+                          is_failure_node ? kFailureFillColor : kAsyncConsumerFillColor,
+                          is_failure_node ? kFailureBorderColor : kAsyncConsumerBorderColor,
+                          is_failure_node ? 3 : 1);
 
         if (uses_block_layout(prefs)) {
-          ss << std::format("  v{}_in:e -> v{}_out:w [style=dotted, color=\"#888888\", "
+          ss << std::format("  v{}_in:e -> v{}_out:w [style=dotted, color=\"{}\", "
                             "penwidth=2, arrowhead=none, label=\"Async Signal\", "
                             "constraint=false];\n",
-                            v, v);
+                            v, v, kAsyncSignalColor);
         } else {
-          ss << std::format("  v{}_in -> v{}_out [style=dotted, color=\"#888888\", penwidth=2, "
+          ss << std::format("  v{}_in -> v{}_out [style=dotted, color=\"{}\", penwidth=2, "
                             "arrowhead=none, label=\"Async Signal\"];\n",
-                            v, v);
+                            v, v, kAsyncSignalColor);
         }
       } else {
         const std::string label = label_base.str() + "\n(" + np.spec.kind + ")" + ids_line + "\n";
-        ss << std::format("  v{} [label=\"{}\", fillcolor=\"#ccffcc\"];\n", v,
-                          escape_for_label(label));
+        ss << std::format(
+            "  v{} [label=\"{}\", fillcolor=\"{}\", color=\"{}\", "
+            "penwidth={}];\n",
+            v, escape_for_label(label), is_failure_node ? kFailureFillColor : kSyncFillColor,
+            is_failure_node ? kFailureBorderColor : kSyncBorderColor, is_failure_node ? 3 : 1);
       }
     }
   }
@@ -522,7 +545,8 @@ static void write_compiled_sections(std::ostringstream                  &ss,
     }
     ss << std::format("\\l\";\n");
 
-    ss << "    style=rounded; color=gray; bgcolor=\"#f8f8f8\";\n";
+    ss << std::format("    style=rounded; color={}; bgcolor=\"{}\";\n", kSectionBorderColor,
+                      kSectionFillColor);
 
     if (row_layout) {
       ss << "    { rank=same;\n";
@@ -599,14 +623,25 @@ static std::string render_compiled_graph(const GraphPlan                    &gra
                                          const std::map<size_t, size_t>     &tid_to_sid,
                                          const CompiledGraphDumpMetadata    &metadata,
                                          const GraphCompiledDumpPreferences &prefs,
-                                         const std::string                  &filename) {
+                                         std::string_view                   filename,
+                                         std::string_view                   failure_node = {},
+                                         std::string_view                   failure_context = {},
+                                         GraphFailureKind failure_kind = GraphFailureKind::Runtime) {
   std::ostringstream ss;
   write_compiled_graph_header(ss, prefs, filename);
+
+  if (!failure_context.empty()) {
+    const auto failure_title = failure_kind == GraphFailureKind::Compilation
+                                   ? "COMPILATION FAILURE\n"
+                                   : "RUNTIME FAILURE\n";
+    ss << std::format("  labelloc=\"t\";\n  label=\"{}\";\n",
+                      escape_for_label(std::string{failure_title} + std::string{failure_context}));
+  }
 
   if (prefs.dump_resource_info) {
     write_compiled_resources(ss, metadata);
   }
-  write_compiled_nodes(ss, graph, tid_to_sid, prefs);
+  write_compiled_nodes(ss, graph, tid_to_sid, prefs, failure_node);
   ss << "\n";
   write_compiled_edges(ss, graph, tid_to_sid, prefs, sections);
   ss << "\n";
@@ -618,15 +653,32 @@ static std::string render_compiled_graph(const GraphPlan                    &gra
 }
 
 std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
-                   std::string filename) {
+                   std::string_view filename) {
   return render_compiled_graph(out.graph, out.sections, out.resources.tid_to_sid,
                                snapshot_compiled_metadata(out), prefs, filename);
+}
+
+std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
+                   std::string_view filename, std::string_view failure_node,
+                   std::string_view failure_context, GraphFailureKind failure_kind) {
+  return render_compiled_graph(out.graph, out.sections, out.resources.tid_to_sid,
+                               snapshot_compiled_metadata(out), prefs, filename, failure_node,
+                               failure_context, failure_kind);
 }
 
 std::string to_dot(const GraphCompiledDumpSnapshot    &snapshot,
                    const GraphCompiledDumpPreferences &prefs, std::string filename) {
   return render_compiled_graph(snapshot.graph, snapshot.sections, snapshot.tid_to_sid,
                                snapshot.metadata, prefs, filename);
+}
+
+std::string to_dot(const GraphCompiledDumpSnapshot    &snapshot,
+                   const GraphCompiledDumpPreferences &prefs, std::string filename,
+                   std::string_view failure_node, std::string_view failure_context,
+                   GraphFailureKind failure_kind) {
+  return render_compiled_graph(snapshot.graph, snapshot.sections, snapshot.tid_to_sid,
+                               snapshot.metadata, prefs, filename, failure_node, failure_context,
+                               failure_kind);
 }
 
 } // namespace holoflow::runtime
