@@ -52,6 +52,7 @@ public:
   }
 
   void set_record_queue(int first, int second, int max);
+  void update_record_writing_speed(size_t first);
   void update_record_queue_acquired(int first);
   void update_record_queue_recorded(int second);
 
@@ -71,8 +72,10 @@ private:
   QLabel *pipeline_latency_value_;
 
   // Queue progress bars
-  QProgressBar     *input_queue_bar_;
-  QProgressBar     *output_queue_bar_;
+  QProgressBar *input_queue_bar_;
+  QProgressBar *output_queue_bar_;
+
+  QLabel           *record_writing_speed_value_;
   MultiProgressBar *record_queue_bar_;
 };
 

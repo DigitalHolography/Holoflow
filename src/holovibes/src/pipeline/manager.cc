@@ -408,13 +408,13 @@ void Manager::update_pipeline(const Settings &settings) {
   }
 }
 
-const std::string& Manager::get_record_node_name()
-{
+const std::string &Manager::get_record_node_name() {
   static const std::string source = "source_0";
   static const std::string record = "record";
 
-  if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP && s_.recording_method == RecordingMethod::RAW)
-    return source; 
+  if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP &&
+      s_.recording_method == RecordingMethod::RAW)
+    return source;
 
   return record;
 }
@@ -550,20 +550,19 @@ void Manager::poll_events() {
     if (!event.has_value())
       break;
 
-    //logger()->info("[Manager::poll_events] Received event from node '{}': {}", event->node_id,
-    //               event->data.dump());
+    // logger()->info("[Manager::poll_events] Received event from node '{}': {}", event->node_id,
+    //                event->data.dump());
 
     std::string type = event->data.value("type", "");
 
     if (type == "recording_update") {
       size_t frame_recorded = event->data.value("frame_recorded", 0);
-      emit update_record(frame_recorded);
-    }
-    else if (type == "acquisition_update") {
+      size_t writing_speed  = event->data.value("writing_speed", 0);
+      emit   update_record(frame_recorded, writing_speed);
+    } else if (type == "acquisition_update") {
       size_t frame_acquired = event->data.value("frame_acquired", 0);
-      emit update_acquisition(frame_acquired);
-    }
-    else if (type == "recording_finished") {
+      emit   update_acquisition(frame_acquired);
+    } else if (type == "recording_finished") {
       std::string path_str    = event->data.value("path", "");
       bool        should_emit = false;
 

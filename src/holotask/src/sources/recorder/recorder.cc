@@ -90,7 +90,8 @@ Recorder::~Recorder() {
   writer_.flush();
 }
 
-size_t Recorder::execute(std::stop_token cancelled, std::function<void(size_t)> poll_metrics) {
+size_t Recorder::execute(std::stop_token                     cancelled,
+                         std::function<void(size_t, size_t)> poll_metrics) {
   batch_ = 0;
   std::atomic<bool>  stop_requested{false};
   std::stop_callback on_stop(cancelled,
@@ -98,6 +99,8 @@ size_t Recorder::execute(std::stop_token cancelled, std::function<void(size_t)> 
 
   Clock::time_point last_poll     = Clock::now();
   constexpr auto    poll_interval = std::chrono::milliseconds(500);
+
+  size_t written_last_interval = 0;
 
   while (current_frame_ < frame_to_record_ && !cancelled.stop_requested()) {
     const auto *frame = queue_.read_b(&stop_requested);
@@ -113,12 +116,16 @@ size_t Recorder::execute(std::stop_token cancelled, std::function<void(size_t)> 
     writer_.write_frames(reinterpret_cast<const uint8_t *>(frame->base), to_write);
     queue_.release_b();
     current_frame_ += to_write;
+    written_last_interval += to_write;
     session_.register_write(to_write);
     ++batch_;
 
-    auto now = Clock::now();
-    if (now - last_poll > poll_interval) {
-      poll_metrics(current_frame_);
+    auto now     = Clock::now();
+    auto elapsed = now - last_poll;
+    if (elapsed > poll_interval) {
+      size_t writing_speed =
+          written_last_interval / std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+      poll_metrics(current_frame_, writing_speed);
     }
   }
 
@@ -127,7 +134,8 @@ size_t Recorder::execute(std::stop_token cancelled, std::function<void(size_t)> 
   return current_frame_;
 }
 
-std::string Recorder::remove_incomplete_camera_recording(const std::string &path, std::string failure) {
+std::string Recorder::remove_incomplete_camera_recording(const std::string &path,
+                                                         std::string        failure) {
   if (!path.empty() && std::remove(path.c_str()) != 0 && errno != ENOENT)
     failure += "; failed to remove incomplete recording: " +
                std::error_code(errno, std::generic_category()).message();
@@ -138,7 +146,7 @@ void Recorder::worker(const holotask::sources::RecordSettings &settings,
                       const Recorder::RecordingGeometry &g, size_t buffer_part_count,
                       CameraBufferQueue &queue, RecordingSession &session,
                       std::atomic<bool>                       &recording,
-                      std::function<void(size_t)>              poll_metrics_callback,
+                      std::function<void(size_t, size_t)>      poll_metrics_callback,
                       std::function<void(size_t)>              finished_callback,
                       std::function<void(const std::string &)> failed_callback) {
   logger()->info("[Recorder] started recorder thread");

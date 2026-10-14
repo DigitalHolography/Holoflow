@@ -191,11 +191,19 @@ void SystemMonitorWidget::setup_ui() {
 
   configure_bar(&input_queue_bar_, "Input Queue", 48, 64);
   configure_bar(&output_queue_bar_, "Output Queue", 22, 64);
-  queue_layout->addWidget(new QLabel("Record Queue 0", queue_group));
-  record_queue_bar_ = new MultiProgressBar(queue_group);
-  queue_layout->addWidget(record_queue_bar_);
+
+  auto *record_group  = new QGroupBox("Record", this);
+  auto *record_layout = new QGridLayout(record_group);
+
+  record_layout->addWidget(new QLabel("Record Queue 0", record_group), 0, 0);
+  record_layout->addWidget(new QLabel("Writing Speed:", record_group), 1, 0);
+  record_writing_speed_value_ = new QLabel("N/A", record_group);
+  record_layout->addWidget(record_writing_speed_value_, 1, 1);
+  record_queue_bar_ = new MultiProgressBar(record_group);
+  record_layout->addWidget(record_queue_bar_);
 
   layout->addWidget(queue_group);
+  layout->addWidget(record_group);
 }
 
 void SystemMonitorWidget::update_metrics(double input_fps) {
@@ -220,6 +228,11 @@ void SystemMonitorWidget::update_metrics(double input_fps) {
 void SystemMonitorWidget::set_record_queue(int first, int second, int max) {
   record_queue_bar_->setMaximum(max);
   record_queue_bar_->set_progress(first, second);
+}
+
+void SystemMonitorWidget::update_record_writing_speed(size_t first) {
+  auto str = QString("%1 frames/s").arg(QString::number(first));
+  record_writing_speed_value_->setText(str);
 }
 
 void SystemMonitorWidget::update_record_queue_acquired(int first) {

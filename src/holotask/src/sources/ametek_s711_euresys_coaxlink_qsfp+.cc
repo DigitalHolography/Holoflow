@@ -747,7 +747,7 @@ public:
                     "Failed to emit recording_finished event");
   }
 
-  void emit_record_update_event(holoflow::core::SyncCtx &ctx, size_t frames_written) {
+  void emit_record_update_event(holoflow::core::SyncCtx &ctx, size_t frames_written, size_t writing_speed) {
     auto event = holoflow_event::Event{
         .direction = holoflow_event::EventDirection::ToUi,
         .node_id   = "",
@@ -755,6 +755,7 @@ public:
             nlohmann::json{
                 {"type", "recording_update"},
                 {"frame_recorded", frames_written},
+                {"writing_speed", writing_speed},
             },
         .ts = std::chrono::steady_clock::now(),
     };
@@ -820,8 +821,8 @@ public:
             {static_cast<uint8_t>(runtime_cfg_.bytes_per_pixel * 8), runtime_cfg_.width,
              runtime_cfg_.final_height},
             runtime_cfg_.buffer_part_count, buffer_queue_, *session, recording_,
-            [this, &event_ctx](size_t recorded_frames) {
-              emit_record_update_event(event_ctx, recorded_frames);
+            [this, &event_ctx](size_t recorded_frames, size_t writing_speed) {
+              emit_record_update_event(event_ctx, recorded_frames, writing_speed);
             },
             [this, &event_ctx, &record_settings](size_t written) {
               emit_finished_event(event_ctx, written, record_settings.file_path);

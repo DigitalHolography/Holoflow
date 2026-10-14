@@ -76,7 +76,6 @@
 #include "ui/widgets/tensor_display_widget.hh"
 #include "ui/widgets/zernike_history_widget.hh"
 
-
 namespace {
 
 constexpr int  kLargeSpinMax             = 1024 * 1024;
@@ -401,8 +400,7 @@ public:
   using GraphSpecDumpPreferences     = holoflow::core::GraphSpecDumpPreferences;
   using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
 
-  PreferencesDialog(QWidget *parent,
-                    holovibes::pipeline::Manager &manager)
+  PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager)
       : QDialog(parent), manager_(manager) {
     setWindowTitle(tr("Preferences"));
     setMinimumWidth(400);
@@ -651,7 +649,6 @@ private:
 
     manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
     manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
-
   }
 
   void connect_signals() {
@@ -2072,13 +2069,12 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
 }
 
-void MainWindow::on_update_record(size_t frame_recorded)
-{
+void MainWindow::on_update_record(size_t frame_recorded, size_t writing_speed) {
   monitor_widget_->update_record_queue_recorded(static_cast<int>(frame_recorded));
+  monitor_widget_->update_record_writing_speed(writing_speed);
 }
 
-void MainWindow::on_update_acquisition(size_t frame_acquired)
-{
+void MainWindow::on_update_acquisition(size_t frame_acquired) {
   monitor_widget_->update_record_queue_acquired(static_cast<int>(frame_acquired));
 }
 
@@ -2177,8 +2173,10 @@ void MainWindow::on_export_record_clicked() {
     frame_count = static_cast<size_t>(export_widget_->get_frame_count());
   }
 
-  auto start = [mgr = pipeline_manager_, record_path, record_size = frame_count.has_value() ? *frame_count : 1, monitor = monitor_widget_]() { 
-    mgr->start_raw_record(record_path); 
+  auto start = [mgr         = pipeline_manager_, record_path,
+                record_size = frame_count.has_value() ? *frame_count : 1,
+                monitor     = monitor_widget_]() {
+    mgr->start_raw_record(record_path);
     monitor->set_record_queue(0, 0, static_cast<int>(record_size));
   };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
@@ -2664,7 +2662,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     QString     appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
     QString     convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels/";
     std::string kernel_path             = convolutionsKernelsPath.toStdString() +
-                              render_widget_->get_convolution().toStdString() + ".json";
+                                          render_widget_->get_convolution().toStdString() + ".json";
 
     s.pp_fps       = 60;
     s.pp_fft_shift = s.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;

@@ -75,18 +75,19 @@ public:
 
   ~Recorder();
 
-  size_t execute(std::stop_token cancelled, std::function<void(size_t)> poll_metrics);
+  size_t execute(std::stop_token cancelled, std::function<void(size_t, size_t)> poll_metrics);
 
   static void worker(const holotask::sources::RecordSettings &settings,
                      const Recorder::RecordingGeometry &g, size_t buffer_part_count,
                      CameraBufferQueue &queue, RecordingSession &session,
                      std::atomic<bool>                       &recording,
-                     std::function<void(size_t)>              poll_metrics_callback,
+                     std::function<void(size_t, size_t)>      poll_metrics_callback,
                      std::function<void(size_t)>              finished_callback,
                      std::function<void(const std::string &)> failed_callback);
 
 private:
-  static std::string remove_incomplete_camera_recording(const std::string &path, std::string failure);
+  static std::string remove_incomplete_camera_recording(const std::string &path,
+                                                        std::string        failure);
 
 private:
   holofile::Writer   writer_;

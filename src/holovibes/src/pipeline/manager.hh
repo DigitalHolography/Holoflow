@@ -116,7 +116,7 @@ signals:
   void graph_visualization_failed(const QString &error);
 
   // monitor signals
-  void update_record(size_t recorded_frames);
+  void update_record(size_t recorded_frames, size_t writing_speed);
   void update_acquisition(size_t acquired_frames);
 
 private:
