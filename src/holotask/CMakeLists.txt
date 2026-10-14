@@ -24,7 +24,7 @@ file(GLOB_RECURSE HOLOTASK_PRIVATE_HEADERS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.hxx
 )
 
-file(GLOB_RECURSE HOLOTASK_SOURCES
+file(GLOB_RECURSE HOLOTASK_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cc
     ${CMAKE_CURRENT_SOURCE_DIR}/src/*.cu
 )
@@ -86,3 +86,7 @@ if(EGrabber_FOUND)
         EGrabber
     )
 endif()
+
+add_executable(holotask_mtd tools/mtd_reconstruct.cc)
+target_link_libraries(holotask_mtd PRIVATE holotask project_options)
+install(TARGETS holotask_mtd RUNTIME DESTINATION bin COMPONENT binaries)

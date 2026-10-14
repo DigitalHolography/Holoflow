@@ -47,12 +47,15 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/pipelines/mtd.hh"
 #include "holotask/sinks/holofile.hh"
+#include "holotask/sinks/npy_volume.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
 #include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
+#include "holotask/sources/pgm_sequence.hh"
 #include "holotask/syncs/angular_spectrum.hh"
 #include "holotask/syncs/causal_sliding_average.hh"
 #include "holotask/syncs/conversion.hh"
@@ -91,6 +94,7 @@ protected:
 
   // clang-format off
   TDesc holofile_read(holotask::sources::HolofileSettings s);
+  TDesc pgm_sequence_read(holotask::sources::PgmSequenceSettings s);
   TDesc empty(holonp::EmptySettings s);
   TDesc zeros(holonp::ZerosSettings s);
   TDesc asarray(holonp::AsArraySettings s);
@@ -159,6 +163,12 @@ protected:
   TDesc normalize(const TDesc &X, holotask::syncs::NormalizeSettings s);
   TDesc reshape(const TDesc &X, holonp::ReshapeSettings s);
   TDesc conj(const TDesc &X, holonp::ConjSettings s);
+  std::vector<TDesc> mtd_field_recovery(const TDesc &frames, holotask::syncs::MTDFieldRecoverySettings s);
+  TDesc rytov_correction(const TDesc &fields, const TDesc &mask, holotask::syncs::RytovCorrectionSettings s);
+  std::vector<TDesc> mtd_linear3d(const TDesc &fields, const TDesc &positions, holotask::syncs::MTDLinear3DReconstructionSettings s);
+  TDesc gps_refinement3d(const TDesc &volume, const TDesc &coverage, holotask::syncs::GPSRefinement3DSettings s);
+  TDesc volume_slice(const TDesc &volume, holotask::syncs::VolumeSliceSettings s);
+  void npy_volume_write(const TDesc &volume, holotask::sinks::NpyVolumeSettings s);
   // clang-format on
 };
 

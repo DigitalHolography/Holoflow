@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "VolumeSliceSettings",
+  "type": "object",
+  "properties": {
+    "axis": {
+      "type": "integer",
+      "default": 0,
+      "minimum": 0,
+      "maximum": 2
+    },
+    "index": {
+      "type": "integer",
+      "default": 280,
+      "minimum": 0
+    },
+    "component": {
+      "type": "string",
+      "default": "real",
+      "enum": [
+        "real",
+        "imaginary",
+        "magnitude"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

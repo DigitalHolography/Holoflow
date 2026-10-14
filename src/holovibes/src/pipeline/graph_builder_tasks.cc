@@ -45,6 +45,7 @@ namespace holovibes::pipeline {
 
 // clang-format off
 DEFINE_SOURCE_SYNC_NODE(holofile_read,                          "source",                              "Holofile",                        holotask::sources::HolofileSettings)
+DEFINE_SOURCE_SYNC_NODE(pgm_sequence_read,                      "source",                              "PgmSequence",                    holotask::sources::PgmSequenceSettings)
 DEFINE_SOURCE_SYNC_NODE(empty,                                  "empty",                               "Empty",                           holonp::EmptySettings)
 DEFINE_SOURCE_SYNC_NODE(zeros,                                  "zeros",                               "Zeros",                           holonp::ZerosSettings)
 DEFINE_SOURCE_SYNC_NODE(asarray,                                "asarray",                             "AsArray",                         holonp::AsArraySettings)
@@ -210,6 +211,49 @@ void GraphBuilderTasks::holofile_write(const TDesc &X, holotask::sinks::Holofile
   auto      &factory     = reg_.get_sync(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});
   (void)factory.infer(core_inputs, nlohmann::json(s));
+}
+
+std::vector<GraphBuilderTasks::TDesc>
+GraphBuilderTasks::mtd_field_recovery(const TDesc                              &frames,
+                                      holotask::syncs::MTDFieldRecoverySettings s) {
+  return make_unary_sync_node("mtd_field_recovery", "MTDFieldRecovery", "MTDFieldRecovery", frames,
+                              s);
+}
+
+GraphBuilderTasks::TDesc
+GraphBuilderTasks::rytov_correction(const TDesc &fields, const TDesc &mask,
+                                    holotask::syncs::RytovCorrectionSettings s) {
+  const std::array<TDesc, 2> inputs{fields, mask};
+  return make_nary_sync_node("mtd_rytov", "RytovCorrection", "RytovCorrection",
+                             std::span<const TDesc>{inputs}, s)
+      .at(0);
+}
+
+std::vector<GraphBuilderTasks::TDesc>
+GraphBuilderTasks::mtd_linear3d(const TDesc &fields, const TDesc &positions,
+                                holotask::syncs::MTDLinear3DReconstructionSettings s) {
+  const std::array<TDesc, 2> inputs{fields, positions};
+  return make_nary_sync_node("mtd_linear3d", "MTDLinear3DReconstruction",
+                             "MTDLinear3DReconstruction", std::span<const TDesc>{inputs}, s);
+}
+
+GraphBuilderTasks::TDesc
+GraphBuilderTasks::gps_refinement3d(const TDesc &volume, const TDesc &coverage,
+                                    holotask::syncs::GPSRefinement3DSettings s) {
+  const std::array<TDesc, 2> inputs{volume, coverage};
+  return make_nary_sync_node("mtd_gps3d", "GPSRefinement3D", "GPSRefinement3D",
+                             std::span<const TDesc>{inputs}, s)
+      .at(0);
+}
+
+GraphBuilderTasks::TDesc GraphBuilderTasks::volume_slice(const TDesc &volume,
+                                                         holotask::syncs::VolumeSliceSettings s) {
+  return make_unary_sync_node("volume_slice", "VolumeSlice", "VolumeSlice", volume, s).at(0);
+}
+
+void GraphBuilderTasks::npy_volume_write(const TDesc                       &volume,
+                                         holotask::sinks::NpyVolumeSettings s) {
+  make_unary_sync_node("npy_volume_write", "NpyVolumeWriter", "NpyVolumeWriter", volume, s);
 }
 
 } // namespace holovibes::pipeline
