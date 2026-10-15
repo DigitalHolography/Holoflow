@@ -102,6 +102,40 @@ std::string task_range_name(std::string_view operation, const core::NodeSpec &sp
   return std::format("{}: {} ({})", operation, spec.name, spec.kind);
 }
 
+// Dispatch steps do not correspond to section iterations. Keep these thread-bound scopes alive
+// across dispatches, but never across a pause: resumed checkpoints run on a new worker thread.
+class SectionNvtxRanges {
+public:
+  void begin_iteration(const char *name) {
+    if (!iteration_)
+      iteration_.emplace(name);
+  }
+
+  void phase(const char *name) {
+    if (phase_name_ == name)
+      return;
+    end_phase();
+    phase_.emplace(name);
+    phase_name_ = name;
+  }
+
+  void end_phase() {
+    phase_.reset();
+    phase_name_ = {};
+  }
+
+  void end_iteration() {
+    end_phase();
+    iteration_.reset();
+  }
+
+private:
+  // Reverse destruction order closes the phase before its parent, including during unwinding.
+  std::optional<nvtx3::scoped_range> iteration_;
+  std::optional<nvtx3::scoped_range> phase_;
+  std::string_view                   phase_name_;
+};
+
 [[noreturn]] inline void
 log_and_abort_current_exception(std::string_view thread_name, std::string_view node_name,
                                 const Scheduler::FailureCallback &failure_callback,
@@ -168,8 +202,8 @@ public:
   void request_stop();
   void wait();
 
-  bool is_running() const;
-  bool stop_requested() const;
+  bool                           is_running() const;
+  bool                           stop_requested() const;
   [[nodiscard]] std::string_view current_node_name() const noexcept;
 
   [[nodiscard]] bool ui_try_send(const std::string &node_id, nlohmann::json &&data) noexcept;
@@ -179,6 +213,7 @@ public:
 private:
   struct SyncRt {
     core::ISyncTask         *task = nullptr;
+    std::string              range_name;
     std::vector<core::TView> in_views;
     std::vector<core::TView> out_views;
     core::SyncCtx            ctx{};
@@ -186,6 +221,8 @@ private:
 
   struct AsyncRt {
     core::IAsyncTask        *task = nullptr;
+    std::string              pop_range_name;
+    std::string              push_range_name;
     std::vector<core::TView> in_views;
     std::vector<core::TView> out_views;
     core::AsyncPushCtx       pctx{};
@@ -601,6 +638,7 @@ void Scheduler::Impl::build_nodes_rts() {
 
     if (auto *st = dynamic_cast<core::ISyncTask *>(task)) {
       SyncRt srt;
+      srt.range_name       = task_range_name("sync execute", np.spec);
       srt.task             = st;
       srt.in_views         = in_views;
       srt.out_views        = out_views;
@@ -612,14 +650,16 @@ void Scheduler::Impl::build_nodes_rts() {
       node_rts_.at(idx)    = std::move(srt);
     } else if (auto *at = dynamic_cast<core::IAsyncTask *>(task)) {
       AsyncRt art;
-      art.task           = at;
-      art.in_views       = in_views;
-      art.out_views      = out_views;
-      art.pctx.inputs    = art.in_views;
-      art.pctx.cancelled = &stop_;
-      art.xctx.outputs   = art.out_views;
-      art.xctx.cancelled = &stop_;
-      node_rts_.at(idx)  = std::move(art);
+      art.pop_range_name  = task_range_name("async pop", np.spec);
+      art.push_range_name = task_range_name("async push", np.spec);
+      art.task            = at;
+      art.in_views        = in_views;
+      art.out_views       = out_views;
+      art.pctx.inputs     = art.in_views;
+      art.pctx.cancelled  = &stop_;
+      art.xctx.outputs    = art.out_views;
+      art.xctx.cancelled  = &stop_;
+      node_rts_.at(idx)   = std::move(art);
     } else {
       HOLOFLOW_BUG("Task for node {} is neither sync nor async", np.spec.name);
     }
@@ -645,20 +685,23 @@ void Scheduler::Impl::run_router() {
 void Scheduler::Impl::run_section(int section_id) {
   const auto &sec = sections_.at(section_id);
   tracing::set_thread_name(std::format("Section {}: {}", section_id, sec.name));
-  auto &checkpoint   = checkpoints_.at(section_id);
-  using Stage        = SectionCheckpoint::Stage;
-  const auto advance = [&](Stage next) {
-    checkpoint.stage = next;
-    checkpoint.node  = 0;
-    checkpoint.port  = 0;
-  };
+  auto &checkpoint = checkpoints_.at(section_id);
+  using Stage      = SectionCheckpoint::Stage;
   std::string_view current_node_name;
   detail::current_node_name() = {};
   try {
+    SectionNvtxRanges ranges;
+    const auto        advance = [&](Stage next) {
+      if (!(checkpoint.stage == Stage::AcquireSync && next == Stage::AcquireProducer))
+        ranges.end_phase();
+      checkpoint.stage = next;
+      checkpoint.node  = 0;
+      checkpoint.port  = 0;
+    };
     while (!stop_.load()) {
-      current_node_name = {};
+      current_node_name           = {};
       detail::current_node_name() = {};
-      nvtx3::scoped_range section_range{sec.name.c_str()};
+      ranges.begin_iteration(sec.name.c_str());
       switch (checkpoint.stage) {
       case Stage::AcquireSync:
       case Stage::AcquireProducer: {
@@ -667,10 +710,12 @@ void Scheduler::Impl::run_section(int section_id) {
           advance(checkpoint.stage == Stage::AcquireSync ? Stage::AcquireProducer : Stage::Pop);
           break;
         }
-        const auto v = nodes[checkpoint.node];
-        current_node_name = graph_[v].spec.name;
+        const auto v                = nodes[checkpoint.node];
+        current_node_name           = graph_[v].spec.name;
         detail::current_node_name() = current_node_name;
         try {
+          if (std::ranges::any_of(graph_[v].infer.owned_inputs, [](bool owned) { return owned; }))
+            ranges.phase("Acquire inputs");
           acquire_owned_inputs(v, checkpoint.port);
         } catch (...) {
           rethrow_with_node_context(graph_, v, "acquire_owned_inputs", section_id, sec.name);
@@ -687,10 +732,11 @@ void Scheduler::Impl::run_section(int section_id) {
           break;
         }
         {
-          const auto v = sec.async_cons[checkpoint.node];
-          current_node_name = graph_[v].spec.name;
+          const auto v                = sec.async_cons[checkpoint.node];
+          current_node_name           = graph_[v].spec.name;
           detail::current_node_name() = current_node_name;
           try {
+            ranges.phase("Async pop");
             if (run_async_cons(v) == core::OpResult::Ok) {
               checkpoint.produced.push_back(v);
               ++checkpoint.node;
@@ -701,8 +747,10 @@ void Scheduler::Impl::run_section(int section_id) {
         }
         break;
       case Stage::Compute: {
-        auto graph_it = res_.section_cuda_graphs.find(sec.id);
-        current_node_name = {};
+        if (!checkpoint.graph_submitted && checkpoint.node < sec.sync_topo.size())
+          ranges.phase("Compute");
+        auto graph_it               = res_.section_cuda_graphs.find(sec.id);
+        current_node_name           = {};
         detail::current_node_name() = {};
         if (!checkpoint.computation_started) {
           checkpoint.computation_started = true;
@@ -711,7 +759,10 @@ void Scheduler::Impl::run_section(int section_id) {
             const auto variant = graphs.variant(res_.storages);
             if (variant) {
               const auto started = std::chrono::steady_clock::now();
-              CUDA_CHECK(cudaGraphLaunch(graphs.executables.at(*variant), sec.stream));
+              {
+                nvtx3::scoped_range launch_range{"CUDA graph launch"};
+                CUDA_CHECK(cudaGraphLaunch(graphs.executables.at(*variant), sec.stream));
+              }
               checkpoint.graph_submitted = true;
               graphs.launches.fetch_add(1, std::memory_order_relaxed);
               auto &acc = graph_metric_accumulators_.at(section_id);
@@ -732,8 +783,8 @@ void Scheduler::Impl::run_section(int section_id) {
           advance(Stage::Barrier);
           break;
         }
-        const auto v = sec.sync_topo[checkpoint.node];
-        current_node_name = graph_[v].spec.name;
+        const auto v                = sec.sync_topo[checkpoint.node];
+        current_node_name           = graph_[v].spec.name;
         detail::current_node_name() = current_node_name;
         try {
           if (run_sync(v) == core::OpResult::Ok) {
@@ -746,10 +797,12 @@ void Scheduler::Impl::run_section(int section_id) {
         break;
       }
       case Stage::Barrier:
-        current_node_name = {};
+        current_node_name           = {};
         detail::current_node_name() = {};
-        if (!sec.has_synchronizing_async_producer)
+        if (!sec.has_synchronizing_async_producer) {
+          ranges.phase("Wait");
           CUDA_CHECK(cudaStreamSynchronize(sec.stream));
+        }
         advance(Stage::Push);
         break;
       case Stage::Push:
@@ -758,10 +811,11 @@ void Scheduler::Impl::run_section(int section_id) {
           break;
         }
         {
-          const auto v = sec.async_prod[checkpoint.node];
-          current_node_name = graph_[v].spec.name;
+          const auto v                = sec.async_prod[checkpoint.node];
+          current_node_name           = graph_[v].spec.name;
           detail::current_node_name() = current_node_name;
           try {
+            ranges.phase("Async push");
             if (run_async_prod(v) == core::OpResult::Ok)
               ++checkpoint.node;
           } catch (...) {
@@ -771,14 +825,18 @@ void Scheduler::Impl::run_section(int section_id) {
         break;
       case Stage::Release:
         if (checkpoint.node == checkpoint.produced.size()) {
+          ranges.end_iteration();
           checkpoint = SectionCheckpoint{};
           break;
         }
         {
-          const auto v = checkpoint.produced[checkpoint.node];
-          current_node_name = graph_[v].spec.name;
+          const auto v                = checkpoint.produced[checkpoint.node];
+          current_node_name           = graph_[v].spec.name;
           detail::current_node_name() = current_node_name;
           try {
+            if (std::ranges::any_of(graph_[v].infer.owned_outputs,
+                                    [](bool owned) { return owned; }))
+              ranges.phase("Release outputs");
             release_owned_outputs(v, checkpoint.port);
           } catch (...) {
             rethrow_with_node_context(graph_, v, "release_owned_outputs", section_id, sec.name);
@@ -791,14 +849,16 @@ void Scheduler::Impl::run_section(int section_id) {
         break;
       }
     }
+    ranges.end_iteration();
     // Abort/EOF retain the old cleanup semantics. Pause keeps every pending port and operation.
     if (!paused_.load() || aborted_.load()) {
-      current_node_name = {};
+      nvtx3::scoped_range cleanup_range{"Section cleanup"};
+      current_node_name           = {};
       detail::current_node_name() = {};
       CUDA_CHECK(cudaStreamSynchronize(sec.stream));
       const size_t first = checkpoint.stage == Stage::Release ? checkpoint.node : 0;
       for (size_t i = first; i < checkpoint.produced.size(); ++i) {
-        current_node_name = graph_[checkpoint.produced[i]].spec.name;
+        current_node_name           = graph_[checkpoint.produced[i]].spec.name;
         detail::current_node_name() = current_node_name;
         size_t port = checkpoint.stage == Stage::Release && i == first ? checkpoint.port : 0;
         release_owned_outputs(checkpoint.produced[i], port);
@@ -814,102 +874,6 @@ void Scheduler::Impl::run_section(int section_id) {
         current_node_name, failure_callback_, failure_dumped_);
   }
 }
-
-// void Scheduler::run_section(int section_id) {
-//   const auto &sec    = sections_.at(section_id);
-//   auto        stream = sec.stream;
-
-//   // Nodes in sections are topologically sorted, so we can execute them in order.
-//   // However, owned inputs are used as outputs for former nodes, so we need to
-//   // acquire them first.
-//   // Owned outputs are used as inputs for later nodes, so we need to release
-//   // them last.
-
-//   // TODO: How to handle end of stream (Eof)? Do we need to propagate it?
-//   // Do we need to stop the scheduler when we reach Eof for every node?
-//   // Do we need to notify nodes when we reach Eof for their inputs?
-
-//   // TODO: How to handle stream synchronization? Should asynchronous tasks
-//   // be responsible for synchronizing push-stream before enabling to pop data?
-//   // Or should the scheduler be the sole responsible for synchronizing streams?
-
-//   // TODO: How to properly collect metrics on given tasks run on cuda streams?
-//   // Should we use cuda events?
-
-//   while (!stop_.load()) {
-//     logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
-//     nvtxRangePush(sec.name.c_str());
-
-//     // Acquire owned inputs.
-//     //
-//     // - We do not acquire owned-inputs of async consumers here, as they
-//     //   used in the former section only.
-//     //
-//     // - It is mandatory to check stop_ after acquiring inputs, as
-//     //   the scheduler may have been requested to stop while waiting
-//     //   for owned inputs to become available. This leads to undefined
-//     //   behavior if we proceed to execute nodes after stop_ was set.
-//     nvtxRangePush("Acquire owned inputs");
-//     for (auto v : sec.sync_topo) {
-//       acquire_owned_inputs(v);
-//     }
-//     for (auto v : sec.async_prod) {
-//       acquire_owned_inputs(v);
-//     }
-//     nvtxRangePop();
-//     if (stop_.load()) {
-//       break;
-//     }
-
-//     // Execute nodes.
-//     //
-//     // - We know the nodes are topologically sorted within the section, so we
-//     //   can execute them in order. The topological order also takes into account
-//     //   in-place operations, so inputs or siblings is not changed before they are
-//     //   executed.
-//     //
-//     // - It is mandatory to syncronize the stream before running async producers,
-//     //   as async consumers from the next section may depend on work done on this stream,
-//     //   and we have no guarantee that the async producer at the end of this section
-//     //   will synchronize the stream before pushing data (it may not be cuda-related).
-//     nvtxRangePush("Execute async consumers");
-//     for (auto v : sec.async_cons) {
-//       run_async_cons(v);
-//     }
-//     if (stop_.load()) {
-//       break;
-//     }
-//     nvtxRangePop();
-
-//     nvtxRangePush("Execute sync nodes");
-//     for (auto v : sec.sync_topo) {
-//       run_sync(v);
-//     }
-
-//     CUDA_CHECK(cudaStreamSynchronize(stream));
-//     nvtxRangePop();
-
-//     nvtxRangePush("Execute async producers");
-//     for (auto v : sec.async_prod) {
-//       run_async_prod(v);
-//     }
-//     nvtxRangePop();
-
-//     // Release owned outputs.
-//     //
-//     // - We do not release owned-outputs of async producers here, as they
-//     // used only in the next section.
-//     nvtxRangePush("Release owned outputs");
-//     for (auto v : sec.sync_topo) {
-//       release_owned_outputs(v);
-//     }
-//     for (auto v : sec.async_cons) {
-//       release_owned_outputs(v);
-//     }
-//     nvtxRangePop();
-//     nvtxRangePop();
-//   }
-// }
 
 void Scheduler::Impl::acquire_owned_inputs(GraphPlan::vertex_descriptor v, size_t &port) {
   const auto  idx        = boost::get(boost::vertex_index, graph_, v);
@@ -965,11 +929,10 @@ core::OpResult Scheduler::Impl::run_sync(GraphPlan::vertex_descriptor v) {
   auto &srt = std::get<SyncRt>(nrt);
 
   logger()->trace("[Scheduler::run_sync] Executing node '{}'", np.spec.name);
-  const auto range_name = task_range_name("sync execute", np.spec);
-  auto       t0         = clock::now();
-  auto       r          = core::OpResult::Cancelled;
+  auto t0 = clock::now();
+  auto r  = core::OpResult::Cancelled;
   {
-    nvtx3::scoped_range task_range{range_name.c_str()};
+    nvtx3::scoped_range task_range{srt.range_name.c_str()};
     r = srt.task->execute(srt.ctx);
   }
   auto t1 = clock::now();
@@ -1021,11 +984,10 @@ core::OpResult Scheduler::Impl::run_async_cons(GraphPlan::vertex_descriptor v) {
   auto &art = std::get<AsyncRt>(nrt);
 
   logger()->trace("[Scheduler::run_async_cons] Executing node '{}'", np.spec.name);
-  const auto range_name = task_range_name("async pop", np.spec);
-  auto       t0         = clock::now();
-  auto       r          = core::OpResult::Cancelled;
+  auto t0 = clock::now();
+  auto r  = core::OpResult::Cancelled;
   {
-    nvtx3::scoped_range task_range{range_name.c_str()};
+    nvtx3::scoped_range task_range{art.pop_range_name.c_str()};
     r = art.task->try_pop(art.xctx);
     while (r == core::OpResult::NotReady) {
       if (stop_.load())
@@ -1074,11 +1036,10 @@ core::OpResult Scheduler::Impl::run_async_prod(GraphPlan::vertex_descriptor v) {
   auto &art = std::get<AsyncRt>(nrt);
 
   logger()->trace("[Scheduler::run_async_prod] Executing node '{}'", np.spec.name);
-  const auto range_name = task_range_name("async push", np.spec);
-  auto       t0         = clock::now();
-  auto       r          = core::OpResult::Cancelled;
+  auto t0 = clock::now();
+  auto r  = core::OpResult::Cancelled;
   {
-    nvtx3::scoped_range task_range{range_name.c_str()};
+    nvtx3::scoped_range task_range{art.push_range_name.c_str()};
     r = art.task->try_push(art.pctx);
     while (r == core::OpResult::NotReady) {
       if (stop_.load())
@@ -1275,7 +1236,7 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
                      ExecResouces &resources, std::chrono::milliseconds metrics_interval,
                      FailureCallback failure_callback)
     : impl_(std::make_unique<Impl>(graph, sections, resources, metrics_interval,
-                                  std::move(failure_callback))) {}
+                                   std::move(failure_callback))) {}
 
 Scheduler::~Scheduler() = default;
 
