@@ -16,6 +16,7 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/syncs/pca.hh"
 
 namespace {
 using namespace holoflow::core;
@@ -146,7 +147,7 @@ TEST(PrequeueOwnership, DualReaderRetainsPairsAcrossStartupCancellationAndWrapar
     const auto settings = holotask::asyncs::DualReaderBatchQueueSettings{4, window};
     const auto infer    = factory.infer(inputs, settings);
     EXPECT_TRUE(infer.supports_prequeued_pop);
-    EXPECT_FALSE(infer.supports_prequeued_push);
+    EXPECT_TRUE(infer.supports_prequeued_push);
     auto          task = factory.create(inputs, settings, {});
     StorageAccess access(infer);
     task->bind_storage_access(&access);
@@ -203,6 +204,120 @@ TEST(PrequeueOwnership, DualReaderRetainsPairsAcrossStartupCancellationAndWrapar
     AsyncTicket ticket;
     EXPECT_EQ(task->reserve_pop(pop, ticket), OpResult::Cancelled);
   }
+}
+
+TEST(PrequeueOwnership, DualReaderWritesPublishInOrderAcrossCancellationAndWraparound) {
+  for (size_t window : {size_t{1}, size_t{4}, size_t{5}}) {
+    holotask::asyncs::DualReaderBatchQueueFactory factory;
+    const std::array                              inputs{TDesc({2}, DType::F32, MemLoc::Host)};
+    const auto    settings = holotask::asyncs::DualReaderBatchQueueSettings{8, window};
+    const auto    infer    = factory.infer(inputs, settings);
+    auto          task     = factory.create(inputs, settings, {});
+    StorageAccess access(infer);
+    task->bind_storage_access(&access);
+    std::uint8_t valid    = 0;
+    access.outputs[2].ptr = reinterpret_cast<std::byte *>(&valid);
+    std::array        in{TView{inputs[0], &access.inputs[0]}};
+    std::array        out{TView{infer.output_descs[0], &access.outputs[0]},
+                          TView{infer.output_descs[1], &access.outputs[1]},
+                          TView{infer.output_descs[2], &access.outputs[2]}};
+    std::atomic<bool> cancelled{false};
+    AsyncPushCtx      push{in, &cancelled};
+    AsyncPopCtx       pop{out, &cancelled};
+    for (size_t frame = 0; frame < 80; frame += 4) {
+      AsyncTicket first, second, extra, read;
+      ASSERT_EQ(task->reserve_push(push, first), OpResult::Ok);
+      auto *first_ptr = reinterpret_cast<float *>(in[0].data());
+      first_ptr[0]    = static_cast<float>(frame + 1);
+      first_ptr[1]    = static_cast<float>(frame + 2);
+      ASSERT_EQ(task->reserve_push(push, second), OpResult::Ok);
+      auto *second_ptr = reinterpret_cast<float *>(in[0].data());
+      EXPECT_NE(first_ptr, second_ptr);
+      EXPECT_EQ(task->reserve_push(push, extra), OpResult::NotReady);
+      EXPECT_THROW((void)task->acquire_input(0), std::logic_error);
+      EXPECT_THROW((void)task->try_push(push), std::logic_error);
+      EXPECT_THROW(task->commit_push(first), std::logic_error);
+      EXPECT_THROW(task->cancel_push(first), std::logic_error);
+      task->cancel_push(second);
+      ASSERT_EQ(task->reserve_push(push, second), OpResult::Ok);
+      EXPECT_EQ(in[0].data(), reinterpret_cast<std::byte *>(second_ptr));
+      second_ptr[0] = static_cast<float>(frame + 3);
+      second_ptr[1] = static_cast<float>(frame + 4);
+      task->enqueue_push(first);
+      task->enqueue_push(second);
+      EXPECT_THROW(task->enqueue_push(first), std::logic_error);
+      EXPECT_THROW(task->commit_push(second), std::logic_error);
+      EXPECT_THROW(task->cancel_push(second), std::logic_error);
+      EXPECT_EQ(task->reserve_pop(pop, read), OpResult::NotReady);
+      for (size_t group = 0; group < 2; ++group) {
+        task->commit_push(group == 0 ? first : second);
+        EXPECT_EQ(in[0].data(), reinterpret_cast<std::byte *>(second_ptr));
+        for (size_t k = 0; k < 2; ++k) {
+          ASSERT_EQ(task->reserve_pop(pop, read), OpResult::Ok);
+          const size_t n = frame + 2 * group + k;
+          EXPECT_FLOAT_EQ(*reinterpret_cast<float *>(out[0].data()), static_cast<float>(n + 1));
+          const size_t delay = (window - 1) / 2;
+          EXPECT_FLOAT_EQ(*reinterpret_cast<float *>(out[1].data()),
+                          n < delay ? 0.F : static_cast<float>(n + 1 - delay));
+          EXPECT_EQ(valid, n >= window - 1 ? 1 : 0);
+          task->release_pop(read);
+        }
+        EXPECT_EQ(task->reserve_pop(pop, read), OpResult::NotReady);
+      }
+    }
+    cancelled.store(true);
+    AsyncTicket ticket;
+    EXPECT_EQ(task->reserve_push(push, ticket), OpResult::Cancelled);
+  }
+}
+
+TEST(PrequeueOwnership, DualReaderReservedWritesRespectDelayedReaderBackpressure) {
+  holotask::asyncs::DualReaderBatchQueueFactory factory;
+  const std::array                              inputs{TDesc({2}, DType::F32, MemLoc::Host)};
+  const auto    settings = holotask::asyncs::DualReaderBatchQueueSettings{4, 5};
+  const auto    infer    = factory.infer(inputs, settings);
+  auto          task     = factory.create(inputs, settings, {});
+  StorageAccess access(infer);
+  task->bind_storage_access(&access);
+  std::uint8_t valid    = 0;
+  access.outputs[2].ptr = reinterpret_cast<std::byte *>(&valid);
+  std::array   in{TView{inputs[0], &access.inputs[0]}};
+  std::array   out{TView{infer.output_descs[0], &access.outputs[0]},
+                   TView{infer.output_descs[1], &access.outputs[1]},
+                   TView{infer.output_descs[2], &access.outputs[2]}};
+  AsyncPushCtx push{in, nullptr};
+  AsyncPopCtx  pop{out, nullptr};
+  AsyncTicket  write, extra, first, second;
+  // Ten ring elements: eight can be occupied before the two-element writer must wait.
+  ASSERT_EQ(task->owned_input_pointers(0)->size(), 5U);
+  for (size_t group = 0; group < 4; ++group) {
+    ASSERT_EQ(task->reserve_push(push, write), OpResult::Ok);
+    if (group == 3)
+      EXPECT_EQ(task->reserve_push(push, extra), OpResult::NotReady);
+    task->enqueue_push(write);
+    task->commit_push(write);
+  }
+  for (size_t k = 0; k < 2; ++k) {
+    ASSERT_EQ(task->reserve_pop(pop, first), OpResult::Ok);
+    task->release_pop(first);
+  }
+  // Advancing through startup scratch does not release the delayed history.
+  EXPECT_EQ(task->reserve_push(push, write), OpResult::NotReady);
+  ASSERT_EQ(task->reserve_pop(pop, first), OpResult::Ok);
+  ASSERT_EQ(task->reserve_pop(pop, second), OpResult::Ok);
+  auto *held_current = out[0].data();
+  auto *held_delayed = out[1].data();
+  EXPECT_EQ(task->reserve_push(push, write), OpResult::NotReady);
+  task->release_pop(first);
+  ASSERT_EQ(task->reserve_push(push, write), OpResult::Ok);
+  EXPECT_NE(in[0].data(), held_current);
+  EXPECT_NE(in[0].data(), held_delayed);
+  // A second group would wrap over the still-held delayed frame.
+  EXPECT_EQ(task->reserve_push(push, extra), OpResult::NotReady);
+  task->cancel_push(write);
+  task->release_pop(second);
+  ASSERT_EQ(task->reserve_push(push, write), OpResult::Ok);
+  task->cancel_push(write);
 }
 
 TEST(PrequeueOwnership, DualReaderDoesNotReturnReservedStorageToWriter) {
@@ -309,6 +424,13 @@ class PipelineFactory final : public ISyncTaskFactory {
 public:
   PipelineFactory(int kind, std::shared_ptr<PipelineState> state) : kind_(kind), state_(state) {}
   InferResult infer(std::span<const TDesc> inputs, const nlohmann::json &settings) const override {
+    if (kind_ == 0 && settings.contains("shape"))
+      return {{},
+              {TDesc(settings.at("shape").get<std::vector<size_t>>(), DType::F32, MemLoc::Device)},
+              {},
+              {},
+              {false},
+              TaskKind::Sync};
     if (kind_ == 0)
       return {
           {},
@@ -461,6 +583,98 @@ void run_pipeline(size_t graph_limit, bool prequeue, size_t output_capacity, boo
         << static_cast<double>(state->target) /
                std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count()
         << '\n';
+}
+
+std::vector<float> run_pca_pipeline(size_t limit, bool prequeue, bool pause = false,
+                                    bool miss = false, bool stop_paused = false) {
+  auto state    = std::make_shared<PipelineState>();
+  state->target = 64;
+  Registry registry;
+  registry.register_sync("source", std::make_unique<PipelineFactory>(0, state));
+  registry.register_sync("sink", std::make_unique<PipelineFactory>(2, state));
+  registry.register_sync("pca", std::make_unique<holotask::syncs::PcaFactory>());
+  registry.register_async("batch", std::make_unique<holotask::asyncs::BatchQueueFactory>());
+  registry.register_async("dual",
+                          std::make_unique<holotask::asyncs::DualReaderBatchQueueFactory>());
+  GraphSpec spec;
+  // One producer commit makes two complete PCA inputs available, so depth two does not depend
+  // on an upstream worker winning a scheduling race. Each PCA projects a different 2x2 matrix.
+  auto source = add_vertex(NodeSpec{"source", "source", {{"shape", {2, 2, 1, 2}}}}, spec);
+  auto input =
+      add_vertex(NodeSpec{"input", "batch", holotask::asyncs::BatchQueueSettings{8, 1, 1}}, spec);
+  auto pca    = add_vertex(NodeSpec{"pca", "pca", holotask::syncs::PcaSettings{1, 2}}, spec);
+  auto output = add_vertex(
+      NodeSpec{"output", "dual", holotask::asyncs::DualReaderBatchQueueSettings{8, 5}}, spec);
+  auto sink = add_vertex(NodeSpec{"sink", "sink", {}}, spec);
+  add_edge(source, input, EdgeSpec{0, 0}, spec);
+  add_edge(input, pca, EdgeSpec{0, 0}, spec);
+  add_edge(pca, output, EdgeSpec{0, 0}, spec);
+  add_edge(output, sink, EdgeSpec{0, 0}, spec);
+  Compiler::Config config;
+  config.enable_profiling        = false;
+  config.verbose_tracing         = false;
+  config.max_section_cuda_graphs = limit;
+  auto out                       = Compiler(registry, config).compile(spec);
+  if (!prequeue)
+    for (auto &section : out->sections)
+      section.supports_prequeue = false;
+  Scheduler scheduler(out->graph, out->sections, out->resources);
+  if (pause)
+    state->hook = [&](size_t frames) {
+      if (frames == 5 || frames == 17)
+        scheduler.request_pause();
+    };
+  for (size_t pass = 0; pass < (pause ? 3U : 1U); ++pass) {
+    scheduler.start();
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool stopped = scheduler.stop_requested();
+    if (!stopped)
+      scheduler.request_stop();
+    scheduler.wait();
+    EXPECT_TRUE(stopped) << "PCA pipeline deadlocked";
+    if (!stopped)
+      break;
+    if (pause && pass < 2)
+      EXPECT_EQ(state->results.size(), pass == 0 ? 5U : 17U);
+    if (pause && pass == 0 && miss)
+      for (const auto &section : out->sections)
+        if (out->graph[section.sync_topo.front()].spec.name == "pca")
+          out->resources.section_cuda_graphs.at(section.id)->tuple_indices.clear();
+    if (stop_paused) {
+      state->target = 5;
+      break;
+    }
+  }
+  scheduler.request_stop();
+  scheduler.wait();
+  EXPECT_EQ(state->results.size(), state->target);
+  for (const auto &section : out->sections)
+    if (out->graph[section.sync_topo.front()].spec.name == "pca") {
+      const auto &graphs = *out->resources.section_cuda_graphs.at(section.id);
+      const auto  report = graphs.snapshot();
+      EXPECT_EQ(report["prequeue_depth"], limit && prequeue && !miss ? 2 : 1);
+      EXPECT_EQ(graphs.prequeue_peak.load(), limit && prequeue ? 2U : 0U);
+      EXPECT_EQ(graphs.prequeue_submissions.load(), graphs.prequeue_retirements.load());
+      EXPECT_EQ(graphs.pointer_misses.load(), 0U);
+      EXPECT_EQ(graphs.tuple_misses.load(), miss ? 1U : 0U);
+    }
+  return state->results;
+}
+
+TEST(PrequeueScheduler, PcaPublishesTwoInputsAcrossPauseFallbackAndStop) {
+  const auto expected = run_pca_pipeline(0, false);
+  const auto compare  = [&](const auto &actual) {
+    ASSERT_LE(actual.size(), expected.size());
+    for (size_t i = 0; i < actual.size(); ++i)
+      EXPECT_NEAR(actual[i], expected[i], 1e-3F * std::max(1.F, std::abs(expected[i])))
+          << "frame " << i;
+  };
+  compare(run_pca_pipeline(128, false));
+  compare(run_pca_pipeline(128, true, true));
+  compare(run_pca_pipeline(128, true, true, true));
+  compare(run_pca_pipeline(128, true, true, false, true));
 }
 
 TEST(PrequeueScheduler, MatchesSerialGraphsAndOrdinaryExecution) {

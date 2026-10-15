@@ -272,7 +272,7 @@ TEST_F(PcaExecuteTest, CudaGraphCachesRotatingInputAndOutputBuffers) {
   EXPECT_NEAR(dot(replayed_b.data() + 2, replayed_b.data() + 2, 2), 16.0f, 5e-2f);
 }
 
-TEST_F(PcaExecuteTest, ParticipatesInOuterCaptureForDxAndCusolverPaths) {
+TEST_F(PcaExecuteTest, QueuesOuterGraphsWithoutHostWaitForDxAndCusolverPaths) {
   for (const size_t depth : {size_t{2}, size_t{256}}) {
     const TDesc        input_desc = device_desc({depth, 1, depth});
     const auto         config     = settings(static_cast<int>(depth - 1), static_cast<int>(depth));
@@ -282,25 +282,42 @@ TEST_F(PcaExecuteTest, ParticipatesInOuterCaptureForDxAndCusolverPaths) {
     task->bind_logger(spdlog::default_logger());
     holonp_test::TensorTestBuffer input(input_desc);
     holonp_test::TensorTestBuffer output(inferred.output_descs[0]);
+    holonp_test::TensorTestBuffer next_input(input_desc);
+    holonp_test::TensorTestBuffer next_output(inferred.output_descs[0]);
     input.upload(as_bytes(diagonal_covariance_input(depth)));
+    next_input.upload(as_bytes(diagonal_covariance_input(depth, 2.0f)));
     std::array              inputs{input.view()};
     std::array              outputs{output.view()};
     std::atomic<bool>       cancelled{false};
     holoflow::core::SyncCtx ctx{inputs, outputs, &cancelled, nullptr, nullptr};
 
-    cudaGraph_t graph = nullptr;
-    CUDA_CHECK(cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeThreadLocal));
-    ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
-    CUDA_CHECK(cudaStreamEndCapture(stream.get(), &graph));
-    cudaGraphExec_t executable = nullptr;
-    CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
-    CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
+    std::array<cudaGraph_t, 2>     graphs{};
+    std::array<cudaGraphExec_t, 2> executables{};
+    for (size_t i = 0; i < graphs.size(); ++i) {
+      if (i == 1) {
+        inputs[0]  = next_input.view();
+        outputs[0] = next_output.view();
+      }
+      CUDA_CHECK(cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeThreadLocal));
+      ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+      CUDA_CHECK(cudaStreamEndCapture(stream.get(), &graphs[i]));
+      CUDA_CHECK(cudaGraphInstantiateWithFlags(&executables[i], graphs[i], 0));
+    }
+    // Both variants share the task's workspace. Stream ordering must protect it without a
+    // host barrier between launches, just as in a prequeued scheduler section.
+    CUDA_CHECK(cudaGraphLaunch(executables[0], stream.get()));
+    CUDA_CHECK(cudaGraphLaunch(executables[1], stream.get()));
     CUDA_CHECK(cudaStreamSynchronize(stream.get()));
     const auto captured = as_floats(output.download());
     EXPECT_NEAR(dot(captured.data(), captured.data(), captured.size()), static_cast<float>(depth),
                 5e-2f * depth);
-    CUDA_CHECK(cudaGraphExecDestroy(executable));
-    CUDA_CHECK(cudaGraphDestroy(graph));
+    const auto next_captured = as_floats(next_output.download());
+    EXPECT_NEAR(dot(next_captured.data(), next_captured.data(), next_captured.size()), 4.0f * depth,
+                5e-2f * depth);
+    for (size_t i = 0; i < graphs.size(); ++i) {
+      CUDA_CHECK(cudaGraphExecDestroy(executables[i]));
+      CUDA_CHECK(cudaGraphDestroy(graphs[i]));
+    }
   }
 }
 

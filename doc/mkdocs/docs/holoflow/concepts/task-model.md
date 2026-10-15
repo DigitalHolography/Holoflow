@@ -135,8 +135,8 @@ and release must not modify the current shared storage bindings, which may descr
 iteration. Never mix this protocol with legacy operations on the same side while tickets remain.
 Pause retains submitted iterations; stop drains CUDA work before returning their reservations.
 
-BatchQueue supports both directions. DualReaderBatchQueue supports reserved consumption of its
-current and delayed frame views together; its producer retains ordinary scheduling.
+BatchQueue and DualReaderBatchQueue support both directions. DualReaderBatchQueue reserves its
+current and delayed frame views together and publishes producer batches only after completion.
 SlidingAverage supports reserved output consumption and,
 without its optional host validity input, reserved producer submission, including `discard_first`.
 Sections consuming a connected non-owned async output (including the dual-reader host validity
@@ -146,6 +146,15 @@ retain ordinary scheduling. Queue capacities are unchanged; a small queue may pe
 iteration at a time. Section graph diagnostics expose `prequeue_depth`, `prequeue_peak`, submission
 and retirement counts, and `prequeue_fallback_reason`. Startup dumps include the selected depth and
 fallback reason before execution begins; shutdown dumps additionally include runtime counters.
+
+NVTX traces identify the two slots as `Slot 0` (blue) and `Slot 1` (orange), with the
+iteration number in each lifetime and Submit/Retire range's numeric payload. Overlapping
+section/slot lifetime ranges span acquisition through retirement, including paused time;
+they measure buffer ownership rather than GPU execution. Nested CPU ranges show acquisition,
+compute submission, async push, event wait, output commit, and output release. Input/output
+wait ranges name the boundary task and remain open across polling retries, splitting when
+the wait reason changes or the worker retires another slot. CPU ranges close when a worker
+exits; submitted slot lifetimes survive pause/resume and close on retirement or stop cleanup.
 
 ## Task factories
 

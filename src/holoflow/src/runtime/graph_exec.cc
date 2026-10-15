@@ -49,6 +49,7 @@
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
 #include "logger.hh"
+#include "prequeue_nvtx.hh"
 #include "section_cuda_graph.hh"
 
 namespace holoflow::runtime {
@@ -220,6 +221,13 @@ private:
   };
 
   struct AsyncRt {
+    explicit AsyncRt(const core::NodeSpec &spec)
+        : wait_input(std::format("Wait for input: {}", spec.name)),
+          wait_output(std::format("Wait for output slot: {}", spec.name)),
+          push_trace(task_range_name("async push", spec)),
+          commit_trace(task_range_name("commit outputs", spec)),
+          release_trace(task_range_name("release outputs", spec)) {}
+
     core::IAsyncTask        *task = nullptr;
     std::string              pop_range_name;
     std::string              push_range_name;
@@ -227,6 +235,7 @@ private:
     std::vector<core::TView> out_views;
     core::AsyncPushCtx       pctx{};
     core::AsyncPopCtx        xctx{};
+    nvtx3::registered_string wait_input, wait_output, push_trace, commit_trace, release_trace;
   };
 
   using NodeRt = std::variant<SyncRt, AsyncRt>;
@@ -247,7 +256,7 @@ private:
 
   void run_section(int section_id);
   bool run_prequeued_section(int section_id);
-  void retire_prequeued(int section_id);
+  void retire_prequeued(int section_id, bool cleanup = false);
 
   /// This function acquires all owned inputs for the given node.
   /// Owning tasks publish memory by updating their compiler-provided Storage;
@@ -309,10 +318,17 @@ private:
     std::vector<Reservation> pushes, pops;
     // Storage is shared by task contexts. Save addresses, rather than copying mutable TViews.
     std::vector<std::pair<core::Storage *, std::byte *>> bindings;
+    std::optional<detail::PrequeueNvtxSlot>              trace;
   };
   struct PrequeueState {
-    std::array<InFlight, 2> slots;
-    size_t                  head = 0, size = 0;
+    explicit PrequeueState(const std::string &name) : section_name(name) {
+      for (size_t i = 0; i < slots.size(); ++i)
+        slots[i].trace.emplace(name, i);
+    }
+    nvtx3::registered_string section_name;
+    std::array<InFlight, 2>  slots;
+    size_t                   head = 0, size = 0;
+    uint64_t                 next_iteration = 0;
   };
   std::vector<std::unique_ptr<PrequeueState>> prequeues_;
   const GraphPlan                            &graph_;    ///< The computational graph to execute.
@@ -571,7 +587,7 @@ void Scheduler::Impl::wait() {
   if (aborted_.load()) {
     for (size_t i = 0; i < prequeues_.size(); ++i)
       while (prequeues_[i] && prequeues_[i]->size)
-        retire_prequeued(static_cast<int>(i));
+        retire_prequeued(static_cast<int>(i), true);
     for (auto &checkpoint : checkpoints_) {
       const bool   releasing = checkpoint.stage == SectionCheckpoint::Stage::Release;
       const size_t first     = releasing ? checkpoint.node : 0;
@@ -691,7 +707,7 @@ void Scheduler::Impl::build_nodes_rts() {
       srt.ctx.event_reader = &event_handles_.at(np.spec.name).in;
       node_rts_.at(idx)    = std::move(srt);
     } else if (auto *at = dynamic_cast<core::IAsyncTask *>(task)) {
-      AsyncRt art;
+      AsyncRt art{np.spec};
       art.pop_range_name  = task_range_name("async pop", np.spec);
       art.push_range_name = task_range_name("async push", np.spec);
       art.task            = at;
@@ -728,24 +744,34 @@ void Scheduler::Impl::run_router() {
 // Double-buffered section execution
 // -------------------------------------------------------------------------------------------------
 
-void Scheduler::Impl::retire_prequeued(int section_id) {
-  auto &state = *prequeues_.at(section_id);
-  auto &slot  = state.slots[state.head];
+void Scheduler::Impl::retire_prequeued(int section_id, bool cleanup) {
+  auto                          &state = *prequeues_.at(section_id);
+  auto                          &slot  = state.slots[state.head];
+  detail::FinishPrequeueNvtxSlot finish{*slot.trace};
+  detail::PrequeueNvtxRanges     ranges{cleanup ? &state.section_name : nullptr};
+  ranges.operation(*slot.trace, true);
+  using Phase = detail::PrequeueNvtxPhase;
+  ranges.phase(Phase::Wait);
   {
-    nvtx3::scoped_range wait_range{"Wait iteration event"};
-    const auto          status = cudaEventQuery(slot.done);
+    const auto status = cudaEventQuery(slot.done);
     if (status == cudaErrorNotReady)
       CUDA_CHECK(cudaEventSynchronize(slot.done));
     else
       CUDA_CHECK(status);
   }
+  ranges.phase(Phase::Commit);
   for (const auto &reservation : slot.pushes) {
     detail::current_node_name() = graph_[reservation.node].spec.name;
-    std::get<AsyncRt>(node_rts_.at(reservation.node)).task->commit_push(reservation.ticket);
+    auto               &runtime = std::get<AsyncRt>(node_rts_.at(reservation.node));
+    nvtx3::scoped_range task_range{runtime.commit_trace};
+    runtime.task->commit_push(reservation.ticket);
   }
+  ranges.phase(Phase::Release);
   for (const auto &reservation : slot.pops) {
     detail::current_node_name() = graph_[reservation.node].spec.name;
-    std::get<AsyncRt>(node_rts_.at(reservation.node)).task->release_pop(reservation.ticket);
+    auto               &runtime = std::get<AsyncRt>(node_rts_.at(reservation.node));
+    nvtx3::scoped_range task_range{runtime.release_trace};
+    runtime.task->release_pop(reservation.ticket);
   }
   slot.pushes.clear();
   slot.pops.clear();
@@ -766,14 +792,16 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
   auto &graphs = *graph_it->second;
   auto &owner  = prequeues_.at(section_id);
   if (!owner) {
-    owner = std::make_unique<PrequeueState>();
+    owner = std::make_unique<PrequeueState>(section.name);
     for (auto &slot : owner->slots) {
       slot.pushes.reserve(section.async_prod.size());
       slot.pops.reserve(section.async_cons.size());
       slot.bindings.reserve(section.async_prod.size() + section.async_cons.size());
     }
   }
-  auto      &state    = *owner;
+  auto                      &state = *owner;
+  detail::PrequeueNvtxRanges ranges{&state.section_name};
+  using Phase         = detail::PrequeueNvtxPhase;
   const auto rollback = [&](InFlight &slot) {
     for (auto it = slot.pops.rbegin(); it != slot.pops.rend(); ++it)
       std::get<AsyncRt>(node_rts_.at(it->node)).task->cancel_pop(it->ticket);
@@ -795,112 +823,141 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
     }
     return result == core::OpResult::Ok;
   };
-  while (!stop_.load()) {
-    if (state.size == state.slots.size()) {
-      retire_prequeued(section_id);
-      continue;
-    }
-    auto &slot  = state.slots[(state.head + state.size) % state.slots.size()];
-    bool  ready = true;
-    {
-      nvtx3::scoped_range reserve_range{"Reserve iteration"};
-      for (auto v : section.async_prod) {
-        detail::current_node_name() = graph_[v].spec.name;
-        auto             &runtime   = std::get<AsyncRt>(node_rts_.at(v));
-        core::AsyncTicket ticket;
-        if (!control(runtime.task->reserve_push(runtime.pctx, ticket))) {
-          ready = false;
-          break;
-        }
-        slot.pushes.push_back({v, ticket});
-        for (size_t port = 0; port < runtime.in_views.size(); ++port)
-          if (graph_[v].infer.owned_inputs[port]) {
-            auto *storage = runtime.in_views[port].storage;
-            slot.bindings.emplace_back(storage, storage->ptr);
-          }
+  try {
+    while (!stop_.load()) {
+      if (state.size == state.slots.size()) {
+        ranges.end_operation();
+        retire_prequeued(section_id);
+        continue;
       }
-      if (ready)
-        for (auto v : section.async_cons) {
+      auto &slot = state.slots[(state.head + state.size) % state.slots.size()];
+      if (!slot.trace->active())
+        slot.trace->begin(state.next_iteration++);
+      ranges.operation(*slot.trace);
+      ranges.phase(Phase::Acquire);
+      bool ready = true;
+      {
+        for (auto v : section.async_prod) {
           detail::current_node_name() = graph_[v].spec.name;
           auto             &runtime   = std::get<AsyncRt>(node_rts_.at(v));
           core::AsyncTicket ticket;
-          const auto        pop_started = std::chrono::steady_clock::now();
-          if (!control(runtime.task->reserve_pop(runtime.xctx, ticket))) {
+          const auto        result = runtime.task->reserve_push(runtime.pctx, ticket);
+          if (!control(result)) {
+            if (result == core::OpResult::NotReady)
+              ranges.wait(runtime.wait_output);
             ready = false;
             break;
           }
-          slot.pops.push_back(
-              {v, ticket,
-               static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                         std::chrono::steady_clock::now() - pop_started)
-                                         .count())});
-          for (size_t port = 0; port < runtime.out_views.size(); ++port)
-            if (graph_[v].infer.owned_outputs[port]) {
-              auto *storage = runtime.out_views[port].storage;
+          slot.pushes.push_back({v, ticket});
+          for (size_t port = 0; port < runtime.in_views.size(); ++port)
+            if (graph_[v].infer.owned_inputs[port]) {
+              auto *storage = runtime.in_views[port].storage;
               slot.bindings.emplace_back(storage, storage->ptr);
             }
         }
-    }
-    if (!ready || stop_.load()) {
-      rollback(slot);
-      if (!stop_.load() && state.size)
-        retire_prequeued(section_id);
-      else if (!stop_.load())
-        std::this_thread::yield();
-      continue;
-    }
-    detail::current_node_name() = {};
-    for (const auto &[storage, pointer] : slot.bindings)
-      storage->ptr = pointer;
-    const auto variant = graphs.variant(res_.storages);
-    if (!variant) {
-      graphs.report_miss(res_.storages);
-      rollback(slot);
-      while (state.size)
-        retire_prequeued(section_id);
-      graphs.prequeue_depth.store(1, std::memory_order_relaxed);
-      {
-        std::lock_guard lock(graphs.diagnostic_mutex);
-        graphs.diagnostics["prequeue_fallback_reason"] = "Runtime graph binding miss";
+        if (ready)
+          for (auto v : section.async_cons) {
+            detail::current_node_name() = graph_[v].spec.name;
+            auto             &runtime   = std::get<AsyncRt>(node_rts_.at(v));
+            core::AsyncTicket ticket;
+            const auto        pop_started = std::chrono::steady_clock::now();
+            const auto        result      = runtime.task->reserve_pop(runtime.xctx, ticket);
+            if (!control(result)) {
+              if (result == core::OpResult::NotReady)
+                ranges.wait(runtime.wait_input);
+              ready = false;
+              break;
+            }
+            slot.pops.push_back(
+                {v, ticket,
+                 static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                           std::chrono::steady_clock::now() - pop_started)
+                                           .count())});
+            for (size_t port = 0; port < runtime.out_views.size(); ++port)
+              if (graph_[v].infer.owned_outputs[port]) {
+                auto *storage = runtime.out_views[port].storage;
+                slot.bindings.emplace_back(storage, storage->ptr);
+              }
+          }
       }
-      return false;
+      if (!ready || stop_.load()) {
+        rollback(slot);
+        if (!stop_.load() && state.size) {
+          ranges.end_operation();
+          retire_prequeued(section_id);
+        } else if (!stop_.load())
+          std::this_thread::yield();
+        continue;
+      }
+      ranges.phase(Phase::Compute);
+      detail::current_node_name() = {};
+      for (const auto &[storage, pointer] : slot.bindings)
+        storage->ptr = pointer;
+      const auto variant = graphs.variant(res_.storages);
+      if (!variant) {
+        graphs.report_miss(res_.storages);
+        rollback(slot);
+        ranges.end_operation();
+        slot.trace->finish();
+        while (state.size)
+          retire_prequeued(section_id);
+        graphs.prequeue_depth.store(1, std::memory_order_relaxed);
+        {
+          std::lock_guard lock(graphs.diagnostic_mutex);
+          graphs.diagnostics["prequeue_fallback_reason"] = "Runtime graph binding miss";
+        }
+        return false;
+      }
+      const auto started = std::chrono::steady_clock::now();
+      {
+        nvtx3::scoped_range launch_range{"CUDA graph launch"};
+        CUDA_CHECK(cudaGraphLaunch(graphs.executables.at(*variant), section.stream));
+      }
+      auto &acc = graph_metric_accumulators_.at(section_id);
+      acc.duration_ns.fetch_add(
+          static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                    std::chrono::steady_clock::now() - started)
+                                    .count()),
+          std::memory_order_relaxed);
+      acc.run_count.fetch_add(1, std::memory_order_relaxed);
+      graphs.launches.fetch_add(1, std::memory_order_relaxed);
+      ranges.phase(Phase::Push);
+      for (const auto &reservation : slot.pushes) {
+        detail::current_node_name()      = graph_[reservation.node].spec.name;
+        auto               &runtime      = std::get<AsyncRt>(node_rts_.at(reservation.node));
+        const auto          push_started = std::chrono::steady_clock::now();
+        nvtx3::scoped_range task_range{runtime.push_trace};
+        runtime.task->enqueue_push(reservation.ticket);
+        const auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                  std::chrono::steady_clock::now() - push_started)
+                                  .count();
+        auto [host, device] = sum_bytes(runtime.in_views);
+        record_node_sample(reservation.node, static_cast<uint64_t>(duration), host, device);
+      }
+      CUDA_CHECK(cudaEventRecord(slot.done, section.stream));
+      slot.trace->mark_submitted();
+      ranges.end_operation();
+      for (const auto &reservation : slot.pops) {
+        auto &runtime       = std::get<AsyncRt>(node_rts_.at(reservation.node));
+        auto [host, device] = sum_bytes(runtime.out_views);
+        record_node_sample(reservation.node, reservation.duration_ns, host, device);
+      }
+      ++state.size;
+      if (state.size > graphs.prequeue_peak.load(std::memory_order_relaxed))
+        graphs.prequeue_peak.store(state.size, std::memory_order_relaxed);
+      graphs.prequeue_submissions.fetch_add(1, std::memory_order_relaxed);
+      detail::current_node_name() = {};
     }
-    const auto started = std::chrono::steady_clock::now();
-    {
-      nvtx3::scoped_range launch_range{"CUDA graph launch"};
-      CUDA_CHECK(cudaGraphLaunch(graphs.executables.at(*variant), section.stream));
-    }
-    auto &acc = graph_metric_accumulators_.at(section_id);
-    acc.duration_ns.fetch_add(
-        static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                  std::chrono::steady_clock::now() - started)
-                                  .count()),
-        std::memory_order_relaxed);
-    acc.run_count.fetch_add(1, std::memory_order_relaxed);
-    graphs.launches.fetch_add(1, std::memory_order_relaxed);
-    for (const auto &reservation : slot.pushes) {
-      detail::current_node_name() = graph_[reservation.node].spec.name;
-      auto      &runtime          = std::get<AsyncRt>(node_rts_.at(reservation.node));
-      const auto push_started     = std::chrono::steady_clock::now();
-      runtime.task->enqueue_push(reservation.ticket);
-      const auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                                std::chrono::steady_clock::now() - push_started)
-                                .count();
-      auto [host, device] = sum_bytes(runtime.in_views);
-      record_node_sample(reservation.node, static_cast<uint64_t>(duration), host, device);
-    }
-    CUDA_CHECK(cudaEventRecord(slot.done, section.stream));
-    for (const auto &reservation : slot.pops) {
-      auto &runtime       = std::get<AsyncRt>(node_rts_.at(reservation.node));
-      auto [host, device] = sum_bytes(runtime.out_views);
-      record_node_sample(reservation.node, reservation.duration_ns, host, device);
-    }
-    ++state.size;
-    if (state.size > graphs.prequeue_peak.load(std::memory_order_relaxed))
-      graphs.prequeue_peak.store(state.size, std::memory_order_relaxed);
-    graphs.prequeue_submissions.fetch_add(1, std::memory_order_relaxed);
-    detail::current_node_name() = {};
+  } catch (...) {
+    ranges.end_operation();
+    for (auto &slot : state.slots)
+      slot.trace->finish();
+    throw;
   }
+  ranges.end_operation();
+  for (auto &slot : state.slots)
+    if (!slot.trace->submitted())
+      slot.trace->finish();
   // Pause retains both tickets and events. Abort/EOF cleanup runs in wait(), after all workers
   // have joined and all streams are drained, including when stopping an already paused scheduler.
   return true;

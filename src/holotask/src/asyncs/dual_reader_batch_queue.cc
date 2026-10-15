@@ -96,6 +96,8 @@ public:
     if (index != 0) {
       throw std::out_of_range("DualReaderBatchQueue::acquire_input: invalid index");
     }
+    if (!pending_writes_.empty())
+      throw std::logic_error("DualReaderBatchQueue::acquire_input: reserved inputs still held");
     if (slot_count_ - writer_size() <= input_size_) {
       return std::nullopt;
     }
@@ -182,6 +184,8 @@ public:
   }
 
   holoflow::core::OpResult try_push(holoflow::core::AsyncPushCtx &) override {
+    if (!pending_writes_.empty())
+      throw std::logic_error("DualReaderBatchQueue::try_push: reserved inputs still held");
     size_t next_write_idx = write_idx_.load(std::memory_order_relaxed) + input_size_;
     if (next_write_idx >= slot_count_) {
       next_write_idx = 0;
@@ -189,6 +193,44 @@ public:
     storage_access().owned_input_storage(0).ptr = nullptr;
     write_idx_.store(next_write_idx, std::memory_order_release);
     return holoflow::core::OpResult::Ok;
+  }
+
+  holoflow::core::OpResult reserve_push(holoflow::core::AsyncPushCtx &ctx,
+                                        holoflow::core::AsyncTicket  &ticket) override {
+    using holoflow::core::OpResult;
+    if (ctx.cancelled && ctx.cancelled->load())
+      return OpResult::Cancelled;
+    if (pending_writes_.full())
+      return OpResult::NotReady;
+    const size_t write = pending_writes_.empty() ? write_idx_.load(std::memory_order_relaxed)
+                                                 : pending_writes_.back().next;
+    // Reservations occupy ring space immediately, but only completed writes are visible to
+    // readers. The committed delayed-reader cursor protects both current and delayed views.
+    const size_t read = delayed_read_idx_.load(std::memory_order_acquire);
+    if (slot_count_ - distance(read, write) <= input_size_)
+      return OpResult::NotReady;
+    storage_access().owned_input_storage(0).ptr = buffer_ + write * element_size_;
+    ticket = pending_writes_.push({(write + input_size_) % slot_count_});
+    return OpResult::Ok;
+  }
+
+  void enqueue_push(holoflow::core::AsyncTicket ticket) override {
+    auto &pending = pending_writes_.get(ticket);
+    if (pending.submitted)
+      throw std::logic_error("DualReaderBatchQueue reservation already submitted");
+    pending.submitted = true;
+  }
+
+  void commit_push(holoflow::core::AsyncTicket ticket) override {
+    if (!pending_writes_.get(ticket).submitted)
+      throw std::logic_error("DualReaderBatchQueue reservation not submitted");
+    write_idx_.store(pending_writes_.pop(ticket).next, std::memory_order_release);
+  }
+
+  void cancel_push(holoflow::core::AsyncTicket ticket) override {
+    if (pending_writes_.get(ticket).submitted)
+      throw std::logic_error("Cannot cancel submitted DualReaderBatchQueue reservation");
+    pending_writes_.cancel(ticket);
   }
 
   holoflow::core::OpResult try_pop(holoflow::core::AsyncPopCtx &ctx) override {
@@ -307,6 +349,11 @@ private:
   bool   delayed_active_   = false;
   bool   current_released_ = false;
   bool   delayed_released_ = false;
+  struct PendingWrite {
+    size_t next;
+    bool   submitted = false;
+  };
+  alignas(CACHE_LINE_SIZE) detail::ReservationQueue<PendingWrite> pending_writes_;
   alignas(CACHE_LINE_SIZE) detail::ReservationQueue<ReadPosition> pending_reads_;
 };
 
@@ -346,6 +393,7 @@ DualReaderBatchQueueFactory::infer(std::span<const holoflow::core::TDesc> input_
       .kind                        = holoflow::core::TaskKind::Async,
       .owned_input_pointer_counts  = {slots / input.shape[0]},
       .owned_output_pointer_counts = {slots, slots + (delay != 0 ? 1 : 0), std::nullopt},
+      .supports_prequeued_push     = true,
       .supports_prequeued_pop      = true,
   };
 }

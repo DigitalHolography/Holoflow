@@ -149,7 +149,9 @@ GraphSpec reference_spec(bool full) {
   return holoflow::core::from_json(json);
 }
 
-std::vector<std::vector<unsigned char>> run_reference(bool full, size_t limit) {
+std::vector<std::vector<unsigned char>> run_reference(bool full, size_t limit, bool prequeue = true,
+                                                      bool pause = false, bool miss = false,
+                                                      bool stop_paused = false) {
   auto             state    = std::make_shared<ReferenceState>();
   auto             registry = reference_registry(state);
   Compiler::Config config;
@@ -159,37 +161,84 @@ std::vector<std::vector<unsigned char>> run_reference(bool full, size_t limit) {
   config.dump_dot_on_failure     = false;
   size_t free_before, free_after, total;
   CUDA_CHECK(cudaMemGetInfo(&free_before, &total));
-  const auto   started = std::chrono::steady_clock::now();
-  auto         out     = Compiler(registry, config).compile(reference_spec(full));
+  const auto started = std::chrono::steady_clock::now();
+  auto       out     = Compiler(registry, config).compile(reference_spec(full));
+  if (!prequeue)
+    for (auto &section : out->sections)
+      section.supports_prequeue = false;
   const double compile_ms =
       std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
   CUDA_CHECK(cudaMemGetInfo(&free_after, &total));
-  Scheduler  scheduler(out->graph, out->sections, out->resources);
-  const auto preparing = std::chrono::steady_clock::now();
-  scheduler.start();
-  const double start_ms =
-      std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - preparing)
-          .count();
-  CUDA_CHECK(cudaMemGetInfo(&free_after, &total));
-  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
-  while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
-    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  Scheduler scheduler(out->graph, out->sections, out->resources);
+  if (pause)
+    state->frame_hook = [&](size_t frames) {
+      if (frames == 5 || frames == 17)
+        scheduler.request_pause();
+    };
+  double start_ms = 0;
+  for (size_t pass = 0; pass < (pause ? 3U : 1U); ++pass) {
+    const auto preparing = std::chrono::steady_clock::now();
+    scheduler.start();
+    start_ms +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - preparing)
+            .count();
+    CUDA_CHECK(cudaMemGetInfo(&free_after, &total));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(90);
+    while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    const bool stopped = scheduler.stop_requested();
+    if (!stopped)
+      scheduler.request_stop();
+    scheduler.wait();
+    EXPECT_TRUE(stopped) << "Reference pipeline deadlocked";
+    if (!stopped)
+      break;
+    if (pause && pass < 2)
+      EXPECT_EQ(state->frames.size(), pass == 0 ? 5U : 17U);
+    if (pause && pass == 0 && miss)
+      for (const auto &section : out->sections)
+        for (auto v : section.sync_topo)
+          if (out->graph[v].spec.kind == "Pca")
+            out->resources.section_cuda_graphs.at(section.id)->tuple_indices.clear();
+    if (stop_paused) {
+      state->target_frames = 5;
+      break;
+    }
+  }
   scheduler.request_stop();
   scheduler.wait();
   size_t              enabled = 0;
   std::vector<size_t> products;
   for (const auto &sec : out->sections) {
-    const auto &graphs = *out->resources.section_cuda_graphs.at(sec.id);
+    const auto &graphs      = *out->resources.section_cuda_graphs.at(sec.id);
+    const bool  pca_section = std::any_of(sec.sync_topo.begin(), sec.sync_topo.end(),
+                                          [&](auto v) { return out->graph[v].spec.kind == "Pca"; });
+    for (auto v : sec.sync_topo)
+      if (out->graph[v].spec.kind == "Pca") {
+        const auto report = graphs.snapshot();
+        EXPECT_EQ(report["prequeue_depth"], limit && prequeue && !miss ? 2 : 1);
+        if (limit && prequeue) {
+          // This pipeline may be starved upstream or limited to one complete batch by capacity.
+          EXPECT_GE(graphs.prequeue_peak.load(), 1U);
+          EXPECT_LE(graphs.prequeue_peak.load(), 2U);
+          EXPECT_GT(graphs.prequeue_submissions.load(), 0U);
+          EXPECT_EQ(graphs.prequeue_submissions.load(), graphs.prequeue_retirements.load());
+          EXPECT_EQ(graphs.tuple_misses.load(), miss ? 1U : 0U);
+          EXPECT_EQ(graphs.pointer_misses.load(), 0U);
+        } else
+          EXPECT_EQ(graphs.prequeue_submissions.load(), 0U);
+      }
     if (graphs.enabled) {
       ++enabled;
       products.push_back(graphs.executables.size());
     } else if (limit && !sec.sync_topo.empty() &&
                out->graph[sec.sync_topo.front()].spec.kind != "ReferenceSource" &&
-               out->graph[sec.sync_topo.front()].spec.kind != "ReferenceSink") {
+               out->graph[sec.sync_topo.front()].spec.kind != "ReferenceSink" &&
+               !(miss && pca_section)) {
       ADD_FAILURE() << sec.name << ": " << graphs.fallback_reason;
     }
   }
-  EXPECT_EQ(enabled, limit ? 4U : 0U);
+  EXPECT_EQ(enabled, limit ? miss ? 3U : 4U : 0U);
   if (full && limit) {
     std::sort(products.begin(), products.end());
     EXPECT_EQ(products, (std::vector<size_t>{21, 264, 504, 792}));
@@ -222,6 +271,23 @@ void compare_reference(bool full) {
 }
 
 TEST(SectionGraphReference, SmallPipelineMatchesOrdinaryExecution) { compare_reference(false); }
+
+TEST(SectionGraphReference, PcaPrequeueMatchesSerialGraphsAcrossPauseFallbackAndStop) {
+  const auto expected = run_reference(false, 128, false);
+  const auto compare  = [&](const auto &actual) {
+    ASSERT_LE(actual.size(), expected.size());
+    for (size_t i = 0; i < actual.size(); ++i) {
+      ASSERT_EQ(actual[i].size(), expected[i].size());
+      int maximum_error = 0;
+      for (size_t j = 0; j < actual[i].size(); ++j)
+        maximum_error = std::max(maximum_error, std::abs(int(actual[i][j]) - int(expected[i][j])));
+      EXPECT_LE(maximum_error, 2) << "frame " << i;
+    }
+  };
+  compare(run_reference(false, 128, true, true));
+  compare(run_reference(false, 128, true, true, true));
+  compare(run_reference(false, 128, true, true, false, true));
+}
 
 std::vector<std::vector<unsigned char>> run_compatible_update(size_t limit,
                                                               bool   dual_reader = false,
