@@ -2590,12 +2590,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       s.load_fps_limit = import_widget_->get_fps_limit();
       QString method   = import_widget_->get_load_method();
       s.load_method    = method_from_str.at(method.toStdString());
-      // if (render_widget_->get_time_transform() == "Principal Component Analysis") {
-      //   s.load_batch = 32;
-      // } else {
-      //   s.load_batch = render_widget_->get_batch_size();
-      // }
-      s.load_batch = render_widget_->get_batch_size();
+      s.load_batch     = render_widget_->get_batch_size();
 
     } else {
       QString source       = import_widget_->get_camera_type();
