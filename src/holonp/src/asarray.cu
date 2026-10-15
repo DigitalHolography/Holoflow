@@ -107,6 +107,7 @@ AsArrayFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
       .owned_inputs  = {},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,
+      .constness     = holoflow::core::ConstInferenceState::Constant,
   };
 }
 

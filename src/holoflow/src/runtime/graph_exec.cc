@@ -234,6 +234,7 @@ private:
   void init_tviews();
   void build_event_handles();
   void build_nodes_rts();
+  void init_const_task_states();
   void reset_metrics_state();
   void start_metrics_thread();
   void stop_metrics_thread();
@@ -288,9 +289,14 @@ private:
     Stage                                     stage               = Stage::AcquireSync;
     size_t                                    node                = 0;
     size_t                                    port                = 0;
+    size_t                                    const_node          = 0;
+    size_t                                    const_input_port    = 0;
+    size_t                                    const_release_node  = 0;
+    size_t                                    const_output_port   = 0;
     bool                                      computation_started = false;
     bool                                      graph_submitted     = false;
     std::vector<GraphPlan::vertex_descriptor> produced;
+    std::vector<GraphPlan::vertex_descriptor> completed_const_nodes;
   };
   std::vector<SectionCheckpoint> checkpoints_;
   const GraphPlan               &graph_;    ///< The computational graph to execute.
@@ -303,6 +309,12 @@ private:
 
   std::vector<NodeRt>      node_rts_; ///< Runtime data for each node.
   std::vector<std::string> node_names_;
+  std::vector<core::ConstTaskState> const_task_states_;
+
+  std::mutex              const_init_mutex_;
+  std::condition_variable const_init_cv_;
+  std::size_t             const_init_sections_ready_ = 0;
+  bool                    const_init_complete_       = false;
 
   struct NodeMetricAccumulator {
     std::atomic<uint64_t> duration_ns{0};
@@ -397,6 +409,7 @@ Scheduler::Impl::Impl(const GraphPlan &graph, const std::vector<Section> &sectio
     tracing::ScopedTrace scope("Build Node Runtime State", "scheduler");
     build_nodes_rts();
   }
+  init_const_task_states();
 }
 
 Scheduler::Impl::~Impl() {
@@ -448,8 +461,18 @@ void Scheduler::Impl::start() {
   const bool resume = paused_.exchange(false) && !aborted_.load();
   aborted_.store(false);
   stop_.store(false);
+  {
+    std::lock_guard lock(const_init_mutex_);
+    const_init_sections_ready_ = 0;
+    const_init_complete_       = sections_.empty();
+  }
   if (!resume) {
     checkpoints_.assign(sections_.size(), SectionCheckpoint{});
+  }
+  if (sections_.empty()) {
+    stop_.store(true);
+    running_.store(false);
+    return;
   }
   try {
     {
@@ -490,6 +513,7 @@ void Scheduler::Impl::request_pause() {
     return;
   paused_.store(true);
   stop_.store(true);
+  const_init_cv_.notify_all();
 }
 
 void Scheduler::Impl::request_stop() {
@@ -504,8 +528,10 @@ void Scheduler::Impl::request_stop() {
   }
   if (stop_.exchange(true)) {
     logger()->warn("[Scheduler::request_stop] Stop already requested");
+    const_init_cv_.notify_all();
     return;
   }
+  const_init_cv_.notify_all();
 }
 
 void Scheduler::Impl::wait() {
@@ -536,6 +562,11 @@ void Scheduler::Impl::wait() {
       for (size_t i = first; i < checkpoint.produced.size(); ++i) {
         size_t port = releasing && i == first ? checkpoint.port : 0;
         release_owned_outputs(checkpoint.produced[i], port);
+      }
+      for (size_t i = checkpoint.const_release_node;
+           i < checkpoint.completed_const_nodes.size(); ++i) {
+        size_t port = i == checkpoint.const_release_node ? checkpoint.const_output_port : 0;
+        release_owned_outputs(checkpoint.completed_const_nodes[i], port);
       }
       checkpoint = SectionCheckpoint{};
     }
@@ -666,6 +697,18 @@ void Scheduler::Impl::build_nodes_rts() {
   }
 }
 
+void Scheduler::Impl::init_const_task_states() {
+  const auto num_vertices = boost::num_vertices(graph_);
+  const_task_states_.assign(num_vertices, core::ConstTaskState::NotConstant);
+
+  for (auto v : boost::make_iterator_range(boost::vertices(graph_))) {
+    if (graph_[v].infer.constness == core::ConstInferenceState::Constant) {
+      const auto idx = boost::get(boost::vertex_index, graph_, v);
+      const_task_states_.at(idx) = core::ConstTaskState::ConstantNotComputed;
+    }
+  }
+}
+
 void Scheduler::Impl::run_router() {
   tracing::set_thread_name("Scheduler Router");
   try {
@@ -677,6 +720,7 @@ void Scheduler::Impl::run_router() {
     logger()->info("[Scheduler::run_router] Event router stopped");
   } catch (...) {
     stop_.store(true);
+    const_init_cv_.notify_all();
     log_and_abort_current_exception("Scheduler::run_router", {}, failure_callback_,
                                     failure_dumped_);
   }
@@ -698,6 +742,102 @@ void Scheduler::Impl::run_section(int section_id) {
       checkpoint.node  = 0;
       checkpoint.port  = 0;
     };
+
+    // Initialize constant outputs once per scheduler lifetime. Checkpointed ports and completed
+    // nodes let a paused scheduler resume without reacquiring or recomputing finished work.
+    while (checkpoint.const_node < sec.const_sync_topo.size() && !stop_.load()) {
+      const auto v   = sec.const_sync_topo[checkpoint.const_node];
+      const auto idx = boost::get(boost::vertex_index, graph_, v);
+      current_node_name = graph_[v].spec.name;
+      detail::current_node_name() = current_node_name;
+
+      if (const_task_states_.at(idx) != core::ConstTaskState::ConstantNotComputed) {
+        ++checkpoint.const_node;
+        checkpoint.const_input_port = 0;
+        continue;
+      }
+
+      try {
+        acquire_owned_inputs(v, checkpoint.const_input_port);
+        if (stop_.load() ||
+            checkpoint.const_input_port != graph_[v].infer.owned_inputs.size())
+          break;
+
+        if (run_sync(v) != core::OpResult::Ok)
+          break;
+
+        const_task_states_.at(idx) = core::ConstTaskState::ConstantComputed;
+        checkpoint.completed_const_nodes.push_back(v);
+        ++checkpoint.const_node;
+        checkpoint.const_input_port = 0;
+      } catch (...) {
+        rethrow_with_node_context(graph_, v, "execute_constant", section_id, sec.name);
+      }
+    }
+
+    if (stop_.load())
+      return;
+
+    while (checkpoint.const_release_node < checkpoint.completed_const_nodes.size()) {
+      const auto v = checkpoint.completed_const_nodes[checkpoint.const_release_node];
+      current_node_name = graph_[v].spec.name;
+      detail::current_node_name() = current_node_name;
+      try {
+        release_owned_outputs(v, checkpoint.const_output_port);
+      } catch (...) {
+        rethrow_with_node_context(graph_, v, "release_constant_outputs", section_id, sec.name);
+      }
+
+      if (checkpoint.const_output_port != graph_[v].infer.owned_outputs.size() || stop_.load())
+        break;
+
+      ++checkpoint.const_release_node;
+      checkpoint.const_output_port = 0;
+    }
+
+    if (stop_.load())
+      return;
+
+    checkpoint.completed_const_nodes.clear();
+    checkpoint.const_release_node = 0;
+    checkpoint.const_output_port  = 0;
+    current_node_name             = {};
+    detail::current_node_name()   = {};
+    CUDA_CHECK(cudaStreamSynchronize(sec.stream));
+
+    const bool any_recurring_work = std::any_of(
+        sections_.begin(), sections_.end(), [](const Section &section) {
+          return !section.sync_topo.empty() || !section.async_cons.empty() ||
+                 !section.async_prod.empty();
+        });
+
+    // All sections must finish initializing constants before any of them can
+    // enter the recurring loop or stop the scheduler for a constant-only graph.
+    {
+      std::unique_lock lock(const_init_mutex_);
+      ++const_init_sections_ready_;
+      if (const_init_sections_ready_ == sections_.size()) {
+        const_init_complete_ = true;
+        if (!any_recurring_work && !stop_.load()) {
+          stop_.store(true);
+        }
+        const_init_cv_.notify_all();
+      } else {
+        const_init_cv_.wait(lock, [this] {
+          return const_init_complete_ || stop_.load();
+        });
+      }
+    }
+
+    if (stop_.load()) {
+      return;
+    }
+    const bool section_has_recurring_work = !sec.sync_topo.empty() || !sec.async_cons.empty() ||
+                                            !sec.async_prod.empty();
+    if (!section_has_recurring_work) {
+      return;
+    }
+
     while (!stop_.load()) {
       current_node_name           = {};
       detail::current_node_name() = {};
@@ -869,6 +1009,7 @@ void Scheduler::Impl::run_section(int section_id) {
     aborted_.store(true);
     paused_.store(false);
     stop_.store(true);
+    const_init_cv_.notify_all();
     log_and_abort_current_exception(
         std::format("Scheduler::run_section section={} id={}", sec.name, section_id),
         current_node_name, failure_callback_, failure_dumped_);
