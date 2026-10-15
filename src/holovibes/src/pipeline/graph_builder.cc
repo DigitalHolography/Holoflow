@@ -176,6 +176,11 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
 
   if (s_.pp_spatial_contrast) {
     auto frames = build_spatial_contrast_input(H);
+    if (s_.pp_spatial_contrast_dimensions != 2) {
+      frames = temporal_window(frames,
+                               {.window_size = static_cast<size_t>(
+                                   s_.pp_spatial_contrast_temporal_frames)});
+    }
     build_spatial_contrast_view(frames);
     return g_;
   }
@@ -725,12 +730,22 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_contrast_input(TDesc
 }
 
 void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
-  if (frames.rank() != 3 || frames.shape.at(0) != 1) {
-    throw std::logic_error{"Spatial LSCI input must be [1, height, width] per frame"};
+  const size_t temporal_window_size = s_.pp_spatial_contrast_dimensions != 2
+                                          ? static_cast<size_t>(
+                                                s_.pp_spatial_contrast_temporal_frames)
+                                          : size_t{1};
+  if (frames.rank() != 3 || frames.shape.at(0) != temporal_window_size) {
+    throw std::logic_error{"Spatial LSCI input has an unexpected temporal window shape"};
   }
 
   auto result = spatial_contrast(frames,
-                                 {.window_size = s_.pp_spatial_contrast_window_size});
+                                 {.window_size = s_.pp_spatial_contrast_dimensions == 1
+                                                     ? 1
+                                                     : s_.pp_spatial_contrast_window_size,
+                                  .temporal_window_size = static_cast<int>(temporal_window_size),
+                                  .method = s_.pp_spatial_contrast_method == 1
+                                                ? holotask::syncs::SpatialContrastMethod::FFT
+                                                : holotask::syncs::SpatialContrastMethod::Kernel});
   build_xy_output(result, 0, true);
 }
 

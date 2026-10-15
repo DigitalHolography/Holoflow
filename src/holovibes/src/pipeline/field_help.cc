@@ -98,6 +98,18 @@ constexpr auto kFlatfieldCutoffConstraints        = std::to_array<const char *>(
     "Physical period of the 50% amplitude transition convention, not a hard cutoff.",
     "Converted to anisotropic Gaussian sigmas using the current image pitch.",
 });
+constexpr auto kSpatialContrastWindowConstraints = std::to_array<const char *>({
+    "Must be odd and between 3 and 255 pixels.",
+});
+constexpr auto kSpatialContrastDimensionsConstraints = std::to_array<const char *>({
+    "Choose 1D for temporal-only contrast, 2D for spatial-only contrast, or 3D for both.",
+});
+constexpr auto kSpatialContrastFramesConstraints = std::to_array<const char *>({
+    "Choose at least 3 frames for 1D or 3D; for a holofile, the maximum is the selected frame range.",
+});
+constexpr auto kSpatialContrastMethodConstraints = std::to_array<const char *>({
+    "Kernel evaluates the sliding window directly; FFT performs linear convolution with a box kernel.",
+});
 constexpr auto kConvolutionConstraints            = std::to_array<const char *>({
     "Not currently supported by the pipeline.",
 });
@@ -172,6 +184,19 @@ const FieldHelp kFieldHelp[] = {
     {SettingsField::PpFlatfieldCutoffPeriod, "Flatfield Cutoff",
      "Physical cutoff period used to derive the Gaussian background subtraction scale.",
      kFlatfieldCutoffConstraints},
+    {SettingsField::PpSpatialContrastWindowSize, "Spatial LSCI Window",
+     "Odd square sliding-window side length in pixels for local standard deviation divided by mean.",
+     kSpatialContrastWindowConstraints},
+    {SettingsField::PpSpatialContrastDimensions, "Spatial LSCI Dimensions",
+     "2D calculates contrast within each frame; 3D combines a sliding temporal window with "
+     "a spatial neighborhood.",
+     kSpatialContrastDimensionsConstraints},
+    {SettingsField::PpSpatialContrastTemporalFrames, "Spatial LSCI Temporal Frames",
+     "Number of frames in each sliding 1D or 3D temporal neighborhood.",
+     kSpatialContrastFramesConstraints},
+    {SettingsField::PpSpatialContrastMethod, "Spatial LSCI Method",
+     "Calculation method used for the local sliding-window statistics.",
+     kSpatialContrastMethodConstraints},
     {SettingsField::PpConvolution, "Convolution",
      "Applies a convolution kernel during post-processing.", kConvolutionConstraints},
     {SettingsField::PpRegistration, "Registration",

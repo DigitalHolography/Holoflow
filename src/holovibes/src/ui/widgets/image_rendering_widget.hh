@@ -16,6 +16,7 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDoubleSpinBox>
 #include <QGroupBox>
 #include <QSlider>
 #include <QSpinBox>
@@ -47,6 +48,12 @@ public:
   int     get_asp_padded_height() const;
   QString get_convolution() const;
   bool    is_convolution_divide() const;
+  bool    is_spatial_contrast_enabled() const;
+  int     get_spatial_contrast_window_size() const;
+  int     get_spatial_contrast_dimensions() const;
+  int     get_spatial_contrast_temporal_frames() const;
+  QString get_spatial_contrast_method() const;
+  double  get_spatial_contrast_display_max() const;
 
   // Setters
   void set_batch_size(int value);
@@ -64,6 +71,13 @@ public:
   void set_asp_padded_height(int value);
   void set_convolution(const QString &kernel);
   void set_convolution_divide(bool enabled);
+  void set_spatial_contrast_enabled(bool enabled);
+  void set_spatial_contrast_window_size(int value);
+  void set_spatial_contrast_dimensions(int value);
+  void set_spatial_contrast_temporal_frames(int value);
+  void set_spatial_contrast_temporal_frames_max(int value);
+  void set_spatial_contrast_method(const QString &method);
+  void set_spatial_contrast_display_max(double value);
 
   // Validation
   void clear_validation_styles();
@@ -77,6 +91,10 @@ public:
   void mark_asp_padding_invalid();
   void mark_time_transform_invalid();
   void mark_convolution_invalid();
+  void mark_spatial_contrast_window_invalid();
+  void mark_spatial_contrast_dimensions_invalid();
+  void mark_spatial_contrast_temporal_frames_invalid();
+  void mark_spatial_contrast_method_invalid();
 
   // Access to widgets for connection setup
   QComboBox       *image_combo();
@@ -96,10 +114,17 @@ public:
   QSpinBox        *asp_padded_height_spin();
   QComboBox       *convolution_combo();
   QCheckBox       *convolution_divide_check();
+  QCheckBox       *spatial_contrast_check();
+  QSpinBox        *spatial_contrast_window_size();
+  QComboBox       *spatial_contrast_dimensions();
+  QSpinBox        *spatial_contrast_temporal_frames();
+  QComboBox       *spatial_contrast_method();
+  QDoubleSpinBox  *spatial_contrast_display_max();
   AutoFocusWidget *autofocus_widget();
 
 signals:
   void settings_changed();
+  void spatial_contrast_display_range_changed(float minimum, float maximum);
 
 private:
   void        setup_ui();
@@ -126,6 +151,12 @@ private:
   QWidget         *asp_padding_controls_;
   QComboBox       *convolution_combo_;
   QCheckBox       *convolution_divide_check_;
+  QCheckBox       *spatial_contrast_check_;
+  QSpinBox        *spatial_contrast_window_size_;
+  QComboBox       *spatial_contrast_dimensions_;
+  QSpinBox        *spatial_contrast_temporal_frames_;
+  QComboBox       *spatial_contrast_method_;
+  QDoubleSpinBox  *spatial_contrast_display_max_;
   AutoFocusWidget *autofocus_widget_;
 };
 

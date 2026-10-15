@@ -59,15 +59,6 @@ ViewWidget::ViewWidget(QWidget *parent) : QGroupBox("VIEW", parent) {
 
 QString ViewWidget::get_image_type() const { return image_type_combo_->currentText(); }
 bool    ViewWidget::is_flatfield_enabled() const { return flatfield_check_->isChecked(); }
-bool    ViewWidget::is_spatial_contrast_enabled() const {
-  return spatial_contrast_check_->isChecked();
-}
-int     ViewWidget::get_spatial_contrast_window_size() const {
-  return spatial_contrast_window_size_->value();
-}
-double ViewWidget::get_spatial_contrast_display_max() const {
-  return spatial_contrast_display_max_->value();
-}
 int     ViewWidget::get_x_origin() const { return x_spin_->value(); }
 int     ViewWidget::get_x_width() const { return x_width_spin_->value(); }
 int     ViewWidget::get_y_origin() const { return y_spin_->value(); }
@@ -102,21 +93,7 @@ void ViewWidget::set_z_origin(int value) { z_spin_->setValue(value); }
 void ViewWidget::set_z_width(int value) { z_width_spin_->setValue(value); }
 void ViewWidget::set_flatfield_enabled(bool enabled) {
   flatfield_check_->setChecked(enabled);
-  const bool lsi_enabled = spatial_contrast_check_ && spatial_contrast_check_->isChecked();
-  flatfield_check_->setEnabled(!lsi_enabled);
-  flatfield_cutoff_period_um_->setEnabled(enabled && !lsi_enabled);
-}
-void ViewWidget::set_spatial_contrast_enabled(bool enabled) {
-  spatial_contrast_check_->setChecked(enabled);
-  spatial_contrast_window_size_->setEnabled(enabled);
-  spatial_contrast_display_max_->setEnabled(enabled);
-  flatfield_check_->setEnabled(!enabled);
-  flatfield_cutoff_period_um_->setEnabled(!enabled && flatfield_check_->isChecked());
-  pct_check_->setEnabled(!enabled);
-  pct_radius_->setEnabled(!enabled);
-}
-void ViewWidget::set_spatial_contrast_window_size(int value) {
-  spatial_contrast_window_size_->setValue(value);
+  flatfield_cutoff_period_um_->setEnabled(enabled);
 }
 void ViewWidget::set_accumulation(int value) { accumulation_spin_->setValue(value); }
 void ViewWidget::set_flatfield_cutoff_period_um(double value) {
@@ -137,9 +114,6 @@ void ViewWidget::mark_accumulation_invalid() { mark_validation_error(accumulatio
 void ViewWidget::mark_flatfield_cutoff_period_invalid() {
   mark_validation_error(flatfield_cutoff_period_um_);
 }
-void ViewWidget::mark_spatial_contrast_window_invalid() {
-  mark_validation_error(spatial_contrast_window_size_);
-}
 void ViewWidget::mark_registration_invalid() { mark_validation_error(registration_check_); }
 
 // Access to widgets for connection setup
@@ -149,10 +123,6 @@ QGroupBox      *ViewWidget::post_processing_group() { return post_processing_gro
 QSpinBox       *ViewWidget::z_spin() { return z_spin_; }
 QSpinBox       *ViewWidget::z_width_spin() { return z_width_spin_; }
 QSpinBox       *ViewWidget::accumulation_spin() { return accumulation_spin_; }
-QCheckBox      *ViewWidget::spatial_contrast_check() { return spatial_contrast_check_; }
-QDoubleSpinBox *ViewWidget::spatial_contrast_display_max() {
-  return spatial_contrast_display_max_;
-}
 QDoubleSpinBox *ViewWidget::flatfield_cutoff_period_um() { return flatfield_cutoff_period_um_; }
 QSpinBox       *ViewWidget::range_start_spin() { return range_start_spin_; }
 QSpinBox       *ViewWidget::range_end_spin() { return range_end_spin_; }
@@ -232,52 +202,26 @@ void ViewWidget::setup_ui() {
       create_double_spin_box(post_processing_group_, 1.0, 1000000.0, 100.0, 2000.0, 1);
   post_layout->addWidget(flatfield_cutoff_period_um_, 1, 2);
 
-  spatial_contrast_check_ = new QCheckBox("Spatial LSCI contrast", post_processing_group_);
-  spatial_contrast_check_->setToolTip(
-      tr("For each acquired laser-speckle intensity frame, compute local K = standard deviation / "
-         "mean in an odd square sliding window. Select Processed image mode to display K; use "
-         "Display max K to adjust the fixed grayscale range. Lower K can indicate more motion/flow. "
-         "Accumulation averages successive K "
-         "maps. This direct LSCI path skips hologram propagation, time transforms, FFT shift, "
-         "Flatfield, and PCT clipping."));
-  post_layout->addWidget(spatial_contrast_check_, 2, 0);
-  post_layout->addWidget(new QLabel("Window (px):", post_processing_group_), 2, 1);
-  spatial_contrast_window_size_ = create_spin_box(post_processing_group_, 3, 255, 7);
-  spatial_contrast_window_size_->setSingleStep(2);
-  spatial_contrast_window_size_->setToolTip(
-      tr("Odd window size. Border windows use only pixels inside the frame."));
-  spatial_contrast_window_size_->setEnabled(false);
-  post_layout->addWidget(spatial_contrast_window_size_, 2, 2);
-
-  post_layout->addWidget(new QLabel("Display max K:", post_processing_group_), 3, 0);
-  spatial_contrast_display_max_ =
-      create_double_spin_box(post_processing_group_, 0.05, 1.0, 0.05, 0.75, 2);
-  spatial_contrast_display_max_->setToolTip(
-      tr("Map K=0 to black and this K value to white in the processed preview. Higher values are "
-         "clipped. This changes display only, not the calculated or recorded K values."));
-  spatial_contrast_display_max_->setEnabled(false);
-  post_layout->addWidget(spatial_contrast_display_max_, 3, 1, 1, 2);
-
-  post_layout->addWidget(new QLabel("Range:", post_processing_group_), 4, 0);
+  post_layout->addWidget(new QLabel("Range:", post_processing_group_), 2, 0);
   range_start_spin_ = create_spin_box(post_processing_group_, 1, kLargeSpinMax, 0);
-  post_layout->addWidget(range_start_spin_, 4, 1);
+  post_layout->addWidget(range_start_spin_, 2, 1);
   range_end_spin_ = create_spin_box(post_processing_group_, 1, kLargeSpinMax, 255);
-  post_layout->addWidget(range_end_spin_, 4, 2);
+  post_layout->addWidget(range_end_spin_, 2, 2);
 
   reticle_check_ = new QCheckBox("Display reticle", post_processing_group_);
-  post_layout->addWidget(reticle_check_, 5, 0);
+  post_layout->addWidget(reticle_check_, 3, 0);
   reticle_radius_ = create_double_spin_box(post_processing_group_, 0.05, 1.0, 0.05, 1.0);
-  post_layout->addWidget(reticle_radius_, 5, 1, 1, 2);
+  post_layout->addWidget(reticle_radius_, 3, 1, 1, 2);
 
   pct_check_ = new QCheckBox("PCT", post_processing_group_);
-  post_layout->addWidget(pct_check_, 6, 0);
+  post_layout->addWidget(pct_check_, 4, 0);
   pct_radius_ = create_double_spin_box(post_processing_group_, 0.05, 1.0, 0.05, 1.0);
-  post_layout->addWidget(pct_radius_, 6, 1, 1, 2);
+  post_layout->addWidget(pct_radius_, 4, 1, 1, 2);
 
   registration_check_ = new QCheckBox("Registration", post_processing_group_);
-  post_layout->addWidget(registration_check_, 7, 0);
+  post_layout->addWidget(registration_check_, 5, 0);
   registration_radius_ = create_double_spin_box(post_processing_group_, 0.05, 1.0, 0.05, 1.0);
-  post_layout->addWidget(registration_radius_, 7, 1, 1, 2);
+  post_layout->addWidget(registration_radius_, 5, 1, 1, 2);
 }
 
 void ViewWidget::connect_signals() {
@@ -299,33 +243,6 @@ void ViewWidget::connect_signals() {
   connect(flatfield_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
   connect(flatfield_cutoff_period_um_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);
-  connect(spatial_contrast_check_, &QCheckBox::toggled, spatial_contrast_window_size_,
-          &QSpinBox::setEnabled);
-  connect(spatial_contrast_check_, &QCheckBox::toggled, spatial_contrast_display_max_,
-          &QDoubleSpinBox::setEnabled);
-  connect(spatial_contrast_check_, &QCheckBox::toggled, this, [this](bool enabled) {
-    flatfield_check_->setEnabled(!enabled);
-    flatfield_cutoff_period_um_->setEnabled(!enabled && flatfield_check_->isChecked());
-    pct_check_->setEnabled(!enabled);
-    pct_radius_->setEnabled(!enabled);
-  });
-  connect(spatial_contrast_check_, &QCheckBox::toggled, this, &ViewWidget::settings_changed);
-  connect(spatial_contrast_window_size_, qOverload<int>(&QSpinBox::valueChanged), this,
-          &ViewWidget::settings_changed);
-  const auto emit_spatial_contrast_display_range = [this] {
-    const float display_max = spatial_contrast_check_->isChecked()
-                                  ? static_cast<float>(spatial_contrast_display_max_->value())
-                                  : 1.0f;
-    emit spatial_contrast_display_range_changed(0.0f, display_max);
-  };
-  connect(spatial_contrast_check_, &QCheckBox::toggled, this,
-          [emit_spatial_contrast_display_range](bool) { emit_spatial_contrast_display_range(); });
-  connect(spatial_contrast_display_max_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
-          [this, emit_spatial_contrast_display_range](double) {
-            if (spatial_contrast_check_->isChecked()) {
-              emit_spatial_contrast_display_range();
-            }
-          });
   connect(range_start_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ViewWidget::settings_changed);
   connect(range_end_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
@@ -342,7 +259,6 @@ void ViewWidget::clear_validation_styles() {
   clear_validation_error(z_spin_);
   clear_validation_error(z_width_spin_);
   clear_validation_error(flatfield_cutoff_period_um_);
-  clear_validation_error(spatial_contrast_window_size_);
   clear_validation_error(registration_check_);
 }
 

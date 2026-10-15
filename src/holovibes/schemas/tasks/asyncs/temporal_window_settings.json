@@ -1,0 +1,19 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TemporalWindowSettings",
+  "description": "Settings for the sliding temporal frame-window async task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "window_size": {
+      "type": "integer",
+      "minimum": 3,
+      "description": "Number of consecutive frames in each output window."
+    }
+  },
+  "required": ["window_size"],
+  "examples": [
+    { "window_size": 3 },
+    { "window_size": 5 }
+  ]
+}

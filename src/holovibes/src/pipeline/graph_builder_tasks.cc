@@ -108,6 +108,7 @@ DEFINE_UNARY_SYNC_NODE (min,                          "min",                    
 DEFINE_UNARY_SYNC_NODE (max,                          "max",                          "Max",                             holonp::MaxSettings)
 DEFINE_UNARY_SYNC_NODE (normalize,                    "normalize",                    "Normalize",                       holotask::syncs::NormalizeSettings)
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                "batch_queue",                  "BatchQueue",                      holotask::asyncs::BatchQueueSettings)
+DEFINE_UNARY_ASYNC_NODE(temporal_window,              "temporal_window",              "TemporalWindow",                  holotask::asyncs::TemporalWindowSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                    "slide_avg",                    "SlidingAverage",                  holotask::asyncs::SlidingAverageSettings)
 // clang-format on
 

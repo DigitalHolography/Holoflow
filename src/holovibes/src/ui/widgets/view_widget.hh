@@ -31,9 +31,6 @@ public:
   // Getters
   QString get_image_type() const;
   bool    is_flatfield_enabled() const;
-  bool    is_spatial_contrast_enabled() const;
-  int     get_spatial_contrast_window_size() const;
-  double  get_spatial_contrast_display_max() const;
   int     get_x_origin() const;
   int     get_x_width() const;
   int     get_y_origin() const;
@@ -56,8 +53,6 @@ public:
   void set_z_origin(int value);
   void set_z_width(int value);
   void set_flatfield_enabled(bool enabled);
-  void set_spatial_contrast_enabled(bool enabled);
-  void set_spatial_contrast_window_size(int value);
   void set_accumulation(int value);
   void set_flatfield_cutoff_period_um(double value);
   void set_reticle_radius(int value);
@@ -72,7 +67,6 @@ public:
   void mark_z_width_invalid();
   void mark_accumulation_invalid();
   void mark_flatfield_cutoff_period_invalid();
-  void mark_spatial_contrast_window_invalid();
   void mark_registration_invalid();
 
   // Access to widgets for connection setup
@@ -82,8 +76,6 @@ public:
   QSpinBox       *z_spin();
   QSpinBox       *z_width_spin();
   QSpinBox       *accumulation_spin();
-  QCheckBox      *spatial_contrast_check();
-  QDoubleSpinBox *spatial_contrast_display_max();
   QDoubleSpinBox *flatfield_cutoff_period_um();
   QSpinBox       *range_start_spin();
   QSpinBox       *range_end_spin();
@@ -96,7 +88,6 @@ public:
 
 signals:
   void settings_changed();
-  void spatial_contrast_display_range_changed(float minimum, float maximum);
   void reticle_toggled(bool enabled);
   void reticle_radius_changed(double radius);
 
@@ -115,9 +106,6 @@ private:
   QSpinBox       *accumulation_spin_;
   QCheckBox      *flatfield_check_;
   QDoubleSpinBox *flatfield_cutoff_period_um_;
-  QCheckBox      *spatial_contrast_check_;
-  QSpinBox       *spatial_contrast_window_size_;
-  QDoubleSpinBox *spatial_contrast_display_max_;
   QSpinBox       *range_start_spin_;
   QSpinBox       *range_end_spin_;
   QCheckBox      *registration_check_;

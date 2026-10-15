@@ -14,11 +14,14 @@
 
 #pragma once
 
+#include <cstdint>
 #include <nlohmann/json.hpp>
 
 #include "holoflow/core/tasks.hh"
 
 namespace holotask::syncs {
+
+enum class SpatialContrastMethod : uint8_t { Kernel, FFT };
 
 // -------------------------------------------------------------------------------------------------
 // Settings
@@ -26,6 +29,8 @@ namespace holotask::syncs {
 
 struct SpatialContrastSettings {
   int window_size = 7;
+  int temporal_window_size = 1;
+  SpatialContrastMethod method = SpatialContrastMethod::Kernel;
 
   bool operator==(const SpatialContrastSettings &) const = default;
 };

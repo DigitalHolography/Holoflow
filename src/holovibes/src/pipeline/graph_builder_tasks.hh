@@ -47,6 +47,7 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/asyncs/temporal_window.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
@@ -100,6 +101,7 @@ protected:
   TDesc copy(const TDesc &X, holonp::CopySettings s);
   TDesc memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);
   TDesc batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
+  TDesc temporal_window(const TDesc &X, holotask::asyncs::TemporalWindowSettings s);
   std::vector<TDesc> dual_reader_batch_queue(const TDesc &X, holotask::asyncs::DualReaderBatchQueueSettings s);
   TDesc convert(const TDesc &X, holotask::syncs::ConversionSettings s);
   TDesc pca(const TDesc &X, holotask::syncs::PcaSettings s);
