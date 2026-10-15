@@ -753,7 +753,7 @@ private:
     QCheckBox *resources_toggle_checkbox_ = nullptr;
   };
   GraphCompiledDumpPreferencesWidgets graph_compiled_dump_preferences_widgets_;
-  QCheckBox *runtime_failure_graph_checkbox_ = nullptr;
+  QCheckBox                          *runtime_failure_graph_checkbox_ = nullptr;
 };
 
 } // namespace
@@ -1207,7 +1207,7 @@ void MainWindow::save_persistent_state() {
   settings.beginGroup("preferences");
   settings.setValue("dump_runtime_failure_graphs",
                     pipeline_manager_ ? pipeline_manager_->dump_runtime_failure_graphs()
-                                       : dump_runtime_failure_graphs_);
+                                      : dump_runtime_failure_graphs_);
   settings.endGroup();
 
   settings.beginGroup("main_window");
@@ -1313,8 +1313,7 @@ void MainWindow::restore_persistent_state() {
   QSettings settings;
 
   settings.beginGroup("preferences");
-  dump_runtime_failure_graphs_ =
-      settings.value("dump_runtime_failure_graphs", false).toBool();
+  dump_runtime_failure_graphs_ = settings.value("dump_runtime_failure_graphs", false).toBool();
   settings.endGroup();
 
   settings.beginGroup("main_window");
@@ -2591,11 +2590,13 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       s.load_fps_limit = import_widget_->get_fps_limit();
       QString method   = import_widget_->get_load_method();
       s.load_method    = method_from_str.at(method.toStdString());
-      if (render_widget_->get_time_transform() == "Principal Component Analysis") {
-        s.load_batch = 32;
-      } else {
-        s.load_batch = render_widget_->get_batch_size();
-      }
+      // if (render_widget_->get_time_transform() == "Principal Component Analysis") {
+      //   s.load_batch = 32;
+      // } else {
+      //   s.load_batch = render_widget_->get_batch_size();
+      // }
+      s.load_batch = render_widget_->get_batch_size();
+
     } else {
       QString source       = import_widget_->get_camera_type();
       s.import_source      = source_from_str.at(source.toStdString());
