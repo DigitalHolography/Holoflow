@@ -301,8 +301,8 @@ var assemblies = [
   {
     "name": "holoflow",
     "classes": [
-      { "name": "include", "rp": "holoflow_include.html", "cl": 55, "ucl": 0, "cal": 55, "tl": 872, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
-      { "name": "src", "rp": "holoflow_src.html", "cl": 2770, "ucl": 292, "cal": 3062, "tl": 6359, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "include", "rp": "holoflow_include.html", "cl": 55, "ucl": 0, "cal": 55, "tl": 892, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holoflow_src.html", "cl": 2994, "ucl": 330, "cal": 3324, "tl": 6567, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
   {
     "name": "holoflow_event",
@@ -320,7 +320,7 @@ var assemblies = [
     "name": "holotask",
     "classes": [
       { "name": "include", "rp": "holotask_include.html", "cl": 4, "ucl": 52, "cal": 56, "tl": 1127, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
-      { "name": "src", "rp": "holotask_src.html", "cl": 1273, "ucl": 1068, "cal": 2341, "tl": 5210, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holotask_src.html", "cl": 1273, "ucl": 1068, "cal": 2341, "tl": 5213, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
   {
     "name": "holovibes",
