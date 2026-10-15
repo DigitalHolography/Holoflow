@@ -47,9 +47,11 @@ uniform sampler2D colormap_tex;
 uniform int use_colormap;
 uniform float vmin;
 uniform float vmax;
+uniform bool vertical_flip;
 
 void main(){
-  float raw_val = texture(tex, uv).r;
+  vec2 sample_uv = vec2(uv.x, vertical_flip ? 1.0 - uv.y : uv.y);
+  float raw_val = texture(tex, sample_uv).r;
   
   // Normalize the value to 0.0 - 1.0 based on bounds
   float g = clamp((raw_val - vmin) / (vmax - vmin), 0.0, 1.0);
@@ -152,11 +154,12 @@ void TensorDisplayWidget::initializeGL() {
   sp->link();
   prog_ = sp->programId();
 
-  tex_loc_      = glGetUniformLocation(prog_, "tex");
-  cmap_tex_loc_ = glGetUniformLocation(prog_, "colormap_tex");
-  use_cmap_loc_ = glGetUniformLocation(prog_, "use_colormap");
-  vmin_loc_     = glGetUniformLocation(prog_, "vmin");
-  vmax_loc_     = glGetUniformLocation(prog_, "vmax");
+  tex_loc_           = glGetUniformLocation(prog_, "tex");
+  cmap_tex_loc_      = glGetUniformLocation(prog_, "colormap_tex");
+  use_cmap_loc_      = glGetUniformLocation(prog_, "use_colormap");
+  vmin_loc_          = glGetUniformLocation(prog_, "vmin");
+  vmax_loc_          = glGetUniformLocation(prog_, "vmax");
+  vertical_flip_loc_ = glGetUniformLocation(prog_, "vertical_flip");
 
   glGenTextures(1, &tex_);
   glBindTexture(GL_TEXTURE_2D, tex_);
@@ -173,6 +176,7 @@ void TensorDisplayWidget::initializeGL() {
 
   initializeColormaps();
   initializeReticle();
+  restore_frame_ = retain_frame_ && !retained_frame_.isEmpty();
 }
 
 void TensorDisplayWidget::initializeColormaps() {
@@ -282,9 +286,6 @@ void TensorDisplayWidget::updateTexture(const void *pixels, int w, int h,
 
 void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
                                         holoflow::core::DType dtype) {
-  if (!isVisible() || !isValid())
-    return;
-
   qsizetype need = qsizetype(w) * qsizetype(h);
 
   if (dtype == holoflow::core::DType::U16) {
@@ -296,8 +297,23 @@ void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
   if (w <= 0 || h <= 0 || bytes.size() < need)
     return;
 
+  if (retain_frame_) {
+    retained_frame_ = bytes;
+    retained_size_  = QSize(w, h);
+    retained_dtype_ = dtype;
+    restore_frame_  = true;
+  }
+  if (!isVisible() || !isValid()) {
+    if (retain_frame_) {
+      // Content is available even before this tab receives its first paint event.
+      emit tensorDisplayed();
+      update();
+    }
+    return;
+  }
   makeCurrent();
   updateTexture(reinterpret_cast<const void *>(bytes.constData()), w, h, dtype);
+  restore_frame_ = false;
   doneCurrent();
 
   waiting_label_->hide();
@@ -344,6 +360,8 @@ void TensorDisplayWidget::set_reticle_radius(double radius) {
 }
 
 void TensorDisplayWidget::show_waiting_placeholder(const QString &message) {
+  retained_frame_.clear();
+  restore_frame_ = false;
   waiting_label_->setText(message.isEmpty() ? tr("Waiting for data...") : message);
   waiting_label_->show();
   img_w_ = 0;
@@ -379,6 +397,13 @@ void TensorDisplayWidget::drawReticle() {
 }
 
 void TensorDisplayWidget::paintGL() {
+  if (restore_frame_ && !retained_frame_.isEmpty()) {
+    updateTexture(retained_frame_.constData(), retained_size_.width(), retained_size_.height(),
+                  retained_dtype_);
+    restore_frame_ = false;
+    waiting_label_->hide();
+    emit tensorDisplayed();
+  }
   if (img_w_ <= 0 || img_h_ <= 0) {
     const QColor background = palette().color(QPalette::Window);
     glClearColor(background.redF(), background.greenF(), background.blueF(), 1.0f);
@@ -396,6 +421,7 @@ void TensorDisplayWidget::paintGL() {
   // Pass bounds
   glUniform1f(vmin_loc_, vmin_);
   glUniform1f(vmax_loc_, vmax_);
+  glUniform1i(vertical_flip_loc_, vertical_flip_ ? 1 : 0);
 
   // Bind Main Image Texture
   glActiveTexture(GL_TEXTURE0);
@@ -414,6 +440,20 @@ void TensorDisplayWidget::paintGL() {
   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 
   drawReticle();
+}
+
+void TensorDisplayWidget::set_retain_frame(bool enabled) {
+  retain_frame_ = enabled;
+  if (!enabled) {
+    retained_frame_.clear();
+    restore_frame_ = false;
+  }
+}
+void TensorDisplayWidget::set_vertical_flip(bool enabled) {
+  if (vertical_flip_ == enabled)
+    return;
+  vertical_flip_ = enabled;
+  update();
 }
 
 } // namespace holovibes::ui

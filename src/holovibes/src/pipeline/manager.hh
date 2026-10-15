@@ -27,6 +27,7 @@
 #include "holoflow/runtime/compiler.hh"
 #include "holoflow/runtime/graph_display.hh"
 #include "holoflow/runtime/graph_exec.hh"
+#include "pipeline/mtd_session.hh"
 #include "pipeline/settings.hh"
 
 namespace holovibes::ui {
@@ -92,6 +93,8 @@ public:
   void request_compiled_graph_visualization();
 
 signals:
+  void mtd_volume_ready(int dimension, double voxel_pitch_m);
+
   // Lifecycle signals
   void start_pipeline_success();
   void start_pipeline_failure(const QString &error);
@@ -119,7 +122,11 @@ private:
   using V = holoflow::core::GraphSpec::vertex_descriptor;
 
   // --- Initialization Helpers ---
-  void register_components();
+  void                        register_components();
+  void                        start_mtd();
+  void                        present_mtd();
+  std::unique_ptr<MTDSession> mtd_session_;
+  bool                        mtd_active_ = false;
 
   // --- Polling Helpers ---
   void start_metrics_updates();

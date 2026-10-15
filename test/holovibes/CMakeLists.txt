@@ -18,6 +18,7 @@ set(SOURCES
     signal_history_test.cc
     settings_test.cc
     update_checker_test.cc
+    ../../src/holovibes/src/pipeline/settings.cc
     ../../src/holovibes/src/pipeline/validation.cc
     ../../src/holovibes/src/settings_loader.cc
     ../../src/holovibes/src/ui/update_checker.cc

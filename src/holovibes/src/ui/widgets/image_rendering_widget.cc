@@ -24,6 +24,7 @@
 #include <QSpacerItem>
 #include <QStandardItemModel>
 #include <QStandardPaths>
+#include <QVBoxLayout>
 
 namespace holovibes::ui {
 
@@ -152,7 +153,16 @@ QCheckBox *ImageRenderingWidget::convolution_divide_check() { return convolution
 AutoFocusWidget *ImageRenderingWidget::autofocus_widget() { return autofocus_widget_; }
 
 void ImageRenderingWidget::setup_ui() {
-  auto *layout = new QGridLayout(this);
+  auto *outer = new QVBoxLayout(this);
+  outer->setContentsMargins(0, 0, 0, 0);
+  legacy_page_ = new QWidget(this);
+  outer->addWidget(legacy_page_);
+  mtd_controls_ = new MTDProcessingWidget(this);
+  outer->addWidget(mtd_controls_);
+  mtd_controls_->hide();
+  connect(mtd_controls_, &MTDProcessingWidget::settings_changed, this,
+          &ImageRenderingWidget::settings_changed);
+  auto *layout = new QGridLayout(legacy_page_);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setHorizontalSpacing(6);
   layout->setVerticalSpacing(4);
@@ -355,6 +365,13 @@ void ImageRenderingWidget::clear_validation_styles() {
   clear_validation_error(asp_padded_height_spin_);
   clear_validation_error(time_transform_combo_);
   clear_validation_error(convolution_combo_);
+}
+
+void ImageRenderingWidget::set_mtd_mode(bool enabled) {
+  legacy_page_->setVisible(!enabled);
+  mtd_controls_->setVisible(enabled);
+  autofocus_widget_->setEnabled(!enabled);
+  setTitle(enabled ? tr("MTD RECONSTRUCTION") : tr("IMAGE RENDERING"));
 }
 
 } // namespace holovibes::ui

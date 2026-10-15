@@ -31,7 +31,7 @@ MTDDatasetSettings load_mtd_dataset(const std::filesystem::path &directory,
                                     std::optional<double>        medium_index = std::nullopt);
 
 struct MTDOutputSettings {
-  std::filesystem::path                volume_path;
+  std::filesystem::path volume_path; ///< Empty: retain volume in memory without export.
   std::optional<std::filesystem::path> slice_path;
   syncs::VolumeSliceSettings           slice;
   bool                                 overwrite = false;

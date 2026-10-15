@@ -42,6 +42,9 @@ public:
   explicit TensorDisplayWidget(QWidget *parent = nullptr);
 
   void set_fixed_aspect(std::optional<QSize> size);
+  /// Retain a finite image while its tab is hidden or its OpenGL context is recreated.
+  void set_retain_frame(bool enabled);
+  void set_vertical_flip(bool enabled);
   void set_reticle_enabled(bool enabled);
   void set_reticle_radius(double radius);
   void show_waiting_placeholder(const QString &message = {});
@@ -86,12 +89,18 @@ private:
   GLuint reticle_prog_      = 0;
   GLint  reticle_color_loc_ = -1;
 
-  GLuint colormap_tex_ = 0;
-  GLint  tex_loc_      = -1;
-  GLint  cmap_tex_loc_ = -1;
-  GLint  use_cmap_loc_ = -1;
-  GLint  vmin_loc_     = -1;
-  GLint  vmax_loc_     = -1;
+  GLuint                colormap_tex_      = 0;
+  GLint                 tex_loc_           = -1;
+  GLint                 cmap_tex_loc_      = -1;
+  GLint                 use_cmap_loc_      = -1;
+  GLint                 vmin_loc_          = -1;
+  GLint                 vmax_loc_          = -1;
+  GLint                 vertical_flip_loc_ = -1;
+  bool                  vertical_flip_     = false;
+  bool                  retain_frame_ = false, restore_frame_ = false;
+  QByteArray            retained_frame_;
+  QSize                 retained_size_;
+  holoflow::core::DType retained_dtype_ = holoflow::core::DType::U8;
 
   int  img_w_ = 0, img_h_ = 0;
   bool texture_storage_allocated_ = false;

@@ -68,13 +68,45 @@ the complete scan in one batch and requires exactly NB_HOLO matching frames and
 one matching mask. Extra files are rejected rather than silently dropping images.
 Volume, slice, graph export, and metadata output paths must be distinct.
 
+## View the reconstructed volume in Holoflow
+
+1. Stop any current acquisition. Under **IMPORT**, select **MTD dataset**.
+2. Browse to the dataset's **ACQUIS** directory. Saved optical settings are read
+   automatically. **MTD RECONSTRUCTION** exposes volume dimension, GPS iterations,
+   and an optional mounting-medium index override. Missing NM is identified in
+   the dataset summary; it defaults to N0 unless overridden.
+3. Press **Start**. Reconstruction runs on the pipeline worker. The final complex
+   volume is retained on the GPU, while reconstruction scratch buffers are freed.
+4. Use **VIEW** to move X/Y/Z with the sliders or numeric fields:
+   - X selects the **YZ** slice, with Y horizontal and Z increasing downward.
+   - Y selects **XZ**, with X horizontal and Z increasing downward.
+   - Z selects **XY**, with X horizontal and Y increasing downward.
+5. The existing **XZ Processed** and **YZ Processed** entries are enabled when
+   entering MTD mode. They can be shown/hidden through the visualization controls.
+
+The component selector displays real delta-n, imaginary kappa, or magnitude.
+Floating-point display minimum/maximum are shared by all three views and stay
+fixed during navigation. The controls show voxel indices and the voxel pitch in
+micrometres. Slider limits follow the selected reconstruction dimension.
+
+MTD tabs retain their latest plane while hidden and restore it after OpenGL
+context recreation, so opening or re-docking a tab does not require another slider
+movement. Row zero is displayed at the top, matching the notebook.
+
+Only 2D planes are downloaded for display; moving sliders or changing contrast
+does not reconstruct the dataset again. Changes while a view update is busy are
+coalesced so the latest selection is applied. Changing the dataset or reconstruction
+parameters rebuilds the cached volume. Pause/resume retains it. Stop the run before
+changing the input source. New controls persist through the existing UI settings
+and pipeline JSON. The raw hologram recorder is unavailable for an MTD volume.
+
 ## Library and application integration
 
 `holotask/pipelines/mtd.hh` exposes `load_mtd_dataset`, `build_mtd_pipeline`, and
 `register_mtd_tasks`. The application registry registers all new task kinds;
-typed adapters are available in `GraphBuilderTasks`. The standalone runner is the
-entry point for the assembled offline pipeline; the existing camera/import UI
-continues to build its configured holographic processing graph.
+typed adapters are available in `GraphBuilderTasks`. The standalone runner exports
+the offline graph. The GUI MTD session uses that same graph without an export sink,
+retains its GPS volume, and uses `VolumeSlice` for interactive navigation.
 
 To show a reconstructed volume in an application graph, connect `VolumeSlice`
 to an existing `DisplayTensor` sink. Selecting a different index selects a
@@ -125,5 +157,7 @@ complex64 output and Z=280 slice on a TITAN RTX. A warmed run, including compila
 and file export, took 3.75 seconds. All volume values were finite, and the exported
 F32 slice exactly equaled `volume[280].real`. This measures execution and storage
 correctness; it does not establish an exact match to the original MTD reconstruction.
-The final Release build and all 469 tests in the repository test preset passed.
-All added C++/CUDA code passed the repository clang-format configuration.
+The initial backend validation on 2026-10-14 passed all 469 tests in the repository
+test preset. The GUI integration on 2026-10-15 passed the full Release build and
+clang-format checks. Automated tests and an interactive GUI run were not performed
+for the GUI integration.

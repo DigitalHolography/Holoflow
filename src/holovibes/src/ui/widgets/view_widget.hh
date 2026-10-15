@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "ui/widgets/mtd_view_widget.hh"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDoubleSpinBox>
@@ -27,6 +29,9 @@ class ViewWidget : public QGroupBox {
 
 public:
   explicit ViewWidget(QWidget *parent = nullptr);
+
+  void           set_mtd_mode(bool enabled);
+  MTDViewWidget *mtd_controls() const { return mtd_controls_; }
 
   // Getters
   QString get_image_type() const;
@@ -92,6 +97,9 @@ signals:
   void reticle_radius_changed(double radius);
 
 private:
+  QWidget       *legacy_page_  = nullptr;
+  MTDViewWidget *mtd_controls_ = nullptr;
+
   void setup_ui();
   void connect_signals();
 

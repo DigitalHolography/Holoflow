@@ -15,7 +15,9 @@
 #pragma once
 
 #include <filesystem>
+#include <nlohmann/json_fwd.hpp>
 #include <optional>
+#include <string>
 #include <variant>
 
 namespace holovibes::pipeline {
@@ -24,6 +26,7 @@ enum class ImportSource {
   AMETEK_S710_EURESYS_COAXLINK_OCTO,
   AMETEK_S711_EURESYS_COAXLINK_QSFP,
   HOLOFILE,
+  MTD_DATASET,
 };
 
 enum class LoadMethod {
@@ -62,6 +65,25 @@ enum class MomentType {
   M2,
 };
 
+struct MTDReconstructionSettings {
+  int                   dimension  = 512;
+  int                   iterations = 10;
+  std::optional<double> medium_index;
+  bool                  operator==(const MTDReconstructionSettings &) const = default;
+};
+
+struct MTDViewSettings {
+  int         x = 256, y = 256, z = 280;
+  std::string component = "real";
+  double      minimum = 0.0, maximum = 0.06;
+  bool        operator==(const MTDViewSettings &) const = default;
+};
+
+void to_json(nlohmann::json &, const MTDReconstructionSettings &);
+void from_json(const nlohmann::json &, MTDReconstructionSettings &);
+void to_json(nlohmann::json &, const MTDViewSettings &);
+void from_json(const nlohmann::json &, MTDViewSettings &);
+
 struct Settings {
   // Advanced
   int cpu_in_size;
@@ -70,6 +92,9 @@ struct Settings {
   int cpu_out_size;
   int gpu_out_size;
   int time_accumulation;
+
+  MTDReconstructionSettings mtd_reconstruction;
+  MTDViewSettings           mtd_view;
 
   // Import
   ImportSource          import_source;

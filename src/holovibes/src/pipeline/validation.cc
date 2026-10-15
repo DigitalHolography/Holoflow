@@ -140,6 +140,31 @@ std::optional<std::string> validate_recording_path(const std::filesystem::path &
 ValidationResult validate_settings(const Settings &settings, const ValidationContext &context) {
   ValidationResult result;
 
+  if (settings.import_source == ImportSource::MTD_DATASET) {
+    const auto &r = settings.mtd_reconstruction;
+    const auto &v = settings.mtd_view;
+    if (!context.load_path_exists || context.mtd_error)
+      add_issue(result, ValidationSeverity::Error, "mtd_input_invalid",
+                context.mtd_error.value_or("Select a valid MTD ACQUIS folder."),
+                {SettingsField::LoadPath});
+    if (r.dimension < 2 || r.dimension > 1024 || r.dimension % 2 != 0 || r.iterations < 1 ||
+        r.iterations > 1000 ||
+        (r.medium_index && (!std::isfinite(*r.medium_index) || *r.medium_index <= 0)))
+      add_issue(result, ValidationSeverity::Error, "mtd_reconstruction_invalid",
+                "MTD needs an even dimension from 2 to 1024, 1–1000 iterations, and a positive "
+                "finite medium index.",
+                {SettingsField::MTDReconstruction});
+    if (v.x < 0 || v.x >= r.dimension || v.y < 0 || v.y >= r.dimension || v.z < 0 ||
+        v.z >= r.dimension || !std::isfinite(v.minimum) || !std::isfinite(v.maximum) ||
+        v.minimum >= v.maximum ||
+        (v.component != "real" && v.component != "imaginary" && v.component != "magnitude"))
+      add_issue(
+          result, ValidationSeverity::Error, "mtd_view_invalid",
+          "Slice positions must be inside the volume and display minimum must be below maximum.",
+          {SettingsField::MTDView});
+    return result;
+  }
+
   if (settings.import_source == ImportSource::HOLOFILE) {
     if (settings.load_path.empty()) {
       add_issue(result, ValidationSeverity::Error, "load_path_empty",

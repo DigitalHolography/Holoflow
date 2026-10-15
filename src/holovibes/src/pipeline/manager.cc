@@ -16,6 +16,7 @@
 
 #include <QCoreApplication>
 #include <QMetaObject>
+#include <QPointer>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
@@ -105,6 +106,7 @@
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
 #include "ui/widgets/auto_focus_widget.hh"
+#include "ui/widgets/tensor_display_widget.hh"
 #include "ui/widgets/zernike_history_widget.hh"
 
 using namespace holotask;
@@ -291,7 +293,7 @@ void Manager::start_pipeline() {
   logger()->info("[Manager::start_pipeline] Starting pipeline...");
   std::lock_guard lock(mtx_);
 
-  if (scheduler_ && scheduler_->is_running()) {
+  if (mtd_active_ || (scheduler_ && scheduler_->is_running())) {
     const QString msg = "Pipeline is already running";
     logger()->error("[Manager::start_pipeline] {}", msg.toStdString());
     emit start_pipeline_failure(msg);
@@ -299,12 +301,21 @@ void Manager::start_pipeline() {
   }
 
   try {
-    configure_zernike_history(true);
-    build_and_run();
+    if (s_.import_source == ImportSource::MTD_DATASET)
+      start_mtd();
+    else {
+      mtd_session_.reset();
+      configure_zernike_history(true);
+      build_and_run();
+    }
     logger()->info("[Manager::start_pipeline] Pipeline started successfully");
     emit start_pipeline_success();
+    if (mtd_active_)
+      present_mtd();
   } catch (const std::exception &e) {
-    stop_zernike_history();
+    mtd_active_ = false;
+    if (s_.import_source != ImportSource::MTD_DATASET)
+      stop_zernike_history();
     const QString msg = QString("Failed to start pipeline: %1").arg(e.what());
     logger()->error("[Manager::start_pipeline] {}", msg.toStdString());
     emit start_pipeline_failure(msg);
@@ -314,6 +325,11 @@ void Manager::start_pipeline() {
 void Manager::stop_pipeline() {
   logger()->info("[Manager::stop_pipeline] Stopping pipeline...");
   std::lock_guard lock(mtx_);
+  if (mtd_active_) {
+    mtd_active_ = false;
+    emit stop_pipeline_success();
+    return;
+  }
 
   if (!scheduler_ || !scheduler_->is_running()) {
     const QString msg = "Pipeline is not running";
@@ -345,8 +361,19 @@ void Manager::stop_pipeline() {
 void Manager::resume_pipeline() {
   logger()->info("[Manager::resume_pipeline] Resuming pipeline...");
   std::lock_guard lock(mtx_);
+  if (s_.import_source == ImportSource::MTD_DATASET && mtd_session_) {
+    try {
+      start_mtd();
+      emit resume_pipeline_success();
+      if (mtd_active_)
+        present_mtd();
+    } catch (const std::exception &e) {
+      emit resume_pipeline_failure(QString::fromUtf8(e.what()));
+    }
+    return;
+  }
 
-  if (scheduler_ && scheduler_->is_running()) {
+  if (mtd_active_ || (scheduler_ && scheduler_->is_running())) {
     const QString msg = "Pipeline is already running";
     logger()->error("[Manager::resume_pipeline] {}", msg.toStdString());
     emit resume_pipeline_failure(msg);
@@ -364,6 +391,8 @@ void Manager::resume_pipeline() {
     run_compiled_graph();
     logger()->info("[Manager::resume_pipeline] Pipeline resumed successfully");
     emit resume_pipeline_success();
+    if (mtd_active_)
+      present_mtd();
   } catch (const std::exception &e) {
     stop_zernike_history();
     const QString msg = QString("Failed to resume pipeline: %1").arg(e.what());
@@ -377,13 +406,35 @@ void Manager::update_pipeline(const Settings &settings) {
   std::lock_guard lock(mtx_);
   s_              = settings;
   settings_dirty_ = true;
+  if (mtd_active_) {
+    try {
+      if (s_.import_source == ImportSource::MTD_DATASET)
+        start_mtd();
+      else {
+        mtd_active_ = false;
+        mtd_session_.reset();
+        configure_zernike_history(true);
+        build_and_run();
+      }
+      emit update_pipeline_success();
+      if (mtd_active_)
+        present_mtd();
+    } catch (const std::exception &e) {
+      mtd_active_ = false;
+      emit update_pipeline_failure(QString::fromUtf8(e.what()));
+    }
+    return;
+  }
 
   if (!scheduler_ || !scheduler_->is_running()) {
     try {
-      configure_zernike_history(false);
+      if (s_.import_source != ImportSource::MTD_DATASET)
+        configure_zernike_history(false);
       logger()->debug(
           "[Manager::update_pipeline] Pipeline is not running, updated parameters only.");
       emit update_pipeline_success();
+      if (mtd_active_)
+        present_mtd();
     } catch (const std::exception &e) {
       const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
       logger()->error("[Manager::update_pipeline] {}", msg.toStdString());
@@ -398,11 +449,17 @@ void Manager::update_pipeline(const Settings &settings) {
     scheduler_->wait();
     raw_recording_active_ = false;
 
-    configure_zernike_history(true);
-    build_and_run();
+    if (s_.import_source == ImportSource::MTD_DATASET)
+      start_mtd();
+    else {
+      configure_zernike_history(true);
+      build_and_run();
+    }
 
     logger()->info("[Manager::update_pipeline] Pipeline updated successfully");
     emit update_pipeline_success();
+    if (mtd_active_)
+      present_mtd();
   } catch (const std::exception &e) {
     stop_zernike_history();
     const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
@@ -483,6 +540,10 @@ void Manager::update_graph_compiled_dump_preferences(const GraphCompiledDumpPref
 }
 
 void Manager::request_compiled_graph_visualization() {
+  if (s_.import_source == ImportSource::MTD_DATASET && mtd_session_) {
+    emit graph_visualization_ready(QString::fromStdString(mtd_session_->graph_dot()));
+    return;
+  }
   if (!compiler_output_) {
     emit graph_visualization_failed(
         "No compiled pipeline graph is available. Start the pipeline first.");
@@ -741,6 +802,56 @@ void Manager::guess_source_dims() {
   }
 
   HOLOVIBES_UNIMPLEMENTED();
+}
+
+// -------------------------------------------------------------------------------------------------
+// Retained MTD volume and display-only navigation
+// -------------------------------------------------------------------------------------------------
+
+void Manager::start_mtd() {
+  stop_metrics_updates();
+  stop_event_polling();
+  if (scheduler_ && scheduler_->is_running()) {
+    scheduler_->request_stop();
+    scheduler_->wait();
+  }
+  scheduler_.reset();
+  compiler_output_.reset();
+  raw_recording_active_ = false;
+  if (!mtd_session_)
+    mtd_session_ = std::make_unique<MTDSession>();
+  mtd_session_->reconstruct(s_.load_path, s_.mtd_reconstruction);
+  mtd_active_     = true;
+  settings_dirty_ = false;
+  emit mtd_volume_ready(mtd_session_->dimension(), mtd_session_->voxel_pitch_m());
+}
+
+// Called after the lifecycle-success signal: its GUI handler resets the workspace.
+void Manager::present_mtd() {
+  const auto &view      = s_.mtd_view;
+  const int   dimension = mtd_session_->dimension();
+  const auto  present   = [this, dimension, &view](ui::TensorDisplayWidget *widget, int axis,
+                                                   int index) {
+    auto                              frame = mtd_session_->slice(axis, index, view.component);
+    QPointer<ui::TensorDisplayWidget> safe_widget(widget);
+    const float                       minimum = static_cast<float>(view.minimum),
+                                      maximum = static_cast<float>(view.maximum);
+    const bool                        queued  = QMetaObject::invokeMethod(
+        widget,
+        [safe_widget, frame = std::move(frame), dimension, minimum, maximum]() {
+          if (!safe_widget)
+            return;
+          safe_widget->set_fixed_aspect(QSize(dimension, dimension));
+          safe_widget->set_value_range(minimum, maximum);
+          safe_widget->presentTensor(frame, dimension, dimension, holoflow::core::DType::F32);
+        },
+        Qt::QueuedConnection);
+    if (!queued)
+      throw std::runtime_error("Could not dispatch an MTD slice to its display");
+  };
+  present(xy_processed_widget_, 0, view.z);
+  present(xz_processed_widget_, 1, view.y);
+  present(yz_processed_widget_, 2, view.x);
 }
 
 } // namespace holovibes::pipeline

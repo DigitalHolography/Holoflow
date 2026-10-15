@@ -140,13 +140,13 @@ void write_image_rendering(json &j, const Settings &s) {
   rendering["lambda"]               = s.spacial_lambda;
   rendering["propagation_distance"] = s.spacial_z;
 
-  rendering["space_transformation"] = to_legacy_space_transform(s.spacial_method);
+  rendering["space_transformation"]                   = to_legacy_space_transform(s.spacial_method);
   rendering["angular_spectrum"]["padding"]["enabled"] = s.asp_padding_enabled;
   rendering["angular_spectrum"]["padding"]["width"]   = s.asp_padded_width;
   rendering["angular_spectrum"]["padding"]["height"]  = s.asp_padded_height;
-  rendering["time_transformation"]        = to_legacy_time_transform(s.time_method);
-  rendering["time_transformation_size"]   = s.time_window;
-  rendering["time_transformation_stride"] = s.time_stride;
+  rendering["time_transformation"]                    = to_legacy_time_transform(s.time_method);
+  rendering["time_transformation_size"]               = s.time_window;
+  rendering["time_transformation_stride"]             = s.time_stride;
 }
 
 void write_view(json &j, const Settings &s) {
@@ -306,6 +306,10 @@ nlohmann::json settings_to_old_json(const Settings &settings) {
   write_image_rendering(j, settings);
   write_view(j, settings);
   write_info(j, settings);
+  j["compute_settings"]["mtd"] = {{"enabled", settings.import_source == ImportSource::MTD_DATASET},
+                                  {"directory", settings.load_path.string()},
+                                  {"reconstruction", settings.mtd_reconstruction},
+                                  {"view", settings.mtd_view}};
 
   return j;
 }
@@ -323,6 +327,15 @@ Settings old_json_to_settings(const nlohmann::json &j, const Settings &default_s
   read_image_rendering(settings, rendering);
   read_view(settings, view);
   read_info(settings, info);
+  const auto &mtd = child_or_empty(compute, "mtd");
+  if (mtd.value("enabled", false)) {
+    settings.import_source = ImportSource::MTD_DATASET;
+    settings.load_path     = mtd.value("directory", settings.load_path.string());
+  }
+  if (mtd.contains("reconstruction"))
+    mtd.at("reconstruction").get_to(settings.mtd_reconstruction);
+  if (mtd.contains("view"))
+    mtd.at("view").get_to(settings.mtd_view);
 
   return settings;
 }

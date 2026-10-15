@@ -86,6 +86,13 @@ private:
   void on_update_pipeline_success();
   void on_update_pipeline_failure(const QString &error);
 
+  void                        refresh_mtd_mode();
+  bool                        pipeline_starting_ = false;
+  void                        refresh_mtd_displays();
+  bool                        mtd_ui_mode_        = false;
+  bool                        mtd_update_pending_ = false;
+  QString                     mtd_loaded_path_;
+  double                      mtd_voxel_pitch_m_ = 0;
   bool                        validate_inputs();
   void                        apply_validation_result(const pipeline::ValidationResult &result);
   void                        refresh_validation_tooltips(const pipeline::ValidationResult &result);

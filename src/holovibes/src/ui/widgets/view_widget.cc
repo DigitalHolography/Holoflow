@@ -134,7 +134,15 @@ QCheckBox      *ViewWidget::pct_check() { return pct_check_; }
 QDoubleSpinBox *ViewWidget::pct_radius() { return pct_radius_; }
 
 void ViewWidget::setup_ui() {
-  auto *layout = new QGridLayout(this);
+  auto *outer = new QVBoxLayout(this);
+  outer->setContentsMargins(0, 0, 0, 0);
+  legacy_page_ = new QWidget(this);
+  outer->addWidget(legacy_page_);
+  mtd_controls_ = new MTDViewWidget(this);
+  outer->addWidget(mtd_controls_);
+  mtd_controls_->hide();
+  connect(mtd_controls_, &MTDViewWidget::settings_changed, this, &ViewWidget::settings_changed);
+  auto *layout = new QGridLayout(legacy_page_);
   layout->setContentsMargins(0, 0, 0, 0);
   layout->setHorizontalSpacing(6);
   layout->setVerticalSpacing(4);
@@ -260,6 +268,12 @@ void ViewWidget::clear_validation_styles() {
   clear_validation_error(z_width_spin_);
   clear_validation_error(flatfield_cutoff_period_um_);
   clear_validation_error(registration_check_);
+}
+
+void ViewWidget::set_mtd_mode(bool enabled) {
+  legacy_page_->setVisible(!enabled);
+  mtd_controls_->setVisible(enabled);
+  post_processing_group_->setEnabled(!enabled);
 }
 
 } // namespace holovibes::ui

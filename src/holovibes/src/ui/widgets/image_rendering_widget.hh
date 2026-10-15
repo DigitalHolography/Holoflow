@@ -14,6 +14,8 @@
 
 #pragma once
 
+#include "ui/widgets/mtd_processing_widget.hh"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QGroupBox>
@@ -29,6 +31,9 @@ class ImageRenderingWidget : public QGroupBox {
 
 public:
   explicit ImageRenderingWidget(QWidget *parent = nullptr);
+
+  void                 set_mtd_mode(bool enabled);
+  MTDProcessingWidget *mtd_controls() const { return mtd_controls_; }
 
   // Getters
   QString get_image_mode() const;
@@ -102,6 +107,9 @@ signals:
   void settings_changed();
 
 private:
+  QWidget             *legacy_page_  = nullptr;
+  MTDProcessingWidget *mtd_controls_ = nullptr;
+
   void        setup_ui();
   void        connect_signals();
   QStringList load_available_kernels();

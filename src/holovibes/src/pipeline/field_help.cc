@@ -123,6 +123,14 @@ constexpr auto kAutofocusNbIterConstraints        = std::to_array<const char *>(
 });
 
 const FieldHelp kFieldHelp[] = {
+    {SettingsField::MTDReconstruction,
+     "MTD Reconstruction",
+     "Reconstruct a complete MTD acquisition using the dataset optical settings.",
+     {}},
+    {SettingsField::MTDView,
+     "MTD Volume View",
+     "X selects YZ, Y selects XZ, and Z selects XY. Contrast is shared across these views.",
+     {}},
     {SettingsField::LoadPath, "Input File",
      "Holofile used as the acquisition source when camera mode is disabled.", kLoadPathConstraints},
     {SettingsField::CameraConfigPath, "Camera Config",

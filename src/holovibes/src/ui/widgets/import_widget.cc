@@ -25,6 +25,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLabel>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStackedLayout>
 #include <QStandardPaths>
@@ -65,11 +66,9 @@ std::optional<int> ImportWidget::get_fps_limit() const {
 
   return fps_spin_->value();
 }
-double ImportWidget::get_sampling_frequency_hz() const {
-  return sampling_frequency_spin_->value();
-}
-int     ImportWidget::get_start_index() const { return start_index_spin_->value(); }
-int     ImportWidget::get_end_index() const { return end_index_spin_->value(); }
+double ImportWidget::get_sampling_frequency_hz() const { return sampling_frequency_spin_->value(); }
+int    ImportWidget::get_start_index() const { return start_index_spin_->value(); }
+int    ImportWidget::get_end_index() const { return end_index_spin_->value(); }
 QString ImportWidget::get_load_method() const { return load_method_combo_->currentText(); }
 QString ImportWidget::get_camera_type() const { return camera_combo_->currentText(); }
 QString ImportWidget::get_camera_config() const { return camera_config_combo_->currentText(); }
@@ -102,10 +101,10 @@ void ImportWidget::mark_start_index_invalid() { mark_validation_error(start_inde
 void ImportWidget::mark_end_index_invalid() { mark_validation_error(end_index_spin_); }
 void ImportWidget::mark_camera_config_invalid() { mark_validation_error(camera_config_combo_); }
 
-QLineEdit   *ImportWidget::file_line_edit() { return file_line_edit_; }
-QPushButton *ImportWidget::browse_button() { return browse_button_; }
-QPushButton *ImportWidget::start_button() { return start_button_; }
-QPushButton *ImportWidget::stop_button() { return stop_button_; }
+QLineEdit      *ImportWidget::file_line_edit() { return file_line_edit_; }
+QPushButton    *ImportWidget::browse_button() { return browse_button_; }
+QPushButton    *ImportWidget::start_button() { return start_button_; }
+QPushButton    *ImportWidget::stop_button() { return stop_button_; }
 QSpinBox       *ImportWidget::fps_spin() { return fps_spin_; }
 QDoubleSpinBox *ImportWidget::sampling_frequency_spin() { return sampling_frequency_spin_; }
 QSpinBox       *ImportWidget::start_index_spin() { return start_index_spin_; }
@@ -122,6 +121,8 @@ void ImportWidget::setup_ui() {
 
   cam_check_ = new QCheckBox("Use Camera", this);
   main_layout->addWidget(cam_check_);
+  mtd_check_ = new QCheckBox(tr("MTD dataset"), this);
+  main_layout->addWidget(mtd_check_);
 
   stack_ = new QStackedLayout();
   main_layout->addLayout(stack_);
@@ -153,8 +154,22 @@ void ImportWidget::setup_ui() {
 }
 
 void ImportWidget::connect_signals() {
+  connect(mtd_check_, &QCheckBox::toggled, this, [this](bool checked) {
+    if (checked) {
+      const QSignalBlocker blocker(cam_check_);
+      cam_check_->setChecked(false);
+      stack_->setCurrentIndex(0);
+    }
+    refresh_mode();
+    emit settings_changed();
+  });
   connect(cam_check_, &QCheckBox::toggled, this, [this](bool checked) {
+    if (checked) {
+      const QSignalBlocker blocker(mtd_check_);
+      mtd_check_->setChecked(false);
+    }
     stack_->setCurrentIndex(checked ? 1 : 0);
+    refresh_mode();
     if (checked) {
       update_sampling_frequency_from_camera_config();
     }
@@ -273,10 +288,9 @@ QStringList ImportWidget::load_available_camera_configs() {
 
 void ImportWidget::update_sampling_frequency_from_camera_config() {
   const QString app_data_base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-  const QString config_path =
-      app_data_base + "/" + QCoreApplication::applicationVersion() + "/camera_configs/" +
-      camera_config_combo_->currentText() + ".json";
-  QFile config_file(config_path);
+  const QString config_path   = app_data_base + "/" + QCoreApplication::applicationVersion() +
+                                "/camera_configs/" + camera_config_combo_->currentText() + ".json";
+  QFile         config_file(config_path);
   if (!config_file.open(QIODevice::ReadOnly)) {
     return;
   }
@@ -286,7 +300,7 @@ void ImportWidget::update_sampling_frequency_from_camera_config() {
     return;
   }
 
-  const auto root = document.object();
+  const auto  root = document.object();
   QJsonObject camera;
   if (root.value("s711").isObject()) {
     camera = root.value("s711").toObject();
@@ -311,6 +325,28 @@ void ImportWidget::clear_validation_styles() {
   clear_validation_error(start_index_spin_);
   clear_validation_error(end_index_spin_);
   clear_validation_error(camera_config_combo_);
+}
+
+bool ImportWidget::is_mtd_mode() const { return mtd_check_->isChecked() && !is_camera_mode(); }
+void ImportWidget::set_mtd_mode(bool enabled) { mtd_check_->setChecked(enabled); }
+void ImportWidget::refresh_mode() {
+  const bool mtd = is_mtd_mode();
+  for (auto *spin : {fps_spin_, start_index_spin_, end_index_spin_})
+    spin->setEnabled(!mtd);
+  load_method_combo_->setEnabled(!mtd);
+  sampling_frequency_spin_->setEnabled(!mtd);
+  file_line_edit_->setPlaceholderText(mtd ? tr("Select MTD ACQUIS folder") : tr("Select File"));
+}
+
+void ImportWidget::set_source_editing_enabled(bool enabled) {
+  cam_check_->setEnabled(enabled);
+  mtd_check_->setEnabled(enabled);
+  browse_button_->setEnabled(enabled);
+  const auto hint =
+      enabled ? QString{} : tr("Stop the current run before changing the input source.");
+  cam_check_->setToolTip(hint);
+  mtd_check_->setToolTip(hint);
+  browse_button_->setToolTip(hint);
 }
 
 } // namespace holovibes::ui

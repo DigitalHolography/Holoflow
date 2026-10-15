@@ -36,6 +36,7 @@ public:
 
   // Getters for settings
   bool               is_camera_mode() const;
+  bool               is_mtd_mode() const;
   QString            get_file_path() const;
   std::optional<int> get_fps_limit() const;
   double             get_sampling_frequency_hz() const;
@@ -46,6 +47,8 @@ public:
   QString            get_camera_config() const;
 
   // Setters
+  void set_mtd_mode(bool enabled);
+  void set_source_editing_enabled(bool enabled);
   void set_file_path(const QString &path);
   void set_fps_limit(std::optional<int> value);
   void set_sampling_frequency_hz(double value);
@@ -91,6 +94,9 @@ signals:
   void settings_changed();
 
 private:
+  void       refresh_mode();
+  QCheckBox *mtd_check_ = nullptr;
+
   void        setup_ui();
   void        connect_signals();
   QWidget    *create_file_page();
@@ -101,12 +107,12 @@ private:
   QDoubleSpinBox *sampling_frequency_spin_;
 
   // File mode widgets
-  QLineEdit      *file_line_edit_;
-  QPushButton    *browse_button_;
-  QSpinBox       *fps_spin_;
-  QSpinBox       *start_index_spin_;
-  QSpinBox       *end_index_spin_;
-  QComboBox      *load_method_combo_;
+  QLineEdit   *file_line_edit_;
+  QPushButton *browse_button_;
+  QSpinBox    *fps_spin_;
+  QSpinBox    *start_index_spin_;
+  QSpinBox    *end_index_spin_;
+  QComboBox   *load_method_combo_;
 
   // Camera mode widgets
   QCheckBox *cam_check_;

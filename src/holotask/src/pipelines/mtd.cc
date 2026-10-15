@@ -106,8 +106,8 @@ MTDDatasetSettings load_mtd_dataset(const std::filesystem::path &directory,
 holoflow::core::GraphSpec build_mtd_pipeline(const MTDDatasetSettings &dataset,
                                              const MTDOutputSettings  &output) {
   using namespace holoflow::core;
-  if (dataset.frame_count <= 0 || output.volume_path.empty())
-    throw std::invalid_argument("MTD requires a positive scan count and volume output path");
+  if (dataset.frame_count <= 0)
+    throw std::invalid_argument("MTD requires a positive scan count");
   std::set<std::filesystem::path> destinations;
   const auto reserve_output = [&destinations](const std::filesystem::path &path,
                                               bool                         sidecar = true) {
@@ -133,7 +133,8 @@ holoflow::core::GraphSpec build_mtd_pipeline(const MTDDatasetSettings &dataset,
         throw std::invalid_argument("MTD volume, slice, and metadata paths must be distinct");
     }
   };
-  reserve_output(output.volume_path);
+  if (!output.volume_path.empty())
+    reserve_output(output.volume_path);
   if (output.slice_path)
     reserve_output(*output.slice_path);
   if (output.graph_path)
@@ -178,10 +179,6 @@ holoflow::core::GraphSpec build_mtd_pipeline(const MTDDatasetSettings &dataset,
       {"voxel_pitch_m", voxel_pitch},
       {"medium_index_assumed", dataset.medium_index_assumed},
       {"phase_unwrapping", "MTD mirrored spectral gradient with local/global damping"}};
-  const auto writer = node("mtd_volume_write", "NpyVolumeWriter",
-                           sinks::NpyVolumeSettings{.path      = output.volume_path.string(),
-                                                    .metadata  = metadata,
-                                                    .overwrite = output.overwrite});
   edge(frames, 0, field, 0);
   edge(field, 0, rytov, 0);
   edge(mask, 0, rytov, 1);
@@ -189,7 +186,13 @@ holoflow::core::GraphSpec build_mtd_pipeline(const MTDDatasetSettings &dataset,
   edge(field, 1, linear, 1);
   edge(linear, 0, gps, 0);
   edge(linear, 1, gps, 1);
-  edge(gps, 0, writer, 0);
+  if (!output.volume_path.empty()) {
+    const auto writer = node("mtd_volume_write", "NpyVolumeWriter",
+                             sinks::NpyVolumeSettings{.path      = output.volume_path.string(),
+                                                      .metadata  = metadata,
+                                                      .overwrite = output.overwrite});
+    edge(gps, 0, writer, 0);
+  }
   if (output.slice_path.has_value()) {
     const auto slice          = node("mtd_volume_slice", "VolumeSlice", output.slice);
     auto       slice_metadata = metadata;
