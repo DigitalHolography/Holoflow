@@ -1346,6 +1346,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Read the reports">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nvtx-ranges" class="md-nav__link">
+    <span class="md-ellipsis">
+      NVTX ranges
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -2574,6 +2589,21 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Read the reports">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nvtx-ranges" class="md-nav__link">
+    <span class="md-ellipsis">
+      NVTX ranges
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -2789,6 +2819,21 @@ and protect exception paths. Details and examples are in the
 counts, fallback reasons, and launch/miss counters. Host graph-submission timing is not <abbr title="Graphics processing unit">GPU</abbr> execution
 duration. See the <a href="section-cuda-graphs-reference.html#diagnostics">diagnostics</a> and
 <a href="section-cuda-graphs-reference.html#reference-validation">reference validation</a> for measurement guidance.</p>
+<h3 id="nvtx-ranges">NVTX ranges<a class="headerlink" href="#nvtx-ranges" title="Permanent link">&para;</a></h3>
+<p>Each section worker emits one range named after the section per iteration, with nested phases:
+<code>Acquire inputs</code>, <code>Async pop</code>, <code>Compute</code>, <code>Wait</code>, <code>Async push</code>, and <code>Release outputs</code>.
+Phases span their nodes and readiness polling; phases without work are omitted. Ordinary execution
+keeps the <code>sync execute: name (kind)</code>, <code>async pop: name (kind)</code>, and <code>async push: name (kind)</code> task
+ranges. Graph execution instead nests <code>CUDA graph launch</code> inside <code>Compute</code>; its <abbr title="Central processing unit">CPU</abbr> duration measures
+host submission, not <abbr title="Graphics processing unit">GPU</abbr> execution. Variant selection and fallback also belong to <code>Compute</code>.</p>
+<p><code>Wait</code> covers the scheduler's stream synchronization. When an asynchronous producer supplies the
+barrier, its synchronization remains inside <code>Async push</code>. Stop/EOF draining and output release appear
+under a separate <code>Section cleanup</code> range. Pausing closes the current iteration segment on its worker;
+resuming opens a new segment around the retained checkpoint, without spanning the paused interval.</p>
+<p>Graph recording retains its existing task annotations. In Nsight Systems, graph granularity gives
+a lower-overhead view of complete <abbr title="Graphics processing unit">GPU</abbr> graphs; node granularity exposes their individual operations.
+Capture-time NVTX projection requires profiling graph construction, or the profiler's precapture
+mode when construction precedes collection. <abbr title="Central processing unit">CPU</abbr> task ranges are not executed again during replay.</p>
 
 
 

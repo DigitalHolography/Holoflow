@@ -3,16 +3,16 @@
 
 |||
 |:---|:---|
-| Generated on: | 10/14/2026 - 2:49:23 PM |
+| Generated on: | 10/15/2026 - 12:28:17 PM |
 | Parser: | Cobertura |
 | Assemblies: | 7 |
 | Classes: | 12 |
 | Files: | 119 |
-| **Line coverage:** | 39% (4937 of 12640) |
-| Covered lines: | 4937 |
-| Uncovered lines: | 7703 |
-| Coverable lines: | 12640 |
-| Total lines: | 29206 |
+| **Line coverage:** | 39.1% (4957 of 12659) |
+| Covered lines: | 4957 |
+| Uncovered lines: | 7702 |
+| Coverable lines: | 12659 |
+| Total lines: | 29167 |
 | Covered branches: | 0 |
 | Total branches: | 0 |
 | **Method coverage:** | [Feature is only available for sponsors](https://reportgenerator.io/pro) |
@@ -37,11 +37,11 @@
 |src|0%||
 
 </details>
-<details><summary>holoflow - 90.5%</summary>
+<details><summary>holoflow - 90.6%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holoflow**|**90.5%**|****|
+|**holoflow**|**90.6%**|****|
 |include|100%||
 |src|90.4%||
 
