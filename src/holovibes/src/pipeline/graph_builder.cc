@@ -91,7 +91,10 @@ private:
   void build_zernike_outputs(const AberrationCorrectionState &state, const ShackHartmannGeometry &geometry);
   TDesc build_spatial_propagation(const TDesc &FH);
   TDesc build_spatial_filter(const TDesc &FH_z);
+  TDesc build_spatial_contrast_input(TDesc H);
+  void build_spatial_contrast_view(const TDesc &frames);
   void build_xy_view(const TDesc &FH_z);
+  void build_xy_output(TDesc result, size_t discard_first, bool fixed_contrast_range = false);
   void build_3d_cuts(const TDesc &FH_z);
   TDesc build_freq_weights();
   // clang-format on
@@ -169,6 +172,12 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
     if (should_exit) {
       return g_;
     }
+  }
+
+  if (s_.pp_spatial_contrast) {
+    auto frames = build_spatial_contrast_input(H);
+    build_spatial_contrast_view(frames);
+    return g_;
   }
 
   H = build_preprocessing(H);
@@ -704,16 +713,33 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
   HOLOVIBES_UNREACHABLE();
 }
 
-void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
-  using Target                 = holotask::syncs::ConversionSettings::Target;
-  using Strat                  = holotask::syncs::ConversionSettings::Strategy;
-  using SlidingAverageSettings = holotask::asyncs::SlidingAverageSettings;
-  using PctClipSettings        = holotask::syncs::PctClipSettings;
-  using Ellipse                = PctClipSettings::Ellipse;
-  using holotask::sinks::HolofileSettings;
-  auto Host = holotask::syncs::MemcpySettings::Target::Host;
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_contrast_input(TDesc H) {
+  using MemLoc = holoflow::core::MemLoc;
+  auto Device  = holotask::syncs::MemcpySettings::Target::Device;
 
-  TDesc      result;
+  if (H.mem_loc != MemLoc::Device) {
+    H = memcpy(H, {Device});
+  }
+  H = batched_queue(H, {s_.gpu_in_size, 1, 1});
+  return ascontiguousarray(H, {});
+}
+
+void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
+  if (frames.rank() != 3 || frames.shape.at(0) != 1) {
+    throw std::logic_error{"Spatial LSCI input must be [1, height, width] per frame"};
+  }
+
+  auto result = spatial_contrast(frames,
+                                 {.window_size = s_.pp_spatial_contrast_window_size});
+  build_xy_output(result, 0, true);
+}
+
+void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
+  if (s_.pp_registration) {
+    throw std::logic_error{"Registration is currently not supported"};
+  }
+
+  TDesc result;
   const bool is_magnitude = FH_z.dtype == holoflow::core::DType::F32;
 
   if (s_.moment_type == MomentType::M0) {
@@ -751,16 +777,29 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     result              = flatfield(result, flatfield_settings_from_cutoff_period(cutoff, dy, dx));
   }
 
-  if (s_.pp_registration) {
-    throw std::logic_error{"Registration is currently not supported"};
-  }
-
   result = mean(result, {{0}, false}); // [1, H, W]
+
+  auto discard_first = s_.autofocus_enabled ? static_cast<size_t>(s_.pp_accumulation - 1) : 0;
+  build_xy_output(result, discard_first);
+}
+
+void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
+                                         bool fixed_contrast_range) {
+  using Target                 = holotask::syncs::ConversionSettings::Target;
+  using Strat                  = holotask::syncs::ConversionSettings::Strategy;
+  using SlidingAverageSettings = holotask::asyncs::SlidingAverageSettings;
+  using PctClipSettings        = holotask::syncs::PctClipSettings;
+  using Ellipse                = PctClipSettings::Ellipse;
+  using holotask::sinks::HolofileSettings;
+  auto Host = holotask::syncs::MemcpySettings::Target::Host;
+
+  if (s_.pp_accumulation <= 0) {
+    throw std::invalid_argument{"pp_accumulation must be positive"};
+  }
 
   // auto target_capacity = static_cast<size_t>(std::max(1, s_.gpu_out_size));
   auto target_capacity = 8ULL;
   auto window_size     = static_cast<size_t>(s_.pp_accumulation);
-  auto discard_first   = s_.autofocus_enabled ? window_size - 1 : 0;
   auto slide_settings  = SlidingAverageSettings{target_capacity, window_size, discard_first};
   result               = slide_avg(result, slide_settings);
 
@@ -768,18 +807,30 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     throw std::logic_error{"Convolution is currently not supported"};
   }
 
-  if (s_.pp_pctclip) {
+  if (s_.pp_pctclip && !fixed_contrast_range) {
     Ellipse         roi{0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f};
     PctClipSettings pct_clip_settings{s_.pp_pctclip_lower, s_.pp_pctclip_upper, roi};
     result = pct_clip(result, pct_clip_settings);
   }
 
-  result = convert(result, {Target::U8, Strat::Scaled});
-  result = batched_queue(result, {s_.gpu_out_size, 1, 1});
-  xy_processed_display(result, {});
+  TDesc display_result = result;
+  if (!fixed_contrast_range) {
+    display_result = convert(display_result, {Target::U8, Strat::Scaled});
+  } else {
+    // The sliding average owns its output buffer. Give the display queue a distinct buffer before
+    // it takes ownership, while preserving the fixed-range F32 contrast values.
+    display_result = copy(display_result, {});
+  }
+  display_result = batched_queue(display_result, {s_.gpu_out_size, 1, 1});
+  xy_processed_display(display_result, {});
 
   if (s_.recording_method == RecordingMethod::PROCESSED) {
-    auto result_rec = memcpy(result, {Host});
+    // Holofile processed recordings remain 8-bit visualizations; the live LSCI preview keeps
+    // the F32 K values so its grayscale range stays fixed from frame to frame.
+    if (fixed_contrast_range) {
+      display_result = convert(display_result, {Target::U8, Strat::Scaled});
+    }
+    auto result_rec = memcpy(display_result, {Host});
     result_rec      = batched_queue(result_rec, {s_.cpu_out_size, 1, 1});
 
     auto path              = s_.recording_path.string();

@@ -48,6 +48,7 @@ enum class SettingsField {
   View3DCuts,
   PpAccumulation,
   PpFlatfieldCutoffPeriod,
+  PpSpatialContrastWindowSize,
   PpConvolution,
   PpRegistration,
   RecordingPath,

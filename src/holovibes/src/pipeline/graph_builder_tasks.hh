@@ -71,6 +71,7 @@
 #include "holotask/syncs/registration.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
+#include "holotask/syncs/spatial_contrast.hh"
 #include "holotask/syncs/unfold2d.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike_defocus_z_prop.hh"
@@ -104,6 +105,7 @@ protected:
   TDesc pca(const TDesc &X, holotask::syncs::PcaSettings s);
   TDesc flatfield(const TDesc &X, holotask::syncs::FlatfieldSettings s);
   TDesc filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
+  TDesc spatial_contrast(const TDesc &X, holotask::syncs::SpatialContrastSettings s);
   TDesc fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
   TDesc fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
   TDesc fresnel_qout(const TDesc &Z, holotask::sources::FresnelQoutSettings s);

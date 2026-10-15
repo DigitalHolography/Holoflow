@@ -26,6 +26,7 @@ set(SOURCES
     pct_clip_test.cu
     shack_hartmann_test.cu
     sliding_average_test.cu
+    spatial_contrast_test.cu
     section_cuda_graph_reference_test.cu
     zernike_defocus_z_prop_test.cc
     zernike_phase_test.cu

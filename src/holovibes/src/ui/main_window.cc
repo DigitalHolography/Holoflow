@@ -1257,6 +1257,11 @@ void MainWindow::save_persistent_state() {
   settings.setValue("accumulation", view_widget_->get_accumulation());
   settings.setValue("flatfield", view_widget_->is_flatfield_enabled());
   settings.setValue("flatfield_cutoff_period_um", view_widget_->get_flatfield_cutoff_period_um());
+  settings.setValue("spatial_contrast", view_widget_->is_spatial_contrast_enabled());
+  settings.setValue("spatial_contrast_window_size",
+                    view_widget_->get_spatial_contrast_window_size());
+  settings.setValue("spatial_contrast_display_max",
+                    view_widget_->get_spatial_contrast_display_max());
   settings.setValue("range_start", view_widget_->get_range_start());
   settings.setValue("range_end", view_widget_->get_range_end());
   settings.setValue("registration", view_widget_->is_registration_enabled());
@@ -1407,6 +1412,16 @@ void MainWindow::restore_persistent_state() {
       settings.value("flatfield", view_widget_->is_flatfield_enabled()).toBool());
   view_widget_->set_flatfield_cutoff_period_um(
       settings.value("flatfield_cutoff_period_um", view_widget_->get_flatfield_cutoff_period_um())
+          .toDouble());
+  view_widget_->set_spatial_contrast_enabled(
+      settings.value("spatial_contrast", view_widget_->is_spatial_contrast_enabled()).toBool());
+  view_widget_->set_spatial_contrast_window_size(
+      settings.value("spatial_contrast_window_size",
+                     view_widget_->get_spatial_contrast_window_size())
+          .toInt());
+  view_widget_->spatial_contrast_display_max()->setValue(
+      settings.value("spatial_contrast_display_max",
+                     view_widget_->get_spatial_contrast_display_max())
           .toDouble());
   view_widget_->range_start_spin()->setValue(
       settings.value("range_start", view_widget_->get_range_start()).toInt());
@@ -1601,6 +1616,14 @@ void MainWindow::initialize_display_widgets() {
       xy_processed_widget_->set_reticle_radius(value);
     }
   });
+  connect(view_widget_, &ViewWidget::spatial_contrast_display_range_changed, this,
+          [this](float minimum, float maximum) {
+            xy_processed_widget_->set_value_range(minimum, maximum);
+          });
+  xy_processed_widget_->set_value_range(
+      0.0f, view_widget_->is_spatial_contrast_enabled()
+                ? static_cast<float>(view_widget_->get_spatial_contrast_display_max())
+                : 1.0f);
 }
 
 void MainWindow::initialize_pipeline_manager() {
@@ -2349,6 +2372,9 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::PpFlatfieldCutoffPeriod:
         view_widget_->mark_flatfield_cutoff_period_invalid();
         break;
+      case SettingsField::PpSpatialContrastWindowSize:
+        view_widget_->mark_spatial_contrast_window_invalid();
+        break;
       case SettingsField::PpConvolution:
         render_widget_->mark_convolution_invalid();
         break;
@@ -2697,6 +2723,8 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_flatfield = view_widget_->is_flatfield_enabled();
     s.pp_flatfield_cutoff_period_m =
         static_cast<float>(view_widget_->get_flatfield_cutoff_period_um() * 1e-6);
+    s.pp_spatial_contrast = view_widget_->is_spatial_contrast_enabled();
+    s.pp_spatial_contrast_window_size = view_widget_->get_spatial_contrast_window_size();
     s.pp_accumulation        = static_cast<size_t>(view_widget_->get_accumulation());
     s.pp_convolution         = render_widget_->get_convolution() != "None";
     s.pp_convolution_path    = kernel_path;
@@ -2909,6 +2937,8 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   {
     view_widget_->set_flatfield_enabled(s.pp_flatfield);
     view_widget_->set_flatfield_cutoff_period_um(s.pp_flatfield_cutoff_period_m * 1e6);
+    view_widget_->set_spatial_contrast_enabled(s.pp_spatial_contrast);
+    view_widget_->set_spatial_contrast_window_size(s.pp_spatial_contrast_window_size);
     view_widget_->set_accumulation(static_cast<int>(s.pp_accumulation));
     render_widget_->set_convolution_divide(s.pp_convolution_divide);
 

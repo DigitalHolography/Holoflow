@@ -1,0 +1,23 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SpatialContrastSettings",
+  "description": "Settings for the SpatialContrast sync task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "window_size": {
+      "type": "integer",
+      "minimum": 3,
+      "maximum": 255,
+      "description": "Odd side length in pixels of the sliding square window."
+    }
+  },
+  "required": [
+    "window_size"
+  ],
+  "examples": [
+    {
+      "window_size": 7
+    }
+  ]
+}

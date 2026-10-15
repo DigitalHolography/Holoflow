@@ -155,6 +155,8 @@ void write_view(json &j, const Settings &s) {
   view["fft_shift"]                    = s.pp_fft_shift;
   view["flatfield"]["enabled"]         = s.pp_flatfield;
   view["flatfield"]["cutoff_period_m"] = s.pp_flatfield_cutoff_period_m;
+  view["spatial_contrast"]["enabled"]     = s.pp_spatial_contrast;
+  view["spatial_contrast"]["window_size"] = s.pp_spatial_contrast_window_size;
 
   view["registration"]["registration_enabled"] = s.pp_registration;
   view["registration"]["registration_zone"]    = s.pp_registration_radius;
@@ -267,6 +269,10 @@ void read_view(Settings &s, const json &view) {
   s.pp_flatfield        = val(flatfield, "enabled", s.pp_flatfield);
   s.pp_flatfield_cutoff_period_m =
       val(flatfield, "cutoff_period_m", s.pp_flatfield_cutoff_period_m);
+  const auto &spatial_contrast = child_or_empty(view, "spatial_contrast");
+  s.pp_spatial_contrast = val(spatial_contrast, "enabled", s.pp_spatial_contrast);
+  s.pp_spatial_contrast_window_size =
+      val(spatial_contrast, "window_size", s.pp_spatial_contrast_window_size);
 
   const auto &window = child_or_empty(view, "window");
   const auto &xy     = child_or_empty(window, "xy");

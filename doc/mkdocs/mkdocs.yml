@@ -57,6 +57,7 @@ nav:
         - Convolution: holovibes/tasks/syncs/convolution.md
         - FFT Shift: holovibes/tasks/syncs/fft_shift.md
         - Filter 2D: holovibes/tasks/syncs/filter2d.md
+        - Spatial Contrast: holovibes/tasks/syncs/spatial_contrast.md
         - Fresnel Diffraction: holovibes/tasks/syncs/fresnel_diffraction.md
         - Memcpy: holovibes/tasks/syncs/memcpy.md
         - PCA: holovibes/tasks/syncs/pca.md
