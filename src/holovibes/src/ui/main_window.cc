@@ -753,7 +753,7 @@ private:
     QCheckBox *resources_toggle_checkbox_ = nullptr;
   };
   GraphCompiledDumpPreferencesWidgets graph_compiled_dump_preferences_widgets_;
-  QCheckBox *runtime_failure_graph_checkbox_ = nullptr;
+  QCheckBox                          *runtime_failure_graph_checkbox_ = nullptr;
 };
 
 } // namespace
@@ -1207,7 +1207,7 @@ void MainWindow::save_persistent_state() {
   settings.beginGroup("preferences");
   settings.setValue("dump_runtime_failure_graphs",
                     pipeline_manager_ ? pipeline_manager_->dump_runtime_failure_graphs()
-                                       : dump_runtime_failure_graphs_);
+                                      : dump_runtime_failure_graphs_);
   settings.endGroup();
 
   settings.beginGroup("main_window");
@@ -1313,8 +1313,7 @@ void MainWindow::restore_persistent_state() {
   QSettings settings;
 
   settings.beginGroup("preferences");
-  dump_runtime_failure_graphs_ =
-      settings.value("dump_runtime_failure_graphs", false).toBool();
+  dump_runtime_failure_graphs_ = settings.value("dump_runtime_failure_graphs", false).toBool();
   settings.endGroup();
 
   settings.beginGroup("main_window");
@@ -1567,7 +1566,7 @@ void MainWindow::initialize_display_widgets() {
                                               "xy_processed", DockPlacement::Tab, false});
   display_workspace_->register_visualization({"pipeline_graph", "Pipeline Graph",
                                               graph_visualizer_widget_, "xy_processed",
-                                              DockPlacement::Tab, false});
+                                              DockPlacement::Tab, false, false});
   display_workspace_->finalize_registration();
 
   connect(display_workspace_, &VisualizationWorkspace::selected_visualization_changed, this,
@@ -1582,6 +1581,8 @@ void MainWindow::initialize_display_widgets() {
           });
   connect(graph_visualizer_widget_, &GraphVisualizerWidget::reload_requested, this,
           &MainWindow::show_pipeline_graph);
+  connect(graph_visualizer_widget_, &GraphVisualizerWidget::open_file_requested, this,
+          &MainWindow::open_dot_file);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this,
           &MainWindow::refresh_visualization_availability);
 
@@ -2589,11 +2590,8 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       s.load_fps_limit = import_widget_->get_fps_limit();
       QString method   = import_widget_->get_load_method();
       s.load_method    = method_from_str.at(method.toStdString());
-      if (render_widget_->get_time_transform() == "Principal Component Analysis") {
-        s.load_batch = 32;
-      } else {
-        s.load_batch = render_widget_->get_batch_size();
-      }
+      s.load_batch     = render_widget_->get_batch_size();
+
     } else {
       QString source       = import_widget_->get_camera_type();
       s.import_source      = source_from_str.at(source.toStdString());
