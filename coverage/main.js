@@ -302,7 +302,7 @@ var assemblies = [
     "name": "holoflow",
     "classes": [
       { "name": "include", "rp": "holoflow_include.html", "cl": 55, "ucl": 0, "cal": 55, "tl": 872, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
-      { "name": "src", "rp": "holoflow_src.html", "cl": 2771, "ucl": 291, "cal": 3062, "tl": 6359, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holoflow_src.html", "cl": 2770, "ucl": 292, "cal": 3062, "tl": 6359, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
   {
     "name": "holoflow_event",
@@ -325,7 +325,7 @@ var assemblies = [
   {
     "name": "holovibes",
     "classes": [
-      { "name": "src", "rp": "holovibes_src.html", "cl": 558, "ucl": 5876, "cal": 6434, "tl": 13211, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holovibes_src.html", "cl": 558, "ucl": 5873, "cal": 6431, "tl": 13207, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
 ];
 

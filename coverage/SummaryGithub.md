@@ -3,16 +3,16 @@
 
 |||
 |:---|:---|
-| Generated on: | 10/15/2026 - 12:28:17 PM |
+| Generated on: | 10/15/2026 - 1:05:05 PM |
 | Parser: | Cobertura |
 | Assemblies: | 7 |
 | Classes: | 12 |
 | Files: | 119 |
-| **Line coverage:** | 39.1% (4957 of 12659) |
-| Covered lines: | 4957 |
-| Uncovered lines: | 7702 |
-| Coverable lines: | 12659 |
-| Total lines: | 29167 |
+| **Line coverage:** | 39.1% (4956 of 12656) |
+| Covered lines: | 4956 |
+| Uncovered lines: | 7700 |
+| Coverable lines: | 12656 |
+| Total lines: | 29163 |
 | Covered branches: | 0 |
 | Total branches: | 0 |
 | **Method coverage:** | [Feature is only available for sponsors](https://reportgenerator.io/pro) |
