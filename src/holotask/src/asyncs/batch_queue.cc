@@ -25,6 +25,7 @@
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
 #include "logger.hh"
+#include "reservation_queue.hh"
 
 #ifndef CACHE_LINE_SIZE
 #define CACHE_LINE_SIZE 64
@@ -64,6 +65,15 @@ public:
   void                                 release_output(int index) override;
   holoflow::core::OpResult             try_push(holoflow::core::AsyncPushCtx &ctx) override;
   holoflow::core::OpResult             try_pop(holoflow::core::AsyncPopCtx &ctx) override;
+  holoflow::core::OpResult             reserve_push(holoflow::core::AsyncPushCtx &,
+                                                    holoflow::core::AsyncTicket &) override;
+  void                                 enqueue_push(holoflow::core::AsyncTicket ticket) override;
+  void                                 commit_push(holoflow::core::AsyncTicket ticket) override;
+  void                                 cancel_push(holoflow::core::AsyncTicket ticket) override;
+  holoflow::core::OpResult             reserve_pop(holoflow::core::AsyncPopCtx &,
+                                                   holoflow::core::AsyncTicket &) override;
+  void                                 release_pop(holoflow::core::AsyncTicket ticket) override;
+  void cancel_pop(holoflow::core::AsyncTicket ticket) override { pending_reads_.cancel(ticket); }
 
   std::optional<std::vector<std::byte *>> owned_input_pointers(size_t index) const override {
     if (index != 0)
@@ -129,7 +139,73 @@ private:
   size_t                element_size_;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_idx_;
+  struct PendingWrite {
+    size_t next;
+    bool   submitted = false;
+  };
+  alignas(CACHE_LINE_SIZE) detail::ReservationQueue<PendingWrite> pending_writes_;
+  alignas(CACHE_LINE_SIZE) detail::ReservationQueue<size_t> pending_reads_;
 };
+
+holoflow::core::OpResult BatchQueue::reserve_push(holoflow::core::AsyncPushCtx &ctx,
+                                                  holoflow::core::AsyncTicket  &ticket) {
+  using holoflow::core::OpResult;
+  if (ctx.cancelled && ctx.cancelled->load())
+    return OpResult::Cancelled;
+  if (pending_writes_.full())
+    return OpResult::NotReady;
+  const size_t write = pending_writes_.empty() ? write_idx_.load(std::memory_order_relaxed)
+                                               : pending_writes_.back().next;
+  const size_t read  = read_idx_.load(std::memory_order_acquire);
+  const size_t used  = (write + nb_slots_ - read) % nb_slots_;
+  if (nb_slots_ - used <= input_size_)
+    return OpResult::NotReady;
+  storage_access().owned_input_storage(0).ptr = buf_ + write * element_size_;
+  ticket = pending_writes_.push({(write + input_size_) % nb_slots_});
+  return OpResult::Ok;
+}
+
+void BatchQueue::enqueue_push(holoflow::core::AsyncTicket ticket) {
+  auto &pending = pending_writes_.get(ticket);
+  if (pending.submitted)
+    throw std::logic_error("BatchQueue reservation already submitted");
+  pending.submitted = true;
+}
+
+void BatchQueue::commit_push(holoflow::core::AsyncTicket ticket) {
+  if (!pending_writes_.get(ticket).submitted)
+    throw std::logic_error("BatchQueue reservation not submitted");
+  write_idx_.store(pending_writes_.pop(ticket).next, std::memory_order_release);
+}
+
+void BatchQueue::cancel_push(holoflow::core::AsyncTicket ticket) {
+  if (pending_writes_.get(ticket).submitted)
+    throw std::logic_error("Cannot cancel submitted BatchQueue reservation");
+  pending_writes_.cancel(ticket);
+}
+
+holoflow::core::OpResult BatchQueue::reserve_pop(holoflow::core::AsyncPopCtx &ctx,
+                                                 holoflow::core::AsyncTicket &ticket) {
+  using holoflow::core::OpResult;
+  if (ctx.cancelled && ctx.cancelled->load())
+    return OpResult::Cancelled;
+  if (pending_reads_.full())
+    return OpResult::NotReady;
+  const size_t read =
+      pending_reads_.empty() ? read_idx_.load(std::memory_order_relaxed) : pending_reads_.back();
+  const size_t write = write_idx_.load(std::memory_order_acquire);
+  if ((write + nb_slots_ - read) % nb_slots_ < static_cast<size_t>(settings_.output_stride))
+    return OpResult::NotReady;
+  auto &storage  = storage_access().owned_output_storage(0);
+  storage.ptr    = buf_ + read * element_size_;
+  ctx.outputs[0] = {odesc_, &storage};
+  ticket         = pending_reads_.push((read + settings_.output_stride) % nb_slots_);
+  return OpResult::Ok;
+}
+
+void BatchQueue::release_pop(holoflow::core::AsyncTicket ticket) {
+  read_idx_.store(pending_reads_.pop(ticket), std::memory_order_release);
+}
 
 std::optional<holoflow::core::TView> BatchQueue::acquire_input(int index) {
   if (index != 0) {
@@ -267,6 +343,8 @@ BatchQueueFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
       .kind                        = holoflow::core::TaskKind::Async,
       .owned_input_pointer_counts  = {slots / input_descs[0].shape[0]},
       .owned_output_pointer_counts = {slots / settings.output_stride},
+      .supports_prequeued_push     = true,
+      .supports_prequeued_pop      = true,
   };
 }
 

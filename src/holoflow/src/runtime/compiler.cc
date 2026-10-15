@@ -357,7 +357,7 @@ void Compiler::Impl::dump_graphviz(std::string_view filename, std::string_view f
     return;
   }
 
-  const auto dump_path = config_.log_dir / std::string{filename};
+  const auto dump_path  = config_.log_dir / std::string{filename};
   const auto graph_name = dump_path.stem().string();
   if (!out_)
     return;
@@ -898,6 +898,25 @@ void Compiler::Impl::partition_sections() {
         std::stable_partition(section.async_prod.begin(), section.async_prod.end(),
                               [&](auto v) { return g[v].infer.synchronizes_producer_stream; });
     section.has_synchronizing_async_producer = ordinary_begin != section.async_prod.begin();
+    section.supports_prequeue                = true;
+    const auto block_prequeue                = [&](const std::string &reason) {
+      section.supports_prequeue = false;
+      if (section.prequeue_fallback_reason.empty())
+        section.prequeue_fallback_reason = reason;
+    };
+    for (auto v : section.async_prod)
+      if (!g[v].infer.supports_prequeued_push)
+        block_prequeue(g[v].spec.name + " does not support prequeued pushes");
+    for (auto v : section.async_cons) {
+      if (!g[v].infer.supports_prequeued_pop)
+        block_prequeue(g[v].spec.name + " does not support prequeued pops");
+      for (auto edge : boost::make_iterator_range(boost::out_edges(v, g)))
+        if (!g[v].infer.owned_outputs.at(g[edge].spec.out_idx))
+          block_prequeue(g[v].spec.name + " has a connected non-owned output");
+    }
+    for (auto v : section.sync_topo)
+      if (std::ranges::any_of(g[v].infer.owned_inputs, [](bool owned) { return owned; }))
+        block_prequeue(g[v].spec.name + " requires synchronous input acquisition");
   }
 }
 
@@ -1208,6 +1227,10 @@ void Compiler::Impl::carry_section_cuda_graphs() {
     graphs->ordinary_iterations.store(0);
     graphs->pointer_misses.store(0);
     graphs->tuple_misses.store(0);
+    graphs->prequeue_depth.store(1);
+    graphs->prequeue_peak.store(0);
+    graphs->prequeue_submissions.store(0);
+    graphs->prequeue_retirements.store(0);
     graphs->refresh_count = 0;
     logger_->info("[CUDA graphs] {} compilation {}: carried {}, reason {}", section.name,
                   compilation_generation_, graphs->carried_from_previous_compilation,

@@ -29,6 +29,11 @@ This task does not perform inplace propagation between its input and output tens
 ## Ownership
 The task owns both the input and output storage it exposes.
 
+Without the optional validity input, the producer supports two reserved submissions on its CUDA
+stream, including startup discards. The averaging kernel is enqueued before the iteration's
+completion event; output publication follows completion. The consumer independently supports
+two reserved outputs. The validity-input producer keeps its existing serial scheduling.
+
 ---
 ## Settings
 --8<-- "docs/schemas/asyncs/sliding_average_settings.md"

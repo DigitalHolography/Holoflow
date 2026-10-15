@@ -26,6 +26,7 @@
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
 #include "logger.hh"
+#include "reservation_queue.hh"
 
 #ifndef CACHE_LINE_SIZE
 #define CACHE_LINE_SIZE 64
@@ -67,6 +68,15 @@ public:
   holoflow::core::OpResult             try_pop(holoflow::core::AsyncPopCtx &ctx) override;
   std::optional<holoflow::core::TView> acquire_input(int index) override;
   void                                 release_output(int index) override;
+  holoflow::core::OpResult             reserve_push(holoflow::core::AsyncPushCtx &,
+                                                    holoflow::core::AsyncTicket &) override;
+  void                                 enqueue_push(holoflow::core::AsyncTicket ticket) override;
+  void                                 commit_push(holoflow::core::AsyncTicket ticket) override;
+  void                                 cancel_push(holoflow::core::AsyncTicket ticket) override;
+  holoflow::core::OpResult             reserve_pop(holoflow::core::AsyncPopCtx &,
+                                                   holoflow::core::AsyncTicket &) override;
+  void                                 release_pop(holoflow::core::AsyncTicket ticket) override;
+  void cancel_pop(holoflow::core::AsyncTicket ticket) override { pending_reads_.cancel(ticket); }
 
   std::optional<std::vector<std::byte *>> owned_input_pointers(size_t index) const override {
     if (index != 0)
@@ -96,7 +106,9 @@ public:
     avg_idx_.store(nb_slots_ - settings_.window_size, std::memory_order_relaxed);
     write_idx_.store(0, std::memory_order_relaxed);
     read_idx_.store(nb_slots_ - 1, std::memory_order_relaxed);
-    discarded_ = 0;
+    discarded_      = 0;
+    pending_writes_ = {};
+    pending_reads_  = {};
   }
   std::optional<holoflow::core::PointerSequence>
   owned_input_pointer_sequence(size_t index) const override {
@@ -143,6 +155,12 @@ private:
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_idx_;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_idx_;
   bool has_validity_;
+  struct PendingWrite {
+    size_t write, avg, next_write, next_avg, discarded;
+    bool   skip, submitted = false;
+  };
+  alignas(CACHE_LINE_SIZE) detail::ReservationQueue<PendingWrite> pending_writes_;
+  alignas(CACHE_LINE_SIZE) detail::ReservationQueue<size_t> pending_reads_;
 };
 
 bool is_contiguous(const holoflow::core::TDesc &desc) {
@@ -168,6 +186,88 @@ __global__ void f32_update_avg_kernel(const float *write_data, float *avg_data, 
 }
 
 } // namespace
+
+holoflow::core::OpResult SlidingAverage::reserve_push(holoflow::core::AsyncPushCtx &ctx,
+                                                      holoflow::core::AsyncTicket  &ticket) {
+  using holoflow::core::OpResult;
+  if (has_validity_)
+    throw std::logic_error("SlidingAverage validity input requires serial pushes");
+  if (ctx.cancelled && ctx.cancelled->load())
+    return OpResult::Cancelled;
+  if (pending_writes_.full())
+    return OpResult::NotReady;
+  const size_t write     = pending_writes_.empty() ? write_idx_.load(std::memory_order_relaxed)
+                                                   : pending_writes_.back().next_write;
+  const size_t avg       = pending_writes_.empty() ? avg_idx_.load(std::memory_order_relaxed)
+                                                   : pending_writes_.back().next_avg;
+  const size_t discarded = pending_writes_.empty() ? discarded_ : pending_writes_.back().discarded;
+  const size_t read      = read_idx_.load(std::memory_order_acquire);
+  if (nb_slots_ - (write + nb_slots_ - read) % nb_slots_ <= 1)
+    return OpResult::NotReady;
+  const bool skip                             = discarded < settings_.discard_first;
+  storage_access().owned_input_storage(0).ptr = d_buffer_.get() + write * element_size_;
+  ticket = pending_writes_.push({write, avg, skip ? write : (write + 1) % nb_slots_,
+                                 skip ? avg : (avg + 1) % nb_slots_,
+                                 discarded + static_cast<size_t>(skip), skip});
+  return OpResult::Ok;
+}
+
+void SlidingAverage::enqueue_push(holoflow::core::AsyncTicket ticket) {
+  auto &pending = pending_writes_.get(ticket);
+  if (pending.submitted)
+    throw std::logic_error("SlidingAverage reservation already submitted");
+  if (!pending.skip) {
+    const auto ny = static_cast<unsigned int>(idesc_.shape.at(1));
+    const auto nx = static_cast<unsigned int>(idesc_.shape.at(2));
+    const dim3 block(16, 16);
+    const dim3 grid((nx + block.x - 1) / block.x, (ny + block.y - 1) / block.y);
+    f32_update_avg_kernel<<<grid, block, 0, producer_stream_>>>(
+        reinterpret_cast<float *>(d_buffer_.get() + pending.write * element_size_),
+        reinterpret_cast<float *>(d_buffer_.get() + pending.avg * element_size_),
+        d_running_avg_.get(), static_cast<int>(nx), static_cast<int>(ny),
+        static_cast<int>(settings_.window_size));
+    CUDA_CHECK(cudaGetLastError());
+  }
+  pending.submitted = true;
+}
+
+void SlidingAverage::commit_push(holoflow::core::AsyncTicket ticket) {
+  if (!pending_writes_.get(ticket).submitted)
+    throw std::logic_error("SlidingAverage reservation not submitted");
+  const auto pending = pending_writes_.pop(ticket);
+  discarded_         = pending.discarded;
+  avg_idx_.store(pending.next_avg, std::memory_order_release);
+  write_idx_.store(pending.next_write, std::memory_order_release);
+}
+
+void SlidingAverage::cancel_push(holoflow::core::AsyncTicket ticket) {
+  if (pending_writes_.get(ticket).submitted)
+    throw std::logic_error("Cannot cancel submitted SlidingAverage reservation");
+  pending_writes_.cancel(ticket);
+}
+
+holoflow::core::OpResult SlidingAverage::reserve_pop(holoflow::core::AsyncPopCtx &ctx,
+                                                     holoflow::core::AsyncTicket &ticket) {
+  using holoflow::core::OpResult;
+  if (ctx.cancelled && ctx.cancelled->load())
+    return OpResult::Cancelled;
+  if (pending_reads_.full())
+    return OpResult::NotReady;
+  const size_t read =
+      pending_reads_.empty() ? read_idx_.load(std::memory_order_relaxed) : pending_reads_.back();
+  const size_t write = write_idx_.load(std::memory_order_acquire);
+  if ((write + nb_slots_ - read) % nb_slots_ <= settings_.window_size)
+    return OpResult::NotReady;
+  auto &storage  = storage_access().owned_output_storage(0);
+  storage.ptr    = d_buffer_.get() + read * element_size_;
+  ctx.outputs[0] = {odesc_, &storage};
+  ticket         = pending_reads_.push((read + 1) % nb_slots_);
+  return OpResult::Ok;
+}
+
+void SlidingAverage::release_pop(holoflow::core::AsyncTicket ticket) {
+  read_idx_.store(pending_reads_.pop(ticket), std::memory_order_release);
+}
 
 size_t SlidingAverage::writer_size() const {
   size_t write_idx = write_idx_.load(std::memory_order_relaxed);
@@ -345,6 +445,8 @@ SlidingAverageFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
               : std::vector<std::optional<size_t>>{settings.target_capacity + settings.window_size,
                                                    std::nullopt},
       .owned_output_pointer_counts = {settings.target_capacity + settings.window_size},
+      .supports_prequeued_push     = input_descs.size() == 1,
+      .supports_prequeued_pop      = true,
   };
 }
 

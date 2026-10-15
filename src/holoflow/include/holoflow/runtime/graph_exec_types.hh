@@ -112,6 +112,9 @@ struct SectionCudaGraphs {
   /// Runtime counters for graph launches, ordinary iterations, unknown individual addresses,
   /// and unprepared combinations of otherwise known addresses, respectively. Reset on compilation.
   std::atomic<uint64_t> launches{0}, ordinary_iterations{0}, pointer_misses{0}, tuple_misses{0};
+  std::atomic<size_t>   prequeue_depth{1};
+  std::atomic<size_t>   prequeue_peak{0};
+  std::atomic<uint64_t> prequeue_submissions{0}, prequeue_retirements{0};
   /// Number of refreshes requesting instantiation in the current compilation (even if blocked).
   uint64_t refresh_count = 0;
   /// Compilation generation to which this section cache currently belongs.
@@ -168,6 +171,8 @@ struct Section {
   std::vector<GraphPlan::vertex_descriptor> async_cons; ///< Asynchronous consumer nodes.
   std::vector<GraphPlan::vertex_descriptor> async_prod; ///< Asynchronous producer nodes
   bool has_synchronizing_async_producer = false; ///< Producer supplies the section stream barrier.
+  bool supports_prequeue = false; ///< Boundary ownership supports two outstanding iterations.
+  std::string prequeue_fallback_reason;
 };
 
 } // namespace holoflow::runtime

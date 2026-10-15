@@ -45,8 +45,8 @@
 /// @section ownership Ownership
 /// - Acquire/release apply only to indices marked owned by factory inference.
 /// - Calling acquire/release on non-owned indices is undefined.
-/// - At most one acquired input group and one unreleased output group exist at
-///   a time under SPSC assumptions.
+/// - The legacy lifecycle allows one acquired input group and one unreleased output group.
+///   Opt-in async reservation operations allow up to two groups on each SPSC side.
 /// - @todo Define policy for discarding an acquired input on cancellation
 ///   before use (abort API vs implicit discard vs push-then-drop vs aggregation
 ///   commit).
@@ -261,6 +261,9 @@ public:
   virtual void record_cuda_graph(CudaGraphCtx &ctx);
 };
 
+/// Opaque reservation identifier, local to one task and one producer/consumer side.
+using AsyncTicket = uint64_t;
+
 /// @brief Interface for asynchronous (decoupled) tasks.
 ///
 /// Asynchronous tasks split their interaction into a producer-side push and a
@@ -289,6 +292,25 @@ public:
   /// Overwrites owned output slots in ctx.outputs.
   /// @returns control-flow result; errors via exceptions.
   [[nodiscard]] virtual OpResult try_pop(AsyncPopCtx &ctx) = 0;
+
+  /// Optional double-buffered ownership protocol, independent of the legacy methods above.
+  /// One producer thread and one consumer thread may each hold up to two tickets. Reservations
+  /// bind the compiler-provided Storage, but never publish writes or release reads. NotReady and
+  /// Cancelled leave no reservation. The caller snapshots bindings before reserving again.
+  /// Never mix legacy and reserved operations on the same side while tickets are outstanding.
+  [[nodiscard]] virtual OpResult reserve_push(AsyncPushCtx &, AsyncTicket &);
+  /// Append producer CUDA work after upstream work on producer_stream; never synchronize or
+  /// cancel after submission. Called exactly once for a successfully reserved ticket.
+  virtual void enqueue_push(AsyncTicket);
+  /// After GPU completion, publish the oldest submitted ticket. Must not change Storage bindings.
+  virtual void commit_push(AsyncTicket);
+  /// Cancel the newest, not-yet-submitted producer reservation.
+  virtual void                   cancel_push(AsyncTicket);
+  [[nodiscard]] virtual OpResult reserve_pop(AsyncPopCtx &, AsyncTicket &);
+  /// After GPU consumption, return the oldest output reservation without changing bindings.
+  virtual void release_pop(AsyncTicket);
+  /// Cancel the newest output reservation before submitting its downstream work.
+  virtual void cancel_pop(AsyncTicket);
 };
 
 /// Describes an in-place link between an input and output tensor.
@@ -319,6 +341,8 @@ struct InferResult {
   /// Optional per-port counts. An empty vector or nullopt entry means unknown.
   std::vector<std::optional<size_t>> owned_input_pointer_counts;
   std::vector<std::optional<size_t>> owned_output_pointer_counts;
+  bool supports_prequeued_push = false; ///< Implements the reserved producer protocol.
+  bool supports_prequeued_pop  = false; ///< Implements the reserved consumer protocol.
 };
 
 /// Controls how dependent executables are invalidated during a task update.

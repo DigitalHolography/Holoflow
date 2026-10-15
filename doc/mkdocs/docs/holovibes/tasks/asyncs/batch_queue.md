@@ -36,6 +36,10 @@ This task does not support inplace operation.
 ## Ownership
 The task owns both its input and output memory.
 
+Both queue sides support up to two reserved groups for CUDA-graph iteration pre-queuing.
+Reserved writes remain invisible to consumers until their completion event retires; reserved
+reads retain their memory until downstream GPU work completes. This uses the existing capacity.
+
 ---
 ## Settings
 --8<-- "docs/schemas/asyncs/batch_queue_settings.md"

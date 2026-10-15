@@ -27,6 +27,7 @@
 
 #include "curaii/cuda.hh"
 #include "logger.hh"
+#include "reservation_queue.hh"
 
 #ifndef CACHE_LINE_SIZE
 #define CACHE_LINE_SIZE 64
@@ -142,10 +143,10 @@ public:
     if (index > 1)
       throw std::out_of_range("DualReaderBatchQueue output port");
     holoflow::core::PointerSequence result;
-    if (index == 1 && sequence_ < delay_)
-      result.prefix.assign(delay_ - sequence_, slot_count_); // Startup scratch domain entry.
-    const size_t phase =
-        index == 0 ? current_read_idx_ : delayed_read_idx_.load(std::memory_order_relaxed);
+    const auto                      next = next_read();
+    if (index == 1 && next.sequence < delay_)
+      result.prefix.assign(delay_ - next.sequence, slot_count_); // Startup scratch domain entry.
+    const size_t phase = index == 0 ? next.current : next.delayed;
     for (size_t i = 0; i < slot_count_; ++i)
       result.cycle.push_back((phase + i) % slot_count_);
     return result;
@@ -191,6 +192,8 @@ public:
   }
 
   holoflow::core::OpResult try_pop(holoflow::core::AsyncPopCtx &ctx) override {
+    if (!pending_reads_.empty())
+      throw std::logic_error("DualReaderBatchQueue::try_pop: reserved outputs still held");
     if (reader_size(current_read_idx_) < 1) {
       return holoflow::core::OpResult::NotReady;
     }
@@ -216,7 +219,56 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
+  holoflow::core::OpResult reserve_pop(holoflow::core::AsyncPopCtx &ctx,
+                                       holoflow::core::AsyncTicket &ticket) override {
+    using holoflow::core::OpResult;
+    if (pop_active_)
+      throw std::logic_error("DualReaderBatchQueue::reserve_pop: legacy output still held");
+    if (ctx.cancelled && ctx.cancelled->load())
+      return OpResult::Cancelled;
+    if (pending_reads_.full())
+      return OpResult::NotReady;
+    const auto next = next_read();
+    if (reader_size(next.current) < 1)
+      return OpResult::NotReady;
+
+    auto      &current = storage_access().owned_output_storage(0);
+    auto      &delayed = storage_access().owned_output_storage(1);
+    const bool active  = next.sequence >= delay_;
+    current.ptr        = buffer_ + next.current * element_size_;
+    delayed.ptr        = active ? buffer_ + next.delayed * element_size_ : scratch_;
+    ctx.outputs[0]     = {output_desc_, &current};
+    ctx.outputs[1]     = {output_desc_, &delayed};
+    // The compiler excludes pre-queuing when this shared host scalar is connected. The two
+    // owned frame views are retained together; advancing only a private cursor cannot free data.
+    *reinterpret_cast<std::uint8_t *>(ctx.outputs[2].data()) =
+        next.sequence >= settings_.window_size - 1 ? std::uint8_t{1} : std::uint8_t{0};
+    ticket =
+        pending_reads_.push({increment(next.current),
+                             active ? increment(next.delayed) : next.delayed, next.sequence + 1});
+    return OpResult::Ok;
+  }
+
+  void release_pop(holoflow::core::AsyncTicket ticket) override {
+    const auto next   = pending_reads_.pop(ticket);
+    current_read_idx_ = next.current;
+    sequence_         = next.sequence;
+    delayed_read_idx_.store(next.delayed, std::memory_order_release);
+  }
+
+  void cancel_pop(holoflow::core::AsyncTicket ticket) override { pending_reads_.cancel(ticket); }
+
 private:
+  struct ReadPosition {
+    size_t current, delayed, sequence;
+  };
+  ReadPosition next_read() const {
+    return pending_reads_.empty()
+               ? ReadPosition{current_read_idx_, delayed_read_idx_.load(std::memory_order_relaxed),
+                              sequence_}
+               : pending_reads_.back();
+  }
+
   size_t increment(size_t index) const { return index + 1 == slot_count_ ? 0 : index + 1; }
 
   size_t distance(size_t begin, size_t end) const {
@@ -255,6 +307,7 @@ private:
   bool   delayed_active_   = false;
   bool   current_released_ = false;
   bool   delayed_released_ = false;
+  alignas(CACHE_LINE_SIZE) detail::ReservationQueue<ReadPosition> pending_reads_;
 };
 
 } // namespace
@@ -293,6 +346,7 @@ DualReaderBatchQueueFactory::infer(std::span<const holoflow::core::TDesc> input_
       .kind                        = holoflow::core::TaskKind::Async,
       .owned_input_pointer_counts  = {slots / input.shape[0]},
       .owned_output_pointer_counts = {slots, slots + (delay != 0 ? 1 : 0), std::nullopt},
+      .supports_prequeued_pop      = true,
   };
 }
 

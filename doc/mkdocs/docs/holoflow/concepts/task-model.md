@@ -109,6 +109,44 @@ The CUDA call is asynchronous with respect to the CPU, but `execute(...)` is sti
     A task enqueing CUDA work on a stream should generally not synchronise the stream after. It is the scheduler responsibility to do so. However it remains possible,
     as it may be required for thread safety.
 
+## CUDA iteration pre-queuing
+
+Eligible CUDA-graph sections keep up to two iterations in flight on their existing stream.
+The scheduler reserves boundary buffers, launches a graph and any async producer CUDA work,
+then records an iteration completion event. It can submit the next iteration before retiring
+the previous one. Completion publishes queued writes and releases consumed reads in FIFO order.
+If another iteration cannot reserve its buffers, the scheduler retires pending work before retrying.
+
+Factories opt in independently through `InferResult::supports_prequeued_push` and
+`supports_prequeued_pop`, both false by default. `IAsyncTask` provides the optional protocol:
+
+| Operation | Responsibility |
+| --- | --- |
+| `reserve_push(ctx, ticket)` | Nonblocking reservation of one input group; bind owned input storage. |
+| `enqueue_push(ticket)` | Submit producer work on the producer stream, without a host wait. |
+| `commit_push(ticket)` | Publish the oldest submitted group after its CUDA event completes. |
+| `cancel_push(ticket)` | Undo the newest unsubmitted input reservation. |
+| `reserve_pop(ctx, ticket)` | Nonblocking reservation of one committed output group. |
+| `release_pop(ticket)` | Return the oldest output group after GPU consumption completes. |
+| `cancel_pop(ticket)` | Undo the newest output reservation before downstream submission. |
+
+Each SPSC side supports two outstanding tickets. Failed reservations change no state. Commit
+and release must not modify the current shared storage bindings, which may describe a later
+iteration. Never mix this protocol with legacy operations on the same side while tickets remain.
+Pause retains submitted iterations; stop drains CUDA work before returning their reservations.
+
+BatchQueue supports both directions. DualReaderBatchQueue supports reserved consumption of its
+current and delayed frame views together; its producer retains ordinary scheduling.
+SlidingAverage supports reserved output consumption and,
+without its optional host validity input, reserved producer submission, including `discard_first`.
+Sections consuming a connected non-owned async output (including the dual-reader host validity
+scalar) retain ordinary scheduling because that shared storage is not reserved per iteration.
+Sections with other boundaries, synchronous owned-input acquisition, or unavailable CUDA graphs
+retain ordinary scheduling. Queue capacities are unchanged; a small queue may permit only one
+iteration at a time. Section graph diagnostics expose `prequeue_depth`, `prequeue_peak`, submission
+and retirement counts, and `prequeue_fallback_reason`. Startup dumps include the selected depth and
+fallback reason before execution begins; shutdown dumps additionally include runtime counters.
+
 ## Task factories
 
 Tasks do not expose a standard public constructor to Holoflow. Instead, the application registers a factory for each task kind. This separates three concerns:
