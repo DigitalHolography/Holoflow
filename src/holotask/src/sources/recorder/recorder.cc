@@ -79,12 +79,13 @@ Recorder::Recorder(const std::string &file_path, uint32_t frame_count, size_t bu
       queue_{queue}, session_{session} {
   if (buffer_part_count == 0)
     throw std::invalid_argument("Cannot record with zero buffer parts");
-  logger()->info("Create recorder with width: {}, height: {}, bits_per_pixel: {}, frame_count: {}",
+  logger()->info("[Recorder] Create recorder with width: {}, height: {}, bits_per_pixel: {}, frame_count: {}",
                  g.frame_width, g.frame_height, g.bits_per_pixel, frame_count);
   queue_.subscribe_b();
 }
 
 Recorder::~Recorder() {
+  logger()->info("[Recorder] finished record");
   queue_.unsubscribe_b();
   queue_.clear_b();
   writer_.flush();
@@ -124,13 +125,19 @@ size_t Recorder::execute(std::stop_token                     cancelled,
     auto elapsed = now - last_poll;
     if (elapsed > poll_interval) {
       size_t writing_speed =
-          written_last_interval / std::chrono::duration_cast<std::chrono::seconds>(elapsed).count();
+          written_last_interval * 1000 / std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count(); // speed in frames / s
       poll_metrics(current_frame_, writing_speed);
+      written_last_interval = 0;
+      last_poll = Clock::now();
+      logger()->info("[Recorder] recorded {} frames with a speed of {} frames/s", current_frame_, writing_speed);
     }
   }
 
+  logger()->debug("[Recorder] exited record loop");
+
   if (!cancelled.stop_requested())
     writer_.write_footer();
+
   return current_frame_;
 }
 

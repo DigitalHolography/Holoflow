@@ -81,7 +81,7 @@ protected:
 
       // Clip everything to the rounded progress bar shape.
       QPainterPath clipPath;
-      qreal        radius = contents.height() / 2.0;
+      qreal        radius = contents.height() / 4.0;
       clipPath.addRoundedRect(contents, radius, radius);
       painter.setClipPath(clipPath);
 

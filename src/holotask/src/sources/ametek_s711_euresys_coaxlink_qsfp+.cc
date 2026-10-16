@@ -763,7 +763,7 @@ public:
                     "Failed to emit recording_update event");
   }
 
-  void emit_acquisistion_update_event(holoflow::core::SyncCtx &ctx, size_t frames) {
+  void emit_acquisition_update_event(holoflow::core::SyncCtx &ctx, size_t frames) {
     auto event = holoflow_event::Event{
         .direction = holoflow_event::EventDirection::ToUi,
         .node_id   = "",
@@ -811,24 +811,25 @@ public:
     }
     recording_.store(true, std::memory_order_release);
     try {
-      record_thread_.emplace([this, session, event_writer = *ctx.event_writer,
+      record_thread_.emplace([this, session, &ctx,
                               record_settings](std::stop_token cancelled) mutable {
         std::stop_callback      on_stop(cancelled, [&] { session->request_stop(); });
-        holoflow::core::SyncCtx event_ctx{};
-        event_ctx.event_writer = &event_writer;
+        acquiring_for_record_.store(true, std::memory_order_release);
         Recorder::worker(
             record_settings,
             {static_cast<uint8_t>(runtime_cfg_.bytes_per_pixel * 8), runtime_cfg_.width,
              runtime_cfg_.final_height},
             runtime_cfg_.buffer_part_count, buffer_queue_, *session, recording_,
-            [this, &event_ctx](size_t recorded_frames, size_t writing_speed) {
-              emit_record_update_event(event_ctx, recorded_frames, writing_speed);
+            [this, &ctx](size_t recorded_frames, size_t writing_speed) {
+              emit_record_update_event(ctx, recorded_frames, writing_speed);
             },
-            [this, &event_ctx, &record_settings](size_t written) {
-              emit_finished_event(event_ctx, written, record_settings.file_path);
+            [this, &ctx, &record_settings](size_t written) {
+              emit_finished_event(ctx, written, record_settings.file_path);
+              logger()->info("[AmetekS711EuresysCoaxlinkQSFP::start_raw_record] recording finished");
             },
-            [this, &event_ctx, &record_settings](const std::string &message) {
-              emit_failed_event(event_ctx, message, record_settings.file_path);
+            [this, &ctx, &record_settings](const std::string &message) {
+              emit_failed_event(ctx, message, record_settings.file_path);
+              logger()->info("[AmetekS711EuresysCoaxlinkQSFP::start_raw_record] recording failed");
             });
       });
     } catch (...) {
@@ -853,6 +854,7 @@ public:
       recording_session_.reset();
     }
     recording_.store(false, std::memory_order_release);
+    acquiring_for_record_.store(false, std::memory_order_release);
   }
 
   void update_settings(const AmetekS711EuresysCoaxlinkQSFPSettings &settings) {
@@ -1192,13 +1194,15 @@ private:
             auto now     = Clock::now();
             auto elapsed = now - last_update_event;
             if (elapsed >= update_event_interval) {
-              emit_acquisistion_update_event(ctx, acquired);
+              emit_acquisition_update_event(ctx, acquired);
               last_update_event = now;
             }
 
-            if(acquired >= settings_.record_settings->recording_count) {
+            if(acquired >= settings_.record_settings->recording_count && acquiring_for_record_.load(std::memory_order_acquire)) {
               buffer_queue_.unsubscribe_b();
               logger()->info("[AmetekS711EuresysCoaxlinkQSFP::acquisition_loop] record acquisition is finished without any frame drop ({} frames acquired)", acquired);
+              acquiring_for_record_.store(false, std::memory_order_release);
+              acquired = 0;
             }
           }
         } else {
@@ -1342,6 +1346,7 @@ private:
 
   CameraBufferQueue                 buffer_queue_;
   std::atomic<bool>                 recording_ = false;
+  std::atomic<bool>                  acquiring_for_record_ = false;
   std::optional<std::jthread>       record_thread_;
   std::optional<std::jthread>       acquisition_thread_;
   std::mutex                        recording_mutex_;
