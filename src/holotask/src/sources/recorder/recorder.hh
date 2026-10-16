@@ -83,7 +83,8 @@ public:
                      std::atomic<bool>                       &recording,
                      std::function<void(size_t, size_t)>      poll_metrics_callback,
                      std::function<void(size_t)>              finished_callback,
-                     std::function<void(const std::string &)> failed_callback);
+                     std::function<void(const std::string &)> failed_callback,
+                     std::atomic<size_t> &frame_recorded_since_start);
 
 private:
   static std::string remove_incomplete_camera_recording(const std::string &path,

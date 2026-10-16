@@ -155,7 +155,8 @@ void Recorder::worker(const holotask::sources::RecordSettings &settings,
                       std::atomic<bool>                       &recording,
                       std::function<void(size_t, size_t)>      poll_metrics_callback,
                       std::function<void(size_t)>              finished_callback,
-                      std::function<void(const std::string &)> failed_callback) {
+                      std::function<void(const std::string &)> failed_callback,
+                      std::atomic<size_t> &frame_recorded_since_start) {
   logger()->info("[Recorder] started recorder thread");
   const auto  cancelled      = session.token();
   size_t      frames_written = 0;
@@ -168,6 +169,7 @@ void Recorder::worker(const holotask::sources::RecordSettings &settings,
                  g,
                  settings.pipeline_config,
                  session};
+    frame_recorded_since_start.store(0, std::memory_order_release);
     frames_written = rec.execute(cancelled, poll_metrics_callback);
   } catch (const std::exception &e) {
     failure = e.what();
