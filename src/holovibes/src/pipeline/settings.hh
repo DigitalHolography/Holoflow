@@ -131,7 +131,6 @@ struct Settings {
   bool        pp_spatial_contrast;
   int         pp_spatial_contrast_window_size;
   int         pp_spatial_contrast_dimensions = 2;
-  int         pp_spatial_contrast_temporal_frames = 3;
   int         pp_spatial_contrast_method = 0;
   int         pp_accumulation;
   bool        pp_convolution;

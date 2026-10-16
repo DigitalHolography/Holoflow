@@ -1262,8 +1262,7 @@ void MainWindow::save_persistent_state() {
                     render_widget_->get_spatial_contrast_window_size());
   settings.setValue("spatial_contrast_dimensions",
                     render_widget_->get_spatial_contrast_dimensions());
-  settings.setValue("spatial_contrast_temporal_frames",
-                    render_widget_->get_spatial_contrast_temporal_frames());
+  settings.remove("spatial_contrast_temporal_frames");
   settings.setValue("spatial_contrast_method", render_widget_->get_spatial_contrast_method());
   settings.setValue("spatial_contrast_display_max",
                     render_widget_->get_spatial_contrast_display_max());
@@ -1427,10 +1426,6 @@ void MainWindow::restore_persistent_state() {
   render_widget_->set_spatial_contrast_dimensions(
       settings.value("spatial_contrast_dimensions",
                      render_widget_->get_spatial_contrast_dimensions())
-          .toInt());
-  render_widget_->set_spatial_contrast_temporal_frames(
-      settings.value("spatial_contrast_temporal_frames",
-                     render_widget_->get_spatial_contrast_temporal_frames())
           .toInt());
   render_widget_->set_spatial_contrast_method(
       settings.value("spatial_contrast_method", render_widget_->get_spatial_contrast_method())
@@ -2328,9 +2323,8 @@ bool MainWindow::validate_inputs() {
     const int selected_end = std::min(settings.load_end, *context.source_frame_count);
     max_temporal_frames = std::max(selected_end - settings.load_begin, 3);
   }
-  render_widget_->set_spatial_contrast_temporal_frames_max(max_temporal_frames);
-  settings.pp_spatial_contrast_temporal_frames =
-      render_widget_->get_spatial_contrast_temporal_frames();
+  render_widget_->set_time_window_max_for_temporal_lscsi(max_temporal_frames);
+  settings.time_window = render_widget_->get_time_window();
 
   QSize display_dims(context.source_width.value_or(1), context.source_height.value_or(1));
   if (settings.view_type != pipeline::ViewType::RAW &&
@@ -2414,9 +2408,6 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::PpSpatialContrastDimensions:
         render_widget_->mark_spatial_contrast_dimensions_invalid();
         break;
-      case SettingsField::PpSpatialContrastTemporalFrames:
-        render_widget_->mark_spatial_contrast_temporal_frames_invalid();
-        break;
       case SettingsField::PpSpatialContrastMethod:
         render_widget_->mark_spatial_contrast_method_invalid();
         break;
@@ -2473,8 +2464,6 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
                    render_widget_->spatial_contrast_window_size()},
       FieldBinding{SettingsField::PpSpatialContrastDimensions,
                    render_widget_->spatial_contrast_dimensions()},
-      FieldBinding{SettingsField::PpSpatialContrastTemporalFrames,
-                   render_widget_->spatial_contrast_temporal_frames()},
       FieldBinding{SettingsField::PpSpatialContrastMethod,
                    render_widget_->spatial_contrast_method()},
       FieldBinding{SettingsField::PpConvolution, render_widget_->convolution_combo()},
@@ -2779,8 +2768,6 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_spatial_contrast = render_widget_->is_spatial_contrast_enabled();
     s.pp_spatial_contrast_window_size = render_widget_->get_spatial_contrast_window_size();
     s.pp_spatial_contrast_dimensions = render_widget_->get_spatial_contrast_dimensions();
-    s.pp_spatial_contrast_temporal_frames =
-        render_widget_->get_spatial_contrast_temporal_frames();
     s.pp_spatial_contrast_method = render_widget_->get_spatial_contrast_method() == "FFT" ? 1 : 0;
     s.pp_accumulation        = static_cast<size_t>(view_widget_->get_accumulation());
     s.pp_convolution         = render_widget_->get_convolution() != "None";
@@ -2997,7 +2984,6 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     render_widget_->set_spatial_contrast_enabled(s.pp_spatial_contrast);
     render_widget_->set_spatial_contrast_window_size(s.pp_spatial_contrast_window_size);
     render_widget_->set_spatial_contrast_dimensions(s.pp_spatial_contrast_dimensions);
-    render_widget_->set_spatial_contrast_temporal_frames(s.pp_spatial_contrast_temporal_frames);
     render_widget_->set_spatial_contrast_method(s.pp_spatial_contrast_method == 1 ? "FFT"
                                                                                  : "Kernel");
     view_widget_->set_accumulation(static_cast<int>(s.pp_accumulation));

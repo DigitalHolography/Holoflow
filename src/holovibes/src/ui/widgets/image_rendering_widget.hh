@@ -20,6 +20,7 @@
 #include <QGroupBox>
 #include <QSlider>
 #include <QSpinBox>
+#include <limits>
 
 #include "ui/widgets/auto_focus_widget.hh"
 
@@ -51,7 +52,6 @@ public:
   bool    is_spatial_contrast_enabled() const;
   int     get_spatial_contrast_window_size() const;
   int     get_spatial_contrast_dimensions() const;
-  int     get_spatial_contrast_temporal_frames() const;
   QString get_spatial_contrast_method() const;
   double  get_spatial_contrast_display_max() const;
 
@@ -74,8 +74,7 @@ public:
   void set_spatial_contrast_enabled(bool enabled);
   void set_spatial_contrast_window_size(int value);
   void set_spatial_contrast_dimensions(int value);
-  void set_spatial_contrast_temporal_frames(int value);
-  void set_spatial_contrast_temporal_frames_max(int value);
+  void set_time_window_max_for_temporal_lscsi(int value);
   void set_spatial_contrast_method(const QString &method);
   void set_spatial_contrast_display_max(double value);
 
@@ -93,7 +92,6 @@ public:
   void mark_convolution_invalid();
   void mark_spatial_contrast_window_invalid();
   void mark_spatial_contrast_dimensions_invalid();
-  void mark_spatial_contrast_temporal_frames_invalid();
   void mark_spatial_contrast_method_invalid();
 
   // Access to widgets for connection setup
@@ -117,7 +115,6 @@ public:
   QCheckBox       *spatial_contrast_check();
   QSpinBox        *spatial_contrast_window_size();
   QComboBox       *spatial_contrast_dimensions();
-  QSpinBox        *spatial_contrast_temporal_frames();
   QComboBox       *spatial_contrast_method();
   QDoubleSpinBox  *spatial_contrast_display_max();
   AutoFocusWidget *autofocus_widget();
@@ -132,6 +129,7 @@ private:
   QStringList load_available_kernels();
   void        set_angular_spectrum_enabled(bool enabled);
   void        update_asp_padding_visibility();
+  void        update_time_window_limits();
 
   QComboBox       *image_combo_;
   QSpinBox        *batch_size_spin_;
@@ -154,10 +152,10 @@ private:
   QCheckBox       *spatial_contrast_check_;
   QSpinBox        *spatial_contrast_window_size_;
   QComboBox       *spatial_contrast_dimensions_;
-  QSpinBox        *spatial_contrast_temporal_frames_;
   QComboBox       *spatial_contrast_method_;
   QDoubleSpinBox  *spatial_contrast_display_max_;
   AutoFocusWidget *autofocus_widget_;
+  int              max_temporal_lscsi_frames_ = std::numeric_limits<int>::max();
 };
 
 } // namespace holovibes::ui

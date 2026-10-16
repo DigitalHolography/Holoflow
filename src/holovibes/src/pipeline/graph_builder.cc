@@ -178,8 +178,7 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
     auto frames = build_spatial_contrast_input(H);
     if (s_.pp_spatial_contrast_dimensions != 2) {
       frames = temporal_window(frames,
-                               {.window_size = static_cast<size_t>(
-                                   s_.pp_spatial_contrast_temporal_frames)});
+                               {.window_size = static_cast<size_t>(s_.time_window)});
     }
     build_spatial_contrast_view(frames);
     return g_;
@@ -731,8 +730,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_contrast_input(TDesc
 
 void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
   const size_t temporal_window_size = s_.pp_spatial_contrast_dimensions != 2
-                                          ? static_cast<size_t>(
-                                                s_.pp_spatial_contrast_temporal_frames)
+                                          ? static_cast<size_t>(s_.time_window)
                                           : size_t{1};
   if (frames.rank() != 3 || frames.shape.at(0) != temporal_window_size) {
     throw std::logic_error{"Spatial LSCI input has an unexpected temporal window shape"};

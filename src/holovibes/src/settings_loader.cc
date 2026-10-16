@@ -155,11 +155,12 @@ void write_view(json &j, const Settings &s) {
   view["fft_shift"]                    = s.pp_fft_shift;
   view["flatfield"]["enabled"]         = s.pp_flatfield;
   view["flatfield"]["cutoff_period_m"] = s.pp_flatfield_cutoff_period_m;
-  view["spatial_contrast"]["enabled"]     = s.pp_spatial_contrast;
-  view["spatial_contrast"]["window_size"] = s.pp_spatial_contrast_window_size;
-  view["spatial_contrast"]["dimensions"] = s.pp_spatial_contrast_dimensions;
-  view["spatial_contrast"]["temporal_frames"] = s.pp_spatial_contrast_temporal_frames;
-  view["spatial_contrast"]["method"] = s.pp_spatial_contrast_method == 1 ? "fft" : "kernel";
+  auto &spatial_contrast                  = view["spatial_contrast"];
+  spatial_contrast["enabled"]             = s.pp_spatial_contrast;
+  spatial_contrast["window_size"]         = s.pp_spatial_contrast_window_size;
+  spatial_contrast["dimensions"]          = s.pp_spatial_contrast_dimensions;
+  spatial_contrast["method"] = s.pp_spatial_contrast_method == 1 ? "fft" : "kernel";
+  spatial_contrast.erase("temporal_frames");
 
   view["registration"]["registration_enabled"] = s.pp_registration;
   view["registration"]["registration_zone"]    = s.pp_registration_radius;
@@ -278,8 +279,6 @@ void read_view(Settings &s, const json &view) {
       val(spatial_contrast, "window_size", s.pp_spatial_contrast_window_size);
   s.pp_spatial_contrast_dimensions =
       val(spatial_contrast, "dimensions", s.pp_spatial_contrast_dimensions);
-  s.pp_spatial_contrast_temporal_frames =
-      val(spatial_contrast, "temporal_frames", s.pp_spatial_contrast_temporal_frames);
   const auto method = val(spatial_contrast, "method", std::string{"kernel"});
   s.pp_spatial_contrast_method = method == "fft" ? 1 : method == "kernel" ? 0 : -1;
 

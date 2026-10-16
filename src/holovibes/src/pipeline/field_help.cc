@@ -104,9 +104,6 @@ constexpr auto kSpatialContrastWindowConstraints = std::to_array<const char *>({
 constexpr auto kSpatialContrastDimensionsConstraints = std::to_array<const char *>({
     "Choose 1D for temporal-only contrast, 2D for spatial-only contrast, or 3D for both.",
 });
-constexpr auto kSpatialContrastFramesConstraints = std::to_array<const char *>({
-    "Choose at least 3 frames for 1D or 3D; for a holofile, the maximum is the selected frame range.",
-});
 constexpr auto kSpatialContrastMethodConstraints = std::to_array<const char *>({
     "Kernel evaluates the sliding window directly; FFT performs linear convolution with a box kernel.",
 });
@@ -166,7 +163,8 @@ const FieldHelp kFieldHelp[] = {
     {SettingsField::TimeMethod, "Time Transform",
      "Temporal transform used to convert frame windows into the analysis domain.",
      kTimeMethodConstraints},
-    {SettingsField::TimeWindow, "Time Window", "Number of frames in each temporal analysis window.",
+    {SettingsField::TimeWindow, "Time Window",
+     "Number of frames in each temporal-analysis window or temporal LSCI window.",
      kTimeWindowConstraints},
     {SettingsField::TimeStride, "Time Stride",
      "Number of frames between successive temporal analysis windows.", kTimeStrideConstraints},
@@ -191,9 +189,6 @@ const FieldHelp kFieldHelp[] = {
      "2D calculates contrast within each frame; 3D combines a sliding temporal window with "
      "a spatial neighborhood.",
      kSpatialContrastDimensionsConstraints},
-    {SettingsField::PpSpatialContrastTemporalFrames, "Spatial LSCI Temporal Frames",
-     "Number of frames in each sliding 1D or 3D temporal neighborhood.",
-     kSpatialContrastFramesConstraints},
     {SettingsField::PpSpatialContrastMethod, "Spatial LSCI Method",
      "Calculation method used for the local sliding-window statistics.",
      kSpatialContrastMethodConstraints},

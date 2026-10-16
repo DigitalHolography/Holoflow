@@ -50,7 +50,6 @@ enum class SettingsField {
   PpFlatfieldCutoffPeriod,
   PpSpatialContrastWindowSize,
   PpSpatialContrastDimensions,
-  PpSpatialContrastTemporalFrames,
   PpSpatialContrastMethod,
   PpConvolution,
   PpRegistration,

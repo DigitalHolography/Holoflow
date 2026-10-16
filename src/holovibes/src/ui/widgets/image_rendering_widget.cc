@@ -25,6 +25,7 @@
 #include <QSignalBlocker>
 #include <QStandardItemModel>
 #include <QStandardPaths>
+#include <algorithm>
 #include <limits>
 
 namespace holovibes::ui {
@@ -87,9 +88,6 @@ int ImageRenderingWidget::get_spatial_contrast_window_size() const {
 int ImageRenderingWidget::get_spatial_contrast_dimensions() const {
   return spatial_contrast_dimensions_->currentData().toInt();
 }
-int ImageRenderingWidget::get_spatial_contrast_temporal_frames() const {
-  return spatial_contrast_temporal_frames_->value();
-}
 QString ImageRenderingWidget::get_spatial_contrast_method() const {
   return spatial_contrast_method_->currentText();
 }
@@ -132,10 +130,9 @@ void ImageRenderingWidget::set_spatial_contrast_enabled(bool enabled) {
   spatial_contrast_check_->setChecked(enabled);
   spatial_contrast_window_size_->setEnabled(enabled && get_spatial_contrast_dimensions() != 1);
   spatial_contrast_dimensions_->setEnabled(enabled);
-  spatial_contrast_temporal_frames_->setEnabled(
-      enabled && get_spatial_contrast_dimensions() != 2);
   spatial_contrast_method_->setEnabled(enabled && get_spatial_contrast_dimensions() != 1);
   spatial_contrast_display_max_->setEnabled(enabled);
+  update_time_window_limits();
 }
 void ImageRenderingWidget::set_spatial_contrast_window_size(int value) {
   spatial_contrast_window_size_->setValue(value);
@@ -146,15 +143,19 @@ void ImageRenderingWidget::set_spatial_contrast_dimensions(int value) {
     spatial_contrast_dimensions_->setCurrentIndex(index);
   const bool enabled = spatial_contrast_check_->isChecked();
   spatial_contrast_window_size_->setEnabled(enabled && value != 1);
-  spatial_contrast_temporal_frames_->setEnabled(enabled && value != 2);
   spatial_contrast_method_->setEnabled(enabled && value != 1);
+  update_time_window_limits();
 }
-void ImageRenderingWidget::set_spatial_contrast_temporal_frames(int value) {
-  spatial_contrast_temporal_frames_->setValue(value);
+void ImageRenderingWidget::set_time_window_max_for_temporal_lscsi(int value) {
+  max_temporal_lscsi_frames_ = std::max(value, 3);
+  update_time_window_limits();
 }
-void ImageRenderingWidget::set_spatial_contrast_temporal_frames_max(int value) {
-  const QSignalBlocker blocker(spatial_contrast_temporal_frames_);
-  spatial_contrast_temporal_frames_->setMaximum(value < 3 ? 3 : value);
+void ImageRenderingWidget::update_time_window_limits() {
+  const bool temporal_lscsi = spatial_contrast_check_->isChecked() &&
+                              get_spatial_contrast_dimensions() != 2;
+  const QSignalBlocker blocker(time_window_spin_);
+  time_window_spin_->setRange(temporal_lscsi ? 3 : 1,
+                              temporal_lscsi ? max_temporal_lscsi_frames_ : kLargeSpinMax);
 }
 void ImageRenderingWidget::set_spatial_contrast_method(const QString &method) {
   spatial_contrast_method_->setCurrentText(method);
@@ -191,9 +192,6 @@ void ImageRenderingWidget::mark_spatial_contrast_window_invalid() {
 void ImageRenderingWidget::mark_spatial_contrast_dimensions_invalid() {
   mark_validation_error(spatial_contrast_dimensions_);
 }
-void ImageRenderingWidget::mark_spatial_contrast_temporal_frames_invalid() {
-  mark_validation_error(spatial_contrast_temporal_frames_);
-}
 void ImageRenderingWidget::mark_spatial_contrast_method_invalid() {
   mark_validation_error(spatial_contrast_method_);
 }
@@ -221,9 +219,6 @@ QSpinBox *ImageRenderingWidget::spatial_contrast_window_size() {
 }
 QComboBox *ImageRenderingWidget::spatial_contrast_dimensions() {
   return spatial_contrast_dimensions_;
-}
-QSpinBox *ImageRenderingWidget::spatial_contrast_temporal_frames() {
-  return spatial_contrast_temporal_frames_;
 }
 QComboBox *ImageRenderingWidget::spatial_contrast_method() { return spatial_contrast_method_; }
 QDoubleSpinBox *ImageRenderingWidget::spatial_contrast_display_max() {
@@ -290,16 +285,6 @@ void ImageRenderingWidget::setup_ui() {
   layout->addWidget(spatial_contrast_dimensions_, row, 1);
   ++row;
 
-  layout->addWidget(new QLabel("Frames:", this), row, 0);
-  spatial_contrast_temporal_frames_ = create_spin_box(this, 3, kLargeSpinMax, 3);
-  spatial_contrast_temporal_frames_->setToolTip(
-      tr("Number of consecutive frames in the sliding 1D or 3D LSCI window. For a file, this is "
-         "limited to the selected input range. A live camera has no fixed frame count, so its "
-         "practical limit is GPU memory. Larger windows reduce frame rate."));
-  spatial_contrast_temporal_frames_->setEnabled(false);
-  layout->addWidget(spatial_contrast_temporal_frames_, row, 1);
-  ++row;
-
   add_combo_row("LSCI method:", spatial_contrast_method_, QStringList{"Kernel", "FFT"});
   spatial_contrast_method_->setEnabled(false);
   layout->addWidget(new QLabel("Display max K:", this), row, 0);
@@ -350,6 +335,9 @@ void ImageRenderingWidget::setup_ui() {
   auto time_transforms = QStringList{"None", "RFFT", "FFT", "Principal Component Analysis"};
   add_combo_row("Time Transform:", time_transform_combo_, time_transforms);
   add_spin_row("Time Window:", time_window_spin_, 1, kLargeSpinMax, 32);
+  time_window_spin_->setToolTip(
+      tr("Number of consecutive frames in each temporal-transform window. For 1D or 3D LSCI, "
+         "this same value sets the temporal window; 2D LSCI ignores it."));
   add_spin_row("Lambda (nm):", lambda_spin_, 1, kLargeSpinMax, 852);
   add_spin_row("Focus (mm):", focus_spin_, 1, kLargeSpinMax, 380);
 
@@ -432,10 +420,9 @@ void ImageRenderingWidget::connect_signals() {
   connect(spatial_contrast_check_, &QCheckBox::toggled, this, [this](bool enabled) {
     spatial_contrast_window_size_->setEnabled(enabled && get_spatial_contrast_dimensions() != 1);
     spatial_contrast_dimensions_->setEnabled(enabled);
-    spatial_contrast_temporal_frames_->setEnabled(
-        enabled && get_spatial_contrast_dimensions() != 2);
     spatial_contrast_method_->setEnabled(enabled && get_spatial_contrast_dimensions() != 1);
     spatial_contrast_display_max_->setEnabled(enabled);
+    update_time_window_limits();
     emit settings_changed();
     const float display_max = enabled ? static_cast<float>(spatial_contrast_display_max_->value())
                                       : 1.0f;
@@ -448,8 +435,6 @@ void ImageRenderingWidget::connect_signals() {
             set_spatial_contrast_dimensions(get_spatial_contrast_dimensions());
             emit settings_changed();
           });
-  connect(spatial_contrast_temporal_frames_, qOverload<int>(&QSpinBox::valueChanged), this,
-          &ImageRenderingWidget::settings_changed);
   connect(spatial_contrast_method_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(spatial_contrast_display_max_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
@@ -521,7 +506,6 @@ void ImageRenderingWidget::clear_validation_styles() {
   clear_validation_error(convolution_combo_);
   clear_validation_error(spatial_contrast_window_size_);
   clear_validation_error(spatial_contrast_dimensions_);
-  clear_validation_error(spatial_contrast_temporal_frames_);
   clear_validation_error(spatial_contrast_method_);
 }
 

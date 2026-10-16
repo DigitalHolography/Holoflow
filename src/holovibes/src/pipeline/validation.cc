@@ -335,23 +335,23 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     }
 
     if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions != 2 &&
-        settings.pp_spatial_contrast_temporal_frames < 3) {
-      add_issue(result, ValidationSeverity::Error, "pp_spatial_contrast_temporal_frames_invalid",
+        settings.time_window < 3) {
+      add_issue(result, ValidationSeverity::Error, "spatial_contrast_time_window_invalid",
                 "Temporal spatial contrast must use at least 3 frames.",
-                {SettingsField::PpSpatialContrastTemporalFrames});
+                {SettingsField::TimeWindow});
     }
 
     if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions != 2 &&
         context.source_frame_count.has_value() && settings.import_source == ImportSource::HOLOFILE) {
       const int selected_end = std::min(settings.load_end, *context.source_frame_count);
       const int selected_frames = std::max(selected_end - settings.load_begin, 0);
-      if (selected_frames < settings.pp_spatial_contrast_temporal_frames) {
+      if (selected_frames < settings.time_window) {
         add_issue(result, ValidationSeverity::Error,
-                  "pp_spatial_contrast_temporal_frames_insufficient",
+                  "spatial_contrast_time_window_insufficient",
                   std::format("The selected holofile range contains {} frames; temporal LSCI "
                               "needs at least {}.",
-                              selected_frames, settings.pp_spatial_contrast_temporal_frames),
-                  {SettingsField::PpSpatialContrastTemporalFrames});
+                              selected_frames, settings.time_window),
+                  {SettingsField::TimeWindow});
       }
     }
 
