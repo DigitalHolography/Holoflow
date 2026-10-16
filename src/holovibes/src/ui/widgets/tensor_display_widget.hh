@@ -53,6 +53,8 @@ public:
 
   /// Set the display range for mapping float data (or adjusting contrast on integers)
   void set_value_range(float vmin, float vmax);
+  /// Invert the normalized grayscale or colormap lookup value without changing tensor data.
+  void set_display_inverted(bool inverted);
 
 public slots:
   void presentTensor(const QByteArray &bytes, int width, int height, holoflow::core::DType dtype);
@@ -95,6 +97,7 @@ private:
   GLint  use_cmap_loc_ = -1;
   GLint  vmin_loc_     = -1;
   GLint  vmax_loc_     = -1;
+  GLint  invert_display_loc_ = -1;
 
   int  img_w_ = 0, img_h_ = 0;
   bool texture_storage_allocated_ = false;
@@ -105,6 +108,7 @@ private:
   Colormap cmap_ = Colormap::Grayscale;
   float    vmin_ = 0.0f;
   float    vmax_ = 1.0f;
+  bool     display_inverted_ = false;
 
   // Track current dtype to reallocate texture format if it changes
   holoflow::core::DType current_dtype_ = holoflow::core::DType::U8;

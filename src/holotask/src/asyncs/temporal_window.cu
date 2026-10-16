@@ -18,6 +18,7 @@
 #include <atomic>
 #include <cstddef>
 #include <limits>
+#include <mutex>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -35,11 +36,12 @@ namespace holotask::asyncs {
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 void to_json(nlohmann::json &j, const TemporalWindowSettings &s) {
-  j = nlohmann::json{{"window_size", s.window_size}};
+  j = nlohmann::json{{"window_size", s.window_size}, {"stride_size", s.stride_size}};
 }
 
 void from_json(const nlohmann::json &j, TemporalWindowSettings &s) {
   s.window_size = j.value("window_size", size_t{3});
+  s.stride_size = j.value("stride_size", size_t{1});
 }
 
 namespace {
@@ -63,11 +65,16 @@ public:
   void release_output(int index) override {
     if (index != 0)
       throw std::out_of_range("TemporalWindow::release_output: invalid index");
+
+    std::scoped_lock state_lock(state_mutex_);
     if (!pop_active_)
       throw std::logic_error("TemporalWindow::release_output: no active output");
 
     storage_access().owned_output_storage(0).ptr = nullptr;
-    read_count_.fetch_add(1, std::memory_order_release);
+    const size_t buffered_frames = writer_size();
+    const size_t advance_frames = std::min(settings_.stride_size, buffered_frames);
+    read_count_.fetch_add(advance_frames, std::memory_order_release);
+    pending_skip_ += settings_.stride_size - advance_frames;
     pop_active_ = false;
   }
 
@@ -85,6 +92,12 @@ public:
   }
 
   holoflow::core::OpResult try_push(holoflow::core::AsyncPushCtx &ctx) override {
+    std::scoped_lock state_lock(state_mutex_);
+    if (pending_skip_ > 0) {
+      --pending_skip_;
+      return holoflow::core::OpResult::Ok;
+    }
+
     if (writer_size() >= capacity_)
       return holoflow::core::OpResult::NotReady;
 
@@ -131,8 +144,10 @@ public:
   }
 
   void reset() {
+    std::scoped_lock state_lock(state_mutex_);
     write_count_.store(0, std::memory_order_relaxed);
     read_count_.store(0, std::memory_order_relaxed);
+    pending_skip_ = 0;
     pop_active_ = false;
     storage_access().owned_output_storage(0).ptr = nullptr;
   }
@@ -156,6 +171,8 @@ private:
   size_t                  frame_bytes_;
   DevPtr<std::byte>       frame_buffer_;
   DevPtr<std::byte>       window_buffer_;
+  std::mutex              state_mutex_;
+  size_t                  pending_skip_ = 0;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_count_{0};
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_count_{0};
   bool pop_active_ = false;
@@ -171,6 +188,8 @@ TemporalWindowFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
     throw std::invalid_argument("TemporalWindow expects exactly one input");
   if (settings.window_size < 3)
     throw std::invalid_argument("TemporalWindow window_size must be at least 3");
+  if (settings.stride_size == 0)
+    throw std::invalid_argument("TemporalWindow stride_size must be positive");
 
   const auto &input = input_descs[0];
   if (input.rank() != 3 || input.shape[0] != 1)

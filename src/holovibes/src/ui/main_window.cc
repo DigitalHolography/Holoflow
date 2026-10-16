@@ -1266,6 +1266,8 @@ void MainWindow::save_persistent_state() {
   settings.setValue("spatial_contrast_method", render_widget_->get_spatial_contrast_method());
   settings.setValue("spatial_contrast_display_max",
                     render_widget_->get_spatial_contrast_display_max());
+  settings.setValue("spatial_contrast_invert_display",
+                    render_widget_->is_spatial_contrast_display_inverted());
   settings.setValue("range_start", view_widget_->get_range_start());
   settings.setValue("range_end", view_widget_->get_range_end());
   settings.setValue("registration", view_widget_->is_registration_enabled());
@@ -1434,6 +1436,8 @@ void MainWindow::restore_persistent_state() {
       settings.value("spatial_contrast_display_max",
                      render_widget_->get_spatial_contrast_display_max())
           .toDouble());
+  render_widget_->set_spatial_contrast_display_inverted(
+      settings.value("spatial_contrast_invert_display", false).toBool());
   view_widget_->range_start_spin()->setValue(
       settings.value("range_start", view_widget_->get_range_start()).toInt());
   view_widget_->range_end_spin()->setValue(
@@ -1641,10 +1645,16 @@ void MainWindow::initialize_display_widgets() {
           [this](float minimum, float maximum) {
             xy_processed_widget_->set_value_range(minimum, maximum);
           });
+  connect(render_widget_, &ImageRenderingWidget::spatial_contrast_display_inversion_changed, this,
+          [this](bool inverted) { xy_processed_widget_->set_display_inverted(inverted); });
   xy_processed_widget_->set_value_range(
       0.0f, render_widget_->is_spatial_contrast_enabled()
                 ? static_cast<float>(render_widget_->get_spatial_contrast_display_max())
                 : 1.0f);
+  xy_processed_widget_->set_display_inverted(
+      render_widget_->is_spatial_contrast_enabled() &&
+      render_widget_->get_image_mode() == "Processed" &&
+      render_widget_->is_spatial_contrast_display_inverted());
 }
 
 void MainWindow::initialize_pipeline_manager() {

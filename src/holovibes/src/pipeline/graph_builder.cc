@@ -178,7 +178,8 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
     auto frames = build_spatial_contrast_input(H);
     if (s_.pp_spatial_contrast_dimensions != 2) {
       frames = temporal_window(frames,
-                               {.window_size = static_cast<size_t>(s_.time_window)});
+                               {.window_size = static_cast<size_t>(s_.time_window),
+                                .stride_size = static_cast<size_t>(s_.time_stride)});
     }
     build_spatial_contrast_view(frames);
     return g_;

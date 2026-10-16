@@ -9,11 +9,17 @@
       "type": "integer",
       "minimum": 3,
       "description": "Number of consecutive frames in each output window."
+    },
+    "stride_size": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "Number of frames to advance between output windows."
     }
   },
   "required": ["window_size"],
   "examples": [
-    { "window_size": 3 },
-    { "window_size": 5 }
+    { "window_size": 3, "stride_size": 1 },
+    { "window_size": 5, "stride_size": 5 }
   ]
 }

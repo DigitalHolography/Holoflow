@@ -94,6 +94,9 @@ QString ImageRenderingWidget::get_spatial_contrast_method() const {
 double ImageRenderingWidget::get_spatial_contrast_display_max() const {
   return spatial_contrast_display_max_->value();
 }
+bool ImageRenderingWidget::is_spatial_contrast_display_inverted() const {
+  return spatial_contrast_invert_display_->isChecked();
+}
 
 void ImageRenderingWidget::set_batch_size(int value) { batch_size_spin_->setValue(value); }
 void ImageRenderingWidget::set_time_stride(int value) { time_stride_spin_->setValue(value); }
@@ -132,6 +135,7 @@ void ImageRenderingWidget::set_spatial_contrast_enabled(bool enabled) {
   spatial_contrast_dimensions_->setEnabled(enabled);
   spatial_contrast_method_->setEnabled(enabled && get_spatial_contrast_dimensions() != 1);
   spatial_contrast_display_max_->setEnabled(enabled);
+  spatial_contrast_invert_display_->setEnabled(enabled);
   update_time_window_limits();
 }
 void ImageRenderingWidget::set_spatial_contrast_window_size(int value) {
@@ -162,6 +166,9 @@ void ImageRenderingWidget::set_spatial_contrast_method(const QString &method) {
 }
 void ImageRenderingWidget::set_spatial_contrast_display_max(double value) {
   spatial_contrast_display_max_->setValue(value);
+}
+void ImageRenderingWidget::set_spatial_contrast_display_inverted(bool inverted) {
+  spatial_contrast_invert_display_->setChecked(inverted);
 }
 
 void ImageRenderingWidget::mark_batch_size_invalid() { mark_validation_error(batch_size_spin_); }
@@ -300,6 +307,14 @@ void ImageRenderingWidget::setup_ui() {
   layout->addWidget(spatial_contrast_display_max_, row, 1);
   ++row;
 
+  spatial_contrast_invert_display_ = new QCheckBox("Invert LSCI display", this);
+  spatial_contrast_invert_display_->setToolTip(
+      tr("Reverse black and white in the processed LSCI preview without changing the input or "
+         "calculated contrast values."));
+  spatial_contrast_invert_display_->setEnabled(false);
+  layout->addWidget(spatial_contrast_invert_display_, row, 0, 1, 2);
+  ++row;
+
   filter_2d_check_ = new QCheckBox("Filter 2D", this);
   layout->addWidget(filter_2d_check_, row, 0);
 
@@ -384,8 +399,12 @@ void ImageRenderingWidget::connect_signals() {
   });
 
   // Emit settings_changed for all control changes
-  connect(image_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          &ImageRenderingWidget::settings_changed);
+  connect(image_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+    emit settings_changed();
+    emit spatial_contrast_display_inversion_changed(
+        spatial_contrast_check_->isChecked() && get_image_mode() == "Processed" &&
+        is_spatial_contrast_display_inverted());
+  });
   connect(batch_size_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(time_stride_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
@@ -422,11 +441,15 @@ void ImageRenderingWidget::connect_signals() {
     spatial_contrast_dimensions_->setEnabled(enabled);
     spatial_contrast_method_->setEnabled(enabled && get_spatial_contrast_dimensions() != 1);
     spatial_contrast_display_max_->setEnabled(enabled);
+    spatial_contrast_invert_display_->setEnabled(enabled);
     update_time_window_limits();
     emit settings_changed();
     const float display_max = enabled ? static_cast<float>(spatial_contrast_display_max_->value())
                                       : 1.0f;
     emit spatial_contrast_display_range_changed(0.0f, display_max);
+    emit spatial_contrast_display_inversion_changed(
+        enabled && get_image_mode() == "Processed" &&
+        is_spatial_contrast_display_inverted());
   });
   connect(spatial_contrast_window_size_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
@@ -442,6 +465,10 @@ void ImageRenderingWidget::connect_signals() {
             if (spatial_contrast_check_->isChecked())
               emit spatial_contrast_display_range_changed(0.0f, static_cast<float>(value));
           });
+  connect(spatial_contrast_invert_display_, &QCheckBox::toggled, this, [this](bool inverted) {
+    emit spatial_contrast_display_inversion_changed(
+        spatial_contrast_check_->isChecked() && get_image_mode() == "Processed" && inverted);
+  });
   connect(autofocus_widget_, &AutoFocusWidget::settings_changed, this, [this]() {
     set_angular_spectrum_enabled(!autofocus_widget_->is_enabled());
     emit settings_changed();

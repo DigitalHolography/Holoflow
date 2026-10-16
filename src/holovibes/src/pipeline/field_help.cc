@@ -167,7 +167,9 @@ const FieldHelp kFieldHelp[] = {
      "Number of frames in each temporal-analysis window or temporal LSCI window.",
      kTimeWindowConstraints},
     {SettingsField::TimeStride, "Time Stride",
-     "Number of frames between successive temporal analysis windows.", kTimeStrideConstraints},
+     "For temporal LSCI (1D/3D), frames to advance between windows. 2D LSCI processes each input "
+     "frame. The regular processing pipeline does not currently apply this setting.",
+     kTimeStrideConstraints},
     {SettingsField::TimeZBegin, "Z Start",
      "Start of the selected temporal-frequency range displayed or processed.",
      kTimeZBeginConstraints},

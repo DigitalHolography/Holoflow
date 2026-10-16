@@ -48,12 +48,16 @@ uniform sampler2D colormap_tex;
 uniform int use_colormap;
 uniform float vmin;
 uniform float vmax;
+uniform int invert_display;
 
 void main(){
   float raw_val = texture(tex, uv).r;
   
   // Normalize the value to 0.0 - 1.0 based on bounds
   float g = clamp((raw_val - vmin) / (vmax - vmin), 0.0, 1.0);
+  if (invert_display == 1) {
+    g = 1.0 - g;
+  }
 
   if (use_colormap == 1) {
     // Sample the colormap lookup texture
@@ -128,6 +132,13 @@ void TensorDisplayWidget::set_value_range(float vmin, float vmax) {
   update();
 }
 
+void TensorDisplayWidget::set_display_inverted(bool inverted) {
+  if (display_inverted_ == inverted)
+    return;
+  display_inverted_ = inverted;
+  update();
+}
+
 void TensorDisplayWidget::initializeGL() {
   initializeOpenGLFunctions();
   const QColor background = palette().color(QPalette::Window);
@@ -163,6 +174,7 @@ void TensorDisplayWidget::initializeGL() {
   use_cmap_loc_ = glGetUniformLocation(prog_, "use_colormap");
   vmin_loc_     = glGetUniformLocation(prog_, "vmin");
   vmax_loc_     = glGetUniformLocation(prog_, "vmax");
+  invert_display_loc_ = glGetUniformLocation(prog_, "invert_display");
 
   glGenTextures(1, &tex_);
   glBindTexture(GL_TEXTURE_2D, tex_);
@@ -417,6 +429,7 @@ void TensorDisplayWidget::paintGL() {
   // Pass bounds
   glUniform1f(vmin_loc_, vmin_);
   glUniform1f(vmax_loc_, vmax_);
+  glUniform1i(invert_display_loc_, display_inverted_ ? 1 : 0);
 
   // Bind Main Image Texture
   glActiveTexture(GL_TEXTURE0);
