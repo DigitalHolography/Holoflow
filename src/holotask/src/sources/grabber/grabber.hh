@@ -19,21 +19,31 @@
 
 namespace holotask::sources {
 
-class Grabber : public Euresys::EGrabber<Euresys::CallbackOnDemand> {
+class Grabber final : public Euresys::EGrabber<Euresys::CallbackOnDemand> {
 public:
+  using parent = Euresys::EGrabber<Euresys::CallbackOnDemand>;
+
   using Clock = std::chrono::steady_clock;
   enum class EGrabberName : uint8_t { A = 0, B = 1 };
 
-  Grabber(Euresys::EGrabberInfo info, EGrabberName name)
-      : EGrabber<Euresys::CallbackOnDemand>(info), name_{name} {
+  Grabber(Euresys::EGrabberInfo info, EGrabberName name) : parent(info), name_{name} {
     enableEvent<Euresys::NewBufferData>();
   }
 
+  const char *name() const noexcept { return name_ == EGrabberName::A ? "A" : "B"; }
+
   void requeue_buffer(const Euresys::NewBufferData &data) noexcept;
+
+  void start_if_not_running();
+
+  void stop_if_running();
+
+  bool running() const noexcept { return is_running_; }
 
 private:
   Clock::time_point last_error_log_;
   EGrabberName      name_;
+  bool              is_running_ = false;
 };
 
 } // namespace holotask::sources

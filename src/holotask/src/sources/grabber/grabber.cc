@@ -18,21 +18,6 @@
 
 #include "logger.hh"
 
-namespace {
-
-using Clock = std::chrono::steady_clock;
-// TODO factorise this function
-bool log_due(Clock::time_point &last_log) {
-  const auto now = Clock::now();
-  if (last_log != Clock::time_point{} && now - last_log < std::chrono::seconds(1)) {
-    return false;
-  }
-  last_log = now;
-  return true;
-}
-
-} // namespace
-
 namespace holotask::sources {
 
 void Grabber::requeue_buffer(const Euresys::NewBufferData &data) noexcept {
@@ -40,10 +25,29 @@ void Grabber::requeue_buffer(const Euresys::NewBufferData &data) noexcept {
     Euresys::Buffer(data).push(*this);
   } catch (const std::exception &e) {
     if (log_due(last_error_log_)) {
-      logger()->error(
-          "[Grabber::requeue_buffer_noexcept] failed to requeue buffer on grabber {} while handling an error: {}",
-          name_ == EGrabberName::A ? "A" : "B", e.what());
+      logger()->error("[Grabber::requeue_buffer_noexcept] failed to requeue buffer on grabber {} "
+                      "while handling an error: {}",
+                      name_ == EGrabberName::A ? "A" : "B", e.what());
     }
   }
 }
+  void Grabber::start_if_not_running() {
+    if (!is_running_) {
+      start();
+      logger()->info("[Grabber::start_if_not_running] started {}", name());
+      is_running_ = true;
+    }
+  }
+
+  void Grabber::stop_if_running() {
+    if (is_running_) {
+      try {
+        stop();
+        logger()->info("[Grabber::stop_if_running] stopped {}", name());
+      } catch (const std::exception &e) {
+        logger()->error("[Grabber::stop_if_running] failed to stop {}: {}", name(), e.what());
+      }
+      is_running_ = false;
+    }
+  }
 } // namespace holotask::sources

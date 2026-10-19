@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include <chrono>
 #include <memory>
 #include <spdlog/logger.h>
 
@@ -21,4 +22,16 @@ namespace holotask {
 
 std::shared_ptr<spdlog::logger> logger();
 
+inline bool log_due(std::chrono::steady_clock::time_point &last_log,
+                    std::chrono::steady_clock::duration    interval = std::chrono::seconds(1)) {
+  using Clock    = std::chrono::steady_clock;
+  const auto now = Clock::now();
+
+  if (last_log != Clock::time_point{} && now - last_log < interval) {
+    return false;
+  }
+
+  last_log = now;
+  return true;
 }
+} // namespace holotask
