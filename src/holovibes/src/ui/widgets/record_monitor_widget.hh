@@ -27,7 +27,7 @@ class RecordMonitorWidget : public QGroupBox {
   Q_OBJECT
 
 public:
-  explicit RecordMonitorWidget(QWidget *parent = nullptr, size_t queue_count = 1);
+  explicit RecordMonitorWidget(QWidget *parent = nullptr, size_t queue_count = 3);
 
   // Update methods
   void set_record_queue(size_t q, int first, int second, int max);
