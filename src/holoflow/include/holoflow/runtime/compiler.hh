@@ -48,9 +48,11 @@ public:
     std::filesystem::path log_dir;
     bool                  dump_dot_on_failure = true;
     bool                  verbose_tracing     = true;
-    // Profiling toggles
+    // Automatic native capture (joins an already active process-wide session).
     bool        enable_profiling = true;
-    std::string trace_filename   = "trace_events.json";
+    std::string trace_filename   = "trace_events.perfetto-trace";
+    size_t      max_section_cuda_graphs =
+        4096; ///< Strict product cap per section; zero disables graphs.
   };
 
   explicit Compiler(core::Registry &registry, Config config = {});

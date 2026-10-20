@@ -355,3 +355,39 @@ TEST_F(FlatfieldExecuteTest, ParticipatesInOuterCaptureForSpatialAndFftPaths) {
     CUDA_CHECK(cudaGraphDestroy(graph));
   }
 }
+
+TEST_F(FlatfieldExecuteTest, OuterGraphReplaysSigmaUpdatesForSpatialAndFftPaths) {
+  using namespace holoflow::core;
+  const TDesc        desc = device_desc({8, 8}, DType::F32);
+  std::vector<float> values(desc.num_elements());
+  for (size_t i = 0; i < values.size(); ++i)
+    values[i] = float((i * 17 + 2) % 41) - 13.F;
+  for (const auto configs : {std::pair{settings(0.75F, 1.F), settings(1.F, 1.25F)},
+                             std::pair{settings(12.F, 12.F), settings(13.F, 10.F)}}) {
+    curaii::CudaStream stream;
+    auto task = factory.create(std::array{desc}, configs.first, {.stream = stream.get()});
+    holonp_test::TensorTestBuffer input(desc), output(desc);
+    input.upload(as_bytes(values));
+    std::array  inputs{input.view()}, outputs{output.view()};
+    cudaGraph_t graph = nullptr;
+    CUDA_CHECK(cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeThreadLocal));
+    CudaGraphCtx recording{inputs, outputs, stream.get(), nullptr};
+    task->record_cuda_graph(recording);
+    CUDA_CHECK(cudaStreamEndCapture(stream.get(), &graph));
+    cudaGraphExec_t executable = nullptr;
+    CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+    ExecutionInvalidation invalidation{[&]() noexcept {
+      CUDA_CHECK_NT(cudaGraphExecDestroy(executable));
+      executable = nullptr;
+    }};
+    task = factory.update(std::move(task), std::array{desc}, configs.second,
+                          {.stream = stream.get(), .execution_invalidation = &invalidation});
+    ASSERT_FALSE(invalidation.invalidated);
+    CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
+    CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+    const auto expected = as_floats(execute_default_stream(factory, desc, configs.second, values));
+    expect_f32_near(output.download(), expected);
+    CUDA_CHECK(cudaGraphExecDestroy(executable));
+    CUDA_CHECK(cudaGraphDestroy(graph));
+  }
+}

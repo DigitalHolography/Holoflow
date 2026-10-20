@@ -19,6 +19,8 @@
 
 namespace holoflow {
 
+// Console output runs on a dedicated worker; message formatting remains on the caller. The bounded
+// queue preserves messages, waiting only if full, and is drained during orderly process shutdown.
 std::shared_ptr<spdlog::logger> logger();
 
-}
+} // namespace holoflow

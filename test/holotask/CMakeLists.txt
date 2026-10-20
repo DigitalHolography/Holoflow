@@ -29,6 +29,7 @@ set(SOURCES
     pct_clip_test.cu
     shack_hartmann_test.cu
     sliding_average_test.cu
+    section_cuda_graph_reference_test.cu
     zernike_defocus_z_prop_test.cc
     zernike_phase_test.cu
     ../holonp/support/tensor_test_buffer.cc
@@ -45,6 +46,7 @@ target_include_directories(${TARGET}
 target_link_libraries(${TARGET}
     PRIVATE
     holotask
+    holonp
     GTest::gtest_main
 )
 
@@ -63,6 +65,10 @@ if(TARGET holoflow_ffmpeg)
         )
     endforeach()
 endif()
+
+target_compile_definitions(${TARGET} PRIVATE
+    HOLOFLOW_REFERENCE_SPEC="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/section_cuda_graph_reference.json"
+)
 
 holoflow_discover_tests(${TARGET}
     LABELS gpu

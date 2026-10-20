@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
@@ -94,9 +95,9 @@ TaskResult run_task(const holoflow::core::ISyncTaskFactory &factory, const TDesc
   holonp_test::TensorTestBuffer output(infer.output_descs[0]);
   input.upload(input_bytes);
 
-  auto              input_view  = input.view();
-  auto              output_view = output.view();
-  std::atomic<bool> cancelled{false};
+  auto                    input_view  = input.view();
+  auto                    output_view = output.view();
+  std::atomic<bool>       cancelled{false};
   holoflow::core::SyncCtx execute_ctx{
       .inputs       = {&input_view, 1},
       .outputs      = {&output_view, 1},
@@ -130,11 +131,11 @@ void expect_magnitude_output_rebinding(const holoflow::core::ISyncTaskFactory &f
   std::atomic<bool> cancelled{false};
   auto              execute = [&](holoflow::core::TView &output) {
     holoflow::core::SyncCtx execute_ctx{
-                     .inputs       = {&input_view, 1},
-                     .outputs      = {&output, 1},
-                     .cancelled    = &cancelled,
-                     .event_writer = nullptr,
-                     .event_reader = nullptr,
+        .inputs       = {&input_view, 1},
+        .outputs      = {&output, 1},
+        .cancelled    = &cancelled,
+        .event_writer = nullptr,
+        .event_reader = nullptr,
     };
     EXPECT_EQ(task->execute(execute_ctx), holoflow::core::OpResult::Ok);
   };
@@ -148,7 +149,8 @@ void expect_magnitude_output_rebinding(const holoflow::core::ISyncTaskFactory &f
   EXPECT_EQ(output_a.download(), output_b.download());
 }
 
-void expect_magnitude_matches(const TaskResult &complex_result, const TaskResult &magnitude_result) {
+void expect_magnitude_matches(const TaskResult &complex_result,
+                              const TaskResult &magnitude_result) {
   ASSERT_EQ(complex_result.desc.dtype, DType::CF32);
   ASSERT_EQ(magnitude_result.desc.dtype, DType::F32);
   ASSERT_EQ(complex_result.desc.shape, magnitude_result.desc.shape);
@@ -159,7 +161,8 @@ void expect_magnitude_matches(const TaskResult &complex_result, const TaskResult
   std::vector<cuFloatComplex> complex_values(count);
   std::vector<float>          magnitude_values(count);
   std::memcpy(complex_values.data(), complex_result.bytes.data(), complex_result.bytes.size());
-  std::memcpy(magnitude_values.data(), magnitude_result.bytes.data(), magnitude_result.bytes.size());
+  std::memcpy(magnitude_values.data(), magnitude_result.bytes.data(),
+              magnitude_result.bytes.size());
 
   for (size_t i = 0; i < count; ++i) {
     const float expected = std::hypot(complex_values[i].x, complex_values[i].y);
@@ -171,7 +174,7 @@ void expect_magnitude_matches(const TaskResult &complex_result, const TaskResult
 
 TEST(FresnelDiffractionMagnitudeTest, DefaultsToComplexAndSerializesOptIn) {
   holotask::syncs::FresnelDiffractionFactory factory;
-  const std::vector<TDesc> input = {device_desc({2, 4, 4}, DType::CF32)};
+  const std::vector<TDesc>                   input = {device_desc({2, 4, 4}, DType::CF32)};
 
   auto settings = fresnel_settings(0.01f);
   EXPECT_FALSE(settings.get<holotask::syncs::FresnelDiffractionSettings>().output_magnitude);
@@ -184,14 +187,14 @@ TEST(FresnelDiffractionMagnitudeTest, DefaultsToComplexAndSerializesOptIn) {
 
 TEST(FresnelDiffractionMagnitudeTest, StoreCallbackMatchesComplexMagnitude) {
   holotask::syncs::FresnelDiffractionFactory factory;
-  const auto input_desc = device_desc({2, 3, 32, 48}, DType::CF32);
-  std::vector<cuFloatComplex> input_values(input_desc.num_elements());
+  const auto                                 input_desc = device_desc({2, 3, 32, 48}, DType::CF32);
+  std::vector<cuFloatComplex>                input_values(input_desc.num_elements());
   for (size_t i = 0; i < input_values.size(); ++i)
-    input_values[i] = make_cuFloatComplex(static_cast<float>(i % 7) - 3.0f,
-                                          static_cast<float>(i % 5) - 2.0f);
+    input_values[i] =
+        make_cuFloatComplex(static_cast<float>(i % 7) - 3.0f, static_cast<float>(i % 5) - 2.0f);
 
-  auto complex_settings = fresnel_settings(0.01f);
-  auto magnitude_settings = complex_settings;
+  auto complex_settings                  = fresnel_settings(0.01f);
+  auto magnitude_settings                = complex_settings;
   magnitude_settings["output_magnitude"] = true;
 
   const auto input_bytes = as_bytes(input_values);
@@ -201,15 +204,15 @@ TEST(FresnelDiffractionMagnitudeTest, StoreCallbackMatchesComplexMagnitude) {
 
 TEST(ShortTimeFresnelDiffractionMagnitudeTest, StoreCallbackMatchesComplexMagnitude) {
   holotask::syncs::ShortTimeFresnelDiffractionFactory factory;
-  const auto input_desc = device_desc({2, 3, 32, 32}, DType::CF32);
+  const auto                  input_desc = device_desc({2, 3, 32, 32}, DType::CF32);
   std::vector<cuFloatComplex> input_values(input_desc.num_elements());
   for (size_t i = 0; i < input_values.size(); ++i)
-    input_values[i] = make_cuFloatComplex(static_cast<float>(i % 11) - 5.0f,
-                                          static_cast<float>(i % 3) - 1.0f);
+    input_values[i] =
+        make_cuFloatComplex(static_cast<float>(i % 11) - 5.0f, static_cast<float>(i % 3) - 1.0f);
 
   auto complex_settings = short_time_fresnel_settings(0.01f);
   EXPECT_EQ(factory.infer({&input_desc, 1}, complex_settings).output_descs[0].dtype, DType::CF32);
-  auto magnitude_settings = complex_settings;
+  auto magnitude_settings                = complex_settings;
   magnitude_settings["output_magnitude"] = true;
   EXPECT_EQ(factory.infer({&input_desc, 1}, magnitude_settings).output_descs[0].dtype, DType::F32);
 
@@ -240,6 +243,72 @@ TEST(ShortTimeFresnelDiffractionMagnitudeTest, LazilyUpdatesChangingOutputPointe
   expect_magnitude_output_rebinding(factory, input_desc, as_bytes(input_values), settings);
 }
 
+void expect_outer_graph_distance_update(const holoflow::core::ISyncTaskFactory &factory,
+                                        const TDesc &desc, nlohmann::json initial,
+                                        nlohmann::json updated) {
+  using namespace holoflow::core;
+  curaii::CudaStream          stream;
+  const std::array            descriptors{desc};
+  const auto                  infer = factory.infer(descriptors, initial);
+  auto                        task = factory.create(descriptors, initial, {.stream = stream.get()});
+  std::vector<cuFloatComplex> values(desc.num_elements());
+  for (size_t i = 0; i < values.size(); ++i)
+    values[i] = make_cuFloatComplex(float(i % 7) + 1.F, float(i % 3) - 1.F);
+  const auto                    bytes = as_bytes(values);
+  holonp_test::TensorTestBuffer input(desc), output(infer.output_descs[0]);
+  input.upload(bytes);
+  std::array  inputs{input.view()}, outputs{output.view()};
+  cudaGraph_t graph = nullptr;
+  CUDA_CHECK(cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeThreadLocal));
+  CudaGraphCtx recording{inputs, outputs, stream.get(), nullptr};
+  task->record_cuda_graph(recording);
+  CUDA_CHECK(cudaStreamEndCapture(stream.get(), &graph));
+  cudaGraphExec_t executable = nullptr;
+  CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+  CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  const auto            original = output.download();
+  ExecutionInvalidation invalidation{[&]() noexcept {
+    CUDA_CHECK_NT(cudaGraphExecDestroy(executable));
+    executable = nullptr;
+  }};
+  task = factory.update(std::move(task), descriptors, updated,
+                        {.stream = stream.get(), .execution_invalidation = &invalidation});
+  ASSERT_FALSE(invalidation.invalidated);
+  CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  const auto actual   = output.download();
+  const auto expected = run_task(factory, desc, bytes, updated).bytes;
+  ASSERT_EQ(actual.size(), expected.size());
+  for (size_t i = 0; i < actual.size() / sizeof(float); ++i) {
+    float a, e;
+    std::memcpy(&a, actual.data() + i * sizeof(float), sizeof(float));
+    std::memcpy(&e, expected.data() + i * sizeof(float), sizeof(float));
+    EXPECT_NEAR(a, e, 1e-4F * std::max(1.F, std::abs(e)));
+  }
+  EXPECT_NE(actual, original);
+  CUDA_CHECK(cudaGraphExecDestroy(executable));
+  CUDA_CHECK(cudaGraphDestroy(graph));
+}
+
+TEST(FresnelDiffractionUpdateTest, OuterGraphReplaysUpdatedDistanceWithoutRecapture) {
+  holotask::syncs::FresnelDiffractionFactory factory;
+  for (bool magnitude : {false, true}) {
+    auto initial = fresnel_settings(0.01F), updated = fresnel_settings(0.02F);
+    initial["output_magnitude"] = updated["output_magnitude"] = magnitude;
+    expect_outer_graph_distance_update(factory, device_desc({4, 4}, DType::CF32), initial, updated);
+  }
+}
+
+TEST(ShortTimeFresnelDiffractionUpdateTest, OuterGraphReplaysUpdatedDistanceWithoutRecapture) {
+  holotask::syncs::ShortTimeFresnelDiffractionFactory factory;
+  for (bool magnitude : {false, true}) {
+    auto initial = short_time_fresnel_settings(0.01F), updated = short_time_fresnel_settings(0.02F);
+    initial["output_magnitude"] = updated["output_magnitude"] = magnitude;
+    expect_outer_graph_distance_update(factory, device_desc({8, 8}, DType::CF32), initial, updated);
+  }
+}
+
 TEST(FresnelDiffractionUpdateTest, ReusesTaskWhenOnlyPropagationDistanceChanges) {
   holotask::syncs::FresnelDiffractionFactory factory;
   const std::vector<TDesc>                   input = {device_desc({4, 4}, DType::CF32)};
@@ -249,9 +318,9 @@ TEST(FresnelDiffractionUpdateTest, ReusesTaskWhenOnlyPropagationDistanceChanges)
     curaii::CudaStream  stream;
     const SyncCreateCtx ctx{stream.get()};
 
-    auto initial_settings = fresnel_settings(0.01f);
+    auto initial_settings                = fresnel_settings(0.01f);
     initial_settings["output_magnitude"] = output_magnitude;
-    auto updated_settings = fresnel_settings(0.02f);
+    auto updated_settings                = fresnel_settings(0.02f);
     updated_settings["output_magnitude"] = output_magnitude;
 
     auto task = factory.create(input, initial_settings, ctx);
@@ -274,9 +343,9 @@ TEST(ShortTimeFresnelDiffractionUpdateTest, ReusesTaskWhenOnlyPropagationDistanc
     curaii::CudaStream  stream;
     const SyncCreateCtx ctx{stream.get()};
 
-    auto initial_settings = short_time_fresnel_settings(0.01f);
+    auto initial_settings                = short_time_fresnel_settings(0.01f);
     initial_settings["output_magnitude"] = output_magnitude;
-    auto updated_settings = short_time_fresnel_settings(0.02f);
+    auto updated_settings                = short_time_fresnel_settings(0.02f);
     updated_settings["output_magnitude"] = output_magnitude;
 
     auto task = factory.create(input, initial_settings, ctx);

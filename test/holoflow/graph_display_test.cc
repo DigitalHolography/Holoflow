@@ -68,3 +68,82 @@ TEST(CompiledGraphDisplayTest, RendersEmptyOutput) {
   EXPECT_NE(dot.find("// tasks:"), std::string::npos);
   EXPECT_NE(dot.find("}\n"), std::string::npos);
 }
+
+TEST(CompiledGraphDisplayTest, HighlightsRuntimeFailureNodeAndContext) {
+  holoflow::runtime::CompilerOutput output;
+  holoflow::runtime::NodePlan       source{
+      .spec     = {"source", "sync", {}},
+      .infer    = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync},
+      .in_tids  = {},
+      .out_tids = {0},
+  };
+  holoflow::runtime::NodePlan failing_node{
+      .spec     = {"failing_node", "sync", {}},
+      .infer    = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync},
+      .in_tids  = {0},
+      .out_tids = {},
+  };
+
+  const auto source_v = add_vertex(source, output.graph);
+  const auto failing_v = add_vertex(failing_node, output.graph);
+  add_edge(source_v, failing_v,
+           holoflow::runtime::EdgePlan{
+               {0, 0},
+               holoflow::core::TDesc({4}, holoflow::core::DType::F32,
+                                     holoflow::core::MemLoc::Host),
+               0,
+           },
+           output.graph);
+
+  const auto dot = holoflow::runtime::to_dot(
+      output, {}, "runtime_failure", "failing_node",
+      "Thread: Scheduler::run_section\nNode: failing_node\nError: test failure",
+      holoflow::runtime::GraphFailureKind::Runtime);
+
+  EXPECT_NE(dot.find("label=\"RUNTIME FAILURE\\nThread: Scheduler::run_section"),
+            std::string::npos);
+  EXPECT_NE(dot.find("label=\"failing_node\\n(sync)"), std::string::npos);
+  EXPECT_NE(dot.find("fillcolor=\"#ff9999\""), std::string::npos);
+  EXPECT_NE(dot.find("color=\"#cc0000\""), std::string::npos);
+  EXPECT_NE(dot.find("Error: test failure"), std::string::npos);
+}
+
+TEST(CompiledGraphDisplayTest, UsesExplicitCompilationFailureKind) {
+  holoflow::runtime::CompilerOutput output;
+  const auto dot = holoflow::runtime::to_dot(
+      output, {}, "compilation_failure", {}, "Unexpected validation error",
+      holoflow::runtime::GraphFailureKind::Compilation);
+
+  EXPECT_NE(dot.find("COMPILATION FAILURE"), std::string::npos);
+  EXPECT_NE(dot.find("Unexpected validation error"), std::string::npos);
+  EXPECT_EQ(dot.find("RUNTIME FAILURE"), std::string::npos);
+}
+
+TEST(CompiledGraphDisplayTest, SnapshotMatchesEmptyAndPartialOutputAcrossPreferences) {
+  holoflow::runtime::CompilerOutput output;
+  auto empty = holoflow::runtime::make_graph_compiled_dump_snapshot(output);
+  EXPECT_EQ(holoflow::runtime::to_dot(*empty), holoflow::runtime::to_dot(output));
+  holoflow::runtime::NodePlan node{.spec  = {"source", "partial", {{"value", 1.23456789}}},
+                                   .infer = {{}, {}, {}, {}, {}, holoflow::core::TaskKind::Sync}};
+  auto                        vertex = add_vertex(node, output.graph);
+  output.sections.push_back({.id        = 4,
+                             .name      = "partial",
+                             .stream    = reinterpret_cast<cudaStream_t>(uintptr_t{0x5678}),
+                             .sync_topo = {vertex}});
+  auto snapshot     = holoflow::runtime::make_graph_compiled_dump_snapshot(output);
+  using Preferences = holoflow::runtime::GraphCompiledDumpPreferences;
+  for (auto layout : {Preferences::Layout::Normal, Preferences::Layout::Stairs,
+                      Preferences::Layout::Block, Preferences::Layout::Snake}) {
+    for (bool details : {false, true}) {
+      Preferences prefs;
+      prefs.layout                   = layout;
+      prefs.rankdir                  = Preferences::Rankdir::TopToBottom;
+      prefs.floating_point_precision = 3;
+      prefs.dump_section_stream_addr = details;
+      prefs.dump_resource_info       = details;
+      prefs.dump_node_settings       = details;
+      EXPECT_EQ(holoflow::runtime::to_dot(*snapshot, prefs, "partial"),
+                holoflow::runtime::to_dot(output, prefs, "partial"));
+    }
+  }
+}

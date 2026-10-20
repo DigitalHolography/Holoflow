@@ -43,6 +43,11 @@ namespace holovibes::pipeline {
     return std::move(make_unary_async_node(node_name_str, kind_str, kind_str, X, s).at(0));        \
   }
 
+#define DEFINE_SINK_ASYNC_NODE(fn_name, node_name_str, kind_str, SettingsType)                     \
+  void GraphBuilderTasks::fn_name(const TDesc &X, SettingsType s) {                                \
+    make_unary_async_node(node_name_str, kind_str, kind_str, X, s);                                \
+  }
+
 // clang-format off
 DEFINE_SOURCE_SYNC_NODE(holofile_read,                          "source",                              "Holofile",                        holotask::sources::HolofileSettings)
 DEFINE_SOURCE_SYNC_NODE(empty,                                  "empty",                               "Empty",                           holonp::EmptySettings)
@@ -74,7 +79,7 @@ DEFINE_UNARY_SYNC_NODE (resize,                                  "resize",      
 DEFINE_UNARY_SYNC_NODE (wrap2pi,                                "wrap2pi",                             "Wrap2Pi",                         holotask::syncs::Wrap2PiSettings)
 DEFINE_UNARY_SYNC_NODE (zernike_from_slopes,                    "zernike_from_slopes",                 "ZernikeFromSlopes",               holotask::syncs::ZernikeFromSlopesSettings)
 DEFINE_UNARY_SYNC_NODE (zernike_phase,                          "zernike_phase",                       "ZernikePhase",                    holotask::syncs::ZernikePhaseSettings)
-DEFINE_SINK_SYNC_NODE  (zernike_defocus_z_prop,                 "zernike_defocus_z_prop",              "ZernikeDefocusZProp",             holotask::syncs::ZernikeDefocusZPropSettings)
+DEFINE_SINK_ASYNC_NODE (zernike_defocus_z_prop,                 "zernike_defocus_z_prop",              "ZernikeDefocusZProp",             holotask::syncs::ZernikeDefocusZPropSettings)
 
 DEFINE_SINK_SYNC_NODE  (xy_raw_display,               "xy_raw_display",               "DisplayTensorXYRaw",              tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE  (xy_processed_display,         "xy_processed_display",         "DisplayTensorXY",                 tasks::sinks::DisplayTensorSettings)
@@ -210,7 +215,9 @@ void GraphBuilderTasks::holofile_write(const TDesc &X, holotask::sinks::Holofile
 
   auto      &factory     = reg_.get_sync(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});
-  (void)factory.infer(core_inputs, nlohmann::json(s));
+  (void)infer_node(v, std::span{&X, 1}, [&] {
+    return factory.infer(core_inputs, nlohmann::json(s));
+  });
 }
 
 void GraphBuilderTasks::npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s) {
