@@ -95,7 +95,7 @@ size_t num_elements(std::span<const size_t> shape) {
 }
 
 template <typename InT>
-__global__ void horizontal_sums_kernel(const InT *__restrict__ input, double2 *__restrict__ sums,
+__global__ void horizontal_sums_kernel(const InT *__restrict__ input, float2 *__restrict__ sums,
                                        int width, int height, int window_size,
                                        int64_t total_elements) {
   const int64_t idx = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
@@ -112,16 +112,16 @@ __global__ void horizontal_sums_kernel(const InT *__restrict__ input, double2 *_
   const int     x_begin      = x > radius ? x - radius : 0;
   const int     x_end        = (x + radius < width) ? x + radius : width - 1;
 
-  double sum         = 0.0;
-  double squared_sum = 0.0;
+  float sum         = 0.0F;
+  float squared_sum = 0.0F;
   const int64_t row_offset = plane_offset + static_cast<int64_t>(y) * width;
   for (int sample_x = x_begin; sample_x <= x_end; ++sample_x) {
-    const double value = static_cast<double>(input[row_offset + sample_x]);
+    const float value = static_cast<float>(input[row_offset + sample_x]);
     sum += value;
     squared_sum += value * value;
   }
 
-  sums[idx] = make_double2(sum, squared_sum);
+  sums[idx] = make_float2(sum, squared_sum);
 }
 
 template <typename InT>
@@ -133,22 +133,22 @@ __global__ void temporal_contrast_kernel(const InT *__restrict__ input, float *_
     return;
 
   const int64_t plane_size = static_cast<int64_t>(width) * height;
-  double        sum         = 0.0;
-  double        squared_sum = 0.0;
+  float         sum         = 0.0F;
+  float         squared_sum = 0.0F;
   for (int time = 0; time < temporal_window_size; ++time) {
-    const double value =
-        static_cast<double>(input[static_cast<int64_t>(time) * plane_size + idx]);
+    const float value =
+        static_cast<float>(input[static_cast<int64_t>(time) * plane_size + idx]);
     sum += value;
     squared_sum += value * value;
   }
 
-  const double mean     = sum / static_cast<double>(temporal_window_size);
-  const double variance =
-      fmax(squared_sum / static_cast<double>(temporal_window_size) - mean * mean, 0.0);
-  output[idx] = mean > 0.0 ? static_cast<float>(sqrt(variance) / mean) : 0.0F;
+  const float mean     = sum / static_cast<float>(temporal_window_size);
+  const float variance =
+      fmaxf(squared_sum / static_cast<float>(temporal_window_size) - mean * mean, 0.0F);
+  output[idx] = mean > 0.0F ? sqrtf(variance) / mean : 0.0F;
 }
 
-__global__ void contrast_from_sums_kernel(const double2 *__restrict__ horizontal_sums,
+__global__ void contrast_from_sums_kernel(const float2 *__restrict__ horizontal_sums,
                                           float *__restrict__ output, int width, int height,
                                           int window_size, int temporal_window_size,
                                           int64_t output_elements) {
@@ -168,12 +168,12 @@ __global__ void contrast_from_sums_kernel(const double2 *__restrict__ horizontal
   const int     x_begin      = x > radius ? x - radius : 0;
   const int     x_end        = (x + radius < width) ? x + radius : width - 1;
 
-  double sum         = 0.0;
-  double squared_sum = 0.0;
+  float sum         = 0.0F;
+  float squared_sum = 0.0F;
   for (int time = 0; time < temporal_window_size; ++time) {
     const int64_t time_offset = static_cast<int64_t>(time) * plane_size;
     for (int sample_y = y_begin; sample_y <= y_end; ++sample_y) {
-      const double2 row_sum =
+      const float2 row_sum =
           horizontal_sums[plane_offset + time_offset +
                           static_cast<int64_t>(sample_y) * width + x];
       sum += row_sum.x;
@@ -183,10 +183,10 @@ __global__ void contrast_from_sums_kernel(const double2 *__restrict__ horizontal
 
   const int64_t sample_count = static_cast<int64_t>(temporal_window_size) *
                                (x_end - x_begin + 1) * (y_end - y_begin + 1);
-  const double mean         = sum / static_cast<double>(sample_count);
-  const double variance =
-      fmax(squared_sum / static_cast<double>(sample_count) - mean * mean, 0.0);
-  output[idx] = mean > 0.0 ? static_cast<float>(sqrt(variance) / mean) : 0.0F;
+  const float mean         = sum / static_cast<float>(sample_count);
+  const float variance =
+      fmaxf(squared_sum / static_cast<float>(sample_count) - mean * mean, 0.0F);
+  output[idx] = mean > 0.0F ? sqrtf(variance) / mean : 0.0F;
 }
 
 __global__ void fill_box_kernel(cufftComplex *__restrict__ box, int fft_width, int fft_height,
@@ -301,7 +301,7 @@ public:
   SpatialContrast(SpatialContrastSettings settings, holoflow::core::TDesc idesc, int width,
                   int height, int temporal_window_size, int64_t total_elements,
                   int64_t output_elements, int64_t input_planes, int fft_width, int fft_height,
-                  DevPtr<double2> &&horizontal_sums, DevPtr<cufftComplex> &&fft_data,
+                  DevPtr<float2> &&horizontal_sums, DevPtr<cufftComplex> &&fft_data,
                   DevPtr<cufftComplex> &&box_spectrum, curaii::CufftHandle &&fft_plan,
                   curaii::CufftHandle &&box_plan, cudaStream_t stream)
       : settings_(settings), idesc_(std::move(idesc)), width_(width), height_(height),
@@ -439,7 +439,7 @@ private:
   int64_t                input_planes_;
   int                    fft_width_;
   int                    fft_height_;
-  DevPtr<double2>        horizontal_sums_;
+  DevPtr<float2>         horizontal_sums_;
   DevPtr<cufftComplex>   fft_data_;
   DevPtr<cufftComplex>   box_spectrum_;
   curaii::CufftHandle    fft_plan_;
@@ -523,7 +523,7 @@ SpatialContrastFactory::create(std::span<const holoflow::core::TDesc> input_desc
   const auto  output_count = temporal_window_size > 1
                                  ? count / static_cast<size_t>(temporal_window_size)
                                  : count;
-  DevPtr<double2>      sums;
+  DevPtr<float2>       sums;
   DevPtr<cufftComplex> fft_data;
   DevPtr<cufftComplex> box_spectrum;
   curaii::CufftHandle  fft_plan;
@@ -534,7 +534,7 @@ SpatialContrastFactory::create(std::span<const holoflow::core::TDesc> input_desc
   if (settings.window_size == 1) {
     // Temporal-only contrast is fused into one kernel and needs no intermediate buffer.
   } else if (settings.method == SpatialContrastMethod::Kernel) {
-    sums = curaii::make_unique_device_ptr<double2>(count);
+    sums = curaii::make_unique_device_ptr<float2>(count);
   } else {
     const int64_t fft_min_width = static_cast<int64_t>(width) +
                                   2LL * settings.window_size - 2;

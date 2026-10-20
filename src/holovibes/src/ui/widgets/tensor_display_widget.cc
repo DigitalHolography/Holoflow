@@ -54,7 +54,9 @@ void main(){
   float raw_val = texture(tex, uv).r;
   
   // Normalize the value to 0.0 - 1.0 based on bounds
-  float g = clamp((raw_val - vmin) / (vmax - vmin), 0.0, 1.0);
+  float range = vmax - vmin;
+  float g = range > 0.0 ? clamp((raw_val - vmin) / range, 0.0, 1.0)
+                        : (raw_val > vmax ? 1.0 : 0.0);
   if (invert_display == 1) {
     g = 1.0 - g;
   }

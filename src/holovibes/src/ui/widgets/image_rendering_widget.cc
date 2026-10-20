@@ -172,14 +172,20 @@ void ImageRenderingWidget::update_spatial_contrast_controls() {
   spatial_contrast_method_label_->setVisible(enabled);
   spatial_contrast_method_->setVisible(enabled);
   spatial_contrast_method_->setEnabled(enabled);
+  spatial_contrast_display_max_label_->setVisible(enabled);
+  spatial_contrast_display_max_->setVisible(enabled);
   spatial_contrast_display_max_->setEnabled(enabled);
   spatial_contrast_invert_display_->setEnabled(enabled);
   update_time_window_limits();
   emit spatial_contrast_enabled_changed(enabled);
-  emit spatial_contrast_display_range_changed(
-      0.0f, enabled ? static_cast<float>(spatial_contrast_display_max_->value()) : 1.0f);
+  update_spatial_contrast_display_range();
   emit spatial_contrast_display_inversion_changed(
       enabled && get_image_mode() == "Processed" && is_spatial_contrast_display_inverted());
+}
+void ImageRenderingWidget::update_spatial_contrast_display_range() {
+  const bool enabled = is_spatial_contrast_enabled();
+  emit spatial_contrast_display_range_changed(
+      0.0f, enabled ? static_cast<float>(get_spatial_contrast_display_max()) : 1.0f);
 }
 void ImageRenderingWidget::set_spatial_contrast_method(const QString &method) {
   spatial_contrast_method_->setCurrentText(method);
@@ -341,17 +347,22 @@ void ImageRenderingWidget::setup_ui() {
   spatial_contrast_method_->hide();
   ++row;
 
-  layout->addWidget(new QLabel("Display max K:", this), row, 0);
+  spatial_contrast_display_max_label_ = new QLabel("Display max K:", this);
+  layout->addWidget(spatial_contrast_display_max_label_, row, 0);
   spatial_contrast_display_max_ = new QDoubleSpinBox(this);
-  spatial_contrast_display_max_->setRange(0.05, 1.0);
+  spatial_contrast_display_max_->setRange(
+      0.0, static_cast<double>(std::numeric_limits<float>::max()));
   spatial_contrast_display_max_->setSingleStep(0.05);
   spatial_contrast_display_max_->setDecimals(2);
   spatial_contrast_display_max_->setValue(0.75);
   spatial_contrast_display_max_->setToolTip(
-      tr("Map K=0 to black and this K value to white in the processed preview. Higher values "
-         "are clipped. This affects display only."));
+      tr("Map K=0 to black and this K value to white in the processed preview. Larger K values "
+         "appear white. The calculated K map itself is not upper-clipped. This affects display "
+         "only."));
   spatial_contrast_display_max_->setEnabled(false);
   layout->addWidget(spatial_contrast_display_max_, row, 1);
+  spatial_contrast_display_max_label_->hide();
+  spatial_contrast_display_max_->hide();
   ++row;
 
   spatial_contrast_invert_display_ = new QCheckBox("Invert LSCI display", this);
@@ -469,9 +480,8 @@ void ImageRenderingWidget::connect_signals() {
   connect(spatial_contrast_method_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(spatial_contrast_display_max_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
-          [this](double value) {
-            if (is_spatial_contrast_enabled())
-              emit spatial_contrast_display_range_changed(0.0f, static_cast<float>(value));
+          [this](double) {
+            update_spatial_contrast_display_range();
           });
   connect(spatial_contrast_invert_display_, &QCheckBox::toggled, this, [this](bool inverted) {
     emit spatial_contrast_display_inversion_changed(

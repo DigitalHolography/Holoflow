@@ -132,6 +132,7 @@ private:
   void        set_angular_spectrum_enabled(bool enabled);
   void        update_asp_padding_visibility();
   void        update_spatial_contrast_controls();
+  void        update_spatial_contrast_display_range();
   void        update_time_window_limits();
 
   QComboBox       *image_combo_;
@@ -156,6 +157,7 @@ private:
   QSpinBox        *spatial_contrast_window_size_;
   QLabel          *spatial_contrast_method_label_;
   QComboBox       *spatial_contrast_method_;
+  QLabel          *spatial_contrast_display_max_label_;
   QDoubleSpinBox  *spatial_contrast_display_max_;
   QCheckBox       *spatial_contrast_invert_display_;
   AutoFocusWidget *autofocus_widget_;
