@@ -57,7 +57,8 @@ constexpr auto kFilter2DOuterConstraints          = std::to_array<const char *>(
     "Must be greater than or equal to the inner radius when Filter 2D is enabled.",
 });
 constexpr auto kSpacialMethodConstraints          = std::to_array<const char *>({
-    "Processed mode supports Fresnel Diffraction and Angular Spectrum.",
+    "Processed reconstruction supports Fresnel Diffraction and Angular Spectrum; LSCI (2D) "
+    "calculates spatial contrast per frame.",
     "Angular Spectrum is disabled when Auto Focus is enabled.",
 });
 constexpr auto kAspPaddingConstraints             = std::to_array<const char *>({
@@ -66,15 +67,18 @@ constexpr auto kAspPaddingConstraints             = std::to_array<const char *>(
     "The number of pixels added on each axis must be even.",
 });
 constexpr auto kTimeMethodConstraints             = std::to_array<const char *>({
-    "Processed mode requires a time transform.",
+    "Processed reconstruction requires a time transform; LSCI (3D) calculates spatial-temporal "
+    "contrast.",
 });
 constexpr auto kTimeWindowConstraints             = std::to_array<const char *>({
     "Must be strictly positive.",
-    "Time Stride must be a multiple of Time Window.",
+    "Outside processed 3D LSCI, Time Stride must be a multiple of Time Window.",
 });
 constexpr auto kTimeStrideConstraints             = std::to_array<const char *>({
     "Must be strictly positive.",
-    "Must be a multiple of Time Window.",
+    "Outside processed 3D LSCI, must be a multiple of Time Window.",
+    "For 3D LSCI, a stride smaller than Time Window produces overlapping windows.",
+    "For holofile replay, windows stay within one pass through the selected frames.",
     "For holofile import, must not exceed the selected frame range.",
 });
 constexpr auto kTimeZBeginConstraints             = std::to_array<const char *>({
@@ -102,7 +106,7 @@ constexpr auto kSpatialContrastWindowConstraints = std::to_array<const char *>({
     "Must be odd and between 3 and 255 pixels.",
 });
 constexpr auto kSpatialContrastDimensionsConstraints = std::to_array<const char *>({
-    "Choose 1D for temporal-only contrast, 2D for spatial-only contrast, or 3D for both.",
+    "Choose LSCI (2D) in Space Transform or LSCI (3D) in Time Transform.",
 });
 constexpr auto kSpatialContrastMethodConstraints = std::to_array<const char *>({
     "Kernel evaluates the sliding window directly; FFT performs linear convolution with a box kernel.",
@@ -156,18 +160,21 @@ const FieldHelp kFieldHelp[] = {
      "Outer cutoff radius in pixels. Frequencies outside this radius are attenuated.",
      kFilter2DOuterConstraints},
     {SettingsField::SpacialMethod, "Space Transform",
-     "Spatial propagation method applied after temporal analysis.", kSpacialMethodConstraints},
+     "Spatial propagation method applied after temporal analysis, or LSCI (2D) for local spatial "
+     "contrast in each frame.",
+     kSpacialMethodConstraints},
     {SettingsField::AspPadding, "ASP Padding",
      "Centered zero-padding resolution used for Angular Spectrum propagation.",
      kAspPaddingConstraints},
     {SettingsField::TimeMethod, "Time Transform",
-     "Temporal transform used to convert frame windows into the analysis domain.",
+     "Temporal transform used to convert frame windows into the analysis domain, or LSCI (3D) "
+     "for local contrast across space and time.",
      kTimeMethodConstraints},
     {SettingsField::TimeWindow, "Time Window",
      "Number of frames in each temporal-analysis window or temporal LSCI window.",
      kTimeWindowConstraints},
     {SettingsField::TimeStride, "Time Stride",
-     "For temporal LSCI (1D/3D), frames to advance between windows. 2D LSCI processes each input "
+     "For temporal LSCI (3D), frames to advance between windows. 2D LSCI processes each input "
      "frame. The regular processing pipeline does not currently apply this setting.",
      kTimeStrideConstraints},
     {SettingsField::TimeZBegin, "Z Start",
@@ -189,7 +196,8 @@ const FieldHelp kFieldHelp[] = {
      kSpatialContrastWindowConstraints},
     {SettingsField::PpSpatialContrastDimensions, "Spatial LSCI Dimensions",
      "2D calculates contrast within each frame; 3D combines a sliding temporal window with "
-     "a spatial neighborhood.",
+     "a spatial neighborhood. Choose LSCI (2D) in Space Transform or LSCI (3D) in Time Transform; "
+     "only one LSCI mode can be active.",
      kSpatialContrastDimensionsConstraints},
     {SettingsField::PpSpatialContrastMethod, "Spatial LSCI Method",
      "Calculation method used for the local sliding-window statistics.",

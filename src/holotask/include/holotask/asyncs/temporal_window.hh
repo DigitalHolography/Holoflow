@@ -24,6 +24,7 @@ namespace holotask::asyncs {
 struct TemporalWindowSettings {
   size_t window_size = 3;
   size_t stride_size = 1;
+  size_t source_cycle_frames = 0;
 
   bool operator==(const TemporalWindowSettings &) const = default;
 };

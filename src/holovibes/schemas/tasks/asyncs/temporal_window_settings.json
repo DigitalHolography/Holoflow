@@ -15,6 +15,12 @@
       "minimum": 1,
       "default": 1,
       "description": "Number of frames to advance between output windows."
+    },
+    "source_cycle_frames": {
+      "type": "integer",
+      "minimum": 0,
+      "default": 0,
+      "description": "Frames per repeated source pass; zero means the source does not loop. Windows do not cross a pass boundary."
     }
   },
   "required": ["window_size"],

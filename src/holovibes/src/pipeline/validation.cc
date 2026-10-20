@@ -208,7 +208,10 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
               {SettingsField::SignalPlotTimeWindow});
   }
 
-  if (settings.time_window > 0 && settings.time_stride > 0 &&
+  const bool temporal_lscsi =
+      requires_processed_pipeline(settings) && settings.pp_spatial_contrast &&
+      settings.pp_spatial_contrast_dimensions == 3;
+  if (!temporal_lscsi && settings.time_window > 0 && settings.time_stride > 0 &&
       (settings.time_stride % settings.time_window != 0)) {
     add_issue(result, ValidationSeverity::Error, "time_stride_not_multiple",
               "Time stride must be a multiple of the time window.",
@@ -317,7 +320,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 {SettingsField::PpFlatfieldCutoffPeriod});
     }
 
-    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions != 1 &&
+    if (settings.pp_spatial_contrast &&
         (settings.pp_spatial_contrast_window_size < 3 ||
          settings.pp_spatial_contrast_window_size > 255 ||
          settings.pp_spatial_contrast_window_size % 2 == 0)) {
@@ -326,31 +329,33 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 {SettingsField::PpSpatialContrastWindowSize});
     }
 
-    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions != 1 &&
-        settings.pp_spatial_contrast_dimensions != 2 &&
+    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions != 2 &&
         settings.pp_spatial_contrast_dimensions != 3) {
       add_issue(result, ValidationSeverity::Error, "pp_spatial_contrast_dimensions_invalid",
-                "Spatial contrast dimensions must be 1D, 2D, or 3D.",
+                "Spatial contrast dimensions must be 2D or 3D.",
                 {SettingsField::PpSpatialContrastDimensions});
     }
 
-    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions != 2 &&
+    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions == 3 &&
         settings.time_window < 3) {
       add_issue(result, ValidationSeverity::Error, "spatial_contrast_time_window_invalid",
                 "Temporal spatial contrast must use at least 3 frames.",
                 {SettingsField::TimeWindow});
     }
 
-    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions != 2 &&
+    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions == 3 &&
         context.source_frame_count.has_value() && settings.import_source == ImportSource::HOLOFILE) {
       const int selected_end = std::min(settings.load_end, *context.source_frame_count);
       const int selected_frames = std::max(selected_end - settings.load_begin, 0);
-      if (selected_frames < settings.time_window) {
+      const int cycle_frames = settings.load_batch > 0
+                                   ? selected_frames / settings.load_batch * settings.load_batch
+                                   : selected_frames;
+      if (cycle_frames < settings.time_window) {
         add_issue(result, ValidationSeverity::Error,
                   "spatial_contrast_time_window_insufficient",
-                  std::format("The selected holofile range contains {} frames; temporal LSCI "
-                              "needs at least {}.",
-                              selected_frames, settings.time_window),
+                  std::format("The selected holofile range provides {} frames per replay; "
+                              "temporal LSCI needs at least {}.",
+                              cycle_frames, settings.time_window),
                   {SettingsField::TimeWindow});
       }
     }

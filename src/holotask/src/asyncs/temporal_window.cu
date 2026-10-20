@@ -36,12 +36,15 @@ namespace holotask::asyncs {
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 void to_json(nlohmann::json &j, const TemporalWindowSettings &s) {
-  j = nlohmann::json{{"window_size", s.window_size}, {"stride_size", s.stride_size}};
+  j = nlohmann::json{{"window_size", s.window_size},
+                     {"stride_size", s.stride_size},
+                     {"source_cycle_frames", s.source_cycle_frames}};
 }
 
 void from_json(const nlohmann::json &j, TemporalWindowSettings &s) {
   s.window_size = j.value("window_size", size_t{3});
   s.stride_size = j.value("stride_size", size_t{1});
+  s.source_cycle_frames = j.value("source_cycle_frames", size_t{0});
 }
 
 namespace {
@@ -71,10 +74,24 @@ public:
       throw std::logic_error("TemporalWindow::release_output: no active output");
 
     storage_access().owned_output_storage(0).ptr = nullptr;
+    size_t stride_frames = settings_.stride_size;
+    if (settings_.source_cycle_frames != 0) {
+      const size_t next_offset =
+          (window_start_offset_ + stride_frames % settings_.source_cycle_frames) %
+          settings_.source_cycle_frames;
+      // A replayed holofile must not contribute frames from two different passes to one window.
+      if (next_offset > settings_.source_cycle_frames - settings_.window_size) {
+        stride_frames += settings_.source_cycle_frames - next_offset;
+      }
+      window_start_offset_ =
+          (window_start_offset_ + stride_frames % settings_.source_cycle_frames) %
+          settings_.source_cycle_frames;
+    }
+
     const size_t buffered_frames = writer_size();
-    const size_t advance_frames = std::min(settings_.stride_size, buffered_frames);
+    const size_t advance_frames = std::min(stride_frames, buffered_frames);
     read_count_.fetch_add(advance_frames, std::memory_order_release);
-    pending_skip_ += settings_.stride_size - advance_frames;
+    pending_skip_ += stride_frames - advance_frames;
     pop_active_ = false;
   }
 
@@ -148,6 +165,7 @@ public:
     write_count_.store(0, std::memory_order_relaxed);
     read_count_.store(0, std::memory_order_relaxed);
     pending_skip_ = 0;
+    window_start_offset_ = 0;
     pop_active_ = false;
     storage_access().owned_output_storage(0).ptr = nullptr;
   }
@@ -173,6 +191,7 @@ private:
   DevPtr<std::byte>       window_buffer_;
   std::mutex              state_mutex_;
   size_t                  pending_skip_ = 0;
+  size_t                  window_start_offset_ = 0;
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_count_{0};
   alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_count_{0};
   bool pop_active_ = false;
@@ -190,6 +209,8 @@ TemporalWindowFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
     throw std::invalid_argument("TemporalWindow window_size must be at least 3");
   if (settings.stride_size == 0)
     throw std::invalid_argument("TemporalWindow stride_size must be positive");
+  if (settings.source_cycle_frames != 0 && settings.source_cycle_frames < settings.window_size)
+    throw std::invalid_argument("TemporalWindow source cycle must contain a full window");
 
   const auto &input = input_descs[0];
   if (input.rank() != 3 || input.shape[0] != 1)

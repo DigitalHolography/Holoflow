@@ -18,6 +18,7 @@
 #include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QGroupBox>
+#include <QLabel>
 #include <QSlider>
 #include <QSpinBox>
 #include <limits>
@@ -72,9 +73,8 @@ public:
   void set_asp_padded_height(int value);
   void set_convolution(const QString &kernel);
   void set_convolution_divide(bool enabled);
-  void set_spatial_contrast_enabled(bool enabled);
+  void set_spatial_contrast_mode(bool enabled, int dimensions);
   void set_spatial_contrast_window_size(int value);
-  void set_spatial_contrast_dimensions(int value);
   void set_time_window_max_for_temporal_lscsi(int value);
   void set_spatial_contrast_method(const QString &method);
   void set_spatial_contrast_display_max(double value);
@@ -114,15 +114,14 @@ public:
   QSpinBox        *asp_padded_height_spin();
   QComboBox       *convolution_combo();
   QCheckBox       *convolution_divide_check();
-  QCheckBox       *spatial_contrast_check();
   QSpinBox        *spatial_contrast_window_size();
-  QComboBox       *spatial_contrast_dimensions();
   QComboBox       *spatial_contrast_method();
   QDoubleSpinBox  *spatial_contrast_display_max();
   AutoFocusWidget *autofocus_widget();
 
 signals:
   void settings_changed();
+  void spatial_contrast_enabled_changed(bool enabled);
   void spatial_contrast_display_range_changed(float minimum, float maximum);
   void spatial_contrast_display_inversion_changed(bool inverted);
 
@@ -132,6 +131,7 @@ private:
   QStringList load_available_kernels();
   void        set_angular_spectrum_enabled(bool enabled);
   void        update_asp_padding_visibility();
+  void        update_spatial_contrast_controls();
   void        update_time_window_limits();
 
   QComboBox       *image_combo_;
@@ -152,9 +152,9 @@ private:
   QWidget         *asp_padding_controls_;
   QComboBox       *convolution_combo_;
   QCheckBox       *convolution_divide_check_;
-  QCheckBox       *spatial_contrast_check_;
+  QLabel          *spatial_contrast_window_label_;
   QSpinBox        *spatial_contrast_window_size_;
-  QComboBox       *spatial_contrast_dimensions_;
+  QLabel          *spatial_contrast_method_label_;
   QComboBox       *spatial_contrast_method_;
   QDoubleSpinBox  *spatial_contrast_display_max_;
   QCheckBox       *spatial_contrast_invert_display_;

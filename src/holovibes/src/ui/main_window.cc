@@ -1257,11 +1257,10 @@ void MainWindow::save_persistent_state() {
   settings.setValue("accumulation", view_widget_->get_accumulation());
   settings.setValue("flatfield", view_widget_->is_flatfield_enabled());
   settings.setValue("flatfield_cutoff_period_um", view_widget_->get_flatfield_cutoff_period_um());
-  settings.setValue("spatial_contrast", render_widget_->is_spatial_contrast_enabled());
+  settings.remove("spatial_contrast");
   settings.setValue("spatial_contrast_window_size",
                     render_widget_->get_spatial_contrast_window_size());
-  settings.setValue("spatial_contrast_dimensions",
-                    render_widget_->get_spatial_contrast_dimensions());
+  settings.remove("spatial_contrast_dimensions");
   settings.remove("spatial_contrast_temporal_frames");
   settings.setValue("spatial_contrast_method", render_widget_->get_spatial_contrast_method());
   settings.setValue("spatial_contrast_display_max",
@@ -1419,15 +1418,18 @@ void MainWindow::restore_persistent_state() {
   view_widget_->set_flatfield_cutoff_period_um(
       settings.value("flatfield_cutoff_period_um", view_widget_->get_flatfield_cutoff_period_um())
           .toDouble());
-  render_widget_->set_spatial_contrast_enabled(settings.value(
-      "spatial_contrast", render_widget_->is_spatial_contrast_enabled()).toBool());
+  const bool has_legacy_spatial_contrast = settings.contains("spatial_contrast");
+  const bool legacy_spatial_contrast_enabled =
+      settings.value("spatial_contrast", false).toBool();
+  const int legacy_spatial_contrast_dimensions =
+      settings.value("spatial_contrast_dimensions", 2).toInt();
+  if (has_legacy_spatial_contrast) {
+    render_widget_->set_spatial_contrast_mode(legacy_spatial_contrast_enabled,
+                                              legacy_spatial_contrast_dimensions);
+  }
   render_widget_->set_spatial_contrast_window_size(
       settings.value("spatial_contrast_window_size",
                      render_widget_->get_spatial_contrast_window_size())
-          .toInt());
-  render_widget_->set_spatial_contrast_dimensions(
-      settings.value("spatial_contrast_dimensions",
-                     render_widget_->get_spatial_contrast_dimensions())
           .toInt());
   render_widget_->set_spatial_contrast_method(
       settings.value("spatial_contrast_method", render_widget_->get_spatial_contrast_method())
@@ -1626,7 +1628,7 @@ void MainWindow::initialize_display_widgets() {
     view_widget_->pct_check()->setEnabled(!enabled);
     view_widget_->pct_radius()->setEnabled(!enabled);
   };
-  connect(render_widget_->spatial_contrast_check(), &QCheckBox::toggled, this,
+  connect(render_widget_, &ImageRenderingWidget::spatial_contrast_enabled_changed, this,
           update_post_processing_controls);
   update_post_processing_controls(render_widget_->is_spatial_contrast_enabled());
 
@@ -2473,7 +2475,9 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
       FieldBinding{SettingsField::PpSpatialContrastWindowSize,
                    render_widget_->spatial_contrast_window_size()},
       FieldBinding{SettingsField::PpSpatialContrastDimensions,
-                   render_widget_->spatial_contrast_dimensions()},
+                   render_widget_->get_spatial_contrast_dimensions() == 3
+                       ? static_cast<QWidget *>(render_widget_->time_transform_combo())
+                       : static_cast<QWidget *>(render_widget_->space_transform_combo())},
       FieldBinding{SettingsField::PpSpatialContrastMethod,
                    render_widget_->spatial_contrast_method()},
       FieldBinding{SettingsField::PpConvolution, render_widget_->convolution_combo()},
@@ -2702,6 +2706,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"None", SpacialMethod::NONE},
         {"Fresnel Diffraction", SpacialMethod::FRESNEL_DIFFRACTION},
         {"Angular Spectrum", SpacialMethod::ANGULAR_SPECTRUM},
+        {"LSCI (2D)", SpacialMethod::NONE},
     };
     QString method        = render_widget_->get_space_transform();
     s.spacial_method      = method_from_str.at(method.toStdString());
@@ -2725,6 +2730,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"Principal Component Analysis", TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS},
         {"RFFT", TimeMethod::RFFT},
         {"FFT", TimeMethod::FFT},
+        {"LSCI (3D)", TimeMethod::NONE},
     };
     s.time_window       = render_widget_->get_time_window();
     s.time_stride       = render_widget_->get_time_stride();
@@ -2991,9 +2997,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   {
     view_widget_->set_flatfield_enabled(s.pp_flatfield);
     view_widget_->set_flatfield_cutoff_period_um(s.pp_flatfield_cutoff_period_m * 1e6);
-    render_widget_->set_spatial_contrast_enabled(s.pp_spatial_contrast);
+    render_widget_->set_spatial_contrast_mode(s.pp_spatial_contrast,
+                                              s.pp_spatial_contrast_dimensions);
     render_widget_->set_spatial_contrast_window_size(s.pp_spatial_contrast_window_size);
-    render_widget_->set_spatial_contrast_dimensions(s.pp_spatial_contrast_dimensions);
     render_widget_->set_spatial_contrast_method(s.pp_spatial_contrast_method == 1 ? "FFT"
                                                                                  : "Kernel");
     view_widget_->set_accumulation(static_cast<int>(s.pp_accumulation));

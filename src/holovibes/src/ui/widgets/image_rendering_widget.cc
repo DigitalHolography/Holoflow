@@ -34,6 +34,8 @@ namespace {
 
 // constexpr int kLargeSpinMax = 1024 * 1024;
 constexpr int kLargeSpinMax = std::numeric_limits<int>::max();
+constexpr auto kLscsi2D = "LSCI (2D)";
+constexpr auto kLscsi3D = "LSCI (3D)";
 
 QSpinBox *create_spin_box(QWidget *parent, int minimum, int maximum, int value) {
   auto *spin_box = new QSpinBox(parent);
@@ -80,13 +82,14 @@ bool    ImageRenderingWidget::is_convolution_divide() const {
   return convolution_divide_check_->isChecked();
 }
 bool ImageRenderingWidget::is_spatial_contrast_enabled() const {
-  return spatial_contrast_check_->isChecked();
+  return space_transform_combo_->currentText() == kLscsi2D ||
+         time_transform_combo_->currentText() == kLscsi3D;
 }
 int ImageRenderingWidget::get_spatial_contrast_window_size() const {
   return spatial_contrast_window_size_->value();
 }
 int ImageRenderingWidget::get_spatial_contrast_dimensions() const {
-  return spatial_contrast_dimensions_->currentData().toInt();
+  return time_transform_combo_->currentText() == kLscsi3D ? 3 : 2;
 }
 QString ImageRenderingWidget::get_spatial_contrast_method() const {
   return spatial_contrast_method_->currentText();
@@ -129,37 +132,54 @@ void ImageRenderingWidget::set_convolution(const QString &kernel) {
 void ImageRenderingWidget::set_convolution_divide(bool enabled) {
   convolution_divide_check_->setChecked(enabled);
 }
-void ImageRenderingWidget::set_spatial_contrast_enabled(bool enabled) {
-  spatial_contrast_check_->setChecked(enabled);
-  spatial_contrast_window_size_->setEnabled(enabled && get_spatial_contrast_dimensions() != 1);
-  spatial_contrast_dimensions_->setEnabled(enabled);
-  spatial_contrast_method_->setEnabled(enabled && get_spatial_contrast_dimensions() != 1);
-  spatial_contrast_display_max_->setEnabled(enabled);
-  spatial_contrast_invert_display_->setEnabled(enabled);
-  update_time_window_limits();
+void ImageRenderingWidget::set_spatial_contrast_mode(bool enabled, int dimensions) {
+  const QSignalBlocker space_blocker(space_transform_combo_);
+  const QSignalBlocker time_blocker(time_transform_combo_);
+  if (!enabled) {
+    if (space_transform_combo_->currentText() == kLscsi2D)
+      space_transform_combo_->setCurrentText("None");
+    if (time_transform_combo_->currentText() == kLscsi3D)
+      time_transform_combo_->setCurrentText("None");
+  } else if (dimensions == 3) {
+    space_transform_combo_->setCurrentText("None");
+    time_transform_combo_->setCurrentText(kLscsi3D);
+  } else {
+    space_transform_combo_->setCurrentText(kLscsi2D);
+    time_transform_combo_->setCurrentText("None");
+  }
+  update_asp_padding_visibility();
+  update_spatial_contrast_controls();
 }
 void ImageRenderingWidget::set_spatial_contrast_window_size(int value) {
   spatial_contrast_window_size_->setValue(value);
-}
-void ImageRenderingWidget::set_spatial_contrast_dimensions(int value) {
-  const int index = spatial_contrast_dimensions_->findData(value);
-  if (index >= 0)
-    spatial_contrast_dimensions_->setCurrentIndex(index);
-  const bool enabled = spatial_contrast_check_->isChecked();
-  spatial_contrast_window_size_->setEnabled(enabled && value != 1);
-  spatial_contrast_method_->setEnabled(enabled && value != 1);
-  update_time_window_limits();
 }
 void ImageRenderingWidget::set_time_window_max_for_temporal_lscsi(int value) {
   max_temporal_lscsi_frames_ = std::max(value, 3);
   update_time_window_limits();
 }
 void ImageRenderingWidget::update_time_window_limits() {
-  const bool temporal_lscsi = spatial_contrast_check_->isChecked() &&
-                              get_spatial_contrast_dimensions() != 2;
+  const bool temporal_lscsi = is_spatial_contrast_enabled() &&
+                              get_spatial_contrast_dimensions() == 3;
   const QSignalBlocker blocker(time_window_spin_);
   time_window_spin_->setRange(temporal_lscsi ? 3 : 1,
                               temporal_lscsi ? max_temporal_lscsi_frames_ : kLargeSpinMax);
+}
+void ImageRenderingWidget::update_spatial_contrast_controls() {
+  const bool enabled = is_spatial_contrast_enabled();
+  spatial_contrast_window_label_->setVisible(enabled);
+  spatial_contrast_window_size_->setVisible(enabled);
+  spatial_contrast_window_size_->setEnabled(enabled);
+  spatial_contrast_method_label_->setVisible(enabled);
+  spatial_contrast_method_->setVisible(enabled);
+  spatial_contrast_method_->setEnabled(enabled);
+  spatial_contrast_display_max_->setEnabled(enabled);
+  spatial_contrast_invert_display_->setEnabled(enabled);
+  update_time_window_limits();
+  emit spatial_contrast_enabled_changed(enabled);
+  emit spatial_contrast_display_range_changed(
+      0.0f, enabled ? static_cast<float>(spatial_contrast_display_max_->value()) : 1.0f);
+  emit spatial_contrast_display_inversion_changed(
+      enabled && get_image_mode() == "Processed" && is_spatial_contrast_display_inverted());
 }
 void ImageRenderingWidget::set_spatial_contrast_method(const QString &method) {
   spatial_contrast_method_->setCurrentText(method);
@@ -197,7 +217,10 @@ void ImageRenderingWidget::mark_spatial_contrast_window_invalid() {
   mark_validation_error(spatial_contrast_window_size_);
 }
 void ImageRenderingWidget::mark_spatial_contrast_dimensions_invalid() {
-  mark_validation_error(spatial_contrast_dimensions_);
+  if (get_spatial_contrast_dimensions() == 3)
+    mark_validation_error(time_transform_combo_);
+  else
+    mark_validation_error(space_transform_combo_);
 }
 void ImageRenderingWidget::mark_spatial_contrast_method_invalid() {
   mark_validation_error(spatial_contrast_method_);
@@ -220,12 +243,8 @@ QSpinBox  *ImageRenderingWidget::asp_padded_width_spin() { return asp_padded_wid
 QSpinBox  *ImageRenderingWidget::asp_padded_height_spin() { return asp_padded_height_spin_; }
 QComboBox *ImageRenderingWidget::convolution_combo() { return convolution_combo_; }
 QCheckBox *ImageRenderingWidget::convolution_divide_check() { return convolution_divide_check_; }
-QCheckBox *ImageRenderingWidget::spatial_contrast_check() { return spatial_contrast_check_; }
 QSpinBox *ImageRenderingWidget::spatial_contrast_window_size() {
   return spatial_contrast_window_size_;
-}
-QComboBox *ImageRenderingWidget::spatial_contrast_dimensions() {
-  return spatial_contrast_dimensions_;
 }
 QComboBox *ImageRenderingWidget::spatial_contrast_method() { return spatial_contrast_method_; }
 QDoubleSpinBox *ImageRenderingWidget::spatial_contrast_display_max() {
@@ -261,39 +280,67 @@ void ImageRenderingWidget::setup_ui() {
   add_spin_row("Time Stride:", time_stride_spin_, 1, kLargeSpinMax, 32);
   image_combo_->setCurrentText("Processed");
 
-  spatial_contrast_check_ = new QCheckBox("Spatial LSCI contrast", this);
-  spatial_contrast_check_->setToolTip(
-      tr("Compute local K = standard deviation / mean. 1D uses the same pixel across a centered "
-         "time window, 2D uses a spatial sliding window, and 3D uses both. Select Processed "
-         "image mode to display K. Accumulation averages successive K maps. This direct LSCI "
-         "path skips hologram propagation, time transforms, FFT shift, Flatfield, and PCT clipping. "
-         "FFT convolution applies to spatial windows; 1D temporal-only mode uses direct samples."));
-  layout->addWidget(spatial_contrast_check_, row, 0, 1, 2);
+  filter_2d_check_ = new QCheckBox("Filter 2D", this);
+  layout->addWidget(filter_2d_check_, row, 0);
+
+  auto *filter_controls = new QWidget(this);
+  auto *filter_layout   = new QHBoxLayout(filter_controls);
+  filter_layout->setContentsMargins(0, 0, 0, 0);
+  filter_layout->setSpacing(6);
+  filter_2d_inner_spin_ = create_spin_box(filter_controls, 0, kLargeSpinMax, 0);
+  filter_layout->addWidget(filter_2d_inner_spin_);
+  filter_2d_outer_spin_ = create_spin_box(filter_controls, 0, kLargeSpinMax, 1024);
+  filter_layout->addWidget(filter_2d_outer_spin_);
+  layout->addWidget(filter_controls, row, 1);
   ++row;
-  layout->addWidget(new QLabel("Window (px):", this), row, 0);
+
+  auto space_transforms =
+      QStringList{"None", "Fresnel Diffraction", "Angular Spectrum", kLscsi2D};
+  add_combo_row("Space Transform:", space_transform_combo_, space_transforms);
+  space_transform_combo_->setToolTip(
+      tr("Select a propagation method, or LSCI (2D) to calculate local contrast in each frame."));
+
+  asp_padding_check_ = new QCheckBox("ASP Padding", this);
+  layout->addWidget(asp_padding_check_, row, 0);
+  asp_padding_controls_    = new QWidget(this);
+  auto *asp_padding_layout = new QHBoxLayout(asp_padding_controls_);
+  asp_padding_layout->setContentsMargins(0, 0, 0, 0);
+  asp_padding_layout->setSpacing(6);
+  asp_padded_width_spin_ = create_spin_box(asp_padding_controls_, 1, kLargeSpinMax, 1024);
+  asp_padded_width_spin_->setPrefix("W ");
+  asp_padding_layout->addWidget(asp_padded_width_spin_);
+  asp_padded_height_spin_ = create_spin_box(asp_padding_controls_, 1, kLargeSpinMax, 1024);
+  asp_padded_height_spin_->setPrefix("H ");
+  asp_padding_layout->addWidget(asp_padded_height_spin_);
+  layout->addWidget(asp_padding_controls_, row, 1);
+  ++row;
+
+  auto time_transforms =
+      QStringList{"None", "RFFT", "FFT", "Principal Component Analysis", kLscsi3D};
+  add_combo_row("Time Transform:", time_transform_combo_, time_transforms);
+  time_transform_combo_->setToolTip(
+      tr("Select a temporal transform, or LSCI (3D) to calculate local contrast across a sliding "
+         "time window and spatial neighborhood."));
+
+  spatial_contrast_window_label_ = new QLabel("LSCI Window (px):", this);
+  layout->addWidget(spatial_contrast_window_label_, row, 0);
   spatial_contrast_window_size_ = create_spin_box(this, 3, 255, 7);
   spatial_contrast_window_size_->setSingleStep(2);
   spatial_contrast_window_size_->setToolTip(
       tr("Odd spatial window size. Border windows use only pixels inside the frame."));
-  spatial_contrast_window_size_->setEnabled(false);
   layout->addWidget(spatial_contrast_window_size_, row, 1);
+  spatial_contrast_window_label_->hide();
+  spatial_contrast_window_size_->hide();
   ++row;
 
-  layout->addWidget(new QLabel("Dimensions:", this), row, 0);
-  spatial_contrast_dimensions_ = new QComboBox(this);
-  spatial_contrast_dimensions_->addItem(tr("1D (time only)"), 1);
-  spatial_contrast_dimensions_->addItem(tr("2D (space)"), 2);
-  spatial_contrast_dimensions_->addItem(tr("3D (space + time)"), 3);
-  spatial_contrast_dimensions_->setCurrentIndex(1);
-  spatial_contrast_dimensions_->setToolTip(
-      tr("1D follows one pixel over time. 2D uses one frame. 3D uses a sliding temporal window "
-         "and a spatial window."));
-  spatial_contrast_dimensions_->setEnabled(false);
-  layout->addWidget(spatial_contrast_dimensions_, row, 1);
+  spatial_contrast_method_label_ = new QLabel("LSCI method:", this);
+  layout->addWidget(spatial_contrast_method_label_, row, 0);
+  spatial_contrast_method_ = create_combo_box(this, QStringList{"Kernel", "FFT"});
+  layout->addWidget(spatial_contrast_method_, row, 1);
+  spatial_contrast_method_label_->hide();
+  spatial_contrast_method_->hide();
   ++row;
 
-  add_combo_row("LSCI method:", spatial_contrast_method_, QStringList{"Kernel", "FFT"});
-  spatial_contrast_method_->setEnabled(false);
   layout->addWidget(new QLabel("Display max K:", this), row, 0);
   spatial_contrast_display_max_ = new QDoubleSpinBox(this);
   spatial_contrast_display_max_->setRange(0.05, 1.0);
@@ -315,44 +362,10 @@ void ImageRenderingWidget::setup_ui() {
   layout->addWidget(spatial_contrast_invert_display_, row, 0, 1, 2);
   ++row;
 
-  filter_2d_check_ = new QCheckBox("Filter 2D", this);
-  layout->addWidget(filter_2d_check_, row, 0);
-
-  auto *filter_controls = new QWidget(this);
-  auto *filter_layout   = new QHBoxLayout(filter_controls);
-  filter_layout->setContentsMargins(0, 0, 0, 0);
-  filter_layout->setSpacing(6);
-  filter_2d_inner_spin_ = create_spin_box(filter_controls, 0, kLargeSpinMax, 0);
-  filter_layout->addWidget(filter_2d_inner_spin_);
-  filter_2d_outer_spin_ = create_spin_box(filter_controls, 0, kLargeSpinMax, 1024);
-  filter_layout->addWidget(filter_2d_outer_spin_);
-  layout->addWidget(filter_controls, row, 1);
-  ++row;
-
-  auto space_transforms = QStringList{"None", "Fresnel Diffraction", "Angular Spectrum"};
-  add_combo_row("Space Transform:", space_transform_combo_, space_transforms);
-
-  asp_padding_check_ = new QCheckBox("ASP Padding", this);
-  layout->addWidget(asp_padding_check_, row, 0);
-  asp_padding_controls_    = new QWidget(this);
-  auto *asp_padding_layout = new QHBoxLayout(asp_padding_controls_);
-  asp_padding_layout->setContentsMargins(0, 0, 0, 0);
-  asp_padding_layout->setSpacing(6);
-  asp_padded_width_spin_ = create_spin_box(asp_padding_controls_, 1, kLargeSpinMax, 1024);
-  asp_padded_width_spin_->setPrefix("W ");
-  asp_padding_layout->addWidget(asp_padded_width_spin_);
-  asp_padded_height_spin_ = create_spin_box(asp_padding_controls_, 1, kLargeSpinMax, 1024);
-  asp_padded_height_spin_->setPrefix("H ");
-  asp_padding_layout->addWidget(asp_padded_height_spin_);
-  layout->addWidget(asp_padding_controls_, row, 1);
-  ++row;
-
-  auto time_transforms = QStringList{"None", "RFFT", "FFT", "Principal Component Analysis"};
-  add_combo_row("Time Transform:", time_transform_combo_, time_transforms);
   add_spin_row("Time Window:", time_window_spin_, 1, kLargeSpinMax, 32);
   time_window_spin_->setToolTip(
-      tr("Number of consecutive frames in each temporal-transform window. For 1D or 3D LSCI, "
-         "this same value sets the temporal window; 2D LSCI ignores it."));
+      tr("Number of consecutive frames in each temporal-transform window. LSCI (3D) uses this "
+         "as its temporal window; LSCI (2D) ignores it."));
   add_spin_row("Lambda (nm):", lambda_spin_, 1, kLargeSpinMax, 852);
   add_spin_row("Focus (mm):", focus_spin_, 1, kLargeSpinMax, 380);
 
@@ -402,7 +415,7 @@ void ImageRenderingWidget::connect_signals() {
   connect(image_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
     emit settings_changed();
     emit spatial_contrast_display_inversion_changed(
-        spatial_contrast_check_->isChecked() && get_image_mode() == "Processed" &&
+        is_spatial_contrast_enabled() && get_image_mode() == "Processed" &&
         is_spatial_contrast_display_inverted());
   });
   connect(batch_size_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
@@ -415,7 +428,13 @@ void ImageRenderingWidget::connect_signals() {
   connect(filter_2d_outer_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(space_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+    if (space_transform_combo_->currentText() == kLscsi2D ||
+        time_transform_combo_->currentText() == kLscsi3D) {
+      const QSignalBlocker blocker(time_transform_combo_);
+      time_transform_combo_->setCurrentText("None");
+    }
     update_asp_padding_visibility();
+    update_spatial_contrast_controls();
     emit settings_changed();
   });
   connect(asp_padding_check_, &QCheckBox::toggled, this, [this](bool enabled) {
@@ -427,7 +446,16 @@ void ImageRenderingWidget::connect_signals() {
   connect(asp_padded_height_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(time_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          &ImageRenderingWidget::settings_changed);
+          [this]() {
+            if (time_transform_combo_->currentText() == kLscsi3D ||
+                space_transform_combo_->currentText() == kLscsi2D) {
+              const QSignalBlocker blocker(space_transform_combo_);
+              space_transform_combo_->setCurrentText("None");
+              update_asp_padding_visibility();
+            }
+            update_spatial_contrast_controls();
+            emit settings_changed();
+          });
   connect(time_window_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(lambda_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
@@ -436,38 +464,18 @@ void ImageRenderingWidget::connect_signals() {
           &ImageRenderingWidget::settings_changed);
   connect(convolution_divide_check_, &QCheckBox::toggled, this,
           &ImageRenderingWidget::settings_changed);
-  connect(spatial_contrast_check_, &QCheckBox::toggled, this, [this](bool enabled) {
-    spatial_contrast_window_size_->setEnabled(enabled && get_spatial_contrast_dimensions() != 1);
-    spatial_contrast_dimensions_->setEnabled(enabled);
-    spatial_contrast_method_->setEnabled(enabled && get_spatial_contrast_dimensions() != 1);
-    spatial_contrast_display_max_->setEnabled(enabled);
-    spatial_contrast_invert_display_->setEnabled(enabled);
-    update_time_window_limits();
-    emit settings_changed();
-    const float display_max = enabled ? static_cast<float>(spatial_contrast_display_max_->value())
-                                      : 1.0f;
-    emit spatial_contrast_display_range_changed(0.0f, display_max);
-    emit spatial_contrast_display_inversion_changed(
-        enabled && get_image_mode() == "Processed" &&
-        is_spatial_contrast_display_inverted());
-  });
   connect(spatial_contrast_window_size_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
-  connect(spatial_contrast_dimensions_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          [this](int) {
-            set_spatial_contrast_dimensions(get_spatial_contrast_dimensions());
-            emit settings_changed();
-          });
   connect(spatial_contrast_method_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(spatial_contrast_display_max_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           [this](double value) {
-            if (spatial_contrast_check_->isChecked())
+            if (is_spatial_contrast_enabled())
               emit spatial_contrast_display_range_changed(0.0f, static_cast<float>(value));
           });
   connect(spatial_contrast_invert_display_, &QCheckBox::toggled, this, [this](bool inverted) {
     emit spatial_contrast_display_inversion_changed(
-        spatial_contrast_check_->isChecked() && get_image_mode() == "Processed" && inverted);
+        is_spatial_contrast_enabled() && get_image_mode() == "Processed" && inverted);
   });
   connect(autofocus_widget_, &AutoFocusWidget::settings_changed, this, [this]() {
     set_angular_spectrum_enabled(!autofocus_widget_->is_enabled());
@@ -532,7 +540,6 @@ void ImageRenderingWidget::clear_validation_styles() {
   clear_validation_error(time_transform_combo_);
   clear_validation_error(convolution_combo_);
   clear_validation_error(spatial_contrast_window_size_);
-  clear_validation_error(spatial_contrast_dimensions_);
   clear_validation_error(spatial_contrast_method_);
 }
 
