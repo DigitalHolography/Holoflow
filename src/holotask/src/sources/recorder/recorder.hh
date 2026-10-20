@@ -29,10 +29,10 @@
 namespace holotask::sources {
 
 struct RecordingGeometry {
-  uint8_t      bits_per_pixel;
-  size_t       frame_width;
-  size_t       frame_height;
-  const size_t frame_size_in_bytes;
+  uint8_t bits_per_pixel;
+  size_t  frame_width;
+  size_t  frame_height;
+  size_t  frame_size_in_bytes;
 
   RecordingGeometry(uint8_t bits_per_pixel_, size_t frame_width_, size_t frame_height_);
 };
@@ -47,10 +47,16 @@ public:
   using SuccessCallback                 = std::function<void(SessionId, size_t)>;
   using FailureCallback                 = std::function<void(SessionId, const std::string &)>;
 
-  RecordingSession(SessionId id, CameraBufferQueue &buffer_queue, RecordingGeometry &geometry,
+  RecordingSession(SessionId id, CameraBufferQueue &buffer_queue, const RecordingGeometry &geometry,
                    size_t buffer_size, PollMetricsCallback metrics_callback,
                    SuccessCallback success_callback, FailureCallback failure_callback,
                    BufferRecordingFinishedCallback buffer_recording_finished_callback);
+
+  RecordingSession(const RecordingSession &)            = delete;
+  RecordingSession &operator=(const RecordingSession &) = delete;
+
+  RecordingSession(RecordingSession &&other);
+  RecordingSession &operator=(RecordingSession &&other) = delete;
 
   ~RecordingSession();
   // start recording workers
@@ -174,7 +180,8 @@ struct RecordingContext {
 
   std::vector<RecordingSession> sessions_;
 
-  void invalidate(size_t session_count, CameraBufferQueue &buffer_queue, size_t buffer_size,
+  void
+  invalidate(size_t session_count, CameraBufferQueue &buffer_queue, size_t buffer_size,
              const RecordingGeometry &g, RecordingSession::PollMetricsCallback metrics_callback,
              RecordingSession::SuccessCallback                 success_callback,
              RecordingSession::FailureCallback                 failure_callback,

@@ -37,14 +37,24 @@ RecordingGeometry::RecordingGeometry(uint8_t bits_per_pixel_, size_t frame_width
 // -------------------------------------------------------------------------------------------------
 
 RecordingSession::RecordingSession(
-    SessionId id, CameraBufferQueue &buffer_queue, RecordingGeometry &geometry, size_t buffer_size,
-    PollMetricsCallback metrics_callback, SuccessCallback success_callback,
+    SessionId id, CameraBufferQueue &buffer_queue, const RecordingGeometry &geometry,
+    size_t buffer_size, PollMetricsCallback metrics_callback, SuccessCallback success_callback,
     FailureCallback                 failure_callback,
     BufferRecordingFinishedCallback buffer_recording_finished_callback)
     : buffer_queue_{buffer_queue}, id_{id}, geometry_{geometry}, buffer_(buffer_size),
       metrics_callback_{metrics_callback}, success_callback_{success_callback},
       failure_callback_{failure_callback},
       buffer_recording_finished_callback_{buffer_recording_finished_callback} {}
+
+RecordingSession::RecordingSession(RecordingSession &&other)
+    : buffer_queue_(other.buffer_queue_), state_(other.state_.load(std::memory_order_relaxed)),
+      id_(other.id_), geometry_(std::move(other.geometry_)), buffer_(std::move(other.buffer_)),
+      worker_thread_(std::move(other.worker_thread_)),
+      metrics_callback_(std::move(other.metrics_callback_)),
+      success_callback_(std::move(other.success_callback_)),
+      failure_callback_(std::move(other.failure_callback_)),
+      buffer_recording_finished_callback_(std::move(other.buffer_recording_finished_callback_)),
+      remaining_to_record_(other.remaining_to_record_.load(std::memory_order_relaxed)) {}
 
 RecordingSession::~RecordingSession() {
   if (cancel_worker_thread())
@@ -104,8 +114,9 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
     std::atomic<uint32_t> finished = 0;
 
     auto writer = RecordWriter(id_, buffer_, settings.file_path,
-                               static_cast<size_t>(settings.recording_count), buffer_part_count,
-                               geometry_, settings.pipeline_config, metrics_callback_);
+                               static_cast<uint32_t>(settings.recording_count),
+                               static_cast<uint32_t>(buffer_part_count), geometry_,
+                               settings.pipeline_config, metrics_callback_);
 
     auto rec = Recorder(settings.recording_count, buffer_part_count, buffer_queue_, writer);
 
@@ -274,8 +285,6 @@ void Recorder::execute(std::stop_token cancelled, std::atomic<size_t> &remaining
   Clock::time_point last_poll     = Clock::now();
   constexpr auto    poll_interval = std::chrono::milliseconds(500);
 
-  size_t written_last_interval = 0;
-
   while (current_frame < frame_to_record_ && !cancelled.stop_requested()) {
     const auto *frame = queue_.read_b(&stop_requested);
     if (!frame) {
@@ -300,7 +309,7 @@ void Recorder::execute(std::stop_token cancelled, std::atomic<size_t> &remaining
 // RecordingContext
 // -------------------------------------------------------------------------------------------------
 
-void RecordingContext::reset(
+void RecordingContext::invalidate(
     size_t session_count, CameraBufferQueue &buffer_queue, size_t buffer_size,
     const RecordingGeometry &g, RecordingSession::PollMetricsCallback metrics_callback,
     RecordingSession::SuccessCallback                 success_callback,
@@ -313,12 +322,14 @@ void RecordingContext::reset(
   acquired_since_record_start_.store(0, std::memory_order_release);
   acquiring_for_record_.store(false, std::memory_order_release);
 
-  sessions_.reserve(session_count);
   logger()->info("[RecordingContext::reset] creating {} recording session with buffer of {} bytes",
                  session_count, buffer_size);
+
+  sessions_.reserve(session_count);
   for (size_t i = 0; i < session_count; ++i) {
-    sessions_.emplace_back(i, buffer_queue, g, buffer_size, metrics_callback, success_callback,
-                           failure_callback, buffer_recording_finished_callback);
+    sessions_.emplace_back(static_cast<RecordingSession::SessionId>(i), buffer_queue, g,
+                           buffer_size, metrics_callback, success_callback, failure_callback,
+                           buffer_recording_finished_callback);
   }
 }
 } // namespace holotask::sources

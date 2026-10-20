@@ -793,11 +793,6 @@ public:
                     "Failed to emit recording_failed event");
   }
 
-  void emit_recording_failed_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
-                                   const std::string &message) {
-    emit_recording_failed_event(ctx, id, message);
-  }
-
   void start_raw_record(holoflow::core::SyncCtx &ctx) {
     HOLOVIBES_CHECK(ctx.event_writer != nullptr, "Camera recording requires an event writer");
     // Join a completed recorder before replacing its thread and settings.
@@ -990,8 +985,8 @@ public:
       auto recording_buffer_size = runtime_cfg_.final_height * runtime_cfg_.width *
                                    record_settings.recording_count * pixel_size_in_bytes;
 
-      auto g =
-          RecordingGeometry(pixel_size_in_bytes * 8, runtime_cfg_.width, runtime_cfg_.final_height);
+      auto g = RecordingGeometry(static_cast<uint8_t>(pixel_size_in_bytes * 8), runtime_cfg_.width,
+                                 runtime_cfg_.final_height);
 
       recording_context_->invalidate(
           record_settings.record_queue_count, buffer_queue_, recording_buffer_size, g,
