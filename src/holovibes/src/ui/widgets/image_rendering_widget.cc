@@ -174,18 +174,15 @@ void ImageRenderingWidget::update_spatial_contrast_controls() {
   spatial_contrast_method_->setEnabled(enabled);
   spatial_contrast_display_max_label_->setVisible(enabled);
   spatial_contrast_display_max_->setVisible(enabled);
-  spatial_contrast_display_max_->setEnabled(enabled);
-  spatial_contrast_invert_display_->setEnabled(enabled);
+  spatial_contrast_display_max_->setEnabled(enabled && !spatial_contrast_appearance_locked_);
+  spatial_contrast_invert_display_->setEnabled(enabled && !spatial_contrast_appearance_locked_);
   update_time_window_limits();
   emit spatial_contrast_enabled_changed(enabled);
   update_spatial_contrast_display_range();
-  emit spatial_contrast_display_inversion_changed(
-      enabled && get_image_mode() == "Processed" && is_spatial_contrast_display_inverted());
 }
 void ImageRenderingWidget::update_spatial_contrast_display_range() {
-  const bool enabled = is_spatial_contrast_enabled();
-  emit spatial_contrast_display_range_changed(
-      0.0f, enabled ? static_cast<float>(get_spatial_contrast_display_max()) : 1.0f);
+  // LSCI uses a fixed-range U8 conversion before display; Raw and other views are U8/U16 too.
+  emit spatial_contrast_display_range_changed(0.0f, 1.0f);
 }
 void ImageRenderingWidget::set_spatial_contrast_method(const QString &method) {
   spatial_contrast_method_->setCurrentText(method);
@@ -195,6 +192,15 @@ void ImageRenderingWidget::set_spatial_contrast_display_max(double value) {
 }
 void ImageRenderingWidget::set_spatial_contrast_display_inverted(bool inverted) {
   spatial_contrast_invert_display_->setChecked(inverted);
+}
+void ImageRenderingWidget::set_spatial_contrast_appearance_locked(bool locked) {
+  if (spatial_contrast_appearance_locked_ == locked) {
+    return;
+  }
+  spatial_contrast_appearance_locked_ = locked;
+  const bool enabled = is_spatial_contrast_enabled() && !locked;
+  spatial_contrast_display_max_->setEnabled(enabled);
+  spatial_contrast_invert_display_->setEnabled(enabled);
 }
 
 void ImageRenderingWidget::mark_batch_size_invalid() { mark_validation_error(batch_size_spin_); }
@@ -354,21 +360,22 @@ void ImageRenderingWidget::setup_ui() {
       0.0, static_cast<double>(std::numeric_limits<float>::max()));
   spatial_contrast_display_max_->setSingleStep(0.05);
   spatial_contrast_display_max_->setDecimals(2);
+  spatial_contrast_display_max_->setKeyboardTracking(false);
   spatial_contrast_display_max_->setValue(0.75);
   spatial_contrast_display_max_->setToolTip(
-      tr("Map K=0 to black and this K value to white in the processed preview. Larger K values "
-         "appear white. The calculated K map itself is not upper-clipped. This affects display "
-         "only."));
+      tr("Map K=0 to black and this K value to white in the processed LSCI preview and "
+         "recording. Larger K values appear white. The calculated K map itself is not "
+         "upper-clipped."));
   spatial_contrast_display_max_->setEnabled(false);
   layout->addWidget(spatial_contrast_display_max_, row, 1);
   spatial_contrast_display_max_label_->hide();
   spatial_contrast_display_max_->hide();
   ++row;
 
-  spatial_contrast_invert_display_ = new QCheckBox("Invert LSCI display", this);
+  spatial_contrast_invert_display_ = new QCheckBox("Invert LSCI", this);
   spatial_contrast_invert_display_->setToolTip(
-      tr("Reverse black and white in the processed LSCI preview without changing the input or "
-         "calculated contrast values."));
+      tr("Reverse black and white in the processed LSCI preview and recording without changing "
+         "the input or calculated contrast values."));
   spatial_contrast_invert_display_->setEnabled(false);
   layout->addWidget(spatial_contrast_invert_display_, row, 0, 1, 2);
   ++row;
@@ -425,9 +432,6 @@ void ImageRenderingWidget::connect_signals() {
   // Emit settings_changed for all control changes
   connect(image_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
     emit settings_changed();
-    emit spatial_contrast_display_inversion_changed(
-        is_spatial_contrast_enabled() && get_image_mode() == "Processed" &&
-        is_spatial_contrast_display_inverted());
   });
   connect(batch_size_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
@@ -481,12 +485,10 @@ void ImageRenderingWidget::connect_signals() {
           &ImageRenderingWidget::settings_changed);
   connect(spatial_contrast_display_max_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           [this](double) {
-            update_spatial_contrast_display_range();
+            emit settings_changed();
           });
-  connect(spatial_contrast_invert_display_, &QCheckBox::toggled, this, [this](bool inverted) {
-    emit spatial_contrast_display_inversion_changed(
-        is_spatial_contrast_enabled() && get_image_mode() == "Processed" && inverted);
-  });
+  connect(spatial_contrast_invert_display_, &QCheckBox::toggled, this,
+          &ImageRenderingWidget::settings_changed);
   connect(autofocus_widget_, &AutoFocusWidget::settings_changed, this, [this]() {
     set_angular_spectrum_enabled(!autofocus_widget_->is_enabled());
     emit settings_changed();

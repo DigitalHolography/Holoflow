@@ -79,6 +79,7 @@ public:
   void set_spatial_contrast_method(const QString &method);
   void set_spatial_contrast_display_max(double value);
   void set_spatial_contrast_display_inverted(bool inverted);
+  void set_spatial_contrast_appearance_locked(bool locked);
 
   // Validation
   void clear_validation_styles();
@@ -123,7 +124,6 @@ signals:
   void settings_changed();
   void spatial_contrast_enabled_changed(bool enabled);
   void spatial_contrast_display_range_changed(float minimum, float maximum);
-  void spatial_contrast_display_inversion_changed(bool inverted);
 
 private:
   void        setup_ui();
@@ -160,6 +160,7 @@ private:
   QLabel          *spatial_contrast_display_max_label_;
   QDoubleSpinBox  *spatial_contrast_display_max_;
   QCheckBox       *spatial_contrast_invert_display_;
+  bool             spatial_contrast_appearance_locked_ = false;
   AutoFocusWidget *autofocus_widget_;
   int              max_temporal_lscsi_frames_ = std::numeric_limits<int>::max();
 };

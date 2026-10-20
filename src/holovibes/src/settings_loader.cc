@@ -160,6 +160,8 @@ void write_view(json &j, const Settings &s) {
   spatial_contrast["window_size"]         = s.pp_spatial_contrast_window_size;
   spatial_contrast["dimensions"]          = s.pp_spatial_contrast_dimensions;
   spatial_contrast["method"] = s.pp_spatial_contrast_method == 1 ? "fft" : "kernel";
+  spatial_contrast["display_max"]       = s.pp_spatial_contrast_display_max;
+  spatial_contrast["invert_display"]    = s.pp_spatial_contrast_invert_display;
   spatial_contrast.erase("temporal_frames");
 
   view["registration"]["registration_enabled"] = s.pp_registration;
@@ -281,6 +283,10 @@ void read_view(Settings &s, const json &view) {
       val(spatial_contrast, "dimensions", s.pp_spatial_contrast_dimensions);
   const auto method = val(spatial_contrast, "method", std::string{"kernel"});
   s.pp_spatial_contrast_method = method == "fft" ? 1 : method == "kernel" ? 0 : -1;
+  s.pp_spatial_contrast_display_max =
+      val(spatial_contrast, "display_max", s.pp_spatial_contrast_display_max);
+  s.pp_spatial_contrast_invert_display =
+      val(spatial_contrast, "invert_display", s.pp_spatial_contrast_invert_display);
 
   const auto &window = child_or_empty(view, "window");
   const auto &xy     = child_or_empty(window, "xy");

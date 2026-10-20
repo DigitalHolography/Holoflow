@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <list>
 #include <map>
@@ -73,6 +74,7 @@ void to_json(nlohmann::json &j, const ConversionSettings::Strategy &s) {
   static const std::map<ConversionSettings::Strategy, std::string> strategy_to_string{
       {ConversionSettings::Strategy::Real, "Real"},
       {ConversionSettings::Strategy::Scaled, "Scaled"},
+      {ConversionSettings::Strategy::FixedRange, "FixedRange"},
       {ConversionSettings::Strategy::Modulus, "Modulus"},
       {ConversionSettings::Strategy::Argument, "Argument"},
   };
@@ -85,6 +87,7 @@ void from_json(const nlohmann::json &j, ConversionSettings::Strategy &s) {
   static const std::map<std::string, ConversionSettings::Strategy> string_to_strategy{
       {"Real", ConversionSettings::Strategy::Real},
       {"Scaled", ConversionSettings::Strategy::Scaled},
+      {"FixedRange", ConversionSettings::Strategy::FixedRange},
       {"Modulus", ConversionSettings::Strategy::Modulus},
       {"Argument", ConversionSettings::Strategy::Argument},
   };
@@ -99,11 +102,19 @@ void from_json(const nlohmann::json &j, ConversionSettings::Strategy &s) {
 
 void to_json(nlohmann::json &j, const ConversionSettings &s) {
   j = nlohmann::json{{"target", s.target}, {"strategy", s.strategy}};
+  if (s.strategy == ConversionSettings::Strategy::FixedRange) {
+    j["max_value"] = s.max_value;
+    j["invert"]    = s.invert;
+  }
 }
 
 void from_json(const nlohmann::json &j, ConversionSettings &s) {
   j.at("target").get_to(s.target);
   j.at("strategy").get_to(s.strategy);
+  if (s.strategy == ConversionSettings::Strategy::FixedRange) {
+    j.at("max_value").get_to(s.max_value);
+    s.invert = j.value("invert", false);
+  }
 }
 
 namespace {
@@ -145,6 +156,7 @@ const std::map<Cfg, DType> &cfg_to_dtype() {
       {{DType::U8, Target::CF32, Strategy::Real}, DType::CF32},
       {{DType::U16, Target::CF32, Strategy::Real}, DType::CF32},
       {{DType::F32, Target::U8, Strategy::Scaled}, DType::U8},
+      {{DType::F32, Target::U8, Strategy::FixedRange}, DType::U8},
       {{DType::F32, Target::U16, Strategy::Scaled}, DType::U16},
       {{DType::F32, Target::CF32, Strategy::Real}, DType::CF32},
       {{DType::CF32, Target::F32, Strategy::Modulus}, DType::F32},
@@ -185,6 +197,23 @@ __global__ void f32_u8_scaled_kernel(const float *idata, uint8_t *odata, int siz
     float scale = 255.f / (*max_val - *min_val);
     int   val   = static_cast<int>((idata[idx] - *min_val) * scale + 0.5f);
     odata[idx]  = static_cast<uint8_t>(fminf(fmaxf(val, 0), 255));
+  }
+}
+
+__global__ void f32_u8_fixed_range_kernel(const float *idata, uint8_t *odata, int size,
+                                          float max_value, bool invert) {
+  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+  if (idx < size) {
+    const float value = idata[idx];
+    uint8_t     mapped;
+    if (!(value > 0.0f)) {
+      mapped = 0; // Also maps NaN to black.
+    } else if (max_value == 0.0f || value >= max_value) {
+      mapped = 255;
+    } else {
+      mapped = static_cast<uint8_t>(value / max_value * 255.0f + 0.5f);
+    }
+    odata[idx] = invert ? static_cast<uint8_t>(255 - mapped) : mapped;
   }
 }
 
@@ -452,6 +481,7 @@ private:
         {{DType::U8, Target::CF32, Strategy::Real}, &Conversion::launch_u8_cf32_real},
         {{DType::U16, Target::CF32, Strategy::Real}, &Conversion::launch_u16_cf32_real},
         {{DType::F32, Target::U8, Strategy::Scaled}, &Conversion::launch_f32_u8_scaled},
+        {{DType::F32, Target::U8, Strategy::FixedRange}, &Conversion::launch_f32_u8_fixed_range},
         {{DType::F32, Target::U16, Strategy::Scaled}, &Conversion::launch_f32_u16_scaled},
         {{DType::F32, Target::CF32, Strategy::Real}, &Conversion::launch_f32_cf32_real},
         {{DType::CF32, Target::F32, Strategy::Modulus}, &Conversion::launch_cf32_f32_modulus},
@@ -554,6 +584,15 @@ private:
                               addresses, idata, odata, size);
       return;
     }
+    if (cfg == Cfg{DType::F32, Target::U8, Strategy::FixedRange}) {
+      auto *idata = reinterpret_cast<const float *>(in.data());
+      auto *odata = reinterpret_cast<uint8_t *>(out.data());
+      float max_value = settings_.max_value;
+      bool  invert    = settings_.invert;
+      set_single_graph_params(reinterpret_cast<const void *>(f32_u8_fixed_range_kernel),
+                              num_blocks, addresses, idata, odata, size, max_value, invert);
+      return;
+    }
     if (cfg == Cfg{DType::CF32, Target::F32, Strategy::Modulus}) {
       auto *idata = reinterpret_cast<const cuFloatComplex *>(in.data());
       auto *odata = reinterpret_cast<float *>(out.data());
@@ -624,6 +663,18 @@ private:
     const int block_size = 256;
     const int num_blocks = (size + block_size - 1) / block_size;
     f32_u8_scaled_kernel<<<num_blocks, block_size, 0, stream_>>>(idata, odata, size, d_min, d_max);
+    CUDA_CHECK(cudaGetLastError());
+  }
+
+  void launch_f32_u8_fixed_range(holoflow::core::TView in, holoflow::core::TView out) {
+    auto *idata = reinterpret_cast<const float *>(in.data());
+    auto *odata = reinterpret_cast<uint8_t *>(out.data());
+    int   size  = static_cast<int>(in.desc.num_elements());
+
+    const int block_size = 256;
+    const int num_blocks = (size + block_size - 1) / block_size;
+    f32_u8_fixed_range_kernel<<<num_blocks, block_size, 0, stream_>>>(
+        idata, odata, size, settings_.max_value, settings_.invert);
     CUDA_CHECK(cudaGetLastError());
   }
 
@@ -712,6 +763,10 @@ ConversionFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
   const auto cfg = Cfg{idesc.dtype, settings.target, settings.strategy};
   check(cfg_to_dtype().contains(cfg), "Unsupported conversion configuration");
+  if (settings.strategy == Strategy::FixedRange) {
+    check(std::isfinite(settings.max_value) && settings.max_value >= 0.0f,
+          "FixedRange max_value must be finite and nonnegative");
+  }
 
   holoflow::core::TDesc odesc(idesc.shape, cfg_to_dtype().at(cfg), holoflow::core::MemLoc::Device);
   return holoflow::core::InferResult{

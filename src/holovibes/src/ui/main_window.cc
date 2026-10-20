@@ -1169,6 +1169,9 @@ void MainWindow::refresh_command_bar() {
   stop_command_button_->setEnabled(import_widget_->stop_button()->isEnabled());
   record_command_button_->setEnabled(export_widget_->record_button()->isEnabled());
   stop_record_command_button_->setEnabled(export_widget_->stop_button()->isEnabled());
+  render_widget_->set_spatial_contrast_appearance_locked(
+      export_in_progress_ || update_in_progress_ ||
+      pending_recording_acquisition_id_.has_value());
 
   if (pause_requested_) {
     set_status_label(pipeline_status_label_, "Pausing", "warning");
@@ -1660,16 +1663,8 @@ void MainWindow::initialize_display_widgets() {
           [this](float minimum, float maximum) {
             xy_processed_widget_->set_value_range(minimum, maximum);
           });
-  connect(render_widget_, &ImageRenderingWidget::spatial_contrast_display_inversion_changed, this,
-          [this](bool inverted) { xy_processed_widget_->set_display_inverted(inverted); });
-  xy_processed_widget_->set_value_range(
-      0.0f, render_widget_->is_spatial_contrast_enabled()
-                ? static_cast<float>(render_widget_->get_spatial_contrast_display_max())
-                : 1.0f);
-  xy_processed_widget_->set_display_inverted(
-      render_widget_->is_spatial_contrast_enabled() &&
-      render_widget_->get_image_mode() == "Processed" &&
-      render_widget_->is_spatial_contrast_display_inverted());
+  xy_processed_widget_->set_value_range(0.0f, 1.0f);
+  xy_processed_widget_->set_display_inverted(false);
 }
 
 void MainWindow::initialize_pipeline_manager() {
@@ -1997,6 +1992,7 @@ void MainWindow::on_start_pipeline_failure(const QString &error) {
   resume_in_progress_    = false;
   paused_settings_dirty_ = false;
   export_in_progress_    = false;
+  pending_recording_acquisition_id_.reset();
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
   export_widget_->set_record_enabled(false);
@@ -2019,6 +2015,7 @@ void MainWindow::on_stop_pipeline_success() {
     pipeline_paused_    = true;
     pause_requested_    = false;
     export_in_progress_ = false;
+    pending_recording_acquisition_id_.reset();
     import_widget_->set_start_enabled(true);
     import_widget_->set_stop_enabled(true);
     export_widget_->set_record_enabled(false);
@@ -2038,6 +2035,7 @@ void MainWindow::on_stop_pipeline_failure(const QString &error) {
     pipeline_paused_    = true;
     pause_requested_    = false;
     export_in_progress_ = false;
+    pending_recording_acquisition_id_.reset();
     import_widget_->set_start_enabled(true);
     import_widget_->set_stop_enabled(true);
     export_widget_->set_record_enabled(false);
@@ -2071,6 +2069,7 @@ void MainWindow::on_resume_pipeline_failure(const QString &error) {
   pipeline_paused_    = true;
   resume_in_progress_ = false;
   export_in_progress_ = false;
+  pending_recording_acquisition_id_.reset();
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(true);
   export_widget_->set_record_enabled(false);
@@ -2087,6 +2086,7 @@ void MainWindow::reset_pipeline_ui_after_stop() {
   resume_in_progress_    = false;
   paused_settings_dirty_ = false;
   export_in_progress_    = false;
+  pending_recording_acquisition_id_.reset();
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
   export_widget_->set_record_enabled(false);
@@ -2172,6 +2172,7 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
   export_in_progress_ = false;
+  pending_recording_acquisition_id_.reset();
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
   display_workspace_->set_pipeline_running(false);
@@ -2275,6 +2276,7 @@ void MainWindow::on_export_record_clicked() {
   refresh_command_bar();
 
   std::filesystem::path record_path = makeRecordingPath(export_widget_->get_file_path());
+  refresh_command_bar();
   std::optional<size_t> frame_count;
   if (export_widget_->is_frame_count_enabled()) {
     frame_count = static_cast<size_t>(export_widget_->get_frame_count());
@@ -2801,6 +2803,10 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_spatial_contrast_window_size = render_widget_->get_spatial_contrast_window_size();
     s.pp_spatial_contrast_dimensions = render_widget_->get_spatial_contrast_dimensions();
     s.pp_spatial_contrast_method = render_widget_->get_spatial_contrast_method() == "FFT" ? 1 : 0;
+    s.pp_spatial_contrast_display_max =
+        static_cast<float>(render_widget_->get_spatial_contrast_display_max());
+    s.pp_spatial_contrast_invert_display =
+        render_widget_->is_spatial_contrast_display_inverted();
     s.pp_accumulation        = static_cast<size_t>(view_widget_->get_accumulation());
     s.pp_convolution         = render_widget_->get_convolution() != "None";
     s.pp_convolution_path    = kernel_path;
@@ -3021,6 +3027,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     render_widget_->set_spatial_contrast_window_size(s.pp_spatial_contrast_window_size);
     render_widget_->set_spatial_contrast_method(s.pp_spatial_contrast_method == 1 ? "FFT"
                                                                                  : "Kernel");
+    render_widget_->set_spatial_contrast_display_max(s.pp_spatial_contrast_display_max);
+    render_widget_->set_spatial_contrast_display_inverted(
+        s.pp_spatial_contrast_invert_display);
     view_widget_->set_accumulation(static_cast<int>(s.pp_accumulation));
     render_widget_->set_convolution_divide(s.pp_convolution_divide);
 

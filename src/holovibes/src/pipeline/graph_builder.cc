@@ -846,19 +846,16 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
   if (!fixed_contrast_range) {
     display_result = convert(display_result, {Target::U8, Strat::Scaled});
   } else {
-    // The sliding average owns its output buffer. Give the display queue a distinct buffer before
-    // it takes ownership, while preserving the fixed-range F32 contrast values.
-    display_result = copy(display_result, {});
+    // Keep the F32 K map upstream; display and recording share the same fixed-range U8 image.
+    display_result = convert(display_result,
+                             {Target::U8, Strat::FixedRange,
+                              s_.pp_spatial_contrast_display_max,
+                              s_.pp_spatial_contrast_invert_display});
   }
   display_result = batched_queue(display_result, {s_.gpu_out_size, 1, 1});
   xy_processed_display(display_result, {});
 
   if (s_.recording_method == RecordingMethod::PROCESSED) {
-    // Holofile processed recordings remain 8-bit visualizations; the live LSCI preview keeps
-    // the F32 K values so its grayscale range stays fixed from frame to frame.
-    if (fixed_contrast_range) {
-      display_result = convert(display_result, {Target::U8, Strat::Scaled});
-    }
     auto result_rec = memcpy(display_result, {Host});
     result_rec      = batched_queue(result_rec, {s_.cpu_out_size, 1, 1});
 

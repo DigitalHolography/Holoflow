@@ -20,15 +20,41 @@
       "enum": [
         "Real",
         "Scaled",
+        "FixedRange",
         "Modulus",
         "Argument"
       ],
-      "description": "Conversion strategy to apply. Accepted values:\n- Real: Extract real component (valid when target is CF32 and the input is U8/U16)\n- Scaled: Normalize float input to integer range (valid when target is U8 or U16 and the input is F32)\n- Modulus: Emit magnitude (valid when target is F32 and the input is CF32)\n- Argument: Emit phase angle (valid when target is F32 and the input is CF32)"
+      "description": "Conversion strategy to apply. Accepted values:\n- Real: Extract real component (valid when target is CF32 and the input is U8/U16)\n- Scaled: Normalize float input to integer range (valid when target is U8 or U16 and the input is F32)\n- FixedRange: Map float input from [0, max_value] to U8 without per-frame scaling\n- Modulus: Emit magnitude (valid when target is F32 and the input is CF32)\n- Argument: Emit phase angle (valid when target is F32 and the input is CF32)"
+    },
+    "max_value": {
+      "type": "number",
+      "minimum": 0,
+      "description": "White point for FixedRange; zero maps positive values to white."
+    },
+    "invert": {
+      "type": "boolean",
+      "description": "Invert the FixedRange U8 output."
     }
   },
   "required": [
     "target",
     "strategy"
+  ],
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "strategy": {
+            "const": "FixedRange"
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "max_value"
+        ]
+      }
+    }
   ],
   "examples": [
     {
