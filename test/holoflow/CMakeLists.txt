@@ -52,6 +52,7 @@ if(WIN32)
 endif()
 
 add_executable(holoflow_runtime_test
+    const_tasks_test.cc
     compiler_additional_test.cc
     compiler_test.cc
     functional_device_test.cu

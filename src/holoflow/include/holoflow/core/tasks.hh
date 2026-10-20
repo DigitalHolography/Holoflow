@@ -64,6 +64,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <cuda_runtime.h>
 #include <exception>
 #include <functional>
@@ -303,6 +304,22 @@ enum class TaskKind {
   Async, /// Asynchronous
 };
 
+/// Whether a synchronous task may be initialized once and have its output reused.
+/// Factories marking a task Constant promise that its output is stable for the
+/// scheduler's lifetime and that it has no per-iteration side effects.
+enum class ConstInferenceState : uint8_t {
+  Undefined,
+  Constant,
+  Mutable,
+};
+
+/// Runtime state of a task classified as constant by the compiler.
+enum class ConstTaskState : uint8_t {
+  NotConstant,
+  ConstantNotComputed,
+  ConstantComputed,
+};
+
 /// Result of task inference from a factory infer function. This provides
 /// information about the task's input and output tensor shapes and other
 /// properties to the scheduling system / compiler.
@@ -316,6 +333,8 @@ struct InferResult {
   /// Async producer capability. When true, try_push synchronizes its producer stream before any
   /// result that lets the scheduler advance. NotReady retries need not synchronize.
   bool synchronizes_producer_stream = false;
+  /// Constness inferred by the compiler. Undefined requests graph-based deduction.
+  ConstInferenceState constness = ConstInferenceState::Undefined;
   /// Optional per-port counts. An empty vector or nullopt entry means unknown.
   std::vector<std::optional<size_t>> owned_input_pointer_counts;
   std::vector<std::optional<size_t>> owned_output_pointer_counts;

@@ -179,3 +179,22 @@ and protect exception paths. Details and examples are in the
 counts, fallback reasons, and launch/miss counters. Host graph-submission timing is not GPU execution
 duration. See the [diagnostics](section-cuda-graphs-reference.md#diagnostics) and
 [reference validation](section-cuda-graphs-reference.md#reference-validation) for measurement guidance.
+
+### NVTX ranges
+
+Each section worker emits one range named after the section per iteration, with nested phases:
+`Acquire inputs`, `Async pop`, `Compute`, `Wait`, `Async push`, and `Release outputs`.
+Phases span their nodes and readiness polling; phases without work are omitted. Ordinary execution
+keeps the `sync execute: name (kind)`, `async pop: name (kind)`, and `async push: name (kind)` task
+ranges. Graph execution instead nests `CUDA graph launch` inside `Compute`; its CPU duration measures
+host submission, not GPU execution. Variant selection and fallback also belong to `Compute`.
+
+`Wait` covers the scheduler's stream synchronization. When an asynchronous producer supplies the
+barrier, its synchronization remains inside `Async push`. Stop/EOF draining and output release appear
+under a separate `Section cleanup` range. Pausing closes the current iteration segment on its worker;
+resuming opens a new segment around the retained checkpoint, without spanning the paused interval.
+
+Graph recording retains its existing task annotations. In Nsight Systems, graph granularity gives
+a lower-overhead view of complete GPU graphs; node granularity exposes their individual operations.
+Capture-time NVTX projection requires profiling graph construction, or the profiler's precapture
+mode when construction precedes collection. CPU task ranges are not executed again during replay.
