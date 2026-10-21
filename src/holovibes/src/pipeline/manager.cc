@@ -573,6 +573,15 @@ void Manager::start_raw_record(std::filesystem::path record_path) {
     return;
   }
 
+  if (s_.import_source == ImportSource::HOLOFILE) {
+    nlohmann::json restart_payload{{"type", "restart_playback"}};
+    if (!scheduler_->ui_try_send("source_0", std::move(restart_payload))) {
+      logger()->error("[Manager::start_raw_record] Failed to enqueue playback restart event");
+      emit raw_record_started_failure("Failed to enqueue playback restart event");
+      return;
+    }
+  }
+
   auto payload = nlohmann::json{
       {"type", "start_recording"},
       {"record_path", record_path},
