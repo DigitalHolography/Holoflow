@@ -115,6 +115,31 @@ RecordMonitorWidget::RecordMonitorWidget(QWidget *parent, size_t queue_count)
   setup_ui(queue_count);
 }
 
+void RecordMonitorWidget::set_record_size(int max)
+{
+  for (auto &q : record_queues_) {
+    q.progress_bar->setMaximum(max);
+    q.progress_bar->update();
+  }
+}
+
+void RecordMonitorWidget::free(size_t q, bool f) {
+  assert(q < record_queues_.size());
+  auto label = record_queues_[q].state_label;
+  if (f) {
+    label->setText(QString("Free"));
+    label->setProperty("statusTone", QString::fromLatin1("success"));
+    record_queues_[q].progress_bar->set_progress(0, 0);
+  } else {
+    label->setText(QString("Recording"));
+    label->setProperty("statusTone", QString::fromLatin1("warning"));
+  }
+
+  label->style()->unpolish(label);
+  label->style()->polish(label);
+  label->update();
+}
+
 void RecordMonitorWidget::setup_ui(size_t queue_count) {
   auto *layout = new QVBoxLayout(this);
   layout->setContentsMargins(0, 0, 0, 0);
@@ -125,10 +150,19 @@ void RecordMonitorWidget::setup_ui(size_t queue_count) {
   auto *queue_layout = new QGridLayout(queue_group);
 
   auto configure_bar = [&](const QString &title, MultiProgressBar **bar, QLabel **name_label,
-                           QLabel **speed_label, int &row) {
+                           QLabel **state_label, QLabel **speed_label, int &row) {
     *name_label = new QLabel(title, queue_group);
     (*name_label)->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     queue_layout->addWidget(*name_label, row, 0);
+
+    *state_label = new QLabel("Free", queue_group);
+    (*state_label)->setProperty("statusTone", QString::fromLatin1("success"));
+    (*state_label)->style()->unpolish(*state_label);
+    (*state_label)->style()->polish(*state_label);
+    (*state_label)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+
+    queue_layout->addWidget(*state_label, row, 1);
+
     ++row;
 
     queue_layout->addWidget(new QLabel("Writing Speed: ", queue_group), row, 0);
@@ -152,7 +186,7 @@ void RecordMonitorWidget::setup_ui(size_t queue_count) {
     RecordQueue &queue = record_queues_[i];
 
     configure_bar(QString("Record Queue %1").arg(i), &queue.progress_bar, &queue.name,
-                  &queue.writing_speed_value, row);
+                  &queue.state_label, &queue.writing_speed_value, row);
   }
 
   layout->addWidget(queue_group);

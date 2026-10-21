@@ -150,7 +150,7 @@ void ExportWidget::connect_signals() {
   // Emit settings_changed for all control changes
   connect(image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
-  connect(file_line_edit_, &QLineEdit::textChanged, this, &ExportWidget::settings_changed);
+  connect(file_line_edit_, &QLineEdit::textChanged, this, &ExportWidget::file_path_changed);
   connect(tag_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
   connect(frames_check_, &QCheckBox::toggled, this, &ExportWidget::settings_changed);

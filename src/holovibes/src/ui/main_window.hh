@@ -88,8 +88,9 @@ private:
   void on_update_pipeline_success();
   void on_update_pipeline_failure(const QString &error);
 
-  void on_update_record(size_t frame_recorded, size_t writing_speed);
-  void on_update_acquisition(size_t frame_acquired);
+  void on_update_record(size_t id, size_t frame_recorded, size_t writing_speed);
+  void on_update_acquisition(size_t id, size_t frame_acquired);
+  void on_raw_record_flushing_finished(size_t id);
 
   bool                        validate_inputs();
   void                        apply_validation_result(const pipeline::ValidationResult &result);
@@ -98,6 +99,7 @@ private:
   void                        setup_validation_connections();
   void                        setup_update_connections();
   void                        update_if_running();
+  void                        recording_file_path_changed();
 
   QSize              guess_source_dims();
   QSize              processed_display_dims(QSize source_dims) const;

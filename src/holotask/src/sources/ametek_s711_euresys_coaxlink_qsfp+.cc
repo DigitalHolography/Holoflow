@@ -708,20 +708,20 @@ public:
     stop_acquisition();
   }
 
-  void emit_camera_buffer_recording_finished_event(holoflow::core::SyncCtx    &ctx,
-                                                   RecordingSession::SessionId id) {
+  void emit_camera_record_flushing_finished_event(holoflow::core::SyncCtx    &ctx,
+                                                  RecordingSession::SessionId id) {
     auto event = holoflow_event::Event{
         .direction = holoflow_event::EventDirection::ToUi,
         .node_id   = "",
         .data =
             nlohmann::json{
-                {"type", "buffer_recording_finished"},
+                {"type", "record_flushing_finished"},
                 {"id", id},
             },
         .ts = std::chrono::steady_clock::now(),
     };
     HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit recording_finished event");
+                    "Failed to emit record_flushing_finished event");
   }
 
   void emit_recording_finished_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
@@ -773,7 +773,7 @@ public:
         .ts = std::chrono::steady_clock::now(),
     };
     HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit recording_update event");
+                    "Failed to emit acquisition_update event");
   }
 
   void emit_recording_failed_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
@@ -817,8 +817,7 @@ public:
       return;
     }
 
-    auto &session = *session_it;
-
+    auto &session              = *session_it;
     current_recording_session_ = &session;
     session.start(record_settings, runtime_cfg_.buffer_part_count, recording_context_->recording_,
                   recording_context_->acquired_since_record_start_);
@@ -860,6 +859,10 @@ public:
         {"stop_recording",
          [this](holoflow::core::SyncCtx &ctx, const std::optional<holoflow_event::Event> &event) {
            on_stop_recording_event(ctx, event);
+         }},
+        {"update_recording_path",
+         [this](holoflow::core::SyncCtx &ctx, const std::optional<holoflow_event::Event> &event) {
+           on_update_record_path(ctx, event);
          }},
     };
 
@@ -981,9 +984,14 @@ public:
     if (settings_.record_settings) {
       auto &record_settings = *settings_.record_settings;
       recording_context_.emplace();
-      auto pixel_size_in_bytes   = size_from_pixel_format(runtime_cfg_.pixel_format);
-      auto recording_buffer_size = runtime_cfg_.final_height * runtime_cfg_.width *
-                                   record_settings.recording_count * pixel_size_in_bytes;
+      const auto pixel_size_in_bytes = size_from_pixel_format(runtime_cfg_.pixel_format);
+      size_t     rec_count           = record_settings.recording_count;
+      if (rec_count % runtime_cfg_.buffer_part_count != 0) {
+        rec_count += runtime_cfg_.buffer_part_count - (rec_count % runtime_cfg_.buffer_part_count);
+      }
+
+      auto recording_buffer_size =
+          runtime_cfg_.final_height * runtime_cfg_.width * rec_count * pixel_size_in_bytes;
 
       auto g = RecordingGeometry(static_cast<uint8_t>(pixel_size_in_bytes * 8), runtime_cfg_.width,
                                  runtime_cfg_.final_height);
@@ -996,16 +1004,19 @@ public:
           [this, &ctx](auto id, size_t written) {
             emit_recording_finished_event(ctx, id, written);
             logger()->info("[AmetekS711EuresysCoaxlinkQSFP] recording {} finished", id);
+            current_recording_session_ = nullptr;
           },
           [this, &ctx](auto id, const std::string &message) {
             emit_recording_failed_event(ctx, id, message);
             logger()->info("[AmetekS711EuresysCoaxlinkQSFP::start_raw_record] recording {} failed",
                            id);
+            current_recording_session_ = nullptr;
           },
           [this, &ctx, &record_settings](auto id) {
-            emit_camera_buffer_recording_finished_event(ctx, id);
-            logger()->info("[AmetekS711EuresysCoaxlinkQSFP::start_raw_record] recording failed");
-            current_recording_session_ = nullptr;
+            emit_camera_record_flushing_finished_event(ctx, id);
+            logger()->info(
+                "[AmetekS711EuresysCoaxlinkQSFP::start_raw_record] recording {} flushing finished",
+                id);
           });
     }
   }
@@ -1135,7 +1146,9 @@ private:
                                  Clock::time_point       &last_update_event) {
     constexpr auto update_event_interval = std::chrono::milliseconds(500);
 
-    assert(recording_context_.has_value());
+    if (!recording_context_.has_value())
+      return;
+
     if (recording_context_->recording_.load(std::memory_order_acquire)) {
       recording_context_->acquired_since_record_start_.fetch_add(runtime_cfg_.buffer_part_count);
       auto now     = Clock::now();
@@ -1158,6 +1171,9 @@ private:
             recording_context_->acquired_since_record_start_.load(std::memory_order_acquire),
             settings_.record_settings->recording_count);
         recording_context_->acquiring_for_record_.store(false, std::memory_order_release);
+        emit_acquisition_update_event(
+            ctx, current_recording_session_->id(),
+            recording_context_->acquired_since_record_start_.load(std::memory_order_acquire));
       }
     }
   }
@@ -1300,6 +1316,24 @@ private:
     return std::nullopt;
   }
 
+  void on_update_record_path(holoflow::core::SyncCtx                    &ctx,
+                             const std::optional<holoflow_event::Event> &event) {
+
+    assert(recording_context_.has_value());
+
+    const auto record_path = event->data.value("record_path", std::string{});
+    if (record_path.empty()) {
+      logger()->error("[AmetekS711EuresysCoaxlinkQSFP::on_update_record_path] Rejecting "
+                      "update_record_path event with empty path");
+      // TODO change for specific event
+      emit_recording_failed_event(ctx, current_recording_session_->id(),
+                                  "Cannot update recording path to: empty path");
+      return;
+    }
+
+    settings_.record_settings->file_path = record_path;
+  }
+
   void on_start_recording_event(holoflow::core::SyncCtx                    &ctx,
                                 const std::optional<holoflow_event::Event> &event) {
 
@@ -1419,7 +1453,7 @@ private:
   // Record
   std::optional<RecordingContext> recording_context_;
 
-  RecordingSession *current_recording_session_;
+  RecordingSession *current_recording_session_ = nullptr;
 };
 
 // -------------------------------------------------------------------------------------------------

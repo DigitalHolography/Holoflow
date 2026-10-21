@@ -328,6 +328,19 @@ private:
     };
     HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
                     "Failed to emit recording_finished event");
+    
+   auto event_flush = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "record_flushing_finished"},
+                {"id", 0},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event_flush)),
+                    "Failed to emit record_flushing_finished event");
   }
 
   void emit_failed_event(holoflow::core::SyncCtx &ctx, const std::string &message) {

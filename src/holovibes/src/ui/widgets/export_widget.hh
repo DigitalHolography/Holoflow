@@ -69,6 +69,7 @@ signals:
   void stop_fan_clicked();
   void browse_clicked();
   void settings_changed();
+  void file_path_changed();
 
 private:
   void setup_ui();

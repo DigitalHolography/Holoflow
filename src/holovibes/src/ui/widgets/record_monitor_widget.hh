@@ -30,16 +30,19 @@ public:
   explicit RecordMonitorWidget(QWidget *parent = nullptr, size_t queue_count = 3);
 
   // Update methods
+  void set_record_size(int max);
   void set_record_queue(size_t q, int first, int second, int max);
   void update_record_writing_speed(size_t q, size_t first);
   void update_record_queue_acquired(size_t q, int first);
   void update_record_queue_recorded(size_t q, int second);
 
+  void free(size_t q, bool f);
 private:
   void setup_ui(size_t queue_count);
   struct RecordQueue {
     QLabel           *name;
     QLabel           *writing_speed_value;
+    QLabel           *state_label;
     MultiProgressBar *progress_bar;
   };
 

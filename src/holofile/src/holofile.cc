@@ -273,8 +273,6 @@ Writer &Writer::operator=(Writer &&) noexcept = default;
 void Writer::write_footer() {
   std::string footer_json = impl_->footer.pipeline_settings.dump();
 
-  logger()->info("Writing Holofile footer with pipeline settings: {}", footer_json);
-
   if (_fseeki64(impl_->file.get(), 0, SEEK_END) != 0) {
     std::error_code ec(errno, std::generic_category());
     throw std::system_error(ec, "Failed to seek to end of file:");

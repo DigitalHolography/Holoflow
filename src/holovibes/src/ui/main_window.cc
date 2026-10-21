@@ -1623,6 +1623,9 @@ void MainWindow::connect_manager_signals() {
   connect(pipeline_manager_, &pipeline::Manager::update_acquisition, this,
           &MainWindow::on_update_acquisition);
 
+  connect(pipeline_manager_, &pipeline::Manager::raw_record_flushing_finished, this,
+          &MainWindow::on_raw_record_flushing_finished);
+
   connect(pipeline_manager_, &pipeline::Manager::metrics_updated, this,
           &MainWindow::on_metrics_updated, Qt::QueuedConnection);
 
@@ -2075,13 +2078,19 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
 }
 
-void MainWindow::on_update_record(size_t frame_recorded, size_t writing_speed) {
-  record_widget_->update_record_queue_recorded(0, static_cast<int>(frame_recorded));
-  record_widget_->update_record_writing_speed(0, writing_speed);
+void MainWindow::on_update_record(size_t id, size_t frame_recorded, size_t writing_speed) {
+  record_widget_->update_record_queue_recorded(id, static_cast<int>(frame_recorded));
+  record_widget_->update_record_writing_speed(id, writing_speed);
+  record_widget_->free(id, false);
 }
 
-void MainWindow::on_update_acquisition(size_t frame_acquired) {
-  record_widget_->update_record_queue_acquired(0, static_cast<int>(frame_acquired));
+void MainWindow::on_update_acquisition(size_t id, size_t frame_acquired) {
+  record_widget_->update_record_queue_acquired(id, static_cast<int>(frame_acquired));
+}
+
+void MainWindow::on_raw_record_flushing_finished(size_t id) {
+  logger()->info("[MainWindow::on_raw_record_flushing_finished] queue {} has been flushed to disk", id);
+  record_widget_->free(id, true);
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
@@ -2183,7 +2192,7 @@ void MainWindow::on_export_record_clicked() {
                 record_size = frame_count.has_value() ? *frame_count : 1,
                 monitor     = record_widget_]() {
     mgr->start_raw_record(record_path);
-    monitor->set_record_queue(0, 0, 0, static_cast<int>(record_size));
+    monitor->set_record_size(static_cast<int>(record_size));
   };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
 }
@@ -2230,7 +2239,6 @@ void MainWindow::on_raw_record_stopped_success() {
   export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(false);
 
-  record_widget_->set_record_queue(0, 0, 0, 1);
   refresh_command_bar();
 }
 
@@ -2465,6 +2473,15 @@ void MainWindow::setup_update_connections() {
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this, cb);
   connect(view_widget_, &ViewWidget::settings_changed, this, cb);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this, cb);
+
+  void (MainWindow::*file_cb)() = &MainWindow::recording_file_path_changed;
+  connect(export_widget_, &ExportWidget::file_path_changed, this, file_cb);
+}
+
+void MainWindow::recording_file_path_changed()
+{
+  auto               update   = [=]() { pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString()); };
+  HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
 }
 
 void MainWindow::update_if_running() {

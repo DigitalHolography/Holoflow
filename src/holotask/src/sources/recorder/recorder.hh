@@ -40,9 +40,10 @@ struct RecordingGeometry {
 class RecordingSession final {
 public:
   enum class State { Free, Recording, WritingToDisk };
+
   using SessionId = uint32_t;
 
-  using BufferRecordingFinishedCallback = std::function<void(SessionId)>;
+  using BufferFlushingFinishedCallback = std::function<void(SessionId)>;
   using PollMetricsCallback             = std::function<void(SessionId, size_t, size_t)>;
   using SuccessCallback                 = std::function<void(SessionId, size_t)>;
   using FailureCallback                 = std::function<void(SessionId, const std::string &)>;
@@ -50,7 +51,7 @@ public:
   RecordingSession(SessionId id, CameraBufferQueue &buffer_queue, const RecordingGeometry &geometry,
                    size_t buffer_size, PollMetricsCallback metrics_callback,
                    SuccessCallback success_callback, FailureCallback failure_callback,
-                   BufferRecordingFinishedCallback buffer_recording_finished_callback);
+                   BufferFlushingFinishedCallback buffer_flushing_finished_callback);
 
   RecordingSession(const RecordingSession &)            = delete;
   RecordingSession &operator=(const RecordingSession &) = delete;
@@ -96,7 +97,7 @@ private:
   PollMetricsCallback             metrics_callback_;
   SuccessCallback                 success_callback_;
   FailureCallback                 failure_callback_;
-  BufferRecordingFinishedCallback buffer_recording_finished_callback_;
+  BufferFlushingFinishedCallback buffer_flushing_finished_callback_;
 
   std::atomic<size_t> remaining_to_record_ = 0;
 };
@@ -185,6 +186,6 @@ struct RecordingContext {
              const RecordingGeometry &g, RecordingSession::PollMetricsCallback metrics_callback,
              RecordingSession::SuccessCallback                 success_callback,
              RecordingSession::FailureCallback                 failure_callback,
-             RecordingSession::BufferRecordingFinishedCallback buffer_recording_finished_callback);
+             RecordingSession::BufferFlushingFinishedCallback buffer_flushing_finished_callback);
 };
 } // namespace holotask::sources
