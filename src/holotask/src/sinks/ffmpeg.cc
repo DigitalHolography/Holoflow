@@ -86,6 +86,21 @@ AVPixelFormat choose_pixel_format(const AVCodec *codec, const detail::RecordingG
     throw std::invalid_argument("FfmpegFactory error: codec does not support 16-bit grayscale");
   }
 
+  if (codec->id == AV_CODEC_ID_MJPEG) {
+    if (pixel_formats == nullptr)
+      throw std::invalid_argument("FfmpegFactory error: MJPEG pixel formats are unspecified");
+
+    constexpr AVPixelFormat full_range_formats[] = {
+        AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ444P,
+    };
+    for (const auto format : full_range_formats) {
+      if (supports(format))
+        return format;
+    }
+    throw std::invalid_argument(
+        "FfmpegFactory error: MJPEG has no supported full-range YUV format");
+  }
+
   if (pixel_formats == nullptr)
     return AV_PIX_FMT_YUV420P;
 
@@ -256,10 +271,18 @@ private:
     codec_context_->width        = static_cast<int>(output_width_);
     codec_context_->height       = static_cast<int>(output_height_);
     codec_context_->pix_fmt      = output_pixel_format_;
+    if (codec->id == AV_CODEC_ID_MJPEG)
+      codec_context_->color_range = AVCOL_RANGE_JPEG;
     codec_context_->framerate    = av_d2q(settings_.fps, 100000);
     codec_context_->time_base    = av_inv_q(codec_context_->framerate);
     codec_context_->gop_size     = 12;
     codec_context_->max_b_frames = 0;
+    if (codec->id == AV_CODEC_ID_MJPEG) {
+      codec_context_->flags |= AV_CODEC_FLAG_QSCALE;
+      codec_context_->global_quality = FF_QP2LAMBDA;
+      codec_context_->qmin = 1;
+      codec_context_->qmax = 1;
+    }
     if (codec->id == AV_CODEC_ID_MPEG4) {
       // MPEG-4's defaults are tuned for small bandwidth, which is too destructive for
       // scientific images. Use a bounded quality range instead of an arbitrary bitrate.
@@ -286,6 +309,7 @@ private:
     frame_->format = output_pixel_format_;
     frame_->width  = codec_context_->width;
     frame_->height = codec_context_->height;
+    frame_->color_range = codec_context_->color_range;
     check_ffmpeg(av_frame_get_buffer(frame_, 32), "av_frame_get_buffer");
 
     const bool cuda_resized =
@@ -313,6 +337,8 @@ private:
                   frame_->linesize) <= 0)
       throw std::runtime_error("sws_scale failed");
 
+    if (codec_context_->codec_id == AV_CODEC_ID_MJPEG)
+      frame_->quality = codec_context_->global_quality;
     frame_->pts = frames_buffered_;
     check_ffmpeg(avcodec_send_frame(codec_context_, frame_), "avcodec_send_frame");
     write_packets();

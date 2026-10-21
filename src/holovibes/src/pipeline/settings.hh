@@ -125,7 +125,6 @@ struct Settings {
   bool       view_shack_hartmann_xcorr;
 
   // Post-processing
-  int         pp_fps;
   bool        pp_fft_shift;
   bool        pp_flatfield;
   float       pp_flatfield_cutoff_period_m;
