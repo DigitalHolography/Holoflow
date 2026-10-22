@@ -1637,15 +1637,6 @@ void MainWindow::initialize_display_widgets() {
 
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this,
           &MainWindow::refresh_visualization_availability);
-  const auto update_post_processing_controls = [this](bool enabled) {
-    view_widget_->flatfield_check()->setEnabled(!enabled);
-    view_widget_->flatfield_cutoff_period_um()->setEnabled(
-        !enabled && view_widget_->is_flatfield_enabled());
-  };
-  connect(render_widget_, &ImageRenderingWidget::spatial_contrast_enabled_changed, this,
-          update_post_processing_controls);
-  update_post_processing_controls(render_widget_->is_spatial_contrast_enabled());
-
   connect(view_widget_, &ViewWidget::reticle_toggled, this, [this](bool checked) {
     xy_processed_widget_->set_reticle_enabled(checked);
     if (checked) {

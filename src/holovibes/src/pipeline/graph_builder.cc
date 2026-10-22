@@ -760,6 +760,12 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
                                   .method = s_.pp_spatial_contrast_method == 1
                                                 ? holotask::syncs::SpatialContrastMethod::FFT
                                                 : holotask::syncs::SpatialContrastMethod::Kernel});
+  if (s_.pp_flatfield) {
+    // Spatial contrast uses the camera grid, so derive the filter from the source pixel pitch.
+    const auto pitch = s_.spacial_pixel_size;
+    result = flatfield(result, flatfield_settings_from_cutoff_period(
+                                   s_.pp_flatfield_cutoff_period_m, pitch, pitch));
+  }
   build_xy_output(result, 0, true);
 }
 
