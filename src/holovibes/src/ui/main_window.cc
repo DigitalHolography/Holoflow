@@ -1641,8 +1641,6 @@ void MainWindow::initialize_display_widgets() {
     view_widget_->flatfield_check()->setEnabled(!enabled);
     view_widget_->flatfield_cutoff_period_um()->setEnabled(
         !enabled && view_widget_->is_flatfield_enabled());
-    view_widget_->pct_check()->setEnabled(!enabled);
-    view_widget_->pct_radius()->setEnabled(!enabled);
   };
   connect(render_widget_, &ImageRenderingWidget::spatial_contrast_enabled_changed, this,
           update_post_processing_controls);

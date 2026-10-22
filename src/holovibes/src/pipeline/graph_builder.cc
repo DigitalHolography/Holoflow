@@ -836,7 +836,8 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
     throw std::logic_error{"Convolution is currently not supported"};
   }
 
-  if (s_.pp_pctclip && !fixed_contrast_range) {
+  // Clip the shared float result before it branches to display and processed recording.
+  if (s_.pp_pctclip) {
     Ellipse         roi{0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f};
     PctClipSettings pct_clip_settings{s_.pp_pctclip_lower, s_.pp_pctclip_upper, roi};
     result = pct_clip(result, pct_clip_settings);
