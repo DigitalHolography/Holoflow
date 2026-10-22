@@ -44,12 +44,12 @@ public:
   using SessionId = uint32_t;
 
   using BufferFlushingFinishedCallback = std::function<void(SessionId)>;
-  using PollMetricsCallback             = std::function<void(SessionId, size_t, size_t)>;
-  using SuccessCallback                 = std::function<void(SessionId, size_t)>;
-  using FailureCallback                 = std::function<void(SessionId, const std::string &)>;
+  using PollMetricsCallback            = std::function<void(SessionId, size_t, size_t)>;
+  using SuccessCallback                = std::function<void(SessionId, size_t)>;
+  using FailureCallback                = std::function<void(SessionId, const std::string &)>;
 
   RecordingSession(SessionId id, CameraBufferQueue &buffer_queue, const RecordingGeometry &geometry,
-                   size_t buffer_size, PollMetricsCallback metrics_callback,
+                   size_t buffer_size, std::byte *buffer, PollMetricsCallback metrics_callback,
                    SuccessCallback success_callback, FailureCallback failure_callback,
                    BufferFlushingFinishedCallback buffer_flushing_finished_callback);
 
@@ -90,13 +90,14 @@ private:
 
   RecordingGeometry geometry_;
 
-  std::vector<std::byte> buffer_; // buffer where the frame are stored before being flushed to disk
-  std::jthread worker_thread_;    // the recorder and writer are created and destroyed for each
-                                  // recording session, so it is local to the worker thread;
+  std::byte   *buffer_; // buffer where the frame are stored before being flushed to disk
+  size_t       buffer_size_;
+  std::jthread worker_thread_; // the recorder and writer are created and destroyed for each
+                               // recording session, so it is local to the worker thread;
 
-  PollMetricsCallback             metrics_callback_;
-  SuccessCallback                 success_callback_;
-  FailureCallback                 failure_callback_;
+  PollMetricsCallback            metrics_callback_;
+  SuccessCallback                success_callback_;
+  FailureCallback                failure_callback_;
   BufferFlushingFinishedCallback buffer_flushing_finished_callback_;
 
   std::atomic<size_t> remaining_to_record_ = 0;
@@ -182,9 +183,10 @@ struct RecordingContext {
 
   void
   invalidate(size_t session_count, CameraBufferQueue &buffer_queue, size_t buffer_size,
-             const RecordingGeometry &g, RecordingSession::PollMetricsCallback metrics_callback,
-             RecordingSession::SuccessCallback                 success_callback,
-             RecordingSession::FailureCallback                 failure_callback,
+             std::byte *buffer, const RecordingGeometry &g,
+             RecordingSession::PollMetricsCallback            metrics_callback,
+             RecordingSession::SuccessCallback                success_callback,
+             RecordingSession::FailureCallback                failure_callback,
              RecordingSession::BufferFlushingFinishedCallback buffer_flushing_finished_callback);
 };
 } // namespace holotask::sources

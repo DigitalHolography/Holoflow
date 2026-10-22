@@ -994,15 +994,26 @@ public:
       auto g = RecordingGeometry(static_cast<uint8_t>(pixel_size_in_bytes * 8), runtime_cfg_.width,
                                  runtime_cfg_.final_height);
 
+      if (recording_buffer_size > recording_buffers_size_) {
+        recording_buffers_size_ = recording_buffer_size;
+        auto buffer_total_size  = record_settings.record_queue_count * recording_buffers_size_;
+        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::init_record_context] allocating {} x {} bytes"
+                       "buffers (total={} bytes)",
+                       record_settings.record_queue_count, recording_buffers_size_,
+                       buffer_total_size);
+        recording_buffers_ = curaii::make_unique_host_ptr<std::byte>(buffer_total_size);
+      }
+
       recording_context_->invalidate(
-          record_settings.record_queue_count, buffer_queue_, recording_buffer_size, g,
+          record_settings.record_queue_count, buffer_queue_, recording_buffers_size_,
+          recording_buffers_.get(), g,
           [this, &ctx](auto id, size_t recorded_frames, size_t writing_speed) {
             emit_recording_update_event(ctx, id, recorded_frames, writing_speed);
           },
           [this, &ctx](auto id, size_t written) {
             emit_recording_finished_event(ctx, id, written);
             logger()->info("[AmetekS711EuresysCoaxlinkQSFP] recording {} finished", id);
-                  buffer_queue_.unsubscribe_b();
+            buffer_queue_.unsubscribe_b();
             emit_acquisition_update_event(ctx, id, settings_.record_settings->recording_count);
             current_recording_session_ = nullptr;
           },
@@ -1018,7 +1029,8 @@ public:
                 "[AmetekS711EuresysCoaxlinkQSFP::start_raw_record] recording {} flushing finished",
                 id);
           });
-    }
+    } else
+      recording_context_ = std::nullopt;
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
@@ -1312,7 +1324,6 @@ private:
     if (record_path.empty()) {
       logger()->error("[AmetekS711EuresysCoaxlinkQSFP::on_update_record_path] Rejecting "
                       "update_record_path event with empty path");
-      // TODO change for specific event
       emit_recording_failed_event(ctx, current_recording_session_->id(),
                                   "Cannot update recording path to: empty path");
       return;
@@ -1438,9 +1449,10 @@ private:
   std::optional<std::jthread> acquisition_thread_;
 
   // Record
-  std::optional<RecordingContext> recording_context_;
-
-  RecordingSession *current_recording_session_ = nullptr;
+  std::optional<RecordingContext>    recording_context_;
+  curaii::unique_host_ptr<std::byte> recording_buffers_         = nullptr;
+  size_t                             recording_buffers_size_    = 0;
+  RecordingSession                  *current_recording_session_ = nullptr;
 };
 
 // -------------------------------------------------------------------------------------------------

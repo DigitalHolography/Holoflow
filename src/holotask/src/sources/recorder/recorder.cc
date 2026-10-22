@@ -38,13 +38,13 @@ RecordingGeometry::RecordingGeometry(uint8_t bits_per_pixel_, size_t frame_width
 
 RecordingSession::RecordingSession(SessionId id, CameraBufferQueue &buffer_queue,
                                    const RecordingGeometry &geometry, size_t buffer_size,
-                                   PollMetricsCallback            metrics_callback,
+                                   std::byte *buffer, PollMetricsCallback metrics_callback,
                                    SuccessCallback                success_callback,
                                    FailureCallback                failure_callback,
                                    BufferFlushingFinishedCallback buffer_flushing_finished_callback)
-    : buffer_queue_{buffer_queue}, id_{id}, geometry_{geometry}, buffer_(buffer_size),
-      metrics_callback_{metrics_callback}, success_callback_{success_callback},
-      failure_callback_{failure_callback},
+    : buffer_queue_{buffer_queue}, id_{id}, geometry_{geometry}, buffer_(buffer),
+      buffer_size_{buffer_size}, metrics_callback_{metrics_callback},
+      success_callback_{success_callback}, failure_callback_{failure_callback},
       buffer_flushing_finished_callback_{buffer_flushing_finished_callback} {}
 
 RecordingSession::RecordingSession(RecordingSession &&other)
@@ -137,9 +137,9 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
     std::atomic<uint32_t> finished = 0;
 
     logger()->info("[RecordingSession::worker::worker_thread] worker thread started");
-    auto writer = RecordWriter(id_, buffer_, settings.file_path, settings.recording_count,
-                               static_cast<uint32_t>(buffer_part_count), geometry_,
-                               settings.pipeline_config, metrics_callback_);
+    auto writer = RecordWriter(id_, std::span(buffer_, buffer_size_), settings.file_path,
+                               settings.recording_count, static_cast<uint32_t>(buffer_part_count),
+                               geometry_, settings.pipeline_config, metrics_callback_);
 
     remaining_to_record_.store(settings.recording_count, std::memory_order_release);
 
@@ -286,7 +286,6 @@ void RecordWriter::execute(std::stop_token cancelled) {
 void RecordWriter::push_frames(const std::byte *frames) {
   auto offset = buffer_offset_.load(std::memory_order_acquire);
 
-  // TODO mtmemcpy ?
   memcpy(buffer_.data() + offset, frames, batch_size_in_bytes);
 
   buffer_offset_.store(offset + batch_size_in_bytes, std::memory_order_release);
@@ -355,7 +354,7 @@ void Recorder::execute(std::stop_token cancelled, std::atomic<size_t> &remaining
 // -------------------------------------------------------------------------------------------------
 
 void RecordingContext::invalidate(
-    size_t session_count, CameraBufferQueue &buffer_queue, size_t buffer_size,
+    size_t session_count, CameraBufferQueue &buffer_queue, size_t buffer_size, std::byte *buffer,
     const RecordingGeometry &g, RecordingSession::PollMetricsCallback metrics_callback,
     RecordingSession::SuccessCallback                success_callback,
     RecordingSession::FailureCallback                failure_callback,
@@ -370,10 +369,12 @@ void RecordingContext::invalidate(
                  session_count, buffer_size);
 
   sessions_.reserve(session_count);
+  size_t offset = 0;
   for (size_t i = 0; i < session_count; ++i) {
     sessions_.emplace_back(static_cast<RecordingSession::SessionId>(i), buffer_queue, g,
-                           buffer_size, metrics_callback, success_callback, failure_callback,
-                           buffer_flushing_finished_callback);
+                           buffer_size, buffer + offset, metrics_callback, success_callback,
+                           failure_callback, buffer_flushing_finished_callback);
+    offset += buffer_size;
   }
 }
 
