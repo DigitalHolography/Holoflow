@@ -125,10 +125,12 @@ void CameraBufferQueue::clear() {
     slot.frame          = frame;
     const bool pushed_a = ready_queue_a_.push(write_index);
     assert(pushed_a);
+    (void)pushed_a;
 
     if (reader_b_active_) {
       const bool pushed_b = ready_queue_b_.push(write_index);
       assert(pushed_b);
+      (void)pushed_b;
     }
 
     slot.readers = reader_b_active_ ? 2u : 1u;
@@ -219,6 +221,7 @@ void CameraBufferQueue::release(size_t index) {
     release_(slot.frame);
     const bool pushed = free_queue_.push(index);
     assert(pushed);
+    (void) pushed;
   }
 }
 

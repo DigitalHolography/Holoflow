@@ -1156,7 +1156,7 @@ private:
 
   void update_acquisition_status(holoflow::core::SyncCtx &ctx,
                                  Clock::time_point       &last_update_event) {
-    constexpr auto update_event_interval = std::chrono::milliseconds(500);
+    constexpr auto update_event_interval = std::chrono::milliseconds(200);
 
     if (!recording_context_.has_value())
       return;
