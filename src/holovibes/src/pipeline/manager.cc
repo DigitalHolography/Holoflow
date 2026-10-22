@@ -607,6 +607,7 @@ void Manager::poll_events() {
     } else if (type == "recording_failed") {
       const std::string message =
           event->data.value("message", std::string{"Recording failed for an unknown reason"});
+      size_t id = event->data.value("id", 0); // assume that the id exists and is valid
       const std::string path_str = event->data.value("path", std::string{});
       bool              should_emit{false};
 
@@ -618,7 +619,7 @@ void Manager::poll_events() {
         }
       }
 
-      logger()->error("[Manager::poll_events] Recording failed at '{}': {}", path_str, message);
+      logger()->error("[Manager::poll_events] Recording {} failed: {}", id, path_str, message);
 
       if (should_emit) {
         emit raw_record_stopped_failure(QString::fromStdString(message));

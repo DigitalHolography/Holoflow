@@ -2244,7 +2244,9 @@ void MainWindow::on_raw_record_stopped_success() {
 
 void MainWindow::on_raw_record_stopped_failure(const QString &error) {
   logger()->error("[MainWindow::on_raw_record_stopped_failure]");
+  export_in_progress_ = false;
   export_widget_->set_stop_enabled(pipeline_running_);
+  export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
   refresh_command_bar();
   show_pipeline_error_popup(tr("An error occurred while stopping raw recording:\n%1").arg(error));
 }
