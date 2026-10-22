@@ -812,8 +812,7 @@ public:
     if (session_it == recording_context_->sessions_.end()) {
       logger()->error(
           "[AmetekS711EuresysCoaxlinkQSFP:start_raw_record] cannot find a free recording session");
-      emit_recording_failed_event(ctx, current_recording_session_->id(),
-                                  "no queue available for record");
+      emit_recording_failed_event(ctx, 0, "no queue available for record");
       return;
     }
 
@@ -833,7 +832,6 @@ public:
     }
 
     assert(!recording_context_->recording_.load(std::memory_order_acquire));
-    recording_context_->acquiring_for_record_.store(false, std::memory_order_release);
   }
 
   void update_settings(const AmetekS711EuresysCoaxlinkQSFPSettings &settings) {
@@ -1004,6 +1002,8 @@ public:
           [this, &ctx](auto id, size_t written) {
             emit_recording_finished_event(ctx, id, written);
             logger()->info("[AmetekS711EuresysCoaxlinkQSFP] recording {} finished", id);
+                  buffer_queue_.unsubscribe_b();
+            emit_acquisition_update_event(ctx, id, settings_.record_settings->recording_count);
             current_recording_session_ = nullptr;
           },
           [this, &ctx](auto id, const std::string &message) {
@@ -1149,31 +1149,18 @@ private:
     if (!recording_context_.has_value())
       return;
 
-    if (recording_context_->recording_.load(std::memory_order_acquire)) {
+    auto recording = recording_context_->recording_.load();
+    if (recording) {
       recording_context_->acquired_since_record_start_.fetch_add(runtime_cfg_.buffer_part_count);
       auto now     = Clock::now();
       auto elapsed = now - last_update_event;
+      assert(current_recording_session_ != nullptr);
+      auto id = current_recording_session_->id();
       if (elapsed >= update_event_interval) {
         emit_acquisition_update_event(
-            ctx, current_recording_session_->id(),
+            ctx, id,
             recording_context_->acquired_since_record_start_.load(std::memory_order_acquire));
         last_update_event = now;
-      }
-
-      if (recording_context_->acquired_since_record_start_.load(std::memory_order_acquire) >=
-              settings_.record_settings->recording_count &&
-          recording_context_->acquiring_for_record_.load(std::memory_order_acquire)) {
-        buffer_queue_.unsubscribe_b();
-        logger()->info(
-            "[AmetekS711EuresysCoaxlinkQSFP::update_acquisition_status] "
-            "record acquisition "
-            "is finished without any frame drop ({}/{} frames acquired)",
-            recording_context_->acquired_since_record_start_.load(std::memory_order_acquire),
-            settings_.record_settings->recording_count);
-        recording_context_->acquiring_for_record_.store(false, std::memory_order_release);
-        emit_acquisition_update_event(
-            ctx, current_recording_session_->id(),
-            recording_context_->acquired_since_record_start_.load(std::memory_order_acquire));
       }
     }
   }

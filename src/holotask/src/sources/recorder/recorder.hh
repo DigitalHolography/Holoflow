@@ -177,7 +177,6 @@ private:
 struct RecordingContext {
   std::atomic<bool>   recording_                   = false;
   std::atomic<size_t> acquired_since_record_start_ = 0;
-  std::atomic<bool>   acquiring_for_record_        = false;
 
   std::vector<RecordingSession> sessions_;
 
