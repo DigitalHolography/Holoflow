@@ -115,8 +115,7 @@ RecordMonitorWidget::RecordMonitorWidget(QWidget *parent, size_t queue_count)
   setup_ui(queue_count);
 }
 
-void RecordMonitorWidget::set_record_size(int max)
-{
+void RecordMonitorWidget::set_record_size(int max) {
   for (auto &q : record_queues_) {
     q.progress_bar->setMaximum(max);
     q.progress_bar->update();
@@ -127,11 +126,12 @@ void RecordMonitorWidget::free(size_t q, bool f) {
   assert(q < record_queues_.size());
   auto label = record_queues_[q].state_label;
   if (f) {
-    label->setText(QString("Free"));
+    label->setText(QString("FREE"));
     label->setProperty("statusTone", QString::fromLatin1("success"));
     record_queues_[q].progress_bar->set_progress(0, 0);
+    record_queues_[q].elapsed_time_label->setText(QString("N/A"));
   } else {
-    label->setText(QString("Recording"));
+    label->setText(QString("RECORDING"));
     label->setProperty("statusTone", QString::fromLatin1("warning"));
   }
 
@@ -141,37 +141,37 @@ void RecordMonitorWidget::free(size_t q, bool f) {
 }
 
 void RecordMonitorWidget::setup_ui(size_t queue_count) {
-  auto *layout = new QVBoxLayout(this);
-  layout->setContentsMargins(0, 0, 0, 0);
-  layout->setSpacing(8);
-
   // Queue metrics
-  auto *queue_group  = new QGroupBox("QUEUES", this);
-  auto *queue_layout = new QGridLayout(queue_group);
+  auto *queue_layout = new QGridLayout(this);
 
   auto configure_bar = [&](const QString &title, MultiProgressBar **bar, QLabel **name_label,
-                           QLabel **state_label, QLabel **speed_label, int &row) {
-    *name_label = new QLabel(title, queue_group);
+                           QLabel **state_label, QLabel **elapsed_time_label, QLabel **speed_label,
+                           int &row) {
+    *name_label = new QLabel(title, this);
     (*name_label)->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     queue_layout->addWidget(*name_label, row, 0);
 
-    *state_label = new QLabel("Free", queue_group);
+    *state_label = new QLabel("FREE", this);
     (*state_label)->setProperty("statusTone", QString::fromLatin1("success"));
     (*state_label)->style()->unpolish(*state_label);
     (*state_label)->style()->polish(*state_label);
     (*state_label)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-
     queue_layout->addWidget(*state_label, row, 1);
-
     ++row;
 
-    queue_layout->addWidget(new QLabel("Writing Speed: ", queue_group), row, 0);
-    *speed_label = new QLabel("N/A", queue_group);
+    queue_layout->addWidget(new QLabel("Elapsed time: ", this), row, 0);
+    *elapsed_time_label = new QLabel("N/A", this);
+    (*elapsed_time_label)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    queue_layout->addWidget(*elapsed_time_label, row, 1);
+    ++row;
+
+    queue_layout->addWidget(new QLabel("Writing Speed: ", this), row, 0);
+    *speed_label = new QLabel("N/A", this);
     (*speed_label)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     queue_layout->addWidget(*speed_label, row, 1);
     ++row;
 
-    *bar = new MultiProgressBar(queue_group);
+    *bar = new MultiProgressBar(this);
     (*bar)->setRange(0, 1);
     (*bar)->setValue(0);
     (*bar)->setTextVisible(true);
@@ -186,10 +186,9 @@ void RecordMonitorWidget::setup_ui(size_t queue_count) {
     RecordQueue &queue = record_queues_[i];
 
     configure_bar(QString("Record Queue %1").arg(i), &queue.progress_bar, &queue.name,
-                  &queue.state_label, &queue.writing_speed_value, row);
+                  &queue.state_label, &queue.elapsed_time_label, &queue.writing_speed_value, row);
   }
 
-  layout->addWidget(queue_group);
 }
 
 void RecordMonitorWidget::set_record_queue(size_t q, int first, int second, int max) {
@@ -199,10 +198,17 @@ void RecordMonitorWidget::set_record_queue(size_t q, int first, int second, int 
   }
 }
 
-void RecordMonitorWidget::update_record_writing_speed(size_t q, size_t first) {
+void RecordMonitorWidget::update_record_writing_speed(size_t q, size_t speed) {
   if (q < record_queues_.size()) {
-    auto str = QString("%1 frames/s").arg(QString::number(first));
+    auto str = QString("%1 frames/s").arg(QString::number(speed));
     record_queues_[q].writing_speed_value->setText(str);
+  }
+}
+
+void RecordMonitorWidget::update_record_elapsed_time(size_t q, size_t elapsed_time) {
+  if (q < record_queues_.size()) {
+    auto str = QString("%1 s").arg(QString::number(elapsed_time));
+    record_queues_[q].elapsed_time_label->setText(str);
   }
 }
 

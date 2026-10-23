@@ -742,7 +742,7 @@ public:
   }
 
   void emit_recording_update_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
-                                   size_t frames_written, size_t writing_speed) {
+                                   size_t frames_written, size_t writing_speed, size_t elapsed_time) {
     auto event = holoflow_event::Event{
         .direction = holoflow_event::EventDirection::ToUi,
         .node_id   = "",
@@ -752,6 +752,7 @@ public:
                 {"id", id},
                 {"frame_recorded", frames_written},
                 {"writing_speed", writing_speed},
+                {"elapsed_time", elapsed_time},
             },
         .ts = std::chrono::steady_clock::now(),
     };
@@ -1007,8 +1008,8 @@ public:
       recording_context_->invalidate(
           record_settings.record_queue_count, buffer_queue_, recording_buffers_size_,
           recording_buffers_.get(), g,
-          [this, &ctx](auto id, size_t recorded_frames, size_t writing_speed) {
-            emit_recording_update_event(ctx, id, recorded_frames, writing_speed);
+          [this, &ctx](auto id, size_t recorded_frames, size_t writing_speed, size_t elapsed_time) {
+            emit_recording_update_event(ctx, id, recorded_frames, writing_speed, elapsed_time);
           },
           [this, &ctx](auto id, size_t written) {
             emit_recording_finished_event(ctx, id, written);

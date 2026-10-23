@@ -368,14 +368,14 @@ void Manager::resume_pipeline() {
   }
 }
 
-void Manager::update_recording_path(const std::string& new_path)
-{
-  if (s_.import_source != ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP || s_.recording_method != RecordingMethod::RAW) {
+void Manager::update_recording_path(const std::string &new_path) {
+  if (s_.import_source != ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP ||
+      s_.recording_method != RecordingMethod::RAW) {
     s_.recording_path = new_path;
     update_pipeline(s_);
     return;
   }
-  
+
   auto payload = nlohmann::json{
       {"type", "update_recording_path"},
       {"record_path", new_path},
@@ -579,18 +579,18 @@ void Manager::poll_events() {
     if (type == "recording_update") {
       size_t frame_recorded = event->data.value("frame_recorded", 0);
       size_t writing_speed  = event->data.value("writing_speed", 0);
-      size_t id = event->data.value("id", 0); // assume that the id exists and is valid
-      emit   update_record(id, frame_recorded, writing_speed);
+      size_t id             = event->data.value("id", 0); // assume that the id exists and is valid
+      size_t elapsed_time   = event->data.value("elapsed_time", 0);
+      emit   update_record(id, frame_recorded, writing_speed, elapsed_time);
     } else if (type == "acquisition_update") {
       size_t frame_acquired = event->data.value("frame_acquired", 0);
-      size_t id = event->data.value("id", 0); // assume that the id exists and is valid
+      size_t id             = event->data.value("id", 0); // assume that the id exists and is valid
       emit   update_acquisition(id, frame_acquired);
-    } else if(type == "record_flushing_finished") {
+    } else if (type == "record_flushing_finished") {
       size_t id = event->data.value("id", 0); // assume that the id exists and is valid
-      emit raw_record_flushing_finished(id);
-    }
-    else if (type == "recording_finished") {
-      bool        should_emit = false;
+      emit   raw_record_flushing_finished(id);
+    } else if (type == "recording_finished") {
+      bool should_emit = false;
 
       {
         std::lock_guard lock(mtx_);
@@ -607,7 +607,7 @@ void Manager::poll_events() {
     } else if (type == "recording_failed") {
       const std::string message =
           event->data.value("message", std::string{"Recording failed for an unknown reason"});
-      size_t id = event->data.value("id", 0); // assume that the id exists and is valid
+      size_t            id = event->data.value("id", 0); // assume that the id exists and is valid
       const std::string path_str = event->data.value("path", std::string{});
       bool              should_emit{false};
 

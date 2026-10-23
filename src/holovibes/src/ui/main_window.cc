@@ -2078,9 +2078,10 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
 }
 
-void MainWindow::on_update_record(size_t id, size_t frame_recorded, size_t writing_speed) {
+void MainWindow::on_update_record(size_t id, size_t frame_recorded, size_t writing_speed, size_t elapsed_time) {
   record_widget_->update_record_queue_recorded(id, static_cast<int>(frame_recorded));
   record_widget_->update_record_writing_speed(id, writing_speed);
+  record_widget_->update_record_elapsed_time(id, elapsed_time);
   record_widget_->free(id, false);
 }
 

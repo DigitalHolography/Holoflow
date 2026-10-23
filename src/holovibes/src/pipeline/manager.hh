@@ -114,7 +114,7 @@ signals:
   void raw_record_stopped_failure(const QString &error);
 
   // record monitor signals
-  void update_record(size_t id, size_t recorded_frames, size_t writing_speed);
+  void update_record(size_t id, size_t recorded_frames, size_t writing_speed, size_t elapsed_time);
   void update_acquisition(size_t id, size_t acquired_frames);
   void raw_record_flushing_finished(size_t id);
 

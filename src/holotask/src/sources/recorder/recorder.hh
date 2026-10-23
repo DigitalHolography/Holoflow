@@ -44,7 +44,7 @@ public:
   using SessionId = uint32_t;
 
   using BufferFlushingFinishedCallback = std::function<void(SessionId)>;
-  using PollMetricsCallback            = std::function<void(SessionId, size_t, size_t)>;
+  using PollMetricsCallback            = std::function<void(SessionId, size_t, size_t, size_t)>; // frame_written | writing speed | elasped time
   using SuccessCallback                = std::function<void(SessionId, size_t)>;
   using FailureCallback                = std::function<void(SessionId, const std::string &)>;
 

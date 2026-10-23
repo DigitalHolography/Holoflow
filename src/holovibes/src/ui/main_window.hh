@@ -88,7 +88,7 @@ private:
   void on_update_pipeline_success();
   void on_update_pipeline_failure(const QString &error);
 
-  void on_update_record(size_t id, size_t frame_recorded, size_t writing_speed);
+  void on_update_record(size_t id, size_t frame_recorded, size_t writing_speed, size_t elapsed_time);
   void on_update_acquisition(size_t id, size_t frame_acquired);
   void on_raw_record_flushing_finished(size_t id);
 

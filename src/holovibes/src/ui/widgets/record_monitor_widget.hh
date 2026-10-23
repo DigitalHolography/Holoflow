@@ -32,9 +32,12 @@ public:
   // Update methods
   void set_record_size(int max);
   void set_record_queue(size_t q, int first, int second, int max);
-  void update_record_writing_speed(size_t q, size_t first);
+
   void update_record_queue_acquired(size_t q, int first);
   void update_record_queue_recorded(size_t q, int second);
+
+  void update_record_writing_speed(size_t q, size_t speed);
+  void update_record_elapsed_time(size_t q, size_t elapsed_time);
 
   void free(size_t q, bool f);
 private:
@@ -43,6 +46,7 @@ private:
     QLabel           *name;
     QLabel           *writing_speed_value;
     QLabel           *state_label;
+    QLabel           *elapsed_time_label;
     MultiProgressBar *progress_bar;
   };
 

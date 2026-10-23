@@ -246,6 +246,7 @@ void RecordWriter::execute(std::stop_token cancelled) {
                              [&] { stop_requested.store(true, std::memory_order_release); });
 
   using Clock                     = std::chrono::steady_clock;
+  Clock::time_point start         = Clock::now();
   Clock::time_point last_poll     = Clock::now();
   constexpr auto    poll_interval = std::chrono::milliseconds(500);
 
@@ -267,8 +268,9 @@ void RecordWriter::execute(std::stop_token cancelled) {
       size_t writing_speed = written_last_interval * 1000 /
                              std::chrono::duration_cast<std::chrono::milliseconds>(elapsed)
                                  .count(); // speed in frames / s
-
-      poll_metrics_(id_, current_frame, writing_speed);
+      
+      auto elapsed_time_since_start = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - start).count();
+      poll_metrics_(id_, current_frame, writing_speed, elapsed_time_since_start);
       logger()->info("[RecordWriter {}] {} total frames written to disk ({} during the last {} ms)",
                      id_, current_frame, written_last_interval,
                      std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count());
