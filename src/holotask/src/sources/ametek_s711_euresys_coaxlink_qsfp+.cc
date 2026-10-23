@@ -710,134 +710,6 @@ public:
     stop_acquisition();
   }
 
-  void emit_camera_record_flushing_finished_event(holoflow::core::SyncCtx    &ctx,
-                                                  RecordingSession::SessionId id) {
-    auto event = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "record_flushing_finished"},
-                {"id", id},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit record_flushing_finished event");
-  }
-
-  void emit_recording_finished_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
-                                     size_t frames_written) {
-    auto event = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "recording_finished"},
-                {"id", id},
-                {"frames_written", frames_written},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit recording_finished event");
-  }
-
-  void emit_recording_update_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
-                                   size_t frames_written, size_t writing_speed,
-                                   size_t elapsed_time) {
-    auto event = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "recording_update"},
-                {"id", id},
-                {"frame_recorded", frames_written},
-                {"writing_speed", writing_speed},
-                {"elapsed_time", elapsed_time},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit recording_update event");
-  }
-
-  void emit_acquisition_update_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
-                                     size_t frames) {
-    auto event = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "acquisition_update"},
-                {"id", id},
-                {"frame_acquired", frames},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit acquisition_update event");
-  }
-
-  void emit_recording_failed_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
-                                   const std::string &message) {
-    auto event = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "recording_failed"},
-                {"id", id},
-                {"message", message},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit recording_failed event");
-  }
-
-  void start_raw_record(holoflow::core::SyncCtx &ctx) {
-    HOLOVIBES_CHECK(ctx.event_writer != nullptr, "Camera recording requires an event writer");
-    // Join a completed recorder before replacing its thread and settings.
-    assert(settings_.record_settings.has_value());
-    assert(recording_context_.has_value());
-
-    if (session_still_recording()) {
-      logger()->error("[AmetekS711EuresysCoaxlinkQSFP:start_raw_record] a session is still "
-                      "recording frames from camera");
-      emit_recording_failed_event(ctx, current_recording_session_->id(),
-                                  "a record is still recording camera frames");
-      return;
-    }
-
-    const auto record_settings = *settings_.record_settings;
-    auto       session_it      = find_next_free_session();
-    if (session_it == recording_context_->sessions_.end()) {
-      logger()->error(
-          "[AmetekS711EuresysCoaxlinkQSFP:start_raw_record] cannot find a free recording session");
-      emit_recording_failed_event(ctx, 0, "no queue available for record");
-      return;
-    }
-
-    auto &session              = *session_it;
-    current_recording_session_ = &session;
-    session.start(record_settings, runtime_cfg_.buffer_part_count, recording_context_->recording_,
-                  recording_context_->acquired_since_record_start_);
-
-    logger()->info("[AmetekS711EuresysCoaxlinkQSFP:start_raw_record] started raw record");
-  }
-
-  void stop_raw_record() {
-    auto session = current_recording_session_;
-    if (session) {
-      session->stop();
-      current_recording_session_ = nullptr;
-    }
-
-    assert(!recording_context_->recording_.load(std::memory_order_acquire));
-  }
-
   void update_settings(const AmetekS711EuresysCoaxlinkQSFPSettings &settings) {
     stop_raw_record();
     settings_ = settings;
@@ -1009,7 +881,7 @@ public:
     }
 
     logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] cancelled");
-    stop_raw_record();
+    stop_all_record();
     running_.store(false, std::memory_order_release);
     stop_acquisition();
     buffer_queue_.clear();
@@ -1036,12 +908,149 @@ public:
   }
 
 private:
+
+  void emit_camera_record_flushing_finished_event(holoflow::core::SyncCtx    &ctx,
+                                                  RecordingSession::SessionId id) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "record_flushing_finished"},
+                {"id", id},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit record_flushing_finished event");
+  }
+
+  void emit_recording_finished_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
+                                     size_t frames_written) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "recording_finished"},
+                {"id", id},
+                {"frames_written", frames_written},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit recording_finished event");
+  }
+
+  void emit_recording_update_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
+                                   size_t frames_written, size_t writing_speed,
+                                   size_t elapsed_time) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "recording_update"},
+                {"id", id},
+                {"frame_recorded", frames_written},
+                {"writing_speed", writing_speed},
+                {"elapsed_time", elapsed_time},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit recording_update event");
+  }
+
+  void emit_acquisition_update_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
+                                     size_t frames) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "acquisition_update"},
+                {"id", id},
+                {"frame_acquired", frames},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit acquisition_update event");
+  }
+
+  void emit_recording_failed_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
+                                   const std::string &message) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "recording_failed"},
+                {"id", id},
+                {"message", message},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit recording_failed event");
+  }
+
+  void start_raw_record(holoflow::core::SyncCtx &ctx) {
+    HOLOVIBES_CHECK(ctx.event_writer != nullptr, "Camera recording requires an event writer");
+    // Join a completed recorder before replacing its thread and settings.
+    assert(settings_.record_settings.has_value());
+    assert(recording_context_.has_value());
+
+    if (session_still_recording()) {
+      logger()->error("[AmetekS711EuresysCoaxlinkQSFP:start_raw_record] a session is still "
+                      "recording frames from camera");
+      emit_recording_failed_event(ctx, current_recording_session_->id(),
+                                  "a record is still recording camera frames");
+      return;
+    }
+
+    const auto record_settings = *settings_.record_settings;
+    auto       session_it      = find_next_free_session();
+    if (session_it == recording_context_->sessions_.end()) {
+      logger()->error(
+          "[AmetekS711EuresysCoaxlinkQSFP:start_raw_record] cannot find a free recording session");
+      emit_recording_failed_event(ctx, 0, "no queue available for record");
+      return;
+    }
+
+    auto &session              = *session_it;
+    current_recording_session_ = &session;
+    session.start(record_settings, runtime_cfg_.buffer_part_count, recording_context_->recording_,
+                  recording_context_->acquired_since_record_start_);
+
+    logger()->info("[AmetekS711EuresysCoaxlinkQSFP:start_raw_record] started raw record");
+  }
+
+  void stop_raw_record() {
+    auto session = current_recording_session_;
+    if (session) {
+      session->stop();
+      current_recording_session_ = nullptr;
+
+      assert(!recording_context_->recording_.load(std::memory_order_acquire));
+    }
+  }
+
   std::vector<RecordingSession>::iterator find_next_free_session() {
     assert(recording_context_);
 
     return std::ranges::find_if(recording_context_->sessions_, [](const auto &s) {
       return s.state() == RecordingSession::State::Free;
     });
+  }
+
+  void stop_all_record() {
+    if (!recording_context_.has_value())
+      return;
+
+    std::ranges::for_each(recording_context_->sessions_, [](auto &s) { s.stop(); });
+    current_recording_session_ = nullptr;
   }
 
   bool session_still_recording() {
@@ -1070,18 +1079,18 @@ private:
 
       auto buffer_total_size = record_settings.record_queue_count * recording_buffer_size;
       if (buffer_total_size > recording_buffers_size_ * recording_buffers_count_) {
-        logger()->info(
-            "[init_record_context] allocating {} x {} bytes"
-            "buffers (total={} bytes)",
-            record_settings.record_queue_count, recording_buffer_size, buffer_total_size);
+        logger()->info("[init_record_context] allocating {} x {} bytes"
+                       "buffers (total={} bytes)",
+                       record_settings.record_queue_count, recording_buffer_size,
+                       buffer_total_size);
         recording_buffers_ = curaii::make_unique_host_ptr<std::byte>(buffer_total_size);
       } else {
-        logger()->info(
-            "[init_record_context] reusing old {} x {} bytes"
-            "buffers (total={} bytes) as {} x {} bytes (total={} bytes)",
-            recording_buffers_count_, recording_buffers_size_,
-            recording_buffers_count_ * recording_buffers_size_, record_settings.record_queue_count,
-            recording_buffer_size, buffer_total_size);
+        logger()->info("[init_record_context] reusing old {} x {} bytes"
+                       "buffers (total={} bytes) as {} x {} bytes (total={} bytes)",
+                       recording_buffers_count_, recording_buffers_size_,
+                       recording_buffers_count_ * recording_buffers_size_,
+                       record_settings.record_queue_count, recording_buffer_size,
+                       buffer_total_size);
       }
       recording_buffers_size_  = recording_buffer_size;
       recording_buffers_count_ = record_settings.record_queue_count;
@@ -1151,7 +1160,7 @@ private:
     bool               recording_failed = false;
     static const char *overflow_message =
         "Camera buffer queue is full; recording cancelled because a frame was dropped";
-    if (recording_context_->recording_) {
+    if (recording_context_.has_value() && recording_context_->recording_) {
       auto rem = current_recording_session_->remaining_to_record() / runtime_cfg_.buffer_part_count;
       auto recording_fail = rem > buffer_queue_.size();
 
@@ -1562,9 +1571,12 @@ AmetekS711EuresysCoaxlinkQSFPFactory::update(std::unique_ptr<holoflow::core::ISy
   const auto new_cfg     = normalized_cfg_json(runtime_cfg);
 
   // if record was enabled and is disabled in new settings, we don't need to rebuild
-  auto record_settings_changed =
-      settings.record_settings.has_value() && !old->get_settings().record_settings.has_value() ||
-      settings.record_settings->requires_rebuild(*old->get_settings().record_settings);
+  auto record_settings_changed = false;
+  if (old->get_settings().record_settings.has_value() && settings.record_settings.has_value()) {
+    record_settings_changed =
+        settings.record_settings->requires_rebuild(*old->get_settings().record_settings);
+  } else
+    record_settings_changed = settings.record_settings.has_value();
 
   auto config_changed = new_cfg != old->get_cfg();
   auto need_rebuild   = record_settings_changed || config_changed;

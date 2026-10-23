@@ -170,11 +170,12 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
           cancelled.stop_requested());
     });
 
-    auto writer_thread = std::jthread([this, &writer, &finished, cancelled] {
+    auto writer_thread = std::jthread([this, &writer, &finished, cancelled, &settings] {
       logger()->info("[RecordingSession::worker::writer_thread] writer thread started");
       writer.execute(cancelled);
-      if (!cancelled.stop_requested()) {
-
+      if (cancelled.stop_requested()) {
+        remove_incomplete_camera_recording(settings.file_path);
+      } else {
         finished.fetch_add(1);
         buffer_flushing_finished_callback_(id_);
       }
@@ -189,9 +190,6 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
 
     rec_thread.join();
     writer_thread.join();
-
-    if (cancelled.stop_requested())
-      remove_incomplete_camera_recording(settings.file_path);
 
     logger()->info(
         "[RecordingSession::worker::worker_thread] worker thread finished (cancelled: {})",
@@ -248,7 +246,7 @@ void RecordWriter::execute(std::stop_token cancelled) {
   using Clock                     = std::chrono::steady_clock;
   Clock::time_point start         = Clock::now();
   Clock::time_point last_poll     = Clock::now();
-  constexpr auto    poll_interval = std::chrono::milliseconds(500);
+  constexpr auto    poll_interval = std::chrono::milliseconds(200);
 
   size_t written_last_interval = 0;
 
@@ -268,8 +266,9 @@ void RecordWriter::execute(std::stop_token cancelled) {
       size_t writing_speed = written_last_interval * 1000 /
                              std::chrono::duration_cast<std::chrono::milliseconds>(elapsed)
                                  .count(); // speed in frames / s
-      
-      auto elapsed_time_since_start = std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - start).count();
+
+      auto elapsed_time_since_start =
+          std::chrono::duration_cast<std::chrono::seconds>(Clock::now() - start).count();
       poll_metrics_(id_, current_frame, writing_speed, elapsed_time_since_start);
       logger()->info("[RecordWriter {}] {} total frames written to disk ({} during the last {} ms)",
                      id_, current_frame, written_last_interval,

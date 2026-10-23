@@ -188,6 +188,8 @@ public:
 
     if (!recording_)
       return holoflow::core::OpResult::Ok;
+    
+    constexpr auto poll_interval = std::chrono::milliseconds(500);
 
     // --- Phase 1: Accumulate frames into the buffer ---
     if (frames_buffered_ < settings_.count) {
@@ -203,6 +205,13 @@ public:
       auto duration_us = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
       logger()->trace("[HolofileWriter] Buffered {} frames ({} us)", to_copy, duration_us);
       frames_buffered_ += to_copy;
+
+      auto now     = Clock::now();
+      auto elapsed = now - last_poll_;
+      if (elapsed > poll_interval) {
+        emit_acquisition_update_event(ctx, frames_buffered_);
+        last_poll_ = Clock::now();
+      }
     }
 
     // --- Phase 2: Buffer full — flush everything to disk ---
@@ -210,6 +219,7 @@ public:
       logger()->info("[HolofileWriter] Frame buffer full ({} frames); flushing to disk...",
                      settings_.count);
       try {
+        emit_acquisition_update_event(ctx, frames_buffered_);
         flush_to_disk();
         emit_finished_event(ctx);
         logger()->info("[HolofileWriter] Recording complete: {} frames written to {}",
@@ -314,6 +324,38 @@ private:
     }
   }
 
+  void emit_recording_update_event(holoflow::core::SyncCtx &ctx, size_t frames_written,
+                                   size_t writing_speed, size_t elapsed_time) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "recording_update"},
+                {"frame_recorded", frames_written},
+                {"writing_speed", writing_speed},
+                {"elapsed_time", elapsed_time},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit recording_update event");
+  }
+  void emit_acquisition_update_event(holoflow::core::SyncCtx &ctx, size_t frames) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "acquisition_update"},
+                {"frame_acquired", frames},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit acquisition_update event");
+  }
+
   void emit_finished_event(holoflow::core::SyncCtx &ctx) {
     auto event = holoflow_event::Event{
         .direction = holoflow_event::EventDirection::ToUi,
@@ -328,8 +370,8 @@ private:
     };
     HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
                     "Failed to emit recording_finished event");
-    
-   auto event_flush = holoflow_event::Event{
+
+    auto event_flush = holoflow_event::Event{
         .direction = holoflow_event::EventDirection::ToUi,
         .node_id   = "",
         .data =
@@ -371,6 +413,9 @@ private:
 
   bool recording_       = false;
   int  frames_buffered_ = 0;
+
+  using Clock = std::chrono::steady_clock;
+  Clock::time_point last_poll_;
 };
 
 } // namespace
