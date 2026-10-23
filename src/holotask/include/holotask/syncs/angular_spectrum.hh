@@ -52,6 +52,8 @@ struct AngularSpectrumSettings {
   float                  z;       ///< Propagation distance [m].
   std::optional<Filter>  filter;  ///< Optional bandlimiting filter.
   std::optional<Padding> padding; ///< Optional centered zero-padding resolution.
+  bool                   normalize =
+      false; ///< Divide inverse FFT by its pixel count. False preserves legacy scaling.
 
   bool operator==(const AngularSpectrumSettings &) const = default;
 };

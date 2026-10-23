@@ -1,0 +1,8 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TemporalFFTSettings",
+  "description": "Unnormalized complex FFT along leading T of contiguous device [T,Y,X]. Rectangular window, unshifted frequency bins, as in Holovibes STFT.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {}
+}

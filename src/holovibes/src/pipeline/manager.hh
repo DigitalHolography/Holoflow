@@ -27,6 +27,7 @@
 #include "holoflow/runtime/compiler.hh"
 #include "holoflow/runtime/graph_display.hh"
 #include "holoflow/runtime/graph_exec.hh"
+#include "pipeline/focus_session.hh"
 #include "pipeline/mtd_session.hh"
 #include "pipeline/settings.hh"
 
@@ -94,6 +95,8 @@ public:
 
 signals:
   void mtd_volume_ready(int dimension, double voxel_pitch_m);
+  void focus_volume_ready(int width, int height, int depth);
+  void focus_playback_position(int first, int last, int total);
 
   // Lifecycle signals
   void start_pipeline_success();
@@ -122,11 +125,17 @@ private:
   using V = holoflow::core::GraphSpec::vertex_descriptor;
 
   // --- Initialization Helpers ---
-  void                        register_components();
-  void                        start_mtd();
-  void                        present_mtd();
-  std::unique_ptr<MTDSession> mtd_session_;
-  bool                        mtd_active_ = false;
+  void                          register_components();
+  void                          start_volume();
+  void                          present_volume();
+  std::unique_ptr<MTDSession>   mtd_session_;
+  std::unique_ptr<FocusSession> focus_session_;
+  VolumeSession                *volume_session() const;
+  bool                          is_volume_mode() const;
+  bool                          volume_active_ = false;
+  void                          schedule_focus_playback(int delay_ms = -1);
+  void                          advance_focus_playback();
+  void                          publish_focus_position();
 
   // --- Polling Helpers ---
   void start_metrics_updates();
@@ -191,8 +200,9 @@ private:
   std::unique_ptr<holoflow::runtime::Scheduler>      scheduler_;
 
   // Timers for regular UI updates
-  QTimer *metrics_timer_ = nullptr;
-  QTimer *events_timer_  = nullptr;
+  QTimer *metrics_timer_        = nullptr;
+  QTimer *events_timer_         = nullptr;
+  QTimer *focus_playback_timer_ = nullptr;
 };
 
 } // namespace holovibes::pipeline

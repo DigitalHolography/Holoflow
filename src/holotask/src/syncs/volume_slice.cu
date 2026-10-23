@@ -7,23 +7,31 @@
 
 namespace holotask::syncs {
 void to_json(nlohmann::json &j, const VolumeSliceSettings &s) {
-  j = {{"axis", s.axis}, {"index", s.index}, {"component", s.component}};
+  j = {{"axis", s.axis},
+       {"index", s.index},
+       {"component", s.component},
+       {"count", s.count},
+       {"transpose_output", s.transpose_output}};
 }
 void from_json(const nlohmann::json &j, VolumeSliceSettings &s) {
-  s.axis      = j.value("axis", 0);
-  s.index     = j.value("index", 280);
-  s.component = j.value("component", std::string{"real"});
+  s.count            = j.value("count", 1);
+  s.transpose_output = j.value("transpose_output", false);
+  s.axis             = j.value("axis", 0);
+  s.index            = j.value("index", 280);
+  s.component        = j.value("component", std::string{"real"});
 }
 
 namespace {
 using namespace mtd_detail;
 template <typename T>
 __global__ void select_slice(const T *volume, float *output, size_t height, size_t width, size_t sy,
-                             size_t sx, int axis, int index, int component) {
+                             size_t sx, int axis, int index, int component, int count,
+                             bool transpose) {
   const size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (i >= height * width)
     return;
-  size_t x = i % width, y = i / width, z = static_cast<size_t>(index);
+  size_t x = transpose ? i / width : i % width, y = transpose ? i % width : i / width,
+         z = static_cast<size_t>(index);
   if (axis == 1) {
     z = y;
     y = static_cast<size_t>(index);
@@ -33,12 +41,16 @@ __global__ void select_slice(const T *volume, float *output, size_t height, size
     x = static_cast<size_t>(index);
   }
   const size_t source = (z * sy + y) * sx + x;
-  if constexpr (std::is_same_v<T, float>)
-    output[i] = component == 1 ? 0.0f : (component == 2 ? fabsf(volume[source]) : volume[source]);
-  else {
-    const auto v = volume[source];
-    output[i]    = component == 0 ? v.x : (component == 1 ? v.y : hypotf(v.x, v.y));
+  const size_t stride = axis == 0 ? sy * sx : (axis == 1 ? sx : 1);
+  float        sum    = 0;
+  for (int plane = 0; plane < count; ++plane) {
+    const auto value = volume[source + static_cast<size_t>(plane) * stride];
+    if constexpr (std::is_same_v<T, float>)
+      sum += component == 1 ? 0.0f : (component == 2 ? fabsf(value) : value);
+    else
+      sum += component == 0 ? value.x : (component == 1 ? value.y : hypotf(value.x, value.y));
   }
+  output[i] = sum / count;
 }
 class VolumeSlice : public ISyncTask {
 public:
@@ -54,11 +66,12 @@ public:
     if (input_.dtype == DType::CF32)
       select_slice<<<blocks(h * w), block_size, 0, stream_>>>(
           reinterpret_cast<const cuFloatComplex *>(ctx.inputs[0].data()), output, h, w,
-          input_.shape[1], input_.shape[2], s_.axis, s_.index, component);
+          input_.shape[1], input_.shape[2], s_.axis, s_.index, component, s_.count,
+          s_.transpose_output);
     else
       select_slice<<<blocks(h * w), block_size, 0, stream_>>>(
           reinterpret_cast<const float *>(ctx.inputs[0].data()), output, h, w, input_.shape[1],
-          input_.shape[2], s_.axis, s_.index, component);
+          input_.shape[2], s_.axis, s_.index, component, s_.count, s_.transpose_output);
     CUDA_CHECK(cudaGetLastError());
     return OpResult::Ok;
   }
@@ -80,12 +93,17 @@ holoflow::core::InferResult VolumeSliceFactory::infer(std::span<const TDesc> inp
   require(s.axis >= 0 && s.axis < 3 && s.index >= 0 &&
               static_cast<size_t>(s.index) < in.shape[static_cast<size_t>(s.axis)],
           "slice axis or index out of range");
+  require(s.count > 0 && static_cast<size_t>(s.count) <=
+                             in.shape[static_cast<size_t>(s.axis)] - static_cast<size_t>(s.index),
+          "slice averaging range is outside the volume");
   require(s.component == "real" || s.component == "imaginary" || s.component == "magnitude",
           "unknown slice component");
   std::vector<size_t> shape;
   for (int axis = 0; axis < 3; ++axis)
     if (axis != s.axis)
       shape.push_back(in.shape[static_cast<size_t>(axis)]);
+  if (s.transpose_output)
+    std::swap(shape[0], shape[1]);
   return {.input_descs   = {in},
           .output_descs  = {TDesc(shape, DType::F32, MemLoc::Device)},
           .owned_inputs  = {false},

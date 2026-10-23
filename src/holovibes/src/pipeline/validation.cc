@@ -140,6 +140,36 @@ std::optional<std::string> validate_recording_path(const std::filesystem::path &
 ValidationResult validate_settings(const Settings &settings, const ValidationContext &context) {
   ValidationResult result;
 
+  if (settings.import_source == ImportSource::HOLO_FOCUS) {
+    const auto &r = settings.focus_reconstruction;
+    const auto &v = settings.focus_view;
+    if (!context.load_path_exists || !context.source_width || !context.source_height ||
+        !context.source_frame_count) {
+      add_issue(result, ValidationSeverity::Error, "focus_input_invalid",
+                "Select a valid, complete little-endian U8/U16 .holo recording.",
+                {SettingsField::LoadPath});
+      return result;
+    }
+    try {
+      holotask::pipelines::validate_holo_focus_settings(
+          r, *context.source_width, *context.source_height, *context.source_frame_count);
+    } catch (const std::exception &e) {
+      add_issue(result, ValidationSeverity::Error, "focus_reconstruction_invalid", e.what(),
+                {SettingsField::FocusReconstruction});
+    }
+    if (v.x < 0 || v.x >= *context.source_width || v.y < 0 || v.y >= *context.source_height ||
+        v.z < 0 || v.z >= (r.method == "holovibes_stft" ? r.window : r.optics.planes) ||
+        v.band_width < 0 || v.x_width < 0 || v.y_width < 0 ||
+        v.band_width >= (r.method == "holovibes_stft" ? r.window : r.optics.planes) ||
+        v.x_width >= *context.source_width || v.y_width >= *context.source_height ||
+        v.component != "real" || !std::isfinite(v.minimum) || !std::isfinite(v.maximum) ||
+        v.minimum >= v.maximum)
+      add_issue(result, ValidationSeverity::Error, "focus_view_invalid",
+                "Slice positions must be inside the stack; display minimum must be below maximum.",
+                {SettingsField::FocusView});
+    return result;
+  }
+
   if (settings.import_source == ImportSource::MTD_DATASET) {
     const auto &r = settings.mtd_reconstruction;
     const auto &v = settings.mtd_view;

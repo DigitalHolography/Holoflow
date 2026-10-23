@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FocusStackSettings",
+  "description": "One raw hologram [1,Y,X] to normalized holographic intensity [Z,Y,X]. Distances in metres. Z minimum must be below maximum. This is refocusing, not quantitative tomography.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "wavelength_m": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "pixel_pitch_x_m": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "pixel_pitch_y_m": {
+      "type": "number",
+      "exclusiveMinimum": 0
+    },
+    "z_min_m": {
+      "type": "number"
+    },
+    "z_max_m": {
+      "type": "number"
+    },
+    "planes": {
+      "type": "integer",
+      "minimum": 2,
+      "maximum": 2048
+    },
+    "padding": {
+      "type": "boolean",
+      "default": true
+    },
+    "isolate_order": {
+      "type": "boolean",
+      "default": false
+    },
+    "carrier_x": {
+      "type": "integer"
+    },
+    "carrier_y": {
+      "type": "integer"
+    },
+    "order_radius": {
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

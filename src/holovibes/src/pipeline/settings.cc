@@ -38,14 +38,24 @@ void to_json(nlohmann::json &j, const MTDViewSettings &s) {
        {"z", s.z},
        {"component", s.component},
        {"minimum", s.minimum},
-       {"maximum", s.maximum}};
+       {"maximum", s.maximum},
+       {"band_width", s.band_width},
+       {"x_width", s.x_width},
+       {"y_width", s.y_width},
+       {"auto_contrast", s.auto_contrast},
+       {"fit_panel", s.fit_panel}};
 }
 void from_json(const nlohmann::json &j, MTDViewSettings &s) {
-  s.x         = j.value("x", 256);
-  s.y         = j.value("y", 256);
-  s.z         = j.value("z", 280);
-  s.component = j.value("component", std::string("real"));
-  s.minimum   = j.value("minimum", 0.0);
-  s.maximum   = j.value("maximum", 0.06);
+  s.band_width    = j.value("band_width", 0);
+  s.x_width       = j.value("x_width", 0);
+  s.y_width       = j.value("y_width", 0);
+  s.auto_contrast = j.value("auto_contrast", false);
+  s.fit_panel     = j.value("fit_panel", false);
+  s.x             = j.value("x", 256);
+  s.y             = j.value("y", 256);
+  s.z             = j.value("z", 280);
+  s.component     = j.value("component", std::string("real"));
+  s.minimum       = j.value("minimum", 0.0);
+  s.maximum       = j.value("maximum", 0.06);
 }
 } // namespace holovibes::pipeline

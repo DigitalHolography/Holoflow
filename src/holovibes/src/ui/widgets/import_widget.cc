@@ -121,8 +121,15 @@ void ImportWidget::setup_ui() {
 
   cam_check_ = new QCheckBox("Use Camera", this);
   main_layout->addWidget(cam_check_);
-  mtd_check_ = new QCheckBox(tr("MTD dataset"), this);
+  mtd_check_ = new QCheckBox(tr("OCT mode"), this);
+  mtd_check_->setToolTip(
+      tr("Explore a volume: MTD diffraction tomography or .holo numerical refocusing."));
   main_layout->addWidget(mtd_check_);
+  oct_source_ = new QComboBox(this);
+  oct_source_->addItem(tr(".holo (Holovibes / focus stack)"), "holo");
+  oct_source_->addItem(tr("MTD dataset (tomography)"), "mtd");
+  main_layout->addWidget(oct_source_);
+  oct_source_->hide();
 
   stack_ = new QStackedLayout();
   main_layout->addLayout(stack_);
@@ -154,6 +161,10 @@ void ImportWidget::setup_ui() {
 }
 
 void ImportWidget::connect_signals() {
+  connect(oct_source_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this] {
+    refresh_mode();
+    emit settings_changed();
+  });
   connect(mtd_check_, &QCheckBox::toggled, this, [this](bool checked) {
     if (checked) {
       const QSignalBlocker blocker(cam_check_);
@@ -327,20 +338,40 @@ void ImportWidget::clear_validation_styles() {
   clear_validation_error(camera_config_combo_);
 }
 
-bool ImportWidget::is_mtd_mode() const { return mtd_check_->isChecked() && !is_camera_mode(); }
-void ImportWidget::set_mtd_mode(bool enabled) { mtd_check_->setChecked(enabled); }
+bool ImportWidget::is_volume_mode() const { return mtd_check_->isChecked() && !is_camera_mode(); }
+bool ImportWidget::is_mtd_mode() const {
+  return is_volume_mode() && oct_source_->currentData().toString() == "mtd";
+}
+bool ImportWidget::is_focus_mode() const {
+  return is_volume_mode() && oct_source_->currentData().toString() == "holo";
+}
+void ImportWidget::set_mtd_mode(bool enabled) {
+  if (enabled)
+    oct_source_->setCurrentIndex(oct_source_->findData("mtd"));
+  mtd_check_->setChecked(enabled);
+  refresh_mode();
+}
+void ImportWidget::set_focus_mode(bool enabled) {
+  if (enabled)
+    oct_source_->setCurrentIndex(oct_source_->findData("holo"));
+  mtd_check_->setChecked(enabled);
+  refresh_mode();
+}
 void ImportWidget::refresh_mode() {
-  const bool mtd = is_mtd_mode();
+  const bool mtd = is_volume_mode();
+  oct_source_->setVisible(mtd);
   for (auto *spin : {fps_spin_, start_index_spin_, end_index_spin_})
     spin->setEnabled(!mtd);
   load_method_combo_->setEnabled(!mtd);
   sampling_frequency_spin_->setEnabled(!mtd);
-  file_line_edit_->setPlaceholderText(mtd ? tr("Select MTD ACQUIS folder") : tr("Select File"));
+  file_line_edit_->setPlaceholderText(is_mtd_mode() ? tr("Select MTD ACQUIS folder")
+                                                    : tr("Select File"));
 }
 
 void ImportWidget::set_source_editing_enabled(bool enabled) {
   cam_check_->setEnabled(enabled);
   mtd_check_->setEnabled(enabled);
+  oct_source_->setEnabled(enabled);
   browse_button_->setEnabled(enabled);
   const auto hint =
       enabled ? QString{} : tr("Stop the current run before changing the input source.");

@@ -64,12 +64,9 @@ void from_json(const nlohmann::json &j, HolofileSettings::LoadKind &lk) {
 
 void to_json(nlohmann::json &j, const HolofileSettings &hs) {
   j = {
-      {"path", hs.path},
-      {"load_kind", hs.load_kind},
-      {"start_frame", hs.start_frame},
-      {"end_frame", hs.end_frame},
-      {"batch_size", hs.batch_size},
-      {"keep_cursor", hs.keep_cursor},
+      {"path", hs.path},           {"load_kind", hs.load_kind},   {"start_frame", hs.start_frame},
+      {"end_frame", hs.end_frame}, {"batch_size", hs.batch_size}, {"keep_cursor", hs.keep_cursor},
+      {"repeat", hs.repeat},
   };
 
   if (hs.max_fps.has_value()) {
@@ -88,6 +85,7 @@ void from_json(const nlohmann::json &j, HolofileSettings &hs) {
     hs.max_fps = j.at("max_fps").get<int>();
   }
   hs.keep_cursor = j.value("keep_cursor", true);
+  hs.repeat      = j.value("repeat", true);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -156,8 +154,8 @@ public:
       return true;
     }
 
-    auto batch_period = std::chrono::duration_cast<Clock::duration>(
-        std::chrono::duration<double>(static_cast<double>(settings.batch_size) / *settings.max_fps));
+    auto batch_period = std::chrono::duration_cast<Clock::duration>(std::chrono::duration<double>(
+        static_cast<double>(settings.batch_size) / *settings.max_fps));
 
     if (batch_period <= Clock::duration::zero()) {
       batch_period = Clock::duration{1};
@@ -208,7 +206,9 @@ public:
     size_t bytes_per_frame  = bits_per_frame / 8;
 
     // Loop back to start when EOF would be bypassed when reading next batch
-    if (frame_idx + settings.batch_size > settings.end_frame) {
+    if (settings.batch_size > settings.end_frame - frame_idx) {
+      if (!settings.repeat)
+        return holoflow::core::OpResult::Eof;
       if (settings.load_kind == HolofileSettings::LoadKind::Live) {
         reader->seek(settings.start_frame);
       }
@@ -416,16 +416,16 @@ HolofileFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   }
 
   // Construct task directly
-  auto task       = std::make_unique<Holofile>();
-  task->settings  = settings;
-  task->reader    = std::move(reader);
-  task->header    = header;
-  task->frame_idx = frame_idx;
-  task->odesc     = infer.output_descs[0];
-  task->buf       = buf;
-  task->h_buf     = std::move(h_buf);
-  task->d_buf     = std::move(d_buf);
-  task->stream    = ctx.stream;
+  auto task              = std::make_unique<Holofile>();
+  task->settings         = settings;
+  task->reader           = std::move(reader);
+  task->header           = header;
+  task->frame_idx        = frame_idx;
+  task->odesc            = infer.output_descs[0];
+  task->buf              = buf;
+  task->h_buf            = std::move(h_buf);
+  task->d_buf            = std::move(d_buf);
+  task->stream           = ctx.stream;
   task->next_batch_start = pace_same ? old_holofile->next_batch_start : std::nullopt;
 
   return task;

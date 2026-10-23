@@ -22,6 +22,17 @@
         "imaginary",
         "magnitude"
       ]
+    },
+    "count": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "Average adjacent planes starting at index. Range must fit inside volume."
+    },
+    "transpose_output": {
+      "type": "boolean",
+      "default": false,
+      "description": "Swap the two output axes; used for Holovibes YZ orientation."
     }
   },
   "additionalProperties": false

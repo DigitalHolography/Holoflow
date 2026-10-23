@@ -35,6 +35,7 @@ target_include_directories(${TARGET}
 target_link_libraries(${TARGET}
     PRIVATE
     project_options
+    holotask
     nlohmann_json::nlohmann_json
     GTest::gtest_main
     Qt6::Core

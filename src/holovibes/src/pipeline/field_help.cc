@@ -123,6 +123,16 @@ constexpr auto kAutofocusNbIterConstraints        = std::to_array<const char *>(
 });
 
 const FieldHelp kFieldHelp[] = {
+    {SettingsField::FocusReconstruction,
+     "Holo Focus Stack",
+     "Refocus one time frame over a range of sensor propagation distances. Saved optical settings "
+     "are editable estimates, not a verified calibration.",
+     {}},
+    {SettingsField::FocusView,
+     "Focus Volume View",
+     "Independent XY, XZ and YZ slices of normalized holographic intensity. Shared contrast stays "
+     "fixed while navigating. Z is propagation distance, not anatomical depth.",
+     {}},
     {SettingsField::MTDReconstruction,
      "MTD Reconstruction",
      "Reconstruct a complete MTD acquisition using the dataset optical settings.",

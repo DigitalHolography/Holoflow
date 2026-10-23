@@ -141,6 +141,22 @@ void ViewWidget::setup_ui() {
   mtd_controls_ = new MTDViewWidget(this);
   outer->addWidget(mtd_controls_);
   mtd_controls_->hide();
+  focus_controls_ = new MTDViewWidget(this);
+  focus_controls_->set_focus_mode();
+  focus_controls_->set_settings({.x             = 0,
+                                 .y             = 0,
+                                 .z             = 224,
+                                 .component     = "real",
+                                 .minimum       = 0,
+                                 .maximum       = 1,
+                                 .band_width    = 20,
+                                 .x_width       = 20,
+                                 .y_width       = 20,
+                                 .auto_contrast = true,
+                                 .fit_panel     = true});
+  outer->addWidget(focus_controls_);
+  focus_controls_->hide();
+  connect(focus_controls_, &MTDViewWidget::settings_changed, this, &ViewWidget::settings_changed);
   connect(mtd_controls_, &MTDViewWidget::settings_changed, this, &ViewWidget::settings_changed);
   auto *layout = new QGridLayout(legacy_page_);
   layout->setContentsMargins(0, 0, 0, 0);
@@ -271,8 +287,18 @@ void ViewWidget::clear_validation_styles() {
 }
 
 void ViewWidget::set_mtd_mode(bool enabled) {
+  focus_mode_ = false;
+  focus_controls_->hide();
   legacy_page_->setVisible(!enabled);
   mtd_controls_->setVisible(enabled);
+  post_processing_group_->setEnabled(!enabled);
+}
+
+void ViewWidget::set_focus_mode(bool enabled) {
+  focus_mode_ = enabled;
+  legacy_page_->setVisible(!enabled);
+  mtd_controls_->hide();
+  focus_controls_->setVisible(enabled);
   post_processing_group_->setEnabled(!enabled);
 }
 

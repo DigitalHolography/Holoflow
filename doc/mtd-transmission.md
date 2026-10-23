@@ -70,7 +70,7 @@ Volume, slice, graph export, and metadata output paths must be distinct.
 
 ## View the reconstructed volume in Holoflow
 
-1. Stop any current acquisition. Under **IMPORT**, select **MTD dataset**.
+1. Stop any current acquisition. Under **IMPORT**, enable **OCT mode** and select **MTD dataset (tomography)**.
 2. Browse to the dataset's **ACQUIS** directory. Saved optical settings are read
    automatically. **MTD RECONSTRUCTION** exposes volume dimension, GPS iterations,
    and an optional mounting-medium index override. Missing NM is identified in

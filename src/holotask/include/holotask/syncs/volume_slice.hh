@@ -29,6 +29,9 @@ struct VolumeSliceSettings {
   int         index     = 280;
   std::string component = "real"; ///< real, imaginary, or magnitude.
 
+  int  count            = 1;     ///< Average this many adjacent planes, starting at index.
+  bool transpose_output = false; ///< Swap the two output axes (Holovibes YZ layout).
+
   bool operator==(const VolumeSliceSettings &) const = default;
 };
 

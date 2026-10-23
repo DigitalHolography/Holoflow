@@ -92,7 +92,13 @@ private:
   bool                        mtd_ui_mode_        = false;
   bool                        mtd_update_pending_ = false;
   QString                     mtd_loaded_path_;
+  QString                     focus_loaded_path_;
+  QSize                       focus_dims_{512, 512};
+  void                        refresh_focus_geometry();
   double                      mtd_voxel_pitch_m_ = 0;
+  void                        refresh_slice_guides();
+  void                        move_volume_slices(int plane, double x, double y);
+  QString                     validation_error_message_;
   bool                        validate_inputs();
   void                        apply_validation_result(const pipeline::ValidationResult &result);
   void                        refresh_validation_tooltips(const pipeline::ValidationResult &result);

@@ -21,9 +21,11 @@
 #include <QOpenGLFunctions>
 #include <QOpenGLWidget>
 #include <QPixmap>
+#include <QRectF>
 #include <QString>
 #include <QWidget>
 #include <optional>
+#include <vector>
 
 #include "holoflow/core/tensor.hh"
 
@@ -32,6 +34,8 @@ class QLabel;
 namespace holovibes::ui {
 
 /// Available colormaps for tensor visualization
+class SliceNavigationOverlay;
+
 enum class Colormap { Grayscale, Twilight };
 
 /// Widget that renders a 2D tensor as an image (with optional colormaps and float support).
@@ -42,9 +46,12 @@ public:
   explicit TensorDisplayWidget(QWidget *parent = nullptr);
 
   void set_fixed_aspect(std::optional<QSize> size);
+  void set_fit_to_panel(bool enabled);
   /// Retain a finite image while its tab is hidden or its OpenGL context is recreated.
   void set_retain_frame(bool enabled);
   void set_vertical_flip(bool enabled);
+  void set_slice_navigation_enabled(bool enabled);
+  void set_slice_guides(const std::vector<QRectF> &bands);
   void set_reticle_enabled(bool enabled);
   void set_reticle_radius(double radius);
   void show_waiting_placeholder(const QString &message = {});
@@ -60,8 +67,16 @@ public slots:
 
 signals:
   void tensorDisplayed();
+  void slice_position_requested(double x, double y);
 
 protected:
+  bool event(QEvent *event) override;
+  void keyPressEvent(QKeyEvent *event) override;
+  void mousePressEvent(QMouseEvent *event) override;
+  void mouseMoveEvent(QMouseEvent *event) override;
+  void focusInEvent(QFocusEvent *event) override;
+  void focusOutEvent(QFocusEvent *event) override;
+  void resizeEvent(QResizeEvent *event) override;
   void closeEvent(QCloseEvent *event) override;
   void initializeGL() override;
   void resizeGL(int w, int h) override;
@@ -71,7 +86,12 @@ protected:
   int  heightForWidth(int w) const override;
 
 private:
-  void  ensureTexture(int w, int h, holoflow::core::DType dtype);
+  void                    refresh_slice_overlay();
+  void                    request_slice_position(const QPointF &position);
+  SliceNavigationOverlay *slice_overlay_ = nullptr;
+  std::vector<QRectF>     slice_bands_;
+  bool                    slice_navigation_ = false, slices_unlocked_ = false;
+  void                    ensureTexture(int w, int h, holoflow::core::DType dtype);
   void  updateTexture(const void *data, int w, int h, holoflow::core::DType dtype);
   void  updateLetterboxViewport();
   QRect getLetterboxRect() const;
@@ -79,10 +99,11 @@ private:
   void  initializeColormaps();
   void  drawReticle();
 
-  GLuint tex_  = 0;
-  GLuint vao_  = 0;
-  GLuint vbo_  = 0;
-  GLuint prog_ = 0;
+  bool   fit_to_panel_ = false;
+  GLuint tex_          = 0;
+  GLuint vao_          = 0;
+  GLuint vbo_          = 0;
+  GLuint prog_         = 0;
 
   GLuint reticle_vao_       = 0;
   GLuint reticle_vbo_       = 0;

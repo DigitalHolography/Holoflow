@@ -77,6 +77,11 @@
         "height"
       ],
       "additionalProperties": false
+    },
+    "normalize": {
+      "type": "boolean",
+      "default": false,
+      "description": "Normalize the spatial inverse FFT by pixel count. False preserves legacy amplitude scaling."
     }
   },
   "required": [
@@ -87,15 +92,15 @@
   ],
   "examples": [
     {
-      "lambda": 5.32e-7,
-      "dx": 3.45e-6,
-      "dy": 3.45e-6,
+      "lambda": 5.32e-07,
+      "dx": 3.45e-06,
+      "dy": 3.45e-06,
       "z": 0.1
     },
     {
-      "lambda": 5.32e-7,
-      "dx": 3.45e-6,
-      "dy": 3.45e-6,
+      "lambda": 5.32e-07,
+      "dx": 3.45e-06,
+      "dy": 3.45e-06,
       "z": 0.1,
       "filter": {
         "r_inner": 120,
@@ -105,9 +110,9 @@
       }
     },
     {
-      "lambda": 5.32e-7,
-      "dx": 3.45e-6,
-      "dy": 3.45e-6,
+      "lambda": 5.32e-07,
+      "dx": 3.45e-06,
+      "dy": 3.45e-06,
       "z": 0.1,
       "padding": {
         "width": 1024,

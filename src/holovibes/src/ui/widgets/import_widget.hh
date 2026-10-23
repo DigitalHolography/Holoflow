@@ -37,6 +37,9 @@ public:
   // Getters for settings
   bool               is_camera_mode() const;
   bool               is_mtd_mode() const;
+  bool               is_focus_mode() const;
+  bool               is_volume_mode() const;
+  void               set_focus_mode(bool enabled);
   QString            get_file_path() const;
   std::optional<int> get_fps_limit() const;
   double             get_sampling_frequency_hz() const;
@@ -95,7 +98,8 @@ signals:
 
 private:
   void       refresh_mode();
-  QCheckBox *mtd_check_ = nullptr;
+  QCheckBox *mtd_check_  = nullptr;
+  QComboBox *oct_source_ = nullptr;
 
   void        setup_ui();
   void        connect_signals();

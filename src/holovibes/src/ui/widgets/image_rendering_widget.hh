@@ -14,6 +14,7 @@
 
 #pragma once
 
+#include "ui/widgets/focus_processing_widget.hh"
 #include "ui/widgets/mtd_processing_widget.hh"
 
 #include <QCheckBox>
@@ -32,8 +33,10 @@ class ImageRenderingWidget : public QGroupBox {
 public:
   explicit ImageRenderingWidget(QWidget *parent = nullptr);
 
-  void                 set_mtd_mode(bool enabled);
-  MTDProcessingWidget *mtd_controls() const { return mtd_controls_; }
+  void                   set_mtd_mode(bool enabled);
+  void                   set_focus_mode(bool enabled);
+  FocusProcessingWidget *focus_controls() const { return focus_controls_; }
+  MTDProcessingWidget   *mtd_controls() const { return mtd_controls_; }
 
   // Getters
   QString get_image_mode() const;
@@ -107,8 +110,9 @@ signals:
   void settings_changed();
 
 private:
-  QWidget             *legacy_page_  = nullptr;
-  MTDProcessingWidget *mtd_controls_ = nullptr;
+  QWidget               *legacy_page_    = nullptr;
+  MTDProcessingWidget   *mtd_controls_   = nullptr;
+  FocusProcessingWidget *focus_controls_ = nullptr;
 
   void        setup_ui();
   void        connect_signals();

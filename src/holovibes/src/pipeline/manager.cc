@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <limits>
@@ -145,6 +146,10 @@ Manager::Manager(
       zernike_phase_widget_(zernike_phase_widget), zernike_history_widget_(zernike_history_widget) {
 
   register_components();
+  focus_playback_timer_ = new QTimer(this);
+  focus_playback_timer_->setSingleShot(true);
+  focus_playback_timer_->setTimerType(Qt::PreciseTimer);
+  connect(focus_playback_timer_, &QTimer::timeout, this, &Manager::advance_focus_playback);
 
   // Setup UI metric polling (1 FPS)
   metrics_timer_ = new QTimer(this);
@@ -235,6 +240,7 @@ void Manager::register_components() {
   reg_sync<EqualFactory>(registry_, "Equal");
   reg_sync<WhereFactory>(registry_, "Where");
   reg_sync<ReshapeFactory>(registry_, "Reshape");
+  holotask::pipelines::register_focus_stack_tasks(registry_);
   // clang-format on
 }
 
@@ -293,7 +299,7 @@ void Manager::start_pipeline() {
   logger()->info("[Manager::start_pipeline] Starting pipeline...");
   std::lock_guard lock(mtx_);
 
-  if (mtd_active_ || (scheduler_ && scheduler_->is_running())) {
+  if (volume_active_ || (scheduler_ && scheduler_->is_running())) {
     const QString msg = "Pipeline is already running";
     logger()->error("[Manager::start_pipeline] {}", msg.toStdString());
     emit start_pipeline_failure(msg);
@@ -301,20 +307,22 @@ void Manager::start_pipeline() {
   }
 
   try {
-    if (s_.import_source == ImportSource::MTD_DATASET)
-      start_mtd();
+    if (is_volume_mode())
+      start_volume();
     else {
       mtd_session_.reset();
+      focus_session_.reset();
       configure_zernike_history(true);
       build_and_run();
     }
     logger()->info("[Manager::start_pipeline] Pipeline started successfully");
     emit start_pipeline_success();
-    if (mtd_active_)
-      present_mtd();
+    if (volume_active_)
+      present_volume();
   } catch (const std::exception &e) {
-    mtd_active_ = false;
-    if (s_.import_source != ImportSource::MTD_DATASET)
+    volume_active_ = false;
+    focus_playback_timer_->stop();
+    if (!is_volume_mode())
       stop_zernike_history();
     const QString msg = QString("Failed to start pipeline: %1").arg(e.what());
     logger()->error("[Manager::start_pipeline] {}", msg.toStdString());
@@ -325,8 +333,9 @@ void Manager::start_pipeline() {
 void Manager::stop_pipeline() {
   logger()->info("[Manager::stop_pipeline] Stopping pipeline...");
   std::lock_guard lock(mtx_);
-  if (mtd_active_) {
-    mtd_active_ = false;
+  focus_playback_timer_->stop();
+  if (volume_active_) {
+    volume_active_ = false;
     emit stop_pipeline_success();
     return;
   }
@@ -361,19 +370,25 @@ void Manager::stop_pipeline() {
 void Manager::resume_pipeline() {
   logger()->info("[Manager::resume_pipeline] Resuming pipeline...");
   std::lock_guard lock(mtx_);
-  if (s_.import_source == ImportSource::MTD_DATASET && mtd_session_) {
+  if (volume_active_) {
+    emit resume_pipeline_failure("Pipeline is already running");
+    return;
+  }
+  if (is_volume_mode() && volume_session()) {
     try {
-      start_mtd();
+      start_volume();
       emit resume_pipeline_success();
-      if (mtd_active_)
-        present_mtd();
+      if (volume_active_)
+        present_volume();
     } catch (const std::exception &e) {
+      volume_active_ = false;
+      focus_playback_timer_->stop();
       emit resume_pipeline_failure(QString::fromUtf8(e.what()));
     }
     return;
   }
 
-  if (mtd_active_ || (scheduler_ && scheduler_->is_running())) {
+  if (volume_active_ || (scheduler_ && scheduler_->is_running())) {
     const QString msg = "Pipeline is already running";
     logger()->error("[Manager::resume_pipeline] {}", msg.toStdString());
     emit resume_pipeline_failure(msg);
@@ -391,8 +406,8 @@ void Manager::resume_pipeline() {
     run_compiled_graph();
     logger()->info("[Manager::resume_pipeline] Pipeline resumed successfully");
     emit resume_pipeline_success();
-    if (mtd_active_)
-      present_mtd();
+    if (volume_active_)
+      present_volume();
   } catch (const std::exception &e) {
     stop_zernike_history();
     const QString msg = QString("Failed to resume pipeline: %1").arg(e.what());
@@ -406,21 +421,28 @@ void Manager::update_pipeline(const Settings &settings) {
   std::lock_guard lock(mtx_);
   s_              = settings;
   settings_dirty_ = true;
-  if (mtd_active_) {
+  if (volume_active_ || (is_volume_mode() && volume_session())) {
+    const bool was_active = volume_active_;
     try {
-      if (s_.import_source == ImportSource::MTD_DATASET)
-        start_mtd();
+      if (is_volume_mode())
+        start_volume();
       else {
-        mtd_active_ = false;
+        volume_active_ = false;
         mtd_session_.reset();
+        focus_session_.reset();
         configure_zernike_history(true);
         build_and_run();
       }
+      if (!was_active && is_volume_mode()) {
+        volume_active_ = false;
+        focus_playback_timer_->stop();
+      }
       emit update_pipeline_success();
-      if (mtd_active_)
-        present_mtd();
+      if (is_volume_mode() && volume_session())
+        present_volume();
     } catch (const std::exception &e) {
-      mtd_active_ = false;
+      volume_active_ = false;
+      focus_playback_timer_->stop();
       emit update_pipeline_failure(QString::fromUtf8(e.what()));
     }
     return;
@@ -428,13 +450,13 @@ void Manager::update_pipeline(const Settings &settings) {
 
   if (!scheduler_ || !scheduler_->is_running()) {
     try {
-      if (s_.import_source != ImportSource::MTD_DATASET)
+      if (!is_volume_mode())
         configure_zernike_history(false);
       logger()->debug(
           "[Manager::update_pipeline] Pipeline is not running, updated parameters only.");
       emit update_pipeline_success();
-      if (mtd_active_)
-        present_mtd();
+      if (volume_active_)
+        present_volume();
     } catch (const std::exception &e) {
       const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
       logger()->error("[Manager::update_pipeline] {}", msg.toStdString());
@@ -449,8 +471,8 @@ void Manager::update_pipeline(const Settings &settings) {
     scheduler_->wait();
     raw_recording_active_ = false;
 
-    if (s_.import_source == ImportSource::MTD_DATASET)
-      start_mtd();
+    if (is_volume_mode())
+      start_volume();
     else {
       configure_zernike_history(true);
       build_and_run();
@@ -458,8 +480,8 @@ void Manager::update_pipeline(const Settings &settings) {
 
     logger()->info("[Manager::update_pipeline] Pipeline updated successfully");
     emit update_pipeline_success();
-    if (mtd_active_)
-      present_mtd();
+    if (volume_active_)
+      present_volume();
   } catch (const std::exception &e) {
     stop_zernike_history();
     const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
@@ -540,8 +562,10 @@ void Manager::update_graph_compiled_dump_preferences(const GraphCompiledDumpPref
 }
 
 void Manager::request_compiled_graph_visualization() {
-  if (s_.import_source == ImportSource::MTD_DATASET && mtd_session_) {
-    emit graph_visualization_ready(QString::fromStdString(mtd_session_->graph_dot()));
+  if (is_volume_mode() && volume_session()) {
+    emit graph_visualization_ready(QString::fromStdString(
+        (s_.import_source == ImportSource::HOLO_FOCUS ? focus_session_->graph_dot()
+                                                      : mtd_session_->graph_dot())));
     return;
   }
   if (!compiler_output_) {
@@ -808,7 +832,7 @@ void Manager::guess_source_dims() {
 // Retained MTD volume and display-only navigation
 // -------------------------------------------------------------------------------------------------
 
-void Manager::start_mtd() {
+void Manager::start_volume() {
   stop_metrics_updates();
   stop_event_polling();
   if (scheduler_ && scheduler_->is_running()) {
@@ -818,40 +842,146 @@ void Manager::start_mtd() {
   scheduler_.reset();
   compiler_output_.reset();
   raw_recording_active_ = false;
-  if (!mtd_session_)
-    mtd_session_ = std::make_unique<MTDSession>();
-  mtd_session_->reconstruct(s_.load_path, s_.mtd_reconstruction);
-  mtd_active_     = true;
+  if (s_.import_source == ImportSource::HOLO_FOCUS) {
+    mtd_session_.reset();
+    if (!focus_session_)
+      focus_session_ = std::make_unique<FocusSession>();
+    focus_session_->reconstruct(s_.load_path, s_.focus_reconstruction);
+    emit focus_volume_ready(focus_session_->width(), focus_session_->height(),
+                            focus_session_->depth());
+  } else {
+    focus_playback_timer_->stop();
+    focus_session_.reset();
+    if (!mtd_session_)
+      mtd_session_ = std::make_unique<MTDSession>();
+    mtd_session_->reconstruct(s_.load_path, s_.mtd_reconstruction);
+    emit mtd_volume_ready(mtd_session_->dimension(), mtd_session_->voxel_pitch_m());
+  }
+  volume_active_  = true;
   settings_dirty_ = false;
-  emit mtd_volume_ready(mtd_session_->dimension(), mtd_session_->voxel_pitch_m());
+  publish_focus_position();
+  schedule_focus_playback();
 }
 
 // Called after the lifecycle-success signal: its GUI handler resets the workspace.
-void Manager::present_mtd() {
-  const auto &view      = s_.mtd_view;
-  const int   dimension = mtd_session_->dimension();
-  const auto  present   = [this, dimension, &view](ui::TensorDisplayWidget *widget, int axis,
-                                                   int index) {
-    auto                              frame = mtd_session_->slice(axis, index, view.component);
+bool Manager::is_volume_mode() const {
+  return s_.import_source == ImportSource::MTD_DATASET ||
+         s_.import_source == ImportSource::HOLO_FOCUS;
+}
+
+VolumeSession *Manager::volume_session() const {
+  return s_.import_source == ImportSource::HOLO_FOCUS
+             ? static_cast<VolumeSession *>(focus_session_.get())
+             : static_cast<VolumeSession *>(mtd_session_.get());
+}
+
+void Manager::present_volume() {
+  auto *session = volume_session();
+  if (!session)
+    throw std::logic_error("No volume is available");
+  const bool  focus    = s_.import_source == ImportSource::HOLO_FOCUS;
+  const auto &view     = focus ? s_.focus_view : s_.mtd_view;
+  const bool  temporal = focus && s_.focus_reconstruction.method == "holovibes_stft";
+  const auto  present = [session, &view, focus, temporal](ui::TensorDisplayWidget *widget, int axis,
+                                                          int index) {
+    const int limit =
+        axis == 0 ? session->depth() : (axis == 1 ? session->height() : session->width());
+    index = std::clamp(index, 0, limit - 1);
+    const int extent =
+        temporal ? (axis == 0 ? view.band_width : (axis == 1 ? view.y_width : view.x_width)) : 0;
+    const int  count     = std::min(std::max(0, extent), limit - index - 1) + 1;
+    const bool transpose = temporal && axis == 2;
+    auto frame  = session->slice(axis, index, focus ? "real" : view.component, count, transpose);
+    int  width  = axis == 2 ? session->height() : session->width();
+    int  height = axis == 0 ? session->height() : session->depth();
+    if (transpose)
+      std::swap(width, height);
+    float minimum = static_cast<float>(view.minimum), maximum = static_cast<float>(view.maximum);
+    if (focus && view.auto_contrast) {
+      std::vector<float> pixels(static_cast<size_t>(width) * height);
+      std::memcpy(pixels.data(), frame.constData(), frame.size());
+      std::vector<float> sample;
+      const size_t       step = std::max(size_t{1}, pixels.size() / 65536);
+      sample.reserve(pixels.size() / step + 1);
+      for (size_t i = 0; i < pixels.size(); i += step) {
+        const size_t bin =
+            transpose ? i % static_cast<size_t>(width) : i / static_cast<size_t>(width);
+        if (std::isfinite(pixels[i]) && !(temporal && axis != 0 && bin < 2))
+          sample.push_back(pixels[i]);
+      }
+      if (!sample.empty()) {
+        const size_t lower = (sample.size() - 1) * 5 / 1000,
+                     upper = (sample.size() - 1) * 995 / 1000;
+        std::nth_element(sample.begin(), sample.begin() + lower, sample.end());
+        minimum = sample[lower];
+        std::nth_element(sample.begin(), sample.begin() + upper, sample.end());
+        maximum = sample[upper];
+        if (maximum <= minimum)
+          maximum = minimum + std::max(1e-6f, std::abs(minimum) * 1e-6f);
+      }
+    }
     QPointer<ui::TensorDisplayWidget> safe_widget(widget);
-    const float                       minimum = static_cast<float>(view.minimum),
-                                      maximum = static_cast<float>(view.maximum);
-    const bool                        queued  = QMetaObject::invokeMethod(
-        widget,
-        [safe_widget, frame = std::move(frame), dimension, minimum, maximum]() {
-          if (!safe_widget)
-            return;
-          safe_widget->set_fixed_aspect(QSize(dimension, dimension));
-          safe_widget->set_value_range(minimum, maximum);
-          safe_widget->presentTensor(frame, dimension, dimension, holoflow::core::DType::F32);
-        },
-        Qt::QueuedConnection);
-    if (!queued)
-      throw std::runtime_error("Could not dispatch an MTD slice to its display");
+    const bool                        fit = focus && view.fit_panel;
+    if (!QMetaObject::invokeMethod(
+            widget,
+            [safe_widget, frame = std::move(frame), width, height, minimum, maximum, fit]() {
+              if (!safe_widget)
+                return;
+              safe_widget->set_fit_to_panel(fit);
+              safe_widget->set_fixed_aspect(fit ? std::nullopt
+                                                : std::optional(QSize(width, height)));
+              safe_widget->set_value_range(minimum, maximum);
+              safe_widget->presentTensor(frame, width, height, holoflow::core::DType::F32);
+            },
+            Qt::QueuedConnection))
+      throw std::runtime_error("Could not dispatch a volume slice to its display");
   };
   present(xy_processed_widget_, 0, view.z);
   present(xz_processed_widget_, 1, view.y);
   present(yz_processed_widget_, 2, view.x);
+}
+
+void Manager::schedule_focus_playback(int delay_ms) {
+  if (!volume_active_ || s_.import_source != ImportSource::HOLO_FOCUS || !focus_session_ ||
+      s_.focus_reconstruction.method != "holovibes_stft" || !s_.focus_reconstruction.playback) {
+    focus_playback_timer_->stop();
+    return;
+  }
+  // View-only updates must not postpone the next video window.
+  if (!focus_playback_timer_->isActive())
+    focus_playback_timer_->start(
+        delay_ms >= 0 ? delay_ms : std::max(1, 1000 / s_.focus_reconstruction.playback_fps));
+}
+
+void Manager::publish_focus_position() {
+  if (s_.import_source != ImportSource::HOLO_FOCUS || !focus_session_)
+    return;
+  const int first = focus_session_->current_frame();
+  const int count =
+      s_.focus_reconstruction.method == "holovibes_stft" ? s_.focus_reconstruction.window : 1;
+  emit focus_playback_position(first, first + count - 1, focus_session_->frame_count());
+}
+
+void Manager::advance_focus_playback() {
+  std::lock_guard lock(mtx_);
+  if (!volume_active_ || s_.import_source != ImportSource::HOLO_FOCUS || !focus_session_ ||
+      s_.focus_reconstruction.method != "holovibes_stft" || !s_.focus_reconstruction.playback)
+    return;
+  const auto started = std::chrono::steady_clock::now();
+  try {
+    focus_session_->advance();
+    publish_focus_position();
+    present_volume();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - started)
+                             .count();
+    const int  period  = std::max(1, 1000 / s_.focus_reconstruction.playback_fps);
+    schedule_focus_playback(static_cast<int>(std::max<int64_t>(1, period - elapsed)));
+  } catch (const std::exception &error) {
+    volume_active_ = false;
+    focus_playback_timer_->stop();
+    emit update_pipeline_failure(QString("Playback failed: %1").arg(error.what()));
+  }
 }
 
 } // namespace holovibes::pipeline

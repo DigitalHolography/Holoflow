@@ -57,6 +57,8 @@ enum class SettingsField {
   SignalPlotTimeWindow,
   MTDReconstruction,
   MTDView,
+  FocusReconstruction,
+  FocusView,
 };
 
 struct ValidationIssue {
