@@ -140,6 +140,29 @@ void RecordMonitorWidget::free(size_t q, bool f) {
   label->update();
 }
 
+void RecordMonitorWidget::reset(size_t queue_count) {
+  clear_ui();
+  setup_ui(queue_count);
+}
+
+void RecordMonitorWidget::clear_ui() {
+  QLayout *layout = this->layout();
+  if (!layout)
+    return;
+
+  while (QLayoutItem *item = layout->takeAt(0)) {
+    if (QWidget *widget = item->widget())
+      delete widget;
+
+    if (QLayout *childLayout = item->layout())
+      delete childLayout;
+
+    delete item;
+  }
+
+  delete layout;
+}
+
 void RecordMonitorWidget::setup_ui(size_t queue_count) {
   // Queue metrics
   auto *queue_layout = new QGridLayout(this);
@@ -153,6 +176,10 @@ void RecordMonitorWidget::setup_ui(size_t queue_count) {
 
     *state_label = new QLabel("FREE", this);
     (*state_label)->setProperty("statusTone", QString::fromLatin1("success"));
+    (*state_label)
+        ->setToolTip(
+            tr("This represent the current state of the record. FREE means that the queue is "
+               "available for a record. RECORDING means that the record is not finished yet"));
     (*state_label)->style()->unpolish(*state_label);
     (*state_label)->style()->polish(*state_label);
     (*state_label)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -161,11 +188,14 @@ void RecordMonitorWidget::setup_ui(size_t queue_count) {
 
     queue_layout->addWidget(new QLabel("Elapsed time: ", this), row, 0);
     *elapsed_time_label = new QLabel("N/A", this);
+    (*elapsed_time_label)
+        ->setToolTip(tr("Elapsed Time represent the time elapsed since the writing of the record "
+                        "on the disk started."));
     (*elapsed_time_label)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     queue_layout->addWidget(*elapsed_time_label, row, 1);
     ++row;
 
-    queue_layout->addWidget(new QLabel("Writing Speed: ", this), row, 0);
+    queue_layout->addWidget(new QLabel("Writing speed: ", this), row, 0);
     *speed_label = new QLabel("N/A", this);
     (*speed_label)->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
     queue_layout->addWidget(*speed_label, row, 1);
@@ -173,6 +203,9 @@ void RecordMonitorWidget::setup_ui(size_t queue_count) {
 
     *bar = new MultiProgressBar(this);
     (*bar)->setRange(0, 1);
+    (*bar)->setToolTip(tr(
+        "This progress bar shows the progress of the record. The blue part represents the frames "
+        "acquired by the camera for this record and the green one the frames written to disk"));
     (*bar)->setValue(0);
     (*bar)->setTextVisible(true);
     (*bar)->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
@@ -185,10 +218,9 @@ void RecordMonitorWidget::setup_ui(size_t queue_count) {
   for (size_t i = 0; i < record_queues_.size(); ++i) {
     RecordQueue &queue = record_queues_[i];
 
-    configure_bar(QString("Record Queue %1").arg(i), &queue.progress_bar, &queue.name,
+    configure_bar(QString("Record queue %1").arg(i), &queue.progress_bar, &queue.name,
                   &queue.state_label, &queue.elapsed_time_label, &queue.writing_speed_value, row);
   }
-
 }
 
 void RecordMonitorWidget::set_record_queue(size_t q, int first, int second, int max) {

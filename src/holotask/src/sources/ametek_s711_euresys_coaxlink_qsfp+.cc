@@ -49,13 +49,15 @@ bool RecordSettings::requires_rebuild(const RecordSettings &old) const {
 void to_json(nlohmann::json &j, const RecordSettings &s) {
   j = nlohmann::json{{"file_path", s.file_path},
                      {"recording_count", s.recording_count},
-                     {"pipeline_config", s.pipeline_config}};
+                     {"pipeline_config", s.pipeline_config},
+                     {"record_queue_count", s.record_queue_count}};
 }
 
 void from_json(const nlohmann::json &j, RecordSettings &s) {
   j.at("file_path").get_to(s.file_path);
   j.at("recording_count").get_to(s.recording_count);
   j.at("pipeline_config").get_to(s.pipeline_config);
+  j.at("record_queue_count").get_to(s.record_queue_count);
 }
 
 void to_json(nlohmann::json &j, const AmetekS711EuresysCoaxlinkQSFPSettings &s) {
@@ -742,7 +744,8 @@ public:
   }
 
   void emit_recording_update_event(holoflow::core::SyncCtx &ctx, RecordingSession::SessionId id,
-                                   size_t frames_written, size_t writing_speed, size_t elapsed_time) {
+                                   size_t frames_written, size_t writing_speed,
+                                   size_t elapsed_time) {
     auto event = holoflow_event::Event{
         .direction = holoflow_event::EventDirection::ToUi,
         .node_id   = "",
@@ -979,61 +982,6 @@ public:
     };
   }
 
-  void init_record_context(holoflow::core::SyncCtx &ctx) {
-    if (settings_.record_settings) {
-      auto &record_settings = *settings_.record_settings;
-      recording_context_.emplace();
-      const auto pixel_size_in_bytes = size_from_pixel_format(runtime_cfg_.pixel_format);
-      size_t     rec_count           = record_settings.recording_count;
-      if (rec_count % runtime_cfg_.buffer_part_count != 0) {
-        rec_count += runtime_cfg_.buffer_part_count - (rec_count % runtime_cfg_.buffer_part_count);
-      }
-
-      auto recording_buffer_size =
-          runtime_cfg_.final_height * runtime_cfg_.width * rec_count * pixel_size_in_bytes;
-
-      auto g = RecordingGeometry(static_cast<uint8_t>(pixel_size_in_bytes * 8), runtime_cfg_.width,
-                                 runtime_cfg_.final_height);
-
-      if (recording_buffer_size > recording_buffers_size_) {
-        recording_buffers_size_ = recording_buffer_size;
-        auto buffer_total_size  = record_settings.record_queue_count * recording_buffers_size_;
-        logger()->info("[AmetekS711EuresysCoaxlinkQSFP::init_record_context] allocating {} x {} bytes"
-                       "buffers (total={} bytes)",
-                       record_settings.record_queue_count, recording_buffers_size_,
-                       buffer_total_size);
-        recording_buffers_ = curaii::make_unique_host_ptr<std::byte>(buffer_total_size);
-      }
-
-      recording_context_->invalidate(
-          record_settings.record_queue_count, buffer_queue_, recording_buffers_size_,
-          recording_buffers_.get(), g,
-          [this, &ctx](auto id, size_t recorded_frames, size_t writing_speed, size_t elapsed_time) {
-            emit_recording_update_event(ctx, id, recorded_frames, writing_speed, elapsed_time);
-          },
-          [this, &ctx](auto id, size_t written) {
-            emit_recording_finished_event(ctx, id, written);
-            logger()->info("[AmetekS711EuresysCoaxlinkQSFP] recording {} finished", id);
-            buffer_queue_.unsubscribe_b();
-            emit_acquisition_update_event(ctx, id, settings_.record_settings->recording_count);
-            current_recording_session_ = nullptr;
-          },
-          [this, &ctx](auto id, const std::string &message) {
-            emit_recording_failed_event(ctx, id, message);
-            logger()->info("[AmetekS711EuresysCoaxlinkQSFP::start_raw_record] recording {} failed",
-                           id);
-            current_recording_session_ = nullptr;
-          },
-          [this, &ctx, &record_settings](auto id) {
-            emit_camera_record_flushing_finished_event(ctx, id);
-            logger()->info(
-                "[AmetekS711EuresysCoaxlinkQSFP::start_raw_record] recording {} flushing finished",
-                id);
-          });
-    } else
-      recording_context_ = std::nullopt;
-  }
-
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     if (settings_.record_settings.has_value())
       handle_events(ctx);
@@ -1102,6 +1050,69 @@ private:
     return std::ranges::any_of(recording_context_->sessions_, [](const auto &s) {
       return s.state() == RecordingSession::State::Recording;
     });
+  }
+
+  void init_record_context(holoflow::core::SyncCtx &ctx) {
+    if (settings_.record_settings) {
+      auto &record_settings = *settings_.record_settings;
+      recording_context_.emplace();
+      const auto pixel_size_in_bytes = size_from_pixel_format(runtime_cfg_.pixel_format);
+      size_t     rec_count           = record_settings.recording_count;
+      if (rec_count % runtime_cfg_.buffer_part_count != 0) {
+        rec_count += runtime_cfg_.buffer_part_count - (rec_count % runtime_cfg_.buffer_part_count);
+      }
+
+      auto recording_buffer_size =
+          runtime_cfg_.final_height * runtime_cfg_.width * rec_count * pixel_size_in_bytes;
+
+      auto g = RecordingGeometry(static_cast<uint8_t>(pixel_size_in_bytes * 8), runtime_cfg_.width,
+                                 runtime_cfg_.final_height);
+
+      auto buffer_total_size = record_settings.record_queue_count * recording_buffer_size;
+      if (buffer_total_size > recording_buffers_size_ * recording_buffers_count_) {
+        logger()->info(
+            "[init_record_context] allocating {} x {} bytes"
+            "buffers (total={} bytes)",
+            record_settings.record_queue_count, recording_buffer_size, buffer_total_size);
+        recording_buffers_ = curaii::make_unique_host_ptr<std::byte>(buffer_total_size);
+      } else {
+        logger()->info(
+            "[init_record_context] reusing old {} x {} bytes"
+            "buffers (total={} bytes) as {} x {} bytes (total={} bytes)",
+            recording_buffers_count_, recording_buffers_size_,
+            recording_buffers_count_ * recording_buffers_size_, record_settings.record_queue_count,
+            recording_buffer_size, buffer_total_size);
+      }
+      recording_buffers_size_  = recording_buffer_size;
+      recording_buffers_count_ = record_settings.record_queue_count;
+
+      recording_context_->invalidate(
+          record_settings.record_queue_count, buffer_queue_, recording_buffers_size_,
+          recording_buffers_.get(), g,
+          [this, &ctx](auto id, size_t recorded_frames, size_t writing_speed, size_t elapsed_time) {
+            emit_recording_update_event(ctx, id, recorded_frames, writing_speed, elapsed_time);
+          },
+          [this, &ctx](auto id, size_t written) {
+            emit_recording_finished_event(ctx, id, written);
+            logger()->info("[AmetekS711EuresysCoaxlinkQSFP] recording {} finished", id);
+            buffer_queue_.unsubscribe_b();
+            emit_acquisition_update_event(ctx, id, settings_.record_settings->recording_count);
+            current_recording_session_ = nullptr;
+          },
+          [this, &ctx](auto id, const std::string &message) {
+            emit_recording_failed_event(ctx, id, message);
+            logger()->info("[AmetekS711EuresysCoaxlinkQSFP::start_raw_record] recording {} failed",
+                           id);
+            current_recording_session_ = nullptr;
+          },
+          [this, &ctx, &record_settings](auto id) {
+            emit_camera_record_flushing_finished_event(ctx, id);
+            logger()->info(
+                "[AmetekS711EuresysCoaxlinkQSFP::start_raw_record] recording {} flushing finished",
+                id);
+          });
+    } else
+      recording_context_ = std::nullopt;
   }
 
   void start_acquisition(holoflow::core::SyncCtx &ctx) {
@@ -1453,6 +1464,7 @@ private:
   std::optional<RecordingContext>    recording_context_;
   curaii::unique_host_ptr<std::byte> recording_buffers_         = nullptr;
   size_t                             recording_buffers_size_    = 0;
+  size_t                             recording_buffers_count_   = 0;
   RecordingSession                  *current_recording_session_ = nullptr;
 };
 

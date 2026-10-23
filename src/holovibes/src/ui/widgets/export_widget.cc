@@ -51,6 +51,7 @@ QString ExportWidget::get_file_path() const { return file_line_edit_->text(); }
 QString ExportWidget::get_tag() const { return tag_combo_->currentText(); }
 bool    ExportWidget::is_frame_count_enabled() const { return frames_check_->isChecked(); }
 int     ExportWidget::get_frame_count() const { return frames_spin_->value(); }
+int     ExportWidget::get_queue_count() const { return queues_spin_->value(); }
 bool    ExportWidget::isChecked() const { return enable_check_->isChecked(); }
 
 void ExportWidget::set_file_path(const QString &path) { file_line_edit_->setText(path); }
@@ -73,6 +74,7 @@ QPushButton *ExportWidget::browse_button() { return browse_button_; }
 QComboBox   *ExportWidget::tag_combo() { return tag_combo_; }
 QCheckBox   *ExportWidget::frames_check() { return frames_check_; }
 QSpinBox    *ExportWidget::frames_spin() { return frames_spin_; }
+QSpinBox    *ExportWidget::queues_spin() { return queues_spin_; }
 QPushButton *ExportWidget::record_button() { return record_button_; }
 QPushButton *ExportWidget::stop_button() { return stop_button_; }
 QPushButton *ExportWidget::stop_fan_button() { return stop_fan_button_; }
@@ -121,6 +123,14 @@ void ExportWidget::setup_ui() {
   layout->addWidget(frames_spin_, row, 1);
   ++row;
 
+  layout->addWidget(new QLabel("Record queue count"), row, 0);
+  queues_spin_ = create_spin_box(content_container_, 1, 5, 3);
+  queues_spin_->setToolTip(
+      tr("This is the number of queues for recording. The only configuration where it will be used "
+         "is when recording raw files with the AmetekS711."));
+  layout->addWidget(queues_spin_, row, 1);
+  ++row;
+
   auto *button_layout = new QHBoxLayout();
   record_button_      = new QPushButton("Record", content_container_);
   stop_button_        = new QPushButton("Stop", content_container_);
@@ -155,6 +165,9 @@ void ExportWidget::connect_signals() {
           &ExportWidget::settings_changed);
   connect(frames_check_, &QCheckBox::toggled, this, &ExportWidget::settings_changed);
   connect(frames_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &ExportWidget::settings_changed);
+
+  connect(queues_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ExportWidget::settings_changed);
 }
 

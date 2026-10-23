@@ -222,9 +222,10 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
     holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings settings{.cfg_path = cam_path};
     if (s_.recording_method == RecordingMethod::RAW) {
       settings.record_settings = holotask::sources::RecordSettings{
-          .file_path       = s_.recording_path.string(),
-          .recording_count = s_.recording_count,
-          .pipeline_config = settings_to_old_json(s_)};
+          .file_path          = s_.recording_path.string(),
+          .recording_count    = s_.recording_count,
+          .pipeline_config    = settings_to_old_json(s_),
+          .record_queue_count = static_cast<size_t>(s_.recording_queue_count)};
     }
     return ametek_s711_euresys_coaxlink_qsfp_plus(settings);
   }

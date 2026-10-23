@@ -143,6 +143,7 @@ struct Settings {
   RecordingMethod       recording_method;
   std::filesystem::path recording_path;
   int                   recording_count;
+  int                   recording_queue_count;
 
   // Auto-focus
   bool             autofocus_enabled;

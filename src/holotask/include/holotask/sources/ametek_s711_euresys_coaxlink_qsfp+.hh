@@ -29,7 +29,7 @@ struct RecordSettings {
   int            recording_count;
   nlohmann::json pipeline_config;
 
-  size_t record_queue_count = 3;
+  size_t record_queue_count;
 
   bool operator==(const RecordSettings &other) const {
     return recording_count == other.recording_count && record_queue_count == other.record_queue_count &&

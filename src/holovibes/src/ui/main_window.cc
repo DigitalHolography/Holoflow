@@ -2078,7 +2078,8 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
 }
 
-void MainWindow::on_update_record(size_t id, size_t frame_recorded, size_t writing_speed, size_t elapsed_time) {
+void MainWindow::on_update_record(size_t id, size_t frame_recorded, size_t writing_speed,
+                                  size_t elapsed_time) {
   record_widget_->update_record_queue_recorded(id, static_cast<int>(frame_recorded));
   record_widget_->update_record_writing_speed(id, writing_speed);
   record_widget_->update_record_elapsed_time(id, elapsed_time);
@@ -2090,7 +2091,8 @@ void MainWindow::on_update_acquisition(size_t id, size_t frame_acquired) {
 }
 
 void MainWindow::on_raw_record_flushing_finished(size_t id) {
-  logger()->info("[MainWindow::on_raw_record_flushing_finished] queue {} has been flushed to disk", id);
+  logger()->info("[MainWindow::on_raw_record_flushing_finished] queue {} has been flushed to disk",
+                 id);
   record_widget_->free(id, true);
 }
 
@@ -2472,7 +2474,11 @@ void MainWindow::setup_update_connections() {
   void (MainWindow::*cb)() = &MainWindow::update_if_running;
 
   connect(import_widget_, &ImportWidget::settings_changed, this, cb);
+
   connect(export_widget_, &ExportWidget::settings_changed, this, cb);
+  connect(export_widget_, &ExportWidget::settings_changed, this,
+          [this]() { record_widget_->reset(export_widget_->get_queue_count()); });
+
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this, cb);
   connect(view_widget_, &ViewWidget::settings_changed, this, cb);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this, cb);
@@ -2481,9 +2487,10 @@ void MainWindow::setup_update_connections() {
   connect(export_widget_, &ExportWidget::file_path_changed, this, file_cb);
 }
 
-void MainWindow::recording_file_path_changed()
-{
-  auto               update   = [=]() { pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString()); };
+void MainWindow::recording_file_path_changed() {
+  auto update = [=]() {
+    pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString());
+  };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
 }
 
@@ -2688,7 +2695,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     QString     appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
     QString     convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels/";
     std::string kernel_path             = convolutionsKernelsPath.toStdString() +
-                                          render_widget_->get_convolution().toStdString() + ".json";
+                              render_widget_->get_convolution().toStdString() + ".json";
 
     s.pp_fps       = 60;
     s.pp_fft_shift = s.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;
@@ -2717,8 +2724,9 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     } else {
       s.recording_method = RecordingMethod::NONE;
     }
-    s.recording_path  = export_widget_->get_file_path().toStdString();
-    s.recording_count = export_widget_->get_frame_count();
+    s.recording_path        = export_widget_->get_file_path().toStdString();
+    s.recording_count       = export_widget_->get_frame_count();
+    s.recording_queue_count = export_widget_->get_queue_count();
   }
 
   // Auto-Focus Settings

@@ -40,8 +40,12 @@ public:
   void update_record_elapsed_time(size_t q, size_t elapsed_time);
 
   void free(size_t q, bool f);
+
+  void reset(size_t queue_count);
 private:
+  void clear_ui();
   void setup_ui(size_t queue_count);
+private:
   struct RecordQueue {
     QLabel           *name;
     QLabel           *writing_speed_value;
