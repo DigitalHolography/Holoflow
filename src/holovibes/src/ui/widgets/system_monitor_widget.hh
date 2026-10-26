@@ -17,6 +17,7 @@
 #include <QGroupBox>
 #include <QLabel>
 #include <QProgressBar>
+#include <QTimer>
 
 namespace holovibes::ui {
 
@@ -49,6 +50,11 @@ public:
     output_queue_bar_->setValue(value);
   }
 
+  void start_pipeline_progress_bar(int estimated_time);
+  void stop_pipeline_progress_bar();
+  void pipeline_progress_bar_finished();
+  void reset_pipeline_progress_bar();
+
 private:
   void setup_ui();
 
@@ -68,6 +74,8 @@ private:
   QProgressBar *input_queue_bar_;
   QProgressBar *output_queue_bar_;
 
+  QProgressBar *pipeline_start_bar_;
+  QTimer* pipeline_start_timer_;
 };
 
 } // namespace holovibes::ui

@@ -30,6 +30,7 @@
 #include <QFileInfoList>
 #include <QFormLayout>
 #include <QFrame>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QKeySequence>
@@ -55,6 +56,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QtConcurrent>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -1890,6 +1892,8 @@ void MainWindow::on_start_pipeline_success() {
   refresh_visualization_availability();
   display_workspace_->set_pipeline_running(true);
   refresh_command_bar();
+
+  monitor_widget_->pipeline_progress_bar_finished();
 }
 
 void MainWindow::on_start_pipeline_failure(const QString &error) {
@@ -1908,6 +1912,8 @@ void MainWindow::on_start_pipeline_failure(const QString &error) {
   refresh_command_bar();
 
   show_pipeline_error_popup(tr("An error occurred while starting the pipeline:\n%1").arg(error));
+
+  monitor_widget_->stop_pipeline_progress_bar();
 }
 
 void MainWindow::on_stop_pipeline_success() {
@@ -2147,8 +2153,25 @@ void MainWindow::on_import_start_clicked() {
   pipeline::Settings settings = get_pipeline_settings();
   auto               update   = [=]() { pipeline_manager_->update_pipeline(settings); };
   auto               start    = [=]() { pipeline_manager_->start_pipeline(); };
+
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
-  HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
+
+  auto start_estimation = estimate_pipeline_start_duration();
+  monitor_widget_->start_pipeline_progress_bar(start_estimation);
+  logger()->info("[MainWindow::on_import_start_clicked] pipeline start is estimated to take {} s",
+                 start_estimation);
+
+  auto  t0      = std::chrono::steady_clock::now();
+  auto *watcher = new QFutureWatcher<void>(this);
+
+  connect(watcher, &QFutureWatcher<void>::finished, this, [this, watcher, t0]() {
+    auto t1       = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(t1 - t0).count();
+    logger()->info("[MainWindow::on_import_start_clicked] pipeline start took {} s", duration);
+    watcher->deleteLater();
+  });
+
+  watcher->setFuture(QtConcurrent::run([this]() { pipeline_manager_->start_pipeline(); }));
 }
 
 void MainWindow::on_import_stop_clicked() {
@@ -2472,7 +2495,10 @@ void MainWindow::setup_validation_connections() {
 }
 
 void MainWindow::setup_update_connections() {
-  void (MainWindow::*cb)() = &MainWindow::update_if_running;
+  auto cb = [this]() {
+    update_if_running();
+    monitor_widget_->reset_pipeline_progress_bar();
+  };
 
   connect(import_widget_, &ImportWidget::settings_changed, this, cb);
 
@@ -2493,6 +2519,31 @@ void MainWindow::recording_file_path_changed() {
     pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString());
   };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
+}
+
+int MainWindow::estimate_pipeline_start_duration() {
+  if (!export_widget_->isChecked())
+    return 30;
+
+  const double frame_count = export_widget_->get_frame_count();
+
+  constexpr double p1 = 32768.0;
+  constexpr double p2 = 65536.0;
+  constexpr double p3 = 163840.0;
+
+  constexpr double t1 = 34.0;
+  constexpr double t2 = 52.0;
+  constexpr double t3 = 161.0;
+
+  double estimated_time;
+
+  if (frame_count <= p2) {
+    estimated_time = t1 + (frame_count - p1) * (t2 - t1) / (p2 - p1);
+  } else {
+    estimated_time = t2 + (frame_count - p2) * (t3 - t2) / (p3 - p2);
+  }
+
+  return static_cast<int>(std::ceil(std::max(0.0, estimated_time)));
 }
 
 void MainWindow::update_if_running() {

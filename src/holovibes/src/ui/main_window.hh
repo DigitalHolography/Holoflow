@@ -69,6 +69,7 @@ private slots:
   void on_raw_record_stopped_success();
   void on_raw_record_stopped_failure(const QString &error);
 
+
 private:
   ImportWidget                *import_widget_;
   ExportWidget                *export_widget_;
@@ -100,6 +101,7 @@ private:
   void                        setup_update_connections();
   void                        update_if_running();
   void                        recording_file_path_changed();
+  int                         estimate_pipeline_start_duration();
 
   QSize              guess_source_dims();
   QSize              processed_display_dims(QSize source_dims) const;
