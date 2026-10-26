@@ -42,6 +42,7 @@
 #include <QRegularExpression>
 #include <QScrollArea>
 #include <QScrollBar>
+#include <QScopedValueRollback>
 #include <QSettings>
 #include <QSignalBlocker>
 #include <QSizePolicy>
@@ -81,6 +82,7 @@ namespace {
 constexpr int  kLargeSpinMax             = 1024 * 1024;
 constexpr int  kTopBarHeight             = 30;
 constexpr auto kDefaultSamplingFrequency = 37'000.0;
+constexpr auto kKeepCurrentConfigKey      = "preferences/always_keep_current_config";
 
 QSpinBox *create_spin_box(QWidget *parent, int minimum, int maximum, int value) {
   auto *spin_box = new QSpinBox(parent);
@@ -408,6 +410,18 @@ public:
 
     auto *dialog_layout = new QVBoxLayout(this);
 
+    auto *import_group_box = new QGroupBox(tr("Import"), this);
+    auto *import_form      = new QFormLayout();
+    keep_current_config_checkbox_ = new QCheckBox(tr("Always keep current config"), this);
+    keep_current_config_checkbox_->setChecked(
+        QSettings().value(kKeepCurrentConfigKey, false).toBool());
+    keep_current_config_checkbox_->setToolTip(
+        tr("Keep the current processing settings, including Time Window and Time Stride, when "
+           "opening a new .holo file. When off, load settings saved in the file if available."));
+    import_form->addRow(keep_current_config_checkbox_);
+    import_group_box->setLayout(import_form);
+    dialog_layout->addWidget(import_group_box);
+
     auto *splitter = new QSplitter(Qt::Horizontal, this);
 
     // Dump preferences
@@ -662,6 +676,9 @@ private:
     manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
     manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
     manager_.set_dump_runtime_failure_graphs(runtime_failure_graph_checkbox_->isChecked());
+    QSettings settings;
+    settings.setValue(kKeepCurrentConfigKey, keep_current_config_checkbox_->isChecked());
+    settings.sync();
   }
 
   void connect_signals() {
@@ -712,6 +729,8 @@ private:
             &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
     connect(runtime_failure_graph_checkbox_, &QCheckBox::toggled, this,
             [this](bool) { apply_button_->setEnabled(true); });
+    connect(keep_current_config_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
   }
 
   holovibes::pipeline::Manager &manager_;
@@ -755,6 +774,7 @@ private:
   };
   GraphCompiledDumpPreferencesWidgets graph_compiled_dump_preferences_widgets_;
   QCheckBox                          *runtime_failure_graph_checkbox_ = nullptr;
+  QCheckBox                          *keep_current_config_checkbox_    = nullptr;
 };
 
 } // namespace
@@ -1741,25 +1761,38 @@ void MainWindow::connect_import_controls() {
     if (file.isEmpty()) {
       return;
     }
+    bool file_selected = false;
     try {
       auto reader      = holofile::Reader(file.toStdString());
       auto frame_count = reader.header().frame_count;
+      {
+        QScopedValueRollback<bool> loading(loading_holofile_, true);
+        import_widget_->set_file_path(file);
+        import_widget_->set_end_index_range(0, static_cast<int>(frame_count));
+        import_widget_->set_end_index(static_cast<int>(frame_count));
+        import_widget_->set_start_index(0);
+        file_selected = true;
 
-      import_widget_->set_file_path(file);
-      import_widget_->set_end_index_range(0, static_cast<int>(frame_count));
-      import_widget_->set_end_index(static_cast<int>(frame_count));
-      import_widget_->set_start_index(0);
-
-      if (reader.footer().has_value()) {
-        auto               footer        = reader.footer().value();
-        pipeline::Settings prev_settings = get_pipeline_settings();
-        prev_settings.view_type          = pipeline::ViewType::PROCESSED;
-        pipeline::Settings new_settings =
-            pipeline::old_json_to_settings(footer.pipeline_settings, prev_settings);
-        set_pipeline_settings(new_settings);
+        if (!QSettings().value(kKeepCurrentConfigKey, false).toBool() &&
+            reader.footer().has_value()) {
+          auto               footer        = reader.footer().value();
+          pipeline::Settings prev_settings = get_pipeline_settings();
+          prev_settings.view_type          = pipeline::ViewType::PROCESSED;
+          pipeline::Settings new_settings =
+              pipeline::old_json_to_settings(footer.pipeline_settings, prev_settings);
+          set_pipeline_settings(new_settings);
+        }
       }
     } catch (std::exception &e) {
       logger()->error("failed to open \"{}\": \"{}\"", file.toStdString(), e.what());
+    }
+    if (file_selected) {
+      refresh_command_bar();
+      if (update_in_progress_) {
+        pending_import_update_ = true;
+      } else {
+        update_if_running();
+      }
     }
   });
 }
@@ -2003,6 +2036,7 @@ void MainWindow::on_stop_pipeline_success() {
     pipeline_running_   = false;
     pipeline_paused_    = true;
     pause_requested_    = false;
+    pending_import_update_ = false;
     export_in_progress_ = false;
     pending_recording_acquisition_id_.reset();
     import_widget_->set_start_enabled(true);
@@ -2023,6 +2057,7 @@ void MainWindow::on_stop_pipeline_failure(const QString &error) {
     pipeline_running_   = false;
     pipeline_paused_    = true;
     pause_requested_    = false;
+    pending_import_update_ = false;
     export_in_progress_ = false;
     pending_recording_acquisition_id_.reset();
     import_widget_->set_start_enabled(true);
@@ -2074,6 +2109,7 @@ void MainWindow::reset_pipeline_ui_after_stop() {
   pause_requested_       = false;
   resume_in_progress_    = false;
   paused_settings_dirty_ = false;
+  pending_import_update_ = false;
   export_in_progress_    = false;
   pending_recording_acquisition_id_.reset();
   import_widget_->set_start_enabled(true);
@@ -2148,6 +2184,10 @@ void MainWindow::on_update_pipeline_success() {
   refresh_visualization_availability();
   display_workspace_->set_pipeline_running(true);
   refresh_command_bar();
+  if (pending_import_update_) {
+    pending_import_update_ = false;
+    update_if_running();
+  }
 }
 
 void MainWindow::on_update_pipeline_failure(const QString &error) {
@@ -2157,6 +2197,7 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   pause_requested_       = false;
   resume_in_progress_    = false;
   update_in_progress_    = false;
+  pending_import_update_ = false;
   paused_settings_dirty_ = false;
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
@@ -2582,6 +2623,9 @@ void MainWindow::setup_update_connections() {
 }
 
 void MainWindow::update_if_running() {
+  if (loading_holofile_) {
+    return;
+  }
   if (pipeline_paused_) {
     paused_settings_dirty_ = true;
     return;

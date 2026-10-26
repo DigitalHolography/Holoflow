@@ -133,6 +133,8 @@ private:
 
   // Current state
   bool               update_in_progress_              = false;
+  bool               loading_holofile_                = false;
+  bool               pending_import_update_           = false;
   bool               pipeline_running_                = false;
   bool               pipeline_paused_                 = false;
   bool               pause_requested_                 = false;
