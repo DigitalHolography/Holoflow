@@ -86,7 +86,7 @@ private:
   CameraBufferQueue &buffer_queue_;
 
   std::atomic<State> state_ = State::Free;
-  SessionId          id_    = 0;
+  const SessionId          id_    = 0;
 
   RecordingGeometry geometry_;
 

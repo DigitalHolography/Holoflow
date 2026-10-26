@@ -137,60 +137,64 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
     std::atomic<uint32_t> finished = 0;
 
     logger()->info("[RecordingSession::worker::worker_thread] worker thread started");
-    auto writer = RecordWriter(id_, std::span(buffer_, buffer_size_), settings.file_path,
-                               settings.recording_count, static_cast<uint32_t>(buffer_part_count),
-                               geometry_, settings.pipeline_config, metrics_callback_);
+    {
 
-    remaining_to_record_.store(settings.recording_count, std::memory_order_release);
+      auto writer = RecordWriter(id_, std::span(buffer_, buffer_size_), settings.file_path,
+                                 settings.recording_count, static_cast<uint32_t>(buffer_part_count),
+                                 geometry_, settings.pipeline_config, metrics_callback_);
 
-    // start rec and writers on other threads
-    auto rec_thread = std::jthread([this, &settings, &recording, &frame_recorded_since_start,
-                                    &finished, cancelled, buffer_part_count, &writer] {
-      logger()->info("[RecordingSession::worker::rec_thread] recording thread started");
-      recording.store(true, std::memory_order_release);
-      frame_recorded_since_start.store(0, std::memory_order_release);
+      remaining_to_record_.store(settings.recording_count, std::memory_order_release);
 
-      {
-        auto rec = Recorder(settings.recording_count, buffer_part_count, buffer_queue_, writer);
-        rec.execute(cancelled, remaining_to_record_);
-      }
+      // start rec and writers on other threads
+      auto rec_thread = std::jthread([this, &settings, &recording, &frame_recorded_since_start,
+                                      &finished, cancelled, buffer_part_count, &writer] {
+        logger()->info("[RecordingSession::worker::rec_thread] recording thread started");
+        recording.store(true, std::memory_order_release);
+        frame_recorded_since_start.store(0, std::memory_order_release);
 
-      if (!cancelled.stop_requested()) {
-        state_.store(State::WritingToDisk, std::memory_order_release);
-        finished.fetch_add(1);
-        success_callback_(id_, settings.recording_count);
-      } else {
-        logger()->info("[RecordingSession::worker] record cancelled");
-        failure_callback_(id_, "record cancelled");
-      }
+        {
+          auto rec = Recorder(settings.recording_count, buffer_part_count, buffer_queue_, writer);
+          rec.execute(cancelled, remaining_to_record_);
+        }
 
-      recording.store(false, std::memory_order_release);
-      logger()->info(
-          "[RecordingSession::worker::rec_thread] recording thread finished (cancelled: {})",
-          cancelled.stop_requested());
-    });
+        if (!cancelled.stop_requested()) {
+          state_.store(State::WritingToDisk, std::memory_order_release);
+          finished.fetch_add(1);
+          success_callback_(id_, settings.recording_count);
+        } else {
+          logger()->info("[RecordingSession::worker] record cancelled");
+          failure_callback_(id_, "record cancelled");
+        }
 
-    auto writer_thread = std::jthread([this, &writer, &finished, cancelled, &settings] {
-      logger()->info("[RecordingSession::worker::writer_thread] writer thread started");
-      writer.execute(cancelled);
-      if (cancelled.stop_requested()) {
-        remove_incomplete_camera_recording(settings.file_path);
-      } else {
-        finished.fetch_add(1);
-        buffer_flushing_finished_callback_(id_);
-      }
-      logger()->info(
-          "[RecordingSession::worker::writer_thread] writer thread finished (cancelled: {})",
-          cancelled.stop_requested());
-    });
+        recording.store(false, std::memory_order_release);
+        logger()->info(
+            "[RecordingSession::worker::rec_thread] recording thread finished (cancelled: {})",
+            cancelled.stop_requested());
+      });
 
-    constexpr size_t thread_count = 2;
-    while (finished.load(std::memory_order_acquire) < thread_count && !cancelled.stop_requested())
-      ;
+      auto writer_thread = std::jthread([this, &writer, &finished, cancelled, &settings] {
+        logger()->info("[RecordingSession::worker::writer_thread] writer thread started");
+        writer.execute(cancelled);
+        if(!cancelled.stop_requested()) {
+          finished.fetch_add(1);
+          buffer_flushing_finished_callback_(id_);
+        }
+        logger()->info(
+            "[RecordingSession::worker::writer_thread] writer thread finished (cancelled: {})",
+            cancelled.stop_requested());
+      });
 
-    rec_thread.join();
-    writer_thread.join();
+      constexpr size_t thread_count = 2;
+      while (finished.load(std::memory_order_acquire) < thread_count && !cancelled.stop_requested())
+        ;
 
+      rec_thread.join();
+      writer_thread.join();
+    }
+
+    if (cancelled.stop_requested()) {
+      remove_incomplete_camera_recording(settings.file_path);
+    }
     logger()->info(
         "[RecordingSession::worker::worker_thread] worker thread finished (cancelled: {})",
         cancelled.stop_requested());

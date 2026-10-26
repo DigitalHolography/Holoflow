@@ -149,6 +149,7 @@ public:
   /// @throws std::out_of_range on bad index.
   virtual void release_output(int index);
 
+
   void bind_logger(std::shared_ptr<spdlog::logger> logger);
 
   void bind_storage_access(IOStorageAccess *storage_access);
@@ -187,6 +188,10 @@ public:
   /// Overwrites owned output slots in ctx.outputs.
   /// @returns control-flow result; errors via exceptions.
   [[nodiscard]] virtual OpResult execute(SyncCtx &ctx) = 0;
+
+  // handle cancel properly
+  // It is called for each task after a cancel request
+  virtual void cancel(SyncCtx &ctx) { (void)ctx; }
 };
 
 /// @brief Interface for asynchronous (decoupled) tasks.
@@ -217,6 +222,10 @@ public:
   /// Overwrites owned output slots in ctx.outputs.
   /// @returns control-flow result; errors via exceptions.
   [[nodiscard]] virtual OpResult try_pop(AsyncPopCtx &ctx) = 0;
+
+  // handle cancel properly
+  // It is called for each task after a cancel request
+  virtual void cancel() {}
 };
 
 /// Describes an in-place link between an input and output tensor.

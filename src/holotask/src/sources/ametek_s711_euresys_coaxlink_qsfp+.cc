@@ -880,12 +880,15 @@ public:
       return holoflow::core::OpResult::Ok;
     }
 
+    return holoflow::core::OpResult::Cancelled;
+  }
+
+  void cancel(holoflow::core::SyncCtx &ctx) override {
     logger()->info("[AmetekS711EuresysCoaxlinkQSFP::execute] cancelled");
-    stop_all_record();
+    stop_all_record(ctx);
     running_.store(false, std::memory_order_release);
     stop_acquisition();
     buffer_queue_.clear();
-    return holoflow::core::OpResult::Cancelled;
   }
 
   const nlohmann::json &get_cfg() const { return cfg_; }
@@ -1045,11 +1048,17 @@ private:
     });
   }
 
-  void stop_all_record() {
+  void stop_all_record(holoflow::core::SyncCtx &ctx) {
     if (!recording_context_.has_value())
       return;
 
-    std::ranges::for_each(recording_context_->sessions_, [](auto &s) { s.stop(); });
+    std::ranges::for_each(recording_context_->sessions_, [this, &ctx](auto &s) {
+      if (s.state() != RecordingSession::State::Free) {
+        auto msg = std::format("Recording {} failed because pipeline has been cancelled", s.id());
+        emit_recording_failed_event(ctx, s.id(), msg);
+      }
+      s.stop();
+    });
     current_recording_session_ = nullptr;
   }
 

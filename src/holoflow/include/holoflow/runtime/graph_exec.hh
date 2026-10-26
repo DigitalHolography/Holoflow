@@ -184,6 +184,15 @@ private:
   /// @warning This function must be called on an asynchronous producer node only.
   [[nodiscard]] core::OpResult run_async_prod(GraphPlan::vertex_descriptor v);
 
+  /// run cancel callback of a sync node
+  /// @warning This function must be called after having cancelled the node
+  void cancel_sync(GraphPlan::vertex_descriptor v);
+
+  /// run cancel callback of a async producer | consumer
+  /// @warning This function must be called after having cancelled the node
+  void cancel_async(GraphPlan::vertex_descriptor v);
+
+
 private:
   std::atomic<bool>           running_{false}; ///< True if the scheduler is running.
   std::atomic<bool>           stop_{false};    ///< True if a stop has been requested.

@@ -1994,6 +1994,7 @@ void MainWindow::reset_pipeline_ui_after_stop() {
   display_workspace_->set_pipeline_running(false);
   render_widget_->autofocus_widget()->reset_zernike_values();
   refresh_command_bar();
+  record_widget_->reset(export_widget_->get_queue_count());
 }
 
 void MainWindow::on_metrics_updated(double input_fps) {

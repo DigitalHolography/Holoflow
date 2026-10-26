@@ -338,7 +338,7 @@ void Scheduler::run_section(int section_id) {
 
   try {
     bool reached_eof = false;
-    auto handle_eof = [&](GraphPlan::vertex_descriptor vertex) {
+    auto handle_eof  = [&](GraphPlan::vertex_descriptor vertex) {
       reached_eof = true;
       if (boost::out_degree(vertex, graph_) != 0) {
         stop_.store(true);
@@ -462,108 +462,33 @@ void Scheduler::run_section(int section_id) {
         break;
     }
 
+    // cancel async_cons
+    {
+      nvtx3::scoped_range r{nvtx3::event_attributes{"Cancel async consumers", color_async_c}};
+      for (auto v : sec.async_cons)
+        cancel_async(v);
+    }
+
+    // cancel sync nodes
+    {
+      nvtx3::scoped_range r{nvtx3::event_attributes{"Cancel sync nodes", color_sync}};
+      for (auto v : sec.sync_topo)
+        cancel_sync(v);
+    }
+
+    // cancel async producers
+    {
+      nvtx3::scoped_range r{nvtx3::event_attributes{"Cancel async producers", color_async_p}};
+      for (auto v : sec.async_prod)
+        cancel_async(v);
+    }
+
   } catch (...) {
     stop_.store(true);
     log_and_abort_current_exception(
         std::format("Scheduler::run_section section={} id={}", sec.name, section_id));
   }
 }
-
-// void Scheduler::run_section(int section_id) {
-//   const auto &sec    = sections_.at(section_id);
-//   auto        stream = sec.stream;
-
-//   // Nodes in sections are topologically sorted, so we can execute them in order.
-//   // However, owned inputs are used as outputs for former nodes, so we need to
-//   // acquire them first.
-//   // Owned outputs are used as inputs for later nodes, so we need to release
-//   // them last.
-
-//   // TODO: How to handle end of stream (Eof)? Do we need to propagate it?
-//   // Do we need to stop the scheduler when we reach Eof for every node?
-//   // Do we need to notify nodes when we reach Eof for their inputs?
-
-//   // TODO: How to handle stream synchronization? Should asynchronous tasks
-//   // be responsible for synchronizing push-stream before enabling to pop data?
-//   // Or should the scheduler be the sole responsible for synchronizing streams?
-
-//   // TODO: How to properly collect metrics on given tasks run on cuda streams?
-//   // Should we use cuda events?
-
-//   while (!stop_.load()) {
-//     logger()->trace("[Scheduler::run_section] Running section {}", sec.name);
-//     nvtxRangePush(sec.name.c_str());
-
-//     // Acquire owned inputs.
-//     //
-//     // - We do not acquire owned-inputs of async consumers here, as they
-//     //   used in the former section only.
-//     //
-//     // - It is mandatory to check stop_ after acquiring inputs, as
-//     //   the scheduler may have been requested to stop while waiting
-//     //   for owned inputs to become available. This leads to undefined
-//     //   behavior if we proceed to execute nodes after stop_ was set.
-//     nvtxRangePush("Acquire owned inputs");
-//     for (auto v : sec.sync_topo) {
-//       acquire_owned_inputs(v);
-//     }
-//     for (auto v : sec.async_prod) {
-//       acquire_owned_inputs(v);
-//     }
-//     nvtxRangePop();
-//     if (stop_.load()) {
-//       break;
-//     }
-
-//     // Execute nodes.
-//     //
-//     // - We know the nodes are topologically sorted within the section, so we
-//     //   can execute them in order. The topological order also takes into account
-//     //   in-place operations, so inputs or siblings is not changed before they are
-//     //   executed.
-//     //
-//     // - It is mandatory to syncronize the stream before running async producers,
-//     //   as async consumers from the next section may depend on work done on this stream,
-//     //   and we have no guarantee that the async producer at the end of this section
-//     //   will synchronize the stream before pushing data (it may not be cuda-related).
-//     nvtxRangePush("Execute async consumers");
-//     for (auto v : sec.async_cons) {
-//       run_async_cons(v);
-//     }
-//     if (stop_.load()) {
-//       break;
-//     }
-//     nvtxRangePop();
-
-//     nvtxRangePush("Execute sync nodes");
-//     for (auto v : sec.sync_topo) {
-//       run_sync(v);
-//     }
-
-//     CUDA_CHECK(cudaStreamSynchronize(stream));
-//     nvtxRangePop();
-
-//     nvtxRangePush("Execute async producers");
-//     for (auto v : sec.async_prod) {
-//       run_async_prod(v);
-//     }
-//     nvtxRangePop();
-
-//     // Release owned outputs.
-//     //
-//     // - We do not release owned-outputs of async producers here, as they
-//     // used only in the next section.
-//     nvtxRangePush("Release owned outputs");
-//     for (auto v : sec.sync_topo) {
-//       release_owned_outputs(v);
-//     }
-//     for (auto v : sec.async_cons) {
-//       release_owned_outputs(v);
-//     }
-//     nvtxRangePop();
-//     nvtxRangePop();
-//   }
-// }
 
 void Scheduler::acquire_owned_inputs(GraphPlan::vertex_descriptor v) {
   const auto  idx        = boost::get(boost::vertex_index, graph_, v);
@@ -602,6 +527,50 @@ void Scheduler::release_owned_outputs(GraphPlan::vertex_descriptor v) {
 
     task->release_output(static_cast<int>(i));
   }
+}
+
+void Scheduler::cancel_sync(GraphPlan::vertex_descriptor v) {
+  using clock     = std::chrono::high_resolution_clock;
+  const auto  idx = boost::get(boost::vertex_index, graph_, v);
+  const auto &np  = graph_[v];
+  auto       &nrt = node_rts_.at(idx);
+  HOLOFLOW_CHECK(std::holds_alternative<SyncRt>(nrt));
+  auto &srt = std::get<SyncRt>(nrt);
+
+  logger()->trace("[Scheduler::cancel_sync] Cancelling node '{}'", np.spec.name);
+  const auto range_name = task_range_name("sync cancel", np.spec);
+  auto       t0         = clock::now();
+  {
+    nvtx3::scoped_range task_range{range_name.c_str()};
+    srt.task->cancel(srt.ctx);
+  }
+  auto       t1          = clock::now();
+  const auto duration_ns = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
+  logger()->debug("[Scheduler::cancel_sync] Node '{}' cancel callback took {} ms", np.spec.name,
+                  duration_ns);
+}
+
+void Scheduler::cancel_async(GraphPlan::vertex_descriptor v) {
+  using clock     = std::chrono::high_resolution_clock;
+  const auto  idx = boost::get(boost::vertex_index, graph_, v);
+  const auto &np  = graph_[v];
+  auto       &nrt = node_rts_.at(idx);
+  HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
+  auto &art = std::get<AsyncRt>(nrt);
+
+  logger()->trace("[Scheduler::cancel_async] Cancelling node '{}'", np.spec.name);
+  const auto range_name = task_range_name("sync cancel", np.spec);
+  auto       t0         = clock::now();
+  {
+    nvtx3::scoped_range task_range{range_name.c_str()};
+    art.task->cancel();
+  }
+  auto       t1          = clock::now();
+  const auto duration_ns = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
+  logger()->debug("[Scheduler::cancel_async] Node '{}' cancel callback took {} ms", np.spec.name,
+                  duration_ns);
 }
 
 core::OpResult Scheduler::run_sync(GraphPlan::vertex_descriptor v) {
