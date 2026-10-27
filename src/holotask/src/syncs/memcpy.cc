@@ -104,8 +104,13 @@ void mt_memcpy(void *dst, const void *src, const std::size_t n) {
 
 class Memcpy : public holoflow::core::ISyncTask {
 public:
-  explicit Memcpy(MemcpySettings settings, cudaStream_t stream)
-      : settings_(std::move(settings)), stream_(stream) {}
+  explicit Memcpy(MemcpySettings settings, cudaStream_t stream, holoflow::core::MemLoc input)
+      : settings_(std::move(settings)), stream_(stream), input_(input) {}
+
+  bool supports_prequeued_execution() const noexcept override {
+    return input_ == holoflow::core::MemLoc::Device ||
+           settings_.target == MemcpySettings::Target::Device;
+  }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     auto *src       = ctx.inputs[0].data();
@@ -132,12 +137,14 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
-  void                  update_stream(cudaStream_t stream) { stream_ = stream; }
-  const MemcpySettings &settings() const { return settings_; }
+  void                   update_stream(cudaStream_t stream) { stream_ = stream; }
+  const MemcpySettings  &settings() const { return settings_; }
+  holoflow::core::MemLoc input_location() const { return input_; }
 
 private:
-  MemcpySettings settings_;
-  cudaStream_t   stream_;
+  MemcpySettings         settings_;
+  cudaStream_t           stream_;
+  holoflow::core::MemLoc input_;
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -171,7 +178,7 @@ MemcpyFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   (void)this->infer(input_descs, jsettings);
   const auto settings = jsettings.get<MemcpySettings>();
 
-  return std::make_unique<Memcpy>(settings, ctx.stream);
+  return std::make_unique<Memcpy>(settings, ctx.stream, input_descs[0].mem_loc);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -187,7 +194,8 @@ MemcpyFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   }
 
   const auto settings = jsettings.get<MemcpySettings>();
-  if (settings == old_memcpy->settings()) {
+  if (settings == old_memcpy->settings() &&
+      input_descs[0].mem_loc == old_memcpy->input_location()) {
     old_memcpy->update_stream(ctx.stream);
     return old_task;
   }

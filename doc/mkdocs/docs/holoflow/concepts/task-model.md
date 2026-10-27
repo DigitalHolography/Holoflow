@@ -111,11 +111,17 @@ The CUDA call is asynchronous with respect to the CPU, but `execute(...)` is sti
 
 ## CUDA iteration pre-queuing
 
-Eligible CUDA-graph sections keep up to two iterations in flight on their existing stream.
-The scheduler reserves boundary buffers, launches a graph and any async producer CUDA work,
+Eligible sections keep up to two iterations in flight on their existing stream, using either
+CUDA graph replay or ordinary CUDA submission. The scheduler reserves boundary buffers,
+submits the synchronous tasks and any async producer CUDA work,
 then records an iteration completion event. It can submit the next iteration before retiring
 the previous one. Completion publishes queued writes and releases consumed reads in FIFO order.
-If another iteration cannot reserve its buffers, the scheduler retires pending work before retrying.
+If another iteration cannot reserve its buffers, the scheduler retries while checking whether
+the oldest pending iteration has completed.
+With two iterations in flight it retires the oldest before refilling. With one remaining,
+a failed reservation never blocks on an incomplete CUDA event: it retries buffer acquisition
+and polls completion, retiring promptly once complete. Actual input starvation or downstream
+backpressure can still drain the window.
 
 Factories opt in independently through `InferResult::supports_prequeued_push` and
 `supports_prequeued_pop`, both false by default. `IAsyncTask` provides the optional protocol:
@@ -135,17 +141,36 @@ and release must not modify the current shared storage bindings, which may descr
 iteration. Never mix this protocol with legacy operations on the same side while tickets remain.
 Pause retains submitted iterations; stop drains CUDA work before returning their reservations.
 
+`ISyncTask::supports_prequeued_execution()` opts synchronous tasks into ordinary submission.
+It defaults to `supports_cuda_graph()`; implementations may override either decision independently.
+An opted-in `execute()` must be bounded and nonblocking, order GPU work on the section stream,
+and return `Ok`. Once submission begins, cancellation is suppressed until the entire iteration
+has been enqueued, so a host source cursor cannot be advanced and then accidentally replayed.
+Synchronous owned outputs must support two outstanding views. The scheduler snapshots each
+published pointer and rebinds that view for FIFO release after GPU completion, preserving any
+newer iteration's bindings.
+
+Graph replay remains preferred. If graphs are disabled, preparation cannot produce a graph, or
+a binding lookup misses, eligible sections continue with ordinary pre-queuing. A binding miss
+first cancels unsubmitted reservations and drains older submissions. Graph pointer-domain
+enumeration is unnecessary for ordinary submissions. Unsupported tasks retain serial scheduling.
+
 BatchQueue and DualReaderBatchQueue support both directions. DualReaderBatchQueue reserves its
 current and delayed frame views together and publishes producer batches only after completion.
 SlidingAverage supports reserved output consumption and,
 without its optional host validity input, reserved producer submission, including `discard_first`.
 Sections consuming a connected non-owned async output (including the dual-reader host validity
 scalar) retain ordinary scheduling because that shared storage is not reserved per iteration.
-Sections with other boundaries, synchronous owned-input acquisition, or unavailable CUDA graphs
-retain ordinary scheduling. Queue capacities are unchanged; a small queue may permit only one
+Sections with other boundaries or synchronous owned-input acquisition retain serial scheduling.
+Uncapped cached Holofile sources and GPU Memcpy operations support ordinary pre-queuing; live
+disk readers, paced playback, and host-to-host Memcpy do not. Queue capacities are unchanged; a small queue may permit only one
 iteration at a time. Section graph diagnostics expose `prequeue_depth`, `prequeue_peak`, submission
 and retirement counts, and `prequeue_fallback_reason`. Startup dumps include the selected depth and
 fallback reason before execution begins; shutdown dumps additionally include runtime counters.
+`prequeue_execution_mode` is `cuda_graph`, `ordinary`, or `serial`. Graph failure diagnostics are
+independent of prequeue eligibility: an unavailable graph can coexist with depth two and an empty
+`prequeue_fallback_reason`. Ordinary submissions increment `ordinary_iterations` and prequeue
+counters while graph `launches` stays zero.
 
 NVTX traces identify the two slots as `Slot 0` (blue) and `Slot 1` (orange), with the
 iteration number in each lifetime and Submit/Retire range's numeric payload. Overlapping
@@ -155,6 +180,33 @@ compute submission, async push, event wait, output commit, and output release. I
 wait ranges name the boundary task and remain open across polling retries, splitting when
 the wait reason changes or the worker retires another slot. CPU ranges close when a worker
 exits; submitted slot lifetimes survive pause/resume and close on retirement or stop cleanup.
+
+Independent NVTX ranges show section backpressure without interrupting Submit/Retire scopes:
+
+| Message | Color | Meaning |
+| --- | --- | --- |
+| `section-N / Waiting for input: <task>` | Purple | The named boundary cannot reserve the next input group. |
+| `section-N / Waiting for output slot: <task>` | Red | The named boundary cannot reserve space for the next output group. |
+| `section-N / Window full: 2/2 in flight` | Green | Both scheduler slots own submitted iterations. |
+
+Their numeric payload is the section's in-flight iteration count. An input wait with payload
+zero means that section's window is empty; upstream work may still be running, including PCA
+eigendecomposition. Output availability follows the boundary task's reservation policy. Green
+indicates software window occupancy, not GPU utilization or physical queue capacity.
+`Wait for GPU completion` inside a slot's Retire range identifies a blocking CUDA event wait.
+
+Unchanged conditions stay open across polling retries; a new interval starts only when the
+boundary, wait direction, or in-flight count changes. Input/output conditions close when the
+worker exits and are reevaluated on resume. Full-window ranges, like slot lifetimes, include
+paused time while submitted iterations remain owned.
+
+`OrdinaryPrequeue.RefillsWhileRemainingIterationIsIncomplete` exercises the refill policy
+with a temporarily unavailable output reservation and a deliberately blocked second GPU
+iteration. It verifies that iteration three submits before iteration two completes, then
+checks FIFO source-view release. The local `build/prequeue-polling-refill.nsys-rep` capture
+contains the output wait with payload one and full-window ranges with payload two.
+`build/prequeue-polling-policy.nsys-rep` captures cached playback with pipelined PCA and
+contains input waits, output waits, and full-window ranges for its prequeued sections.
 
 ## Task factories
 

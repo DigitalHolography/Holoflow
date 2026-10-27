@@ -525,7 +525,7 @@ void run_pipeline(size_t graph_limit, bool prequeue, size_t output_capacity, boo
       for (const auto &section : out->sections)
         if (out->graph[section.sync_topo.front()].spec.name == "compute") {
           const auto &report = reports.at(section.id);
-          EXPECT_EQ(report["prequeue_depth"], graph_limit && prequeue && !validity ? 2 : 1);
+          EXPECT_EQ(report["prequeue_depth"], prequeue && !validity ? 2 : 1);
           EXPECT_TRUE(report.contains("prequeue_fallback_reason"));
           EXPECT_EQ(report["prequeue_submissions"], 0);
         }
@@ -561,8 +561,8 @@ void run_pipeline(size_t graph_limit, bool prequeue, size_t output_capacity, boo
       continue;
     const auto &graphs = *out->resources.section_cuda_graphs.at(section.id);
     const auto  report = graphs.snapshot();
-    if (graph_limit && prequeue && !validity) {
-      EXPECT_EQ(report["prequeue_depth"], miss ? 1 : 2);
+    if (prequeue && !validity) {
+      EXPECT_EQ(report["prequeue_depth"], 2);
       EXPECT_GT(graphs.prequeue_submissions.load(), 0U);
       EXPECT_EQ(graphs.prequeue_submissions.load(), graphs.prequeue_retirements.load());
       EXPECT_EQ(graphs.prequeue_peak.load(), output_capacity == 1 ? 1U : 2U);
@@ -654,8 +654,8 @@ std::vector<float> run_pca_pipeline(size_t limit, bool prequeue, bool pause = fa
     if (out->graph[section.sync_topo.front()].spec.name == "pca") {
       const auto &graphs = *out->resources.section_cuda_graphs.at(section.id);
       const auto  report = graphs.snapshot();
-      EXPECT_EQ(report["prequeue_depth"], limit && prequeue && !miss ? 2 : 1);
-      EXPECT_EQ(graphs.prequeue_peak.load(), limit && prequeue ? 2U : 0U);
+      EXPECT_EQ(report["prequeue_depth"], prequeue ? 2 : 1);
+      EXPECT_EQ(graphs.prequeue_peak.load(), prequeue ? 2U : 0U);
       EXPECT_EQ(graphs.prequeue_submissions.load(), graphs.prequeue_retirements.load());
       EXPECT_EQ(graphs.pointer_misses.load(), 0U);
       EXPECT_EQ(graphs.tuple_misses.load(), miss ? 1U : 0U);
@@ -681,6 +681,10 @@ TEST(PrequeueScheduler, MatchesSerialGraphsAndOrdinaryExecution) {
   run_pipeline(0, false, 4, false);
   run_pipeline(512, false, 4, false);
   run_pipeline(512, true, 4, false);
+}
+TEST(PrequeueScheduler, OrdinaryFallbackRetainsTwoSlotsWithoutPreparedGraphs) {
+  run_pipeline(0, true, 4, true);
+  run_pipeline(1, true, 4, true);
 }
 TEST(PrequeueScheduler, RetiresWhenOnlyOneOutputSlotIsAvailable) {
   run_pipeline(512, true, 1, false);

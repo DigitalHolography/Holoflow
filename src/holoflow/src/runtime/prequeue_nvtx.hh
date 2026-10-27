@@ -56,6 +56,44 @@ private:
 
 enum class PrequeueNvtxPhase { Acquire, Compute, Push, Wait, Commit, Release };
 
+// Independent process ranges can span slot Submit/Retire scopes without violating NVTX's
+// thread-local nesting rules. Emit only state transitions, never one range per polling retry.
+class PrequeueNvtxCondition {
+public:
+  ~PrequeueNvtxCondition() { clear(); }
+  PrequeueNvtxCondition()                                         = default;
+  PrequeueNvtxCondition(const PrequeueNvtxCondition &)            = delete;
+  PrequeueNvtxCondition &operator=(const PrequeueNvtxCondition &) = delete;
+
+  void set(const nvtx3::registered_string &name, size_t in_flight, nvtx3::rgb color) {
+    if (name_ == &name && in_flight_ == in_flight)
+      return;
+    clear();
+    name_      = &name;
+    in_flight_ = in_flight;
+    color_     = color;
+    range_     = nvtx3::start_range(
+        nvtx3::event_attributes{name, color, nvtx3::payload{static_cast<uint64_t>(in_flight)}});
+  }
+  void in_flight(size_t count) {
+    if (name_)
+      set(*name_, count, color_);
+  }
+  void clear() noexcept {
+    if (range_) {
+      nvtx3::end_range(*range_);
+      range_.reset();
+    }
+    name_ = nullptr;
+  }
+
+private:
+  const nvtx3::registered_string    *name_      = nullptr;
+  size_t                             in_flight_ = 0;
+  nvtx3::rgb                         color_{0, 0, 0};
+  std::optional<nvtx3::range_handle> range_;
+};
+
 // All nested scopes are thread-bound and must be destroyed before leaving a worker. Keep the
 // acquisition/wait scopes alive across retries; no NVTX calls are made for unchanged phases.
 class PrequeueNvtxRanges {
@@ -79,9 +117,12 @@ public:
     phase_.reset();
     phase_id_ = phase;
     static const std::array<nvtx3::registered_string, 6> names{
-        nvtx3::registered_string{"Acquire buffers"}, nvtx3::registered_string{"Compute"},
-        nvtx3::registered_string{"Async push"},      nvtx3::registered_string{"Wait"},
-        nvtx3::registered_string{"Commit outputs"},  nvtx3::registered_string{"Release outputs"}};
+        nvtx3::registered_string{"Acquire buffers"},
+        nvtx3::registered_string{"Compute"},
+        nvtx3::registered_string{"Async push"},
+        nvtx3::registered_string{"Wait for GPU completion"},
+        nvtx3::registered_string{"Commit outputs"},
+        nvtx3::registered_string{"Release outputs"}};
     phase_.emplace(names.at(static_cast<size_t>(phase)));
   }
   void wait(const nvtx3::registered_string &name) {

@@ -22,6 +22,7 @@ set(SOURCES
     fresnel_diffraction_test.cu
     holofile_sink_test.cc
     normalize_test.cu
+    ordinary_prequeue_test.cc
     pca_test.cu
     pca_pipeline_test.cu
     pct_clip_test.cu

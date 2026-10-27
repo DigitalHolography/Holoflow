@@ -216,8 +216,8 @@ std::vector<std::vector<unsigned char>> run_reference(bool full, size_t limit, b
     for (auto v : sec.sync_topo)
       if (out->graph[v].spec.kind == "Pca") {
         const auto report = graphs.snapshot();
-        EXPECT_EQ(report["prequeue_depth"], limit && prequeue && !miss ? 2 : 1);
-        if (limit && prequeue) {
+        EXPECT_EQ(report["prequeue_depth"], prequeue ? 2 : 1);
+        if (prequeue) {
           // This pipeline may be starved upstream or limited to one complete batch by capacity.
           EXPECT_GE(graphs.prequeue_peak.load(), 1U);
           EXPECT_LE(graphs.prequeue_peak.load(), 2U);

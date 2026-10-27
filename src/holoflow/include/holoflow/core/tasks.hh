@@ -257,6 +257,14 @@ public:
   /// Opt-in promise: fixed bindings/configuration replay correctly without host-side execution,
   /// events, control results, or ownership publication. GPU-side state/conditionals are allowed.
   [[nodiscard]] virtual bool supports_cuda_graph() const noexcept { return false; }
+  /// execute() can submit a bounded iteration without host waits or control results other than
+  /// Ok. Work must be ordered on the section stream. Owned outputs must support two outstanding
+  /// views and FIFO release with the retired view rebound by the scheduler. Once submission
+  /// starts, cancellation is suppressed until the complete iteration has been enqueued.
+  /// Graph-recordable tasks satisfy this by default; tasks may explicitly decline.
+  [[nodiscard]] virtual bool supports_prequeued_execution() const noexcept {
+    return supports_cuda_graph();
+  }
   /// Append work to the current top-level graph, never launch or embed a task-local graph.
   virtual void record_cuda_graph(CudaGraphCtx &ctx);
 };
