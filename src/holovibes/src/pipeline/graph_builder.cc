@@ -43,8 +43,8 @@ public:
 
   holoflow::core::GraphSpec build();
 
-  [[nodiscard]] std::string failure_graph_dot(
-      const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+  [[nodiscard]] std::string
+  failure_graph_dot(const holoflow::core::GraphSpecDumpPreferences &prefs) const {
     return GraphBuilderTracer::failure_graph_dot(prefs);
   }
 
@@ -136,8 +136,8 @@ GraphBuilder &GraphBuilder::operator=(GraphBuilder &&) noexcept = default;
 
 holoflow::core::GraphSpec GraphBuilder::build() { return impl_->build(); }
 
-std::string GraphBuilder::failure_graph_dot(
-    const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+std::string
+GraphBuilder::failure_graph_dot(const holoflow::core::GraphSpecDumpPreferences &prefs) const {
   return impl_->failure_graph_dot(prefs);
 }
 
@@ -286,6 +286,16 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
 
   H = reshape(H, {{1, T, Hy, Hx}, false});
+
+  if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
+    // Keep the four-window grouping, but retain X and eigenvectors together through projection.
+    // The decomposition queue overlaps producer covariance and consumer projection with HEEV.
+    const auto decomposition = pca_decomposition_queue(H, {static_cast<size_t>(N_pre), 3});
+    const int  z0            = s_.view_3d_cuts ? 0 : s_.time_z_begin;
+    const int  z1            = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
+    return pca_projection(decomposition.at(0), decomposition.at(1), {z0, z1});
+  }
+
   H = batched_queue(H, {N_pre * 2, N_pre, N_pre}); // [N_pre, T, Hy, Hx]
 
   if (s_.time_method == TimeMethod::RFFT) {
@@ -318,16 +328,6 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
     auto FH_neg    = slice(FH, {{{}, neg_range, {}, {}}});
 
     FH = concatenate(std::array<TDesc, 2>{FH_pos, FH_neg}, {1});
-    return FH;
-  }
-
-  if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
-    // PCA natively supports arbitrary leading batch dimensions (rank >= 3).
-    // Input H: [N_pre, T, Hy, Hx] — the feature axis is shape[-3] = T.
-    // Output FH: [N_pre, Nz, Hy, Hx] where Nz = z1 - z0.
-    int  z0 = s_.view_3d_cuts ? 0 : s_.time_z_begin;
-    int  z1 = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
-    auto FH = pca(H, {z0, z1});
     return FH;
   }
 

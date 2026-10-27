@@ -37,9 +37,9 @@
 #include "bug.hh"
 #include "graph_builder.hh"
 #include "holofile/holofile.hh"
-#include "holoflow/runtime/windows_crash_handler.hh"
 #include "holoflow/runtime/diagnostics.hh"
 #include "holoflow/runtime/tracing.hh"
+#include "holoflow/runtime/windows_crash_handler.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
@@ -71,6 +71,7 @@
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
+#include "holotask/asyncs/pca_decomposition_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
@@ -211,6 +212,7 @@ void Manager::register_components() {
   // clang-format off
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::DualReaderBatchQueueFactory>(registry_, "DualReaderBatchQueue");
+  reg_async<asyncs::PcaDecompositionQueueFactory>(registry_, "PcaDecompositionQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
@@ -236,6 +238,7 @@ void Manager::register_components() {
   reg_sync<syncs::FresnelDiffractionFactory>(registry_, "FresnelDiffraction");
   reg_sync<syncs::MemcpyFactory>(registry_, "Memcpy");
   reg_sync<syncs::PcaFactory>(registry_, "Pca");
+  reg_sync<syncs::PcaProjectionFactory>(registry_, "PcaProjection");
   reg_sync<syncs::PctClipFactory>(registry_, "PctClip");
   reg_sync<syncs::CorrectPhaseFactory>(registry_, "CorrectPhase");
   reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");

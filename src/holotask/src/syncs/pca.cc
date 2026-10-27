@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holotask/syncs/pca.hh"
+#include "holotask/asyncs/pca_decomposition_queue.hh"
 
 #include <cuda.h>
 #include <nvJitLink.h>
@@ -29,6 +30,7 @@
 #include <limits>
 #include <list>
 #include <memory>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -39,6 +41,7 @@
 #include "curaii/cusolver.hh"
 #include "curaii/nvrtc.hh"
 
+#include "../asyncs/reservation_queue.hh"
 #include "logger.hh"
 
 namespace holotask::syncs {
@@ -252,6 +255,40 @@ protected:
 std::unique_ptr<Eigensolver> make_eigensolver(const PcaLayout    &layout,
                                               const PcaWorkspace &workspace, cudaStream_t stream);
 
+void enqueue_pca_covariance(cublasHandle_t cublas, const PcaLayout &layout, const float *input,
+                            float *matrices) {
+  nvtx3::scoped_range range("PCA covariance");
+  constexpr float     alpha = 1.0f;
+  constexpr float     beta  = 0.0f;
+  // Independent GEMMs preserve Split-K selection for the large sample dimension.
+  for (size_t batch = 0; batch < layout.batches; ++batch) {
+    const auto x = input + batch * layout.input_batch_stride;
+    CUBLAS_CHECK(cublasGemmEx(cublas, CUBLAS_OP_T, CUBLAS_OP_N, layout.features, layout.features,
+                              layout.samples, &alpha, x, CUDA_R_32F, layout.samples, x, CUDA_R_32F,
+                              layout.samples, &beta, matrices + batch * layout.matrix_batch_stride,
+                              CUDA_R_32F, layout.features, CUBLAS_COMPUTE_32F_FAST_16F,
+                              CUBLAS_GEMM_DEFAULT));
+  }
+}
+
+void enqueue_pca_projection(cublasHandle_t cublas, const PcaLayout &layout,
+                            const PcaSettings &settings, const float *input,
+                            const float *eigenvectors, float *output) {
+  nvtx3::scoped_range range("PCA projection");
+  constexpr float     alpha      = 1.0f;
+  constexpr float     beta       = 0.0f;
+  const int           components = settings.components();
+  for (size_t batch = 0; batch < layout.batches; ++batch) {
+    CUBLAS_CHECK(cublasGemmEx(
+        cublas, CUBLAS_OP_N, CUBLAS_OP_N, layout.samples, components, layout.features, &alpha,
+        input + batch * layout.input_batch_stride, CUDA_R_32F, layout.samples,
+        eigenvectors + batch * layout.matrix_batch_stride +
+            static_cast<long long>(settings.begin) * layout.features,
+        CUDA_R_32F, layout.features, &beta, output + batch * layout.output_batch_stride(components),
+        CUDA_R_32F, layout.samples, CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
+  }
+}
+
 // -------------------------------------------------------------------------------------------------
 // PCA task
 // -------------------------------------------------------------------------------------------------
@@ -330,23 +367,7 @@ private:
   }
 
   void enqueue_covariance(const float *input) {
-    nvtx3::scoped_range range("PCA covariance");
-
-    constexpr float alpha = 1.0f;
-    constexpr float beta  = 0.0f;
-
-    // Independent GEMMs preserve cuBLAS Split-K selection for the large sample dimension.
-    for (size_t batch = 0; batch < layout_.batches; ++batch) {
-      const auto input_offset  = static_cast<long long>(batch) * layout_.input_batch_stride;
-      const auto matrix_offset = static_cast<long long>(batch) * layout_.matrix_batch_stride;
-
-      CUBLAS_CHECK(cublasGemmEx(cublas_.get(), CUBLAS_OP_T, CUBLAS_OP_N, layout_.features,
-                                layout_.features, layout_.samples, &alpha, input + input_offset,
-                                CUDA_R_32F, layout_.samples, input + input_offset, CUDA_R_32F,
-                                layout_.samples, &beta, workspace_.matrices.get() + matrix_offset,
-                                CUDA_R_32F, layout_.features, CUBLAS_COMPUTE_32F_FAST_16F,
-                                CUBLAS_GEMM_DEFAULT));
-    }
+    enqueue_pca_covariance(cublas_.get(), layout_, input, workspace_.matrices.get());
   }
 
   void enqueue_eigendecomposition() {
@@ -357,28 +378,8 @@ private:
   }
 
   void enqueue_projection(const float *input, float *output) {
-    nvtx3::scoped_range range("PCA projection");
-
-    constexpr float alpha = 1.0f;
-    constexpr float beta  = 0.0f;
-
-    const int components = settings_.components();
-
-    const auto eigenvector_offset = static_cast<long long>(settings_.begin) * layout_.features;
-    const auto output_stride      = layout_.output_batch_stride(components);
-
-    for (size_t batch = 0; batch < layout_.batches; ++batch) {
-      const auto input_offset  = static_cast<long long>(batch) * layout_.input_batch_stride;
-      const auto matrix_offset = static_cast<long long>(batch) * layout_.matrix_batch_stride;
-      const auto output_offset = static_cast<long long>(batch) * output_stride;
-
-      CUBLAS_CHECK(
-          cublasGemmEx(cublas_.get(), CUBLAS_OP_N, CUBLAS_OP_N, layout_.samples, components,
-                       layout_.features, &alpha, input + input_offset, CUDA_R_32F, layout_.samples,
-                       workspace_.matrices.get() + matrix_offset + eigenvector_offset, CUDA_R_32F,
-                       layout_.features, &beta, output + output_offset, CUDA_R_32F, layout_.samples,
-                       CUBLAS_COMPUTE_32F_FAST_16F, CUBLAS_GEMM_DEFAULT));
-    }
+    enqueue_pca_projection(cublas_.get(), layout_, settings_, input, workspace_.matrices.get(),
+                           output);
   }
 
   PcaSettings           settings_;
@@ -390,6 +391,320 @@ private:
   PcaWorkspace                 workspace_;
   std::unique_ptr<Eigensolver> eigensolver_;
   PcaGraphCache                graph_cache_;
+};
+
+// -------------------------------------------------------------------------------------------------
+// Pipelined PCA
+// -------------------------------------------------------------------------------------------------
+
+class PcaProjectionTask final : public holoflow::core::ISyncTask {
+public:
+  PcaProjectionTask(const PcaSettings &settings, const holoflow::core::TDesc &input,
+                    cudaStream_t stream)
+      : settings_(settings), layout_(input) {
+    CUBLAS_CHECK(cublasSetStream(cublas_.get(), stream));
+  }
+
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    enqueue(ctx.inputs, ctx.outputs);
+  }
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    enqueue(ctx.inputs, ctx.outputs);
+    return holoflow::core::OpResult::Ok;
+  }
+
+private:
+  void enqueue(std::span<holoflow::core::TView> inputs, std::span<holoflow::core::TView> outputs) {
+    enqueue_pca_projection(cublas_.get(), layout_, settings_,
+                           reinterpret_cast<const float *>(inputs[0].data()),
+                           reinterpret_cast<const float *>(inputs[1].data()),
+                           reinterpret_cast<float *>(outputs[0].data()));
+  }
+
+  PcaSettings          settings_;
+  PcaLayout            layout_;
+  curaii::CublasHandle cublas_;
+};
+
+class PcaEvent {
+public:
+  PcaEvent() { CUDA_CHECK(cudaEventCreateWithFlags(&event_, cudaEventDisableTiming)); }
+  ~PcaEvent() { CUDA_CHECK_NT(cudaEventDestroy(event_)); }
+  PcaEvent(const PcaEvent &)              = delete;
+  PcaEvent   &operator=(const PcaEvent &) = delete;
+  cudaEvent_t get() const { return event_; }
+
+private:
+  cudaEvent_t event_ = nullptr;
+};
+
+struct PcaQueueSlot {
+  PcaQueueSlot(const PcaLayout &layout, size_t elements)
+      : input(curaii::make_unique_device_ptr<float>(elements)), workspace(layout) {}
+
+  curaii::unique_device_ptr<float> input;
+  PcaWorkspace                     workspace;
+  PcaEvent                         covariance_done, solver_done;
+  PcaGraphCache                    covariance_graph;
+};
+
+// The queue owns X through projection. Producer and consumer use independent FIFO cursors;
+// reservations consume capacity immediately, and only completed consumption recycles a slot.
+// The solver/JIT implementation stays private to this translation unit for both PCA factories.
+class PcaDecompositionQueue final : public holoflow::core::IAsyncTask {
+public:
+  PcaDecompositionQueue(const holotask::asyncs::PcaDecompositionQueueSettings &settings,
+                        const holoflow::core::InferResult &infer, cudaStream_t producer_stream)
+      : settings_(settings), input_desc_(infer.input_descs[0]), output_descs_(infer.output_descs),
+        layout_(output_descs_[0]), producer_stream_(producer_stream),
+        solver_stream_(cudaStreamNonBlocking), window_elements_(input_desc_.num_elements()) {
+    try {
+      CUBLAS_CHECK(cublasSetStream(cublas_.get(), producer_stream_));
+      for (size_t i = 0; i < settings_.slot_count; ++i)
+        slots_.push_back(std::make_unique<PcaQueueSlot>(layout_, output_descs_[0].num_elements()));
+      eigensolver_ = make_eigensolver(layout_, slots_[0]->workspace, solver_stream_.get());
+      for (auto &slot : slots_) {
+        // Warm cuBLAS before capture, outside the steady-state producer path.
+        CUDA_CHECK(
+            cudaMemsetAsync(slot->input.get(), 0, output_descs_[0].num_bytes(), producer_stream_));
+        const auto enqueue = [&] {
+          enqueue_pca_covariance(cublas_.get(), layout_, slot->input.get(),
+                                 slot->workspace.matrices.get());
+        };
+        enqueue();
+        slot->covariance_graph.try_capture({slot->input.get(), slot->workspace.matrices.get()},
+                                           producer_stream_, enqueue);
+      }
+      CUDA_CHECK(cudaStreamSynchronize(producer_stream_));
+    } catch (...) {
+      // A throwing constructor still has to drain work before its members are destroyed.
+      CUDA_CHECK_NT(cudaStreamSynchronize(producer_stream_));
+      CUDA_CHECK_NT(cudaStreamSynchronize(solver_stream_.get()));
+      throw;
+    }
+  }
+
+  ~PcaDecompositionQueue() override {
+    // The runtime drains section streams. This private stream can still own unpopped groups.
+    CUDA_CHECK_NT(cudaStreamSynchronize(solver_stream_.get()));
+  }
+
+  std::optional<holoflow::core::TView> acquire_input(int index) override {
+    check_input(index);
+    if (!writes_.empty())
+      throw std::logic_error("PCA queue has outstanding write reservations");
+    const auto write = written_.load(std::memory_order_relaxed);
+    if (!can_write(write))
+      return std::nullopt;
+    bind_input(write);
+    return holoflow::core::TView{input_desc_, &storage_access().owned_input_storage(0)};
+  }
+
+  holoflow::core::OpResult reserve_push(holoflow::core::AsyncPushCtx &ctx,
+                                        holoflow::core::AsyncTicket  &ticket) override {
+    using holoflow::core::OpResult;
+    if (ctx.cancelled && ctx.cancelled->load())
+      return OpResult::Cancelled;
+    if (writes_.full())
+      return OpResult::NotReady;
+    const auto write =
+        writes_.empty() ? written_.load(std::memory_order_relaxed) : writes_.back().next;
+    if (!can_write(write))
+      return OpResult::NotReady;
+    bind_input(write);
+    ticket = writes_.push({write + 1});
+    return OpResult::Ok;
+  }
+
+  void enqueue_push(holoflow::core::AsyncTicket ticket) override {
+    auto &write = writes_.get(ticket);
+    if (write.submitted)
+      throw std::logic_error("PCA queue write already submitted");
+    // Once submitted, cancellation must not make this work replayable.
+    write.submitted = true;
+    if (write.next % settings_.batch_size != 0)
+      return;
+    auto             &slot = slot_for(write.next - 1);
+    const PcaGraphKey key{slot.input.get(), slot.workspace.matrices.get()};
+    if (!slot.covariance_graph.try_launch(key, producer_stream_))
+      enqueue_pca_covariance(cublas_.get(), layout_, slot.input.get(),
+                             slot.workspace.matrices.get());
+    CUDA_CHECK(cudaEventRecord(slot.covariance_done.get(), producer_stream_));
+    CUDA_CHECK(cudaStreamWaitEvent(solver_stream_.get(), slot.covariance_done.get(), 0));
+    {
+      nvtx3::scoped_range range("PCA eigendecomposition");
+      eigensolver_->solve(slot.workspace.matrices.get(), slot.workspace.eigenvalues.get(),
+                          slot.workspace.solver_info.get(), solver_stream_.get());
+    }
+    CUDA_CHECK(cudaEventRecord(slot.solver_done.get(), solver_stream_.get()));
+  }
+
+  void commit_push(holoflow::core::AsyncTicket ticket) override {
+    if (!writes_.get(ticket).submitted)
+      throw std::logic_error("PCA queue write not submitted");
+    written_.store(writes_.pop(ticket).next, std::memory_order_release);
+  }
+
+  void cancel_push(holoflow::core::AsyncTicket ticket) override {
+    if (writes_.get(ticket).submitted)
+      throw std::logic_error("Cannot cancel submitted PCA queue write");
+    writes_.cancel(ticket);
+  }
+
+  holoflow::core::OpResult try_push(holoflow::core::AsyncPushCtx &ctx) override {
+    if (!writes_.empty())
+      throw std::logic_error("PCA queue has outstanding write reservations");
+    holoflow::core::AsyncTicket ticket;
+    const auto                  result = reserve_push(ctx, ticket);
+    if (result != holoflow::core::OpResult::Ok)
+      return result;
+    enqueue_push(ticket);
+    CUDA_CHECK(cudaStreamSynchronize(producer_stream_));
+    commit_push(ticket);
+    storage_access().owned_input_storage(0).ptr = nullptr;
+    return holoflow::core::OpResult::Ok;
+  }
+
+  holoflow::core::OpResult reserve_pop(holoflow::core::AsyncPopCtx &ctx,
+                                       holoflow::core::AsyncTicket &ticket) override {
+    using holoflow::core::OpResult;
+    if (legacy_read_)
+      throw std::logic_error("PCA queue legacy output still held");
+    if (ctx.cancelled && ctx.cancelled->load())
+      return OpResult::Cancelled;
+    if (reads_.full())
+      return OpResult::NotReady;
+    const auto read = reads_.empty() ? read_.load(std::memory_order_relaxed) : reads_.back();
+    if (written_.load(std::memory_order_acquire) - read < settings_.batch_size)
+      return OpResult::NotReady;
+    auto &slot = slot_for(read);
+    // The acquire above also guarantees this generation's event has been recorded. Querying
+    // a never-recorded event would otherwise report success and expose an incomplete group.
+    const auto status = cudaEventQuery(slot.solver_done.get());
+    if (status == cudaErrorNotReady)
+      return OpResult::NotReady;
+    CUDA_CHECK(status);
+    storage_access().owned_output_storage(0).ptr = reinterpret_cast<std::byte *>(slot.input.get());
+    storage_access().owned_output_storage(1).ptr =
+        reinterpret_cast<std::byte *>(slot.workspace.matrices.get());
+    for (size_t port = 0; port < 2; ++port)
+      ctx.outputs[port] = {output_descs_[port], &storage_access().owned_output_storage(port)};
+    ticket = reads_.push(read + settings_.batch_size);
+    return OpResult::Ok;
+  }
+
+  void release_pop(holoflow::core::AsyncTicket ticket) override {
+    read_.store(reads_.pop(ticket), std::memory_order_release);
+  }
+
+  void cancel_pop(holoflow::core::AsyncTicket ticket) override { reads_.cancel(ticket); }
+
+  holoflow::core::OpResult try_pop(holoflow::core::AsyncPopCtx &ctx) override {
+    if (!reads_.empty())
+      throw std::logic_error("PCA queue has outstanding read reservations");
+    holoflow::core::AsyncTicket ticket;
+    const auto                  result = reserve_pop(ctx, ticket);
+    if (result == holoflow::core::OpResult::Ok) {
+      legacy_read_ = ticket;
+      released_    = {false, false};
+    }
+    return result;
+  }
+
+  void release_output(int index) override {
+    check_output(index);
+    if (!legacy_read_ || released_[index])
+      throw std::logic_error("PCA queue output is not held");
+    storage_access().owned_output_storage(index).ptr = nullptr;
+    released_[index]                                 = true;
+    if (released_[0] && released_[1]) {
+      release_pop(*legacy_read_);
+      legacy_read_.reset();
+    }
+  }
+
+  std::optional<std::vector<std::byte *>> owned_input_pointers(size_t index) const override {
+    check_input(index);
+    std::vector<std::byte *> result;
+    for (const auto &slot : slots_)
+      for (size_t window = 0; window < settings_.batch_size; ++window)
+        result.push_back(
+            reinterpret_cast<std::byte *>(slot->input.get() + window * window_elements_));
+    return result;
+  }
+
+  std::optional<std::vector<std::byte *>> owned_output_pointers(size_t index) const override {
+    check_output(index);
+    std::vector<std::byte *> result;
+    for (const auto &slot : slots_)
+      result.push_back(reinterpret_cast<std::byte *>(index == 0 ? slot->input.get()
+                                                                : slot->workspace.matrices.get()));
+    return result;
+  }
+
+  std::optional<holoflow::core::PointerSequence>
+  owned_input_pointer_sequence(size_t index) const override {
+    check_input(index);
+    return sequence(written_.load(std::memory_order_relaxed), capacity());
+  }
+
+  std::optional<holoflow::core::PointerSequence>
+  owned_output_pointer_sequence(size_t index) const override {
+    check_output(index);
+    return sequence(read_.load(std::memory_order_relaxed) / settings_.batch_size,
+                    settings_.slot_count);
+  }
+
+private:
+  static void check_input(size_t index) {
+    if (index != 0)
+      throw std::out_of_range("PCA queue input port");
+  }
+  static void check_output(size_t index) {
+    if (index > 1)
+      throw std::out_of_range("PCA queue output port");
+  }
+  static holoflow::core::PointerSequence sequence(size_t phase, size_t count) {
+    holoflow::core::PointerSequence result;
+    for (size_t i = 0; i < count; ++i)
+      result.cycle.push_back((phase + i) % count);
+    return result;
+  }
+  size_t capacity() const { return settings_.batch_size * settings_.slot_count; }
+  bool   can_write(size_t write) const {
+    return write - read_.load(std::memory_order_acquire) < capacity();
+  }
+  PcaQueueSlot &slot_for(size_t window) const {
+    return *slots_[(window / settings_.batch_size) % settings_.slot_count];
+  }
+  void bind_input(size_t write) {
+    storage_access().owned_input_storage(0).ptr = reinterpret_cast<std::byte *>(
+        slot_for(write).input.get() + (write % settings_.batch_size) * window_elements_);
+  }
+
+  struct PendingWrite {
+    size_t next;
+    bool   submitted = false;
+  };
+  holotask::asyncs::PcaDecompositionQueueSettings settings_;
+  holoflow::core::TDesc                           input_desc_;
+  std::vector<holoflow::core::TDesc>              output_descs_;
+  PcaLayout                                       layout_;
+  cudaStream_t                                    producer_stream_;
+  curaii::CudaStream                              solver_stream_;
+  size_t                                          window_elements_;
+  curaii::CublasHandle                            cublas_;
+  std::vector<std::unique_ptr<PcaQueueSlot>>      slots_;
+  std::unique_ptr<Eigensolver>                    eigensolver_;
+  alignas(64) std::atomic<size_t> written_{0};
+  alignas(64) std::atomic<size_t> read_{0};
+  holotask::asyncs::detail::ReservationQueue<PendingWrite> writes_;
+  holotask::asyncs::detail::ReservationQueue<size_t>       reads_;
+  std::optional<holoflow::core::AsyncTicket>               legacy_read_;
+  std::array<bool, 2>                                      released_{false, false};
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -1052,6 +1367,37 @@ void from_json(const nlohmann::json &j, PcaSettings &settings) {
 // Factory methods
 // -------------------------------------------------------------------------------------------------
 
+holoflow::core::InferResult
+PcaProjectionFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
+                            const nlohmann::json                  &jsettings) const {
+  if (input_descs.size() != 2)
+    throw std::invalid_argument("PCA projection expects X and eigenvectors");
+  auto                result = PcaFactory{}.infer(input_descs.first(1), jsettings);
+  const auto         &x      = input_descs[0];
+  const auto         &v      = input_descs[1];
+  std::vector<size_t> shape(x.shape.begin(), x.shape.end() - 2);
+  shape.push_back(x.shape[x.rank() - 3]);
+  const holoflow::core::TDesc contiguous_x(x.shape, x.dtype, x.mem_loc, x.offset);
+  const holoflow::core::TDesc contiguous_v(shape, holoflow::core::DType::F32,
+                                           holoflow::core::MemLoc::Device, v.offset);
+  if (x.strides != contiguous_x.strides || v.shape != contiguous_v.shape ||
+      v.dtype != contiguous_v.dtype || v.mem_loc != contiguous_v.mem_loc ||
+      v.strides != contiguous_v.strides)
+    throw std::invalid_argument("PCA projection expects contiguous X and matching eigenvectors");
+  result.input_descs.push_back(v);
+  result.owned_inputs.push_back(false);
+  return result;
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+PcaProjectionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
+                             const nlohmann::json                  &jsettings,
+                             const holoflow::core::SyncCreateCtx   &ctx) const {
+  (void)infer(input_descs, jsettings);
+  return std::make_unique<PcaProjectionTask>(jsettings.get<PcaSettings>(), input_descs[0],
+                                             ctx.stream);
+}
+
 holoflow::core::InferResult PcaFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
                                               const nlohmann::json &jsettings) const {
   const auto check = [&](bool condition, const std::string &message) {
@@ -1124,3 +1470,87 @@ PcaFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 }
 
 } // namespace holotask::syncs
+
+namespace holotask::asyncs {
+
+void to_json(nlohmann::json &j, const PcaDecompositionQueueSettings &settings) {
+  j = {{"batch_size", settings.batch_size}, {"slot_count", settings.slot_count}};
+}
+
+void from_json(const nlohmann::json &j, PcaDecompositionQueueSettings &settings) {
+  j.at("batch_size").get_to(settings.batch_size);
+  j.at("slot_count").get_to(settings.slot_count);
+}
+
+holoflow::core::InferResult
+PcaDecompositionQueueFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
+                                    const nlohmann::json                  &jsettings) const {
+  using namespace holoflow::core;
+  const auto settings = jsettings.get<PcaDecompositionQueueSettings>();
+  if (input_descs.size() != 1 || input_descs[0].rank() != 4 || input_descs[0].shape[0] != 1)
+    throw std::invalid_argument("PCA queue expects one [1,T,H,W] input");
+  const auto &input = input_descs[0];
+  const TDesc contiguous(input.shape, DType::F32, MemLoc::Device);
+  if (input.dtype != contiguous.dtype || input.mem_loc != contiguous.mem_loc ||
+      input.strides != contiguous.strides || input.offset != 0 || settings.batch_size == 0 ||
+      settings.slot_count == 0)
+    throw std::invalid_argument(
+        "PCA queue expects contiguous device F32 input and positive capacity");
+  const auto int_max = static_cast<size_t>((std::numeric_limits<int>::max)());
+  for (size_t dimension : input.shape)
+    if (dimension == 0 || dimension > int_max)
+      throw std::invalid_argument("PCA queue dimension exceeds the GEMM limit");
+  if (input.shape[2] > int_max / input.shape[3])
+    throw std::invalid_argument("PCA queue sample count exceeds the GEMM limit");
+  // Check all allocation products before constructing descriptors or PcaLayout.
+  const auto size_max      = (std::numeric_limits<size_t>::max)();
+  auto       check_product = [&](std::initializer_list<size_t> factors) {
+    size_t product = sizeof(float);
+    for (auto factor : factors) {
+      if (factor > size_max / product)
+        throw std::overflow_error("PCA queue allocation size overflow");
+      product *= factor;
+    }
+  };
+  check_product(
+      {settings.slot_count, settings.batch_size, input.shape[1], input.shape[2], input.shape[3]});
+  check_product({settings.slot_count, settings.batch_size, input.shape[1], input.shape[1]});
+  auto shape = input.shape;
+  shape[0]   = settings.batch_size;
+  const TDesc x(shape, DType::F32, MemLoc::Device);
+  const TDesc vectors({settings.batch_size, shape[1], shape[1]}, DType::F32, MemLoc::Device);
+  return {
+      .input_descs                 = {input},
+      .output_descs                = {x, vectors},
+      .in_place                    = {},
+      .owned_inputs                = {true},
+      .owned_outputs               = {true, true},
+      .kind                        = TaskKind::Async,
+      .owned_input_pointer_counts  = {settings.batch_size * settings.slot_count},
+      .owned_output_pointer_counts = {settings.slot_count, settings.slot_count},
+      .supports_prequeued_push     = true,
+      .supports_prequeued_pop      = true,
+  };
+}
+
+std::unique_ptr<holoflow::core::IAsyncTask>
+PcaDecompositionQueueFactory::create(std::span<const holoflow::core::TDesc> input_descs,
+                                     const nlohmann::json                  &jsettings,
+                                     const holoflow::core::AsyncCreateCtx  &ctx) const {
+  const auto inferred = infer(input_descs, jsettings);
+  return std::make_unique<syncs::PcaDecompositionQueue>(
+      jsettings.get<PcaDecompositionQueueSettings>(), inferred, ctx.producer_stream);
+}
+
+std::unique_ptr<holoflow::core::IAsyncTask>
+PcaDecompositionQueueFactory::update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
+                                     std::span<const holoflow::core::TDesc>      input_descs,
+                                     const nlohmann::json                       &jsettings,
+                                     const holoflow::core::AsyncCreateCtx       &ctx) const {
+  ctx.invalidate_execution();
+  // Destroying the old task drains its private solver before captured allocations disappear.
+  old_task.reset();
+  return create(input_descs, jsettings, ctx);
+}
+
+} // namespace holotask::asyncs

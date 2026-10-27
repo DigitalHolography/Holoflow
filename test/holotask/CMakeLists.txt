@@ -23,6 +23,7 @@ set(SOURCES
     holofile_sink_test.cc
     normalize_test.cu
     pca_test.cu
+    pca_pipeline_test.cu
     pct_clip_test.cu
     shack_hartmann_test.cu
     sliding_average_test.cu

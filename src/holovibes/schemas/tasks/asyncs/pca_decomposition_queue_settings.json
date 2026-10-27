@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PcaDecompositionQueueSettings",
+  "description": "Retains groups of PCA inputs and eigenvectors through downstream projection.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "batch_size": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 4,
+      "description": "Number of [1,T,H,W] inputs in each decomposition group."
+    },
+    "slot_count": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 3,
+      "description": "Maximum number of retained groups, including groups held by projection."
+    }
+  },
+  "required": ["batch_size", "slot_count"]
+}

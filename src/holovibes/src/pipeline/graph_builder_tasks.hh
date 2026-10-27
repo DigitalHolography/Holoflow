@@ -46,6 +46,7 @@
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
+#include "holotask/asyncs/pca_decomposition_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
@@ -102,6 +103,8 @@ protected:
   std::vector<TDesc> dual_reader_batch_queue(const TDesc &X, holotask::asyncs::DualReaderBatchQueueSettings s);
   TDesc convert(const TDesc &X, holotask::syncs::ConversionSettings s);
   TDesc pca(const TDesc &X, holotask::syncs::PcaSettings s);
+  std::vector<TDesc> pca_decomposition_queue(const TDesc &X, holotask::asyncs::PcaDecompositionQueueSettings s);
+  TDesc pca_projection(const TDesc &X, const TDesc &Eigenvectors, holotask::syncs::PcaSettings s);
   TDesc flatfield(const TDesc &X, holotask::syncs::FlatfieldSettings s);
   TDesc filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
   TDesc fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);

@@ -36,6 +36,16 @@ struct PcaSettings {
 void to_json(nlohmann::json &j, const PcaSettings &settings);
 void from_json(const nlohmann::json &j, PcaSettings &settings);
 
+class PcaProjectionFactory final : public holoflow::core::ISyncTaskFactory {
+public:
+  holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
+                                    const nlohmann::json &jsettings) const override;
+
+  std::unique_ptr<holoflow::core::ISyncTask>
+  create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+         const holoflow::core::SyncCreateCtx &ctx) const override;
+};
+
 class PcaFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::ExecutionUpdatePolicy execution_update_policy() const noexcept override {
