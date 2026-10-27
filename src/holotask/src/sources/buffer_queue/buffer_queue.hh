@@ -14,6 +14,8 @@
 
 #pragma once
 
+#ifdef HOLOTASK_HAS_EGRABBER
+
 #include "sources/grabber/grabber.hh"
 
 #include <atomic>
@@ -131,3 +133,5 @@ private:
 };
 
 } // namespace holotask::sources
+
+#endif // HOLOTASK_HAS_EGRABBER

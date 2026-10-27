@@ -14,6 +14,8 @@
 
 #pragma once
 
+#ifdef HOLOTASK_HAS_EGRABBER
+
 #include <EGrabber.h>
 #include <chrono>
 
@@ -47,3 +49,5 @@ private:
 };
 
 } // namespace holotask::sources
+
+#endif // HOLOTASK_HAS_EGRABBER

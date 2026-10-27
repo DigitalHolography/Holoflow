@@ -15,6 +15,7 @@
 #include "holotask/sinks/holofile.hh"
 
 // #include <Windows.h>
+#include <cerrno>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -23,14 +24,15 @@
 #include <memory>
 #include <omp.h>
 #include <span>
+#include <system_error>
 #include <unordered_set>
 
+#include "bug.hh"
 #include "curaii/cuda.hh"
 #include "holofile/holofile.hh"
 #include "holoflow/core/tasks.hh"
 #include "logger.hh"
 #include "recording_geometry.hh"
-#include "recording_sink.hh"
 
 template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
@@ -124,7 +126,7 @@ void check(bool condition, const std::string &msg) {
 // stall for one cycle while the file is written. For typical recording sizes this is acceptable
 // and avoids all async complexity.
 
-class HolofileWriter final : public detail::RecordingSink {
+class HolofileWriter final : public holoflow::core::ISyncTask {
 public:
   HolofileWriter(const HolofileSettings &settings, const RecordingGeometry &geometry,
                  size_t frame_byte_size)
@@ -152,7 +154,7 @@ public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     handle_events(ctx);
 
-    if (!is_recording())
+    if (!recording_)
       return holoflow::core::OpResult::Ok;
     
     constexpr auto poll_interval = std::chrono::milliseconds(500);
@@ -208,8 +210,12 @@ public:
   }
 
   void update_settings(const HolofileSettings &settings) {
+    const auto active_path = settings_.path;
+
     settings_ = settings;
-    update_recording_path(settings_.path);
+    if (recording_) {
+      settings_.path = active_path;
+    }
   }
 
 private:

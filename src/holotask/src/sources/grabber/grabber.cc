@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#ifdef HOLOTASK_HAS_EGRABBER
+
 #include "grabber.hh"
 
 #include <EuresysGenapiErrorFormats.h>
@@ -51,3 +53,5 @@ void Grabber::requeue_buffer(const Euresys::NewBufferData &data) noexcept {
     }
   }
 } // namespace holotask::sources
+
+#endif // HOLOTASK_HAS_EGRABBER

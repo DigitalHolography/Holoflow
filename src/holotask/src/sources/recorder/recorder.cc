@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#ifdef HOLOTASK_HAS_EGRABBER
+
 #include "recorder.hh"
 
 #include "logger.hh"
@@ -384,3 +386,5 @@ void RecordingContext::invalidate(
 }
 
 } // namespace holotask::sources
+
+#endif // HOLOTASK_HAS_EGRABBER

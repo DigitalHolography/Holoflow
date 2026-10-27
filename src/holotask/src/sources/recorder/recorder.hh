@@ -14,6 +14,8 @@
 
 #pragma once
 
+#ifdef HOLOTASK_HAS_EGRABBER
+
 #include <span>
 #include <stdint.h>
 #include <string>
@@ -190,3 +192,5 @@ struct RecordingContext {
              RecordingSession::BufferFlushingFinishedCallback buffer_flushing_finished_callback);
 };
 } // namespace holotask::sources
+
+#endif // HOLOTASK_HAS_EGRABBER
