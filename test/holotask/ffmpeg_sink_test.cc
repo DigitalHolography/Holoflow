@@ -6,6 +6,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -72,7 +73,8 @@ void expect_rejected(const holotask::sinks::FfmpegFactory &factory, TDesc input,
 }
 
 void decode_u8(const std::filesystem::path &path, int &width, int &height, int &frames,
-               std::vector<std::uint8_t> &result) {
+               std::vector<std::uint8_t> &result,
+               AVPixelFormat              expected_format = AV_PIX_FMT_GRAY8) {
   AVFormatContext *input = nullptr;
   ASSERT_EQ(avformat_open_input(&input, path.string().c_str(), nullptr, nullptr), 0);
   ASSERT_EQ(avformat_find_stream_info(input, nullptr), 0);
@@ -98,7 +100,7 @@ void decode_u8(const std::filesystem::path &path, int &width, int &height, int &
       while (avcodec_receive_frame(codec, frame) == 0) {
         width  = frame->width;
         height = frame->height;
-        ASSERT_EQ(frame->format, AV_PIX_FMT_GRAY8);
+        ASSERT_EQ(frame->format, expected_format);
         for (int row = 0; row < height; ++row)
           result.insert(result.end(), frame->data[0] + row * frame->linesize[0],
                         frame->data[0] + row * frame->linesize[0] + width);
@@ -111,7 +113,7 @@ void decode_u8(const std::filesystem::path &path, int &width, int &height, int &
   while (avcodec_receive_frame(codec, frame) == 0) {
     width  = frame->width;
     height = frame->height;
-    ASSERT_EQ(frame->format, AV_PIX_FMT_GRAY8);
+    ASSERT_EQ(frame->format, expected_format);
     for (int row = 0; row < height; ++row)
       result.insert(result.end(), frame->data[0] + row * frame->linesize[0],
                     frame->data[0] + row * frame->linesize[0] + width);
@@ -194,6 +196,70 @@ TEST(FfmpegSinkTest, RejectsInvalidInputsAndSettings) {
   expect_rejected(factory, desc(), settings("x.webm", 2, 25.0, "webm", "ffv1"));
   expect_rejected(factory, desc(DType::U16), settings("x.mp4", 2, 25.0, "mp4", "mpeg4"));
   expect_rejected(factory, desc(DType::U8, 3), settings("x.mkv", 2));
+}
+
+TEST(FfmpegSinkTest, RejectsAviRatesAboveMuxerLimitWithActionableMessage) {
+  holotask::sinks::FfmpegFactory factory;
+  const std::vector<TDesc>       input{desc()};
+  for (const auto *codec : {"mjpeg", "mpeg4", "ffv1"}) {
+    SCOPED_TRACE(codec);
+    EXPECT_NO_THROW(factory.infer(input, settings("x.avi", 2, 1000.0, "avi", codec)));
+    for (const double fps : {std::nextafter(1000.0, std::numeric_limits<double>::infinity()),
+                             37037.037037 / 32.0}) {
+      try {
+        factory.infer(input, settings("x.avi", 2, fps, "avi", codec));
+        FAIL() << "AVI rate above 1000 fps was accepted";
+      } catch (const std::invalid_argument &error) {
+        const std::string message = error.what();
+        EXPECT_NE(message.find("1000 fps"), std::string::npos);
+        EXPECT_NE(message.find("time stride"), std::string::npos);
+      }
+    }
+  }
+  EXPECT_NO_THROW(factory.infer(input, settings("x.mkv", 2, 37037.037037 / 32.0)));
+}
+
+TEST(FfmpegSinkTest, EncodesAviMjpegAtNormalAndMaximumRates) {
+  for (const double fps : {25.0, 1000.0}) {
+    SCOPED_TRACE(fps);
+    const auto path = test_path("holoflow_ffmpeg_sink_mjpeg.avi");
+    std::filesystem::remove(path);
+    holotask::sinks::FfmpegFactory factory;
+    const std::vector<TDesc>       input_descs{TDesc({32, 16, 32}, DType::U8, MemLoc::Host)};
+    auto video_settings                = settings(path.string(), 128, fps, "avi", "mjpeg");
+    video_settings["resize_to_square"] = true;
+    auto task                          = factory.create(input_descs, video_settings, {});
+    task->bind_logger(spdlog::default_logger());
+    RecordingContext                     recording;
+    holoflow::core::Tensor               tensor(input_descs[0]);
+    std::array<holoflow::core::TView, 1> inputs{tensor.view()};
+    holoflow::core::SyncCtx ctx{inputs, {}, nullptr, &recording.handles.out, &recording.handles.in};
+
+    start_recording(recording, path.string());
+    for (int batch = 0; batch < 4; ++batch) {
+      std::memset(tensor.data(), batch % 2 == 0 ? 32 : 224, input_descs[0].num_bytes());
+      ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+    }
+    const auto event = receive_event(recording);
+    ASSERT_TRUE(event.has_value());
+    ASSERT_EQ(event->data.at("type"), "recording_finished") << event->data;
+    EXPECT_EQ(event->data.at("frames_written"), 128);
+
+    int                       width  = 0;
+    int                       height = 0;
+    int                       frames = 0;
+    std::vector<std::uint8_t> decoded;
+    decode_u8(path, width, height, frames, decoded, AV_PIX_FMT_YUVJ420P);
+    EXPECT_EQ(width, 32);
+    EXPECT_EQ(height, 32);
+    EXPECT_EQ(frames, 128);
+    ASSERT_EQ(decoded.size(), 128 * 32 * 32);
+    for (std::size_t index = 0; index < decoded.size(); ++index) {
+      const int expected = (index / (32 * 32 * 32)) % 2 == 0 ? 32 : 224;
+      ASSERT_NEAR(decoded[index], expected, 2) << "Luma sample " << index;
+    }
+    std::filesystem::remove(path);
+  }
 }
 
 TEST(FfmpegSinkTest, ReusesOnlyWhenEncoderSettingsAndGeometryMatch) {
