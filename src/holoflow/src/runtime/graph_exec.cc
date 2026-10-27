@@ -292,6 +292,7 @@ private:
   std::atomic<bool> stop_{false};    ///< True if a stop has been requested.
   std::atomic<bool> paused_{false};
   std::atomic<bool> aborted_{false};
+  bool tasks_cancelled_ = false;
   struct SectionCheckpoint {
     enum class Stage { AcquireSync, AcquireProducer, Pop, Compute, Barrier, Push, Release };
     Stage                                     stage               = Stage::AcquireSync;
@@ -485,6 +486,7 @@ void Scheduler::Impl::start() {
   }
   if (!resume) {
     checkpoints_.assign(sections_.size(), SectionCheckpoint{});
+    tasks_cancelled_ = false;
   }
   if (sections_.empty()) {
     stop_.store(true);
@@ -588,6 +590,19 @@ void Scheduler::Impl::wait() {
       }
       checkpoint = SectionCheckpoint{};
     }
+  }
+  // Pause retains task state and held buffers. Cancel only after all workers have joined,
+  // including when a previously paused scheduler is stopped or destroyed.
+  if (!paused_.load() && !tasks_cancelled_) {
+    for (const auto &section : sections_) {
+      for (auto v : section.async_cons)
+        cancel_async(v);
+      for (auto v : section.sync_topo)
+        cancel_sync(v);
+      for (auto v : section.async_prod)
+        cancel_async(v);
+    }
+    tasks_cancelled_ = true;
   }
   logger()->info("[Scheduler::wait] Scheduler stopped");
   running_.store(false);
@@ -1020,27 +1035,6 @@ void Scheduler::Impl::run_section(int section_id) {
       }
       checkpoint = SectionCheckpoint{};
     }
-
-    // cancel async_cons
-    {
-      nvtx3::scoped_range r{nvtx3::event_attributes{"Cancel async consumers"}};
-      for (auto v : sec.async_cons)
-        cancel_async(v);
-    }
-
-    // cancel sync nodes
-    {
-      nvtx3::scoped_range r{nvtx3::event_attributes{"Cancel sync nodes"}};
-      for (auto v : sec.sync_topo)
-        cancel_sync(v);
-    }
-
-    // cancel async producers
-    {
-      nvtx3::scoped_range r{nvtx3::event_attributes{"Cancel async producers"}};
-      for (auto v : sec.async_prod)
-        cancel_async(v);
-    }
   } catch (...) {
     aborted_.store(true);
     paused_.store(false);
@@ -1169,6 +1163,7 @@ core::OpResult Scheduler::Impl::run_sync(GraphPlan::vertex_descriptor v) {
     aborted_.store(true);
     paused_.store(false);
     logger()->debug("[Scheduler::run_sync] Node '{}' reached end of stream", np.spec.name);
+    stop_.store(true);
     break;
   case core::OpResult::NotReady:
     aborted_.store(true);
@@ -1228,6 +1223,7 @@ core::OpResult Scheduler::Impl::run_async_cons(GraphPlan::vertex_descriptor v) {
     aborted_.store(true);
     paused_.store(false);
     logger()->debug("[Scheduler::run_async_cons] Node '{}' reached end of stream", np.spec.name);
+    stop_.store(true);
     break;
   case core::OpResult::NotReady:
     HOLOFLOW_UNREACHABLE();
@@ -1279,6 +1275,7 @@ core::OpResult Scheduler::Impl::run_async_prod(GraphPlan::vertex_descriptor v) {
     aborted_.store(true);
     paused_.store(false);
     logger()->debug("[Scheduler::run_async_prod] Node '{}' reached end of stream", np.spec.name);
+    stop_.store(true);
     break;
   case core::OpResult::NotReady:
     HOLOFLOW_UNREACHABLE();

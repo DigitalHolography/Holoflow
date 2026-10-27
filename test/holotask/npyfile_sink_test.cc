@@ -76,9 +76,18 @@ TEST(NpyfileSinkTest, WritesStandardNpyArrayAndCompletionEvent) {
   ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
   ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
   router.tick();
-  const auto event = router.ui_try_receive();
-  ASSERT_TRUE(event.has_value());
-  EXPECT_EQ(event->data.at("type"), "recording_finished");
+  bool finished = false, acquired = false, recorded = false, flushed = false;
+  while (auto event = router.ui_try_receive()) {
+    const auto type = event->data.at("type");
+    finished |= type == "recording_finished";
+    acquired |= type == "acquisition_update" && event->data.value("frame_acquired", 0) == 4;
+    recorded |= type == "recording_update" && event->data.value("frame_recorded", 0) == 4;
+    flushed |= type == "record_flushing_finished";
+  }
+  EXPECT_TRUE(finished);
+  EXPECT_TRUE(acquired);
+  EXPECT_TRUE(recorded);
+  EXPECT_TRUE(flushed);
 
   std::ifstream file(path, std::ios::binary);
   ASSERT_TRUE(file.good());
@@ -155,7 +164,9 @@ TEST(NpyfileSinkTest, ReportsFailedFileCreation) {
   router.tick();
   ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
   router.tick();
-  const auto event = router.ui_try_receive();
+  auto event = router.ui_try_receive();
+  while (event && event->data.at("type") != "recording_failed")
+    event = router.ui_try_receive();
   ASSERT_TRUE(event.has_value());
   EXPECT_EQ(event->data.at("type"), "recording_failed");
   EXPECT_NE(event->data.at("message").get<std::string>().find("Failed to open NPY file"),

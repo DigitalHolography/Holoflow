@@ -28,6 +28,7 @@ struct State {
   int                               executions       = 0;
   int                               recordings       = 0;
   int                               acquisitions     = 0;
+  int                               cancellations    = 0;
   int                               source_uses = 0, sink_uses = 0;
   bool                              stop_after_pop             = false;
   bool                              recorded_after_acquisition = false;
@@ -47,6 +48,7 @@ struct State {
 
 class Boundary : public IAsyncTask {
 public:
+  void cancel() override { ++state_->cancellations; }
   Boundary(bool source, size_t count, TDesc desc, cudaStream_t stream, std::shared_ptr<State> state,
            bool bad, nlohmann::json settings)
       : source_(source), count_(count), desc_(desc), stream_(stream), state_(state), bad_(bad),
@@ -286,6 +288,7 @@ __global__ void condition(cudaGraphConditionalHandle handle, const float *input)
 
 class Compute : public ISyncTask {
 public:
+  void cancel(SyncCtx &) override { ++state_->cancellations; }
   Compute(cudaStream_t stream, std::shared_ptr<State> state, nlohmann::json settings)
       : stream_(stream), state_(state), settings_(settings) {}
   ~Compute() override {
@@ -1042,6 +1045,28 @@ TEST_F(SectionCudaGraphTest, PauseRetainsEveryCompletedOperationAndGraphVariant)
       }
     }
   }
+}
+
+TEST_F(SectionCudaGraphTest, StoppingPausedSchedulerCancelsTasksExactlyOnce) {
+  auto out = compile();
+  Scheduler scheduler(out->graph, out->sections, out->resources);
+  state->operation_hook = [&](const char *point) {
+    if (std::string(point) == "pop")
+      scheduler.request_pause();
+  };
+  scheduler.start();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  if (!scheduler.stop_requested())
+    scheduler.request_stop();
+  scheduler.wait();
+  ASSERT_EQ(state->cancellations, 0);
+  scheduler.request_stop();
+  scheduler.wait();
+  EXPECT_EQ(state->cancellations, 4);
+  scheduler.wait();
+  EXPECT_EQ(state->cancellations, 4);
 }
 
 TEST_F(SectionCudaGraphTest, PauseRetainsPartiallyAcquiredAndReleasedPorts) {

@@ -347,7 +347,7 @@ TEST(SchedulerTest, HandlesAnEmptyCompiledGraphLifecycle) {
 
   holoflow::runtime::Scheduler scheduler(output->graph, output->sections, output->resources);
   scheduler.start();
-  ASSERT_TRUE(scheduler.is_running());
+  EXPECT_FALSE(scheduler.is_running());
   scheduler.request_stop();
   scheduler.wait();
 

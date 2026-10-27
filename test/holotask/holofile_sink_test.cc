@@ -133,11 +133,16 @@ TEST_F(HolofileSinkUpdateTest, RecordsFramesToActivePathAcrossSettingsUpdate) {
   }
 
   router.tick();
-  bool finished = false;
+  bool finished = false, recorded = false, flushed = false;
   while (auto event = router.ui_try_receive()) {
     finished |= event->data.at("type") == "recording_finished";
+    recorded |= event->data.at("type") == "recording_update" &&
+                event->data.value("frame_recorded", 0) == 4;
+    flushed |= event->data.at("type") == "record_flushing_finished";
   }
   EXPECT_TRUE(finished);
+  EXPECT_TRUE(recorded);
+  EXPECT_TRUE(flushed);
 
   std::filesystem::remove(path);
 }

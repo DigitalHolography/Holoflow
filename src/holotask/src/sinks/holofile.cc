@@ -33,6 +33,7 @@
 #include "holoflow/core/tasks.hh"
 #include "logger.hh"
 #include "recording_geometry.hh"
+#include "recording_sink.hh"
 
 template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
@@ -157,7 +158,7 @@ public:
     if (!recording_)
       return holoflow::core::OpResult::Ok;
     
-    constexpr auto poll_interval = std::chrono::milliseconds(500);
+
 
     // --- Phase 1: Accumulate frames into the buffer ---
     if (frames_buffered_ < settings_.count) {
@@ -174,12 +175,7 @@ public:
       logger()->trace("[HolofileWriter] Buffered {} frames ({} us)", to_copy, duration_us);
       frames_buffered_ += to_copy;
 
-      auto now     = Clock::now();
-      auto elapsed = now - last_poll_;
-      if (elapsed > poll_interval) {
-        emit_acquisition_update_event(ctx, frames_buffered_);
-        last_poll_ = Clock::now();
-      }
+      monitor_.update(ctx, frames_buffered_, 0);
     }
 
     // --- Phase 2: Buffer full — flush everything to disk ---
@@ -189,6 +185,7 @@ public:
       try {
         emit_acquisition_update_event(ctx, frames_buffered_);
         flush_to_disk();
+        monitor_.update(ctx, frames_buffered_, frames_buffered_, true);
         emit_finished_event(ctx);
         logger()->info("[HolofileWriter] Recording complete: {} frames written to {}",
                        frames_buffered_, settings_.path);
@@ -267,6 +264,8 @@ private:
         settings_.path   = record_path;
         frames_buffered_ = 0;
         recording_       = true;
+        monitor_.start();
+        monitor_.update(ctx, 0, 0, true);
 
       } else if (type == "stop_recording") {
         if (!recording_) {
@@ -382,8 +381,7 @@ private:
   bool recording_       = false;
   int  frames_buffered_ = 0;
 
-  using Clock = std::chrono::steady_clock;
-  Clock::time_point last_poll_;
+  detail::RecordingMonitor monitor_;
 };
 
 } // namespace

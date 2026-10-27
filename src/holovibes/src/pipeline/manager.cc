@@ -440,7 +440,6 @@ void Manager::stop_pipeline() {
       ScopedTrace scope("Stop Event Polling");
       stop_event_polling();
     }
-    raw_recording_active_ = false;
 
     logger()->info("[Manager::stop_pipeline] Pipeline stopped successfully");
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
@@ -929,6 +928,7 @@ void Manager::run_compiled_graph() {
   {
     ScopedTrace scope("Create Scheduler");
     if (!scheduler_) {
+      raw_recording_active_ = false;
       scheduler_ = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval,
                                                failure_callback);
     }
@@ -940,7 +940,6 @@ void Manager::run_compiled_graph() {
     uninstall_windows_crash_handler();
   }
 #endif
-  raw_recording_active_ = false;
 
   {
     ScopedTrace scope("Start Scheduler");

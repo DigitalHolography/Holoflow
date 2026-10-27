@@ -96,6 +96,7 @@ public:
     copy_bytes(ring_.get() + static_cast<std::size_t>(frames_buffered_) * frame_size_,
                ctx.inputs[0].data(), static_cast<std::size_t>(count) * frame_size_);
     frames_buffered_ += count;
+    monitor_.update(ctx, frames_buffered_, 0);
     if (frames_buffered_ >= settings_.count) {
       logger()->info("[NpyfileWriter] Frame buffer full ({} frames); flushing to disk...",
                      settings_.count);

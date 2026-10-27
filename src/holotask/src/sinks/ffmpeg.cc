@@ -184,6 +184,7 @@ public:
         ++frames_buffered_;
       }
 
+      monitor_.update(ctx, frames_buffered_, frames_buffered_);
       if (frames_buffered_ >= settings_.count) {
         finalize();
         emit_finished_event(ctx);

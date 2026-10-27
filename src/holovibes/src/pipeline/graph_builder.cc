@@ -230,7 +230,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
 
   if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
     holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings settings{.cfg_path = cam_path};
-    if (s_.recording_method == RecordingMethod::RAW) {
+    if (s_.can_use_camera_record()) {
       settings.record_settings = holotask::sources::RecordSettings{
           .file_path          = s_.recording_path.string(),
           .recording_count    = s_.recording_count,
@@ -244,7 +244,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
 }
 
 void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
-  if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP)
+  if (s_.can_use_camera_record())
     return;
 
   auto path  = s_.recording_path.string();

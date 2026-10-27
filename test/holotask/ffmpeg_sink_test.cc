@@ -62,7 +62,12 @@ void start_recording(RecordingContext &recording, const std::string &path) {
 
 std::optional<holoflow_event::Event> receive_event(RecordingContext &recording) {
   recording.router.tick();
-  return recording.router.ui_try_receive();
+  while (auto event = recording.router.ui_try_receive()) {
+    const auto type = event->data.at("type");
+    if (type == "recording_finished" || type == "recording_failed")
+      return event;
+  }
+  return std::nullopt;
 }
 
 void expect_rejected(const holotask::sinks::FfmpegFactory &factory, TDesc input,
@@ -228,6 +233,14 @@ TEST(FfmpegSinkTest, EncodesU8FramesAndEmitsCompletion) {
   ASSERT_TRUE(event.has_value());
   EXPECT_EQ(event->data.at("type"), "recording_finished");
   EXPECT_EQ(event->data.at("frames_written"), 2);
+  bool recorded = false, flushed = false;
+  while (auto update = recording.router.ui_try_receive()) {
+    recorded |= update->data.at("type") == "recording_update" &&
+                update->data.value("frame_recorded", 0) == 2;
+    flushed |= update->data.at("type") == "record_flushing_finished";
+  }
+  EXPECT_TRUE(recorded);
+  EXPECT_TRUE(flushed);
 
   int                       width  = 0;
   int                       height = 0;

@@ -1078,13 +1078,13 @@ QString MainWindow::sanitize_recording_token(const QString &value) const {
 QString MainWindow::recording_file_name(int acquisition_id) const {
   const QString patient = sanitize_recording_token(patient_line_edit_->text());
   const QString eye     = sanitize_recording_token(eye_side_combo_->currentText());
-  const QString format = export_widget_ == nullptr ? QStringLiteral("holo")
-                                                   : export_widget_->get_format();
-  const auto *format_info = holotask::sinks::ffmpeg_format(format.toStdString());
-  const QString extension = format_info == nullptr
-                                 ? QStringLiteral("holo")
-                                 : QString::fromUtf8(format_info->extension.data(),
-                                                      format_info->extension.size());
+  const QString format =
+      export_widget_ == nullptr ? QStringLiteral("holo") : export_widget_->get_format();
+  const auto   *format_info = holotask::sinks::ffmpeg_format(format.toStdString());
+  const QString extension =
+      format_info == nullptr
+          ? QStringLiteral("holo")
+          : QString::fromUtf8(format_info->extension.data(), format_info->extension.size());
   return QString("%1_%2_%3_%4.%5")
       .arg(patient, eye, session_id_, acquisition_label(acquisition_id), extension);
 }
@@ -1981,10 +1981,9 @@ void MainWindow::on_start_pipeline_failure(const QString &error) {
 void MainWindow::on_stop_pipeline_success() {
   logger()->info("[MainWindow::on_stop_pipeline_success]");
   if (pause_requested_) {
-    pipeline_running_   = false;
-    pipeline_paused_    = true;
-    pause_requested_    = false;
-    export_in_progress_ = false;
+    pipeline_running_ = false;
+    pipeline_paused_  = true;
+    pause_requested_  = false;
     import_widget_->set_start_enabled(true);
     import_widget_->set_stop_enabled(true);
     export_widget_->set_record_enabled(false);
@@ -2219,7 +2218,6 @@ void MainWindow::on_import_start_clicked() {
   refresh_command_bar();
   pipeline::Settings settings = get_pipeline_settings();
   auto               update   = [=]() { pipeline_manager_->update_pipeline(settings); };
-  auto               start    = [=]() { pipeline_manager_->start_pipeline(); };
 
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
 
@@ -2228,17 +2226,16 @@ void MainWindow::on_import_start_clicked() {
   logger()->info("[MainWindow::on_import_start_clicked] pipeline start is estimated to take {} s",
                  start_estimation);
 
-  auto  t0      = std::chrono::steady_clock::now();
-  auto *watcher = new QFutureWatcher<void>(this);
+  auto t0    = std::chrono::steady_clock::now();
+  auto start = [=]() {
+    pipeline_manager_->start_pipeline();
 
-  connect(watcher, &QFutureWatcher<void>::finished, this, [this, watcher, t0]() {
     auto t1       = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::seconds>(t1 - t0).count();
     logger()->info("[MainWindow::on_import_start_clicked] pipeline start took {} s", duration);
-    watcher->deleteLater();
-  });
+  };
 
-  watcher->setFuture(QtConcurrent::run([this]() { pipeline_manager_->start_pipeline(); }));
+  HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
 }
 
 void MainWindow::on_import_stop_clicked() {
@@ -2354,11 +2351,11 @@ bool MainWindow::validate_inputs() {
   configure_unsupported_features();
 
   pipeline::Settings settings = get_pipeline_settings();
-  export_widget_->set_frame_batch_size(
-      settings.recording_method == pipeline::RecordingMethod::RAW ? settings.load_batch
-                                                                   : settings.cpu_out_size);
-  const auto         context  = build_validation_context(settings);
-  QSize display_dims(context.source_width.value_or(1), context.source_height.value_or(1));
+  export_widget_->set_frame_batch_size(settings.recording_method == pipeline::RecordingMethod::RAW
+                                           ? settings.load_batch
+                                           : settings.cpu_out_size);
+  const auto context = build_validation_context(settings);
+  QSize      display_dims(context.source_width.value_or(1), context.source_height.value_or(1));
   if (settings.view_type != pipeline::ViewType::RAW &&
       settings.spacial_method == pipeline::SpacialMethod::ANGULAR_SPECTRUM &&
       settings.asp_padding_enabled) {
@@ -2843,12 +2840,12 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     } else {
       s.recording_method = RecordingMethod::NONE;
     }
-    s.recording_path        = export_widget_->get_file_path().toStdString();
-    s.recording_count       = export_widget_->get_frame_count();
-    s.recording_format = export_widget_->get_format().toStdString();
-    s.recording_codec  = export_widget_->get_codec().toStdString();
+    s.recording_path             = export_widget_->get_file_path().toStdString();
+    s.recording_count            = export_widget_->get_frame_count();
+    s.recording_format           = export_widget_->get_format().toStdString();
+    s.recording_codec            = export_widget_->get_codec().toStdString();
     s.recording_resize_algorithm = export_widget_->get_resize_algorithm().toStdString();
-    s.recording_queue_count = export_widget_->get_queue_count();
+    s.recording_queue_count      = export_widget_->get_queue_count();
   }
 
   // Auto-Focus Settings
@@ -3058,13 +3055,13 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   {
     export_widget_->set_file_path(QString::fromStdString(s.recording_path.string()));
     export_widget_->set_frame_count(static_cast<int>(s.recording_count));
-    const auto format_index = export_widget_->format_combo()->findData(
-        QString::fromStdString(s.recording_format));
+    const auto format_index =
+        export_widget_->format_combo()->findData(QString::fromStdString(s.recording_format));
     if (format_index >= 0) {
       export_widget_->format_combo()->setCurrentIndex(format_index);
     }
-    const auto codec_index = export_widget_->codec_combo()->findData(
-        QString::fromStdString(s.recording_codec));
+    const auto codec_index =
+        export_widget_->codec_combo()->findData(QString::fromStdString(s.recording_codec));
     if (codec_index >= 0) {
       export_widget_->codec_combo()->setCurrentIndex(codec_index);
     }
