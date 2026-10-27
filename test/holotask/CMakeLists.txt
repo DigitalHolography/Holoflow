@@ -17,17 +17,21 @@ set(TARGET holotask_test)
 set(SOURCES
     angular_spectrum_test.cu
     conversion_test.cu
+    ffmpeg_sink_test.cc
     flatfield_test.cu
     filter2d_test.cu
     fresnel_diffraction_test.cu
     headless_nodes_test.cu
     holofile_sink_test.cc
     production_pipeline_test.cu
+    npyfile_sink_test.cc
+    resize_test.cc
     normalize_test.cu
     pca_test.cu
     pct_clip_test.cu
     shack_hartmann_test.cu
     sliding_average_test.cu
+    section_cuda_graph_reference_test.cu
     zernike_defocus_z_prop_test.cc
     zernike_phase_test.cu
     ../holonp/support/tensor_test_buffer.cc
@@ -46,6 +50,26 @@ target_link_libraries(${TARGET}
     holotask
     holonp
     GTest::gtest_main
+)
+
+if(TARGET holoflow_ffmpeg)
+    target_link_libraries(${TARGET} PRIVATE holoflow_ffmpeg)
+endif()
+
+if(TARGET holoflow_ffmpeg)
+    get_target_property(FFMPEG_RUNTIME_DLLS holoflow_ffmpeg HOLOFLOW_FFMPEG_RUNTIME_DLLS)
+    foreach(FFMPEG_RUNTIME_DLL IN LISTS FFMPEG_RUNTIME_DLLS)
+        add_custom_command(TARGET ${TARGET} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${FFMPEG_RUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:${TARGET}>"
+            COMMENT "Copying FFmpeg runtime ${FFMPEG_RUNTIME_DLL}"
+        )
+    endforeach()
+endif()
+
+target_compile_definitions(${TARGET} PRIVATE
+    HOLOFLOW_REFERENCE_SPEC="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/section_cuda_graph_reference.json"
 )
 
 holoflow_discover_tests(${TARGET}

@@ -14,17 +14,26 @@
 
 #include "logger.hh"
 
+#include <spdlog/async_logger.h>
+#include <spdlog/details/thread_pool.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
+
+#include "holoflow/runtime/tracing.hh"
 
 namespace holovibes {
 
 std::shared_ptr<spdlog::logger> logger() {
+  // Keep the worker independent of the registry and alive across updates. One worker preserves
+  // queue order; a full queue waits rather than dropping messages. Shutdown drains pending output.
+  static auto thread_pool = std::make_shared<spdlog::details::thread_pool>(
+      8192, 1, [] { holoflow::runtime::tracing::set_thread_name("Holovibes Logger"); });
   static std::shared_ptr<spdlog::logger> logger = [] {
     auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
     sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [thread %t] [%^%l%$] %v");
 
-    auto log = std::make_shared<spdlog::logger>("holovibes", sink);
+    auto log = std::make_shared<spdlog::async_logger>("holovibes", sink, thread_pool,
+                                                      spdlog::async_overflow_policy::block);
     log->set_level(spdlog::default_logger()->level());
     log->flush_on(spdlog::level::warn);
 

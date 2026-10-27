@@ -1510,6 +1510,7 @@ AmetekS711EuresysCoaxlinkQSFPFactory::infer(std::span<const holoflow::core::TDes
       .owned_inputs  = {},
       .owned_outputs = {true},
       .kind          = holoflow::core::TaskKind::Sync,
+      .constness     = holoflow::core::ConstInferenceState::Mutable,
   };
 }
 

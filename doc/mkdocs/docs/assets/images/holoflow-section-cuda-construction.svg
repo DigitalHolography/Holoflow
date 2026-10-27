@@ -1,0 +1,203 @@
+<?xml version='1.0' encoding='utf-8'?>
+<svg xmlns="http://www.w3.org/2000/svg" width="505pt" height="1018pt" viewBox="0.00 0.00 505.00 1018.00" role="img" aria-labelledby="figure-title figure-description">
+<desc id="figure-description">Compilation inspects; startup prepares executables before workers.</desc><title id="figure-title">Graph-set construction</title><g id="graph0" class="graph" transform="scale(1 1) rotate(0) translate(21.6 996.1)">
+<title>SectionConstruction</title>
+<polygon fill="white" stroke="none" points="-21.6,21.6 -21.6,-996.1 483.6,-996.1 483.6,21.6 -21.6,21.6" />
+<g id="clust1" class="cluster">
+<title>cluster_compile</title>
+<path fill="white" stroke="#94a3b8" d="M163,-750.6C163,-750.6 421,-750.6 421,-750.6 427,-750.6 433,-756.6 433,-762.6 433,-762.6 433,-954.5 433,-954.5 433,-960.5 427,-966.5 421,-966.5 421,-966.5 163,-966.5 163,-966.5 157,-966.5 151,-960.5 151,-954.5 151,-954.5 151,-762.6 151,-762.6 151,-756.6 157,-750.6 163,-750.6" />
+<text xml:space="preserve" text-anchor="middle" x="292" y="-950.15" font-family="Helvetica,sans-Serif" font-size="13.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">COMPILATION: inspect, without instantiation</text>
+</g>
+<g id="clust2" class="cluster">
+<title>cluster_start</title>
+<path fill="white" stroke="#94a3b8" d="M20,-8C20,-8 442,-8 442,-8 448,-8 454,-14 454,-20 454,-20 454,-721.6 454,-721.6 454,-727.6 448,-733.6 442,-733.6 442,-733.6 20,-733.6 20,-733.6 14,-733.6 8,-727.6 8,-721.6 8,-721.6 8,-20 8,-20 8,-14 14,-8 20,-8" />
+<text xml:space="preserve" text-anchor="middle" x="231" y="-717.25" font-family="Helvetica,sans-Serif" font-size="13.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">STARTUP: prepare before creating workers</text>
+</g>
+
+<g id="node1" class="node">
+<title>inspect</title>
+<path fill="#dcfce7" stroke="#64748b" d="M399.46,-935.5C399.46,-935.5 184.54,-935.5 184.54,-935.5 178.54,-935.5 172.54,-929.5 172.54,-923.5 172.54,-923.5 172.54,-911.5 172.54,-911.5 172.54,-905.5 178.54,-899.5 184.54,-899.5 184.54,-899.5 399.46,-899.5 399.46,-899.5 405.46,-899.5 411.46,-905.5 411.46,-911.5 411.46,-911.5 411.46,-923.5 411.46,-923.5 411.46,-929.5 405.46,-935.5 399.46,-935.5" />
+<text xml:space="preserve" text-anchor="middle" x="292" y="-913.23" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Check task eligibility + storage contracts</text>
+</g>
+
+<g id="node2" class="node">
+<title>plan</title>
+<path fill="#dcfce7" stroke="#64748b" d="M373.58,-868.5C373.58,-868.5 210.42,-868.5 210.42,-868.5 204.42,-868.5 198.42,-862.5 198.42,-856.5 198.42,-856.5 198.42,-837.6 198.42,-837.6 198.42,-831.6 204.42,-825.6 210.42,-825.6 210.42,-825.6 373.58,-825.6 373.58,-825.6 379.58,-825.6 385.58,-831.6 385.58,-837.6 385.58,-837.6 385.58,-856.5 385.58,-856.5 385.58,-862.5 379.58,-868.5 373.58,-868.5" />
+<text xml:space="preserve" text-anchor="middle" x="292" y="-849.9" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Plan reachable index tuples</text>
+<text xml:space="preserve" text-anchor="middle" x="292" y="-835.65" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Resolve finite pointer domains</text>
+</g>
+
+<g id="edge1" class="edge">
+<title>inspect-&gt;plan</title>
+<path fill="none" stroke="#64748b" d="M292,-899.23C292,-892.62 292,-884.89 292,-877.47" />
+<polygon fill="#64748b" stroke="#64748b" points="294.45,-877.5 292,-870.5 289.55,-877.5 294.45,-877.5" />
+</g>
+
+<g id="node3" class="node">
+<title>retain</title>
+<path fill="#dbeafe" stroke="#64748b" d="M375.83,-794.6C375.83,-794.6 208.17,-794.6 208.17,-794.6 202.17,-794.6 196.17,-788.6 196.17,-782.6 196.17,-782.6 196.17,-770.6 196.17,-770.6 196.17,-764.6 202.17,-758.6 208.17,-758.6 208.17,-758.6 375.83,-758.6 375.83,-758.6 381.83,-758.6 387.83,-764.6 387.83,-770.6 387.83,-770.6 387.83,-782.6 387.83,-782.6 387.83,-788.6 381.83,-794.6 375.83,-794.6" />
+<text xml:space="preserve" text-anchor="middle" x="292" y="-772.32" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Retain one-use inspection plan</text>
+</g>
+
+<g id="edge2" class="edge">
+<title>plan-&gt;retain</title>
+<path fill="none" stroke="#64748b" d="M292,-825.14C292,-818.13 292,-810.24 292,-802.93" />
+<polygon fill="#64748b" stroke="#64748b" points="294.45,-803.22 292,-796.22 289.55,-803.22 294.45,-803.22" />
+</g>
+
+<g id="node4" class="node">
+<title>input</title>
+<path fill="#dcfce7" stroke="#64748b" d="M372.46,-702.6C372.46,-702.6 211.54,-702.6 211.54,-702.6 205.54,-702.6 199.54,-696.6 199.54,-690.6 199.54,-690.6 199.54,-671.7 199.54,-671.7 199.54,-665.7 205.54,-659.7 211.54,-659.7 211.54,-659.7 372.46,-659.7 372.46,-659.7 378.46,-659.7 384.46,-665.7 384.46,-671.7 384.46,-671.7 384.46,-690.6 384.46,-690.6 384.46,-696.6 378.46,-702.6 372.46,-702.6" />
+<text xml:space="preserve" text-anchor="middle" x="292" y="-684" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Consume first-start plan</text>
+<text xml:space="preserve" text-anchor="middle" x="292" y="-669.75" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Or reinspect phases on restart</text>
+</g>
+
+<g id="edge16" class="edge">
+<title>retain-&gt;input</title>
+<path fill="none" stroke="#64748b" d="M292,-758.46C292,-745.21 292,-726.57 292,-711.03" />
+<polygon fill="#64748b" stroke="#64748b" points="294.45,-711.28 292,-704.28 289.55,-711.28 294.45,-711.28" />
+</g>
+
+<g id="node5" class="node">
+<title>eligible</title>
+<path fill="#fef3c7" stroke="#64748b" d="M280.2,-626.5C280.2,-626.5 150.38,-602.25 150.38,-602.25 144.48,-601.15 144.48,-598.95 150.38,-597.85 150.38,-597.85 280.2,-573.6 280.2,-573.6 286.1,-572.5 297.9,-572.5 303.8,-573.6 303.8,-573.6 433.62,-597.85 433.62,-597.85 439.52,-598.95 439.52,-601.15 433.62,-602.25 433.62,-602.25 303.8,-626.5 303.8,-626.5 297.9,-627.6 286.1,-627.6 280.2,-626.5" />
+<text xml:space="preserve" text-anchor="middle" x="292" y="-595.77" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Eligible and within cap?</text>
+</g>
+
+<g id="edge3" class="edge">
+<title>input-&gt;eligible</title>
+<path fill="none" stroke="#64748b" d="M292,-659.37C292,-652.58 292,-644.83 292,-637.24" />
+<polygon fill="#64748b" stroke="#64748b" points="294.45,-637.64 292,-630.64 289.55,-637.64 294.45,-637.64" />
+</g>
+
+<g id="node6" class="node">
+<title>compare</title>
+<path fill="#dbeafe" stroke="#64748b" d="M365.58,-527.9C365.58,-527.9 190.42,-527.9 190.42,-527.9 184.42,-527.9 178.42,-521.9 178.42,-515.9 178.42,-515.9 178.42,-497 178.42,-497 178.42,-491 184.42,-485 190.42,-485 190.42,-485 365.58,-485 365.58,-485 371.58,-485 377.58,-491 377.58,-497 377.58,-497 377.58,-515.9 377.58,-515.9 377.58,-521.9 371.58,-527.9 365.58,-527.9" />
+<text xml:space="preserve" text-anchor="middle" x="278" y="-509.3" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Compare desired address tuples</text>
+<text xml:space="preserve" text-anchor="middle" x="278" y="-495.05" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">with cached executables</text>
+</g>
+
+<g id="edge4" class="edge">
+<title>eligible-&gt;compare</title>
+<path fill="none" stroke="#64748b" d="M287.88,-572.06C286.17,-560.88 284.18,-547.88 282.44,-536.49" />
+<polygon fill="#64748b" stroke="#64748b" points="284.87,-536.19 281.39,-529.64 280.03,-536.93 284.87,-536.19" />
+<text xml:space="preserve" text-anchor="middle" x="293.67" y="-545.95" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">yes</text>
+</g>
+
+<g id="node12" class="node">
+<title>fallback</title>
+<path fill="#fee2e2" stroke="#64748b" d="M413.96,-119C413.96,-119 232.04,-119 232.04,-119 226.04,-119 220.04,-113 220.04,-107 220.04,-107 220.04,-95 220.04,-95 220.04,-89 226.04,-83 232.04,-83 232.04,-83 413.96,-83 413.96,-83 419.96,-83 425.96,-89 425.96,-95 425.96,-95 425.96,-107 425.96,-107 425.96,-113 419.96,-119 413.96,-119" />
+<text xml:space="preserve" text-anchor="middle" x="323" y="-96.72" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Ordinary execution for this section</text>
+</g>
+
+<g id="edge5" class="edge">
+<title>eligible-&gt;fallback</title>
+<path fill="none" stroke="#64748b" d="M358.01,-583.25C395.09,-570.02 434,-546.76 434,-507.45 434,-507.45 434,-507.45 434,-395.1 434,-285.35 464.03,-241.87 404,-150 396.96,-139.22 386.58,-130.54 375.59,-123.67" />
+<polygon fill="#64748b" stroke="#64748b" points="376.9,-121.6 369.62,-120.18 374.43,-125.83 376.9,-121.6" />
+<text xml:space="preserve" text-anchor="middle" x="443.68" y="-347.75" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">no</text>
+</g>
+
+<g id="node7" class="node">
+<title>reuse</title>
+<path fill="#dbeafe" stroke="#64748b" d="M302.33,-454C302.33,-454 143.67,-454 143.67,-454 137.67,-454 131.67,-448 131.67,-442 131.67,-442 131.67,-423.1 131.67,-423.1 131.67,-417.1 137.67,-411.1 143.67,-411.1 143.67,-411.1 302.33,-411.1 302.33,-411.1 308.33,-411.1 314.33,-417.1 314.33,-423.1 314.33,-423.1 314.33,-442 314.33,-442 314.33,-448 308.33,-454 302.33,-454" />
+<text xml:space="preserve" text-anchor="middle" x="223" y="-435.4" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Retain compatible matches</text>
+<text xml:space="preserve" text-anchor="middle" x="223" y="-421.15" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Discard obsolete variants first</text>
+</g>
+
+<g id="edge6" class="edge">
+<title>compare-&gt;reuse</title>
+<path fill="none" stroke="#64748b" d="M262.09,-484.65C256.34,-477.14 249.76,-468.54 243.66,-460.56" />
+<polygon fill="#64748b" stroke="#64748b" points="245.8,-459.32 239.6,-455.25 241.91,-462.3 245.8,-459.32" />
+</g>
+
+<g id="node8" class="node">
+<title>missing</title>
+<path fill="#fef3c7" stroke="#64748b" d="M181.27,-377.58C181.27,-377.58 71.56,-353.97 71.56,-353.97 65.7,-352.71 65.7,-350.19 71.56,-348.93 71.56,-348.93 181.27,-325.32 181.27,-325.32 187.13,-324.06 198.87,-324.06 204.73,-325.32 204.73,-325.32 314.44,-348.93 314.44,-348.93 320.3,-350.19 320.3,-352.71 314.44,-353.97 314.44,-353.97 204.73,-377.58 204.73,-377.58 198.87,-378.84 187.13,-378.84 181.27,-377.58" />
+<text xml:space="preserve" text-anchor="middle" x="193" y="-347.17" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Any missing tuples?</text>
+</g>
+
+<g id="edge7" class="edge">
+<title>reuse-&gt;missing</title>
+<path fill="none" stroke="#64748b" d="M215.12,-410.77C212.28,-403.27 208.99,-394.61 205.84,-386.29" />
+<polygon fill="#64748b" stroke="#64748b" points="208.18,-385.56 203.41,-379.89 203.6,-387.3 208.18,-385.56" />
+</g>
+
+<g id="node9" class="node">
+<title>capture</title>
+<path fill="#dbeafe" stroke="#64748b" d="M291.83,-279.3C291.83,-279.3 94.17,-279.3 94.17,-279.3 88.17,-279.3 82.17,-273.3 82.17,-267.3 82.17,-267.3 82.17,-248.4 82.17,-248.4 82.17,-242.4 88.17,-236.4 94.17,-236.4 94.17,-236.4 291.83,-236.4 291.83,-236.4 297.83,-236.4 303.83,-242.4 303.83,-248.4 303.83,-248.4 303.83,-267.3 303.83,-267.3 303.83,-273.3 297.83,-279.3 291.83,-279.3" />
+<text xml:space="preserve" text-anchor="middle" x="193" y="-260.7" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">For each missing tuple:</text>
+<text xml:space="preserve" text-anchor="middle" x="193" y="-246.45" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">private bindings → capture task work</text>
+</g>
+
+<g id="edge8" class="edge">
+<title>missing-&gt;capture</title>
+<path fill="none" stroke="#64748b" d="M193,-322.47C193,-311.59 193,-299.13 193,-288.13" />
+<polygon fill="#64748b" stroke="#64748b" points="195.45,-288.2 193,-281.2 190.55,-288.2 195.45,-288.2" />
+<text xml:space="preserve" text-anchor="middle" x="201.25" y="-297.35" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">yes</text>
+</g>
+
+<g id="node11" class="node">
+<title>ready</title>
+<path fill="#dbeafe" stroke="#64748b" d="M179.34,-119C179.34,-119 92.66,-119 92.66,-119 86.66,-119 80.66,-113 80.66,-107 80.66,-107 80.66,-95 80.66,-95 80.66,-89 86.66,-83 92.66,-83 92.66,-83 179.34,-83 179.34,-83 185.34,-83 191.34,-89 191.34,-95 191.34,-95 191.34,-107 191.34,-107 191.34,-113 185.34,-119 179.34,-119" />
+<text xml:space="preserve" text-anchor="middle" x="136" y="-96.72" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Graph set ready</text>
+</g>
+
+<g id="edge11" class="edge">
+<title>missing-&gt;ready</title>
+<path fill="none" stroke="#64748b" d="M145.77,-332.56C119.94,-320.75 89.01,-303.06 68,-279.3 40.44,-248.14 40.16,-233.69 32,-192.9 28.26,-174.2 21.72,-166.06 32,-150 41.39,-135.32 56.55,-125.06 72.42,-117.92" />
+<polygon fill="#64748b" stroke="#64748b" points="73.33,-120.2 78.85,-115.25 71.44,-115.68 73.33,-120.2" />
+<text xml:space="preserve" text-anchor="middle" x="43.56" y="-210.95" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">no</text>
+</g>
+
+<g id="node10" class="node">
+<title>instantiate</title>
+<path fill="#dbeafe" stroke="#64748b" d="M253.33,-192.9C253.33,-192.9 58.67,-192.9 58.67,-192.9 52.67,-192.9 46.67,-186.9 46.67,-180.9 46.67,-180.9 46.67,-162 46.67,-162 46.67,-156 52.67,-150 58.67,-150 58.67,-150 253.33,-150 253.33,-150 259.33,-150 265.33,-156 265.33,-162 265.33,-162 265.33,-180.9 265.33,-180.9 265.33,-186.9 259.33,-192.9 253.33,-192.9" />
+<text xml:space="preserve" text-anchor="middle" x="156" y="-174.3" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Validate → instantiate executable</text>
+<text xml:space="preserve" text-anchor="middle" x="156" y="-160.05" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Destroy temporary graph description</text>
+</g>
+
+<g id="edge9" class="edge">
+<title>capture-&gt;instantiate</title>
+<path fill="none" stroke="#64748b" d="M183.85,-235.99C179.23,-225.44 173.55,-212.47 168.52,-201.01" />
+<polygon fill="#64748b" stroke="#64748b" points="170.83,-200.18 165.78,-194.75 166.34,-202.15 170.83,-200.18" />
+</g>
+
+<g id="edge12" class="edge">
+<title>capture-&gt;fallback</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M229.32,-236.02C246.35,-224.89 265.93,-209.97 280,-192.9 296.23,-173.22 307.94,-146.39 315,-126.98" />
+<polygon fill="#64748b" stroke="#64748b" points="317.24,-128.01 317.25,-120.59 312.62,-126.39 317.24,-128.01" />
+<text xml:space="preserve" text-anchor="middle" x="350.79" y="-174.5" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">failure + successful</text>
+<text xml:space="preserve" text-anchor="middle" x="350.79" y="-161" font-family="Helvetica,sans-Serif" font-size="11.00" fill="#334155" style=";font-family:Arial,Helvetica,sans-serif">stream recovery</text>
+</g>
+
+<g id="edge10" class="edge">
+<title>instantiate-&gt;ready</title>
+<path fill="none" stroke="#64748b" d="M149.89,-149.54C147.8,-142.38 145.44,-134.3 143.26,-126.86" />
+<polygon fill="#64748b" stroke="#64748b" points="145.74,-126.59 141.42,-120.56 141.03,-127.97 145.74,-126.59" />
+</g>
+
+<g id="edge13" class="edge">
+<title>instantiate-&gt;fallback</title>
+<path fill="none" stroke="#64748b" stroke-dasharray="5,2" d="M207.01,-149.54C227.85,-141 251.89,-131.15 272.66,-122.63" />
+<polygon fill="#64748b" stroke="#64748b" points="273.5,-124.94 279.04,-120.02 271.64,-120.4 273.5,-124.94" />
+</g>
+
+<g id="node13" class="node">
+<title>workers</title>
+<path fill="#dcfce7" stroke="#64748b" d="M286.46,-52C286.46,-52 173.54,-52 173.54,-52 167.54,-52 161.54,-46 161.54,-40 161.54,-40 161.54,-28 161.54,-28 161.54,-22 167.54,-16 173.54,-16 173.54,-16 286.46,-16 286.46,-16 292.46,-16 298.46,-22 298.46,-28 298.46,-28 298.46,-40 298.46,-40 298.46,-46 292.46,-52 286.46,-52" />
+<text xml:space="preserve" text-anchor="middle" x="230" y="-29.73" font-family="Helvetica,sans-Serif" font-size="12.00" fill="#172033" style=";font-family:Arial,Helvetica,sans-serif">Start section workers</text>
+</g>
+
+<g id="edge14" class="edge">
+<title>ready-&gt;workers</title>
+<path fill="none" stroke="#64748b" d="M161.19,-82.58C172.46,-74.79 185.89,-65.5 197.88,-57.21" />
+<polygon fill="#64748b" stroke="#64748b" points="199.13,-59.32 203.5,-53.33 196.34,-55.29 199.13,-59.32" />
+</g>
+
+<g id="edge15" class="edge">
+<title>fallback-&gt;workers</title>
+<path fill="none" stroke="#64748b" d="M298.08,-82.58C286.92,-74.79 273.64,-65.5 261.78,-57.21" />
+<polygon fill="#64748b" stroke="#64748b" points="263.37,-55.34 256.23,-53.33 260.57,-59.35 263.37,-55.34" />
+</g>
+</g>
+</svg>
