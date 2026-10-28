@@ -215,10 +215,6 @@ void ExportWidget::connect_signals() {
   // Emit settings_changed for all control changes
   connect(image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
-  connect(format_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
-    update_codec_choices();
-    emit settings_changed();
-  });
   connect(codec_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
   connect(resize_algorithm_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
@@ -227,10 +223,6 @@ void ExportWidget::connect_signals() {
     update_codec_choices();
     emit settings_changed();
   });
-  connect(codec_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          &ExportWidget::settings_changed);
-  connect(resize_algorithm_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          &ExportWidget::settings_changed);
   connect(file_line_edit_, &QLineEdit::textChanged, this, &ExportWidget::file_path_changed);
   connect(tag_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);

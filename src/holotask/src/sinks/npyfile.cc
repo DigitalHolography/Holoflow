@@ -88,7 +88,7 @@ public:
                                                          frame_size)) {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    handle_events(ctx, settings_.path, settings_.count);
+    handle_events(ctx);
     if (!is_recording())
       return holoflow::core::OpResult::Ok;
     const auto batch = static_cast<int>(ctx.inputs[0].desc.shape[0]);
@@ -129,6 +129,9 @@ public:
     settings_ = std::move(settings);
     update_recording_path(settings_.path);
   }
+
+protected:
+  void recording_path_update_callback() override { settings_.path = recording_path(); }
 
 private:
   NpyfileSettings           settings_;

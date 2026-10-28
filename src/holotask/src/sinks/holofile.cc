@@ -127,13 +127,14 @@ void check(bool condition, const std::string &msg) {
 // stall for one cycle while the file is written. For typical recording sizes this is acceptable
 // and avoids all async complexity.
 
-class HolofileWriter final : public holoflow::core::ISyncTask {
+class HolofileWriter final : public detail::RecordingSink {
 public:
   HolofileWriter(const HolofileSettings &settings, const RecordingGeometry &geometry,
                  size_t frame_byte_size)
       : settings_(settings), geometry_(geometry), frame_byte_size_(frame_byte_size),
         ring_(curaii::make_unique_host_ptr<uint8_t>(static_cast<size_t>(settings.count) *
-                                                    frame_byte_size)) {
+                                                    frame_byte_size)),
+        writer_{std::nullopt} {
     // Touch every page so the OS actually backs the allocation with physical memory.
     // Without this, the first recording pays the page-fault cost.
     const size_t total_bytes = static_cast<size_t>(settings.count) * frame_byte_size_;
@@ -157,8 +158,6 @@ public:
 
     if (!recording_)
       return holoflow::core::OpResult::Ok;
-    
-
 
     // --- Phase 1: Accumulate frames into the buffer ---
     if (frames_buffered_ < settings_.count) {
@@ -180,21 +179,13 @@ public:
 
     // --- Phase 2: Buffer full — flush everything to disk ---
     if (frames_buffered_ >= settings_.count) {
-      logger()->info("[HolofileWriter] Frame buffer full ({} frames); flushing to disk...",
-                     settings_.count);
       try {
-        emit_acquisition_update_event(ctx, frames_buffered_);
-        flush_to_disk();
-        monitor_.update(ctx, frames_buffered_, frames_buffered_, true);
-        emit_finished_event(ctx);
-        logger()->info("[HolofileWriter] Recording complete: {} frames written to {}",
-                       frames_buffered_, settings_.path);
+        flush_to_disk(ctx);
       } catch (const std::exception &e) {
         logger()->error("[HolofileWriter] Failed to finalize recording at {}: {}", settings_.path,
                         e.what());
         emit_failed_event(ctx, e.what());
       }
-      reset();
     }
 
     return holoflow::core::OpResult::Ok;
@@ -213,175 +204,63 @@ public:
     if (recording_) {
       settings_.path = active_path;
     }
+    recording_path() = settings_.path;
   }
+
+protected:
+  virtual void recording_stopped_callback() override {}
+  virtual void recording_reset_callback() override {
+    frames_written_ = 0;
+    start_flush_    = false;
+  }
+  virtual void recording_path_update_callback() override { settings_.path = recording_path(); }
 
 private:
-  void flush_to_disk() {
-    const auto header = make_header(settings_.count, geometry_);
-    const auto footer = holofile::Footer{.pipeline_settings = settings_.pipeline_settings};
-
-    holofile::Writer writer(settings_.path, header, footer);
-    writer.write_frames(ring_.get(), static_cast<size_t>(settings_.count));
-    writer.write_footer();
+  void make_writer() {
+    writer_ = holofile::Writer{settings_.path, make_header(settings_.count, geometry_),
+                               holofile::Footer{.pipeline_settings = settings_.pipeline_settings}};
   }
 
-  void handle_events(holoflow::core::SyncCtx &ctx) {
-    if (!ctx.event_reader)
-      return;
+  void flush_to_disk(holoflow::core::SyncCtx &ctx) {
 
-    while (true) {
-      auto event = ctx.event_reader->try_pop();
-      if (!event.has_value())
-        break;
+    if (start_flush_) {
+      logger()->info("[HolofileWriter] Frame buffer full ({} frames); flushing to disk...",
+                     settings_.count);
+      start_flush_    = false;
+      frames_written_ = 0;
+      make_writer();
+    }
 
-      HOLOVIBES_CHECK(event->direction == holoflow_event::EventDirection::ToNode,
-                      "Unexpected event direction");
+    assert(writer_.has_value());
 
-      const auto type = event->data.at("type").get<std::string>();
+    const auto remaining  = settings_.count - frames_written_;
+    const auto batch_size = static_cast<int>(ctx.inputs[0].desc.shape[0]);
+    const auto to_write   = std::min(remaining, batch_size);
 
-      if (type == "start_recording") {
-        if (recording_) {
-          logger()->error("[HolofileWriter] Ignoring duplicate start_recording event");
-          emit_failed_event(ctx, "Recording already in progress");
-          continue;
-        }
-
-        const auto record_path = event->data.value("record_path", std::string{});
-        if (record_path.empty()) {
-          logger()->error("[HolofileWriter] Rejecting start_recording event with empty path");
-          emit_failed_event(ctx, "Cannot start recording: empty path");
-          continue;
-        }
-
-        if (settings_.count <= 0) {
-          const auto message = "Cannot start recording: invalid frame count (" +
-                               std::to_string(settings_.count) + ")";
-          logger()->error("[HolofileWriter] {}", message);
-          emit_failed_event(ctx, message);
-          continue;
-        }
-
-        settings_.path   = record_path;
-        frames_buffered_ = 0;
-        recording_       = true;
-        monitor_.start();
-        monitor_.update(ctx, 0, 0, true);
-
-      } else if (type == "stop_recording") {
-        if (!recording_) {
-          logger()->warn("[HolofileWriter] Ignoring stop_recording event while idle");
-          continue;
-        }
-
-        recording_       = false;
-        frames_buffered_ = 0;
-
-        if (!settings_.path.empty() && std::remove(settings_.path.c_str()) != 0 &&
-            errno != ENOENT) {
-          std::error_code ec(errno, std::generic_category());
-          logger()->error("[HolofileWriter] Failed to remove incomplete recording at {}: {}",
-                          settings_.path, ec.message());
-          emit_failed_event(ctx, "Failed to remove incomplete recording at " + settings_.path +
-                                     ": " + ec.message());
-        }
-
-      } else {
-        HOLOVIBES_BUG("Unknown event type: {}", type);
-      }
+    if (to_write > 0) {
+      const auto *buffer = ring_.get() + frames_written_ * frame_byte_size_;
+      writer_->write_frames(buffer, to_write);
+      frames_written_ += to_write;
+      monitor_.update(ctx, frames_buffered_, frames_written_, false);
+    } else {
+      writer_->write_footer();
+      writer_->flush();
+      start_flush_ = true;
+      emit_finished_event(ctx);
+      logger()->info("[HolofileWriter] Recording complete: {} frames written to {}",
+                     frames_written_, settings_.path);
+      writer_.reset();
     }
   }
 
-  void emit_recording_update_event(holoflow::core::SyncCtx &ctx, size_t frames_written,
-                                   size_t writing_speed, size_t elapsed_time) {
-    auto event = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "recording_update"},
-                {"frame_recorded", frames_written},
-                {"writing_speed", writing_speed},
-                {"elapsed_time", elapsed_time},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit recording_update event");
-  }
-  void emit_acquisition_update_event(holoflow::core::SyncCtx &ctx, size_t frames) {
-    auto event = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "acquisition_update"},
-                {"frame_acquired", frames},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit acquisition_update event");
-  }
-
-  void emit_finished_event(holoflow::core::SyncCtx &ctx) {
-    auto event = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "recording_finished"},
-                {"path", settings_.path},
-                {"frames_written", frames_buffered_},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit recording_finished event");
-
-    auto event_flush = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "record_flushing_finished"},
-                {"id", 0},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event_flush)),
-                    "Failed to emit record_flushing_finished event");
-  }
-
-  void emit_failed_event(holoflow::core::SyncCtx &ctx, const std::string &message) {
-    auto event = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "recording_failed"},
-                {"path", settings_.path},
-                {"message", message},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit recording_failed event");
-  }
-
-  void reset() {
-    recording_       = false;
-    frames_buffered_ = 0;
-  }
-
+private:
   HolofileSettings  settings_;
   RecordingGeometry geometry_;
   size_t            frame_byte_size_;
+  int               frames_written_ = 0;
+  bool              start_flush_    = true;
   HostPtr<uint8_t>  ring_; ///< Preallocated at construction; reused across recordings.
-
-  bool recording_       = false;
-  int  frames_buffered_ = 0;
-
-  detail::RecordingMonitor monitor_;
+  std::optional<holofile::Writer> writer_;
 };
 
 } // namespace

@@ -723,20 +723,20 @@ public:
       return;
     }
 
-    using EventHandler = std::function<void(holoflow::core::SyncCtx &,
-                                            const std::optional<holoflow_event::Event> &)>;
+    using EventHandler =
+        std::function<void(holoflow::core::SyncCtx &, const holoflow_event::Event &)>;
     static std::map<std::string, EventHandler> event_handlers = {
         {"start_recording",
-         [this](holoflow::core::SyncCtx &ctx, const std::optional<holoflow_event::Event> &event) {
+         [this](holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
            on_start_recording_event(ctx, event);
          }},
         {"stop_recording",
-         [this](holoflow::core::SyncCtx &ctx, const std::optional<holoflow_event::Event> &event) {
+         [this](holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
            on_stop_recording_event(ctx, event);
          }},
         {"update_recording_path",
-         [this](holoflow::core::SyncCtx &ctx, const std::optional<holoflow_event::Event> &event) {
-           on_update_record_path(ctx, event);
+         [this](holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
+           on_update_record_path_event(ctx, event);
          }},
     };
 
@@ -756,7 +756,7 @@ public:
       if (handler_it == event_handlers.end()) {
         HOLOVIBES_BUG("Unknown event type: {}", type);
       } else {
-        handler_it->second(ctx, event);
+        handler_it->second(ctx, *event);
       }
     }
   }
@@ -911,7 +911,6 @@ public:
   }
 
 private:
-
   void emit_camera_record_flushing_finished_event(holoflow::core::SyncCtx    &ctx,
                                                   RecordingSession::SessionId id) {
     auto event = holoflow_event::Event{
@@ -1345,12 +1344,10 @@ private:
     return std::nullopt;
   }
 
-  void on_update_record_path(holoflow::core::SyncCtx                    &ctx,
-                             const std::optional<holoflow_event::Event> &event) {
+  void on_update_record_path_event(holoflow::core::SyncCtx     &ctx,
+                                   const holoflow_event::Event &event) {
 
-    assert(recording_context_.has_value());
-
-    const auto record_path = event->data.value("record_path", std::string{});
+    const auto record_path = event.data.value("record_path", std::string{});
     if (record_path.empty()) {
       logger()->error("[AmetekS711EuresysCoaxlinkQSFP::on_update_record_path] Rejecting "
                       "update_record_path event with empty path");
@@ -1362,10 +1359,8 @@ private:
     settings_.record_settings->file_path = record_path;
   }
 
-  void on_start_recording_event(holoflow::core::SyncCtx                    &ctx,
-                                const std::optional<holoflow_event::Event> &event) {
+  void on_start_recording_event(holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
 
-    assert(recording_context_.has_value());
     if (recording_context_->recording_.load(std::memory_order_acquire)) {
       logger()->error(
           "[AmetekS711EuresysCoaxlinkQSFP::on_start_recording_event] Ignoring duplicate "
@@ -1375,7 +1370,7 @@ private:
       return;
     }
 
-    const auto record_path = event->data.value("record_path", std::string{});
+    const auto record_path = event.data.value("record_path", std::string{});
     if (record_path.empty()) {
       logger()->error("[AmetekS711EuresysCoaxlinkQSFP::on_start_recording_event] Rejecting "
                       "start_recording event with empty path");
@@ -1402,8 +1397,7 @@ private:
     }
   }
 
-  void on_stop_recording_event(holoflow::core::SyncCtx                    &ctx,
-                               const std::optional<holoflow_event::Event> &event) {
+  void on_stop_recording_event(holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
     (void)event;
 
     assert(recording_context_.has_value());
