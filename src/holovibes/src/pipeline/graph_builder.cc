@@ -275,8 +275,11 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
 
   if (H.mem_loc != MemLoc::Device) {
     H = memcpy(H, {Device});
-    H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window});
   }
+  // Window GPU-cached input too, and retain enough frames to advance a full stride
+  // without filling the queue's reserved slot before an output becomes available.
+  H = batched_queue(H, {std::max(s_.gpu_in_size, s_.time_stride), s_.time_window,
+                        s_.time_stride});
 
   return convert(H, {Target::F32, Strat::Real});
 }
