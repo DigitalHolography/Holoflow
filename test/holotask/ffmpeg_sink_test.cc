@@ -262,6 +262,71 @@ TEST(FfmpegSinkTest, EncodesAviMjpegAtNormalAndMaximumRates) {
   }
 }
 
+TEST(FfmpegSinkTest, RejectsMpeg4RatesAboveCodecLimitBeforeRecording) {
+  holotask::sinks::FfmpegFactory factory;
+  const std::vector<TDesc>       input{desc()};
+  EXPECT_NO_THROW(factory.infer(input, settings("x.mp4", 2, 65535.0, "mp4", "mpeg4")));
+  for (const double fps :
+       {std::nextafter(65535.0, std::numeric_limits<double>::infinity()), 100000.0}) {
+    try {
+      factory.infer(input, settings("x.mp4", 2, fps, "mp4", "mpeg4"));
+      FAIL() << "Unsupported MPEG-4 frame rate was accepted";
+    } catch (const std::invalid_argument &error) {
+      const std::string message = error.what();
+      EXPECT_NE(message.find("65535 fps"), std::string::npos);
+      EXPECT_NE(message.find("another codec"), std::string::npos);
+    }
+  }
+  EXPECT_NO_THROW(factory.infer(input, settings("x.mkv", 2, 100000.0)));
+}
+
+TEST(FfmpegSinkTest, EncodesMpeg4WithFractionalFrameRates) {
+  for (const auto *format : {"mp4", "avi", "matroska"}) {
+    SCOPED_TRACE(format);
+    for (const double fps : {25.0, 50000.1 / 64.0, 25000.1 / 64.0}) {
+      SCOPED_TRACE(fps);
+      const auto path = test_path((std::string("holoflow_mpeg4_fractional.") + format).c_str());
+      std::filesystem::remove(path);
+      holotask::sinks::FfmpegFactory factory;
+      const std::vector<TDesc>       input_descs{TDesc({1, 16, 32}, DType::U8, MemLoc::Host)};
+      auto task = factory.create(input_descs, settings(path.string(), 8, fps, format, "mpeg4"), {});
+      task->bind_logger(spdlog::default_logger());
+      RecordingContext       recording;
+      holoflow::core::Tensor tensor(input_descs[0]);
+      std::memset(tensor.data(), 128, input_descs[0].num_bytes());
+      std::array<holoflow::core::TView, 1> inputs{tensor.view()};
+      holoflow::core::SyncCtx              ctx{
+          inputs, {}, nullptr, &recording.handles.out, &recording.handles.in};
+      start_recording(recording, path.string());
+      for (int frame = 0; frame < 8; ++frame)
+        ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+      const auto event = receive_event(recording);
+      ASSERT_TRUE(event.has_value());
+      ASSERT_EQ(event->data.at("type"), "recording_finished") << event->data;
+      EXPECT_EQ(event->data.at("frames_written"), 8);
+
+      AVFormatContext *output = nullptr;
+      ASSERT_EQ(avformat_open_input(&output, path.string().c_str(), nullptr, nullptr), 0);
+      ASSERT_EQ(avformat_find_stream_info(output, nullptr), 0);
+      const auto stream_index = av_find_best_stream(output, AVMEDIA_TYPE_VIDEO, -1, -1, nullptr, 0);
+      ASSERT_GE(stream_index, 0);
+      // Bounding the MPEG-4 time base requires a small rational approximation.
+      EXPECT_NEAR(av_q2d(output->streams[stream_index]->avg_frame_rate), fps, fps * 1e-5);
+      avformat_close_input(&output);
+
+      int                       width  = 0;
+      int                       height = 0;
+      int                       frames = 0;
+      std::vector<std::uint8_t> decoded;
+      decode_u8(path, width, height, frames, decoded, AV_PIX_FMT_YUV420P);
+      EXPECT_EQ(width, 32);
+      EXPECT_EQ(height, 16);
+      EXPECT_EQ(frames, 8);
+      std::filesystem::remove(path);
+    }
+  }
+}
+
 TEST(FfmpegSinkTest, ReusesOnlyWhenEncoderSettingsAndGeometryMatch) {
   holotask::sinks::FfmpegFactory factory;
   const std::vector<TDesc>       input{desc()};
