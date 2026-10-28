@@ -208,12 +208,13 @@ public:
   }
 
 protected:
-  virtual void recording_stopped_callback() override {}
   virtual void recording_reset_callback() override {
     frames_written_ = 0;
-    start_flush_    = false;
+    start_flush_    = true;
+    writer_.reset();
   }
   virtual void recording_path_update_callback() override { settings_.path = recording_path(); }
+  virtual void recording_stopped_callback() override { reset(); }
 
 private:
   void make_writer() {

@@ -51,10 +51,8 @@ void RecordingSink::on_start_recording_event(holoflow::core::SyncCtx     &ctx,
 void RecordingSink::on_stop_recording_event(holoflow::core::SyncCtx     &ctx,
                                             const holoflow_event::Event &event) {
   (void)event;
-  if (!recording_) {
-    logger()->warn("[RecordingSink] Ignoring stop_recording event while idle");
+  if (!recording_)
     return;
-  }
 
   std::string stop_error;
   try {
@@ -65,8 +63,9 @@ void RecordingSink::on_stop_recording_event(holoflow::core::SyncCtx     &ctx,
 
   if (!recording_path_.empty() && std::remove(recording_path_.c_str()) != 0 && errno != ENOENT) {
     std::error_code ec(errno, std::generic_category());
-    logger()->error("[RecordingSink] Failed to remove incomplete recording at {}: {}",
-                    recording_path_, ec.message());
+    logger()->error(
+        "RecordingSink::on_stop_recording_event] Failed to remove incomplete recording at {}: {}",
+        recording_path_, ec.message());
     stop_error =
         "Failed to remove incomplete recording at " + recording_path_ + ": " + ec.message();
   }
@@ -112,7 +111,7 @@ void RecordingSink::handle_events(holoflow::core::SyncCtx &ctx) {
 
     const auto type = event->data.at("type").get<std::string>();
 
-    logger()->debug("[AmetekS711EuresysCoaxlinkQSFP::handle_events] received event: {}", type);
+    logger()->debug("[RecordingSink::handle_events] received event: {}", type);
 
     auto handler_it = event_handlers.find(type);
     if (handler_it == event_handlers.end()) {

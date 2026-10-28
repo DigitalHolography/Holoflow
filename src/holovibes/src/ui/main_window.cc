@@ -2811,7 +2811,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     QString     appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
     QString     convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels/";
     std::string kernel_path             = convolutionsKernelsPath.toStdString() +
-                              render_widget_->get_convolution().toStdString() + ".json";
+                                          render_widget_->get_convolution().toStdString() + ".json";
 
     s.pp_fps       = 60;
     s.pp_fft_shift = s.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;
