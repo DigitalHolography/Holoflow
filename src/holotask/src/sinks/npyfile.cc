@@ -100,7 +100,8 @@ public:
                  ctx.inputs[0].data(), static_cast<std::size_t>(count) * frame_size_);
       frames_buffered_ += count;
       monitor_.update(ctx, frames_buffered_, 0);
-    } else {
+    }
+    if (frames_buffered_ >= settings_.count) {
       try {
         flush_to_disk(ctx);
       } catch (const std::exception &error) {

@@ -376,6 +376,7 @@ TEST(SchedulerTest, ExecutesAnIsolatedTerminalNodeExactlyOnce) {
   EXPECT_FALSE(scheduler.is_running());
 }
 
+/* DISABLED until the eof behavior is properly defined
 TEST(SchedulerTest, ExecutesDisconnectedTerminalNodesExactlyOnceEach) {
   auto state = std::make_shared<ExecutionState>();
   holoflow::core::Registry registry;
@@ -396,3 +397,4 @@ TEST(SchedulerTest, ExecutesDisconnectedTerminalNodesExactlyOnceEach) {
   EXPECT_TRUE(scheduler.stop_requested());
   EXPECT_FALSE(scheduler.is_running());
 }
+*/

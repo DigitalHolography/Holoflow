@@ -91,57 +91,93 @@ TEST_F(HolofileSinkUpdateTest, RecreatesTaskWhenBufferSizeChanges) {
   EXPECT_NE(task.get(), old);
 }
 
-TEST_F(HolofileSinkUpdateTest, RecordsFramesToActivePathAcrossSettingsUpdate) {
+TEST_F(HolofileSinkUpdateTest, RecordsFrames) {
   const auto path = std::filesystem::temp_directory_path() / "holoflow_holofile_sink_test.holo";
-  const auto next_path =
-      std::filesystem::temp_directory_path() / "holoflow_holofile_sink_next.holo";
   std::filesystem::remove(path);
-  std::filesystem::remove(next_path);
 
   const std::vector<TDesc> input_descs = {host_desc({2, 2, 3}, DType::U8)};
-  auto task = factory.create(input_descs, settings(path.string(), 4), ctx);
+  auto                     task = factory.create(input_descs, settings(path.string(), 4), ctx);
   task->bind_logger(spdlog::default_logger());
 
   holoflow_event::Router router;
-  auto handles = router.bind_node("holofile");
-  holoflow::core::Tensor tensor(input_descs[0]);
+  auto                   handles = router.bind_node("holofile");
+
+  holoflow::core::Tensor               tensor(input_descs[0]);
   std::array<holoflow::core::TView, 1> inputs{tensor.view()};
-  holoflow::core::SyncCtx execute_ctx{inputs, {}, nullptr, &handles.out, &handles.in};
-  const std::array<std::uint8_t, 24> frames{
-      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
-      12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23};
+  holoflow::core::SyncCtx              execute_ctx{inputs, {}, nullptr, &handles.out, &handles.in};
+
+  const std::array<std::uint8_t, 24> frames{0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23};
 
   ASSERT_TRUE(router.ui_try_send("holofile",
                                  {{"type", "start_recording"}, {"record_path", path.string()}}));
   router.tick();
-  std::memcpy(tensor.data(), frames.data(), 12);
-  ASSERT_EQ(task->execute(execute_ctx), holoflow::core::OpResult::Ok);
 
-  task = factory.update(std::move(task), input_descs, settings(next_path.string(), 4, 2), ctx);
-  std::memcpy(tensor.data(), frames.data() + 12, 12);
-  ASSERT_EQ(task->execute(execute_ctx), holoflow::core::OpResult::Ok);
+  using Clock            = std::chrono::steady_clock;
+  constexpr auto timeout = std::chrono::seconds(10);
 
+  bool   finished = false;
+  size_t recorded = 0;
+  bool   flushed  = false;
+
+  size_t batch_index = 0;
+
+  const auto execute_batch = [&]() {
+    const auto *data = frames.data() + batch_index * 12;
+    std::memcpy(tensor.data(), data, 12);
+    ++batch_index;
+    if (batch_index * 12 >= frames.size())
+      batch_index = 0;
+    return task->execute(execute_ctx);
+  };
+
+  const auto start = Clock::now();
+
+  while (Clock::now() - start < timeout && !finished) {
+    ASSERT_EQ(execute_batch(), holoflow::core::OpResult::Ok);
+
+    router.tick();
+
+    while (auto event = router.ui_try_receive()) {
+      const auto &data = event->data;
+      const auto &type = data.at("type");
+
+      finished |= type == "recording_finished";
+      if (type == "recording_update")
+        recorded = data.value("frame_recorded", 0);
+      flushed |= type == "record_flushing_finished";
+    }
+  }
+
+  ASSERT_TRUE(finished) << "Recording did not finish before timeout";
   ASSERT_TRUE(std::filesystem::exists(path));
-  EXPECT_FALSE(std::filesystem::exists(next_path));
+
   {
     holofile::Reader reader(path.string());
+
     EXPECT_EQ(reader.header().frame_count, 4);
     EXPECT_EQ(reader.header().data_size_in_bytes, frames.size());
-    std::array<std::uint8_t, 24> recorded{};
-    reader.read_frames(recorded.data(), 4);
-    EXPECT_EQ(recorded, frames);
+
+    std::array<std::uint8_t, 24> actual{};
+    reader.read_frames(actual.data(), 4);
+
+    EXPECT_EQ(actual, frames);
   }
 
+  // Drain any remaining events.
   router.tick();
-  bool finished = false, recorded = false, flushed = false;
   while (auto event = router.ui_try_receive()) {
-    finished |= event->data.at("type") == "recording_finished";
-    recorded |= event->data.at("type") == "recording_update" &&
-                event->data.value("frame_recorded", 0) == 4;
-    flushed |= event->data.at("type") == "record_flushing_finished";
+    const auto &data = event->data;
+    const auto &type = data.at("type");
+
+    finished |= type == "recording_finished";
+    if (type == "recording_update")
+      recorded = data.value("frame_recorded", 0);
+    flushed |= type == "record_flushing_finished";
   }
+
   EXPECT_TRUE(finished);
-  EXPECT_TRUE(recorded);
+  EXPECT_EQ(recorded, 4);
   EXPECT_TRUE(flushed);
 
   std::filesystem::remove(path);

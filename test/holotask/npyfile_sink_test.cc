@@ -52,60 +52,105 @@ TEST(NpyfileSinkTest, RejectsInvalidInputs) {
 TEST(NpyfileSinkTest, WritesStandardNpyArrayAndCompletionEvent) {
   const auto path = test_path();
   std::filesystem::remove(path);
+
   holotask::sinks::NpyfileFactory factory;
   const std::vector<TDesc>        input_descs{desc()};
-  auto                      task = factory.create(input_descs, settings(path.string(), 4), {});
+  auto task = factory.create(input_descs, settings(path.string(), 4), {});
   task->bind_logger(spdlog::default_logger());
-  holoflow_event::Router    router;
-  auto                      handles = router.bind_node("npy");
-  std::vector<std::uint8_t> batch_values(12);
-  for (std::size_t i = 0; i < batch_values.size(); ++i)
-    batch_values[i] = static_cast<std::uint8_t>(i);
-  std::vector<std::uint8_t> values;
-  values.insert(values.end(), batch_values.begin(), batch_values.end());
-  values.insert(values.end(), batch_values.begin(), batch_values.end());
-  TDesc                  batch_desc({2, 2, 3}, DType::U8, MemLoc::Host);
-  holoflow::core::Tensor tensor(batch_desc);
-  std::memcpy(tensor.data(), batch_values.data(), batch_values.size());
+
+  holoflow_event::Router router;
+  auto                   handles = router.bind_node("npy");
+
+  const std::array<std::uint8_t, 24> values{0,  1,  2,  3,  4,  5,  6,  7,  8,  9,  10, 11,
+                                            12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23};
+
+  TDesc                                batch_desc({2, 2, 3}, DType::U8, MemLoc::Host);
+  holoflow::core::Tensor               tensor(batch_desc);
   std::array<holoflow::core::TView, 1> inputs{tensor.view()};
   holoflow::core::SyncCtx              ctx{inputs, {}, nullptr, &handles.out, &handles.in};
 
   ASSERT_TRUE(
       router.ui_try_send("npy", {{"type", "start_recording"}, {"record_path", path.string()}}));
   router.tick();
-  ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
-  ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+
+  using Clock            = std::chrono::steady_clock;
+  constexpr auto timeout = std::chrono::seconds(10);
+
+  bool        finished    = false;
+  bool        acquired    = false;
+  size_t      recorded    = 0;
+  bool        flushed     = false;
+  std::size_t batch_index = 0;
+  const auto  start       = Clock::now();
+
+  while (Clock::now() - start < timeout && !finished) {
+    std::memcpy(tensor.data(), values.data() + batch_index * 12, 12);
+    ++batch_index;
+    if (batch_index * 12 >= values.size())
+      batch_index = 0;
+
+    ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+    router.tick();
+
+    while (auto event = router.ui_try_receive()) {
+      const auto &data = event->data;
+      const auto &type = data.at("type");
+
+      finished |= type == "recording_finished";
+      acquired |= type == "acquisition_update" && data.value("frame_acquired", 0) == 4;
+      if (type == "recording_update")
+        recorded = data.value("frame_recorded", 0);
+      flushed |= type == "record_flushing_finished";
+    }
+  }
+
+  ASSERT_TRUE(finished) << "Recording did not finish before timeout";
+  ASSERT_TRUE(std::filesystem::exists(path));
+
+  {
+    std::ifstream file(path, std::ios::binary);
+    ASSERT_TRUE(file.good());
+
+    std::array<char, 10> prefix{};
+    file.read(prefix.data(), prefix.size());
+
+    EXPECT_EQ(std::string(prefix.data(), 6), "\x93NUMPY");
+
+    const auto header_size =
+        static_cast<unsigned char>(prefix[8]) | (static_cast<unsigned char>(prefix[9]) << 8);
+
+    std::string header(header_size, '\0');
+    file.read(header.data(), header.size());
+
+    EXPECT_NE(header.find("'descr': '<u1'"), std::string::npos);
+    EXPECT_NE(header.find("'fortran_order': False"), std::string::npos);
+    EXPECT_NE(header.find("'shape': (4, 2, 3)"), std::string::npos);
+    EXPECT_EQ((10 + header_size) % 16, 0);
+
+    std::array<std::uint8_t, 24> actual{};
+    file.read(reinterpret_cast<char *>(actual.data()), actual.size());
+
+    EXPECT_TRUE(std::equal(values.begin(), values.end(), actual.begin()));
+  }
+
+  // Drain any remaining events.
   router.tick();
-  bool finished = false, acquired = false, recorded = false, flushed = false;
   while (auto event = router.ui_try_receive()) {
-    const auto type = event->data.at("type");
+    const auto &data = event->data;
+    const auto &type = data.at("type");
+
     finished |= type == "recording_finished";
-    acquired |= type == "acquisition_update" && event->data.value("frame_acquired", 0) == 4;
-    recorded |= type == "recording_update" && event->data.value("frame_recorded", 0) == 4;
+    acquired |= type == "acquisition_update" && data.value("frame_acquired", 0) == 4;
+    if (type == "recording_update")
+      recorded = data.value("frame_recorded", 0);
     flushed |= type == "record_flushing_finished";
   }
+
   EXPECT_TRUE(finished);
   EXPECT_TRUE(acquired);
-  EXPECT_TRUE(recorded);
+  EXPECT_EQ(recorded, 4);
   EXPECT_TRUE(flushed);
 
-  std::ifstream file(path, std::ios::binary);
-  ASSERT_TRUE(file.good());
-  std::array<char, 10> prefix{};
-  file.read(prefix.data(), prefix.size());
-  EXPECT_EQ(std::string(prefix.data(), 6), "\x93NUMPY");
-  const auto header_size =
-      static_cast<unsigned char>(prefix[8]) | (static_cast<unsigned char>(prefix[9]) << 8);
-  std::string header(header_size, '\0');
-  file.read(header.data(), header.size());
-  EXPECT_NE(header.find("'descr': '<u1'"), std::string::npos);
-  EXPECT_NE(header.find("'fortran_order': False"), std::string::npos);
-  EXPECT_NE(header.find("'shape': (4, 2, 3)"), std::string::npos);
-  EXPECT_EQ((10 + header_size) % 16, 0);
-  std::vector<std::uint8_t> actual(values.size());
-  file.read(reinterpret_cast<char *>(actual.data()), actual.size());
-  EXPECT_TRUE(std::equal(values.begin(), values.end(), actual.begin()));
-  file.close();
   std::filesystem::remove(path);
 }
 
@@ -124,15 +169,15 @@ TEST(NpyfileSinkTest, RemovesIncompleteFileAfterStopRecording) {
   const auto path = test_path();
   std::filesystem::remove(path);
   holotask::sinks::NpyfileFactory factory;
-  const std::vector<TDesc> input_descs{desc()};
+  const std::vector<TDesc>        input_descs{desc()};
   auto task = factory.create(input_descs, settings(path.string(), 4), {});
   task->bind_logger(spdlog::default_logger());
-  holoflow_event::Router router;
-  auto handles = router.bind_node("npy");
-  TDesc batch_desc({2, 2, 3}, DType::U8, MemLoc::Host);
-  holoflow::core::Tensor tensor(batch_desc);
+  holoflow_event::Router               router;
+  auto                                 handles = router.bind_node("npy");
+  TDesc                                batch_desc({2, 2, 3}, DType::U8, MemLoc::Host);
+  holoflow::core::Tensor               tensor(batch_desc);
   std::array<holoflow::core::TView, 1> inputs{tensor.view()};
-  holoflow::core::SyncCtx ctx{inputs, {}, nullptr, &handles.out, &handles.in};
+  holoflow::core::SyncCtx              ctx{inputs, {}, nullptr, &handles.out, &handles.in};
 
   ASSERT_TRUE(
       router.ui_try_send("npy", {{"type", "start_recording"}, {"record_path", path.string()}}));
@@ -146,18 +191,18 @@ TEST(NpyfileSinkTest, RemovesIncompleteFileAfterStopRecording) {
 }
 
 TEST(NpyfileSinkTest, ReportsFailedFileCreation) {
-  const auto path = std::filesystem::temp_directory_path() / "holoflow_missing_npy_dir" /
-                    "recording.npy";
+  const auto path =
+      std::filesystem::temp_directory_path() / "holoflow_missing_npy_dir" / "recording.npy";
   std::filesystem::remove(path);
   holotask::sinks::NpyfileFactory factory;
-  const std::vector<TDesc> input_descs{desc()};
+  const std::vector<TDesc>        input_descs{desc()};
   auto task = factory.create(input_descs, settings(path.string(), 2), {});
   task->bind_logger(spdlog::default_logger());
-  holoflow_event::Router router;
-  auto handles = router.bind_node("npy");
-  holoflow::core::Tensor tensor(TDesc({2, 2, 3}, DType::U8, MemLoc::Host));
+  holoflow_event::Router               router;
+  auto                                 handles = router.bind_node("npy");
+  holoflow::core::Tensor               tensor(TDesc({2, 2, 3}, DType::U8, MemLoc::Host));
   std::array<holoflow::core::TView, 1> inputs{tensor.view()};
-  holoflow::core::SyncCtx ctx{inputs, {}, nullptr, &handles.out, &handles.in};
+  holoflow::core::SyncCtx              ctx{inputs, {}, nullptr, &handles.out, &handles.in};
 
   ASSERT_TRUE(
       router.ui_try_send("npy", {{"type", "start_recording"}, {"record_path", path.string()}}));

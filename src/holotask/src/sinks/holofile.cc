@@ -174,7 +174,7 @@ public:
       logger()->trace("[HolofileWriter] Buffered {} frames ({} us)", to_copy, duration_us);
       frames_buffered_ += to_copy;
 
-      monitor_.update(ctx, frames_buffered_, 0);
+      monitor_.update(ctx, frames_buffered_, frames_buffered_);
     }
 
     // --- Phase 2: Buffer full — flush everything to disk ---
@@ -242,7 +242,7 @@ private:
       const auto *buffer = ring_.get() + frames_written_ * frame_byte_size_;
       writer_->write_frames(buffer, to_write);
       frames_written_ += to_write;
-      monitor_.update(ctx, frames_buffered_, frames_written_, false);
+      monitor_.update(ctx, frames_buffered_, 0);
     } else {
       writer_->write_footer();
       writer_->flush();

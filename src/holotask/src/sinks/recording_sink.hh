@@ -32,10 +32,9 @@ public:
     const auto now = Clock::now();
     if (!force && now - last_update_ < std::chrono::milliseconds(200))
       return;
+
     last_update_       = now;
     const auto seconds = std::chrono::duration<double>(now - started_).count();
-    if (seconds < 0.2)
-      return;
     send(ctx, {{"type", "acquisition_update"}, {"id", 0}, {"frame_acquired", acquired}});
     send(ctx, {{"type", "recording_update"},
                {"id", 0},

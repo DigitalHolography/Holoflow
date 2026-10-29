@@ -123,7 +123,6 @@ void RecordingSink::handle_events(holoflow::core::SyncCtx &ctx) {
 }
 
 void RecordingSink::emit_finished_event(holoflow::core::SyncCtx &ctx) {
-  emit_event(ctx, "recording_finished", {{"frames_written", frames_buffered_}});
   monitor_.update(ctx, frames_buffered_, frames_buffered_, true);
   monitor_.finish(ctx);
   recording_ = false;
