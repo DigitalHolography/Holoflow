@@ -86,6 +86,21 @@ AVPixelFormat choose_pixel_format(const AVCodec *codec, const detail::RecordingG
     throw std::invalid_argument("FfmpegFactory error: codec does not support 16-bit grayscale");
   }
 
+  if (codec->id == AV_CODEC_ID_MJPEG) {
+    if (pixel_formats == nullptr)
+      throw std::invalid_argument("FfmpegFactory error: MJPEG pixel formats are unspecified");
+
+    constexpr AVPixelFormat full_range_formats[] = {
+        AV_PIX_FMT_YUVJ420P, AV_PIX_FMT_YUVJ422P, AV_PIX_FMT_YUVJ444P,
+    };
+    for (const auto format : full_range_formats) {
+      if (supports(format))
+        return format;
+    }
+    throw std::invalid_argument(
+        "FfmpegFactory error: MJPEG has no supported full-range YUV format");
+  }
+
   if (pixel_formats == nullptr)
     return AV_PIX_FMT_YUV420P;
 
@@ -100,10 +115,30 @@ AVPixelFormat choose_pixel_format(const AVCodec *codec, const detail::RecordingG
   throw std::invalid_argument("FfmpegFactory error: codec has no supported 8-bit pixel format");
 }
 
+AVRational encoder_frame_rate(const AVCodec *codec, double fps) {
+  if (codec->id == AV_CODEC_ID_MPEG4) {
+    // The inverse frame rate becomes the time base. MPEG-4 limits its denominator
+    // (the frame-rate numerator) to 16 bits, including for fractional frame rates.
+    check(fps <= 65535.0, "MPEG-4 export supports at most 65535 fps; choose another codec "
+                          "(current export fps: " +
+                              std::to_string(fps) + ")");
+    const auto rate = av_d2q(fps, 65535);
+    check(rate.num > 0 && rate.den > 0, "frame rate is too small for MPEG-4 export");
+    return rate;
+  }
+  return av_d2q(fps, 100000);
+}
+
 void validate_ffmpeg_settings(const FfmpegSettings            &settings,
                               const detail::RecordingGeometry &geometry) {
   check(settings.count > 0, "count must be positive");
   check(std::isfinite(settings.fps) && settings.fps > 0.0, "fps must be finite and positive");
+  // FFmpeg's AVI muxer replaces rates above 1000 fps with 600 fps, which collapses
+  // consecutive packet timestamps. Reject this before opening the recording file.
+  check(settings.format != "avi" || settings.fps <= 1000.0,
+        "AVI export supports at most 1000 fps; increase the time stride or choose another "
+        "output format (current export fps: " +
+            std::to_string(settings.fps) + ")");
   check(!settings.format.empty(), "format must not be empty");
   check(!settings.codec.empty(), "codec must not be empty");
   check(!settings.resize_to_square || settings.resize_algorithm == "CpuBilinear" ||
@@ -119,6 +154,7 @@ void validate_ffmpeg_settings(const FfmpegSettings            &settings,
   const auto *codec = avcodec_find_encoder_by_name(settings.codec.c_str());
   check(codec != nullptr, "unknown video encoder: " + settings.codec);
   check(codec->type == AVMEDIA_TYPE_VIDEO, "codec is not a video encoder: " + settings.codec);
+  (void)encoder_frame_rate(codec, settings.fps);
   check(avformat_query_codec(output_format, codec->id, FF_COMPLIANCE_NORMAL) > 0,
         "codec '" + settings.codec + "' is incompatible with format '" + settings.format + "'");
   (void)choose_pixel_format(codec, geometry);
@@ -258,10 +294,17 @@ private:
     codec_context_->width        = static_cast<int>(output_width_);
     codec_context_->height       = static_cast<int>(output_height_);
     codec_context_->pix_fmt      = output_pixel_format_;
-    codec_context_->framerate    = av_d2q(settings_.fps, 100000);
+    codec_context_->framerate    = encoder_frame_rate(codec, settings_.fps);
     codec_context_->time_base    = av_inv_q(codec_context_->framerate);
     codec_context_->gop_size     = 12;
     codec_context_->max_b_frames = 0;
+    if (codec->id == AV_CODEC_ID_MJPEG) {
+      codec_context_->color_range = AVCOL_RANGE_JPEG;
+      codec_context_->flags |= AV_CODEC_FLAG_QSCALE;
+      codec_context_->global_quality = FF_QP2LAMBDA;
+      codec_context_->qmin           = 1;
+      codec_context_->qmax           = 1;
+    }
     if (codec->id == AV_CODEC_ID_MPEG4) {
       // MPEG-4's defaults are tuned for small bandwidth, which is too destructive for
       // scientific images. Use a bounded quality range instead of an arbitrary bitrate.
@@ -274,7 +317,8 @@ private:
     check_ffmpeg(avcodec_open2(codec_context_, codec, nullptr), "avcodec_open2");
     check_ffmpeg(avcodec_parameters_from_context(stream_->codecpar, codec_context_),
                  "avcodec_parameters_from_context");
-    stream_->time_base = codec_context_->time_base;
+    stream_->time_base      = codec_context_->time_base;
+    stream_->avg_frame_rate = codec_context_->framerate;
 
     if ((format_context_->oformat->flags & AVFMT_NOFILE) == 0)
       check_ffmpeg(avio_open(&format_context_->pb, recording_path().c_str(), AVIO_FLAG_WRITE),
@@ -288,6 +332,10 @@ private:
     frame_->format = output_pixel_format_;
     frame_->width  = codec_context_->width;
     frame_->height = codec_context_->height;
+    frame_->color_range = codec_context_->color_range;
+    // Frame properties survive av_frame_make_writable(), so set quality only once.
+    frame_->quality  = codec_context_->global_quality;
+    frame_->duration = 1; // Each frame spans one encoder time-base tick.
     check_ffmpeg(av_frame_get_buffer(frame_, 32), "av_frame_get_buffer");
 
     const bool cuda_resized =
