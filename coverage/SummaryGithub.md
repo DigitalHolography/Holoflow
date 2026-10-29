@@ -3,16 +3,16 @@
 
 |||
 |:---|:---|
-| Generated on: | 10/20/2026 - 4:19:39 PM |
+| Generated on: | 10/29/2026 - 2:42:23 PM |
 | Parser: | Cobertura |
 | Assemblies: | 7 |
 | Classes: | 12 |
-| Files: | 127 |
-| **Line coverage:** | 41.9% (5699 of 13584) |
-| Covered lines: | 5699 |
-| Uncovered lines: | 7885 |
-| Coverable lines: | 13584 |
-| Total lines: | 30709 |
+| Files: | 140 |
+| **Line coverage:** | 41.3% (6084 of 14709) |
+| Covered lines: | 6084 |
+| Uncovered lines: | 8625 |
+| Coverable lines: | 14709 |
+| Total lines: | 33723 |
 | Covered branches: | 0 |
 | Total branches: | 0 |
 | **Method coverage:** | [Feature is only available for sponsors](https://reportgenerator.io/pro) |
@@ -29,21 +29,21 @@
 |src|38.4%||
 
 </details>
-<details><summary>holofile - 0%</summary>
+<details><summary>holofile - 62%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holofile**|**0%**|****|
-|src|0%||
+|**holofile**|**62%**|****|
+|src|62%||
 
 </details>
-<details><summary>holoflow - 90.2%</summary>
+<details><summary>holoflow - 89.7%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holoflow**|**90.2%**|****|
-|include|100%||
-|src|90%||
+|**holoflow**|**89.7%**|****|
+|include|57.8%||
+|src|90.2%||
 
 </details>
 <details><summary>holoflow_event - 86.2%</summary>
@@ -55,29 +55,29 @@
 |src|84%||
 
 </details>
-<details><summary>holonp - 52.6%</summary>
+<details><summary>holonp - 57.2%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holonp**|**52.6%**|****|
+|**holonp**|**57.2%**|****|
 |include|0%||
-|src|59.7%||
+|src|64.9%||
 
 </details>
-<details><summary>holotask - 61.3%</summary>
+<details><summary>holotask - 54.2%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holotask**|**61.3%**|****|
-|include|27.7%||
-|src|62.1%||
+|**holotask**|**54.2%**|****|
+|include|27.3%||
+|src|54.8%||
 
 </details>
-<details><summary>holovibes - 8.4%</summary>
+<details><summary>holovibes - 8.1%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holovibes**|**8.4%**|****|
-|src|8.4%||
+|**holovibes**|**8.1%**|****|
+|src|8.1%||
 
 </details>
