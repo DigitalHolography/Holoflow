@@ -37,9 +37,9 @@
 #include "bug.hh"
 #include "graph_builder.hh"
 #include "holofile/holofile.hh"
-#include "holoflow/runtime/windows_crash_handler.hh"
 #include "holoflow/runtime/diagnostics.hh"
 #include "holoflow/runtime/tracing.hh"
+#include "holoflow/runtime/windows_crash_handler.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
@@ -72,10 +72,9 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
-#include "holotask/sinks/ffmpeg.hh"
-#include "holotask/syncs/resize.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
@@ -97,6 +96,7 @@
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
+#include "holotask/syncs/resize.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 #include "holotask/syncs/unfold2d.hh"
@@ -493,13 +493,7 @@ void Manager::resume_pipeline() {
 }
 
 void Manager::update_recording_path(const std::string &new_path) {
-  if (s_.import_source != ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP ||
-      s_.recording_method != RecordingMethod::RAW) {
-    s_.recording_path = new_path;
-    update_pipeline(s_);
-    return;
-  }
-
+  logger()->info("[Manager::update_recording_path] updating recording path: {}", new_path);
   auto payload = nlohmann::json{
       {"type", "update_recording_path"},
       {"record_path", new_path},

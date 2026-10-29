@@ -88,16 +88,16 @@ void RecordingSink::handle_events(holoflow::core::SyncCtx &ctx) {
 
   static std::map<std::string, EventHandler> event_handlers = {
       {"start_recording",
-       [this](holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
-         on_start_recording_event(ctx, event);
+       [](RecordingSink &self, holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
+         self.on_start_recording_event(ctx, event);
        }},
       {"stop_recording",
-       [this](holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
-         on_stop_recording_event(ctx, event);
+       [](RecordingSink &self, holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
+         self.on_stop_recording_event(ctx, event);
        }},
       {"update_recording_path",
-       [this](holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
-         on_update_record_path_event(ctx, event);
+       [](RecordingSink &self, holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
+         self.on_update_record_path_event(ctx, event);
        }},
   };
 
@@ -117,7 +117,7 @@ void RecordingSink::handle_events(holoflow::core::SyncCtx &ctx) {
     if (handler_it == event_handlers.end()) {
       HOLOVIBES_BUG("Unknown event type: {}", type);
     } else {
-      handler_it->second(ctx, *event);
+      handler_it->second(*this, ctx, *event);
     }
   }
 }

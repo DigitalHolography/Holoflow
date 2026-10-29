@@ -64,8 +64,8 @@ private:
 
 class RecordingSink : public holoflow::core::ISyncTask {
 protected:
-  using EventHandler =
-      std::function<void(holoflow::core::SyncCtx &, const holoflow_event::Event &)>;
+  using EventHandler = std::function<void(RecordingSink &, holoflow::core::SyncCtx &,
+                                          const holoflow_event::Event &)>;
 
   void handle_events(holoflow::core::SyncCtx &ctx);
 
