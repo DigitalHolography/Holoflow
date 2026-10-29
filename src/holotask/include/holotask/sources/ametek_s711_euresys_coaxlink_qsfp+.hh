@@ -24,9 +24,28 @@ namespace holotask::sources {
 // Settings
 // -------------------------------------------------------------------------------------------------
 
+struct RecordSettings {
+  std::string    file_path;
+  int            recording_count;
+  nlohmann::json pipeline_config;
+
+  size_t record_queue_count;
+
+  bool operator==(const RecordSettings &other) const {
+    return recording_count == other.recording_count && record_queue_count == other.record_queue_count &&
+           file_path == other.file_path && pipeline_config == other.pipeline_config;
+  }
+
+  bool requires_rebuild(const RecordSettings &old) const;
+};
+
+void to_json(nlohmann::json &j, const RecordSettings &s);
+void from_json(const nlohmann::json &j, RecordSettings &s);
+
 struct AmetekS711EuresysCoaxlinkQSFPSettings {
   std::string cfg_path; ///< Path to JSON configuration file for Phantom S711.
 
+  std::optional<RecordSettings> record_settings                        = std::nullopt;
   bool operator==(const AmetekS711EuresysCoaxlinkQSFPSettings &) const = default;
 };
 

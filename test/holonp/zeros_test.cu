@@ -16,7 +16,6 @@
 
 #include <atomic>
 #include <cmath>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -27,7 +26,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/zeros.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -36,7 +35,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static nlohmann::json make_jsettings(std::vector<size_t> shape) {
   return nlohmann::json{{"shape", shape}};
@@ -48,7 +46,7 @@ static nlohmann::json make_jsettings(std::vector<size_t> shape, const std::strin
   return j;
 }
 
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -103,33 +101,33 @@ TEST_F(ZerosInferTest, RejectsBadInputOrHostOrder) {
   EXPECT_THROW(factory.infer({}, j), std::invalid_argument);
 }
 
-class ZerosOracleTest : public ::testing::Test {
+class ZerosReferenceTest : public ::testing::Test {
 protected:
   holonp::ZerosFactory                      factory;
   const std::vector<TDesc>                  no_inputs = {};
   const std::vector<std::vector<std::byte>> no_data   = {};
 };
 
-TEST_F(ZerosOracleTest, F32) {
+TEST_F(ZerosReferenceTest, F32) {
   const auto               j   = make_jsettings({2, 3});
   const auto               run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "zeros";
   oi.n_outputs      = 1;
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }
 
-TEST_F(ZerosOracleTest, CF32) {
+TEST_F(ZerosReferenceTest, CF32) {
   const auto               j   = make_jsettings({3}, "CF32");
   const auto               run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "zeros";
   oi.n_outputs      = 1;
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::CF32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::CF32);
 }
 
 class ZerosUpdateTest : public ::testing::Test {
@@ -142,12 +140,12 @@ protected:
 TEST_F(ZerosUpdateTest, ReusesZerosTask) {
   const auto j   = make_jsettings({4}, "U8");
   const auto run = holonp_test::run_sync_factory_update(factory, no_inputs, no_data, j);
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "zeros";
   oi.n_outputs      = 1;
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::U8);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::U8);
 }
 
 TEST_F(ZerosUpdateTest, RecreatesOnWrongTaskType) {
@@ -178,10 +176,10 @@ TEST_F(ZerosUpdateTest, RecreatesOnWrongTaskType) {
   EXPECT_NO_THROW((void)task->execute(exec_ctx));
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "zeros";
   oi.n_outputs      = 1;
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(out_buf.download(), oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(out_buf.download(), reference.output_bytes[0], DType::F32);
 }

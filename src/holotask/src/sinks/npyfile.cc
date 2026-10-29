@@ -85,36 +85,31 @@ public:
                 std::size_t frame_size)
       : settings_(std::move(settings)), geometry_(geometry), frame_size_(frame_size),
         ring_(curaii::make_unique_host_ptr<std::uint8_t>(static_cast<std::size_t>(settings_.count) *
-                                                         frame_size)) {}
+                                                         frame_size)),
+        writer_{std::nullopt} {}
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    handle_events(ctx, settings_.path, settings_.count);
+    handle_events(ctx);
     if (!is_recording())
       return holoflow::core::OpResult::Ok;
-    const auto batch = static_cast<int>(ctx.inputs[0].desc.shape[0]);
-    const auto count = std::min(settings_.count - frames_buffered_, batch);
-    copy_bytes(ring_.get() + static_cast<std::size_t>(frames_buffered_) * frame_size_,
-               ctx.inputs[0].data(), static_cast<std::size_t>(count) * frame_size_);
-    frames_buffered_ += count;
+
+    if (frames_buffered_ < settings_.count) {
+      const auto batch = static_cast<int>(ctx.inputs[0].desc.shape[0]);
+      const auto count = std::min(settings_.count - frames_buffered_, batch);
+      copy_bytes(ring_.get() + static_cast<std::size_t>(frames_buffered_) * frame_size_,
+                 ctx.inputs[0].data(), static_cast<std::size_t>(count) * frame_size_);
+      frames_buffered_ += count;
+      monitor_.update(ctx, frames_buffered_, 0);
+    }
     if (frames_buffered_ >= settings_.count) {
-      logger()->info("[NpyfileWriter] Frame buffer full ({} frames); flushing to disk...",
-                     settings_.count);
       try {
-        npyfile::Writer writer(settings_.path,
-                               {.shape = {static_cast<std::size_t>(settings_.count),
-                                          geometry_.frame_height, geometry_.frame_width},
-                                .dtype = geometry_.bits_per_pixel == 8 ? "<u1" : "<u2"});
-        writer.write_frames(ring_.get(), static_cast<std::size_t>(settings_.count), frame_size_);
-        emit_finished_event(ctx);
-        logger()->info("[NpyfileWriter] Recording complete: {} frames written to {}",
-                       frames_buffered_, settings_.path);
+        flush_to_disk(ctx);
       } catch (const std::exception &error) {
         std::remove(settings_.path.c_str());
         emit_failed_event(ctx, error.what());
         logger()->error("[NpyfileWriter] Failed to finalize recording at {}: {}", settings_.path,
                         error.what());
       }
-      reset();
     }
     return holoflow::core::OpResult::Ok;
   }
@@ -129,11 +124,62 @@ public:
     update_recording_path(settings_.path);
   }
 
+protected:
+  virtual void recording_reset_callback() override {
+    frames_written_ = 0;
+    start_flush_    = true;
+    writer_.reset();
+  }
+  void recording_path_update_callback() override { settings_.path = recording_path(); }
+
+  virtual void recording_stopped_callback() override { reset(); }
+
 private:
-  NpyfileSettings           settings_;
-  detail::RecordingGeometry geometry_;
-  std::size_t               frame_size_;
-  HostPtr<std::uint8_t>     ring_;
+  void make_writer() {
+    const auto header = npyfile::Header{.shape = {static_cast<std::size_t>(settings_.count),
+                                                  geometry_.frame_height, geometry_.frame_width},
+                                        .dtype = geometry_.bits_per_pixel == 8 ? "<u1" : "<u2"};
+    writer_.emplace(settings_.path, header);
+  }
+
+  void flush_to_disk(holoflow::core::SyncCtx &ctx) {
+
+    if (start_flush_) {
+      logger()->info("[NpyFileWriter] Frame buffer full ({} frames); flushing to disk...",
+                     settings_.count);
+      start_flush_    = false;
+      frames_written_ = 0;
+      make_writer();
+    }
+
+    assert(writer_.has_value());
+
+    const auto remaining  = settings_.count - frames_written_;
+    const auto batch_size = static_cast<int>(ctx.inputs[0].desc.shape[0]);
+    const auto to_write   = std::min(remaining, batch_size);
+
+    if (to_write > 0) {
+      const auto *buffer = ring_.get() + frames_written_ * frame_size_;
+      writer_->write_frames(buffer, to_write, frame_size_);
+      frames_written_ += to_write;
+      monitor_.update(ctx, frames_buffered_, frames_written_, false);
+    } else {
+      start_flush_ = true;
+      emit_finished_event(ctx);
+      logger()->info("[NpyFileWriter] Recording complete: {} frames written to {}", frames_written_,
+                     settings_.path);
+      writer_.reset();
+    }
+  }
+
+private:
+  NpyfileSettings                settings_;
+  detail::RecordingGeometry      geometry_;
+  std::size_t                    frame_size_;
+  int                            frames_written_ = 0;
+  HostPtr<std::uint8_t>          ring_;
+  std::optional<npyfile::Writer> writer_;
+  bool                           start_flush_ = true;
 };
 } // namespace
 

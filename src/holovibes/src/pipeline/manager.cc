@@ -37,9 +37,9 @@
 #include "bug.hh"
 #include "graph_builder.hh"
 #include "holofile/holofile.hh"
-#include "holoflow/runtime/windows_crash_handler.hh"
 #include "holoflow/runtime/diagnostics.hh"
 #include "holoflow/runtime/tracing.hh"
+#include "holoflow/runtime/windows_crash_handler.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
@@ -72,10 +72,9 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
-#include "holotask/sinks/ffmpeg.hh"
-#include "holotask/syncs/resize.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
@@ -97,6 +96,7 @@
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
+#include "holotask/syncs/resize.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 #include "holotask/syncs/unfold2d.hh"
@@ -440,7 +440,6 @@ void Manager::stop_pipeline() {
       ScopedTrace scope("Stop Event Polling");
       stop_event_polling();
     }
-    raw_recording_active_ = false;
 
     logger()->info("[Manager::stop_pipeline] Pipeline stopped successfully");
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
@@ -490,6 +489,21 @@ void Manager::resume_pipeline() {
     logger()->error("[Manager::resume_pipeline] {}", msg.toStdString());
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit resume_pipeline_failure(msg);
+  }
+}
+
+void Manager::update_recording_path(const std::string &new_path) {
+  logger()->info("[Manager::update_recording_path] updating recording path: {}", new_path);
+  auto payload = nlohmann::json{
+      {"type", "update_recording_path"},
+      {"record_path", new_path},
+  };
+
+  if (!scheduler_->ui_try_send(get_record_node_name(), std::move(payload))) {
+    logger()->error("[Manager::update_recording_path] Failed to update recording path");
+    // TODO change event type
+    emit raw_record_started_failure("Failed to update recording path");
+    return;
   }
 }
 
@@ -550,6 +564,17 @@ void Manager::update_pipeline(const Settings &settings) {
   }
 }
 
+const std::string &Manager::get_record_node_name() {
+  static const std::string source = "source_0";
+  static const std::string record = "record";
+
+  if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP &&
+      s_.recording_method == RecordingMethod::RAW)
+    return source;
+
+  return record;
+}
+
 void Manager::start_raw_record(std::filesystem::path record_path) {
   std::lock_guard lock(mtx_);
   if (!scheduler_ || !scheduler_->is_running()) {
@@ -575,7 +600,7 @@ void Manager::start_raw_record(std::filesystem::path record_path) {
   };
 
   // Send the recording event to the UI message queue inside the scheduler
-  if (!scheduler_->ui_try_send("record", std::move(payload))) {
+  if (!scheduler_->ui_try_send(get_record_node_name(), std::move(payload))) {
     logger()->error("[Manager::start_raw_record] Failed to enqueue start_recording event");
     emit raw_record_started_failure("Failed to enqueue start_recording event");
     return;
@@ -600,7 +625,7 @@ void Manager::stop_raw_record() {
   }
 
   nlohmann::json payload{{"type", "stop_recording"}};
-  if (!scheduler_->ui_try_send("record", std::move(payload))) {
+  if (!scheduler_->ui_try_send(get_record_node_name(), std::move(payload))) {
     logger()->error("[Manager::stop_raw_record] Failed to enqueue stop_recording event");
     emit raw_record_stopped_failure("Failed to enqueue stop_recording event");
     return;
@@ -681,14 +706,26 @@ void Manager::poll_events() {
     if (!event.has_value())
       break;
 
-    logger()->info("[Manager::poll_events] Received event from node '{}': {}", event->node_id,
-                   event->data.dump());
+    // logger()->info("[Manager::poll_events] Received event from node '{}': {}", event->node_id,
+    //                event->data.dump());
 
     std::string type = event->data.value("type", "");
 
-    if (type == "recording_finished") {
-      std::string path_str    = event->data.value("path", "");
-      bool        should_emit = false;
+    if (type == "recording_update") {
+      size_t frame_recorded = event->data.value("frame_recorded", 0);
+      size_t writing_speed  = event->data.value("writing_speed", 0);
+      size_t id             = event->data.value("id", 0); // assume that the id exists and is valid
+      size_t elapsed_time   = event->data.value("elapsed_time", 0);
+      emit   update_record(id, frame_recorded, writing_speed, elapsed_time);
+    } else if (type == "acquisition_update") {
+      size_t frame_acquired = event->data.value("frame_acquired", 0);
+      size_t id             = event->data.value("id", 0); // assume that the id exists and is valid
+      emit   update_acquisition(id, frame_acquired);
+    } else if (type == "record_flushing_finished") {
+      size_t id = event->data.value("id", 0); // assume that the id exists and is valid
+      emit   raw_record_flushing_finished(id);
+    } else if (type == "recording_finished") {
+      bool should_emit = false;
 
       {
         std::lock_guard lock(mtx_);
@@ -699,12 +736,13 @@ void Manager::poll_events() {
       }
 
       if (should_emit) {
-        logger()->info("[Manager::poll_events] Recording finished successfully at {}", path_str);
+        logger()->info("[Manager::poll_events] Recording finished successfully");
         emit raw_record_stopped_success();
       }
     } else if (type == "recording_failed") {
       const std::string message =
           event->data.value("message", std::string{"Recording failed for an unknown reason"});
+      size_t            id = event->data.value("id", 0); // assume that the id exists and is valid
       const std::string path_str = event->data.value("path", std::string{});
       bool              should_emit{false};
 
@@ -716,7 +754,7 @@ void Manager::poll_events() {
         }
       }
 
-      logger()->error("[Manager::poll_events] Recording failed at '{}': {}", path_str, message);
+      logger()->error("[Manager::poll_events] Recording {} failed: {}", id, path_str, message);
 
       if (should_emit) {
         emit raw_record_stopped_failure(QString::fromStdString(message));
@@ -884,6 +922,7 @@ void Manager::run_compiled_graph() {
   {
     ScopedTrace scope("Create Scheduler");
     if (!scheduler_) {
+      raw_recording_active_ = false;
       scheduler_ = std::make_unique<Scheduler>(graph, sections, resources, metrics_interval,
                                                failure_callback);
     }
@@ -895,7 +934,6 @@ void Manager::run_compiled_graph() {
     uninstall_windows_crash_handler();
   }
 #endif
-  raw_recording_active_ = false;
 
   {
     ScopedTrace scope("Start Scheduler");

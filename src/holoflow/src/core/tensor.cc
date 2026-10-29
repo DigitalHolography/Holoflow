@@ -98,6 +98,7 @@ void to_json(nlohmann::json &j, const TDesc &desc) {
       {"dtype", desc.dtype},
       {"mem_loc", desc.mem_loc},
       {"strides", desc.strides},
+      {"offset", desc.offset},
   };
 }
 
@@ -106,6 +107,7 @@ void from_json(const nlohmann::json &j, TDesc &desc) {
   j.at("dtype").get_to(desc.dtype);
   j.at("mem_loc").get_to(desc.mem_loc);
   j.at("strides").get_to(desc.strides);
+  desc.offset = j.value("offset", size_t{0});
 }
 
 namespace {

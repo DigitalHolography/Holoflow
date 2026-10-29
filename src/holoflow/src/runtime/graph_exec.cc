@@ -210,6 +210,14 @@ public:
 
   [[nodiscard]] std::optional<holoflow_event::Event> ui_try_receive() noexcept;
 
+  /// run cancel callback of a sync node
+  /// @warning This function must be called after having cancelled the node
+  void cancel_sync(GraphPlan::vertex_descriptor v);
+
+  /// run cancel callback of a async producer | consumer
+  /// @warning This function must be called after having cancelled the node
+  void cancel_async(GraphPlan::vertex_descriptor v);
+
 private:
   struct SyncRt {
     core::ISyncTask         *task = nullptr;
@@ -284,6 +292,7 @@ private:
   std::atomic<bool> stop_{false};    ///< True if a stop has been requested.
   std::atomic<bool> paused_{false};
   std::atomic<bool> aborted_{false};
+  bool tasks_cancelled_ = false;
   struct SectionCheckpoint {
     enum class Stage { AcquireSync, AcquireProducer, Pop, Compute, Barrier, Push, Release };
     Stage                                     stage               = Stage::AcquireSync;
@@ -307,8 +316,8 @@ private:
   /// observe ownership changes through their shared Storage pointers.
   std::vector<core::TView> tviews_;
 
-  std::vector<NodeRt>      node_rts_; ///< Runtime data for each node.
-  std::vector<std::string> node_names_;
+  std::vector<NodeRt>               node_rts_; ///< Runtime data for each node.
+  std::vector<std::string>          node_names_;
   std::vector<core::ConstTaskState> const_task_states_;
 
   std::mutex              const_init_mutex_;
@@ -371,6 +380,9 @@ private:
   std::map<std::string, holoflow_event::Router::NodeHandles> event_handles_;
   std::atomic_flag                                           failure_dumped_ = ATOMIC_FLAG_INIT;
   Scheduler::FailureCallback                                 failure_callback_;
+
+  std::size_t              terminal_nodes_ = 0;          ///< Number of graph terminal nodes.
+  std::atomic<std::size_t> completed_terminal_nodes_{0}; ///< Terminal nodes that reached EOF.
 };
 
 Scheduler::Impl::Impl(const GraphPlan &graph, const std::vector<Section> &sections,
@@ -393,6 +405,12 @@ Scheduler::Impl::Impl(const GraphPlan &graph, const std::vector<Section> &sectio
 
   if (metrics_interval_.count() <= 0) {
     metrics_interval_ = std::chrono::milliseconds{1};
+  }
+
+  for (const auto vertex : boost::make_iterator_range(boost::vertices(graph_))) {
+    if (boost::out_degree(vertex, graph_) == 0) {
+      ++terminal_nodes_;
+    }
   }
 
   // init_tensor_tables();
@@ -468,6 +486,7 @@ void Scheduler::Impl::start() {
   }
   if (!resume) {
     checkpoints_.assign(sections_.size(), SectionCheckpoint{});
+    tasks_cancelled_ = false;
   }
   if (sections_.empty()) {
     stop_.store(true);
@@ -493,6 +512,7 @@ void Scheduler::Impl::start() {
   }
   {
     tracing::ScopedTrace scope("Reset Scheduler Metrics", "scheduler");
+    completed_terminal_nodes_.store(0);
     reset_metrics_state();
   }
   {
@@ -563,13 +583,26 @@ void Scheduler::Impl::wait() {
         size_t port = releasing && i == first ? checkpoint.port : 0;
         release_owned_outputs(checkpoint.produced[i], port);
       }
-      for (size_t i = checkpoint.const_release_node;
-           i < checkpoint.completed_const_nodes.size(); ++i) {
+      for (size_t i = checkpoint.const_release_node; i < checkpoint.completed_const_nodes.size();
+           ++i) {
         size_t port = i == checkpoint.const_release_node ? checkpoint.const_output_port : 0;
         release_owned_outputs(checkpoint.completed_const_nodes[i], port);
       }
       checkpoint = SectionCheckpoint{};
     }
+  }
+  // Pause retains task state and held buffers. Cancel only after all workers have joined,
+  // including when a previously paused scheduler is stopped or destroyed.
+  if (!paused_.load() && !tasks_cancelled_) {
+    for (const auto &section : sections_) {
+      for (auto v : section.async_cons)
+        cancel_async(v);
+      for (auto v : section.sync_topo)
+        cancel_sync(v);
+      for (auto v : section.async_prod)
+        cancel_async(v);
+    }
+    tasks_cancelled_ = true;
   }
   logger()->info("[Scheduler::wait] Scheduler stopped");
   running_.store(false);
@@ -703,7 +736,7 @@ void Scheduler::Impl::init_const_task_states() {
 
   for (auto v : boost::make_iterator_range(boost::vertices(graph_))) {
     if (graph_[v].infer.constness == core::ConstInferenceState::Constant) {
-      const auto idx = boost::get(boost::vertex_index, graph_, v);
+      const auto idx             = boost::get(boost::vertex_index, graph_, v);
       const_task_states_.at(idx) = core::ConstTaskState::ConstantNotComputed;
     }
   }
@@ -746,9 +779,9 @@ void Scheduler::Impl::run_section(int section_id) {
     // Initialize constant outputs once per scheduler lifetime. Checkpointed ports and completed
     // nodes let a paused scheduler resume without reacquiring or recomputing finished work.
     while (checkpoint.const_node < sec.const_sync_topo.size() && !stop_.load()) {
-      const auto v   = sec.const_sync_topo[checkpoint.const_node];
-      const auto idx = boost::get(boost::vertex_index, graph_, v);
-      current_node_name = graph_[v].spec.name;
+      const auto v                = sec.const_sync_topo[checkpoint.const_node];
+      const auto idx              = boost::get(boost::vertex_index, graph_, v);
+      current_node_name           = graph_[v].spec.name;
       detail::current_node_name() = current_node_name;
 
       if (const_task_states_.at(idx) != core::ConstTaskState::ConstantNotComputed) {
@@ -759,8 +792,7 @@ void Scheduler::Impl::run_section(int section_id) {
 
       try {
         acquire_owned_inputs(v, checkpoint.const_input_port);
-        if (stop_.load() ||
-            checkpoint.const_input_port != graph_[v].infer.owned_inputs.size())
+        if (stop_.load() || checkpoint.const_input_port != graph_[v].infer.owned_inputs.size())
           break;
 
         if (run_sync(v) != core::OpResult::Ok)
@@ -779,8 +811,8 @@ void Scheduler::Impl::run_section(int section_id) {
       return;
 
     while (checkpoint.const_release_node < checkpoint.completed_const_nodes.size()) {
-      const auto v = checkpoint.completed_const_nodes[checkpoint.const_release_node];
-      current_node_name = graph_[v].spec.name;
+      const auto v                = checkpoint.completed_const_nodes[checkpoint.const_release_node];
+      current_node_name           = graph_[v].spec.name;
       detail::current_node_name() = current_node_name;
       try {
         release_owned_outputs(v, checkpoint.const_output_port);
@@ -805,8 +837,8 @@ void Scheduler::Impl::run_section(int section_id) {
     detail::current_node_name()   = {};
     CUDA_CHECK(cudaStreamSynchronize(sec.stream));
 
-    const bool any_recurring_work = std::any_of(
-        sections_.begin(), sections_.end(), [](const Section &section) {
+    const bool any_recurring_work =
+        std::any_of(sections_.begin(), sections_.end(), [](const Section &section) {
           return !section.sync_topo.empty() || !section.async_cons.empty() ||
                  !section.async_prod.empty();
         });
@@ -823,17 +855,15 @@ void Scheduler::Impl::run_section(int section_id) {
         }
         const_init_cv_.notify_all();
       } else {
-        const_init_cv_.wait(lock, [this] {
-          return const_init_complete_ || stop_.load();
-        });
+        const_init_cv_.wait(lock, [this] { return const_init_complete_ || stop_.load(); });
       }
     }
 
     if (stop_.load()) {
       return;
     }
-    const bool section_has_recurring_work = !sec.sync_topo.empty() || !sec.async_cons.empty() ||
-                                            !sec.async_prod.empty();
+    const bool section_has_recurring_work =
+        !sec.sync_topo.empty() || !sec.async_cons.empty() || !sec.async_prod.empty();
     if (!section_has_recurring_work) {
       return;
     }
@@ -1059,6 +1089,50 @@ void Scheduler::Impl::release_owned_outputs(GraphPlan::vertex_descriptor v, size
       return;
     task->release_output(static_cast<int>(i));
   }
+}
+
+void Scheduler::Impl::cancel_sync(GraphPlan::vertex_descriptor v) {
+  using clock     = std::chrono::high_resolution_clock;
+  const auto  idx = boost::get(boost::vertex_index, graph_, v);
+  const auto &np  = graph_[v];
+  auto       &nrt = node_rts_.at(idx);
+  HOLOFLOW_CHECK(std::holds_alternative<SyncRt>(nrt));
+  auto &srt = std::get<SyncRt>(nrt);
+
+  logger()->trace("[Scheduler::cancel_sync] Cancelling node '{}'", np.spec.name);
+  const auto range_name = task_range_name("sync cancel", np.spec);
+  auto       t0         = clock::now();
+  {
+    nvtx3::scoped_range task_range{range_name.c_str()};
+    srt.task->cancel(srt.ctx);
+  }
+  auto       t1          = clock::now();
+  const auto duration_ns = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
+  logger()->debug("[Scheduler::cancel_sync] Node '{}' cancel callback took {} ms", np.spec.name,
+                  duration_ns);
+}
+
+void Scheduler::Impl::cancel_async(GraphPlan::vertex_descriptor v) {
+  using clock     = std::chrono::high_resolution_clock;
+  const auto  idx = boost::get(boost::vertex_index, graph_, v);
+  const auto &np  = graph_[v];
+  auto       &nrt = node_rts_.at(idx);
+  HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
+  auto &art = std::get<AsyncRt>(nrt);
+
+  logger()->trace("[Scheduler::cancel_async] Cancelling node '{}'", np.spec.name);
+  const auto range_name = task_range_name("sync cancel", np.spec);
+  auto       t0         = clock::now();
+  {
+    nvtx3::scoped_range task_range{range_name.c_str()};
+    art.task->cancel();
+  }
+  auto       t1          = clock::now();
+  const auto duration_ns = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+
+  logger()->debug("[Scheduler::cancel_async] Node '{}' cancel callback took {} ms", np.spec.name,
+                  duration_ns);
 }
 
 core::OpResult Scheduler::Impl::run_sync(GraphPlan::vertex_descriptor v) {
@@ -1419,4 +1493,7 @@ std::optional<holoflow_event::Event> Scheduler::ui_try_receive() noexcept {
   return impl_->ui_try_receive();
 }
 
-} // namespace holoflow::runtime
+void Scheduler::cancel_sync(GraphPlan::vertex_descriptor v) { impl_->cancel_sync(v); }
+
+void Scheduler::cancel_async(GraphPlan::vertex_descriptor v) { impl_->cancel_async(v); }
+}

@@ -17,7 +17,6 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -28,7 +27,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/argmax.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -37,8 +36,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-// Absolute path to oracle.py, baked in at compile time.
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 // -------------------------------------------------------------------------------------------------
 // Helpers
@@ -216,14 +213,14 @@ TEST_F(ArgmaxInferTest, RejectsReductionTooLarge) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// ArgmaxFactory: execution tests via NumPy oracle
+// ArgmaxFactory: execution tests via C++ reference
 // -------------------------------------------------------------------------------------------------
 
-class ArgmaxOracleTest : public ::testing::Test {
+class ArgmaxReferenceTest : public ::testing::Test {
 protected:
   holonp::ArgmaxFactory factory;
 
-  // Run factory + oracle and compare for a single contiguous device tensor.
+  // Run factory + reference and compare for a single contiguous device tensor.
   template <typename T>
   void check(DType dtype, const std::vector<size_t> &shape, const std::vector<T> &host_data,
              const nlohmann::json &jsettings) {
@@ -234,27 +231,27 @@ protected:
 
     const auto run = holonp_test::run_sync_factory(factory, input_descs, input_data, jsettings);
 
-    holonp_test::OracleInput oi;
+    holonp_test::ReferenceInput oi;
     oi.op             = "argmax";
     oi.n_outputs      = 1;
     oi.input_descs    = {idesc};
     oi.input_bytes    = {ibytes};
     oi.settings       = jsettings;
-    const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+    const auto reference = holonp_test::invoke_reference(oi);
 
     ASSERT_EQ(run.output_bytes.size(), 1u);
-    ASSERT_EQ(oracle.output_bytes.size(), 1u);
-    ASSERT_EQ(run.output_bytes[0].size(), oracle.output_bytes[0].size());
+    ASSERT_EQ(reference.output_bytes.size(), 1u);
+    ASSERT_EQ(run.output_bytes[0].size(), reference.output_bytes[0].size());
 
     const size_t n = run.output_bytes[0].size() / sizeof(std::uint16_t);
     const auto  *a = reinterpret_cast<const std::uint16_t *>(run.output_bytes[0].data());
-    const auto  *e = reinterpret_cast<const std::uint16_t *>(oracle.output_bytes[0].data());
+    const auto  *e = reinterpret_cast<const std::uint16_t *>(reference.output_bytes[0].data());
     for (size_t i = 0; i < n; ++i)
       EXPECT_EQ(a[i], e[i]) << "at index " << i;
   }
 };
 
-TEST_F(ArgmaxOracleTest, F32Axis0) {
+TEST_F(ArgmaxReferenceTest, F32Axis0) {
   // Column-wise argmax: (3,4), axis=0 → {4}
   check(DType::F32, {3, 4},
         std::vector<float>{// row 0
@@ -266,35 +263,35 @@ TEST_F(ArgmaxOracleTest, F32Axis0) {
         jsettings_axis(0));
 }
 
-TEST_F(ArgmaxOracleTest, F32Axis1) {
+TEST_F(ArgmaxReferenceTest, F32Axis1) {
   // Row-wise argmax: (3,4), axis=1 → {3}
   check(DType::F32, {3, 4},
         std::vector<float>{1.0f, 8.0f, 3.0f, 2.0f, 5.0f, 2.0f, 9.0f, 1.0f, 4.0f, 6.0f, 0.0f, 7.0f},
         jsettings_axis(1));
 }
 
-TEST_F(ArgmaxOracleTest, F32NegativeAxis) {
+TEST_F(ArgmaxReferenceTest, F32NegativeAxis) {
   // axis=-1 on (3,4) is the same as axis=1.
   check(DType::F32, {3, 4},
         std::vector<float>{1.0f, 8.0f, 3.0f, 2.0f, 5.0f, 2.0f, 9.0f, 1.0f, 4.0f, 6.0f, 0.0f, 7.0f},
         jsettings_axis(-1));
 }
 
-TEST_F(ArgmaxOracleTest, F32KeepDimsAllAxes) {
+TEST_F(ArgmaxReferenceTest, F32KeepDimsAllAxes) {
   // (3,4) with keepdims → output shape {1,1}
   check(DType::F32, {3, 4},
         std::vector<float>{1.0f, 8.0f, 3.0f, 2.0f, 5.0f, 2.0f, 9.0f, 1.0f, 4.0f, 6.0f, 0.0f, 7.0f},
         jsettings_all(/*keepdims=*/true));
 }
 
-TEST_F(ArgmaxOracleTest, F32KeepDimsAxis1) {
+TEST_F(ArgmaxReferenceTest, F32KeepDimsAxis1) {
   // (3,4), axis=1, keepdims → output shape {3,1}
   check(DType::F32, {3, 4},
         std::vector<float>{1.0f, 8.0f, 3.0f, 2.0f, 5.0f, 2.0f, 9.0f, 1.0f, 4.0f, 6.0f, 0.0f, 7.0f},
         jsettings_axis(1, /*keepdims=*/true));
 }
 
-TEST_F(ArgmaxOracleTest, RejectsRank0OutputForF32Flat1D) {
+TEST_F(ArgmaxReferenceTest, RejectsRank0OutputForF32Flat1D) {
   const TDesc              idesc       = device_desc({5}, DType::F32);
   const auto               ibytes      = as_bytes(std::vector<float>{1.0f, 4.0f, 2.0f, 5.0f, 3.0f});
   const std::vector<TDesc> input_descs = {idesc};
@@ -305,7 +302,7 @@ TEST_F(ArgmaxOracleTest, RejectsRank0OutputForF32Flat1D) {
       std::invalid_argument);
 }
 
-TEST_F(ArgmaxOracleTest, RejectsRank0OutputForF32Flat2D) {
+TEST_F(ArgmaxReferenceTest, RejectsRank0OutputForF32Flat2D) {
   const TDesc idesc  = device_desc({2, 3}, DType::F32);
   const auto  ibytes = as_bytes(std::vector<float>{1.0f, 9.0f, 3.0f, 4.0f, 2.0f, 7.0f});
   const std::vector<TDesc>                  input_descs = {idesc};
@@ -316,7 +313,7 @@ TEST_F(ArgmaxOracleTest, RejectsRank0OutputForF32Flat2D) {
       std::invalid_argument);
 }
 
-TEST_F(ArgmaxOracleTest, RejectsRank0OutputForU8Flat) {
+TEST_F(ArgmaxReferenceTest, RejectsRank0OutputForU8Flat) {
   const TDesc              idesc  = device_desc({6}, DType::U8);
   const auto               ibytes = as_bytes(std::vector<std::uint8_t>{10, 50, 30, 200, 100, 150});
   const std::vector<TDesc> input_descs                 = {idesc};
@@ -327,7 +324,7 @@ TEST_F(ArgmaxOracleTest, RejectsRank0OutputForU8Flat) {
       std::invalid_argument);
 }
 
-TEST_F(ArgmaxOracleTest, RejectsRank0OutputForU16Flat) {
+TEST_F(ArgmaxReferenceTest, RejectsRank0OutputForU16Flat) {
   const TDesc              idesc  = device_desc({5}, DType::U16);
   const auto               ibytes = as_bytes(std::vector<std::uint16_t>{100, 500, 300, 1000, 200});
   const std::vector<TDesc> input_descs                 = {idesc};
@@ -338,7 +335,7 @@ TEST_F(ArgmaxOracleTest, RejectsRank0OutputForU16Flat) {
       std::invalid_argument);
 }
 
-TEST_F(ArgmaxOracleTest, RejectsRank0OutputForCF32FlatManual) {
+TEST_F(ArgmaxReferenceTest, RejectsRank0OutputForCF32FlatManual) {
   const std::vector<CF32>  data        = {{1.f, 0.f}, {3.f, 1.f}, {3.f, 0.f}, {-2.f, 5.f}};
   const TDesc              idesc       = device_desc({4}, DType::CF32);
   const auto               ibytes      = as_bytes(data);

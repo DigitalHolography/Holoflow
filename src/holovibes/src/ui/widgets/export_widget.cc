@@ -13,14 +13,14 @@
 // limitations under the License.
 
 #include "ui/widgets/export_widget.hh"
-#include "ui/widgets/validation_style.hh"
 #include "holotask/sinks/ffmpeg_formats.hh"
+#include "ui/widgets/validation_style.hh"
 
 #include <QGridLayout>
 #include <QHBoxLayout>
 #include <QLabel>
-#include <QSpacerItem>
 #include <QSignalBlocker>
+#include <QSpacerItem>
 #include <QVBoxLayout>
 #include <algorithm>
 
@@ -59,13 +59,14 @@ QString ExportWidget::get_file_path() const { return file_line_edit_->text(); }
 QString ExportWidget::get_tag() const { return tag_combo_->currentText(); }
 bool    ExportWidget::is_frame_count_enabled() const { return frames_check_->isChecked(); }
 int     ExportWidget::get_frame_count() const { return frames_spin_->value(); }
+int     ExportWidget::get_queue_count() const { return queues_spin_->value(); }
 bool    ExportWidget::isChecked() const { return enable_check_->isChecked(); }
 
 void ExportWidget::set_file_path(const QString &path) { file_line_edit_->setText(path); }
 void ExportWidget::set_frame_count(int count) { frames_spin_->setValue(count); }
 void ExportWidget::set_frame_batch_size(int batch_size) {
   frame_batch_size_ = std::max(1, batch_size);
-  const auto value = frames_spin_->value();
+  const auto value  = frames_spin_->value();
   frames_lower_button_->setEnabled(value > frame_batch_size_);
 }
 void ExportWidget::set_image_type(const QString &type) { image_type_combo_->setCurrentText(type); }
@@ -93,6 +94,7 @@ QPushButton *ExportWidget::browse_button() { return browse_button_; }
 QComboBox   *ExportWidget::tag_combo() { return tag_combo_; }
 QCheckBox   *ExportWidget::frames_check() { return frames_check_; }
 QSpinBox    *ExportWidget::frames_spin() { return frames_spin_; }
+QSpinBox    *ExportWidget::queues_spin() { return queues_spin_; }
 QPushButton *ExportWidget::record_button() { return record_button_; }
 QPushButton *ExportWidget::stop_button() { return stop_button_; }
 QPushButton *ExportWidget::stop_fan_button() { return stop_fan_button_; }
@@ -122,8 +124,7 @@ void ExportWidget::setup_ui() {
   layout->addWidget(new QLabel("Format", content_container_), row, 0);
   format_combo_ = new QComboBox(content_container_);
   for (const auto &format : holotask::sinks::kFfmpegFormats) {
-    format_combo_->addItem(QString::fromUtf8(format.label.data(), format.label.size()) +
-                               " (." +
+    format_combo_->addItem(QString::fromUtf8(format.label.data(), format.label.size()) + " (." +
                                QString::fromUtf8(format.extension.data(), format.extension.size()) +
                                ")",
                            QString::fromUtf8(format.name.data(), format.name.size()));
@@ -138,8 +139,8 @@ void ExportWidget::setup_ui() {
   update_codec_choices();
 
   layout->addWidget(new QLabel("Resize algorithm", content_container_), row, 0);
-  resize_algorithm_combo_ = create_combo_box(
-      content_container_, QStringList{"CPU bilinear", "GPU bilinear"});
+  resize_algorithm_combo_ =
+      create_combo_box(content_container_, QStringList{"CPU bilinear", "GPU bilinear"});
   resize_algorithm_combo_->setItemData(0, "CpuBilinear");
   resize_algorithm_combo_->setItemData(1, "CudaBilinear");
   resize_algorithm_combo_->setToolTip(
@@ -165,9 +166,9 @@ void ExportWidget::setup_ui() {
   frames_check_ = new QCheckBox("Nb. of frames", content_container_);
   frames_check_->setChecked(true);
   layout->addWidget(frames_check_, row, 0);
-  auto *frame_controls = new QHBoxLayout();
-  frames_spin_ = create_spin_box(content_container_, 1, 999999, 2048);
-  frames_lower_button_ = new QPushButton("−", content_container_);
+  auto *frame_controls  = new QHBoxLayout();
+  frames_spin_          = create_spin_box(content_container_, 1, 999999, 2048);
+  frames_lower_button_  = new QPushButton("−", content_container_);
   frames_higher_button_ = new QPushButton("+", content_container_);
   frames_lower_button_->setFixedWidth(28);
   frames_higher_button_->setFixedWidth(28);
@@ -175,6 +176,14 @@ void ExportWidget::setup_ui() {
   frame_controls->addWidget(frames_spin_, 1);
   frame_controls->addWidget(frames_higher_button_);
   layout->addLayout(frame_controls, row, 1);
+  ++row;
+
+  layout->addWidget(new QLabel("Record queue count"), row, 0);
+  queues_spin_ = create_spin_box(content_container_, 1, 5, 3);
+  queues_spin_->setToolTip(
+      tr("This is the number of queues for recording. The only configuration where it will be used "
+         "is when recording raw files with the AmetekS711."));
+  layout->addWidget(queues_spin_, row, 1);
   ++row;
 
   auto *button_layout = new QHBoxLayout();
@@ -206,24 +215,22 @@ void ExportWidget::connect_signals() {
   // Emit settings_changed for all control changes
   connect(image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
-  connect(format_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          [this](int) {
-            update_codec_choices();
-            emit settings_changed();
-          });
   connect(codec_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
   connect(resize_algorithm_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
-  connect(file_line_edit_, &QLineEdit::textChanged, this, &ExportWidget::settings_changed);
+  connect(format_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+    update_codec_choices();
+    emit settings_changed();
+  });
+  connect(file_line_edit_, &QLineEdit::textChanged, this, &ExportWidget::file_path_changed);
   connect(tag_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
   connect(frames_check_, &QCheckBox::toggled, this, &ExportWidget::settings_changed);
-  connect(frames_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
-          [this](int value) {
-            frames_lower_button_->setEnabled(value > frame_batch_size_);
-            emit settings_changed();
-          });
+  connect(frames_spin_, qOverload<int>(&QSpinBox::valueChanged), this, [this](int value) {
+    frames_lower_button_->setEnabled(value > frame_batch_size_);
+    emit settings_changed();
+  });
   connect(frames_lower_button_, &QPushButton::clicked, this, [this] {
     const auto batch = frame_batch_size_;
     const auto value = frames_spin_->value();
@@ -231,12 +238,15 @@ void ExportWidget::connect_signals() {
     frames_spin_->setValue(std::max(batch, lower));
   });
   connect(frames_higher_button_, &QPushButton::clicked, this, [this] {
-    const auto batch = frame_batch_size_;
-    const auto value = frames_spin_->value();
+    const auto batch  = frame_batch_size_;
+    const auto value  = frames_spin_->value();
     const auto higher = ((value / batch) + 1) * batch;
     frames_spin_->setValue(std::min(frames_spin_->maximum(), higher));
   });
   set_frame_batch_size(1);
+
+  connect(queues_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &ExportWidget::settings_changed);
 }
 
 void ExportWidget::clear_validation_styles() {
@@ -249,9 +259,9 @@ void ExportWidget::set_export_controls_enabled(bool enabled) {
 }
 
 void ExportWidget::update_codec_choices() {
-  const auto format_name = format_combo_->currentData().toString().toStdString();
-  const auto *format      = holotask::sinks::ffmpeg_format(format_name);
-  const auto  previous    = codec_combo_->currentData().toString();
+  const auto     format_name = format_combo_->currentData().toString().toStdString();
+  const auto    *format      = holotask::sinks::ffmpeg_format(format_name);
+  const auto     previous    = codec_combo_->currentData().toString();
   QSignalBlocker blocker(codec_combo_);
   codec_combo_->clear();
   if (format == nullptr || format->codecs.empty()) {

@@ -100,6 +100,8 @@ public:
   /// @brief Emits Graphviz DOT for the current compiled pipeline graph.
   void request_compiled_graph_visualization();
 
+  void update_recording_path(const std::string& new_path);
+
 signals:
   // Lifecycle signals
   void start_pipeline_success();
@@ -119,6 +121,11 @@ signals:
   void raw_record_started_failure(const QString &error);
   void raw_record_stopped_success();
   void raw_record_stopped_failure(const QString &error);
+
+  // record monitor signals
+  void update_record(size_t id, size_t recorded_frames, size_t writing_speed, size_t elapsed_time);
+  void update_acquisition(size_t id, size_t acquired_frames);
+  void raw_record_flushing_finished(size_t id);
 
   // Graph visualization signals
   void graph_visualization_ready(const QString &dot);
@@ -159,6 +166,8 @@ private:
   void uninstall_windows_crash_handler();
   void dump_windows_crash_graph(unsigned long exception_code) noexcept;
 #endif
+
+  const std::string& get_record_node_name();
 
   // --- UI Elements ---
   ui::AutoFocusWidget                                 *autofocus_widget_;

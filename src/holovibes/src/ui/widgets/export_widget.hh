@@ -38,6 +38,7 @@ public:
   QString get_tag() const;
   bool    is_frame_count_enabled() const;
   int     get_frame_count() const;
+  int     get_queue_count() const;
   bool    isChecked() const;
 
   // Setters
@@ -67,6 +68,7 @@ public:
   QComboBox   *tag_combo();
   QCheckBox   *frames_check();
   QSpinBox    *frames_spin();
+  QSpinBox    *queues_spin();
   QPushButton *record_button();
   QPushButton *stop_button();
   QPushButton *stop_fan_button();
@@ -77,6 +79,7 @@ signals:
   void stop_fan_clicked();
   void browse_clicked();
   void settings_changed();
+  void file_path_changed();
 
 private:
   void setup_ui();
@@ -98,6 +101,7 @@ private:
   QPushButton *frames_lower_button_;
   QPushButton *frames_higher_button_;
   int          frame_batch_size_ = 1;
+  QSpinBox    *queues_spin_;
   QPushButton *record_button_;
   QPushButton *stop_button_;
   QPushButton *stop_fan_button_;

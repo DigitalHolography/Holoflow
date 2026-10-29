@@ -101,12 +101,12 @@ private:
   QDoubleSpinBox *sampling_frequency_spin_;
 
   // File mode widgets
-  QLineEdit      *file_line_edit_;
-  QPushButton    *browse_button_;
-  QSpinBox       *fps_spin_;
-  QSpinBox       *start_index_spin_;
-  QSpinBox       *end_index_spin_;
-  QComboBox      *load_method_combo_;
+  QLineEdit   *file_line_edit_;
+  QPushButton *browse_button_;
+  QSpinBox    *fps_spin_;
+  QSpinBox    *start_index_spin_;
+  QSpinBox    *end_index_spin_;
+  QComboBox   *load_method_combo_;
 
   // Camera mode widgets
   QCheckBox *cam_check_;

@@ -18,7 +18,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -29,7 +28,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/ascontiguousarray.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -38,8 +37,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-// Absolute path to oracle.py, baked in at compile time.
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 // -------------------------------------------------------------------------------------------------
 // Helpers
@@ -80,7 +77,7 @@ static std::vector<std::byte> make_strided_2d_bytes(const std::vector<T> &logica
 }
 
 // Element-wise comparison: exact for integer types, toleranced for F32/CF32.
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -123,17 +120,17 @@ static void expect_near_oracle(const std::vector<std::byte> &actual,
   }
 }
 
-static void expect_matches_oracle(const std::vector<std::byte> &actual, const TDesc &idesc,
+static void expect_matches_reference(const std::vector<std::byte> &actual, const TDesc &idesc,
                                   const std::vector<std::byte> &input_bytes) {
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op          = "ascontiguousarray";
   oi.n_outputs   = 1;
   oi.input_descs = {idesc};
   oi.input_bytes = {input_bytes};
 
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  ASSERT_EQ(oracle.output_bytes.size(), 1u);
-  expect_near_oracle(actual, oracle.output_bytes[0], idesc.dtype);
+  const auto reference = holonp_test::invoke_reference(oi);
+  ASSERT_EQ(reference.output_bytes.size(), 1u);
+  expect_near_reference(actual, reference.output_bytes[0], idesc.dtype);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -191,7 +188,7 @@ TEST_F(AsContiguousArrayInferTest, RejectsHostInput) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// AsContiguousArrayFactory: execution tests via NumPy oracle
+// AsContiguousArrayFactory: execution tests via C++ reference
 // -------------------------------------------------------------------------------------------------
 
 class AsContiguousArrayExecuteTest : public ::testing::Test {
@@ -207,7 +204,7 @@ TEST_F(AsContiguousArrayExecuteTest, U16Strided2DCopy) {
       holonp_test::run_sync_factory(factory, {&in, 1}, {&input, 1}, nlohmann::json::object());
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], in, input);
+  expect_matches_reference(run.output_bytes[0], in, input);
 }
 
 TEST_F(AsContiguousArrayExecuteTest, F32Strided2DCopy) {
@@ -218,7 +215,7 @@ TEST_F(AsContiguousArrayExecuteTest, F32Strided2DCopy) {
       holonp_test::run_sync_factory(factory, {&in, 1}, {&input, 1}, nlohmann::json::object());
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], in, input);
+  expect_matches_reference(run.output_bytes[0], in, input);
 }
 
 TEST_F(AsContiguousArrayExecuteTest, OutputDescMatchesInferForNonContiguousInput) {
@@ -251,7 +248,7 @@ TEST_F(AsContiguousArrayUpdateTest, ReusesTaskOnSameNonContiguousDesc) {
                                                            nlohmann::json::object());
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], in, input);
+  expect_matches_reference(run.output_bytes[0], in, input);
 }
 
 TEST_F(AsContiguousArrayUpdateTest, RecreatesOnWrongTaskType) {
@@ -291,5 +288,5 @@ TEST_F(AsContiguousArrayUpdateTest, RecreatesOnWrongTaskType) {
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
   const auto actual = out_buf.download();
-  expect_matches_oracle(actual, in, input);
+  expect_matches_reference(actual, in, input);
 }

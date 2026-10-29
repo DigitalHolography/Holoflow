@@ -18,7 +18,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -29,7 +28,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/concatenate.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -38,8 +37,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-// Absolute path to oracle.py, baked in at compile time.
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 // -------------------------------------------------------------------------------------------------
 // Helpers
@@ -63,7 +60,7 @@ static nlohmann::json axis_settings(std::optional<int> axis) {
 }
 
 // Element-wise comparison: exact for integer types, toleranced for F32/CF32.
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -189,10 +186,10 @@ TEST_F(ConcatenateInferTest, RejectsShapeMismatchOutsideAxis) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// ConcatenateFactory: execution tests via NumPy oracle
+// ConcatenateFactory: execution tests via C++ reference
 // -------------------------------------------------------------------------------------------------
 
-class ConcatenateOracleTest : public ::testing::Test {
+class ConcatenateReferenceTest : public ::testing::Test {
 protected:
   holonp::ConcatenateFactory factory;
 
@@ -201,21 +198,21 @@ protected:
              const nlohmann::json                      &settings) {
     const auto run = holonp_test::run_sync_factory(factory, input_descs, input_bytes, settings);
 
-    holonp_test::OracleInput oi;
+    holonp_test::ReferenceInput oi;
     oi.op             = "concatenate";
     oi.n_outputs      = 1;
     oi.input_descs    = input_descs;
     oi.input_bytes    = input_bytes;
     oi.settings       = settings;
-    const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+    const auto reference = holonp_test::invoke_reference(oi);
 
     ASSERT_EQ(run.output_bytes.size(), 1u);
-    ASSERT_EQ(oracle.output_bytes.size(), 1u);
-    expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], dtype);
+    ASSERT_EQ(reference.output_bytes.size(), 1u);
+    expect_near_reference(run.output_bytes[0], reference.output_bytes[0], dtype);
   }
 };
 
-TEST_F(ConcatenateOracleTest, F32Axis0) {
+TEST_F(ConcatenateReferenceTest, F32Axis0) {
   const std::vector<TDesc> in = {device_desc({2, 2}, DType::F32), device_desc({1, 2}, DType::F32)};
   const std::vector<std::vector<std::byte>> data = {
       as_bytes(std::vector<float>{1.f, 2.f, 3.f, 4.f}),
@@ -224,7 +221,7 @@ TEST_F(ConcatenateOracleTest, F32Axis0) {
   check(DType::F32, in, data, axis_settings(0));
 }
 
-TEST_F(ConcatenateOracleTest, F32Axis1) {
+TEST_F(ConcatenateReferenceTest, F32Axis1) {
   const std::vector<TDesc> in = {device_desc({2, 2}, DType::F32), device_desc({2, 1}, DType::F32)};
   const std::vector<std::vector<std::byte>> data = {
       as_bytes(std::vector<float>{1.f, 2.f, 3.f, 4.f}),
@@ -233,7 +230,7 @@ TEST_F(ConcatenateOracleTest, F32Axis1) {
   check(DType::F32, in, data, axis_settings(1));
 }
 
-TEST_F(ConcatenateOracleTest, F32Axis1StridedInput) {
+TEST_F(ConcatenateReferenceTest, F32Axis1StridedInput) {
   const TDesc              a({2, 2}, DType::F32, MemLoc::Device, std::vector<size_t>{16, 4});
   const TDesc              b                     = device_desc({2, 1}, DType::F32);
   const std::vector<TDesc> in                    = {a, b};
@@ -244,7 +241,7 @@ TEST_F(ConcatenateOracleTest, F32Axis1StridedInput) {
   check(DType::F32, in, data, axis_settings(1));
 }
 
-TEST_F(ConcatenateOracleTest, F32Axis1OffsetStridedInput) {
+TEST_F(ConcatenateReferenceTest, F32Axis1OffsetStridedInput) {
   const TDesc              a({2, 2}, DType::F32, MemLoc::Device, std::vector<size_t>{16, 4}, 8);
   const TDesc              b                     = device_desc({2, 1}, DType::F32);
   const std::vector<TDesc> in                    = {a, b};
@@ -255,11 +252,11 @@ TEST_F(ConcatenateOracleTest, F32Axis1OffsetStridedInput) {
 
   const auto run = holonp_test::run_sync_factory(factory, in, data, axis_settings(1));
 
-  expect_near_oracle(run.output_bytes[0],
+  expect_near_reference(run.output_bytes[0],
                      as_bytes(std::vector<float>{1.f, 2.f, 10.f, 3.f, 4.f, 20.f}), DType::F32);
 }
 
-TEST_F(ConcatenateOracleTest, F32AxisNullFlatten) {
+TEST_F(ConcatenateReferenceTest, F32AxisNullFlatten) {
   const std::vector<TDesc> in = {device_desc({2, 2}, DType::F32), device_desc({3}, DType::F32)};
   const std::vector<std::vector<std::byte>> data = {
       as_bytes(std::vector<float>{1.f, 2.f, 3.f, 4.f}),
@@ -268,7 +265,7 @@ TEST_F(ConcatenateOracleTest, F32AxisNullFlatten) {
   check(DType::F32, in, data, axis_settings(std::nullopt));
 }
 
-TEST_F(ConcatenateOracleTest, U8Axis0) {
+TEST_F(ConcatenateReferenceTest, U8Axis0) {
   const std::vector<TDesc> in = {device_desc({2, 3}, DType::U8), device_desc({1, 3}, DType::U8)};
   const std::vector<std::vector<std::byte>> data = {
       as_bytes(std::vector<std::uint8_t>{1, 2, 3, 4, 5, 6}),
@@ -277,7 +274,7 @@ TEST_F(ConcatenateOracleTest, U8Axis0) {
   check(DType::U8, in, data, axis_settings(0));
 }
 
-TEST_F(ConcatenateOracleTest, CF32Axis1) {
+TEST_F(ConcatenateReferenceTest, CF32Axis1) {
   struct CF32 {
     float re, im;
   };
@@ -291,7 +288,7 @@ TEST_F(ConcatenateOracleTest, CF32Axis1) {
   check(DType::CF32, in, data, axis_settings(1));
 }
 
-TEST_F(ConcatenateOracleTest, OutputDescMatchesInfer) {
+TEST_F(ConcatenateReferenceTest, OutputDescMatchesInfer) {
   const std::vector<TDesc> in = {device_desc({2, 2}, DType::U16), device_desc({2, 1}, DType::U16)};
   const std::vector<std::vector<std::byte>> data = {
       as_bytes(std::vector<std::uint16_t>{1, 2, 3, 4}),
@@ -323,16 +320,16 @@ TEST_F(ConcatenateUpdateTest, ReusesConcatenateTask) {
 
   const auto run = holonp_test::run_sync_factory_update(factory, in, data, axis_settings(0));
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "concatenate";
   oi.n_outputs      = 1;
   oi.input_descs    = in;
   oi.input_bytes    = data;
   oi.settings       = axis_settings(0);
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  const auto reference = holonp_test::invoke_reference(oi);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }
 
 TEST_F(ConcatenateUpdateTest, RecreatesOnChangedAxis) {
@@ -377,16 +374,16 @@ TEST_F(ConcatenateUpdateTest, RecreatesOnChangedAxis) {
   EXPECT_NO_THROW((void)task->execute(ctx));
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "concatenate";
   oi.n_outputs      = 1;
   oi.input_descs    = in;
   oi.input_bytes    = data;
   oi.settings       = j_new;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  const auto reference = holonp_test::invoke_reference(oi);
 
   const auto actual = out_buf.download();
-  expect_near_oracle(actual, oracle.output_bytes[0], DType::F32);
+  expect_near_reference(actual, reference.output_bytes[0], DType::F32);
 }
 
 TEST_F(ConcatenateUpdateTest, RecreatesOnWrongTaskType) {
@@ -436,14 +433,14 @@ TEST_F(ConcatenateUpdateTest, RecreatesOnWrongTaskType) {
   EXPECT_NO_THROW((void)task->execute(ctx));
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "concatenate";
   oi.n_outputs      = 1;
   oi.input_descs    = in;
   oi.input_bytes    = data;
   oi.settings       = settings;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  const auto reference = holonp_test::invoke_reference(oi);
 
   const auto actual = out_buf.download();
-  expect_near_oracle(actual, oracle.output_bytes[0], DType::U8);
+  expect_near_reference(actual, reference.output_bytes[0], DType::U8);
 }
