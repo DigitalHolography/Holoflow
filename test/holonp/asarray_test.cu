@@ -16,7 +16,6 @@
 
 #include <atomic>
 #include <cmath>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -27,7 +26,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/asarray.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -36,8 +35,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-// Absolute path to oracle.py, baked in at compile time.
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 // -------------------------------------------------------------------------------------------------
 // Helpers
@@ -45,7 +42,7 @@ static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static nlohmann::json make_jsettings(double value) { return nlohmann::json{{"value", value}}; }
 
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
   ASSERT_EQ(actual.size(), sizeof(float));
@@ -56,16 +53,16 @@ static void expect_near_oracle(const std::vector<std::byte> &actual,
   EXPECT_NEAR(a[0], e[0], tol);
 }
 
-static void expect_matches_oracle(const std::vector<std::byte> &actual,
+static void expect_matches_reference(const std::vector<std::byte> &actual,
                                   const nlohmann::json         &settings) {
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op        = "asarray";
   oi.n_outputs = 1;
   oi.settings  = settings;
 
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  ASSERT_EQ(oracle.output_bytes.size(), 1u);
-  expect_near_oracle(actual, oracle.output_bytes[0]);
+  const auto reference = holonp_test::invoke_reference(oi);
+  ASSERT_EQ(reference.output_bytes.size(), 1u);
+  expect_near_reference(actual, reference.output_bytes[0]);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -114,7 +111,7 @@ TEST_F(AsArrayInferTest, RejectsHostDevice) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// AsArrayFactory: execution tests via NumPy oracle
+// AsArrayFactory: execution tests via C++ reference
 // -------------------------------------------------------------------------------------------------
 
 class AsArrayExecuteTest : public ::testing::Test {
@@ -129,7 +126,7 @@ TEST_F(AsArrayExecuteTest, ZeroValue) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], j);
+  expect_matches_reference(run.output_bytes[0], j);
 }
 
 TEST_F(AsArrayExecuteTest, PositiveValue) {
@@ -137,7 +134,7 @@ TEST_F(AsArrayExecuteTest, PositiveValue) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], j);
+  expect_matches_reference(run.output_bytes[0], j);
 }
 
 TEST_F(AsArrayExecuteTest, NegativeFractionalValue) {
@@ -145,7 +142,7 @@ TEST_F(AsArrayExecuteTest, NegativeFractionalValue) {
   const auto run = holonp_test::run_sync_factory(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], j);
+  expect_matches_reference(run.output_bytes[0], j);
 }
 
 TEST_F(AsArrayExecuteTest, OutputDescMatchesInfer) {
@@ -174,7 +171,7 @@ TEST_F(AsArrayUpdateTest, ReusesAsArrayTask) {
   const auto run = holonp_test::run_sync_factory_update(factory, no_inputs, no_data, j);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_matches_oracle(run.output_bytes[0], j);
+  expect_matches_reference(run.output_bytes[0], j);
 }
 
 TEST_F(AsArrayUpdateTest, RecreatesOnChangedSettings) {
@@ -205,7 +202,7 @@ TEST_F(AsArrayUpdateTest, RecreatesOnChangedSettings) {
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
   const auto actual = out_buf.download();
-  expect_matches_oracle(actual, j_new);
+  expect_matches_reference(actual, j_new);
 }
 
 TEST_F(AsArrayUpdateTest, RecreatesOnWrongTaskType) {
@@ -240,5 +237,5 @@ TEST_F(AsArrayUpdateTest, RecreatesOnWrongTaskType) {
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
   const auto actual = out_buf.download();
-  expect_matches_oracle(actual, j);
+  expect_matches_reference(actual, j);
 }

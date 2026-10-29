@@ -21,7 +21,9 @@ set(SOURCES
     flatfield_test.cu
     filter2d_test.cu
     fresnel_diffraction_test.cu
+    headless_nodes_test.cu
     holofile_sink_test.cc
+    production_pipeline_test.cu
     npyfile_sink_test.cc
     resize_test.cc
     normalize_test.cu

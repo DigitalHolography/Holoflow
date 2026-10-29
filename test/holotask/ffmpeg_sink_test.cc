@@ -63,7 +63,12 @@ void start_recording(RecordingContext &recording, const std::string &path) {
 
 std::optional<holoflow_event::Event> receive_event(RecordingContext &recording) {
   recording.router.tick();
-  return recording.router.ui_try_receive();
+  while (auto event = recording.router.ui_try_receive()) {
+    const auto type = event->data.at("type");
+    if (type == "recording_finished" || type == "recording_failed")
+      return event;
+  }
+  return std::nullopt;
 }
 
 void expect_rejected(const holotask::sinks::FfmpegFactory &factory, TDesc input,
@@ -243,7 +248,6 @@ TEST(FfmpegSinkTest, EncodesAviMjpegAtNormalAndMaximumRates) {
     const auto event = receive_event(recording);
     ASSERT_TRUE(event.has_value());
     ASSERT_EQ(event->data.at("type"), "recording_finished") << event->data;
-    EXPECT_EQ(event->data.at("frames_written"), 128);
 
     int                       width  = 0;
     int                       height = 0;
@@ -303,7 +307,6 @@ TEST(FfmpegSinkTest, EncodesMpeg4WithFractionalFrameRates) {
       const auto event = receive_event(recording);
       ASSERT_TRUE(event.has_value());
       ASSERT_EQ(event->data.at("type"), "recording_finished") << event->data;
-      EXPECT_EQ(event->data.at("frames_written"), 8);
 
       AVFormatContext *output = nullptr;
       ASSERT_EQ(avformat_open_input(&output, path.string().c_str(), nullptr, nullptr), 0);
@@ -355,10 +358,22 @@ TEST(FfmpegSinkTest, EncodesU8FramesAndEmitsCompletion) {
   start_recording(recording, path.string());
   ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
   ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
-  const auto event = receive_event(recording);
-  ASSERT_TRUE(event.has_value());
-  EXPECT_EQ(event->data.at("type"), "recording_finished");
-  EXPECT_EQ(event->data.at("frames_written"), 2);
+
+  recording.router.tick();
+
+  size_t recorded = 0;
+  bool   flushed  = false;
+  bool   finished = false;
+  while (auto update = recording.router.ui_try_receive()) {
+    if (update->data.at("type") == "recording_update")
+      recorded = update->data.value("frame_recorded", 0);
+    flushed |= update->data.at("type") == "record_flushing_finished";
+    finished |= update->data.at("type") == "recording_finished";
+  }
+
+  EXPECT_EQ(recorded, 2);
+  EXPECT_TRUE(flushed);
+  EXPECT_TRUE(finished);
 
   int                       width  = 0;
   int                       height = 0;

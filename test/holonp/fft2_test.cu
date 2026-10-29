@@ -17,7 +17,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -26,7 +25,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/fft2.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 
 using holoflow::core::DType;
@@ -34,7 +33,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static TDesc device_desc(std::vector<size_t> shape, DType dtype) {
   return TDesc(std::move(shape), dtype, MemLoc::Device);
@@ -76,12 +74,12 @@ TEST_F(FFT2InferTest, RejectsNonComplexInput) {
   EXPECT_THROW(factory.infer(in, nlohmann::json::object()), std::invalid_argument);
 }
 
-class FFT2OracleTest : public ::testing::Test {
+class FFT2ReferenceTest : public ::testing::Test {
 protected:
   holonp::FFT2Factory factory;
 };
 
-TEST_F(FFT2OracleTest, CF32DefaultAxes) {
+TEST_F(FFT2ReferenceTest, CF32DefaultAxes) {
   struct CF32 {
     float re, im;
   };
@@ -92,14 +90,14 @@ TEST_F(FFT2OracleTest, CF32DefaultAxes) {
   const auto run = holonp_test::run_sync_factory(factory, std::vector<TDesc>{d},
                                                  std::vector<std::vector<std::byte>>{data}, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "fft2";
   oi.n_outputs      = 1;
   oi.input_descs    = {d};
   oi.input_bytes    = {data};
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_cf32_near(run.output_bytes[0], oracle.output_bytes[0]);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_cf32_near(run.output_bytes[0], reference.output_bytes[0]);
 }
 
 class FFT2UpdateTest : public ::testing::Test {
@@ -118,12 +116,12 @@ TEST_F(FFT2UpdateTest, ReusesTaskWithSameConfig) {
   const auto run = holonp_test::run_sync_factory_update(
       factory, std::vector<TDesc>{d}, std::vector<std::vector<std::byte>>{data}, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "fft2";
   oi.n_outputs      = 1;
   oi.input_descs    = {d};
   oi.input_bytes    = {data};
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_cf32_near(run.output_bytes[0], oracle.output_bytes[0]);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_cf32_near(run.output_bytes[0], reference.output_bytes[0]);
 }

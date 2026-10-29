@@ -37,6 +37,7 @@
 #include "ui/widgets/export_widget.hh"
 #include "ui/widgets/image_rendering_widget.hh"
 #include "ui/widgets/import_widget.hh"
+#include "ui/widgets/record_monitor_widget.hh"
 #include "ui/widgets/system_monitor_widget.hh"
 #include "ui/widgets/view_widget.hh"
 
@@ -68,12 +69,14 @@ private slots:
   void on_raw_record_stopped_success();
   void on_raw_record_stopped_failure(const QString &error);
 
+
 private:
   ImportWidget                *import_widget_;
   ExportWidget                *export_widget_;
   ImageRenderingWidget        *render_widget_;
   ViewWidget                  *view_widget_;
   SystemMonitorWidget         *monitor_widget_;
+  RecordMonitorWidget         *record_widget_;
   SelectedWidgetSettingsPanel *selected_widget_settings_panel_;
 
   void show_pipeline_error_popup(const QString &message);
@@ -86,6 +89,10 @@ private:
   void on_update_pipeline_success();
   void on_update_pipeline_failure(const QString &error);
 
+  void on_update_record(size_t id, size_t frame_recorded, size_t writing_speed, size_t elapsed_time);
+  void on_update_acquisition(size_t id, size_t frame_acquired);
+  void on_raw_record_flushing_finished(size_t id);
+
   bool                        validate_inputs();
   void                        apply_validation_result(const pipeline::ValidationResult &result);
   void                        refresh_validation_tooltips(const pipeline::ValidationResult &result);
@@ -93,6 +100,8 @@ private:
   void                        setup_validation_connections();
   void                        setup_update_connections();
   void                        update_if_running();
+  void                        recording_file_path_changed();
+  int                         estimate_pipeline_start_duration();
 
   QSize              guess_source_dims();
   QSize              processed_display_dims(QSize source_dims) const;

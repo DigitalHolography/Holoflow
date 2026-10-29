@@ -30,6 +30,7 @@
 #include <QFileInfoList>
 #include <QFormLayout>
 #include <QFrame>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QKeySequence>
@@ -55,6 +56,7 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QVBoxLayout>
+#include <QtConcurrent>
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -63,6 +65,7 @@
 #include <functional>
 #include <limits>
 #include <optional>
+#include <utility>
 
 #include "bug.hh"
 #include "holofile/holofile.hh"
@@ -399,7 +402,6 @@ class PreferencesDialog : public QDialog {
 public:
   using GraphSpecDumpPreferences     = holoflow::core::GraphSpecDumpPreferences;
   using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
-  // TODO : find the right import
 
   PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager)
       : QDialog(parent), manager_(manager) {
@@ -432,6 +434,7 @@ public:
     splitter->addWidget(runtime_failure_group_box);
 
     dialog_layout->addWidget(splitter);
+
     // Apply / Close
     auto *button_box = new QDialogButtonBox(QDialogButtonBox::Close, this);
     apply_button_    = button_box->addButton(tr("Apply"), QDialogButtonBox::ActionRole);
@@ -971,8 +974,14 @@ void MainWindow::setup_main_layout() {
   monitor_widget_ = new SystemMonitorWidget(right_sidebar_);
   monitor_widget_->setObjectName("systemMonitorPanel");
   monitor_widget_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+
+  record_widget_ = new RecordMonitorWidget(right_sidebar_);
+  record_widget_->setObjectName("recordMonitorPanel");
+  record_widget_->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Maximum);
+
   selected_widget_settings_panel_ = new SelectedWidgetSettingsPanel(right_sidebar_);
   right_sidebar_layout->addWidget(monitor_widget_);
+  right_sidebar_layout->addWidget(record_widget_);
   right_sidebar_layout->addWidget(selected_widget_settings_panel_, 1);
 
   const int right_sidebar_width = std::max(280, right_sidebar_->sizeHint().width());
@@ -1069,13 +1078,13 @@ QString MainWindow::sanitize_recording_token(const QString &value) const {
 QString MainWindow::recording_file_name(int acquisition_id) const {
   const QString patient = sanitize_recording_token(patient_line_edit_->text());
   const QString eye     = sanitize_recording_token(eye_side_combo_->currentText());
-  const QString format = export_widget_ == nullptr ? QStringLiteral("holo")
-                                                   : export_widget_->get_format();
-  const auto *format_info = holotask::sinks::ffmpeg_format(format.toStdString());
-  const QString extension = format_info == nullptr
-                                 ? QStringLiteral("holo")
-                                 : QString::fromUtf8(format_info->extension.data(),
-                                                      format_info->extension.size());
+  const QString format =
+      export_widget_ == nullptr ? QStringLiteral("holo") : export_widget_->get_format();
+  const auto   *format_info = holotask::sinks::ffmpeg_format(format.toStdString());
+  const QString extension =
+      format_info == nullptr
+          ? QStringLiteral("holo")
+          : QString::fromUtf8(format_info->extension.data(), format_info->extension.size());
   return QString("%1_%2_%3_%4.%5")
       .arg(patient, eye, session_id_, acquisition_label(acquisition_id), extension);
 }
@@ -1653,6 +1662,15 @@ void MainWindow::connect_manager_signals() {
   connect(pipeline_manager_, &pipeline::Manager::update_pipeline_failure, this,
           &MainWindow::on_update_pipeline_failure);
 
+  connect(pipeline_manager_, &pipeline::Manager::update_record, this,
+          &MainWindow::on_update_record);
+
+  connect(pipeline_manager_, &pipeline::Manager::update_acquisition, this,
+          &MainWindow::on_update_acquisition);
+
+  connect(pipeline_manager_, &pipeline::Manager::raw_record_flushing_finished, this,
+          &MainWindow::on_raw_record_flushing_finished);
+
   connect(pipeline_manager_, &pipeline::Manager::metrics_updated, this,
           &MainWindow::on_metrics_updated, Qt::QueuedConnection);
 
@@ -1931,6 +1949,8 @@ void MainWindow::on_start_pipeline_success() {
   refresh_visualization_availability();
   display_workspace_->set_pipeline_running(true);
   refresh_command_bar();
+
+  monitor_widget_->pipeline_progress_bar_finished();
 }
 
 void MainWindow::on_start_pipeline_failure(const QString &error) {
@@ -1954,15 +1974,16 @@ void MainWindow::on_start_pipeline_failure(const QString &error) {
   }
 
   show_pipeline_error_popup(tr("An error occurred while starting the pipeline:\n%1").arg(error));
+
+  monitor_widget_->stop_pipeline_progress_bar();
 }
 
 void MainWindow::on_stop_pipeline_success() {
   logger()->info("[MainWindow::on_stop_pipeline_success]");
   if (pause_requested_) {
-    pipeline_running_   = false;
-    pipeline_paused_    = true;
-    pause_requested_    = false;
-    export_in_progress_ = false;
+    pipeline_running_ = false;
+    pipeline_paused_  = true;
+    pause_requested_  = false;
     import_widget_->set_start_enabled(true);
     import_widget_->set_stop_enabled(true);
     export_widget_->set_record_enabled(false);
@@ -2040,6 +2061,7 @@ void MainWindow::reset_pipeline_ui_after_stop() {
   display_workspace_->set_pipeline_running(false);
   render_widget_->autofocus_widget()->reset_zernike_values();
   refresh_command_bar();
+  record_widget_->reset(export_widget_->get_queue_count());
 }
 
 void MainWindow::on_metrics_updated(double input_fps) {
@@ -2129,6 +2151,24 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   show_pipeline_error_popup(tr("An error occurred while updating the pipeline:\n%1").arg(error));
 }
 
+void MainWindow::on_update_record(size_t id, size_t frame_recorded, size_t writing_speed,
+                                  size_t elapsed_time) {
+  record_widget_->update_record_queue_recorded(id, static_cast<int>(frame_recorded));
+  record_widget_->update_record_writing_speed(id, writing_speed);
+  record_widget_->update_record_elapsed_time(id, elapsed_time);
+  record_widget_->free(id, false);
+}
+
+void MainWindow::on_update_acquisition(size_t id, size_t frame_acquired) {
+  record_widget_->update_record_queue_acquired(id, static_cast<int>(frame_acquired));
+}
+
+void MainWindow::on_raw_record_flushing_finished(size_t id) {
+  logger()->info("[MainWindow::on_raw_record_flushing_finished] queue {} has been flushed to disk",
+                 id);
+  record_widget_->free(id, true);
+}
+
 void MainWindow::closeEvent(QCloseEvent *event) {
   save_persistent_state();
 
@@ -2178,8 +2218,23 @@ void MainWindow::on_import_start_clicked() {
   refresh_command_bar();
   pipeline::Settings settings = get_pipeline_settings();
   auto               update   = [=]() { pipeline_manager_->update_pipeline(settings); };
-  auto               start    = [=]() { pipeline_manager_->start_pipeline(); };
+
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
+
+  auto start_estimation = estimate_pipeline_start_duration();
+  monitor_widget_->start_pipeline_progress_bar(start_estimation);
+  logger()->info("[MainWindow::on_import_start_clicked] pipeline start is estimated to take {} s",
+                 start_estimation);
+
+  auto t0    = std::chrono::steady_clock::now();
+  auto start = [=]() {
+    pipeline_manager_->start_pipeline();
+
+    auto t1       = std::chrono::steady_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(t1 - t0).count();
+    logger()->info("[MainWindow::on_import_start_clicked] pipeline start took {} s", duration);
+  };
+
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
 }
 
@@ -2224,7 +2279,12 @@ void MainWindow::on_export_record_clicked() {
     frame_count = static_cast<size_t>(export_widget_->get_frame_count());
   }
 
-  auto start = [mgr = pipeline_manager_, record_path]() { mgr->start_raw_record(record_path); };
+  auto start = [mgr         = pipeline_manager_, record_path,
+                record_size = frame_count.has_value() ? *frame_count : 1,
+                monitor     = record_widget_]() {
+    mgr->start_raw_record(record_path);
+    monitor->set_record_size(static_cast<int>(record_size));
+  };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, start, Qt::QueuedConnection));
 }
 
@@ -2269,12 +2329,15 @@ void MainWindow::on_raw_record_stopped_success() {
   }
   export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(false);
+
   refresh_command_bar();
 }
 
 void MainWindow::on_raw_record_stopped_failure(const QString &error) {
   logger()->error("[MainWindow::on_raw_record_stopped_failure]");
+  export_in_progress_ = false;
   export_widget_->set_stop_enabled(pipeline_running_);
+  export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
   refresh_command_bar();
   show_pipeline_error_popup(tr("An error occurred while stopping raw recording:\n%1").arg(error));
 }
@@ -2288,11 +2351,11 @@ bool MainWindow::validate_inputs() {
   configure_unsupported_features();
 
   pipeline::Settings settings = get_pipeline_settings();
-  export_widget_->set_frame_batch_size(
-      settings.recording_method == pipeline::RecordingMethod::RAW ? settings.load_batch
-                                                                   : settings.cpu_out_size);
-  const auto         context  = build_validation_context(settings);
-  QSize display_dims(context.source_width.value_or(1), context.source_height.value_or(1));
+  export_widget_->set_frame_batch_size(settings.recording_method == pipeline::RecordingMethod::RAW
+                                           ? settings.load_batch
+                                           : settings.cpu_out_size);
+  const auto context = build_validation_context(settings);
+  QSize      display_dims(context.source_width.value_or(1), context.source_height.value_or(1));
   if (settings.view_type != pipeline::ViewType::RAW &&
       settings.spacial_method == pipeline::SpacialMethod::ANGULAR_SPECTRUM &&
       settings.asp_padding_enabled) {
@@ -2499,13 +2562,55 @@ void MainWindow::setup_validation_connections() {
 }
 
 void MainWindow::setup_update_connections() {
-  void (MainWindow::*cb)() = &MainWindow::update_if_running;
+  auto cb = [this]() {
+    update_if_running();
+    monitor_widget_->reset_pipeline_progress_bar();
+  };
 
   connect(import_widget_, &ImportWidget::settings_changed, this, cb);
+
   connect(export_widget_, &ExportWidget::settings_changed, this, cb);
+  connect(export_widget_, &ExportWidget::settings_changed, this,
+          [this]() { record_widget_->reset(export_widget_->get_queue_count()); });
+
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this, cb);
   connect(view_widget_, &ViewWidget::settings_changed, this, cb);
   connect(display_workspace_, &VisualizationWorkspace::visualization_preferences_changed, this, cb);
+
+  void (MainWindow::*file_cb)() = &MainWindow::recording_file_path_changed;
+  connect(export_widget_, &ExportWidget::file_path_changed, this, file_cb);
+}
+
+void MainWindow::recording_file_path_changed() {
+  auto update = [=]() {
+    pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString());
+  };
+  HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
+}
+
+int MainWindow::estimate_pipeline_start_duration() {
+  if (!export_widget_->isChecked())
+    return 30;
+
+  const double frame_count = export_widget_->get_frame_count();
+
+  constexpr double p1 = 32768.0;
+  constexpr double p2 = 65536.0;
+  constexpr double p3 = 163840.0;
+
+  constexpr double t1 = 34.0;
+  constexpr double t2 = 52.0;
+  constexpr double t3 = 161.0;
+
+  double estimated_time;
+
+  if (frame_count <= p2) {
+    estimated_time = t1 + (frame_count - p1) * (t2 - t1) / (p2 - p1);
+  } else {
+    estimated_time = t2 + (frame_count - p2) * (t3 - t2) / (p3 - p2);
+  }
+
+  return static_cast<int>(std::ceil(std::max(0.0, estimated_time)));
 }
 
 void MainWindow::update_if_running() {
@@ -2734,11 +2839,12 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     } else {
       s.recording_method = RecordingMethod::NONE;
     }
-    s.recording_path  = export_widget_->get_file_path().toStdString();
-    s.recording_count = export_widget_->get_frame_count();
-    s.recording_format = export_widget_->get_format().toStdString();
-    s.recording_codec  = export_widget_->get_codec().toStdString();
+    s.recording_path             = export_widget_->get_file_path().toStdString();
+    s.recording_count            = export_widget_->get_frame_count();
+    s.recording_format           = export_widget_->get_format().toStdString();
+    s.recording_codec            = export_widget_->get_codec().toStdString();
     s.recording_resize_algorithm = export_widget_->get_resize_algorithm().toStdString();
+    s.recording_queue_count      = export_widget_->get_queue_count();
   }
 
   // Auto-Focus Settings
@@ -2948,13 +3054,13 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   {
     export_widget_->set_file_path(QString::fromStdString(s.recording_path.string()));
     export_widget_->set_frame_count(static_cast<int>(s.recording_count));
-    const auto format_index = export_widget_->format_combo()->findData(
-        QString::fromStdString(s.recording_format));
+    const auto format_index =
+        export_widget_->format_combo()->findData(QString::fromStdString(s.recording_format));
     if (format_index >= 0) {
       export_widget_->format_combo()->setCurrentIndex(format_index);
     }
-    const auto codec_index = export_widget_->codec_combo()->findData(
-        QString::fromStdString(s.recording_codec));
+    const auto codec_index =
+        export_widget_->codec_combo()->findData(QString::fromStdString(s.recording_codec));
     if (codec_index >= 0) {
       export_widget_->codec_combo()->setCurrentIndex(codec_index);
     }

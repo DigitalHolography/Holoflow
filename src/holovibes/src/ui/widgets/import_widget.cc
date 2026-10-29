@@ -65,11 +65,9 @@ std::optional<int> ImportWidget::get_fps_limit() const {
 
   return fps_spin_->value();
 }
-double ImportWidget::get_sampling_frequency_hz() const {
-  return sampling_frequency_spin_->value();
-}
-int     ImportWidget::get_start_index() const { return start_index_spin_->value(); }
-int     ImportWidget::get_end_index() const { return end_index_spin_->value(); }
+double ImportWidget::get_sampling_frequency_hz() const { return sampling_frequency_spin_->value(); }
+int    ImportWidget::get_start_index() const { return start_index_spin_->value(); }
+int    ImportWidget::get_end_index() const { return end_index_spin_->value(); }
 QString ImportWidget::get_load_method() const { return load_method_combo_->currentText(); }
 QString ImportWidget::get_camera_type() const { return camera_combo_->currentText(); }
 QString ImportWidget::get_camera_config() const { return camera_config_combo_->currentText(); }
@@ -102,10 +100,10 @@ void ImportWidget::mark_start_index_invalid() { mark_validation_error(start_inde
 void ImportWidget::mark_end_index_invalid() { mark_validation_error(end_index_spin_); }
 void ImportWidget::mark_camera_config_invalid() { mark_validation_error(camera_config_combo_); }
 
-QLineEdit   *ImportWidget::file_line_edit() { return file_line_edit_; }
-QPushButton *ImportWidget::browse_button() { return browse_button_; }
-QPushButton *ImportWidget::start_button() { return start_button_; }
-QPushButton *ImportWidget::stop_button() { return stop_button_; }
+QLineEdit      *ImportWidget::file_line_edit() { return file_line_edit_; }
+QPushButton    *ImportWidget::browse_button() { return browse_button_; }
+QPushButton    *ImportWidget::start_button() { return start_button_; }
+QPushButton    *ImportWidget::stop_button() { return stop_button_; }
 QSpinBox       *ImportWidget::fps_spin() { return fps_spin_; }
 QDoubleSpinBox *ImportWidget::sampling_frequency_spin() { return sampling_frequency_spin_; }
 QSpinBox       *ImportWidget::start_index_spin() { return start_index_spin_; }
@@ -273,10 +271,9 @@ QStringList ImportWidget::load_available_camera_configs() {
 
 void ImportWidget::update_sampling_frequency_from_camera_config() {
   const QString app_data_base = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
-  const QString config_path =
-      app_data_base + "/" + QCoreApplication::applicationVersion() + "/camera_configs/" +
-      camera_config_combo_->currentText() + ".json";
-  QFile config_file(config_path);
+  const QString config_path   = app_data_base + "/" + QCoreApplication::applicationVersion() +
+                                "/camera_configs/" + camera_config_combo_->currentText() + ".json";
+  QFile         config_file(config_path);
   if (!config_file.open(QIODevice::ReadOnly)) {
     return;
   }
@@ -286,7 +283,7 @@ void ImportWidget::update_sampling_frequency_from_camera_config() {
     return;
   }
 
-  const auto root = document.object();
+  const auto  root = document.object();
   QJsonObject camera;
   if (root.value("s711").isObject()) {
     camera = root.value("s711").toObject();

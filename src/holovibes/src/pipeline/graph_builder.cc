@@ -229,13 +229,24 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
   }
 
   if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
-    return ametek_s711_euresys_coaxlink_qsfp_plus({cam_path});
+    holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings settings{.cfg_path = cam_path};
+    if (s_.can_use_camera_record()) {
+      settings.record_settings = holotask::sources::RecordSettings{
+          .file_path          = s_.recording_path.string(),
+          .recording_count    = s_.recording_count,
+          .pipeline_config    = settings_to_old_json(s_),
+          .record_queue_count = static_cast<size_t>(s_.recording_queue_count)};
+    }
+    return ametek_s711_euresys_coaxlink_qsfp_plus(settings);
   }
 
   HOLOVIBES_UNREACHABLE();
 }
 
 void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
+  if (s_.can_use_camera_record())
+    return;
+
   auto path  = s_.recording_path.string();
   auto count = s_.recording_count;
   if (s_.recording_format == "npy") {

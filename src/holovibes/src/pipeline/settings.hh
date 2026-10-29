@@ -18,7 +18,6 @@
 #include <optional>
 #include <variant>
 
-
 namespace holovibes::pipeline {
 
 enum class ImportSource {
@@ -143,9 +142,10 @@ struct Settings {
   RecordingMethod       recording_method;
   std::filesystem::path recording_path;
   int                   recording_count;
-  std::string           recording_format = "holo";
-  std::string           recording_codec  = "mpeg4";
+  std::string           recording_format           = "holo";
+  std::string           recording_codec            = "mpeg4";
   std::string           recording_resize_algorithm = "CpuBilinear";
+  int                   recording_queue_count;
 
   // Auto-focus
   bool             autofocus_enabled;
@@ -160,6 +160,11 @@ struct Settings {
 
   [[nodiscard]] double signal_plot_sample_time_seconds() const {
     return static_cast<double>(time_stride) / input_sampling_frequency_hz;
+  }
+
+  [[nodiscard]] bool can_use_camera_record() const {
+    return recording_format == "holo" && recording_method == RecordingMethod::RAW &&
+           import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP;
   }
 };
 

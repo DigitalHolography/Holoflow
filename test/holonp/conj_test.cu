@@ -18,7 +18,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -29,7 +28,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/conj.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -38,8 +37,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-// Absolute path to oracle.py, baked in at compile time.
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 // -------------------------------------------------------------------------------------------------
 // Helpers
@@ -56,7 +53,7 @@ template <typename T> static std::vector<std::byte> as_bytes(const std::vector<T
 }
 
 // Element-wise comparison: exact for integer types, toleranced for F32/CF32.
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -166,10 +163,10 @@ TEST_F(ConjInferTest, RejectsNonContiguousInput) {
 }
 
 // -------------------------------------------------------------------------------------------------
-// ConjFactory: execution tests via NumPy oracle
+// ConjFactory: execution tests via C++ reference
 // -------------------------------------------------------------------------------------------------
 
-class ConjOracleTest : public ::testing::Test {
+class ConjReferenceTest : public ::testing::Test {
 protected:
   holonp::ConjFactory factory;
 
@@ -181,32 +178,32 @@ protected:
     const auto run =
         holonp_test::run_sync_factory(factory, {&idesc, 1}, {&ibytes, 1}, nlohmann::json::object());
 
-    holonp_test::OracleInput oi;
+    holonp_test::ReferenceInput oi;
     oi.op             = "conj";
     oi.n_outputs      = 1;
     oi.input_descs    = {idesc};
     oi.input_bytes    = {ibytes};
-    const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+    const auto reference = holonp_test::invoke_reference(oi);
 
     ASSERT_EQ(run.output_bytes.size(), 1u);
-    ASSERT_EQ(oracle.output_bytes.size(), 1u);
-    expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], dtype);
+    ASSERT_EQ(reference.output_bytes.size(), 1u);
+    expect_near_reference(run.output_bytes[0], reference.output_bytes[0], dtype);
   }
 };
 
-TEST_F(ConjOracleTest, U8) {
+TEST_F(ConjReferenceTest, U8) {
   check(DType::U8, {6}, std::vector<std::uint8_t>{0, 1, 2, 3, 200, 255});
 }
 
-TEST_F(ConjOracleTest, U16) {
+TEST_F(ConjReferenceTest, U16) {
   check(DType::U16, {5}, std::vector<std::uint16_t>{0, 1, 256, 1024, 65535});
 }
 
-TEST_F(ConjOracleTest, F32TwoDim) {
+TEST_F(ConjReferenceTest, F32TwoDim) {
   check(DType::F32, {2, 3}, std::vector<float>{1.f, -2.f, 3.5f, -4.f, 0.f, 6.f});
 }
 
-TEST_F(ConjOracleTest, CF32) {
+TEST_F(ConjReferenceTest, CF32) {
   struct CF32 {
     float re, im;
   };
@@ -229,15 +226,15 @@ TEST_F(ConjUpdateTest, ReusesConjTask) {
   const auto run = holonp_test::run_sync_factory_update(factory, {&in, 1}, {&ibytes, 1},
                                                         nlohmann::json::object());
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "conj";
   oi.n_outputs      = 1;
   oi.input_descs    = {in};
   oi.input_bytes    = {ibytes};
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  const auto reference = holonp_test::invoke_reference(oi);
 
   ASSERT_EQ(run.output_bytes.size(), 1u);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }
 
 TEST_F(ConjUpdateTest, RecreatesOnWrongTaskType) {
@@ -276,13 +273,13 @@ TEST_F(ConjUpdateTest, RecreatesOnWrongTaskType) {
   EXPECT_NO_THROW((void)task->execute(ctx));
   CUDA_CHECK(cudaStreamSynchronize(stream.get()));
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "conj";
   oi.n_outputs      = 1;
   oi.input_descs    = {in};
   oi.input_bytes    = {ibytes};
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
+  const auto reference = holonp_test::invoke_reference(oi);
 
   const auto actual = out_buf.download();
-  expect_near_oracle(actual, oracle.output_bytes[0], DType::F32);
+  expect_near_reference(actual, reference.output_bytes[0], DType::F32);
 }
