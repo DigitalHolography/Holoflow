@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "graph_builder.hh"
+#include "precision_options.hh"
 
 #include <algorithm>
 #include <array>
@@ -79,6 +80,7 @@ private:
   void build_raw_record(const TDesc &H);
   bool build_raw_view(const TDesc &H);
   TDesc build_preprocessing(TDesc H);
+  bool fused_spatial_mean_ = false;
   TDesc build_time_frequency_analysis(TDesc H);
   TDesc build_aberration_correction(const TDesc &FH_current, const TDesc &FH_delayed);
   TDesc build_aberration_correction_pass(const TDesc &FH_current, const TDesc &FH_delayed, bool is_last_pass, AberrationCorrectionState &state);
@@ -271,6 +273,13 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
     H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window});
   }
 
+  if (enable_f16_pca && s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS &&
+      s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION && s_.moment_type == MomentType::M0 &&
+      !s_.autofocus_enabled && !s_.view_3d_cuts && !s_.filter_2d &&
+      H.dtype == holoflow::core::DType::U8 && H.shape == std::vector<size_t>{32, 320, 512} &&
+      s_.time_z_end - s_.time_z_begin <= 16)
+    // The input and PCA queues both own their buffers. Keep a device copy between them.
+    return memcpy(H, {Device});
   return convert(H, {Target::F32, Strat::Real});
 }
 
@@ -290,10 +299,14 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
   if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
     // Keep the four-window grouping, but retain X and eigenvectors together through projection.
     // The decomposition queue overlaps producer covariance and consumer projection with HEEV.
-    const auto decomposition = pca_decomposition_queue(H, {static_cast<size_t>(N_pre), 3});
-    const int  z0            = s_.view_3d_cuts ? 0 : s_.time_z_begin;
-    const int  z1            = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
-    return pca_projection(decomposition.at(0), decomposition.at(1), {z0, z1});
+    const auto decomposition = pca_decomposition_queue(
+        H, {static_cast<size_t>(N_pre), 3, H.dtype == holoflow::core::DType::U8});
+    const int z0 = s_.view_3d_cuts ? 0 : s_.time_z_begin;
+    const int z1 = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
+    return pca_projection(decomposition.at(0), decomposition.at(1),
+                          {z0, z1, H.dtype == holoflow::core::DType::U8,
+                           H.dtype == holoflow::core::DType::U8 ? holoflow::core::DType::F16
+                                                                : holoflow::core::DType::F32});
   }
 
   H = batched_queue(H, {N_pre * 2, N_pre, N_pre}); // [N_pre, T, Hy, Hx]
@@ -631,12 +644,20 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_propagation(const TD
   using Filter  = holotask::syncs::AngularSpectrumSettings::Filter;
 
   if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
+    const bool use_half = enable_f16_fresnel &&
+                          s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS &&
+                          !s_.autofocus_enabled && !s_.view_3d_cuts && !s_.filter_2d &&
+                          s_.moment_type == MomentType::M0 && FH.shape[FH.rank() - 2] == 320 &&
+                          FH.shape.back() == 512;
+    fused_spatial_mean_ = use_half && fuse_fresnel_mean;
     return fresnel_diffraction(FH, {.lambda           = s_.spacial_lambda,
                                     .dx               = s_.spacial_pixel_size,
                                     .dy               = s_.spacial_pixel_size,
                                     .z                = s_.spacial_z,
                                     .axes             = {-2, -1},
-                                    .output_magnitude = true});
+                                    .output_magnitude = true,
+                                    .use_fused_f16    = use_half,
+                                    .reduce_magnitude = fused_spatial_mean_});
   }
 
   if (s_.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
@@ -717,7 +738,9 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
   const bool is_magnitude = FH_z.dtype == holoflow::core::DType::F32;
 
   if (s_.moment_type == MomentType::M0) {
-    result = is_magnitude ? mean(FH_z, {{-3}, true}) : mean_abs(FH_z, {{-3}, true});
+    result = fused_spatial_mean_
+                 ? FH_z
+                 : (is_magnitude ? mean(FH_z, {{-3}, true}) : mean_abs(FH_z, {{-3}, true}));
   }
 
   else if (s_.moment_type == MomentType::M1) {

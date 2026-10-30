@@ -17,6 +17,8 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <cuda_fp16.h>
+#include <random>
 #include <vector>
 
 #include <spdlog/spdlog.h>
@@ -368,4 +370,21 @@ TEST_F(PcaExecuteTest, ReusesCompiledTaskWhenComponentSelectionChanges) {
   const auto reconfigured = execute_once(*task, input, output, stream.get());
   ASSERT_EQ(reconfigured.size(), 2);
   EXPECT_NEAR(dot(reconfigured.data(), reconfigured.data(), reconfigured.size()), 1.0f, 2e-2f);
+}
+
+TEST(PcaF16Production, BatchedU8InputProducesHalfProjections) {
+  const TDesc            input_desc = device_desc({4, 32, 320, 512}, DType::U8);
+  std::vector<std::byte> input(input_desc.num_bytes());
+  std::mt19937           rng(42);
+  for (auto &v : input)
+    v = std::byte(rng() % 256);
+  holotask::syncs::PcaFactory        factory;
+  const holotask::syncs::PcaSettings config{0, 16, true, DType::F16};
+  const auto                         result = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{input_desc}, std::vector<std::vector<std::byte>>{input}, config);
+  ASSERT_EQ(result.output_bytes[0].size(), size_t(4 * 16 * 320 * 512 * 2));
+  std::vector<__half> output(result.output_bytes[0].size() / 2);
+  std::memcpy(output.data(), result.output_bytes[0].data(), result.output_bytes[0].size());
+  EXPECT_TRUE(std::all_of(output.begin(), output.end(),
+                          [](auto v) { return std::isfinite(__half2float(v)); }));
 }

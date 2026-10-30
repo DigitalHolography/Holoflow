@@ -16,6 +16,7 @@
 
 #include <cuComplex.h>
 #include <cub/cub.cuh>
+#include <cuda_fp16.h>
 
 #include <algorithm>
 #include <array>
@@ -43,10 +44,9 @@ template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
 void to_json(nlohmann::json &j, const ConversionSettings::Target &t) {
   static const std::map<ConversionSettings::Target, std::string> target_to_string{
-      {ConversionSettings::Target::U8, "U8"},
-      {ConversionSettings::Target::U16, "U16"},
-      {ConversionSettings::Target::F32, "F32"},
-      {ConversionSettings::Target::CF32, "CF32"},
+      {ConversionSettings::Target::U8, "U8"},   {ConversionSettings::Target::U16, "U16"},
+      {ConversionSettings::Target::F32, "F32"}, {ConversionSettings::Target::CF32, "CF32"},
+      {ConversionSettings::Target::F16, "F16"}, {ConversionSettings::Target::CF16, "CF16"},
   };
 
   HOLOVIBES_CHECK(target_to_string.contains(t), "Unknown target type for conversion");
@@ -55,10 +55,9 @@ void to_json(nlohmann::json &j, const ConversionSettings::Target &t) {
 
 void from_json(const nlohmann::json &j, ConversionSettings::Target &t) {
   static const std::map<std::string, ConversionSettings::Target> string_to_target{
-      {"U8", ConversionSettings::Target::U8},
-      {"U16", ConversionSettings::Target::U16},
-      {"F32", ConversionSettings::Target::F32},
-      {"CF32", ConversionSettings::Target::CF32},
+      {"U8", ConversionSettings::Target::U8},   {"U16", ConversionSettings::Target::U16},
+      {"F32", ConversionSettings::Target::F32}, {"CF32", ConversionSettings::Target::CF32},
+      {"F16", ConversionSettings::Target::F16}, {"CF16", ConversionSettings::Target::CF16},
   };
 
   const std::string s = j.get<std::string>();
@@ -142,6 +141,18 @@ bool is_c_contiguous(const holoflow::core::TDesc &desc) {
 const std::map<Cfg, DType> &cfg_to_dtype() {
   static const std::map<Cfg, DType> map{
       {{DType::U8, Target::F32, Strategy::Real}, DType::F32},
+      {{DType::U8, Target::F16, Strategy::Real}, DType::F16},
+      {{DType::U16, Target::F16, Strategy::Real}, DType::F16},
+      {{DType::F32, Target::F16, Strategy::Real}, DType::F16},
+      {{DType::F16, Target::F32, Strategy::Real}, DType::F32},
+      {{DType::U8, Target::CF16, Strategy::Real}, DType::CF16},
+      {{DType::U16, Target::CF16, Strategy::Real}, DType::CF16},
+      {{DType::F32, Target::CF16, Strategy::Real}, DType::CF16},
+      {{DType::F16, Target::CF16, Strategy::Real}, DType::CF16},
+      {{DType::F16, Target::CF32, Strategy::Real}, DType::CF32},
+      {{DType::CF16, Target::CF32, Strategy::Real}, DType::CF32},
+      {{DType::CF32, Target::CF16, Strategy::Real}, DType::CF16},
+
       {{DType::U8, Target::CF32, Strategy::Real}, DType::CF32},
       {{DType::U16, Target::CF32, Strategy::Real}, DType::CF32},
       {{DType::F32, Target::U8, Strategy::Scaled}, DType::U8},
@@ -156,6 +167,31 @@ const std::map<Cfg, DType> &cfg_to_dtype() {
 // -------------------------------------------------------------------------------------------------
 // Device kernels
 // -------------------------------------------------------------------------------------------------
+
+template <class T> __device__ float2 half_conversion_read(T v) {
+  return make_float2(float(v), 0.f);
+}
+template <> __device__ float2 half_conversion_read(__half2 v) { return __half22float2(v); }
+template <> __device__ float2 half_conversion_read(cuFloatComplex v) {
+  return make_float2(v.x, v.y);
+}
+template <class T> __device__ T half_conversion_write(float2 v);
+template <> __device__ float    half_conversion_write<float>(float2 v) { return v.x; }
+template <> __device__ __half   half_conversion_write<__half>(float2 v) {
+  return __float2half_rn(v.x);
+}
+template <> __device__ __half2 half_conversion_write<__half2>(float2 v) {
+  return __floats2half2_rn(v.x, v.y);
+}
+template <> __device__ cuFloatComplex half_conversion_write<cuFloatComplex>(float2 v) {
+  return make_cuFloatComplex(v.x, v.y);
+}
+template <class In, class Out>
+__global__ void half_conversion_kernel(const In *input, Out *output, size_t count) {
+  size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (i < count)
+    output[i] = half_conversion_write<Out>(half_conversion_read(input[i]));
+}
 
 __global__ void u8_f32_real_kernel(const uint8_t *idata, float *odata, int size) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -389,6 +425,9 @@ public:
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    if (ctx.inputs[0].desc.dtype == DType::F16 || ctx.inputs[0].desc.dtype == DType::CF16 ||
+        settings_.target == Target::F16 || settings_.target == Target::CF16)
+      return enqueue(ctx);
     const GraphAddresses addresses{ctx.inputs[0].data(), ctx.outputs[0].data()};
     if (stream_ == nullptr) {
       return enqueue(ctx);
@@ -446,6 +485,95 @@ private:
     auto in  = ctx.inputs[0];
     auto out = ctx.outputs[0];
 
+    const auto count = in.desc.num_elements();
+    if (in.desc.dtype == DType::U8 && settings_.target == Target::F16 &&
+        settings_.strategy == Strategy::Real) {
+      half_conversion_kernel<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          reinterpret_cast<const uint8_t *>(in.data()), reinterpret_cast<__half *>(out.data()),
+          count);
+      CUDA_CHECK(cudaGetLastError());
+      return holoflow::core::OpResult::Ok;
+    }
+    if (in.desc.dtype == DType::U16 && settings_.target == Target::F16 &&
+        settings_.strategy == Strategy::Real) {
+      half_conversion_kernel<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          reinterpret_cast<const uint16_t *>(in.data()), reinterpret_cast<__half *>(out.data()),
+          count);
+      CUDA_CHECK(cudaGetLastError());
+      return holoflow::core::OpResult::Ok;
+    }
+    if (in.desc.dtype == DType::F32 && settings_.target == Target::F16 &&
+        settings_.strategy == Strategy::Real) {
+      half_conversion_kernel<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          reinterpret_cast<const float *>(in.data()), reinterpret_cast<__half *>(out.data()),
+          count);
+      CUDA_CHECK(cudaGetLastError());
+      return holoflow::core::OpResult::Ok;
+    }
+    if (in.desc.dtype == DType::F16 && settings_.target == Target::F32 &&
+        settings_.strategy == Strategy::Real) {
+      half_conversion_kernel<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          reinterpret_cast<const __half *>(in.data()), reinterpret_cast<float *>(out.data()),
+          count);
+      CUDA_CHECK(cudaGetLastError());
+      return holoflow::core::OpResult::Ok;
+    }
+    if (in.desc.dtype == DType::U8 && settings_.target == Target::CF16 &&
+        settings_.strategy == Strategy::Real) {
+      half_conversion_kernel<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          reinterpret_cast<const uint8_t *>(in.data()), reinterpret_cast<__half2 *>(out.data()),
+          count);
+      CUDA_CHECK(cudaGetLastError());
+      return holoflow::core::OpResult::Ok;
+    }
+    if (in.desc.dtype == DType::U16 && settings_.target == Target::CF16 &&
+        settings_.strategy == Strategy::Real) {
+      half_conversion_kernel<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          reinterpret_cast<const uint16_t *>(in.data()), reinterpret_cast<__half2 *>(out.data()),
+          count);
+      CUDA_CHECK(cudaGetLastError());
+      return holoflow::core::OpResult::Ok;
+    }
+    if (in.desc.dtype == DType::F32 && settings_.target == Target::CF16 &&
+        settings_.strategy == Strategy::Real) {
+      half_conversion_kernel<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          reinterpret_cast<const float *>(in.data()), reinterpret_cast<__half2 *>(out.data()),
+          count);
+      CUDA_CHECK(cudaGetLastError());
+      return holoflow::core::OpResult::Ok;
+    }
+    if (in.desc.dtype == DType::F16 && settings_.target == Target::CF16 &&
+        settings_.strategy == Strategy::Real) {
+      half_conversion_kernel<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          reinterpret_cast<const __half *>(in.data()), reinterpret_cast<__half2 *>(out.data()),
+          count);
+      CUDA_CHECK(cudaGetLastError());
+      return holoflow::core::OpResult::Ok;
+    }
+    if (in.desc.dtype == DType::F16 && settings_.target == Target::CF32 &&
+        settings_.strategy == Strategy::Real) {
+      half_conversion_kernel<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          reinterpret_cast<const __half *>(in.data()),
+          reinterpret_cast<cuFloatComplex *>(out.data()), count);
+      CUDA_CHECK(cudaGetLastError());
+      return holoflow::core::OpResult::Ok;
+    }
+    if (in.desc.dtype == DType::CF16 && settings_.target == Target::CF32 &&
+        settings_.strategy == Strategy::Real) {
+      half_conversion_kernel<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          reinterpret_cast<const __half2 *>(in.data()),
+          reinterpret_cast<cuFloatComplex *>(out.data()), count);
+      CUDA_CHECK(cudaGetLastError());
+      return holoflow::core::OpResult::Ok;
+    }
+    if (in.desc.dtype == DType::CF32 && settings_.target == Target::CF16 &&
+        settings_.strategy == Strategy::Real) {
+      half_conversion_kernel<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          reinterpret_cast<const cuFloatComplex *>(in.data()),
+          reinterpret_cast<__half2 *>(out.data()), count);
+      CUDA_CHECK(cudaGetLastError());
+      return holoflow::core::OpResult::Ok;
+    }
     using LaunchFn = void (Conversion::*)(holoflow::core::TView, holoflow::core::TView);
     static const std::map<Cfg, LaunchFn> launch_map{
         {{DType::U8, Target::F32, Strategy::Real}, &Conversion::launch_u8_f32_real},

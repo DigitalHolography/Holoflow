@@ -14,6 +14,8 @@
 
 #include "holotask/syncs/pca.hh"
 #include "holotask/asyncs/pca_decomposition_queue.hh"
+#include "pca/fused_f16.hh"
+#include "pca_heev_source.hh"
 
 #include <cuda.h>
 #include <nvJitLink.h>
@@ -55,18 +57,19 @@ namespace {
 // PCA operates on tensors shaped [..., features, height, width]. All leading dimensions are
 // flattened into independent batches.
 struct PcaLayout {
-  size_t feature_axis;
-  int    features;
-  int    height;
-  int    width;
-  int    samples;
-  size_t batches;
+  holoflow::core::DType dtype;
+  size_t                feature_axis;
+  int                   features;
+  int                   height;
+  int                   width;
+  int                   samples;
+  size_t                batches;
 
   // Strides in elements between consecutive flattened batches.
   long long input_batch_stride;
   long long matrix_batch_stride;
 
-  explicit PcaLayout(const holoflow::core::TDesc &desc) {
+  explicit PcaLayout(const holoflow::core::TDesc &desc) : dtype(desc.dtype) {
     const auto rank = desc.rank();
 
     feature_axis = rank - 3;
@@ -94,12 +97,17 @@ struct PcaWorkspace {
   curaii::unique_device_ptr<float> matrices;
   curaii::unique_device_ptr<float> eigenvalues;
   curaii::unique_device_ptr<int>   solver_info;
+  curaii::unique_device_ptr<float> partial;
 
   explicit PcaWorkspace(const PcaLayout &layout)
       : matrices(curaii::make_unique_device_ptr<float>(
             layout.batches * static_cast<size_t>(layout.features) * layout.features)),
         eigenvalues(curaii::make_unique_device_ptr<float>(layout.batches * layout.features)),
-        solver_info(curaii::make_unique_device_ptr<int>(layout.batches)) {}
+        solver_info(curaii::make_unique_device_ptr<int>(layout.batches)),
+        partial(layout.dtype == holoflow::core::DType::U8
+                    ? curaii::make_unique_device_ptr<float>(layout.batches *
+                                                            (layout.samples / 512) * 1024)
+                    : curaii::unique_device_ptr<float>{}) {}
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -255,11 +263,19 @@ protected:
 std::unique_ptr<Eigensolver> make_eigensolver(const PcaLayout    &layout,
                                               const PcaWorkspace &workspace, cudaStream_t stream);
 
-void enqueue_pca_covariance(cublasHandle_t cublas, const PcaLayout &layout, const float *input,
-                            float *matrices) {
+void enqueue_pca_covariance(cublasHandle_t cublas, const PcaLayout &layout, const void *raw_input,
+                            float *matrices, float *partial = nullptr) {
   nvtx3::scoped_range range("PCA covariance");
-  constexpr float     alpha = 1.0f;
-  constexpr float     beta  = 0.0f;
+  if (layout.dtype == holoflow::core::DType::U8) {
+    cudaStream_t stream;
+    CUBLAS_CHECK(cublasGetStream(cublas, &stream));
+    pca_f16::covariance(raw_input, partial, matrices, layout.batches, stream);
+    return;
+  }
+  const auto *input = static_cast<const float *>(raw_input);
+
+  constexpr float alpha = 1.0f;
+  constexpr float beta  = 0.0f;
   // Independent GEMMs preserve Split-K selection for the large sample dimension.
   for (size_t batch = 0; batch < layout.batches; ++batch) {
     const auto x = input + batch * layout.input_batch_stride;
@@ -275,9 +291,17 @@ void enqueue_pca_projection(cublasHandle_t cublas, const PcaLayout &layout,
                             const PcaSettings &settings, const float *input,
                             const float *eigenvectors, float *output) {
   nvtx3::scoped_range range("PCA projection");
-  constexpr float     alpha      = 1.0f;
-  constexpr float     beta       = 0.0f;
-  const int           components = settings.components();
+  if (layout.dtype == holoflow::core::DType::U8) {
+    cudaStream_t stream;
+    CUBLAS_CHECK(cublasGetStream(cublas, &stream));
+    pca_f16::projection(input, eigenvectors, output, layout.batches, settings.begin,
+                        settings.components(), stream);
+    return;
+  }
+
+  constexpr float alpha      = 1.0f;
+  constexpr float beta       = 0.0f;
+  const int       components = settings.components();
   for (size_t batch = 0; batch < layout.batches; ++batch) {
     CUBLAS_CHECK(cublasGemmEx(
         cublas, CUBLAS_OP_N, CUBLAS_OP_N, layout.samples, components, layout.features, &alpha,
@@ -367,7 +391,8 @@ private:
   }
 
   void enqueue_covariance(const float *input) {
-    enqueue_pca_covariance(cublas_.get(), layout_, input, workspace_.matrices.get());
+    enqueue_pca_covariance(cublas_.get(), layout_, input, workspace_.matrices.get(),
+                           workspace_.partial.get());
   }
 
   void enqueue_eigendecomposition() {
@@ -443,12 +468,14 @@ private:
 
 struct PcaQueueSlot {
   PcaQueueSlot(const PcaLayout &layout, size_t elements)
-      : input(curaii::make_unique_device_ptr<float>(elements)), workspace(layout) {}
+      : input(curaii::make_unique_device_ptr<std::byte>(elements *
+                                                        holoflow::core::size_of(layout.dtype))),
+        workspace(layout) {}
 
-  curaii::unique_device_ptr<float> input;
-  PcaWorkspace                     workspace;
-  PcaEvent                         covariance_done, solver_done;
-  PcaGraphCache                    covariance_graph;
+  curaii::unique_device_ptr<std::byte> input;
+  PcaWorkspace                         workspace;
+  PcaEvent                             covariance_done, solver_done;
+  PcaGraphCache                        covariance_graph;
 };
 
 // The queue owns X through projection. Producer and consumer use independent FIFO cursors;
@@ -460,7 +487,7 @@ public:
                         const holoflow::core::InferResult &infer, cudaStream_t producer_stream)
       : settings_(settings), input_desc_(infer.input_descs[0]), output_descs_(infer.output_descs),
         layout_(output_descs_[0]), producer_stream_(producer_stream),
-        solver_stream_(cudaStreamNonBlocking), window_elements_(input_desc_.num_elements()) {
+        solver_stream_(cudaStreamNonBlocking), window_bytes_(input_desc_.num_bytes()) {
     try {
       CUBLAS_CHECK(cublasSetStream(cublas_.get(), producer_stream_));
       for (size_t i = 0; i < settings_.slot_count; ++i)
@@ -472,7 +499,7 @@ public:
             cudaMemsetAsync(slot->input.get(), 0, output_descs_[0].num_bytes(), producer_stream_));
         const auto enqueue = [&] {
           enqueue_pca_covariance(cublas_.get(), layout_, slot->input.get(),
-                                 slot->workspace.matrices.get());
+                                 slot->workspace.matrices.get(), slot->workspace.partial.get());
         };
         enqueue();
         slot->covariance_graph.try_capture({slot->input.get(), slot->workspace.matrices.get()},
@@ -531,7 +558,7 @@ public:
     const PcaGraphKey key{slot.input.get(), slot.workspace.matrices.get()};
     if (!slot.covariance_graph.try_launch(key, producer_stream_))
       enqueue_pca_covariance(cublas_.get(), layout_, slot.input.get(),
-                             slot.workspace.matrices.get());
+                             slot.workspace.matrices.get(), slot.workspace.partial.get());
     CUDA_CHECK(cudaEventRecord(slot.covariance_done.get(), producer_stream_));
     CUDA_CHECK(cudaStreamWaitEvent(solver_stream_.get(), slot.covariance_done.get(), 0));
     {
@@ -631,8 +658,7 @@ public:
     std::vector<std::byte *> result;
     for (const auto &slot : slots_)
       for (size_t window = 0; window < settings_.batch_size; ++window)
-        result.push_back(
-            reinterpret_cast<std::byte *>(slot->input.get() + window * window_elements_));
+        result.push_back(reinterpret_cast<std::byte *>(slot->input.get() + window * window_bytes_));
     return result;
   }
 
@@ -640,8 +666,9 @@ public:
     check_output(index);
     std::vector<std::byte *> result;
     for (const auto &slot : slots_)
-      result.push_back(reinterpret_cast<std::byte *>(index == 0 ? slot->input.get()
-                                                                : slot->workspace.matrices.get()));
+      result.push_back(reinterpret_cast<std::byte *>(
+          index == 0 ? static_cast<void *>(slot->input.get())
+                     : static_cast<void *>(slot->workspace.matrices.get())));
     return result;
   }
 
@@ -682,7 +709,7 @@ private:
   }
   void bind_input(size_t write) {
     storage_access().owned_input_storage(0).ptr = reinterpret_cast<std::byte *>(
-        slot_for(write).input.get() + (write % settings_.batch_size) * window_elements_);
+        slot_for(write).input.get() + (write % settings_.batch_size) * window_bytes_);
   }
 
   struct PendingWrite {
@@ -695,7 +722,7 @@ private:
   PcaLayout                                       layout_;
   cudaStream_t                                    producer_stream_;
   curaii::CudaStream                              solver_stream_;
-  size_t                                          window_elements_;
+  size_t                                          window_bytes_;
   curaii::CublasHandle                            cublas_;
   std::vector<std::unique_ptr<PcaQueueSlot>>      slots_;
   std::unique_ptr<Eigensolver>                    eigensolver_;
@@ -1270,77 +1297,7 @@ std::unique_ptr<Eigensolver> make_eigensolver(const PcaLayout    &layout,
 // Embedded cuSolverDx device program
 // -------------------------------------------------------------------------------------------------
 
-const char *cusolverdx_source() {
-  static constexpr char source[] = R"cusolverdx(
-#include <cusolverdx.hpp>
-#include <cusolverdx_io.hpp>
-
-using namespace cusolverdx;
-
-using Base = decltype(Size<PCA_FEATURES>() + Precision<float>() + Type<type::real>() +
-                      Function<heev>() + FillMode<fill_mode::lower>() +
-                      Arrangement<arrangement::col_major>() +
-                      Job<job::overwrite_vectors>() + SM<PCA_SOLVER_SM>() + Block());
-using BatchedSolver =
-    decltype(Base() + BatchesPerBlock<Base::suggested_batches_per_block>());
-using TailSolver = decltype(Base() + BatchesPerBlock<1>());
-
-extern "C" __constant__ unsigned int pca_batched_block_x = BatchedSolver::block_dim.x;
-extern "C" __constant__ unsigned int pca_batched_shared_memory =
-    BatchedSolver::shared_memory_size;
-extern "C" __constant__ unsigned int pca_batches_per_block =
-    BatchedSolver::batches_per_block;
-extern "C" __constant__ unsigned int pca_tail_block_x = TailSolver::block_dim.x;
-extern "C" __constant__ unsigned int pca_tail_shared_memory = TailSolver::shared_memory_size;
-
-template <class Solver>
-__device__ void solve(float *covariance, float *eigenvalues, int *info,
-                      const unsigned int batches) {
-  constexpr unsigned int m = Solver::m_size;
-  constexpr unsigned int batches_per_block = Solver::batches_per_block;
-  constexpr unsigned int lda_shared = Solver::lda;
-  constexpr unsigned int matrix_elements = m * m;
-
-  const unsigned int batch = blockIdx.x * batches_per_block;
-  if (batch >= batches) {
-    return;
-  }
-
-  extern __shared__ __align__(16) cusolverdx::byte shared_memory[];
-  auto [matrix_shared, eigenvalues_shared, workspace_shared] =
-      cusolverdx::shared_memory::slice<float, float, float>(
-          shared_memory, alignof(float), lda_shared * m * batches_per_block, alignof(float),
-          m * batches_per_block, alignof(float));
-
-  float *matrix_global = covariance + matrix_elements * batch;
-  float *eigenvalues_global = eigenvalues + m * batch;
-
-  cusolverdx::copy_2d<Solver, m, m, arrangement::col_major, batches_per_block>(
-      matrix_global, m, matrix_shared, lda_shared);
-  __syncthreads();
-
-  Solver().execute(matrix_shared, lda_shared, eigenvalues_shared, workspace_shared, info + batch);
-
-  cusolverdx::copy_2d<Solver, m, 1, arrangement::col_major, batches_per_block>(
-      eigenvalues_shared, m, eigenvalues_global, m);
-  __syncthreads();
-  cusolverdx::copy_2d<Solver, m, m, arrangement::col_major, batches_per_block>(
-      matrix_shared, lda_shared, matrix_global, m);
-}
-
-extern "C" __global__ void pca_heev_batched(float *covariance, float *eigenvalues, int *info,
-                                             const unsigned int batches) {
-  solve<BatchedSolver>(covariance, eigenvalues, info, batches);
-}
-
-extern "C" __global__ void pca_heev_tail(float *covariance, float *eigenvalues, int *info,
-                                          const unsigned int batches) {
-  solve<TailSolver>(covariance, eigenvalues, info, batches);
-}
-)cusolverdx";
-
-  return source;
-}
+const char *cusolverdx_source() { return holotask::detail::pca_heev_source; }
 
 #undef PCA_NVJITLINK_CHECK
 #undef PCA_DRIVER_CHECK
@@ -1355,12 +1312,16 @@ void to_json(nlohmann::json &j, const PcaSettings &settings) {
   j = nlohmann::json{
       {"begin", settings.begin},
       {"end", settings.end},
+      {"use_fused_f16", settings.use_fused_f16},
+      {"output_dtype", settings.output_dtype},
   };
 }
 
 void from_json(const nlohmann::json &j, PcaSettings &settings) {
   j.at("begin").get_to(settings.begin);
   j.at("end").get_to(settings.end);
+  settings.use_fused_f16 = j.value("use_fused_f16", false);
+  settings.output_dtype  = j.value("output_dtype", holoflow::core::DType::F32);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -1413,8 +1374,21 @@ holoflow::core::InferResult PcaFactory::infer(std::span<const holoflow::core::TD
 
   const auto &input_desc = input_descs.front();
   check(input_desc.rank() >= 3, "expected input rank >= 3");
-  check(input_desc.dtype == holoflow::core::DType::F32, "PCA currently supports F32 input only");
+  check(input_desc.dtype == holoflow::core::DType::F32 ||
+            (settings.use_fused_f16 && input_desc.dtype == holoflow::core::DType::U8 &&
+             input_desc.shape[input_desc.rank() - 3] == 32 &&
+             input_desc.shape[input_desc.rank() - 2] == 320 && input_desc.shape.back() == 512 &&
+             settings.components() <= 16 && settings.output_dtype == holoflow::core::DType::F16),
+        "Unsupported PCA input/precision combination");
+  check(input_desc.dtype != holoflow::core::DType::F32 ||
+            settings.output_dtype == holoflow::core::DType::F32,
+        "FP32 PCA requires FP32 output");
   check(input_desc.mem_loc == holoflow::core::MemLoc::Device, "expected input in device memory");
+  if (input_desc.dtype == holoflow::core::DType::U8) {
+    const holoflow::core::TDesc contiguous(input_desc.shape, input_desc.dtype, input_desc.mem_loc,
+                                           input_desc.offset);
+    check(input_desc.strides == contiguous.strides, "fused PCA requires contiguous U8 input");
+  }
   check(settings.begin < settings.end, "expected begin < end");
   check(settings.begin >= 0, "expected begin >= 0");
 
@@ -1424,7 +1398,7 @@ holoflow::core::InferResult PcaFactory::infer(std::span<const holoflow::core::TD
   auto output_shape                    = input_desc.shape;
   output_shape.at(layout.feature_axis) = static_cast<size_t>(settings.components());
 
-  holoflow::core::TDesc output_desc(output_shape, input_desc.dtype, input_desc.mem_loc);
+  holoflow::core::TDesc output_desc(output_shape, settings.output_dtype, input_desc.mem_loc);
 
   return holoflow::core::InferResult{
       .input_descs   = {input_desc},
@@ -1474,12 +1448,15 @@ PcaFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 namespace holotask::asyncs {
 
 void to_json(nlohmann::json &j, const PcaDecompositionQueueSettings &settings) {
-  j = {{"batch_size", settings.batch_size}, {"slot_count", settings.slot_count}};
+  j = {{"batch_size", settings.batch_size},
+       {"slot_count", settings.slot_count},
+       {"use_fused_f16", settings.use_fused_f16}};
 }
 
 void from_json(const nlohmann::json &j, PcaDecompositionQueueSettings &settings) {
   j.at("batch_size").get_to(settings.batch_size);
   j.at("slot_count").get_to(settings.slot_count);
+  settings.use_fused_f16 = j.value("use_fused_f16", false);
 }
 
 holoflow::core::InferResult
@@ -1490,7 +1467,10 @@ PcaDecompositionQueueFactory::infer(std::span<const holoflow::core::TDesc> input
   if (input_descs.size() != 1 || input_descs[0].rank() != 4 || input_descs[0].shape[0] != 1)
     throw std::invalid_argument("PCA queue expects one [1,T,H,W] input");
   const auto &input = input_descs[0];
-  const TDesc contiguous(input.shape, DType::F32, MemLoc::Device);
+  if (settings.use_fused_f16 && input.shape != std::vector<size_t>{1, 32, 320, 512})
+    throw std::invalid_argument("Fused F16 PCA queue requires [1,32,320,512] U8 input");
+  const TDesc contiguous(input.shape, settings.use_fused_f16 ? DType::U8 : DType::F32,
+                         MemLoc::Device);
   if (input.dtype != contiguous.dtype || input.mem_loc != contiguous.mem_loc ||
       input.strides != contiguous.strides || input.offset != 0 || settings.batch_size == 0 ||
       settings.slot_count == 0)
@@ -1517,7 +1497,7 @@ PcaDecompositionQueueFactory::infer(std::span<const holoflow::core::TDesc> input
   check_product({settings.slot_count, settings.batch_size, input.shape[1], input.shape[1]});
   auto shape = input.shape;
   shape[0]   = settings.batch_size;
-  const TDesc x(shape, DType::F32, MemLoc::Device);
+  const TDesc x(shape, input.dtype, MemLoc::Device);
   const TDesc vectors({settings.batch_size, shape[1], shape[1]}, DType::F32, MemLoc::Device);
   return {
       .input_descs                 = {input},
@@ -1538,6 +1518,8 @@ PcaDecompositionQueueFactory::create(std::span<const holoflow::core::TDesc> inpu
                                      const nlohmann::json                  &jsettings,
                                      const holoflow::core::AsyncCreateCtx  &ctx) const {
   const auto inferred = infer(input_descs, jsettings);
+  if (jsettings.get<PcaDecompositionQueueSettings>().use_fused_f16)
+    logger()->info("[PCA] fused U8/F16 covariance and projection; FP32 eigensolver");
   return std::make_unique<syncs::PcaDecompositionQueue>(
       jsettings.get<PcaDecompositionQueueSettings>(), inferred, ctx.producer_stream);
 }

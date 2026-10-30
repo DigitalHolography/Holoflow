@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <cuda_fp16.h>
 #include <filesystem>
 #include <vector>
 
@@ -160,4 +161,36 @@ TEST_F(MeanUpdateTest, ReusesTaskWithSameConfig) {
   oi.settings       = j;
   const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
   expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+}
+
+TEST_F(MeanInferTest, PromotesHalfInputs) {
+  for (auto dtype : {DType::F16, DType::CF16}) {
+    const std::vector<TDesc> inputs = {device_desc({2, 3}, dtype)};
+    const auto               result = factory.infer(inputs, mean_settings_axis(1, true));
+    EXPECT_EQ(result.output_descs[0].shape, (std::vector<size_t>{2, 1}));
+    EXPECT_EQ(result.output_descs[0].dtype, dtype == DType::F16 ? DType::F32 : DType::CF32);
+    EXPECT_EQ(holoflow::core::size_of(dtype), dtype == DType::F16 ? 2u : 4u);
+    EXPECT_EQ(nlohmann::json(dtype).get<DType>(), dtype);
+  }
+}
+TEST(MeanHalfExecuteTest, AccumulatesInFloatWithoutHalfOverflow) {
+  holonp::MeanFactory factory;
+  std::vector<__half> input(32, __float2half(60000.f));
+  auto                result = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{device_desc({32}, DType::F16)},
+      std::vector<std::vector<std::byte>>{as_bytes(input)}, mean_settings_all(true));
+  float value;
+  std::memcpy(&value, result.output_bytes[0].data(), sizeof(value));
+  EXPECT_FLOAT_EQ(value, 60000.f);
+}
+TEST(MeanHalfExecuteTest, PromotesComplexHalfComponents) {
+  holonp::MeanFactory  factory;
+  std::vector<__half2> input  = {__floats2half2_rn(2.f, 4.f), __floats2half2_rn(6.f, 8.f)};
+  auto                 result = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{device_desc({2}, DType::CF16)},
+      std::vector<std::vector<std::byte>>{as_bytes(input)}, mean_settings_all(true));
+  float values[2];
+  std::memcpy(values, result.output_bytes[0].data(), sizeof(values));
+  EXPECT_FLOAT_EQ(values[0], 4.f);
+  EXPECT_FLOAT_EQ(values[1], 6.f);
 }

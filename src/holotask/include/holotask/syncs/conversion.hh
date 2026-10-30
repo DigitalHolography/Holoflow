@@ -30,6 +30,8 @@ struct ConversionSettings {
     U16,
     F32,
     CF32,
+    F16,
+    CF16,
   };
 
   enum class Strategy { Real, Scaled, Modulus, Argument };

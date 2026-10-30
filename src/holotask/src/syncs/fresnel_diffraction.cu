@@ -12,7 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "fresnel_callback_source.hh"
+#include "fresnel_diffraction/fused_f16.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
+#include <cuda_fp16.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -48,6 +51,8 @@ void to_json(nlohmann::json &j, const FresnelDiffractionSettings &fds) {
       {"axes", fds.axes},
       {"skip_phase_shift", fds.skip_phase_shift},
       {"output_magnitude", fds.output_magnitude},
+      {"use_fused_f16", fds.use_fused_f16},
+      {"reduce_magnitude", fds.reduce_magnitude},
   };
 }
 
@@ -63,6 +68,8 @@ void from_json(const nlohmann::json &j, FresnelDiffractionSettings &fds) {
     j.at("skip_phase_shift").get_to(fds.skip_phase_shift);
   if (j.contains("output_magnitude"))
     j.at("output_magnitude").get_to(fds.output_magnitude);
+  fds.use_fused_f16    = j.value("use_fused_f16", false);
+  fds.reduce_magnitude = j.value("reduce_magnitude", false);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -274,53 +281,9 @@ std::vector<char> apply_lens_lto(bool is_fast, bool is_real, unsigned int width,
                     std::to_string(stride_h) + "ull\n" + "#define ISTRIDE " +
                     std::to_string(istride) + "ull\n";
 
-  // Common header — struct definition shared with the host side.
-  src += R"(
-#include <cuComplex.h>
-
-struct ApplyLensCallerInfo {
-  cuFloatComplex *lens;
-  float          *magnitude_output;
-};
-
-__device__ cuFloatComplex apply_lens_callback2(
-    void *data, size_t offset, void *callerInfo, void *sharedPtr) {
-  auto *info = (ApplyLensCallerInfo *)callerInfo;
-)";
-
-  // Load sample — real or complex input.
-  if (is_real) {
-    src += "  cuFloatComplex val = make_cuComplex(((float *)data)[offset], 0.0f);\n";
-  } else {
-    src += "  cuFloatComplex val = ((cuFloatComplex *)data)[offset];\n";
-  }
-
-  // Index into the lens — fast (contiguous) or general strided path using macros
-  if (is_fast) {
-    src += R"(
-  size_t lens_idx = offset % IDIST;
-  return cuCmulf(val, info->lens[lens_idx]);
-}
-)";
-  } else {
-    src += R"(
-  size_t local_offset = offset % IDIST;
-  size_t row          = local_offset / STRIDE_H;
-  size_t col          = (local_offset % STRIDE_H) / ISTRIDE;
-  size_t lens_idx     = row * WIDTH + col;
-  return cuCmulf(val, info->lens[lens_idx]);
-}
-)";
-  }
-
-  src += R"(
-__device__ void store_magnitude_callback(
-    void *data, unsigned long long offset, cuFloatComplex element,
-    void *callerInfo, void *sharedPtr) {
-  auto *info = (ApplyLensCallerInfo *)callerInfo;
-  info->magnitude_output[offset] = cuCabsf(element);
-}
-)";
+  src += "#define FRESNEL_REAL_INPUT " + std::to_string(is_real ? 1 : 0) + "\n";
+  src += "#define FRESNEL_CONTIGUOUS " + std::to_string(is_fast ? 1 : 0) + "\n";
+  src += holotask::detail::fresnel_callback_source;
 
   return compile_source_to_lto(src, "apply_lens_callback2.cu");
 }
@@ -506,6 +469,83 @@ public:
   }
 };
 
+__global__ void widen_fresnel_half(const __half *input, float *output, size_t count) {
+  size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (i < count)
+    output[i] = __half2float(input[i]);
+}
+__global__ void fresnel_mean_f32(const float *input, float *output, size_t count, int components,
+                                 size_t spatial) {
+  size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (i < count) {
+    size_t outer = i / spatial, local = i % spatial;
+    float  sum = 0;
+    for (int c = 0; c < components; ++c)
+      sum += input[(outer * components + c) * spatial + local];
+    output[i] = sum / components;
+  }
+}
+class LegacyHalfFresnel final : public holoflow::core::ISyncTask {
+  cudaStream_t                               stream_;
+  int                                        components_;
+  size_t                                     spatial_;
+  bool                                       half_, reduce_;
+  std::unique_ptr<holoflow::core::Tensor>    widened_, magnitudes_;
+  std::unique_ptr<holoflow::core::ISyncTask> legacy_;
+
+public:
+  LegacyHalfFresnel(const holoflow::core::TDesc &input, FresnelDiffractionSettings settings,
+                    const holoflow::core::SyncCreateCtx &ctx)
+      : stream_(ctx.stream),
+        components_(input.rank() >= 3 ? int(input.shape[input.rank() - 3]) : 1),
+        spatial_(input.shape[input.rank() - 2] * input.shape.back()),
+        half_(input.dtype == holoflow::core::DType::F16), reduce_(settings.reduce_magnitude) {
+    auto desc = input;
+    if (half_) {
+      desc     = holoflow::core::TDesc(input.shape, holoflow::core::DType::F32, input.mem_loc);
+      widened_ = std::make_unique<holoflow::core::Tensor>(desc);
+    }
+    settings.use_fused_f16    = false;
+    settings.reduce_magnitude = false;
+    FresnelDiffractionFactory factory;
+    auto inference = factory.infer(std::span<const holoflow::core::TDesc>(&desc, 1), settings);
+    if (reduce_)
+      magnitudes_ = std::make_unique<holoflow::core::Tensor>(inference.output_descs[0]);
+    legacy_ = factory.create(std::span<const holoflow::core::TDesc>(&desc, 1), settings, ctx);
+  }
+  ~LegacyHalfFresnel() override { CUDA_CHECK_NT(cudaStreamSynchronize(stream_)); }
+  bool supports_cuda_graph() const noexcept override { return true; }
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    std::atomic<bool>       cancel{false};
+    holoflow::core::SyncCtx call{ctx.inputs, ctx.outputs, &cancel, nullptr, nullptr};
+    execute(call);
+  }
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    auto in = ctx.inputs[0], out = ctx.outputs[0];
+    if (half_) {
+      widen_fresnel_half<<<static_cast<unsigned>((in.desc.num_elements() + 255) / 256), 256, 0,
+                           stream_>>>(reinterpret_cast<const __half *>(in.data()),
+                                      static_cast<float *>(widened_->data()),
+                                      in.desc.num_elements());
+      in = widened_->view();
+    }
+    if (reduce_)
+      out = magnitudes_->view();
+    holoflow::core::SyncCtx call{std::span<holoflow::core::TView>(&in, 1),
+                                 std::span<holoflow::core::TView>(&out, 1), ctx.cancelled, nullptr,
+                                 nullptr};
+    auto                    result = legacy_->execute(call);
+    if (reduce_) {
+      size_t count = ctx.outputs[0].desc.num_elements();
+      fresnel_mean_f32<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          static_cast<const float *>(magnitudes_->data()),
+          reinterpret_cast<float *>(ctx.outputs[0].data()), count, components_, spatial_);
+    }
+    CUDA_CHECK(cudaGetLastError());
+    return result;
+  }
+};
+
 bool same_settings_except_z(FresnelDiffractionSettings lhs, FresnelDiffractionSettings rhs) {
   rhs.z = lhs.z;
   return lhs == rhs;
@@ -526,9 +566,13 @@ FresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc> input_de
   check(input_descs.size() == 1, "expected exactly one input");
   const auto &idesc = input_descs[0];
   check(idesc.rank() >= 2, "input must be a tensor of rank 2 or higher");
-  check(idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::F32, "input must be complex float32 or real float32");
+  check(idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::F16, "input must be CF32, F32, or F16");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
 
+  if (idesc.dtype == holoflow::core::DType::F16) {
+    const holoflow::core::TDesc contiguous(idesc.shape, idesc.dtype, idesc.mem_loc, idesc.offset);
+    check(idesc.strides == contiguous.strides, "F16 input must be contiguous");
+  }
   auto [ax0, ax1] = normalize_axes(settings, static_cast<int>(idesc.rank()));
   auto in_strides = get_strides_bytes(idesc);
   check(in_strides[ax0] % in_strides[ax1] == 0, "stride of ax0 (H) must be a multiple of stride of ax1 (W) for cuFFT to run without copying");
@@ -547,6 +591,13 @@ FresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc> input_de
   else
     odesc = holoflow::core::TDesc(idesc.shape, holoflow::core::DType::CF32, idesc.mem_loc);
 
+  if (settings.reduce_magnitude) {
+    check(settings.output_magnitude && idesc.rank() >= 3,
+          "magnitude reduction requires rank >= 3 and magnitude output");
+    auto shape              = odesc.shape;
+    shape[shape.size() - 3] = 1;
+    odesc = holoflow::core::TDesc(shape, holoflow::core::DType::F32, odesc.mem_loc);
+  }
   return holoflow::core::InferResult{
       .input_descs   = {idesc},
       .output_descs  = {odesc},
@@ -561,6 +612,20 @@ std::unique_ptr<holoflow::core::ISyncTask>
 FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                   const nlohmann::json                  &jsettings,
                                   const holoflow::core::SyncCreateCtx   &ctx) const {
+  const auto requested = jsettings.get<FresnelDiffractionSettings>();
+  (void)this->infer(input_descs, jsettings);
+  if (requested.use_fused_f16 && supports_fused_f16_fresnel(input_descs[0], requested)) {
+    try {
+      auto task = create_fused_f16_fresnel(input_descs[0], requested, ctx);
+      logger()->info("[Fresnel] fused F16{}",
+                     requested.reduce_magnitude ? " + magnitude mean" : "");
+      return task;
+    } catch (const std::exception &error) {
+      logger()->warn("[Fresnel] F16 setup failed; using FP32: {}", error.what());
+    }
+  }
+  if (input_descs[0].dtype == holoflow::core::DType::F16 || requested.reduce_magnitude)
+    return std::make_unique<LegacyHalfFresnel>(input_descs[0], requested, ctx);
   auto        infer    = this->infer(input_descs, jsettings);
   auto        settings = jsettings.get<FresnelDiffractionSettings>();
   const auto &idesc    = input_descs[0];

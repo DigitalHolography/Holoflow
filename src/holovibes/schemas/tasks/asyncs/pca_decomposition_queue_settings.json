@@ -16,7 +16,14 @@
       "minimum": 1,
       "default": 3,
       "description": "Maximum number of retained groups, including groups held by projection."
+    },
+    "use_fused_f16": {
+      "type": "boolean",
+      "default": false
     }
   },
-  "required": ["batch_size", "slot_count"]
+  "required": [
+    "batch_size",
+    "slot_count"
+  ]
 }

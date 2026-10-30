@@ -8,8 +8,9 @@
 namespace holotask::asyncs {
 
 struct PcaDecompositionQueueSettings {
-  size_t batch_size = 4;
-  size_t slot_count = 3;
+  size_t batch_size    = 4;
+  size_t slot_count    = 3;
+  bool   use_fused_f16 = false;
 
   bool operator==(const PcaDecompositionQueueSettings &) const = default;
 };

@@ -23,13 +23,16 @@
 namespace holotask::syncs {
 
 struct PcaSettings {
-  int begin;
-  int end;
+  int                   begin;
+  int                   end;
+  bool                  use_fused_f16 = false;
+  holoflow::core::DType output_dtype  = holoflow::core::DType::F32;
 
   int components() const { return end - begin; }
 
   bool operator==(const PcaSettings &other) const {
-    return begin == other.begin && end == other.end;
+    return begin == other.begin && end == other.end && use_fused_f16 == other.use_fused_f16 &&
+           output_dtype == other.output_dtype;
   }
 };
 

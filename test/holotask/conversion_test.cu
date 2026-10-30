@@ -28,6 +28,7 @@
 #include <vector>
 
 #include <cuComplex.h>
+#include <cuda_fp16.h>
 #include <spdlog/spdlog.h>
 
 #include "curaii/cuda.hh"
@@ -277,3 +278,16 @@ TEST(ConversionCudaGraph, FallsBackOnDefaultStreamAndDuringOuterCapture) {
 }
 
 } // namespace
+
+TEST(ConversionHalf, WidensRealAndRetainsUpdateBehavior) {
+  exercise_single_kernel<__half, float>(DType::F16,
+                                        {Settings::Target::F32, Settings::Strategy::Real},
+                                        {__float2half(2.f), __float2half(6.f)}, {2.f, 6.f},
+                                        {__float2half(-4.f), __float2half(8.f)}, {-4.f, 8.f});
+}
+TEST(ConversionHalf, WidensComplexComponents) {
+  exercise_single_kernel<__half2, cuFloatComplex>(
+      DType::CF16, {Settings::Target::CF32, Settings::Strategy::Real},
+      {__floats2half2_rn(2.f, 4.f)}, {make_cuFloatComplex(2.f, 4.f)},
+      {__floats2half2_rn(-6.f, 8.f)}, {make_cuFloatComplex(-6.f, 8.f)});
+}

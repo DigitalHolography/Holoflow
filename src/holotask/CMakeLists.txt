@@ -86,3 +86,46 @@ if(EGrabber_FOUND)
         EGrabber
     )
 endif()
+
+# NVRTC sources are formatted CUDA files, embedded rather than compiled by MSVC.
+set(PCA_RUNTIME_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/syncs/pca/runtime/pca_heev_kernel.cu")
+set_source_files_properties("${PCA_RUNTIME_SOURCE}" PROPERTIES HEADER_FILE_ONLY TRUE)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/embedded")
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/embedded/pca_heev_source.hh"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${PCA_RUNTIME_SOURCE}"
+            "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/embedded/pca_heev_source.hh"
+            "-DSYMBOL=pca_heev_source" -P "${PROJECT_SOURCE_DIR}/cmake/EmbedCudaSource.cmake"
+    DEPENDS "${PCA_RUNTIME_SOURCE}" "${PROJECT_SOURCE_DIR}/cmake/EmbedCudaSource.cmake"
+    VERBATIM
+)
+target_sources(${TARGET} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/embedded/pca_heev_source.hh")
+target_include_directories(${TARGET} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/embedded")
+
+set(FRESNEL_RUNTIME_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/syncs/fresnel_diffraction/runtime/apply_lens_callback2.cu")
+set_source_files_properties("${FRESNEL_RUNTIME_SOURCE}" PROPERTIES HEADER_FILE_ONLY TRUE)
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/embedded/fresnel_callback_source.hh"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${FRESNEL_RUNTIME_SOURCE}"
+            "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/embedded/fresnel_callback_source.hh"
+            "-DSYMBOL=fresnel_callback_source" -P "${PROJECT_SOURCE_DIR}/cmake/EmbedCudaSource.cmake"
+    DEPENDS "${FRESNEL_RUNTIME_SOURCE}" "${PROJECT_SOURCE_DIR}/cmake/EmbedCudaSource.cmake"
+    VERBATIM
+)
+target_sources(${TARGET} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/embedded/fresnel_callback_source.hh")
+
+get_filename_component(HOLOTASK_MATHDX_ROOT "${mathdx_DIR}/../../.." ABSOLUTE)
+target_include_directories(${TARGET} SYSTEM PRIVATE "${HOLOTASK_MATHDX_ROOT}/external/cutlass/include")
+
+set(FRESNEL_F16_RUNTIME_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/syncs/fresnel_diffraction/runtime/fused_f16.cu")
+set_source_files_properties("${FRESNEL_F16_RUNTIME_SOURCE}" PROPERTIES HEADER_FILE_ONLY TRUE)
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/embedded/fresnel_fused_f16_source.hh"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${FRESNEL_F16_RUNTIME_SOURCE}"
+            "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/embedded/fresnel_fused_f16_source.hh"
+            "-DSYMBOL=fresnel_fused_f16_source" -P "${PROJECT_SOURCE_DIR}/cmake/EmbedCudaSource.cmake"
+    DEPENDS "${FRESNEL_F16_RUNTIME_SOURCE}" "${PROJECT_SOURCE_DIR}/cmake/EmbedCudaSource.cmake"
+    VERBATIM
+)
+
+target_sources(${TARGET} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/embedded/fresnel_fused_f16_source.hh")

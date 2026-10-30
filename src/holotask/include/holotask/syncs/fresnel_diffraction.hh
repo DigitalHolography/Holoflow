@@ -35,6 +35,9 @@ struct FresnelDiffractionSettings {
   bool             skip_phase_shift = true;     ///< Omit output-plane quadratic phase.
   bool             output_magnitude = false;    ///< Store the propagated magnitude as F32.
 
+  bool use_fused_f16    = false;
+  bool reduce_magnitude = false;
+
   bool operator==(const FresnelDiffractionSettings &) const = default;
 };
 

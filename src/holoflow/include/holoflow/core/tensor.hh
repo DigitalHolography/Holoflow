@@ -31,6 +31,8 @@ enum class DType : uint8_t {
   U16,  ///< Unsigned 16-bit integer
   F32,  ///< 32-bit float
   CF32, ///< 32-bit complex float
+  F16,  ///< IEEE binary16 float
+  CF16, ///< Interleaved IEEE binary16 real and imaginary components
 };
 
 /// Returns the size in bytes of a given DType.

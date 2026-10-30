@@ -8,6 +8,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
+#include <cuda_fp16.h>
 #include <functional>
 #include <iostream>
 #include <nvtx3/nvtx3.hpp>
@@ -16,8 +17,17 @@
 #include "curaii/cuda.hh"
 #include "holoflow/runtime/compiler.hh"
 #include "holonp/copy.hh"
+#include "holonp/fftshift.hh"
+#include "holonp/mean.hh"
+#include "holonp/reshape.hh"
 #include "holotask/asyncs/batch_queue.hh"
+#include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/pca_decomposition_queue.hh"
+#include "holotask/asyncs/slide_avg.hh"
+#include "holotask/sources/holofile.hh"
+#include "holotask/syncs/conversion.hh"
+#include "holotask/syncs/fresnel_diffraction.hh"
+#include "holotask/syncs/memcpy.hh"
 #include "holotask/syncs/pca.hh"
 
 namespace {
@@ -247,9 +257,23 @@ __global__ void generate_inputs(float *output, size_t count, size_t samples, int
                                    : 0.1F * sinf(static_cast<float>((sample + 1) * (feature + 1))));
 }
 
+__global__ void generate_u8_inputs(unsigned char *output, size_t count, size_t first) {
+  size_t i = size_t(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (i < count) {
+    unsigned int v = static_cast<unsigned int>(i + first * 5242880 + 1);
+    v ^= v >> 16;
+    v *= 0x7feb352dU;
+    v ^= v >> 15;
+    v *= 0x846ca68bU;
+    v ^= v >> 16;
+    output[i] = static_cast<unsigned char>(v);
+  }
+}
+
 struct PipelineState {
   size_t                                features = 2, height = 1, width = 2, target = 64;
   bool                                  performance = false;
+  bool                                  mixed       = false;
   size_t                                duration_ms = 10000;
   std::vector<float>                    values;
   std::function<void(size_t)>           hook;
@@ -265,23 +289,44 @@ public:
   OpResult execute(SyncCtx &ctx) override {
     if (source_) {
       const auto count = ctx.outputs[0].desc.num_elements();
-      generate_inputs<<<static_cast<unsigned int>((count + 255) / 256), 256, 0, stream_>>>(
-          reinterpret_cast<float *>(ctx.outputs[0].data()), count, state_->height * state_->width,
-          static_cast<int>(state_->features), next_);
+      if (state_->mixed)
+        generate_u8_inputs<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+            reinterpret_cast<unsigned char *>(ctx.outputs[0].data()), count, next_);
+      else
+        generate_inputs<<<static_cast<unsigned int>((count + 255) / 256), 256, 0, stream_>>>(
+            reinterpret_cast<float *>(ctx.outputs[0].data()), count, state_->height * state_->width,
+            static_cast<int>(state_->features), next_);
       CUDA_CHECK(cudaGetLastError());
       next_ += 4;
     } else {
       float value;
-      CUDA_CHECK(cudaMemcpyAsync(&value, ctx.inputs[0].data(), sizeof(float),
-                                 cudaMemcpyDeviceToHost, stream_));
+      if (ctx.inputs[0].desc.dtype == DType::U8) {
+        unsigned char byte;
+        CUDA_CHECK(
+            cudaMemcpyAsync(&byte, ctx.inputs[0].data(), 1, cudaMemcpyDeviceToHost, stream_));
+        CUDA_CHECK(cudaStreamSynchronize(stream_));
+        value = float(byte);
+      } else if (state_->mixed) {
+        __half h;
+        CUDA_CHECK(
+            cudaMemcpyAsync(&h, ctx.inputs[0].data(), sizeof(h), cudaMemcpyDeviceToHost, stream_));
+        CUDA_CHECK(cudaStreamSynchronize(stream_));
+        value = __half2float(h);
+        EXPECT_TRUE(std::isfinite(value));
+      } else
+        CUDA_CHECK(cudaMemcpyAsync(&value, ctx.inputs[0].data(), sizeof(float),
+                                   cudaMemcpyDeviceToHost, stream_));
       CUDA_CHECK(cudaStreamSynchronize(stream_));
       ++state_->consumed;
       if (!state_->performance) {
         const auto count  = ctx.inputs[0].desc.num_elements();
         const auto offset = state_->values.size();
-        state_->values.resize(offset + count);
-        CUDA_CHECK(cudaMemcpyAsync(state_->values.data() + offset, ctx.inputs[0].data(),
-                                   count * sizeof(float), cudaMemcpyDeviceToHost, stream_));
+        state_->values.resize(offset + (state_->mixed ? 1 : count));
+        if (state_->mixed)
+          state_->values[offset] = value;
+        else
+          CUDA_CHECK(cudaMemcpyAsync(state_->values.data() + offset, ctx.inputs[0].data(),
+                                     count * sizeof(float), cudaMemcpyDeviceToHost, stream_));
         CUDA_CHECK(cudaStreamSynchronize(stream_));
         if (state_->hook)
           state_->hook(state_->consumed);
@@ -315,13 +360,13 @@ public:
       : source_(source), state_(std::move(state)) {}
   InferResult infer(std::span<const TDesc> inputs, const nlohmann::json &) const override {
     if (source_)
-      return {
-          {},
-          {TDesc({4, state_->features, state_->height, state_->width}, DType::F32, MemLoc::Device)},
-          {},
-          {},
-          {false},
-          TaskKind::Sync};
+      return {{},
+              {TDesc({4, state_->features, state_->height, state_->width},
+                     state_->mixed ? DType::U8 : DType::F32, MemLoc::Device)},
+              {},
+              {},
+              {false},
+              TaskKind::Sync};
     return {{inputs[0]}, {}, {}, {false}, {}, TaskKind::Sync};
   }
   std::unique_ptr<ISyncTask> create(std::span<const TDesc>, const nlohmann::json &,
@@ -338,11 +383,12 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
                                             bool miss = false, bool stop_paused = false,
                                             size_t features = 2, bool performance = false,
                                             size_t duration_ms      = 10000,
-                                            size_t benchmark_height = 320) {
+                                            size_t benchmark_height = 320, bool mixed = false) {
   auto state         = std::make_shared<PipelineState>();
+  state->mixed       = mixed;
   state->features    = features;
-  state->width       = performance ? 512 : features;
-  state->height      = performance ? benchmark_height : 1;
+  state->width       = (performance || mixed) ? 512 : features;
+  state->height      = (performance || mixed) ? benchmark_height : 1;
   state->performance = performance;
   state->duration_ms = duration_ms;
   if (features >= 256)
@@ -362,10 +408,11 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
       add_vertex(NodeSpec{"input", "batch", holotask::asyncs::BatchQueueSettings{8, 1, 1}}, spec);
   auto copy    = add_vertex(NodeSpec{"copy", "copy", holonp::CopySettings{}}, spec);
   auto grouped = add_vertex(
-      pipeline ? NodeSpec{"grouped", "decomposition", QueueSettings{4, 3}}
+      pipeline ? NodeSpec{"grouped", "decomposition", QueueSettings{4, 3, mixed}}
                : NodeSpec{"grouped", "batch", holotask::asyncs::BatchQueueSettings{8, 4, 4}},
       spec);
-  const holotask::syncs::PcaSettings selection{1, performance ? 16 : 2};
+  const holotask::syncs::PcaSettings selection{mixed ? 0 : 1, (performance || mixed) ? 16 : 2,
+                                               mixed, mixed ? DType::F16 : DType::F32};
   auto compute = add_vertex(NodeSpec{"compute", pipeline ? "projection" : "pca", selection}, spec);
   auto output =
       add_vertex(NodeSpec{"output", "batch", holotask::asyncs::BatchQueueSettings{8, 1, 1}}, spec);
@@ -489,3 +536,140 @@ TEST(PcaPipeline, PerformanceOverlap) {
 }
 
 } // namespace
+
+TEST(PcaPipeline, F16QueueWraparoundAndGraphReplay) {
+  const auto actual = run_pipeline(true, 128, false, false, false, 32, false, 10000, 320, true);
+  EXPECT_EQ(actual->consumed, 64u);
+  EXPECT_TRUE(std::all_of(actual->values.begin(), actual->values.end(),
+                          [](float v) { return std::isfinite(v); }));
+}
+
+TEST(ProductionF16, RecordingBasicPipeline) {
+  char  *path   = nullptr;
+  size_t length = 0;
+  _dupenv_s(&path, &length, "HOLOFLOW_F16_RECORDING_PATH");
+  if (!path)
+    GTEST_SKIP() << "Set HOLOFLOW_F16_RECORDING_PATH for the recording smoke/performance run";
+  std::string recording(path);
+  std::free(path);
+  const auto mode     = benchmark_option("HOLOFLOW_F16_RECORDING_MODE", 3);
+  const bool half_pca = mode == 1 || mode == 3, half_fresnel = mode == 2 || mode == 3;
+  auto       state   = std::make_shared<PipelineState>();
+  state->performance = true;
+  state->duration_ms = benchmark_option("HOLOFLOW_F16_RECORDING_MS", 1000);
+  Registry registry;
+  registry.register_sync("source", std::make_unique<holotask::sources::HolofileFactory>());
+  registry.register_sync("memcpy", std::make_unique<holotask::syncs::MemcpyFactory>());
+  registry.register_sync("convert", std::make_unique<holotask::syncs::ConversionFactory>());
+  registry.register_sync("reshape", std::make_unique<holonp::ReshapeFactory>());
+  registry.register_sync("projection", std::make_unique<holotask::syncs::PcaProjectionFactory>());
+  registry.register_sync("fresnel", std::make_unique<holotask::syncs::FresnelDiffractionFactory>());
+  registry.register_sync("mean", std::make_unique<holonp::MeanFactory>());
+  registry.register_sync("fftshift", std::make_unique<holonp::FFTShiftFactory>());
+  registry.register_sync("sink", std::make_unique<EndpointFactory>(false, state));
+  registry.register_async("batch", std::make_unique<holotask::asyncs::BatchQueueFactory>());
+  registry.register_async("decomposition",
+                          std::make_unique<holotask::asyncs::PcaDecompositionQueueFactory>());
+  registry.register_async("dual",
+                          std::make_unique<holotask::asyncs::DualReaderBatchQueueFactory>());
+  registry.register_async("average", std::make_unique<holotask::asyncs::SlidingAverageFactory>());
+  GraphSpec spec;
+  auto      node = [&](const char *name, const char *type, nlohmann::json settings) {
+    return add_vertex(NodeSpec{name, type, settings}, spec);
+  };
+  auto edge = [&](auto from, auto to, int out = 0, int in = 0) {
+    add_edge(from, to, EdgeSpec{out, in}, spec);
+  };
+  auto source = node("source", "source",
+                     holotask::sources::HolofileSettings{
+                         .path        = recording,
+                         .load_kind   = holotask::sources::HolofileSettings::LoadKind::CPUCached,
+                         .start_frame = 0,
+                         .end_frame   = 16384,
+                         .batch_size  = 32,
+                         .keep_cursor = false});
+  auto copy =
+      node("memcpy", "memcpy",
+           holotask::syncs::MemcpySettings{holotask::syncs::MemcpySettings::Target::Device});
+  edge(source, copy);
+  auto input = node("input", "batch", holotask::asyncs::BatchQueueSettings{1024, 32, 32});
+  edge(copy, input);
+  auto previous = input;
+  if (half_pca) {
+    auto boundary =
+        node("queue_copy", "memcpy",
+             holotask::syncs::MemcpySettings{holotask::syncs::MemcpySettings::Target::Device});
+    edge(previous, boundary);
+    previous = boundary;
+  }
+  if (!half_pca) {
+    auto convert = node(
+        "widen", "convert",
+        holotask::syncs::ConversionSettings{holotask::syncs::ConversionSettings::Target::F32,
+                                            holotask::syncs::ConversionSettings::Strategy::Real});
+    edge(previous, convert);
+    previous = convert;
+  }
+  auto reshape = node("reshape", "reshape", holonp::ReshapeSettings{{1, 32, 320, 512}, false});
+  edge(previous, reshape);
+  auto decomposition = node("decomposition", "decomposition", QueueSettings{4, 3, half_pca});
+  edge(reshape, decomposition);
+  auto projection =
+      node("projection", "projection",
+           holotask::syncs::PcaSettings{0, 16, half_pca, half_pca ? DType::F16 : DType::F32});
+  edge(decomposition, projection);
+  edge(decomposition, projection, 1, 1);
+  auto dual = node("dual", "dual", holotask::asyncs::DualReaderBatchQueueSettings{8, 64});
+  edge(projection, dual);
+  auto fresnel =
+      node("fresnel", "fresnel",
+           holotask::syncs::FresnelDiffractionSettings{.lambda           = 851e-9f,
+                                                       .dx               = 20e-6f,
+                                                       .dy               = 20e-6f,
+                                                       .z                = .49f,
+                                                       .axes             = {-2, -1},
+                                                       .skip_phase_shift = true,
+                                                       .output_magnitude = true,
+                                                       .use_fused_f16    = half_fresnel,
+                                                       .reduce_magnitude = half_fresnel});
+  edge(dual, fresnel);
+  previous = fresnel;
+  if (!half_fresnel) {
+    auto mean = node("component_mean", "mean", holonp::MeanSettings{{-3}, true});
+    edge(previous, mean);
+    previous = mean;
+  }
+  auto shift = node("shift", "fftshift", holonp::FFTShiftSettings{{-2, -1}});
+  edge(previous, shift);
+  auto mean = node("mean", "mean", holonp::MeanSettings{{0}, false});
+  edge(shift, mean);
+  auto average = node("average", "average", holotask::asyncs::SlidingAverageSettings{8, 64, 0});
+  edge(mean, average);
+  auto convert = node(
+      "display_scale", "convert",
+      holotask::syncs::ConversionSettings{holotask::syncs::ConversionSettings::Target::U8,
+                                          holotask::syncs::ConversionSettings::Strategy::Scaled});
+  edge(average, convert);
+  auto output = node("output", "batch", holotask::asyncs::BatchQueueSettings{32, 1, 1});
+  edge(convert, output);
+  auto sink = node("sink", "sink", nlohmann::json::object());
+  edge(output, sink);
+  Compiler::Config config;
+  config.enable_profiling        = false;
+  config.verbose_tracing         = false;
+  config.max_section_cuda_graphs = 128;
+  auto      compiled             = Compiler(registry, config).compile(spec);
+  Scheduler scheduler(compiled->graph, compiled->sections, compiled->resources);
+  scheduler.start();
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(45);
+  while (!scheduler.stop_requested() && std::chrono::steady_clock::now() < deadline)
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  const bool stopped = scheduler.stop_requested();
+  if (!stopped)
+    scheduler.request_stop();
+  scheduler.wait();
+  ASSERT_TRUE(stopped);
+  EXPECT_GT(state->windows_per_second, 0);
+  std::cout << "PRODUCTION_F16 mode=" << mode << " consumed=" << state->consumed
+            << " windows_per_second=" << state->windows_per_second << std::endl;
+}

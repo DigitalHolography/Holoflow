@@ -31,6 +31,10 @@ size_t size_of(DType dtype) noexcept {
     return 4;
   case DType::CF32:
     return 8;
+  case DType::F16:
+    return 2;
+  case DType::CF16:
+    return 4;
   }
 
   HOLOFLOW_UNREACHABLE();
@@ -46,6 +50,10 @@ std::string_view to_string(DType dtype) noexcept {
     return "F32";
   case DType::CF32:
     return "CF32";
+  case DType::F16:
+    return "F16";
+  case DType::CF16:
+    return "CF16";
   }
 
   HOLOFLOW_UNREACHABLE();
@@ -63,6 +71,10 @@ void from_json(const nlohmann::json &j, DType &dtype) {
     dtype = DType::F32;
   } else if (s == "CF32") {
     dtype = DType::CF32;
+  } else if (s == "F16") {
+    dtype = DType::F16;
+  } else if (s == "CF16") {
+    dtype = DType::CF16;
   } else {
     throw std::invalid_argument("invalid DType string");
   }

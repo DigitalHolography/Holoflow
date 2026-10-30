@@ -148,6 +148,7 @@ if(ENABLE_FETCHCONTENT)
         install(
             FILES
                 "${MATHDX_ROOT}/include/cusolverdx.hpp"
+                "${MATHDX_ROOT}/include/cufftdx.hpp"
                 "${MATHDX_ROOT}/include/cusolverdx_io.hpp"
             DESTINATION share/holovibes/nvrtc/mathdx/include
             COMPONENT dependencies
@@ -155,6 +156,7 @@ if(ENABLE_FETCHCONTENT)
         install(
             DIRECTORY
                 "${MATHDX_ROOT}/include/cusolverdx"
+                "${MATHDX_ROOT}/include/cufftdx"
                 "${MATHDX_ROOT}/include/commondx"
             DESTINATION share/holovibes/nvrtc/mathdx/include
             COMPONENT dependencies

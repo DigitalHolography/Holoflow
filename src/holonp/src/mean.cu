@@ -21,6 +21,7 @@
 #include <stdexcept>
 
 #include <cuComplex.h>
+#include <cuda_fp16.h>
 
 #include "curaii/cuda.hh"
 
@@ -265,6 +266,16 @@ template <> struct MeanTraits<cuFloatComplex> {
   __device__ static Out  finish(Acc a, float n) { return make_cuFloatComplex(a.x / n, a.y / n); }
 };
 
+template <> struct MeanTraits<__half2> {
+  using Acc = cuFloatComplex;
+  using Out = cuFloatComplex;
+  __device__ static void add(Acc &a, __half2 v) {
+    a.x += __half2float(__low2half(v));
+    a.y += __half2float(__high2half(v));
+  }
+  __device__ static Out finish(Acc a, float n) { return make_cuFloatComplex(a.x / n, a.y / n); }
+};
+
 template <typename InT>
 __global__ void
 mean_kernel(const InT *__restrict__ in, typename MeanTraits<InT>::Out *out, int out_ndim,
@@ -404,6 +415,24 @@ holoflow::core::OpResult Mean::execute(holoflow::core::SyncCtx &ctx) {
         total_out_, total_red_);
     break;
   }
+  case holoflow::core::DType::F16: {
+    auto *in  = reinterpret_cast<const __half *>(idata);
+    auto *out = reinterpret_cast<float *>(odata);
+    mean_kernel<<<grid, block, 0, stream_>>>(
+        in, out, static_cast<int>(out_ndim_), d_out_strides_.get(), d_out_to_in_.get(),
+        d_in_strides_.get(), d_red_axes_.get(), d_red_strides_.get(), static_cast<int>(red_ndim_),
+        total_out_, total_red_);
+    break;
+  }
+  case holoflow::core::DType::CF16: {
+    auto *in  = reinterpret_cast<const __half2 *>(idata);
+    auto *out = reinterpret_cast<cuFloatComplex *>(odata);
+    mean_kernel<<<grid, block, 0, stream_>>>(
+        in, out, static_cast<int>(out_ndim_), d_out_strides_.get(), d_out_to_in_.get(),
+        d_in_strides_.get(), d_red_axes_.get(), d_red_strides_.get(), static_cast<int>(red_ndim_),
+        total_out_, total_red_);
+    break;
+  }
   default:
     logger()->error("[Mean::execute] unsupported dtype");
     std::abort();
@@ -423,13 +452,17 @@ holoflow::core::InferResult MeanFactory::infer(std::span<const holoflow::core::T
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "only Device tensors are supported");
   check(is_c_contiguous(idesc), "input must be C-contiguous");
   check(idesc.dtype == holoflow::core::DType::U8 || idesc.dtype == holoflow::core::DType::U16 ||
-            idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::CF32,
+            idesc.dtype == holoflow::core::DType::F32 ||
+            idesc.dtype == holoflow::core::DType::CF32 ||
+            idesc.dtype == holoflow::core::DType::F16 || idesc.dtype == holoflow::core::DType::CF16,
         "unsupported input dtype");
 
   const auto plan = build_plan(settings, idesc.shape);
 
-  auto odtype = idesc.dtype == holoflow::core::DType::CF32 ? holoflow::core::DType::CF32
-                                                           : holoflow::core::DType::F32;
+  auto odtype =
+      (idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::CF16)
+          ? holoflow::core::DType::CF32
+          : holoflow::core::DType::F32;
   holoflow::core::TDesc odesc(plan.out_shape, odtype, idesc.mem_loc);
 
   return holoflow::core::InferResult{
