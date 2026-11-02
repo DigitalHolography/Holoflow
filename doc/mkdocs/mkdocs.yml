@@ -10,6 +10,7 @@ nav:
   - Applications:
     - Overview: applications/index.md
     - Doppler Holography: applications/doppler-holography.md
+    - Retinal LSCI: applications/retinal-lsci.md
     - Doppler OCT: applications/doppler-oct.md
     - Wavefront Analysis: applications/wavefront-analysis.md
   - Learn:

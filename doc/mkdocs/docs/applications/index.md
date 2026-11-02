@@ -2,7 +2,7 @@
 
 Holoflow and Holovibes support complete experimental workflows, from optical acquisition to real-time processing and visualization. These guides are organized by scientific result rather than by software component.
 
-Each guide will describe the optical setup, acquisition requirements, and two ways to reproduce the processing: an operator-oriented workflow in Holovibes and a programmable workflow using Holoflow.
+The retinal LSCI guide documents a reported acquisition and the corresponding Holovibes processing settings. Other guides are still outlines for future experimental and software workflows.
 
 <div class="grid cards" markdown>
 
@@ -18,6 +18,12 @@ Each guide will describe the optical setup, acquisition requirements, and two wa
 
     [Open the guide](doppler-oct.md)
 
+-   **Retinal LSCI**
+
+    Calculate spatial and temporal speckle contrast from retinal intensity sequences.
+
+    [Open the guide](retinal-lsci.md)
+
 -   **Wavefront analysis**
 
     Measure optical aberrations with Shack–Hartmann data and Zernike decomposition.
@@ -27,4 +33,4 @@ Each guide will describe the optical setup, acquisition requirements, and two wa
 </div>
 
 !!! warning "Experimental guidance in progress"
-    These pages currently establish the structure of the application guides. Experimental parameters and operating procedures will be added only after they have been validated by the project team.
+    The Doppler holography, Doppler OCT, and wavefront analysis guides are outlines. The retinal LSCI values describe one reported experiment, not a general acquisition protocol.

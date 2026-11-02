@@ -1,21 +1,38 @@
 # Spatial Contrast Sync Task
 
-The **Spatial Contrast** sync task calculates local speckle contrast for each input frame. At each pixel, it computes the population standard deviation divided by the mean inside a square sliding window centered on that pixel.
+The **SpatialContrast** sync task calculates laser speckle contrast from intensity samples. For each output pixel, it divides the population standard deviation by the mean over a spatial neighborhood, a temporal window, or both:
 
-When enabled in Holovibes, **Spatial LSCI contrast** is a dedicated path for laser-speckle intensity input. It applies this task directly to each acquired frame, then uses the existing **Accumulation** setting to average successive contrast maps. Select **Processed** image mode to display the map; lower contrast can indicate more motion or flow. The **Raw** view and raw input recording remain unchanged. This path bypasses hologram propagation, time transforms, FFT shift, and the existing high-pass Flatfield operation because those are not part of the spatial LSCI estimator.
+$$
+K = \frac{\sigma_I}{\mu_I}, \qquad
+\sigma_I = \sqrt{\max\!\left(\frac{1}{N}\sum_{i=1}^{N} I_i^2 - \mu_I^2,\,0\right)}.
+$$
 
-The window is clipped at image borders, so border pixels use only the in-frame samples in their neighborhood. A non-positive local mean produces an output value of zero. The processed preview keeps the F32 contrast values. **Display max K** sets the fixed grayscale range from 0 (black) to the selected value (white); larger values are clipped. This display-only control does not change the calculated or recorded K values, and its fixed range avoids brightness flicker between frames. The raw input buffer is not modified.
+The kernel and FFT methods calculate the same box-window statistic. Spatial neighborhoods are clipped to the image at borders, so their sample count is smaller there. A non-positive local mean produces zero contrast. The input tensor is not modified.
 
-## Inputs
+## Modes and tensor shapes
 
-This task consumes one GPU-resident, C-contiguous tensor of rank 2 or higher. The last two dimensions are interpreted as image height and width; all leading dimensions are processed as independent frames. Supported input dtypes are U8, U16, and F32.
+| Mode | `window_size` | `temporal_window_size` | Input | Output |
+| --- | ---: | ---: | --- | --- |
+| Spatial (2D) | Odd, 3–255 | 1 | `(..., H, W)` | Same shape |
+| Temporal only | 1 | At least 3 | `(T, H, W)`, with `T = temporal_window_size` | `(1, H, W)` |
+| Pooled spatial and temporal (3D) | Odd, 3–255 | At least 3 | `(T, H, W)`, with `T = temporal_window_size` | `(1, H, W)` |
 
-## Outputs
+The task accepts one GPU-resident, C-contiguous tensor of dtype U8, U16, or F32 and returns F32 values. In 2D mode, leading dimensions are independent frames. In temporal modes, the first dimension is one complete frame window, and the task emits one contrast map for that window. A temporal size of 2 is not accepted.
 
-The output has the same shape as the input and dtype F32. Each frame is processed independently, and the input tensor is not modified.
+The direct `kernel` method uses CUDA kernels for local sums. The `fft` method uses box convolution for spatial windows; temporal-only contrast uses the direct kernel even if `fft` is selected. The FFT method does not support CUDA graph capture for spatial windows.
+
+## Holovibes processing
+
+For **LSCI (2D)**, choose it under **Space Transform**. Holovibes calculates a contrast map for every input frame; **Time Window** and **Time Stride** do not set its estimator support.
+
+For **LSCI (3D)**, choose it under **Time Transform**. **LSCI Window (px)** sets the spatial side length, **Time Window** sets the number of consecutive frames pooled into each map, and **Time Stride** sets how many frames to advance. Set stride equal to window length for nonoverlapping blocks; a smaller stride creates overlapping windows. The two LSCI choices are mutually exclusive. **LSCI method** selects Kernel or FFT.
+
+Both modes use the acquired intensity frames directly, without hologram propagation or temporal Fourier analysis. **Accumulation** can average successive contrast maps. If enabled, **Flatfield** is applied to the calculated map before accumulation, and percentile clipping is applied after accumulation. These operations change the processed result; disable them when reproducing an uncorrected $K$ map.
+
+The calculated map is F32 before display conversion. **Display max K** maps the range from 0 to the selected value onto U8 grayscale and clips larger values for display. **Invert LSCI** reverses that grayscale. Holovibes uses this same U8 image for the processed preview and processed recording; neither control changes the estimator's F32 output. Raw viewing and raw recording use the original intensity stream.
+
+For a worked configuration based on high-speed retinal imaging, see [Retinal laser speckle contrast imaging](../../../applications/retinal-lsci.md).
 
 ## Settings
-
-`window_size` is an odd integer from 3 to 255. The default is 7, giving a 7×7 sliding window. Larger windows improve statistical stability but reduce spatial detail; choose a size that spans several speckle grains while retaining the vessel detail you need.
 
 --8<-- "docs/schemas/syncs/spatial_contrast_settings.md"

@@ -2,6 +2,12 @@
 
 This page collects the sources cited throughout the Holoflow documentation.
 
+## Auray et al. (2026) { #auray-2026 }
+
+Z. Auray, J. Guillou, B. Malbois, M. Boy-Arnould, and M. Atlan, “[High-speed laser speckle contrast imaging of the human retina](https://arxiv.org/html/2610.34605v1)” 25 October 2026.
+
+Used on: [Retinal LSCI](applications/retinal-lsci.md).
+
 ## Atlan (2025) { #atlan-2025 }
 
 M. Atlan, *Doppler Holography Measurements of the Eye Fundus in a Volunteer – May 27, 2025* [Data set]. Zenodo, 2025. [https://doi.org/10.5281/zenodo.16761111](https://doi.org/10.5281/zenodo.16761111). Licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
