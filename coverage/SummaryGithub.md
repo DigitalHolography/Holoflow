@@ -3,14 +3,14 @@
 
 |||
 |:---|:---|
-| Generated on: | 10/29/2026 - 2:42:23 PM |
+| Generated on: | 11/2/2026 - 2:23:04 PM |
 | Parser: | Cobertura |
 | Assemblies: | 7 |
 | Classes: | 12 |
 | Files: | 140 |
-| **Line coverage:** | 41.3% (6084 of 14709) |
-| Covered lines: | 6084 |
-| Uncovered lines: | 8625 |
+| **Line coverage:** | 41.3% (6085 of 14709) |
+| Covered lines: | 6085 |
+| Uncovered lines: | 8624 |
 | Coverable lines: | 14709 |
 | Total lines: | 33723 |
 | Covered branches: | 0 |
