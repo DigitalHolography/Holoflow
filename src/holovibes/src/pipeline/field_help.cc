@@ -56,9 +56,9 @@ constexpr auto kFilter2DOuterConstraints          = std::to_array<const char *>(
     "Must be non-negative.",
     "Must be greater than or equal to the inner radius when Filter 2D is enabled.",
 });
-constexpr auto kSpacialMethodConstraints          = std::to_array<const char *>({
+constexpr auto kSpacialMethodConstraints             = std::to_array<const char *>({
     "Processed reconstruction supports Fresnel Diffraction and Angular Spectrum; LSCI (2D) "
-    "calculates spatial contrast per frame.",
+    "calculates spatial contrast per frame; MESI estimates decorrelation time from raw frames.",
     "Angular Spectrum is disabled when Auto Focus is enabled.",
 });
 constexpr auto kAspPaddingConstraints             = std::to_array<const char *>({
@@ -66,18 +66,20 @@ constexpr auto kAspPaddingConstraints             = std::to_array<const char *>(
     "Width and height must be at least the source dimensions.",
     "The number of pixels added on each axis must be even.",
 });
-constexpr auto kTimeMethodConstraints             = std::to_array<const char *>({
+constexpr auto kTimeMethodConstraints                = std::to_array<const char *>({
     "Processed reconstruction requires a time transform; LSCI (3D) calculates spatial-temporal "
-    "contrast.",
+    "contrast, while MESI analyzes raw frames directly.",
 });
-constexpr auto kTimeWindowConstraints             = std::to_array<const char *>({
+constexpr auto kTimeWindowConstraints                = std::to_array<const char *>({
     "Must be strictly positive.",
-    "Outside processed 3D LSCI, Time Stride must be a multiple of Time Window.",
+    "Outside processed 3D LSCI and MESI, Time Stride must be a multiple of Time Window.",
+    "MESI requires a power-of-two window between 4 and 512 frames.",
 });
-constexpr auto kTimeStrideConstraints             = std::to_array<const char *>({
+constexpr auto kTimeStrideConstraints                = std::to_array<const char *>({
     "Must be strictly positive.",
-    "Outside processed 3D LSCI, must be a multiple of Time Window.",
+    "Outside processed 3D LSCI and MESI, must be a multiple of Time Window.",
     "For 3D LSCI, a stride smaller than Time Window produces overlapping windows.",
+    "MESI also supports overlapping analysis windows.",
     "For holofile replay, windows stay within one pass through the selected frames.",
     "For holofile import, must not exceed the selected frame range.",
 });
@@ -110,6 +112,33 @@ constexpr auto kSpatialContrastDimensionsConstraints = std::to_array<const char 
 });
 constexpr auto kSpatialContrastMethodConstraints = std::to_array<const char *>({
     "Kernel evaluates the sliding window directly; FFT performs linear convolution with a box kernel.",
+});
+constexpr auto kMesiExposureConstraints              = std::to_array<const char *>({
+    "Must be greater than 0 and at most one frame period.",
+    "REMI/sREMI require exactly one; use the fixed LUT when frames have dead time.",
+});
+constexpr auto kMesiEstimatorConstraints             = std::to_array<const char *>({
+    "Fixed LUT accepts 4 or more frames and estimates τ with user-supplied β and ρ.",
+    "REMI/sREMI require at least 16 frames and continuous exposure; sREMI smooths β spatially.",
+    "Validate synthetic grouped exposures against independently captured exposure curves.",
+});
+constexpr auto kMesiBetaSmoothingConstraints         = std::to_array<const char *>({
+    "Odd Gaussian width between 1 and 31 pixels; 1 disables smoothing.",
+});
+constexpr auto kMesiBetaConstraints                  = std::to_array<const char *>({
+    "Used only by the fixed LUT; must be in (0, 1].",
+});
+constexpr auto kMesiRhoConstraints                   = std::to_array<const char *>({
+    "Used only by the fixed LUT; must be in (0, 1].",
+});
+constexpr auto kMesiTauMinimumConstraints            = std::to_array<const char *>({
+    "Must be positive and finite, expressed in camera frame periods.",
+});
+constexpr auto kMesiTauMaximumConstraints            = std::to_array<const char *>({
+    "Must be greater than the minimum τ, expressed in camera frame periods.",
+});
+constexpr auto kMesiTauSamplesConstraints            = std::to_array<const char *>({
+    "Between 16 and 512 logarithmically spaced lookup-table candidates.",
 });
 constexpr auto kConvolutionConstraints            = std::to_array<const char *>({
     "Not currently supported by the pipeline.",
@@ -161,7 +190,7 @@ const FieldHelp kFieldHelp[] = {
      kFilter2DOuterConstraints},
     {SettingsField::SpacialMethod, "Space Transform",
      "Spatial propagation method applied after temporal analysis, or LSCI (2D) for local spatial "
-     "contrast in each frame.",
+     "contrast in each frame, or MESI for a raw-frame decorrelation-time estimate.",
      kSpacialMethodConstraints},
     {SettingsField::AspPadding, "ASP Padding",
      "Centered zero-padding resolution used for Angular Spectrum propagation.",
@@ -171,7 +200,7 @@ const FieldHelp kFieldHelp[] = {
      "for local contrast across space and time.",
      kTimeMethodConstraints},
     {SettingsField::TimeWindow, "Time Window",
-     "Number of frames in each temporal-analysis window or temporal LSCI window.",
+     "Number of frames in each temporal-analysis or local-metric analysis window.",
      kTimeWindowConstraints},
     {SettingsField::TimeStride, "Time Stride",
      "For temporal LSCI (3D), frames to advance between windows. 2D LSCI processes each input "
@@ -192,7 +221,7 @@ const FieldHelp kFieldHelp[] = {
      "Physical cutoff period used to derive the Gaussian background subtraction scale.",
      kFlatfieldCutoffConstraints},
     {SettingsField::PpSpatialContrastWindowSize, "Spatial LSCI Window",
-     "Odd square sliding-window side length in pixels for local standard deviation divided by mean.",
+     "Odd square sliding-window side length in pixels for local speckle statistics.",
      kSpatialContrastWindowConstraints},
     {SettingsField::PpSpatialContrastDimensions, "Spatial LSCI Dimensions",
      "2D calculates contrast within each frame; 3D combines a sliding temporal window with "
@@ -202,6 +231,22 @@ const FieldHelp kFieldHelp[] = {
     {SettingsField::PpSpatialContrastMethod, "Spatial LSCI Method",
      "Calculation method used for the local sliding-window statistics.",
      kSpatialContrastMethodConstraints},
+    {SettingsField::MesiExposureFraction, "MESI Exposure / Frame Period",
+     "Camera exposure duration as a fraction of the frame period.", kMesiExposureConstraints},
+    {SettingsField::MesiEstimator, "MESI Estimator",
+     "Choose the fixed gated-exposure LUT, REMI, or sREMI.", kMesiEstimatorConstraints},
+    {SettingsField::MesiBetaSmoothingSize, "sREMI β Smoothing Size",
+     "Gaussian width applied to the preliminary β map.", kMesiBetaSmoothingConstraints},
+    {SettingsField::MesiBeta, "MESI Coherence Factor β",
+     "Fixed coherence factor used by the LUT model.", kMesiBetaConstraints},
+    {SettingsField::MesiRho, "MESI Dynamic Fraction ρ",
+     "Fixed fraction of the scattered field assigned to dynamic scatterers.", kMesiRhoConstraints},
+    {SettingsField::MesiTauMinFrames, "MESI Minimum τ",
+     "Lower bound of the logarithmic decorrelation-time search.", kMesiTauMinimumConstraints},
+    {SettingsField::MesiTauMaxFrames, "MESI Maximum τ",
+     "Upper bound of the logarithmic decorrelation-time search.", kMesiTauMaximumConstraints},
+    {SettingsField::MesiTauSamples, "MESI τ LUT Samples",
+     "Number of precomputed model values tested for each pixel.", kMesiTauSamplesConstraints},
     {SettingsField::PpConvolution, "Convolution",
      "Applies a convolution kernel during post-processing.", kConvolutionConstraints},
     {SettingsField::PpRegistration, "Registration",

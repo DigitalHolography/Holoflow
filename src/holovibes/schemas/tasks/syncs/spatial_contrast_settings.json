@@ -19,13 +19,34 @@
         { "const": 1 },
         { "minimum": 3 }
       ],
-      "description": "Number of frames in the temporal window; 1 selects spatial-only 2D contrast, larger values select temporal or spatiotemporal contrast."
+      "description": "Number of frames in the temporal window; in pool_statistics mode, the number of group images to pool."
     },
     "method": {
       "type": "string",
       "enum": ["kernel", "fft"],
       "default": "kernel",
       "description": "Direct sliding-window kernel or FFT-based box convolution."
+    },
+    "squared_output": {
+      "type": "boolean",
+      "default": false,
+      "description": "Return corrected squared contrast instead of contrast K."
+    },
+    "unbiased_variance": {
+      "type": "boolean",
+      "default": false,
+      "description": "Apply the finite-sample correction to the variance estimate."
+    },
+    "poisson_noise_scale": {
+      "type": "number",
+      "minimum": 0,
+      "default": 0,
+      "description": "Subtract poisson_noise_scale / mean from the squared contrast."
+    },
+    "pool_statistics": {
+      "type": "boolean",
+      "default": false,
+      "description": "For squared spatial contrast, average corrected variances and means over the temporal input groups before dividing by the squared pooled mean. Negative corrected variances remain negative."
     }
   },
   "required": [
@@ -36,7 +57,11 @@
     {
       "window_size": 7,
       "temporal_window_size": 1,
-      "method": "kernel"
+      "method": "kernel",
+      "squared_output": false,
+      "unbiased_variance": false,
+      "poisson_noise_scale": 0,
+      "pool_statistics": false
     }
   ]
 }

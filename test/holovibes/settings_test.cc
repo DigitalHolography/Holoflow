@@ -115,6 +115,98 @@ TEST(AngularSpectrumPaddingSettingsTest, ValidationRejectsInvalidResolution) {
   EXPECT_FALSE(has_issue(valid_padding, "asp_padding_not_even"));
 }
 
+TEST(MesiRemiSettingsTest, LegacyJsonRoundTripPreservesUserParameters) {
+  Settings settings{};
+  settings.pp_mesi_remi                    = true;
+  settings.pp_mesi_estimator               = 2;
+  settings.pp_mesi_beta_smoothing_size     = 9;
+  settings.pp_mesi_display_exposure_frames = 4;
+  settings.pp_mesi_exposure_fraction       = 0.988;
+  settings.pp_mesi_beta                    = 0.91;
+  settings.pp_mesi_rho                     = 0.82;
+  settings.pp_mesi_tau_min_frames          = 0.1;
+  settings.pp_mesi_tau_max_frames          = 250.0;
+  settings.pp_mesi_tau_samples             = 256;
+
+  const auto  json     = settings_to_old_json(settings);
+  const auto  restored = old_json_to_settings(json, Settings{});
+  const auto &mesi     = json.at("compute_settings").at("view").at("mesi_remi");
+
+  EXPECT_TRUE(mesi.at("enabled").get<bool>());
+  EXPECT_EQ(restored.pp_mesi_estimator, 2);
+  EXPECT_EQ(restored.pp_mesi_beta_smoothing_size, 9);
+  EXPECT_EQ(restored.pp_mesi_display_exposure_frames, 4);
+  EXPECT_DOUBLE_EQ(restored.pp_mesi_exposure_fraction, 0.988);
+  EXPECT_DOUBLE_EQ(restored.pp_mesi_beta, 0.91);
+  EXPECT_DOUBLE_EQ(restored.pp_mesi_rho, 0.82);
+  EXPECT_DOUBLE_EQ(restored.pp_mesi_tau_min_frames, 0.1);
+  EXPECT_DOUBLE_EQ(restored.pp_mesi_tau_max_frames, 250.0);
+  EXPECT_EQ(restored.pp_mesi_tau_samples, 256);
+}
+
+TEST(MesiRemiSettingsTest, ValidatesDyadicWindowAndOverlappingStride) {
+  Settings settings{};
+  settings.view_type       = ViewType::PROCESSED;
+  settings.pp_mesi_remi    = true;
+  settings.time_window     = 16;
+  settings.time_stride     = 4;
+  settings.pp_accumulation = 1;
+  settings.load_batch      = 1;
+
+  const auto valid = validate_settings(settings, {});
+  EXPECT_FALSE(has_issue(valid, "mesi_time_window_invalid"));
+  EXPECT_FALSE(has_issue(valid, "time_stride_not_multiple"));
+
+  settings.pp_mesi_display_exposure_frames = 4;
+  EXPECT_FALSE(has_issue(validate_settings(settings, {}), "mesi_display_exposure_invalid"));
+  settings.pp_mesi_display_exposure_frames = 3;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "mesi_display_exposure_invalid"));
+  settings.pp_mesi_display_exposure_frames = 0;
+
+  settings.time_window = 12;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "mesi_time_window_invalid"));
+}
+
+TEST(MesiRemiSettingsTest, RejectsInvalidCalibrationAndUnsupportedFilter) {
+  Settings settings{};
+  settings.view_type       = ViewType::PROCESSED;
+  settings.pp_mesi_remi    = true;
+  settings.time_window     = 16;
+  settings.time_stride     = 16;
+  settings.pp_accumulation = 1;
+  settings.load_batch      = 1;
+  settings.pp_mesi_rho     = 0.0;
+  settings.filter_2d       = true;
+
+  const auto result = validate_settings(settings, {});
+  EXPECT_TRUE(has_issue(result, "mesi_rho_invalid"));
+  EXPECT_TRUE(has_issue(result, "mesi_filter2d_unsupported"));
+}
+
+TEST(MesiRemiSettingsTest, AutomaticModesRequireContinuousExposureAndSufficientFrames) {
+  Settings settings{};
+  settings.view_type                 = ViewType::PROCESSED;
+  settings.pp_mesi_remi              = true;
+  settings.pp_mesi_estimator         = 2;
+  settings.time_window               = 4;
+  settings.time_stride               = 4;
+  settings.pp_accumulation           = 1;
+  settings.load_batch                = 1;
+  settings.pp_mesi_exposure_fraction = 0.8;
+
+  const auto invalid = validate_settings(settings, {});
+  EXPECT_TRUE(has_issue(invalid, "mesi_remi_window_insufficient"));
+  EXPECT_TRUE(has_issue(invalid, "mesi_remi_gapped_exposure"));
+
+  settings.time_window               = 16;
+  settings.pp_mesi_exposure_fraction = 1.0;
+  const auto valid                   = validate_settings(settings, {});
+  EXPECT_FALSE(has_issue(valid, "mesi_remi_window_insufficient"));
+  EXPECT_FALSE(has_issue(valid, "mesi_remi_gapped_exposure"));
+  settings.pp_mesi_beta_smoothing_size = 8;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "mesi_beta_smoothing_invalid"));
+}
+
 TEST(SignalPlotSettingsTest, DerivesSampleTimeFromFrequencyStride) {
   Settings settings{};
   settings.input_sampling_frequency_hz = 40'000.0;

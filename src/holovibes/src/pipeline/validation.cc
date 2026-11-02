@@ -40,6 +40,10 @@ bool requires_processed_pipeline(const Settings &settings) {
   return settings.view_type != ViewType::RAW;
 }
 
+bool uses_direct_metric_pipeline(const Settings &settings) {
+  return settings.pp_spatial_contrast || settings.pp_mesi_remi;
+}
+
 int recording_batch_size(const Settings &settings) {
   return settings.recording_method == RecordingMethod::RAW ? settings.load_batch
                                                            : settings.cpu_out_size;
@@ -208,17 +212,24 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
               {SettingsField::SignalPlotTimeWindow});
   }
 
+  if (settings.pp_mesi_remi && !requires_processed_pipeline(settings)) {
+    add_issue(result, ValidationSeverity::Error, "mesi_requires_processed_view",
+              "MESI requires Processed image mode.", {SettingsField::SpacialMethod});
+  }
+
   const bool temporal_lscsi =
       requires_processed_pipeline(settings) && settings.pp_spatial_contrast &&
       settings.pp_spatial_contrast_dimensions == 3;
-  if (!temporal_lscsi && settings.time_window > 0 && settings.time_stride > 0 &&
+  const bool temporal_metric =
+      temporal_lscsi || (requires_processed_pipeline(settings) && settings.pp_mesi_remi);
+  if (!temporal_metric && settings.time_window > 0 && settings.time_stride > 0 &&
       (settings.time_stride % settings.time_window != 0)) {
     add_issue(result, ValidationSeverity::Error, "time_stride_not_multiple",
               "Time stride must be a multiple of the time window.",
               {SettingsField::TimeWindow, SettingsField::TimeStride});
   }
 
-  if (settings.filter_2d && !settings.pp_spatial_contrast) {
+  if (settings.filter_2d && !uses_direct_metric_pipeline(settings)) {
     if (settings.filter_r_inner < 0) {
       add_issue(result, ValidationSeverity::Error, "filter_2d_inner_negative",
                 "Filter 2D inner radius must be non-negative.",
@@ -252,7 +263,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 "Accumulation must be strictly positive.", {SettingsField::PpAccumulation});
     }
 
-    if (!settings.pp_spatial_contrast) {
+    if (!uses_direct_metric_pipeline(settings)) {
       if (settings.time_method == TimeMethod::NONE) {
         add_issue(result, ValidationSeverity::Error, "time_method_unsupported",
                   "A time transform must be selected for processed view mode.",
@@ -301,7 +312,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
       }
     }
 
-    if (settings.view_3d_cuts && !settings.pp_spatial_contrast) {
+    if (settings.view_3d_cuts && !uses_direct_metric_pipeline(settings)) {
       add_issue(result, ValidationSeverity::Error, "view_3d_cuts_unsupported",
                 "3D cuts are not currently supported by the pipeline.",
                 {SettingsField::View3DCuts});
@@ -319,7 +330,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 {SettingsField::PpFlatfieldCutoffPeriod});
     }
 
-    if (settings.pp_spatial_contrast &&
+    if ((settings.pp_spatial_contrast || settings.pp_mesi_remi) &&
         (settings.pp_spatial_contrast_window_size < 3 ||
          settings.pp_spatial_contrast_window_size > 255 ||
          settings.pp_spatial_contrast_window_size % 2 == 0)) {
@@ -359,8 +370,8 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
       }
     }
 
-    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_method != 0 &&
-        settings.pp_spatial_contrast_method != 1) {
+    if ((settings.pp_spatial_contrast || settings.pp_mesi_remi) &&
+        settings.pp_spatial_contrast_method != 0 && settings.pp_spatial_contrast_method != 1) {
       add_issue(result, ValidationSeverity::Error, "pp_spatial_contrast_method_invalid",
                 "Spatial contrast method must be Kernel or FFT.",
                 {SettingsField::PpSpatialContrastMethod});
@@ -371,9 +382,123 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 "Convolution is not currently supported by the pipeline.",
                 {SettingsField::PpConvolution});
     }
+
+    if (settings.pp_mesi_remi) {
+      if (settings.pp_flatfield) {
+        add_issue(result, ValidationSeverity::Warning, "mesi_flatfield_skipped",
+                  "The post-processing flatfield filter is skipped in MESI because it would "
+                  "change the estimated τ map. Raw camera dark, gain, and flatfield calibration "
+                  "is not currently available in this pipeline.",
+                  {});
+      }
+      if (settings.pp_spatial_contrast) {
+        add_issue(result, ValidationSeverity::Error, "mesi_lscsi_mutually_exclusive",
+                  "MESI and LSCI cannot be enabled at the same time.",
+                  {SettingsField::SpacialMethod, SettingsField::TimeMethod});
+      }
+      if (settings.filter_2d) {
+        add_issue(result, ValidationSeverity::Error, "mesi_filter2d_unsupported",
+                  "Filter 2D is not applied to MESI input frames.", {SettingsField::Filter2D});
+      }
+      if (settings.autofocus_enabled) {
+        add_issue(result, ValidationSeverity::Error, "mesi_autofocus_unsupported",
+                  "Auto-focus is not supported in MESI mode.", {SettingsField::SpacialMethod});
+      }
+      if (settings.time_window < 4 || settings.time_window > 512 ||
+          (settings.time_window & (settings.time_window - 1)) != 0) {
+        add_issue(result, ValidationSeverity::Error, "mesi_time_window_invalid",
+                  "MESI Time Window must be a power of two between 4 and 512 frames.",
+                  {SettingsField::TimeWindow});
+      }
+      const int display_exposure = settings.pp_mesi_display_exposure_frames;
+      if (display_exposure < 0 ||
+          (display_exposure != 0 && ((display_exposure & (display_exposure - 1)) != 0 ||
+                                     display_exposure > settings.time_window))) {
+        add_issue(
+            result, ValidationSeverity::Error, "mesi_display_exposure_invalid",
+            "MESI display exposure must be zero (τ) or a power of two within the time window.",
+            {SettingsField::TimeWindow});
+      }
+      if (settings.pp_mesi_estimator < 0 || settings.pp_mesi_estimator > 2) {
+        add_issue(result, ValidationSeverity::Error, "mesi_estimator_invalid",
+                  "Select Fixed LUT, REMI, or sREMI.", {SettingsField::MesiEstimator});
+      } else if (settings.pp_mesi_estimator != 0) {
+        if (settings.time_window < 16) {
+          add_issue(result, ValidationSeverity::Error, "mesi_remi_window_insufficient",
+                    "REMI and sREMI require at least 16 frames (five exposure channels).",
+                    {SettingsField::TimeWindow, SettingsField::MesiEstimator});
+        }
+        if (settings.pp_mesi_exposure_fraction != 1.0) {
+          add_issue(result, ValidationSeverity::Error, "mesi_remi_gapped_exposure",
+                    "REMI and sREMI require continuous exposure. Use Fixed LUT when exposure "
+                    "is shorter than the frame period.",
+                    {SettingsField::MesiExposureFraction, SettingsField::MesiEstimator});
+        }
+      }
+      if (settings.pp_mesi_estimator == 2 && (settings.pp_mesi_beta_smoothing_size < 0 ||
+                                              settings.pp_mesi_beta_smoothing_size > 2047 ||
+                                              (settings.pp_mesi_beta_smoothing_size != 0 &&
+                                               (settings.pp_mesi_beta_smoothing_size & 1) == 0))) {
+        add_issue(result, ValidationSeverity::Error, "mesi_beta_smoothing_invalid",
+                  "sREMI β smoothing size must be zero (automatic) or odd and between 1 and "
+                  "2047 pixels.",
+                  {SettingsField::MesiBetaSmoothingSize});
+      }
+      if (!std::isfinite(settings.pp_mesi_exposure_fraction) ||
+          settings.pp_mesi_exposure_fraction <= 0.0 || settings.pp_mesi_exposure_fraction > 1.0) {
+        add_issue(result, ValidationSeverity::Error, "mesi_exposure_fraction_invalid",
+                  "Exposure / frame period must be greater than 0 and at most 1.",
+                  {SettingsField::MesiExposureFraction});
+      }
+      if (settings.pp_mesi_estimator == 0 &&
+          (!std::isfinite(settings.pp_mesi_beta) || settings.pp_mesi_beta <= 0.0 ||
+           settings.pp_mesi_beta > 1.0)) {
+        add_issue(result, ValidationSeverity::Error, "mesi_beta_invalid",
+                  "Coherence factor β must be greater than 0 and at most 1.",
+                  {SettingsField::MesiBeta});
+      }
+      if (settings.pp_mesi_estimator == 0 &&
+          (!std::isfinite(settings.pp_mesi_rho) || settings.pp_mesi_rho <= 0.0 ||
+           settings.pp_mesi_rho > 1.0)) {
+        add_issue(result, ValidationSeverity::Error, "mesi_rho_invalid",
+                  "Dynamic fraction ρ must be greater than 0 and at most 1.",
+                  {SettingsField::MesiRho});
+      }
+      if (!std::isfinite(settings.pp_mesi_tau_min_frames) ||
+          settings.pp_mesi_tau_min_frames <= 0.0) {
+        add_issue(result, ValidationSeverity::Error, "mesi_tau_min_invalid",
+                  "Minimum τ must be positive and finite.", {SettingsField::MesiTauMinFrames});
+      }
+      if (!std::isfinite(settings.pp_mesi_tau_max_frames) ||
+          settings.pp_mesi_tau_max_frames <= settings.pp_mesi_tau_min_frames) {
+        add_issue(result, ValidationSeverity::Error, "mesi_tau_max_invalid",
+                  "Maximum τ must be finite and greater than minimum τ.",
+                  {SettingsField::MesiTauMinFrames, SettingsField::MesiTauMaxFrames});
+      }
+      if (settings.pp_mesi_estimator == 0 &&
+          (settings.pp_mesi_tau_samples < 16 || settings.pp_mesi_tau_samples > 512)) {
+        add_issue(result, ValidationSeverity::Error, "mesi_tau_samples_invalid",
+                  "τ LUT samples must be between 16 and 512.", {SettingsField::MesiTauSamples});
+      }
+      if (settings.import_source == ImportSource::HOLOFILE &&
+          context.source_frame_count.has_value()) {
+        const int selected_end    = std::min(settings.load_end, *context.source_frame_count);
+        const int selected_frames = std::max(selected_end - settings.load_begin, 0);
+        const int cycle_frames = settings.load_batch > 0
+                                     ? selected_frames / settings.load_batch * settings.load_batch
+                                     : selected_frames;
+        if (settings.time_window > 0 && cycle_frames < settings.time_window) {
+          add_issue(result, ValidationSeverity::Error, "mesi_time_window_insufficient",
+                    std::format("The selected holofile range provides {} frames per replay; "
+                                "MESI needs at least {}.",
+                                cycle_frames, settings.time_window),
+                    {SettingsField::TimeWindow});
+        }
+      }
+    }
   }
 
-  if (requires_processed_pipeline(settings) && !settings.pp_spatial_contrast &&
+  if (requires_processed_pipeline(settings) && !uses_direct_metric_pipeline(settings) &&
       settings.time_method != TimeMethod::NONE) {
     if (settings.time_z_end <= settings.time_z_begin) {
       add_issue(result, ValidationSeverity::Error, "time_z_range_invalid",

@@ -36,6 +36,7 @@ namespace {
 constexpr int kLargeSpinMax = std::numeric_limits<int>::max();
 constexpr auto kLscsi2D = "LSCI (2D)";
 constexpr auto kLscsi3D = "LSCI (3D)";
+constexpr auto kMesiRemi     = "MESI";
 
 QSpinBox *create_spin_box(QWidget *parent, int minimum, int maximum, int value) {
   auto *spin_box = new QSpinBox(parent);
@@ -85,6 +86,13 @@ bool ImageRenderingWidget::is_spatial_contrast_enabled() const {
   return space_transform_combo_->currentText() == kLscsi2D ||
          time_transform_combo_->currentText() == kLscsi3D;
 }
+bool ImageRenderingWidget::is_mesi_remi_enabled() const {
+  return space_transform_combo_->currentText() == kMesiRemi;
+}
+int ImageRenderingWidget::get_mesi_estimator() const { return mesi_estimator_->currentIndex(); }
+int ImageRenderingWidget::get_mesi_beta_smoothing_size() const {
+  return mesi_beta_smoothing_size_->value();
+}
 int ImageRenderingWidget::get_spatial_contrast_window_size() const {
   return spatial_contrast_window_size_->value();
 }
@@ -100,6 +108,18 @@ double ImageRenderingWidget::get_spatial_contrast_display_max() const {
 bool ImageRenderingWidget::is_spatial_contrast_display_inverted() const {
   return spatial_contrast_invert_display_->isChecked();
 }
+double ImageRenderingWidget::get_mesi_exposure_fraction() const {
+  return mesi_exposure_fraction_->value();
+}
+double ImageRenderingWidget::get_mesi_beta() const { return mesi_beta_->value(); }
+double ImageRenderingWidget::get_mesi_rho() const { return mesi_rho_->value(); }
+double ImageRenderingWidget::get_mesi_tau_min_frames() const {
+  return mesi_tau_min_frames_->value();
+}
+double ImageRenderingWidget::get_mesi_tau_max_frames() const {
+  return mesi_tau_max_frames_->value();
+}
+int ImageRenderingWidget::get_mesi_tau_samples() const { return mesi_tau_samples_->value(); }
 
 void ImageRenderingWidget::set_batch_size(int value) { batch_size_spin_->setValue(value); }
 void ImageRenderingWidget::set_time_stride(int value) { time_stride_spin_->setValue(value); }
@@ -150,6 +170,25 @@ void ImageRenderingWidget::set_spatial_contrast_mode(bool enabled, int dimension
   update_asp_padding_visibility();
   update_spatial_contrast_controls();
 }
+void ImageRenderingWidget::set_mesi_remi_mode(bool enabled) {
+  const QSignalBlocker space_blocker(space_transform_combo_);
+  const QSignalBlocker time_blocker(time_transform_combo_);
+  if (enabled) {
+    space_transform_combo_->setCurrentText(kMesiRemi);
+    time_transform_combo_->setCurrentText("None");
+  } else if (is_mesi_remi_enabled()) {
+    space_transform_combo_->setCurrentText("None");
+  }
+  update_asp_padding_visibility();
+  update_spatial_contrast_controls();
+}
+void ImageRenderingWidget::set_mesi_estimator(int value) {
+  mesi_estimator_->setCurrentIndex(value);
+  update_spatial_contrast_controls();
+}
+void ImageRenderingWidget::set_mesi_beta_smoothing_size(int value) {
+  mesi_beta_smoothing_size_->setValue(value);
+}
 void ImageRenderingWidget::set_spatial_contrast_window_size(int value) {
   spatial_contrast_window_size_->setValue(value);
 }
@@ -158,26 +197,47 @@ void ImageRenderingWidget::set_time_window_max_for_temporal_lscsi(int value) {
   update_time_window_limits();
 }
 void ImageRenderingWidget::update_time_window_limits() {
+  const bool mesi_remi      = is_mesi_remi_enabled();
   const bool temporal_lscsi = is_spatial_contrast_enabled() &&
                               get_spatial_contrast_dimensions() == 3;
   const QSignalBlocker blocker(time_window_spin_);
-  time_window_spin_->setRange(temporal_lscsi ? 3 : 1,
-                              temporal_lscsi ? max_temporal_lscsi_frames_ : kLargeSpinMax);
+  time_window_spin_->setRange(mesi_remi        ? (get_mesi_estimator() == 0 ? 4 : 16)
+                              : temporal_lscsi ? 3
+                                               : 1,
+                              mesi_remi        ? std::max(get_mesi_estimator() == 0 ? 4 : 16,
+                                                          std::min(max_temporal_lscsi_frames_, 512))
+                              : temporal_lscsi ? max_temporal_lscsi_frames_
+                                               : kLargeSpinMax);
 }
 void ImageRenderingWidget::update_spatial_contrast_controls() {
-  const bool enabled = is_spatial_contrast_enabled();
-  spatial_contrast_window_label_->setVisible(enabled);
-  spatial_contrast_window_size_->setVisible(enabled);
-  spatial_contrast_window_size_->setEnabled(enabled);
-  spatial_contrast_method_label_->setVisible(enabled);
-  spatial_contrast_method_->setVisible(enabled);
-  spatial_contrast_method_->setEnabled(enabled);
-  spatial_contrast_display_max_label_->setVisible(enabled);
-  spatial_contrast_display_max_->setVisible(enabled);
-  spatial_contrast_display_max_->setEnabled(enabled && !spatial_contrast_appearance_locked_);
-  spatial_contrast_invert_display_->setEnabled(enabled && !spatial_contrast_appearance_locked_);
+  const bool lsci        = is_spatial_contrast_enabled();
+  const bool mesi_remi   = is_mesi_remi_enabled();
+  const bool metric_mode = lsci || mesi_remi;
+  spatial_contrast_window_label_->setText(mesi_remi ? tr("MESI Spatial Window (px):")
+                                                    : tr("LSCI Window (px):"));
+  spatial_contrast_method_label_->setText(mesi_remi ? tr("MESI method:") : tr("LSCI method:"));
+  spatial_contrast_window_label_->setVisible(metric_mode);
+  spatial_contrast_window_size_->setVisible(metric_mode);
+  spatial_contrast_window_size_->setEnabled(metric_mode);
+  spatial_contrast_method_label_->setVisible(metric_mode);
+  spatial_contrast_method_->setVisible(metric_mode);
+  spatial_contrast_method_->setEnabled(metric_mode);
+  spatial_contrast_display_max_label_->setVisible(lsci);
+  spatial_contrast_display_max_->setVisible(lsci);
+  spatial_contrast_invert_display_->setVisible(lsci);
+  spatial_contrast_display_max_->setEnabled(lsci && !spatial_contrast_appearance_locked_);
+  spatial_contrast_invert_display_->setEnabled(lsci && !spatial_contrast_appearance_locked_);
+  mesi_parameters_label_->setVisible(mesi_remi);
+  mesi_estimator_->parentWidget()->setVisible(mesi_remi);
+  mesi_exposure_fraction_->parentWidget()->setVisible(mesi_remi);
+  mesi_beta_->parentWidget()->setVisible(mesi_remi && get_mesi_estimator() == 0);
+  mesi_rho_->parentWidget()->setVisible(mesi_remi && get_mesi_estimator() == 0);
+  mesi_tau_min_frames_->parentWidget()->setVisible(mesi_remi);
+  mesi_tau_max_frames_->parentWidget()->setVisible(mesi_remi);
+  mesi_tau_samples_->parentWidget()->setVisible(mesi_remi && get_mesi_estimator() == 0);
+  mesi_beta_smoothing_size_->parentWidget()->setVisible(mesi_remi && get_mesi_estimator() == 2);
   update_time_window_limits();
-  emit spatial_contrast_enabled_changed(enabled);
+  emit spatial_contrast_enabled_changed(lsci);
   update_spatial_contrast_display_range();
 }
 void ImageRenderingWidget::update_spatial_contrast_display_range() {
@@ -193,6 +253,18 @@ void ImageRenderingWidget::set_spatial_contrast_display_max(double value) {
 void ImageRenderingWidget::set_spatial_contrast_display_inverted(bool inverted) {
   spatial_contrast_invert_display_->setChecked(inverted);
 }
+void ImageRenderingWidget::set_mesi_exposure_fraction(double value) {
+  mesi_exposure_fraction_->setValue(value);
+}
+void ImageRenderingWidget::set_mesi_beta(double value) { mesi_beta_->setValue(value); }
+void ImageRenderingWidget::set_mesi_rho(double value) { mesi_rho_->setValue(value); }
+void ImageRenderingWidget::set_mesi_tau_min_frames(double value) {
+  mesi_tau_min_frames_->setValue(value);
+}
+void ImageRenderingWidget::set_mesi_tau_max_frames(double value) {
+  mesi_tau_max_frames_->setValue(value);
+}
+void ImageRenderingWidget::set_mesi_tau_samples(int value) { mesi_tau_samples_->setValue(value); }
 void ImageRenderingWidget::set_spatial_contrast_appearance_locked(bool locked) {
   if (spatial_contrast_appearance_locked_ == locked) {
     return;
@@ -262,6 +334,16 @@ QComboBox *ImageRenderingWidget::spatial_contrast_method() { return spatial_cont
 QDoubleSpinBox *ImageRenderingWidget::spatial_contrast_display_max() {
   return spatial_contrast_display_max_;
 }
+QDoubleSpinBox *ImageRenderingWidget::mesi_exposure_fraction_spin() {
+  return mesi_exposure_fraction_;
+}
+QComboBox *ImageRenderingWidget::mesi_estimator_combo() { return mesi_estimator_; }
+QSpinBox  *ImageRenderingWidget::mesi_beta_smoothing_spin() { return mesi_beta_smoothing_size_; }
+QDoubleSpinBox  *ImageRenderingWidget::mesi_beta_spin() { return mesi_beta_; }
+QDoubleSpinBox  *ImageRenderingWidget::mesi_rho_spin() { return mesi_rho_; }
+QDoubleSpinBox  *ImageRenderingWidget::mesi_tau_min_spin() { return mesi_tau_min_frames_; }
+QDoubleSpinBox  *ImageRenderingWidget::mesi_tau_max_spin() { return mesi_tau_max_frames_; }
+QSpinBox        *ImageRenderingWidget::mesi_tau_samples_spin() { return mesi_tau_samples_; }
 AutoFocusWidget *ImageRenderingWidget::autofocus_widget() { return autofocus_widget_; }
 
 void ImageRenderingWidget::setup_ui() {
@@ -286,6 +368,41 @@ void ImageRenderingWidget::setup_ui() {
     layout->addWidget(spin, row, 1);
     ++row;
   };
+  auto add_mesi_double_row = [&](const QString &label, QDoubleSpinBox *&spin, double minimum,
+                                 double maximum, double value, int decimals, double step) {
+    auto *row_widget = new QWidget(this);
+    auto *row_layout = new QGridLayout(row_widget);
+    row_layout->setContentsMargins(0, 0, 0, 0);
+    row_layout->setHorizontalSpacing(6);
+    auto *field_label = new QLabel(label, row_widget);
+    spin              = new QDoubleSpinBox(row_widget);
+    spin->setRange(minimum, maximum);
+    spin->setDecimals(decimals);
+    spin->setSingleStep(step);
+    spin->setKeyboardTracking(false);
+    spin->setValue(value);
+    row_layout->addWidget(field_label, 0, 0);
+    row_layout->addWidget(spin, 0, 1);
+    row_layout->setColumnStretch(1, 1);
+    layout->addWidget(row_widget, row, 0, 1, 2);
+    mesi_control_rows_.push_back(row_widget);
+    ++row;
+  };
+  auto add_mesi_int_row = [&](const QString &label, QSpinBox *&spin, int minimum, int maximum,
+                              int value) {
+    auto *row_widget = new QWidget(this);
+    auto *row_layout = new QGridLayout(row_widget);
+    row_layout->setContentsMargins(0, 0, 0, 0);
+    row_layout->setHorizontalSpacing(6);
+    auto *field_label = new QLabel(label, row_widget);
+    spin              = create_spin_box(row_widget, minimum, maximum, value);
+    row_layout->addWidget(field_label, 0, 0);
+    row_layout->addWidget(spin, 0, 1);
+    row_layout->setColumnStretch(1, 1);
+    layout->addWidget(row_widget, row, 0, 1, 2);
+    mesi_control_rows_.push_back(row_widget);
+    ++row;
+  };
 
   add_combo_row("Image:", image_combo_, QStringList{"Raw", "Processed"});
   add_spin_row("Batch Size:", batch_size_spin_, 1, kLargeSpinMax, 32);
@@ -307,10 +424,11 @@ void ImageRenderingWidget::setup_ui() {
   ++row;
 
   auto space_transforms =
-      QStringList{"None", "Fresnel Diffraction", "Angular Spectrum", kLscsi2D};
+      QStringList{"None", "Fresnel Diffraction", "Angular Spectrum", kLscsi2D, kMesiRemi};
   add_combo_row("Space Transform:", space_transform_combo_, space_transforms);
   space_transform_combo_->setToolTip(
-      tr("Select a propagation method, or LSCI (2D) to calculate local contrast in each frame."));
+      tr("Select a propagation method, LSCI (2D), or MESI to estimate a local "
+         "decorrelation-time map from raw frames."));
 
   asp_padding_check_ = new QCheckBox("ASP Padding", this);
   layout->addWidget(asp_padding_check_, row, 0);
@@ -380,10 +498,52 @@ void ImageRenderingWidget::setup_ui() {
   layout->addWidget(spatial_contrast_invert_display_, row, 0, 1, 2);
   ++row;
 
+  mesi_parameters_label_ = new QLabel(tr("MESI estimator:"), this);
+  layout->addWidget(mesi_parameters_label_, row, 0, 1, 2);
+  mesi_parameters_label_->hide();
+  ++row;
+  {
+    auto *row_widget = new QWidget(this);
+    auto *row_layout = new QGridLayout(row_widget);
+    row_layout->setContentsMargins(0, 0, 0, 0);
+    row_layout->addWidget(new QLabel(tr("Estimator:"), row_widget), 0, 0);
+    mesi_estimator_ =
+        create_combo_box(row_widget, QStringList{tr("Fixed β/ρ LUT"), tr("REMI"), tr("sREMI")});
+    mesi_estimator_->setToolTip(tr("REMI and sREMI estimate β and ρ from at least 16 frames. "
+                                   "They require exposure equal to the frame period. "
+                                   "The fixed LUT supports 4-frame and gapped recordings. "
+                                   "Validate REMI/sREMI on your camera: grouped frames are "
+                                   "synthetic rather than separately captured exposures."));
+    row_layout->addWidget(mesi_estimator_, 0, 1);
+    row_layout->setColumnStretch(1, 1);
+    layout->addWidget(row_widget, row, 0, 1, 2);
+    mesi_control_rows_.push_back(row_widget);
+    ++row;
+  }
+  add_mesi_double_row(tr("Exposure / frame period:"), mesi_exposure_fraction_, 0.01, 1.0, 1.0, 3,
+                      0.01);
+  mesi_exposure_fraction_->setToolTip(
+      tr("Camera exposure duration divided by the frame period. Set from the acquisition "
+         "configuration when there is an inter-frame dead time."));
+  add_mesi_double_row(tr("Coherence factor β:"), mesi_beta_, 0.01, 1.0, 1.0, 3, 0.01);
+  mesi_beta_->setToolTip(tr("Fixed coherence factor used only by the LUT estimator."));
+  add_mesi_double_row(tr("Dynamic fraction ρ:"), mesi_rho_, 0.01, 1.0, 1.0, 3, 0.01);
+  mesi_rho_->setToolTip(tr("Fixed dynamic-scattering fraction used only by the LUT estimator."));
+  add_mesi_double_row(tr("Minimum τ (frames):"), mesi_tau_min_frames_, 0.001, 1.0e6, 0.05, 3, 0.05);
+  add_mesi_double_row(tr("Maximum τ (frames):"), mesi_tau_max_frames_, 0.002, 1.0e6, 100.0, 3, 1.0);
+  add_mesi_int_row(tr("τ LUT samples:"), mesi_tau_samples_, 16, 512, 256);
+  mesi_tau_samples_->setSingleStep(16);
+  add_mesi_int_row(tr("β smoothing size (px):"), mesi_beta_smoothing_size_, 0, 2047, 0);
+  mesi_beta_smoothing_size_->setSingleStep(2);
+  mesi_beta_smoothing_size_->setToolTip(
+      tr("For sREMI, 0 uses the image-size-dependent filter from the reference implementation. "
+         "Set an odd pixel width to override it; 1 disables smoothing."));
+
   add_spin_row("Time Window:", time_window_spin_, 1, kLargeSpinMax, 32);
   time_window_spin_->setToolTip(
       tr("Number of consecutive frames in each temporal-transform window. LSCI (3D) uses this "
-         "as its temporal window; LSCI (2D) ignores it."));
+         "as its temporal window; MESI uses dyadic exposure groups and requires a "
+         "power-of-two window; LSCI (2D) ignores it."));
   add_spin_row("Lambda (nm):", lambda_spin_, 1, kLargeSpinMax, 852);
   add_spin_row("Focus (mm):", focus_spin_, 1, kLargeSpinMax, 380);
 
@@ -407,6 +567,7 @@ void ImageRenderingWidget::setup_ui() {
   layout->addItem(new QSpacerItem(20, 40, QSizePolicy::Minimum, QSizePolicy::Expanding), row, 0, 1,
                   2);
   update_asp_padding_visibility();
+  update_spatial_contrast_controls();
 }
 
 void ImageRenderingWidget::connect_signals() {
@@ -444,6 +605,7 @@ void ImageRenderingWidget::connect_signals() {
           &ImageRenderingWidget::settings_changed);
   connect(space_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
     if (space_transform_combo_->currentText() == kLscsi2D ||
+        space_transform_combo_->currentText() == kMesiRemi ||
         time_transform_combo_->currentText() == kLscsi3D) {
       const QSignalBlocker blocker(time_transform_combo_);
       time_transform_combo_->setCurrentText("None");
@@ -460,17 +622,17 @@ void ImageRenderingWidget::connect_signals() {
           &ImageRenderingWidget::settings_changed);
   connect(asp_padded_height_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
-  connect(time_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          [this]() {
-            if (time_transform_combo_->currentText() == kLscsi3D ||
-                space_transform_combo_->currentText() == kLscsi2D) {
-              const QSignalBlocker blocker(space_transform_combo_);
-              space_transform_combo_->setCurrentText("None");
-              update_asp_padding_visibility();
-            }
-            update_spatial_contrast_controls();
-            emit settings_changed();
-          });
+  connect(time_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+    if (time_transform_combo_->currentText() == kLscsi3D ||
+        space_transform_combo_->currentText() == kLscsi2D ||
+        space_transform_combo_->currentText() == kMesiRemi) {
+      const QSignalBlocker blocker(space_transform_combo_);
+      space_transform_combo_->setCurrentText("None");
+      update_asp_padding_visibility();
+    }
+    update_spatial_contrast_controls();
+    emit settings_changed();
+  });
   connect(time_window_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(lambda_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
@@ -488,6 +650,24 @@ void ImageRenderingWidget::connect_signals() {
             emit settings_changed();
           });
   connect(spatial_contrast_invert_display_, &QCheckBox::toggled, this,
+          &ImageRenderingWidget::settings_changed);
+  connect(mesi_exposure_fraction_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+          [this](double) { emit settings_changed(); });
+  connect(mesi_estimator_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
+    update_spatial_contrast_controls();
+    emit settings_changed();
+  });
+  connect(mesi_beta_smoothing_size_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &ImageRenderingWidget::settings_changed);
+  connect(mesi_beta_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+          [this](double) { emit settings_changed(); });
+  connect(mesi_rho_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+          [this](double) { emit settings_changed(); });
+  connect(mesi_tau_min_frames_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+          [this](double) { emit settings_changed(); });
+  connect(mesi_tau_max_frames_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+          [this](double) { emit settings_changed(); });
+  connect(mesi_tau_samples_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(autofocus_widget_, &AutoFocusWidget::settings_changed, this, [this]() {
     set_angular_spectrum_enabled(!autofocus_widget_->is_enabled());
@@ -553,6 +733,14 @@ void ImageRenderingWidget::clear_validation_styles() {
   clear_validation_error(convolution_combo_);
   clear_validation_error(spatial_contrast_window_size_);
   clear_validation_error(spatial_contrast_method_);
+  clear_validation_error(mesi_exposure_fraction_);
+  clear_validation_error(mesi_estimator_);
+  clear_validation_error(mesi_beta_smoothing_size_);
+  clear_validation_error(mesi_beta_);
+  clear_validation_error(mesi_rho_);
+  clear_validation_error(mesi_tau_min_frames_);
+  clear_validation_error(mesi_tau_max_frames_);
+  clear_validation_error(mesi_tau_samples_);
 }
 
 } // namespace holovibes::ui

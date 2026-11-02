@@ -33,6 +33,7 @@ namespace holovibes::ui {
 class AutoFocusWidget;
 class TensorDisplayWidget;
 class ZernikeHistoryWidget;
+class MesiDashboardWidget;
 struct SignalHistoryDispatcherProvider;
 } // namespace holovibes::ui
 
@@ -53,7 +54,8 @@ public:
           ui::TensorDisplayWidget  *shack_hartmann_widget,
           ui::TensorDisplayWidget  *shack_hartmann_xcorr_widget,
           ui::TensorDisplayWidget  *zernike_phase_widget,
-          ui::ZernikeHistoryWidget *zernike_history_widget);
+          ui::ZernikeHistoryWidget *zernike_history_widget,
+          ui::MesiDashboardWidget  *mesi_dashboard_widget);
 
   ~Manager() override;
 
@@ -62,6 +64,9 @@ public:
 
   /// @brief Requests a stop and waits for the pipeline to halt cleanly.
   void stop_pipeline();
+
+  /// @brief Aborts active work and releases the compiled pipeline before application exit.
+  void shutdown();
 
   /// @brief Restarts execution from the retained compiled graph and task state.
   void resume_pipeline();
@@ -106,6 +111,7 @@ signals:
   void start_pipeline_failure(const QString &error);
   void stop_pipeline_success();
   void stop_pipeline_failure(const QString &error);
+  void shutdown_finished(const QString &error);
   void resume_pipeline_success();
   void resume_pipeline_failure(const QString &error);
   void update_pipeline_success();
@@ -172,6 +178,7 @@ private:
   ui::TensorDisplayWidget                             *shack_hartmann_xcorr_widget_;
   ui::TensorDisplayWidget                             *zernike_phase_widget_;
   ui::ZernikeHistoryWidget                            *zernike_history_widget_;
+  ui::MesiDashboardWidget                             *mesi_dashboard_widget_;
   std::shared_ptr<ui::SignalHistoryDispatcherProvider> history_dispatchers_;
 
   // --- State & Configuration ---

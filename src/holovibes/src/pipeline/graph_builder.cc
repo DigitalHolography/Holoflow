@@ -22,6 +22,7 @@
 #include <spdlog/fmt/ranges.h>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 #include "bug.hh"
 #include "graph_builder_tasks.hh"
@@ -93,6 +94,7 @@ private:
   TDesc build_spatial_filter(const TDesc &FH_z);
   TDesc build_spatial_contrast_input(TDesc H);
   void build_spatial_contrast_view(const TDesc &frames);
+  void build_mesi_remi_view(const TDesc &frames, size_t source_cycle_frames);
   void build_xy_view(const TDesc &FH_z);
   void build_xy_output(TDesc result, size_t discard_first, bool fixed_contrast_range = false);
   void build_3d_cuts(const TDesc &FH_z);
@@ -190,6 +192,21 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
                                 .source_cycle_frames = source_cycle_frames});
     }
     build_spatial_contrast_view(frames);
+    return g_;
+  }
+
+  if (s_.pp_mesi_remi) {
+    auto   frames              = build_spatial_contrast_input(H);
+    size_t source_cycle_frames = 0;
+    if (s_.import_source == ImportSource::HOLOFILE && s_.load_batch > 0 &&
+        s_.load_end > s_.load_begin) {
+      const int selected_frames = s_.load_end - s_.load_begin;
+      source_cycle_frames = static_cast<size_t>(selected_frames / s_.load_batch * s_.load_batch);
+    }
+    frames = temporal_window(frames, {.window_size         = static_cast<size_t>(s_.time_window),
+                                      .stride_size         = static_cast<size_t>(s_.time_stride),
+                                      .source_cycle_frames = source_cycle_frames});
+    build_mesi_remi_view(frames, source_cycle_frames);
     return g_;
   }
 
@@ -767,6 +784,97 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
                                    s_.pp_flatfield_cutoff_period_m, pitch, pitch));
   }
   build_xy_output(result, 0, true);
+}
+
+void GraphBuilder::Impl::build_mesi_remi_view(const TDesc &frames, size_t source_cycle_frames) {
+  using holotask::syncs::SpatialContrastMethod;
+
+  if (frames.rank() != 3 || frames.shape.at(0) != static_cast<size_t>(s_.time_window)) {
+    throw std::logic_error{"MESI input has an unexpected temporal window shape"};
+  }
+  if (s_.time_window < 4 || (s_.time_window & (s_.time_window - 1)) != 0) {
+    throw std::invalid_argument{"MESI time window must be a power of two of at least four frames"};
+  }
+  if (s_.time_stride <= 0 || !std::isfinite(s_.input_sampling_frequency_hz) ||
+      s_.input_sampling_frequency_hz <= 0.0) {
+    throw std::invalid_argument{"MESI requires positive time stride and sampling frequency"};
+  }
+
+  std::vector<TDesc> exposure_maps;
+  std::vector<int>   exposure_group_sizes;
+  const auto         window_frames = static_cast<size_t>(s_.time_window);
+  const auto         height        = frames.shape.at(1);
+  const auto         width         = frames.shape.at(2);
+  const auto spatial_method = s_.pp_spatial_contrast_method == 1 ? SpatialContrastMethod::FFT
+                                                                 : SpatialContrastMethod::Kernel;
+  auto       exposure_group_means = frames;
+
+  // Build a dyadic temporal pyramid. Each frame contributes to one group at every level, avoiding
+  // repeated reductions from the full window. At each exposure, pool corrected spatial variances
+  // and means across groups before normalizing. Shot-noise variance scales as 1/m for frame means.
+  for (size_t exposure_frames = 1; exposure_frames <= window_frames; exposure_frames *= 2) {
+    const size_t group_count = window_frames / exposure_frames;
+    exposure_group_sizes.push_back(static_cast<int>(exposure_frames));
+    auto pooled_k2 = spatial_contrast(
+        exposure_group_means, {.window_size          = s_.pp_spatial_contrast_window_size,
+                               .temporal_window_size = static_cast<int>(group_count),
+                               .method               = spatial_method,
+                               .squared_output       = true,
+                               .unbiased_variance    = true,
+                               .poisson_noise_scale  = 1.0F / static_cast<float>(exposure_frames),
+                               .pool_statistics      = true});
+    exposure_maps.push_back(pooled_k2);
+    if (exposure_frames == window_frames) {
+      break;
+    }
+    const auto grouped = reshape(
+        exposure_group_means, {.shape = {static_cast<int64_t>(group_count / 2), 2,
+                                         static_cast<int64_t>(height), static_cast<int64_t>(width)},
+                               .copy  = false});
+    exposure_group_means = mean(grouped, {.axis = {1}, .keepdims = false});
+  }
+
+  const auto                              stacked_k2   = concatenate(exposure_maps, {.axis = 0});
+  const double                            frame_period = 1.0 / s_.input_sampling_frequency_hz;
+  const holotask::syncs::MesiRemiSettings model_settings{
+      .exposure_frames      = exposure_group_sizes,
+      .frame_period_seconds = frame_period,
+      .exposure_fraction    = s_.pp_mesi_exposure_fraction,
+      .beta                 = s_.pp_mesi_beta,
+      .rho                  = s_.pp_mesi_rho,
+      .tau_min_frames       = s_.pp_mesi_tau_min_frames,
+      .tau_max_frames       = s_.pp_mesi_tau_max_frames,
+      .tau_samples          = s_.pp_mesi_tau_samples,
+      .estimator            = static_cast<holotask::syncs::MesiEstimator>(s_.pp_mesi_estimator),
+      .beta_smoothing_size  = s_.pp_mesi_beta_smoothing_size};
+  auto  mesi_outputs = mesi_remi_with_parameters(stacked_k2, model_settings);
+  TDesc map          = mesi_outputs.at(0);
+  if (s_.pp_mesi_display_exposure_frames != 0) {
+    const auto selected = std::find(exposure_group_sizes.begin(), exposure_group_sizes.end(),
+                                    s_.pp_mesi_display_exposure_frames);
+    if (selected == exposure_group_sizes.end())
+      throw std::invalid_argument{"MESI display exposure must match a group size"};
+    map = exposure_maps.at(static_cast<size_t>(selected - exposure_group_sizes.begin()));
+  }
+  auto parameter_maps                            = mesi_outputs.at(1);
+  auto cache_settings                            = s_;
+  cache_settings.pp_mesi_display_exposure_frames = 0;
+  auto curve_cache_key                           = settings_to_old_json(cache_settings);
+  curve_cache_key["source"]                      = {{"kind", static_cast<int>(s_.import_source)},
+                                                    {"path", s_.load_path.string()},
+                                                    {"begin", s_.load_begin},
+                                                    {"end", s_.load_end},
+                                                    {"method", static_cast<int>(s_.load_method)}};
+  const size_t source_cycle_packets =
+      source_cycle_frames >= window_frames
+          ? 1 + (source_cycle_frames - window_frames) / static_cast<size_t>(s_.time_stride)
+          : 0;
+  mesi_history_display(stacked_k2, parameter_maps, map,
+                       {.tau_min_seconds      = s_.pp_mesi_tau_min_frames * frame_period,
+                        .tau_max_seconds      = s_.pp_mesi_tau_max_frames * frame_period,
+                        .model_settings       = model_settings,
+                        .source_cycle_packets = source_cycle_packets,
+                        .curve_cache_key      = curve_cache_key.dump()});
 }
 
 void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {

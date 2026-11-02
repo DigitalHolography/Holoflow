@@ -31,6 +31,10 @@ struct SpatialContrastSettings {
   int window_size = 7;
   int temporal_window_size = 1;
   SpatialContrastMethod method = SpatialContrastMethod::Kernel;
+  bool                  squared_output       = false;
+  bool                  unbiased_variance    = false;
+  float                 poisson_noise_scale  = 0.0F;
+  bool                  pool_statistics      = false;
 
   bool operator==(const SpatialContrastSettings &) const = default;
 };

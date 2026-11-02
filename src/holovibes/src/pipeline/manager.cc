@@ -16,6 +16,7 @@
 
 #include <QCoreApplication>
 #include <QMetaObject>
+#include <QPointer>
 #include <QStandardPaths>
 #include <QThread>
 #include <QTimer>
@@ -37,9 +38,9 @@
 #include "bug.hh"
 #include "graph_builder.hh"
 #include "holofile/holofile.hh"
-#include "holoflow/runtime/windows_crash_handler.hh"
 #include "holoflow/runtime/diagnostics.hh"
 #include "holoflow/runtime/tracing.hh"
+#include "holoflow/runtime/windows_crash_handler.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
@@ -73,10 +74,9 @@
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/asyncs/temporal_window.hh"
+#include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
-#include "holotask/sinks/ffmpeg.hh"
-#include "holotask/syncs/resize.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
@@ -94,10 +94,12 @@
 #include "holotask/syncs/fresnel_diffraction.hh"
 #include "holotask/syncs/mean_abs.hh"
 #include "holotask/syncs/memcpy.hh"
+#include "holotask/syncs/mesi_remi.hh"
 #include "holotask/syncs/normalize.hh"
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
+#include "holotask/syncs/resize.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 #include "holotask/syncs/spatial_contrast.hh"
@@ -109,12 +111,13 @@
 #include "logger.hh"
 #include "pipeline/validation.hh"
 #include "settings_loader.hh"
+#include "tasks/sinks/display_mesi_history.hh"
 #include "tasks/sinks/display_signal_history.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
 #include "ui/widgets/auto_focus_widget.hh"
+#include "ui/widgets/mesi_dashboard_widget.hh"
 #include "ui/widgets/zernike_history_widget.hh"
-#include <QPointer>
 
 using namespace holotask;
 using namespace holonp;
@@ -187,7 +190,8 @@ Manager::Manager(
     ui::TensorDisplayWidget *processed_spectrum_widget,
     ui::TensorDisplayWidget *shack_hartmann_widget,
     ui::TensorDisplayWidget *shack_hartmann_xcorr_widget,
-    ui::TensorDisplayWidget *zernike_phase_widget, ui::ZernikeHistoryWidget *zernike_history_widget)
+    ui::TensorDisplayWidget *zernike_phase_widget, ui::ZernikeHistoryWidget *zernike_history_widget,
+    ui::MesiDashboardWidget *mesi_dashboard_widget)
     : autofocus_widget_(autofocus_widget), xy_processed_widget_(xy_processed_widget),
       xz_processed_widget_(xz_processed_widget), yz_processed_widget_(yz_processed_widget),
       xy_raw_widget_(xy_raw_widget), raw_spectrum_widget_(raw_spectrum_widget),
@@ -195,6 +199,7 @@ Manager::Manager(
       shack_hartmann_widget_(shack_hartmann_widget),
       shack_hartmann_xcorr_widget_(shack_hartmann_xcorr_widget),
       zernike_phase_widget_(zernike_phase_widget), zernike_history_widget_(zernike_history_widget),
+      mesi_dashboard_widget_(mesi_dashboard_widget),
       history_dispatchers_(std::make_shared<ui::SignalHistoryDispatcherProvider>()) {
 
   register_components();
@@ -229,6 +234,8 @@ void Manager::register_components() {
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase", zernike_phase_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(registry_, "DisplayZernikeCoefficients", autofocus_widget_);
   reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory", history_dispatchers_);
+  reg_sync<holovibes::tasks::sinks::DisplayMesiHistoryFactory>(registry_, "DisplayMesiHistory",
+                                                               mesi_dashboard_widget_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sinks::NpyfileFactory>(registry_, "NpyfileWriter");
   reg_sync<sinks::FfmpegFactory>(registry_, "FfmpegWriter");
@@ -250,6 +257,7 @@ void Manager::register_components() {
   reg_sync<syncs::FlatfieldFactory>(registry_, "Flatfield");
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
   reg_sync<syncs::SpatialContrastFactory>(registry_, "SpatialContrast");
+  reg_sync<syncs::MesiRemiFactory>(registry_, "MesiRemi");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
   reg_sync<syncs::ResizeFactory>(registry_, "Resize");
   reg_sync<syncs::ShortTimeFresnelDiffractionFactory>(registry_, "ShortTimeFresnelDiffraction");
@@ -456,6 +464,38 @@ void Manager::stop_pipeline() {
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit stop_pipeline_failure(msg);
   }
+}
+
+void Manager::shutdown() {
+  logger()->info("[Manager::shutdown] Stopping pipeline for application exit...");
+  QString error;
+  try {
+    std::lock_guard lock(mtx_);
+    if (scheduler_) {
+      // A paused scheduler still owns checkpoints and camera buffers.
+      scheduler_->request_stop();
+      scheduler_->wait();
+    }
+    stop_zernike_history(true);
+    stop_metrics_updates();
+    stop_event_polling();
+    raw_recording_active_ = false;
+
+    // The scheduler references the compiled graph, so release it first.
+    scheduler_.reset();
+    compiler_output_.reset();
+#if defined(_WIN32)
+    uninstall_windows_crash_handler();
+#endif
+    logger()->info("[Manager::shutdown] Pipeline stopped for application exit");
+  } catch (const std::exception &e) {
+    error = QString::fromUtf8(e.what());
+    logger()->error("[Manager::shutdown] {}", e.what());
+  } catch (...) {
+    error = QStringLiteral("Unknown pipeline shutdown error");
+    logger()->error("[Manager::shutdown] Unknown error");
+  }
+  emit shutdown_finished(error);
 }
 
 void Manager::resume_pipeline() {

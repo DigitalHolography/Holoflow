@@ -48,9 +48,9 @@
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/asyncs/temporal_window.hh"
+#include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
-#include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
@@ -68,6 +68,7 @@
 #include "holotask/syncs/fresnel_diffraction.hh"
 #include "holotask/syncs/mean_abs.hh"
 #include "holotask/syncs/memcpy.hh"
+#include "holotask/syncs/mesi_remi.hh"
 #include "holotask/syncs/normalize.hh"
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
@@ -81,6 +82,7 @@
 #include "holotask/syncs/zernike_defocus_z_prop.hh"
 #include "holotask/syncs/zernike_from_slopes.hh"
 #include "holotask/syncs/zernike_phase.hh"
+#include "tasks/sinks/display_mesi_history.hh"
 #include "tasks/sinks/display_signal_history.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
@@ -111,6 +113,9 @@ protected:
   TDesc flatfield(const TDesc &X, holotask::syncs::FlatfieldSettings s);
   TDesc filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
   TDesc spatial_contrast(const TDesc &X, holotask::syncs::SpatialContrastSettings s);
+  TDesc mesi_remi(const TDesc &X, holotask::syncs::MesiRemiSettings s);
+  std::vector<TDesc> mesi_remi_with_parameters(const TDesc &X,
+                                                holotask::syncs::MesiRemiSettings s);
   TDesc fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
   TDesc fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
   TDesc fresnel_qout(const TDesc &Z, holotask::sources::FresnelQoutSettings s);
@@ -130,6 +135,8 @@ protected:
   void  zernike_phase_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  zernike_coefficients_display(const TDesc &X, tasks::sinks::DisplayZernikeCoefficientsSettings s);
   void  zernike_history_display(const TDesc &X, tasks::sinks::DisplaySignalHistorySettings s);
+  void  mesi_history_display(const TDesc &K2, const TDesc &Parameters, const TDesc &Map,
+                             tasks::sinks::DisplayMesiHistorySettings s);
   void  zernike_defocus_z_prop(const TDesc &X, holotask::syncs::ZernikeDefocusZPropSettings s);
   void  holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
   void  npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s);

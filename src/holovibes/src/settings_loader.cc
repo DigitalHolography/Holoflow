@@ -163,6 +163,17 @@ void write_view(json &j, const Settings &s) {
   spatial_contrast["display_max"]       = s.pp_spatial_contrast_display_max;
   spatial_contrast["invert_display"]    = s.pp_spatial_contrast_invert_display;
   spatial_contrast.erase("temporal_frames");
+  auto &mesi_remi                      = view["mesi_remi"];
+  mesi_remi["enabled"]                 = s.pp_mesi_remi;
+  mesi_remi["estimator"]               = s.pp_mesi_estimator;
+  mesi_remi["beta_smoothing_size"]     = s.pp_mesi_beta_smoothing_size;
+  mesi_remi["display_exposure_frames"] = s.pp_mesi_display_exposure_frames;
+  mesi_remi["exposure_fraction"]       = s.pp_mesi_exposure_fraction;
+  mesi_remi["beta"]                    = s.pp_mesi_beta;
+  mesi_remi["rho"]                     = s.pp_mesi_rho;
+  mesi_remi["tau_min_frames"]          = s.pp_mesi_tau_min_frames;
+  mesi_remi["tau_max_frames"]          = s.pp_mesi_tau_max_frames;
+  mesi_remi["tau_samples"]             = s.pp_mesi_tau_samples;
 
   view["registration"]["registration_enabled"] = s.pp_registration;
   view["registration"]["registration_zone"]    = s.pp_registration_radius;
@@ -287,6 +298,19 @@ void read_view(Settings &s, const json &view) {
       val(spatial_contrast, "display_max", s.pp_spatial_contrast_display_max);
   s.pp_spatial_contrast_invert_display =
       val(spatial_contrast, "invert_display", s.pp_spatial_contrast_invert_display);
+  const auto &mesi_remi = child_or_empty(view, "mesi_remi");
+  s.pp_mesi_remi        = val(mesi_remi, "enabled", s.pp_mesi_remi);
+  s.pp_mesi_estimator   = val(mesi_remi, "estimator", s.pp_mesi_estimator);
+  s.pp_mesi_beta_smoothing_size =
+      val(mesi_remi, "beta_smoothing_size", s.pp_mesi_beta_smoothing_size);
+  s.pp_mesi_display_exposure_frames =
+      val(mesi_remi, "display_exposure_frames", s.pp_mesi_display_exposure_frames);
+  s.pp_mesi_exposure_fraction = val(mesi_remi, "exposure_fraction", s.pp_mesi_exposure_fraction);
+  s.pp_mesi_beta              = val(mesi_remi, "beta", s.pp_mesi_beta);
+  s.pp_mesi_rho               = val(mesi_remi, "rho", s.pp_mesi_rho);
+  s.pp_mesi_tau_min_frames    = val(mesi_remi, "tau_min_frames", s.pp_mesi_tau_min_frames);
+  s.pp_mesi_tau_max_frames    = val(mesi_remi, "tau_max_frames", s.pp_mesi_tau_max_frames);
+  s.pp_mesi_tau_samples       = val(mesi_remi, "tau_samples", s.pp_mesi_tau_samples);
 
   const auto &window = child_or_empty(view, "window");
   const auto &xy     = child_or_empty(window, "xy");

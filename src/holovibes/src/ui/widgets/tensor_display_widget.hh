@@ -24,10 +24,12 @@
 #include <QString>
 #include <QWidget>
 #include <optional>
+#include <utility>
 
 #include "holoflow/core/tensor.hh"
 
 class QLabel;
+class QShowEvent;
 class QTimer;
 
 namespace holovibes::ui {
@@ -53,6 +55,11 @@ public:
 
   /// Set the display range for mapping float data (or adjusting contrast on integers)
   void set_value_range(float vmin, float vmax);
+  /// Derive a robust display range from each incoming F32 image without changing its data.
+  void set_auto_value_range(bool enabled);
+  /// Highlight nonpositive or nonfinite values, which have no valid positive measurement.
+  void                                  set_nonpositive_invalid(bool enabled);
+  [[nodiscard]] std::pair<float, float> display_range() const;
   /// Invert the normalized grayscale or colormap lookup value without changing tensor data.
   void set_display_inverted(bool inverted);
 
@@ -67,6 +74,7 @@ protected:
   void initializeGL() override;
   void resizeGL(int w, int h) override;
   void paintGL() override;
+  void showEvent(QShowEvent *event) override;
 
   bool hasHeightForWidth() const override;
   int  heightForWidth(int w) const override;
@@ -79,6 +87,7 @@ private:
   void  initializeReticle();
   void  initializeColormaps();
   void  drawReticle();
+  void  presentPendingTensor();
   void  apply_waiting_placeholder();
 
   GLuint tex_  = 0;
@@ -98,6 +107,7 @@ private:
   GLint  vmin_loc_     = -1;
   GLint  vmax_loc_     = -1;
   GLint  invert_display_loc_ = -1;
+  GLint  nonpositive_invalid_loc_ = -1;
 
   int  img_w_ = 0, img_h_ = 0;
   bool texture_storage_allocated_ = false;
@@ -109,6 +119,8 @@ private:
   float    vmin_ = 0.0f;
   float    vmax_ = 1.0f;
   bool     display_inverted_ = false;
+  bool     auto_value_range_    = false;
+  bool     nonpositive_invalid_ = false;
 
   // Track current dtype to reallocate texture format if it changes
   holoflow::core::DType current_dtype_ = holoflow::core::DType::U8;
@@ -117,6 +129,11 @@ private:
   QLabel              *waiting_label_ = nullptr;
   QTimer              *waiting_timer_ = nullptr;
   QString              pending_waiting_message_;
+  QByteArray            pending_tensor_bytes_;
+  int                   pending_tensor_width_  = 0;
+  int                   pending_tensor_height_ = 0;
+  holoflow::core::DType pending_tensor_dtype_  = holoflow::core::DType::U8;
+  bool                  has_pending_tensor_    = false;
 };
 
 } // namespace holovibes::ui

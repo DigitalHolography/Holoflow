@@ -135,6 +135,16 @@ struct Settings {
   int         pp_spatial_contrast_method = 0;
   float       pp_spatial_contrast_display_max = 0.75f;
   bool        pp_spatial_contrast_invert_display = false;
+  bool        pp_mesi_remi                       = false;
+  int         pp_mesi_estimator                  = 0;
+  int         pp_mesi_beta_smoothing_size        = 0;
+  int         pp_mesi_display_exposure_frames    = 0; // 0 displays tau; otherwise pooled K².
+  double      pp_mesi_exposure_fraction          = 1.0;
+  double      pp_mesi_beta                       = 1.0;
+  double      pp_mesi_rho                        = 1.0;
+  double      pp_mesi_tau_min_frames             = 0.05;
+  double      pp_mesi_tau_max_frames             = 100.0;
+  int         pp_mesi_tau_samples                = 256;
   int         pp_accumulation;
   bool        pp_convolution;
   std::string pp_convolution_path;

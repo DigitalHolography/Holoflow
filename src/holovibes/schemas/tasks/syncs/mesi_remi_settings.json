@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "MesiRemiSettings",
+  "description": "Settings for the fixed-calibration gated MESI LUT or continuous-exposure REMI/sREMI tau estimator.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "exposure_frames": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 10,
+      "items": { "type": "integer", "minimum": 1, "maximum": 512 },
+      "description": "Dyadic exposure-group lengths, starting at 1 frame."
+    },
+    "frame_period_seconds": { "type": "number", "exclusiveMinimum": 0 },
+    "exposure_fraction": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+    "beta": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+    "rho": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+    "tau_min_frames": { "type": "number", "exclusiveMinimum": 0 },
+    "tau_max_frames": { "type": "number", "exclusiveMinimum": 0 },
+    "tau_samples": { "type": "integer", "minimum": 5, "maximum": 2048 },
+    "estimator": { "type": "integer", "enum": [0, 1, 2], "description": "0=fixed beta/rho LUT, 1=REMI, 2=sREMI" },
+    "beta_smoothing_size": { "type": "integer", "minimum": 0, "maximum": 2047, "description": "Zero uses the image-size-dependent sREMI reference default; positive values override it with an odd Gaussian width in pixels." }
+  },
+  "required": [
+    "exposure_frames",
+    "frame_period_seconds",
+    "exposure_fraction",
+    "beta",
+    "rho",
+    "tau_min_frames",
+    "tau_max_frames",
+    "tau_samples"
+  ],
+  "examples": [
+    {
+      "exposure_frames": [1, 2, 4, 8, 16],
+      "frame_period_seconds": 0.001,
+      "exposure_fraction": 0.988,
+      "beta": 0.95,
+      "rho": 0.8,
+      "tau_min_frames": 0.05,
+      "tau_max_frames": 100.0,
+      "tau_samples": 256,
+      "estimator": 0,
+      "beta_smoothing_size": 0
+    }
+  ]
+}

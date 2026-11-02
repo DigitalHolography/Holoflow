@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "ui/widgets/mesi_dashboard_widget.hh"
 #include "ui/widgets/tensor_display_widget.hh"
 #include "ui/widgets/zernike_history_widget.hh"
 
@@ -189,6 +190,13 @@ bool VisualizationWorkspace::register_visualization(VisualizationDescriptor desc
                  qobject_cast<ZernikeHistoryWidget *>(entry_pointer->descriptor.widget);
              history_widget != nullptr) {
     connect(history_widget, &ZernikeHistoryWidget::samplesDisplayed, this, [this, entry_pointer]() {
+      entry_pointer->content_received = true;
+      update_entry_content(*entry_pointer);
+    });
+  } else if (auto *mesi_widget =
+                 qobject_cast<MesiDashboardWidget *>(entry_pointer->descriptor.widget);
+             mesi_widget != nullptr) {
+    connect(mesi_widget, &MesiDashboardWidget::samplesDisplayed, this, [this, entry_pointer]() {
       entry_pointer->content_received = true;
       update_entry_content(*entry_pointer);
     });

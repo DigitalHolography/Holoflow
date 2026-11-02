@@ -134,6 +134,17 @@ TEST_F(SpatialContrastInferTest, RejectsDegenerateOrEvenWindowSizes) {
   EXPECT_THROW(factory.infer(input, settings(2)), std::invalid_argument);
 }
 
+TEST_F(SpatialContrastInferTest, PooledGroupCountMustMatchInput) {
+  const holotask::syncs::SpatialContrastSettings pooled{
+      .window_size          = 3,
+      .temporal_window_size = 1,
+      .squared_output       = true,
+      .pool_statistics      = true,
+  };
+  EXPECT_THROW(factory.infer(std::vector<TDesc>{device_desc({2, 3, 3}, DType::U16)}, pooled),
+               std::invalid_argument);
+}
+
 class SpatialContrastExecuteTest : public ::testing::Test {
 protected:
   holotask::syncs::SpatialContrastFactory factory;
@@ -178,4 +189,74 @@ TEST_F(SpatialContrastExecuteTest, ConstantInputProducesZeroContrast) {
       std::vector<std::vector<std::byte>>{as_bytes(input)}, settings());
 
   expect_f32_near(result.output_bytes[0], std::vector<float>(4, 0.0F));
+}
+
+TEST_F(SpatialContrastExecuteTest, CorrectedSquaredContrastUsesSampleVarianceAndPoissonNoise) {
+  const TDesc                                    desc = device_desc({1, 3, 3}, DType::U16);
+  const std::vector<uint16_t>                    input{1, 2, 3, 4, 5, 6, 7, 8, 9};
+  const holotask::syncs::SpatialContrastSettings corrected{
+      .window_size          = 3,
+      .temporal_window_size = 1,
+      .method               = holotask::syncs::SpatialContrastMethod::Kernel,
+      .squared_output       = true,
+      .unbiased_variance    = true,
+      .poisson_noise_scale  = 0.5F,
+  };
+  const auto result = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{desc}, std::vector<std::vector<std::byte>>{as_bytes(input)},
+      corrected);
+  const auto values = as_floats(result.output_bytes[0]);
+
+  ASSERT_EQ(values.size(), 9);
+  // The center has mean 5, sample variance 7.5, and shot-noise variance 2.5.
+  EXPECT_NEAR(values[4], 5.0F / 25.0F, 1.0e-6F);
+}
+
+TEST_F(SpatialContrastExecuteTest, PooledStatisticsNormalizeAfterAveragingGroupMoments) {
+  const TDesc                 desc = device_desc({2, 3, 3}, DType::U16);
+  const std::vector<uint16_t> input{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18};
+  for (const auto method : {holotask::syncs::SpatialContrastMethod::Kernel,
+                            holotask::syncs::SpatialContrastMethod::FFT}) {
+    const holotask::syncs::SpatialContrastSettings pooled{
+        .window_size          = 3,
+        .temporal_window_size = 2,
+        .method               = method,
+        .squared_output       = true,
+        .unbiased_variance    = true,
+        .poisson_noise_scale  = 0.25F,
+        .pool_statistics      = true,
+    };
+    const auto inferred = factory.infer(std::vector<TDesc>{desc}, pooled);
+    ASSERT_EQ(inferred.output_descs[0].shape, (std::vector<size_t>{1, 3, 3}));
+    const auto result =
+        holonp_test::run_sync_factory(factory, std::vector<TDesc>{desc},
+                                      std::vector<std::vector<std::byte>>{as_bytes(input)}, pooled);
+    const auto values = as_floats(result.output_bytes[0]);
+
+    ASSERT_EQ(values.size(), 9);
+    // The means are 5 and 14. Each sample variance is 7.5; correct them, then
+    // divide by the pooled mean squared: (7.5 - 0.25 * 9.5) / 9.5².
+    EXPECT_NEAR(values[4], 5.125F / 90.25F, 1.0e-4F);
+  }
+}
+
+TEST_F(SpatialContrastExecuteTest, PooledStatisticsPreserveNegativeNoiseDominatedVariance) {
+  const TDesc           desc = device_desc({2, 3, 3}, DType::U16);
+  std::vector<uint16_t> input(18, 5);
+  std::fill(input.begin() + 9, input.end(), 15);
+  const holotask::syncs::SpatialContrastSettings pooled{
+      .window_size          = 3,
+      .temporal_window_size = 2,
+      .squared_output       = true,
+      .unbiased_variance    = true,
+      .poisson_noise_scale  = 1.0F,
+      .pool_statistics      = true,
+  };
+  const auto result =
+      holonp_test::run_sync_factory(factory, std::vector<TDesc>{desc},
+                                    std::vector<std::vector<std::byte>>{as_bytes(input)}, pooled);
+  const auto values = as_floats(result.output_bytes[0]);
+
+  ASSERT_EQ(values.size(), 9);
+  EXPECT_NEAR(values[4], -0.1F, 1.0e-6F);
 }

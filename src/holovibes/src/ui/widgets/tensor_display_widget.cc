@@ -16,17 +16,18 @@
 
 #include <QDebug>
 #include <QLabel>
+#include <QMetaObject>
 #include <QMetaType>
 #include <QOpenGLExtraFunctions>
 #include <QOpenGLShaderProgram>
-#include <QPaintEvent>
-#include <QPainter>
+#include <QShowEvent>
 #include <QStyleOption>
 #include <QTimer>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <utility>
 #include <vector>
 
 #include "bug.hh"
@@ -49,9 +50,14 @@ uniform int use_colormap;
 uniform float vmin;
 uniform float vmax;
 uniform int invert_display;
+uniform int nonpositive_invalid;
 
 void main(){
   float raw_val = texture(tex, uv).r;
+  if (nonpositive_invalid == 1 && (!(raw_val > 0.0) || isinf(raw_val))) {
+    frag = vec4(1.0, 0.0, 1.0, 1.0);
+    return;
+  }
   
   // Normalize the value to 0.0 - 1.0 based on bounds
   float range = vmax - vmin;
@@ -129,10 +135,23 @@ void TensorDisplayWidget::set_colormap(Colormap cmap) {
 }
 
 void TensorDisplayWidget::set_value_range(float vmin, float vmax) {
+  auto_value_range_ = false;
   vmin_ = vmin;
   vmax_ = vmax;
   update();
 }
+
+void TensorDisplayWidget::set_auto_value_range(bool enabled) {
+  auto_value_range_ = enabled;
+  update();
+}
+
+void TensorDisplayWidget::set_nonpositive_invalid(bool enabled) {
+  nonpositive_invalid_ = enabled;
+  update();
+}
+
+std::pair<float, float> TensorDisplayWidget::display_range() const { return {vmin_, vmax_}; }
 
 void TensorDisplayWidget::set_display_inverted(bool inverted) {
   if (display_inverted_ == inverted)
@@ -177,6 +196,7 @@ void TensorDisplayWidget::initializeGL() {
   vmin_loc_     = glGetUniformLocation(prog_, "vmin");
   vmax_loc_     = glGetUniformLocation(prog_, "vmax");
   invert_display_loc_ = glGetUniformLocation(prog_, "invert_display");
+  nonpositive_invalid_loc_ = glGetUniformLocation(prog_, "nonpositive_invalid");
 
   glGenTextures(1, &tex_);
   glBindTexture(GL_TEXTURE_2D, tex_);
@@ -193,6 +213,10 @@ void TensorDisplayWidget::initializeGL() {
 
   initializeColormaps();
   initializeReticle();
+
+  if (has_pending_tensor_) {
+    QMetaObject::invokeMethod(this, [this] { presentPendingTensor(); }, Qt::QueuedConnection);
+  }
 }
 
 void TensorDisplayWidget::initializeColormaps() {
@@ -302,9 +326,6 @@ void TensorDisplayWidget::updateTexture(const void *pixels, int w, int h,
 
 void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
                                         holoflow::core::DType dtype) {
-  if (!isVisible() || !isValid())
-    return;
-
   qsizetype need = qsizetype(w) * qsizetype(h);
 
   if (dtype == holoflow::core::DType::U16) {
@@ -316,6 +337,53 @@ void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
   if (w <= 0 || h <= 0 || bytes.size() < need)
     return;
 
+  if (!isVisible() || !isValid()) {
+    // Short recordings can finish before this dock's OpenGL context is ready. Keep the newest
+    // complete map so showing the widget later still displays the result.
+    pending_tensor_bytes_  = bytes;
+    pending_tensor_width_  = w;
+    pending_tensor_height_ = h;
+    pending_tensor_dtype_  = dtype;
+    has_pending_tensor_    = true;
+    waiting_timer_->stop();
+    return;
+  }
+
+  pending_tensor_bytes_.clear();
+  pending_tensor_width_  = 0;
+  pending_tensor_height_ = 0;
+  has_pending_tensor_    = false;
+
+  if (auto_value_range_ && dtype == holoflow::core::DType::F32) {
+    const auto        *values      = reinterpret_cast<const float *>(bytes.constData());
+    const size_t       count       = static_cast<size_t>(w) * static_cast<size_t>(h);
+    constexpr size_t   max_samples = 65536;
+    const size_t       stride      = std::max<size_t>(1, (count + max_samples - 1) / max_samples);
+    std::vector<float> samples;
+    samples.reserve(std::min(count, max_samples));
+    for (size_t i = 0; i < count; i += stride) {
+      if (std::isfinite(values[i]) && values[i] > 0.0F)
+        samples.push_back(values[i]);
+    }
+    if (samples.size() >= 2) {
+      const size_t low_index  = (samples.size() - 1) / 20;
+      const size_t high_index = (samples.size() - 1) * 19 / 20;
+      std::nth_element(samples.begin(), samples.begin() + low_index, samples.end());
+      const float low = samples[low_index];
+      std::nth_element(samples.begin(), samples.begin() + high_index, samples.end());
+      const float high = samples[high_index];
+      if (high > low) {
+        const float padding = (high - low) * 0.05F;
+        vmin_               = std::max(0.0F, low - padding);
+        vmax_               = high + padding;
+      } else {
+        const float padding = std::max(std::abs(high) * 0.05F, 1.0e-6F);
+        vmin_               = std::max(0.0F, low - padding);
+        vmax_               = high + padding;
+      }
+    }
+  }
+
   makeCurrent();
   updateTexture(reinterpret_cast<const void *>(bytes.constData()), w, h, dtype);
   doneCurrent();
@@ -326,11 +394,34 @@ void TensorDisplayWidget::presentTensor(const QByteArray &bytes, int w, int h,
   emit tensorDisplayed();
 }
 
+void TensorDisplayWidget::showEvent(QShowEvent *event) {
+  QOpenGLWidget::showEvent(event);
+  if (has_pending_tensor_) {
+    QMetaObject::invokeMethod(this, [this] { presentPendingTensor(); }, Qt::QueuedConnection);
+  }
+}
+
+void TensorDisplayWidget::presentPendingTensor() {
+  if (!has_pending_tensor_ || !isVisible() || !isValid()) {
+    return;
+  }
+
+  QByteArray bytes       = std::move(pending_tensor_bytes_);
+  const int  width       = pending_tensor_width_;
+  const int  height      = pending_tensor_height_;
+  const auto dtype       = pending_tensor_dtype_;
+  pending_tensor_width_  = 0;
+  pending_tensor_height_ = 0;
+  has_pending_tensor_    = false;
+  presentTensor(bytes, width, height, dtype);
+}
+
 void TensorDisplayWidget::resizeGL(int, int) { updateLetterboxViewport(); }
 
 void TensorDisplayWidget::updateLetterboxViewport() {
-  const int widget_w = std::max(0, width());
-  const int widget_h = std::max(0, height());
+  // OpenGL viewport coordinates are physical pixels; QWidget dimensions are logical pixels.
+  const int widget_w = std::max(0, qRound(width() * devicePixelRatioF()));
+  const int widget_h = std::max(0, qRound(height() * devicePixelRatioF()));
   if (img_w_ <= 0 || img_h_ <= 0 || widget_w <= 0 || widget_h <= 0) {
     glViewport(0, 0, widget_w, widget_h);
     return;
@@ -379,6 +470,10 @@ void TensorDisplayWidget::show_waiting_placeholder(const QString &message, int d
 }
 
 void TensorDisplayWidget::apply_waiting_placeholder() {
+  pending_tensor_bytes_.clear();
+  pending_tensor_width_  = 0;
+  pending_tensor_height_ = 0;
+  has_pending_tensor_    = false;
   waiting_label_->setText(pending_waiting_message_);
   waiting_label_->show();
   img_w_ = 0;
@@ -432,6 +527,7 @@ void TensorDisplayWidget::paintGL() {
   glUniform1f(vmin_loc_, vmin_);
   glUniform1f(vmax_loc_, vmax_);
   glUniform1i(invert_display_loc_, display_inverted_ ? 1 : 0);
+  glUniform1i(nonpositive_invalid_loc_, nonpositive_invalid_ ? 1 : 0);
 
   // Bind Main Image Texture
   glActiveTexture(GL_TEXTURE0);

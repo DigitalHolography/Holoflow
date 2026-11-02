@@ -19,6 +19,7 @@ set(SOURCES
     conversion_test.cu
     ffmpeg_sink_test.cc
     flatfield_test.cu
+    mesi_remi_test.cu
     filter2d_test.cu
     fresnel_diffraction_test.cu
     holofile_sink_test.cc

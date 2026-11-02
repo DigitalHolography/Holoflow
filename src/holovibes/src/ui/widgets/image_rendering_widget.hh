@@ -22,6 +22,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <limits>
+#include <vector>
 
 #include "ui/widgets/auto_focus_widget.hh"
 
@@ -51,11 +52,20 @@ public:
   QString get_convolution() const;
   bool    is_convolution_divide() const;
   bool    is_spatial_contrast_enabled() const;
+  bool    is_mesi_remi_enabled() const;
+  int     get_mesi_estimator() const;
+  int     get_mesi_beta_smoothing_size() const;
   int     get_spatial_contrast_window_size() const;
   int     get_spatial_contrast_dimensions() const;
   QString get_spatial_contrast_method() const;
   double  get_spatial_contrast_display_max() const;
   bool    is_spatial_contrast_display_inverted() const;
+  double  get_mesi_exposure_fraction() const;
+  double  get_mesi_beta() const;
+  double  get_mesi_rho() const;
+  double  get_mesi_tau_min_frames() const;
+  double  get_mesi_tau_max_frames() const;
+  int     get_mesi_tau_samples() const;
 
   // Setters
   void set_batch_size(int value);
@@ -74,12 +84,21 @@ public:
   void set_convolution(const QString &kernel);
   void set_convolution_divide(bool enabled);
   void set_spatial_contrast_mode(bool enabled, int dimensions);
+  void set_mesi_remi_mode(bool enabled);
+  void set_mesi_estimator(int value);
+  void set_mesi_beta_smoothing_size(int value);
   void set_spatial_contrast_window_size(int value);
   void set_time_window_max_for_temporal_lscsi(int value);
   void set_spatial_contrast_method(const QString &method);
   void set_spatial_contrast_display_max(double value);
   void set_spatial_contrast_display_inverted(bool inverted);
   void set_spatial_contrast_appearance_locked(bool locked);
+  void set_mesi_exposure_fraction(double value);
+  void set_mesi_beta(double value);
+  void set_mesi_rho(double value);
+  void set_mesi_tau_min_frames(double value);
+  void set_mesi_tau_max_frames(double value);
+  void set_mesi_tau_samples(int value);
 
   // Validation
   void clear_validation_styles();
@@ -118,6 +137,14 @@ public:
   QSpinBox        *spatial_contrast_window_size();
   QComboBox       *spatial_contrast_method();
   QDoubleSpinBox  *spatial_contrast_display_max();
+  QDoubleSpinBox  *mesi_exposure_fraction_spin();
+  QComboBox       *mesi_estimator_combo();
+  QSpinBox        *mesi_beta_smoothing_spin();
+  QDoubleSpinBox  *mesi_beta_spin();
+  QDoubleSpinBox  *mesi_rho_spin();
+  QDoubleSpinBox  *mesi_tau_min_spin();
+  QDoubleSpinBox  *mesi_tau_max_spin();
+  QSpinBox        *mesi_tau_samples_spin();
   AutoFocusWidget *autofocus_widget();
 
 signals:
@@ -160,6 +187,16 @@ private:
   QLabel          *spatial_contrast_display_max_label_;
   QDoubleSpinBox  *spatial_contrast_display_max_;
   QCheckBox       *spatial_contrast_invert_display_;
+  QLabel                *mesi_parameters_label_;
+  QComboBox             *mesi_estimator_;
+  QSpinBox              *mesi_beta_smoothing_size_;
+  QDoubleSpinBox        *mesi_exposure_fraction_;
+  QDoubleSpinBox        *mesi_beta_;
+  QDoubleSpinBox        *mesi_rho_;
+  QDoubleSpinBox        *mesi_tau_min_frames_;
+  QDoubleSpinBox        *mesi_tau_max_frames_;
+  QSpinBox              *mesi_tau_samples_;
+  std::vector<QWidget *> mesi_control_rows_;
   bool             spatial_contrast_appearance_locked_ = false;
   AutoFocusWidget *autofocus_widget_;
   int              max_temporal_lscsi_frames_ = std::numeric_limits<int>::max();

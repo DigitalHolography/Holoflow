@@ -43,6 +43,7 @@
 namespace holovibes::ui {
 
 class ZernikeHistoryWidget;
+class MesiDashboardWidget;
 class SelectedWidgetSettingsPanel;
 class VisualizationWorkspace;
 class UpdateChecker;
@@ -144,6 +145,8 @@ private:
   bool               geometry_restored_               = false;
   bool               dump_runtime_failure_graphs_     = false;
   bool               failure_graph_available_         = false;
+  bool               close_requested_                 = false;
+  bool               shutdown_complete_               = false;
   double             last_input_fps_                  = 0.0;
   double             signal_plot_time_window_seconds_ = 8.0;
   QString            session_id_;
@@ -165,6 +168,7 @@ private:
   TensorDisplayWidget  *shack_hartmann_xcorr_widget_;
   TensorDisplayWidget  *zernike_phase_widget_;
   ZernikeHistoryWidget *zernike_history_widget_;
+  MesiDashboardWidget  *mesi_dashboard_widget_;
   // Application columns and central visualization workspace
   QLineEdit              *patient_line_edit_          = nullptr;
   QComboBox              *eye_side_combo_             = nullptr;

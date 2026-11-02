@@ -73,8 +73,10 @@
 #include "ui/graph_visualizer_widget.hh"
 #include "ui/update_checker.hh"
 #include "ui/visualization_workspace.hh"
+#include "ui/widgets/mesi_dashboard_widget.hh"
 #include "ui/widgets/selected_widget_settings_panel.hh"
 #include "ui/widgets/tensor_display_widget.hh"
+#include "ui/widgets/validation_style.hh"
 #include "ui/widgets/zernike_history_widget.hh"
 
 namespace {
@@ -170,7 +172,10 @@ QString build_field_tooltip(const holovibes::pipeline::FieldHelp                
 }
 
 void restore_combo_text(QSettings &settings, const char *key, QComboBox *combo_box) {
-  const QString text = settings.value(key).toString();
+  QString text = settings.value(key).toString();
+  if (QString::fromLatin1(key) == "space_transform" && text == "MESI (sREMI)") {
+    text = "MESI";
+  }
   if (text.isEmpty()) {
     return;
   }
@@ -1014,6 +1019,7 @@ void MainWindow::refresh_visualization_availability() {
   }
 
   auto      *autofocus         = render_widget_->autofocus_widget();
+  const auto pipeline_settings = get_pipeline_settings();
   const bool autofocus_enabled = autofocus->is_enabled();
   const bool has_zernike_order =
       autofocus->is_z2_enabled() || autofocus->is_z3_enabled() || autofocus->is_z4_enabled() ||
@@ -1032,10 +1038,15 @@ void MainWindow::refresh_visualization_availability() {
       tr("3D cut visualizations are not currently supported by the pipeline.");
 
   display_workspace_->set_visualization_content_expectations({
-      {"xy_processed", {true, {}}},
+      {"xy_processed",
+       {!pipeline_settings.pp_mesi_remi,
+        pipeline_settings.pp_mesi_remi ? tr("MESI output is shown in the MESI Exposure Curve view.")
+                                       : QString{}}},
       {"zernike_a4",
        {autofocus_enabled && has_zernike_order,
         autofocus_enabled ? zernike_order_message : autofocus_message}},
+      {"mesi_history",
+       {pipeline_settings.pp_mesi_remi, tr("Enable MESI / REMI to generate the exposure curve.")}},
       {"zernike_phase", {autofocus_enabled, autofocus_message}},
       {"shack_hartmann", {autofocus_enabled, autofocus_message}},
       {"shack_hartmann_xcorr",
@@ -1272,6 +1283,14 @@ void MainWindow::save_persistent_state() {
   settings.setValue("space_transform", render_widget_->get_space_transform());
   settings.setValue("time_transform", render_widget_->get_time_transform());
   settings.setValue("time_window", render_widget_->get_time_window());
+  settings.setValue("mesi_exposure_fraction", render_widget_->get_mesi_exposure_fraction());
+  settings.setValue("mesi_estimator", render_widget_->get_mesi_estimator());
+  settings.setValue("mesi_beta_smoothing_size", render_widget_->get_mesi_beta_smoothing_size());
+  settings.setValue("mesi_beta", render_widget_->get_mesi_beta());
+  settings.setValue("mesi_rho", render_widget_->get_mesi_rho());
+  settings.setValue("mesi_tau_min_frames", render_widget_->get_mesi_tau_min_frames());
+  settings.setValue("mesi_tau_max_frames", render_widget_->get_mesi_tau_max_frames());
+  settings.setValue("mesi_tau_samples", render_widget_->get_mesi_tau_samples());
   settings.setValue("lambda_nm", render_widget_->get_lambda());
   settings.setValue("focus_mm", render_widget_->get_focus());
   settings.setValue("asp_padding_enabled", render_widget_->is_asp_padding_enabled());
@@ -1415,6 +1434,24 @@ void MainWindow::restore_persistent_state() {
   restore_combo_text(settings, "time_transform", render_widget_->time_transform_combo());
   render_widget_->set_time_window(
       settings.value("time_window", render_widget_->get_time_window()).toInt());
+  render_widget_->set_mesi_exposure_fraction(
+      settings.value("mesi_exposure_fraction", render_widget_->get_mesi_exposure_fraction())
+          .toDouble());
+  render_widget_->set_mesi_estimator(
+      settings.value("mesi_estimator", render_widget_->get_mesi_estimator()).toInt());
+  render_widget_->set_mesi_beta_smoothing_size(
+      settings.value("mesi_beta_smoothing_size", render_widget_->get_mesi_beta_smoothing_size())
+          .toInt());
+  render_widget_->set_mesi_beta(
+      settings.value("mesi_beta", render_widget_->get_mesi_beta()).toDouble());
+  render_widget_->set_mesi_rho(
+      settings.value("mesi_rho", render_widget_->get_mesi_rho()).toDouble());
+  render_widget_->set_mesi_tau_min_frames(
+      settings.value("mesi_tau_min_frames", render_widget_->get_mesi_tau_min_frames()).toDouble());
+  render_widget_->set_mesi_tau_max_frames(
+      settings.value("mesi_tau_max_frames", render_widget_->get_mesi_tau_max_frames()).toDouble());
+  render_widget_->set_mesi_tau_samples(
+      settings.value("mesi_tau_samples", render_widget_->get_mesi_tau_samples()).toInt());
   render_widget_->set_lambda(settings.value("lambda_nm", render_widget_->get_lambda()).toInt());
   render_widget_->set_focus(settings.value("focus_mm", render_widget_->get_focus()).toInt());
   render_widget_->set_asp_padding_enabled(
@@ -1600,6 +1637,9 @@ void MainWindow::initialize_display_widgets() {
   shack_hartmann_xcorr_widget_ = new TensorDisplayWidget(display_workspace_);
   zernike_phase_widget_        = new TensorDisplayWidget(display_workspace_);
   zernike_history_widget_      = new ZernikeHistoryWidget(display_workspace_);
+  mesi_dashboard_widget_       = new MesiDashboardWidget(display_workspace_);
+  connect(mesi_dashboard_widget_, &MesiDashboardWidget::displayExposureChanged, this,
+          &MainWindow::update_if_running);
   graph_visualizer_widget_     = new GraphVisualizerWidget(display_workspace_);
 
   zernike_phase_widget_->set_colormap(Colormap::Twilight);
@@ -1610,6 +1650,9 @@ void MainWindow::initialize_display_widgets() {
   display_workspace_->register_visualization({"zernike_a4", "Zernike Metrics",
                                               zernike_history_widget_, "xy_processed",
                                               DockPlacement::Right});
+  display_workspace_->register_visualization({"mesi_history", "MESI Exposure Curve",
+                                              mesi_dashboard_widget_, "xy_processed",
+                                              DockPlacement::Below, true});
   display_workspace_->register_visualization({"zernike_phase", "Zernike Phase",
                                               zernike_phase_widget_, "xy_processed",
                                               DockPlacement::Below, false});
@@ -1681,14 +1724,33 @@ void MainWindow::initialize_pipeline_manager() {
       render_widget_->autofocus_widget(), xy_processed_widget_, xz_processed_widget_,
       yz_processed_widget_, xy_raw_widget_, raw_spectrum_widget_, processed_spectrum_widget_,
       shack_hartmann_widget_, shack_hartmann_xcorr_widget_, zernike_phase_widget_,
-      zernike_history_widget_);
+      zernike_history_widget_, mesi_dashboard_widget_);
   pipeline_manager_->set_dump_runtime_failure_graphs(dump_runtime_failure_graphs_);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);
+  connect(pipeline_manager_thread_, &QThread::finished, pipeline_manager_, &QObject::deleteLater);
+  connect(pipeline_manager_thread_, &QThread::finished, this, [this]() {
+    pipeline_manager_thread_->wait();
+    pipeline_manager_  = nullptr;
+    shutdown_complete_ = true;
+    if (close_requested_)
+      close();
+  });
   pipeline_manager_thread_->start();
 }
 
 void MainWindow::connect_manager_signals() {
+  connect(pipeline_manager_, &pipeline::Manager::shutdown_finished, this,
+          [this](const QString &error) {
+            if (!error.isEmpty()) {
+              close_requested_ = false;
+              show_pipeline_error_popup(
+                  tr("Could not stop the pipeline while closing:\n%1").arg(error));
+              return;
+            }
+            pipeline_manager_thread_->quit();
+          });
+
   connect(pipeline_manager_, &pipeline::Manager::start_pipeline_success, this,
           &MainWindow::on_start_pipeline_success);
 
@@ -1956,6 +2018,8 @@ std::filesystem::path MainWindow::makeRecordingPath(const QString &userText) {
 }
 
 void MainWindow::show_pipeline_error_popup(const QString &message) {
+  if (close_requested_)
+    return;
   QMessageBox msgBox(this);
   msgBox.setIcon(QMessageBox::Critical);
   msgBox.setWindowTitle(tr("Pipeline Error"));
@@ -2153,6 +2217,7 @@ void MainWindow::on_metrics_updated(double input_fps) {
 void MainWindow::on_update_pipeline_success() {
   logger()->info("[MainWindow::on_update_pipeline_success]");
   update_in_progress_ = false;
+  mesi_dashboard_widget_->set_display_selector_enabled(true);
   import_widget_->set_start_enabled(pipeline_running_);
   export_widget_->set_record_enabled(!export_in_progress_ && export_widget_->isChecked());
   export_widget_->set_stop_enabled(export_in_progress_);
@@ -2197,6 +2262,7 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   pause_requested_       = false;
   resume_in_progress_    = false;
   update_in_progress_    = false;
+  mesi_dashboard_widget_->set_display_selector_enabled(true);
   pending_import_update_ = false;
   paused_settings_dirty_ = false;
   import_widget_->set_start_enabled(true);
@@ -2217,15 +2283,19 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
 }
 
 void MainWindow::closeEvent(QCloseEvent *event) {
-  save_persistent_state();
+  if (!shutdown_complete_) {
+    event->ignore();
+    if (close_requested_)
+      return;
 
-  if (pipeline_manager_ && pipeline_running_) {
-    pipeline_manager_->stop_pipeline();
-  }
-
-  if (pipeline_manager_thread_) {
-    pipeline_manager_thread_->quit();
-    pipeline_manager_thread_->wait();
+    save_persistent_state();
+    close_requested_ = true;
+    auto shutdown    = [manager = pipeline_manager_]() { manager->shutdown(); };
+    if (!QMetaObject::invokeMethod(pipeline_manager_, shutdown, Qt::QueuedConnection)) {
+      close_requested_ = false;
+      show_pipeline_error_popup(tr("Could not request pipeline shutdown."));
+    }
+    return;
   }
 
   QMainWindow::closeEvent(event);
@@ -2233,6 +2303,8 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 }
 
 void MainWindow::on_import_start_clicked() {
+  if (close_requested_)
+    return;
   if (pipeline_running_) {
     pause_requested_ = true;
     import_widget_->set_start_enabled(false);
@@ -2271,6 +2343,8 @@ void MainWindow::on_import_start_clicked() {
 }
 
 void MainWindow::on_import_stop_clicked() {
+  if (close_requested_)
+    return;
   if (pipeline_paused_) {
     reset_pipeline_ui_after_stop();
     return;
@@ -2286,6 +2360,8 @@ void MainWindow::on_import_stop_clicked() {
 }
 
 void MainWindow::on_export_record_clicked() {
+  if (close_requested_)
+    return;
   if (export_in_progress_) {
     logger()->warn("[MainWindow::on_export_record_clicked] Recording already in progress");
     return;
@@ -2317,6 +2393,8 @@ void MainWindow::on_export_record_clicked() {
 }
 
 void MainWindow::on_export_stop_clicked() {
+  if (close_requested_)
+    return;
   if (!export_in_progress_) {
     logger()->warn("[MainWindow::on_export_stop_clicked] No active recording to stop");
     return;
@@ -2474,6 +2552,30 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::PpSpatialContrastMethod:
         render_widget_->mark_spatial_contrast_method_invalid();
         break;
+      case SettingsField::MesiExposureFraction:
+        mark_validation_error(render_widget_->mesi_exposure_fraction_spin());
+        break;
+      case SettingsField::MesiEstimator:
+        mark_validation_error(render_widget_->mesi_estimator_combo());
+        break;
+      case SettingsField::MesiBetaSmoothingSize:
+        mark_validation_error(render_widget_->mesi_beta_smoothing_spin());
+        break;
+      case SettingsField::MesiBeta:
+        mark_validation_error(render_widget_->mesi_beta_spin());
+        break;
+      case SettingsField::MesiRho:
+        mark_validation_error(render_widget_->mesi_rho_spin());
+        break;
+      case SettingsField::MesiTauMinFrames:
+        mark_validation_error(render_widget_->mesi_tau_min_spin());
+        break;
+      case SettingsField::MesiTauMaxFrames:
+        mark_validation_error(render_widget_->mesi_tau_max_spin());
+        break;
+      case SettingsField::MesiTauSamples:
+        mark_validation_error(render_widget_->mesi_tau_samples_spin());
+        break;
       case SettingsField::PpConvolution:
         render_widget_->mark_convolution_invalid();
         break;
@@ -2531,6 +2633,16 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
                        : static_cast<QWidget *>(render_widget_->space_transform_combo())},
       FieldBinding{SettingsField::PpSpatialContrastMethod,
                    render_widget_->spatial_contrast_method()},
+      FieldBinding{SettingsField::MesiExposureFraction,
+                   render_widget_->mesi_exposure_fraction_spin()},
+      FieldBinding{SettingsField::MesiEstimator, render_widget_->mesi_estimator_combo()},
+      FieldBinding{SettingsField::MesiBetaSmoothingSize,
+                   render_widget_->mesi_beta_smoothing_spin()},
+      FieldBinding{SettingsField::MesiBeta, render_widget_->mesi_beta_spin()},
+      FieldBinding{SettingsField::MesiRho, render_widget_->mesi_rho_spin()},
+      FieldBinding{SettingsField::MesiTauMinFrames, render_widget_->mesi_tau_min_spin()},
+      FieldBinding{SettingsField::MesiTauMaxFrames, render_widget_->mesi_tau_max_spin()},
+      FieldBinding{SettingsField::MesiTauSamples, render_widget_->mesi_tau_samples_spin()},
       FieldBinding{SettingsField::PpConvolution, render_widget_->convolution_combo()},
       FieldBinding{SettingsField::PpRegistration, view_widget_->registration_check()},
       FieldBinding{SettingsField::RecordingPath, export_widget_->file_line_edit()},
@@ -2623,6 +2735,8 @@ void MainWindow::setup_update_connections() {
 }
 
 void MainWindow::update_if_running() {
+  if (close_requested_)
+    return;
   if (loading_holofile_) {
     return;
   }
@@ -2645,6 +2759,7 @@ void MainWindow::update_if_running() {
 
   display_workspace_->reset_visualization_content();
   update_in_progress_ = true;
+  mesi_dashboard_widget_->set_display_selector_enabled(false);
   import_widget_->set_start_enabled(false);
   refresh_command_bar();
   pipeline::Settings settings = get_pipeline_settings();
@@ -2758,6 +2873,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"Fresnel Diffraction", SpacialMethod::FRESNEL_DIFFRACTION},
         {"Angular Spectrum", SpacialMethod::ANGULAR_SPECTRUM},
         {"LSCI (2D)", SpacialMethod::NONE},
+        {"MESI", SpacialMethod::NONE},
     };
     QString method        = render_widget_->get_space_transform();
     s.spacial_method      = method_from_str.at(method.toStdString());
@@ -2840,6 +2956,18 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         static_cast<float>(render_widget_->get_spatial_contrast_display_max());
     s.pp_spatial_contrast_invert_display =
         render_widget_->is_spatial_contrast_display_inverted();
+    s.pp_mesi_remi                    = render_widget_->is_mesi_remi_enabled();
+    s.pp_mesi_estimator               = render_widget_->get_mesi_estimator();
+    s.pp_mesi_beta_smoothing_size     = render_widget_->get_mesi_beta_smoothing_size();
+    s.pp_mesi_display_exposure_frames = mesi_dashboard_widget_->display_exposure_frames();
+    if (s.pp_mesi_display_exposure_frames > s.time_window)
+      s.pp_mesi_display_exposure_frames = 0;
+    s.pp_mesi_exposure_fraction = render_widget_->get_mesi_exposure_fraction();
+    s.pp_mesi_beta              = render_widget_->get_mesi_beta();
+    s.pp_mesi_rho               = render_widget_->get_mesi_rho();
+    s.pp_mesi_tau_min_frames    = render_widget_->get_mesi_tau_min_frames();
+    s.pp_mesi_tau_max_frames    = render_widget_->get_mesi_tau_max_frames();
+    s.pp_mesi_tau_samples       = render_widget_->get_mesi_tau_samples();
     s.pp_accumulation        = static_cast<size_t>(view_widget_->get_accumulation());
     s.pp_convolution         = render_widget_->get_convolution() != "None";
     s.pp_convolution_path    = kernel_path;
@@ -3057,12 +3185,22 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     view_widget_->set_flatfield_cutoff_period_um(s.pp_flatfield_cutoff_period_m * 1e6);
     render_widget_->set_spatial_contrast_mode(s.pp_spatial_contrast,
                                               s.pp_spatial_contrast_dimensions);
+    render_widget_->set_mesi_remi_mode(s.pp_mesi_remi);
+    render_widget_->set_mesi_estimator(s.pp_mesi_estimator);
+    render_widget_->set_mesi_beta_smoothing_size(s.pp_mesi_beta_smoothing_size);
+    mesi_dashboard_widget_->set_display_exposure_frames(s.pp_mesi_display_exposure_frames);
     render_widget_->set_spatial_contrast_window_size(s.pp_spatial_contrast_window_size);
     render_widget_->set_spatial_contrast_method(s.pp_spatial_contrast_method == 1 ? "FFT"
                                                                                  : "Kernel");
     render_widget_->set_spatial_contrast_display_max(s.pp_spatial_contrast_display_max);
     render_widget_->set_spatial_contrast_display_inverted(
         s.pp_spatial_contrast_invert_display);
+    render_widget_->set_mesi_exposure_fraction(s.pp_mesi_exposure_fraction);
+    render_widget_->set_mesi_beta(s.pp_mesi_beta);
+    render_widget_->set_mesi_rho(s.pp_mesi_rho);
+    render_widget_->set_mesi_tau_min_frames(s.pp_mesi_tau_min_frames);
+    render_widget_->set_mesi_tau_max_frames(s.pp_mesi_tau_max_frames);
+    render_widget_->set_mesi_tau_samples(s.pp_mesi_tau_samples);
     view_widget_->set_accumulation(static_cast<int>(s.pp_accumulation));
     render_widget_->set_convolution_divide(s.pp_convolution_divide);
 

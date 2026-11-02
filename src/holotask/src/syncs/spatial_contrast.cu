@@ -36,13 +36,21 @@ namespace holotask::syncs {
 void to_json(nlohmann::json &j, const SpatialContrastSettings &s) {
   j = nlohmann::json{{"window_size", s.window_size},
                      {"temporal_window_size", s.temporal_window_size},
-                     {"method", s.method == SpatialContrastMethod::FFT ? "fft" : "kernel"}};
+                     {"method", s.method == SpatialContrastMethod::FFT ? "fft" : "kernel"},
+                     {"squared_output", s.squared_output},
+                     {"unbiased_variance", s.unbiased_variance},
+                     {"poisson_noise_scale", s.poisson_noise_scale},
+                     {"pool_statistics", s.pool_statistics}};
 }
 
 void from_json(const nlohmann::json &j, SpatialContrastSettings &s) {
   s.window_size = j.value("window_size", 7);
   s.temporal_window_size = j.value("temporal_window_size", 1);
   const auto method = j.value("method", std::string{"kernel"});
+  s.squared_output       = j.value("squared_output", false);
+  s.unbiased_variance    = j.value("unbiased_variance", false);
+  s.poisson_noise_scale  = j.value("poisson_noise_scale", 0.0F);
+  s.pool_statistics      = j.value("pool_statistics", false);
   if (method == "kernel")
     s.method = SpatialContrastMethod::Kernel;
   else if (method == "fft")
@@ -82,6 +90,33 @@ bool is_c_contiguous(const holoflow::core::TDesc &desc) {
   return true;
 }
 
+__device__ float contrast_result(float mean, float variance, int64_t sample_count,
+                                 bool squared_output, bool unbiased_variance,
+                                 float poisson_noise_scale) {
+  if (mean <= 0.0F) {
+    return 0.0F;
+  }
+  if (!squared_output) {
+    return sqrtf(fmaxf(variance, 0.0F)) / mean;
+  }
+  if (unbiased_variance && sample_count > 1) {
+    variance *= static_cast<float>(sample_count) / static_cast<float>(sample_count - 1);
+  }
+  variance = fmaxf(variance - poisson_noise_scale * mean, 0.0F);
+  return variance / (mean * mean);
+}
+
+__device__ float pooled_contrast_result(float mean_sum, float corrected_variance_sum,
+                                        int group_count) {
+  const float mean = mean_sum / static_cast<float>(group_count);
+  if (mean <= 0.0F) {
+    return nanf("");
+  }
+  const float variance = corrected_variance_sum / static_cast<float>(group_count);
+  // Preserve negative noise-dominated values so the MESI fit can reject them.
+  return variance / (mean * mean);
+}
+
 size_t num_elements(std::span<const size_t> shape) {
   size_t count = 1;
   for (const auto dim : shape) {
@@ -111,14 +146,15 @@ __global__ void horizontal_sums_kernel(const InT *__restrict__ input, float2 *__
   const int     radius       = window_size / 2;
   const int     x_begin      = x > radius ? x - radius : 0;
   const int     x_end        = (x + radius < width) ? x + radius : width - 1;
+  const float   center       = static_cast<float>(input[idx]);
 
   float sum         = 0.0F;
   float squared_sum = 0.0F;
   const int64_t row_offset = plane_offset + static_cast<int64_t>(y) * width;
   for (int sample_x = x_begin; sample_x <= x_end; ++sample_x) {
-    const float value = static_cast<float>(input[row_offset + sample_x]);
-    sum += value;
-    squared_sum += value * value;
+    const float delta = static_cast<float>(input[row_offset + sample_x]) - center;
+    sum += delta;
+    squared_sum += delta * delta;
   }
 
   sums[idx] = make_float2(sum, squared_sum);
@@ -127,7 +163,8 @@ __global__ void horizontal_sums_kernel(const InT *__restrict__ input, float2 *__
 template <typename InT>
 __global__ void temporal_contrast_kernel(const InT *__restrict__ input, float *__restrict__ output,
                                          int width, int height, int temporal_window_size,
-                                         int64_t output_elements) {
+                                         int64_t output_elements, bool squared_output,
+                                         bool unbiased_variance, float poisson_noise_scale) {
   const int64_t idx = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (idx >= output_elements)
     return;
@@ -145,13 +182,16 @@ __global__ void temporal_contrast_kernel(const InT *__restrict__ input, float *_
   const float mean     = sum / static_cast<float>(temporal_window_size);
   const float variance =
       fmaxf(squared_sum / static_cast<float>(temporal_window_size) - mean * mean, 0.0F);
-  output[idx] = mean > 0.0F ? sqrtf(variance) / mean : 0.0F;
+  output[idx] = contrast_result(mean, variance, temporal_window_size, squared_output,
+                                unbiased_variance, poisson_noise_scale);
 }
 
-__global__ void contrast_from_sums_kernel(const float2 *__restrict__ horizontal_sums,
-                                          float *__restrict__ output, int width, int height,
-                                          int window_size, int temporal_window_size,
-                                          int64_t output_elements) {
+template <typename InT>
+__global__ void
+contrast_from_sums_kernel(const InT *__restrict__ input, const float2 *__restrict__ horizontal_sums,
+                          float *__restrict__ output, int width, int height, int window_size,
+                          int temporal_window_size, int64_t output_elements, bool squared_output,
+                          bool unbiased_variance, float poisson_noise_scale, bool pool_statistics) {
   const int64_t idx = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (idx >= output_elements) {
     return;
@@ -167,26 +207,62 @@ __global__ void contrast_from_sums_kernel(const float2 *__restrict__ horizontal_
   const int     y_end        = (y + radius < height) ? y + radius : height - 1;
   const int     x_begin      = x > radius ? x - radius : 0;
   const int     x_end        = (x + radius < width) ? x + radius : width - 1;
-
-  float sum         = 0.0F;
-  float squared_sum = 0.0F;
+  const int     horizontal_count       = x_end - x_begin + 1;
+  float         sum                    = 0.0F;
+  float         squared_sum            = 0.0F;
+  float         mean_sum               = 0.0F;
+  float         corrected_variance_sum = 0.0F;
+  const int64_t spatial_sample_count =
+      static_cast<int64_t>(horizontal_count) * (y_end - y_begin + 1);
+  const float first_anchor =
+      static_cast<float>(input[plane_offset + static_cast<int64_t>(y_begin) * width + x]);
   for (int time = 0; time < temporal_window_size; ++time) {
     const int64_t time_offset = static_cast<int64_t>(time) * plane_size;
-    for (int sample_y = y_begin; sample_y <= y_end; ++sample_y) {
-      const float2 row_sum =
-          horizontal_sums[plane_offset + time_offset +
-                          static_cast<int64_t>(sample_y) * width + x];
-      sum += row_sum.x;
-      squared_sum += row_sum.y;
+    const float   anchor =
+        pool_statistics
+            ? static_cast<float>(
+                  input[plane_offset + time_offset + static_cast<int64_t>(y_begin) * width + x])
+            : first_anchor;
+    if (pool_statistics) {
+      sum         = 0.0F;
+      squared_sum = 0.0F;
     }
+    for (int sample_y = y_begin; sample_y <= y_end; ++sample_y) {
+      const int64_t row_idx =
+          plane_offset + time_offset + static_cast<int64_t>(sample_y) * width + x;
+      const float2 row_stats  = horizontal_sums[row_idx];
+      const float  row_center = static_cast<float>(input[row_idx]);
+      const float  shift      = row_center - anchor;
+      sum += row_stats.x + static_cast<float>(horizontal_count) * shift;
+      squared_sum += row_stats.y + 2.0F * shift * row_stats.x +
+                     static_cast<float>(horizontal_count) * shift * shift;
+    }
+    if (pool_statistics) {
+      const float delta_mean     = sum / static_cast<float>(spatial_sample_count);
+      const float group_mean     = anchor + delta_mean;
+      float       group_variance = fmaxf(
+          squared_sum / static_cast<float>(spatial_sample_count) - delta_mean * delta_mean, 0.0F);
+      if (unbiased_variance && spatial_sample_count > 1) {
+        group_variance *=
+            static_cast<float>(spatial_sample_count) / static_cast<float>(spatial_sample_count - 1);
+      }
+      mean_sum += group_mean;
+      corrected_variance_sum += group_variance - poisson_noise_scale * group_mean;
+    }
+  }
+  if (pool_statistics) {
+    output[idx] = pooled_contrast_result(mean_sum, corrected_variance_sum, temporal_window_size);
+    return;
   }
 
   const int64_t sample_count = static_cast<int64_t>(temporal_window_size) *
                                (x_end - x_begin + 1) * (y_end - y_begin + 1);
-  const float mean         = sum / static_cast<float>(sample_count);
+  const float delta_mean = sum / static_cast<float>(sample_count);
+  const float mean       = first_anchor + delta_mean;
   const float variance =
-      fmaxf(squared_sum / static_cast<float>(sample_count) - mean * mean, 0.0F);
-  output[idx] = mean > 0.0F ? sqrtf(variance) / mean : 0.0F;
+      fmaxf(squared_sum / static_cast<float>(sample_count) - delta_mean * delta_mean, 0.0F);
+  output[idx] = contrast_result(mean, variance, sample_count, squared_output, unbiased_variance,
+                                poisson_noise_scale);
 }
 
 __global__ void fill_box_kernel(cufftComplex *__restrict__ box, int fft_width, int fft_height,
@@ -245,7 +321,9 @@ __global__ void contrast_from_fft_kernel(const cufftComplex *__restrict__ fft_da
                                          float *__restrict__ output, int width, int height,
                                          int fft_width, int fft_height, int window_size,
                                          int temporal_window_size, int64_t input_planes,
-                                         int64_t output_elements) {
+                                         int64_t output_elements, bool squared_output,
+                                         bool unbiased_variance, float poisson_noise_scale,
+                                         bool pool_statistics) {
   const int64_t idx = static_cast<int64_t>(blockIdx.x) * blockDim.x + threadIdx.x;
   if (idx >= output_elements)
     return;
@@ -269,22 +347,43 @@ __global__ void contrast_from_fft_kernel(const cufftComplex *__restrict__ fft_da
 
   float sum = 0.0F;
   float squared_sum = 0.0F;
+  float         mean_sum               = 0.0F;
+  float         corrected_variance_sum = 0.0F;
+  const int64_t spatial_sample_count   = sample_count / temporal_window_size;
+  const float   fft_scale              = 1.0F / static_cast<float>(fft_plane_size);
   for (int time = 0; time < temporal_window_size; ++time) {
     const int64_t input_plane = first_input_plane + time;
     if (input_plane >= input_planes)
       break;
     const auto sum_value = fft_data[(input_plane * 2) * fft_plane_size + crop_idx];
     const auto squared_value = fft_data[(input_plane * 2 + 1) * fft_plane_size + crop_idx];
+    if (pool_statistics) {
+      const float group_mean = sum_value.x * fft_scale / static_cast<float>(spatial_sample_count);
+      float       group_variance =
+          fmaxf(squared_value.x * fft_scale / static_cast<float>(spatial_sample_count) -
+                    group_mean * group_mean,
+                0.0F);
+      if (unbiased_variance && spatial_sample_count > 1) {
+        group_variance *=
+            static_cast<float>(spatial_sample_count) / static_cast<float>(spatial_sample_count - 1);
+      }
+      mean_sum += group_mean;
+      corrected_variance_sum += group_variance - poisson_noise_scale * group_mean;
+      continue;
+    }
     sum += sum_value.x;
     squared_sum += squared_value.x;
   }
-
-  const float fft_scale = 1.0F / static_cast<float>(fft_plane_size);
+  if (pool_statistics) {
+    output[idx] = pooled_contrast_result(mean_sum, corrected_variance_sum, temporal_window_size);
+    return;
+  }
   const float mean = sum * fft_scale / static_cast<float>(sample_count);
   const float variance = fmaxf(squared_sum * fft_scale / static_cast<float>(sample_count) -
                                    mean * mean,
                                0.0F);
-  output[idx] = mean > 0.0F ? sqrtf(variance) / mean : 0.0F;
+  output[idx] = contrast_result(mean, variance, sample_count, squared_output, unbiased_variance,
+                                poisson_noise_scale);
 }
 
 int next_power_of_two(int value) {
@@ -333,7 +432,8 @@ public:
     if (settings_.window_size == 1) {
       const auto enqueue_temporal = [&](const auto *typed_input) {
         temporal_contrast_kernel<<<output_grid_size, block_size, 0, stream_>>>(
-            typed_input, output, width_, height_, temporal_window_size_, output_elements_);
+            typed_input, output, width_, height_, temporal_window_size_, output_elements_,
+            settings_.squared_output, settings_.unbiased_variance, settings_.poisson_noise_scale);
       };
       switch (idesc_.dtype) {
       case holoflow::core::DType::U8:
@@ -367,8 +467,10 @@ public:
             fft_data_.get(), box_spectrum_.get(), fft_plane_size, fft_elements);
         CUFFT_CHECK(cufftExecC2C(fft_plan_.get(), fft_data_.get(), fft_data_.get(), CUFFT_INVERSE));
         contrast_from_fft_kernel<<<output_grid_size, block_size, 0, stream_>>>(
-            fft_data_.get(), output, width_, height_, fft_width_, fft_height_, settings_.window_size,
-            temporal_window_size_, input_planes_, output_elements_);
+            fft_data_.get(), output, width_, height_, fft_width_, fft_height_,
+            settings_.window_size, temporal_window_size_, input_planes_, output_elements_,
+            settings_.squared_output, settings_.unbiased_variance, settings_.poisson_noise_scale,
+            settings_.pool_statistics);
       };
 
       switch (idesc_.dtype) {
@@ -394,8 +496,9 @@ public:
           typed_input, horizontal_sums_.get(), width_, height_, settings_.window_size,
           total_elements_);
       contrast_from_sums_kernel<<<output_grid_size, block_size, 0, stream_>>>(
-          horizontal_sums_.get(), output, width_, height_, settings_.window_size,
-          temporal_window_size_, output_elements_);
+          typed_input, horizontal_sums_.get(), output, width_, height_, settings_.window_size,
+          temporal_window_size_, output_elements_, settings_.squared_output,
+          settings_.unbiased_variance, settings_.poisson_noise_scale, settings_.pool_statistics);
     };
 
     switch (idesc_.dtype) {
@@ -470,12 +573,18 @@ SpatialContrastFactory::infer(std::span<const holoflow::core::TDesc> input_descs
             (settings.window_size >= kMinWindowSize && settings.window_size <= kMaxWindowSize &&
              settings.window_size % 2 == 1),
         "window_size must be 1 for temporal-only contrast or an odd integer between 3 and 255");
-  check(settings.temporal_window_size == 1 || settings.temporal_window_size >= 3,
-        "temporal_window_size must be 1 or at least 3");
+  check(settings.temporal_window_size == 1 || settings.temporal_window_size >= 3 ||
+            (settings.pool_statistics && settings.temporal_window_size == 2),
+        "temporal_window_size must be 1 or at least 3 (or 2 when pooling statistics)");
+  check(!settings.pool_statistics ||
+            (settings.squared_output && settings.window_size > 1 && idesc.rank() == 3),
+        "pool_statistics requires squared spatial contrast and 3D input");
   check(settings.method == SpatialContrastMethod::Kernel ||
             settings.method == SpatialContrastMethod::FFT,
         "method must be Kernel or FFT");
-  if (settings.temporal_window_size > 1) {
+  check(std::isfinite(settings.poisson_noise_scale) && settings.poisson_noise_scale >= 0.0F,
+        "poisson_noise_scale must be finite and non-negative");
+  if (settings.temporal_window_size > 1 || settings.pool_statistics) {
     check(idesc.rank() == 3 && idesc.shape[0] ==
                                   static_cast<size_t>(settings.temporal_window_size),
           "3D input batch must match temporal_window_size");

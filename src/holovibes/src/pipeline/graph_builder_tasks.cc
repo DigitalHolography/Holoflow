@@ -68,6 +68,7 @@ DEFINE_UNARY_SYNC_NODE (pca,                                    "pca",          
 DEFINE_UNARY_SYNC_NODE (flatfield,                              "flatfield",                           "Flatfield",                       holotask::syncs::FlatfieldSettings)
 DEFINE_UNARY_SYNC_NODE (filter_2d,                              "filter_2d",                           "Filter2D",                        holotask::syncs::Filter2DSettings)
 DEFINE_UNARY_SYNC_NODE (spatial_contrast,                       "spatial_contrast",                    "SpatialContrast",                 holotask::syncs::SpatialContrastSettings)
+DEFINE_UNARY_SYNC_NODE (mesi_remi,                               "mesi_remi",                            "MesiRemi",                        holotask::syncs::MesiRemiSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_diffraction,                    "fresnel_diffraction",                 "FresnelDiffraction",              holotask::syncs::FresnelDiffractionSettings)
 DEFINE_UNARY_SYNC_NODE (angular_spectrum,                       "angular_spectrum",                    "AngularSpectrum",                 holotask::syncs::AngularSpectrumSettings)
 DEFINE_UNARY_SYNC_NODE (cuda_stream_synchronize,                "cuda_stream_synchronize",             "CudaStreamSynchronize",           holotask::syncs::CudaStreamSynchronizeSettings)
@@ -112,6 +113,20 @@ DEFINE_UNARY_ASYNC_NODE(batched_queue,                "batch_queue",            
 DEFINE_UNARY_ASYNC_NODE(temporal_window,              "temporal_window",              "TemporalWindow",                  holotask::asyncs::TemporalWindowSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                    "slide_avg",                    "SlidingAverage",                  holotask::asyncs::SlidingAverageSettings)
 // clang-format on
+
+std::vector<GraphBuilderTasks::TDesc>
+GraphBuilderTasks::mesi_remi_with_parameters(const TDesc                      &X,
+                                             holotask::syncs::MesiRemiSettings settings) {
+  return make_unary_sync_node("mesi_remi", "MesiRemi", "MesiRemi", X, settings);
+}
+
+void GraphBuilderTasks::mesi_history_display(const TDesc &K2, const TDesc &Parameters,
+                                             const TDesc                             &Map,
+                                             tasks::sinks::DisplayMesiHistorySettings settings) {
+  const std::array<TDesc, 3> inputs{K2, Parameters, Map};
+  make_nary_sync_node("mesi_history_display", "DisplayMesiHistory", "DisplayMesiHistory",
+                      std::span<const TDesc>{inputs}, settings);
+}
 
 std::vector<GraphBuilderTasks::TDesc>
 GraphBuilderTasks::dual_reader_batch_queue(const TDesc                                   &X,
