@@ -43,8 +43,8 @@ public:
 
   holoflow::core::GraphSpec build();
 
-  [[nodiscard]] std::string failure_graph_dot(
-      const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+  [[nodiscard]] std::string
+  failure_graph_dot(const holoflow::core::GraphSpecDumpPreferences &prefs) const {
     return GraphBuilderTracer::failure_graph_dot(prefs);
   }
 
@@ -136,8 +136,8 @@ GraphBuilder &GraphBuilder::operator=(GraphBuilder &&) noexcept = default;
 
 holoflow::core::GraphSpec GraphBuilder::build() { return impl_->build(); }
 
-std::string GraphBuilder::failure_graph_dot(
-    const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+std::string
+GraphBuilder::failure_graph_dot(const holoflow::core::GraphSpecDumpPreferences &prefs) const {
   return impl_->failure_graph_dot(prefs);
 }
 
@@ -228,16 +228,25 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
     return ametek_s710_euresys_coaxlink_octo({cam_path});
   }
 
+  std::optional<holotask::sources::RecordSettings> record_settings = std::nullopt;
+  if (s_.can_use_camera_record()) {
+    record_settings = holotask::sources::RecordSettings{
+        .file_path          = s_.recording_path.string(),
+        .recording_count    = s_.recording_count,
+        .pipeline_config    = settings_to_old_json(s_),
+        .record_queue_count = static_cast<size_t>(s_.recording_queue_count)};
+  }
+
   if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
-    holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings settings{.cfg_path = cam_path};
-    if (s_.can_use_camera_record()) {
-      settings.record_settings = holotask::sources::RecordSettings{
-          .file_path          = s_.recording_path.string(),
-          .recording_count    = s_.recording_count,
-          .pipeline_config    = settings_to_old_json(s_),
-          .record_queue_count = static_cast<size_t>(s_.recording_queue_count)};
-    }
+    holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings settings{
+        .cfg_path = cam_path, .record_settings = record_settings};
     return ametek_s711_euresys_coaxlink_qsfp_plus(settings);
+  }
+
+  if (s_.import_source == ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP) {
+    holotask::sources::AmetekS991EuresysCoaxlinkQSFPSettings settings{
+        .cfg_path = cam_path, .record_settings = record_settings};
+    return ametek_s991_euresys_coaxlink_qsfp_plus(settings);
   }
 
   HOLOVIBES_UNREACHABLE();

@@ -1,0 +1,22 @@
+{
+    "s991": {
+        "NbBuffers": 64,
+        "BufferPartCount": 64,
+        "Height": 512,
+        "Width": 512,
+        "PixelFormat": "Mono12",
+        "TriggerSource": "SWTRIGGER",
+        "TriggerSelector": "ExposureStart",
+        "TriggerMode": "On",
+        "GainSelector": "DigitalAll",
+        "Gain": 1.0,
+        "FlatFieldCorrection": "Off",
+        "BalanceWhiteMarker": "Off",
+        "ExposureTime": 270,
+        "CycleMinimumPeriod": 700,
+        "Offsets": [
+            0,
+            4
+        ]
+    }
+}
