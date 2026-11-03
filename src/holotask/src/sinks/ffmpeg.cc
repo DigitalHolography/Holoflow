@@ -142,7 +142,7 @@ public:
   ~FfmpegWriter() override { release(); }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    handle_events(ctx, settings_.path, settings_.count);
+    handle_events(ctx);
     if (!is_recording())
       return holoflow::core::OpResult::Ok;
 
@@ -184,6 +184,7 @@ public:
         ++frames_buffered_;
       }
 
+      monitor_.update(ctx, frames_buffered_, frames_buffered_);
       if (frames_buffered_ >= settings_.count) {
         finalize();
         emit_finished_event(ctx);
@@ -219,8 +220,9 @@ public:
   void update_stream(cudaStream_t stream) { cuda_stream_ = stream; }
 
 protected:
-  void on_recording_stopped() override { release(); }
-  void on_recording_reset() override { release(); }
+  void recording_stopped_callback() override { release(); }
+  void recording_reset_callback() override { release(); }
+  void recording_path_update_callback() override { settings_.path = recording_path(); }
 
 private:
   void initialize() {

@@ -46,6 +46,22 @@ template <typename T1, typename T2> struct Promote {
   using type = decltype(std::declval<T1>() + std::declval<T2>());
 };
 
+// Keep integer arithmetic in the dtype selected by promote_dtype.  The C++
+// usual arithmetic conversions would otherwise promote uint8_t/uint16_t to
+// int, causing the kernel to write wider elements than the output descriptor.
+template <> struct Promote<uint8_t, uint8_t> {
+  using type = uint8_t;
+};
+template <> struct Promote<uint8_t, uint16_t> {
+  using type = uint16_t;
+};
+template <> struct Promote<uint16_t, uint8_t> {
+  using type = uint16_t;
+};
+template <> struct Promote<uint16_t, uint16_t> {
+  using type = uint16_t;
+};
+
 // Specializations for cuFloatComplex (as standard C++ doesn't natively add it to reals)
 template <typename T> struct Promote<cuFloatComplex, T> {
   using type = cuFloatComplex;

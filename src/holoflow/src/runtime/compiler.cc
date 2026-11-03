@@ -359,7 +359,7 @@ void Compiler::Impl::dump_graphviz(std::string_view filename, std::string_view f
     return;
   }
 
-  const auto dump_path = config_.log_dir / std::string{filename};
+  const auto dump_path  = config_.log_dir / std::string{filename};
   const auto graph_name = dump_path.stem().string();
   if (!out_)
     return;
@@ -477,13 +477,12 @@ void Compiler::Impl::deduce_const_tasks() {
   boost::topological_sort(g, std::back_inserter(topo));
 
   for (auto v : std::views::reverse(topo)) {
-    auto       &node      = g[v];
-    const auto  in_degree = boost::in_degree(v, g);
-    const auto  predecessor_const = [&] {
-      return std::ranges::all_of(
-          boost::make_iterator_range(boost::in_edges(v, g)), [&](auto edge) {
-            return g[boost::source(edge, g)].infer.constness == core::ConstInferenceState::Constant;
-          });
+    auto      &node              = g[v];
+    const auto in_degree         = boost::in_degree(v, g);
+    const auto predecessor_const = [&] {
+      return std::ranges::all_of(boost::make_iterator_range(boost::in_edges(v, g)), [&](auto edge) {
+        return g[boost::source(edge, g)].infer.constness == core::ConstInferenceState::Constant;
+      });
     };
 
     if (node.infer.kind == core::TaskKind::Async) {
