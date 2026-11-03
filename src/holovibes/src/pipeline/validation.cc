@@ -14,6 +14,7 @@
 
 #include "pipeline/validation.hh"
 
+#include <algorithm>
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
@@ -207,14 +208,17 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
               {SettingsField::SignalPlotTimeWindow});
   }
 
-  if (settings.time_window > 0 && settings.time_stride > 0 &&
+  const bool temporal_lscsi =
+      requires_processed_pipeline(settings) && settings.pp_spatial_contrast &&
+      settings.pp_spatial_contrast_dimensions == 3;
+  if (!temporal_lscsi && settings.time_window > 0 && settings.time_stride > 0 &&
       (settings.time_stride % settings.time_window != 0)) {
     add_issue(result, ValidationSeverity::Error, "time_stride_not_multiple",
               "Time stride must be a multiple of the time window.",
               {SettingsField::TimeWindow, SettingsField::TimeStride});
   }
 
-  if (settings.filter_2d) {
+  if (settings.filter_2d && !settings.pp_spatial_contrast) {
     if (settings.filter_r_inner < 0) {
       add_issue(result, ValidationSeverity::Error, "filter_2d_inner_negative",
                 "Filter 2D inner radius must be non-negative.",
@@ -248,51 +252,56 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 "Accumulation must be strictly positive.", {SettingsField::PpAccumulation});
     }
 
-    if (settings.time_method == TimeMethod::NONE) {
-      add_issue(result, ValidationSeverity::Error, "time_method_unsupported",
-                "A time transform must be selected for processed view mode.",
-                {SettingsField::TimeMethod});
-    }
-
-    const bool supported_spacial_method =
-        settings.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION ||
-        settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM;
-    if (!supported_spacial_method) {
-      add_issue(result, ValidationSeverity::Error, "spacial_method_unsupported",
-                "Fresnel Diffraction or Angular Spectrum must be selected for processed view mode.",
-                {SettingsField::SpacialMethod});
-    }
-
-    if (settings.autofocus_enabled && settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
-      add_issue(result, ValidationSeverity::Error, "spacial_method_autofocus_unsupported",
-                "Angular Spectrum is not supported when Auto Focus is enabled.",
-                {SettingsField::SpacialMethod});
-    }
-
-    if (settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM &&
-        settings.asp_padding_enabled) {
-      if (settings.asp_padded_width <= 0 || settings.asp_padded_height <= 0) {
-        add_issue(result, ValidationSeverity::Error, "asp_padding_non_positive",
-                  "Angular Spectrum padded width and height must be strictly positive.",
-                  {SettingsField::AspPadding});
+    if (!settings.pp_spatial_contrast) {
+      if (settings.time_method == TimeMethod::NONE) {
+        add_issue(result, ValidationSeverity::Error, "time_method_unsupported",
+                  "A time transform must be selected for processed view mode.",
+                  {SettingsField::TimeMethod});
       }
 
-      if (context.source_width.has_value() && context.source_height.has_value()) {
-        const int width_padding  = settings.asp_padded_width - *context.source_width;
-        const int height_padding = settings.asp_padded_height - *context.source_height;
-        if (width_padding < 0 || height_padding < 0) {
-          add_issue(result, ValidationSeverity::Error, "asp_padding_smaller_than_source",
-                    "Angular Spectrum padded resolution must be at least the source resolution.",
+      const bool supported_spacial_method =
+          settings.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION ||
+          settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM;
+      if (!supported_spacial_method) {
+        add_issue(
+            result, ValidationSeverity::Error, "spacial_method_unsupported",
+            "Fresnel Diffraction or Angular Spectrum must be selected for processed view mode.",
+            {SettingsField::SpacialMethod});
+      }
+
+      if (settings.autofocus_enabled &&
+          settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM) {
+        add_issue(result, ValidationSeverity::Error, "spacial_method_autofocus_unsupported",
+                  "Angular Spectrum is not supported when Auto Focus is enabled.",
+                  {SettingsField::SpacialMethod});
+      }
+
+      if (settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM &&
+          settings.asp_padding_enabled) {
+        if (settings.asp_padded_width <= 0 || settings.asp_padded_height <= 0) {
+          add_issue(result, ValidationSeverity::Error, "asp_padding_non_positive",
+                    "Angular Spectrum padded width and height must be strictly positive.",
                     {SettingsField::AspPadding});
-        } else if (width_padding % 2 != 0 || height_padding % 2 != 0) {
-          add_issue(result, ValidationSeverity::Error, "asp_padding_not_even",
-                    "Angular Spectrum must add an even number of pixels on each axis.",
-                    {SettingsField::AspPadding});
+        }
+
+        if (context.source_width.has_value() && context.source_height.has_value()) {
+          const int width_padding  = settings.asp_padded_width - *context.source_width;
+          const int height_padding = settings.asp_padded_height - *context.source_height;
+          if (width_padding < 0 || height_padding < 0) {
+            add_issue(
+                result, ValidationSeverity::Error, "asp_padding_smaller_than_source",
+                "Angular Spectrum padded resolution must be at least the source resolution.",
+                {SettingsField::AspPadding});
+          } else if (width_padding % 2 != 0 || height_padding % 2 != 0) {
+            add_issue(result, ValidationSeverity::Error, "asp_padding_not_even",
+                      "Angular Spectrum must add an even number of pixels on each axis.",
+                      {SettingsField::AspPadding});
+          }
         }
       }
     }
 
-    if (settings.view_3d_cuts) {
+    if (settings.view_3d_cuts && !settings.pp_spatial_contrast) {
       add_issue(result, ValidationSeverity::Error, "view_3d_cuts_unsupported",
                 "3D cuts are not currently supported by the pipeline.",
                 {SettingsField::View3DCuts});
@@ -310,6 +319,53 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 {SettingsField::PpFlatfieldCutoffPeriod});
     }
 
+    if (settings.pp_spatial_contrast &&
+        (settings.pp_spatial_contrast_window_size < 3 ||
+         settings.pp_spatial_contrast_window_size > 255 ||
+         settings.pp_spatial_contrast_window_size % 2 == 0)) {
+      add_issue(result, ValidationSeverity::Error, "pp_spatial_contrast_window_size_invalid",
+                "Spatial contrast window size must be an odd integer between 3 and 255.",
+                {SettingsField::PpSpatialContrastWindowSize});
+    }
+
+    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions != 2 &&
+        settings.pp_spatial_contrast_dimensions != 3) {
+      add_issue(result, ValidationSeverity::Error, "pp_spatial_contrast_dimensions_invalid",
+                "Spatial contrast dimensions must be 2D or 3D.",
+                {SettingsField::PpSpatialContrastDimensions});
+    }
+
+    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions == 3 &&
+        settings.time_window < 3) {
+      add_issue(result, ValidationSeverity::Error, "spatial_contrast_time_window_invalid",
+                "Temporal spatial contrast must use at least 3 frames.",
+                {SettingsField::TimeWindow});
+    }
+
+    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions == 3 &&
+        context.source_frame_count.has_value() && settings.import_source == ImportSource::HOLOFILE) {
+      const int selected_end = std::min(settings.load_end, *context.source_frame_count);
+      const int selected_frames = std::max(selected_end - settings.load_begin, 0);
+      const int cycle_frames = settings.load_batch > 0
+                                   ? selected_frames / settings.load_batch * settings.load_batch
+                                   : selected_frames;
+      if (cycle_frames < settings.time_window) {
+        add_issue(result, ValidationSeverity::Error,
+                  "spatial_contrast_time_window_insufficient",
+                  std::format("The selected holofile range provides {} frames per replay; "
+                              "temporal LSCI needs at least {}.",
+                              cycle_frames, settings.time_window),
+                  {SettingsField::TimeWindow});
+      }
+    }
+
+    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_method != 0 &&
+        settings.pp_spatial_contrast_method != 1) {
+      add_issue(result, ValidationSeverity::Error, "pp_spatial_contrast_method_invalid",
+                "Spatial contrast method must be Kernel or FFT.",
+                {SettingsField::PpSpatialContrastMethod});
+    }
+
     if (settings.pp_convolution) {
       add_issue(result, ValidationSeverity::Error, "pp_convolution_unsupported",
                 "Convolution is not currently supported by the pipeline.",
@@ -317,7 +373,8 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     }
   }
 
-  if (requires_processed_pipeline(settings) && settings.time_method != TimeMethod::NONE) {
+  if (requires_processed_pipeline(settings) && !settings.pp_spatial_contrast &&
+      settings.time_method != TimeMethod::NONE) {
     if (settings.time_z_end <= settings.time_z_begin) {
       add_issue(result, ValidationSeverity::Error, "time_z_range_invalid",
                 "Z range width must be strictly positive.",
@@ -356,7 +413,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     }
   }
 
-  if (settings.autofocus_enabled) {
+  if (settings.autofocus_enabled && !settings.pp_spatial_contrast) {
     if (settings.autofocus_nb_subaps <= 0) {
       add_issue(result, ValidationSeverity::Error, "autofocus_nb_subaps_non_positive",
                 "Auto-focus sub-aperture count must be strictly positive.",

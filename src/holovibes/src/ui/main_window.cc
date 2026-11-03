@@ -41,6 +41,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
+#include <QScopedValueRollback>
 #include <QScrollArea>
 #include <QScrollBar>
 #include <QSettings>
@@ -84,6 +85,7 @@ namespace {
 constexpr int  kLargeSpinMax             = 1024 * 1024;
 constexpr int  kTopBarHeight             = 30;
 constexpr auto kDefaultSamplingFrequency = 37'000.0;
+constexpr auto kKeepCurrentConfigKey     = "preferences/always_keep_current_config";
 
 QSpinBox *create_spin_box(QWidget *parent, int minimum, int maximum, int value) {
   auto *spin_box = new QSpinBox(parent);
@@ -410,6 +412,18 @@ public:
 
     auto *dialog_layout = new QVBoxLayout(this);
 
+    auto *import_group_box        = new QGroupBox(tr("Import"), this);
+    auto *import_form             = new QFormLayout();
+    keep_current_config_checkbox_ = new QCheckBox(tr("Always keep current config"), this);
+    keep_current_config_checkbox_->setChecked(
+        QSettings().value(kKeepCurrentConfigKey, false).toBool());
+    keep_current_config_checkbox_->setToolTip(
+        tr("Keep the current processing settings, including Time Window and Time Stride, when "
+           "opening a new .holo file. When off, load settings saved in the file if available."));
+    import_form->addRow(keep_current_config_checkbox_);
+    import_group_box->setLayout(import_form);
+    dialog_layout->addWidget(import_group_box);
+
     auto *splitter = new QSplitter(Qt::Horizontal, this);
 
     // Dump preferences
@@ -665,6 +679,9 @@ private:
     manager_.update_graph_spec_dump_preferences(graph_spec_dump_preferences);
     manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
     manager_.set_dump_runtime_failure_graphs(runtime_failure_graph_checkbox_->isChecked());
+    QSettings settings;
+    settings.setValue(kKeepCurrentConfigKey, keep_current_config_checkbox_->isChecked());
+    settings.sync();
   }
 
   void connect_signals() {
@@ -715,6 +732,8 @@ private:
             &QCheckBox::toggled, this, [this](bool) { apply_button_->setEnabled(true); });
     connect(runtime_failure_graph_checkbox_, &QCheckBox::toggled, this,
             [this](bool) { apply_button_->setEnabled(true); });
+    connect(keep_current_config_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
   }
 
   holovibes::pipeline::Manager &manager_;
@@ -758,6 +777,7 @@ private:
   };
   GraphCompiledDumpPreferencesWidgets graph_compiled_dump_preferences_widgets_;
   QCheckBox                          *runtime_failure_graph_checkbox_ = nullptr;
+  QCheckBox                          *keep_current_config_checkbox_   = nullptr;
 };
 
 } // namespace
@@ -1178,6 +1198,8 @@ void MainWindow::refresh_command_bar() {
   stop_command_button_->setEnabled(import_widget_->stop_button()->isEnabled());
   record_command_button_->setEnabled(export_widget_->record_button()->isEnabled());
   stop_record_command_button_->setEnabled(export_widget_->stop_button()->isEnabled());
+  render_widget_->set_spatial_contrast_appearance_locked(
+      export_in_progress_ || update_in_progress_ || pending_recording_acquisition_id_.has_value());
 
   if (pause_requested_) {
     set_status_label(pipeline_status_label_, "Pausing", "warning");
@@ -1274,6 +1296,16 @@ void MainWindow::save_persistent_state() {
   settings.setValue("accumulation", view_widget_->get_accumulation());
   settings.setValue("flatfield", view_widget_->is_flatfield_enabled());
   settings.setValue("flatfield_cutoff_period_um", view_widget_->get_flatfield_cutoff_period_um());
+  settings.remove("spatial_contrast");
+  settings.setValue("spatial_contrast_window_size",
+                    render_widget_->get_spatial_contrast_window_size());
+  settings.remove("spatial_contrast_dimensions");
+  settings.remove("spatial_contrast_temporal_frames");
+  settings.setValue("spatial_contrast_method", render_widget_->get_spatial_contrast_method());
+  settings.setValue("spatial_contrast_display_max",
+                    render_widget_->get_spatial_contrast_display_max());
+  settings.setValue("spatial_contrast_invert_display",
+                    render_widget_->is_spatial_contrast_display_inverted());
   settings.setValue("range_start", view_widget_->get_range_start());
   settings.setValue("range_end", view_widget_->get_range_end());
   settings.setValue("registration", view_widget_->is_registration_enabled());
@@ -1427,6 +1459,27 @@ void MainWindow::restore_persistent_state() {
   view_widget_->set_flatfield_cutoff_period_um(
       settings.value("flatfield_cutoff_period_um", view_widget_->get_flatfield_cutoff_period_um())
           .toDouble());
+  const bool has_legacy_spatial_contrast     = settings.contains("spatial_contrast");
+  const bool legacy_spatial_contrast_enabled = settings.value("spatial_contrast", false).toBool();
+  const int  legacy_spatial_contrast_dimensions =
+      settings.value("spatial_contrast_dimensions", 2).toInt();
+  if (has_legacy_spatial_contrast) {
+    render_widget_->set_spatial_contrast_mode(legacy_spatial_contrast_enabled,
+                                              legacy_spatial_contrast_dimensions);
+  }
+  render_widget_->set_spatial_contrast_window_size(
+      settings
+          .value("spatial_contrast_window_size", render_widget_->get_spatial_contrast_window_size())
+          .toInt());
+  render_widget_->set_spatial_contrast_method(
+      settings.value("spatial_contrast_method", render_widget_->get_spatial_contrast_method())
+          .toString());
+  render_widget_->spatial_contrast_display_max()->setValue(
+      settings
+          .value("spatial_contrast_display_max", render_widget_->get_spatial_contrast_display_max())
+          .toDouble());
+  render_widget_->set_spatial_contrast_display_inverted(
+      settings.value("spatial_contrast_invert_display", false).toBool());
   view_widget_->range_start_spin()->setValue(
       settings.value("range_start", view_widget_->get_range_start()).toInt());
   view_widget_->range_end_spin()->setValue(
@@ -1611,7 +1664,6 @@ void MainWindow::initialize_display_widgets() {
 
   connect(render_widget_, &ImageRenderingWidget::settings_changed, this,
           &MainWindow::refresh_visualization_availability);
-
   connect(view_widget_, &ViewWidget::reticle_toggled, this, [this](bool checked) {
     xy_processed_widget_->set_reticle_enabled(checked);
     if (checked) {
@@ -1623,6 +1675,12 @@ void MainWindow::initialize_display_widgets() {
       xy_processed_widget_->set_reticle_radius(value);
     }
   });
+  connect(render_widget_, &ImageRenderingWidget::spatial_contrast_display_range_changed, this,
+          [this](float minimum, float maximum) {
+            xy_processed_widget_->set_value_range(minimum, maximum);
+          });
+  xy_processed_widget_->set_value_range(0.0f, 1.0f);
+  xy_processed_widget_->set_display_inverted(false);
 }
 
 void MainWindow::initialize_pipeline_manager() {
@@ -1719,25 +1777,38 @@ void MainWindow::connect_import_controls() {
     if (file.isEmpty()) {
       return;
     }
+    bool file_selected = false;
     try {
       auto reader      = holofile::Reader(file.toStdString());
       auto frame_count = reader.header().frame_count;
+      {
+        QScopedValueRollback<bool> loading(loading_holofile_, true);
+        import_widget_->set_file_path(file);
+        import_widget_->set_end_index_range(0, static_cast<int>(frame_count));
+        import_widget_->set_end_index(static_cast<int>(frame_count));
+        import_widget_->set_start_index(0);
+        file_selected = true;
 
-      import_widget_->set_file_path(file);
-      import_widget_->set_end_index_range(0, static_cast<int>(frame_count));
-      import_widget_->set_end_index(static_cast<int>(frame_count));
-      import_widget_->set_start_index(0);
-
-      if (reader.footer().has_value()) {
-        auto               footer        = reader.footer().value();
-        pipeline::Settings prev_settings = get_pipeline_settings();
-        prev_settings.view_type          = pipeline::ViewType::PROCESSED;
-        pipeline::Settings new_settings =
-            pipeline::old_json_to_settings(footer.pipeline_settings, prev_settings);
-        set_pipeline_settings(new_settings);
+        if (!QSettings().value(kKeepCurrentConfigKey, false).toBool() &&
+            reader.footer().has_value()) {
+          auto               footer        = reader.footer().value();
+          pipeline::Settings prev_settings = get_pipeline_settings();
+          prev_settings.view_type          = pipeline::ViewType::PROCESSED;
+          pipeline::Settings new_settings =
+              pipeline::old_json_to_settings(footer.pipeline_settings, prev_settings);
+          set_pipeline_settings(new_settings);
+        }
       }
     } catch (std::exception &e) {
       logger()->error("failed to open \"{}\": \"{}\"", file.toStdString(), e.what());
+    }
+    if (file_selected) {
+      refresh_command_bar();
+      if (update_in_progress_) {
+        pending_import_update_ = true;
+      } else {
+        update_if_running();
+      }
     }
   });
 }
@@ -1961,6 +2032,7 @@ void MainWindow::on_start_pipeline_failure(const QString &error) {
   resume_in_progress_    = false;
   paused_settings_dirty_ = false;
   export_in_progress_    = false;
+  pending_recording_acquisition_id_.reset();
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
   export_widget_->set_record_enabled(false);
@@ -1981,9 +2053,12 @@ void MainWindow::on_start_pipeline_failure(const QString &error) {
 void MainWindow::on_stop_pipeline_success() {
   logger()->info("[MainWindow::on_stop_pipeline_success]");
   if (pause_requested_) {
-    pipeline_running_ = false;
-    pipeline_paused_  = true;
-    pause_requested_  = false;
+    pipeline_running_      = false;
+    pipeline_paused_       = true;
+    pause_requested_       = false;
+    pending_import_update_ = false;
+    export_in_progress_    = false;
+    pending_recording_acquisition_id_.reset();
     import_widget_->set_start_enabled(true);
     import_widget_->set_stop_enabled(true);
     export_widget_->set_record_enabled(false);
@@ -1999,10 +2074,12 @@ void MainWindow::on_stop_pipeline_success() {
 void MainWindow::on_stop_pipeline_failure(const QString &error) {
   logger()->error("[MainWindow::on_stop_pipeline_failure]");
   if (pause_requested_) {
-    pipeline_running_   = false;
-    pipeline_paused_    = true;
-    pause_requested_    = false;
-    export_in_progress_ = false;
+    pipeline_running_      = false;
+    pipeline_paused_       = true;
+    pause_requested_       = false;
+    pending_import_update_ = false;
+    export_in_progress_    = false;
+    pending_recording_acquisition_id_.reset();
     import_widget_->set_start_enabled(true);
     import_widget_->set_stop_enabled(true);
     export_widget_->set_record_enabled(false);
@@ -2036,6 +2113,7 @@ void MainWindow::on_resume_pipeline_failure(const QString &error) {
   pipeline_paused_    = true;
   resume_in_progress_ = false;
   export_in_progress_ = false;
+  pending_recording_acquisition_id_.reset();
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(true);
   export_widget_->set_record_enabled(false);
@@ -2051,7 +2129,9 @@ void MainWindow::reset_pipeline_ui_after_stop() {
   pause_requested_       = false;
   resume_in_progress_    = false;
   paused_settings_dirty_ = false;
+  pending_import_update_ = false;
   export_in_progress_    = false;
+  pending_recording_acquisition_id_.reset();
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
   export_widget_->set_record_enabled(false);
@@ -2125,6 +2205,10 @@ void MainWindow::on_update_pipeline_success() {
   refresh_visualization_availability();
   display_workspace_->set_pipeline_running(true);
   refresh_command_bar();
+  if (pending_import_update_) {
+    pending_import_update_ = false;
+    update_if_running();
+  }
 }
 
 void MainWindow::on_update_pipeline_failure(const QString &error) {
@@ -2134,10 +2218,12 @@ void MainWindow::on_update_pipeline_failure(const QString &error) {
   pause_requested_       = false;
   resume_in_progress_    = false;
   update_in_progress_    = false;
+  pending_import_update_ = false;
   paused_settings_dirty_ = false;
   import_widget_->set_start_enabled(true);
   import_widget_->set_stop_enabled(false);
   export_in_progress_ = false;
+  pending_recording_acquisition_id_.reset();
   export_widget_->set_record_enabled(false);
   export_widget_->set_stop_enabled(false);
   display_workspace_->set_pipeline_running(false);
@@ -2274,6 +2360,7 @@ void MainWindow::on_export_record_clicked() {
   refresh_command_bar();
 
   std::filesystem::path record_path = makeRecordingPath(export_widget_->get_file_path());
+  refresh_command_bar();
   std::optional<size_t> frame_count;
   if (export_widget_->is_frame_count_enabled()) {
     frame_count = static_cast<size_t>(export_widget_->get_frame_count());
@@ -2354,8 +2441,17 @@ bool MainWindow::validate_inputs() {
   export_widget_->set_frame_batch_size(settings.recording_method == pipeline::RecordingMethod::RAW
                                            ? settings.load_batch
                                            : settings.cpu_out_size);
-  const auto context = build_validation_context(settings);
-  QSize      display_dims(context.source_width.value_or(1), context.source_height.value_or(1));
+  const auto context             = build_validation_context(settings);
+  int        max_temporal_frames = std::numeric_limits<int>::max();
+  if (settings.import_source == pipeline::ImportSource::HOLOFILE &&
+      context.source_frame_count.has_value()) {
+    const int selected_end = std::min(settings.load_end, *context.source_frame_count);
+    max_temporal_frames    = std::max(selected_end - settings.load_begin, 3);
+  }
+  render_widget_->set_time_window_max_for_temporal_lscsi(max_temporal_frames);
+  settings.time_window = render_widget_->get_time_window();
+
+  QSize display_dims(context.source_width.value_or(1), context.source_height.value_or(1));
   if (settings.view_type != pipeline::ViewType::RAW &&
       settings.spacial_method == pipeline::SpacialMethod::ANGULAR_SPECTRUM &&
       settings.asp_padding_enabled) {
@@ -2431,6 +2527,15 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::PpFlatfieldCutoffPeriod:
         view_widget_->mark_flatfield_cutoff_period_invalid();
         break;
+      case SettingsField::PpSpatialContrastWindowSize:
+        render_widget_->mark_spatial_contrast_window_invalid();
+        break;
+      case SettingsField::PpSpatialContrastDimensions:
+        render_widget_->mark_spatial_contrast_dimensions_invalid();
+        break;
+      case SettingsField::PpSpatialContrastMethod:
+        render_widget_->mark_spatial_contrast_method_invalid();
+        break;
       case SettingsField::PpConvolution:
         render_widget_->mark_convolution_invalid();
         break;
@@ -2480,6 +2585,14 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
       FieldBinding{SettingsField::PpAccumulation, view_widget_->accumulation_spin()},
       FieldBinding{SettingsField::PpFlatfieldCutoffPeriod,
                    view_widget_->flatfield_cutoff_period_um()},
+      FieldBinding{SettingsField::PpSpatialContrastWindowSize,
+                   render_widget_->spatial_contrast_window_size()},
+      FieldBinding{SettingsField::PpSpatialContrastDimensions,
+                   render_widget_->get_spatial_contrast_dimensions() == 3
+                       ? static_cast<QWidget *>(render_widget_->time_transform_combo())
+                       : static_cast<QWidget *>(render_widget_->space_transform_combo())},
+      FieldBinding{SettingsField::PpSpatialContrastMethod,
+                   render_widget_->spatial_contrast_method()},
       FieldBinding{SettingsField::PpConvolution, render_widget_->convolution_combo()},
       FieldBinding{SettingsField::PpRegistration, view_widget_->registration_check()},
       FieldBinding{SettingsField::RecordingPath, export_widget_->file_line_edit()},
@@ -2614,6 +2727,9 @@ int MainWindow::estimate_pipeline_start_duration() {
 }
 
 void MainWindow::update_if_running() {
+  if (loading_holofile_) {
+    return;
+  }
   if (pipeline_paused_) {
     paused_settings_dirty_ = true;
     return;
@@ -2745,6 +2861,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"None", SpacialMethod::NONE},
         {"Fresnel Diffraction", SpacialMethod::FRESNEL_DIFFRACTION},
         {"Angular Spectrum", SpacialMethod::ANGULAR_SPECTRUM},
+        {"LSCI (2D)", SpacialMethod::NONE},
     };
     QString method        = render_widget_->get_space_transform();
     s.spacial_method      = method_from_str.at(method.toStdString());
@@ -2768,6 +2885,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"Principal Component Analysis", TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS},
         {"RFFT", TimeMethod::RFFT},
         {"FFT", TimeMethod::FFT},
+        {"LSCI (3D)", TimeMethod::NONE},
     };
     s.time_window       = render_widget_->get_time_window();
     s.time_stride       = render_widget_->get_time_stride();
@@ -2818,16 +2936,23 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_flatfield = view_widget_->is_flatfield_enabled();
     s.pp_flatfield_cutoff_period_m =
         static_cast<float>(view_widget_->get_flatfield_cutoff_period_um() * 1e-6);
-    s.pp_accumulation        = static_cast<size_t>(view_widget_->get_accumulation());
-    s.pp_convolution         = render_widget_->get_convolution() != "None";
-    s.pp_convolution_path    = kernel_path;
-    s.pp_convolution_divide  = render_widget_->is_convolution_divide();
-    s.pp_pctclip             = view_widget_->is_pct_enabled();
-    s.pp_pctclip_lower       = 0.02f;
-    s.pp_pctclip_upper       = 99.98f;
-    s.pp_pctclip_radius      = view_widget_->get_pct_radius();
-    s.pp_registration        = view_widget_->is_registration_enabled();
-    s.pp_registration_radius = view_widget_->get_registration_radius();
+    s.pp_spatial_contrast             = render_widget_->is_spatial_contrast_enabled();
+    s.pp_spatial_contrast_window_size = render_widget_->get_spatial_contrast_window_size();
+    s.pp_spatial_contrast_dimensions  = render_widget_->get_spatial_contrast_dimensions();
+    s.pp_spatial_contrast_method = render_widget_->get_spatial_contrast_method() == "FFT" ? 1 : 0;
+    s.pp_spatial_contrast_display_max =
+        static_cast<float>(render_widget_->get_spatial_contrast_display_max());
+    s.pp_spatial_contrast_invert_display = render_widget_->is_spatial_contrast_display_inverted();
+    s.pp_accumulation                    = static_cast<size_t>(view_widget_->get_accumulation());
+    s.pp_convolution                     = render_widget_->get_convolution() != "None";
+    s.pp_convolution_path                = kernel_path;
+    s.pp_convolution_divide              = render_widget_->is_convolution_divide();
+    s.pp_pctclip                         = view_widget_->is_pct_enabled();
+    s.pp_pctclip_lower                   = 0.02f;
+    s.pp_pctclip_upper                   = 99.98f;
+    s.pp_pctclip_radius                  = view_widget_->get_pct_radius();
+    s.pp_registration                    = view_widget_->is_registration_enabled();
+    s.pp_registration_radius             = view_widget_->get_registration_radius();
   }
 
   // Recording Settings
@@ -3034,6 +3159,13 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
   {
     view_widget_->set_flatfield_enabled(s.pp_flatfield);
     view_widget_->set_flatfield_cutoff_period_um(s.pp_flatfield_cutoff_period_m * 1e6);
+    render_widget_->set_spatial_contrast_mode(s.pp_spatial_contrast,
+                                              s.pp_spatial_contrast_dimensions);
+    render_widget_->set_spatial_contrast_window_size(s.pp_spatial_contrast_window_size);
+    render_widget_->set_spatial_contrast_method(s.pp_spatial_contrast_method == 1 ? "FFT"
+                                                                                  : "Kernel");
+    render_widget_->set_spatial_contrast_display_max(s.pp_spatial_contrast_display_max);
+    render_widget_->set_spatial_contrast_display_inverted(s.pp_spatial_contrast_invert_display);
     view_widget_->set_accumulation(static_cast<int>(s.pp_accumulation));
     render_widget_->set_convolution_divide(s.pp_convolution_divide);
 

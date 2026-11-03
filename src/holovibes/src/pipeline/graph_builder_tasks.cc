@@ -67,6 +67,7 @@ DEFINE_UNARY_SYNC_NODE (convert,                                "conversion",   
 DEFINE_UNARY_SYNC_NODE (pca,                                    "pca",                                 "Pca",                             holotask::syncs::PcaSettings)
 DEFINE_UNARY_SYNC_NODE (flatfield,                              "flatfield",                           "Flatfield",                       holotask::syncs::FlatfieldSettings)
 DEFINE_UNARY_SYNC_NODE (filter_2d,                              "filter_2d",                           "Filter2D",                        holotask::syncs::Filter2DSettings)
+DEFINE_UNARY_SYNC_NODE (spatial_contrast,                       "spatial_contrast",                    "SpatialContrast",                 holotask::syncs::SpatialContrastSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_diffraction,                    "fresnel_diffraction",                 "FresnelDiffraction",              holotask::syncs::FresnelDiffractionSettings)
 DEFINE_UNARY_SYNC_NODE (angular_spectrum,                       "angular_spectrum",                    "AngularSpectrum",                 holotask::syncs::AngularSpectrumSettings)
 DEFINE_UNARY_SYNC_NODE (cuda_stream_synchronize,                "cuda_stream_synchronize",             "CudaStreamSynchronize",           holotask::syncs::CudaStreamSynchronizeSettings)
@@ -108,6 +109,7 @@ DEFINE_UNARY_SYNC_NODE (min,                          "min",                    
 DEFINE_UNARY_SYNC_NODE (max,                          "max",                          "Max",                             holonp::MaxSettings)
 DEFINE_UNARY_SYNC_NODE (normalize,                    "normalize",                    "Normalize",                       holotask::syncs::NormalizeSettings)
 DEFINE_UNARY_ASYNC_NODE(batched_queue,                "batch_queue",                  "BatchQueue",                      holotask::asyncs::BatchQueueSettings)
+DEFINE_UNARY_ASYNC_NODE(temporal_window,              "temporal_window",              "TemporalWindow",                  holotask::asyncs::TemporalWindowSettings)
 DEFINE_UNARY_ASYNC_NODE(slide_avg,                    "slide_avg",                    "SlidingAverage",                  holotask::asyncs::SlidingAverageSettings)
 // clang-format on
 

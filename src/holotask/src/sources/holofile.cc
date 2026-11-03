@@ -182,6 +182,23 @@ public:
     return true;
   }
 
+  void handle_events(holoflow::core::SyncCtx &ctx) {
+    if (!ctx.event_reader)
+      return;
+
+    while (auto event = ctx.event_reader->try_pop()) {
+      if (event->direction != holoflow_event::EventDirection::ToNode ||
+          event->data.value("type", std::string{}) != "restart_playback") {
+        continue;
+      }
+
+      frame_idx = settings.start_frame;
+      if (settings.load_kind == HolofileSettings::LoadKind::Live)
+        reader->seek(settings.start_frame);
+      next_batch_start.reset();
+    }
+  }
+
   // -- ISyncTask interface ------------------------------------------------------------------------
   std::optional<holoflow::core::TView> acquire_input(int index) override {
     (void)index; // Unused since there are no inputs
@@ -199,6 +216,8 @@ public:
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    handle_events(ctx);
+
     if (!pace_before_batch(ctx)) {
       return holoflow::core::OpResult::Cancelled;
     }

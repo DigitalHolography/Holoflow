@@ -72,6 +72,7 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/asyncs/temporal_window.hh"
 #include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
@@ -99,6 +100,7 @@
 #include "holotask/syncs/resize.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
+#include "holotask/syncs/spatial_contrast.hh"
 #include "holotask/syncs/unfold2d.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike_defocus_z_prop.hh"
@@ -215,6 +217,7 @@ void Manager::register_components() {
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::DualReaderBatchQueueFactory>(registry_, "DualReaderBatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
+  reg_async<asyncs::TemporalWindowFactory>(registry_, "TemporalWindow");
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ", yz_processed_widget_);
@@ -246,6 +249,7 @@ void Manager::register_components() {
   reg_sync<syncs::ConvolutionFactory>(registry_, "Convolution");
   reg_sync<syncs::FlatfieldFactory>(registry_, "Flatfield");
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
+  reg_sync<syncs::SpatialContrastFactory>(registry_, "SpatialContrast");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
   reg_sync<syncs::ResizeFactory>(registry_, "Resize");
   reg_sync<syncs::ShortTimeFresnelDiffractionFactory>(registry_, "ShortTimeFresnelDiffraction");
@@ -592,6 +596,15 @@ void Manager::start_raw_record(std::filesystem::path record_path) {
                     record_path.string(), *error);
     emit raw_record_started_failure(QString::fromStdString(*error));
     return;
+  }
+
+  if (s_.import_source == ImportSource::HOLOFILE) {
+    nlohmann::json restart_payload{{"type", "restart_playback"}};
+    if (!scheduler_->ui_try_send("source_0", std::move(restart_payload))) {
+      logger()->error("[Manager::start_raw_record] Failed to enqueue playback restart event");
+      emit raw_record_started_failure("Failed to enqueue playback restart event");
+      return;
+    }
   }
 
   auto payload = nlohmann::json{
