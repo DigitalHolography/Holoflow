@@ -810,8 +810,8 @@ void GraphBuilder::Impl::build_mesi_remi_view(const TDesc &frames, size_t source
   auto       exposure_group_means = frames;
 
   // Build a dyadic temporal pyramid. Each frame contributes to one group at every level, avoiding
-  // repeated reductions from the full window. At each exposure, pool corrected spatial variances
-  // and means across groups before normalizing. Shot-noise variance scales as 1/m for frame means.
+  // repeated reductions from the full window. At each exposure, pool spatial sample variances
+  // and means across groups before normalizing. No camera-noise calibration is available here.
   for (size_t exposure_frames = 1; exposure_frames <= window_frames; exposure_frames *= 2) {
     const size_t group_count = window_frames / exposure_frames;
     exposure_group_sizes.push_back(static_cast<int>(exposure_frames));
@@ -821,7 +821,7 @@ void GraphBuilder::Impl::build_mesi_remi_view(const TDesc &frames, size_t source
                                .method               = spatial_method,
                                .squared_output       = true,
                                .unbiased_variance    = true,
-                               .poisson_noise_scale  = 1.0F / static_cast<float>(exposure_frames),
+                               .poisson_noise_scale  = 0.0F,
                                .pool_statistics      = true});
     exposure_maps.push_back(pooled_k2);
     if (exposure_frames == window_frames) {
@@ -849,14 +849,18 @@ void GraphBuilder::Impl::build_mesi_remi_view(const TDesc &frames, size_t source
       .beta_smoothing_size  = s_.pp_mesi_beta_smoothing_size};
   auto  mesi_outputs = mesi_remi_with_parameters(stacked_k2, model_settings);
   TDesc map          = mesi_outputs.at(0);
-  if (s_.pp_mesi_display_exposure_frames != 0) {
+  auto parameter_maps = mesi_outputs.at(1);
+  if (s_.pp_mesi_display_exposure_frames == -1 ||
+      s_.pp_mesi_display_exposure_frames == -2) {
+    const int channel = -s_.pp_mesi_display_exposure_frames - 1;
+    map = slice(parameter_maps, {{holonp::SliceRange{channel, channel + 1}, {}, {}}});
+  } else if (s_.pp_mesi_display_exposure_frames != 0) {
     const auto selected = std::find(exposure_group_sizes.begin(), exposure_group_sizes.end(),
                                     s_.pp_mesi_display_exposure_frames);
     if (selected == exposure_group_sizes.end())
       throw std::invalid_argument{"MESI display exposure must match a group size"};
     map = exposure_maps.at(static_cast<size_t>(selected - exposure_group_sizes.begin()));
   }
-  auto parameter_maps                            = mesi_outputs.at(1);
   auto cache_settings                            = s_;
   cache_settings.pp_mesi_display_exposure_frames = 0;
   auto curve_cache_key                           = settings_to_old_json(cache_settings);

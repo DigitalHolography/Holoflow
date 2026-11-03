@@ -138,7 +138,7 @@ struct Settings {
   bool        pp_mesi_remi                       = false;
   int         pp_mesi_estimator                  = 0;
   int         pp_mesi_beta_smoothing_size        = 0;
-  int         pp_mesi_display_exposure_frames    = 0; // 0 displays tau; otherwise pooled K².
+  int         pp_mesi_display_exposure_frames    = 0; // -2 ρ, -1 β, 0 τ, positive pooled K².
   double      pp_mesi_exposure_fraction          = 1.0;
   double      pp_mesi_beta                       = 1.0;
   double      pp_mesi_rho                        = 1.0;

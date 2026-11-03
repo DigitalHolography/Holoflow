@@ -347,13 +347,6 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     }
 
     if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions == 3 &&
-        settings.time_window < 3) {
-      add_issue(result, ValidationSeverity::Error, "spatial_contrast_time_window_invalid",
-                "Temporal spatial contrast must use at least 3 frames.",
-                {SettingsField::TimeWindow});
-    }
-
-    if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions == 3 &&
         context.source_frame_count.has_value() && settings.import_source == ImportSource::HOLOFILE) {
       const int selected_end = std::min(settings.load_end, *context.source_frame_count);
       const int selected_frames = std::max(selected_end - settings.load_begin, 0);
@@ -411,12 +404,12 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                   {SettingsField::TimeWindow});
       }
       const int display_exposure = settings.pp_mesi_display_exposure_frames;
-      if (display_exposure < 0 ||
-          (display_exposure != 0 && ((display_exposure & (display_exposure - 1)) != 0 ||
+      if (display_exposure < -2 ||
+          (display_exposure > 0 && ((display_exposure & (display_exposure - 1)) != 0 ||
                                      display_exposure > settings.time_window))) {
         add_issue(
             result, ValidationSeverity::Error, "mesi_display_exposure_invalid",
-            "MESI display exposure must be zero (τ) or a power of two within the time window.",
+            "MESI display selection must be β, ρ, τ, or a power-of-two exposure within the time window.",
             {SettingsField::TimeWindow});
       }
       if (settings.pp_mesi_estimator < 0 || settings.pp_mesi_estimator > 2) {

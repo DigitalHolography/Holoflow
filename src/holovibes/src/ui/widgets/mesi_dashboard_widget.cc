@@ -285,7 +285,9 @@ MesiDashboardWidget::MesiDashboardWidget(QWidget *parent) : QWidget(parent) {
   map_label_    = new QLabel(tr("Live τ map — drag for ROI"), map_panel);
   map_selector_ = new QComboBox(map_panel);
   map_selector_->addItem(tr("τ map"), 0);
-  map_selector_->setToolTip(tr("Choose the live τ map or a pooled K² exposure map."));
+  map_selector_->addItem(tr("β map"), -1);
+  map_selector_->addItem(tr("ρ map"), -2);
+  map_selector_->setToolTip(tr("Choose a live τ, β, ρ, or pooled K² exposure map."));
   auto *reset_roi_button = new QPushButton(tr("Full image ROI"), map_panel);
   auto *map_toolbar      = new QHBoxLayout();
   map_toolbar->setContentsMargins(0, 0, 0, 0);
@@ -501,15 +503,23 @@ void MesiDashboardWidget::set_display_exposure_frames(int frames) {
     return;
   const QSignalBlocker blocker(map_selector_);
   map_selector_->setCurrentIndex(index);
-  map_label_->setText(
-      frames == 0 ? tr("Live τ map — drag for ROI")
-                  : tr("Live pooled K² map · %1-frame exposure — drag for ROI").arg(frames));
+  map_label_->setText(frames == 0 ? tr("Live τ map — drag for ROI")
+                      : frames == -1 ? tr("Live β map — drag for ROI")
+                      : frames == -2 ? tr("Live ρ map — drag for ROI")
+                                     : tr("Live pooled K² map · %1-frame exposure — drag for ROI")
+                                           .arg(frames));
   map_help_->setText(
       frames == 0
           ? tr("Black to white: increasing τ. Magenta: zero or nonfinite τ. "
                "The grayscale range adjusts to each image; τ is not a direct flow speed.")
-          : tr("Black to white: increasing pooled K² (unitless). Magenta: K² at or below zero "
-               "or nonfinite. The range adjusts to each image."));
+          : frames == -1
+                ? tr("Black to white: increasing per-pixel β. Magenta: zero or nonfinite β.")
+          : frames == -2
+                ? tr("Black to white: increasing per-pixel ρ. Zero may mean ρ = 0 or an invalid "
+                     "estimate; check the pixel's τ.")
+                : tr("Black to white: increasing pooled K² (unitless). Magenta: K² at or below "
+                     "zero or nonfinite. The range adjusts to each image."));
+  tau_map_widget_->set_nonpositive_invalid(frames != -2);
   if (frames != 0) {
     tau_map_widget_->set_value_range(0.0F, 1.0F);
     tau_map_widget_->set_auto_value_range(true);
@@ -522,6 +532,8 @@ void MesiDashboardWidget::set_exposure_levels(const std::vector<int> &frames) {
   const QSignalBlocker blocker(map_selector_);
   map_selector_->clear();
   map_selector_->addItem(tr("τ map"), 0);
+  map_selector_->addItem(tr("β map"), -1);
+  map_selector_->addItem(tr("ρ map"), -2);
   for (const int count : frames)
     map_selector_->addItem(tr("K² · %1 frames").arg(count), count);
   set_display_exposure_frames(map_selector_->findData(previous) >= 0 ? previous : 0);

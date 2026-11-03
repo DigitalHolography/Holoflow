@@ -2462,7 +2462,7 @@ bool MainWindow::validate_inputs() {
   if (settings.import_source == pipeline::ImportSource::HOLOFILE &&
       context.source_frame_count.has_value()) {
     const int selected_end = std::min(settings.load_end, *context.source_frame_count);
-    max_temporal_frames = std::max(selected_end - settings.load_begin, 3);
+    max_temporal_frames = std::max(selected_end - settings.load_begin, 1);
   }
   render_widget_->set_time_window_max_for_temporal_lscsi(max_temporal_frames);
   settings.time_window = render_widget_->get_time_window();

@@ -193,7 +193,7 @@ void ImageRenderingWidget::set_spatial_contrast_window_size(int value) {
   spatial_contrast_window_size_->setValue(value);
 }
 void ImageRenderingWidget::set_time_window_max_for_temporal_lscsi(int value) {
-  max_temporal_lscsi_frames_ = std::max(value, 3);
+  max_temporal_lscsi_frames_ = std::max(value, 1);
   update_time_window_limits();
 }
 void ImageRenderingWidget::update_time_window_limits() {
@@ -202,7 +202,7 @@ void ImageRenderingWidget::update_time_window_limits() {
                               get_spatial_contrast_dimensions() == 3;
   const QSignalBlocker blocker(time_window_spin_);
   time_window_spin_->setRange(mesi_remi        ? (get_mesi_estimator() == 0 ? 4 : 16)
-                              : temporal_lscsi ? 3
+                              : temporal_lscsi ? 1
                                                : 1,
                               mesi_remi        ? std::max(get_mesi_estimator() == 0 ? 4 : 16,
                                                           std::min(max_temporal_lscsi_frames_, 512))
