@@ -258,9 +258,9 @@ RuntimeConfig parse_cfg(const nlohmann::json &cfg) {
                                                          pixel_format_map.at(pixel_format)),
       .line_pitch           = cfg.value("LinePitch", cfg.at("Width").get<std::size_t>() *
                                                          pixel_format_map.at(pixel_format)),
-      .stripe_height        = cfg.value("StripeHeight", std::size_t(8)),
-      .stripe_pitch         = cfg.value("StripePitch", std::size_t(16)),
-      .block_height         = cfg.value("BlockHeight", std::size_t(8)),
+      .stripe_height        = cfg.value("StripeHeight", std::size_t(4)),
+      .stripe_pitch         = cfg.value("StripePitch", std::size_t(8)),
+      .block_height         = cfg.value("BlockHeight", std::size_t(4)),
       .stripe_arrangement   = cfg.value("StripeArrangement", std::string("Geometry_1X_1Y")),
       .pop_timeout_ms       = cfg.value("PopTimeoutMs", std::size_t(1000)),
       .shutter_mode = cfg.value("ShutterMode", "Global"),
