@@ -189,7 +189,6 @@ struct RuntimeConfig {
   std::string                trigger_selector;
   std::string                gain_selector;
   float                      gain;
-  std::string                flat_field_correction;
   std::optional<std::string> balance_white_marker;
   double                     exposure_time;
   std::int64_t               cycle_minimum_period;
@@ -201,6 +200,8 @@ struct RuntimeConfig {
   std::size_t                block_height;
   std::string                stripe_arrangement;
   std::size_t                pop_timeout_ms;
+  std::string                shutter_mode;
+  std::size_t                acquisition_frame_rate;
 
   [[nodiscard]] std::size_t camera_height() const {
     if (banks == "Banks_AB") {
@@ -246,7 +247,6 @@ RuntimeConfig parse_cfg(const nlohmann::json &cfg) {
       .trigger_selector       = cfg.at("TriggerSelector").get<std::string>(),
       .gain_selector          = cfg.at("GainSelector").get<std::string>(),
       .gain                   = cfg.at("Gain").get<float>(),
-      .flat_field_correction  = cfg.at("FlatFieldCorrection").get<std::string>(),
       .balance_white_marker =
           cfg.contains("BalanceWhiteMarker")
               ? std::optional<std::string>(cfg.at("BalanceWhiteMarker").get<std::string>())
@@ -261,8 +261,10 @@ RuntimeConfig parse_cfg(const nlohmann::json &cfg) {
       .stripe_height        = cfg.value("StripeHeight", std::size_t(8)),
       .stripe_pitch         = cfg.value("StripePitch", std::size_t(16)),
       .block_height         = cfg.value("BlockHeight", std::size_t(8)),
-      .stripe_arrangement   = cfg.value("StripeArrangement", std::string("Geometry_1X_2YM")),
+      .stripe_arrangement   = cfg.value("StripeArrangement", std::string("Geometry_1X_1Y")),
       .pop_timeout_ms       = cfg.value("PopTimeoutMs", std::size_t(1000)),
+      .shutter_mode = cfg.value("ShutterMode", "Global"),
+      .acquisition_frame_rate = static_cast<size_t>(cfg.value("AcquisitionFrameRate", 0))
   };
 
   check(out.expected_grabber_count == 2,
@@ -289,7 +291,6 @@ nlohmann::json normalized_cfg_json(const RuntimeConfig &cfg) {
       {"TriggerSelector", cfg.trigger_selector},
       {"GainSelector", cfg.gain_selector},
       {"Gain", cfg.gain},
-      {"FlatFieldCorrection", cfg.flat_field_correction},
       {"ExposureTime", cfg.exposure_time},
       {"CycleMinimumPeriod", cfg.cycle_minimum_period},
       {"Offsets", cfg.offsets},
@@ -300,6 +301,8 @@ nlohmann::json normalized_cfg_json(const RuntimeConfig &cfg) {
       {"BlockHeight", cfg.block_height},
       {"StripeArrangement", cfg.stripe_arrangement},
       {"PopTimeoutMs", cfg.pop_timeout_ms},
+      {"ShutterMode", cfg.shutter_mode},
+      {"AcquisitionFrameRate", cfg.acquisition_frame_rate},
   };
 }
 
@@ -403,7 +406,6 @@ void dump_state(Euresys::EGrabberCameraInfo &info, const std::string &phase) {
     dump_float<RemoteModule>(g, prefix, "ExposureTime");
     dump_string<RemoteModule>(g, prefix, "GainSelector");
     dump_float<RemoteModule>(g, prefix, "Gain");
-    dump_string<RemoteModule>(g, prefix, "FlatFieldCorrection");
 
     dump_string<DeviceModule>(g, prefix, "CameraControlMethod");
     dump_string<DeviceModule>(g, prefix, "ExposureReadoutOverlap");
@@ -493,8 +495,11 @@ void apply_cfg(Euresys::EGrabberCameraInfo &info, const RuntimeConfig &cfg) {
   set_required_float<RemoteModule>(ctrl, ctrl_prefix, "ExposureTime", cfg.exposure_time);
   set_required_string<RemoteModule>(ctrl, ctrl_prefix, "GainSelector", cfg.gain_selector);
   set_required_float<RemoteModule>(ctrl, ctrl_prefix, "Gain", cfg.gain);
-  set_required_string<RemoteModule>(ctrl, ctrl_prefix, "FlatFieldCorrection",
-                                    cfg.flat_field_correction);
+
+  set_required_string<RemoteModule>(ctrl, ctrl_prefix, "ShutterMode", cfg.shutter_mode);
+
+  set_required_string<RemoteModule>(ctrl, ctrl_prefix, "AcquisitionFrameRate",
+                                    std::format("{}", cfg.acquisition_frame_rate));
 
   if (cfg.balance_white_marker.has_value()) {
     set_optional_string<RemoteModule>(ctrl, ctrl_prefix, "BalanceWhiteMarker",

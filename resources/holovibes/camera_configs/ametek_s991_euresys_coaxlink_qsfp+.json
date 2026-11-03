@@ -2,21 +2,22 @@
     "s991": {
         "NbBuffers": 64,
         "BufferPartCount": 64,
-        "Height": 512,
-        "Width": 512,
-        "PixelFormat": "Mono12",
+        "Height": 2048,
+        "Width": 4096,
+        "PixelFormat": "Mono8",
         "TriggerSource": "SWTRIGGER",
         "TriggerSelector": "ExposureStart",
-        "TriggerMode": "On",
+        "TriggerMode": "Off",
         "GainSelector": "DigitalAll",
         "Gain": 1.0,
-        "FlatFieldCorrection": "Off",
         "BalanceWhiteMarker": "Off",
-        "ExposureTime": 270,
-        "CycleMinimumPeriod": 700,
+        "ExposureTime": 990,
+        "CycleMinimumPeriod": 1000,
         "Offsets": [
             0,
             4
-        ]
+        ],
+        "ShutterMode": "Global",
+        "AcquisitionFrameRate": 1000
     }
 }

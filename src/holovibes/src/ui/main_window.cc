@@ -2667,7 +2667,8 @@ QSize MainWindow::guess_source_dims() {
     auto type = import_widget_->get_camera_type();
 
     auto cfg_json   = nlohmann::json::parse(cfg_file);
-    auto cfg        = cfg_json.at(type.toStdString());
+    
+    auto cfg        = cfg_json.at(camera_type_to_config_key.at(type.toStdString()));
     int  src_width  = cfg.at("Width").get<int>();
     int  src_height = cfg.at("Height").get<int>();
     return QSize(src_width, src_height);
