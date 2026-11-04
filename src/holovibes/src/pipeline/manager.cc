@@ -185,6 +185,7 @@ Manager::Manager(
     ui::TensorDisplayWidget *processed_spectrum_widget,
     ui::TensorDisplayWidget *shack_hartmann_widget,
     ui::TensorDisplayWidget *shack_hartmann_xcorr_widget,
+    ui::TensorDisplayWidget *registration_xcorr_widget,
     ui::TensorDisplayWidget *zernike_phase_widget, ui::ZernikeHistoryWidget *zernike_history_widget)
     : autofocus_widget_(autofocus_widget), xy_processed_widget_(xy_processed_widget),
       xz_processed_widget_(xz_processed_widget), yz_processed_widget_(yz_processed_widget),
@@ -192,6 +193,7 @@ Manager::Manager(
       processed_spectrum_widget_(processed_spectrum_widget),
       shack_hartmann_widget_(shack_hartmann_widget),
       shack_hartmann_xcorr_widget_(shack_hartmann_xcorr_widget),
+      registration_xcorr_widget_(registration_xcorr_widget),
       zernike_phase_widget_(zernike_phase_widget), zernike_history_widget_(zernike_history_widget),
       history_dispatchers_(std::make_shared<ui::SignalHistoryDispatcherProvider>()) {
 
@@ -223,6 +225,7 @@ void Manager::register_components() {
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum", processed_spectrum_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann", shack_hartmann_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorRegistrationXcorr", registration_xcorr_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase", zernike_phase_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(registry_, "DisplayZernikeCoefficients", autofocus_widget_);
   reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory", history_dispatchers_);
@@ -557,6 +560,18 @@ void Manager::update_pipeline(const Settings &settings) {
     emit update_pipeline_success();
   } catch (const std::exception &e) {
     stop_zernike_history(true);
+    settings_dirty_ = true;
+    if (compiler_output_ != nullptr) {
+      try {
+        run_compiled_graph();
+        logger()->warn("[Manager::update_pipeline] New graph failed; resumed previous graph: {}",
+                       e.what());
+      } catch (const std::exception &resume_error) {
+        logger()->error("[Manager::update_pipeline] Failed to resume previous graph: {}",
+                        resume_error.what());
+      }
+    }
+
     const QString msg = QString("Failed to update pipeline: %1").arg(e.what());
     logger()->error("[Manager::update_pipeline] {}", msg.toStdString());
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
@@ -829,43 +844,20 @@ void Manager::build_and_run() {
     }
   }
 
-  // The scheduler holds references into the previous compilation. Destroy it before migration.
+  // The scheduler references the previous compilation; stop it before replacing the graph.
   scheduler_.reset();
-  auto     prev_output = std::move(compiler_output_);
   Compiler compiler(registry_, config);
-  try {
-    {
-      ScopedTrace scope("Compile Pipeline");
-      compiler_output_ = compiler.compile(spec_, std::move(prev_output));
-    }
-  } catch (const std::exception &e) {
-    std::string diagnostic_status;
-    if (!dump_runtime_failure_graphs_ && !dump_debug_graphs_) {
-      diagnostic_status = "Failure graph diagnostics are disabled in Preferences.";
-    } else if (log_root_.empty()) {
-      diagnostic_status = "Failure graph was not saved because the application log folder "
-                          "could not be created.";
-    } else {
-      const auto    failure_path = log_root_ / "compilation_failure.dot";
-      std::ifstream failure_file(failure_path);
-      if (failure_file.is_open()) {
-        const std::string dot{std::istreambuf_iterator<char>{failure_file},
-                              std::istreambuf_iterator<char>{}};
-        emit failure_graph_ready(QString::fromUtf8(dot.data(), static_cast<qsizetype>(dot.size())));
-        diagnostic_status = std::format("Compilation failure graph: {}", failure_path.string());
-      } else {
-        diagnostic_status = std::format("Compilation failure graph was not written; expected: {}",
-                                        failure_path.string());
-      }
-    }
-    throw std::runtime_error(std::format("{}\n{}", e.what(), diagnostic_status));
+  {
+    ScopedTrace scope("Compile Pipeline");
+    auto replacement = compiler.compile(spec_);
+    compiler_output_ = std::move(replacement);
   }
-
-  if (compiler_output_ && !log_root.empty()) {
+  if (compiler_output_ && !log_root_.empty()) {
     ScopedTrace dump("Dump Compiled Graph");
-    holoflow::runtime::dump_compiled_graph_async(log_root / "compiled.dot", *compiler_output_,
+    holoflow::runtime::dump_compiled_graph_async(log_root_ / "compiled.dot", *compiler_output_,
                                                  graph_compiled_dump_prefs_, "compiled_pipeline");
   }
+
 
   run_compiled_graph();
 }

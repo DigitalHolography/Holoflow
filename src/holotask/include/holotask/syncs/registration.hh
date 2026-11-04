@@ -26,6 +26,8 @@ namespace holotask::syncs {
 
 struct RegistrationSettings {
   float radius = 0.9f;
+  // Maximum absolute displacement as a fraction of the image dimensions.
+  float max_shift_fraction = 0.25f;
 
   bool operator==(const RegistrationSettings &) const = default;
 };

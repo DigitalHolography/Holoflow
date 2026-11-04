@@ -43,6 +43,7 @@ public:
   int     get_range_end() const;
   bool    is_registration_enabled() const;
   double  get_registration_radius() const;
+  bool    is_registration_ellipse_enabled() const;
   bool    is_reticle_enabled() const;
   double  get_reticle_radius() const;
   bool    is_pct_enabled() const;
@@ -58,6 +59,7 @@ public:
   void set_reticle_radius(int value);
   void set_registration_enabled(bool enabled);
   void set_registration_radius(int value);
+  void set_registration_ellipse_enabled(bool enabled);
   void set_pct_enabled(bool enabled);
   void set_pct_radius(double value);
 
@@ -81,6 +83,7 @@ public:
   QSpinBox       *range_end_spin();
   QCheckBox      *registration_check();
   QDoubleSpinBox *registration_radius();
+  QCheckBox      *registration_ellipse_check();
   QCheckBox      *reticle_check();
   QDoubleSpinBox *reticle_radius();
   QCheckBox      *pct_check();
@@ -110,6 +113,7 @@ private:
   QSpinBox       *range_end_spin_;
   QCheckBox      *registration_check_;
   QDoubleSpinBox *registration_radius_;
+  QCheckBox      *registration_ellipse_check_;
   QCheckBox      *reticle_check_;
   QDoubleSpinBox *reticle_radius_;
   QCheckBox      *pct_check_;
