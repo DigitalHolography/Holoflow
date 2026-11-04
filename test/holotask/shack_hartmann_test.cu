@@ -893,40 +893,40 @@ TEST(ShackHartmannFullPairwisePipeline, NoiselessDefocusMatchesSingleReferenceAn
 }
 
 TEST(ShackHartmannCudaGraph, ReplaysCurrentDataAndRecapturesBuffersAndStreams) {
-  constexpr size_t height = 48;
-  constexpr size_t width  = 48;
+  constexpr size_t                     height = 48;
+  constexpr size_t                     width  = 48;
   std::vector<std::pair<float, float>> shifted_positions(kSy * kSx);
   for (size_t i = 0; i < shifted_positions.size(); ++i) {
     shifted_positions[i] = {static_cast<float>(static_cast<int>(i % kSx) - 2),
                             static_cast<float>(static_cast<int>(i / kSx) - 2)};
   }
   const std::vector<std::pair<float, float>> zero_positions(kSy * kSx, {0.0f, 0.0f});
-  const auto shifted_images =
-      translated_subapertures(kSy, kSx, height, width, shifted_positions);
-  const auto zero_images = translated_subapertures(kSy, kSx, height, width, zero_positions);
-  const auto input_desc  = desc({1, kSy, kSx, height, width}, MemLoc::Device);
+  const auto shifted_images = translated_subapertures(kSy, kSx, height, width, shifted_positions);
+  const auto zero_images    = translated_subapertures(kSy, kSx, height, width, zero_positions);
+  const auto input_desc     = desc({1, kSy, kSx, height, width}, MemLoc::Device);
 
   for (const auto mode : {holotask::syncs::ShackHartmannSlopeMode::SingleReference,
                           holotask::syncs::ShackHartmannSlopeMode::FullPairwise}) {
     SCOPED_TRACE(mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference
                      ? "SingleReference"
                      : "FullPairwise");
-    auto settings = slope_settings(height, width,
-                                   mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference);
+    auto settings = slope_settings(
+        height, width, mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference);
     settings.mode            = mode;
     settings.pair_batch_size = 64;
 
     holotask::syncs::ShackHartmannSlopesFactory factory;
-    const auto inference = factory.infer(std::vector<TDesc>{input_desc}, settings);
+    const auto         inference = factory.infer(std::vector<TDesc>{input_desc}, settings);
     curaii::CudaStream stream_a;
     curaii::CudaStream stream_b;
-    auto task = factory.create(std::vector<TDesc>{input_desc}, settings, {.stream = stream_a.get()});
+    auto               task =
+        factory.create(std::vector<TDesc>{input_desc}, settings, {.stream = stream_a.get()});
     task->bind_logger(spdlog::default_logger());
 
-    holonp_test::TensorTestBuffer input_a(input_desc);
-    holonp_test::TensorTestBuffer input_b(input_desc);
-    holonp_test::TensorTestBuffer slopes_a(inference.output_descs[0]);
-    holonp_test::TensorTestBuffer slopes_b(inference.output_descs[0]);
+    holonp_test::TensorTestBuffer                  input_a(input_desc);
+    holonp_test::TensorTestBuffer                  input_b(input_desc);
+    holonp_test::TensorTestBuffer                  slopes_a(inference.output_descs[0]);
+    holonp_test::TensorTestBuffer                  slopes_b(inference.output_descs[0]);
     std::unique_ptr<holonp_test::TensorTestBuffer> maps_a;
     std::unique_ptr<holonp_test::TensorTestBuffer> maps_b;
     if (inference.output_descs.size() == 2) {
@@ -934,15 +934,15 @@ TEST(ShackHartmannCudaGraph, ReplaysCurrentDataAndRecapturesBuffersAndStreams) {
       maps_b = std::make_unique<holonp_test::TensorTestBuffer>(inference.output_descs[1]);
     }
 
-    std::array inputs_a{input_a.view()};
-    std::array inputs_b{input_b.view()};
+    std::array                         inputs_a{input_a.view()};
+    std::array                         inputs_b{input_b.view()};
     std::vector<holoflow::core::TView> outputs_a{slopes_a.view()};
     std::vector<holoflow::core::TView> outputs_b{slopes_b.view()};
     if (maps_a) {
       outputs_a.push_back(maps_a->view());
       outputs_b.push_back(maps_b->view());
     }
-    std::atomic<bool> cancelled{false};
+    std::atomic<bool>       cancelled{false};
     holoflow::core::SyncCtx context_a{inputs_a, outputs_a, &cancelled, nullptr, nullptr};
     holoflow::core::SyncCtx context_b{inputs_b, outputs_b, &cancelled, nullptr, nullptr};
 
@@ -989,22 +989,22 @@ TEST(ShackHartmannCudaGraph, ReplaysCurrentDataAndRecapturesBuffersAndStreams) {
 }
 
 TEST(ShackHartmannCudaGraph, FallsBackOnDefaultStream) {
-  constexpr size_t height = 24;
-  constexpr size_t width  = 24;
+  constexpr size_t                           height = 24;
+  constexpr size_t                           width  = 24;
   const std::vector<std::pair<float, float>> positions(kSy * kSx, {0.0f, 0.0f});
   const auto images     = translated_subapertures(kSy, kSx, height, width, positions);
   const auto input_desc = desc({1, kSy, kSx, height, width}, MemLoc::Device);
-  auto settings         = slope_settings(height, width, false);
+  auto       settings   = slope_settings(height, width, false);
 
   holotask::syncs::ShackHartmannSlopesFactory factory;
   const auto inference = factory.infer(std::vector<TDesc>{input_desc}, settings);
-  auto task = factory.create(std::vector<TDesc>{input_desc}, settings, {.stream = nullptr});
+  auto       task = factory.create(std::vector<TDesc>{input_desc}, settings, {.stream = nullptr});
   holonp_test::TensorTestBuffer input(input_desc);
   holonp_test::TensorTestBuffer output(inference.output_descs[0]);
   input.upload(as_bytes(images));
-  std::array        inputs{input.view()};
-  std::array        outputs{output.view()};
-  std::atomic<bool> cancelled{false};
+  std::array              inputs{input.view()};
+  std::array              outputs{output.view()};
+  std::atomic<bool>       cancelled{false};
   holoflow::core::SyncCtx context{inputs, outputs, &cancelled, nullptr, nullptr};
 
   ASSERT_EQ(task->execute(context), holoflow::core::OpResult::Ok);
@@ -1172,4 +1172,80 @@ TEST(ZernikeFromSlopesInference, RejectsPartialRegionalGaugeAndReusesTask) {
   const auto coefficients = from_bytes<float>(run.output_bytes[0]);
   EXPECT_EQ(coefficients[0], 0.0f);
   EXPECT_EQ(coefficients[1], 0.0f);
+}
+
+TEST(ShackHartmannCudaGraph, DistanceOnlyUpdateRetainsCapturedExecutionForBothModes) {
+  const auto                           input_desc = desc({1, 3, 3, 16, 16}, MemLoc::Device);
+  std::vector<std::pair<float, float>> shifts(9);
+  for (size_t i = 0; i < shifts.size(); ++i)
+    shifts[i] = {float(int(i % 3) - 1), float(int(i / 3) - 1)};
+  const auto                                 images = translated_subapertures(3, 3, 16, 16, shifts);
+  const std::vector<std::pair<float, float>> zero_shifts(9, {0.0f, 0.0f});
+  const auto zero_images = translated_subapertures(3, 3, 16, 16, zero_shifts);
+  for (auto mode : {holotask::syncs::ShackHartmannSlopeMode::SingleReference,
+                    holotask::syncs::ShackHartmannSlopeMode::FullPairwise}) {
+    SCOPED_TRACE(mode == holotask::syncs::ShackHartmannSlopeMode::SingleReference ? "single"
+                                                                                  : "pairwise");
+    auto settings            = slope_settings(16, 16, false);
+    settings.mode            = mode;
+    settings.pair_batch_size = 16;
+    holotask::syncs::ShackHartmannSlopesFactory factory;
+    const std::array                            inputs_desc{input_desc};
+    const auto                                  inference = factory.infer(inputs_desc, settings);
+    curaii::CudaStream                          stream;
+    auto task = factory.create(inputs_desc, settings, {.stream = stream.get()});
+    holonp_test::TensorTestBuffer input(input_desc), output(inference.output_descs[0]);
+    std::array                    inputs{input.view()};
+    std::array                    outputs{output.view()};
+    holoflow::core::SyncCtx       execution{inputs, outputs};
+    input.upload(as_bytes(images));
+    EXPECT_EQ(task->execute(execution), holoflow::core::OpResult::Ok);
+    CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+    const auto expected = from_bytes<float>(output.download());
+    EXPECT_GT(*std::max_element(expected.begin(), expected.end()), 0.5f);
+    cudaGraph_t graph = nullptr;
+    CUDA_CHECK(cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeThreadLocal));
+    holoflow::core::CudaGraphCtx recording{inputs, outputs, stream.get(), nullptr};
+    task->record_cuda_graph(recording);
+    CUDA_CHECK(cudaStreamEndCapture(stream.get(), &graph));
+    cudaGraphExec_t executable = nullptr;
+    CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+    int                                   invalidations = 0;
+    holoflow::core::ExecutionInvalidation invalidation{[&]() noexcept { ++invalidations; }};
+    auto                                 *original = task.get();
+    for (float distance : {0.5f, 7.25f}) {
+      settings.z = distance;
+      task = factory.update(std::move(task), inputs_desc, settings,
+                            {.stream = stream.get(), .execution_invalidation = &invalidation});
+      EXPECT_EQ(task.get(), original);
+      EXPECT_EQ(invalidations, 0);
+      // Compare the original capture and ordinary execution to a fresh task at the new distance.
+      const auto fresh = holonp_test::run_sync_factory(
+          factory, std::vector<TDesc>{input_desc},
+          std::vector<std::vector<std::byte>>{as_bytes(images)}, settings);
+      const auto reference = from_bytes<float>(fresh.output_bytes[0]);
+      for (size_t i = 0; i < reference.size(); ++i)
+        EXPECT_NEAR(reference[i], expected[i], 2e-4f);
+      for (bool zeros : {true, false}) {
+        input.upload(as_bytes(zeros ? zero_images : images));
+        CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
+        CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+        const auto actual = from_bytes<float>(output.download());
+        for (size_t i = 0; i < actual.size(); ++i)
+          EXPECT_NEAR(actual[i], zeros ? 0.0f : reference[i], 2e-4f);
+        EXPECT_EQ(task->execute(execution), holoflow::core::OpResult::Ok);
+        CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+        const auto ordinary = from_bytes<float>(output.download());
+        for (size_t i = 0; i < ordinary.size(); ++i)
+          EXPECT_NEAR(ordinary[i], actual[i], 2e-4f);
+      }
+    }
+    CUDA_CHECK(cudaGraphExecDestroy(executable));
+    CUDA_CHECK(cudaGraphDestroy(graph));
+    settings.correlation_roi.rx = 0.75f;
+    task = factory.update(std::move(task), inputs_desc, settings,
+                          {.stream = stream.get(), .execution_invalidation = &invalidation});
+    EXPECT_EQ(invalidations, 1);
+    EXPECT_NE(task.get(), original);
+  }
 }

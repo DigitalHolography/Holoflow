@@ -308,6 +308,7 @@ AmetekS710EuresysCoaxlinkOctoFactory::infer(std::span<const holoflow::core::TDes
       .owned_inputs  = {},
       .owned_outputs = {false},
       .kind          = holoflow::core::TaskKind::Sync,
+      .constness     = holoflow::core::ConstInferenceState::Mutable,
   };
 }
 

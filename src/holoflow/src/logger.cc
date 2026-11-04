@@ -14,17 +14,27 @@
 
 #include "logger.hh"
 
+#include <spdlog/async_logger.h>
+#include <spdlog/details/thread_pool.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
+
+#include "holoflow/runtime/tracing.hh"
 
 namespace holoflow {
 
 std::shared_ptr<spdlog::logger> logger() {
+  // Own the pool before the logger so it survives registry shutdown and drains queued messages at
+  // process exit. Keep one worker for ordering, and block only on a full queue rather than lose
+  // logs.
+  static auto thread_pool = std::make_shared<spdlog::details::thread_pool>(
+      8192, 1, [] { runtime::tracing::set_thread_name("Holoflow Logger"); });
   static std::shared_ptr<spdlog::logger> logger = [] {
     auto sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
     sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%n] [thread %t] [%^%l%$] %v");
 
-    auto log = std::make_shared<spdlog::logger>("holoflow", sink);
+    auto log = std::make_shared<spdlog::async_logger>("holoflow", sink, thread_pool,
+                                                      spdlog::async_overflow_policy::block);
     log->set_level(spdlog::default_logger()->level());
     log->flush_on(spdlog::level::warn);
 

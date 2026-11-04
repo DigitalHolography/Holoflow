@@ -114,6 +114,13 @@ public:
   CorrectPhase(CorrectPhaseSettings settings, cudaStream_t stream)
       : settings_(std::move(settings)), stream_(stream) {}
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     const auto &idesc      = ctx.inputs[0].desc;
     const int   total_size = static_cast<int>(idesc.num_elements());
@@ -207,10 +214,12 @@ CorrectPhaseFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                             std::span<const holoflow::core::TDesc>     input_descs,
                             const nlohmann::json                      &jsettings,
                             const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   auto *old_correct_phase = dynamic_cast<CorrectPhase *>(old_task.get());
   if (old_correct_phase == nullptr) {
+    ctx.invalidate_execution();
     return create(input_descs, jsettings, ctx);
   }
 
@@ -219,6 +228,8 @@ CorrectPhaseFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     old_correct_phase->update_stream(ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

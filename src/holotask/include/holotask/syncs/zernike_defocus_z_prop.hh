@@ -42,19 +42,19 @@ void from_json(const nlohmann::json &j, ZernikeDefocusZPropSettings &s);
 // Factory
 // -------------------------------------------------------------------------------------------------
 
-class ZernikeDefocusZPropFactory : public holoflow::core::ISyncTaskFactory {
+class ZernikeDefocusZPropFactory : public holoflow::core::IAsyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
 
-  std::unique_ptr<holoflow::core::ISyncTask>
+  std::unique_ptr<holoflow::core::IAsyncTask>
   create(std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
-         const holoflow::core::SyncCreateCtx &ctx) const override;
+         const holoflow::core::AsyncCreateCtx &ctx) const override;
 
-  std::unique_ptr<holoflow::core::ISyncTask>
-  update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+  std::unique_ptr<holoflow::core::IAsyncTask>
+  update(std::unique_ptr<holoflow::core::IAsyncTask> old_task,
          std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
-         const holoflow::core::SyncCreateCtx &ctx) const override;
+         const holoflow::core::AsyncCreateCtx &ctx) const override;
 };
 
 } // namespace holotask::syncs

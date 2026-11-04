@@ -14,9 +14,9 @@
 
 #include "ui/widgets/system_monitor_widget.hh"
 
-#include <QGridLayout>
 #include <QLabel>
 #include <QVBoxLayout>
+#include <algorithm>
 
 namespace holovibes::ui {
 
@@ -89,21 +89,70 @@ void SystemMonitorWidget::setup_ui() {
   auto *queue_layout = new QVBoxLayout(queue_group);
   queue_layout->setContentsMargins(0, 0, 0, 0);
   queue_layout->setSpacing(6);
-  auto configure_bar = [&](QProgressBar **bar, const QString &title, int value, int maximum) {
+  auto configure_bar = [&](QProgressBar **bar, const QString &title, int value, int maximum,
+                           const QString &format) {
     queue_layout->addWidget(new QLabel(title, queue_group));
     *bar = new QProgressBar(queue_group);
     (*bar)->setRange(0, maximum);
     (*bar)->setValue(value);
-    (*bar)->setFormat("%v / %m");
+    (*bar)->setFormat(format);
     (*bar)->setTextVisible(true);
     queue_layout->addWidget(*bar);
   };
 
-  configure_bar(&input_queue_bar_, "Input Queue", 48, 64);
-  configure_bar(&output_queue_bar_, "Output Queue", 22, 64);
-  configure_bar(&record_queue_bar_, "Record Queue", 12, 32);
+  configure_bar(&input_queue_bar_, "Input Queue", 48, 64, "%v / %m");
+  configure_bar(&output_queue_bar_, "Output Queue", 22, 64, "%v / %m");
+  configure_bar(&pipeline_start_bar_, "Pipeline Start Progress", 0, 1,
+                "Click start to start the pipeline");
+
+  pipeline_start_timer_ = new QTimer(this);
+  pipeline_start_timer_->setInterval(1000);
+
+  connect(pipeline_start_timer_, &QTimer::timeout, this, [this]() {
+    int value = pipeline_start_bar_->value();
+
+    auto max = pipeline_start_bar_->maximum();
+    if (value < max - 1) {
+      pipeline_start_bar_->setValue(value + 1);
+      pipeline_start_bar_->setFormat(QString("%1 s").arg(max - value));
+    } else {
+      pipeline_start_timer_->stop();
+      pipeline_start_bar_->setFormat("Pipeline Starting...");
+    }
+  });
 
   layout->addWidget(queue_group);
+}
+
+void SystemMonitorWidget::start_pipeline_progress_bar(int estimated_time) {
+  stop_pipeline_progress_bar();
+  pipeline_start_timer_->start();
+
+  pipeline_start_bar_->setMaximum(estimated_time);
+  pipeline_start_bar_->setValue(0);
+  pipeline_start_bar_->setFormat(QString("%1 s").arg(estimated_time));
+}
+
+void SystemMonitorWidget::stop_pipeline_progress_bar() {
+  pipeline_start_timer_->stop();
+  pipeline_start_bar_->setMaximum(1);
+  pipeline_start_bar_->setValue(0);
+  pipeline_start_bar_->setFormat("Pipeline failed to start");
+}
+
+void SystemMonitorWidget::pipeline_progress_bar_finished() {
+  pipeline_start_timer_->stop();
+  pipeline_start_bar_->setMaximum(1);
+  pipeline_start_bar_->setValue(1);
+  pipeline_start_bar_->setFormat("Pipeline started!");
+}
+
+void SystemMonitorWidget::reset_pipeline_progress_bar()
+{
+  pipeline_start_timer_->stop();
+  pipeline_start_bar_->setMaximum(1);
+  pipeline_start_bar_->setValue(0);
+  pipeline_start_bar_->setFormat("Click start to start the pipeline");
 }
 
 void SystemMonitorWidget::update_metrics(double input_fps) {

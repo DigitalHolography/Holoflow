@@ -25,6 +25,7 @@
 #include "holoflow/core/graph_spec.hh"
 #include "holoflow/core/registry.hh"
 #include "holoflow/runtime/compiler.hh"
+#include "holoflow/runtime/graph_display.hh"
 #include "holoflow/runtime/graph_exec.hh"
 #include "pipeline/settings.hh"
 
@@ -32,6 +33,7 @@ namespace holovibes::ui {
 class AutoFocusWidget;
 class TensorDisplayWidget;
 class ZernikeHistoryWidget;
+struct SignalHistoryDispatcherProvider;
 } // namespace holovibes::ui
 
 class QTimer;
@@ -54,7 +56,7 @@ public:
           ui::TensorDisplayWidget  *zernike_phase_widget,
           ui::ZernikeHistoryWidget *zernike_history_widget);
 
-  ~Manager() override = default;
+  ~Manager() override;
 
   /// @brief Compiles and starts the pipeline graph.
   void start_pipeline();
@@ -73,6 +75,33 @@ public:
 
   /// @brief Sends an event to the pipeline to stop writing raw data.
   void stop_raw_record();
+
+  using GraphSpecDumpPreferences     = holoflow::core::GraphSpecDumpPreferences;
+  using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
+
+  /// @brief Returns the current graph spec dump preferences
+  const GraphSpecDumpPreferences &get_graph_spec_dump_preferences() const {
+    return graph_spec_dump_prefs_;
+  }
+  void update_graph_spec_dump_preferences(const GraphSpecDumpPreferences &prefs);
+
+  const GraphCompiledDumpPreferences &get_graph_compiled_dump_preferences() const {
+    return graph_compiled_dump_prefs_;
+  }
+  void update_graph_compiled_dump_preferences(const GraphCompiledDumpPreferences &prefs);
+
+  /// @brief Returns whether failure diagnostics should be captured at runtime.
+  bool dump_runtime_failure_graphs() const noexcept { return dump_runtime_failure_graphs_; }
+
+  /// @brief Enables or disables runtime failure diagnostics.
+  void set_dump_runtime_failure_graphs(bool enabled) noexcept {
+    dump_runtime_failure_graphs_ = enabled;
+  }
+
+  /// @brief Emits Graphviz DOT for the current compiled pipeline graph.
+  void request_compiled_graph_visualization();
+
+  void update_recording_path(const std::string& new_path);
 
 signals:
   // Lifecycle signals
@@ -94,6 +123,16 @@ signals:
   void raw_record_stopped_success();
   void raw_record_stopped_failure(const QString &error);
 
+  // record monitor signals
+  void update_record(size_t id, size_t recorded_frames, size_t writing_speed, size_t elapsed_time);
+  void update_acquisition(size_t id, size_t acquired_frames);
+  void raw_record_flushing_finished(size_t id);
+
+  // Graph visualization signals
+  void graph_visualization_ready(const QString &dot);
+  void failure_graph_ready(const QString &dot);
+  void graph_visualization_failed(const QString &error);
+
 private:
   using V = holoflow::core::GraphSpec::vertex_descriptor;
 
@@ -112,16 +151,24 @@ private:
   // --- Graph Management ---
   void build_and_run();
   void run_compiled_graph();
-  void build_graph_spec();
+  void build_graph_spec(const std::filesystem::path &log_dir);
   void reset_graph_spec();
   void guess_optimizations();
   void guess_source_dims();
   void configure_zernike_history(bool start_run);
   void resume_zernike_history();
-  void stop_zernike_history();
+  void stop_zernike_history(bool cancel_run = false);
 
   // --- Logging Helpers ---
   void dump_graph_logs(const std::filesystem::path &log_dir);
+
+#if defined(_WIN32)
+  void install_windows_crash_handler();
+  void uninstall_windows_crash_handler();
+  void dump_windows_crash_graph(unsigned long exception_code) noexcept;
+#endif
+
+  const std::string& get_record_node_name();
 
   // --- UI Elements ---
   ui::AutoFocusWidget      *autofocus_widget_;
@@ -136,14 +183,22 @@ private:
   ui::TensorDisplayWidget  *registration_xcorr_widget_;
   ui::TensorDisplayWidget  *zernike_phase_widget_;
   ui::ZernikeHistoryWidget *zernike_history_widget_;
+  std::shared_ptr<ui::SignalHistoryDispatcherProvider> history_dispatchers_;
 
   // --- State & Configuration ---
   Settings s_;
   int      src_width_  = 0;
   int      src_height_ = 0;
 
-  /// @brief Toggles debug dumps of the pipeline (.dot, .json) to disk.
+  GraphSpecDumpPreferences     graph_spec_dump_prefs_     = {};
+  GraphCompiledDumpPreferences graph_compiled_dump_prefs_ = {};
+  std::filesystem::path         log_root_;
+
+  /// @brief Enables the main branch's pipeline debug dumps and compiler tracing.
   bool dump_debug_graphs_ = true;
+
+  /// @brief Toggles compiler/runtime failure diagnostics (.dot and tracing) to disk.
+  bool dump_runtime_failure_graphs_ = false;
 
   /// @brief Mutex to protect state shared between the main UI thread and pipeline callbacks.
   std::mutex mtx_;

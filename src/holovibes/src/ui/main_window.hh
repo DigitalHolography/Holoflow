@@ -37,6 +37,7 @@
 #include "ui/widgets/export_widget.hh"
 #include "ui/widgets/image_rendering_widget.hh"
 #include "ui/widgets/import_widget.hh"
+#include "ui/widgets/record_monitor_widget.hh"
 #include "ui/widgets/system_monitor_widget.hh"
 #include "ui/widgets/view_widget.hh"
 
@@ -46,6 +47,7 @@ class ZernikeHistoryWidget;
 class SelectedWidgetSettingsPanel;
 class VisualizationWorkspace;
 class UpdateChecker;
+class GraphVisualizerWidget;
 
 class MainWindow : public QMainWindow {
   Q_OBJECT
@@ -67,12 +69,14 @@ private slots:
   void on_raw_record_stopped_success();
   void on_raw_record_stopped_failure(const QString &error);
 
+
 private:
   ImportWidget                *import_widget_;
   ExportWidget                *export_widget_;
   ImageRenderingWidget        *render_widget_;
   ViewWidget                  *view_widget_;
   SystemMonitorWidget         *monitor_widget_;
+  RecordMonitorWidget         *record_widget_;
   SelectedWidgetSettingsPanel *selected_widget_settings_panel_;
 
   void show_pipeline_error_popup(const QString &message);
@@ -85,6 +89,10 @@ private:
   void on_update_pipeline_success();
   void on_update_pipeline_failure(const QString &error);
 
+  void on_update_record(size_t id, size_t frame_recorded, size_t writing_speed, size_t elapsed_time);
+  void on_update_acquisition(size_t id, size_t frame_acquired);
+  void on_raw_record_flushing_finished(size_t id);
+
   bool                        validate_inputs();
   void                        apply_validation_result(const pipeline::ValidationResult &result);
   void                        refresh_validation_tooltips(const pipeline::ValidationResult &result);
@@ -92,6 +100,8 @@ private:
   void                        setup_validation_connections();
   void                        setup_update_connections();
   void                        update_if_running();
+  void                        recording_file_path_changed();
+  int                         estimate_pipeline_start_duration();
 
   QSize              guess_source_dims();
   QSize              processed_display_dims(QSize source_dims) const;
@@ -107,6 +117,9 @@ private:
   void configure_window();
   void check_for_updates();
   void show_fft_frequency_tool();
+  void show_preferences();
+  void show_pipeline_graph();
+  void open_dot_file();
 
   void    refresh_visualization_availability();
   void    select_configurable_widget(ZernikeHistoryWidget *widget);
@@ -136,6 +149,8 @@ private:
   bool               paused_settings_dirty_           = false;
   bool               export_in_progress_              = false;
   bool               geometry_restored_               = false;
+  bool               dump_runtime_failure_graphs_     = false;
+  bool               failure_graph_available_         = false;
   double             last_input_fps_                  = 0.0;
   double             signal_plot_time_window_seconds_ = 8.0;
   QString            session_id_;
@@ -143,8 +158,8 @@ private:
   std::optional<int> pending_recording_acquisition_id_;
 
   // Workers
-  pipeline::Manager *pipeline_manager_;
-  QThread           *pipeline_manager_thread_;
+  pipeline::Manager *pipeline_manager_        = nullptr;
+  QThread           *pipeline_manager_thread_ = nullptr;
 
   // Display widgets
   TensorDisplayWidget  *xy_processed_widget_;
@@ -176,6 +191,7 @@ private:
   QWidget                *right_sidebar_              = nullptr;
   QToolButton            *update_indicator_           = nullptr;
   UpdateChecker          *update_checker_             = nullptr;
+  GraphVisualizerWidget  *graph_visualizer_widget_    = nullptr;
   QUrl                    available_update_url_;
 };
 
