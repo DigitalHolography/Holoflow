@@ -429,6 +429,13 @@ public:
     }
   }
 
+  bool supports_cuda_graph() const noexcept override { return true; }
+
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx execution{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(execution);
+  }
+
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     CUDA_CHECK(detail::launch_zernike_from_slopes_gpu(
         reinterpret_cast<const float *>(ctx.inputs[0].data()),
@@ -529,6 +536,7 @@ ZernikeFromSlopesFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_
                                  std::span<const holoflow::core::TDesc>     input_descs,
                                  const nlohmann::json                      &jsettings,
                                  const holoflow::core::SyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)infer(input_descs, jsettings);
 
   const auto  settings = jsettings.get<ZernikeFromSlopesSettings>();
@@ -545,6 +553,8 @@ ZernikeFromSlopesFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_
     old_gpu->update_stream(ctx.stream);
     return old_task;
   }
+
+  ctx.invalidate_execution();
 
   return create(input_descs, jsettings, ctx);
 }

@@ -22,6 +22,8 @@ struct FfmpegSettings {
   double      fps;
   std::string format;
   std::string codec;
+  bool        resize_to_square = false;
+  std::string resize_algorithm = "CpuBilinear";
 
   bool operator==(const FfmpegSettings &) const = default;
 };

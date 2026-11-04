@@ -17,7 +17,6 @@
 #include <cmath>
 #include <cstdint>
 #include <cstring>
-#include <filesystem>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -26,7 +25,7 @@
 #include "holoflow/core/tensor.hh"
 #include "holonp/max.hh"
 
-#include "python_oracle.hh"
+#include "reference_ops.hh"
 #include "sync_task_runner.hh"
 
 using holoflow::core::DType;
@@ -34,7 +33,6 @@ using holoflow::core::MemLoc;
 using holoflow::core::TaskKind;
 using holoflow::core::TDesc;
 
-static const std::filesystem::path kOracleScript{HOLONP_TEST_ORACLE_SCRIPT};
 
 static TDesc device_desc(std::vector<size_t> shape, DType dtype) {
   return TDesc(std::move(shape), dtype, MemLoc::Device);
@@ -46,7 +44,7 @@ template <typename T> static std::vector<std::byte> as_bytes(const std::vector<T
   return out;
 }
 
-static void expect_near_oracle(const std::vector<std::byte> &actual,
+static void expect_near_reference(const std::vector<std::byte> &actual,
                                const std::vector<std::byte> &expected, DType dtype,
                                float rtol = 1e-5f) {
   ASSERT_EQ(actual.size(), expected.size());
@@ -106,43 +104,43 @@ TEST_F(MaxInferTest, KeepdimsAllAxes) {
   EXPECT_EQ(r.output_descs[0].dtype, DType::U16);
 }
 
-class MaxOracleTest : public ::testing::Test {
+class MaxReferenceTest : public ::testing::Test {
 protected:
   holonp::MaxFactory factory;
 };
 
-TEST_F(MaxOracleTest, F32Axis1) {
+TEST_F(MaxReferenceTest, F32Axis1) {
   const TDesc d    = device_desc({2, 3}, DType::F32);
   const auto  data = as_bytes(std::vector<float>{3.f, 1.f, 2.f, 8.f, 5.f, 7.f});
   const auto  j    = max_settings_axis(1);
   const auto  run  = holonp_test::run_sync_factory(factory, std::vector<TDesc>{d},
                                                    std::vector<std::vector<std::byte>>{data}, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "max";
   oi.n_outputs      = 1;
   oi.input_descs    = {d};
   oi.input_bytes    = {data};
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }
 
-TEST_F(MaxOracleTest, U16ReduceAllKeepdims) {
+TEST_F(MaxReferenceTest, U16ReduceAllKeepdims) {
   const TDesc d    = device_desc({2, 3}, DType::U16);
   const auto  data = as_bytes(std::vector<std::uint16_t>{9, 7, 5, 4, 8, 6});
   const auto  j    = max_settings_all(true);
   const auto  run  = holonp_test::run_sync_factory(factory, std::vector<TDesc>{d},
                                                    std::vector<std::vector<std::byte>>{data}, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "max";
   oi.n_outputs      = 1;
   oi.input_descs    = {d};
   oi.input_bytes    = {data};
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::U16);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::U16);
 }
 
 class MaxUpdateTest : public ::testing::Test {
@@ -157,12 +155,12 @@ TEST_F(MaxUpdateTest, ReusesTaskWithSameConfig) {
   const auto  run  = holonp_test::run_sync_factory_update(
       factory, std::vector<TDesc>{d}, std::vector<std::vector<std::byte>>{data}, j);
 
-  holonp_test::OracleInput oi;
+  holonp_test::ReferenceInput oi;
   oi.op             = "max";
   oi.n_outputs      = 1;
   oi.input_descs    = {d};
   oi.input_bytes    = {data};
   oi.settings       = j;
-  const auto oracle = holonp_test::invoke_oracle(oi, kOracleScript);
-  expect_near_oracle(run.output_bytes[0], oracle.output_bytes[0], DType::F32);
+  const auto reference = holonp_test::invoke_reference(oi);
+  expect_near_reference(run.output_bytes[0], reference.output_bytes[0], DType::F32);
 }

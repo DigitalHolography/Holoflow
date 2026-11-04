@@ -52,13 +52,17 @@ ExportWidget::ExportWidget(QWidget *parent) : QGroupBox("EXPORT", parent) {
 QString ExportWidget::get_image_type() const { return image_type_combo_->currentText(); }
 QString ExportWidget::get_format() const { return format_combo_->currentData().toString(); }
 QString ExportWidget::get_codec() const { return codec_combo_->currentData().toString(); }
+QString ExportWidget::get_resize_algorithm() const {
+  return resize_algorithm_combo_->currentData().toString();
+}
 QString ExportWidget::get_file_path() const { return file_line_edit_->text(); }
 QString ExportWidget::get_tag() const { return tag_combo_->currentText(); }
-bool    ExportWidget::is_motion_compensation_enabled() const {
+bool ExportWidget::is_motion_compensation_enabled() const {
   return motion_compensation_check_->isChecked();
 }
 bool ExportWidget::is_frame_count_enabled() const { return frames_check_->isChecked(); }
 int  ExportWidget::get_frame_count() const { return frames_spin_->value(); }
+int  ExportWidget::get_queue_count() const { return queues_spin_->value(); }
 bool ExportWidget::isChecked() const { return enable_check_->isChecked(); }
 
 void ExportWidget::set_file_path(const QString &path) { file_line_edit_->setText(path); }
@@ -71,8 +75,11 @@ void ExportWidget::set_frame_batch_size(int batch_size) {
 void ExportWidget::set_image_type(const QString &type) { image_type_combo_->setCurrentText(type); }
 void ExportWidget::set_motion_compensation_enabled(bool enabled) {
   const auto format = format_combo_->currentData().toString();
-  motion_compensation_check_->setChecked(
-      enabled && (format == "png" || format == "jpg"));
+  motion_compensation_check_->setChecked(enabled && (format == "png" || format == "jpg"));
+}
+void ExportWidget::set_resize_algorithm(const QString &algorithm) {
+  const auto index = resize_algorithm_combo_->findData(algorithm);
+  resize_algorithm_combo_->setCurrentIndex(index >= 0 ? index : 0);
 }
 void ExportWidget::setChecked(bool checked) {
   enable_check_->setChecked(checked);
@@ -89,11 +96,13 @@ QComboBox   *ExportWidget::image_type_combo() { return image_type_combo_; }
 QComboBox   *ExportWidget::format_combo() { return format_combo_; }
 QComboBox   *ExportWidget::codec_combo() { return codec_combo_; }
 QCheckBox   *ExportWidget::motion_compensation_check() { return motion_compensation_check_; }
+QComboBox   *ExportWidget::resize_algorithm_combo() { return resize_algorithm_combo_; }
 QLineEdit   *ExportWidget::file_line_edit() { return file_line_edit_; }
 QPushButton *ExportWidget::browse_button() { return browse_button_; }
 QComboBox   *ExportWidget::tag_combo() { return tag_combo_; }
 QCheckBox   *ExportWidget::frames_check() { return frames_check_; }
 QSpinBox    *ExportWidget::frames_spin() { return frames_spin_; }
+QSpinBox    *ExportWidget::queues_spin() { return queues_spin_; }
 QPushButton *ExportWidget::record_button() { return record_button_; }
 QPushButton *ExportWidget::stop_button() { return stop_button_; }
 QPushButton *ExportWidget::stop_fan_button() { return stop_fan_button_; }
@@ -142,6 +151,16 @@ void ExportWidget::setup_ui() {
   ++row;
   update_codec_choices();
 
+  layout->addWidget(new QLabel("Resize algorithm", content_container_), row, 0);
+  resize_algorithm_combo_ =
+      create_combo_box(content_container_, QStringList{"CPU bilinear", "GPU bilinear"});
+  resize_algorithm_combo_->setItemData(0, "CpuBilinear");
+  resize_algorithm_combo_->setItemData(1, "CudaBilinear");
+  resize_algorithm_combo_->setToolTip(
+      "Algorithm used when exporting video with square resizing enabled.");
+  layout->addWidget(resize_algorithm_combo_, row, 1);
+  ++row;
+
   file_line_edit_ = new QLineEdit(content_container_);
   file_line_edit_->setText("holovibes\\capture");
   file_line_edit_->setReadOnly(true);
@@ -170,6 +189,14 @@ void ExportWidget::setup_ui() {
   frame_controls->addWidget(frames_spin_, 1);
   frame_controls->addWidget(frames_higher_button_);
   layout->addLayout(frame_controls, row, 1);
+  ++row;
+
+  layout->addWidget(new QLabel("Record queue count"), row, 0);
+  queues_spin_ = create_spin_box(content_container_, 1, 5, 3);
+  queues_spin_->setToolTip(
+      tr("This is the number of queues for recording. The only configuration where it will be used "
+         "is when recording raw files with the AmetekS711."));
+  layout->addWidget(queues_spin_, row, 1);
   ++row;
 
   auto *button_layout = new QHBoxLayout();
@@ -209,7 +236,9 @@ void ExportWidget::connect_signals() {
   connect(codec_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
   connect(motion_compensation_check_, &QCheckBox::toggled, this, &ExportWidget::settings_changed);
-  connect(file_line_edit_, &QLineEdit::textChanged, this, &ExportWidget::settings_changed);
+  connect(resize_algorithm_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &ExportWidget::settings_changed);
+  connect(file_line_edit_, &QLineEdit::textChanged, this, &ExportWidget::file_path_changed);
   connect(tag_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
   connect(frames_check_, &QCheckBox::toggled, this, &ExportWidget::settings_changed);
@@ -230,6 +259,9 @@ void ExportWidget::connect_signals() {
     frames_spin_->setValue(std::min(frames_spin_->maximum(), higher));
   });
   set_frame_batch_size(1);
+
+  connect(queues_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &ExportWidget::settings_changed);
 }
 
 void ExportWidget::clear_validation_styles() {

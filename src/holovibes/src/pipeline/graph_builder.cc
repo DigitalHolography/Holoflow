@@ -43,6 +43,11 @@ public:
 
   holoflow::core::GraphSpec build();
 
+  [[nodiscard]] std::string failure_graph_dot(
+      const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+    return GraphBuilderTracer::failure_graph_dot(prefs);
+  }
+
 private:
   struct ShackHartmannGeometry {
     size_t frame_width;
@@ -132,6 +137,11 @@ GraphBuilder &GraphBuilder::operator=(GraphBuilder &&) noexcept = default;
 
 holoflow::core::GraphSpec GraphBuilder::build() { return impl_->build(); }
 
+std::string GraphBuilder::failure_graph_dot(
+    const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+  return impl_->failure_graph_dot(prefs);
+}
+
 GraphBuilder::Impl::Impl(const Settings &settings, holoflow::core::Registry &registry)
     : GraphBuilderTasks(registry), s_(settings) {}
 
@@ -220,7 +230,15 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
   }
 
   if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
-    return ametek_s711_euresys_coaxlink_qsfp_plus({cam_path});
+    holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings settings{.cfg_path = cam_path};
+    if (s_.can_use_camera_record()) {
+      settings.record_settings = holotask::sources::RecordSettings{
+          .file_path          = s_.recording_path.string(),
+          .recording_count    = s_.recording_count,
+          .pipeline_config    = settings_to_old_json(s_),
+          .record_queue_count = static_cast<size_t>(s_.recording_queue_count)};
+    }
+    return ametek_s711_euresys_coaxlink_qsfp_plus(settings);
   }
 
   HOLOVIBES_UNREACHABLE();
@@ -246,6 +264,8 @@ GraphBuilder::Impl::motion_compensated_export(const TDesc &X) {
 }
 
 void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
+  if (s_.can_use_camera_record())
+    return;
   auto path  = s_.recording_path.string();
   auto count = s_.recording_count;
   if (s_.recording_format == "npy") {
@@ -270,7 +290,7 @@ void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
   } else {
     auto video = memcpy(H, {holotask::syncs::MemcpySettings::Target::Host});
     ffmpeg_write(video, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
-                         s_.recording_codec});
+                         s_.recording_codec, true, s_.recording_resize_algorithm});
   }
 }
 
@@ -312,7 +332,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
   // Time-frequency analysis then operates along axis 1 (the T dimension).
   // The output is [N_pre, Nz, Hy, Hx], which feeds directly into the post-TFA queue.
 
-  int     N_pre = 8;
+  int     N_pre = 4;
   int64_t T     = static_cast<int64_t>(H.shape.at(0));
   int64_t Hy    = static_cast<int64_t>(H.shape.at(1));
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
@@ -835,14 +855,10 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
       } else if (s_.recording_format == "holo") {
         holofile_write(result_rec, {path, count, settings_to_old_json(s_), true});
       } else {
-        if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
-          const auto square_size = std::max(result_rec.shape.at(1), result_rec.shape.at(2));
-          result_rec =
-              resize(result_rec, {static_cast<int>(square_size), static_cast<int>(square_size)});
-        }
-
-        ffmpeg_write(result_rec, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
-                                  s_.recording_codec});
+        const bool resize_to_square = s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;
+        ffmpeg_write(result_rec,
+                     {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
+                      s_.recording_codec, resize_to_square, s_.recording_resize_algorithm});
       }
     }
   }

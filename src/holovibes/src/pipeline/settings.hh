@@ -146,6 +146,8 @@ struct Settings {
   std::string           recording_format              = "holo";
   std::string           recording_codec               = "mpeg4";
   bool                  recording_motion_compensation = false;
+  std::string           recording_resize_algorithm    = "CpuBilinear";
+  int                   recording_queue_count         = 3;
 
   // Auto-focus
   bool             autofocus_enabled;
@@ -160,6 +162,11 @@ struct Settings {
 
   [[nodiscard]] double signal_plot_sample_time_seconds() const {
     return static_cast<double>(time_stride) / input_sampling_frequency_hz;
+  }
+
+  [[nodiscard]] bool can_use_camera_record() const {
+    return recording_format == "holo" && recording_method == RecordingMethod::RAW &&
+           import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP;
   }
 };
 

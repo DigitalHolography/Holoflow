@@ -17,6 +17,7 @@
 #include <memory>
 
 #include "holoflow/core/graph_spec.hh"
+#include "holoflow/runtime/graph_display.hh"
 
 namespace holoflow::core {
 class Registry;
@@ -42,6 +43,10 @@ public:
   GraphBuilder &operator=(const GraphBuilder &) = delete;
 
   holoflow::core::GraphSpec build();
+
+  /// Return the partial graph when a task rejects its input during graph construction.
+  [[nodiscard]] std::string failure_graph_dot(
+      const holoflow::core::GraphSpecDumpPreferences &prefs) const;
 
 private:
   class Impl;

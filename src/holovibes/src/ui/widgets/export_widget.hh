@@ -33,11 +33,13 @@ public:
   QString get_image_type() const;
   QString get_format() const;
   QString get_codec() const;
+  QString get_resize_algorithm() const;
   QString get_file_path() const;
   QString get_tag() const;
   bool    is_motion_compensation_enabled() const;
   bool    is_frame_count_enabled() const;
   int     get_frame_count() const;
+  int     get_queue_count() const;
   bool    isChecked() const;
 
   // Setters
@@ -46,6 +48,7 @@ public:
   void set_frame_batch_size(int batch_size);
   void set_image_type(const QString &type);
   void set_motion_compensation_enabled(bool enabled);
+  void set_resize_algorithm(const QString &algorithm);
   void setChecked(bool checked);
 
   // Control button state
@@ -62,11 +65,13 @@ public:
   QComboBox   *format_combo();
   QComboBox   *codec_combo();
   QCheckBox   *motion_compensation_check();
+  QComboBox   *resize_algorithm_combo();
   QLineEdit   *file_line_edit();
   QPushButton *browse_button();
   QComboBox   *tag_combo();
   QCheckBox   *frames_check();
   QSpinBox    *frames_spin();
+  QSpinBox    *queues_spin();
   QPushButton *record_button();
   QPushButton *stop_button();
   QPushButton *stop_fan_button();
@@ -77,6 +82,7 @@ signals:
   void stop_fan_clicked();
   void browse_clicked();
   void settings_changed();
+  void file_path_changed();
 
 private:
   void setup_ui();
@@ -91,6 +97,7 @@ private:
   QComboBox   *format_combo_;
   QCheckBox   *motion_compensation_check_;
   QComboBox   *codec_combo_;
+  QComboBox   *resize_algorithm_combo_;
   QLineEdit   *file_line_edit_;
   QPushButton *browse_button_;
   QComboBox   *tag_combo_;
@@ -99,6 +106,7 @@ private:
   QPushButton *frames_lower_button_;
   QPushButton *frames_higher_button_;
   int          frame_batch_size_ = 1;
+  QSpinBox    *queues_spin_;
   QPushButton *record_button_;
   QPushButton *stop_button_;
   QPushButton *stop_fan_button_;

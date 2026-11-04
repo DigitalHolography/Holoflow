@@ -19,6 +19,8 @@
 
 namespace holovibes {
 
+// Console output and flushing use a persistent worker. Formatting stays on the caller; the
+// lossless bounded queue waits only when full and drains at orderly process shutdown.
 std::shared_ptr<spdlog::logger> logger();
 
-}
+} // namespace holovibes

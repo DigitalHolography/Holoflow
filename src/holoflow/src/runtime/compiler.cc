@@ -13,25 +13,29 @@
 // limitations under the License.
 
 #include "holoflow/runtime/compiler.hh"
+#include "diagnostics_file_writer.hh"
+#include "holoflow/runtime/diagnostics.hh"
+#include "holoflow/runtime/tracing.hh"
+#include "section_cuda_graph.hh"
 
+#include <algorithm>
 #include <boost/graph/adjacency_list.hpp>
 #include <boost/graph/breadth_first_search.hpp>
 #include <boost/graph/topological_sort.hpp>
-#include <chrono>
 #include <format>
-#include <fstream>
 #include <iostream>
 #include <mutex>
 #include <numeric>
-#include <nvtx3/nvtx3.hpp>
 #include <queue>
 #include <ranges>
 #include <set>
 #include <stack>
-#include <thread>
+#include <string_view>
+#include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <variant>
 
 #include "curaii/cuda.hh"
@@ -39,8 +43,9 @@
 #include "holoflow/core/registry.hh"
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
+#include "holoflow/runtime/graph_display.hh"
 #include "holoflow/runtime/graph_exec.hh"
-#include "spdlog/sinks/basic_file_sink.h"
+#include "spdlog/sinks/base_sink.h"
 #include "spdlog/sinks/stdout_color_sinks.h"
 #include "spdlog/spdlog.h"
 
@@ -55,135 +60,30 @@ public:
   using std::runtime_error::runtime_error;
 };
 
-// -------------------------------------------------------------------------------------------------
-// Profiling Data Structures
-// -------------------------------------------------------------------------------------------------
+using tracing::ScopedTrace;
 
-struct TraceEvent {
-  std::string name;
-  std::string category;
-  long long   start_us;
-  long long   dur_us;
-  uint32_t    tid;
-};
-
-class CompilationProfiler {
+namespace {
+class CompilerLogBufferSink final : public spdlog::sinks::base_sink<std::mutex> {
 public:
-  void add_event(std::string name, std::string category, long long start_us, long long dur_us) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    uint32_t tid = static_cast<uint32_t>(std::hash<std::thread::id>{}(std::this_thread::get_id()));
-    events_.push_back({std::move(name), std::move(category), start_us, dur_us, tid});
+  void clear() {
+    std::lock_guard lock(mutex_);
+    buffer_.clear();
   }
-
-  void log_summary(std::shared_ptr<spdlog::logger> &logger) const {
-    if (!logger || events_.empty())
-      return;
-
-    double total_time_ms = 0.0;
-    for (const auto &ev : events_) {
-      if (ev.name == "Total Compilation") {
-        total_time_ms = ev.dur_us / 1000.0;
-        break;
-      }
-    }
-
-    logger->info("{:=^60}", " Compilation Passes Summary ");
-    logger->info("{:<30} | {:>12} | {:>10}", "Pass Name", "Time (ms)", "% Total");
-    logger->info("{:-^60}", "");
-
-    for (const auto &ev : events_) {
-      if (ev.category != "pass" && ev.name != "Total Compilation")
-        continue;
-
-      double dur_ms  = ev.dur_us / 1000.0;
-      double percent = (total_time_ms > 0) ? (dur_ms / total_time_ms) * 100.0 : 0.0;
-
-      if (ev.name == "Total Compilation") {
-        logger->info("{:-^60}", "");
-      }
-      logger->info("{:<30} | {:>12.3f} | {:>9.2f}%", ev.name, dur_ms, percent);
-    }
-    logger->info("{:=^60}", "");
-  }
-
-  void dump_chrome_tracing(const std::filesystem::path &filepath) const {
-    std::ofstream out(filepath);
-    if (!out.is_open())
-      return;
-
-    out << "[\n";
-    for (size_t i = 0; i < events_.size(); ++i) {
-      const auto &ev = events_[i];
-      out << "  {"
-          << "\"name\": \"" << ev.name << "\", "
-          << "\"cat\": \"" << ev.category << "\", "
-          << "\"ph\": \"X\", "
-          << "\"ts\": " << ev.start_us << ", "
-          << "\"dur\": " << ev.dur_us << ", "
-          << "\"pid\": 1, "
-          << "\"tid\": " << ev.tid << "}";
-      if (i < events_.size() - 1)
-        out << ",";
-      out << "\n";
-    }
-    out << "]\n";
+  std::string take() {
+    std::lock_guard lock(mutex_);
+    return std::exchange(buffer_, {});
   }
 
 private:
-  std::vector<TraceEvent> events_;
-  std::mutex              mutex_;
-};
-
-// -------------------------------------------------------------------------------------------------
-// Observability & Scoped Tracer
-// -------------------------------------------------------------------------------------------------
-
-class ScopedTrace {
-public:
-  using Clock       = std::chrono::steady_clock;
-  using SystemClock = std::chrono::system_clock;
-
-  ScopedTrace(std::string name, std::string category, std::shared_ptr<spdlog::logger> logger,
-              CompilationProfiler *profiler)
-      : name_(std::move(name)), category_(std::move(category)), logger_(std::move(logger)),
-        profiler_(profiler) {
-
-    start_time_ = Clock::now();
-    start_us_   = std::chrono::time_point_cast<std::chrono::microseconds>(SystemClock::now())
-                      .time_since_epoch()
-                      .count();
-
-    if (logger_ && category_ == "pass") {
-      logger_->trace(">> Begin Pass: {}", name_);
-    }
-
-    nvtxRangePush(name_.c_str());
+  void sink_it_(const spdlog::details::log_msg &message) override {
+    spdlog::memory_buf_t text;
+    formatter_->format(message, text);
+    buffer_.append(text.data(), text.size());
   }
-
-  ~ScopedTrace() {
-    auto end_time = Clock::now();
-    auto dur_us =
-        std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time_).count();
-
-    if (logger_ && category_ == "pass") {
-      logger_->info("<< End Pass:   {} ({:.3f} ms)", name_, dur_us / 1000.0);
-    }
-
-    if (profiler_) {
-      profiler_->add_event(name_, category_, start_us_, dur_us);
-    }
-
-    nvtxRangePop();
-  }
-
-private:
-  std::string                     name_;
-  std::string                     category_;
-  std::shared_ptr<spdlog::logger> logger_;
-  CompilationProfiler            *profiler_;
-  Clock::time_point               start_time_;
-  long long                       start_us_;
+  void        flush_() override {}
+  std::string buffer_;
 };
+} // namespace
 
 // -------------------------------------------------------------------------------------------------
 // Storage Adapter for owning tasks
@@ -229,28 +129,43 @@ core::Storage &TaskStorageAdapter::owned_output_storage(size_t index) {
 class Compiler::Impl {
 public:
   Impl(core::Registry &registry, Compiler::Config config);
+  ~Impl() {
+    // Also covers exceptions raised while reporting a compilation failure.
+    if (out_)
+      out_->resources.section_cuda_graphs.clear();
+    if (prev_)
+      prev_->resources.section_cuda_graphs.clear();
+  }
 
   std::unique_ptr<CompilerOutput> run(const core::GraphSpec          &gspec,
                                       std::unique_ptr<CompilerOutput> prev);
 
 private:
   // --- State ---
-  core::Registry                 &registry_;
-  Compiler::Config                config_;
-  std::shared_ptr<spdlog::logger> logger_;
-  CompilationProfiler             profiler_;
+  core::Registry                        &registry_;
+  Compiler::Config                       config_;
+  std::shared_ptr<spdlog::logger>        logger_;
+  std::shared_ptr<CompilerLogBufferSink> log_buffer_;
+  std::string                            failure_pass_name_;
+  std::string                            failure_node_name_;
 
   const core::GraphSpec          *gspec_ = nullptr;
   std::unique_ptr<CompilerOutput> prev_;
   std::unique_ptr<CompilerOutput> out_;
+  // Unused allocations stay alive until their executable dependencies have been retired.
+  std::multimap<std::pair<core::MemLoc, size_t>, MemoryBlock> retired_blocks_;
+  uint64_t                                                    compilation_generation_ = 1;
 
   // Auxiliary Map: Node Name -> Section ID
   std::unordered_map<std::string, size_t> node_to_section_map_;
 
   // --- Helpers ---
   void        setup_logging();
+  void        publish_log() noexcept;
   ScopedTrace trace_scope(std::string name, std::string category = "pass");
-  void        dump_graphviz(const std::string &filename);
+  void        dump_graphviz(std::string_view filename, std::string_view failure_node = {},
+                            std::string_view failure_context = {});
+  void        dump_json(const std::string &filename, const core::GraphSpec &gspec);
   template <class TaskInterface, class Factory, class Ctx>
   std::unique_ptr<core::ITask> create_or_update_task(Factory &factory, const NodePlan &np,
                                                      const Ctx &ctx);
@@ -259,6 +174,7 @@ private:
   void validate_spec();
   void build_graph_structure();
   void run_type_inference();
+  void deduce_const_tasks();
   void assign_tensor_ids();
   void assign_storage_ids();
   void verify_buffer_consistency();
@@ -268,9 +184,13 @@ private:
   void assign_streams();
   void instantiate_tasks();
   void bind_tasks();
+  void invalidate_task_graphs(std::string_view name) noexcept;
+  void carry_section_cuda_graphs();
 
   // Generic Pass Runner
   template <typename Func> void run_pass(const char *name, Func &&fn) {
+    failure_pass_name_ = name;
+    failure_node_name_.clear();
     auto scope = trace_scope(name, "pass");
     fn();
   }
@@ -282,23 +202,47 @@ private:
 
 Compiler::Impl::Impl(core::Registry &registry, Compiler::Config config)
     : registry_(registry), config_(std::move(config)) {
+  ScopedTrace initialization("Compiler Initialization");
+  ScopedTrace logging("Setup Compiler Logging");
   setup_logging();
 }
 
 std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec          &gspec,
                                                     std::unique_ptr<CompilerOutput> prev) {
-  gspec_ = &gspec;
-  prev_  = std::move(prev);
-  out_   = std::make_unique<CompilerOutput>();
-
-  // Use optional to control exactly when the trace ends without double-destruction
+  if (log_buffer_)
+    log_buffer_->clear();
+  // Publish on every exit, including exceptions during failure reporting/cleanup.
+  struct LogPublication {
+    Impl &compiler;
+    ~LogPublication() { compiler.publish_log(); }
+  } log_publication{*this};
+  tracing::Capture capture(config_.log_dir.empty() ? std::filesystem::path{}
+                                                   : config_.log_dir / config_.trace_filename,
+                           config_.enable_profiling);
   std::optional<ScopedTrace> total_trace;
-  total_trace.emplace(trace_scope("Total Compilation", "lifecycle"));
+  total_trace.emplace("Total Compilation");
 
   try {
+    run_pass("Initialize Compilation", [&] {
+      gspec_                  = &gspec;
+      prev_                   = std::move(prev);
+      out_                    = std::make_unique<CompilerOutput>();
+      compilation_generation_ = prev_ ? prev_->resources.compilation_generation + 1 : 1;
+    });
+    run_pass("Dump Graph Spec", [&] { dump_json("graph_spec.json", gspec); });
+    if (prev_) {
+      // Stop/wait is the caller's responsibility. Drain before any dependent resources change.
+      run_pass("Drain Previous CUDA Streams", [&] {
+        for (auto &[id, stream] : prev_->resources.streams) {
+          auto scope = trace_scope(std::format("Synchronize Previous Stream {}", id), "detail");
+          CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+        }
+      });
+    }
     run_pass("Validate Spec", [&] { validate_spec(); });
     run_pass("Build Graph Plan", [&] { build_graph_structure(); });
     run_pass("Type Inference", [&] { run_type_inference(); });
+    run_pass("Const Deduction", [&] { deduce_const_tasks(); });
 
     run_pass("Tensor IDs", [&] { assign_tensor_ids(); });
     run_pass("Storage Mapping", [&] { assign_storage_ids(); });
@@ -311,6 +255,12 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     run_pass("Stream Assignment", [&] { assign_streams(); });
     run_pass("Task Instantiation", [&] { instantiate_tasks(); });
     run_pass("Task Binding", [&] { bind_tasks(); });
+    run_pass("Carry Compatible Section CUDA Graphs", [&] { carry_section_cuda_graphs(); });
+    run_pass("Inspect Section CUDA Graphs", [&] {
+      out_->resources.max_section_cuda_graphs    = config_.max_section_cuda_graphs;
+      out_->resources.section_cuda_graph_log_dir = config_.log_dir;
+      refresh_section_cuda_graphs(out_->graph, out_->sections, out_->resources, false);
+    });
 
     if (config_.dump_dot_on_failure) {
       run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_success.dot"); });
@@ -318,16 +268,30 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
   } catch (const std::exception &e) {
     logger_->error("Compilation Failed: {}", e.what());
     if (config_.dump_dot_on_failure) {
-      run_pass("Dump Graphviz", [&] { dump_graphviz("compilation_failure.dot"); });
+      const auto context = std::format(
+          "Compilation failed during {}{}: {}", failure_pass_name_,
+          failure_node_name_.empty() ? "" : std::format(" at node '{}'", failure_node_name_),
+          e.what());
+      auto dump_trace = trace_scope("Dump Graphviz", "pass");
+      dump_graphviz("compilation_failure.dot", failure_node_name_, context);
     }
 
-    total_trace.reset(); // Stop timer before throwing
+    total_trace->set_outcome(tracing::Outcome::Failure);
+    total_trace.reset(); // Close the measured scope before cleanup/export.
 
     try {
       CUDA_CHECK(cudaDeviceSynchronize());
     } catch (const std::exception &cuda_e) {
       logger_->error("CUDA error during cleanup: {}", cuda_e.what());
     }
+
+    // Clear graphs before releasing tasks or retired buffers, including partially transferred
+    // state.
+    if (out_)
+      out_->resources.section_cuda_graphs.clear();
+    if (prev_)
+      prev_->resources.section_cuda_graphs.clear();
+    retired_blocks_.clear();
 
     try {
       CUDA_CHECK(cudaGetLastError());
@@ -339,40 +303,71 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     throw;
   }
 
-  // Stop the total compilation timer safely
+  total_trace->set_outcome(tracing::Outcome::Success);
   total_trace.reset();
-
-  if (config_.enable_profiling) {
-    // profiler_.log_summary(logger_);
-    run_pass("Dump log summary", [&] { profiler_.log_summary(logger_); });
-    if (!config_.log_dir.empty()) {
-      // profiler_.dump_chrome_tracing(config_.log_dir / config_.trace_filename);
-      run_pass("Dump Chrome Tracing",
-               [&] { profiler_.dump_chrome_tracing(config_.log_dir / config_.trace_filename); });
-    }
-  }
 
   return std::move(out_);
 }
 
 void Compiler::Impl::setup_logging() {
-  if (spdlog::get("compiler")) {
+  {
+    ScopedTrace retirement("Retire Compiler Logger", "detail");
     spdlog::drop("compiler");
   }
-
   if (!config_.log_dir.empty()) {
-    std::filesystem::create_directories(config_.log_dir);
-    auto path = config_.log_dir / "compiler.log";
-    logger_   = spdlog::basic_logger_mt("compiler", path.string(), true);
+    ScopedTrace buffer("Create Compiler Log Buffer", "detail");
+    log_buffer_ = std::make_shared<CompilerLogBufferSink>();
+    logger_     = std::make_shared<spdlog::logger>("compiler", log_buffer_);
+    spdlog::initialize_logger(logger_);
   } else {
     logger_ = spdlog::stdout_color_mt("compiler");
   }
+  ScopedTrace configuration("Configure Compiler Logger", "detail");
   logger_->set_level(config_.verbose_tracing ? spdlog::level::trace : spdlog::level::info);
 }
 
+void Compiler::Impl::publish_log() noexcept {
+  if (!log_buffer_)
+    return;
+  try {
+    ScopedTrace submission("Submit Compiler Log", "detail");
+    section_diagnostics_file_writer().submit_text(
+        config_.log_dir / "compiler.log",
+        [text = log_buffer_->take()]() mutable { return std::move(text); });
+  } catch (...) {
+    // Diagnostic failures must not mask a successful compilation or its original exception.
+    try {
+      spdlog::warn("Could not submit compiler log for background writing");
+    } catch (...) {
+    }
+  }
+}
+
 ScopedTrace Compiler::Impl::trace_scope(std::string name, std::string category) {
-  return ScopedTrace(std::move(name), std::move(category), logger_,
-                     config_.enable_profiling ? &profiler_ : nullptr);
+  return ScopedTrace(std::move(name), category);
+}
+
+void Compiler::Impl::dump_graphviz(std::string_view filename, std::string_view failure_node,
+                                   std::string_view failure_context) {
+  if (config_.log_dir.empty()) {
+    logger_->warn("Graphviz dump '{}' skipped: no log directory is configured", filename);
+    return;
+  }
+
+  if (!out_) {
+    logger_->warn("Graphviz dump '{}' skipped: compilation output is unavailable", filename);
+    return;
+  }
+
+  const auto dump_path  = config_.log_dir / std::string{filename};
+  const auto graph_name = dump_path.stem().string();
+  if (!out_)
+    return;
+
+  dump_compiled_graph_async(dump_path, *out_, {}, graph_name, std::string{failure_node},
+                            std::string{failure_context}, GraphFailureKind::Compilation);
+  if (!failure_node.empty() || !failure_context.empty())
+    logger_->info("Compilation failure graph queued for {}", dump_path.string());
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -444,8 +439,9 @@ void Compiler::Impl::run_type_inference() {
   }
 
   for (auto v : std::views::reverse(topo_order)) {
-    auto &node       = g[v];
-    auto  node_trace = trace_scope(std::format("Infer: {}", node.spec.name), "detail");
+    auto &node         = g[v];
+    failure_node_name_ = node.spec.name;
+    auto node_trace    = trace_scope(std::format("Infer: {}", node.spec.name), "detail");
 
     auto                     in_degree = boost::in_degree(v, g);
     std::vector<core::TDesc> input_descs(in_degree);
@@ -467,6 +463,58 @@ void Compiler::Impl::run_type_inference() {
         throw CompilerException("Output index out of bounds");
       }
       edge_plan.desc = node.infer.output_descs[edge_plan.spec.out_idx];
+    }
+  }
+}
+
+// -------------------------------------------------------------------------------------------------
+// Pass: Deduce constant tasks
+// -------------------------------------------------------------------------------------------------
+void Compiler::Impl::deduce_const_tasks() {
+  auto &g = out_->graph;
+
+  std::vector<GraphPlan::vertex_descriptor> topo;
+  boost::topological_sort(g, std::back_inserter(topo));
+
+  for (auto v : std::views::reverse(topo)) {
+    auto      &node              = g[v];
+    const auto in_degree         = boost::in_degree(v, g);
+    const auto predecessor_const = [&] {
+      return std::ranges::all_of(boost::make_iterator_range(boost::in_edges(v, g)), [&](auto edge) {
+        return g[boost::source(edge, g)].infer.constness == core::ConstInferenceState::Constant;
+      });
+    };
+
+    if (node.infer.kind == core::TaskKind::Async) {
+      node.infer.constness = core::ConstInferenceState::Mutable;
+      continue;
+    }
+
+    // A task with no outputs is a sink/side-effect. Even when its inputs are
+    // constant, executing it may still be required on every iteration.
+    if (node.infer.output_descs.empty()) {
+      node.infer.constness = core::ConstInferenceState::Mutable;
+      continue;
+    }
+
+    if (node.infer.constness == core::ConstInferenceState::Constant) {
+      if (in_degree != 0 && !predecessor_const()) {
+        throw CompilerException(std::format(
+            "Node '{}' is marked constant but has a non-constant predecessor", node.spec.name));
+      }
+    } else if (node.infer.constness == core::ConstInferenceState::Undefined) {
+      node.infer.constness = (in_degree != 0 && predecessor_const())
+                                 ? core::ConstInferenceState::Constant
+                                 : core::ConstInferenceState::Mutable;
+    }
+
+    // The one-time path cannot safely release or reacquire owned task memory.
+    // Keep such tasks in the recurring path; this also makes their descendants
+    // mutable as they are visited later in topological order.
+    if (node.infer.constness == core::ConstInferenceState::Constant &&
+        (std::ranges::any_of(node.infer.owned_inputs, [](bool owned) { return owned; }) ||
+         std::ranges::any_of(node.infer.owned_outputs, [](bool owned) { return owned; }))) {
+      node.infer.constness = core::ConstInferenceState::Mutable;
     }
   }
 }
@@ -693,7 +741,8 @@ void Compiler::Impl::allocate_buffers() {
 
   // 3. Build a pool of scavengable blocks from prev_
   // Key: {MemLoc, size_in_bytes}
-  std::multimap<std::pair<core::MemLoc, size_t>, MemoryBlock> free_blocks;
+  auto &free_blocks = retired_blocks_;
+  free_blocks.clear();
   if (prev_) {
     for (auto &[prev_sid, block] : prev_->resources.memory_blocks) {
       free_blocks.emplace(std::make_pair(block.mem_loc, block.size_bytes), std::move(block));
@@ -711,9 +760,15 @@ void Compiler::Impl::allocate_buffers() {
     storage->ptr     = nullptr;
 
     if (!user_managed_sids.contains(sid)) {
-      MemoryBlock block;
-      auto        pool_key = std::make_pair(desc.mem_loc, desc.num_bytes());
-      auto        it       = free_blocks.find(pool_key);
+      MemoryBlock                 block;
+      core::ExecutionInvalidation allocation_failure{[this]() noexcept {
+        if (prev_)
+          prev_->resources.section_cuda_graphs.clear();
+      }};
+      // A scavenged block may temporarily be local before insertion into the output map.
+      core::ExecutionUpdateGuard allocation_guard(&allocation_failure);
+      auto                       pool_key = std::make_pair(desc.mem_loc, desc.num_bytes());
+      auto                       it       = free_blocks.find(pool_key);
 
       if (it != free_blocks.end()) {
         // We found an exact match! Scavenge it.
@@ -761,8 +816,7 @@ void Compiler::Impl::allocate_buffers() {
     }
   }
 
-  // Any blocks left inside `free_blocks` will naturally go out of scope here and
-  // safely deallocate, meaning memory for removed nodes is properly cleaned up.
+  // Leftovers are retired only after dependent graph caches have been destroyed.
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -859,7 +913,11 @@ void Compiler::Impl::partition_sections() {
     auto &np = g[v];
     if (np.infer.kind == core::TaskKind::Sync) {
       size_t sec_id = get_section_id(v);
-      out_->sections[sec_id].sync_topo.push_back(v);
+      if (np.infer.constness == core::ConstInferenceState::Constant) {
+        out_->sections[sec_id].const_sync_topo.push_back(v);
+      } else {
+        out_->sections[sec_id].sync_topo.push_back(v);
+      }
       node_to_section_map_[np.spec.name] = sec_id;
     }
   }
@@ -968,6 +1026,9 @@ std::unique_ptr<To> dynamic_unique_ptr_cast(std::unique_ptr<From> &&ptr) noexcep
 template <class TaskInterface, class Factory, class Ctx>
 std::unique_ptr<core::ITask>
 Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, const Ctx &ctx) {
+  // Construct the callback before moving any captured task out of the previous resource map.
+  core::ExecutionInvalidation invalidation{
+      [this, &np]() noexcept { invalidate_task_graphs(np.spec.name); }};
 
   // 1. Helper to synchronize the correct streams based on Ctx type
   auto sync_streams = [&]() {
@@ -1001,8 +1062,16 @@ Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, cons
 
   // 3. Helper to accurately profile Task Updating
   auto do_update = [&](std::unique_ptr<TaskInterface> prev_task) {
-    auto scope = trace_scope(std::format("Update Task: {}", np.spec.name), "detail");
-    auto task  = factory.update(std::move(prev_task), np.infer.input_descs, np.spec.settings, ctx);
+    core::ExecutionUpdateGuard ownership_guard(&invalidation);
+    auto scope      = trace_scope(std::format("Update Task: {}", np.spec.name), "detail");
+    auto update_ctx = ctx;
+    update_ctx.execution_invalidation = &invalidation;
+    if (factory.execution_update_policy() == core::ExecutionUpdatePolicy::AlwaysInvalidate)
+      invalidation.invalidate();
+    auto task =
+        factory.update(std::move(prev_task), np.infer.input_descs, np.spec.settings, update_ctx);
+    // A post-update synchronization error must invalidate before the returned task is unwound.
+    core::ExecutionUpdateGuard update_guard(&invalidation);
     sync_streams();
     return task;
   };
@@ -1037,9 +1106,12 @@ Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, cons
   }
 
   if (!found_in_prev_graph || kind_mismatch) {
+    invalidate_task_graphs(np.spec.name);
     return do_create();
   }
 
+  if (!dynamic_cast<TaskInterface *>(prev_ptr_ref->get()))
+    invalidate_task_graphs(np.spec.name);
   auto prev_task_typed = dynamic_unique_ptr_cast<TaskInterface>(std::move(*prev_ptr_ref));
 
   if (!prev_task_typed) {
@@ -1047,6 +1119,162 @@ Compiler::Impl::create_or_update_task(Factory &factory, const NodePlan &np, cons
   }
 
   return do_update(std::move(prev_task_typed));
+}
+
+// -------------------------------------------------------------------------------------------------
+// Execution cache compatibility
+// -------------------------------------------------------------------------------------------------
+
+void Compiler::Impl::invalidate_task_graphs(std::string_view name) noexcept {
+  if (!prev_)
+    return;
+  for (const auto &section : prev_->sections) {
+    auto it = prev_->resources.section_cuda_graphs.find(section.id);
+    if (it == prev_->resources.section_cuda_graphs.end())
+      continue;
+    auto &graphs  = *it->second;
+    bool  depends = false;
+    for (auto v : section.sync_topo)
+      depends |= prev_->graph[v].spec.name == name;
+    for (auto v : boost::make_iterator_range(boost::vertices(prev_->graph))) {
+      const auto &node = prev_->graph[v];
+      if (node.spec.name != name)
+        continue;
+      auto owns_domain = [&](const auto &tids, const auto &owned) {
+        for (size_t port = 0; port < tids.size(); ++port) {
+          if (!owned[port])
+            continue;
+          auto sid = prev_->resources.tid_to_sid.at(tids[port]);
+          if (std::ranges::find(graphs.storage_ids, sid) != graphs.storage_ids.end())
+            return true;
+        }
+        return false;
+      };
+      depends |= owns_domain(node.in_tids, node.infer.owned_inputs) ||
+                 owns_domain(node.out_tids, node.infer.owned_outputs);
+    }
+    if (!depends)
+      continue;
+    graphs.clear();
+    try {
+      graphs.compilation_invalidation_reason = "task_update: " + std::string(name);
+      logger_->info("[CUDA graphs] Invalidated section {} before updating {}", section.name, name);
+    } catch (...) {
+      // Invalidation also runs during exception unwinding; reporting must never block cleanup.
+    }
+  }
+}
+
+namespace {
+
+// This describes the current unfused recording plan, independently of factory configuration.
+// Future lowering/fusion must include generated-kernel identity and specialization constants here.
+nlohmann::json section_structure(const CompilerOutput &output, const Section &section) {
+  auto                  result = nlohmann::json::array();
+  std::set<std::string> names;
+  for (const auto *vertices : {&section.sync_topo, &section.async_cons, &section.async_prod}) {
+    auto tasks = nlohmann::json::array();
+    for (auto v : *vertices) {
+      const auto &node = output.graph[v];
+      tasks.push_back({node.spec.name, node.spec.kind});
+      names.insert(node.spec.name);
+    }
+    result.push_back(std::move(tasks));
+  }
+  std::set<std::tuple<std::string, int, std::string, int>> wiring;
+  for (auto edge : boost::make_iterator_range(boost::edges(output.graph))) {
+    const auto &source = output.graph[boost::source(edge, output.graph)].spec.name;
+    const auto &target = output.graph[boost::target(edge, output.graph)].spec.name;
+    if (names.contains(source) || names.contains(target)) {
+      const auto &ports = output.graph[edge].spec;
+      wiring.emplace(source, ports.out_idx, target, ports.in_idx);
+    }
+  }
+  result.push_back(wiring);
+  return result;
+}
+
+nlohmann::json section_bindings(const CompilerOutput &output, const Section &section) {
+  auto result = nlohmann::json::array();
+  for (auto v : section.sync_topo) {
+    const auto &node     = output.graph[v];
+    auto        bindings = nlohmann::json::array();
+    for (const auto *tids : {&node.in_tids, &node.out_tids}) {
+      auto ports = nlohmann::json::array();
+      for (int tid : *tids) {
+        const auto &desc = output.resources.tensor_descs.at(tid);
+        // The public TDesc serializer intentionally excludes offsets; captures cannot exclude them.
+        ports.push_back({output.resources.tid_to_sid.at(tid), desc, desc.offset});
+      }
+      bindings.push_back(std::move(ports));
+    }
+    bindings.push_back(node.infer.owned_inputs);
+    bindings.push_back(node.infer.owned_outputs);
+    result.push_back(std::move(bindings));
+  }
+  return result;
+}
+
+} // namespace
+
+void Compiler::Impl::carry_section_cuda_graphs() {
+  out_->resources.compilation_generation = compilation_generation_;
+  // Destroy executables referencing allocations that will not survive compilation, before free.
+  if (prev_) {
+    for (auto &[id, graphs] : prev_->resources.section_cuda_graphs) {
+      bool retires_resource = false;
+      for (auto &[key, block] : retired_blocks_)
+        for (const auto &domain : graphs->pointers)
+          retires_resource |=
+              std::ranges::find(domain, static_cast<std::byte *>(block.get())) != domain.end();
+      if (retires_resource) {
+        graphs->clear();
+        graphs->compilation_invalidation_reason = "resource_retirement";
+      }
+    }
+  }
+  for (const auto &section : out_->sections) {
+    auto        graphs = std::make_unique<SectionCudaGraphs>();
+    std::string reason = prev_ ? "section_structure" : "initial_compilation";
+    if (prev_) {
+      for (const auto &old_section : prev_->sections) {
+        if (section_structure(*prev_, old_section) != section_structure(*out_, section))
+          continue;
+        auto it = prev_->resources.section_cuda_graphs.find(old_section.id);
+        if (it == prev_->resources.section_cuda_graphs.end())
+          continue;
+        if (old_section.stream != section.stream)
+          reason = "stream_change";
+        else if (section_bindings(*prev_, old_section) != section_bindings(*out_, section))
+          reason = "descriptor_or_binding_change";
+        else if (it->second->executables.empty())
+          reason = it->second->compilation_invalidation_reason.empty()
+                       ? "no_cached_executables"
+                       : it->second->compilation_invalidation_reason;
+        else {
+          graphs = std::move(it->second);
+          prev_->resources.section_cuda_graphs.erase(it);
+          graphs->carried_from_previous_compilation = true;
+          reason.clear();
+        }
+        break;
+      }
+    }
+    graphs->compilation_generation          = compilation_generation_;
+    graphs->compilation_invalidation_reason = std::move(reason);
+    graphs->launches.store(0);
+    graphs->ordinary_iterations.store(0);
+    graphs->pointer_misses.store(0);
+    graphs->tuple_misses.store(0);
+    graphs->refresh_count = 0;
+    logger_->info("[CUDA graphs] {} compilation {}: carried {}, reason {}", section.name,
+                  compilation_generation_, graphs->carried_from_previous_compilation,
+                  graphs->compilation_invalidation_reason);
+    out_->resources.section_cuda_graphs.emplace(section.id, std::move(graphs));
+  }
+  if (prev_)
+    prev_->resources.section_cuda_graphs.clear();
+  retired_blocks_.clear();
 }
 
 void Compiler::Impl::instantiate_tasks() {
@@ -1133,184 +1361,9 @@ void Compiler::Impl::bind_tasks() {
 }
 
 // -------------------------------------------------------------------------------------------------
-// Visualization Helpers (Internal)
-// -------------------------------------------------------------------------------------------------
-
-namespace {
-
-std::string escape_dot_label(const std::string &s) {
-  std::string out;
-  out.reserve(s.size());
-  for (char c : s) {
-    switch (c) {
-    case '\\':
-      out += "\\\\";
-      break;
-    case '"':
-      out += "\\\"";
-      break;
-    case '\n':
-      out += "\\n";
-      break;
-    case '\r':
-      break;
-    default:
-      out += c;
-      break;
-    }
-  }
-  return out;
-}
-
-std::string format_tdesc(const core::TDesc &d) {
-  std::ostringstream ss;
-  ss << "{\\n";
-  ss << "  shape: " << escape_dot_label(nlohmann::json(d.shape).dump()) << ",\\n";
-  ss << "  dtype: " << escape_dot_label(nlohmann::json(d.dtype).dump()) << "\\n";
-  ss << "  mem_loc: " << escape_dot_label(nlohmann::json(d.mem_loc).dump()) << "\\n";
-  ss << "  strides: " << escape_dot_label(nlohmann::json(d.strides).dump()) << "\\n";
-  ss << "  offset: " << d.offset << "\\n";
-  ss << "}";
-  return ss.str();
-}
-
-} // namespace
-
-// -------------------------------------------------------------------------------------------------
-// Debugging: Graphviz Dump (Implementation)
-// -------------------------------------------------------------------------------------------------
-
-void Compiler::Impl::dump_graphviz(const std::string &filename) {
-  if (config_.log_dir.empty()) {
-    return;
-  }
-
-  std::ofstream file(config_.log_dir / filename);
-  if (!file.is_open()) {
-    return;
-  }
-
-  auto &g        = out_->graph;
-  auto &res      = out_->resources;
-  auto &sections = out_->sections;
-
-  file << "digraph GraphPlan {\n";
-  file << "  rankdir=LR;\n";
-  file << "  compound=true;\n";
-  file << "  node [fontname=\"Helvetica\", shape=box, style=filled];\n";
-  file << "  edge [fontname=\"Helvetica\", fontsize=10];\n\n";
-
-  auto fmt_id = [&](int tid) -> std::string {
-    if (res.tid_to_sid.contains(tid)) {
-      return std::format("{}(s:{})", tid, res.tid_to_sid.at(tid));
-    }
-    return std::to_string(tid);
-  };
-
-  auto get_visual_id = [&](size_t v, bool is_source) -> std::string {
-    if (g[v].infer.kind == core::TaskKind::Async) {
-      return is_source ? std::format("v{}_out", v) : std::format("v{}_in", v);
-    }
-    return std::format("v{}", v);
-  };
-
-  for (auto v : boost::make_iterator_range(boost::vertices(g))) {
-    const auto &np = g[v];
-
-    std::ostringstream label_base;
-    label_base << (np.spec.name.empty() ? "(unnamed)" : np.spec.name);
-
-    std::string in_str = "[";
-    for (size_t i = 0; i < np.in_tids.size(); ++i) {
-      in_str += (i ? "," : "") + fmt_id(np.in_tids[i]);
-    }
-    in_str += "]";
-
-    std::string out_str = "[";
-    for (size_t i = 0; i < np.out_tids.size(); ++i) {
-      const int   out_tid = np.out_tids[i];
-      std::string id_text = fmt_id(out_tid);
-
-      bool is_alias = false;
-      if (res.tid_to_sid.count(out_tid)) {
-        const size_t out_sid = res.tid_to_sid.at(out_tid);
-        for (int in_tid : np.in_tids) {
-          if (res.tid_to_sid.count(in_tid) && res.tid_to_sid.at(in_tid) == out_sid) {
-            is_alias = true;
-            break;
-          }
-        }
-      }
-
-      out_str += (i ? "," : "") + id_text + (is_alias ? "*" : "");
-    }
-    out_str += "]";
-
-    const std::string ids_line = "\nIn: " + in_str + "\nOut: " + out_str;
-
-    if (np.infer.kind == core::TaskKind::Async) {
-      const std::string label_in = label_base.str() + "\n(Producer/Write)" + ids_line + "\n";
-      file << std::format("  v{}_in [label=\"{}\", shape=invhouse, fillcolor=\"#e6f2ff\", "
-                          "color=\"#0066cc\", style=\"filled,dashed\"];\n",
-                          v, escape_dot_label(label_in));
-
-      const std::string label_out = label_base.str() + "\n(Consumer/Read)" + ids_line + "\n";
-      file << std::format("  v{}_out [label=\"{}\", shape=house, fillcolor=\"#ffe6e6\", "
-                          "color=\"#cc0000\", style=\"filled,dashed\"];\n",
-                          v, escape_dot_label(label_out));
-
-      file << std::format("  v{}_in -> v{}_out [style=dotted, color=\"#888888\", penwidth=2, "
-                          "arrowh=none, label=\"Async Signal\"];\n",
-                          v, v);
-    } else {
-      const std::string label = label_base.str() + "\n(" + np.spec.kind + ")" + ids_line + "\n";
-      file << std::format("  v{} [label=\"{}\", fillcolor=\"#ccffcc\"];\n", v,
-                          escape_dot_label(label));
-    }
-  }
-
-  file << "\n";
-
-  for (auto e : boost::make_iterator_range(boost::edges(g))) {
-    const auto  u  = boost::source(e, g);
-    const auto  v  = boost::target(e, g);
-    const auto &ep = g[e];
-
-    const std::string u_vis = get_visual_id(u, true);
-    const std::string v_vis = get_visual_id(v, false);
-
-    std::ostringstream edge_lbl;
-    edge_lbl << "tid:" << ep.tid;
-    if (res.tid_to_sid.count(ep.tid)) {
-      edge_lbl << " (s:" << res.tid_to_sid.at(ep.tid) << ")";
-    }
-    edge_lbl << "\\n" << format_tdesc(ep.desc);
-
-    file << std::format("  {} -> {} [taillabel=\"{}\", headlabel=\"{}\", label=\"{}\"];\n", u_vis,
-                        v_vis, ep.spec.out_idx, ep.spec.in_idx, edge_lbl.str());
-  }
-
-  file << "\n";
-
-  for (const auto &sec : sections) {
-    file << std::format("  subgraph cluster_section_{} {{\n", sec.id);
-    file << std::format("    label=\"Section {} (Stream {})\\l\";\n", sec.id, (void *)sec.stream);
-    file << "    style=rounded; color=gray; bgcolor=\"#f8f8f8\";\n";
-
-    for (auto vd : sec.sync_topo) {
-      file << std::format("    v{};\n", vd);
-    }
-    for (auto vd : sec.async_prod) {
-      file << std::format("    v{}_in;\n", vd);
-    }
-    for (auto vd : sec.async_cons) {
-      file << std::format("    v{}_out;\n", vd);
-    }
-
-    file << "  }\n";
-  }
-
-  file << "}\n";
+void Compiler::Impl::dump_json(const std::string &filename, const core::GraphSpec &gspec) {
+  if (!config_.log_dir.empty())
+    dump_graph_spec_async(config_.log_dir / filename, gspec);
 }
 
 // -------------------------------------------------------------------------------------------------

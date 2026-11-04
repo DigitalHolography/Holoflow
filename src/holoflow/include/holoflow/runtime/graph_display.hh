@@ -14,12 +14,37 @@
 
 #pragma once
 
-#include "holoflow/core/registry.hh"
-#include "holoflow/runtime/compiler.hh"
-
+#include <memory>
 #include <string>
-
+#include <string_view>
+// could not forward declare GraphSpec because it is an alias
+#include "holoflow/core/graph_spec.hh"
 namespace holoflow::runtime {
+
+struct CompilerOutput;
+struct GraphCompiledDumpSnapshot;
+enum class GraphFailureKind { Compilation, Runtime };
+
+struct GraphCompiledDumpPreferences {
+  enum class Rankdir { LeftToRight, TopToBottom };
+  enum class Layout { Normal, Stairs, Block, Snake };
+
+  Rankdir rankdir                  = Rankdir::LeftToRight;
+  Layout  layout                   = Layout::Normal;
+  int     floating_point_precision = 17;
+  bool    dump_node_name           = true;
+  bool    dump_node_kind           = true;
+  // TODO : remove node settings
+  bool dump_node_settings    = true;
+  bool dump_node_in_out_tids = true;
+
+  bool dump_edge_indices      = true;
+  bool dump_edge_descriptions = true;
+
+  bool dump_section_info        = true;
+  bool dump_section_stream_addr = true;
+  bool dump_resource_info       = true;
+};
 
 /// Serialize a compiled graph (CompilerOutput) to Graphviz DOT format.
 /// This prints:
@@ -28,8 +53,51 @@ namespace holoflow::runtime {
 ///  - clusters for Sections (sync/async grouping)
 ///
 /// @param out       Compiled graph output (non-owning reference).
-/// @param registry  Registry used to detect async node kinds.
+/// @param prefs     Preferences for controlling the output format.
 /// @return          DOT source as std::string.
-std::string to_dot(const CompilerOutput &out, core::Registry &registry);
+std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs = {},
+                   std::string_view filename = "compiled");
+
+/// Serialize a compiled graph with a failure annotation.
+/// @param filename  Graphviz graph identifier.
+/// @param failure_node Optional node name to highlight as the failure location.
+/// @param failure_context Failure details displayed as the graph title.
+/// @param failure_kind Whether compilation or runtime failed.
+/// @return          DOT source as std::string.
+std::string to_dot(const CompilerOutput &out, const GraphCompiledDumpPreferences &prefs,
+                   std::string_view filename, std::string_view failure_node,
+                   std::string_view failure_context, GraphFailureKind failure_kind);
+
+// Own only diagnostic values, including stream addresses as numbers. No CUDA resources or task
+// references survive capture, so snapshots can be rendered after the compiler output is destroyed.
+std::shared_ptr<const GraphCompiledDumpSnapshot>
+make_graph_compiled_dump_snapshot(const CompilerOutput &out);
+std::string to_dot(const GraphCompiledDumpSnapshot    &snapshot,
+                   const GraphCompiledDumpPreferences &prefs    = {},
+                   std::string                         filename = "compiled");
+std::string to_dot(const GraphCompiledDumpSnapshot    &snapshot,
+                   const GraphCompiledDumpPreferences &prefs, std::string filename,
+                   std::string_view failure_node, std::string_view failure_context,
+                   GraphFailureKind failure_kind);
 
 } // namespace holoflow::runtime
+
+namespace holoflow::core {
+
+struct GraphSpecDumpPreferences {
+  enum class Rankdir { LeftToRight, TopToBottom };
+
+  Rankdir rankdir                  = Rankdir::LeftToRight;
+  int     floating_point_precision = 17;
+  bool    dump_node_name           = true;
+  bool    dump_node_kind           = true;
+  bool    dump_node_settings       = true;
+  bool    dump_edge_indices        = true;
+};
+
+/// Serialize a graph specification to a dot format string.
+/// @param g     Graph specification to serialize.
+/// @return      Dot format representation of the graph specification.
+std::string to_dot(const holoflow::core::GraphSpec &g,
+                   const GraphSpecDumpPreferences  &dump_prefs = {});
+} // namespace holoflow::core

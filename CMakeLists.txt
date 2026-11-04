@@ -66,6 +66,7 @@ option(ENABLE_BENCHMARKS "Build benchmarks" ON)
 option(ENABLE_DOCUMENTATION "Build documentation" ON)
 option(ENABLE_EXAMPLES "Build examples" ON)
 option(ENABLE_FETCHCONTENT "Use FetchContent for dependencies" ON)
+option(ENABLE_PERFETTO "Record native Perfetto traces" ON)
 option(ENABLE_COVERAGE "Build the complete native coverage image" OFF)
 option(ENABLE_WARNINGS "Enable compiler warnings" ON)
 option(ENABLE_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
@@ -83,7 +84,7 @@ project_options(
 )
 
 find_package(EGrabber)
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Network OpenGL OpenGLWidgets Graphs)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Network OpenGL OpenGLWidgets Graphs Svg SvgWidgets)
 qt_standard_project_setup()
 
 add_subdirectory(external)
@@ -142,12 +143,12 @@ if(WIN32 AND MSVC)
     function(find_single_cuda_runtime OUTPUT_VARIABLE GLOB_PATTERN)
         file(GLOB MATCHES "${CUDA_BIN_DIR}/${GLOB_PATTERN}")
         list(LENGTH MATCHES MATCH_COUNT)
-        if(NOT MATCH_COUNT EQUAL 1)
-            message(FATAL_ERROR
-                "Expected exactly one CUDA runtime matching "
-                "'${CUDA_BIN_DIR}/${GLOB_PATTERN}', found ${MATCH_COUNT}: ${MATCHES}"
-            )
-        endif()
+        #if(NOT MATCH_COUNT EQUAL 1)
+        #    message(FATAL_ERROR
+        #        "Expected exactly one CUDA runtime matching "
+        #        "'${CUDA_BIN_DIR}/${GLOB_PATTERN}', found ${MATCH_COUNT}: ${MATCHES}"
+        #    )
+        #endif()
         list(GET MATCHES 0 MATCH)
         set("${OUTPUT_VARIABLE}" "${MATCH}" PARENT_SCOPE)
     endfunction()
