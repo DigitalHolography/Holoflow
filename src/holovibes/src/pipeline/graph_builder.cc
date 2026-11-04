@@ -255,7 +255,7 @@ void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
     holofile_write(H, {path, count, settings_to_old_json(s_), true});
   } else {
     auto video = memcpy(H, {holotask::syncs::MemcpySettings::Target::Host});
-    ffmpeg_write(video, {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
+    ffmpeg_write(video, {path, count, s_.input_sampling_frequency_hz, s_.recording_format,
                          s_.recording_codec, true, s_.recording_resize_algorithm});
   }
 }
@@ -286,8 +286,11 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
 
   if (H.mem_loc != MemLoc::Device) {
     H = memcpy(H, {Device});
-    H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window});
   }
+  // Window GPU-cached input too, and retain enough frames to advance a full stride
+  // without filling the queue's reserved slot before an output becomes available.
+  H = batched_queue(H, {std::max(s_.gpu_in_size, s_.time_stride), s_.time_window,
+                        s_.time_stride});
 
   return convert(H, {Target::F32, Strat::Real});
 }
@@ -809,7 +812,8 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     } else {
       const bool resize_to_square = s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;
       ffmpeg_write(result_rec,
-                   {path, count, static_cast<double>(s_.pp_fps), s_.recording_format,
+                   {path, count, s_.input_sampling_frequency_hz / s_.time_stride,
+                    s_.recording_format,
                     s_.recording_codec, resize_to_square, s_.recording_resize_algorithm});
     }
   }

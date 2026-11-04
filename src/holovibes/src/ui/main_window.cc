@@ -2813,7 +2813,6 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     std::string kernel_path             = convolutionsKernelsPath.toStdString() +
                                           render_widget_->get_convolution().toStdString() + ".json";
 
-    s.pp_fps       = 60;
     s.pp_fft_shift = s.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;
     s.pp_flatfield = view_widget_->is_flatfield_enabled();
     s.pp_flatfield_cutoff_period_m =
