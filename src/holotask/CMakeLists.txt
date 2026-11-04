@@ -78,6 +78,10 @@ target_link_libraries(${TARGET}
     nvrtc
 )
 
+if(TARGET holoflow_ffmpeg)
+    target_link_libraries(${TARGET} PRIVATE holoflow_ffmpeg)
+endif()
+
 if(EGrabber_FOUND)
     target_compile_definitions(${TARGET} PRIVATE HOLOTASK_HAS_EGRABBER)
 

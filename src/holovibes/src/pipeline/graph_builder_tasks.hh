@@ -72,6 +72,8 @@
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/holofile.hh"
+#include "holotask/sinks/npyfile.hh"
+#include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
@@ -93,6 +95,7 @@
 #include "holotask/syncs/pca.hh"
 #include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/registration.hh"
+#include "holotask/syncs/resize.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 #include "holotask/syncs/unfold2d.hh"
@@ -164,6 +167,9 @@ protected:
   TDesc              wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
   std::vector<TDesc> shack_hartmann_slopes(const TDesc                                &X,
                                            holotask::syncs::ShackHartmannSlopeSettings s);
+  void npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s);
+  void ffmpeg_write(const TDesc &X, holotask::sinks::FfmpegSettings s);
+  TDesc resize(const TDesc &X, holotask::syncs::ResizeSettings s);
   TDesc zernike_from_slopes(const TDesc &X, holotask::syncs::ZernikeFromSlopesSettings s);
   TDesc zernike_phase(const TDesc &X, holotask::syncs::ZernikePhaseSettings s);
   TDesc concatenate(std::span<const TDesc> Xs, holonp::ConcatenateSettings s);

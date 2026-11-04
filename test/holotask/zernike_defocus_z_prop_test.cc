@@ -102,6 +102,16 @@ TEST(ZernikeDefocusZPropInferTest, RejectsInvalidIntervals) {
   }
 }
 
+TEST(ZernikeDefocusZPropInferTest, SynchronizesBeforeOrdinaryAsyncProducers) {
+  holotask::syncs::ZernikeDefocusZPropFactory factory;
+  const std::vector<TDesc>                    inputs{input_desc()};
+
+  const auto inference = factory.infer(inputs, settings());
+
+  EXPECT_EQ(inference.kind, holoflow::core::TaskKind::Async);
+  EXPECT_TRUE(inference.synchronizes_producer_stream);
+}
+
 TEST(ZernikeDefocusZPropExecutionTest, ExecutesImmediatelyAndThenAtConfiguredInterval) {
   holotask::syncs::ZernikeDefocusZPropFactory factory;
   const auto                                  desc = input_desc();
@@ -116,24 +126,17 @@ TEST(ZernikeDefocusZPropExecutionTest, ExecutesImmediatelyAndThenAtConfiguredInt
   holonp_test::TensorTestBuffer input(desc);
   input.upload(as_bytes(0.25f));
   std::vector<holoflow::core::TView> input_views{input.view()};
-  std::vector<holoflow::core::TView> output_views;
   std::atomic<bool>                  cancelled{false};
-  holoflow::core::SyncCtx            ctx{
-      .inputs       = input_views,
-      .outputs      = output_views,
-      .cancelled    = &cancelled,
-      .event_writer = nullptr,
-      .event_reader = nullptr,
-  };
+  holoflow::core::AsyncPushCtx       ctx{.inputs = input_views, .cancelled = &cancelled};
 
-  EXPECT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+  EXPECT_EQ(task->try_push(ctx), holoflow::core::OpResult::Ok);
   EXPECT_EQ(sink->count(), 1u);
 
-  EXPECT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+  EXPECT_EQ(task->try_push(ctx), holoflow::core::OpResult::Ok);
   EXPECT_EQ(sink->count(), 1u);
 
   std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
-  EXPECT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+  EXPECT_EQ(task->try_push(ctx), holoflow::core::OpResult::Ok);
   EXPECT_EQ(sink->count(), 2u);
 }

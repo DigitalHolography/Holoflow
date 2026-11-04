@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstddef>
@@ -240,6 +241,72 @@ TEST(ShortTimeFresnelDiffractionMagnitudeTest, LazilyUpdatesChangingOutputPointe
   settings["output_magnitude"]         = true;
 
   expect_magnitude_output_rebinding(factory, input_desc, as_bytes(input_values), settings);
+}
+
+void expect_outer_graph_distance_update(const holoflow::core::ISyncTaskFactory &factory,
+                                        const TDesc &desc, nlohmann::json initial,
+                                        nlohmann::json updated) {
+  using namespace holoflow::core;
+  curaii::CudaStream          stream;
+  const std::array            descriptors{desc};
+  const auto                  infer = factory.infer(descriptors, initial);
+  auto                        task = factory.create(descriptors, initial, {.stream = stream.get()});
+  std::vector<cuFloatComplex> values(desc.num_elements());
+  for (size_t i = 0; i < values.size(); ++i)
+    values[i] = make_cuFloatComplex(float(i % 7) + 1.F, float(i % 3) - 1.F);
+  const auto                    bytes = as_bytes(values);
+  holonp_test::TensorTestBuffer input(desc), output(infer.output_descs[0]);
+  input.upload(bytes);
+  std::array  inputs{input.view()}, outputs{output.view()};
+  cudaGraph_t graph = nullptr;
+  CUDA_CHECK(cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeThreadLocal));
+  CudaGraphCtx recording{inputs, outputs, stream.get(), nullptr};
+  task->record_cuda_graph(recording);
+  CUDA_CHECK(cudaStreamEndCapture(stream.get(), &graph));
+  cudaGraphExec_t executable = nullptr;
+  CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
+  CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  const auto            original = output.download();
+  ExecutionInvalidation invalidation{[&]() noexcept {
+    CUDA_CHECK_NT(cudaGraphExecDestroy(executable));
+    executable = nullptr;
+  }};
+  task = factory.update(std::move(task), descriptors, updated,
+                        {.stream = stream.get(), .execution_invalidation = &invalidation});
+  ASSERT_FALSE(invalidation.invalidated);
+  CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  const auto actual   = output.download();
+  const auto expected = run_task(factory, desc, bytes, updated).bytes;
+  ASSERT_EQ(actual.size(), expected.size());
+  for (size_t i = 0; i < actual.size() / sizeof(float); ++i) {
+    float a, e;
+    std::memcpy(&a, actual.data() + i * sizeof(float), sizeof(float));
+    std::memcpy(&e, expected.data() + i * sizeof(float), sizeof(float));
+    EXPECT_NEAR(a, e, 1e-4F * std::max(1.F, std::abs(e)));
+  }
+  EXPECT_NE(actual, original);
+  CUDA_CHECK(cudaGraphExecDestroy(executable));
+  CUDA_CHECK(cudaGraphDestroy(graph));
+}
+
+TEST(FresnelDiffractionUpdateTest, OuterGraphReplaysUpdatedDistanceWithoutRecapture) {
+  holotask::syncs::FresnelDiffractionFactory factory;
+  for (bool magnitude : {false, true}) {
+    auto initial = fresnel_settings(0.01F), updated = fresnel_settings(0.02F);
+    initial["output_magnitude"] = updated["output_magnitude"] = magnitude;
+    expect_outer_graph_distance_update(factory, device_desc({4, 4}, DType::CF32), initial, updated);
+  }
+}
+
+TEST(ShortTimeFresnelDiffractionUpdateTest, OuterGraphReplaysUpdatedDistanceWithoutRecapture) {
+  holotask::syncs::ShortTimeFresnelDiffractionFactory factory;
+  for (bool magnitude : {false, true}) {
+    auto initial = short_time_fresnel_settings(0.01F), updated = short_time_fresnel_settings(0.02F);
+    initial["output_magnitude"] = updated["output_magnitude"] = magnitude;
+    expect_outer_graph_distance_update(factory, device_desc({8, 8}, DType::CF32), initial, updated);
+  }
 }
 
 TEST(FresnelDiffractionUpdateTest, ReusesTaskWhenOnlyPropagationDistanceChanges) {

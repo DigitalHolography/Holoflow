@@ -51,6 +51,71 @@ if(ENABLE_FETCHCONTENT)
         )
     endmacro()
 
+    if(WIN32 AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+        set(FFMPEG_VERSION "n8.1.3-9-g29e619e767")
+        declare_persistent_archive(
+            ffmpeg
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n8.1.3-9-g29e619e767-win64-lgpl-shared-8.1.zip"
+            "SHA256=3e47bda1607740550141e37c0e49d1e5182b34699f15adfd137ee266d346811a"
+        )
+        FetchContent_MakeAvailable(ffmpeg)
+
+        set(FFMPEG_ROOT "${ffmpeg_SOURCE_DIR}")
+        foreach(FFMPEG_DIRECTORY IN ITEMS include lib bin)
+            if(NOT IS_DIRECTORY "${FFMPEG_ROOT}/${FFMPEG_DIRECTORY}")
+                message(FATAL_ERROR
+                    "FFmpeg archive is missing its ${FFMPEG_DIRECTORY} directory: ${FFMPEG_ROOT}"
+                )
+            endif()
+        endforeach()
+        if(NOT EXISTS "${FFMPEG_ROOT}/LICENSE.txt")
+            message(FATAL_ERROR "FFmpeg archive is missing LICENSE.txt: ${FFMPEG_ROOT}")
+        endif()
+
+        set(FFMPEG_INCLUDE_DIR "${FFMPEG_ROOT}/include")
+        set(FFMPEG_LIBRARY_DIR "${FFMPEG_ROOT}/lib")
+        set(FFMPEG_RUNTIME_DIR "${FFMPEG_ROOT}/bin")
+
+        foreach(FFMPEG_COMPONENT IN ITEMS avcodec avformat avutil swscale)
+            file(GLOB FFMPEG_COMPONENT_DLL
+                "${FFMPEG_RUNTIME_DIR}/${FFMPEG_COMPONENT}-*.dll"
+            )
+            list(LENGTH FFMPEG_COMPONENT_DLL FFMPEG_COMPONENT_DLL_COUNT)
+            if(NOT FFMPEG_COMPONENT_DLL_COUNT EQUAL 1)
+                message(FATAL_ERROR
+                    "Expected one FFmpeg ${FFMPEG_COMPONENT} DLL, "
+                    "found ${FFMPEG_COMPONENT_DLL_COUNT}: ${FFMPEG_COMPONENT_DLL}"
+                )
+            endif()
+            list(GET FFMPEG_COMPONENT_DLL 0 FFMPEG_COMPONENT_DLL_PATH)
+            add_library(FFmpeg::${FFMPEG_COMPONENT} SHARED IMPORTED GLOBAL)
+            set_target_properties(FFmpeg::${FFMPEG_COMPONENT} PROPERTIES
+                IMPORTED_IMPLIB "${FFMPEG_LIBRARY_DIR}/${FFMPEG_COMPONENT}.lib"
+                IMPORTED_LOCATION "${FFMPEG_COMPONENT_DLL_PATH}"
+                INTERFACE_INCLUDE_DIRECTORIES "${FFMPEG_INCLUDE_DIR}"
+            )
+        endforeach()
+
+        add_library(holoflow_ffmpeg INTERFACE)
+        target_link_libraries(holoflow_ffmpeg INTERFACE
+            FFmpeg::avcodec
+            FFmpeg::avformat
+            FFmpeg::avutil
+            FFmpeg::swscale
+        )
+
+        file(GLOB FFMPEG_RUNTIME_DLLS CONFIGURE_DEPENDS "${FFMPEG_RUNTIME_DIR}/*.dll")
+        set_property(TARGET holoflow_ffmpeg PROPERTY
+            HOLOFLOW_FFMPEG_RUNTIME_DLLS "${FFMPEG_RUNTIME_DLLS}"
+        )
+        install(FILES ${FFMPEG_RUNTIME_DLLS} DESTINATION bin COMPONENT dependencies)
+        install(FILES "${FFMPEG_ROOT}/LICENSE.txt"
+            DESTINATION share/licenses
+            RENAME FFmpeg-LICENSE.txt
+            COMPONENT dependencies
+        )
+    endif()
+
     declare_persistent_dependency(spdlog "https://github.com/gabime/spdlog.git" "v1.15.3")
     FetchContent_MakeAvailable(spdlog)
 
@@ -248,4 +313,33 @@ endif()
 
 if (ENABLE_DOCS)
     find_package(Doxygen REQUIRED)
+endif()
+
+# The SDK amalgamation has no CMake project and does not require protobuf at runtime.
+if(ENABLE_PERFETTO)
+    if(ENABLE_FETCHCONTENT)
+        declare_persistent_archive(
+            perfetto
+            "https://github.com/google/perfetto/releases/download/v58.2/perfetto-cpp-sdk-src.zip"
+            "SHA256=e56126ff81f0f914d35fe03c72419d147acf2890f36fbda7d4558fd5b84c4b09"
+        )
+        FetchContent_MakeAvailable(perfetto)
+        set(PERFETTO_SDK_DIR "${perfetto_SOURCE_DIR}")
+    else()
+        set(PERFETTO_SDK_DIR "" CACHE PATH "Directory containing Perfetto v58.2 perfetto.h/perfetto.cc")
+        if(NOT EXISTS "${PERFETTO_SDK_DIR}/perfetto.h" OR
+           NOT EXISTS "${PERFETTO_SDK_DIR}/perfetto.cc")
+            message(FATAL_ERROR "ENABLE_PERFETTO requires PERFETTO_SDK_DIR or ENABLE_FETCHCONTENT")
+        endif()
+    endif()
+    find_package(Threads REQUIRED)
+    add_library(perfetto_sdk STATIC "${PERFETTO_SDK_DIR}/perfetto.cc")
+    set_target_properties(perfetto_sdk PROPERTIES AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+    target_include_directories(perfetto_sdk SYSTEM PUBLIC "${PERFETTO_SDK_DIR}")
+    target_compile_features(perfetto_sdk PUBLIC cxx_std_17)
+    target_compile_definitions(perfetto_sdk PRIVATE WIN32_LEAN_AND_MEAN NOMINMAX)
+    target_compile_options(perfetto_sdk PRIVATE /bigobj /permissive- /Zc:preprocessor)
+    target_link_libraries(perfetto_sdk PUBLIC Threads::Threads ws2_32)
+    install(FILES "${PERFETTO_SDK_DIR}/perfetto.h"
+        DESTINATION share/licenses RENAME Perfetto-SDK-source-and-license.txt COMPONENT dependencies)
 endif()
