@@ -69,6 +69,10 @@ holoflow
 - **[Intel oneAPI Base Toolkit](https://www.intel.com/content/www/us/en/developer/tools/oneapi/base-toolkit-download.html)** add `C:\Program Files (x86)\Intel\oneAPI\mkl\latest\bin` and `C:\Program Files (x86)\Intel\oneAPI\compiler\latest\bin` to your `PATH`
 - **[LLVM](https://github.com/llvm/llvm-project/releases/tag/llvmorg-22.1.0) (22.2.0+ recommended)
 
+### FFmpeg archive pin
+
+When `ENABLE_FETCHCONTENT` is enabled on 64-bit Windows, CMake downloads a pinned FFmpeg archive from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds). The URL and SHA-256 are kept together so builds use the same archive and verify its contents. BtbN retains the last build of each month for two years, so update the pinned version, URL, and hash before the archive expires. The `latest` URL avoids dated links but points to a moving build, so it does not provide the same reproducibility with a fixed hash.
+
 ## Python dependencies
 The python dependencies are listed in `requirements.txt`. The recommended way to set up the Python environment is by using a virtual environment. You can create and activate a virtual environment using the following commands:
 

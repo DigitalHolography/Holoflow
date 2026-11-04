@@ -140,13 +140,13 @@ void write_image_rendering(json &j, const Settings &s) {
   rendering["lambda"]               = s.spacial_lambda;
   rendering["propagation_distance"] = s.spacial_z;
 
-  rendering["space_transformation"] = to_legacy_space_transform(s.spacial_method);
+  rendering["space_transformation"]                   = to_legacy_space_transform(s.spacial_method);
   rendering["angular_spectrum"]["padding"]["enabled"] = s.asp_padding_enabled;
   rendering["angular_spectrum"]["padding"]["width"]   = s.asp_padded_width;
   rendering["angular_spectrum"]["padding"]["height"]  = s.asp_padded_height;
-  rendering["time_transformation"]        = to_legacy_time_transform(s.time_method);
-  rendering["time_transformation_size"]   = s.time_window;
-  rendering["time_transformation_stride"] = s.time_stride;
+  rendering["time_transformation"]                    = to_legacy_time_transform(s.time_method);
+  rendering["time_transformation_size"]               = s.time_window;
+  rendering["time_transformation_stride"]             = s.time_stride;
 }
 
 void write_view(json &j, const Settings &s) {
@@ -185,6 +185,11 @@ void write_info(json &j, const Settings &s) {
   info["contiguous"]       = s.cpu_rec_size;
   info["pixel_pitch"]["x"] = s.spacial_pixel_size;
   info["pixel_pitch"]["y"] = s.spacial_pixel_size;
+}
+
+void write_export(json &j, const Settings &s) {
+  auto &export_settings                  = j["compute_settings"]["export"];
+  export_settings["motion_compensation"] = s.recording_motion_compensation;
 }
 
 void read_advanced(Settings &s, const json &advanced) {
@@ -297,6 +302,11 @@ void read_info(Settings &s, const json &info) {
   s.spacial_pixel_size    = val(pixel_pitch, "x", s.spacial_pixel_size);
 }
 
+void read_export(Settings &s, const json &export_settings) {
+  s.recording_motion_compensation =
+      val(export_settings, "motion_compensation", s.recording_motion_compensation);
+}
+
 } // namespace
 
 nlohmann::json settings_to_old_json(const Settings &settings) {
@@ -306,6 +316,7 @@ nlohmann::json settings_to_old_json(const Settings &settings) {
   write_image_rendering(j, settings);
   write_view(j, settings);
   write_info(j, settings);
+  write_export(j, settings);
 
   return j;
 }
@@ -313,16 +324,18 @@ nlohmann::json settings_to_old_json(const Settings &settings) {
 Settings old_json_to_settings(const nlohmann::json &j, const Settings &default_settings) {
   Settings settings = default_settings;
 
-  const auto &compute   = child_or_empty(j, "compute_settings");
-  const auto &advanced  = child_or_empty(compute, "advanced");
-  const auto &rendering = child_or_empty(compute, "image_rendering");
-  const auto &view      = child_or_empty(compute, "view");
-  const auto &info      = child_or_empty(j, "info");
+  const auto &compute         = child_or_empty(j, "compute_settings");
+  const auto &advanced        = child_or_empty(compute, "advanced");
+  const auto &rendering       = child_or_empty(compute, "image_rendering");
+  const auto &view            = child_or_empty(compute, "view");
+  const auto &info            = child_or_empty(j, "info");
+  const auto &export_settings = child_or_empty(compute, "export");
 
   read_advanced(settings, advanced);
   read_image_rendering(settings, rendering);
   read_view(settings, view);
   read_info(settings, info);
+  read_export(settings, export_settings);
 
   return settings;
 }

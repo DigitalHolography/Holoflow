@@ -36,6 +36,7 @@ public:
   QString get_resize_algorithm() const;
   QString get_file_path() const;
   QString get_tag() const;
+  bool    is_motion_compensation_enabled() const;
   bool    is_frame_count_enabled() const;
   int     get_frame_count() const;
   int     get_queue_count() const;
@@ -46,6 +47,7 @@ public:
   void set_frame_count(int count);
   void set_frame_batch_size(int batch_size);
   void set_image_type(const QString &type);
+  void set_motion_compensation_enabled(bool enabled);
   void set_resize_algorithm(const QString &algorithm);
   void setChecked(bool checked);
 
@@ -62,6 +64,7 @@ public:
   QComboBox   *image_type_combo();
   QComboBox   *format_combo();
   QComboBox   *codec_combo();
+  QCheckBox   *motion_compensation_check();
   QComboBox   *resize_algorithm_combo();
   QLineEdit   *file_line_edit();
   QPushButton *browse_button();
@@ -85,12 +88,14 @@ private:
   void setup_ui();
   void connect_signals();
   void update_codec_choices();
+  void update_motion_compensation_control();
   void set_export_controls_enabled(bool enabled);
 
   QCheckBox   *enable_check_;
   QWidget     *content_container_;
   QComboBox   *image_type_combo_;
   QComboBox   *format_combo_;
+  QCheckBox   *motion_compensation_check_;
   QComboBox   *codec_combo_;
   QComboBox   *resize_algorithm_combo_;
   QLineEdit   *file_line_edit_;
