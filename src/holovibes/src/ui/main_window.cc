@@ -1709,6 +1709,7 @@ void MainWindow::connect_manager_signals() {
                                                         tr("Failure Graph"));
             graph_visualizer_widget_->render_dot(dot);
           });
+
 }
 
 void MainWindow::connect_import_controls() {

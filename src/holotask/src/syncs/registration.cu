@@ -551,10 +551,10 @@ RegistrationFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   const auto &old_input_desc = old_registration->input_desc();
   const auto  settings       = jsettings.get<RegistrationSettings>();
   const bool  can_reuse      = settings == old_registration->settings() &&
-                         new_input_desc.shape == old_input_desc.shape &&
-                         new_input_desc.strides == old_input_desc.strides &&
-                         new_input_desc.dtype == old_input_desc.dtype &&
-                         new_input_desc.mem_loc == old_input_desc.mem_loc;
+                               new_input_desc.shape == old_input_desc.shape &&
+                               new_input_desc.strides == old_input_desc.strides &&
+                               new_input_desc.dtype == old_input_desc.dtype &&
+                               new_input_desc.mem_loc == old_input_desc.mem_loc;
 
   if (can_reuse) {
     old_registration->update_stream(ctx.stream);

@@ -83,8 +83,8 @@ protected:
 TEST_F(SliceInferTest, ComputesShapeStridesAndOffsetForMixedSliceItems) {
   const TDesc in = device_desc({3, 4, 5}, DType::F32);
   const auto  j  = nlohmann::json{
-        {"slices",
-         {
+      {"slices",
+       {
            {{"start", 1}, {"stop", 3}, {"step", 1}},
            2,
            {{"start", nullptr}, {"stop", nullptr}, {"step", 2}},
@@ -103,8 +103,8 @@ TEST_F(SliceInferTest, ComputesShapeStridesAndOffsetForMixedSliceItems) {
 TEST_F(SliceInferTest, RejectsOutOfRangeIndex) {
   const TDesc in = device_desc({3, 4}, DType::F32);
   const auto  j  = nlohmann::json{
-        {"slices",
-         {
+      {"slices",
+       {
            3,
            {{"start", nullptr}, {"stop", nullptr}, {"step", 1}},
        }},
@@ -120,8 +120,8 @@ protected:
 TEST_F(SliceReferenceTest, InferredDescriptorMaterializationMatchesReferenceSlice) {
   const TDesc in = device_desc({3, 4}, DType::F32);
   const auto  j  = nlohmann::json{
-        {"slices",
-         {
+      {"slices",
+       {
            {{"start", 1}, {"stop", 3}, {"step", 1}},
            {{"start", 0}, {"stop", 4}, {"step", 2}},
        }},
