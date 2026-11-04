@@ -503,3 +503,11 @@ QScrollBar::handle:vertical:hover,
 QScrollBar::handle:horizontal:hover {
   background-color: @BORDER_STRONG@;
 }
+
+QGroupBox#recordMonitorPanel QLabel[statusTone="success"] {
+  color: @STATUS_SUCCESS@;
+}
+
+QGroupBox#recordMonitorPanel QLabel[statusTone="warning"] {
+  color: @STATUS_WARNING@;
+}

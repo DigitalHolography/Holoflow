@@ -14,6 +14,8 @@
 
 set(TARGET holonp_test)
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+
 # abs_test.cu is compiled by NVCC (host code only, no kernels) so that the
 # linker correctly resolves device code from the holonp static library.
 set(SOURCES
@@ -27,6 +29,7 @@ set(SOURCES
     conj_test.cu
     copy_test.cu
     divide_test.cu
+    edge_cases_test.cu
     empty_test.cu
     equal_test.cu
     exp_test.cu
@@ -51,9 +54,10 @@ set(SOURCES
     transpose_test.cu
     where_test.cu
     zeros_test.cu
+    support/reference_ops.cc
+    support/python_oracle.cc
     support/tensor_test_buffer.cc
     support/sync_task_runner.cc
-    support/python_oracle.cc
 )
 
 add_executable(${TARGET} ${SOURCES})
@@ -63,18 +67,16 @@ target_include_directories(${TARGET}
     ${CMAKE_CURRENT_SOURCE_DIR}/support
 )
 
+target_compile_definitions(${TARGET}
+    PRIVATE
+    "HOLONP_TEST_ORACLE_SCRIPT=\"${CMAKE_CURRENT_SOURCE_DIR}/python/oracle.py\""
+    "HOLOFLOW_TEST_PYTHON_EXECUTABLE=\"${Python3_EXECUTABLE}\""
+)
+
 target_link_libraries(${TARGET}
     PRIVATE
     holonp
     GTest::gtest_main
-)
-
-# Bake the absolute path to the oracle script into the binary at configure time.
-# The escaped inner quotes produce a C string literal: #define HOLONP_TEST_ORACLE_SCRIPT "..."
-target_compile_definitions(${TARGET}
-    PRIVATE
-    "HOLONP_TEST_ORACLE_SCRIPT=\"${CMAKE_CURRENT_SOURCE_DIR}/python/oracle.py\""
-    "HOLOFLOW_TEST_PYTHON_EXECUTABLE=\"${HOLOFLOW_TEST_PYTHON_EXECUTABLE}\""
 )
 
 holoflow_discover_tests(${TARGET}

@@ -260,6 +260,10 @@ public:
   [[nodiscard]] virtual bool supports_cuda_graph() const noexcept { return false; }
   /// Append work to the current top-level graph, never launch or embed a task-local graph.
   virtual void record_cuda_graph(CudaGraphCtx &ctx);
+
+  // handle cancel properly
+  // It is called for each task after a cancel request
+  virtual void cancel(SyncCtx &ctx) { (void)ctx; }
 };
 
 /// @brief Interface for asynchronous (decoupled) tasks.
@@ -290,6 +294,10 @@ public:
   /// Overwrites owned output slots in ctx.outputs.
   /// @returns control-flow result; errors via exceptions.
   [[nodiscard]] virtual OpResult try_pop(AsyncPopCtx &ctx) = 0;
+
+  // handle cancel properly
+  // It is called for each task after a cancel request
+  virtual void cancel() {}
 };
 
 /// Describes an in-place link between an input and output tensor.
