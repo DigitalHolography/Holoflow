@@ -18,6 +18,6 @@
             4
         ],
         "ShutterMode": "Global",
-        "AcquisitionFrameRate": 1000
+        "AcquisitionFrameRate": "1000"
     }
 }
