@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
@@ -31,6 +32,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -40,6 +42,7 @@
 #include "curaii/nvrtc.hh"
 
 #include "logger.hh"
+#include "syncs/local_pca.hh"
 
 namespace holotask::syncs {
 
@@ -952,6 +955,179 @@ std::unique_ptr<Eigensolver> make_eigensolver(const PcaLayout    &layout,
 }
 
 // -------------------------------------------------------------------------------------------------
+// Local PCA task
+// -------------------------------------------------------------------------------------------------
+
+size_t local_tile_size(const PcaLayout &layout, int window_size) {
+  size_t free_bytes = 0;
+  size_t total_bytes = 0;
+  CUDA_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
+
+  const size_t area = static_cast<size_t>(window_size) * window_size;
+  const size_t depth = static_cast<size_t>(layout.features);
+  const size_t bytes_per_pixel = sizeof(float) * (area * depth + depth * depth + depth) +
+                                 sizeof(int);
+  // This is an initial guess. The actual CUDA allocations below determine the usable tile size.
+  return (std::min)({static_cast<size_t>(layout.samples),
+                     static_cast<size_t>((std::numeric_limits<int>::max)()),
+                     (std::max)(size_t{1}, free_bytes / bytes_per_pixel)});
+}
+
+class LocalPcaTask final : public holoflow::core::ISyncTask {
+public:
+  LocalPcaTask(const PcaSettings &settings, const holoflow::core::TDesc &input_desc,
+               const holoflow::core::SyncCreateCtx &ctx)
+      : settings_(settings), input_desc_(input_desc), layout_(input_desc), stream_(ctx.stream),
+        tile_pixels_(local_tile_size(layout_, settings.window_size)),
+        tile_layout_(holoflow::core::TDesc({1, static_cast<size_t>(layout_.features), 1, 1},
+                                           input_desc.dtype, input_desc.mem_loc)) {
+    CUBLAS_CHECK(cublasSetStream(cublas_.get(), stream_));
+    for (;;) {
+      tile_layout_ = PcaLayout(holoflow::core::TDesc(
+          {tile_pixels_, static_cast<size_t>(layout_.features), 1, 1}, input_desc.dtype,
+          input_desc.mem_loc));
+      try {
+        patches_ = curaii::make_unique_device_ptr<float>(
+            tile_pixels_ * static_cast<size_t>(settings.window_size) * settings.window_size *
+            layout_.features);
+        workspace_ = std::make_unique<PcaWorkspace>(tile_layout_);
+        break;
+      } catch (const curaii::CudaError &error) {
+        if (error.code() != cudaErrorMemoryAllocation) throw;
+        workspace_.reset();
+        patches_.reset();
+        if (tile_pixels_ == 1) {
+          throw std::runtime_error(
+              "[LocalPca] CUDA cannot allocate scratch buffers for even one PCA window");
+        }
+        tile_pixels_ = (std::max)(size_t{1}, tile_pixels_ / 2);
+        logger()->warn("[LocalPca] Reducing tile to {} pixels after CUDA allocation failure",
+                       tile_pixels_);
+      }
+    }
+    eigensolver_ = make_eigensolver(tile_layout_, *workspace_, stream_);
+    CUDA_CHECK(cudaEventCreateWithFlags(&tile_done_, cudaEventDisableTiming));
+  }
+
+  ~LocalPcaTask() noexcept override {
+    if (tile_done_ != nullptr) {
+      CUDA_CHECK_NT(cudaEventDestroy(tile_done_));
+    }
+  }
+
+  [[nodiscard]] bool can_reuse(const PcaSettings &settings,
+                                const holoflow::core::TDesc &desc, cudaStream_t stream) const {
+    return settings.window_size == settings_.window_size && desc.shape == input_desc_.shape &&
+           desc.strides == input_desc_.strides && desc.dtype == input_desc_.dtype &&
+           desc.mem_loc == input_desc_.mem_loc && eigensolver_->is_compatible_stream(stream);
+  }
+
+  void reconfigure(const PcaSettings &settings, cudaStream_t stream) {
+    settings_ = settings;
+    stream_ = stream;
+    CUBLAS_CHECK(cublasSetStream(cublas_.get(), stream_));
+  }
+
+  bool same_settings(const PcaSettings &settings) const { return settings_ == settings; }
+
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    nvtx3::scoped_range range("Local PCA Sync Task");
+    const auto *input = reinterpret_cast<const float *>(ctx.inputs[0].data());
+    auto *output = reinterpret_cast<float *>(ctx.outputs[0].data());
+    const int area = settings_.window_size * settings_.window_size;
+    logger()->debug("[LocalPca] window={}x{}x{}, tile={} pixels, frame={}x{}",
+                    settings_.window_size, settings_.window_size, layout_.features, tile_pixels_,
+                    layout_.width, layout_.height);
+    const long long patch_stride = static_cast<long long>(area) * layout_.features;
+    const long long matrix_stride = static_cast<long long>(layout_.features) * layout_.features;
+    constexpr float alpha = 1.0f;
+    constexpr float beta = 0.0f;
+    const auto started = std::chrono::steady_clock::now();
+    auto last_log = started;
+    const size_t total_pixels = layout_.batches * static_cast<size_t>(layout_.samples);
+    size_t completed = 0;
+    size_t queued = 0;
+    unsigned int pending_tiles = 0;
+
+    for (size_t batch = 0; batch < layout_.batches; ++batch) {
+      for (size_t pixel = 0; pixel < static_cast<size_t>(layout_.samples);
+           pixel += tile_pixels_) {
+        const size_t count = (std::min)(tile_pixels_, static_cast<size_t>(layout_.samples) - pixel);
+        enqueue_local_pca_patches(input, patches_.get(), batch, pixel, count,
+                                  layout_.features, layout_.height, layout_.width,
+                                  settings_.window_size, stream_);
+        CUBLAS_CHECK(cublasGemmStridedBatchedEx(
+            cublas_.get(), CUBLAS_OP_T, CUBLAS_OP_N, layout_.features, layout_.features,
+            area, &alpha, patches_.get(), CUDA_R_32F, area, patch_stride, patches_.get(),
+            CUDA_R_32F, area, patch_stride, &beta, workspace_->matrices.get(), CUDA_R_32F,
+            layout_.features, matrix_stride, static_cast<int>(count),
+            CUBLAS_COMPUTE_32F_PEDANTIC,
+            CUBLAS_GEMM_DEFAULT));
+
+        // The eigensolver has a fixed batch size. A final partial tile gets zero covariance
+        // matrices so that its unused entries remain well-defined.
+        if (count < tile_pixels_) {
+          CUDA_CHECK(cudaMemsetAsync(workspace_->matrices.get() + count * matrix_stride, 0,
+                                     (tile_pixels_ - count) * matrix_stride * sizeof(float),
+                                     stream_));
+        }
+        eigensolver_->solve(workspace_->matrices.get(), workspace_->eigenvalues.get(),
+                            workspace_->solver_info.get(), stream_);
+        enqueue_local_pca_projection(input, workspace_->matrices.get(), output, batch, pixel,
+                                     count, layout_.features, layout_.height, layout_.width,
+                                     settings_.begin, settings_.end, stream_);
+
+        // Same-stream ordering permits tile scratch to be reused without waiting. Poll after
+        // several tiles to report GPU completion while keeping launch overhead low.
+        queued += count;
+        ++pending_tiles;
+        if (pending_tiles == 8 || queued == total_pixels) {
+          CUDA_CHECK(cudaEventRecord(tile_done_, stream_));
+          for (;;) {
+            const auto status = cudaEventQuery(tile_done_);
+            if (status == cudaSuccess) break;
+            if (status != cudaErrorNotReady) CUDA_CHECK(status);
+            const auto now = std::chrono::steady_clock::now();
+            if (now - last_log >= std::chrono::seconds(1)) {
+              logger()->info("[LocalPca] {}/{} pixels ({:.1f}%)", completed, total_pixels,
+                             100.0 * static_cast<double>(completed) / total_pixels);
+              last_log = now;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+          }
+          completed = queued;
+          pending_tiles = 0;
+        }
+        const auto now = std::chrono::steady_clock::now();
+        if (now - last_log >= std::chrono::seconds(1)) {
+          logger()->info("[LocalPca] {}/{} pixels ({:.1f}%)", completed, total_pixels,
+                         100.0 * static_cast<double>(completed) / total_pixels);
+          last_log = now;
+        }
+      }
+    }
+    if (last_log != started) {
+      logger()->info("[LocalPca] completed {} pixels in {:.1f} s", total_pixels,
+                     std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count());
+    }
+    return holoflow::core::OpResult::Ok;
+  }
+
+private:
+  PcaSettings settings_;
+  holoflow::core::TDesc input_desc_;
+  PcaLayout layout_;
+  cudaStream_t stream_;
+  size_t tile_pixels_;
+  PcaLayout tile_layout_;
+  std::unique_ptr<PcaWorkspace> workspace_;
+  curaii::unique_device_ptr<float> patches_;
+  curaii::CublasHandle cublas_;
+  std::unique_ptr<Eigensolver> eigensolver_;
+  cudaEvent_t tile_done_{nullptr};
+};
+
+// -------------------------------------------------------------------------------------------------
 // Embedded cuSolverDx device program
 // -------------------------------------------------------------------------------------------------
 
@@ -1040,12 +1216,14 @@ void to_json(nlohmann::json &j, const PcaSettings &settings) {
   j = nlohmann::json{
       {"begin", settings.begin},
       {"end", settings.end},
+      {"window_size", settings.window_size},
   };
 }
 
 void from_json(const nlohmann::json &j, PcaSettings &settings) {
   j.at("begin").get_to(settings.begin);
   j.at("end").get_to(settings.end);
+  settings.window_size = j.value("window_size", 0);
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -1071,6 +1249,33 @@ holoflow::core::InferResult PcaFactory::infer(std::span<const holoflow::core::TD
   check(input_desc.mem_loc == holoflow::core::MemLoc::Device, "expected input in device memory");
   check(settings.begin < settings.end, "expected begin < end");
   check(settings.begin >= 0, "expected begin >= 0");
+  check(settings.window_size == 0 ||
+            (settings.window_size > 0 && settings.window_size % 2 == 1),
+        "expected window_size to be zero or a positive odd number");
+
+  check(input_desc.shape.at(input_desc.rank() - 1) > 0 &&
+            input_desc.shape.at(input_desc.rank() - 2) > 0 &&
+            input_desc.shape.at(input_desc.rank() - 3) > 0,
+        "expected positive width, height and feature count");
+  check(input_desc.shape.at(input_desc.rank() - 1) <=
+            static_cast<size_t>((std::numeric_limits<int>::max)()) &&
+            input_desc.shape.at(input_desc.rank() - 2) <=
+            static_cast<size_t>((std::numeric_limits<int>::max)()) &&
+            input_desc.shape.at(input_desc.rank() - 3) <=
+            static_cast<size_t>((std::numeric_limits<int>::max)()),
+        "input dimensions exceed PCA limits");
+  check(input_desc.shape.at(input_desc.rank() - 1) <=
+            static_cast<size_t>((std::numeric_limits<int>::max)()) /
+                input_desc.shape.at(input_desc.rank() - 2),
+        "frame area exceeds PCA limits");
+  if (settings.window_size != 0) {
+    check(static_cast<size_t>(settings.window_size) * settings.window_size <=
+              static_cast<size_t>((std::numeric_limits<int>::max)()),
+          "local window area exceeds cuBLAS limits");
+    check(input_desc.strides == holoflow::core::TDesc(input_desc.shape, input_desc.dtype,
+                                                     input_desc.mem_loc).strides,
+          "local PCA requires contiguous input");
+  }
 
   const PcaLayout layout(input_desc);
   check(settings.end <= layout.features, "expected end <= n_features");
@@ -1096,7 +1301,11 @@ PcaFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                    const holoflow::core::SyncCreateCtx   &ctx) const {
   this->infer(input_descs, jsettings);
 
-  return std::make_unique<PcaTask>(jsettings.get<PcaSettings>(), input_descs.front(), ctx);
+  const auto settings = jsettings.get<PcaSettings>();
+  if (settings.window_size != 0) {
+    return std::make_unique<LocalPcaTask>(settings, input_descs.front(), ctx);
+  }
+  return std::make_unique<PcaTask>(settings, input_descs.front(), ctx);
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>
@@ -1109,6 +1318,17 @@ PcaFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 
   const auto  settings   = jsettings.get<PcaSettings>();
   const auto &input_desc = input_descs.front();
+
+  if (settings.window_size != 0) {
+    auto *local_pca = dynamic_cast<LocalPcaTask *>(old_task.get());
+    if (local_pca != nullptr && local_pca->can_reuse(settings, input_desc, ctx.stream)) {
+      if (!local_pca->same_settings(settings)) ctx.invalidate_execution();
+      local_pca->reconfigure(settings, ctx.stream);
+      return old_task;
+    }
+    ctx.invalidate_execution();
+    return create(input_descs, jsettings, ctx);
+  }
 
   auto *pca = dynamic_cast<PcaTask *>(old_task.get());
   if (pca != nullptr && pca->can_reuse(input_desc, ctx.stream)) {

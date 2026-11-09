@@ -25,11 +25,13 @@ namespace holotask::syncs {
 struct PcaSettings {
   int begin;
   int end;
+  // Zero retains whole-frame PCA; an odd positive size enables local PCA.
+  int window_size = 0;
 
   int components() const { return end - begin; }
 
   bool operator==(const PcaSettings &other) const {
-    return begin == other.begin && end == other.end;
+    return begin == other.begin && end == other.end && window_size == other.window_size;
   }
 };
 

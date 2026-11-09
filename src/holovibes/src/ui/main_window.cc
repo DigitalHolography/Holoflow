@@ -1280,6 +1280,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("space_transform", render_widget_->get_space_transform());
   settings.setValue("time_transform", render_widget_->get_time_transform());
   settings.setValue("time_window", render_widget_->get_time_window());
+  settings.setValue("local_pca_window_size", render_widget_->get_local_pca_window_size());
   settings.setValue("lambda_nm", render_widget_->get_lambda());
   settings.setValue("focus_mm", render_widget_->get_focus());
   settings.setValue("asp_padding_enabled", render_widget_->is_asp_padding_enabled());
@@ -1411,8 +1412,6 @@ void MainWindow::restore_persistent_state() {
   restore_combo_text(settings, "image_mode", render_widget_->image_combo());
   render_widget_->set_batch_size(
       settings.value("batch_size", render_widget_->get_batch_size()).toInt());
-  render_widget_->set_time_stride(
-      settings.value("time_stride", render_widget_->get_time_stride()).toInt());
   render_widget_->set_filter_2d_enabled(
       settings.value("filter_2d", render_widget_->is_filter_2d_enabled()).toBool());
   render_widget_->set_filter_inner(
@@ -1421,8 +1420,12 @@ void MainWindow::restore_persistent_state() {
       settings.value("filter_outer", render_widget_->get_filter_outer()).toInt());
   restore_combo_text(settings, "space_transform", render_widget_->space_transform_combo());
   restore_combo_text(settings, "time_transform", render_widget_->time_transform_combo());
+  render_widget_->set_time_stride(
+      settings.value("time_stride", render_widget_->get_time_stride()).toInt());
   render_widget_->set_time_window(
       settings.value("time_window", render_widget_->get_time_window()).toInt());
+  render_widget_->set_local_pca_window_size(
+      settings.value("local_pca_window_size", render_widget_->get_local_pca_window_size()).toInt());
   render_widget_->set_lambda(settings.value("lambda_nm", render_widget_->get_lambda()).toInt());
   render_widget_->set_focus(settings.value("focus_mm", render_widget_->get_focus()).toInt());
   render_widget_->set_asp_padding_enabled(
@@ -2510,6 +2513,9 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::TimeWindow:
         render_widget_->mark_time_window_invalid();
         break;
+      case SettingsField::LocalPcaWindowSize:
+        render_widget_->mark_local_pca_window_invalid();
+        break;
       case SettingsField::TimeStride:
         render_widget_->mark_time_stride_invalid();
         break;
@@ -2579,6 +2585,7 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
       FieldBinding{SettingsField::AspPadding, render_widget_->asp_padded_height_spin()},
       FieldBinding{SettingsField::TimeMethod, render_widget_->time_transform_combo()},
       FieldBinding{SettingsField::TimeWindow, render_widget_->time_window_spin()},
+      FieldBinding{SettingsField::LocalPcaWindowSize, render_widget_->local_pca_window_spin()},
       FieldBinding{SettingsField::TimeStride, render_widget_->time_stride_spin()},
       FieldBinding{SettingsField::TimeZBegin, view_widget_->z_spin()},
       FieldBinding{SettingsField::TimeZEnd, view_widget_->z_width_spin()},
@@ -2883,21 +2890,23 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     std::map<std::string, TimeMethod> method_from_str{
         {"None", TimeMethod::NONE},
         {"Principal Component Analysis", TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS},
+        {"Local PCA", TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS},
         {"RFFT", TimeMethod::RFFT},
         {"FFT", TimeMethod::FFT},
         {"LSCI (3D)", TimeMethod::NONE},
     };
-    s.time_window       = render_widget_->get_time_window();
-    s.time_stride       = render_widget_->get_time_stride();
-    s.time_accumulation = 4; // TODO: expose in UI
-    QString method      = render_widget_->get_time_transform();
-    s.time_method       = method_from_str.at(method.toStdString());
-    s.time_x_begin      = view_widget_->get_x_origin();
-    s.time_x_end        = s.time_x_begin + view_widget_->get_x_width();
-    s.time_y_begin      = view_widget_->get_y_origin();
-    s.time_y_end        = s.time_y_begin + view_widget_->get_y_width();
-    s.time_z_begin      = view_widget_->get_z_origin();
-    s.time_z_end        = s.time_z_begin + view_widget_->get_z_width();
+    s.time_window           = render_widget_->get_time_window();
+    s.local_pca_window_size = render_widget_->get_local_pca_window_size();
+    s.time_stride           = render_widget_->get_time_stride();
+    s.time_accumulation     = 4; // TODO: expose in UI
+    QString method          = render_widget_->get_time_transform();
+    s.time_method           = method_from_str.at(method.toStdString());
+    s.time_x_begin          = view_widget_->get_x_origin();
+    s.time_x_end            = s.time_x_begin + view_widget_->get_x_width();
+    s.time_y_begin          = view_widget_->get_y_origin();
+    s.time_y_end            = s.time_y_begin + view_widget_->get_y_width();
+    s.time_z_begin          = view_widget_->get_z_origin();
+    s.time_z_end            = s.time_z_begin + view_widget_->get_z_width();
   }
 
   // View Settings
@@ -3116,6 +3125,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     case TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS:
       method = "Principal Component Analysis";
       break;
+    case TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS:
+      method = "Local PCA";
+      break;
     case TimeMethod::RFFT:
       method = "RFFT";
       break;
@@ -3128,6 +3140,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     }
     render_widget_->set_time_transform(method);
     render_widget_->set_time_window(static_cast<int>(s.time_window));
+    render_widget_->set_local_pca_window_size(s.local_pca_window_size);
     render_widget_->set_time_stride(static_cast<int>(s.time_stride));
 
     view_widget_->set_z_origin(static_cast<int>(s.time_z_begin));

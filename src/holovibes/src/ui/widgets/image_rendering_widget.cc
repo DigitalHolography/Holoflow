@@ -70,6 +70,9 @@ QString ImageRenderingWidget::get_time_transform() const {
   return time_transform_combo_->currentText();
 }
 int  ImageRenderingWidget::get_time_window() const { return time_window_spin_->value(); }
+int  ImageRenderingWidget::get_local_pca_window_size() const {
+  return local_pca_window_spin_->value();
+}
 int  ImageRenderingWidget::get_lambda() const { return lambda_spin_->value(); }
 int  ImageRenderingWidget::get_focus() const { return focus_spin_->value(); }
 bool ImageRenderingWidget::is_asp_padding_enabled() const {
@@ -115,6 +118,9 @@ void ImageRenderingWidget::set_time_transform(const QString &method) {
   time_transform_combo_->setCurrentText(method);
 }
 void ImageRenderingWidget::set_time_window(int value) { time_window_spin_->setValue(value); }
+void ImageRenderingWidget::set_local_pca_window_size(int value) {
+  local_pca_window_spin_->setValue(value);
+}
 void ImageRenderingWidget::set_lambda(int value) { lambda_spin_->setValue(value); }
 void ImageRenderingWidget::set_focus(int value) { focus_spin_->setValue(value); }
 void ImageRenderingWidget::set_asp_padding_enabled(bool enabled) {
@@ -177,8 +183,14 @@ void ImageRenderingWidget::update_spatial_contrast_controls() {
   spatial_contrast_display_max_->setEnabled(enabled && !spatial_contrast_appearance_locked_);
   spatial_contrast_invert_display_->setEnabled(enabled && !spatial_contrast_appearance_locked_);
   update_time_window_limits();
+  update_local_pca_controls();
   emit spatial_contrast_enabled_changed(enabled);
   update_spatial_contrast_display_range();
+}
+void ImageRenderingWidget::update_local_pca_controls() {
+  const bool visible = time_transform_combo_->currentText() == "Local PCA";
+  local_pca_window_label_->setVisible(visible);
+  local_pca_window_spin_->setVisible(visible);
 }
 void ImageRenderingWidget::update_spatial_contrast_display_range() {
   // LSCI uses a fixed-range U8 conversion before display; Raw and other views are U8/U16 too.
@@ -213,6 +225,9 @@ void ImageRenderingWidget::mark_filter_outer_invalid() {
   mark_validation_error(filter_2d_outer_spin_);
 }
 void ImageRenderingWidget::mark_time_window_invalid() { mark_validation_error(time_window_spin_); }
+void ImageRenderingWidget::mark_local_pca_window_invalid() {
+  mark_validation_error(local_pca_window_spin_);
+}
 void ImageRenderingWidget::mark_space_transform_invalid() {
   mark_validation_error(space_transform_combo_);
 }
@@ -247,6 +262,7 @@ QSpinBox  *ImageRenderingWidget::filter_2d_outer_spin() { return filter_2d_outer
 QComboBox *ImageRenderingWidget::space_transform_combo() { return space_transform_combo_; }
 QComboBox *ImageRenderingWidget::time_transform_combo() { return time_transform_combo_; }
 QSpinBox  *ImageRenderingWidget::time_window_spin() { return time_window_spin_; }
+QSpinBox  *ImageRenderingWidget::local_pca_window_spin() { return local_pca_window_spin_; }
 QSpinBox  *ImageRenderingWidget::lambda_spin() { return lambda_spin_; }
 QSpinBox  *ImageRenderingWidget::focus_spin() { return focus_spin_; }
 QSlider   *ImageRenderingWidget::focus_slider() { return focus_slider_; }
@@ -328,7 +344,7 @@ void ImageRenderingWidget::setup_ui() {
   ++row;
 
   auto time_transforms =
-      QStringList{"None", "RFFT", "FFT", "Principal Component Analysis", kLscsi3D};
+      QStringList{"None", "RFFT", "FFT", "Principal Component Analysis", "Local PCA", kLscsi3D};
   add_combo_row("Time Transform:", time_transform_combo_, time_transforms);
   time_transform_combo_->setToolTip(
       tr("Select a temporal transform, or LSCI (3D) to calculate local contrast across a sliding "
@@ -384,6 +400,15 @@ void ImageRenderingWidget::setup_ui() {
   time_window_spin_->setToolTip(
       tr("Number of consecutive frames in each temporal-transform window. LSCI (3D) uses this "
          "as its temporal window; LSCI (2D) ignores it."));
+  local_pca_window_label_ = new QLabel("Local PCA Window (px):", this);
+  layout->addWidget(local_pca_window_label_, row, 0);
+  local_pca_window_spin_ = create_spin_box(this, 1, kLargeSpinMax, 5);
+  local_pca_window_spin_->setSingleStep(2);
+  local_pca_window_spin_->setToolTip(
+      tr("Odd spatial window width and height. Neighborhoods wrap around image borders."));
+  layout->addWidget(local_pca_window_spin_, row, 1);
+  ++row;
+  update_local_pca_controls();
   add_spin_row("Lambda (nm):", lambda_spin_, 1, kLargeSpinMax, 852);
   add_spin_row("Focus (mm):", focus_spin_, 1, kLargeSpinMax, 380);
 
@@ -462,6 +487,14 @@ void ImageRenderingWidget::connect_signals() {
           &ImageRenderingWidget::settings_changed);
   connect(time_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           [this]() {
+            if (time_transform_combo_->currentText() == "Local PCA" &&
+                !local_pca_time_window_initialized_) {
+              local_pca_time_window_initialized_ = true;
+              const QSignalBlocker window_blocker(time_window_spin_);
+              const QSignalBlocker stride_blocker(time_stride_spin_);
+              time_window_spin_->setValue(16);
+              time_stride_spin_->setValue(1);
+            }
             if (time_transform_combo_->currentText() == kLscsi3D ||
                 space_transform_combo_->currentText() == kLscsi2D) {
               const QSignalBlocker blocker(space_transform_combo_);
@@ -472,6 +505,8 @@ void ImageRenderingWidget::connect_signals() {
             emit settings_changed();
           });
   connect(time_window_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
+          &ImageRenderingWidget::settings_changed);
+  connect(local_pca_window_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(lambda_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
@@ -545,6 +580,7 @@ void ImageRenderingWidget::clear_validation_styles() {
   clear_validation_error(filter_2d_inner_spin_);
   clear_validation_error(filter_2d_outer_spin_);
   clear_validation_error(time_window_spin_);
+  clear_validation_error(local_pca_window_spin_);
   clear_validation_error(space_transform_combo_);
   clear_validation_error(asp_padding_check_);
   clear_validation_error(asp_padded_width_spin_);

@@ -13,6 +13,17 @@ $$
 
 where the columns of $V$ are the selected eigenvectors. 
 
+The **Local PCA** time transform applies the same uncentered product at every pixel. For a
+`window_size` of 5 and `F = 16`, it gathers a 5×5×16 neighborhood, forms a 16×16 covariance
+matrix from the 25 spatial samples, and projects only the center pixel's 16-frame signal. The
+spatial window advances by one pixel. `Time Stride` advances the 16-frame input window; setting it
+to 1 produces overlapping windows starting one frame apart. Spatial neighborhoods wrap around
+both image borders. Local PCA uses
+CUDA batched matrix products and solves pixels in memory-bounded tiles; `window_size = 0` retains
+the whole-frame behavior described above.
+With **Space Transform: None**, the processed view displays the absolute component responses on
+the source pixel grid, without Fresnel or Angular Spectrum propagation.
+
 !!! warning
     The input is not mean-centered before decomposition.
 
@@ -26,7 +37,8 @@ This task has a single input of shape `(F, H, W)`, where:
 - `H`: height (rows)
 - `W`: width (columns)
 
-The dtype must be real 32-bit (`float32`) and the tensor must reside in device memory. Complex
+The dtype must be real 32-bit (`float32`) and the tensor must reside in device memory. Local PCA
+requires contiguous input. Complex
 FP32 PCA is not yet supported by the cuSolverDx path.
 
 ## Outputs

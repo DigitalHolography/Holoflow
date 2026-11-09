@@ -42,6 +42,7 @@ enum class SettingsField {
   AspPadding,
   TimeMethod,
   TimeWindow,
+  LocalPcaWindowSize,
   TimeStride,
   TimeZBegin,
   TimeZEnd,

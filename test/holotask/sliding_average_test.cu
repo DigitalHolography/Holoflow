@@ -31,6 +31,7 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/asyncs/temporal_window.hh"
 #include "holotask/syncs/causal_sliding_average.hh"
 
 namespace {
@@ -66,6 +67,50 @@ private:
   std::vector<Storage> inputs_;
   std::vector<Storage> outputs_;
 };
+
+TEST(TemporalWindowTest, AdvancesThreeFrameWindowByOneFrame) {
+  const TDesc input_desc({1, 1, 1}, DType::F32, MemLoc::Device);
+  const std::array input_descs{input_desc};
+  const holotask::asyncs::TemporalWindowSettings settings{3, 1, 0};
+  holotask::asyncs::TemporalWindowFactory factory;
+  const auto inferred = factory.infer(input_descs, nlohmann::json(settings));
+
+  curaii::CudaStream stream;
+  auto task = factory.create(input_descs, nlohmann::json(settings),
+                             {stream.get(), stream.get()});
+  TestStorageAccess access(inferred.input_descs, inferred.output_descs);
+  task->bind_storage_access(&access);
+  auto input = curaii::make_unique_device_ptr<float>(1);
+  Storage input_storage{MemLoc::Device, sizeof(float),
+                        reinterpret_cast<std::byte *>(input.get())};
+  std::array input_views{TView{input_desc, &input_storage}};
+  std::array output_views{TView{inferred.output_descs[0], &access.owned_output_storage(0)}};
+  std::atomic<bool> cancelled{false};
+  holoflow::core::AsyncPushCtx push{input_views, &cancelled};
+  holoflow::core::AsyncPopCtx pop{output_views, &cancelled};
+
+  const std::array values{1.0f, 2.0f, 3.0f, 4.0f};
+  for (size_t i = 0; i < values.size(); ++i) {
+    CUDA_CHECK(cudaMemcpyAsync(input.get(), &values[i], sizeof(float), cudaMemcpyHostToDevice,
+                               stream.get()));
+    ASSERT_EQ(task->try_push(push), OpResult::Ok);
+    if (i < 2) {
+      EXPECT_EQ(task->try_pop(pop), OpResult::NotReady);
+      continue;
+    }
+
+    ASSERT_EQ(task->try_pop(pop), OpResult::Ok);
+    std::array<float, 3> actual{};
+    CUDA_CHECK(cudaMemcpyAsync(actual.data(), output_views[0].data(),
+                               actual.size() * sizeof(float), cudaMemcpyDeviceToHost,
+                               stream.get()));
+    CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+    for (size_t j = 0; j < actual.size(); ++j) {
+      EXPECT_FLOAT_EQ(actual[j], values[i + j - 2]);
+    }
+    task->release_output(0);
+  }
+}
 
 TEST(CausalSlidingAverageTest, EmitsPartialThenFullAveragesForArbitraryRank) {
   const TDesc input_desc({1, 1, 1, 1, 1}, DType::F32, MemLoc::Device);

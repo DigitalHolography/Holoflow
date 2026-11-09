@@ -59,6 +59,8 @@ using json = nlohmann::json;
   switch (method) {
   case TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS:
     return "PCA";
+  case TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS:
+    return "LOCAL_PCA";
   case TimeMethod::RFFT:
     return "RFFT";
   case TimeMethod::FFT:
@@ -72,6 +74,9 @@ using json = nlohmann::json;
 [[nodiscard]] TimeMethod from_legacy_time_transform(const std::string &value) {
   if (value == "PCA") {
     return TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS;
+  }
+  if (value == "LOCAL_PCA") {
+    return TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS;
   }
   if (value == "RFFT" || value == "STFT") { // "STFT" kept for backward compatibility
     return TimeMethod::RFFT;
@@ -147,6 +152,7 @@ void write_image_rendering(json &j, const Settings &s) {
   rendering["time_transformation"]        = to_legacy_time_transform(s.time_method);
   rendering["time_transformation_size"]   = s.time_window;
   rendering["time_transformation_stride"] = s.time_stride;
+  rendering["local_pca_window_size"]       = s.local_pca_window_size;
 }
 
 void write_view(json &j, const Settings &s) {
@@ -230,6 +236,7 @@ void read_image_rendering(Settings &s, const json &rendering) {
   s.time_method = from_legacy_time_transform(val(rendering, "time_transformation", "NONE"));
   s.time_window = val(rendering, "time_transformation_size", s.time_window);
   s.time_stride = val(rendering, "time_transformation_stride", s.time_stride);
+  s.local_pca_window_size = val(rendering, "local_pca_window_size", s.local_pca_window_size);
 
   const auto &filter2d = child_or_empty(rendering, "filter2d");
   s.filter_2d          = val(filter2d, "enabled", s.filter_2d);

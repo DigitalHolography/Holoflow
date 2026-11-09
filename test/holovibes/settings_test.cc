@@ -18,6 +18,7 @@
 #include <limits>
 #include <string_view>
 
+#include "pipeline/field_help.hh"
 #include "pipeline/validation.hh"
 #include "settings_loader.hh"
 
@@ -31,6 +32,13 @@ bool has_issue(const ValidationResult &result, std::string_view code) {
 }
 
 } // namespace
+
+TEST(SettingsFieldHelpTest, CoversEverySettingsField) {
+  for (int index = 0; index <= static_cast<int>(SettingsField::SignalPlotTimeWindow); ++index) {
+    const auto field = static_cast<SettingsField>(index);
+    EXPECT_EQ(get_field_help(field).field, field);
+  }
+}
 
 TEST(SignalPlotSettingsTest, DefaultsArePositive) {
   const Settings settings{};
@@ -126,6 +134,55 @@ TEST(SignalPlotSettingsTest, DerivesSampleTimeFromFrequencyStride) {
   settings.time_stride     = 64;
   settings.pp_accumulation = 4;
   EXPECT_DOUBLE_EQ(settings.signal_plot_sample_time_seconds(), 64.0 / 40'000.0);
+}
+
+TEST(LocalPcaSettingsTest, AllowsOneFrameTimeStride) {
+  Settings settings{};
+  settings.time_method = TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS;
+  settings.time_window = 16;
+  settings.time_stride = 1;
+  settings.local_pca_window_size = 5;
+
+  const auto local_result = validate_settings(settings, {});
+  EXPECT_FALSE(has_issue(local_result, "time_stride_not_multiple"));
+  EXPECT_FALSE(has_issue(local_result, "time_stride_non_positive"));
+
+  settings.time_method = TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "time_stride_not_multiple"));
+}
+
+TEST(LocalPcaSettingsTest, AllowsNoSpatialPropagationInProcessedView) {
+  Settings settings{};
+  settings.view_type = ViewType::PROCESSED;
+  settings.time_method = TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS;
+  settings.spacial_method = SpacialMethod::NONE;
+  settings.time_window = 16;
+  settings.time_stride = 1;
+  settings.local_pca_window_size = 5;
+
+  EXPECT_FALSE(has_issue(validate_settings(settings, {}), "spacial_method_unsupported"));
+
+  settings.time_method = TimeMethod::RFFT;
+  settings.time_stride = 16;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "spacial_method_unsupported"));
+}
+
+TEST(LocalPcaSettingsTest, RequiresEnoughFramesForOverlappingWindow) {
+  Settings settings{};
+  settings.time_method = TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS;
+  settings.time_stride = 1;
+  settings.time_window = 2;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "local_pca_time_window_too_small"));
+
+  settings.time_window = 16;
+  settings.import_source = ImportSource::HOLOFILE;
+  settings.load_begin = 0;
+  settings.load_end = 20;
+  settings.load_batch = 8;
+  EXPECT_FALSE(has_issue(validate_settings(settings, {}), "local_pca_time_window_insufficient"));
+
+  settings.load_end = 15;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "local_pca_time_window_insufficient"));
 }
 
 TEST(SlidingAverageSettingsTest, RejectsMultipleAutofocusIterationsForNonUnitWindow) {

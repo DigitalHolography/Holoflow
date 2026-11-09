@@ -41,6 +41,7 @@ enum class SpacialMethod {
 enum class TimeMethod {
   NONE,
   PRINCIPAL_COMPONENT_ANALYSIS,
+  LOCAL_PRINCIPAL_COMPONENT_ANALYSIS,
   RFFT,
   FFT,
 };
@@ -102,6 +103,7 @@ struct Settings {
   TimeMethod time_method;
   int        time_window;
   int        time_stride;
+  int        local_pca_window_size = 5;
 
   // Cuts views
   int time_x_begin;

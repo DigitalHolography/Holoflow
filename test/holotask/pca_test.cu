@@ -51,10 +51,11 @@ std::vector<float> as_floats(const std::vector<std::byte> &bytes) {
   return values;
 }
 
-nlohmann::json settings(int begin, int end) {
+nlohmann::json settings(int begin, int end, int window_size = 0) {
   return holotask::syncs::PcaSettings{
-      .begin = begin,
-      .end   = end,
+      .begin       = begin,
+      .end         = end,
+      .window_size = window_size,
   };
 }
 
@@ -126,10 +127,49 @@ TEST_F(PcaInferTest, RejectsComplexInput) {
   EXPECT_THROW(factory.infer(inputs, settings(0, 2)), std::invalid_argument);
 }
 
+TEST_F(PcaInferTest, LocalPcaRejectsEvenSpatialWindow) {
+  const std::vector<TDesc> inputs = {device_desc({2, 3, 3})};
+  EXPECT_THROW(factory.infer(inputs, settings(0, 2, 4)), std::invalid_argument);
+}
+
 class PcaExecuteTest : public ::testing::Test {
 protected:
   holotask::syncs::PcaFactory factory;
 };
+
+TEST_F(PcaExecuteTest, LocalPcaWrapsBordersAndProjectsCenterPixel) {
+  // A 9x9 window on this 3x3 image covers every pixel nine times by wrapping the borders.
+  // The covariance has eigenvalues 45 and 81. Eigenvector signs are arbitrary, so compare squares.
+  std::vector<float> input(2 * 3 * 3, 0.0f);
+  input[0]     = 1.0f; // T0 at top-left
+  input[4]     = 2.0f; // T0 at center
+  input[9 + 8] = 3.0f; // T1 at bottom-right
+
+  const TDesc input_desc = device_desc({2, 3, 3});
+  const auto  result     = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{input_desc}, std::vector<std::vector<std::byte>>{as_bytes(input)},
+      settings(0, 2, 9));
+
+  const auto output = as_floats(result.output_bytes[0]);
+  ASSERT_EQ(output.size(), 18);
+  EXPECT_NEAR(output[0] * output[0], 1.0f, 2e-2f);
+  EXPECT_NEAR(output[9] * output[9], 0.0f, 2e-2f);
+  EXPECT_NEAR(output[4] * output[4], 4.0f, 2e-2f);
+  EXPECT_NEAR(output[9 + 4] * output[9 + 4], 0.0f, 2e-2f);
+}
+
+TEST_F(PcaExecuteTest, LocalPcaPreservesLeadingBatches) {
+  const TDesc input_desc = device_desc({2, 2, 1, 1});
+  const auto  result     = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{input_desc},
+      std::vector<std::vector<std::byte>>{as_bytes(std::vector<float>{1.0f, 0.0f, 0.0f, 2.0f})},
+      settings(1, 2, 3));
+
+  const auto output = as_floats(result.output_bytes[0]);
+  ASSERT_EQ(output.size(), 2);
+  EXPECT_NEAR(output[0] * output[0], 1.0f, 2e-2f);
+  EXPECT_NEAR(output[1] * output[1], 4.0f, 2e-2f);
+}
 
 TEST_F(PcaExecuteTest, ProducesOrthogonalComponentsWithExpectedEigenvalueEnergy) {
   const TDesc input_desc = device_desc({2, 1, 2});

@@ -218,7 +218,12 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
     FH_current = build_aberration_correction(FH_current, FH_delayed);
   }
 
-  TDesc FH_z = build_spatial_propagation(FH_current);
+  // Local PCA coefficients are real and their eigenvector signs are arbitrary. With no spatial
+  // propagation, display their magnitude directly on the source pixel grid.
+  TDesc FH_z = s_.time_method == TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS &&
+                       s_.spacial_method == SpacialMethod::NONE
+                   ? abs(FH_current, {})
+                   : build_spatial_propagation(FH_current);
 
   build_xy_view(FH_z);
 
@@ -306,6 +311,29 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
   using Strat  = holotask::syncs::ConversionSettings::Strategy;
   auto Device  = holotask::syncs::MemcpySettings::Target::Device;
 
+  if (s_.time_method == TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS) {
+    // Split source batches into individual frames before forming overlapping time windows.
+    // Keep this queue on the source device so host input does not reserve an entire batch on
+    // the GPU. The temporal window owns its small frame ring and advances by time_stride frames.
+    H = batched_queue(H, {(std::max)(2, static_cast<int>(H.shape.at(0))), 1, 1});
+    if (H.mem_loc != MemLoc::Device) {
+      H = memcpy(H, {Device});
+    }
+    H = ascontiguousarray(H, {});
+
+    size_t source_cycle_frames = 0;
+    if (s_.import_source == ImportSource::HOLOFILE && s_.load_batch > 0 &&
+        s_.load_end > s_.load_begin) {
+      const int selected_frames = s_.load_end - s_.load_begin;
+      source_cycle_frames = static_cast<size_t>(selected_frames / s_.load_batch * s_.load_batch);
+    }
+    H = temporal_window(H,
+                        {.window_size = static_cast<size_t>(s_.time_window),
+                         .stride_size = static_cast<size_t>(s_.time_stride),
+                         .source_cycle_frames = source_cycle_frames});
+    return convert(H, {Target::F32, Strat::Real});
+  }
+
   if (H.mem_loc != MemLoc::Device) {
     H = memcpy(H, {Device});
     H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window});
@@ -316,17 +344,20 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDesc H) {
   // H enters as [T, Hy, Hx] (F32).
-  // We first accumulate N_pre such windows into a batch, producing [N_pre, T, Hy, Hx].
+  // Other transforms first accumulate four windows into a batch. Local PCA processes
+  // each overlapping window as soon as it is ready to avoid buffering large frame batches.
   // Time-frequency analysis then operates along axis 1 (the T dimension).
-  // The output is [N_pre, Nz, Hy, Hx], which feeds directly into the post-TFA queue.
+  // The output is [N_pre, Nz, Hy, Hx] (N_pre = 1 for Local PCA).
 
-  int     N_pre = 4;
+  int     N_pre = s_.time_method == TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS ? 1 : 4;
   int64_t T     = static_cast<int64_t>(H.shape.at(0));
   int64_t Hy    = static_cast<int64_t>(H.shape.at(1));
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
 
   H = reshape(H, {{1, T, Hy, Hx}, false});
-  H = batched_queue(H, {N_pre * 2, N_pre, N_pre}); // [N_pre, T, Hy, Hx]
+  if (N_pre > 1) {
+    H = batched_queue(H, {N_pre * 2, N_pre, N_pre}); // [N_pre, T, Hy, Hx]
+  }
 
   if (s_.time_method == TimeMethod::RFFT) {
     auto FH = rfft(H, {1}); // axis 1 = T dimension
@@ -361,13 +392,17 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
     return FH;
   }
 
-  if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
-    // PCA natively supports arbitrary leading batch dimensions (rank >= 3).
+  if (s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS ||
+      s_.time_method == TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS) {
+    // Both PCA modes support arbitrary leading batch dimensions (rank >= 3).
     // Input H: [N_pre, T, Hy, Hx] — the feature axis is shape[-3] = T.
     // Output FH: [N_pre, Nz, Hy, Hx] where Nz = z1 - z0.
     int  z0 = s_.view_3d_cuts ? 0 : s_.time_z_begin;
     int  z1 = s_.view_3d_cuts ? static_cast<int>(T) : s_.time_z_end;
-    auto FH = pca(H, {z0, z1});
+    const int window_size = s_.time_method == TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS
+                                ? s_.local_pca_window_size
+                                : 0;
+    auto FH = pca(H, {z0, z1, window_size});
     return FH;
   }
 
@@ -736,7 +771,8 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
   }
 
   if (s_.time_method == TimeMethod::RFFT ||
-      s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
+      s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS ||
+      s_.time_method == TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS) {
     auto freqs = arange({f0, f1, df, holoflow::core::DType::F32});
     return freqs;
   }

@@ -43,6 +43,7 @@ public:
   QString get_space_transform() const;
   QString get_time_transform() const;
   int     get_time_window() const;
+  int     get_local_pca_window_size() const;
   int     get_lambda() const;
   int     get_focus() const;
   bool    is_asp_padding_enabled() const;
@@ -66,6 +67,7 @@ public:
   void set_space_transform(const QString &method);
   void set_time_transform(const QString &method);
   void set_time_window(int value);
+  void set_local_pca_window_size(int value);
   void set_lambda(int value);
   void set_focus(int value);
   void set_asp_padding_enabled(bool enabled);
@@ -89,6 +91,7 @@ public:
   void mark_filter_inner_invalid();
   void mark_filter_outer_invalid();
   void mark_time_window_invalid();
+  void mark_local_pca_window_invalid();
   void mark_space_transform_invalid();
   void mark_asp_padding_invalid();
   void mark_time_transform_invalid();
@@ -107,6 +110,7 @@ public:
   QComboBox       *space_transform_combo();
   QComboBox       *time_transform_combo();
   QSpinBox        *time_window_spin();
+  QSpinBox        *local_pca_window_spin();
   QSpinBox        *lambda_spin();
   QSpinBox        *focus_spin();
   QSlider         *focus_slider();
@@ -134,6 +138,7 @@ private:
   void        update_spatial_contrast_controls();
   void        update_spatial_contrast_display_range();
   void        update_time_window_limits();
+  void        update_local_pca_controls();
 
   QComboBox       *image_combo_;
   QSpinBox        *batch_size_spin_;
@@ -144,6 +149,9 @@ private:
   QComboBox       *space_transform_combo_;
   QComboBox       *time_transform_combo_;
   QSpinBox        *time_window_spin_;
+  QLabel          *local_pca_window_label_;
+  QSpinBox        *local_pca_window_spin_;
+  bool             local_pca_time_window_initialized_ = false;
   QSpinBox        *lambda_spin_;
   QSpinBox        *focus_spin_;
   QSlider         *focus_slider_;

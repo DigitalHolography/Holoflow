@@ -196,6 +196,37 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
               "Time window must be strictly positive.", {SettingsField::TimeWindow});
   }
 
+  if (settings.time_method == TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS &&
+      (settings.local_pca_window_size <= 0 || settings.local_pca_window_size % 2 == 0)) {
+    add_issue(result, ValidationSeverity::Error, "local_pca_window_invalid",
+              "Local PCA spatial window must be a positive odd number.",
+              {SettingsField::LocalPcaWindowSize});
+  }
+
+  if (settings.time_method == TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS &&
+      settings.time_window < 3) {
+    add_issue(result, ValidationSeverity::Error, "local_pca_time_window_too_small",
+              "Local PCA requires at least 3 frames in Time Window.",
+              {SettingsField::TimeWindow});
+  }
+
+  if (settings.time_method == TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS &&
+      settings.import_source == ImportSource::HOLOFILE && settings.load_batch > 0 &&
+      settings.load_end > settings.load_begin) {
+    const int selected_end = context.source_frame_count.has_value()
+                                 ? std::min(settings.load_end, *context.source_frame_count)
+                                 : settings.load_end;
+    const int selected_frames = std::max(selected_end - settings.load_begin, 0);
+    const int cycle_frames = selected_frames / settings.load_batch * settings.load_batch;
+    if (cycle_frames < settings.time_window) {
+      add_issue(result, ValidationSeverity::Error, "local_pca_time_window_insufficient",
+                std::format("The selected holofile range provides {} frames per replay; "
+                            "Local PCA needs at least {}.",
+                            cycle_frames, settings.time_window),
+                {SettingsField::TimeWindow, SettingsField::LoadBegin, SettingsField::LoadEnd});
+    }
+  }
+
   if (settings.time_stride <= 0) {
     add_issue(result, ValidationSeverity::Error, "time_stride_non_positive",
               "Time stride must be strictly positive.", {SettingsField::TimeStride});
@@ -211,7 +242,8 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
   const bool temporal_lscsi =
       requires_processed_pipeline(settings) && settings.pp_spatial_contrast &&
       settings.pp_spatial_contrast_dimensions == 3;
-  if (!temporal_lscsi && settings.time_window > 0 && settings.time_stride > 0 &&
+  const bool local_pca = settings.time_method == TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS;
+  if (!temporal_lscsi && !local_pca && settings.time_window > 0 && settings.time_stride > 0 &&
       (settings.time_stride % settings.time_window != 0)) {
     add_issue(result, ValidationSeverity::Error, "time_stride_not_multiple",
               "Time stride must be a multiple of the time window.",
@@ -261,11 +293,13 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
 
       const bool supported_spacial_method =
           settings.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION ||
-          settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM;
+          settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM ||
+          (settings.time_method == TimeMethod::LOCAL_PRINCIPAL_COMPONENT_ANALYSIS &&
+           settings.spacial_method == SpacialMethod::NONE);
       if (!supported_spacial_method) {
         add_issue(
             result, ValidationSeverity::Error, "spacial_method_unsupported",
-            "Fresnel Diffraction or Angular Spectrum must be selected for processed view mode.",
+            "Select Fresnel Diffraction or Angular Spectrum, or use None with Local PCA.",
             {SettingsField::SpacialMethod});
       }
 

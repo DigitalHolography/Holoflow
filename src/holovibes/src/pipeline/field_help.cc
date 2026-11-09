@@ -59,6 +59,7 @@ constexpr auto kFilter2DOuterConstraints          = std::to_array<const char *>(
 constexpr auto kSpacialMethodConstraints          = std::to_array<const char *>({
     "Processed reconstruction supports Fresnel Diffraction and Angular Spectrum; LSCI (2D) "
     "calculates spatial contrast per frame.",
+    "Local PCA can use None to display component magnitudes without spatial propagation.",
     "Angular Spectrum is disabled when Auto Focus is enabled.",
 });
 constexpr auto kAspPaddingConstraints             = std::to_array<const char *>({
@@ -72,12 +73,18 @@ constexpr auto kTimeMethodConstraints             = std::to_array<const char *>(
 });
 constexpr auto kTimeWindowConstraints             = std::to_array<const char *>({
     "Must be strictly positive.",
-    "Outside processed 3D LSCI, Time Stride must be a multiple of Time Window.",
+    "Local PCA requires at least 3 frames and enough frames in each holofile replay cycle.",
+    "For Local PCA and 3D LSCI, Time Stride may be smaller than Time Window to overlap windows.",
+    "Other time transforms require Time Stride to be a multiple of Time Window.",
+});
+constexpr auto kLocalPcaWindowConstraints         = std::to_array<const char *>({
+    "Must be a positive odd number of pixels.",
+    "Neighborhoods wrap around both image borders.",
 });
 constexpr auto kTimeStrideConstraints             = std::to_array<const char *>({
     "Must be strictly positive.",
-    "Outside processed 3D LSCI, must be a multiple of Time Window.",
-    "For 3D LSCI, a stride smaller than Time Window produces overlapping windows.",
+    "For Local PCA and 3D LSCI, a stride smaller than Time Window produces overlapping windows.",
+    "Other time transforms require a multiple of Time Window.",
     "For holofile replay, windows stay within one pass through the selected frames.",
     "For holofile import, must not exceed the selected frame range.",
 });
@@ -134,6 +141,9 @@ constexpr auto kAutofocusNbIterConstraints        = std::to_array<const char *>(
     "Must be strictly positive.",
     "Each pass applies one Shack-Hartmann phase correction.",
 });
+constexpr auto kSignalPlotTimeWindowConstraints   = std::to_array<const char *>({
+    "Must be finite and strictly positive.",
+});
 
 const FieldHelp kFieldHelp[] = {
     {SettingsField::LoadPath, "Input File",
@@ -173,6 +183,9 @@ const FieldHelp kFieldHelp[] = {
     {SettingsField::TimeWindow, "Time Window",
      "Number of frames in each temporal-analysis window or temporal LSCI window.",
      kTimeWindowConstraints},
+    {SettingsField::LocalPcaWindowSize, "Local PCA Window",
+     "Side length in pixels of the square neighborhood used for each local PCA covariance.",
+     kLocalPcaWindowConstraints},
     {SettingsField::TimeStride, "Time Stride",
      "For temporal LSCI (3D), frames to advance between windows. 2D LSCI processes each input "
      "frame. The regular processing pipeline does not currently apply this setting.",
@@ -215,6 +228,9 @@ const FieldHelp kFieldHelp[] = {
      "Number of Shack-Hartmann sub-apertures per image dimension.", kAutofocusNbSubapsConstraints},
     {SettingsField::AutofocusNbIter, "Auto-focus Iterations",
      "Number of Shack-Hartmann correction passes.", kAutofocusNbIterConstraints},
+    {SettingsField::SignalPlotTimeWindow, "Signal Plot Time Window",
+     "Duration in seconds shown in the signal history plot.",
+     kSignalPlotTimeWindowConstraints},
 };
 
 } // namespace
