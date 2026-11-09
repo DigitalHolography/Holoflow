@@ -13,14 +13,23 @@
 // limitations under the License.
 
 #pragma once
+#include "holocam/camera.hh"
 #include <nlohmann/json.hpp>
 #include <string>
 
 #ifdef HOLOCAM_HAS_EGRABBER
+
+#include "curaii/cuda.hh"
+#include "grabber/grabber.hh"
+#include <EGrabber.h>
+
 namespace holocam {
+
+template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 class CameraBase::Impl {
 public:
-  CameraBase::Impl(const nlohmann::json &config);
+  Impl(const char *model_name, const nlohmann::json &config, size_t expected_grabber_count,
+       size_t buffer_size);
 
   std::size_t bank_count() const noexcept;
   std::size_t frame_width() const noexcept;
@@ -41,16 +50,23 @@ public:
   // release pending frame
   void release_frame();
 
-  const nlohmann::json &configuration() const noexcept;
+  const nlohmann::json &configuration() const noexcept { return config_; }
 
-  const CameraMetrics &metrics() const noexcept;
+  const CameraMetrics &metrics() const noexcept { return metrics_; }
 
-  // TODO add exposition for members needed for the configuration so that each camera can use it
+  // forwarded to the grabber
+  template <typename Module, typename T> void set_required(const char *name, const T &value);
+  template <typename Module, typename T> void set_opt(const char *name, const T &value);
+
 private:
   nlohmann::json config_;
   CameraMetrics  metrics_{};
 
-  // TODO copy S711 stuffs
+  std::unique_ptr<Euresys::EGenTL> gentl_;
+  HostPtr<uint8_t>                 buffers_;
+  std::unique_ptr<Grabber>         grabber_;
 };
 } // namespace holocam
+#else
+class CameraBase::Impl {};
 #endif

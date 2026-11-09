@@ -15,18 +15,61 @@
 #include "holocam/camera.hh"
 #include "camera_pimpl.hh"
 
+#undef max
+#include <utility>
+
 #ifdef HOLOCAM_HAS_EGRABBER
 
 namespace holocam {
 
-CameraBase::CameraBase(const nlohmann::json &config) { std::make_unique<CameraBase::Impl>(config); }
+namespace {
+void check(bool condition, const std::string &msg) {
+  if (!condition) {
+    logger()->error("error: {}", msg);
+    throw std::invalid_argument("error: " + msg);
+  }
+}
+
+} // namespace
+CameraBase::CameraBase(const nlohmann::json &config, std::optional<RecordSettings> record_settings)
+    : impl_{nullptr} {
+  static const std::map<std::string, std::size_t> pixel_format_map = {
+      {"Mono8", 1},
+      {"Mono16", 2},
+  };
+
+  auto root              = config.at(short_name());
+  auto nb_buffers        = root.at("NbBuffers").get<std::size_t>();
+  auto buffer_part_count = root.at("BufferPartCount").get<std::size_t>();
+  auto final_height      = root.value("FinalHeight", root.at("Height").get<std::size_t>());
+  auto width             = root.at("Width").get<std::size_t>();
+  auto pixel_format      = root.at("PixelFormat").get<std::string>();
+  check(pixel_format_map.contains(pixel_format), "unsupported PixelFormat: " + pixel_format);
+  auto bytes_per_pixel = pixel_format_map.at(pixel_format);
+
+  auto   frame_size           = final_height * width * bytes_per_pixel;
+  auto   buffer_size          = buffer_part_count * frame_size;
+  size_t record_buffer_needed = 0;
+  if (record_settings.has_value()) {
+    record_buffer_needed = record_settings->recording_count / buffer_part_count;
+    if (record_buffer_needed % nb_buffers != 0) {
+      record_buffer_needed += nb_buffers - (record_buffer_needed % nb_buffers);
+    }
+  }
+
+  constexpr size_t safety_buffer_count = 16;
+  auto             buffer_count = std::max(record_buffer_needed, nb_buffers) + safety_buffer_count;
+  auto             total_size   = buffer_count * buffer_size;
+  impl_ = std::make_unique<CameraBase::Impl>(model_name(), config, grabber_count(), total_size);
+  configure();
+}
 
 std::size_t CameraBase::bank_count() const noexcept { return impl_->bank_count(); }
 std::size_t CameraBase::frame_width() const noexcept { return impl_->frame_width(); }
 std::size_t CameraBase::frame_height() const noexcept { return impl_->frame_height(); }
 std::size_t CameraBase::buffer_part_count() const noexcept { return impl_->buffer_part_count(); }
 
-void CameraBase::set_recording_settings(std::optional<RecordingSettings> s) {
+void CameraBase::set_record_settings(std::optional<RecordSettings> s) {
   impl_->set_recording_settings(s);
 }
 
@@ -47,4 +90,37 @@ const CameraMetrics &CameraBase::metrics() const noexcept { return impl_->metric
 
 } // namespace holocam
 
+#else
+
+namespace holocam {
+CameraBase::CameraBase(nlohmann::json config, std::optional<RecordingSettings> record_settings) {
+  (void)config;
+  (void)record_settings;
+  throw std::runtime_error("This build does not support EGrabber");
+}
+
+std::size_t CameraBase::bank_count() const noexcept { return 0; }
+std::size_t CameraBase::frame_width() const noexcept { return 0; }
+std::size_t CameraBase::frame_height() const noexcept { return 0; }
+std::size_t CameraBase::buffer_part_count() const noexcept { return 0; }
+
+void CameraBase::set_recording_settings(std::optional<RecordingSettings> s) { (void)s; }
+
+bool CameraBase::start_acquisition() { return false; }
+void CameraBase::stop_acquisition() {}
+bool CameraBase::start_raw_record() { return false; }
+void CameraBase::stop_raw_record() {}
+
+std::byte *CameraBase::get_frame(std::atomic<bool> *cancelled) {
+  (void)cancelled;
+  return nullptr;
+}
+
+void CameraBase::release_frame() {}
+
+const nlohmann::json &CameraBase::configuration() const noexcept { return {}; }
+
+const CameraMetrics &CameraBase::metrics() const noexcept { return {}; }
+
+} // namespace holocam
 #endif

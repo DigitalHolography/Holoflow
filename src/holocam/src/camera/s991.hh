@@ -16,8 +16,6 @@
 
 #include "holocam/camera.hh"
 
-#ifdef HOLOCAM_HAS_EGRABBER
-
 namespace holocam {
 
 class CameraS991 final : public CameraBase {
@@ -26,17 +24,11 @@ public:
 
   const char *name() const noexcept override { return "AmetekS991EuresysCoaxlinkQSFP+"; }
   const char *short_name() const noexcept override { return "s991"; }
+  const char *model_name() const noexcept override { return "Phantom S991"; }
+  size_t grabber_count() const noexcept override { return 2; }
 
 protected:
   void configure() override;
 };
-#else
 
-class CameraS991 final : public CameraBase {
-public:
-  explicit CameraS991(const nlohmann::json &config) : CameraBase(config) {}
-  const char *name() const noexcept override { return "AmetekS991EuresysCoaxlinkQSFP+"; }
-  const char *short_name() const noexcept override { return "s991"; }
-};
-
-#endif
+}

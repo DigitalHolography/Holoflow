@@ -16,29 +16,19 @@
 
 #include "holocam/camera.hh"
 
-#ifdef HOLOCAM_HAS_EGRABBER
-
 namespace holocam {
 
 class CameraS710 final : public CameraBase {
 public:
   explicit CameraS710(const nlohmann::json &config);
 
-  const char *name() const noexcept override { return "AmetekS710EuresysCoaxlinkOcto"; }
-  const char *short_name() const noexcept override { return "s710"; }
+  const char  *name() const noexcept override { return "AmetekS710EuresysCoaxlinkOcto"; }
+  const char  *short_name() const noexcept override { return "s710"; }
+  const char  *model_name() const noexcept override { return "Phantom S710"; }
+  size_t grabber_count() const noexcept override { return 1; }
 
 protected:
   void configure() override;
 };
-#else
-
-class CameraS710 final : public CameraBase {
-public:
-  explicit CameraS710(const nlohmann::json &config) : CameraBase(config) {}
-  const char *name() const noexcept override { return "AmetekS710EuresysCoaxlinkOcto"; }
-  const char *short_name() const noexcept override { return "s710"; }
-};
-
-#endif
 
 } // namespace holocam
