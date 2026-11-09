@@ -15,6 +15,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <array>
 #include <cmath>
 #include <cstring>
 #include <vector>
@@ -169,6 +170,24 @@ TEST_F(PcaExecuteTest, LocalPcaPreservesLeadingBatches) {
   ASSERT_EQ(output.size(), 2);
   EXPECT_NEAR(output[0] * output[0], 1.0f, 2e-2f);
   EXPECT_NEAR(output[1] * output[1], 4.0f, 2e-2f);
+}
+
+TEST_F(PcaExecuteTest, LocalPcaCancelledExecutionCanRetrySameInput) {
+  const TDesc input_desc = device_desc({2, 3, 3});
+  const auto config = settings(0, 2, 3);
+  const auto inference = factory.infer(std::array{input_desc}, config);
+  auto task = factory.create(std::array{input_desc}, config, {.stream = nullptr});
+  task->bind_logger(spdlog::default_logger());
+  holonp_test::TensorTestBuffer input_buffer(input_desc);
+  holonp_test::TensorTestBuffer output_buffer(inference.output_descs[0]);
+  input_buffer.upload(as_bytes(std::vector<float>(18, 1.0f)));
+  std::array inputs{input_buffer.view()};
+  std::array outputs{output_buffer.view()};
+  std::atomic<bool> cancelled{true};
+  holoflow::core::SyncCtx ctx{inputs, outputs, &cancelled, nullptr, nullptr};
+  EXPECT_EQ(task->execute(ctx), holoflow::core::OpResult::Cancelled);
+  cancelled.store(false);
+  EXPECT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
 }
 
 TEST_F(PcaExecuteTest, ProducesOrthogonalComponentsWithExpectedEigenvalueEnergy) {

@@ -32,7 +32,6 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <thread>
 #include <utility>
 #include <vector>
 
@@ -246,7 +245,8 @@ public:
 
   [[nodiscard]] virtual bool is_compatible_stream(cudaStream_t stream) const = 0;
 
-  virtual void solve(float *matrices, float *eigenvalues, int *info, cudaStream_t stream) = 0;
+  virtual void solve(float *matrices, float *eigenvalues, int *info, size_t batches,
+                     cudaStream_t stream) = 0;
 
 protected:
   Eigensolver() = default;
@@ -356,7 +356,7 @@ private:
     nvtx3::scoped_range range("PCA eigendecomposition");
 
     eigensolver_->solve(workspace_.matrices.get(), workspace_.eigenvalues.get(),
-                        workspace_.solver_info.get(), stream_);
+                        workspace_.solver_info.get(), layout_.batches, stream_);
   }
 
   void enqueue_projection(const float *input, float *output) {
@@ -524,7 +524,10 @@ public:
     return cuda_context_for_stream(stream) == context_;
   }
 
-  void solve(float *matrices, float *eigenvalues, int *info, cudaStream_t stream) override {
+  void solve(float *matrices, float *eigenvalues, int *info, size_t batches,
+             cudaStream_t stream) override {
+    if (batches == 0 || batches > batches_)
+      throw std::invalid_argument("[Pca] eigensolver batch count exceeds allocated capacity");
     if (!is_compatible_stream(stream)) {
       throw std::invalid_argument(
           "[Pca] cuSOLVER eigensolver and PCA stream use different contexts");
@@ -535,7 +538,7 @@ public:
         handle_->get(), params_->get(), CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_LOWER, features_,
         CUDA_R_32F, matrices, features_, CUDA_R_32F, eigenvalues, CUDA_R_32F,
         device_workspace_.get(), device_workspace_size_, host_workspace_.data(),
-        host_workspace_size_, info, static_cast<int64_t>(batches_)));
+        host_workspace_size_, info, static_cast<int64_t>(batches)));
   }
 
 private:
@@ -809,18 +812,21 @@ public:
     return cuda_context_for_stream(stream) == context_;
   }
 
-  void solve(float *matrices, float *eigenvalues, int *info, cudaStream_t stream) override {
+  void solve(float *matrices, float *eigenvalues, int *info, size_t batches,
+             cudaStream_t stream) override {
+    if (batches == 0 || batches > batches_)
+      throw std::invalid_argument("[Pca] eigensolver batch count exceeds allocated capacity");
     if (!is_compatible_stream(stream)) {
       throw std::invalid_argument(
           "[Pca] cuSolverDx eigensolver and PCA stream use different contexts");
     }
 
-    const size_t full_batches = (batches_ / batches_per_block_) * batches_per_block_;
+    const size_t full_batches = (batches / batches_per_block_) * batches_per_block_;
     if (full_batches != 0) {
       launch_batched(matrices, eigenvalues, info, full_batches, stream);
     }
 
-    const size_t tail_batches = batches_ - full_batches;
+    const size_t tail_batches = batches - full_batches;
     if (tail_batches != 0) {
       launch_tail(matrices, eigenvalues, info, full_batches, tail_batches, stream);
     }
@@ -848,8 +854,9 @@ private:
     CUDA_CHECK(cudaDeviceGetAttribute(&max_shared_memory, cudaDevAttrMaxSharedMemoryPerBlockOptin,
                                       device_));
 
+    // Local PCA can vary its batch count at runtime, so either kernel may be needed.
     const bool uses_batched = batches_ >= batches_per_block_;
-    const bool uses_tail    = batches_ < batches_per_block_ || (batches_ % batches_per_block_) != 0;
+    const bool uses_tail    = true;
 
     if (uses_batched &&
         batched_kernel_.shared_memory > static_cast<unsigned int>(max_shared_memory)) {
@@ -962,6 +969,13 @@ size_t local_tile_size(const PcaLayout &layout, int window_size) {
   size_t free_bytes = 0;
   size_t total_bytes = 0;
   CUDA_CHECK(cudaMemGetInfo(&free_bytes, &total_bytes));
+  int device = 0;
+  int multiprocessors = 0;
+  int blocks_per_multiprocessor = 0;
+  CUDA_CHECK(cudaGetDevice(&device));
+  CUDA_CHECK(cudaDeviceGetAttribute(&multiprocessors, cudaDevAttrMultiProcessorCount, device));
+  CUDA_CHECK(cudaDeviceGetAttribute(&blocks_per_multiprocessor,
+                                    cudaDevAttrMaxBlocksPerMultiprocessor, device));
 
   const size_t area = static_cast<size_t>(window_size) * window_size;
   const size_t depth = static_cast<size_t>(layout.features);
@@ -969,6 +983,8 @@ size_t local_tile_size(const PcaLayout &layout, int window_size) {
                                  sizeof(int);
   // This is an initial guess. The actual CUDA allocations below determine the usable tile size.
   return (std::min)({static_cast<size_t>(layout.samples),
+                     static_cast<size_t>((std::max)(1, multiprocessors)) *
+                         (std::max)(1, blocks_per_multiprocessor),
                      static_cast<size_t>((std::numeric_limits<int>::max)()),
                      (std::max)(size_t{1}, free_bytes / bytes_per_pixel)});
 }
@@ -1006,6 +1022,11 @@ public:
       }
     }
     eigensolver_ = make_eigensolver(tile_layout_, *workspace_, stream_);
+    int device = 0;
+    CUDA_CHECK(cudaGetDevice(&device));
+    int multiprocessors = 0;
+    CUDA_CHECK(cudaDeviceGetAttribute(&multiprocessors, cudaDevAttrMultiProcessorCount, device));
+    active_pixels_ = (std::min)(tile_pixels_, static_cast<size_t>((std::max)(1, multiprocessors)));
     CUDA_CHECK(cudaEventCreateWithFlags(&tile_done_, cudaEventDisableTiming));
   }
 
@@ -1035,8 +1056,9 @@ public:
     const auto *input = reinterpret_cast<const float *>(ctx.inputs[0].data());
     auto *output = reinterpret_cast<float *>(ctx.outputs[0].data());
     const int area = settings_.window_size * settings_.window_size;
-    logger()->debug("[LocalPca] window={}x{}x{}, tile={} pixels, frame={}x{}",
+    logger()->debug("[LocalPca] window={}x{}x{}, tile capacity={} pixels, active={} pixels, frame={}x{}",
                     settings_.window_size, settings_.window_size, layout_.features, tile_pixels_,
+                    active_pixels_,
                     layout_.width, layout_.height);
     const long long patch_stride = static_cast<long long>(area) * layout_.features;
     const long long matrix_stride = static_cast<long long>(layout_.features) * layout_.features;
@@ -1046,13 +1068,12 @@ public:
     auto last_log = started;
     const size_t total_pixels = layout_.batches * static_cast<size_t>(layout_.samples);
     size_t completed = 0;
-    size_t queued = 0;
-    unsigned int pending_tiles = 0;
 
     for (size_t batch = 0; batch < layout_.batches; ++batch) {
-      for (size_t pixel = 0; pixel < static_cast<size_t>(layout_.samples);
-           pixel += tile_pixels_) {
-        const size_t count = (std::min)(tile_pixels_, static_cast<size_t>(layout_.samples) - pixel);
+      for (size_t pixel = 0; pixel < static_cast<size_t>(layout_.samples);) {
+        if (ctx.cancelled->load()) return holoflow::core::OpResult::Cancelled;
+        const size_t count = (std::min)(active_pixels_, static_cast<size_t>(layout_.samples) - pixel);
+        const auto tile_started = std::chrono::steady_clock::now();
         enqueue_local_pca_patches(input, patches_.get(), batch, pixel, count,
                                   layout_.features, layout_.height, layout_.width,
                                   settings_.window_size, stream_);
@@ -1064,41 +1085,31 @@ public:
             CUBLAS_COMPUTE_32F_PEDANTIC,
             CUBLAS_GEMM_DEFAULT));
 
-        // The eigensolver has a fixed batch size. A final partial tile gets zero covariance
-        // matrices so that its unused entries remain well-defined.
-        if (count < tile_pixels_) {
-          CUDA_CHECK(cudaMemsetAsync(workspace_->matrices.get() + count * matrix_stride, 0,
-                                     (tile_pixels_ - count) * matrix_stride * sizeof(float),
-                                     stream_));
-        }
         eigensolver_->solve(workspace_->matrices.get(), workspace_->eigenvalues.get(),
-                            workspace_->solver_info.get(), stream_);
+                            workspace_->solver_info.get(), count, stream_);
         enqueue_local_pca_projection(input, workspace_->matrices.get(), output, batch, pixel,
                                      count, layout_.features, layout_.height, layout_.width,
                                      settings_.begin, settings_.end, stream_);
 
-        // Same-stream ordering permits tile scratch to be reused without waiting. Poll after
-        // several tiles to report GPU completion while keeping launch overhead low.
-        queued += count;
-        ++pending_tiles;
-        if (pending_tiles == 8 || queued == total_pixels) {
-          CUDA_CHECK(cudaEventRecord(tile_done_, stream_));
-          for (;;) {
-            const auto status = cudaEventQuery(tile_done_);
-            if (status == cudaSuccess) break;
-            if (status != cudaErrorNotReady) CUDA_CHECK(status);
-            const auto now = std::chrono::steady_clock::now();
-            if (now - last_log >= std::chrono::seconds(1)) {
-              logger()->info("[LocalPca] {}/{} pixels ({:.1f}%)", completed, total_pixels,
-                             100.0 * static_cast<double>(completed) / total_pixels);
-              last_log = now;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-          }
-          completed = queued;
-          pending_tiles = 0;
-        }
+        // Finish this bounded tile before returning on cancellation. Its output is discarded
+        // by the scheduler and can be recomputed from the same input if processing resumes.
+        CUDA_CHECK(cudaEventRecord(tile_done_, stream_));
+        CUDA_CHECK(cudaEventSynchronize(tile_done_));
+        completed += count;
+        pixel += count;
+        if (ctx.cancelled->load()) return holoflow::core::OpResult::Cancelled;
         const auto now = std::chrono::steady_clock::now();
+        // Measure this device's actual tile time and target a short stop delay. Workspace
+        // capacity remains memory-bound; only the number of active matrices changes.
+        constexpr auto target = std::chrono::milliseconds(250);
+        const auto duration = now - tile_started;
+        if (duration > target && active_pixels_ > 1) {
+          const auto elapsed_ms = std::chrono::duration<double, std::milli>(duration).count();
+          active_pixels_ = (std::max)(size_t{1},
+              static_cast<size_t>(active_pixels_ * 250.0 / elapsed_ms));
+        } else if (duration < target / 2 && count == active_pixels_) {
+          active_pixels_ = (std::min)(tile_pixels_, active_pixels_ * 2);
+        }
         if (now - last_log >= std::chrono::seconds(1)) {
           logger()->info("[LocalPca] {}/{} pixels ({:.1f}%)", completed, total_pixels,
                          100.0 * static_cast<double>(completed) / total_pixels);
@@ -1119,6 +1130,7 @@ private:
   PcaLayout layout_;
   cudaStream_t stream_;
   size_t tile_pixels_;
+  size_t active_pixels_;
   PcaLayout tile_layout_;
   std::unique_ptr<PcaWorkspace> workspace_;
   curaii::unique_device_ptr<float> patches_;
