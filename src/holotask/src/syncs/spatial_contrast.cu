@@ -296,6 +296,41 @@ int next_power_of_two(int value) {
   return result;
 }
 
+__global__ void horizontal_moments_kernel(const double2 *moments, double2 *scratch,
+                                           int width, int height, int radius) {
+  const int p = blockIdx.x * blockDim.x + threadIdx.x;
+  if (p >= width * height) return;
+  const int x = p % width;
+  const int y = p / width;
+  double sum = 0.0, squared = 0.0;
+  for (int sx = max(0, x - radius); sx <= min(width - 1, x + radius); ++sx) {
+    const double2 value = moments[y * width + sx];
+    sum += value.x;
+    squared += value.y;
+  }
+  scratch[p] = make_double2(sum, squared);
+}
+
+__global__ void contrast_moments_kernel(const double2 *scratch, float *output, int width,
+                                         int height, int time_size, int radius) {
+  const int p = blockIdx.x * blockDim.x + threadIdx.x;
+  if (p >= width * height) return;
+  const int x = p % width;
+  const int y = p / width;
+  double sum = 0.0, squared = 0.0;
+  for (int sy = max(0, y - radius); sy <= min(height - 1, y + radius); ++sy) {
+    const double2 value = scratch[sy * width + x];
+    sum += value.x;
+    squared += value.y;
+  }
+  const double count = static_cast<double>(time_size) *
+                       (min(width - 1, x + radius) - max(0, x - radius) + 1) *
+                       (min(height - 1, y + radius) - max(0, y - radius) + 1);
+  const double mean = sum / count;
+  const double variance = fmax(squared / count - mean * mean, 0.0);
+  output[p] = mean > 0.0 ? static_cast<float>(sqrt(variance) / mean) : 0.0f;
+}
+
 class SpatialContrast : public holoflow::core::ISyncTask {
 public:
   SpatialContrast(SpatialContrastSettings settings, holoflow::core::TDesc idesc, int width,
@@ -448,6 +483,18 @@ private:
 };
 
 } // namespace
+
+void enqueue_spatial_contrast_from_moments(const double2 *moments, double2 *scratch,
+                                           float *output, int width, int height,
+                                           int temporal_window_size, int window_size,
+                                           cudaStream_t stream) {
+  const int blocks = (static_cast<int64_t>(width) * height + 255) / 256;
+  const int radius = window_size / 2;
+  horizontal_moments_kernel<<<blocks, 256, 0, stream>>>(moments, scratch, width, height, radius);
+  contrast_moments_kernel<<<blocks, 256, 0, stream>>>(scratch, output, width, height,
+                                                     temporal_window_size, radius);
+  CUDA_CHECK(cudaGetLastError());
+}
 
 // -------------------------------------------------------------------------------------------------
 // SpatialContrastFactory

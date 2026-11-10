@@ -7,7 +7,7 @@
   "properties": {
     "window_size": {
       "type": "integer",
-      "minimum": 3,
+      "minimum": 2,
       "description": "Number of consecutive frames in each output window."
     },
     "stride_size": {

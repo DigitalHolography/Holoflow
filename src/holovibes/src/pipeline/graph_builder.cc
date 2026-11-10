@@ -763,7 +763,14 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
     throw std::logic_error{"Spatial LSCI input has an unexpected temporal window shape"};
   }
 
-  auto result = spatial_contrast(frames,
+  auto result = s_.pp_pca_lsci
+      ? pca_lsci(frames, {.window_size = s_.pp_spatial_contrast_window_size,
+                          .map = s_.pp_pca_lsci_map == 0
+                                     ? holotask::syncs::PcaLsciMap::Original
+                                     : s_.pp_pca_lsci_map == 1
+                                           ? holotask::syncs::PcaLsciMap::Static
+                                           : holotask::syncs::PcaLsciMap::Dynamic})
+      : spatial_contrast(frames,
                                  {.window_size = s_.pp_spatial_contrast_dimensions == 1
                                                      ? 1
                                                      : s_.pp_spatial_contrast_window_size,

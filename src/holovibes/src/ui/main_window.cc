@@ -1302,6 +1302,7 @@ void MainWindow::save_persistent_state() {
   settings.remove("spatial_contrast_dimensions");
   settings.remove("spatial_contrast_temporal_frames");
   settings.setValue("spatial_contrast_method", render_widget_->get_spatial_contrast_method());
+  settings.setValue("pca_lsci_map", render_widget_->get_pca_lsci_map());
   settings.setValue("spatial_contrast_display_max",
                     render_widget_->get_spatial_contrast_display_max());
   settings.setValue("spatial_contrast_invert_display",
@@ -1474,6 +1475,8 @@ void MainWindow::restore_persistent_state() {
   render_widget_->set_spatial_contrast_method(
       settings.value("spatial_contrast_method", render_widget_->get_spatial_contrast_method())
           .toString());
+  render_widget_->set_pca_lsci_mode(render_widget_->is_pca_lsci_enabled(),
+      settings.value("pca_lsci_map", "Dynamic").toString());
   render_widget_->spatial_contrast_display_max()->setValue(
       settings
           .value("spatial_contrast_display_max", render_widget_->get_spatial_contrast_display_max())
@@ -2886,6 +2889,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"RFFT", TimeMethod::RFFT},
         {"FFT", TimeMethod::FFT},
         {"LSCI (3D)", TimeMethod::NONE},
+        {"PCA-LSCI", TimeMethod::NONE},
     };
     s.time_window       = render_widget_->get_time_window();
     s.time_stride       = render_widget_->get_time_stride();
@@ -2937,6 +2941,9 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_flatfield_cutoff_period_m =
         static_cast<float>(view_widget_->get_flatfield_cutoff_period_um() * 1e-6);
     s.pp_spatial_contrast             = render_widget_->is_spatial_contrast_enabled();
+    s.pp_pca_lsci = render_widget_->is_pca_lsci_enabled();
+    const auto pca_map = render_widget_->get_pca_lsci_map();
+    s.pp_pca_lsci_map = pca_map == "Original" ? 0 : pca_map == "Static" ? 1 : 2;
     s.pp_spatial_contrast_window_size = render_widget_->get_spatial_contrast_window_size();
     s.pp_spatial_contrast_dimensions  = render_widget_->get_spatial_contrast_dimensions();
     s.pp_spatial_contrast_method = render_widget_->get_spatial_contrast_method() == "FFT" ? 1 : 0;
@@ -3161,6 +3168,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     view_widget_->set_flatfield_cutoff_period_um(s.pp_flatfield_cutoff_period_m * 1e6);
     render_widget_->set_spatial_contrast_mode(s.pp_spatial_contrast,
                                               s.pp_spatial_contrast_dimensions);
+    render_widget_->set_pca_lsci_mode(s.pp_pca_lsci,
+                                     s.pp_pca_lsci_map == 0 ? "Original" :
+                                     s.pp_pca_lsci_map == 1 ? "Static" : "Dynamic");
     render_widget_->set_spatial_contrast_window_size(s.pp_spatial_contrast_window_size);
     render_widget_->set_spatial_contrast_method(s.pp_spatial_contrast_method == 1 ? "FFT"
                                                                                   : "Kernel");

@@ -157,6 +157,8 @@ void write_view(json &j, const Settings &s) {
   view["flatfield"]["cutoff_period_m"] = s.pp_flatfield_cutoff_period_m;
   auto &spatial_contrast                  = view["spatial_contrast"];
   spatial_contrast["enabled"]             = s.pp_spatial_contrast;
+  spatial_contrast["pca_enabled"]         = s.pp_pca_lsci;
+  spatial_contrast["pca_map"]             = s.pp_pca_lsci_map;
   spatial_contrast["window_size"]         = s.pp_spatial_contrast_window_size;
   spatial_contrast["dimensions"]          = s.pp_spatial_contrast_dimensions;
   spatial_contrast["method"] = s.pp_spatial_contrast_method == 1 ? "fft" : "kernel";
@@ -277,6 +279,8 @@ void read_view(Settings &s, const json &view) {
       val(flatfield, "cutoff_period_m", s.pp_flatfield_cutoff_period_m);
   const auto &spatial_contrast = child_or_empty(view, "spatial_contrast");
   s.pp_spatial_contrast = val(spatial_contrast, "enabled", s.pp_spatial_contrast);
+  s.pp_pca_lsci = val(spatial_contrast, "pca_enabled", s.pp_pca_lsci);
+  s.pp_pca_lsci_map = val(spatial_contrast, "pca_map", s.pp_pca_lsci_map);
   s.pp_spatial_contrast_window_size =
       val(spatial_contrast, "window_size", s.pp_spatial_contrast_window_size);
   s.pp_spatial_contrast_dimensions =

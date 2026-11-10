@@ -68,6 +68,7 @@ DEFINE_UNARY_SYNC_NODE (pca,                                    "pca",          
 DEFINE_UNARY_SYNC_NODE (flatfield,                              "flatfield",                           "Flatfield",                       holotask::syncs::FlatfieldSettings)
 DEFINE_UNARY_SYNC_NODE (filter_2d,                              "filter_2d",                           "Filter2D",                        holotask::syncs::Filter2DSettings)
 DEFINE_UNARY_SYNC_NODE (spatial_contrast,                       "spatial_contrast",                    "SpatialContrast",                 holotask::syncs::SpatialContrastSettings)
+DEFINE_UNARY_SYNC_NODE (pca_lsci,                               "pca_lsci",                            "PcaLsci",                         holotask::syncs::PcaLsciSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_diffraction,                    "fresnel_diffraction",                 "FresnelDiffraction",              holotask::syncs::FresnelDiffractionSettings)
 DEFINE_UNARY_SYNC_NODE (angular_spectrum,                       "angular_spectrum",                    "AngularSpectrum",                 holotask::syncs::AngularSpectrumSettings)
 DEFINE_UNARY_SYNC_NODE (cuda_stream_synchronize,                "cuda_stream_synchronize",             "CudaStreamSynchronize",           holotask::syncs::CudaStreamSynchronizeSettings)

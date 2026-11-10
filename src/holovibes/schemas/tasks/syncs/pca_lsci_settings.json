@@ -1,0 +1,11 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PcaLsciSettings",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "window_size": {"type": "integer", "minimum": 1, "maximum": 63, "not": {"multipleOf": 2}},
+    "map": {"type": "string", "enum": ["original", "static", "dynamic"], "default": "dynamic"}
+  },
+  "required": ["window_size", "map"]
+}

@@ -129,6 +129,8 @@ struct Settings {
   bool        pp_flatfield;
   float       pp_flatfield_cutoff_period_m;
   bool        pp_spatial_contrast;
+  bool        pp_pca_lsci = false;
+  int         pp_pca_lsci_map = 2;
   int         pp_spatial_contrast_window_size;
   int         pp_spatial_contrast_dimensions = 2;
   int         pp_spatial_contrast_method = 0;

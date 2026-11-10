@@ -103,10 +103,10 @@ constexpr auto kFlatfieldCutoffConstraints        = std::to_array<const char *>(
     "Converted to anisotropic Gaussian sigmas using the current image pitch.",
 });
 constexpr auto kSpatialContrastWindowConstraints = std::to_array<const char *>({
-    "Must be odd and between 3 and 255 pixels.",
+    "Must be odd: 3..255 pixels for LSCI, 1..63 for PCA-LSCI.",
 });
 constexpr auto kSpatialContrastDimensionsConstraints = std::to_array<const char *>({
-    "Choose LSCI (2D) in Space Transform or LSCI (3D) in Time Transform.",
+    "Choose LSCI (2D) in Space Transform, or LSCI (3D) or PCA-LSCI in Time Transform.",
 });
 constexpr auto kSpatialContrastMethodConstraints = std::to_array<const char *>({
     "Kernel evaluates the sliding window directly; FFT performs linear convolution with a box kernel.",

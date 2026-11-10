@@ -27,6 +27,17 @@ For **LSCI (2D)**, choose it under **Space Transform**. Holovibes calculates a c
 
 For **LSCI (3D)**, choose it under **Time Transform**. **LSCI Window (px)** sets the spatial side length, **Time Window** sets the number of consecutive frames pooled into each map, and **Time Stride** sets how many frames to advance. Set stride equal to window length for nonoverlapping blocks; a smaller stride creates overlapping windows. The two LSCI choices are mutually exclusive. **LSCI method** selects Kernel or FFT.
 
+**PCA-LSCI** is another Time Transform choice. It computes a single temporal PCA over the entire
+frame block after subtracting each frame's spatial mean. Eigenvectors whose nonnegative
+eigenvalues are at least the average eigenvalue form a static reconstruction. The **PCA-LSCI map**
+selector displays **Original** (contrast of the input), **Static** (contrast of that
+reconstruction), or **Dynamic** (Original minus Static, the default). Dynamic is a signed
+difference of contrast maps, not contrast of the PCA residual. PCA-LSCI accepts 2–512 frames
+and an odd 1–63 pixel spatial window. It uses the Kernel LSCI border rule, clipping windows at
+image edges. The PCA projection is tiled, and no second full reconstructed frame stack is stored.
+Processed preview and recording still convert the selected F32 map to U8; negative Dynamic
+values are clipped by that display conversion.
+
 Both modes use the acquired intensity frames directly, without hologram propagation or temporal Fourier analysis. **Accumulation** can average successive contrast maps. If enabled, **Flatfield** is applied to the calculated map before accumulation, and percentile clipping is applied after accumulation. These operations change the processed result; disable them when reproducing an uncorrected $K$ map.
 
 The calculated map is F32 before display conversion. **Display max K** maps the range from 0 to the selected value onto U8 grayscale and clips larger values for display. **Invert LSCI** reverses that grayscale. Holovibes uses this same U8 image for the processed preview and processed recording; neither control changes the estimator's F32 output. Raw viewing and raw recording use the original intensity stream.

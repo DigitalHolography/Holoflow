@@ -51,6 +51,8 @@ public:
   QString get_convolution() const;
   bool    is_convolution_divide() const;
   bool    is_spatial_contrast_enabled() const;
+  bool    is_pca_lsci_enabled() const;
+  QString get_pca_lsci_map() const;
   int     get_spatial_contrast_window_size() const;
   int     get_spatial_contrast_dimensions() const;
   QString get_spatial_contrast_method() const;
@@ -74,6 +76,7 @@ public:
   void set_convolution(const QString &kernel);
   void set_convolution_divide(bool enabled);
   void set_spatial_contrast_mode(bool enabled, int dimensions);
+  void set_pca_lsci_mode(bool enabled, const QString &map);
   void set_spatial_contrast_window_size(int value);
   void set_time_window_max_for_temporal_lscsi(int value);
   void set_spatial_contrast_method(const QString &method);
@@ -157,6 +160,8 @@ private:
   QSpinBox        *spatial_contrast_window_size_;
   QLabel          *spatial_contrast_method_label_;
   QComboBox       *spatial_contrast_method_;
+  QLabel          *pca_lsci_map_label_;
+  QComboBox       *pca_lsci_map_;
   QLabel          *spatial_contrast_display_max_label_;
   QDoubleSpinBox  *spatial_contrast_display_max_;
   QCheckBox       *spatial_contrast_invert_display_;

@@ -320,11 +320,11 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     }
 
     if (settings.pp_spatial_contrast &&
-        (settings.pp_spatial_contrast_window_size < 3 ||
-         settings.pp_spatial_contrast_window_size > 255 ||
+        (settings.pp_spatial_contrast_window_size < (settings.pp_pca_lsci ? 1 : 3) ||
+         settings.pp_spatial_contrast_window_size > (settings.pp_pca_lsci ? 63 : 255) ||
          settings.pp_spatial_contrast_window_size % 2 == 0)) {
       add_issue(result, ValidationSeverity::Error, "pp_spatial_contrast_window_size_invalid",
-                "Spatial contrast window size must be an odd integer between 3 and 255.",
+                "Spatial contrast window size must be odd and within the selected method's range.",
                 {SettingsField::PpSpatialContrastWindowSize});
     }
 
@@ -336,9 +336,17 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     }
 
     if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions == 3 &&
-        settings.time_window < 3) {
+        settings.time_window < (settings.pp_pca_lsci ? 2 : 3)) {
       add_issue(result, ValidationSeverity::Error, "spatial_contrast_time_window_invalid",
-                "Temporal spatial contrast must use at least 3 frames.",
+                "Temporal contrast needs at least 3 frames, or 2 for PCA-LSCI.",
+                {SettingsField::TimeWindow});
+    }
+
+    if (settings.pp_pca_lsci && (settings.time_window > 512 ||
+                                 settings.pp_spatial_contrast_dimensions != 3 ||
+                                 settings.pp_pca_lsci_map < 0 || settings.pp_pca_lsci_map > 2)) {
+      add_issue(result, ValidationSeverity::Error, "pca_lsci_settings_invalid",
+                "PCA-LSCI requires 2..512 frames, 3D mode and a valid map selection.",
                 {SettingsField::TimeWindow});
     }
 
