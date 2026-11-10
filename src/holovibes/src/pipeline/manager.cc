@@ -755,7 +755,7 @@ void Manager::poll_events() {
             !scheduler_->ui_try_send("registration", nlohmann::json{{"type", "stop_recording"}}))
           logger()->error(
               "[Manager::poll_events] Failed to enqueue registration stop after completion");
-        logger()->info("[Manager::poll_events] Recording finished successfully at {}", path_str);
+        logger()->info("[Manager::poll_events] Recording finished successfully");
         emit raw_record_stopped_success();
       }
     } else if (type == "recording_failed") {
