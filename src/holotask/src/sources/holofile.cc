@@ -239,7 +239,7 @@ public:
       auto *odata = reinterpret_cast<uint8_t *>(ctx.outputs[0].data());
       reader->read_frames(odata, settings.batch_size);
     } else {
-      std::byte *data    = buf + frame_idx * bytes_per_frame;
+      std::byte *data    = buf + (frame_idx - settings.start_frame) * bytes_per_frame;
       auto      &storage = storage_access().owned_output_storage(0);
       storage.ptr        = data;
 
@@ -277,6 +277,12 @@ HolofileFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(settings.start_frame < settings.end_frame, "Invalid frame range");
   check(settings.batch_size > 0, "Batch size must be positive");
   check(!settings.max_fps.has_value() || *settings.max_fps > 0, "max_fps must be positive when provided");
+  if (settings.end_frame > static_cast<int>(header.frame_count)) {
+    logger()->warn("[HolofileFactory::infer] start frame {} plus {} requested frames exceeds "
+                   "file size of {} frames",
+                   settings.start_frame, settings.end_frame - settings.start_frame,
+                   header.frame_count);
+  }
   check(settings.end_frame <= static_cast<int>(header.frame_count), "end_frame exceeds total frames in file");
   check(settings.batch_size <= (settings.end_frame - settings.start_frame), "Batch size exceeds available frames");
   check(bpp_to_dtype.contains(header.bits_per_pixel), "Unsupported bits_per_pixel: " + std::to_string(header.bits_per_pixel));

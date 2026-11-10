@@ -206,9 +206,9 @@ __global__ void f32_u8_fixed_range_kernel(const float *idata, uint8_t *odata, in
   if (idx < size) {
     const float value = idata[idx];
     uint8_t     mapped;
-    if (!(value > 0.0f)) {
-      mapped = 0; // Also maps NaN to black.
-    } else if (max_value == 0.0f || value >= max_value) {
+    if (isnan(value) || value <= 0.0f) {
+      mapped = 0;
+    } else if (value >= max_value) {
       mapped = 255;
     } else {
       mapped = static_cast<uint8_t>(value / max_value * 255.0f + 0.5f);

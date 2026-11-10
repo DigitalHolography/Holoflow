@@ -19,6 +19,7 @@
 #include <cstddef>
 #include <limits>
 #include <mutex>
+#include <new>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -26,10 +27,6 @@
 #include <vector>
 
 #include "curaii/cuda.hh"
-
-#ifndef CACHE_LINE_SIZE
-#define CACHE_LINE_SIZE 64
-#endif
 
 namespace holotask::asyncs {
 
@@ -192,8 +189,8 @@ private:
   std::mutex              state_mutex_;
   size_t                  pending_skip_ = 0;
   size_t                  window_start_offset_ = 0;
-  alignas(CACHE_LINE_SIZE) std::atomic<size_t> write_count_{0};
-  alignas(CACHE_LINE_SIZE) std::atomic<size_t> read_count_{0};
+  alignas(std::hardware_destructive_interference_size) std::atomic<size_t> write_count_{0};
+  alignas(std::hardware_destructive_interference_size) std::atomic<size_t> read_count_{0};
   bool pop_active_ = false;
 };
 
