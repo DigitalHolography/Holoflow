@@ -18,6 +18,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <fstream>
+#include <iomanip>
 #include <nlohmann/json.hpp>
 #include <sstream>
 #include <stdexcept>
@@ -25,6 +26,25 @@
 namespace holonp_test {
 
 namespace {
+
+std::string fixture_key(const OracleInput &input) {
+  uint64_t hash = 1469598103934665603ull;
+  auto mix = [&hash](const void *data, size_t size) {
+    const auto *bytes = static_cast<const unsigned char *>(data);
+    for (size_t i = 0; i < size; ++i) hash = (hash ^ bytes[i]) * 1099511628211ull;
+  };
+  mix(input.op.data(), input.op.size());
+  const auto settings = input.settings.dump();
+  mix(settings.data(), settings.size());
+  for (size_t i = 0; i < input.input_descs.size(); ++i) {
+    const auto desc = nlohmann::json(input.input_descs[i]).dump();
+    mix(desc.data(), desc.size());
+    mix(input.input_bytes[i].data(), input.input_bytes[i].size());
+  }
+  std::ostringstream name;
+  name << std::hex << std::setw(16) << std::setfill('0') << hash;
+  return name.str();
+}
 
 class TemporaryDirectory {
 public:
@@ -68,6 +88,21 @@ std::filesystem::path make_oracle_tmpdir() {
 } // namespace
 
 OracleOutput invoke_oracle(const OracleInput &input, const std::filesystem::path &oracle_script) {
+  const std::filesystem::path fixture =
+      std::filesystem::path(HOLONP_ORACLE_FIXTURE_DIR) / fixture_key(input);
+  if (!std::getenv("HOLOFLOW_RECORD_ORACLE")) {
+    OracleOutput result;
+    for (size_t i = 0; i < input.n_outputs; ++i) {
+      std::ifstream f(fixture.string() + "." + std::to_string(i), std::ios::binary | std::ios::ate);
+      if (!f) throw std::runtime_error("Missing golden oracle fixture: " + fixture.string());
+      const auto size = static_cast<size_t>(f.tellg());
+      f.seekg(0);
+      std::vector<std::byte> bytes(size);
+      f.read(reinterpret_cast<char *>(bytes.data()), static_cast<std::streamsize>(size));
+      result.output_bytes.push_back(std::move(bytes));
+    }
+    return result;
+  }
   const TemporaryDirectory temporary_directory(make_oracle_tmpdir());
   const auto              &tmpdir = temporary_directory.path();
 
@@ -139,6 +174,13 @@ OracleOutput invoke_oracle(const OracleInput &input, const std::filesystem::path
     std::vector<std::byte> buf(sz);
     f.read(reinterpret_cast<char *>(buf.data()), static_cast<std::streamsize>(sz));
     result.output_bytes.push_back(std::move(buf));
+  }
+
+  std::filesystem::create_directories(fixture.parent_path());
+  for (size_t i = 0; i < result.output_bytes.size(); ++i) {
+    std::ofstream f(fixture.string() + "." + std::to_string(i), std::ios::binary);
+    f.write(reinterpret_cast<const char *>(result.output_bytes[i].data()),
+            static_cast<std::streamsize>(result.output_bytes[i].size()));
   }
 
   return result;

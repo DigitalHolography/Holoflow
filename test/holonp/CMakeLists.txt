@@ -14,7 +14,10 @@
 
 set(TARGET holonp_test)
 
-find_package(Python3 COMPONENTS Interpreter REQUIRED)
+find_package(Python3 COMPONENTS Interpreter QUIET) # Used only to refresh the checked-in golden corpus.
+if(NOT Python3_Interpreter_FOUND)
+    set(Python3_EXECUTABLE "python")
+endif()
 
 # abs_test.cu is compiled by NVCC (host code only, no kernels) so that the
 # linker correctly resolves device code from the holonp static library.
@@ -71,6 +74,7 @@ target_compile_definitions(${TARGET}
     PRIVATE
     "HOLONP_TEST_ORACLE_SCRIPT=\"${CMAKE_CURRENT_SOURCE_DIR}/python/oracle.py\""
     "HOLOFLOW_TEST_PYTHON_EXECUTABLE=\"${Python3_EXECUTABLE}\""
+    "HOLONP_ORACLE_FIXTURE_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/python/fixtures\""
 )
 
 target_link_libraries(${TARGET}
