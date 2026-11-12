@@ -150,6 +150,50 @@ TEST(SlidingAverageSettingsTest, RejectsMultipleAutofocusIterationsForNonUnitWin
       has_issue(validate_settings(settings, {}), "autofocus_sliding_average_multiple_iterations"));
 }
 
+TEST(LocalPcaSettingsTest, ValidatesComponentRangeAndStride) {
+  Settings settings{};
+  settings.view_type = ViewType::PROCESSED;
+  settings.pp_spatial_contrast = true;
+  settings.pp_spatial_contrast_dimensions = 3;
+  settings.pp_local_pca = true;
+  settings.time_window = 16;
+  settings.time_z_begin = 0;
+  settings.time_z_end = 15;
+  settings.pp_spatial_contrast_window_size = 5;
+  settings.pp_local_pca_stride = 1;
+  ValidationContext context{.source_width = 8, .source_height = 8,
+                            .source_frame_count = 16};
+  EXPECT_FALSE(has_issue(validate_settings(settings, context), "local_pca_settings_invalid"));
+  EXPECT_FALSE(has_issue(validate_settings(settings, context), "local_pca_components_invalid"));
+
+  settings.time_z_end = 17;
+  EXPECT_TRUE(has_issue(validate_settings(settings, context), "local_pca_components_invalid"));
+  settings.pp_local_pca_automatic = true;
+  EXPECT_FALSE(has_issue(validate_settings(settings, context), "local_pca_components_invalid"));
+  settings.pp_local_pca_automatic = false;
+  settings.time_z_end = 15;
+  settings.pp_local_pca_stride = 9;
+  EXPECT_TRUE(has_issue(validate_settings(settings, context), "local_pca_settings_invalid"));
+}
+
+TEST(LocalPcaSettingsTest, LegacyJsonPreservesAutomaticSelection) {
+  Settings settings{};
+  settings.pp_spatial_contrast = true;
+  settings.pp_local_pca = true;
+  settings.pp_local_pca_stride = 2;
+  settings.pp_local_pca_automatic = true;
+  settings.pp_local_pca_lsci = true;
+  settings.pp_local_pca_map = 1;
+  settings.pp_local_pca_dynamic_auto_scale = false;
+  const auto restored = old_json_to_settings(settings_to_old_json(settings), Settings{});
+  EXPECT_TRUE(restored.pp_local_pca);
+  EXPECT_EQ(restored.pp_local_pca_stride, 1);
+  EXPECT_TRUE(restored.pp_local_pca_automatic);
+  EXPECT_TRUE(restored.pp_local_pca_lsci);
+  EXPECT_EQ(restored.pp_local_pca_map, 1);
+  EXPECT_FALSE(restored.pp_local_pca_dynamic_auto_scale);
+}
+
 TEST(SignalPlotSettingsTest, UnknownAutofocusSlopeModeKeepsDefault) {
   Settings defaults{};
   defaults.autofocus_use_graph_laplacian = true;

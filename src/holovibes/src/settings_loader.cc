@@ -158,6 +158,12 @@ void write_view(json &j, const Settings &s) {
   auto &spatial_contrast                  = view["spatial_contrast"];
   spatial_contrast["enabled"]             = s.pp_spatial_contrast;
   spatial_contrast["pca_enabled"]         = s.pp_pca_lsci;
+  spatial_contrast["local_pca_enabled"] = s.pp_local_pca;
+  spatial_contrast["local_pca_lsci_enabled"] = s.pp_local_pca_lsci;
+  spatial_contrast["local_pca_map"] = s.pp_local_pca_map;
+  spatial_contrast["local_pca_dynamic_auto_scale"] = s.pp_local_pca_dynamic_auto_scale;
+  spatial_contrast["local_pca_stride"] = s.pp_local_pca_stride;
+  spatial_contrast["local_pca_automatic"] = s.pp_local_pca_automatic;
   spatial_contrast["pca_map"]             = s.pp_pca_lsci_map;
   spatial_contrast["window_size"]         = s.pp_spatial_contrast_window_size;
   spatial_contrast["dimensions"]          = s.pp_spatial_contrast_dimensions;
@@ -280,6 +286,15 @@ void read_view(Settings &s, const json &view) {
   const auto &spatial_contrast = child_or_empty(view, "spatial_contrast");
   s.pp_spatial_contrast = val(spatial_contrast, "enabled", s.pp_spatial_contrast);
   s.pp_pca_lsci = val(spatial_contrast, "pca_enabled", s.pp_pca_lsci);
+  s.pp_local_pca = val(spatial_contrast, "local_pca_enabled", s.pp_local_pca);
+  s.pp_local_pca_lsci = val(spatial_contrast, "local_pca_lsci_enabled", s.pp_local_pca_lsci);
+  s.pp_local_pca_map = val(spatial_contrast, "local_pca_map", s.pp_local_pca_map);
+  s.pp_local_pca_dynamic_auto_scale =
+      val(spatial_contrast, "local_pca_dynamic_auto_scale", s.pp_local_pca_dynamic_auto_scale);
+  s.pp_local_pca_stride = val(spatial_contrast, "local_pca_stride", s.pp_local_pca_stride);
+  if (s.pp_local_pca) s.pp_local_pca_stride = 1;
+  s.pp_local_pca_automatic = val(spatial_contrast, "local_pca_automatic",
+                                 s.pp_local_pca_automatic);
   s.pp_pca_lsci_map = val(spatial_contrast, "pca_map", s.pp_pca_lsci_map);
   s.pp_spatial_contrast_window_size =
       val(spatial_contrast, "window_size", s.pp_spatial_contrast_window_size);

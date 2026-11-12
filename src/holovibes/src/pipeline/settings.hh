@@ -130,6 +130,12 @@ struct Settings {
   float       pp_flatfield_cutoff_period_m;
   bool        pp_spatial_contrast;
   bool        pp_pca_lsci = false;
+  bool        pp_local_pca = false;
+  bool        pp_local_pca_lsci = false;
+  int         pp_local_pca_map = 0;
+  bool        pp_local_pca_dynamic_auto_scale = true;
+  int         pp_local_pca_stride = 1;
+  bool        pp_local_pca_automatic = false;
   int         pp_pca_lsci_map = 2;
   int         pp_spatial_contrast_window_size;
   int         pp_spatial_contrast_dimensions = 2;

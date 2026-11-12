@@ -763,7 +763,16 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
     throw std::logic_error{"Spatial LSCI input has an unexpected temporal window shape"};
   }
 
-  auto result = s_.pp_pca_lsci
+  auto result = s_.pp_local_pca
+      ? local_pca(frames, {.window_size = s_.pp_spatial_contrast_window_size,
+                           .stride = 1,
+                           .begin = s_.time_z_begin, .end = s_.time_z_end,
+                           .automatic = s_.pp_local_pca_automatic,
+                           .map = !s_.pp_local_pca_lsci ? holotask::syncs::LocalPcaMap::Energy
+                                  : s_.pp_local_pca_map == 1 ? holotask::syncs::LocalPcaMap::Static
+                                  : s_.pp_local_pca_map == 2 ? holotask::syncs::LocalPcaMap::Original
+                                                              : holotask::syncs::LocalPcaMap::Dynamic})
+      : s_.pp_pca_lsci
       ? pca_lsci(frames, {.window_size = s_.pp_spatial_contrast_window_size,
                           .map = s_.pp_pca_lsci_map == 0
                                      ? holotask::syncs::PcaLsciMap::Original
@@ -781,13 +790,17 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
                                                 ? holotask::syncs::SpatialContrastMethod::FFT
                                                 : holotask::syncs::SpatialContrastMethod::Kernel});
   if (s_.pp_flatfield) {
-    // Spatial contrast uses the camera grid, so derive the filter from the source pixel pitch.
+    // Spatial contrast and Local PCA use the camera grid for flatfield filtering.
     const auto pitch = s_.spacial_pixel_size;
     result = flatfield(result, flatfield_settings_from_cutoff_period(
                                    s_.pp_flatfield_cutoff_period_m, pitch, pitch));
   }
-  // The reconstructed PCA frame contains intensities, not LSCI contrast values.
-  build_xy_output(result, 0, !(s_.pp_pca_lsci && s_.pp_pca_lsci_map == 3));
+  // Local PCA is a unit-range energy fraction; the reconstructed PCA frame contains intensities.
+  const bool auto_dynamic = s_.pp_local_pca_lsci && s_.pp_local_pca_map == 0 &&
+                            s_.pp_local_pca_dynamic_auto_scale;
+  build_xy_output(result, 0,
+                  !auto_dynamic && (s_.pp_local_pca ||
+                                    !(s_.pp_pca_lsci && s_.pp_pca_lsci_map == 3)));
 }
 
 void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
@@ -877,8 +890,10 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
     // Keep the F32 K map upstream; display and recording share the same fixed-range U8 image.
     display_result = convert(display_result,
                              {Target::U8, Strat::FixedRange,
-                              s_.pp_spatial_contrast_display_max,
-                              s_.pp_spatial_contrast_invert_display});
+                              s_.pp_local_pca && !s_.pp_local_pca_lsci
+                                  ? 1.0f : s_.pp_spatial_contrast_display_max,
+                              s_.pp_local_pca && !s_.pp_local_pca_lsci
+                                  ? false : s_.pp_spatial_contrast_invert_display});
   }
   display_result = batched_queue(display_result, {s_.gpu_out_size, 1, 1});
   xy_processed_display(display_result, {});

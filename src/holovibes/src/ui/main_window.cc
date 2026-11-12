@@ -1303,6 +1303,10 @@ void MainWindow::save_persistent_state() {
   settings.remove("spatial_contrast_temporal_frames");
   settings.setValue("spatial_contrast_method", render_widget_->get_spatial_contrast_method());
   settings.setValue("pca_lsci_map", render_widget_->get_pca_lsci_map());
+  settings.setValue("local_pca_automatic", render_widget_->is_local_pca_automatic());
+  settings.setValue("local_pca_map", render_widget_->get_local_pca_map());
+  settings.setValue("local_pca_dynamic_auto_scale",
+                    render_widget_->is_local_pca_dynamic_auto_scale());
   settings.setValue("spatial_contrast_display_max",
                     render_widget_->get_spatial_contrast_display_max());
   settings.setValue("spatial_contrast_invert_display",
@@ -1421,7 +1425,7 @@ void MainWindow::restore_persistent_state() {
   render_widget_->set_filter_outer(
       settings.value("filter_outer", render_widget_->get_filter_outer()).toInt());
   restore_combo_text(settings, "space_transform", render_widget_->space_transform_combo());
-  restore_combo_text(settings, "time_transform", render_widget_->time_transform_combo());
+  render_widget_->set_time_transform(settings.value("time_transform", "None").toString());
   render_widget_->set_time_window(
       settings.value("time_window", render_widget_->get_time_window()).toInt());
   render_widget_->set_lambda(settings.value("lambda_nm", render_widget_->get_lambda()).toInt());
@@ -1475,6 +1479,10 @@ void MainWindow::restore_persistent_state() {
   render_widget_->set_spatial_contrast_method(
       settings.value("spatial_contrast_method", render_widget_->get_spatial_contrast_method())
           .toString());
+  render_widget_->set_local_pca_automatic(settings.value("local_pca_automatic", false).toBool());
+  render_widget_->set_local_pca_map(settings.value("local_pca_map", 0).toInt());
+  render_widget_->set_local_pca_dynamic_auto_scale(
+      settings.value("local_pca_dynamic_auto_scale", true).toBool());
   render_widget_->set_pca_lsci_mode(render_widget_->is_pca_lsci_enabled(),
       settings.value("pca_lsci_map", "Dynamic").toString());
   render_widget_->spatial_contrast_display_max()->setValue(
@@ -2661,6 +2669,21 @@ MainWindow::build_validation_context(const pipeline::Settings &settings) const {
 void MainWindow::setup_validation_connections() {
   bool (MainWindow::*cb)() = &MainWindow::validate_inputs;
 
+  connect(render_widget_->time_transform_combo(), qOverload<int>(&QComboBox::activated), this,
+          [this](int) {
+            if (render_widget_->is_local_pca_enabled()) {
+              view_widget_->set_z_origin(0);
+              view_widget_->set_z_width(std::max(1, render_widget_->get_time_window() - 1));
+            }
+          });
+  connect(render_widget_->pca_type_combo(), qOverload<int>(&QComboBox::activated), this,
+          [this](int) {
+            if (render_widget_->is_local_pca_enabled()) {
+              view_widget_->set_z_origin(0);
+              view_widget_->set_z_width(std::max(1, render_widget_->get_time_window() - 1));
+            }
+          });
+
   // Connect to widget signals
   connect(import_widget_, &ImportWidget::settings_changed, this, cb);
   connect(export_widget_, &ExportWidget::settings_changed, this, cb);
@@ -2890,6 +2913,8 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"FFT", TimeMethod::FFT},
         {"LSCI (3D)", TimeMethod::NONE},
         {"PCA-LSCI", TimeMethod::NONE},
+        {"Local PCA", TimeMethod::NONE},
+        {"Local PCA-LSCI", TimeMethod::NONE},
     };
     s.time_window       = render_widget_->get_time_window();
     s.time_stride       = render_widget_->get_time_stride();
@@ -2942,6 +2967,13 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         static_cast<float>(view_widget_->get_flatfield_cutoff_period_um() * 1e-6);
     s.pp_spatial_contrast             = render_widget_->is_spatial_contrast_enabled();
     s.pp_pca_lsci = render_widget_->is_pca_lsci_enabled();
+    s.pp_local_pca = render_widget_->is_local_pca_enabled();
+    s.pp_local_pca_lsci = render_widget_->is_local_pca_lsci_enabled();
+    s.pp_local_pca_map = render_widget_->get_local_pca_map();
+    s.pp_local_pca_dynamic_auto_scale =
+        render_widget_->is_local_pca_dynamic_auto_scale();
+    s.pp_local_pca_stride = 1;
+    s.pp_local_pca_automatic = render_widget_->is_local_pca_automatic();
     const auto pca_map = render_widget_->get_pca_lsci_map();
     s.pp_pca_lsci_map = pca_map == "Static (PCA then LSCI 3D)" ? 1 :
                         pca_map == "PCA frame (center)" ? 3 : 2;
@@ -3172,6 +3204,10 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     render_widget_->set_pca_lsci_mode(s.pp_pca_lsci,
                                      s.pp_pca_lsci_map == 1 ? "Static (PCA then LSCI 3D)" :
                                      s.pp_pca_lsci_map == 3 ? "PCA frame (center)" : "Dynamic");
+    render_widget_->set_local_pca_mode(s.pp_local_pca, s.pp_local_pca_lsci);
+    render_widget_->set_local_pca_map(s.pp_local_pca_map);
+    render_widget_->set_local_pca_dynamic_auto_scale(s.pp_local_pca_dynamic_auto_scale);
+    render_widget_->set_local_pca_automatic(s.pp_local_pca_automatic);
     render_widget_->set_spatial_contrast_window_size(s.pp_spatial_contrast_window_size);
     render_widget_->set_spatial_contrast_method(s.pp_spatial_contrast_method == 1 ? "FFT"
                                                                                   : "Kernel");

@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "LocalPcaSettings",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "window_size": {"type": "integer", "minimum": 3, "maximum": 15, "not": {"multipleOf": 2}},
+    "stride": {"type": "integer", "enum": [1]},
+    "begin": {"type": "integer", "minimum": 0},
+    "end": {"type": "integer", "minimum": 1, "maximum": 32},
+    "automatic": {"type": "boolean", "default": false},
+    "map": {"type": "string", "enum": ["energy", "original", "static", "dynamic"], "default": "energy"}
+  },
+  "required": ["window_size", "stride", "begin", "end"]
+}

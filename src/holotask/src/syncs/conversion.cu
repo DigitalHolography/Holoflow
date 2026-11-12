@@ -194,6 +194,10 @@ __global__ void f32_u8_scaled_kernel(const float *idata, uint8_t *odata, int siz
                                      float *max_val) {
   const int idx = blockIdx.x * blockDim.x + threadIdx.x;
   if (idx < size) {
+    if (*max_val <= *min_val) {
+      odata[idx] = 0;
+      return;
+    }
     float scale = 255.f / (*max_val - *min_val);
     int   val   = static_cast<int>((idata[idx] - *min_val) * scale + 0.5f);
     odata[idx]  = static_cast<uint8_t>(fminf(fmaxf(val, 0), 255));

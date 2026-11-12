@@ -342,6 +342,29 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 {SettingsField::TimeWindow});
     }
 
+    if (settings.pp_local_pca) {
+      if (!settings.pp_spatial_contrast || settings.pp_pca_lsci ||
+          settings.pp_spatial_contrast_dimensions != 3 ||
+          (settings.pp_local_pca_lsci &&
+           (settings.pp_local_pca_map < 0 || settings.pp_local_pca_map > 2)) ||
+          settings.time_window < 2 || settings.time_window > 32 ||
+          settings.pp_spatial_contrast_window_size < 3 ||
+          settings.pp_spatial_contrast_window_size > 15 ||
+          settings.pp_spatial_contrast_window_size % 2 == 0 ||
+          settings.pp_local_pca_stride != 1) {
+        add_issue(result, ValidationSeverity::Error, "local_pca_settings_invalid",
+                  "Local PCA needs 2..32 frames, an odd 3..15 pixel kernel, and spatial stride 1.",
+                  {SettingsField::TimeWindow, SettingsField::PpSpatialContrastWindowSize});
+      }
+      if (!settings.pp_local_pca_automatic &&
+          (settings.time_z_begin < 0 || settings.time_z_begin >= settings.time_z_end ||
+           settings.time_z_end > settings.time_window)) {
+        add_issue(result, ValidationSeverity::Error, "local_pca_components_invalid",
+                  "Local PCA Z and Width must select components within the time window.",
+                  {SettingsField::TimeZBegin, SettingsField::TimeZEnd});
+      }
+    }
+
     if (settings.pp_pca_lsci && (settings.time_window > 512 ||
                                  settings.pp_spatial_contrast_dimensions != 3 ||
                                  settings.pp_pca_lsci_map < 0 || settings.pp_pca_lsci_map > 3)) {
