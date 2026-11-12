@@ -3,16 +3,16 @@
 
 |||
 |:---|:---|
-| Generated on: | 11/12/2026 - 12:05:31 PM |
+| Generated on: | 11/12/2026 - 3:09:53 PM |
 | Parser: | Cobertura |
 | Assemblies: | 7 |
 | Classes: | 12 |
 | Files: | 142 |
-| **Line coverage:** | 39.3% (6084 of 15447) |
-| Covered lines: | 6084 |
-| Uncovered lines: | 9363 |
-| Coverable lines: | 15447 |
-| Total lines: | 35369 |
+| **Line coverage:** | 39.2% (6087 of 15516) |
+| Covered lines: | 6087 |
+| Uncovered lines: | 9429 |
+| Coverable lines: | 15516 |
+| Total lines: | 35460 |
 | Covered branches: | 0 |
 | Total branches: | 0 |
 | **Method coverage:** | [Feature is only available for sponsors](https://reportgenerator.io/pro) |
@@ -42,7 +42,7 @@
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
 |**holoflow**|**89.7%**|****|
-|include|57.8%||
+|include|58.6%||
 |src|90.2%||
 
 </details>
@@ -70,14 +70,14 @@
 |:---|---:|---:|
 |**holotask**|**45.5%**|****|
 |include|25%||
-|src|45.9%||
+|src|45.8%||
 
 </details>
-<details><summary>holovibes - 8.1%</summary>
+<details><summary>holovibes - 8%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holovibes**|**8.1%**|****|
-|src|8.1%||
+|**holovibes**|**8%**|****|
+|src|8%||
 
 </details>
