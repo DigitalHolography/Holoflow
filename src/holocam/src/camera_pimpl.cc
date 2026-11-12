@@ -76,9 +76,9 @@ CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlo
   assert(expected_grabber_count > 0);
   assert(expected_grabber_count <= 2);
 
-  auto root              = config.at(short_name);
-  auto nb_buffers        = root.at("NbBuffers").get<std::size_t>();
-  auto buffer_part_count = root.at("BufferPartCount").get<std::size_t>();
+  auto root          = config.at(short_name);
+  nb_buffers_        = root.at("NbBuffers").get<std::size_t>();
+  buffer_part_count_ = root.at("BufferPartCount").get<std::size_t>();
 
   const auto bank_a_index = find_grabber_index_for_bank(0);
   if (expected_grabber_count == 1)
@@ -92,7 +92,7 @@ CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlo
   }
 
   buffer_queue_ = std::make_unique<CameraBufferQueue>(
-      nb_buffers, [this](const CameraFrame &frame) { grabber_->requeue(frame.banks); });
+      nb_buffers_, [this](const CameraFrame &frame) { grabber_->requeue(frame.banks); });
 
   if (record_options.has_value()) {
     init_record_context(short_name, *record_options, buffer_size);
@@ -121,8 +121,15 @@ void CameraBase::Impl::init_record_context(const char *short_name, const RecordO
       curaii::make_unique_host_ptr<std::byte>(buffer_size * record_settings.recording_count);
   recording_context_->invalidate(
       record_settings, *buffer_queue_.get(), buffer_size, recording_buffers_.get(), g,
-      record_callbacks.poll_metrics, record_callbacks.success_callback,
+      record_callbacks.poll_metrics, record_callbacks.acquisition_metrics, record_callbacks.success_callback,
       record_callbacks.failure_callback, record_callbacks.flushing_finished);
+}
+
+void CameraBase::Impl::cancel_all_records() {
+  if (recording_context_.has_value()) {
+    recording_context_->stop_all_record();
+    current_recording_session_ = nullptr;
+  }
 }
 
 size_t CameraBase::Impl::find_grabber_index_for_bank(size_t id) {
@@ -205,6 +212,52 @@ void CameraBase::Impl::acquisition_loop(std::stop_token cancelled) {
   buffer_queue_->close();
 }
 
+void CameraBase::Impl::check_for_record_failure() {
+  if (recording_context_.has_value() &&
+      recording_context_->recording.load(std::memory_order_acquire)) {
+    auto rem = current_recording_session_->remaining_to_record() / buffer_part_count_;
+    if (rem > buffer_queue_->size()) {
+      current_recording_session_->stop();
+      logger()->error("[CameraBase::Impl::check_for_record_failure] record on queue {} failed "
+                      "because a frame has been rejected while still acquiring for record",
+                      current_recording_session_->id());
+    }
+  }
+}
+
+bool CameraBase::Impl::start_raw_record() {
+  assert(recording_context_.has_value());
+
+  if (recording_context_->session_still_recording()) {
+    logger()->error("[Camera::Impl::start_raw_record] a session is still "
+                    "recording frames from camera");
+    return false;
+  }
+
+  auto session_it = recording_context_->find_next_free_session();
+  if (session_it == recording_context_->sessions.end()) {
+    logger()->error(
+        "[AmetekS711EuresysCoaxlinkQSFP:start_raw_record] cannot find a free recording session");
+    return false;
+  }
+
+  auto &session              = *session_it;
+  current_recording_session_ = &session;
+  session.start(recording_context_->settings, buffer_part_count_, recording_context_->recording);
+  logger()->info("[CameraBase::Impl::start_raw_record] started new record on queue {} to {}",
+                 session.id(), recording_context_->settings.file_path);
+  return true;
+}
+
+void CameraBase::Impl::stop_raw_record() {
+  auto session = current_recording_session_;
+  if (session) {
+    session->stop();
+    current_recording_session_ = nullptr;
+
+    assert(!recording_context_->recording.load(std::memory_order_acquire));
+  }
+}
 } // namespace holocam
 
 #endif

@@ -25,7 +25,8 @@ using RecordingSessionId = uint32_t;
 using RecordBufferFlushingFinishedCallback = std::function<void(RecordingSessionId)>;
 using RecordPollMetricsCallback =
     std::function<void(RecordingSessionId, size_t, size_t,
-                       size_t)>; // frame_written | writing speed | elasped time (s)
+                       size_t)>; // frame_written | writing speed | elasped time (s
+using RecordAcquisitionMetricsCallback = std::function<void(RecordingSessionId, size_t)>;
 using RecordSuccessCallback = std::function<void(RecordingSessionId, size_t)>;
 using RecordFailureCallback = std::function<void(RecordingSessionId, const std::string &)>;
 
@@ -52,6 +53,7 @@ struct RecordSettings {
 struct RecordCallbacks {
   RecordBufferFlushingFinishedCallback flushing_finished;
   RecordPollMetricsCallback            poll_metrics;
+  RecordAcquisitionMetricsCallback     acquisition_metrics;
   RecordSuccessCallback                success_callback;
   RecordFailureCallback                failure_callback;
 };

@@ -21,7 +21,7 @@
 #undef min
 #undef max
 
-#include "algorithm"
+#include <algorithm>
 
 namespace holocam {
 
@@ -41,12 +41,14 @@ RecordingGeometry::RecordingGeometry(uint8_t bits_per_pixel_, size_t frame_width
 RecordingSession::RecordingSession(SessionId id, CameraBufferQueue &buffer_queue,
                                    const RecordingGeometry &geometry, size_t buffer_size,
                                    std::byte *buffer, PollMetricsCallback metrics_callback,
+                                   AcquisitionMetricsCallback     acquisition_callback,
                                    SuccessCallback                success_callback,
                                    FailureCallback                failure_callback,
                                    BufferFlushingFinishedCallback buffer_flushing_finished_callback)
     : buffer_queue_{buffer_queue}, id_{id}, geometry_{geometry}, buffer_(buffer),
       buffer_size_{buffer_size}, metrics_callback_{metrics_callback},
-      success_callback_{success_callback}, failure_callback_{failure_callback},
+      acquisition_callback_{acquisition_callback}, success_callback_{success_callback},
+      failure_callback_{failure_callback},
       buffer_flushing_finished_callback_{buffer_flushing_finished_callback} {}
 
 RecordingSession::RecordingSession(RecordingSession &&other)
@@ -54,6 +56,7 @@ RecordingSession::RecordingSession(RecordingSession &&other)
       id_(other.id_), geometry_(std::move(other.geometry_)), buffer_(std::move(other.buffer_)),
       worker_thread_(std::move(other.worker_thread_)),
       metrics_callback_(std::move(other.metrics_callback_)),
+      acquisition_callback_(std::move(other.acquisition_callback_)),
       success_callback_(std::move(other.success_callback_)),
       failure_callback_(std::move(other.failure_callback_)),
       buffer_flushing_finished_callback_(std::move(other.buffer_flushing_finished_callback_)),
@@ -92,8 +95,7 @@ const char *state_to_string(RecordingSession::State state) {
 // recording is set to true when starting and then is set to false when all the camera buffers
 // required for the record are copied to the session buffer
 void RecordingSession::start(const RecordSettings &settings, size_t buffer_part_count,
-                             std::atomic<bool>   &recording,
-                             std::atomic<size_t> &frame_recorded_since_start) {
+                             std::atomic<bool> &recording) {
 
   auto s = state();
   if (s != State::Free) {
@@ -108,7 +110,7 @@ void RecordingSession::start(const RecordSettings &settings, size_t buffer_part_
                           // discarded)
 
   state_.store(State::Recording, std::memory_order_release);
-  worker(settings, buffer_part_count, recording, frame_recorded_since_start);
+  worker(settings, buffer_part_count, recording);
 }
 
 // send stop request to the workers and join
@@ -130,12 +132,11 @@ bool RecordingSession::cancel_worker_thread() {
   return false;
 }
 void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part_count,
-                              std::atomic<bool>   &recording,
-                              std::atomic<size_t> &frame_recorded_since_start) {
+                              std::atomic<bool> &recording) {
 
   cancel_worker_thread();
-  worker_thread_ = std::jthread([this, settings, buffer_part_count, &recording,
-                                 &frame_recorded_since_start](std::stop_token cancelled) {
+  worker_thread_ = std::jthread([this, settings, buffer_part_count,
+                                 &recording](std::stop_token cancelled) {
     std::atomic<uint32_t> finished = 0;
 
     logger()->info("[RecordingSession::worker::worker_thread] worker thread started");
@@ -148,31 +149,31 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
       remaining_to_record_.store(settings.recording_count, std::memory_order_release);
 
       // start rec and writers on other threads
-      auto rec_thread = std::jthread([this, &settings, &recording, &frame_recorded_since_start,
-                                      &finished, cancelled, buffer_part_count, &writer] {
-        logger()->info("[RecordingSession::worker::rec_thread] recording thread started");
-        recording.store(true, std::memory_order_release);
-        frame_recorded_since_start.store(0, std::memory_order_release);
+      auto rec_thread = std::jthread(
+          [this, &settings, &recording, &finished, cancelled, buffer_part_count, &writer] {
+            logger()->info("[RecordingSession::worker::rec_thread] recording thread started");
+            recording.store(true, std::memory_order_release);
 
-        {
-          auto rec = Recorder(settings.recording_count, buffer_part_count, buffer_queue_, writer);
-          rec.execute(cancelled, remaining_to_record_);
-        }
+            {
+              auto rec = Recorder(id_, settings.recording_count, buffer_part_count, buffer_queue_,
+                                  writer, acquisition_callback_);
+              rec.execute(cancelled, remaining_to_record_);
+            }
 
-        if (!cancelled.stop_requested()) {
-          state_.store(State::WritingToDisk, std::memory_order_release);
-          finished.fetch_add(1);
-          success_callback_(id_, settings.recording_count);
-        } else {
-          logger()->info("[RecordingSession::worker] record cancelled");
-          failure_callback_(id_, "record cancelled");
-        }
+            if (!cancelled.stop_requested()) {
+              state_.store(State::WritingToDisk, std::memory_order_release);
+              finished.fetch_add(1);
+              success_callback_(id_, settings.recording_count);
+            } else {
+              logger()->info("[RecordingSession::worker] record cancelled");
+              failure_callback_(id_, "record cancelled");
+            }
 
-        recording.store(false, std::memory_order_release);
-        logger()->info(
-            "[RecordingSession::worker::rec_thread] recording thread finished (cancelled: {})",
-            cancelled.stop_requested());
-      });
+            recording.store(false, std::memory_order_release);
+            logger()->info(
+                "[RecordingSession::worker::rec_thread] recording thread finished (cancelled: {})",
+                cancelled.stop_requested());
+          });
 
       auto writer_thread = std::jthread([this, &writer, &finished, cancelled, &settings] {
         logger()->info("[RecordingSession::worker::writer_thread] writer thread started");
@@ -312,10 +313,11 @@ std::byte *RecordWriter::wait_next_frame() {
 // -------------------------------------------------------------------------------------------------
 
 // read B
-Recorder::Recorder(uint32_t frame_count, size_t buffer_part_count, CameraBufferQueue &queue,
-                   RecordWriter &writer)
-    : frame_to_record_{frame_count}, buffer_part_count_{buffer_part_count}, queue_{queue},
-      writer_{writer} {
+Recorder::Recorder(RecordingSessionId id, uint32_t frame_count, size_t buffer_part_count,
+                   CameraBufferQueue &queue, RecordWriter &writer,
+                   RecordingSession::AcquisitionMetricsCallback acquisition_callback)
+    : id_{id}, frame_to_record_{frame_count}, buffer_part_count_{buffer_part_count}, queue_{queue},
+      writer_{writer}, acquisition_callback_{acquisition_callback} {
   if (buffer_part_count == 0)
     throw std::invalid_argument("Cannot record with zero buffer parts");
   queue_.subscribe_b();
@@ -353,6 +355,13 @@ void Recorder::execute(std::stop_token cancelled, std::atomic<size_t> &remaining
     auto rem = remaining_to_record.fetch_sub(buffer_part_count_);
     if (rem < buffer_part_count_)
       remaining_to_record.store(0, std::memory_order_release);
+
+    auto now     = Clock::now();
+    auto elapsed = now - last_poll;
+    if (elapsed > poll_interval) {
+      acquisition_callback_(id_, current_frame);
+      last_poll = Clock::now();
+    }
   }
 }
 
@@ -363,6 +372,7 @@ void Recorder::execute(std::stop_token cancelled, std::atomic<size_t> &remaining
 void RecordingContext::invalidate(
     const RecordSettings &s, CameraBufferQueue &buffer_queue, size_t buffer_size, std::byte *buffer,
     const RecordingGeometry &g, RecordingSession::PollMetricsCallback metrics_callback,
+    RecordingSession::AcquisitionMetricsCallback     acquisition_callback,
     RecordingSession::SuccessCallback                success_callback,
     RecordingSession::FailureCallback                failure_callback,
     RecordingSession::BufferFlushingFinishedCallback buffer_flushing_finished_callback) {
@@ -371,7 +381,6 @@ void RecordingContext::invalidate(
   sessions.clear();
 
   recording.store(false, std::memory_order_release);
-  acquired_since_record_start.store(0, std::memory_order_release);
 
   logger()->info("[RecordingContext::reset] creating {} recording session with buffer of {} bytes",
                  settings.record_queue_count, buffer_size);
@@ -380,10 +389,23 @@ void RecordingContext::invalidate(
   size_t offset = 0;
   for (size_t i = 0; i < settings.record_queue_count; ++i) {
     sessions.emplace_back(static_cast<RecordingSession::SessionId>(i), buffer_queue, g, buffer_size,
-                          buffer + offset, metrics_callback, success_callback, failure_callback,
-                          buffer_flushing_finished_callback);
+                          buffer + offset, metrics_callback, acquisition_callback, success_callback,
+                          failure_callback, buffer_flushing_finished_callback);
     offset += buffer_size;
   }
+}
+std::vector<RecordingSession>::iterator RecordingContext::find_next_free_session() {
+  return std::ranges::find_if(
+      sessions, [](const auto &s) { return s.state() == RecordingSession::State::Free; });
+}
+
+void RecordingContext::stop_all_record() {
+  std::ranges::for_each(sessions, [this](auto &s) { s.stop(); });
+}
+
+bool RecordingContext::session_still_recording() {
+  return std::ranges::any_of(
+      sessions, [](const auto &s) { return s.state() == RecordingSession::State::Recording; });
 }
 
 } // namespace holocam

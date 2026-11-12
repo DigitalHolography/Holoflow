@@ -45,11 +45,13 @@ public:
 
   using BufferFlushingFinishedCallback = RecordBufferFlushingFinishedCallback;
   using PollMetricsCallback            = RecordPollMetricsCallback;
+  using AcquisitionMetricsCallback     = RecordAcquisitionMetricsCallback;
   using SuccessCallback                = RecordSuccessCallback;
   using FailureCallback                = RecordFailureCallback;
 
   RecordingSession(SessionId id, CameraBufferQueue &buffer_queue, const RecordingGeometry &geometry,
                    size_t buffer_size, std::byte *buffer, PollMetricsCallback metrics_callback,
+                   AcquisitionMetricsCallback acquisition_callback,
                    SuccessCallback success_callback, FailureCallback failure_callback,
                    BufferFlushingFinishedCallback buffer_flushing_finished_callback);
 
@@ -63,8 +65,8 @@ public:
   // start recording workers
   // recording is set to true when starting and then is set to false when all the camera buffers
   // required for the record are copied to the session buffer
-  void start(const RecordSettings &settings, size_t buffer_part_count, std::atomic<bool> &recording,
-             std::atomic<size_t> &frame_recorded_since_start);
+  void start(const RecordSettings &settings, size_t buffer_part_count,
+             std::atomic<bool> &recording);
 
   State     state() const { return state_.load(std::memory_order_acquire); }
   bool      is_free() const { return state() == State::Free; }
@@ -76,7 +78,7 @@ public:
 
 private:
   void worker(const RecordSettings &settings, size_t buffer_part_count,
-              std::atomic<bool> &recording, std::atomic<size_t> &frame_recorded_since_start);
+              std::atomic<bool> &recording);
 
   void remove_incomplete_camera_recording(const std::string &path);
 
@@ -96,6 +98,7 @@ private:
                                // recording session, so it is local to the worker thread;
 
   PollMetricsCallback            metrics_callback_;
+  AcquisitionMetricsCallback     acquisition_callback_;
   SuccessCallback                success_callback_;
   FailureCallback                failure_callback_;
   BufferFlushingFinishedCallback buffer_flushing_finished_callback_;
@@ -150,8 +153,9 @@ class Recorder final {
 public:
   using Clock = std::chrono::steady_clock;
 
-  Recorder(uint32_t frame_count, size_t buffer_part_count, CameraBufferQueue &queue,
-           RecordWriter &writer);
+  Recorder(RecordingSessionId id, uint32_t frame_count, size_t buffer_part_count,
+           CameraBufferQueue &queue, RecordWriter &writer,
+           RecordingSession::AcquisitionMetricsCallback acquisition_callback);
 
   ~Recorder();
 
@@ -169,26 +173,34 @@ public:
                      std::atomic<bool> &recording, std::atomic<size_t> &frame_recorded_since_start);
 
 private:
-  RecordWriter      &writer_;
-  size_t             frame_to_record_;
-  size_t             buffer_part_count_;
-  CameraBufferQueue &queue_;
+  RecordingSessionId                           id_;
+  RecordWriter                                &writer_;
+  size_t                                       frame_to_record_;
+  size_t                                       buffer_part_count_;
+  CameraBufferQueue                           &queue_;
+  RecordingSession::AcquisitionMetricsCallback acquisition_callback_;
 };
 
 struct RecordingContext {
   std::atomic<bool>   recording                   = false;
-  std::atomic<size_t> acquired_since_record_start = 0;
 
   RecordSettings                settings;
   std::vector<RecordingSession> sessions;
 
   void
-  invalidate(const RecordSettings& s, CameraBufferQueue &buffer_queue, size_t buffer_size,
+  invalidate(const RecordSettings &s, CameraBufferQueue &buffer_queue, size_t buffer_size,
              std::byte *buffer, const RecordingGeometry &g,
              RecordingSession::PollMetricsCallback            metrics_callback,
+             RecordingSession::AcquisitionMetricsCallback     acquisition_callback,
              RecordingSession::SuccessCallback                success_callback,
              RecordingSession::FailureCallback                failure_callback,
              RecordingSession::BufferFlushingFinishedCallback buffer_flushing_finished_callback);
+
+  std::vector<RecordingSession>::iterator find_next_free_session();
+
+  void stop_all_record();
+
+  bool session_still_recording();
 };
 } // namespace holocam
 

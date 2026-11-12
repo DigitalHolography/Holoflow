@@ -31,8 +31,9 @@ namespace holocam {
 template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 class CameraBase::Impl {
 public:
-  Impl(const char *model_name, const char* short_name, const nlohmann::json &config, const std::optional<RecordOptions> &record_options,
-       size_t expected_grabber_count, size_t buffer_size);
+  Impl(const char *model_name, const char *short_name, const nlohmann::json &config,
+       const std::optional<RecordOptions> &record_options, size_t expected_grabber_count,
+       size_t buffer_size);
 
   std::size_t bank_count() const noexcept;
   std::size_t frame_width() const noexcept;
@@ -40,7 +41,7 @@ public:
   std::size_t buffer_part_count() const noexcept;
 
   void set_recording_options(std::optional<RecordOptions>);
-  void update_record_path(const std::string& path);
+  void update_record_path(const std::string &path);
 
   void start_acquisition();
   void stop_acquisition();
@@ -67,21 +68,24 @@ public:
   size_t find_grabber_index_for_bank(size_t id);
 
 private:
-  void init_record_context(const char *short_name, const RecordOptions& options, size_t buffer_size);
-
+  void init_record_context(const char *short_name, const RecordOptions &options,
+                           size_t buffer_size);
 
   void acquisition_loop(std::stop_token cancelled);
 
-  void cancel_all_records();
-  void check_for_record_failure();
+  void cancel_all_records(); 
+  void check_for_record_failure(); 
+
 private:
   static constexpr uint64_t pop_timeout_ = 100;
-  nlohmann::json config_;
+  nlohmann::json            config_;
 
   std::unique_ptr<Euresys::EGenTL> gentl_;
   Euresys::EGrabberCameraInfo      info_;
   HostPtr<uint8_t>                 buffers_;
   size_t                           buffers_size_;
+  size_t                           buffer_part_count_;
+  size_t                           nb_buffers_;
   std::unique_ptr<Grabber>         grabber_{nullptr};
 
   // Buffer Queue
@@ -91,13 +95,13 @@ private:
   std::atomic<bool>           acquiring_{false};
 
   // Record
-  std::atomic<bool>           recording_{false};
+  std::atomic<bool> recording_{false};
 
-  std::optional<RecordingContext>    recording_context_{std::nullopt};
-  HostPtr<std::byte> recording_buffers_         = nullptr;
-  size_t                             recording_buffers_size_    = 0;
-  size_t                             recording_buffers_count_   = 0;
-  RecordingSession                  *current_recording_session_ = nullptr;
+  std::optional<RecordingContext> recording_context_{std::nullopt};
+  HostPtr<std::byte>              recording_buffers_         = nullptr;
+  size_t                          recording_buffers_size_    = 0;
+  size_t                          recording_buffers_count_   = 0;
+  RecordingSession               *current_recording_session_ = nullptr;
 };
 
 #include "camera_pimpl.hxx"
