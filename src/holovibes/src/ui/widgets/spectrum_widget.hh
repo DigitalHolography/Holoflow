@@ -7,6 +7,8 @@
 
 #include "spectrum.hh"
 
+class QCheckBox;
+
 namespace holovibes::ui {
 
 class SpectrumWidget : public QWidget {
@@ -30,6 +32,9 @@ private:
   std::vector<SpectrumSample> samples_;
   double                      sampling_frequency_hz_ = 1.0;
   bool                        full_fft_              = false;
+  QWidget                    *controls_              = nullptr;
+  QCheckBox                  *log10_scale_           = nullptr;
+  QCheckBox                  *exclude_dc_            = nullptr;
 };
 
 } // namespace holovibes::ui

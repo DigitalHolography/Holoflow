@@ -20,3 +20,8 @@ FFT shifts frequencies and their power values together so negative frequencies a
 left and zero is centered. Enable the visualization in the workspace to display the graph.
 The graph refreshes at up to 100 Hz, subject to the arrival of new transform batches and GUI
 availability; queued updates are bounded to prevent a display backlog.
+
+Use the graph's **Log10 power** checkbox to plot `log10(power)` instead of linear power;
+zero-power bins are omitted in this mode. **Exclude DC** hides the zero-frequency bin and
+automatically fits the Y limits to the remaining bins, in either scale. Both controls update
+the current graph immediately without restarting the pipeline.
