@@ -47,6 +47,7 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/asyncs/temporal_window.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
 #include "holotask/sinks/ffmpeg.hh"
@@ -75,6 +76,7 @@
 #include "holotask/syncs/resize.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
+#include "holotask/syncs/spatial_contrast.hh"
 #include "holotask/syncs/unfold2d.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike_defocus_z_prop.hh"
@@ -103,11 +105,13 @@ protected:
   TDesc copy(const TDesc &X, holonp::CopySettings s);
   TDesc memcpy(const TDesc &X, holotask::syncs::MemcpySettings s);
   TDesc batched_queue(const TDesc &X, holotask::asyncs::BatchQueueSettings s);
+  TDesc temporal_window(const TDesc &X, holotask::asyncs::TemporalWindowSettings s);
   std::vector<TDesc> dual_reader_batch_queue(const TDesc &X, holotask::asyncs::DualReaderBatchQueueSettings s);
   TDesc convert(const TDesc &X, holotask::syncs::ConversionSettings s);
   TDesc pca(const TDesc &X, holotask::syncs::PcaSettings s);
   TDesc flatfield(const TDesc &X, holotask::syncs::FlatfieldSettings s);
   TDesc filter_2d(const TDesc &X, holotask::syncs::Filter2DSettings s);
+  TDesc spatial_contrast(const TDesc &X, holotask::syncs::SpatialContrastSettings s);
   TDesc fresnel_diffraction(const TDesc &X, holotask::syncs::FresnelDiffractionSettings s);
   TDesc fresnel_qin(const TDesc &Z, holotask::sources::FresnelQinSettings s);
   TDesc fresnel_qout(const TDesc &Z, holotask::sources::FresnelQoutSettings s);

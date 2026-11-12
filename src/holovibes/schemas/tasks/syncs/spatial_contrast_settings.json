@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "SpatialContrastSettings",
+  "description": "Settings for the SpatialContrast sync task.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "window_size": {
+      "type": "integer",
+      "anyOf": [
+        { "const": 1 },
+        { "minimum": 3, "maximum": 255, "not": { "multipleOf": 2 } }
+      ],
+      "description": "Temporal-only contrast uses one spatial sample; spatial modes use an odd side length from 3 to 255 pixels."
+    },
+    "temporal_window_size": {
+      "type": "integer",
+      "anyOf": [
+        { "const": 1 },
+        { "minimum": 3 }
+      ],
+      "description": "Number of frames in the temporal window; 1 selects spatial-only 2D contrast, larger values select temporal or spatiotemporal contrast."
+    },
+    "method": {
+      "type": "string",
+      "enum": ["kernel", "fft"],
+      "default": "kernel",
+      "description": "Direct sliding-window kernel or FFT-based box convolution."
+    }
+  },
+  "required": [
+    "window_size",
+    "temporal_window_size"
+  ],
+  "examples": [
+    {
+      "window_size": 7,
+      "temporal_window_size": 1,
+      "method": "kernel"
+    }
+  ]
+}

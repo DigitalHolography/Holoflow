@@ -129,6 +129,12 @@ struct Settings {
   bool        pp_fft_shift;
   bool        pp_flatfield;
   float       pp_flatfield_cutoff_period_m;
+  bool        pp_spatial_contrast;
+  int         pp_spatial_contrast_window_size;
+  int         pp_spatial_contrast_dimensions = 2;
+  int         pp_spatial_contrast_method = 0;
+  float       pp_spatial_contrast_display_max = 0.75f;
+  bool        pp_spatial_contrast_invert_display = false;
   int         pp_accumulation;
   bool        pp_convolution;
   std::string pp_convolution_path;

@@ -155,6 +155,14 @@ void write_view(json &j, const Settings &s) {
   view["fft_shift"]                    = s.pp_fft_shift;
   view["flatfield"]["enabled"]         = s.pp_flatfield;
   view["flatfield"]["cutoff_period_m"] = s.pp_flatfield_cutoff_period_m;
+  auto &spatial_contrast                  = view["spatial_contrast"];
+  spatial_contrast["enabled"]             = s.pp_spatial_contrast;
+  spatial_contrast["window_size"]         = s.pp_spatial_contrast_window_size;
+  spatial_contrast["dimensions"]          = s.pp_spatial_contrast_dimensions;
+  spatial_contrast["method"] = s.pp_spatial_contrast_method == 1 ? "fft" : "kernel";
+  spatial_contrast["display_max"]       = s.pp_spatial_contrast_display_max;
+  spatial_contrast["invert_display"]    = s.pp_spatial_contrast_invert_display;
+  spatial_contrast.erase("temporal_frames");
 
   view["registration"]["registration_enabled"] = s.pp_registration;
   view["registration"]["registration_zone"]    = s.pp_registration_radius;
@@ -267,6 +275,18 @@ void read_view(Settings &s, const json &view) {
   s.pp_flatfield        = val(flatfield, "enabled", s.pp_flatfield);
   s.pp_flatfield_cutoff_period_m =
       val(flatfield, "cutoff_period_m", s.pp_flatfield_cutoff_period_m);
+  const auto &spatial_contrast = child_or_empty(view, "spatial_contrast");
+  s.pp_spatial_contrast = val(spatial_contrast, "enabled", s.pp_spatial_contrast);
+  s.pp_spatial_contrast_window_size =
+      val(spatial_contrast, "window_size", s.pp_spatial_contrast_window_size);
+  s.pp_spatial_contrast_dimensions =
+      val(spatial_contrast, "dimensions", s.pp_spatial_contrast_dimensions);
+  const auto method = val(spatial_contrast, "method", std::string{"kernel"});
+  s.pp_spatial_contrast_method = method == "fft" ? 1 : method == "kernel" ? 0 : -1;
+  s.pp_spatial_contrast_display_max =
+      val(spatial_contrast, "display_max", s.pp_spatial_contrast_display_max);
+  s.pp_spatial_contrast_invert_display =
+      val(spatial_contrast, "invert_display", s.pp_spatial_contrast_invert_display);
 
   const auto &window = child_or_empty(view, "window");
   const auto &xy     = child_or_empty(window, "xy");

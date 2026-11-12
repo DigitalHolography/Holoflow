@@ -182,6 +182,23 @@ public:
     return true;
   }
 
+  void handle_events(holoflow::core::SyncCtx &ctx) {
+    if (!ctx.event_reader)
+      return;
+
+    while (auto event = ctx.event_reader->try_pop()) {
+      if (event->direction != holoflow_event::EventDirection::ToNode ||
+          event->data.value("type", std::string{}) != "restart_playback") {
+        continue;
+      }
+
+      frame_idx = settings.start_frame;
+      if (settings.load_kind == HolofileSettings::LoadKind::Live)
+        reader->seek(settings.start_frame);
+      next_batch_start.reset();
+    }
+  }
+
   // -- ISyncTask interface ------------------------------------------------------------------------
   std::optional<holoflow::core::TView> acquire_input(int index) override {
     (void)index; // Unused since there are no inputs
@@ -199,6 +216,8 @@ public:
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    handle_events(ctx);
+
     if (!pace_before_batch(ctx)) {
       return holoflow::core::OpResult::Cancelled;
     }
@@ -220,7 +239,7 @@ public:
       auto *odata = reinterpret_cast<uint8_t *>(ctx.outputs[0].data());
       reader->read_frames(odata, settings.batch_size);
     } else {
-      std::byte *data    = buf + frame_idx * bytes_per_frame;
+      std::byte *data    = buf + (frame_idx - settings.start_frame) * bytes_per_frame;
       auto      &storage = storage_access().owned_output_storage(0);
       storage.ptr        = data;
 
@@ -258,6 +277,12 @@ HolofileFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(settings.start_frame < settings.end_frame, "Invalid frame range");
   check(settings.batch_size > 0, "Batch size must be positive");
   check(!settings.max_fps.has_value() || *settings.max_fps > 0, "max_fps must be positive when provided");
+  if (settings.end_frame > static_cast<int>(header.frame_count)) {
+    logger()->warn("[HolofileFactory::infer] start frame {} plus {} requested frames exceeds "
+                   "file size of {} frames",
+                   settings.start_frame, settings.end_frame - settings.start_frame,
+                   header.frame_count);
+  }
   check(settings.end_frame <= static_cast<int>(header.frame_count), "end_frame exceeds total frames in file");
   check(settings.batch_size <= (settings.end_frame - settings.start_frame), "Batch size exceeds available frames");
   check(bpp_to_dtype.contains(header.bits_per_pixel), "Unsupported bits_per_pixel: " + std::to_string(header.bits_per_pixel));
