@@ -1484,7 +1484,7 @@ void MainWindow::restore_persistent_state() {
   render_widget_->set_local_pca_dynamic_auto_scale(
       settings.value("local_pca_dynamic_auto_scale", true).toBool());
   render_widget_->set_pca_lsci_mode(render_widget_->is_pca_lsci_enabled(),
-      settings.value("pca_lsci_map", "Dynamic").toString());
+                                    settings.value("pca_lsci_map", "Dynamic").toString());
   render_widget_->spatial_contrast_display_max()->setValue(
       settings
           .value("spatial_contrast_display_max", render_widget_->get_spatial_contrast_display_max())
@@ -2722,7 +2722,8 @@ void MainWindow::setup_update_connections() {
 
 void MainWindow::recording_file_path_changed() {
   auto update = [=]() {
-    pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString());
+    if (pipeline_running_)
+      pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString());
   };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
 }
@@ -2966,17 +2967,17 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_flatfield_cutoff_period_m =
         static_cast<float>(view_widget_->get_flatfield_cutoff_period_um() * 1e-6);
     s.pp_spatial_contrast             = render_widget_->is_spatial_contrast_enabled();
-    s.pp_pca_lsci = render_widget_->is_pca_lsci_enabled();
-    s.pp_local_pca = render_widget_->is_local_pca_enabled();
-    s.pp_local_pca_lsci = render_widget_->is_local_pca_lsci_enabled();
-    s.pp_local_pca_map = render_widget_->get_local_pca_map();
-    s.pp_local_pca_dynamic_auto_scale =
-        render_widget_->is_local_pca_dynamic_auto_scale();
-    s.pp_local_pca_stride = 1;
-    s.pp_local_pca_automatic = render_widget_->is_local_pca_automatic();
-    const auto pca_map = render_widget_->get_pca_lsci_map();
-    s.pp_pca_lsci_map = pca_map == "Static (PCA then LSCI 3D)" ? 1 :
-                        pca_map == "PCA frame (center)" ? 3 : 2;
+    s.pp_pca_lsci                     = render_widget_->is_pca_lsci_enabled();
+    s.pp_local_pca                    = render_widget_->is_local_pca_enabled();
+    s.pp_local_pca_lsci               = render_widget_->is_local_pca_lsci_enabled();
+    s.pp_local_pca_map                = render_widget_->get_local_pca_map();
+    s.pp_local_pca_dynamic_auto_scale = render_widget_->is_local_pca_dynamic_auto_scale();
+    s.pp_local_pca_stride             = 1;
+    s.pp_local_pca_automatic          = render_widget_->is_local_pca_automatic();
+    const auto pca_map                = render_widget_->get_pca_lsci_map();
+    s.pp_pca_lsci_map                 = pca_map == "Static (PCA then LSCI 3D)" ? 1
+                                        : pca_map == "PCA frame (center)"      ? 3
+                                                                               : 2;
     s.pp_spatial_contrast_window_size = render_widget_->get_spatial_contrast_window_size();
     s.pp_spatial_contrast_dimensions  = render_widget_->get_spatial_contrast_dimensions();
     s.pp_spatial_contrast_method = render_widget_->get_spatial_contrast_method() == "FFT" ? 1 : 0;
@@ -3201,9 +3202,10 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     view_widget_->set_flatfield_cutoff_period_um(s.pp_flatfield_cutoff_period_m * 1e6);
     render_widget_->set_spatial_contrast_mode(s.pp_spatial_contrast,
                                               s.pp_spatial_contrast_dimensions);
-    render_widget_->set_pca_lsci_mode(s.pp_pca_lsci,
-                                     s.pp_pca_lsci_map == 1 ? "Static (PCA then LSCI 3D)" :
-                                     s.pp_pca_lsci_map == 3 ? "PCA frame (center)" : "Dynamic");
+    render_widget_->set_pca_lsci_mode(s.pp_pca_lsci, s.pp_pca_lsci_map == 1
+                                                         ? "Static (PCA then LSCI 3D)"
+                                                     : s.pp_pca_lsci_map == 3 ? "PCA frame (center)"
+                                                                              : "Dynamic");
     render_widget_->set_local_pca_mode(s.pp_local_pca, s.pp_local_pca_lsci);
     render_widget_->set_local_pca_map(s.pp_local_pca_map);
     render_widget_->set_local_pca_dynamic_auto_scale(s.pp_local_pca_dynamic_auto_scale);
