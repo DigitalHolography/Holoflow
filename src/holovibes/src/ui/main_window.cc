@@ -1728,6 +1728,7 @@ void MainWindow::connect_manager_signals() {
                                                         tr("Failure Graph"));
             graph_visualizer_widget_->render_dot(dot);
           });
+
 }
 
 void MainWindow::connect_import_controls() {
@@ -2680,7 +2681,7 @@ QSize MainWindow::guess_source_dims() {
     auto type = import_widget_->get_camera_type();
 
     auto cfg_json   = nlohmann::json::parse(cfg_file);
-    
+
     auto cfg        = cfg_json.at(camera_type_to_config_key.at(type.toStdString()));
     int  src_width  = cfg.at("Width").get<int>();
     int  src_height = cfg.at("Height").get<int>();

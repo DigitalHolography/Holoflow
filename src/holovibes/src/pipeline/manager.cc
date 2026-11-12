@@ -44,29 +44,52 @@
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
 #include "holonp/argmax.hh"
+#include "holonp/argmin.hh"
 #include "holonp/asarray.hh"
 #include "holonp/ascontiguousarray.hh"
+#include "holonp/clip.hh"
 #include "holonp/concatenate.hh"
 #include "holonp/conj.hh"
+#include "holonp/convolve.hh"
 #include "holonp/copy.hh"
+#include "holonp/correlate.hh"
+#include "holonp/diff.hh"
 #include "holonp/divide.hh"
+#include "holonp/elementwise_minmax.hh"
 #include "holonp/empty.hh"
 #include "holonp/equal.hh"
+#include "holonp/exp.hh"
 #include "holonp/fft.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
+#include "holonp/gradient.hh"
+#include "holonp/histogram.hh"
+#include "holonp/irfft.hh"
 #include "holonp/irfft2.hh"
+#include "holonp/lstsq.hh"
+#include "holonp/math_unary.hh"
+#include "holonp/matmul.hh"
 #include "holonp/max.hh"
 #include "holonp/mean.hh"
+#include "holonp/median.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/min.hh"
 #include "holonp/multiply.hh"
+#include "holonp/norm.hh"
+#include "holonp/percentile.hh"
+#include "holonp/pinv.hh"
+#include "holonp/quantile.hh"
 #include "holonp/reshape.hh"
 #include "holonp/rfft.hh"
 #include "holonp/rfft2.hh"
 #include "holonp/slice.hh"
+#include "holonp/square.hh"
+#include "holonp/std.hh"
 #include "holonp/subtract.hh"
+#include "holonp/sum.hh"
+#include "holonp/svd.hh"
 #include "holonp/transpose.hh"
+#include "holonp/var.hh"
 #include "holonp/where.hh"
 #include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
@@ -214,7 +237,6 @@ Manager::Manager(
 }
 
 void Manager::register_components() {
-  // clang-format off
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::DualReaderBatchQueueFactory>(registry_, "DualReaderBatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
@@ -234,9 +256,12 @@ void Manager::register_components() {
   reg_sync<sinks::NpyfileFactory>(registry_, "NpyfileWriter");
   reg_sync<sinks::FfmpegFactory>(registry_, "FfmpegWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
-  reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
-  reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS711EuresysCoaxlinkQSFP+");
-  reg_sync<sources::AmetekS991EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS991EuresysCoaxlinkQSFP+");
+  reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_,
+                                                          "AmetekS710EuresysCoaxlinkOcto");
+  reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_,
+                                                          "AmetekS711EuresysCoaxlinkQSFP+");
+  reg_sync<sources::AmetekS991EuresysCoaxlinkQSFPFactory>(
+      registry_, "AmetekS991EuresysCoaxlinkQSFP+");
   reg_sync<sources::FresnelQinFactory>(registry_, "FresnelQin");
   reg_sync<sources::FresnelQoutFactory>(registry_, "FresnelQout");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
@@ -264,35 +289,66 @@ void Manager::register_components() {
   reg_sync<AsArrayFactory>(registry_, "AsArray");
   reg_sync<AsContiguousArrayFactory>(registry_, "AsContiguousArray");
   reg_sync<CopyFactory>(registry_, "Copy");
+  reg_sync<SumFactory>(registry_, "Sum");
+  reg_sync<StdFactory>(registry_, "Std");
+  reg_sync<VarFactory>(registry_, "Var");
+  reg_sync<ArgminFactory>(registry_, "Argmin");
+  reg_sync<SqrtFactory>(registry_, "Sqrt");
+  reg_sync<RealFactory>(registry_, "Real");
+  reg_sync<ImagFactory>(registry_, "Imag");
+  reg_sync<AngleFactory>(registry_, "Angle");
+  reg_sync<LogFactory>(registry_, "Log");
+  reg_sync<IsfiniteFactory>(registry_, "Isfinite");
+  reg_sync<ClipFactory>(registry_, "Clip");
+  reg_sync<MaximumFactory>(registry_, "Maximum");
+  reg_sync<MinimumFactory>(registry_, "Minimum");
   reg_sync<EmptyFactory>(registry_, "Empty");
   reg_sync<ZerosFactory>(registry_, "Zeros");
   reg_sync<MeshgridFactory>(registry_, "Meshgrid");
   reg_sync<TransposeFactory>(registry_, "Transpose");
   reg_sync<SliceFactory>(registry_, "Slice");
   reg_sync<FFTFactory>(registry_, "FFT");
+  reg_sync<IFFTFactory>(registry_, "IFFT");
   reg_sync<FFT2Factory>(registry_, "FFT2");
+  reg_sync<IFFT2Factory>(registry_, "IFFT2");
   reg_sync<FFTShiftFactory>(registry_, "FFTShiftNp");
+  reg_sync<IFFTShiftFactory>(registry_, "IFFTShiftNp");
   reg_sync<AbsFactory>(registry_, "Abs");
   reg_sync<ConjFactory>(registry_, "Conj");
   reg_sync<MeanFactory>(registry_, "Mean");
   reg_sync<syncs::MeanAbsFactory>(registry_, "MeanAbs");
   reg_sync<MinFactory>(registry_, "Min");
   reg_sync<MaxFactory>(registry_, "Max");
+  reg_sync<MedianFactory>(registry_, "Median");
+  reg_sync<QuantileFactory>(registry_, "Quantile");
+  reg_sync<PercentileFactory>(registry_, "Percentile");
+  reg_sync<HistogramFactory>(registry_, "Histogram");
   reg_sync<syncs::NormalizeFactory>(registry_, "Normalize");
   reg_sync<ArgmaxFactory>(registry_, "Argmax");
   reg_sync<ConcatenateFactory>(registry_, "Concatenate");
+  reg_sync<ConvolveFactory>(registry_, "Convolve");
+  reg_sync<CorrelateFactory>(registry_, "Correlate");
   reg_sync<RFFTFactory>(registry_, "RFFT");
+  reg_sync<IRFFTFactory>(registry_, "IRFFT");
   reg_sync<RFFT2Factory>(registry_, "RFFT2");
   reg_sync<IRFFT2Factory>(registry_, "IRFFT2");
   reg_sync<syncs::CrossCorrelation2Factory>(registry_, "CrossCorrelation2");
   reg_sync<MultiplyFactory>(registry_, "Multiply");
+  reg_sync<MatmulFactory>(registry_, "Matmul");
+  reg_sync<NormFactory>(registry_, "Norm");
   reg_sync<SubtractFactory>(registry_, "Subtract");
   reg_sync<DivideFactory>(registry_, "Divide");
+  reg_sync<DiffFactory>(registry_, "Diff");
+  reg_sync<GradientFactory>(registry_, "Gradient");
+  reg_sync<SVDFactory>(registry_, "SVD");
+  reg_sync<PinvFactory>(registry_, "Pinv");
+  reg_sync<LstsqFactory>(registry_, "Lstsq");
   reg_sync<AddFactory>(registry_, "Add");
   reg_sync<EqualFactory>(registry_, "Equal");
+  reg_sync<ExpFactory>(registry_, "Exp");
   reg_sync<WhereFactory>(registry_, "Where");
   reg_sync<ReshapeFactory>(registry_, "Reshape");
-  // clang-format on
+  reg_sync<SquareFactory>(registry_, "Square");
 }
 
 void Manager::configure_zernike_history(bool start_run) {

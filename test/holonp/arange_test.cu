@@ -333,11 +333,11 @@ TEST_F(ArangeUpdateTest, RecreatesOnChangedSettings) {
   auto                          ov = out_buf.view();
   std::atomic<bool>             cancelled{false};
   holoflow::core::SyncCtx       exec_ctx{
-            .inputs       = {},
-            .outputs      = {&ov, 1},
-            .cancelled    = &cancelled,
-            .event_writer = nullptr,
-            .event_reader = nullptr,
+      .inputs       = {},
+      .outputs      = {&ov, 1},
+      .cancelled    = &cancelled,
+      .event_writer = nullptr,
+      .event_reader = nullptr,
   };
 
   task->bind_logger(spdlog::default_logger());
@@ -369,11 +369,11 @@ TEST_F(ArangeUpdateTest, RecreatesOnWrongTaskType) {
   auto                          ov = out_buf.view();
   std::atomic<bool>             cancelled{false};
   holoflow::core::SyncCtx       exec_ctx{
-            .inputs       = {},
-            .outputs      = {&ov, 1},
-            .cancelled    = &cancelled,
-            .event_writer = nullptr,
-            .event_reader = nullptr,
+      .inputs       = {},
+      .outputs      = {&ov, 1},
+      .cancelled    = &cancelled,
+      .event_writer = nullptr,
+      .event_reader = nullptr,
   };
 
   task->bind_logger(spdlog::default_logger());

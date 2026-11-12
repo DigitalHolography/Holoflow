@@ -515,10 +515,10 @@ ConvolutionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   const auto  current_write_time = std::filesystem::last_write_time(settings.kernel_file);
   const bool  kernel_changed     = current_write_time != old_conv->kernel_last_write_time();
   const bool  can_reuse          = !kernel_changed && settings == old_conv->settings() &&
-                         new_input_desc.shape == old_input_desc.shape &&
-                         new_input_desc.strides == old_input_desc.strides &&
-                         new_input_desc.dtype == old_input_desc.dtype &&
-                         new_input_desc.mem_loc == old_input_desc.mem_loc;
+                                   new_input_desc.shape == old_input_desc.shape &&
+                                   new_input_desc.strides == old_input_desc.strides &&
+                                   new_input_desc.dtype == old_input_desc.dtype &&
+                                   new_input_desc.mem_loc == old_input_desc.mem_loc;
 
   if (can_reuse) {
     old_conv->update_stream(ctx.stream);

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/divide.hh"
+#include "utils/tensor_common.hh"
 
 #include <cuComplex.h>
 #include <type_traits>
@@ -56,28 +57,6 @@ inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("Divide: " + msg);
   }
-}
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
-}
-
-std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
-  size_t esize = holoflow::core::size_of(d.dtype);
-  if (!d.strides.empty()) {
-    std::vector<size_t> s;
-    for (auto val : d.strides)
-      s.push_back(val / esize);
-    return s;
-  }
-  std::vector<size_t> s(d.shape.size());
-  size_t              acc = 1;
-  for (int i = int(d.shape.size()) - 1; i >= 0; --i) {
-    s[i] = acc;
-    acc *= d.shape[i];
-  }
-  return s;
 }
 
 template <typename Scalar>
@@ -258,8 +237,8 @@ DivideFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohm
   size_t      total = odesc.num_elements();
 
   std::vector<size_t> a_strides_h(ndim), b_strides_h(ndim);
-  auto                as_raw = get_elem_strides(a);
-  auto                bs_raw = get_elem_strides(b);
+  auto                as_raw = utils::get_elem_strides(a);
+  auto                bs_raw = utils::get_elem_strides(b);
 
   for (size_t i = 0; i < ndim; ++i) {
     auto map = [&](const auto &shape, const auto &strides) {
@@ -296,7 +275,8 @@ DivideFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   auto *old_divide = dynamic_cast<Divide *>(old_task.get());
   if (old_divide && input_descs.size() == 2) {
     const auto &old_idescs = old_divide->idescs();
-    if (same_desc(input_descs[0], old_idescs[0]) && same_desc(input_descs[1], old_idescs[1])) {
+    if (utils::same_desc(input_descs[0], old_idescs[0]) &&
+        utils::same_desc(input_descs[1], old_idescs[1])) {
       old_divide->update_stream(ctx.stream);
       return old_task;
     }

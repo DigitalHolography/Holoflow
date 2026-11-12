@@ -100,8 +100,8 @@ __global__ void zernike_from_slopes_kernel(const float *slopes, float *output,
     const size_t sy           = sample_index / settings.sx_count;
     const size_t sx           = sample_index % settings.sx_count;
     const auto  *sample_data  = reinterpret_cast<const std::uint8_t *>(slopes) +
-                              sy * settings.stride_y + sx * settings.stride_x;
-    const float slope_x = *reinterpret_cast<const float *>(sample_data);
+                                sy * settings.stride_y + sx * settings.stride_x;
+    const float  slope_x      = *reinterpret_cast<const float *>(sample_data);
     const float slope_y = *reinterpret_cast<const float *>(sample_data + settings.stride_component);
 
     const size_t derivative_offset = sample * settings.observable_count;

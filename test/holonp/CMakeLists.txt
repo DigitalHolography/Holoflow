@@ -14,6 +14,8 @@
 
 set(TARGET holonp_test)
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED) # Generates each expected output once per build tree.
+
 # abs_test.cu is compiled by NVCC (host code only, no kernels) so that the
 # linker correctly resolves device code from the holonp static library.
 set(SOURCES
@@ -26,28 +28,35 @@ set(SOURCES
     concatenate_test.cu
     conj_test.cu
     copy_test.cu
+    complexity_test.cu
     divide_test.cu
     edge_cases_test.cu
     empty_test.cu
     equal_test.cu
+    exp_test.cu
     fft2_test.cu
     fft_test.cu
     fftshift_test.cu
     irfft2_test.cu
+    irfft_test.cu
     max_test.cu
+    matmul_test.cu
     mean_test.cu
     meshgrid_test.cu
     min_test.cu
+    new_ops_test.cu
     multiply_test.cu
     reshape_test.cu
     rfft2_test.cu
     rfft_test.cu
     slice_test.cu
+    square_test.cu
     subtract_test.cu
     transpose_test.cu
     where_test.cu
     zeros_test.cu
     support/reference_ops.cc
+    support/python_oracle.cc
     support/tensor_test_buffer.cc
     support/sync_task_runner.cc
 )
@@ -57,6 +66,13 @@ add_executable(${TARGET} ${SOURCES})
 target_include_directories(${TARGET}
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/support
+)
+
+target_compile_definitions(${TARGET}
+    PRIVATE
+    "HOLONP_TEST_ORACLE_SCRIPT=\"${CMAKE_CURRENT_SOURCE_DIR}/python/oracle.py\""
+    "HOLOFLOW_TEST_PYTHON_EXECUTABLE=\"${Python3_EXECUTABLE}\""
+    "HOLONP_ORACLE_CACHE_DIR=\"${CMAKE_CURRENT_BINARY_DIR}/oracle_cache\""
 )
 
 target_link_libraries(${TARGET}
