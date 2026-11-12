@@ -28,6 +28,7 @@ set(SOURCES
     concatenate_test.cu
     conj_test.cu
     copy_test.cu
+    complexity_test.cu
     divide_test.cu
     edge_cases_test.cu
     empty_test.cu
