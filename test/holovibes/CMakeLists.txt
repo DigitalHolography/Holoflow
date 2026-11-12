@@ -19,6 +19,7 @@ set(SOURCES
     logger_test.cc
     ../../src/holovibes/src/logger.cc
     signal_history_test.cc
+    spectrum_test.cc
     signal_history_dispatcher_test.cc
     settings_test.cc
     update_checker_test.cc
@@ -50,6 +51,21 @@ target_link_libraries(${TARGET}
 
 holoflow_discover_tests(${TARGET}
     LABELS fast
+    TIMEOUT 10
+)
+
+add_executable(holovibes_spectrum_power_test
+    spectrum_power_test.cc
+    ../../src/holovibes/src/tasks/sinks/spectrum_power.cu
+)
+target_include_directories(holovibes_spectrum_power_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/src/holovibes/src
+)
+target_link_libraries(holovibes_spectrum_power_test PRIVATE
+    project_options curaii GTest::gtest_main
+)
+holoflow_discover_tests(holovibes_spectrum_power_test
+    LABELS gpu
     TIMEOUT 10
 )
 

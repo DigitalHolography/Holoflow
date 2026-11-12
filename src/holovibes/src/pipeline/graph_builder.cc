@@ -80,6 +80,7 @@ private:
   bool build_raw_view(const TDesc &H);
   TDesc build_preprocessing(TDesc H);
   TDesc build_time_frequency_analysis(TDesc H);
+  void build_processed_spectrum(const TDesc &FH, size_t window_size);
   TDesc build_aberration_correction(const TDesc &FH_current, const TDesc &FH_delayed);
   TDesc build_aberration_correction_pass(const TDesc &FH_current, const TDesc &FH_delayed, bool is_last_pass, AberrationCorrectionState &state);
   ShackHartmannGeometry shack_hartmann_geometry(const TDesc &FH) const;
@@ -317,6 +318,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
 
   if (s_.time_method == TimeMethod::RFFT) {
     auto FH = rfft(H, {1}); // axis 1 = T dimension
+    build_processed_spectrum(FH, static_cast<size_t>(T));
 
     if (s_.view_3d_cuts) {
       return FH;
@@ -331,6 +333,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
 
   if (s_.time_method == TimeMethod::FFT) {
     auto FH = fft(H, {1});
+    build_processed_spectrum(FH, static_cast<size_t>(T));
 
     if (s_.view_3d_cuts) {
       return FH;
@@ -359,6 +362,18 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
   }
 
   HOLOVIBES_UNREACHABLE();
+}
+
+void GraphBuilder::Impl::build_processed_spectrum(const TDesc &FH, size_t window_size) {
+  if (!s_.view_processed_spectrum) {
+    return;
+  }
+
+  // Keep the entire temporal spectrum before band selection. The display sink reduces
+  // power only when a refresh is due, avoiding full-size magnitude/power intermediates.
+  processed_spectrum_display(FH, {.window_size           = window_size,
+                                  .sampling_frequency_hz = s_.input_sampling_frequency_hz,
+                                  .full_fft = s_.time_method == TimeMethod::FFT});
 }
 
 // -------------------------------------------------------------------------------------------------

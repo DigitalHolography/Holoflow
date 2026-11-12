@@ -32,6 +32,7 @@
 namespace holovibes::ui {
 class AutoFocusWidget;
 class TensorDisplayWidget;
+class SpectrumWidget;
 class ZernikeHistoryWidget;
 struct SignalHistoryDispatcherProvider;
 } // namespace holovibes::ui
@@ -49,7 +50,7 @@ public:
           ui::TensorDisplayWidget *xz_processed_widget,
           ui::TensorDisplayWidget *yz_processed_widget, ui::TensorDisplayWidget *xy_raw_widget,
           ui::TensorDisplayWidget  *raw_spectrum_widget,
-          ui::TensorDisplayWidget  *processed_spectrum_widget,
+          ui::SpectrumWidget       *processed_spectrum_widget,
           ui::TensorDisplayWidget  *shack_hartmann_widget,
           ui::TensorDisplayWidget  *shack_hartmann_xcorr_widget,
           ui::TensorDisplayWidget  *zernike_phase_widget,
@@ -176,7 +177,7 @@ private:
   ui::TensorDisplayWidget                             *yz_processed_widget_;
   ui::TensorDisplayWidget                             *xy_raw_widget_;
   ui::TensorDisplayWidget                             *raw_spectrum_widget_;
-  ui::TensorDisplayWidget                             *processed_spectrum_widget_;
+  ui::SpectrumWidget                                  *processed_spectrum_widget_;
   ui::TensorDisplayWidget                             *shack_hartmann_widget_;
   ui::TensorDisplayWidget                             *shack_hartmann_xcorr_widget_;
   ui::TensorDisplayWidget                             *zernike_phase_widget_;

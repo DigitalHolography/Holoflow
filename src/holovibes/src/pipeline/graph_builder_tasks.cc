@@ -84,6 +84,7 @@ DEFINE_SINK_ASYNC_NODE (zernike_defocus_z_prop,                 "zernike_defocus
 
 DEFINE_SINK_SYNC_NODE  (xy_raw_display,               "xy_raw_display",               "DisplayTensorXYRaw",              tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE  (xy_processed_display,         "xy_processed_display",         "DisplayTensorXY",                 tasks::sinks::DisplayTensorSettings)
+DEFINE_SINK_SYNC_NODE  (processed_spectrum_display,   "processed_spectrum_display",   "DisplayProcessedSpectrum",        tasks::sinks::DisplaySpectrumSettings)
 DEFINE_SINK_SYNC_NODE  (xz_processed_display,         "xz_processed_display",         "DisplayTensorXZ",                 tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE  (yz_processed_display,         "yz_processed_display",         "DisplayTensorYZ",                 tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE  (shack_hartmann_display,       "shack_hartmann_display",       "DisplayTensorShackHartmann",      tasks::sinks::DisplayTensorSettings)

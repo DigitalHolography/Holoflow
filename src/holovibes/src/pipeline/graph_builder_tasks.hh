@@ -81,6 +81,7 @@
 #include "holotask/syncs/zernike_from_slopes.hh"
 #include "holotask/syncs/zernike_phase.hh"
 #include "tasks/sinks/display_signal_history.hh"
+#include "tasks/sinks/display_spectrum.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
 
@@ -120,6 +121,7 @@ protected:
   TDesc slide_avg(const TDesc &X, const TDesc &Valid, holotask::asyncs::SlidingAverageSettings s);
   void  xy_raw_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  xy_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  void  processed_spectrum_display(const TDesc &X, tasks::sinks::DisplaySpectrumSettings s);
   void  xz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  yz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  shack_hartmann_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);

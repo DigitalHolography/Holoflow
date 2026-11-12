@@ -30,6 +30,7 @@
 #include <algorithm>
 #include <utility>
 
+#include "ui/widgets/spectrum_widget.hh"
 #include "ui/widgets/tensor_display_widget.hh"
 #include "ui/widgets/zernike_history_widget.hh"
 
@@ -51,6 +52,11 @@ QWidget *create_placeholder(const QString &text, QWidget *parent) {
 }
 
 void show_waiting_placeholder(QWidget *widget) {
+  if (auto *spectrum_widget = qobject_cast<holovibes::ui::SpectrumWidget *>(widget);
+      spectrum_widget != nullptr) {
+    spectrum_widget->show_waiting_placeholder();
+    return;
+  }
   if (auto *tensor_widget = qobject_cast<holovibes::ui::TensorDisplayWidget *>(widget);
       tensor_widget != nullptr) {
     tensor_widget->show_waiting_placeholder();
@@ -179,8 +185,15 @@ bool VisualizationWorkspace::register_visualization(VisualizationDescriptor desc
   entry->view_action->setEnabled(false);
 
   auto *entry_pointer = entry.get();
-  if (auto *tensor_widget = qobject_cast<TensorDisplayWidget *>(entry_pointer->descriptor.widget);
-      tensor_widget != nullptr) {
+  if (auto *spectrum_widget = qobject_cast<SpectrumWidget *>(entry_pointer->descriptor.widget);
+      spectrum_widget != nullptr) {
+    connect(spectrum_widget, &SpectrumWidget::spectrumDisplayed, this, [this, entry_pointer]() {
+      entry_pointer->content_received = true;
+      update_entry_content(*entry_pointer);
+    });
+  } else if (auto *tensor_widget =
+                 qobject_cast<TensorDisplayWidget *>(entry_pointer->descriptor.widget);
+             tensor_widget != nullptr) {
     connect(tensor_widget, &TensorDisplayWidget::tensorDisplayed, this, [this, entry_pointer]() {
       entry_pointer->content_received = true;
       update_entry_content(*entry_pointer);

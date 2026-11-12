@@ -109,6 +109,7 @@
 #include "pipeline/validation.hh"
 #include "settings_loader.hh"
 #include "tasks/sinks/display_signal_history.hh"
+#include "tasks/sinks/display_spectrum.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
 #include "ui/widgets/auto_focus_widget.hh"
@@ -183,7 +184,7 @@ Manager::Manager(
     ui::AutoFocusWidget *autofocus_widget, ui::TensorDisplayWidget *xy_processed_widget,
     ui::TensorDisplayWidget *xz_processed_widget, ui::TensorDisplayWidget *yz_processed_widget,
     ui::TensorDisplayWidget *xy_raw_widget, ui::TensorDisplayWidget *raw_spectrum_widget,
-    ui::TensorDisplayWidget *processed_spectrum_widget,
+    ui::SpectrumWidget *processed_spectrum_widget,
     ui::TensorDisplayWidget *shack_hartmann_widget,
     ui::TensorDisplayWidget *shack_hartmann_xcorr_widget,
     ui::TensorDisplayWidget *zernike_phase_widget, ui::ZernikeHistoryWidget *zernike_history_widget)
@@ -221,7 +222,7 @@ void Manager::register_components() {
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ", yz_processed_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum", raw_spectrum_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum", processed_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplaySpectrumFactory>(registry_, "DisplayProcessedSpectrum", processed_spectrum_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann", shack_hartmann_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
   reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase", zernike_phase_widget_);

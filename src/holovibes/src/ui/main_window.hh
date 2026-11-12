@@ -44,6 +44,7 @@
 namespace holovibes::ui {
 
 class ZernikeHistoryWidget;
+class SpectrumWidget;
 class SelectedWidgetSettingsPanel;
 class VisualizationWorkspace;
 class UpdateChecker;
@@ -167,7 +168,7 @@ private:
   TensorDisplayWidget  *yz_processed_widget_;
   TensorDisplayWidget  *xy_raw_widget_;
   TensorDisplayWidget  *raw_spectrum_widget_;
-  TensorDisplayWidget  *processed_spectrum_widget_;
+  SpectrumWidget       *processed_spectrum_widget_;
   TensorDisplayWidget  *shack_hartmann_widget_;
   TensorDisplayWidget  *shack_hartmann_xcorr_widget_;
   TensorDisplayWidget  *zernike_phase_widget_;

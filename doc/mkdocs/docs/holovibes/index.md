@@ -10,3 +10,13 @@ Its processing pipeline is assembled from registered Holoflow tasks:
 - **Sinks** present or persist results through the [tensor display](tasks/sinks/display_tensor.md) and [Holofile writer](tasks/sinks/holofile.md).
 
 Use the navigation to browse the complete task catalog and the settings accepted by each task.
+
+The **Processed Spectrum** visualization is available with temporal **FFT** or **RFFT**.
+It plots the mean squared transform magnitude over all pixels and windows in the current batch,
+before frequency-band selection or spatial propagation. Power is shown on a linear scale in
+arbitrary units, without FFT normalization or one-sided doubling. Frequency spacing is the input
+sampling frequency divided by the temporal window size. RFFT shows nonnegative frequencies;
+FFT shifts frequencies and their power values together so negative frequencies appear on the
+left and zero is centered. Enable the visualization in the workspace to display the graph.
+The graph refreshes at up to 100 Hz, subject to the arrival of new transform batches and GUI
+availability; queued updates are bounded to prevent a display backlog.
