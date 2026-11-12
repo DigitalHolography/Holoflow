@@ -13,6 +13,8 @@
 // limitations under the License.
 
 #include "ui/widgets/import_widget.hh"
+#include "holofile/holofile.hh"
+#include "settings_loader.hh"
 #include "ui/widgets/validation_style.hh"
 
 #include <QCoreApplication>
@@ -65,9 +67,14 @@ std::optional<int> ImportWidget::get_fps_limit() const {
 
   return fps_spin_->value();
 }
-double ImportWidget::get_sampling_frequency_hz() const { return sampling_frequency_spin_->value(); }
-int    ImportWidget::get_start_index() const { return start_index_spin_->value(); }
-int    ImportWidget::get_end_index() const { return end_index_spin_->value(); }
+double ImportWidget::get_sampling_frequency_hz() const {
+  if (!is_camera_mode() && holofile_sampling_frequency_hz_) {
+    return *holofile_sampling_frequency_hz_;
+  }
+  return sampling_frequency_spin_->value();
+}
+int     ImportWidget::get_start_index() const { return start_index_spin_->value(); }
+int     ImportWidget::get_end_index() const { return end_index_spin_->value(); }
 QString ImportWidget::get_load_method() const { return load_method_combo_->currentText(); }
 QString ImportWidget::get_camera_type() const { return camera_combo_->currentText(); }
 QString ImportWidget::get_camera_config() const { return camera_config_combo_->currentText(); }
@@ -76,6 +83,9 @@ void ImportWidget::set_fps_limit(std::optional<int> value) {
   fps_spin_->setValue(value.value_or(0));
 }
 void ImportWidget::set_sampling_frequency_hz(double value) {
+  if (!is_camera_mode() && holofile_sampling_frequency_hz_) {
+    value = *holofile_sampling_frequency_hz_;
+  }
   sampling_frequency_spin_->setValue(value);
 }
 void ImportWidget::set_start_index(int value) { start_index_spin_->setValue(value); }
@@ -153,6 +163,7 @@ void ImportWidget::setup_ui() {
 void ImportWidget::connect_signals() {
   connect(cam_check_, &QCheckBox::toggled, this, [this](bool checked) {
     stack_->setCurrentIndex(checked ? 1 : 0);
+    update_sampling_frequency_from_holofile();
     if (checked) {
       update_sampling_frequency_from_camera_config();
     }
@@ -165,6 +176,8 @@ void ImportWidget::connect_signals() {
 
   // Emit settings_changed for all control changes
   connect(file_line_edit_, &QLineEdit::editingFinished, this, &ImportWidget::settings_changed);
+  connect(file_line_edit_, &QLineEdit::textChanged, this,
+          &ImportWidget::update_sampling_frequency_from_holofile);
   connect(fps_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImportWidget::settings_changed);
   connect(sampling_frequency_spin_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
@@ -299,6 +312,30 @@ void ImportWidget::update_sampling_frequency_from_camera_config() {
   const double cycle_minimum_period_us = camera.value("CycleMinimumPeriod").toDouble();
   if (cycle_minimum_period_us > 0.0) {
     set_sampling_frequency_hz(1.0e6 / cycle_minimum_period_us);
+  }
+}
+
+void ImportWidget::update_sampling_frequency_from_holofile() {
+  holofile_sampling_frequency_hz_.reset();
+  if (QFileInfo(get_file_path()).isFile()) {
+    try {
+      const auto footer = holofile::Reader(get_file_path().toStdString()).footer();
+      if (footer) {
+        holofile_sampling_frequency_hz_ =
+            pipeline::holofile_sampling_frequency_hz(footer->pipeline_settings);
+      }
+    } catch (const std::exception &) {
+      // File selection and pipeline validation report unreadable or invalid files.
+    }
+  }
+  const bool from_file = !is_camera_mode() && holofile_sampling_frequency_hz_.has_value();
+  sampling_frequency_spin_->setReadOnly(from_file);
+  sampling_frequency_spin_->setToolTip(
+      from_file
+          ? tr("Acquisition sampling frequency recorded in the Holofile.")
+          : tr("Input sampling frequency; used when no Holofile timing metadata is available."));
+  if (from_file) {
+    set_sampling_frequency_hz(*holofile_sampling_frequency_hz_);
   }
 }
 

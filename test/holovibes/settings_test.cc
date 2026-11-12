@@ -14,12 +14,17 @@
 
 #include <gtest/gtest.h>
 
+#include <QTemporaryDir>
+
 #include <algorithm>
 #include <limits>
 #include <string_view>
 
+#include "holofile/holofile.hh"
+
 #include "pipeline/validation.hh"
 #include "settings_loader.hh"
+#include "ui/widgets/spectrum.hh"
 
 namespace holovibes::pipeline {
 
@@ -199,6 +204,103 @@ TEST(SignalPlotSettingsTest, ValidationRejectsInvalidValues) {
 
     EXPECT_TRUE(has_issue(result, "input_sampling_frequency_non_positive"));
   }
+}
+
+TEST(HolofileSamplingFrequencyTest, RecordedInputRateOverridesSettingsAndCameraRate) {
+  const nlohmann::json footer = {
+      {"info", {{"input_fps", 16'000.0}, {"camera_fps", 40'000.0}}},
+      {"compute_settings", {{"advanced", {{"input_sampling_frequency_hz", 32'000.0}}}}}};
+  const auto frequency = holofile_sampling_frequency_hz(footer);
+  ASSERT_TRUE(frequency);
+  EXPECT_DOUBLE_EQ(*frequency, 16'000.0);
+  EXPECT_DOUBLE_EQ(old_json_to_settings(footer, Settings{}).input_sampling_frequency_hz, 16'000.0);
+}
+
+TEST(HolofileSamplingFrequencyTest, ReadsSavedSamplingFrequencyAndLegacyCameraFallback) {
+  nlohmann::json footer = {
+      {"info", {{"camera_fps", 40'000.0}}},
+      {"compute_settings", {{"advanced", {{"input_sampling_frequency_hz", 25'000.0}}}}}};
+  ASSERT_TRUE(holofile_sampling_frequency_hz(footer));
+  EXPECT_DOUBLE_EQ(*holofile_sampling_frequency_hz(footer), 25'000.0);
+  footer["compute_settings"]["advanced"].erase("input_sampling_frequency_hz");
+  EXPECT_DOUBLE_EQ(*holofile_sampling_frequency_hz(footer), 40'000.0);
+}
+
+TEST(HolofileSamplingFrequencyTest, IgnoresPlaybackCapAndInvalidMetadataRates) {
+  for (const nlohmann::json &invalid :
+       {nlohmann::json(nullptr), nlohmann::json("37037"), nlohmann::json(true), nlohmann::json(0.0),
+        nlohmann::json(-1.0), nlohmann::json(std::numeric_limits<double>::infinity()),
+        nlohmann::json(std::numeric_limits<double>::quiet_NaN())}) {
+    const nlohmann::json footer = {
+        {"info", {{"input_fps", invalid}, {"camera_fps", invalid}}},
+        {"compute_settings",
+         {{"advanced", {{"input_sampling_frequency_hz", invalid}, {"input_fps_limit", 18'000}}}}}};
+    EXPECT_FALSE(holofile_sampling_frequency_hz(footer));
+  }
+  EXPECT_FALSE(holofile_sampling_frequency_hz(nlohmann::json::object()));
+}
+
+TEST(HolofileSamplingFrequencyTest, ReadsActualFileForFftAndRfftDespiteEditableRateAndPlaybackCap) {
+  QTemporaryDir directory;
+  ASSERT_TRUE(directory.isValid());
+  const auto             path = directory.filePath("sampling.holo").toStdString();
+  const holofile::Header header{.magic_number       = holofile::Header::MAGIC_NUMBER_LE,
+                                .version            = holofile::Header::CURRENT_VERSION,
+                                .bits_per_pixel     = 8,
+                                .frame_width        = 1,
+                                .frame_height       = 1,
+                                .frame_count        = 1,
+                                .data_size_in_bytes = 1};
+  {
+    holofile::Writer writer(path, header, {{{"info", {{"input_fps", 16'000.0}}}}});
+    const uint8_t    pixel = 0;
+    writer.write_frames(&pixel, 1);
+    writer.write_footer();
+  }
+
+  Settings settings{};
+  settings.import_source  = ImportSource::HOLOFILE;
+  settings.load_path      = path;
+  settings.load_fps_limit = 100;
+  for (double editable_rate : {37'037.0, 8'000.0}) {
+    settings.input_sampling_frequency_hz = editable_rate;
+    const double fs                      = resolve_input_sampling_frequency_hz(settings);
+    EXPECT_DOUBLE_EQ(fs, 16'000.0);
+    for (bool full_fft : {false, true}) {
+      const std::vector<float> power(full_fft ? 8 : 5, 1.0f);
+      const auto               samples = ui::make_spectrum(power, 8, fs, full_fft);
+      EXPECT_DOUBLE_EQ(samples.front().frequency_hz, full_fft ? -8'000.0 : 0.0);
+      EXPECT_DOUBLE_EQ(samples.back().frequency_hz, full_fft ? 6'000.0 : 8'000.0);
+    }
+  }
+
+  // Files with no timing, including files without a footer, retain the manual fallback.
+  for (bool write_footer : {false, true}) {
+    {
+      holofile::Writer writer(path, header, {nlohmann::json::object()});
+      const uint8_t pixel = 0;
+      writer.write_frames(&pixel, 1);
+      if (write_footer) {
+        writer.write_footer();
+      }
+    }
+    EXPECT_DOUBLE_EQ(resolve_input_sampling_frequency_hz(settings), 8'000.0);
+  }
+}
+
+TEST(HolofileSamplingFrequencyTest, CameraInputUsesConfiguredSamplingFrequency) {
+  Settings settings{};
+  settings.import_source               = ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP;
+  settings.input_sampling_frequency_hz = 22'000.0;
+  EXPECT_DOUBLE_EQ(resolve_input_sampling_frequency_hz(settings), 22'000.0);
+}
+
+TEST(HolofileSamplingFrequencyTest, RecordingPreservesAcquisitionFrequencyInInfo) {
+  Settings settings{};
+  settings.input_sampling_frequency_hz = 25'000.0;
+  settings.load_fps_limit              = 100;
+  const auto footer                    = settings_to_old_json(settings);
+  EXPECT_DOUBLE_EQ(footer.at("info").at("input_fps").get<double>(), 25'000.0);
 }
 
 } // namespace holovibes::pipeline

@@ -150,6 +150,8 @@ GraphBuilder::Impl::Impl(const Settings &settings, holoflow::core::Registry &reg
 // -------------------------------------------------------------------------------------------------
 
 holoflow::core::GraphSpec GraphBuilder::Impl::build() {
+  s_.input_sampling_frequency_hz = resolve_input_sampling_frequency_hz(s_);
+
   if (!std::isfinite(s_.signal_plot_time_window_seconds) ||
       s_.signal_plot_time_window_seconds <= 0.0) {
     throw std::invalid_argument("signal_plot_time_window_seconds must be positive and finite");

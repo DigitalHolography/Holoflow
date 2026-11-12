@@ -17,6 +17,7 @@
 #include "pipeline/settings.hh"
 
 #include <nlohmann/json.hpp>
+#include <optional>
 #include <string>
 #include <type_traits>
 
@@ -26,6 +27,12 @@ namespace holovibes::pipeline {
  * @brief Convert the new Settings structure to the legacy JSON format.
  */
 nlohmann::json settings_to_old_json(const Settings &settings);
+
+/// Recorded acquisition frequency, with legacy input_fps taking precedence over saved settings.
+std::optional<double> holofile_sampling_frequency_hz(const nlohmann::json &footer);
+
+/// Resolve file-backed input from its footer; camera input and files without timing use settings.
+double resolve_input_sampling_frequency_hz(const Settings &settings);
 
 /**
  * @brief Safely get a value from JSON with a default fallback.

@@ -14,6 +14,10 @@
 
 #include "settings_loader.hh"
 
+#include <cmath>
+
+#include "holofile/holofile.hh"
+
 namespace holovibes::pipeline {
 namespace {
 
@@ -183,6 +187,7 @@ void write_info(json &j, const Settings &s) {
   auto &info = j["info"];
 
   info["contiguous"]       = s.cpu_rec_size;
+  info["input_fps"]        = s.input_sampling_frequency_hz;
   info["pixel_pitch"]["x"] = s.spacial_pixel_size;
   info["pixel_pitch"]["y"] = s.spacial_pixel_size;
 }
@@ -299,6 +304,32 @@ void read_info(Settings &s, const json &info) {
 
 } // namespace
 
+std::optional<double> holofile_sampling_frequency_hz(const nlohmann::json &footer) {
+  const auto &info     = child_or_empty(footer, "info");
+  const auto &advanced = child_or_empty(child_or_empty(footer, "compute_settings"), "advanced");
+  // input_fps describes the frames stored in the file. camera_fps is only a legacy fallback.
+  for (double frequency :
+       {val(info, "input_fps", 0.0), val(advanced, "input_sampling_frequency_hz", 0.0),
+        val(info, "camera_fps", 0.0)}) {
+    if (std::isfinite(frequency) && frequency > 0.0) {
+      return frequency;
+    }
+  }
+  return std::nullopt;
+}
+
+double resolve_input_sampling_frequency_hz(const Settings &settings) {
+  if (settings.import_source == ImportSource::HOLOFILE) {
+    const auto footer = holofile::Reader(settings.load_path.string()).footer();
+    if (footer) {
+      if (const auto frequency = holofile_sampling_frequency_hz(footer->pipeline_settings)) {
+        return *frequency;
+      }
+    }
+  }
+  return settings.input_sampling_frequency_hz;
+}
+
 nlohmann::json settings_to_old_json(const Settings &settings) {
   json j = json::object();
 
@@ -323,6 +354,10 @@ Settings old_json_to_settings(const nlohmann::json &j, const Settings &default_s
   read_image_rendering(settings, rendering);
   read_view(settings, view);
   read_info(settings, info);
+
+  if (const auto frequency = holofile_sampling_frequency_hz(j)) {
+    settings.input_sampling_frequency_hz = *frequency;
+  }
 
   return settings;
 }

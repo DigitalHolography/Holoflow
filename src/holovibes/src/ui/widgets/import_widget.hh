@@ -97,8 +97,10 @@ private:
   QWidget    *create_camera_page();
   QStringList load_available_camera_configs();
   void        update_sampling_frequency_from_camera_config();
+  void        update_sampling_frequency_from_holofile();
 
-  QDoubleSpinBox *sampling_frequency_spin_;
+  QDoubleSpinBox       *sampling_frequency_spin_;
+  std::optional<double> holofile_sampling_frequency_hz_;
 
   // File mode widgets
   QLineEdit   *file_line_edit_;
