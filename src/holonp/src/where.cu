@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/where.hh"
+#include "utils/tensor_common.hh"
 
 #include <algorithm>
 #include <cuComplex.h>
@@ -60,28 +61,6 @@ inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("Where: " + msg);
   }
-}
-
-std::vector<size_t> get_elem_strides(const holoflow::core::TDesc &d) {
-  size_t esize = holoflow::core::size_of(d.dtype);
-  if (!d.strides.empty()) {
-    std::vector<size_t> s;
-    for (auto val : d.strides)
-      s.push_back(val / esize);
-    return s;
-  }
-  std::vector<size_t> s(d.shape.size());
-  size_t              acc = 1;
-  for (int i = int(d.shape.size()) - 1; i >= 0; --i) {
-    s[i] = acc;
-    acc *= d.shape[i];
-  }
-  return s;
-}
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
 }
 
 // -------------------------------------------------------------------------------------------------
@@ -203,9 +182,9 @@ WhereFactory::create(std::span<const holoflow::core::TDesc> inputs, const nlohma
   size_t      total = 1;
 
   std::vector<size_t> cond_strides_h(ndim), x_strides_h(ndim), y_strides_h(ndim);
-  auto                cs_raw = get_elem_strides(cond);
-  auto                xs_raw = get_elem_strides(x);
-  auto                ys_raw = get_elem_strides(y);
+  auto                cs_raw = utils::get_elem_strides(cond);
+  auto                xs_raw = utils::get_elem_strides(x);
+  auto                ys_raw = utils::get_elem_strides(y);
 
   for (size_t i = 0; i < ndim; ++i) {
     total *= odesc.shape[i];
@@ -247,9 +226,9 @@ WhereFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     return create(input_descs, jsettings, ctx);
   }
 
-  if (same_desc(input_descs[0], old_where->input_descs()[0]) &&
-      same_desc(input_descs[1], old_where->input_descs()[1]) &&
-      same_desc(input_descs[2], old_where->input_descs()[2])) {
+  if (utils::same_desc(input_descs[0], old_where->input_descs()[0]) &&
+      utils::same_desc(input_descs[1], old_where->input_descs()[1]) &&
+      utils::same_desc(input_descs[2], old_where->input_descs()[2])) {
     old_where->update_stream(ctx.stream);
     return old_task;
   }

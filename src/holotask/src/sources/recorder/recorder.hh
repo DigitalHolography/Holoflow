@@ -26,7 +26,7 @@
 
 #include "sources/buffer_queue/buffer_queue.hh"
 
-#include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sources/recorder/record_settings.hh"
 
 namespace holotask::sources {
 
@@ -46,7 +46,8 @@ public:
   using SessionId = uint32_t;
 
   using BufferFlushingFinishedCallback = std::function<void(SessionId)>;
-  using PollMetricsCallback            = std::function<void(SessionId, size_t, size_t, size_t)>; // frame_written | writing speed | elasped time
+  using PollMetricsCallback            = std::function<void(
+      SessionId, size_t, size_t, size_t)>; // frame_written | writing speed | elasped time
   using SuccessCallback                = std::function<void(SessionId, size_t)>;
   using FailureCallback                = std::function<void(SessionId, const std::string &)>;
 
@@ -88,7 +89,7 @@ private:
   CameraBufferQueue &buffer_queue_;
 
   std::atomic<State> state_ = State::Free;
-  const SessionId          id_    = 0;
+  const SessionId    id_    = 0;
 
   RecordingGeometry geometry_;
 

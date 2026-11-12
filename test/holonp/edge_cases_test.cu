@@ -250,7 +250,8 @@ TEST(HolonpEdgeCaseTest, FftshiftUsesNumpyCenterForOddLength) {
   const TDesc            input = device_desc({5}, DType::F32);
   const auto             data  = as_bytes(std::vector<float>{0.F, 1.F, 2.F, 3.F, 4.F});
 
-  const auto run = holonp_test::run_sync_factory(factory, {&input, 1}, {&data, 1}, {});
+  const auto run = holonp_test::run_sync_factory(factory, {&input, 1}, {&data, 1},
+                                                nlohmann::json::object());
   EXPECT_EQ(from_bytes<float>(run.output_bytes[0]),
             (std::vector<float>{3.F, 4.F, 0.F, 1.F, 2.F}));
 }

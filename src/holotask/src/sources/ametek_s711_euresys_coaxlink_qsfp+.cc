@@ -19,46 +19,11 @@
 #include <optional>
 #include <utility>
 
-#include <spdlog/fmt/fmt.h>
-
-template <>
-struct fmt::formatter<holotask::sources::RecordSettings> : fmt::formatter<std::string_view> {
-  auto format(const holotask::sources::RecordSettings &r, fmt::format_context &ctx) const {
-    return fmt::format_to(ctx.out(), "{{ file_path: {}, recording_count: {} }}", r.file_path,
-                          r.recording_count);
-  }
-};
-
-template <typename T> struct fmt::formatter<std::optional<T>> : fmt::formatter<std::string_view> {
-  auto format(const std::optional<T> &o, fmt::format_context &ctx) const {
-    if (!o.has_value())
-      return fmt::format_to(ctx.out(), "None");
-    return fmt::format_to(ctx.out(), "{}", *o);
-  }
-};
-
 namespace holotask::sources {
 
-bool RecordSettings::requires_rebuild(const RecordSettings &old) const {
-  return recording_count > old.recording_count;
-}
 // -------------------------------------------------------------------------------------------------
 // JSON serialization
 // -------------------------------------------------------------------------------------------------
-
-void to_json(nlohmann::json &j, const RecordSettings &s) {
-  j = nlohmann::json{{"file_path", s.file_path},
-                     {"recording_count", s.recording_count},
-                     {"pipeline_config", s.pipeline_config},
-                     {"record_queue_count", s.record_queue_count}};
-}
-
-void from_json(const nlohmann::json &j, RecordSettings &s) {
-  j.at("file_path").get_to(s.file_path);
-  j.at("recording_count").get_to(s.recording_count);
-  j.at("pipeline_config").get_to(s.pipeline_config);
-  j.at("record_queue_count").get_to(s.record_queue_count);
-}
 
 void to_json(nlohmann::json &j, const AmetekS711EuresysCoaxlinkQSFPSettings &s) {
   j = nlohmann::json{{"cfg_path", s.cfg_path}, {"record_settings", nullptr}};

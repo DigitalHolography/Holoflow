@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/irfft2.hh"
+#include "utils/tensor_common.hh"
 
 #include <algorithm>
 #include <array>
@@ -47,20 +48,9 @@ void from_json(const nlohmann::json &j, IRFFT2Settings &s) {
 
 namespace {
 
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
-}
-
 inline void check(bool cond, const std::string &msg) {
   if (!cond)
     throw std::invalid_argument("IRFFT2: " + msg);
-}
-
-inline int normalize_axis(int axis, int ndim) {
-  if (axis < 0)
-    axis += ndim;
-  return axis;
 }
 
 inline float inverse_scale(FftNorm norm, size_t n_fft) {
@@ -69,18 +59,6 @@ inline float inverse_scale(FftNorm norm, size_t n_fft) {
   if (norm == FftNorm::Forward)
     return 1.0f;
   return static_cast<float>(1.0 / std::sqrt(n_fft));
-}
-
-std::vector<size_t> get_strides_bytes(const holoflow::core::TDesc &desc) {
-  if (!desc.strides.empty())
-    return desc.strides;
-  std::vector<size_t> strides(desc.shape.size());
-  size_t              acc = holoflow::core::size_of(desc.dtype);
-  for (size_t i = desc.shape.size(); i-- > 0;) {
-    strides[i] = acc;
-    acc *= desc.shape[i];
-  }
-  return strides;
 }
 
 void generate_offsets_recursive(const std::vector<size_t> &shape,
@@ -105,8 +83,8 @@ std::array<int, 2> resolve_axes(const std::vector<int> &axes, int ndim) {
     resolved[1] = ndim - 1;
   } else {
     check(axes.size() == 2, "expected exactly 2 axes");
-    resolved[0] = normalize_axis(axes[0], ndim);
-    resolved[1] = normalize_axis(axes[1], ndim);
+    resolved[0] = utils::normalize_axis(axes[0], ndim);
+    resolved[1] = utils::normalize_axis(axes[1], ndim);
   }
 
   check(resolved[0] >= 0 && resolved[0] < ndim, "axis 0 out of range");
@@ -231,7 +209,7 @@ IRFFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
   const size_t n_fft = h * w;
   const size_t esize = holoflow::core::size_of(idesc.dtype);
 
-  auto strides_bytes = get_strides_bytes(idesc);
+  auto strides_bytes = utils::get_byte_strides(idesc);
 
   check(strides_bytes[axes[1]] % esize == 0, "unsupported stride on FFT axis");
   check(strides_bytes[axes[0]] % strides_bytes[axes[1]] == 0,
@@ -307,7 +285,8 @@ IRFFT2Factory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     const auto &new_idesc    = input_descs[0];
     const auto &old_idesc    = old_irfft->idesc();
 
-    bool can_reuse = (new_settings == old_irfft->settings()) && same_desc(new_idesc, old_idesc);
+    bool can_reuse =
+        (new_settings == old_irfft->settings()) && utils::same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_irfft->update_stream(ctx.stream);

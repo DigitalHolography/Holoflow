@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/fft2.hh"
+#include "utils/tensor_common.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -31,7 +32,7 @@ namespace holonp {
 // -----------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const FFT2Settings &s) {
-  j = nlohmann::json{{"axes", s.axes}, {"norm", s.norm}};
+  j = nlohmann::json{{"axes", s.axes}, {"norm", s.norm}, {"inverse", s.inverse}};
 }
 
 void from_json(const nlohmann::json &j, FFT2Settings &s) {
@@ -43,6 +44,7 @@ void from_json(const nlohmann::json &j, FFT2Settings &s) {
     j.at("norm").get_to(s.norm);
   else
     s.norm = FftNorm::Backward;
+  s.inverse = j.value("inverse", false);
 }
 
 // -----------------------------------------------------------------------------
@@ -55,11 +57,6 @@ struct LaunchOffset {
   size_t in_bytes;
   size_t out_bytes;
 };
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
-}
 
 inline void check(bool cond, const std::string &msg) {
   if (!cond)
@@ -75,16 +72,14 @@ inline float get_norm_scale(FftNorm norm, size_t n_fft) {
   return static_cast<float>(1.0 / std::sqrt(n));
 }
 
-std::vector<size_t> get_strides_bytes(const holoflow::core::TDesc &desc) {
-  if (!desc.strides.empty())
-    return desc.strides;
-  std::vector<size_t> strides(desc.shape.size());
-  size_t              acc = holoflow::core::size_of(desc.dtype);
-  for (size_t i = desc.shape.size(); i-- > 0;) {
-    strides[i] = acc;
-    acc *= desc.shape[i];
-  }
-  return strides;
+inline float get_norm_scale(FftNorm norm, size_t n_fft, bool inverse) {
+  if (!inverse)
+    return get_norm_scale(norm, n_fft);
+  if (norm == FftNorm::Backward)
+    return static_cast<float>(1.0 / static_cast<double>(n_fft));
+  if (norm == FftNorm::Forward)
+    return 1.0f;
+  return static_cast<float>(1.0 / std::sqrt(static_cast<double>(n_fft)));
 }
 
 void generate_offsets_recursive(const std::vector<size_t> &shape,
@@ -156,11 +151,12 @@ holoflow::core::OpResult FFT2::execute(holoflow::core::SyncCtx &ctx) {
   for (const auto &offset : offsets_) {
     auto *in_ptr  = reinterpret_cast<cuFloatComplex *>(idata_base + offset.in_bytes);
     auto *out_ptr = reinterpret_cast<cuFloatComplex *>(odata_base + offset.out_bytes);
-    CUFFT_CHECK(cufftXtExec(plan_.get(), in_ptr, out_ptr, CUFFT_FORWARD));
+    CUFFT_CHECK(cufftXtExec(plan_.get(), in_ptr, out_ptr,
+                            settings_.inverse ? CUFFT_INVERSE : CUFFT_FORWARD));
   }
 
   // Normalization applies to the entire contiguous output buffer at once
-  const float scale = get_norm_scale(settings_.norm, n_fft_);
+  const float scale = get_norm_scale(settings_.norm, n_fft_, settings_.inverse);
   if (scale != 1.0f) {
     auto        *odata_full = reinterpret_cast<cuFloatComplex *>(odata_base);
     const size_t total      = ctx.outputs[0].desc.num_elements();
@@ -212,7 +208,7 @@ FFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
   const size_t w           = idesc.shape[ndim - 1];
   const size_t n_fft_elems = h * w;
 
-  auto in_strides_bytes = get_strides_bytes(idesc);
+  auto in_strides_bytes = utils::get_byte_strides(idesc);
 
   // Output is physically dense
   std::vector<size_t> out_strides_bytes(ndim);
@@ -318,7 +314,8 @@ FFT2Factory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
     const auto &new_idesc    = input_descs[0];
     const auto &old_idesc    = old_fft->idesc();
 
-    bool can_reuse = (new_settings == old_fft->settings()) && same_desc(new_idesc, old_idesc);
+    bool can_reuse =
+        (new_settings == old_fft->settings()) && utils::same_desc(new_idesc, old_idesc);
 
     if (can_reuse) {
       old_fft->update_stream(ctx.stream);
@@ -328,6 +325,34 @@ FFT2Factory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 
   // Fallback: Structural change detected or invalid old task.
   return create(input_descs, jsettings, ctx);
+}
+
+namespace {
+nlohmann::json inverse_settings(const nlohmann::json &settings) {
+  auto result       = settings;
+  result["inverse"] = true;
+  return result;
+}
+} // namespace
+
+holoflow::core::InferResult IFFT2Factory::infer(std::span<const holoflow::core::TDesc> input_descs,
+                                                const nlohmann::json &jsettings) const {
+  return FFT2Factory{}.infer(input_descs, inverse_settings(jsettings));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+IFFT2Factory::create(std::span<const holoflow::core::TDesc> input_descs,
+                     const nlohmann::json                  &jsettings,
+                     const holoflow::core::SyncCreateCtx   &ctx) const {
+  return FFT2Factory{}.create(input_descs, inverse_settings(jsettings), ctx);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+IFFT2Factory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                     std::span<const holoflow::core::TDesc>     input_descs,
+                     const nlohmann::json                      &jsettings,
+                     const holoflow::core::SyncCreateCtx       &ctx) const {
+  return FFT2Factory{}.update(std::move(old_task), input_descs, inverse_settings(jsettings), ctx);
 }
 
 } // namespace holonp
