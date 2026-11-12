@@ -21,8 +21,6 @@
 
 namespace holocam {
 
-struct CameraMetrics {};
-
 class CameraBase {
 public:
   class Impl;
@@ -31,6 +29,7 @@ public:
   // returns string literals for the camera name and short name
   // ex name: AmetekS710EuresysCoaxlinkOcto
   //    short: s710
+  //    model name: Phantom S710
   //    short name correspond to the config root node
   virtual const char *name() const noexcept       = 0;
   virtual const char *short_name() const noexcept = 0;
@@ -43,9 +42,10 @@ public:
   size_t frame_height() const noexcept;
   size_t buffer_part_count() const noexcept;
 
-  void set_record_settings(std::optional<RecordSettings>);
+  void set_record_options(std::optional<RecordOptions>);
+  void update_record_path(const std::string& path);
 
-  bool start_acquisition();
+  void start_acquisition();
   void stop_acquisition();
   bool start_raw_record();
   void stop_raw_record();
@@ -59,13 +59,10 @@ public:
 
   const nlohmann::json &configuration() const noexcept;
 
-  const CameraMetrics &metrics() const noexcept;
-
 protected:
-  CameraBase(const nlohmann::json &config, std::optional<RecordSettings> record_settings);
+  CameraBase(const nlohmann::json &config, std::optional<RecordOptions> record_options);
 
   // apply configuration to the camera
-  // constructor helper
   virtual void configure() = 0;
 
 protected:

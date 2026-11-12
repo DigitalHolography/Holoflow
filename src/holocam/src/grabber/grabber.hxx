@@ -24,63 +24,51 @@
 
 namespace holocam {
 
+#define SET(name, value, Type, Catch)                                                              \
+  try {                                                                                            \
+    auto n = std::string(name);                                                                    \
+    ctrl_->set##Type<Module>(n, value);                                                            \
+    if constexpr (std::same_as<Module, Euresys::StreamModule>) {                                   \
+      if (grabber_b_)                                                                              \
+        grabber_b_->setString<Module>(n, value);                                                   \
+    }                                                                                              \
+    logger()->info("set {}={}", name, value);                                                      \
+  } catch (const Euresys::genapi_error &e) {                                                       \
+    Catch                                                                                          \
+  }
+
 template <typename Module>
 void Grabber::set_required<Module>(const char *name, const std::string &value) {
-  try {
-    ctrl_->setString<Module>(std::string(name), value);
-    logger()->info("set {}={}", name, value);
-  } catch (const Euresys::genapi_error &e) {
-    throw std::runtime_error(
-        std::format("failed to set {}={}: {}", name, value, format_genapi_error(e)));
-  }
+  SET(name, value, String,
+      throw std::runtime_error(
+          std::format("failed to set {}={}: {}", name, value, format_genapi_error(e)));)
 }
 
 template <typename Module> void Grabber::set_required<Module>(const char *name, float value) {
-  try {
-    ctrl_->setFloat<Module>(std::string(name), value);
-    logger()->info("set {}={}", name, value);
-  } catch (const Euresys::genapi_error &e) {
-    throw std::runtime_error(
-        std::format("failed to set {}={}: {}", name, value, format_genapi_error(e)));
-  }
+  SET(name, value, Float,
+      throw std::runtime_error(
+          std::format("failed to set {}={}: {}", name, value, format_genapi_error(e)));)
 }
 
-template <typename Module> void Grabber::set_required<Module>(const char *name, int value) {
-  try {
-    ctrl_->setInt<Module>(std::string(name), value);
-    logger()->info("set {}={}", name, value);
-  } catch (const Euresys::genapi_error &e) {
-    throw std::runtime_error(
-        std::format("failed to set {}={}: {}", name, value, format_genapi_error(e)));
-  }
+template <typename Module> void Grabber::set_required<Module>(const char *name, int64_t value) {
+  SET(name, value, Integer,
+      throw std::runtime_error(
+          std::format("failed to set {}={}: {}", name, value, format_genapi_error(e)));)
 }
 
-template <typename Module> void Grabber::set_required<Module>(const char *name, const std::string& value) {
-  try {
-    ctrl_->setString<Module>(std::string(name), value);
-    logger()->info("set {}={}", name, value);
-  } catch (const Euresys::genapi_error &e) {
-    logger()->warn("could not set {}={}", name, value);
-  }
+template <typename Module>
+void Grabber::set_required<Module>(const char *name, const std::string &value) {
+  SET(name, value, String, logger()->warn("could not set {}={}", name, value));
 }
 
 template <typename Module> void Grabber::set_required<Module>(const char *name, float value) {
-  try {
-    ctrl_->setFloat<Module>(std::string(name), value);
-    logger()->info("set {}={}", name, value);
-  } catch (const Euresys::genapi_error &e) {
-    logger()->warn("could not set {}={}", name, value);
-  }
+  SET(name, value, Float, logger()->warn("could not set {}={}", name, value));
 }
 
-template <typename Module> void Grabber::set_required<Module>(const char *name, int value) {
-  try {
-    ctrl_->setInt<Module>(std::string(name), value);
-    logger()->info("set {}={}", name, value);
-  } catch (const Euresys::genapi_error &e) {
-    logger()->warn("could not set {}={}", name, value);
-  }
+template <typename Module> void Grabber::set_required<Module>(const char *name, int64_t value) {
+  SET(name, value, Integer, logger()->warn("could not set {}={}", name, value));
 }
 
+#undef SET
 } // namespace holocam
 #endif

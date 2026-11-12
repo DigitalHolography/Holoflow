@@ -32,7 +32,7 @@ std::string format_genapi_error(const Euresys::genapi_error &err);
 
 class Grabber {
 public:
-  Grabber(uint8_t *buffer, size_t buffer_size, Euresys::EGrabberInfo info_a,
+  Grabber(uint8_t *buffer, size_t buffer_size, size_t buffer_part_count, Euresys::EGrabberInfo info_a,
           std::optional<Euresys::EGrabberInfo> info_b = std::nullopt);
   ~Grabber();
 
@@ -44,21 +44,28 @@ public:
 
   bool running() const noexcept { return is_running_; }
 
+  void reset_config();
+
   template <typename Module, typename T> void set_required(const char *name, const T &value);
   template <typename Module> void set_required(const char *name, const std::string &value);
   template <typename Module> void set_required(const char *name, float value);
-  template <typename Module> void set_required(const char *name, int value);
+  template <typename Module> void set_required(const char *name, int64_t value);
 
   template <typename Module, typename T> void set_opt(const char *name, const T &value);
   template <typename Module> void             set_opt(const char *name, const std::string &value);
   template <typename Module> void             set_opt(const char *name, float value);
-  template <typename Module> void             set_opt(const char *name, int value);
+  template <typename Module> void             set_opt(const char *name, int64_t value);
+
+  void set_offsets(int64_t a, int64_t b);
 
   size_t count() const noexcept {
     return static_cast<bool>(grabber_a_) + static_cast<bool>(grabber_b_);
   }
 
   FrameBufferPair pop(uint64_t timeout);
+
+  // validate the buffers data and returns its base ptr (or nullptr if not validated)
+  std::byte *validate_buffer_data(FrameBufferPair& frame);
 
 private:
   using GrabberType = Euresys::EGrabber<Euresys::CallbackOnDemand>;
@@ -72,6 +79,14 @@ private:
 
   using Clock = std::chrono::steady_clock;
   Clock::time_point last_error_log_;
+  Clock::time_point last_rejected_log_;
+  Clock::time_point last_accepted_log_;
+  
+  size_t max_ts_delta_since_log_{};
+  size_t accepted_since_log_{};
+
+  size_t buffer_part_count_;
+
 };
 
 } // namespace holocam

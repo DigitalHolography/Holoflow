@@ -21,7 +21,6 @@
 #include <cassert>
 #include <format>
 
-
 #ifdef HOLOCAM_HAS_EGRABBER
 
 namespace holocam {
@@ -63,39 +62,149 @@ std::optional<Euresys::EGrabberCameraInfo> find_camera(Euresys::EGenTL   &gentl,
   return std::nullopt;
 }
 
-std::size_t find_grabber_index_for_bank(Euresys::EGrabberCameraInfo &info, std::int64_t bank_id) {
+} // namespace
+
+CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlohmann::json &config,
+                       const std::optional<RecordOptions> &record_options,
+                       size_t expected_grabber_count, size_t buffer_size)
+    : config_{config}, gentl_{std::make_unique<Euresys::EGenTL>()},
+      buffers_{curaii::make_unique_host_ptr<uint8_t>(buffer_size)} {
+  auto camera_info = find_camera(*gentl_, model_name);
+  check(camera_info.has_value(), std::format("could not find {} camera", model_name));
+  info_ = *camera_info;
+
+  assert(expected_grabber_count > 0);
+  assert(expected_grabber_count <= 2);
+
+  auto root              = config.at(short_name);
+  auto nb_buffers        = root.at("NbBuffers").get<std::size_t>();
+  auto buffer_part_count = root.at("BufferPartCount").get<std::size_t>();
+
+  const auto bank_a_index = find_grabber_index_for_bank(0);
+  if (expected_grabber_count == 1)
+    grabber_ = std::make_unique<Grabber>(buffers_.get(), buffer_size, buffer_part_count,
+                                         camera_info->grabbers[bank_a_index]);
+  else {
+    const auto bank_b_index = find_grabber_index_for_bank(1);
+    grabber_ = std::make_unique<Grabber>(buffers_.get(), buffer_size, buffer_part_count,
+                                         camera_info->grabbers[bank_a_index],
+                                         camera_info->grabbers[bank_b_index]);
+  }
+
+  buffer_queue_ = std::make_unique<CameraBufferQueue>(
+      nb_buffers, [this](const CameraFrame &frame) { grabber_->requeue(frame.banks); });
+
+  if (record_options.has_value()) {
+    init_record_context(short_name, *record_options, buffer_size);
+  }
+}
+
+void CameraBase::Impl::init_record_context(const char *short_name, const RecordOptions &options,
+                                           size_t buffer_size) {
+  recording_context_.emplace();
+
+  auto       root         = config_.at(short_name);
+  const auto width        = root.at("Width").get<int64_t>();
+  const auto final_height = root.value("FinalHeight", root.at("Height").get<std::int64_t>());
+  const auto pixel_format = root.at("PixelFormat").get<std::string>();
+  static const std::map<std::string, std::size_t> pixel_format_map_bits = {
+      {"Mono8", 8},
+      {"Mono16", 16},
+  };
+
+  auto g = RecordingGeometry(static_cast<uint8_t>(pixel_format_map_bits.at(pixel_format)), width,
+                             final_height);
+
+  const auto &record_settings  = std::get<RecordSettings>(options);
+  const auto &record_callbacks = std::get<RecordCallbacks>(options);
+  recording_buffers_ =
+      curaii::make_unique_host_ptr<std::byte>(buffer_size * record_settings.recording_count);
+  recording_context_->invalidate(
+      record_settings, *buffer_queue_.get(), buffer_size, recording_buffers_.get(), g,
+      record_callbacks.poll_metrics, record_callbacks.success_callback,
+      record_callbacks.failure_callback, record_callbacks.flushing_finished);
+}
+
+size_t CameraBase::Impl::find_grabber_index_for_bank(size_t id) {
   using namespace Euresys;
 
-  for (std::size_t i = 0; i < info.grabbers.size(); ++i) {
-    EGrabber<> g(info.grabbers[i]);
-    if (g.getInteger<RemoteModule>("ConnectedBankID") == bank_id) {
+  for (std::size_t i = 0; i < info_.grabbers.size(); ++i) {
+    EGrabber<> g(info_.grabbers[i]);
+    if (g.getInteger<RemoteModule>("ConnectedBankID") == id) {
       return i;
     }
   }
 
-  throw std::runtime_error(std::format("could not find grabber for ConnectedBankID={}", bank_id));
+  throw std::runtime_error(std::format("could not find grabber for ConnectedBankID={}", id));
 }
-} // namespace
 
-CameraBase::Impl::Impl(const char *model_name, const nlohmann::json &config,
-                       size_t expected_grabber_count, size_t buffer_size)
-    : config_{config}, gentl_{std::make_unique<Euresys::EGenTL>()},
-        buffers_{curaii::make_unique_host_ptr<uint8_t>(buffer_size)}
-    {
-  auto camera_info = find_camera(*gentl_, model_name);
-  check(camera_info.has_value(), std::format("could not find {} camera", model_name));
-
- 
-  assert(expected_grabber_count > 0);
-  assert(expected_grabber_count <= 2);
-  const auto bank_a_index = find_grabber_index_for_bank(*camera_info, 0);
-  if(expected_grabber_count == 1) 
-        grabber_ = std::make_unique<Grabber>(buffers_.get(), buffer_size, camera_info->grabbers[bank_a_index]);
-  else {
-    const auto bank_b_index = find_grabber_index_for_bank(*camera_info, 1);
-    grabber_ =
-        std::make_unique<Grabber>(buffers_.get(), buffer_size, camera_info->grabbers[bank_a_index], camera_info->grabbers[bank_b_index]);
+void CameraBase::Impl::stop_acquisition() {
+  if (acquisition_thread_.has_value() && acquisition_thread_->joinable()) {
+    acquisition_thread_->request_stop();
+    acquisition_thread_->join();
+    acquiring_.store(false, std::memory_order_release);
   }
 }
+
+void CameraBase::Impl::start_acquisition() {
+  grabber_->start_if_not_running();
+  stop_acquisition();
+  acquisition_thread_.emplace([this](std::stop_token cancelled) { acquisition_loop(cancelled); });
+  acquiring_.store(true, std::memory_order_release);
+}
+
+std::byte *CameraBase::Impl::get_frame(std::atomic<bool> *cancelled) {
+  const auto *frame = buffer_queue_->read_a(cancelled);
+  return frame != nullptr ? frame->base : nullptr;
+}
+
+void CameraBase::Impl::release_frame() { buffer_queue_->release_a(); }
+
+void CameraBase::Impl::acquisition_loop(std::stop_token cancelled) {
+
+  logger()->info("[CameraBase::Impl::acquisition_loop] acquisition loop started");
+  try {
+    buffer_queue_->open();
+    FrameBufferPair frame{};
+    while (!cancelled.stop_requested()) {
+      try {
+        frame = grabber_->pop(pop_timeout_);
+      } catch (const Euresys::gentl_error &e) {
+        if (e.gc_err == GenTL::GC_ERR_TIMEOUT)
+          continue;
+        throw;
+      }
+
+      if (cancelled.stop_requested())
+        break;
+
+      auto base = grabber_->validate_buffer_data(frame);
+      if (!base) {
+        grabber_->requeue(frame);
+        check_for_record_failure();
+        continue;
+      }
+
+      CameraFrame camera_frame = {.banks = frame, .base = base};
+      auto        result       = CameraBufferQueue::PushResult::Closed;
+      result                   = buffer_queue_->try_push(camera_frame);
+
+      if (result != CameraBufferQueue::PushResult::Accepted) {
+        check_for_record_failure();
+      }
+    }
+    logger()->info("[CameraBase::Impl::acquisition_loop] acquisition loop stopped");
+  } catch (const std::exception &e) {
+    logger()->error("[CameraBase::Impl::acquisition_loop] acquisition loop stopped due to: {}",
+                    e.what());
+  } catch (...) {
+    logger()->error(
+        "[CameraBase::Impl::acquisition_loop] acquisition loop stopped due to unknown error");
+  }
+  cancel_all_records();
+  buffer_queue_->close();
+}
+
 } // namespace holocam
+
 #endif

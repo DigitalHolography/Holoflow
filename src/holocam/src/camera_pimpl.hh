@@ -21,24 +21,28 @@
 
 #include "curaii/cuda.hh"
 #include "grabber/grabber.hh"
-#include <EGrabber.h>
+
+#include "buffer_queue/buffer_queue.hh"
+
+#include "record/recorder.hh"
 
 namespace holocam {
 
 template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 class CameraBase::Impl {
 public:
-  Impl(const char *model_name, const nlohmann::json &config, size_t expected_grabber_count,
-       size_t buffer_size);
+  Impl(const char *model_name, const char* short_name, const nlohmann::json &config, const std::optional<RecordOptions> &record_options,
+       size_t expected_grabber_count, size_t buffer_size);
 
   std::size_t bank_count() const noexcept;
   std::size_t frame_width() const noexcept;
   std::size_t frame_height() const noexcept;
   std::size_t buffer_part_count() const noexcept;
 
-  void set_recording_settings(std::optional<RecordingSettings>);
+  void set_recording_options(std::optional<RecordOptions>);
+  void update_record_path(const std::string& path);
 
-  bool start_acquisition();
+  void start_acquisition();
   void stop_acquisition();
   bool start_raw_record();
   void stop_raw_record();
@@ -52,21 +56,54 @@ public:
 
   const nlohmann::json &configuration() const noexcept { return config_; }
 
-  const CameraMetrics &metrics() const noexcept { return metrics_; }
-
   // forwarded to the grabber
   template <typename Module, typename T> void set_required(const char *name, const T &value);
   template <typename Module, typename T> void set_opt(const char *name, const T &value);
 
+  void reset_grabber_config() { grabber_->reset_config(); }
+  void set_offset(int64_t a, int64_t b) { grabber_->set_offsets(a, b); }
+  const Euresys::EGrabberCameraInfo info() const noexcept { return info_; }
+
+  size_t find_grabber_index_for_bank(size_t id);
+
 private:
+  void init_record_context(const char *short_name, const RecordOptions& options, size_t buffer_size);
+
+
+  void acquisition_loop(std::stop_token cancelled);
+
+  void cancel_all_records();
+  void check_for_record_failure();
+private:
+  static constexpr uint64_t pop_timeout_ = 100;
   nlohmann::json config_;
-  CameraMetrics  metrics_{};
 
   std::unique_ptr<Euresys::EGenTL> gentl_;
+  Euresys::EGrabberCameraInfo      info_;
   HostPtr<uint8_t>                 buffers_;
-  std::unique_ptr<Grabber>         grabber_;
+  size_t                           buffers_size_;
+  std::unique_ptr<Grabber>         grabber_{nullptr};
+
+  // Buffer Queue
+  std::unique_ptr<CameraBufferQueue> buffer_queue_{nullptr};
+
+  std::optional<std::jthread> acquisition_thread_{std::nullopt};
+  std::atomic<bool>           acquiring_{false};
+
+  // Record
+  std::atomic<bool>           recording_{false};
+
+  std::optional<RecordingContext>    recording_context_{std::nullopt};
+  HostPtr<std::byte> recording_buffers_         = nullptr;
+  size_t                             recording_buffers_size_    = 0;
+  size_t                             recording_buffers_count_   = 0;
+  RecordingSession                  *current_recording_session_ = nullptr;
 };
+
+#include "camera_pimpl.hxx"
 } // namespace holocam
 #else
+namespace holocam {
 class CameraBase::Impl {};
+} // namespace holocam
 #endif

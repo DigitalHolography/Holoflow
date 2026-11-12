@@ -20,6 +20,15 @@
 
 namespace holocam {
 
+using RecordingSessionId = uint32_t;
+
+using RecordBufferFlushingFinishedCallback = std::function<void(RecordingSessionId)>;
+using RecordPollMetricsCallback =
+    std::function<void(RecordingSessionId, size_t, size_t,
+                       size_t)>; // frame_written | writing speed | elasped time (s)
+using RecordSuccessCallback = std::function<void(RecordingSessionId, size_t)>;
+using RecordFailureCallback = std::function<void(RecordingSessionId, const std::string &)>;
+
 // -------------------------------------------------------------------------------------------------
 // Settings
 // -------------------------------------------------------------------------------------------------
@@ -40,14 +49,22 @@ struct RecordSettings {
   bool requires_rebuild(const RecordSettings &old) const;
 };
 
+struct RecordCallbacks {
+  RecordBufferFlushingFinishedCallback flushing_finished;
+  RecordPollMetricsCallback            poll_metrics;
+  RecordSuccessCallback                success_callback;
+  RecordFailureCallback                failure_callback;
+};
+
+using RecordOptions = std::pair<RecordSettings, RecordCallbacks>;
+
 void to_json(nlohmann::json &j, const RecordSettings &s);
 void from_json(const nlohmann::json &j, RecordSettings &s);
 
-} // namespace holotask::sources
+} // namespace holocam
 
-template <>
-struct fmt::formatter<holotask::sources::RecordSettings> : fmt::formatter<std::string_view> {
-  auto format(const holotask::sources::RecordSettings &r, fmt::format_context &ctx) const {
+template <> struct fmt::formatter<holocam::RecordSettings> : fmt::formatter<std::string_view> {
+  auto format(const holocam::RecordSettings &r, fmt::format_context &ctx) const {
     return fmt::format_to(ctx.out(), "{{ file_path: {}, recording_count: {} }}", r.file_path,
                           r.recording_count);
   }

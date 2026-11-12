@@ -19,6 +19,8 @@
 
 #include <cassert>
 
+#undef max
+#include <utility>
 namespace holocam {
 std::string format_genapi_error(const Euresys::genapi_error &err) {
   std::ostringstream oss;
@@ -54,9 +56,11 @@ std::string format_genapi_error(const Euresys::genapi_error &err) {
   return oss.str();
 }
 
-Grabber::Grabber(uint8_t *buffer, size_t buffer_size, Euresys::EGrabberInfo info_a,
+Grabber::Grabber(uint8_t *buffer, size_t buffer_size, size_t buffer_part_count,
+                 Euresys::EGrabberInfo                info_a,
                  std::optional<Euresys::EGrabberInfo> info_b = std::nullopt)
-    : grabber_a_{std::make_unique<GrabberType>(info_a)}, grabber_b_{nullptr} {
+    : grabber_a_{std::make_unique<GrabberType>(info_a)}, grabber_b_{nullptr},
+      buffer_part_count_{buffer_part_count} {
   Euresys::UserMemory      memory(buffer, buffer_size);
   Euresys::UserMemoryArray memory_array(memory, buffer_size);
 
@@ -149,6 +153,90 @@ FrameBufferPair Grabber::pop(uint64_t timeout) {
     b = grabber_b_->pop(timeout);
 
   return {a, b};
+}
+
+void Grabber::reset_config() { ctrl_->execute<Euresys::DeviceModule>("DeviceReset"); }
+
+void Grabber::set_offsets(int64_t a, int64_t b) {
+  grabber_a_->setInteger<Euresys::StreamModule>("StripeOffset", a);
+  assert(grabber_b_ != nullptr);
+  grabber_b_->setInteger<Euresys::StreamModule>("StripeOffset", b);
+}
+
+std::byte *Grabber::validate_buffer_data(FrameBufferPair &frame) {
+  using namespace Euresys;
+  constexpr auto DELIVERED = ge::BUFFER_INFO_CUSTOM_NUM_DELIVERED_PARTS;
+  constexpr auto TIMESTAMP = GenTL::BUFFER_INFO_TIMESTAMP;
+
+  auto buffer_a = Buffer(frame.data_a);
+  try {
+    uint64_t delivered_a = buffer_a.getInfo<uint64_t>(*grabber_a_, DELIVERED);
+    if (delivered_a != buffer_part_count_ && log_due(last_rejected_log_)) {
+      logger()->error("[Grabber::validate_buffer_data] delivered frame count does not match buffer "
+                      "part count: a={}, expected={}",
+                      delivered_a, buffer_part_count_);
+      return nullptr;
+    }
+
+    std::byte *base_a =
+        static_cast<std::byte *>(buffer_a.getInfo<void *>(*grabber_a_, GenTL::BUFFER_INFO_BASE));
+    if (!grabber_b_)
+      return base_a;
+
+    uint64_t   ts_a       = buffer_a.getInfo<uint64_t>(*grabber_a_, TIMESTAMP);
+    const auto frame_id_a = buffer_a.getInfo<uint64_t>(*grabber_a_, GenTL::BUFFER_INFO_FRAMEID);
+
+    assert(frame.data_b.has_value());
+    auto       buffer_b = Buffer(*frame.data_b);
+    std::byte *base_b =
+        static_cast<std::byte *>(buffer_b.getInfo<void *>(*grabber_b_, GenTL::BUFFER_INFO_BASE));
+    uint64_t   delivered_b = buffer_b.getInfo<uint64_t>(*grabber_b_, DELIVERED);
+    uint64_t   ts_b        = buffer_b.getInfo<uint64_t>(*grabber_b_, TIMESTAMP);
+    const auto frame_id_b  = buffer_b.getInfo<uint64_t>(*grabber_b_, GenTL::BUFFER_INFO_FRAMEID);
+
+    if (base_a != base_b && log_due(last_rejected_log_)) {
+      logger()->error("[Grabber::validate_buffer_data] base pointers differ: a={} b={}", base_a,
+                      base_b);
+      return nullptr;
+    }
+
+    if (delivered_b != buffer_part_count_ && log_due(last_rejected_log_)) {
+      logger()->error("[Grabber::validate_buffer_data] delivered frame count does not match buffer "
+                      "part count: b={}, expected={}",
+                      delivered_a, delivered_b, buffer_part_count_);
+      return nullptr;
+    }
+
+    if (frame_id_a != frame_id_b && log_due(last_rejected_log_)) {
+      if (log_due(last_rejected_log_)) {
+        logger()->error(
+            "[Grabber::validate_buffer_data] frame ids differ: a={} b={}", frame_id_a, frame_id_b);
+      }
+      return nullptr;
+    }
+
+    const auto ts_delta = ts_a >= ts_b ? ts_a - ts_b : ts_b - ts_a;
+    max_ts_delta_since_log_ = std::max(ts_delta, max_ts_delta_since_log_);
+    if (log_due(last_accepted_log_)) {
+      ++accepted_since_log_;
+      logger()->info("[Grabber::validate_buffer_data] accepted {} frames, latest: "
+                     "base={}, id={}, max ts delta={} us",
+                     accepted_since_log_, static_cast<void *>(base_a), frame_id_a, max_ts_delta_since_log_);
+      accepted_since_log_ = 0;
+      max_ts_delta_since_log_   = 0;
+    }
+
+    return base_a;
+  } catch (const Euresys::genapi_error &err) {
+    logger()->error("[AmetekS991EuresysCoaxlinkQSFP::acquisition_loop] GenApi error: {}",
+                    format_genapi_error(err));
+  } catch (const Euresys::gentl_error &err) {
+    logger()->error("[AmetekS991EuresysCoaxlinkQSFP::acquisition_loop] GenTL error: {}",
+                    err.what());
+  } catch (const std::exception &err) {
+    logger()->error("[AmetekS991EuresysCoaxlinkQSFP::acquisition_loop] error: {}", err.what());
+  }
+  return nullptr;
 }
 } // namespace holocam
 #endif

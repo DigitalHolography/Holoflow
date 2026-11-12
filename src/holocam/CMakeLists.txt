@@ -65,6 +65,7 @@ target_link_libraries(${TARGET}
     curaii
     spdlog::spdlog
     nlohmann_json::nlohmann_json
+    holofile
 )
 
 if(EGrabber_FOUND)
