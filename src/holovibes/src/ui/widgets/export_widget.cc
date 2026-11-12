@@ -57,10 +57,13 @@ QString ExportWidget::get_resize_algorithm() const {
 }
 QString ExportWidget::get_file_path() const { return file_line_edit_->text(); }
 QString ExportWidget::get_tag() const { return tag_combo_->currentText(); }
-bool    ExportWidget::is_frame_count_enabled() const { return frames_check_->isChecked(); }
-int     ExportWidget::get_frame_count() const { return frames_spin_->value(); }
-int     ExportWidget::get_queue_count() const { return queues_spin_->value(); }
-bool    ExportWidget::isChecked() const { return enable_check_->isChecked(); }
+bool ExportWidget::is_motion_compensation_enabled() const {
+  return motion_compensation_check_->isChecked();
+}
+bool ExportWidget::is_frame_count_enabled() const { return frames_check_->isChecked(); }
+int  ExportWidget::get_frame_count() const { return frames_spin_->value(); }
+int  ExportWidget::get_queue_count() const { return queues_spin_->value(); }
+bool ExportWidget::isChecked() const { return enable_check_->isChecked(); }
 
 void ExportWidget::set_file_path(const QString &path) { file_line_edit_->setText(path); }
 void ExportWidget::set_frame_count(int count) { frames_spin_->setValue(count); }
@@ -70,6 +73,10 @@ void ExportWidget::set_frame_batch_size(int batch_size) {
   frames_lower_button_->setEnabled(value > frame_batch_size_);
 }
 void ExportWidget::set_image_type(const QString &type) { image_type_combo_->setCurrentText(type); }
+void ExportWidget::set_motion_compensation_enabled(bool enabled) {
+  const auto format = format_combo_->currentData().toString();
+  motion_compensation_check_->setChecked(enabled && (format == "png" || format == "jpg"));
+}
 void ExportWidget::set_resize_algorithm(const QString &algorithm) {
   const auto index = resize_algorithm_combo_->findData(algorithm);
   resize_algorithm_combo_->setCurrentIndex(index >= 0 ? index : 0);
@@ -88,6 +95,7 @@ void ExportWidget::mark_frames_invalid() { mark_validation_error(frames_spin_); 
 QComboBox   *ExportWidget::image_type_combo() { return image_type_combo_; }
 QComboBox   *ExportWidget::format_combo() { return format_combo_; }
 QComboBox   *ExportWidget::codec_combo() { return codec_combo_; }
+QCheckBox   *ExportWidget::motion_compensation_check() { return motion_compensation_check_; }
 QComboBox   *ExportWidget::resize_algorithm_combo() { return resize_algorithm_combo_; }
 QLineEdit   *ExportWidget::file_line_edit() { return file_line_edit_; }
 QPushButton *ExportWidget::browse_button() { return browse_button_; }
@@ -131,6 +139,11 @@ void ExportWidget::setup_ui() {
   }
   layout->addWidget(format_combo_, row, 1);
   ++row;
+
+  motion_compensation_check_ = new QCheckBox("Motion compensation", content_container_);
+  layout->addWidget(motion_compensation_check_, row, 0, 1, 2);
+  ++row;
+  update_motion_compensation_control();
 
   layout->addWidget(new QLabel("Codec", content_container_), row, 0);
   codec_combo_ = new QComboBox(content_container_);
@@ -215,14 +228,16 @@ void ExportWidget::connect_signals() {
   // Emit settings_changed for all control changes
   connect(image_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
-  connect(codec_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          &ExportWidget::settings_changed);
-  connect(resize_algorithm_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          &ExportWidget::settings_changed);
   connect(format_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](int) {
     update_codec_choices();
+    update_motion_compensation_control();
     emit settings_changed();
   });
+  connect(codec_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &ExportWidget::settings_changed);
+  connect(motion_compensation_check_, &QCheckBox::toggled, this, &ExportWidget::settings_changed);
+  connect(resize_algorithm_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+          &ExportWidget::settings_changed);
   connect(file_line_edit_, &QLineEdit::textChanged, this, &ExportWidget::file_path_changed);
   connect(tag_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this,
           &ExportWidget::settings_changed);
@@ -278,6 +293,15 @@ void ExportWidget::update_codec_choices() {
   codec_combo_->setCurrentIndex(index >= 0 ? index : 0);
   codec_combo_->setEnabled(true);
   codec_combo_->setToolTip({});
+}
+
+void ExportWidget::update_motion_compensation_control() {
+  const auto format  = format_combo_->currentData().toString();
+  const bool enabled = format == "png" || format == "jpg";
+  if (!enabled)
+    motion_compensation_check_->setChecked(false);
+  motion_compensation_check_->setVisible(enabled);
+  motion_compensation_check_->setEnabled(enabled);
 }
 
 } // namespace holovibes::ui

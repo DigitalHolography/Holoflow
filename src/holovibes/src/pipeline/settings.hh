@@ -145,10 +145,11 @@ struct Settings {
   RecordingMethod       recording_method;
   std::filesystem::path recording_path;
   int                   recording_count;
-  std::string           recording_format           = "holo";
-  std::string           recording_codec            = "mpeg4";
-  std::string           recording_resize_algorithm = "CpuBilinear";
-  int                   recording_queue_count;
+  std::string           recording_format              = "holo";
+  std::string           recording_codec               = "mpeg4";
+  bool                  recording_motion_compensation = false;
+  std::string           recording_resize_algorithm    = "CpuBilinear";
+  int                   recording_queue_count         = 3;
 
   // Auto-focus
   bool             autofocus_enabled;

@@ -27,9 +27,11 @@ inline constexpr std::array<FfmpegCodecInfo, 4> kMatroskaCodecs{{
     {"VP9", "libvpx-vp9"}}};
 inline constexpr std::array<FfmpegCodecInfo, 1> kWebmCodecs{{{"VP9", "libvpx-vp9"}}};
 
-inline constexpr std::array<FfmpegFormatInfo, 6> kFfmpegFormats{{
+inline constexpr std::array<FfmpegFormatInfo, 8> kFfmpegFormats{{
     {"Holo", "holo", "holo", {}},
     {"NumPy", "npy", "npy", {}},
+    {"PNG", "png", "png", {}},
+    {"JPG", "jpg", "jpg", {}},
     {"MP4", "mp4", "mp4", kMp4Codecs},
     {"AVI", "avi", "avi", kAviCodecs},
     {"Matroska", "matroska", "mkv", kMatroskaCodecs},

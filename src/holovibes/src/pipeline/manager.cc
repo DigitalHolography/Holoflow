@@ -131,6 +131,7 @@
 #include "logger.hh"
 #include "pipeline/validation.hh"
 #include "settings_loader.hh"
+#include "tasks/sinks/average_image.hh"
 #include "tasks/sinks/display_signal_history.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
@@ -255,6 +256,7 @@ void Manager::register_components() {
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sinks::NpyfileFactory>(registry_, "NpyfileWriter");
   reg_sync<sinks::FfmpegFactory>(registry_, "FfmpegWriter");
+  reg_sync<holovibes::tasks::sinks::AverageImageFactory>(registry_, "AverageImageWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_,
                                                           "AmetekS710EuresysCoaxlinkOcto");
@@ -671,8 +673,18 @@ void Manager::start_raw_record(std::filesystem::path record_path) {
       {"record_path", record_path},
   };
 
+  if (s_.recording_motion_compensation &&
+      !scheduler_->ui_try_send("registration", nlohmann::json{{"type", "start_recording"},
+                                                              {"record_path", record_path}})) {
+    logger()->error("[Manager::start_raw_record] Failed to enqueue registration start event");
+    emit raw_record_started_failure("Failed to start motion compensation");
+    return;
+  }
+
   // Send the recording event to the UI message queue inside the scheduler
   if (!scheduler_->ui_try_send(get_record_node_name(), std::move(payload))) {
+    if (s_.recording_motion_compensation)
+      (void)scheduler_->ui_try_send("registration", nlohmann::json{{"type", "stop_recording"}});
     logger()->error("[Manager::start_raw_record] Failed to enqueue start_recording event");
     emit raw_record_started_failure("Failed to enqueue start_recording event");
     return;
@@ -702,6 +714,9 @@ void Manager::stop_raw_record() {
     emit raw_record_stopped_failure("Failed to enqueue stop_recording event");
     return;
   }
+  if (s_.recording_motion_compensation &&
+      !scheduler_->ui_try_send("registration", nlohmann::json{{"type", "stop_recording"}}))
+    logger()->error("[Manager::stop_raw_record] Failed to enqueue registration stop event");
 
   raw_recording_active_ = false;
   logger()->info("[Manager::stop_raw_record] Stop request enqueued");
@@ -808,6 +823,10 @@ void Manager::poll_events() {
       }
 
       if (should_emit) {
+        if (s_.recording_motion_compensation &&
+            !scheduler_->ui_try_send("registration", nlohmann::json{{"type", "stop_recording"}}))
+          logger()->error(
+              "[Manager::poll_events] Failed to enqueue registration stop after completion");
         logger()->info("[Manager::poll_events] Recording finished successfully");
         emit raw_record_stopped_success();
       }
@@ -829,6 +848,10 @@ void Manager::poll_events() {
       logger()->error("[Manager::poll_events] Recording {} failed: {}", id, path_str, message);
 
       if (should_emit) {
+        if (s_.recording_motion_compensation &&
+            !scheduler_->ui_try_send("registration", nlohmann::json{{"type", "stop_recording"}}))
+          logger()->error(
+              "[Manager::poll_events] Failed to enqueue registration stop after failure");
         emit raw_record_stopped_failure(QString::fromStdString(message));
       }
     }
