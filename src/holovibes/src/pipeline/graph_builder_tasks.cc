@@ -126,6 +126,8 @@ DEFINE_SINK_SYNC_NODE(shack_hartmann_display, "shack_hartmann_display",
                       "DisplayTensorShackHartmann", tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE(shack_hartmann_xcorr_display, "shack_hartmann_xcorr_display",
                       "DisplayTensorShackHartmannXcorr", tasks::sinks::DisplayTensorSettings)
+DEFINE_SINK_SYNC_NODE(registration_xcorr_display, "registration_xcorr_display",
+                      "DisplayTensorRegistrationXcorr", tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE(zernike_phase_display, "zernike_phase_display", "DisplayTensorZernikePhase",
                       tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE(zernike_coefficients_display, "zernike_coefficients_display",
@@ -253,6 +255,12 @@ GraphBuilderTasks::TDesc GraphBuilderTasks::norm(const TDesc &X, holonp::NormSet
 std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::meshgrid(std::span<const TDesc>   Xs,
                                                                   holonp::MeshgridSettings s) {
   return make_nary_sync_node("meshgrid", "Meshgrid", "Meshgrid", Xs, s);
+}
+
+std::vector<GraphBuilderTasks::TDesc>
+GraphBuilderTasks::registration_outputs(const TDesc &X,
+                                        holotask::syncs::RegistrationSettings s) {
+  return make_unary_sync_node("registration", "Registration", "Registration", X, s);
 }
 
 GraphBuilderTasks::TDesc

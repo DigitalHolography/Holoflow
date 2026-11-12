@@ -209,6 +209,9 @@ public:
         reader->seek(settings.start_frame);
       }
       frame_idx = settings.start_frame;
+      if (ctx.stream_epoch != nullptr) {
+        ctx.stream_epoch->fetch_add(1, std::memory_order_acq_rel);
+      }
     }
 
     // Read frames into buffer

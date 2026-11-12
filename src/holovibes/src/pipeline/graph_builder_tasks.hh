@@ -150,6 +150,7 @@ protected:
   void  yz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  shack_hartmann_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  shack_hartmann_xcorr_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  void  registration_xcorr_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  zernike_phase_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  zernike_coefficients_display(const TDesc                                     &X,
                                      tasks::sinks::DisplayZernikeCoefficientsSettings s);
@@ -173,6 +174,8 @@ protected:
   void npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s);
   void ffmpeg_write(const TDesc &X, holotask::sinks::FfmpegSettings s);
   TDesc resize(const TDesc &X, holotask::syncs::ResizeSettings s);
+  std::vector<TDesc> registration_outputs(
+      const TDesc &X, holotask::syncs::RegistrationSettings s);
   TDesc zernike_from_slopes(const TDesc &X, holotask::syncs::ZernikeFromSlopesSettings s);
   TDesc zernike_phase(const TDesc &X, holotask::syncs::ZernikePhaseSettings s);
   TDesc concatenate(std::span<const TDesc> Xs, holonp::ConcatenateSettings s);
