@@ -76,6 +76,7 @@
 #include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sources/ametek_s991_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
 #include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
@@ -159,6 +160,8 @@ protected:
   ametek_s710_euresys_coaxlink_octo(holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings s);
   TDesc ametek_s711_euresys_coaxlink_qsfp_plus(
       holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
+  TDesc ametek_s991_euresys_coaxlink_qsfp_plus(
+      holotask::sources::AmetekS991EuresysCoaxlinkQSFPSettings s);
   TDesc              convolution(const TDesc &X, holotask::syncs::ConvolutionSettings s);
   TDesc              correct_phase(const TDesc &X, const TDesc &PhaseMask,
                                    holotask::syncs::CorrectPhaseSettings s);
