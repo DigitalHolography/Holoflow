@@ -58,6 +58,7 @@ DEFINE_UNARY_SYNC_NODE (ascontiguousarray,                      "ascontiguousarr
 DEFINE_UNARY_SYNC_NODE (copy,                                   "copy",                                "Copy",                            holonp::CopySettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "source",   "AmetekS710EuresysCoaxlinkOcto",   holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)
 DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "source", "AmetekS711EuresysCoaxlinkQSFP+",  holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
+DEFINE_SOURCE_SYNC_NODE(ametek_s991_euresys_coaxlink_qsfp_plus, "source", "AmetekS991EuresysCoaxlinkQSFP+",  holotask::sources::AmetekS991EuresysCoaxlinkQSFPSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                      holotask::sources::FresnelQinSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_qout,                           "fresnel_qout",                        "FresnelQout",                     holotask::sources::FresnelQoutSettings)
 DEFINE_UNARY_SYNC_NODE (short_time_fresnel_diffraction,         "short_time_fresnel_diffraction",      "ShortTimeFresnelDiffraction",      holotask::syncs::ShortTimeFresnelDiffractionSettings)
