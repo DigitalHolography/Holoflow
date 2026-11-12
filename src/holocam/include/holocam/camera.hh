@@ -24,7 +24,7 @@ namespace holocam {
 class CameraBase {
 public:
   class Impl;
-  virtual ~CameraBase() = default;
+  virtual ~CameraBase();
 
   // returns string literals for the camera name and short name
   // ex name: AmetekS710EuresysCoaxlinkOcto

@@ -104,8 +104,9 @@ private:
   RecordingSession               *current_recording_session_ = nullptr;
 };
 
-#include "camera_pimpl.hxx"
 } // namespace holocam
+
+#include "camera_pimpl.hxx"
 #else
 namespace holocam {
 class CameraBase::Impl {};

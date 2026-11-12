@@ -22,12 +22,12 @@ namespace holocam {
 
 template <typename Module, typename T>
 void CameraBase::Impl::set_required(const char *name, const T &value) {
-  grabber_->set_required(name, value);
+  grabber_->set_required<Module, T>(name, value);
 }
 
 template <typename Module, typename T>
 void CameraBase::Impl::set_opt(const char *name, const T &value) {
-  grabber_->set_opt(name, value);
+  grabber_->set_opt<Module, T>(name, value);
 }
 
 } // namespace holocam

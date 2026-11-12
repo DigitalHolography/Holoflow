@@ -82,11 +82,11 @@ CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlo
 
   const auto bank_a_index = find_grabber_index_for_bank(0);
   if (expected_grabber_count == 1)
-    grabber_ = std::make_unique<Grabber>(buffers_.get(), buffer_size, buffer_part_count,
+    grabber_ = std::make_unique<Grabber>(buffers_.get(), buffer_size, buffer_part_count_,
                                          camera_info->grabbers[bank_a_index]);
   else {
     const auto bank_b_index = find_grabber_index_for_bank(1);
-    grabber_ = std::make_unique<Grabber>(buffers_.get(), buffer_size, buffer_part_count,
+    grabber_ = std::make_unique<Grabber>(buffers_.get(), buffer_size, buffer_part_count_,
                                          camera_info->grabbers[bank_a_index],
                                          camera_info->grabbers[bank_b_index]);
   }
@@ -137,7 +137,7 @@ size_t CameraBase::Impl::find_grabber_index_for_bank(size_t id) {
 
   for (std::size_t i = 0; i < info_.grabbers.size(); ++i) {
     EGrabber<> g(info_.grabbers[i]);
-    if (g.getInteger<RemoteModule>("ConnectedBankID") == id) {
+    if (g.getInteger<RemoteModule>("ConnectedBankID") == static_cast<int64_t>(id)) {
       return i;
     }
   }

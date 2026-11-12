@@ -18,11 +18,13 @@
 #include <nlohmann/json.hpp>
 #include <string_view>
 
+#include "record_settings.hh"
+
 namespace holocam {
 class CameraBase;
 
 class CameraFactory {
 public:
-  std::unique_ptr<CameraBase> create(std::string_view name, const nlohmann::json &config);
+  std::unique_ptr<CameraBase> create(std::string_view name, const nlohmann::json &config, const std::optional<RecordOptions> &record_options);
 };
 } // namespace holocam

@@ -20,15 +20,16 @@ namespace holocam {
 
 class CameraS711 final : public CameraBase {
 public:
-  explicit CameraS711(const nlohmann::json &config);
+  CameraS711(const nlohmann::json &config, const std::optional<RecordOptions> &record_options)
+      : CameraBase(config, record_options) {}
 
   const char *name() const noexcept override { return "AmetekS711EuresysCoaxlinkQSFP+"; }
   const char *short_name() const noexcept override { return "s711"; }
   const char *model_name() const noexcept override { return "Phantom S711"; }
-  size_t grabber_count() const noexcept override { return 2; }
+  size_t      grabber_count() const noexcept override { return 2; }
 
 protected:
   void configure() override;
 };
 
-}
+} // namespace holocam

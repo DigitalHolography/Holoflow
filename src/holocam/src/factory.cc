@@ -19,7 +19,7 @@
 #include <spdlog/fmt/ranges.h>
 #include <stdexcept>
 
-#include "logger.h"
+#include "logger.hh"
 
 #include "camera/s710.hh"
 #include "camera/s711.hh"
@@ -27,12 +27,17 @@
 
 namespace holocam {
 
-std::unique_ptr<CameraBase> CameraFactory::create(std::string_view      name,
-                                                  const nlohmann::json &config) {
+std::unique_ptr<CameraBase>
+CameraFactory::create(std::string_view name, const nlohmann::json &config,
+                      const std::optional<RecordOptions> &record_options) {
 
-#define CTOR_LAMBDA(T) [](const nlohmann::json &c) { return std::make_unique<T>(c); }
+#define CTOR_LAMBDA(T)                                                                             \
+  [](const nlohmann::json &c, const std::optional<RecordOptions> &ro) {                            \
+    return std::make_unique<T>(c, ro);                                                             \
+  }
 
-  using Ctor = std::function<std::unique_ptr<CameraBase>(const nlohmann::json &)>;
+  using Ctor = std::function<std::unique_ptr<CameraBase>(const nlohmann::json &,
+                                                         const std::optional<RecordOptions> &)>;
 
   static const std::map<std::string_view, Ctor> constructor_map = {
       {"AmetekS710EuresysCoaxlinkOcto", CTOR_LAMBDA(CameraS710)},
@@ -52,10 +57,10 @@ std::unique_ptr<CameraBase> CameraFactory::create(std::string_view      name,
 
     logger()->info("supported cameras: {{ {} }}", fmt::join(keys, ", "));
 
-    throw runtime_error(msg);
+    throw std::runtime_error(msg);
   }
 
-  return constructor_map.at(name)(config);
+  return constructor_map.at(name)(config, record_options);
 }
 
 } // namespace holocam

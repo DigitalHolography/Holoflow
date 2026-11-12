@@ -61,10 +61,12 @@ CameraBase::CameraBase(const nlohmann::json &config, std::optional<RecordOptions
   constexpr size_t safety_buffer_count = 16;
   auto             buffer_count = std::max(record_buffer_needed, nb_buffers) + safety_buffer_count;
   auto             total_size   = buffer_count * buffer_size;
-  impl_ = std::make_unique<CameraBase::Impl>(model_name(), short_name(), config, record_options,
-                                             grabber_count(), total_size);
+  impl_ = std::make_unique<Impl>(model_name(), short_name(), config, record_options,
+                                 grabber_count(), total_size);
   configure();
 }
+
+CameraBase::~CameraBase() {}
 
 std::size_t CameraBase::bank_count() const noexcept { return impl_->bank_count(); }
 std::size_t CameraBase::frame_width() const noexcept { return impl_->frame_width(); }
@@ -75,9 +77,7 @@ void CameraBase::set_record_options(std::optional<RecordOptions> s) {
   impl_->set_recording_options(s);
 }
 
-void CameraBase::update_record_path(const std::string& path) {
-  impl_->update_record_path(path);
-}
+void CameraBase::update_record_path(const std::string &path) { impl_->update_record_path(path); }
 
 void CameraBase::start_acquisition() { impl_->start_acquisition(); }
 void CameraBase::stop_acquisition() { impl_->stop_acquisition(); }
@@ -109,7 +109,7 @@ std::size_t CameraBase::frame_height() const noexcept { return 0; }
 std::size_t CameraBase::buffer_part_count() const noexcept { return 0; }
 
 void CameraBase::set_recording_settings(std::optional<RecordingSettings> s) { (void)s; }
-void CameraBase::update_record_path(const std:string& path) { (void)path; }
+void CameraBase::update_record_path(const std : string &path) { (void)path; }
 
 vod  CameraBase::start_acquisition() {}
 void CameraBase::stop_acquisition() {}

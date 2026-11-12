@@ -58,7 +58,7 @@ std::string format_genapi_error(const Euresys::genapi_error &err) {
 
 Grabber::Grabber(uint8_t *buffer, size_t buffer_size, size_t buffer_part_count,
                  Euresys::EGrabberInfo                info_a,
-                 std::optional<Euresys::EGrabberInfo> info_b = std::nullopt)
+                 std::optional<Euresys::EGrabberInfo> info_b)
     : grabber_a_{std::make_unique<GrabberType>(info_a)}, grabber_b_{nullptr},
       buffer_part_count_{buffer_part_count} {
   Euresys::UserMemory      memory(buffer, buffer_size);
@@ -105,7 +105,7 @@ Grabber::Grabber(uint8_t *buffer, size_t buffer_size, size_t buffer_part_count,
   logger()->info("[Grabber::Grabber] announcing buffers took {:.3f} ms ", elapsed);
 }
 
-void Grabber::requeue(const FrameBufferPair &buffers) noexcept {
+void Grabber::requeue(const FrameBufferPair &buffers) {
   try {
     Euresys::Buffer(buffers.data_a).push(*grabber_a_);
     if (grabber_b_) {
@@ -195,8 +195,8 @@ std::byte *Grabber::validate_buffer_data(FrameBufferPair &frame) {
     const auto frame_id_b  = buffer_b.getInfo<uint64_t>(*grabber_b_, GenTL::BUFFER_INFO_FRAMEID);
 
     if (base_a != base_b && log_due(last_rejected_log_)) {
-      logger()->error("[Grabber::validate_buffer_data] base pointers differ: a={} b={}", base_a,
-                      base_b);
+      logger()->error("[Grabber::validate_buffer_data] base pointers differ: a={} b={}", static_cast<void*>(base_a),
+                      static_cast<void*>(base_b));
       return nullptr;
     }
 

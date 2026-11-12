@@ -47,14 +47,7 @@ public:
   void reset_config();
 
   template <typename Module, typename T> void set_required(const char *name, const T &value);
-  template <typename Module> void set_required(const char *name, const std::string &value);
-  template <typename Module> void set_required(const char *name, float value);
-  template <typename Module> void set_required(const char *name, int64_t value);
-
   template <typename Module, typename T> void set_opt(const char *name, const T &value);
-  template <typename Module> void             set_opt(const char *name, const std::string &value);
-  template <typename Module> void             set_opt(const char *name, float value);
-  template <typename Module> void             set_opt(const char *name, int64_t value);
 
   void set_offsets(int64_t a, int64_t b);
 

@@ -17,7 +17,6 @@
 #include <chrono>
 #include <memory>
 #include <spdlog/logger.h>
-
 namespace holocam {
 
 std::shared_ptr<spdlog::logger> logger();
