@@ -302,7 +302,7 @@ var assemblies = [
     "name": "holoflow",
     "classes": [
       { "name": "include", "rp": "holoflow_include.html", "cl": 34, "ucl": 24, "cal": 58, "tl": 901, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
-      { "name": "src", "rp": "holoflow_src.html", "cl": 3052, "ucl": 329, "cal": 3381, "tl": 6648, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holoflow_src.html", "cl": 3052, "ucl": 329, "cal": 3381, "tl": 6643, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
   {
     "name": "holoflow_event",
@@ -313,19 +313,19 @@ var assemblies = [
   {
     "name": "holonp",
     "classes": [
-      { "name": "include", "rp": "holonp_include.html", "cl": 0, "ucl": 18, "cal": 18, "tl": 396, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
-      { "name": "src", "rp": "holonp_src.html", "cl": 87, "ucl": 47, "cal": 134, "tl": 346, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "include", "rp": "holonp_include.html", "cl": 0, "ucl": 18, "cal": 18, "tl": 412, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holonp_src.html", "cl": 90, "ucl": 44, "cal": 134, "tl": 346, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
   {
     "name": "holotask",
     "classes": [
       { "name": "include", "rp": "holotask_include.html", "cl": 20, "ucl": 60, "cal": 80, "tl": 1306, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
-      { "name": "src", "rp": "holotask_src.html", "cl": 2018, "ucl": 2380, "cal": 4398, "tl": 10020, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holotask_src.html", "cl": 2018, "ucl": 2380, "cal": 4398, "tl": 10016, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
   {
     "name": "holovibes",
     "classes": [
-      { "name": "src", "rp": "holovibes_src.html", "cl": 557, "ucl": 6332, "cal": 6889, "tl": 14197, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holovibes_src.html", "cl": 559, "ucl": 6478, "cal": 7037, "tl": 14420, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
 ];
 
