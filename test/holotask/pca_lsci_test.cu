@@ -56,6 +56,12 @@ TEST(PcaLsciTest, SelectsModesAndSubtractsContrastMaps) {
   EXPECT_NEAR(dynamic[0], 0.0f, 1e-5f);
 }
 
+TEST(PcaLsciTest, ShowsReconstructedCenterFrameBeforeContrast) {
+  const auto frame = run_map(holotask::syncs::PcaLsciMap::PcaFrame);
+  ASSERT_EQ(frame.size(), 4);
+  for (float value : frame) EXPECT_NEAR(value, 10.0f, 1e-5f);
+}
+
 TEST(PcaLsciTest, PoolsSpatialAndTemporalMomentsWithClippedBorders) {
   const auto original = run_map(holotask::syncs::PcaLsciMap::Original, 3);
   const auto static_map = run_map(holotask::syncs::PcaLsciMap::Static, 3);

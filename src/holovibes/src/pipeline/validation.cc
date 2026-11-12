@@ -344,7 +344,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
 
     if (settings.pp_pca_lsci && (settings.time_window > 512 ||
                                  settings.pp_spatial_contrast_dimensions != 3 ||
-                                 settings.pp_pca_lsci_map < 0 || settings.pp_pca_lsci_map > 2)) {
+                                 settings.pp_pca_lsci_map < 0 || settings.pp_pca_lsci_map > 3)) {
       add_issue(result, ValidationSeverity::Error, "pca_lsci_settings_invalid",
                 "PCA-LSCI requires 2..512 frames, 3D mode and a valid map selection.",
                 {SettingsField::TimeWindow});

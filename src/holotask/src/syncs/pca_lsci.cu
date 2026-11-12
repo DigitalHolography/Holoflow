@@ -24,7 +24,8 @@ namespace holotask::syncs {
 
 void to_json(nlohmann::json &j, const PcaLsciSettings &s) {
   const char *map = s.map == PcaLsciMap::Original ? "original" :
-                    s.map == PcaLsciMap::Static ? "static" : "dynamic";
+                    s.map == PcaLsciMap::Static ? "static" :
+                    s.map == PcaLsciMap::PcaFrame ? "pca_frame" : "dynamic";
   j = {{"window_size", s.window_size}, {"map", map}};
 }
 
@@ -34,7 +35,8 @@ void from_json(const nlohmann::json &j, PcaLsciSettings &s) {
   if (map == "original") s.map = PcaLsciMap::Original;
   else if (map == "static") s.map = PcaLsciMap::Static;
   else if (map == "dynamic") s.map = PcaLsciMap::Dynamic;
-  else throw std::invalid_argument("PcaLsci map must be original, static or dynamic");
+  else if (map == "pca_frame") s.map = PcaLsciMap::PcaFrame;
+  else throw std::invalid_argument("PcaLsci map must be original, static, dynamic or pca_frame");
 }
 
 namespace {
@@ -98,6 +100,17 @@ __global__ void static_moments_kernel(double2 *moments, const float *scores,
     squared += score * score + 2.0 * score * coefficient.y;
   }
   moments[p] = make_double2(sum, squared);
+}
+
+__global__ void reconstructed_frame_kernel(float *output, const float *scores,
+                                           const float *basis, int pixels, int components,
+                                           int frames, int center, float mean) {
+  const int p = blockIdx.x * blockDim.x + threadIdx.x;
+  if (p >= pixels) return;
+  float value = mean;
+  for (int c = 0; c < components; ++c)
+    value += scores[static_cast<size_t>(c) * pixels + p] * basis[c * frames + center];
+  output[p] = value;
 }
 
 __global__ void subtract_kernel(float *output, const float *static_map, int pixels) {
@@ -264,11 +277,19 @@ public:
                                  frames_, &one, stack_.get() + first, pixels_, basis_.get(),
                                  frames_, &zero, scores_.get(), rows));
       }
-      static_moments_kernel<<<(rows + 255) / 256, 256, 0, stream_>>>(
-          static_moments_.get() + first, scores_.get(), coefficients_.get(), rows, components,
-          mean_sum, mean_squared_sum);
+      if (settings_.map == PcaLsciMap::PcaFrame) {
+        reconstructed_frame_kernel<<<(rows + 255) / 256, 256, 0, stream_>>>(
+            reinterpret_cast<float *>(ctx.outputs[0].data()) + first, scores_.get(),
+            basis_.get(), rows, components, frames_, frames_ / 2, means[frames_ / 2]);
+      } else {
+        static_moments_kernel<<<(rows + 255) / 256, 256, 0, stream_>>>(
+            static_moments_.get() + first, scores_.get(), coefficients_.get(), rows, components,
+            mean_sum, mean_squared_sum);
+      }
     }
     CUDA_CHECK(cudaGetLastError());
+
+    if (settings_.map == PcaLsciMap::PcaFrame) return holoflow::core::OpResult::Ok;
 
     auto *output = reinterpret_cast<float *>(ctx.outputs[0].data());
     if (settings_.map != PcaLsciMap::Static) {

@@ -161,7 +161,8 @@ void ImageRenderingWidget::set_pca_lsci_mode(bool enabled, const QString &map) {
     space_transform_combo_->setCurrentText("None");
     time_transform_combo_->setCurrentText(kPcaLsci);
   }
-  pca_lsci_map_->setCurrentText(map);
+  pca_lsci_map_->setCurrentText(map == "Original" ? "Dynamic" :
+                                 map == "Static" ? "Static (PCA then LSCI 3D)" : map);
   update_spatial_contrast_controls();
 }
 void ImageRenderingWidget::set_spatial_contrast_window_size(int value) {
@@ -375,9 +376,11 @@ void ImageRenderingWidget::setup_ui() {
 
   pca_lsci_map_label_ = new QLabel("PCA-LSCI map:", this);
   layout->addWidget(pca_lsci_map_label_, row, 0);
-  pca_lsci_map_ = create_combo_box(this, QStringList{"Dynamic", "Original", "Static"});
-  pca_lsci_map_->setToolTip(tr("Original: input LSCI; Static: LSCI of PCA-retained modes; "
-                             "Dynamic: Original minus Static."));
+  pca_lsci_map_ = create_combo_box(this, QStringList{"Dynamic", "Static (PCA then LSCI 3D)",
+                                                    "PCA frame (center)"});
+  pca_lsci_map_->setToolTip(tr("Dynamic: original LSCI 3D minus static LSCI 3D. "
+                             "Static: LSCI 3D of the PCA reconstruction. "
+                             "PCA frame: reconstructed center frame before LSCI."));
   layout->addWidget(pca_lsci_map_, row, 1);
   pca_lsci_map_label_->hide();
   pca_lsci_map_->hide();

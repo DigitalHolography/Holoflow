@@ -30,11 +30,14 @@ For **LSCI (3D)**, choose it under **Time Transform**. **LSCI Window (px)** sets
 **PCA-LSCI** is another Time Transform choice. It computes a single temporal PCA over the entire
 frame block after subtracting each frame's spatial mean. Eigenvectors whose nonnegative
 eigenvalues are at least the average eigenvalue form a static reconstruction. The **PCA-LSCI map**
-selector displays **Original** (contrast of the input), **Static** (contrast of that
-reconstruction), or **Dynamic** (Original minus Static, the default). Dynamic is a signed
+selector displays **Static (PCA then LSCI 3D)**, **Dynamic** (input LSCI 3D minus Static, the
+default), or **PCA frame (center)** (the reconstructed center frame before LSCI 3D). Select
+**LSCI (3D)** to view the input contrast alone. Dynamic is a signed
 difference of contrast maps, not contrast of the PCA residual. PCA-LSCI accepts 2–512 frames
 and an odd 1–63 pixel spatial window. It uses the Kernel LSCI border rule, clipping windows at
 image edges. The PCA projection is tiled, and no second full reconstructed frame stack is stored.
+The PCA frame preview scales its own intensity range to the display; the contrast maps use the
+configured LSCI contrast range.
 Processed preview and recording still convert the selected F32 map to U8; negative Dynamic
 values are clipped by that display conversion.
 

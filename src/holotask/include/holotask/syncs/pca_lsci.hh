@@ -9,7 +9,7 @@
 
 namespace holotask::syncs {
 
-enum class PcaLsciMap { Original, Static, Dynamic };
+enum class PcaLsciMap { Original, Static, Dynamic, PcaFrame };
 
 struct PcaLsciSettings {
   int window_size = 5;

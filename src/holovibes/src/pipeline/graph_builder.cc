@@ -769,7 +769,9 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
                                      ? holotask::syncs::PcaLsciMap::Original
                                      : s_.pp_pca_lsci_map == 1
                                            ? holotask::syncs::PcaLsciMap::Static
-                                           : holotask::syncs::PcaLsciMap::Dynamic})
+                                           : s_.pp_pca_lsci_map == 3
+                                                 ? holotask::syncs::PcaLsciMap::PcaFrame
+                                                 : holotask::syncs::PcaLsciMap::Dynamic})
       : spatial_contrast(frames,
                                  {.window_size = s_.pp_spatial_contrast_dimensions == 1
                                                      ? 1
@@ -784,7 +786,8 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
     result = flatfield(result, flatfield_settings_from_cutoff_period(
                                    s_.pp_flatfield_cutoff_period_m, pitch, pitch));
   }
-  build_xy_output(result, 0, true);
+  // The reconstructed PCA frame contains intensities, not LSCI contrast values.
+  build_xy_output(result, 0, !(s_.pp_pca_lsci && s_.pp_pca_lsci_map == 3));
 }
 
 void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
