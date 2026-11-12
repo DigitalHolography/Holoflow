@@ -44,6 +44,7 @@ void to_json(nlohmann::json &j, const RegistrationSettings &s) {
 
 void from_json(const nlohmann::json &j, RegistrationSettings &s) {
   j.at("radius").get_to(s.radius);
+  // Preserve the settings-struct default for older configs that predate this option.
   s.max_shift_fraction = j.value("max_shift_fraction", 0.25f);
 }
 
