@@ -89,12 +89,19 @@ std::filesystem::path make_oracle_tmpdir() {
 
 OracleOutput invoke_oracle(const OracleInput &input, const std::filesystem::path &oracle_script) {
   const std::filesystem::path fixture =
-      std::filesystem::path(HOLONP_ORACLE_FIXTURE_DIR) / fixture_key(input);
-  if (!std::getenv("HOLOFLOW_RECORD_ORACLE")) {
+      std::filesystem::path(HOLONP_ORACLE_CACHE_DIR) / fixture_key(input);
+  bool cache_hit = true;
+  for (size_t i = 0; i < input.n_outputs; ++i) {
+    if (!std::filesystem::exists(fixture.string() + "." + std::to_string(i))) {
+      cache_hit = false;
+      break;
+    }
+  }
+  if (cache_hit) {
     OracleOutput result;
     for (size_t i = 0; i < input.n_outputs; ++i) {
       std::ifstream f(fixture.string() + "." + std::to_string(i), std::ios::binary | std::ios::ate);
-      if (!f) throw std::runtime_error("Missing golden oracle fixture: " + fixture.string());
+      if (!f) throw std::runtime_error("Could not read oracle cache entry: " + fixture.string());
       const auto size = static_cast<size_t>(f.tellg());
       f.seekg(0);
       std::vector<std::byte> bytes(size);
