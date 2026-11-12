@@ -77,6 +77,7 @@
 #include "holotask/sinks/npyfile.hh"
 #include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
 #include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sources/ametek_s991_euresys_coaxlink_qsfp+.hh"
 #include "holotask/sources/fresnel_qin.hh"
 #include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
@@ -235,6 +236,7 @@ void Manager::register_components() {
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
   reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
   reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS711EuresysCoaxlinkQSFP+");
+  reg_sync<sources::AmetekS991EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS991EuresysCoaxlinkQSFP+");
   reg_sync<sources::FresnelQinFactory>(registry_, "FresnelQin");
   reg_sync<sources::FresnelQoutFactory>(registry_, "FresnelQout");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
@@ -583,8 +585,7 @@ const std::string &Manager::get_record_node_name() {
   static const std::string source = "source_0";
   static const std::string record = "record";
 
-  if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP &&
-      s_.recording_method == RecordingMethod::RAW)
+  if (s_.can_use_camera_record())
     return source;
 
   return record;
@@ -1093,7 +1094,8 @@ void Manager::guess_source_dims() {
 
   // Refactored slightly to prevent repetition
   if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO ||
-      s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
+      s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP ||
+      s_.import_source == ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP) {
 
     std::ifstream cfg_file(s_.camera_config_path);
     if (!cfg_file.is_open()) {
@@ -1101,9 +1103,15 @@ void Manager::guess_source_dims() {
           std::format("Could not open camera config file: {}", s_.camera_config_path.string()));
     }
 
-    auto        full_cfg = nlohmann::json::parse(cfg_file);
-    std::string key =
-        (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) ? "s710" : "s711";
+    auto full_cfg = nlohmann::json::parse(cfg_file);
+
+    static const std::map<ImportSource, std::string> source_key_map = {
+        {ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO, "s710"},
+        {ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP, "s711"},
+        {ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP, "s991"},
+    };
+
+    std::string key = source_key_map.at(s_.import_source);
 
     auto cfg    = full_cfg.at(key);
     src_width_  = cfg.at("Width").get<int>();

@@ -81,6 +81,12 @@
 
 namespace {
 
+static const std::map<std::string, std::string> camera_type_to_config_key{
+    {"Ametek S710 Euresys Coaxlink Octo", "s710"},
+    {"Ametek S711 Euresys Coaxlink QSFP+", "s711"},
+    {"Ametek S991 Euresys Coaxlink QSFP+", "s991"},
+};
+
 constexpr int  kLargeSpinMax             = 1024 * 1024;
 constexpr int  kTopBarHeight             = 30;
 constexpr auto kDefaultSamplingFrequency = 37'000.0;
@@ -2537,7 +2543,10 @@ MainWindow::build_validation_context(const pipeline::Settings &settings) const {
       try {
         std::ifstream cfg_file(settings.camera_config_path);
         auto          cfg_json = nlohmann::json::parse(cfg_file);
-        const auto   &cfg = cfg_json.contains("s711") ? cfg_json.at("s711") : cfg_json.at("s710");
+
+        auto        type = import_widget_->get_camera_type();
+        auto        key  = camera_type_to_config_key.at(type.toStdString());
+        const auto &cfg  = cfg_json.contains(key) ? cfg_json.at(key) : nlohmann::json();
 
         context.source_width        = cfg.at("Width").get<int>();
         context.source_height       = cfg.at("Height").get<int>();
@@ -2668,9 +2677,11 @@ QSize MainWindow::guess_source_dims() {
       throw std::runtime_error(std::format("Could not open camera config file: {}", path));
     }
 
-    // FIXME: This needs to be properly handeled for more camera support
+    auto type = import_widget_->get_camera_type();
+
     auto cfg_json   = nlohmann::json::parse(cfg_file);
-    auto cfg        = cfg_json.contains("s711") ? cfg_json.at("s711") : cfg_json.at("s710");
+    
+    auto cfg        = cfg_json.at(camera_type_to_config_key.at(type.toStdString()));
     int  src_width  = cfg.at("Width").get<int>();
     int  src_height = cfg.at("Height").get<int>();
     return QSize(src_width, src_height);
@@ -2717,6 +2728,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     std::map<std::string, ImportSource> source_from_str{
         {"Ametek S710 Euresys Coaxlink Octo", ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO},
         {"Ametek S711 Euresys Coaxlink QSFP+", ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP},
+        {"Ametek S991 Euresys Coaxlink QSFP+", ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP},
     };
     s.input_sampling_frequency_hz = import_widget_->get_sampling_frequency_hz();
 
@@ -2740,10 +2752,11 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       std::ifstream cfg_file(s.camera_config_path);
       if (cfg_file.is_open()) {
         try {
+          auto type     = import_widget_->get_camera_type();
+          auto key      = camera_type_to_config_key.at(type.toStdString());
           auto cfg_json = nlohmann::json::parse(cfg_file);
-          s.load_batch  = cfg_json.contains("s711")
-                              ? cfg_json.at("s711").at("BufferPartCount").get<int>()
-                              : cfg_json.at("s710").at("BufferPartCount").get<int>();
+          s.load_batch =
+              cfg_json.contains(key) ? cfg_json.at(key).at("BufferPartCount").get<int>() : 1;
         } catch (...) {
         }
       }
@@ -2960,6 +2973,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
         break;
       case ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP:
         source = "Ametek S711 Euresys Coaxlink QSFP+";
+        break;
+      case ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP:
+        source = "Ametek S991 Euresys Coaxlink QSFP+";
         break;
       default:
         source = "Ametek S710 Euresys Coaxlink Octo";
