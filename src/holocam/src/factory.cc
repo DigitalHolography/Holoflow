@@ -29,7 +29,7 @@ namespace holocam {
 
 std::unique_ptr<CameraBase>
 CameraFactory::create(std::string_view name, const nlohmann::json &config,
-                      const std::optional<RecordOptions> &record_options) {
+                      const std::optional<RecordOptions> &record_options) const {
 
 #define CTOR_LAMBDA(T)                                                                             \
   [](const nlohmann::json &c, const std::optional<RecordOptions> &ro) {                            \

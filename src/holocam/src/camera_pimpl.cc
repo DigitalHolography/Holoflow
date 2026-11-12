@@ -121,8 +121,9 @@ void CameraBase::Impl::init_record_context(const char *short_name, const RecordO
       curaii::make_unique_host_ptr<std::byte>(buffer_size * record_settings.recording_count);
   recording_context_->invalidate(
       record_settings, *buffer_queue_.get(), buffer_size, recording_buffers_.get(), g,
-      record_callbacks.poll_metrics, record_callbacks.acquisition_metrics, record_callbacks.success_callback,
-      record_callbacks.failure_callback, record_callbacks.flushing_finished);
+      record_callbacks.poll_metrics, record_callbacks.acquisition_metrics,
+      record_callbacks.success_callback, record_callbacks.failure_callback,
+      record_callbacks.flushing_finished);
 }
 
 void CameraBase::Impl::cancel_all_records() {
@@ -131,6 +132,14 @@ void CameraBase::Impl::cancel_all_records() {
     current_recording_session_ = nullptr;
   }
 }
+RecordingSessionId CameraBase::Impl::current_recording_session_id() {
+  if (current_recording_session_ != nullptr)
+    return current_recording_session_->id();
+
+  return 0;
+}
+
+bool CameraBase::Impl::recording() { return recording_.load(std::memory_order_acquire); }
 
 size_t CameraBase::Impl::find_grabber_index_for_bank(size_t id) {
   using namespace Euresys;
@@ -147,6 +156,7 @@ size_t CameraBase::Impl::find_grabber_index_for_bank(size_t id) {
 
 void CameraBase::Impl::stop_acquisition() {
   if (acquisition_thread_.has_value() && acquisition_thread_->joinable()) {
+    cancel_all_records();
     acquisition_thread_->request_stop();
     acquisition_thread_->join();
     acquiring_.store(false, std::memory_order_release);

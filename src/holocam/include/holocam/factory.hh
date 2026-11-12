@@ -25,6 +25,6 @@ class CameraBase;
 
 class CameraFactory {
 public:
-  std::unique_ptr<CameraBase> create(std::string_view name, const nlohmann::json &config, const std::optional<RecordOptions> &record_options);
+  std::unique_ptr<CameraBase> create(std::string_view name, const nlohmann::json &config, const std::optional<RecordOptions> &record_options) const;
 };
 } // namespace holocam

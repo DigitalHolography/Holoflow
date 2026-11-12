@@ -47,6 +47,10 @@ public:
   void stop_acquisition();
   bool start_raw_record();
   void stop_raw_record();
+  void cancel_all_records(); 
+
+  RecordingSessionId current_recording_session_id();
+  bool recording();
 
   // returns nullptr if cancelled
   // returns the next frame in the buffer queue and set it as pending frame
@@ -73,7 +77,6 @@ private:
 
   void acquisition_loop(std::stop_token cancelled);
 
-  void cancel_all_records(); 
   void check_for_record_failure(); 
 
 private:

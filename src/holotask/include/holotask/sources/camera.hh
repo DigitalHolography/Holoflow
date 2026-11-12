@@ -18,7 +18,8 @@
 
 #include "holoflow/core/tasks.hh"
 
-#include "recorder/record_settings.hh"
+#include "holocam/factory.hh"
+#include "holocam/record_settings.hh"
 
 namespace holotask::sources {
 
@@ -26,21 +27,22 @@ namespace holotask::sources {
 // Settings
 // -------------------------------------------------------------------------------------------------
 
-struct AmetekS991EuresysCoaxlinkQSFPSettings {
+struct CameraSettings {
   std::string cfg_path; ///< Path to JSON configuration file for Phantom S991.
+  std::string name;
 
-  std::optional<RecordSettings> record_settings                        = std::nullopt;
-  bool operator==(const AmetekS991EuresysCoaxlinkQSFPSettings &) const = default;
+  std::optional<holocam::RecordSettings> record_settings                          = std::nullopt;
+  bool                                   operator==(const CameraSettings &) const = default;
 };
 
-void to_json(nlohmann::json &j, const AmetekS991EuresysCoaxlinkQSFPSettings &s);
-void from_json(const nlohmann::json &j, AmetekS991EuresysCoaxlinkQSFPSettings &s);
+void to_json(nlohmann::json &j, const CameraSettings &s);
+void from_json(const nlohmann::json &j, CameraSettings &s);
 
 // -------------------------------------------------------------------------------------------------
 // Factory
 // -------------------------------------------------------------------------------------------------
 
-class AmetekS991EuresysCoaxlinkQSFPFactory : public holoflow::core::ISyncTaskFactory {
+class CameraFactory : public holoflow::core::ISyncTaskFactory {
 public:
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
@@ -53,6 +55,9 @@ public:
   update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
          std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
          const holoflow::core::SyncCreateCtx &ctx) const override;
+
+private:
+  holocam::CameraFactory factory_;
 };
 
 } // namespace holotask::sources

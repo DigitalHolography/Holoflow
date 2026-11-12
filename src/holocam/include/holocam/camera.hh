@@ -49,6 +49,10 @@ public:
   void stop_acquisition();
   bool start_raw_record();
   void stop_raw_record();
+  void cancel_all_records(); 
+
+  RecordingSessionId current_recording_session_id();
+  bool recording();
 
   // returns nullptr if cancelled
   // returns the next frame in the buffer queue and set it as pending frame

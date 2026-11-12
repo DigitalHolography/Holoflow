@@ -83,6 +83,11 @@ void CameraBase::start_acquisition() { impl_->start_acquisition(); }
 void CameraBase::stop_acquisition() { impl_->stop_acquisition(); }
 bool CameraBase::start_raw_record() { return impl_->start_raw_record(); }
 void CameraBase::stop_raw_record() { impl_->stop_raw_record(); }
+void CameraBase::cancel_all_records() { impl_->cancel_all_records(); }
+
+
+RecordingSessionId CameraBase::current_recording_session_id() { return impl_->current_recording_session_id(); }
+bool               CameraBase::recording() { return impl_->recording(); }
 
 std::byte *CameraBase::get_frame(std::atomic<bool> *cancelled) {
   return impl_->get_frame(cancelled);
@@ -115,6 +120,10 @@ vod  CameraBase::start_acquisition() {}
 void CameraBase::stop_acquisition() {}
 bool CameraBase::start_raw_record() { return false; }
 void CameraBase::stop_raw_record() {}
+void CameraBase::cancel_all_records() {}
+
+RecordingSessionId CameraBase::current_record_session_id() { return 0; }
+bool               CameraBase::recording() { return false; }
 
 std::byte *CameraBase::get_frame(std::atomic<bool> *cancelled) {
   (void)cancelled;
