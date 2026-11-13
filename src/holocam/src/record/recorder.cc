@@ -106,9 +106,6 @@ void RecordingSession::start(const RecordSettings &settings, size_t buffer_part_
                            "it is already running");
   }
 
-  cancel_worker_thread(); // ensure the worker thread is joined (state == Free => no work is
-                          // discarded)
-
   state_.store(State::Recording, std::memory_order_release);
   worker(settings, buffer_part_count, recording);
 }
@@ -123,7 +120,6 @@ void RecordingSession::stop() {
 }
 
 bool RecordingSession::cancel_worker_thread() {
-
   if (worker_thread_.joinable()) {
     worker_thread_.request_stop();
     worker_thread_.join();
@@ -131,10 +127,10 @@ bool RecordingSession::cancel_worker_thread() {
   }
   return false;
 }
+
 void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part_count,
                               std::atomic<bool> &recording) {
 
-  cancel_worker_thread();
   worker_thread_ = std::jthread([this, settings, buffer_part_count,
                                  &recording](std::stop_token cancelled) {
     std::atomic<uint32_t> finished = 0;
@@ -321,6 +317,7 @@ Recorder::Recorder(RecordingSessionId id, uint32_t frame_count, size_t buffer_pa
   if (buffer_part_count == 0)
     throw std::invalid_argument("Cannot record with zero buffer parts");
   queue_.subscribe_b();
+
 }
 
 Recorder::~Recorder() {

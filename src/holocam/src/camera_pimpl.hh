@@ -33,7 +33,7 @@ class CameraBase::Impl {
 public:
   Impl(const char *model_name, const char *short_name, const nlohmann::json &config,
        const std::optional<RecordOptions> &record_options, size_t expected_grabber_count,
-       size_t buffer_size);
+       size_t buffer_size, size_t buffer_count);
 
   void set_recording_options(std::optional<RecordOptions> o, const char *short_name);
   void update_record_path(const std::string &path);
@@ -42,10 +42,10 @@ public:
   void stop_acquisition();
   bool start_raw_record();
   void stop_raw_record();
-  void cancel_all_records(); 
+  void cancel_all_records();
 
   RecordingSessionId current_recording_session_id();
-  bool recording();
+  bool               recording();
 
   // returns nullptr if cancelled
   // returns the next frame in the buffer queue and set it as pending frame
@@ -66,23 +66,33 @@ public:
 
   size_t find_grabber_index_for_bank(size_t id);
 
+  void announce_buffers() {
+    grabber_->announce_buffers(
+        buffers_.get(), total_buffer_size_ + safety_buffer_count * buffer_size_, buffer_size_);
+  }
+
 private:
   void init_record_context(const char *short_name, const RecordOptions &options,
-                           size_t buffer_size);
+                           size_t total_buffer_size, const nlohmann::json &config);
 
   void acquisition_loop(std::stop_token cancelled);
 
-  void check_for_record_failure(); 
+  void check_for_record_failure();
 
 private:
-  static constexpr uint64_t pop_timeout_ = 100;
+  static constexpr size_t   safety_buffer_count = 16;
+  static constexpr uint64_t pop_timeout_        = 500;
   nlohmann::json            config_;
+
+  using Clock = std::chrono::steady_clock;
+  Clock::time_point last_requeue_log_;
 
   std::unique_ptr<Euresys::EGenTL> gentl_;
   Euresys::EGrabberCameraInfo      info_;
   HostPtr<uint8_t>                 buffers_;
-  size_t                           buffer_size_;
-  size_t                           buffer_part_count_;
+  size_t                           total_buffer_size_; // without safety buffer
+  size_t                           buffer_size_;       // one buffer size
+  size_t                           buffer_part_count_; // nb part / buffer
   size_t                           nb_buffers_;
   std::unique_ptr<Grabber>         grabber_{nullptr};
 

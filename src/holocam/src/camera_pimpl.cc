@@ -66,9 +66,12 @@ std::optional<Euresys::EGrabberCameraInfo> find_camera(Euresys::EGenTL   &gentl,
 
 CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlohmann::json &config,
                        const std::optional<RecordOptions> &record_options,
-                       size_t expected_grabber_count, size_t buffer_size)
+                       size_t expected_grabber_count, size_t buffer_size, size_t buffer_count)
     : config_{config}, gentl_{std::make_unique<Euresys::EGenTL>()},
-      buffers_{curaii::make_unique_host_ptr<uint8_t>(buffer_size)}, buffer_size_{buffer_size} {
+      buffers_{curaii::make_unique_host_ptr<uint8_t>(buffer_size *
+                                                     (buffer_count + safety_buffer_count))},
+      total_buffer_size_{buffer_size * buffer_count}, buffer_size_{buffer_size},
+      nb_buffers_{buffer_count} {
   auto camera_info = find_camera(*gentl_, model_name);
   check(camera_info.has_value(), std::format("could not find {} camera", model_name));
   info_ = *camera_info;
@@ -77,17 +80,14 @@ CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlo
   assert(expected_grabber_count <= 2);
 
   auto root          = config.at(short_name);
-  nb_buffers_        = root.at("NbBuffers").get<std::size_t>();
   buffer_part_count_ = root.at("BufferPartCount").get<std::size_t>();
 
   const auto bank_a_index = find_grabber_index_for_bank(0);
   if (expected_grabber_count == 1)
-    grabber_ = std::make_unique<Grabber>(buffers_.get(), buffer_size, buffer_part_count_,
-                                         camera_info->grabbers[bank_a_index]);
+    grabber_ = std::make_unique<Grabber>(buffer_part_count_, camera_info->grabbers[bank_a_index]);
   else {
     const auto bank_b_index = find_grabber_index_for_bank(1);
-    grabber_ = std::make_unique<Grabber>(buffers_.get(), buffer_size, buffer_part_count_,
-                                         camera_info->grabbers[bank_a_index],
+    grabber_ = std::make_unique<Grabber>(buffer_part_count_, camera_info->grabbers[bank_a_index],
                                          camera_info->grabbers[bank_b_index]);
   }
 
@@ -95,16 +95,16 @@ CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlo
       nb_buffers_, [this](const CameraFrame &frame) { grabber_->requeue(frame.banks); });
 
   if (record_options.has_value()) {
-    init_record_context(short_name, *record_options, buffer_size);
+    init_record_context(short_name, *record_options, buffer_size * buffer_count, config);
   }
 }
 
 void CameraBase::Impl::init_record_context(const char *short_name, const RecordOptions &options,
-                                           size_t buffer_size) {
+                                           size_t total_buffer_size, const nlohmann::json &config) {
   recording_context_.reset();
   recording_context_.emplace();
 
-  auto       root         = config_.at(short_name);
+  auto       root         = config.at(short_name);
   const auto width        = root.at("Width").get<int64_t>();
   const auto final_height = root.value("FinalHeight", root.at("Height").get<std::int64_t>());
   const auto pixel_format = root.at("PixelFormat").get<std::string>();
@@ -118,10 +118,10 @@ void CameraBase::Impl::init_record_context(const char *short_name, const RecordO
 
   const auto &record_settings  = std::get<RecordSettings>(options);
   const auto &record_callbacks = std::get<RecordCallbacks>(options);
-  recording_buffers_ =
-      curaii::make_unique_host_ptr<std::byte>(buffer_size * record_settings.recording_count);
+  recording_buffers_           = curaii::make_unique_host_ptr<std::byte>(total_buffer_size *
+                                                                         record_settings.record_queue_count);
   recording_context_->invalidate(
-      record_settings, *buffer_queue_.get(), buffer_size, recording_buffers_.get(), g,
+      record_settings, *buffer_queue_.get(), total_buffer_size, recording_buffers_.get(), g,
       record_callbacks.poll_metrics, record_callbacks.acquisition_metrics,
       record_callbacks.success_callback, record_callbacks.failure_callback,
       record_callbacks.flushing_finished);
@@ -160,15 +160,19 @@ void CameraBase::Impl::stop_acquisition() {
     cancel_all_records();
     acquisition_thread_->request_stop();
     acquisition_thread_->join();
+    acquisition_thread_.reset();
+    grabber_->stop_if_running();
     acquiring_.store(false, std::memory_order_release);
+    logger()->info("[CameraBase::Impl::stop_acquisition] acquisition stopped");
   }
 }
 
 void CameraBase::Impl::start_acquisition() {
-  grabber_->start_if_not_running();
   stop_acquisition();
+  grabber_->start_if_not_running();
   acquisition_thread_.emplace([this](std::stop_token cancelled) { acquisition_loop(cancelled); });
   acquiring_.store(true, std::memory_order_release);
+  logger()->info("[CameraBase::Impl::start_acquisition] acquisition started");
 }
 
 std::byte *CameraBase::Impl::get_frame(std::atomic<bool> *cancelled) {
@@ -188,13 +192,20 @@ void CameraBase::Impl::acquisition_loop(std::stop_token cancelled) {
       try {
         frame = grabber_->pop(pop_timeout_);
       } catch (const Euresys::gentl_error &e) {
-        if (e.gc_err == GenTL::GC_ERR_TIMEOUT)
+        if (e.gc_err == GenTL::GC_ERR_TIMEOUT) {
+          logger()->debug("[CameraBase::Impl::acquisition_loop] grabber pop timed out");
           continue;
+        }
+        logger()->error("[CameraBase::Impl::acquisition_loop] error occurred while poping frame "
+                        "from grabber: {}",
+                        e.what());
         throw;
       }
 
-      if (cancelled.stop_requested())
+      if (cancelled.stop_requested()) {
+        grabber_->requeue(frame);
         break;
+      }
 
       auto base = grabber_->validate_buffer_data(frame);
       if (!base) {
@@ -209,6 +220,12 @@ void CameraBase::Impl::acquisition_loop(std::stop_token cancelled) {
 
       if (result != CameraBufferQueue::PushResult::Accepted) {
         check_for_record_failure();
+        if (log_due(last_requeue_log_)) {
+          logger()->warn("[CameraBase::Impl::acquisition_loop] buffer_queue is full or closed "
+                         "(size={}/{}): dropping frame",
+                         buffer_queue_->size(), buffer_queue_->capacity());
+        }
+        grabber_->requeue(frame);
       }
     }
     logger()->info("[CameraBase::Impl::acquisition_loop] acquisition loop stopped");
@@ -264,17 +281,18 @@ void CameraBase::Impl::stop_raw_record() {
   auto session = current_recording_session_;
   if (session) {
     session->stop();
+    logger()->info("[CameraBase::Impl::stop_raw_record] stopped record on queue {}",
+                   session->id());
     current_recording_session_ = nullptr;
-
     assert(!recording_context_->recording.load(std::memory_order_acquire));
   }
 }
 
 void CameraBase::Impl::set_recording_options(std::optional<RecordOptions> o,
-                                              const char                  *short_name) {
+                                             const char                  *short_name) {
   cancel_all_records();
   if (o.has_value()) {
-    init_record_context(short_name, *o, buffer_size_);
+    init_record_context(short_name, *o, total_buffer_size_, config_);
   } else {
     recording_context_.reset();
     buffers_.reset();

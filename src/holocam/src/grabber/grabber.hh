@@ -32,7 +32,7 @@ std::string format_genapi_error(const Euresys::genapi_error &err);
 
 class Grabber {
 public:
-  Grabber(uint8_t *buffer, size_t buffer_size, size_t buffer_part_count,
+  Grabber(size_t buffer_part_count,
           Euresys::EGrabberInfo info_a, std::optional<Euresys::EGrabberInfo> info_b = std::nullopt);
   ~Grabber() = default;
 
@@ -60,6 +60,7 @@ public:
   // validate the buffers data and returns its base ptr (or nullptr if not validated)
   std::byte *validate_buffer_data(FrameBufferPair &frame);
 
+  void announce_buffers(uint8_t *buffer, size_t total_size, size_t buffer_size);
 private:
   using GrabberType = Euresys::EGrabber<Euresys::CallbackOnDemand>;
   std::unique_ptr<GrabberType> &ctrl() { return grabber_a_; };

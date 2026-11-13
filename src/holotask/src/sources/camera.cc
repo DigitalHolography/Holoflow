@@ -28,13 +28,14 @@ namespace holotask::sources {
 // -------------------------------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const CameraSettings &s) {
-  j = nlohmann::json{{"cfg_path", s.cfg_path}, {"record_settings", nullptr}};
+  j = nlohmann::json{{"cfg_path", s.cfg_path}, {"name", s.name}, {"record_settings", nullptr}};
   if (s.record_settings)
     j["record_settings"] = *s.record_settings;
 }
 
 void from_json(const nlohmann::json &j, CameraSettings &s) {
   j.at("cfg_path").get_to(s.cfg_path);
+  j.at("name").get_to(s.name);
   s.record_settings.reset();
   if (j.contains("record_settings") && !j.at("record_settings").is_null())
     s.record_settings = j.at("record_settings").get<holocam::RecordSettings>();
@@ -112,13 +113,12 @@ class CameraTask : public holoflow::core::ISyncTask {
 public:
   CameraTask(const CameraSettings &settings, const nlohmann::json &config)
       : settings_{settings}, cfg_{config} {
-    std::unique_ptr<holocam::CameraBase> base = nullptr;
 
     if (settings.record_settings.has_value()) {
       auto options = make_record_options(*settings.record_settings);
-      base         = factory_.create(settings.name, config, options);
+      camera_      = factory_.create(settings.name, config, options);
     } else {
-      base = factory_.create(settings.name, config, std::nullopt);
+      camera_ = factory_.create(settings.name, config, std::nullopt);
     }
   }
 
@@ -194,7 +194,7 @@ public:
 
     if (!running_.load(std::memory_order_acquire)) {
       ctx_ = &ctx;
-      camera_->start_acquisition();
+      start_acquisition();
     }
 
     while (!ctx.cancelled->load()) {
@@ -219,26 +219,15 @@ public:
 
   void cancel(holoflow::core::SyncCtx &ctx) override {
     (void)ctx;
-    logger()->info("[CameraTask::execute] cancelled");
-    camera_->stop_acquisition();
-    running_.store(false, std::memory_order_release);
+    stop_acquisition();
+    logger()->info("[CameraTask::cancel] cancelled");
     ctx_ = nullptr;
   }
 
   const nlohmann::json &get_cfg() const { return cfg_; }
 
   const CameraSettings &get_settings() const { return settings_; }
-
-  void stop_acquisition() {
-    if (!running_.load(std::memory_order_acquire)) {
-      logger()->warn("[CameraTask::stop_acquisition] acquisition is not running");
-    } else {
-      camera_->stop_acquisition();
-      running_.store(false);
-    }
-  }
-
-  void update_settings(const CameraSettings &settings) {
+  void                  update_settings(const CameraSettings &settings) {
     settings_ = settings;
     camera_->set_record_options(make_record_options(*settings.record_settings));
   }
@@ -249,6 +238,24 @@ public:
 
     } else {
       logger()->info("[CameraTask::log_update_lifecycle] update camera by replacing it");
+    }
+  }
+
+  void start_acquisition() {
+    if (running_.load(std::memory_order_acquire)) {
+      logger()->warn("[CameraTask::start_acquisition] acquisition is already running");
+    } else {
+      camera_->start_acquisition();
+      running_.store(true, std::memory_order_release);
+    }
+  }
+
+  void stop_acquisition() {
+    if (!running_.load(std::memory_order_acquire)) {
+      logger()->warn("[CameraTask::stop_acquisition] acquisition is not running");
+    } else {
+      camera_->stop_acquisition();
+      running_.store(false, std::memory_order_release);
     }
   }
 
@@ -419,10 +426,11 @@ private:
     }
 
     // A finished worker may still be delivering its completion event.
-    camera_->stop_raw_record();
     settings_.record_settings->file_path = record_path;
     try {
-      camera_->start_raw_record();
+      if (!camera_->start_raw_record())
+        emit_recording_failed_event(ctx, camera_->current_recording_session_id(),
+                                    "failed to start new record");
     } catch (const std::exception &e) {
       emit_recording_failed_event(ctx, camera_->current_recording_session_id(), e.what());
     }

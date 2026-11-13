@@ -56,11 +56,17 @@ std::string format_genapi_error(const Euresys::genapi_error &err) {
   return oss.str();
 }
 
-Grabber::Grabber(uint8_t *buffer, size_t buffer_size, size_t buffer_part_count,
-                 Euresys::EGrabberInfo info_a, std::optional<Euresys::EGrabberInfo> info_b)
+Grabber::Grabber(size_t buffer_part_count, Euresys::EGrabberInfo info_a,
+                 std::optional<Euresys::EGrabberInfo> info_b)
     : grabber_a_{std::make_unique<GrabberType>(info_a)}, grabber_b_{nullptr},
       buffer_part_count_{buffer_part_count} {
-  Euresys::UserMemory      memory(buffer, buffer_size);
+
+  if (info_b.has_value())
+    grabber_b_ = std::make_unique<GrabberType>(*info_b);
+}
+
+void Grabber::announce_buffers(uint8_t *buffer, size_t total_size, size_t buffer_size) {
+  Euresys::UserMemory      memory(buffer, total_size);
   Euresys::UserMemoryArray memory_array(memory, buffer_size);
 
   using Clock = std::chrono::steady_clock;
@@ -76,7 +82,7 @@ Grabber::Grabber(uint8_t *buffer, size_t buffer_size, size_t buffer_part_count,
 
     const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 
-    logger()->info("[Grabber::Grabber] grabber A: "
+    logger()->info("[Grabber::announce_buffers] grabber A: "
                    "announceAndQueue buffers took {:.3f} ms "
                    "(range {}..{}, {} buffers)",
                    elapsed, range_a.begin, range_a.end, range_a.size());
@@ -85,23 +91,22 @@ Grabber::Grabber(uint8_t *buffer, size_t buffer_size, size_t buffer_part_count,
   // --------------------------------------------------------------------------
   // Grabber B
   // --------------------------------------------------------------------------
-  if (info_b.has_value()) {
-    grabber_b_ = std::make_unique<GrabberType>(*info_b);
-
+  if (grabber_b_) {
     const auto start = Clock::now();
 
     const auto range_b = grabber_b_->announceAndQueue(memory_array);
 
     const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 
-    logger()->info("[Grabber::Grabber] grabber B: "
+    logger()->info("[Grabber::announce_buffers] grabber B: "
                    "announceAndQueue buffers took {:.3f} ms "
                    "(range {}..{}, {} buffers)",
                    elapsed, range_b.begin, range_b.end, range_b.size());
   }
 
   const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
-  logger()->info("[Grabber::Grabber] announcing buffers took {:.3f} ms ", elapsed);
+  logger()->info("[Grabber::announce_buffers] announcing buffers ({} bytes) took {:.3f} ms ",
+                 total_size, elapsed);
 }
 
 void Grabber::requeue(const FrameBufferPair &buffers) {
@@ -119,6 +124,7 @@ void Grabber::requeue(const FrameBufferPair &buffers) {
     }
   }
 }
+
 void Grabber::start_if_not_running() {
   if (!is_running_) {
     if (grabber_b_)
@@ -170,10 +176,13 @@ std::byte *Grabber::validate_buffer_data(FrameBufferPair &frame) {
   auto buffer_a = Buffer(frame.data_a);
   try {
     uint64_t delivered_a = buffer_a.getInfo<uint64_t>(*grabber_a_, DELIVERED);
-    if (delivered_a != buffer_part_count_ && log_due(last_rejected_log_)) {
-      logger()->error("[Grabber::validate_buffer_data] delivered frame count does not match buffer "
-                      "part count: a={}, expected={}",
-                      delivered_a, buffer_part_count_);
+    if (delivered_a != buffer_part_count_) {
+      if (log_due(last_rejected_log_)) {
+        logger()->error(
+            "[Grabber::validate_buffer_data] delivered frame count does not match buffer "
+            "part count: a={}, expected={}",
+            delivered_a, buffer_part_count_);
+      }
       return nullptr;
     }
 
@@ -193,20 +202,25 @@ std::byte *Grabber::validate_buffer_data(FrameBufferPair &frame) {
     uint64_t   ts_b        = buffer_b.getInfo<uint64_t>(*grabber_b_, TIMESTAMP);
     const auto frame_id_b  = buffer_b.getInfo<uint64_t>(*grabber_b_, GenTL::BUFFER_INFO_FRAMEID);
 
-    if (base_a != base_b && log_due(last_rejected_log_)) {
-      logger()->error("[Grabber::validate_buffer_data] base pointers differ: a={} b={}",
-                      static_cast<void *>(base_a), static_cast<void *>(base_b));
+    if (base_a != base_b) {
+      if (log_due(last_rejected_log_)) {
+        logger()->error("[Grabber::validate_buffer_data] base pointers differ: a={} b={}",
+                        static_cast<void *>(base_a), static_cast<void *>(base_b));
+      }
       return nullptr;
     }
 
-    if (delivered_b != buffer_part_count_ && log_due(last_rejected_log_)) {
-      logger()->error("[Grabber::validate_buffer_data] delivered frame count does not match buffer "
-                      "part count: b={}, expected={}",
-                      delivered_a, delivered_b, buffer_part_count_);
+    if (delivered_b != buffer_part_count_) {
+      if (log_due(last_rejected_log_)) {
+        logger()->error(
+            "[Grabber::validate_buffer_data] delivered frame count does not match buffer "
+            "part count: b={}, expected={}",
+            delivered_a, delivered_b, buffer_part_count_);
+      }
       return nullptr;
     }
 
-    if (frame_id_a != frame_id_b && log_due(last_rejected_log_)) {
+    if (frame_id_a != frame_id_b) {
       if (log_due(last_rejected_log_)) {
         logger()->error("[Grabber::validate_buffer_data] frame ids differ: a={} b={}", frame_id_a,
                         frame_id_b);

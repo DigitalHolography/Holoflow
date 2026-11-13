@@ -48,7 +48,7 @@ void CameraS991::configure(Impl *impl, const nlohmann::json &cfg) {
 
   impl->reset_grabber_config();
 
-  impl->set_required<RemoteModule>("Banks", cfg.value("Banks", std::string("Bank_AB")));
+  impl->set_required<RemoteModule>("Banks", cfg.value("Banks", std::string("Banks_AB")));
   impl->set_required<RemoteModule>("Width", cfg.at("Width").get<int64_t>());
 
   const auto pixel_format   = cfg.at("PixelFormat").get<std::string>();
@@ -65,8 +65,9 @@ void CameraS991::configure(Impl *impl, const nlohmann::json &cfg) {
   impl->set_required<RemoteModule>("Gain", cfg.at("Gain").get<float>());
   impl->set_required<RemoteModule>("ShutterMode", cfg.at("ShutterMode").get<std::string>());
 
+  const auto acquisition_frame_rate = cfg.at("AcquisitionFrameRate").get<size_t>();
   impl->set_required<RemoteModule>("AcquisitionFrameRate",
-                                   cfg.at("AcquisitionFrameRate").get<std::string>());
+                                   std::format("{}", acquisition_frame_rate));
 
   if (cfg.contains("BalanceWhiteMarker")) {
     impl->set_opt<RemoteModule>("BalanceWhiteMarker",
@@ -89,10 +90,10 @@ void CameraS991::configure(Impl *impl, const nlohmann::json &cfg) {
       cfg.value("LineWidth", cfg.at("Width").get<int64_t>() * pixel_format_map.at(pixel_format));
   auto line_pitch =
       cfg.value("LinePitch", cfg.at("Width").get<int64_t>() * pixel_format_map.at(pixel_format));
-  auto stripe_height      = cfg.value("StripeHeight", 8);
-  auto stripe_pitch       = cfg.value("StripePitch", 16);
-  auto block_height       = cfg.value("BlockHeight", 8);
-  auto stripe_arrangement = cfg.value("StripeArrangement", std::string("Geometry_1X_2YM"));
+  auto stripe_height      = cfg.value("StripeHeight", 4);
+  auto stripe_pitch       = cfg.value("StripePitch", 8);
+  auto block_height       = cfg.value("BlockHeight", 4);
+  auto stripe_arrangement = cfg.value("StripeArrangement", std::string("Geometry_1X_1Y"));
 
   impl->set_required<StreamModule>("BufferPartCount", cfg.at("BufferPartCount").get<int64_t>());
   impl->set_required<StreamModule>("LineWidth", line_width);

@@ -48,7 +48,7 @@ void CameraS711::configure(Impl *impl, const nlohmann::json &cfg) {
 
   impl->reset_grabber_config();
 
-  impl->set_required<RemoteModule>("Banks", cfg.value("Banks", std::string("Bank_AB")));
+  impl->set_required<RemoteModule>("Banks", cfg.value("Banks", std::string("Banks_AB")));
   impl->set_required<RemoteModule>("Width", cfg.at("Width").get<int64_t>());
 
   const auto pixel_format   = cfg.at("PixelFormat").get<std::string>();

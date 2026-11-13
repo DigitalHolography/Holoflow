@@ -60,12 +60,11 @@ CameraBase::CameraBase(const nlohmann::json &config, std::optional<RecordOptions
     }
   }
 
-  constexpr size_t safety_buffer_count = 16;
-  auto             buffer_count = std::max(record_buffer_needed, nb_buffers) + safety_buffer_count;
-  auto             total_size   = buffer_count * buffer_size;
+  auto             buffer_count = std::max(record_buffer_needed, nb_buffers);
   impl_ = std::make_unique<Impl>(model_name, short_name, config, record_options, grabber_count,
-                                 total_size);
+                                 buffer_size, buffer_count);
   configure(impl_.get(), root);
+  impl_->announce_buffers();
 }
 
 CameraBase::~CameraBase() {}
