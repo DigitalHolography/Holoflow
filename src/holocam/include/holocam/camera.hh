@@ -59,7 +59,7 @@ public:
   const nlohmann::json &configuration() const noexcept;
 
 protected:
-  using ConfigurationCallback = std::function<void()>;
+  using ConfigurationCallback = std::function<void(Impl*, const nlohmann::json& cfg)>;
   CameraBase(const nlohmann::json &config, std::optional<RecordOptions> record_options,
              const char *short_name, const char *model_name, size_t grabber_count,
             ConfigurationCallback configure);

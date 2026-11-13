@@ -22,13 +22,13 @@
     Camera##class_name(const nlohmann::json               &config,                                 \
                        const std::optional<RecordOptions> &record_options)                         \
         : CameraBase(config, record_options, camera_short_name, camera_model_name,                 \
-                     camera_grabber_count, [this]() { configure(); }) {}                           \
+                     camera_grabber_count, &configure) {}                                          \
     const char *name() const noexcept override { return camera_name; }                             \
     const char *short_name() const noexcept override { return camera_short_name; }                 \
     const char *model_name() const noexcept override { return camera_model_name; }                 \
     size_t      grabber_count() const noexcept override { return camera_grabber_count; }           \
                                                                                                    \
   protected:                                                                                       \
-    void configure();                                                                              \
+    static void configure(Impl *impl, const nlohmann::json &cfg);                                      \
   };                                                                                               \
   } // namespace holocam

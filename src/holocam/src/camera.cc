@@ -31,7 +31,9 @@ void check(bool condition, const std::string &msg) {
 }
 
 } // namespace
-CameraBase::CameraBase(const nlohmann::json &config, std::optional<RecordOptions> record_options, const char* short_name, const char *model_name, size_t grabber_count, ConfigurationCallback configure)
+CameraBase::CameraBase(const nlohmann::json &config, std::optional<RecordOptions> record_options,
+                       const char *short_name, const char *model_name, size_t grabber_count,
+                       ConfigurationCallback configure)
     : impl_{nullptr} {
   static const std::map<std::string, std::size_t> pixel_format_map = {
       {"Mono8", 1},
@@ -61,9 +63,9 @@ CameraBase::CameraBase(const nlohmann::json &config, std::optional<RecordOptions
   constexpr size_t safety_buffer_count = 16;
   auto             buffer_count = std::max(record_buffer_needed, nb_buffers) + safety_buffer_count;
   auto             total_size   = buffer_count * buffer_size;
-  impl_ = std::make_unique<Impl>(model_name, short_name, config, record_options,
-                                 grabber_count, total_size);
-  configure();
+  impl_ = std::make_unique<Impl>(model_name, short_name, config, record_options, grabber_count,
+                                 total_size);
+  configure(impl_.get(), root);
 }
 
 CameraBase::~CameraBase() {}
@@ -80,9 +82,10 @@ bool CameraBase::start_raw_record() { return impl_->start_raw_record(); }
 void CameraBase::stop_raw_record() { impl_->stop_raw_record(); }
 void CameraBase::cancel_all_records() { impl_->cancel_all_records(); }
 
-
-RecordingSessionId CameraBase::current_recording_session_id() { return impl_->current_recording_session_id(); }
-bool               CameraBase::recording() { return impl_->recording(); }
+RecordingSessionId CameraBase::current_recording_session_id() {
+  return impl_->current_recording_session_id();
+}
+bool CameraBase::recording() { return impl_->recording(); }
 
 std::byte *CameraBase::get_frame(std::atomic<bool> *cancelled) {
   return impl_->get_frame(cancelled);

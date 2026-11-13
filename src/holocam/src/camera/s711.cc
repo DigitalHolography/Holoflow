@@ -35,56 +35,52 @@ void check(bool condition, const std::string &msg) {
 
 } // namespace
 
-
-void CameraS711::configure() {
+void CameraS711::configure(Impl *impl, const nlohmann::json &cfg) {
   using namespace Euresys;
   static const std::map<std::string, std::size_t> pixel_format_map = {
       {"Mono8", 1},
       {"Mono16", 2},
   };
 
-  check(impl_->info().grabbers.size() == grabber_count(),
-        std::format("expected {} grabber(s), got {}", grabber_count(),
-                    impl_->info().grabbers.size()));
+  constexpr size_t grabber_count = 2;
+  check(impl->info().grabbers.size() == grabber_count,
+        std::format("expected {} grabber(s), got {}", grabber_count, impl->info().grabbers.size()));
 
-   impl_->reset_grabber_config();
+  impl->reset_grabber_config();
 
-  const auto &cfg = configuration().at(short_name());
-
-  impl_->set_required<RemoteModule>("Banks", cfg.value("Banks", std::string("Bank_AB")));
-  impl_->set_required<RemoteModule>("Width", cfg.at("Width").get<int64_t>());
+  impl->set_required<RemoteModule>("Banks", cfg.value("Banks", std::string("Bank_AB")));
+  impl->set_required<RemoteModule>("Width", cfg.at("Width").get<int64_t>());
 
   const auto pixel_format   = cfg.at("PixelFormat").get<std::string>();
   const auto final_height   = cfg.value("FinalHeight", cfg.at("Height").get<std::int64_t>());
-  const auto nb_grabbers    = impl_->info().grabbers.size();
+  const auto nb_grabbers    = impl->info().grabbers.size();
   const auto trigger_source = cfg.at("TriggerSource").get<std::string>();
-  impl_->set_required<RemoteModule>("Height", final_height / nb_grabbers);
-  impl_->set_required<RemoteModule>("PixelFormat", pixel_format);
-  impl_->set_required<RemoteModule>("TriggerSelector",
-                                    cfg.at("TriggerSelector").get<std::string>());
-  impl_->set_required<RemoteModule>("TriggerMode", cfg.at("TriggerMode").get<std::string>());
-  impl_->set_required<RemoteModule>("TriggerSource", trigger_source);
-  impl_->set_required<RemoteModule>("ExposureTime", cfg.at("ExposureTime").get<float>());
-  impl_->set_required<RemoteModule>("GainSelector", cfg.at("GainSelector").get<std::string>());
-  impl_->set_required<RemoteModule>("Gain", cfg.at("Gain").get<float>());
-  impl_->set_required<RemoteModule>("FlatFieldCorrection",
-                                    cfg.at("FlatFieldCorrection").get<std::string>());
+  impl->set_required<RemoteModule>("Height", final_height / static_cast<int64_t>(nb_grabbers));
+  impl->set_required<RemoteModule>("PixelFormat", pixel_format);
+  impl->set_required<RemoteModule>("TriggerSelector", cfg.at("TriggerSelector").get<std::string>());
+  impl->set_required<RemoteModule>("TriggerMode", cfg.at("TriggerMode").get<std::string>());
+  impl->set_required<RemoteModule>("TriggerSource", trigger_source);
+  impl->set_required<RemoteModule>("ExposureTime", cfg.at("ExposureTime").get<float>());
+  impl->set_required<RemoteModule>("GainSelector", cfg.at("GainSelector").get<std::string>());
+  impl->set_required<RemoteModule>("Gain", cfg.at("Gain").get<float>());
+  impl->set_required<RemoteModule>("FlatFieldCorrection",
+                                   cfg.at("FlatFieldCorrection").get<std::string>());
 
   if (cfg.contains("BalanceWhiteMarker")) {
-    impl_->set_opt<RemoteModule>("BalanceWhiteMarker",
-                                 cfg.at("BalanceWhitemarker").get<std::string>());
+    impl->set_opt<RemoteModule>("BalanceWhiteMarker",
+                                cfg.at("BalanceWhiteMarker").get<std::string>());
   }
 
   const auto camera_control_method =
       trigger_source == "SWTRIGGER" ? std::string("RC") : std::string("EXTERNAL");
-  impl_->set_opt<DeviceModule>("CameraControlMethod", camera_control_method);
+  impl->set_opt<DeviceModule>("CameraControlMethod", camera_control_method);
 
   if (trigger_source == "SWTRIGGER") {
-    impl_->set_opt<DeviceModule>("ErrorSelector", "All");
-    impl_->set_opt<DeviceModule>("ExposureReadoutOverlap", "True");
+    impl->set_opt<DeviceModule>("ErrorSelector", "All");
+    impl->set_opt<DeviceModule>("ExposureReadoutOverlap", "True");
     if (cfg.contains("CycleMinimumPeriod"))
-      impl_->set_opt<DeviceModule>("CycleMinimumPeriod",
-                                   cfg.at("CycleMinimumPeriod").get<int64_t>());
+      impl->set_opt<DeviceModule>("CycleMinimumPeriod",
+                                  cfg.at("CycleMinimumPeriod").get<int64_t>());
   }
 
   auto line_width =
@@ -96,21 +92,25 @@ void CameraS711::configure() {
   auto block_height       = cfg.value("BlockHeight", 8);
   auto stripe_arrangement = cfg.value("StripeArrangement", std::string("Geometry_1X_2YM"));
 
-  impl_->set_required<StreamModule>("BufferPartCount", cfg.at("BufferPartCount").get<int64_t>());
-  impl_->set_required<StreamModule>("LineWidth", line_width);
-  impl_->set_required<StreamModule>("LinePitch", line_pitch);
-  impl_->set_required<StreamModule>("StripeHeight", stripe_height);
-  impl_->set_required<StreamModule>("StripePitch", stripe_pitch);
-  impl_->set_required<StreamModule>("BlockHeight", block_height);
-  impl_->set_required<StreamModule>("StripeArrangement", stripe_arrangement);
+  impl->set_required<StreamModule>("BufferPartCount", cfg.at("BufferPartCount").get<int64_t>());
+  impl->set_required<StreamModule>("LineWidth", line_width);
+  impl->set_required<StreamModule>("LinePitch", line_pitch);
+  impl->set_required<StreamModule>("StripeHeight", stripe_height);
+  impl->set_required<StreamModule>("StripePitch", stripe_pitch);
+  impl->set_required<StreamModule>("BlockHeight", block_height);
+  impl->set_required<StreamModule>("StripeArrangement", stripe_arrangement);
 
   auto offsets = cfg.at("Offsets").get<std::vector<int64_t>>();
-  impl_->set_offset(offsets[0], offsets[1]);
+  impl->set_offset(offsets[0], offsets[1]);
 }
 } // namespace holocam
 
 #else
 namespace holocam {
-void CameraS711::configure() {}
+namespace holocam {
+void CameraS711::configure(Impl *impl, const nlohmann::json &cfg) {
+  (void)impl;
+  (void)cfg;
+}
 } // namespace holocam
 #endif
