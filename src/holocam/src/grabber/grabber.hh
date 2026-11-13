@@ -32,9 +32,9 @@ std::string format_genapi_error(const Euresys::genapi_error &err);
 
 class Grabber {
 public:
-  Grabber(uint8_t *buffer, size_t buffer_size, size_t buffer_part_count, Euresys::EGrabberInfo info_a,
-          std::optional<Euresys::EGrabberInfo> info_b = std::nullopt);
-  ~Grabber();
+  Grabber(uint8_t *buffer, size_t buffer_size, size_t buffer_part_count,
+          Euresys::EGrabberInfo info_a, std::optional<Euresys::EGrabberInfo> info_b = std::nullopt);
+  ~Grabber() = default;
 
   void requeue(const FrameBufferPair &buffers);
 
@@ -58,14 +58,14 @@ public:
   FrameBufferPair pop(uint64_t timeout);
 
   // validate the buffers data and returns its base ptr (or nullptr if not validated)
-  std::byte *validate_buffer_data(FrameBufferPair& frame);
+  std::byte *validate_buffer_data(FrameBufferPair &frame);
 
 private:
   using GrabberType = Euresys::EGrabber<Euresys::CallbackOnDemand>;
-  union {
-    std::unique_ptr<GrabberType> grabber_a_;
-    std::unique_ptr<GrabberType> ctrl_;
-  };
+  std::unique_ptr<GrabberType> &ctrl() { return grabber_a_; };
+
+private:
+  std::unique_ptr<GrabberType> grabber_a_;
 
   std::unique_ptr<GrabberType> grabber_b_;
   bool                         is_running_ = false;
@@ -74,12 +74,11 @@ private:
   Clock::time_point last_error_log_;
   Clock::time_point last_rejected_log_;
   Clock::time_point last_accepted_log_;
-  
+
   size_t max_ts_delta_since_log_{};
   size_t accepted_since_log_{};
 
   size_t buffer_part_count_;
-
 };
 
 } // namespace holocam

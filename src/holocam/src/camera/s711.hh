@@ -15,21 +15,6 @@
 #pragma once
 
 #include "holocam/camera.hh"
+#include "skeleton.hh"
 
-namespace holocam {
-
-class CameraS711 final : public CameraBase {
-public:
-  CameraS711(const nlohmann::json &config, const std::optional<RecordOptions> &record_options)
-      : CameraBase(config, record_options) {}
-
-  const char *name() const noexcept override { return "AmetekS711EuresysCoaxlinkQSFP+"; }
-  const char *short_name() const noexcept override { return "s711"; }
-  const char *model_name() const noexcept override { return "Phantom S711"; }
-  size_t      grabber_count() const noexcept override { return 2; }
-
-protected:
-  void configure() override;
-};
-
-} // namespace holocam
+CAMERA_DECL(S711, "AmetekS711EuresysCoaxlinkQSFP+", "s711", "Phantom S711", 2)

@@ -75,9 +75,7 @@
 #include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
-#include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
-#include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
-#include "holotask/sources/ametek_s991_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sources/camera.hh"
 #include "holotask/sources/fresnel_qin.hh"
 #include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
@@ -231,9 +229,7 @@ void Manager::register_components() {
   reg_sync<sinks::NpyfileFactory>(registry_, "NpyfileWriter");
   reg_sync<sinks::FfmpegFactory>(registry_, "FfmpegWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
-  reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_, "AmetekS710EuresysCoaxlinkOcto");
-  reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS711EuresysCoaxlinkQSFP+");
-  reg_sync<sources::AmetekS991EuresysCoaxlinkQSFPFactory>(registry_, "AmetekS991EuresysCoaxlinkQSFP+");
+  reg_sync<sources::CameraFactory>(registry_, "Camera");
   reg_sync<sources::FresnelQinFactory>(registry_, "FresnelQin");
   reg_sync<sources::FresnelQoutFactory>(registry_, "FresnelQout");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");

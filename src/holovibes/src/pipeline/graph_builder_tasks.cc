@@ -56,9 +56,7 @@ DEFINE_SOURCE_SYNC_NODE(asarray,                                "asarray",      
 DEFINE_SOURCE_SYNC_NODE(arange,                                 "arange",                              "Arange",                          holonp::ArangeSettings)
 DEFINE_UNARY_SYNC_NODE (ascontiguousarray,                      "ascontiguousarray",                   "AsContiguousArray",               holonp::AsContiguousArraySettings)
 DEFINE_UNARY_SYNC_NODE (copy,                                   "copy",                                "Copy",                            holonp::CopySettings)
-DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo,      "source",   "AmetekS710EuresysCoaxlinkOcto",   holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)
-DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "source", "AmetekS711EuresysCoaxlinkQSFP+",  holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
-DEFINE_SOURCE_SYNC_NODE(ametek_s991_euresys_coaxlink_qsfp_plus, "source", "AmetekS991EuresysCoaxlinkQSFP+",  holotask::sources::AmetekS991EuresysCoaxlinkQSFPSettings)
+DEFINE_SOURCE_SYNC_NODE(camera,                                 "source",                              "Camera",                          holotask::sources::CameraSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                      holotask::sources::FresnelQinSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_qout,                           "fresnel_qout",                        "FresnelQout",                     holotask::sources::FresnelQoutSettings)
 DEFINE_UNARY_SYNC_NODE (short_time_fresnel_diffraction,         "short_time_fresnel_diffraction",      "ShortTimeFresnelDiffraction",      holotask::syncs::ShortTimeFresnelDiffractionSettings)
@@ -216,9 +214,8 @@ void GraphBuilderTasks::holofile_write(const TDesc &X, holotask::sinks::Holofile
 
   auto      &factory     = reg_.get_sync(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});
-  (void)infer_node(v, std::span{&X, 1}, [&] {
-    return factory.infer(core_inputs, nlohmann::json(s));
-  });
+  (void)infer_node(v, std::span{&X, 1},
+                   [&] { return factory.infer(core_inputs, nlohmann::json(s)); });
 }
 
 void GraphBuilderTasks::npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s) {

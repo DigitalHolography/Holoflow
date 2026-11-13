@@ -35,24 +35,19 @@ public:
   virtual const char *short_name() const noexcept = 0;
   virtual const char *model_name() const noexcept = 0;
 
-  virtual size_t grabber_count() const noexcept;
+  virtual size_t grabber_count() const noexcept = 0;
 
-  size_t bank_count() const noexcept;
-  size_t frame_width() const noexcept;
-  size_t frame_height() const noexcept;
-  size_t buffer_part_count() const noexcept;
-
-  void set_record_options(std::optional<RecordOptions>);
-  void update_record_path(const std::string& path);
+  void set_record_options(std::optional<RecordOptions> o);
+  void update_record_path(const std::string &path);
 
   void start_acquisition();
   void stop_acquisition();
   bool start_raw_record();
   void stop_raw_record();
-  void cancel_all_records(); 
+  void cancel_all_records();
 
   RecordingSessionId current_recording_session_id();
-  bool recording();
+  bool               recording();
 
   // returns nullptr if cancelled
   // returns the next frame in the buffer queue and set it as pending frame
@@ -64,10 +59,10 @@ public:
   const nlohmann::json &configuration() const noexcept;
 
 protected:
-  CameraBase(const nlohmann::json &config, std::optional<RecordOptions> record_options);
-
-  // apply configuration to the camera
-  virtual void configure() = 0;
+  using ConfigurationCallback = std::function<void()>;
+  CameraBase(const nlohmann::json &config, std::optional<RecordOptions> record_options,
+             const char *short_name, const char *model_name, size_t grabber_count,
+            ConfigurationCallback configure);
 
 protected:
   std::unique_ptr<Impl> impl_;

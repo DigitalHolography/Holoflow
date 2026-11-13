@@ -68,7 +68,7 @@ CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlo
                        const std::optional<RecordOptions> &record_options,
                        size_t expected_grabber_count, size_t buffer_size)
     : config_{config}, gentl_{std::make_unique<Euresys::EGenTL>()},
-      buffers_{curaii::make_unique_host_ptr<uint8_t>(buffer_size)} {
+      buffers_{curaii::make_unique_host_ptr<uint8_t>(buffer_size)}, buffer_size_{buffer_size} {
   auto camera_info = find_camera(*gentl_, model_name);
   check(camera_info.has_value(), std::format("could not find {} camera", model_name));
   info_ = *camera_info;
@@ -101,6 +101,7 @@ CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlo
 
 void CameraBase::Impl::init_record_context(const char *short_name, const RecordOptions &options,
                                            size_t buffer_size) {
+  recording_context_.reset();
   recording_context_.emplace();
 
   auto       root         = config_.at(short_name);
@@ -267,6 +268,25 @@ void CameraBase::Impl::stop_raw_record() {
 
     assert(!recording_context_->recording.load(std::memory_order_acquire));
   }
+}
+
+void CameraBase::Impl::set_recording_options(std::optional<RecordOptions> o,
+                                              const char                  *short_name) {
+  cancel_all_records();
+  if (o.has_value()) {
+    init_record_context(short_name, *o, buffer_size_);
+  } else {
+    recording_context_.reset();
+    buffers_.reset();
+    recording_buffers_count_ = 0;
+    recording_buffers_size_  = 0;
+  }
+}
+
+void CameraBase::Impl::update_record_path(const std::string &path) {
+  assert(recording_context_.has_value());
+
+  recording_context_->settings.file_path = path;
 }
 } // namespace holocam
 

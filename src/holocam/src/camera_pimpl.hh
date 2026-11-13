@@ -35,12 +35,7 @@ public:
        const std::optional<RecordOptions> &record_options, size_t expected_grabber_count,
        size_t buffer_size);
 
-  std::size_t bank_count() const noexcept;
-  std::size_t frame_width() const noexcept;
-  std::size_t frame_height() const noexcept;
-  std::size_t buffer_part_count() const noexcept;
-
-  void set_recording_options(std::optional<RecordOptions>);
+  void set_recording_options(std::optional<RecordOptions> o, const char *short_name);
   void update_record_path(const std::string &path);
 
   void start_acquisition();
@@ -86,7 +81,7 @@ private:
   std::unique_ptr<Euresys::EGenTL> gentl_;
   Euresys::EGrabberCameraInfo      info_;
   HostPtr<uint8_t>                 buffers_;
-  size_t                           buffers_size_;
+  size_t                           buffer_size_;
   size_t                           buffer_part_count_;
   size_t                           nb_buffers_;
   std::unique_ptr<Grabber>         grabber_{nullptr};

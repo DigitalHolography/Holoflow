@@ -166,8 +166,7 @@ struct Settings {
 
   [[nodiscard]] bool can_use_camera_record() const {
     return recording_format == "holo" && recording_method == RecordingMethod::RAW &&
-           (import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP ||
-            import_source == ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP);
+           (import_source != ImportSource::HOLOFILE);
   }
 };
 

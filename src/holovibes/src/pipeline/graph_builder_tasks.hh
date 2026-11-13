@@ -50,9 +50,7 @@
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
 #include "holotask/sinks/ffmpeg.hh"
-#include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
-#include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
-#include "holotask/sources/ametek_s991_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sources/camera.hh"
 #include "holotask/sources/fresnel_qin.hh"
 #include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
@@ -131,9 +129,7 @@ protected:
   void  holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
   void  npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s);
   void  ffmpeg_write(const TDesc &X, holotask::sinks::FfmpegSettings s);
-  TDesc ametek_s710_euresys_coaxlink_octo(holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings s);
-  TDesc ametek_s711_euresys_coaxlink_qsfp_plus(holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
-  TDesc ametek_s991_euresys_coaxlink_qsfp_plus(holotask::sources::AmetekS991EuresysCoaxlinkQSFPSettings s);
+  TDesc camera(holotask::sources::CameraSettings s);
   TDesc convolution(const TDesc &X, holotask::syncs::ConvolutionSettings s);
   TDesc correct_phase(const TDesc &X, const TDesc &PhaseMask, holotask::syncs::CorrectPhaseSettings s);
   TDesc pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);

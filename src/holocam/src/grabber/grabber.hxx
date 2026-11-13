@@ -29,7 +29,7 @@ template <typename> inline constexpr bool always_false_v = false;
 #define SET(name, value, Type, Catch)                                                              \
   try {                                                                                            \
     auto n = std::string(name);                                                                    \
-    ctrl_->set##Type<Module>(n, value);                                                            \
+    ctrl()->set##Type<Module>(n, value);                                                            \
     if constexpr (std::same_as<Module, Euresys::StreamModule>) {                                   \
       if (grabber_b_)                                                                              \
         grabber_b_->set##Type<Module>(n, value);                                                   \

@@ -31,14 +31,14 @@ void check(bool condition, const std::string &msg) {
 }
 
 } // namespace
-CameraBase::CameraBase(const nlohmann::json &config, std::optional<RecordOptions> record_options)
+CameraBase::CameraBase(const nlohmann::json &config, std::optional<RecordOptions> record_options, const char* short_name, const char *model_name, size_t grabber_count, ConfigurationCallback configure)
     : impl_{nullptr} {
   static const std::map<std::string, std::size_t> pixel_format_map = {
       {"Mono8", 1},
       {"Mono16", 2},
   };
 
-  auto root              = config.at(short_name());
+  auto root              = config.at(short_name);
   auto nb_buffers        = root.at("NbBuffers").get<std::size_t>();
   auto buffer_part_count = root.at("BufferPartCount").get<std::size_t>();
   auto final_height      = root.value("FinalHeight", root.at("Height").get<std::size_t>());
@@ -61,20 +61,15 @@ CameraBase::CameraBase(const nlohmann::json &config, std::optional<RecordOptions
   constexpr size_t safety_buffer_count = 16;
   auto             buffer_count = std::max(record_buffer_needed, nb_buffers) + safety_buffer_count;
   auto             total_size   = buffer_count * buffer_size;
-  impl_ = std::make_unique<Impl>(model_name(), short_name(), config, record_options,
-                                 grabber_count(), total_size);
+  impl_ = std::make_unique<Impl>(model_name, short_name, config, record_options,
+                                 grabber_count, total_size);
   configure();
 }
 
 CameraBase::~CameraBase() {}
 
-std::size_t CameraBase::bank_count() const noexcept { return impl_->bank_count(); }
-std::size_t CameraBase::frame_width() const noexcept { return impl_->frame_width(); }
-std::size_t CameraBase::frame_height() const noexcept { return impl_->frame_height(); }
-std::size_t CameraBase::buffer_part_count() const noexcept { return impl_->buffer_part_count(); }
-
-void CameraBase::set_record_options(std::optional<RecordOptions> s) {
-  impl_->set_recording_options(s);
+void CameraBase::set_record_options(std::optional<RecordOptions> o) {
+  impl_->set_recording_options(o, short_name());
 }
 
 void CameraBase::update_record_path(const std::string &path) { impl_->update_record_path(path); }
@@ -108,12 +103,7 @@ CameraBase::CameraBase(nlohmann::json config, std::optional<RecordingSettings> r
   throw std::runtime_error("This build does not support EGrabber");
 }
 
-std::size_t CameraBase::bank_count() const noexcept { return 0; }
-std::size_t CameraBase::frame_width() const noexcept { return 0; }
-std::size_t CameraBase::frame_height() const noexcept { return 0; }
-std::size_t CameraBase::buffer_part_count() const noexcept { return 0; }
-
-void CameraBase::set_recording_settings(std::optional<RecordingSettings> s) { (void)s; }
+void CameraBase::set_record_options(std::optional<RecordingOptions> s) { (void)s; }
 void CameraBase::update_record_path(const std : string &path) { (void)path; }
 
 vod  CameraBase::start_acquisition() {}

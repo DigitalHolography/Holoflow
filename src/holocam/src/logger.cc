@@ -17,7 +17,7 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/spdlog.h>
 
-namespace holotask {
+namespace holocam {
 
 std::shared_ptr<spdlog::logger> logger() {
   static std::shared_ptr<spdlog::logger> logger = [] {

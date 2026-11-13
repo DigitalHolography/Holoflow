@@ -57,8 +57,7 @@ std::string format_genapi_error(const Euresys::genapi_error &err) {
 }
 
 Grabber::Grabber(uint8_t *buffer, size_t buffer_size, size_t buffer_part_count,
-                 Euresys::EGrabberInfo                info_a,
-                 std::optional<Euresys::EGrabberInfo> info_b)
+                 Euresys::EGrabberInfo info_a, std::optional<Euresys::EGrabberInfo> info_b)
     : grabber_a_{std::make_unique<GrabberType>(info_a)}, grabber_b_{nullptr},
       buffer_part_count_{buffer_part_count} {
   Euresys::UserMemory      memory(buffer, buffer_size);
@@ -155,7 +154,7 @@ FrameBufferPair Grabber::pop(uint64_t timeout) {
   return {a, b};
 }
 
-void Grabber::reset_config() { ctrl_->execute<Euresys::DeviceModule>("DeviceReset"); }
+void Grabber::reset_config() { ctrl()->execute<Euresys::DeviceModule>("DeviceReset"); }
 
 void Grabber::set_offsets(int64_t a, int64_t b) {
   grabber_a_->setInteger<Euresys::StreamModule>("StripeOffset", a);
@@ -195,8 +194,8 @@ std::byte *Grabber::validate_buffer_data(FrameBufferPair &frame) {
     const auto frame_id_b  = buffer_b.getInfo<uint64_t>(*grabber_b_, GenTL::BUFFER_INFO_FRAMEID);
 
     if (base_a != base_b && log_due(last_rejected_log_)) {
-      logger()->error("[Grabber::validate_buffer_data] base pointers differ: a={} b={}", static_cast<void*>(base_a),
-                      static_cast<void*>(base_b));
+      logger()->error("[Grabber::validate_buffer_data] base pointers differ: a={} b={}",
+                      static_cast<void *>(base_a), static_cast<void *>(base_b));
       return nullptr;
     }
 
@@ -209,32 +208,31 @@ std::byte *Grabber::validate_buffer_data(FrameBufferPair &frame) {
 
     if (frame_id_a != frame_id_b && log_due(last_rejected_log_)) {
       if (log_due(last_rejected_log_)) {
-        logger()->error(
-            "[Grabber::validate_buffer_data] frame ids differ: a={} b={}", frame_id_a, frame_id_b);
+        logger()->error("[Grabber::validate_buffer_data] frame ids differ: a={} b={}", frame_id_a,
+                        frame_id_b);
       }
       return nullptr;
     }
 
-    const auto ts_delta = ts_a >= ts_b ? ts_a - ts_b : ts_b - ts_a;
+    const auto ts_delta     = ts_a >= ts_b ? ts_a - ts_b : ts_b - ts_a;
     max_ts_delta_since_log_ = std::max(ts_delta, max_ts_delta_since_log_);
     if (log_due(last_accepted_log_)) {
       ++accepted_since_log_;
       logger()->info("[Grabber::validate_buffer_data] accepted {} frames, latest: "
                      "base={}, id={}, max ts delta={} us",
-                     accepted_since_log_, static_cast<void *>(base_a), frame_id_a, max_ts_delta_since_log_);
-      accepted_since_log_ = 0;
-      max_ts_delta_since_log_   = 0;
+                     accepted_since_log_, static_cast<void *>(base_a), frame_id_a,
+                     max_ts_delta_since_log_);
+      accepted_since_log_     = 0;
+      max_ts_delta_since_log_ = 0;
     }
 
     return base_a;
   } catch (const Euresys::genapi_error &err) {
-    logger()->error("[AmetekS991EuresysCoaxlinkQSFP::acquisition_loop] GenApi error: {}",
-                    format_genapi_error(err));
+    logger()->error("[Grabber::validate_buffer_data] GenApi error: {}", format_genapi_error(err));
   } catch (const Euresys::gentl_error &err) {
-    logger()->error("[AmetekS991EuresysCoaxlinkQSFP::acquisition_loop] GenTL error: {}",
-                    err.what());
+    logger()->error("[Grabber::validate_buffer_data] GenTL error: {}", err.what());
   } catch (const std::exception &err) {
-    logger()->error("[AmetekS991EuresysCoaxlinkQSFP::acquisition_loop] error: {}", err.what());
+    logger()->error("[Grabber::validate_buffer_data] error: {}", err.what());
   }
   return nullptr;
 }

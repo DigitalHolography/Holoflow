@@ -224,32 +224,25 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
                           .keep_cursor = false});
   }
 
-  if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
-    return ametek_s710_euresys_coaxlink_octo({cam_path});
-  }
-
-  std::optional<holotask::sources::RecordSettings> record_settings = std::nullopt;
+   std::optional<holocam::RecordSettings> record_settings = std::nullopt;
   if (s_.can_use_camera_record()) {
-    record_settings = holotask::sources::RecordSettings{
+    record_settings = holocam::RecordSettings{
         .file_path          = s_.recording_path.string(),
         .recording_count    = s_.recording_count,
         .pipeline_config    = settings_to_old_json(s_),
         .record_queue_count = static_cast<size_t>(s_.recording_queue_count)};
   }
 
-  if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
-    holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings settings{
-        .cfg_path = cam_path, .record_settings = record_settings};
-    return ametek_s711_euresys_coaxlink_qsfp_plus(settings);
-  }
+  static const std::map<ImportSource, std::string_view> import_source_to_string = {
+      { ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO, "AmetekS710EuresysCoaxlinkOcto" },
+      { ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP, "AmetekS711EuresysCoaxlinkQSFP+" },
+      { ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP, "AmetekS991EuresysCoaxlinkQSFP+" },
+  };
 
-  if (s_.import_source == ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP) {
-    holotask::sources::AmetekS991EuresysCoaxlinkQSFPSettings settings{
-        .cfg_path = cam_path, .record_settings = record_settings};
-    return ametek_s991_euresys_coaxlink_qsfp_plus(settings);
-  }
-
-  HOLOVIBES_UNREACHABLE();
+  holotask::sources::CameraSettings settings{.cfg_path        = cam_path,
+                                              .name = std::string(import_source_to_string.at(s_.import_source)),
+                                             .record_settings = record_settings};
+  return camera(settings);
 }
 
 void GraphBuilder::Impl::build_raw_record(const TDesc &H) {

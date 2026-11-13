@@ -115,39 +115,8 @@ public:
     std::unique_ptr<holocam::CameraBase> base = nullptr;
 
     if (settings.record_settings.has_value()) {
-      auto options = holocam::RecordOptions{
-          *settings.record_settings,
-          {
-              .flushing_finished =
-                  [this](holocam::RecordingSessionId id) {
-                    if (ctx_)
-                      emit_camera_record_flushing_finished_event(*ctx_, id);
-                  },
-              .poll_metrics =
-                  [this](holocam::RecordingSessionId id, size_t written, size_t speed,
-                         size_t elapsed_time) {
-                    if (ctx_)
-                      emit_recording_update_event(*ctx_, id, written, speed, elapsed_time);
-                  },
-
-              .acquisition_metrics =
-                  [this](holocam::RecordingSessionId id, size_t frames) {
-                    if (ctx_)
-                      emit_acquisition_update_event(*ctx_, id, frames);
-                  },
-
-              .success_callback =
-                  [this](holocam::RecordingSessionId id, size_t frames) {
-                    if (ctx_)
-                      emit_recording_finished_event(*ctx_, id, frames);
-                  },
-              .failure_callback =
-                  [this](holocam::RecordingSessionId id, const std::string &msg) {
-                    if (ctx_)
-                      emit_recording_failed_event(*ctx_, id, msg);
-                  },
-          }};
-      base = factory_.create(settings.name, config, options);
+      auto options = make_record_options(*settings.record_settings);
+      base         = factory_.create(settings.name, config, options);
     } else {
       base = factory_.create(settings.name, config, std::nullopt);
     }
@@ -249,6 +218,7 @@ public:
   }
 
   void cancel(holoflow::core::SyncCtx &ctx) override {
+    (void)ctx;
     logger()->info("[CameraTask::execute] cancelled");
     camera_->stop_acquisition();
     running_.store(false, std::memory_order_release);
@@ -269,7 +239,8 @@ public:
   }
 
   void update_settings(const CameraSettings &settings) {
-    // TODO
+    settings_ = settings;
+    camera_->set_record_options(make_record_options(*settings.record_settings));
   }
 
   void log_update_lifecycle(bool updated) {
@@ -282,6 +253,41 @@ public:
   }
 
 private:
+  holocam::RecordOptions make_record_options(const holocam::RecordSettings &s) {
+    return holocam::RecordOptions{
+        s,
+        {
+            .flushing_finished =
+                [this](holocam::RecordingSessionId id) {
+                  if (ctx_)
+                    emit_camera_record_flushing_finished_event(*ctx_, id);
+                },
+            .poll_metrics =
+                [this](holocam::RecordingSessionId id, size_t written, size_t speed,
+                       size_t elapsed_time) {
+                  if (ctx_)
+                    emit_recording_update_event(*ctx_, id, written, speed, elapsed_time);
+                },
+
+            .acquisition_metrics =
+                [this](holocam::RecordingSessionId id, size_t frames) {
+                  if (ctx_)
+                    emit_acquisition_update_event(*ctx_, id, frames);
+                },
+
+            .success_callback =
+                [this](holocam::RecordingSessionId id, size_t frames) {
+                  if (ctx_)
+                    emit_recording_finished_event(*ctx_, id, frames);
+                },
+            .failure_callback =
+                [this](holocam::RecordingSessionId id, const std::string &msg) {
+                  if (ctx_)
+                    emit_recording_failed_event(*ctx_, id, msg);
+                },
+        }};
+  }
+
   void emit_camera_record_flushing_finished_event(holoflow::core::SyncCtx    &ctx,
                                                   holocam::RecordingSessionId id) {
     auto event = holoflow_event::Event{
@@ -552,15 +558,13 @@ CameraFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   auto config_changed = raw_cfg != old->get_cfg();
   auto need_rebuild   = record_settings_changed || config_changed;
 
+  old->stop_acquisition();
+  old->log_update_lifecycle(need_rebuild);
   if (!need_rebuild) {
     old->update_settings(settings);
-    old->stop_acquisition();
-    old->log_update_lifecycle(false);
     return old_task;
   }
 
-  old->stop_acquisition();
-  old->log_update_lifecycle(true);
   old_task.reset(); // destroy old task and release all the buffers
   return create(input_descs, jsettings, ctx);
 }
