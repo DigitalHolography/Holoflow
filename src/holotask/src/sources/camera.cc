@@ -115,8 +115,7 @@ void dump_cfg(const char *label, const nlohmann::json &cfg) {
  */
 class CameraTask : public holoflow::core::ISyncTask {
 public:
-  CameraTask(const CameraSettings &settings, const nlohmann::json &config)
-      : settings_{settings} {
+  CameraTask(const CameraSettings &settings, const nlohmann::json &config) : settings_{settings} {
 
     if (settings.record_settings.has_value()) {
       auto options = make_record_options(*settings.record_settings);
@@ -204,29 +203,25 @@ public:
 
     while (!ctx.cancelled->load()) {
       auto *next = camera_->get_frame(ctx.cancelled); // return null if cancelled
-      if (next == nullptr) {
-        logger()->info("[CameraTask::execute] cancelled");
+      if (next == nullptr)
         break;
-      }
-      if (next) {
-        auto &storage = storage_access().owned_output_storage(0);
-        storage.ptr   = next;
+      auto &storage = storage_access().owned_output_storage(0);
+      storage.ptr   = next;
 
-        ctx.outputs[0] = holoflow::core::TView{
-            .desc    = ctx.outputs[0].desc,
-            .storage = &storage,
-        };
-      }
+      ctx.outputs[0] = holoflow::core::TView{
+          .desc    = ctx.outputs[0].desc,
+          .storage = &storage,
+      };
       return holoflow::core::OpResult::Ok;
     }
 
+    cancel(ctx);
     return holoflow::core::OpResult::Cancelled;
   }
 
   void cancel(holoflow::core::SyncCtx &ctx) override {
-    (void)ctx;
     stop_acquisition();
-    logger()->info("[CameraTask::cancel] cancelled");
+    logger()->info("[CameraTask::cancel] cancelled ({})", ctx.cancelled->load());
     ctx_ = nullptr;
   }
 

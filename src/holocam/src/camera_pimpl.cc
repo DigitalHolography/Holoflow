@@ -167,6 +167,7 @@ void CameraBase::Impl::stop_acquisition() {
     acquisition_thread_.reset();
     grabber_->stop_if_running();
     acquiring_.store(false, std::memory_order_release);
+    buffer_queue_->close();
     logger()->info("[CameraBase::Impl::stop_acquisition] acquisition stopped");
   }
 }
@@ -174,6 +175,7 @@ void CameraBase::Impl::stop_acquisition() {
 void CameraBase::Impl::start_acquisition() {
   stop_acquisition();
   grabber_->start_if_not_running();
+  buffer_queue_->open();
   acquisition_thread_.emplace([this](std::stop_token cancelled) { acquisition_loop(cancelled); });
   acquiring_.store(true, std::memory_order_release);
   logger()->info("[CameraBase::Impl::start_acquisition] acquisition started");
@@ -190,7 +192,6 @@ void CameraBase::Impl::acquisition_loop(std::stop_token cancelled) {
 
   logger()->info("[CameraBase::Impl::acquisition_loop] acquisition loop started");
   try {
-    buffer_queue_->open();
     FrameBufferPair frame{};
     while (!cancelled.stop_requested()) {
       try {
@@ -218,6 +219,10 @@ void CameraBase::Impl::acquisition_loop(std::stop_token cancelled) {
         continue;
       }
 
+      if (cancelled.stop_requested()) {
+        grabber_->requeue(frame);
+        break;
+      }
       CameraFrame camera_frame = {.banks = frame, .base = base};
       auto        result       = CameraBufferQueue::PushResult::Closed;
       result                   = buffer_queue_->try_push(camera_frame);
@@ -241,7 +246,6 @@ void CameraBase::Impl::acquisition_loop(std::stop_token cancelled) {
         "[CameraBase::Impl::acquisition_loop] acquisition loop stopped due to unknown error");
   }
   cancel_all_records();
-  buffer_queue_->close();
 }
 
 void CameraBase::Impl::check_for_record_failure() {
