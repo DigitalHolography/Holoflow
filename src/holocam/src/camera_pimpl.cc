@@ -67,7 +67,7 @@ std::optional<Euresys::EGrabberCameraInfo> find_camera(Euresys::EGenTL   &gentl,
 CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlohmann::json &config,
                        const std::optional<RecordOptions> &record_options,
                        size_t expected_grabber_count, size_t buffer_size, size_t buffer_count)
-    : config_{config}, gentl_{std::make_unique<Euresys::EGenTL>()},
+    : config_(config), gentl_{std::make_unique<Euresys::EGenTL>()},
       buffers_{curaii::make_unique_host_ptr<uint8_t>(buffer_size *
                                                      (buffer_count + safety_buffer_count))},
       total_buffer_size_{buffer_size * buffer_count}, buffer_size_{buffer_size},
@@ -118,8 +118,12 @@ void CameraBase::Impl::init_record_context(const char *short_name, const RecordO
 
   const auto &record_settings  = std::get<RecordSettings>(options);
   const auto &record_callbacks = std::get<RecordCallbacks>(options);
-  recording_buffers_           = curaii::make_unique_host_ptr<std::byte>(total_buffer_size *
-                                                                         record_settings.record_queue_count);
+  if (total_buffer_size > old_recording_buffers_size_) {
+    recording_buffers_ = curaii::make_unique_host_ptr<std::byte>(
+        total_buffer_size * record_settings.record_queue_count);
+  }
+  old_recording_buffers_size_ = total_buffer_size;
+
   recording_context_->invalidate(
       record_settings, *buffer_queue_.get(), total_buffer_size, recording_buffers_.get(), g,
       record_callbacks.poll_metrics, record_callbacks.acquisition_metrics,
@@ -222,8 +226,8 @@ void CameraBase::Impl::acquisition_loop(std::stop_token cancelled) {
         check_for_record_failure();
         if (log_due(last_requeue_log_)) {
           logger()->warn("[CameraBase::Impl::acquisition_loop] buffer_queue is full or closed "
-                         "(size={}/{}): dropping frame",
-                         buffer_queue_->size(), buffer_queue_->capacity());
+                         "(size={}/{}, closed={}): dropping frame",
+                         buffer_queue_->size(), buffer_queue_->capacity(), buffer_queue_->closed());
         }
         grabber_->requeue(frame);
       }
@@ -281,8 +285,7 @@ void CameraBase::Impl::stop_raw_record() {
   auto session = current_recording_session_;
   if (session) {
     session->stop();
-    logger()->info("[CameraBase::Impl::stop_raw_record] stopped record on queue {}",
-                   session->id());
+    logger()->info("[CameraBase::Impl::stop_raw_record] stopped record on queue {}", session->id());
     current_recording_session_ = nullptr;
     assert(!recording_context_->recording.load(std::memory_order_acquire));
   }
@@ -296,8 +299,7 @@ void CameraBase::Impl::set_recording_options(std::optional<RecordOptions> o,
   } else {
     recording_context_.reset();
     buffers_.reset();
-    recording_buffers_count_ = 0;
-    recording_buffers_size_  = 0;
+    old_recording_buffers_size_ = 0;
   }
 }
 

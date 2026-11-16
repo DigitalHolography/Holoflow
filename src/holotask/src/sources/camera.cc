@@ -100,6 +100,10 @@ nlohmann::json load_cfg(const std::string &cfg_path) {
   return nlohmann::json::parse(cfg_file);
 }
 
+void dump_cfg(const char *label, const nlohmann::json &cfg) {
+  logger()->info("[holotask::sources::dump_cfg]:{}\n{}", label, cfg.dump(2));
+}
+
 } // namespace
 
 // -------------------------------------------------------------------------------------------------
@@ -112,7 +116,7 @@ nlohmann::json load_cfg(const std::string &cfg_path) {
 class CameraTask : public holoflow::core::ISyncTask {
 public:
   CameraTask(const CameraSettings &settings, const nlohmann::json &config)
-      : settings_{settings}, cfg_{config} {
+      : settings_{settings} {
 
     if (settings.record_settings.has_value()) {
       auto options = make_record_options(*settings.record_settings);
@@ -193,6 +197,7 @@ public:
     handle_events(ctx);
 
     if (!running_.load(std::memory_order_acquire)) {
+      logger()->info("[CameraTask::execute] starting camera execution");
       ctx_ = &ctx;
       start_acquisition();
     }
@@ -200,6 +205,7 @@ public:
     while (!ctx.cancelled->load()) {
       auto *next = camera_->get_frame(ctx.cancelled); // return null if cancelled
       if (next == nullptr) {
+        logger()->info("[CameraTask::execute] cancelled");
         break;
       }
       if (next) {
@@ -224,7 +230,7 @@ public:
     ctx_ = nullptr;
   }
 
-  const nlohmann::json &get_cfg() const { return cfg_; }
+  const nlohmann::json &get_cfg() const { return camera_->configuration(); }
 
   const CameraSettings &get_settings() const { return settings_; }
   void                  update_settings(const CameraSettings &settings) {
@@ -234,10 +240,9 @@ public:
 
   void log_update_lifecycle(bool updated) {
     if (updated) {
-      logger()->info("[CameraTask::log_update_lifecycle] update camera settings in place");
-
-    } else {
       logger()->info("[CameraTask::log_update_lifecycle] update camera by replacing it");
+    } else {
+      logger()->info("[CameraTask::log_update_lifecycle] update camera settings in place");
     }
   }
 
@@ -462,7 +467,6 @@ private:
 private:
   inline static holocam::CameraFactory factory_{};
   CameraSettings                       settings_;
-  nlohmann::json                       cfg_;
   std::unique_ptr<holocam::CameraBase> camera_;
   std::atomic<bool>                    running_{false};
 
@@ -565,6 +569,11 @@ CameraFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
 
   auto config_changed = raw_cfg != old->get_cfg();
   auto need_rebuild   = record_settings_changed || config_changed;
+
+  if (config_changed) {
+    dump_cfg("new config", raw_cfg);
+    dump_cfg("old config", old->get_cfg());
+  }
 
   old->stop_acquisition();
   old->log_update_lifecycle(need_rebuild);

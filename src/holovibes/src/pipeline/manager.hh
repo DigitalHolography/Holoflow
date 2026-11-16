@@ -63,6 +63,9 @@ public:
   /// @brief Requests a stop and waits for the pipeline to halt cleanly.
   void stop_pipeline();
 
+  /// @brief Requests a pause and waits for the pipeline to halt cleanly.
+  void pause_pipeline();
+
   /// @brief Restarts execution from the retained compiled graph and task state.
   void resume_pipeline();
 

@@ -159,6 +159,7 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
             if (!cancelled.stop_requested()) {
               state_.store(State::WritingToDisk, std::memory_order_release);
               finished.fetch_add(1);
+              acquisition_callback_(id_, settings.recording_count);
               success_callback_(id_, settings.recording_count);
             } else {
               logger()->info("[RecordingSession::worker] record cancelled");

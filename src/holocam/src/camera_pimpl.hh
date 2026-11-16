@@ -107,8 +107,7 @@ private:
 
   std::optional<RecordingContext> recording_context_{std::nullopt};
   HostPtr<std::byte>              recording_buffers_         = nullptr;
-  size_t                          recording_buffers_size_    = 0;
-  size_t                          recording_buffers_count_   = 0;
+  size_t                          old_recording_buffers_size_    = 0;
   RecordingSession               *current_recording_session_ = nullptr;
 };
 

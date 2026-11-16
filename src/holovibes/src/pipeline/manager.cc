@@ -419,7 +419,7 @@ void Manager::stop_pipeline() {
     // Retain the compiled graph and pending operations so the UI can resume without rebuilding.
     {
       ScopedTrace scope("Request Scheduler Pause");
-      scheduler_->request_pause();
+      scheduler_->request_stop();
     }
     {
       ScopedTrace scope("Wait for Scheduler Pause");
@@ -446,6 +446,60 @@ void Manager::stop_pipeline() {
     stop_zernike_history();
     const QString msg = QString("Failed to stop pipeline: %1").arg(e.what());
     logger()->error("[Manager::stop_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
+    emit stop_pipeline_failure(msg);
+  }
+}
+
+
+void Manager::pause_pipeline() {
+  OperationTrace operation("pause");
+  logger()->info("[Manager::pause_pipeline] Stopping pipeline...");
+  std::unique_lock lock(mtx_, std::defer_lock);
+  {
+    ScopedTrace scope("Acquire Manager Lock");
+    lock.lock();
+  }
+
+  if (!scheduler_ || !scheduler_->is_running()) {
+    const QString msg = "Pipeline is not running";
+    logger()->error("[Manager::pause_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
+    emit stop_pipeline_failure(msg);
+    return;
+  }
+
+  try {
+    // Retain the compiled graph and pending operations so the UI can resume without rebuilding.
+    {
+      ScopedTrace scope("Request Scheduler Pause");
+      scheduler_->request_pause();
+    }
+    {
+      ScopedTrace scope("Wait for Scheduler Pause");
+      scheduler_->wait();
+    }
+#if defined(_WIN32)
+    uninstall_windows_crash_handler();
+#endif
+    stop_zernike_history();
+
+    {
+      ScopedTrace scope("Stop Metrics Updates");
+      stop_metrics_updates();
+    }
+    {
+      ScopedTrace scope("Stop Event Polling");
+      stop_event_polling();
+    }
+
+    logger()->info("[Manager::pause_pipeline] Pipeline stopped successfully");
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
+    emit stop_pipeline_success();
+  } catch (const std::exception &e) {
+    stop_zernike_history();
+    const QString msg = QString("Failed to pause pipeline: %1").arg(e.what());
+    logger()->error("[Manager::pause_pipeline] {}", msg.toStdString());
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit stop_pipeline_failure(msg);
   }

@@ -29,8 +29,8 @@
 namespace holocam {
 
 struct CameraFrame {
-  FrameBufferPair       banks;
-  std::byte             *base{};
+  FrameBufferPair banks;
+  std::byte      *base{};
 };
 
 class SpinLock {
@@ -79,6 +79,7 @@ public:
   size_t capacity() const { return slots_.size(); }
   size_t size() const;
   bool   empty() const { return size() == 0; }
+  bool   closed() const { return closed_; }
 
 private:
   struct Slot {

@@ -2197,7 +2197,7 @@ void MainWindow::on_import_start_clicked() {
     import_widget_->set_start_enabled(false);
     import_widget_->set_stop_enabled(false);
     refresh_command_bar();
-    auto pause = [manager = pipeline_manager_]() { manager->stop_pipeline(); };
+    auto pause = [manager = pipeline_manager_]() { manager->pause_pipeline(); };
     HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, pause, Qt::QueuedConnection));
     return;
   }
