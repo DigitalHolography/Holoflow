@@ -36,6 +36,8 @@ public:
   virtual const char *model_name() const noexcept = 0;
 
   virtual size_t grabber_count() const noexcept = 0;
+  // pixel size in micrometters
+  virtual float pixel_size() const noexcept = 0;
 
   void set_record_options(std::optional<RecordOptions> o);
   void update_record_path(const std::string &path);
@@ -59,10 +61,10 @@ public:
   const nlohmann::json &configuration() const noexcept;
 
 protected:
-  using ConfigurationCallback = std::function<void(Impl*, const nlohmann::json& cfg)>;
+  using ConfigurationCallback = std::function<void(Impl *, const nlohmann::json &cfg)>;
   CameraBase(const nlohmann::json &config, std::optional<RecordOptions> record_options,
              const char *short_name, const char *model_name, size_t grabber_count,
-            ConfigurationCallback configure);
+             ConfigurationCallback configure);
 
 protected:
   std::unique_ptr<Impl> impl_;

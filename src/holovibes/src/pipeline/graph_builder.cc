@@ -226,24 +226,19 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
                           .keep_cursor = false});
   }
 
-   std::optional<holocam::RecordSettings> record_settings = std::nullopt;
+  std::optional<holocam::RecordSettings> record_settings = std::nullopt;
   if (s_.can_use_camera_record()) {
-    record_settings = holocam::RecordSettings{
-        .file_path          = s_.recording_path.string(),
-        .recording_count    = s_.recording_count,
-        .pipeline_config    = settings_to_old_json(s_),
-        .record_queue_count = static_cast<size_t>(s_.recording_queue_count)};
+    record_settings = holocam::RecordSettings{.file_path       = s_.recording_path.string(),
+                                              .recording_count = s_.recording_count,
+                                              .pipeline_config = settings_to_old_json(s_),
+                                              .record_queue_count =
+                                                  static_cast<size_t>(s_.recording_queue_count)};
   }
 
-  static const std::map<ImportSource, std::string_view> import_source_to_string = {
-      { ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO, "AmetekS710EuresysCoaxlinkOcto" },
-      { ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP, "AmetekS711EuresysCoaxlinkQSFP+" },
-      { ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP, "AmetekS991EuresysCoaxlinkQSFP+" },
-  };
-
-  holotask::sources::CameraSettings settings{.cfg_path        = cam_path,
-                                              .name = std::string(import_source_to_string.at(s_.import_source)),
-                                             .record_settings = record_settings};
+  holotask::sources::CameraSettings settings{
+      .cfg_path        = cam_path,
+      .name            = to_string(s_.import_source),
+      .record_settings = record_settings};
   return camera(settings);
 }
 
@@ -828,12 +823,12 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
   result = mean(result, {{0}, false}); // [1, H, W]
 
   if (s_.pp_registration) {
-    const auto outputs = registration_outputs(result, {.radius = s_.pp_registration_radius});
-    result = outputs.at(0);
+    const auto outputs  = registration_outputs(result, {.radius = s_.pp_registration_radius});
+    result              = outputs.at(0);
     auto output_display = fftshift(outputs.at(1), {{-2, -1}});
     // Match the Shack-Hartmann correlation preview. The registration output is a raw F32
     // correlation matrix and must be normalized before conversion to U8 for display.
-    output_display = normalize(output_display, {{-2, -1}, 0.0f, 255.0f});
+    output_display              = normalize(output_display, {{-2, -1}, 0.0f, 255.0f});
     const auto output_converted = convert(output_display, {Target::U8, Strat::Scaled});
 
     registration_xcorr_display(output_converted, {});

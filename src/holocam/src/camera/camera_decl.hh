@@ -14,21 +14,21 @@
 
 #pragma once
 
-#define CAMERA_DECL(class_name, camera_name, camera_short_name, camera_model_name,                 \
-                    camera_grabber_count)                                                          \
+#define CAMERA_DECL(class_name, camera_info, camera_grabber_count)                                 \
   namespace holocam {                                                                              \
   class Camera##class_name final : public CameraBase {                                             \
   public:                                                                                          \
     Camera##class_name(const nlohmann::json               &config,                                 \
                        const std::optional<RecordOptions> &record_options)                         \
-        : CameraBase(config, record_options, camera_short_name, camera_model_name,                 \
+        : CameraBase(config, record_options, camera_info.short_name, camera_info.model_name,       \
                      camera_grabber_count, &configure) {}                                          \
-    const char *name() const noexcept override { return camera_name; }                             \
-    const char *short_name() const noexcept override { return camera_short_name; }                 \
-    const char *model_name() const noexcept override { return camera_model_name; }                 \
+    const char *name() const noexcept override { return camera_info.name; }                        \
+    const char *short_name() const noexcept override { return camera_info.short_name; }            \
+    const char *model_name() const noexcept override { return camera_info.model_name; }            \
     size_t      grabber_count() const noexcept override { return camera_grabber_count; }           \
+    float       pixel_size() const noexcept override { return camera_info.pixel_size; }            \
                                                                                                    \
   protected:                                                                                       \
-    static void configure(Impl *impl, const nlohmann::json &cfg);                                      \
+    static void configure(Impl *impl, const nlohmann::json &cfg);                                  \
   };                                                                                               \
   } // namespace holocam

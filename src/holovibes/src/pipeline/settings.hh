@@ -27,6 +27,8 @@ enum class ImportSource {
   HOLOFILE,
 };
 
+const char *to_string(ImportSource src);
+
 enum class LoadMethod {
   READ_LIVE,
   LOAD_IN_CPU,
@@ -88,7 +90,7 @@ struct Settings {
   float         spacial_lambda;
   float         spacial_z;
   float         spacial_pixel_size;
-  bool          fresnel_use_numpy   = true; ///< Use the graph-composed CUDA NumPy Fresnel path.
+  bool          fresnel_use_numpy   = false; ///< Use the graph-composed CUDA NumPy Fresnel path.
   bool          asp_padding_enabled = false;
   int           asp_padded_width    = 1024;
   int           asp_padded_height   = 1024;

@@ -15,6 +15,7 @@
 #pragma once
 
 #include "holocam/camera.hh"
-#include "skeleton.hh"
+#include "holocam/camera_info.hh"
+#include "camera_decl.hh"
 
-CAMERA_DECL(S710, "AmetekS710EuresysCoaxlinkOcto", "s710", "Phantom S710", 1)
+CAMERA_DECL(S710, s710_info, 1)
