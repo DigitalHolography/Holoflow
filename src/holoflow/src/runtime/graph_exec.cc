@@ -289,6 +289,7 @@ private:
 
 private:
   std::atomic<bool> running_{false}; ///< True if the scheduler is running.
+  std::atomic<uint64_t> stream_epoch_{0}; ///< Current source-stream epoch.
   std::atomic<bool> stop_{false};    ///< True if a stop has been requested.
   std::atomic<bool> paused_{false};
   std::atomic<bool> aborted_{false};
@@ -471,6 +472,7 @@ nlohmann::json Scheduler::Impl::section_graph_diagnostics() const {
 void Scheduler::Impl::start() {
   tracing::ScopedTrace trace("Scheduler Start", "scheduler");
   logger()->info("[Scheduler::start] Starting scheduler");
+  stream_epoch_.store(0, std::memory_order_release);
   if (running_.exchange(true)) {
     logger()->warn("[Scheduler::start] Scheduler is already running");
     return;
@@ -711,6 +713,7 @@ void Scheduler::Impl::build_nodes_rts() {
       srt.ctx.cancelled    = &stop_;
       srt.ctx.event_writer = &event_handles_.at(np.spec.name).out;
       srt.ctx.event_reader = &event_handles_.at(np.spec.name).in;
+      srt.ctx.stream_epoch = &stream_epoch_;
       node_rts_.at(idx)    = std::move(srt);
     } else if (auto *at = dynamic_cast<core::IAsyncTask *>(task)) {
       AsyncRt art;

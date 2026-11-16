@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/ascontiguousarray.hh"
+#include "utils/tensor_common.hh"
 
 #include <cstddef>
 #include <cstdint>
@@ -30,26 +31,6 @@ inline void check(bool cond, const std::string &msg) {
   if (!cond) {
     throw std::invalid_argument("AsContiguousArray: " + msg);
   }
-}
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
-}
-
-bool is_c_contiguous(const holoflow::core::TDesc &desc) {
-  if (desc.shape.size() != desc.strides.size()) {
-    return false;
-  }
-
-  size_t expected = holoflow::core::size_of(desc.dtype);
-  for (size_t i = desc.shape.size(); i-- > 0;) {
-    if (desc.strides[i] != expected) {
-      return false;
-    }
-    expected *= desc.shape[i];
-  }
-  return true;
 }
 
 __global__ void copy_kernel(const std::byte *__restrict__ src, std::byte *__restrict__ dst,
@@ -132,7 +113,7 @@ AsContiguousArrayFactory::infer(std::span<const holoflow::core::TDesc> input_des
 
   std::vector<holoflow::core::InPlace> in_place;
   holoflow::core::TDesc                odesc = idesc;
-  if (!is_c_contiguous(idesc)) {
+  if (!utils::is_c_contiguous(idesc)) {
     odesc = holoflow::core::TDesc(idesc.shape, idesc.dtype, idesc.mem_loc);
   } else {
     in_place = {{0, 0}};
@@ -155,7 +136,7 @@ AsContiguousArrayFactory::create(std::span<const holoflow::core::TDesc> input_de
   (void)infer(input_descs, jsettings);
 
   const auto &idesc = input_descs[0];
-  if (is_c_contiguous(idesc)) {
+  if (utils::is_c_contiguous(idesc)) {
     auto task = std::make_unique<AsContiguousArray>();
     task->set_idesc(idesc);
     task->update_stream(ctx.stream);
@@ -196,8 +177,8 @@ AsContiguousArrayFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_
   }
 
   const auto &idesc = input_descs[0];
-  if (same_desc(idesc, old_task_ptr->idesc()) &&
-      old_task_ptr->is_noop() == is_c_contiguous(idesc)) {
+  if (utils::same_desc(idesc, old_task_ptr->idesc()) &&
+      old_task_ptr->is_noop() == utils::is_c_contiguous(idesc)) {
     old_task_ptr->update_stream(ctx.stream);
     return old_task;
   }

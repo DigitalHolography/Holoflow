@@ -28,6 +28,8 @@ namespace holonp {
 
 struct AsArraySettings {
   double                                value  = 0.0;
+  double                                imag   = 0.0;
+  std::optional<holoflow::core::DType>  dtype  = std::nullopt;
   std::optional<holoflow::core::MemLoc> device = std::nullopt;
 
   bool operator==(const AsArraySettings &) const = default;
