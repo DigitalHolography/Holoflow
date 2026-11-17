@@ -19,3 +19,7 @@ add_subdirectory(holonp)
 add_subdirectory(holoflow_event)
 add_subdirectory(curaii)
 add_subdirectory(holofile)
+
+if(ENABLE_PYTHON)
+    add_subdirectory(python)
+endif()

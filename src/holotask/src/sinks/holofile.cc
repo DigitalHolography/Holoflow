@@ -185,6 +185,8 @@ public:
         logger()->error("[HolofileWriter] Failed to finalize recording at {}: {}", settings_.path,
                         e.what());
         emit_failed_event(ctx, e.what());
+        // A failed open leaves writer_ empty; do not retry the flush on the next batch.
+        reset();
       }
     }
 

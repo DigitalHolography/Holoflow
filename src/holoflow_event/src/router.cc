@@ -50,10 +50,12 @@ size_t EventReader::drop_all() noexcept {
 
 MailboxCounters::Snapshot EventReader::counters() const noexcept { return counters_->snapshot(); }
 
-EventWriter::EventWriter(BoundedMPMC<Event> *queue, MailboxCounters *counters)
-    : queue_(queue), counters_(counters) {}
+EventWriter::EventWriter(BoundedMPMC<Event> *queue, MailboxCounters *counters, NodeId node_id)
+    : node_id_(std::move(node_id)), queue_(queue), counters_(counters) {}
 
 bool EventWriter::try_push(Event &&event) noexcept {
+  if (event.node_id.empty())
+    event.node_id = node_id_;
   bool ok = queue_->try_push(std::move(event));
   counters_->sent_events.fetch_add(ok, std::memory_order_relaxed);
   counters_->dropped_events.fetch_add(!ok, std::memory_order_relaxed);
@@ -78,7 +80,7 @@ Router::NodeHandles Router::bind_node(const NodeId &node_id) {
     std::abort();
   }
 
-  EventWriter w{&nodes_to_router_, &nodes_to_router_counters_};
+  EventWriter w{&nodes_to_router_, &nodes_to_router_counters_, node_id};
   EventReader r{it->second.get(), &counters};
   return NodeHandles{r, w};
 }

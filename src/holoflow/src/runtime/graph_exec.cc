@@ -186,9 +186,13 @@ void *MemoryBlock::get() {
 class Scheduler::Impl {
 public:
   Impl(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
-       std::chrono::milliseconds metrics_interval, Scheduler::FailureCallback failure_callback);
+       std::chrono::milliseconds metrics_interval, Scheduler::FailureCallback failure_callback,
+       Scheduler::FailurePolicy failure_policy);
 
   ~Impl();
+
+  void rethrow_failure() const;
+  void handle_failure(std::string_view thread_name, std::string_view node_name);
 
   void set_metrics_interval(std::chrono::milliseconds interval);
   [[nodiscard]] std::map<std::string, NodeMetrics> metrics() const;
@@ -381,6 +385,9 @@ private:
   std::map<std::string, holoflow_event::Router::NodeHandles> event_handles_;
   std::atomic_flag                                           failure_dumped_ = ATOMIC_FLAG_INIT;
   Scheduler::FailureCallback                                 failure_callback_;
+  Scheduler::FailurePolicy failure_policy_;
+  mutable std::mutex failure_mutex_;
+  std::exception_ptr failure_;
 
   std::size_t              terminal_nodes_ = 0;          ///< Number of graph terminal nodes.
   std::atomic<std::size_t> completed_terminal_nodes_{0}; ///< Terminal nodes that reached EOF.
@@ -388,19 +395,20 @@ private:
 
 Scheduler::Impl::Impl(const GraphPlan &graph, const std::vector<Section> &sections,
                       ExecResouces &resources, std::chrono::milliseconds metrics_interval,
-                      Scheduler::FailureCallback failure_callback)
+                      Scheduler::FailureCallback failure_callback,
+                      Scheduler::FailurePolicy failure_policy)
     : graph_(graph), sections_(sections), res_(resources), metrics_interval_(metrics_interval),
-      failure_callback_(std::move(failure_callback)) {
+      failure_callback_(std::move(failure_callback)), failure_policy_(failure_policy) {
   tracing::ScopedTrace trace("Initialize Scheduler", "scheduler");
 
-  if (failure_callback_) {
+  if (failure_policy_ == Scheduler::FailurePolicy::Abort && failure_callback_) {
     detail::set_bug_callback([this](std::string_view file, std::size_t line) {
       if (!failure_dumped_.test_and_set(std::memory_order_relaxed)) {
         failure_callback_("HOLOFLOW_BUG", detail::current_node_name(),
                           std::format("Fatal bug at {}:{}", file, line));
       }
     });
-  } else {
+  } else if (failure_policy_ == Scheduler::FailurePolicy::Abort) {
     detail::set_bug_callback({});
   }
 
@@ -432,13 +440,49 @@ Scheduler::Impl::Impl(const GraphPlan &graph, const std::vector<Section> &sectio
 }
 
 Scheduler::Impl::~Impl() {
-  if (is_running() || paused_.load()) {
-    request_stop();
-    wait();
-  } else {
-    stop_metrics_thread();
+  try {
+    if (is_running() || paused_.load()) {
+      request_stop();
+      wait();
+    }
+  } catch (const std::exception &e) {
+    logger()->error("Scheduler cleanup failed: {}", e.what());
+  } catch (...) {
+    logger()->error("Scheduler cleanup failed");
   }
-  detail::set_bug_callback({});
+  stop_metrics_thread();
+  if (failure_policy_ == Scheduler::FailurePolicy::Abort)
+    detail::set_bug_callback({});
+}
+
+void Scheduler::Impl::rethrow_failure() const {
+  std::lock_guard lock(failure_mutex_);
+  if (failure_)
+    std::rethrow_exception(failure_);
+}
+
+void Scheduler::Impl::handle_failure(std::string_view thread_name, std::string_view node_name) {
+  if (failure_policy_ == Scheduler::FailurePolicy::Abort)
+    log_and_abort_current_exception(thread_name, node_name, failure_callback_, failure_dumped_);
+
+  std::string message;
+  try {
+    throw;
+  } catch (const std::exception &e) {
+    message = e.what();
+  } catch (...) {
+    message = "<non-std exception>";
+  }
+  {
+    std::lock_guard lock(failure_mutex_);
+    if (!failure_)
+      failure_ = std::make_exception_ptr(std::runtime_error(
+          std::format("{}: node '{}': {}", thread_name, node_name, message)));
+  }
+  aborted_.store(true);
+  paused_.store(false);
+  stop_.store(true);
+  const_init_cv_.notify_all();
 }
 
 void Scheduler::Impl::set_metrics_interval(std::chrono::milliseconds interval) {
@@ -470,6 +514,7 @@ nlohmann::json Scheduler::Impl::section_graph_diagnostics() const {
 }
 
 void Scheduler::Impl::start() {
+  rethrow_failure();
   tracing::ScopedTrace trace("Scheduler Start", "scheduler");
   logger()->info("[Scheduler::start] Starting scheduler");
   stream_epoch_.store(0, std::memory_order_release);
@@ -757,8 +802,7 @@ void Scheduler::Impl::run_router() {
   } catch (...) {
     stop_.store(true);
     const_init_cv_.notify_all();
-    log_and_abort_current_exception("Scheduler::run_router", {}, failure_callback_,
-                                    failure_dumped_);
+    handle_failure("Scheduler::run_router", {});
   }
 }
 
@@ -1043,9 +1087,9 @@ void Scheduler::Impl::run_section(int section_id) {
     paused_.store(false);
     stop_.store(true);
     const_init_cv_.notify_all();
-    log_and_abort_current_exception(
+    handle_failure(
         std::format("Scheduler::run_section section={} id={}", sec.name, section_id),
-        current_node_name, failure_callback_, failure_dumped_);
+        current_node_name);
   }
 }
 
@@ -1320,7 +1364,13 @@ void Scheduler::Impl::start_metrics_thread() {
   if (!metrics_running_.compare_exchange_strong(expected, true)) {
     return;
   }
-  metrics_thread_ = std::thread(&Scheduler::Impl::metrics_loop, this);
+  metrics_thread_ = std::thread([this] {
+    try {
+      metrics_loop();
+    } catch (...) {
+      handle_failure("Scheduler::metrics_loop", {});
+    }
+  });
 }
 
 void Scheduler::Impl::stop_metrics_thread() {
@@ -1452,11 +1502,13 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
 
 Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &sections,
                      ExecResouces &resources, std::chrono::milliseconds metrics_interval,
-                     FailureCallback failure_callback)
+                     FailureCallback failure_callback, FailurePolicy failure_policy)
     : impl_(std::make_unique<Impl>(graph, sections, resources, metrics_interval,
-                                   std::move(failure_callback))) {}
+                                   std::move(failure_callback), failure_policy)) {}
 
 Scheduler::~Scheduler() = default;
+
+void Scheduler::rethrow_failure() const { impl_->rethrow_failure(); }
 
 void Scheduler::set_metrics_interval(std::chrono::milliseconds interval) {
   impl_->set_metrics_interval(interval);

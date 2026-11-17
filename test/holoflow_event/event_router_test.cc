@@ -63,6 +63,22 @@ TEST(EventRouterTest, HonorsTickBudget) {
   EXPECT_TRUE(handles.in.try_pop().has_value());
 }
 
+TEST(EventRouterTest, StampsEmptyNodeIdsAndPreservesExplicitOnes) {
+  holoflow_event::Router router;
+  auto handles = router.bind_node("writer");
+  ASSERT_TRUE(handles.out.try_push({.direction = holoflow_event::EventDirection::ToUi,
+                                    .node_id = "", .data = {{"type", "recording_finished"}}}));
+  ASSERT_TRUE(handles.out.try_push({.direction = holoflow_event::EventDirection::ToUi,
+                                    .node_id = "explicit", .data = {}}));
+  router.tick();
+  const auto stamped = router.ui_try_receive();
+  const auto explicit_id = router.ui_try_receive();
+  ASSERT_TRUE(stamped);
+  ASSERT_TRUE(explicit_id);
+  EXPECT_EQ(stamped->node_id, "writer");
+  EXPECT_EQ(explicit_id->node_id, "explicit");
+}
+
 TEST(EventRouterTest, DropsUnknownAndFullMailboxEventsWithCounters) {
   holoflow_event::Router::Config config;
   config.router_to_node_capacity = 1;

@@ -25,6 +25,7 @@
 
 #include "bug.hh"
 #include "logger.hh"
+#include "runtime_assets.hh"
 
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
@@ -227,11 +228,8 @@ std::string get_compute_arch() {
 }
 
 std::vector<std::string> get_nvrtc_args() {
-  auto CUDA_PATH = std::getenv("CUDA_PATH");
-  HOLOVIBES_CHECK(CUDA_PATH != nullptr, "CUDA_PATH environment variable not set");
-
   return {
-      "-I" + std::string{CUDA_PATH} + "/include",
+      "-I" + holotask::detail::cuda_include_directory().string(),
       "-arch=" + get_compute_arch(),
       "--std=c++20",
       "--relocatable-device-code=true",

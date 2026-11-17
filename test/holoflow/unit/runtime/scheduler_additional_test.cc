@@ -20,6 +20,7 @@ namespace {
 struct ResultState {
   holoflow::core::OpResult result = holoflow::core::OpResult::Eof;
   std::atomic<int>         calls{0};
+  bool throw_on_execute = false;
 };
 
 class ResultTask final : public holoflow::core::ISyncTask {
@@ -27,6 +28,8 @@ public:
   explicit ResultTask(std::shared_ptr<ResultState> state) : state_(std::move(state)) {}
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &) override {
     ++state_->calls;
+    if (state_->throw_on_execute)
+      throw std::runtime_error("deliberate worker failure");
     return state_->result;
   }
 
@@ -269,6 +272,38 @@ TEST(SchedulerTest, RepeatedLifecycleCallsAreSafe) {
   scheduler.request_stop();
   scheduler.wait();
   EXPECT_FALSE(scheduler.is_running());
+}
+
+TEST(SchedulerTest, CapturesWorkerFailureAndRejectsRestart) {
+  auto state = std::make_shared<ResultState>();
+  state->throw_on_execute = true;
+  auto [output, registry] = compile_result_graph(state);
+  using Scheduler = holoflow::runtime::Scheduler;
+  Scheduler scheduler(output->graph, output->sections, output->resources,
+                      std::chrono::milliseconds{1000}, {}, Scheduler::FailurePolicy::Capture);
+  scheduler.start();
+  scheduler.wait();
+  EXPECT_FALSE(scheduler.is_running());
+  try {
+    scheduler.rethrow_failure();
+    FAIL() << "Expected captured exception";
+  } catch (const std::runtime_error &e) {
+    EXPECT_NE(std::string(e.what()).find("node"), std::string::npos);
+    EXPECT_NE(std::string(e.what()).find("deliberate worker failure"), std::string::npos);
+  }
+  EXPECT_THROW(scheduler.start(), std::runtime_error);
+}
+
+TEST(SchedulerTest, DefaultPolicyStillAbortsOnWorkerFailure) {
+  EXPECT_DEATH({
+    auto state = std::make_shared<ResultState>();
+    state->throw_on_execute = true;
+    auto compiled = compile_result_graph(state);
+    const auto &output = compiled.first;
+    holoflow::runtime::Scheduler scheduler(output->graph, output->sections, output->resources);
+    scheduler.start();
+    scheduler.wait();
+  }, ""); // The native logger writes to stdout, not the captured death-test stderr.
 }
 
 TEST(SchedulerTest, UsesSharedStorageAndReleasesSuccessfulOwnedOutputExactlyOnce) {

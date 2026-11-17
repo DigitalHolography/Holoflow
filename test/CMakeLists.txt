@@ -22,6 +22,10 @@ add_subdirectory(holotask)
 add_subdirectory(holovibes)
 add_subdirectory(holoflow_event)
 
+if(ENABLE_PYTHON)
+    add_subdirectory(python)
+endif()
+
 if(ENABLE_COVERAGE)
     add_test(
         NAME coverage::production_image

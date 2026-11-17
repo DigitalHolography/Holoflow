@@ -42,6 +42,7 @@ struct NodeMetrics {
 
 class Scheduler {
 public:
+  enum class FailurePolicy { Abort, Capture };
   /// Called once before a fatal runtime abort, while the compiled graph is still available.
   using FailureCallback =
       std::function<void(std::string_view thread_name, std::string_view node_name,
@@ -50,7 +51,11 @@ public:
   Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
             std::chrono::milliseconds metrics_interval = std::chrono::milliseconds{1000});
   Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
-            std::chrono::milliseconds metrics_interval, FailureCallback failure_callback);
+            std::chrono::milliseconds metrics_interval, FailureCallback failure_callback,
+            FailurePolicy failure_policy = FailurePolicy::Abort);
+
+  /// Report a captured worker failure on the calling thread. Does not join workers.
+  void rethrow_failure() const;
 
   ~Scheduler();
 

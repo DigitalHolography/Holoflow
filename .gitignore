@@ -8,3 +8,22 @@ __pycache__/
 logs/
 graphify-out/
 .claude/
+
+# Python bytecode, extensions, and tooling caches
+*.py[cod]
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# Python coverage and packaging output
+.coverage
+.coverage.*
+htmlcov/
+*.egg-info/
+/dist/
+/python/build/
+/python/dist/
+
+# Local CMake configuration and generated compilation database
+/CMakeUserPresets.json
+/compile_commands.json

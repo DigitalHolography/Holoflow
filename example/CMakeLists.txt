@@ -15,4 +15,5 @@
 # Configure Holoflow examples.
 
 add_subdirectory(holoflow)
+add_subdirectory(cuda)
 

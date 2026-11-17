@@ -77,13 +77,14 @@ private:
 
 class EventWriter {
 public:
-  EventWriter(BoundedMPMC<Event> *queue, MailboxCounters *counters);
+  EventWriter(BoundedMPMC<Event> *queue, MailboxCounters *counters, NodeId node_id = {});
 
   [[nodiscard]] bool try_push(Event &&event) noexcept;
 
   [[nodiscard]] MailboxCounters::Snapshot counters() const noexcept;
 
 private:
+  NodeId node_id_;
   BoundedMPMC<Event> *queue_;
   MailboxCounters    *counters_;
 };

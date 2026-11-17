@@ -61,6 +61,7 @@ add_compile_definitions(
 add_definitions(-DFMT_UNICODE=0)
 
 option(ENABLE_IPO "IPO/LTO" ON)
+option(ENABLE_PYTHON "Build the optional Python extension" OFF)
 option(ENABLE_TESTING "Build tests" ON)
 option(ENABLE_BENCHMARKS "Build benchmarks" ON)
 option(ENABLE_DOCUMENTATION "Build documentation" ON)

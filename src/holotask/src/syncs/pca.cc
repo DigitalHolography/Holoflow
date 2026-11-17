@@ -40,6 +40,8 @@
 #include "curaii/nvrtc.hh"
 
 #include "logger.hh"
+#include "runtime_assets.hh"
+#include "pca_capture.hh"
 
 namespace holotask::syncs {
 
@@ -94,9 +96,11 @@ struct PcaWorkspace {
 
   explicit PcaWorkspace(const PcaLayout &layout)
       : matrices(curaii::make_unique_device_ptr<float>(
-            layout.batches * static_cast<size_t>(layout.features) * layout.features)),
-        eigenvalues(curaii::make_unique_device_ptr<float>(layout.batches * layout.features)),
-        solver_info(curaii::make_unique_device_ptr<int>(layout.batches)) {}
+            (std::max)(layout.batches, size_t{2}) * static_cast<size_t>(layout.features) *
+            layout.features)),
+        eigenvalues(curaii::make_unique_device_ptr<float>(
+            (std::max)(layout.batches, size_t{2}) * layout.features)),
+        solver_info(curaii::make_unique_device_ptr<int>((std::max)(layout.batches, size_t{2}))) {}
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -105,32 +109,7 @@ struct PcaWorkspace {
 
 using PcaGraphKey = std::array<const void *, 2>;
 
-template <typename Enqueue> cudaGraph_t capture_cuda_graph(cudaStream_t stream, Enqueue &&enqueue) {
-  cudaGraph_t graph     = nullptr;
-  bool        capturing = false;
-
-  try {
-    CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
-    capturing = true;
-
-    std::forward<Enqueue>(enqueue)();
-
-    CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
-    capturing = false;
-    return graph;
-  } catch (...) {
-    if (capturing) {
-      cudaGraph_t discarded = nullptr;
-      (void)cudaStreamEndCapture(stream, &discarded);
-      if (discarded != nullptr) {
-        CUDA_CHECK_NT(cudaGraphDestroy(discarded));
-      }
-    } else if (graph != nullptr) {
-      CUDA_CHECK_NT(cudaGraphDestroy(graph));
-    }
-    throw;
-  }
-}
+using holotask::detail::capture_cuda_graph;
 
 [[nodiscard]] bool stream_is_capturing(cudaStream_t stream) {
   cudaStreamCaptureStatus status = cudaStreamCaptureStatusNone;
@@ -217,6 +196,8 @@ public:
         graphs_.pop_front();
       }
       capture_enabled_ = false;
+      // Capture has ended; clear its sticky error before ordinary execution resumes.
+      (void)cudaGetLastError();
       logger()->warn("[Pca] CUDA Graph capture disabled: {}", error.what());
     }
   }
@@ -498,7 +479,8 @@ class CusolverEigensolver final : public Eigensolver {
 public:
   CusolverEigensolver(int features, size_t batches, float *matrices, float *eigenvalues,
                       cudaStream_t stream)
-      : features_(features), batches_(batches), context_(cuda_context_for_stream(stream)),
+      : features_(features), batches_((std::max)(batches, size_t{2})),
+        context_(cuda_context_for_stream(stream)), padded_batch_(batches == 1), stream_(stream),
         handle_(std::make_unique<curaii::CusolverDnHandle>()),
         params_(std::make_unique<curaii::CusolverDnParams>()) {
     if (batches_ > static_cast<size_t>((std::numeric_limits<int64_t>::max)())) {
@@ -527,7 +509,18 @@ public:
           "[Pca] cuSOLVER eigensolver and PCA stream use different contexts");
     }
 
-    CUSOLVER_CHECK(cusolverDnSetStream(handle_->get(), stream));
+    // Rebinding an unchanged stream can invalidate an active CUDA capture.
+    if (stream != stream_) {
+      CUSOLVER_CHECK(cusolverDnSetStream(handle_->get(), stream));
+      stream_ = stream;
+    }
+    // cuSOLVER's singleton path synchronizes internally and cannot be captured (CUDA 13.5).
+    // Keep a private zero matrix in the spare workspace slot to use its batched path.
+    if (padded_batch_) {
+      const auto matrix_elements = static_cast<size_t>(features_) * features_;
+      CUDA_CHECK(cudaMemsetAsync(matrices + matrix_elements, 0, matrix_elements * sizeof(float),
+                                 stream));
+    }
     CUSOLVER_CHECK(cusolverDnXsyevBatched(
         handle_->get(), params_->get(), CUSOLVER_EIG_MODE_VECTOR, CUBLAS_FILL_MODE_LOWER, features_,
         CUDA_R_32F, matrices, features_, CUDA_R_32F, eigenvalues, CUDA_R_32F,
@@ -540,6 +533,8 @@ private:
   size_t    batches_;
   CUcontext context_{nullptr};
 
+  bool padded_batch_;
+  cudaStream_t stream_;
   std::unique_ptr<curaii::CusolverDnHandle> handle_;
   std::unique_ptr<curaii::CusolverDnParams> params_;
 
@@ -594,26 +589,6 @@ void jitlink_check(nvJitLinkHandle linker, nvJitLinkResult result, const char *e
 
 #define PCA_NVJITLINK_CHECK(linker, expr) jitlink_check((linker), (expr), #expr, __FILE__, __LINE__)
 
-std::filesystem::path executable_directory() {
-  std::vector<wchar_t> buffer(MAX_PATH);
-
-  while (true) {
-    const auto length =
-        GetModuleFileNameW(nullptr, buffer.data(), static_cast<DWORD>(buffer.size()));
-
-    if (length == 0) {
-      throw std::runtime_error(
-          std::format("[Pca] Failed to locate the executable (Windows error {})", GetLastError()));
-    }
-
-    if (length < buffer.size() - 1) {
-      return std::filesystem::path(std::wstring(buffer.data(), length)).parent_path();
-    }
-
-    buffer.resize(buffer.size() * 2);
-  }
-}
-
 bool assets_exist(const Assets &assets) {
   return std::filesystem::is_directory(assets.cuda_include) &&
          std::filesystem::is_regular_file(assets.cuda_include / "cuda_runtime.h") &&
@@ -625,8 +600,17 @@ bool assets_exist(const Assets &assets) {
 }
 
 Assets locate_assets() {
+  const auto module = holotask::detail::containing_module_directory();
+  const auto root = module / "_assets/nvrtc";
+  const Assets packaged{root / "cuda/include", root / "mathdx/include",
+                        root / "mathdx/cutlass/include",
+                        root / "mathdx/lib/libcusolverdx.fatbin"};
+  if (assets_exist(packaged)) {
+    logger()->info("[Pca] Using packaged runtime-compilation assets at {}", root.string());
+    return packaged;
+  }
   const auto installed_root =
-      (executable_directory() / HOLOFLOW_NVRTC_ASSET_RELATIVE_DIR).lexically_normal();
+      (module / HOLOFLOW_NVRTC_ASSET_RELATIVE_DIR).lexically_normal();
 
   const Assets installed{
       installed_root / "cuda/include",
@@ -929,7 +913,9 @@ std::unique_ptr<Eigensolver> make_eigensolver(const PcaLayout    &layout,
                                               const PcaWorkspace &workspace, cudaStream_t stream) {
   if (layout.features < cusolverdx_max_features_exclusive) {
     try {
-      return std::make_unique<CusolverDxEigensolver>(layout.features, layout.batches, stream);
+      auto solver = std::make_unique<CusolverDxEigensolver>(layout.features, layout.batches, stream);
+      logger()->info("[Pca] Selected backend: cuSolverDx");
+      return solver;
     } catch (const std::exception &error) {
       logger()->warn("[Pca] cuSolverDx initialization failed for depth {}: {}\n"
                      "[Pca] Falling back to the conventional cuSOLVER eigensolver",
@@ -983,7 +969,7 @@ __device__ void solve(float *covariance, float *eigenvalues, int *info,
                       const unsigned int batches) {
   constexpr unsigned int m = Solver::m_size;
   constexpr unsigned int batches_per_block = Solver::batches_per_block;
-  constexpr unsigned int lda_shared = Solver::lda;
+  constexpr unsigned int lda_shared = Solver::default_lda;
   constexpr unsigned int matrix_elements = m * m;
 
   const unsigned int batch = blockIdx.x * batches_per_block;

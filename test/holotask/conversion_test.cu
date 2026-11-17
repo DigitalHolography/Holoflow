@@ -130,9 +130,17 @@ template <typename Out> std::vector<Out> scaled_reference(const std::vector<floa
   return output;
 }
 
-template <typename Out> void exercise_scaled(Settings::Target target) {
-  const std::vector<float>           first{-7.0f, -2.0f, 1.0f, 3.0f, 9.0f, 17.0f, 25.0f};
-  const std::vector<float>           second{40.0f, 20.0f, 10.0f, 5.0f, 0.0f, -10.0f, -20.0f};
+template <typename Out> void exercise_scaled(Settings::Target target, size_t count = 7) {
+  std::vector<float>                 first{-7.0f, -2.0f, 1.0f, 3.0f, 9.0f, 17.0f, 25.0f};
+  std::vector<float>                 second{40.0f, 20.0f, 10.0f, 5.0f, 0.0f, -10.0f, -20.0f};
+  if (count != 7) {
+    first.resize(count);
+    second.resize(count);
+    for (size_t i = 0; i < count; ++i) {
+      first[i] = i % 2 ? 25.0f : -7.0f;
+      second[i] = i % 2 ? -20.0f : 40.0f;
+    }
+  }
   const TDesc                        input_desc({first.size()}, DType::F32, MemLoc::Device);
   const Settings                     settings{target, Settings::Strategy::Scaled};
   holotask::syncs::ConversionFactory factory;
@@ -187,6 +195,10 @@ TEST(ConversionCudaGraph, ReplaysAndUpdatesAllSingleKernelConversions) {
 
   const std::vector<uint16_t> u16_a{0, 1, 257, 4096, 65535};
   const std::vector<uint16_t> u16_b{65535, 32, 16, 8, 4};
+  exercise_single_kernel<uint16_t, float>(
+      DType::U16, {Settings::Target::F32, Settings::Strategy::Real}, u16_a,
+      {0.0f, 1.0f, 257.0f, 4096.0f, 65535.0f}, u16_b,
+      {65535.0f, 32.0f, 16.0f, 8.0f, 4.0f});
   exercise_single_kernel<uint16_t, cuFloatComplex>(
       DType::U16, {Settings::Target::CF32, Settings::Strategy::Real}, u16_a,
       {{0.0f, 0.0f}, {1.0f, 0.0f}, {257.0f, 0.0f}, {4096.0f, 0.0f}, {65535.0f, 0.0f}}, u16_b,
@@ -215,6 +227,11 @@ TEST(ConversionCudaGraph, ReplaysAndUpdatesAllSingleKernelConversions) {
 TEST(ConversionCudaGraph, CachesScaledConversionGraphsByBufferAddress) {
   exercise_scaled<uint8_t>(Settings::Target::U8);
   exercise_scaled<uint16_t>(Settings::Target::U16);
+}
+
+TEST(ConversionCudaGraph, ScalesMegapixelBuffers) {
+  exercise_scaled<uint8_t>(Settings::Target::U8, 1024 * 1024);
+  exercise_scaled<uint16_t>(Settings::Target::U16, 1024 * 1024);
 }
 
 TEST(ConversionCudaGraph, FallsBackOnDefaultStreamAndDuringOuterCapture) {

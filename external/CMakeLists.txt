@@ -143,24 +143,24 @@ if(ENABLE_FETCHCONTENT)
     declare_persistent_dependency(qtads "https://github.com/githubuser0xFFFF/Qt-Advanced-Docking-System.git" "5.0.0")
     FetchContent_MakeAvailable(qtads)
 
-    set(MATHDX_VERSION "26.06.1")
+    set(MATHDX_VERSION "26.10.0")
     set(MATHDX_CUDA_MAJOR "13")
 
     declare_persistent_archive(
         mathdx
         "https://developer.nvidia.com/downloads/compute/cuSOLVERDx/redist/cuSOLVERDx/cuda13/nvidia-mathdx-${MATHDX_VERSION}-cuda13.zip"
-        "SHA256=c691252f1c7dc8bce2f96f4166604efe11eb11735998f492ffcf9bc2835e424f"
+        "SHA256=83fe2e6f8829b3b04c6b30554935442192f7ab22add1740450f2004e45e262d8"
     )
 
     FetchContent_MakeAvailable(mathdx)
 
     set(MATHDX_ROOT
-        "${mathdx_SOURCE_DIR}/nvidia/mathdx/26.06"
+        "${mathdx_SOURCE_DIR}/nvidia/mathdx/26.10"
     )
 
     find_package(
         mathdx
-        26.06
+        26.10
         REQUIRED
         COMPONENTS cusolverdx
         CONFIG
@@ -204,94 +204,62 @@ if(ENABLE_FETCHCONTENT)
         HOLOFLOW_NVRTC_ASSET_RELATIVE_DIR="../share/holovibes/nvrtc"
     )
 
-    if(WIN32)
+    function(install_holoflow_nvrtc_assets ASSET_ROOT ASSET_COMPONENT)
+        install(
+            FILES "${PROJECT_SOURCE_DIR}/external/licenses/CUTLASS-LICENSE.txt"
+            DESTINATION share/licenses
+            COMPONENT ${ASSET_COMPONENT}
+        )
         install(
             DIRECTORY "${HOLOFLOW_CUDA_INCLUDE_DIR}/"
-            DESTINATION share/holovibes/nvrtc/cuda/include
-            COMPONENT dependencies
+            DESTINATION ${ASSET_ROOT}/cuda/include
+            COMPONENT ${ASSET_COMPONENT}
         )
         install(
             FILES
                 "${MATHDX_ROOT}/include/cusolverdx.hpp"
                 "${MATHDX_ROOT}/include/cusolverdx_io.hpp"
-            DESTINATION share/holovibes/nvrtc/mathdx/include
-            COMPONENT dependencies
+            DESTINATION ${ASSET_ROOT}/mathdx/include
+            COMPONENT ${ASSET_COMPONENT}
         )
         install(
             DIRECTORY
                 "${MATHDX_ROOT}/include/cusolverdx"
                 "${MATHDX_ROOT}/include/commondx"
-            DESTINATION share/holovibes/nvrtc/mathdx/include
-            COMPONENT dependencies
+            DESTINATION ${ASSET_ROOT}/mathdx/include
+            COMPONENT ${ASSET_COMPONENT}
         )
         install(
-            DIRECTORY "${cusolverdx_cutlass_INCLUDE_DIR}/cute"
-            DESTINATION share/holovibes/nvrtc/mathdx/cutlass/include
-            COMPONENT dependencies
-        )
-        install(
-            FILES
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/array_subbyte.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/array.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/bfloat16.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/complex.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/coord.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/cuda_host_adapter.hpp"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/cutlass.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/exmy_base.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/fast_math.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/float_subbyte.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/float8.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/floating_point_nvrtc.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/functional.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/half.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/integer_subbyte.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/numeric_size.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/numeric_types.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/real.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/tfloat32.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/trace.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/uint128.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/uint256.h"
-            DESTINATION share/holovibes/nvrtc/mathdx/cutlass/include/cutlass
-            COMPONENT dependencies
-        )
-        install(
-            FILES
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/arch/config.h"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/arch/synclog.hpp"
-            DESTINATION share/holovibes/nvrtc/mathdx/cutlass/include/cutlass/arch
-            COMPONENT dependencies
-        )
-        install(
-            FILES
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/detail/dependent_false.hpp"
-                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/detail/helper_macros.hpp"
-            DESTINATION share/holovibes/nvrtc/mathdx/cutlass/include/cutlass/detail
-            COMPONENT dependencies
-        )
-        install(
-            FILES "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass/platform/platform.h"
-            DESTINATION share/holovibes/nvrtc/mathdx/cutlass/include/cutlass/platform
-            COMPONENT dependencies
+            DIRECTORY
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cute"
+                "${cusolverdx_cutlass_INCLUDE_DIR}/cutlass"
+            DESTINATION ${ASSET_ROOT}/mathdx/cutlass/include
+            COMPONENT ${ASSET_COMPONENT}
         )
         install(
             FILES "${cusolverdx_FATBIN}"
-            DESTINATION share/holovibes/nvrtc/mathdx/lib
-            COMPONENT dependencies
+            DESTINATION ${ASSET_ROOT}/mathdx/lib
+            COMPONENT ${ASSET_COMPONENT}
         )
         install(
             FILES "${HOLOFLOW_CUDA_LICENSE}"
             DESTINATION share/licenses
             RENAME NVIDIA-CUDA-EULA.txt
-            COMPONENT dependencies
+            COMPONENT ${ASSET_COMPONENT}
         )
         install(
             FILES "${MATHDX_ROOT}/LICENSE.txt"
             DESTINATION share/licenses
             RENAME NVIDIA-MathDx-LICENSE.txt
-            COMPONENT dependencies
+            COMPONENT ${ASSET_COMPONENT}
         )
+    endfunction()
+
+    if(WIN32)
+        install_holoflow_nvrtc_assets(share/holovibes/nvrtc dependencies)
+        if(ENABLE_PYTHON)
+            install_holoflow_nvrtc_assets(python/holoflow/_assets/nvrtc python)
+        endif()
     endif()
 
     message(STATUS "FetchContent dependencies acquired.")

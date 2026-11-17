@@ -25,6 +25,7 @@
 #include "holoflow/core/tasks.hh"
 #include "holoflow/core/tensor.hh"
 #include "holotask/syncs/pca.hh"
+#include "../../src/holotask/src/pca_capture.hh"
 
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
@@ -288,10 +289,9 @@ TEST_F(PcaExecuteTest, ParticipatesInOuterCaptureForDxAndCusolverPaths) {
     std::atomic<bool>       cancelled{false};
     holoflow::core::SyncCtx ctx{inputs, outputs, &cancelled, nullptr, nullptr};
 
-    cudaGraph_t graph = nullptr;
-    CUDA_CHECK(cudaStreamBeginCapture(stream.get(), cudaStreamCaptureModeThreadLocal));
-    ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
-    CUDA_CHECK(cudaStreamEndCapture(stream.get(), &graph));
+    cudaGraph_t graph = holotask::detail::capture_cuda_graph(stream.get(), [&] {
+      EXPECT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+    });
     cudaGraphExec_t executable = nullptr;
     CUDA_CHECK(cudaGraphInstantiateWithFlags(&executable, graph, 0));
     CUDA_CHECK(cudaGraphLaunch(executable, stream.get()));
@@ -302,6 +302,43 @@ TEST_F(PcaExecuteTest, ParticipatesInOuterCaptureForDxAndCusolverPaths) {
     CUDA_CHECK(cudaGraphExecDestroy(executable));
     CUDA_CHECK(cudaGraphDestroy(graph));
   }
+}
+
+TEST(PcaCaptureCleanup, PreservesFailureAndRestoresStreamAfterInvalidation) {
+  const auto desc = device_desc({2});
+  holonp_test::TensorTestBuffer buffer(desc);
+  curaii::CudaStream stream;
+  for (const bool invalidate : {false, true}) {
+    try {
+      (void)holotask::detail::capture_cuda_graph(stream.get(), [&] {
+        CUDA_CHECK(cudaMemsetAsync(buffer.view().data(), 0, desc.num_bytes(), stream.get()));
+        if (invalidate)
+          EXPECT_NE(cudaStreamSynchronize(stream.get()), cudaSuccess);
+        throw std::runtime_error("injected capture failure");
+      });
+      FAIL() << "Capture should propagate the injected error";
+    } catch (const std::runtime_error &error) {
+      EXPECT_STREQ(error.what(), "injected capture failure");
+    }
+    cudaStreamCaptureStatus status{};
+    CUDA_CHECK(cudaStreamIsCapturing(stream.get(), &status));
+    EXPECT_EQ(status, cudaStreamCaptureStatusNone);
+    EXPECT_EQ(cudaGetLastError(), cudaSuccess);
+    CUDA_CHECK(cudaMemsetAsync(buffer.view().data(), 0, desc.num_bytes(), stream.get()));
+    CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+    EXPECT_EQ(as_floats(buffer.download()), (std::vector<float>{0.0F, 0.0F}));
+  }
+  // Exercise failure from EndCapture itself, rather than a thrown callback.
+  EXPECT_THROW((void)holotask::detail::capture_cuda_graph(stream.get(), [&] {
+    EXPECT_NE(cudaStreamSynchronize(stream.get()), cudaSuccess);
+  }), curaii::CudaError);
+  cudaStreamCaptureStatus status{};
+  CUDA_CHECK(cudaStreamIsCapturing(stream.get(), &status));
+  EXPECT_EQ(status, cudaStreamCaptureStatusNone);
+  EXPECT_EQ(cudaGetLastError(), cudaSuccess);
+  CUDA_CHECK(cudaMemsetAsync(buffer.view().data(), 0, desc.num_bytes(), stream.get()));
+  CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+  EXPECT_EQ(as_floats(buffer.download()), (std::vector<float>{0.0F, 0.0F}));
 }
 
 TEST_F(PcaExecuteTest, FallsBackOnDefaultStream) {
