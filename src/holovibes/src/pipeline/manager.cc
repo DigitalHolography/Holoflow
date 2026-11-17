@@ -961,10 +961,11 @@ void Manager::build_and_run() {
 
   // The scheduler references the previous compilation; stop it before replacing the graph.
   scheduler_.reset();
+  auto     prev_output = std::move(compiler_output_);
   Compiler compiler(registry_, config);
   {
     ScopedTrace scope("Compile Pipeline");
-    auto        replacement = compiler.compile(spec_);
+    auto        replacement = compiler.compile(spec_, std::move(prev_output));
     compiler_output_        = std::move(replacement);
   }
   if (compiler_output_ && !log_root_.empty()) {

@@ -165,9 +165,11 @@ void CameraBase::Impl::stop_acquisition() {
     acquisition_thread_->request_stop();
     acquisition_thread_->join();
     acquisition_thread_.reset();
+    logger()->info("[CameraBase::Impl::stop_acquisition] acquisition thread joined");
     grabber_->stop_if_running();
     acquiring_.store(false, std::memory_order_release);
     buffer_queue_->close();
+    logger()->info("[CameraBase::Impl::stop_acquisition] buffer queue cleared");
     logger()->info("[CameraBase::Impl::stop_acquisition] acquisition stopped");
   }
 }
