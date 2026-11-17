@@ -20,7 +20,7 @@ namespace {
 struct ResultState {
   holoflow::core::OpResult result = holoflow::core::OpResult::Eof;
   std::atomic<int>         calls{0};
-  bool throw_on_execute = false;
+  bool                     throw_on_execute = false;
 };
 
 class ResultTask final : public holoflow::core::ISyncTask {
@@ -275,10 +275,10 @@ TEST(SchedulerTest, RepeatedLifecycleCallsAreSafe) {
 }
 
 TEST(SchedulerTest, CapturesWorkerFailureAndRejectsRestart) {
-  auto state = std::make_shared<ResultState>();
+  auto state              = std::make_shared<ResultState>();
   state->throw_on_execute = true;
   auto [output, registry] = compile_result_graph(state);
-  using Scheduler = holoflow::runtime::Scheduler;
+  using Scheduler         = holoflow::runtime::Scheduler;
   Scheduler scheduler(output->graph, output->sections, output->resources,
                       std::chrono::milliseconds{1000}, {}, Scheduler::FailurePolicy::Capture);
   scheduler.start();
@@ -295,15 +295,17 @@ TEST(SchedulerTest, CapturesWorkerFailureAndRejectsRestart) {
 }
 
 TEST(SchedulerTest, DefaultPolicyStillAbortsOnWorkerFailure) {
-  EXPECT_DEATH({
-    auto state = std::make_shared<ResultState>();
-    state->throw_on_execute = true;
-    auto compiled = compile_result_graph(state);
-    const auto &output = compiled.first;
-    holoflow::runtime::Scheduler scheduler(output->graph, output->sections, output->resources);
-    scheduler.start();
-    scheduler.wait();
-  }, ""); // The native logger writes to stdout, not the captured death-test stderr.
+  EXPECT_DEATH(
+      {
+        auto state                            = std::make_shared<ResultState>();
+        state->throw_on_execute               = true;
+        auto                         compiled = compile_result_graph(state);
+        const auto                  &output   = compiled.first;
+        holoflow::runtime::Scheduler scheduler(output->graph, output->sections, output->resources);
+        scheduler.start();
+        scheduler.wait();
+      },
+      ""); // The native logger writes to stdout, not the captured death-test stderr.
 }
 
 TEST(SchedulerTest, UsesSharedStorageAndReleasesSuccessfulOwnedOutputExactlyOnce) {
@@ -349,4 +351,85 @@ TEST(SchedulerTest, DoesNotReleaseOwnedOutputWhenOperationDoesNotProduceIt) {
   scheduler.wait();
 
   EXPECT_EQ(state->release_calls.load(), 0);
+}
+
+namespace {
+struct FiniteState {
+  int count = 0, sum = 0, closures = 0;
+};
+
+class FiniteTask final : public holoflow::core::ISyncTask {
+public:
+  FiniteTask(bool source, std::shared_ptr<FiniteState> state)
+      : source_(source), state_(std::move(state)) {}
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    if (source_) {
+      if (next_ == 6)
+        return holoflow::core::OpResult::Eof;
+      *reinterpret_cast<float *>(ctx.outputs[0].data()) = static_cast<float>(next_++);
+    } else {
+      ++state_->count;
+      state_->sum += static_cast<int>(*reinterpret_cast<float *>(ctx.inputs[0].data()));
+    }
+    return holoflow::core::OpResult::Ok;
+  }
+  void end_of_stream(holoflow::core::SyncCtx &) override { ++state_->closures; }
+
+private:
+  bool                         source_;
+  int                          next_ = 1;
+  std::shared_ptr<FiniteState> state_;
+};
+
+class FiniteFactory final : public holoflow::core::ISyncTaskFactory {
+public:
+  FiniteFactory(bool source, std::shared_ptr<FiniteState> state)
+      : source_(source), state_(std::move(state)) {}
+  holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc>,
+                                    const nlohmann::json &) const override {
+    using namespace holoflow::core;
+    const TDesc desc({1}, DType::F32, MemLoc::Host);
+    return {.input_descs   = source_ ? std::vector<TDesc>{} : std::vector<TDesc>{desc},
+            .output_descs  = source_ ? std::vector<TDesc>{desc} : std::vector<TDesc>{},
+            .in_place      = {},
+            .owned_inputs  = source_ ? std::vector<bool>{} : std::vector<bool>{false},
+            .owned_outputs = source_ ? std::vector<bool>{false} : std::vector<bool>{},
+            .kind          = TaskKind::Sync,
+            .constness     = ConstInferenceState::Mutable,
+            .finite_source = source_};
+  }
+  std::unique_ptr<holoflow::core::ISyncTask>
+  create(std::span<const holoflow::core::TDesc>, const nlohmann::json &,
+         const holoflow::core::SyncCreateCtx &) const override {
+    return std::make_unique<FiniteTask>(source_, state_);
+  }
+
+private:
+  bool                         source_;
+  std::shared_ptr<FiniteState> state_;
+};
+} // namespace
+
+TEST(SchedulerTest, FiniteEofClosesSinkWithoutExecutingStaleData) {
+  using namespace holoflow;
+  auto           state = std::make_shared<FiniteState>();
+  core::Registry registry;
+  registry.register_sync("finite_source", std::make_unique<FiniteFactory>(true, state));
+  registry.register_sync("finite_sink", std::make_unique<FiniteFactory>(false, state));
+  core::GraphSpec graph;
+  auto            source = add_vertex(core::NodeSpec{"source", "finite_source", {}}, graph);
+  auto            sink   = add_vertex(core::NodeSpec{"sink", "finite_sink", {}}, graph);
+  add_edge(source, sink, core::EdgeSpec{0, 0}, graph);
+  runtime::Compiler  compiler(registry, {.dump_dot_on_failure = false, .enable_profiling = false});
+  auto               output = compiler.compile(graph);
+  runtime::Scheduler scheduler(output->graph, output->sections, output->resources,
+                               std::chrono::milliseconds{1000}, {},
+                               runtime::Scheduler::FailurePolicy::Capture);
+  scheduler.start();
+  scheduler.wait();
+  EXPECT_NO_THROW(scheduler.rethrow_failure());
+  EXPECT_TRUE(scheduler.completed());
+  EXPECT_EQ(state->count, 5);
+  EXPECT_EQ(state->sum, 15);
+  EXPECT_EQ(state->closures, 1);
 }

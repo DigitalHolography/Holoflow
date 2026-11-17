@@ -64,8 +64,14 @@ void from_json(const nlohmann::json &j, HolofileSettings::LoadKind &lk) {
 
 void to_json(nlohmann::json &j, const HolofileSettings &hs) {
   j = {
-      {"path", hs.path},           {"load_kind", hs.load_kind},   {"start_frame", hs.start_frame},
-      {"end_frame", hs.end_frame}, {"batch_size", hs.batch_size}, {"keep_cursor", hs.keep_cursor},
+      {"path", hs.path},
+      {"load_kind", hs.load_kind},
+      {"start_frame", hs.start_frame},
+      {"loop", hs.loop},
+      {"tail", hs.tail},
+      {"end_frame", hs.end_frame},
+      {"batch_size", hs.batch_size},
+      {"keep_cursor", hs.keep_cursor},
   };
 
   if (hs.max_fps.has_value()) {
@@ -83,6 +89,8 @@ void from_json(const nlohmann::json &j, HolofileSettings &hs) {
   if (j.contains("max_fps") && !j.at("max_fps").is_null()) {
     hs.max_fps = j.at("max_fps").get<int>();
   }
+  hs.loop        = j.value("loop", true);
+  hs.tail        = j.value("tail", std::string{"error"});
   hs.keep_cursor = j.value("keep_cursor", true);
 }
 
@@ -195,6 +203,8 @@ public:
   }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    if (!settings.loop && frame_idx + settings.batch_size > settings.end_frame)
+      return holoflow::core::OpResult::Eof;
     if (!pace_before_batch(ctx)) {
       return holoflow::core::OpResult::Cancelled;
     }
@@ -219,7 +229,7 @@ public:
       auto *odata = reinterpret_cast<uint8_t *>(ctx.outputs[0].data());
       reader->read_frames(odata, settings.batch_size);
     } else {
-      std::byte *data    = buf + frame_idx * bytes_per_frame;
+      std::byte *data    = buf + (frame_idx - settings.start_frame) * bytes_per_frame;
       auto      &storage = storage_access().owned_output_storage(0);
       storage.ptr        = data;
 
@@ -254,11 +264,12 @@ HolofileFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
 
   // clang-format off
   check(input_descs.size() == 0, "Holofile task must have no inputs");
-  check(settings.start_frame < settings.end_frame, "Invalid frame range");
+  check(settings.start_frame >= 0 && (settings.loop ? settings.start_frame < settings.end_frame : settings.start_frame <= settings.end_frame), "Invalid frame range");
+  check(settings.tail == "error" || settings.tail == "drop", "tail must be error or drop");
   check(settings.batch_size > 0, "Batch size must be positive");
   check(!settings.max_fps.has_value() || *settings.max_fps > 0, "max_fps must be positive when provided");
   check(settings.end_frame <= static_cast<int>(header.frame_count), "end_frame exceeds total frames in file");
-  check(settings.batch_size <= (settings.end_frame - settings.start_frame), "Batch size exceeds available frames");
+  check(!settings.loop || settings.batch_size <= (settings.end_frame - settings.start_frame), "Batch size exceeds available frames");
   check(bpp_to_dtype.contains(header.bits_per_pixel), "Unsupported bits_per_pixel: " + std::to_string(header.bits_per_pixel));
   // clang-format on
 
@@ -267,6 +278,10 @@ HolofileFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
       bpp_to_dtype.at(header.bits_per_pixel),
       settings.load_kind == HolofileSettings::LoadKind::GPUCached ? holoflow::core::MemLoc::Device
                                                                   : holoflow::core::MemLoc::Host);
+
+  check(settings.loop || settings.tail == "drop" ||
+            (settings.end_frame - settings.start_frame) % settings.batch_size == 0,
+        "Incomplete final source batch");
 
   bool owned_output = settings.load_kind != HolofileSettings::LoadKind::Live;
 
@@ -278,6 +293,7 @@ HolofileFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
       .owned_outputs = {owned_output},
       .kind          = holoflow::core::TaskKind::Sync,
       .constness     = holoflow::core::ConstInferenceState::Mutable,
+      .finite_source = !settings.loop,
   };
 }
 
@@ -312,12 +328,12 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     break;
 
   case HolofileSettings::LoadKind::CPUCached:
-    h_buf = make_unique_host_ptr<std::byte>(bytes_to_load);
+    h_buf = make_unique_host_ptr<std::byte>(std::max(size_t{1}, bytes_to_load));
     buf   = h_buf.get();
     break;
 
   case HolofileSettings::LoadKind::GPUCached:
-    d_buf = make_unique_device_ptr<std::byte>(bytes_to_load);
+    d_buf = make_unique_device_ptr<std::byte>(std::max(size_t{1}, bytes_to_load));
     buf   = d_buf.get();
     break;
   }
@@ -333,7 +349,7 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     break;
 
   case HolofileSettings::LoadKind::GPUCached: {
-    auto temp_buf = make_unique_host_ptr<std::byte>(bytes_to_load);
+    auto temp_buf = make_unique_host_ptr<std::byte>(std::max(size_t{1}, bytes_to_load));
     reader->read_frames(reinterpret_cast<uint8_t *>(temp_buf.get()), frames_to_load);
     CUDA_CHECK(cudaMemcpyAsync(d_buf.get(), temp_buf.get(), bytes_to_load, cudaMemcpyHostToDevice,
                                ctx.stream));

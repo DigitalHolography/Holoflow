@@ -44,9 +44,8 @@ class Scheduler {
 public:
   enum class FailurePolicy { Abort, Capture };
   /// Called once before a fatal runtime abort, while the compiled graph is still available.
-  using FailureCallback =
-      std::function<void(std::string_view thread_name, std::string_view node_name,
-                         std::string_view error_message)>;
+  using FailureCallback = std::function<void(
+      std::string_view thread_name, std::string_view node_name, std::string_view error_message)>;
 
   Scheduler(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
             std::chrono::milliseconds metrics_interval = std::chrono::milliseconds{1000});
@@ -71,6 +70,8 @@ public:
   void request_stop();
   void wait();
 
+  /// True only after every finite execution section has drained successfully.
+  bool completed() const;
   bool is_running() const;
   bool stop_requested() const;
 

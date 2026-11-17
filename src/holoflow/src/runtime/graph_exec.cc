@@ -206,6 +206,7 @@ public:
   void request_stop();
   void wait();
 
+  bool                           completed() const { return completed_.load(); }
   bool                           is_running() const;
   bool                           stop_requested() const;
   [[nodiscard]] std::string_view current_node_name() const noexcept;
@@ -259,6 +260,8 @@ private:
   void run_router();
 
   void run_section(int section_id);
+  bool inputs_closed(GraphPlan::vertex_descriptor v) const;
+  void finish_section();
 
   /// This function acquires all owned inputs for the given node.
   /// Owning tasks publish memory by updating their compiler-provided Storage;
@@ -292,12 +295,16 @@ private:
   [[nodiscard]] core::OpResult run_async_prod(GraphPlan::vertex_descriptor v);
 
 private:
-  std::atomic<bool> running_{false}; ///< True if the scheduler is running.
+  bool                  finite_mode_ = false;
+  std::vector<uint8_t>  node_eof_, producer_closed_, node_ran_;
+  std::atomic<size_t>   finished_sections_{0};
+  std::atomic<bool>     completed_{false};
+  std::atomic<bool>     running_{false};  ///< True if the scheduler is running.
   std::atomic<uint64_t> stream_epoch_{0}; ///< Current source-stream epoch.
-  std::atomic<bool> stop_{false};    ///< True if a stop has been requested.
-  std::atomic<bool> paused_{false};
-  std::atomic<bool> aborted_{false};
-  bool tasks_cancelled_ = false;
+  std::atomic<bool>     stop_{false};     ///< True if a stop has been requested.
+  std::atomic<bool>     paused_{false};
+  std::atomic<bool>     aborted_{false};
+  bool                  tasks_cancelled_ = false;
   struct SectionCheckpoint {
     enum class Stage { AcquireSync, AcquireProducer, Pop, Compute, Barrier, Push, Release };
     Stage                                     stage               = Stage::AcquireSync;
@@ -385,9 +392,9 @@ private:
   std::map<std::string, holoflow_event::Router::NodeHandles> event_handles_;
   std::atomic_flag                                           failure_dumped_ = ATOMIC_FLAG_INIT;
   Scheduler::FailureCallback                                 failure_callback_;
-  Scheduler::FailurePolicy failure_policy_;
-  mutable std::mutex failure_mutex_;
-  std::exception_ptr failure_;
+  Scheduler::FailurePolicy                                   failure_policy_;
+  mutable std::mutex                                         failure_mutex_;
+  std::exception_ptr                                         failure_;
 
   std::size_t              terminal_nodes_ = 0;          ///< Number of graph terminal nodes.
   std::atomic<std::size_t> completed_terminal_nodes_{0}; ///< Terminal nodes that reached EOF.
@@ -396,7 +403,7 @@ private:
 Scheduler::Impl::Impl(const GraphPlan &graph, const std::vector<Section> &sections,
                       ExecResouces &resources, std::chrono::milliseconds metrics_interval,
                       Scheduler::FailureCallback failure_callback,
-                      Scheduler::FailurePolicy failure_policy)
+                      Scheduler::FailurePolicy   failure_policy)
     : graph_(graph), sections_(sections), res_(resources), metrics_interval_(metrics_interval),
       failure_callback_(std::move(failure_callback)), failure_policy_(failure_policy) {
   tracing::ScopedTrace trace("Initialize Scheduler", "scheduler");
@@ -437,6 +444,11 @@ Scheduler::Impl::Impl(const GraphPlan &graph, const std::vector<Section> &sectio
     build_nodes_rts();
   }
   init_const_task_states();
+  node_eof_.assign(num_vertices(graph_), 0);
+  node_ran_.assign(num_vertices(graph_), 0);
+  producer_closed_.assign(num_vertices(graph_), 0);
+  for (const auto v : boost::make_iterator_range(vertices(graph_)))
+    finite_mode_ |= graph_[v].infer.finite_source;
 }
 
 Scheduler::Impl::~Impl() {
@@ -476,8 +488,8 @@ void Scheduler::Impl::handle_failure(std::string_view thread_name, std::string_v
   {
     std::lock_guard lock(failure_mutex_);
     if (!failure_)
-      failure_ = std::make_exception_ptr(std::runtime_error(
-          std::format("{}: node '{}': {}", thread_name, node_name, message)));
+      failure_ = std::make_exception_ptr(
+          std::runtime_error(std::format("{}: node '{}': {}", thread_name, node_name, message)));
   }
   aborted_.store(true);
   paused_.store(false);
@@ -532,6 +544,11 @@ void Scheduler::Impl::start() {
     const_init_complete_       = sections_.empty();
   }
   if (!resume) {
+    completed_.store(false);
+    finished_sections_.store(0);
+    std::ranges::fill(node_eof_, 0);
+    std::ranges::fill(node_ran_, 0);
+    std::ranges::fill(producer_closed_, 0);
     checkpoints_.assign(sections_.size(), SectionCheckpoint{});
     tasks_cancelled_ = false;
   }
@@ -586,6 +603,8 @@ void Scheduler::Impl::request_pause() {
 void Scheduler::Impl::request_stop() {
   tracing::ScopedTrace trace("Scheduler Request Stop", "scheduler");
   logger()->info("[Scheduler::request_stop] Requesting scheduler to stop");
+  if (completed_.load())
+    return;
   aborted_.store(true);
   const bool was_paused = paused_.exchange(false);
   if (!running_.load()) {
@@ -640,7 +659,7 @@ void Scheduler::Impl::wait() {
   }
   // Pause retains task state and held buffers. Cancel only after all workers have joined,
   // including when a previously paused scheduler is stopped or destroyed.
-  if (!paused_.load() && !tasks_cancelled_) {
+  if (!completed() && !paused_.load() && !tasks_cancelled_) {
     for (const auto &section : sections_) {
       for (auto v : section.async_cons)
         cancel_async(v);
@@ -806,6 +825,29 @@ void Scheduler::Impl::run_router() {
   }
 }
 
+bool Scheduler::Impl::inputs_closed(GraphPlan::vertex_descriptor v) const {
+  size_t open = 0, closed = 0;
+  for (auto e : boost::make_iterator_range(in_edges(v, graph_))) {
+    const auto upstream = source(e, graph_);
+    if (graph_[upstream].infer.constness == core::ConstInferenceState::Constant)
+      continue;
+    if (node_eof_[upstream])
+      ++closed;
+    else
+      ++open;
+  }
+  if (closed && open)
+    throw std::runtime_error("Changing input streams have unequal lengths");
+  return closed != 0 || (open == 0 && in_degree(v, graph_) != 0 && node_ran_[v] != 0);
+}
+
+void Scheduler::Impl::finish_section() {
+  if (finished_sections_.fetch_add(1) + 1 == sections_.size()) {
+    completed_.store(true);
+    stop_.store(true);
+  }
+}
+
 void Scheduler::Impl::run_section(int section_id) {
   const auto &sec = sections_.at(section_id);
   tracing::set_thread_name(std::format("Section {}: {}", section_id, sec.name));
@@ -898,6 +940,7 @@ void Scheduler::Impl::run_section(int section_id) {
       if (const_init_sections_ready_ == sections_.size()) {
         const_init_complete_ = true;
         if (!any_recurring_work && !stop_.load()) {
+          completed_.store(true);
           stop_.store(true);
         }
         const_init_cv_.notify_all();
@@ -912,6 +955,8 @@ void Scheduler::Impl::run_section(int section_id) {
     const bool section_has_recurring_work =
         !sec.sync_topo.empty() || !sec.async_cons.empty() || !sec.async_prod.empty();
     if (!section_has_recurring_work) {
+      if (finite_mode_)
+        finish_section();
       return;
     }
 
@@ -954,10 +999,11 @@ void Scheduler::Impl::run_section(int section_id) {
           detail::current_node_name() = current_node_name;
           try {
             ranges.phase("Async pop");
-            if (run_async_cons(v) == core::OpResult::Ok) {
+            const auto result = run_async_cons(v);
+            if (result == core::OpResult::Ok)
               checkpoint.produced.push_back(v);
+            if (result == core::OpResult::Ok || (finite_mode_ && result == core::OpResult::Eof))
               ++checkpoint.node;
-            }
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_async_consumer", section_id, sec.name);
           }
@@ -971,7 +1017,12 @@ void Scheduler::Impl::run_section(int section_id) {
         detail::current_node_name() = {};
         if (!checkpoint.computation_started) {
           checkpoint.computation_started = true;
-          if (graph_it != res_.section_cuda_graphs.end() && graph_it->second->enabled) {
+          const bool closed_input =
+              finite_mode_ &&
+              (std::ranges::any_of(sec.async_cons, [this](auto v) { return node_eof_[v] != 0; }) ||
+               std::ranges::any_of(sec.sync_topo, [this](auto v) { return node_eof_[v] != 0; }));
+          if (!closed_input && graph_it != res_.section_cuda_graphs.end() &&
+              graph_it->second->enabled) {
             auto      &graphs  = *graph_it->second;
             const auto variant = graphs.variant(res_.storages);
             if (variant) {
@@ -1004,10 +1055,11 @@ void Scheduler::Impl::run_section(int section_id) {
         current_node_name           = graph_[v].spec.name;
         detail::current_node_name() = current_node_name;
         try {
-          if (run_sync(v) == core::OpResult::Ok) {
+          const auto result = run_sync(v);
+          if (result == core::OpResult::Ok)
             checkpoint.produced.push_back(v);
+          if (result == core::OpResult::Ok || (finite_mode_ && result == core::OpResult::Eof))
             ++checkpoint.node;
-          }
         } catch (...) {
           rethrow_with_node_context(graph_, v, "execute_sync", section_id, sec.name);
         }
@@ -1016,7 +1068,7 @@ void Scheduler::Impl::run_section(int section_id) {
       case Stage::Barrier:
         current_node_name           = {};
         detail::current_node_name() = {};
-        if (!sec.has_synchronizing_async_producer) {
+        if (finite_mode_ || !sec.has_synchronizing_async_producer) {
           ranges.phase("Wait");
           CUDA_CHECK(cudaStreamSynchronize(sec.stream));
         }
@@ -1033,7 +1085,8 @@ void Scheduler::Impl::run_section(int section_id) {
           detail::current_node_name() = current_node_name;
           try {
             ranges.phase("Async push");
-            if (run_async_prod(v) == core::OpResult::Ok)
+            const auto result = run_async_prod(v);
+            if (result == core::OpResult::Ok || (finite_mode_ && result == core::OpResult::Eof))
               ++checkpoint.node;
           } catch (...) {
             rethrow_with_node_context(graph_, v, "execute_async_producer", section_id, sec.name);
@@ -1044,6 +1097,14 @@ void Scheduler::Impl::run_section(int section_id) {
         if (checkpoint.node == checkpoint.produced.size()) {
           ranges.end_iteration();
           checkpoint = SectionCheckpoint{};
+          if (finite_mode_ &&
+              std::ranges::all_of(sec.sync_topo, [this](auto v) { return node_eof_[v] != 0; }) &&
+              std::ranges::all_of(sec.async_cons, [this](auto v) { return node_eof_[v] != 0; }) &&
+              std::ranges::all_of(sec.async_prod,
+                                  [this](auto v) { return producer_closed_[v] != 0; })) {
+            finish_section();
+            return;
+          }
           break;
         }
         {
@@ -1087,9 +1148,8 @@ void Scheduler::Impl::run_section(int section_id) {
     paused_.store(false);
     stop_.store(true);
     const_init_cv_.notify_all();
-    handle_failure(
-        std::format("Scheduler::run_section section={} id={}", sec.name, section_id),
-        current_node_name);
+    handle_failure(std::format("Scheduler::run_section section={} id={}", sec.name, section_id),
+                   current_node_name);
   }
 }
 
@@ -1098,9 +1158,14 @@ void Scheduler::Impl::acquire_owned_inputs(GraphPlan::vertex_descriptor v, size_
   const auto &np         = graph_[v];
   auto       &nrt        = node_rts_.at(idx);
   const auto &owned_mask = np.infer.owned_inputs;
-  auto       *task       = std::holds_alternative<SyncRt>(nrt)
-                               ? static_cast<core::ITask *>(std::get<SyncRt>(nrt).task)
-                               : static_cast<core::ITask *>(std::get<AsyncRt>(nrt).task);
+  if (finite_mode_ &&
+      (np.infer.kind == core::TaskKind::Sync ? node_eof_[idx] : producer_closed_[idx])) {
+    port = owned_mask.size();
+    return;
+  }
+  auto *task = std::holds_alternative<SyncRt>(nrt)
+                   ? static_cast<core::ITask *>(std::get<SyncRt>(nrt).task)
+                   : static_cast<core::ITask *>(std::get<AsyncRt>(nrt).task);
 
   for (; port < owned_mask.size(); ++port) {
     const auto i = port;
@@ -1190,6 +1255,16 @@ core::OpResult Scheduler::Impl::run_sync(GraphPlan::vertex_descriptor v) {
   HOLOFLOW_CHECK(std::holds_alternative<SyncRt>(nrt));
   auto &srt = std::get<SyncRt>(nrt);
 
+  if (finite_mode_) {
+    if (node_eof_[idx])
+      return core::OpResult::Eof;
+    if (inputs_closed(v)) {
+      srt.task->end_of_stream(srt.ctx);
+      node_eof_[idx] = 1;
+      return core::OpResult::Eof;
+    }
+  }
+
   logger()->trace("[Scheduler::run_sync] Executing node '{}'", np.spec.name);
   auto t0 = clock::now();
   auto r  = core::OpResult::Cancelled;
@@ -1207,6 +1282,10 @@ core::OpResult Scheduler::Impl::run_sync(GraphPlan::vertex_descriptor v) {
     stop_.store(true);
     break;
   case core::OpResult::Eof:
+    if (finite_mode_) {
+      node_eof_[idx] = 1;
+      break;
+    }
     aborted_.store(true);
     paused_.store(false);
     logger()->debug("[Scheduler::run_sync] Node '{}' reached end of stream", np.spec.name);
@@ -1226,6 +1305,7 @@ core::OpResult Scheduler::Impl::run_sync(GraphPlan::vertex_descriptor v) {
   }
 
   if (r == core::OpResult::Ok) {
+    node_ran_[idx]         = 1;
     const auto duration_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count();
     auto [host_in, device_in] =
         sum_bytes(std::span<const core::TView>(srt.in_views.data(), srt.in_views.size()));
@@ -1244,6 +1324,8 @@ core::OpResult Scheduler::Impl::run_async_cons(GraphPlan::vertex_descriptor v) {
   auto       &nrt = node_rts_.at(idx);
   HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
   auto &art = std::get<AsyncRt>(nrt);
+  if (finite_mode_ && node_eof_[idx])
+    return core::OpResult::Eof;
 
   logger()->trace("[Scheduler::run_async_cons] Executing node '{}'", np.spec.name);
   auto t0 = clock::now();
@@ -1267,6 +1349,10 @@ core::OpResult Scheduler::Impl::run_async_cons(GraphPlan::vertex_descriptor v) {
     stop_.store(true);
     break;
   case core::OpResult::Eof:
+    if (finite_mode_) {
+      node_eof_[idx] = 1;
+      break;
+    }
     aborted_.store(true);
     paused_.store(false);
     logger()->debug("[Scheduler::run_async_cons] Node '{}' reached end of stream", np.spec.name);
@@ -1296,6 +1382,15 @@ core::OpResult Scheduler::Impl::run_async_prod(GraphPlan::vertex_descriptor v) {
   auto       &nrt = node_rts_.at(idx);
   HOLOFLOW_CHECK(std::holds_alternative<AsyncRt>(nrt));
   auto &art = std::get<AsyncRt>(nrt);
+  if (finite_mode_) {
+    if (producer_closed_[idx])
+      return core::OpResult::Eof;
+    if (inputs_closed(v)) {
+      art.task->close_input();
+      producer_closed_[idx] = 1;
+      return core::OpResult::Eof;
+    }
+  }
 
   logger()->trace("[Scheduler::run_async_prod] Executing node '{}'", np.spec.name);
   auto t0 = clock::now();
@@ -1532,6 +1627,8 @@ void Scheduler::request_stop() { impl_->request_stop(); }
 
 void Scheduler::wait() { impl_->wait(); }
 
+bool Scheduler::completed() const { return impl_->completed(); }
+
 bool Scheduler::is_running() const { return impl_->is_running(); }
 
 bool Scheduler::stop_requested() const { return impl_->stop_requested(); }
@@ -1551,4 +1648,4 @@ std::optional<holoflow_event::Event> Scheduler::ui_try_receive() noexcept {
 void Scheduler::cancel_sync(GraphPlan::vertex_descriptor v) { impl_->cancel_sync(v); }
 
 void Scheduler::cancel_async(GraphPlan::vertex_descriptor v) { impl_->cancel_async(v); }
-}
+} // namespace holoflow::runtime

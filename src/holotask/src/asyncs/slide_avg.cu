@@ -83,12 +83,15 @@ public:
     return owned_input_pointers(0);
   }
 
+  void close_input() override { closed_.store(true, std::memory_order_release); }
+
   void update_streams(cudaStream_t producer_stream, cudaStream_t consumer_stream) {
     producer_stream_ = producer_stream;
     consumer_stream_ = consumer_stream;
   }
   void update_validity(bool has_validity) { has_validity_ = has_validity; }
   void reset() {
+    closed_.store(false, std::memory_order_relaxed);
     // Recompilation starts a new history while retaining graph-captured allocations.
     CUDA_CHECK(cudaMemsetAsync(d_buffer_.get(), 0, nb_slots_ * element_size_, producer_stream_));
     CUDA_CHECK(cudaMemsetAsync(d_running_avg_.get(), 0, element_size_, producer_stream_));
@@ -126,8 +129,9 @@ private:
       result.cycle.push_back((phase + i) % nb_slots_);
     return result;
   }
-  size_t writer_size() const;
-  size_t reader_size() const;
+  size_t            writer_size() const;
+  std::atomic<bool> closed_{false};
+  size_t            reader_size() const;
 
   SlidingAverageSettings settings_;
   holoflow::core::TDesc  idesc_;
@@ -280,7 +284,10 @@ holoflow::core::OpResult SlidingAverage::try_push(holoflow::core::AsyncPushCtx &
 }
 
 holoflow::core::OpResult SlidingAverage::try_pop(holoflow::core::AsyncPopCtx &ctx) {
+  const bool closed = closed_.load(std::memory_order_acquire);
   if (reader_size() <= settings_.window_size) {
+    if (closed)
+      return holoflow::core::OpResult::Eof;
     return holoflow::core::OpResult::NotReady;
   }
 

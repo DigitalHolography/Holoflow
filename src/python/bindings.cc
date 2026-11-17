@@ -1,36 +1,52 @@
 // Copyright 2026 Digital Holography Foundation
 // Licensed under the Apache License, Version 2.0.
 
+#include "array_collector.hh"
+#include "finite_graph.hh"
 #include <limits>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
+#include <ranges>
 #include <set>
 
 #include "holofile/holofile.hh"
 #include "holoflow/core/registry.hh"
 #include "holoflow/runtime/compiler.hh"
 #include "holoflow/runtime/graph_display.hh"
+#include "holonp/abs.hh"
+#include "holonp/add.hh"
 #include "holonp/arange.hh"
 #include "holonp/asarray.hh"
-#include "holonp/meshgrid.hh"
-#include "holonp/square.hh"
-#include "holonp/add.hh"
-#include "holonp/multiply.hh"
+#include "holonp/copy.hh"
 #include "holonp/exp.hh"
 #include "holonp/fft2.hh"
-#include "holonp/abs.hh"
 #include "holonp/fftshift.hh"
-#include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holonp/mean.hh"
+#include "holonp/meshgrid.hh"
+#include "holonp/multiply.hh"
 #include "holonp/reshape.hh"
+#include "holonp/slice.hh"
+#include "holonp/square.hh"
+#include "holonp/transpose.hh"
 #include "holotask/asyncs/batch_queue.hh"
+#include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sources/holofile.hh"
+#include "holotask/syncs/causal_sliding_average.hh"
 #include "holotask/syncs/conversion.hh"
+#include "holotask/syncs/correct_phase.hh"
+#include "holotask/syncs/filter2d.hh"
+#include "holotask/syncs/flatfield.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
 #include "holotask/syncs/memcpy.hh"
+#include "holotask/syncs/normalize.hh"
 #include "holotask/syncs/pca.hh"
+#include "holotask/syncs/shack_hartmann_slopes.hh"
+#include "holotask/syncs/short_time_fresnel_diffraction.hh"
+#include "holotask/syncs/wrap2pi.hh"
+#include "holotask/syncs/zernike_from_slopes.hh"
+#include "holotask/syncs/zernike_phase.hh"
 
 namespace py = pybind11;
 namespace hc = holoflow::core;
@@ -45,12 +61,17 @@ public:
 class VoidFactory final : public hc::ISyncTaskFactory {
 public:
   hc::InferResult infer(std::span<const hc::TDesc> inputs, const Json &) const override {
-    if (inputs.size() != 1) throw std::invalid_argument("Void expects one tensor");
-    return {.input_descs = {inputs[0]}, .output_descs = {}, .in_place = {},
-            .owned_inputs = {false}, .owned_outputs = {}, .kind = hc::TaskKind::Sync};
+    if (inputs.size() != 1)
+      throw std::invalid_argument("Void expects one tensor");
+    return {.input_descs   = {inputs[0]},
+            .output_descs  = {},
+            .in_place      = {},
+            .owned_inputs  = {false},
+            .owned_outputs = {},
+            .kind          = hc::TaskKind::Sync};
   }
-  std::unique_ptr<hc::ISyncTask> create(std::span<const hc::TDesc> inputs,
-      const Json &settings, const hc::SyncCreateCtx &) const override {
+  std::unique_ptr<hc::ISyncTask> create(std::span<const hc::TDesc> inputs, const Json &settings,
+                                        const hc::SyncCreateCtx &) const override {
     (void)infer(inputs, settings);
     return std::make_unique<VoidTask>();
   }
@@ -58,12 +79,15 @@ public:
 
 std::unique_ptr<hc::Registry> make_registry() {
   auto r = std::make_unique<hc::Registry>();
+  r->register_sync("ArrayCollector", std::make_unique<holoflow::python::ArrayCollectorFactory>());
   r->register_sync("Holofile", std::make_unique<holotask::sources::HolofileFactory>());
   r->register_sync("HolofileWriter", std::make_unique<holotask::sinks::HolofileFactory>());
   r->register_sync("Memcpy", std::make_unique<holotask::syncs::MemcpyFactory>());
   r->register_sync("Conversion", std::make_unique<holotask::syncs::ConversionFactory>());
   r->register_sync("Reshape", std::make_unique<holonp::ReshapeFactory>());
   r->register_sync("Mean", std::make_unique<holonp::MeanFactory>());
+  r->register_sync("Filter2D", std::make_unique<holotask::syncs::Filter2DFactory>());
+  r->register_sync("Flatfield", std::make_unique<holotask::syncs::FlatfieldFactory>());
   r->register_sync("Pca", std::make_unique<holotask::syncs::PcaFactory>());
   r->register_sync("FresnelDiffraction",
                    std::make_unique<holotask::syncs::FresnelDiffractionFactory>());
@@ -80,7 +104,23 @@ std::unique_ptr<hc::Registry> make_registry() {
   r->register_sync("Abs", std::make_unique<holonp::AbsFactory>());
   r->register_sync("FFTShiftNp", std::make_unique<holonp::FFTShiftFactory>());
   r->register_sync("Void", std::make_unique<VoidFactory>());
-  r->register_async("DualReaderBatchQueue", std::make_unique<holotask::asyncs::DualReaderBatchQueueFactory>());
+  r->register_async("DualReaderBatchQueue",
+                    std::make_unique<holotask::asyncs::DualReaderBatchQueueFactory>());
+  r->register_sync("ShortTimeFresnelDiffraction",
+                   std::make_unique<holotask::syncs::ShortTimeFresnelDiffractionFactory>());
+  r->register_sync("CausalSlidingAverage",
+                   std::make_unique<holotask::syncs::CausalSlidingAverageFactory>());
+  r->register_sync("ShackHartmannSlopes",
+                   std::make_unique<holotask::syncs::ShackHartmannSlopesFactory>());
+  r->register_sync("ZernikeFromSlopes",
+                   std::make_unique<holotask::syncs::ZernikeFromSlopesFactory>());
+  r->register_sync("ZernikePhase", std::make_unique<holotask::syncs::ZernikePhaseFactory>());
+  r->register_sync("CorrectPhase", std::make_unique<holotask::syncs::CorrectPhaseFactory>());
+  r->register_sync("Normalize", std::make_unique<holotask::syncs::NormalizeFactory>());
+  r->register_sync("Wrap2Pi", std::make_unique<holotask::syncs::Wrap2PiFactory>());
+  r->register_sync("Copy", std::make_unique<holonp::CopyFactory>());
+  r->register_sync("Transpose", std::make_unique<holonp::TransposeFactory>());
+  r->register_sync("Slice", std::make_unique<holonp::SliceFactory>());
   return r;
 }
 
@@ -99,14 +139,16 @@ public:
                                                                       .enable_profiling = false})) {
     for (const auto v : boost::make_iterator_range(vertices(spec)))
       node_ids_.insert(spec[v].name);
-    output_    = compiler_->compile(spec);
+    for (const auto v : boost::make_iterator_range(vertices(spec)))
+      names_.push_back(spec[v].name);
+    output_    = compiler_->compile(holoflow::python::prepare_finite_graph(spec, *registry_));
     scheduler_ = std::make_unique<hr::Scheduler>(
         output_->graph, output_->sections, output_->resources, std::chrono::milliseconds{1000},
         hr::Scheduler::FailureCallback{}, hr::Scheduler::FailurePolicy::Capture);
   }
   ~Executable() {
     try {
-      if (scheduler_->is_running()) {
+      if (scheduler_ && scheduler_->is_running()) {
         stop();
         scheduler_->wait();
       }
@@ -114,6 +156,8 @@ public:
     }
   }
   void check_failure() const {
+    if (!scheduler_)
+      throw std::runtime_error("Executable is closed");
     try {
       scheduler_->rethrow_failure();
     } catch (const std::exception &e) {
@@ -131,6 +175,38 @@ public:
   void wait() {
     scheduler_->wait();
     check_failure();
+  }
+  void close() {
+    if (!scheduler_)
+      return;
+    std::exception_ptr failure;
+    try {
+      stop();
+      scheduler_->wait();
+      check_failure();
+    } catch (...) {
+      failure = std::current_exception();
+    }
+    scheduler_.reset();
+    output_.reset();
+    compiler_.reset();
+    registry_.reset();
+    if (failure)
+      std::rethrow_exception(failure);
+  }
+  bool completed() const {
+    check_failure();
+    return scheduler_->completed();
+  }
+  py::array array_result(size_t vertex) const {
+    check_failure();
+    if (!scheduler_->completed())
+      throw std::runtime_error("Execution has not completed successfully");
+    auto *collector = dynamic_cast<holoflow::python::ArrayCollector *>(
+        output_->resources.tasks.at(names_.at(vertex)).get());
+    if (!collector)
+      throw std::invalid_argument("Result handle does not identify an array collector");
+    return collector->array();
   }
   bool is_running() const { return scheduler_->is_running(); }
   bool stop_requested() const { return scheduler_->stop_requested(); }
@@ -166,6 +242,7 @@ private:
   std::unique_ptr<hr::CompilerOutput> output_;
   std::unique_ptr<hr::Scheduler>      scheduler_;
   std::set<std::string>               node_ids_;
+  std::vector<std::string>            names_;
 };
 
 class Graph {
@@ -271,6 +348,9 @@ PYBIND11_MODULE(_native, m) {
       .def("start", &Executable::start, py::call_guard<py::gil_scoped_release>())
       .def("stop", &Executable::stop)
       .def("wait", &Executable::wait, py::call_guard<py::gil_scoped_release>())
+      .def("close", &Executable::close, py::call_guard<py::gil_scoped_release>())
+      .def("completed", &Executable::completed)
+      .def("array_result", &Executable::array_result)
       .def("is_running", &Executable::is_running)
       .def("stop_requested", &Executable::stop_requested)
       .def("check_failure", &Executable::check_failure)

@@ -190,8 +190,13 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
+  void close_input() override { closed_.store(true, std::memory_order_release); }
+
   holoflow::core::OpResult try_pop(holoflow::core::AsyncPopCtx &ctx) override {
+    const bool closed = closed_.load(std::memory_order_acquire);
     if (reader_size(current_read_idx_) < 1) {
+      if (closed)
+        return holoflow::core::OpResult::Eof;
       return holoflow::core::OpResult::NotReady;
     }
     if (pop_active_) {
@@ -217,6 +222,7 @@ public:
   }
 
 private:
+  std::atomic<bool> closed_{false};
   size_t increment(size_t index) const { return index + 1 == slot_count_ ? 0 : index + 1; }
 
   size_t distance(size_t begin, size_t end) const {

@@ -72,6 +72,7 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <span>
+#include <stdexcept>
 #include <vector>
 
 #include "driver_types.h"
@@ -85,8 +86,8 @@ struct SyncCtx {
   std::span<TView>             inputs;    ///< Scheduler-provided input views; some may be owned.
   std::span<TView>             outputs;   ///< Output slots; owned outputs are written by the task.
   std::atomic<bool>           *cancelled; ///< Non-null cancellation flag.
-  holoflow_event::EventWriter *event_writer; ///< Event writer for emitting events.
-  holoflow_event::EventReader *event_reader; ///< Event reader for receiving events.
+  holoflow_event::EventWriter *event_writer;           ///< Event writer for emitting events.
+  holoflow_event::EventReader *event_reader;           ///< Event reader for receiving events.
   std::atomic<uint64_t>       *stream_epoch = nullptr; ///< Incremented when a source loops.
 };
 
@@ -256,6 +257,9 @@ public:
   /// @returns control-flow result; errors via exceptions.
   [[nodiscard]] virtual OpResult execute(SyncCtx &ctx) = 0;
 
+  /// Called once after every changing input closes, before publishing output EOF.
+  virtual void end_of_stream(SyncCtx &) {}
+
   /// Opt-in promise: fixed bindings/configuration replay correctly without host-side execution,
   /// events, control results, or ownership publication. GPU-side state/conditionals are allowed.
   [[nodiscard]] virtual bool supports_cuda_graph() const noexcept { return false; }
@@ -295,6 +299,9 @@ public:
   /// Overwrites owned output slots in ctx.outputs.
   /// @returns control-flow result; errors via exceptions.
   [[nodiscard]] virtual OpResult try_pop(AsyncPopCtx &ctx) = 0;
+
+  /// Producer-side closure. Publication must follow all successful pushes.
+  virtual void close_input() { throw std::runtime_error("Task does not support stream closure"); }
 
   // handle cancel properly
   // It is called for each task after a cancel request
@@ -344,6 +351,8 @@ struct InferResult {
   bool synchronizes_producer_stream = false;
   /// Constness inferred by the compiler. Undefined requests graph-based deduction.
   ConstInferenceState constness = ConstInferenceState::Undefined;
+  /// A finite source enables ordered EOF propagation and draining in the scheduler.
+  bool finite_source = false;
   /// Optional per-port counts. An empty vector or nullopt entry means unknown.
   std::vector<std::optional<size_t>> owned_input_pointer_counts;
   std::vector<std::optional<size_t>> owned_output_pointer_counts;

@@ -1,3 +1,17 @@
+# Copyright 2026 Digital Holography Foundation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """PCA Doppler pipeline with decomposed Fresnel operations."""
 
 import math
@@ -6,7 +20,7 @@ import time
 import holoflow as hf
 
 
-INPUT_PATH = "C:/Users/guill/Documents/holofiles_data/GUJ_20260424_224317_AQ001.holo"
+INPUT_PATH = "D:\\260312_GUJ_1.holo"
 WAVELENGTH = 852e-9
 PROPAGATION_DISTANCE = 0.492
 PIXEL_PITCH = 20e-6

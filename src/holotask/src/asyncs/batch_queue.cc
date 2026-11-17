@@ -37,6 +37,7 @@ template <typename T> using HostPtr = curaii::unique_host_ptr<T>;
 
 void to_json(nlohmann::json &j, const BatchQueueSettings &bqs) {
   j = nlohmann::json{
+      {"tail", bqs.tail},
       {"target_capacity", bqs.target_capacity},
       {"output_size", bqs.output_size},
       {"output_stride", bqs.output_stride},
@@ -44,6 +45,7 @@ void to_json(nlohmann::json &j, const BatchQueueSettings &bqs) {
 }
 
 void from_json(const nlohmann::json &j, BatchQueueSettings &bqs) {
+  bqs.tail = j.value("tail", std::string{"error"});
   j.at("target_capacity").get_to(bqs.target_capacity);
   j.at("output_size").get_to(bqs.output_size);
   j.at("output_stride").get_to(bqs.output_stride);
@@ -64,6 +66,8 @@ public:
   void                                 release_output(int index) override;
   holoflow::core::OpResult             try_push(holoflow::core::AsyncPushCtx &ctx) override;
   holoflow::core::OpResult             try_pop(holoflow::core::AsyncPopCtx &ctx) override;
+
+  void close_input() override { closed_.store(true, std::memory_order_release); }
 
   std::optional<std::vector<std::byte *>> owned_input_pointers(size_t index) const override {
     if (index != 0)
@@ -115,8 +119,9 @@ private:
       result.cycle.push_back((phase + i) % count);
     return result;
   }
-  size_t writer_size() const;
-  size_t reader_size() const;
+  std::atomic<bool> closed_{false};
+  size_t            writer_size() const;
+  size_t            reader_size() const;
 
   BatchQueueSettings    settings_;
   holoflow::core::TDesc idesc_;
@@ -179,7 +184,14 @@ holoflow::core::OpResult BatchQueue::try_push(holoflow::core::AsyncPushCtx &) {
 }
 
 holoflow::core::OpResult BatchQueue::try_pop(holoflow::core::AsyncPopCtx &ctx) {
-  if (reader_size() < settings_.output_stride) {
+  const bool closed    = closed_.load(std::memory_order_acquire);
+  const auto remaining = reader_size();
+  if (remaining < static_cast<size_t>(settings_.output_stride)) {
+    if (closed) {
+      if (remaining && settings_.tail == "error")
+        throw std::runtime_error("Incomplete final BatchQueue stride group");
+      return holoflow::core::OpResult::Eof;
+    }
     return holoflow::core::OpResult::NotReady;
   }
 
@@ -242,6 +254,7 @@ BatchQueueFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   auto settings = jsettings.get<BatchQueueSettings>();
 
   // Validate
+  check(settings.tail == "error" || settings.tail == "drop", "tail must be error or drop");
   check(input_descs.size() == 1, "BatchQueue task must have exactly one input");
   check(input_descs[0].rank() > 0, "BatchQueue task input must have rank > 0");
   check(input_descs[0].shape[0] > 0, "BatchQueue task input batch must be positive");

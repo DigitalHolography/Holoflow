@@ -1,3 +1,17 @@
+# Copyright 2026 Digital Holography Foundation
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Symbolic graph construction and generic runtime orchestration."""
 
 from __future__ import annotations
@@ -61,6 +75,19 @@ class Tensor:
                 *, node_id: str | None = None) -> Tensor:
         return operation("Reshape", (self,), {"shape": list(shape), "copy": copy}, node_id)
 
+    def __getitem__(self, key):
+        keys = key if isinstance(key, tuple) else (key,)
+        items = []
+        for item in keys:
+            if isinstance(item, slice):
+                items.append({"start": item.start, "stop": item.stop,
+                              "step": 1 if item.step is None else item.step})
+            elif isinstance(item, int):
+                items.append(item)
+            else:
+                raise TypeError("Symbolic slicing supports integer indices and slices")
+        return operation("Slice", (self,), {"slices": items})
+
     def __add__(self, other):
         return operation("Add", (self, other), {})
 
@@ -97,6 +124,32 @@ def operation(kind: str, inputs: tuple[Tensor, ...], settings: dict,
     return tensors[0] if len(tensors) == 1 else tensors
 
 
+class CancelledError(RuntimeError):
+    """Execution stopped before the graph reached normal EOF."""
+
+
+@dataclass(frozen=True)
+class ArrayResult:
+    """Symbolic collection output, resolved by Executable.result()."""
+
+    _builder: Any
+    _vertex: int
+
+
+def _map_results(value, resolve):
+    if isinstance(value, ArrayResult):
+        return resolve(value)
+    if value is None:
+        return None
+    if isinstance(value, tuple):
+        return tuple(_map_results(v, resolve) for v in value)
+    if isinstance(value, list):
+        return [_map_results(v, resolve) for v in value]
+    if isinstance(value, dict) and all(isinstance(k, str) for k in value):
+        return {k: _map_results(v, resolve) for k, v in value.items()}
+    raise TypeError("Traced returns must be ArrayResult handles, None, or tuples/lists/string-keyed dictionaries of them")
+
+
 @dataclass(frozen=True)
 class Event:
     node_id: str
@@ -106,8 +159,10 @@ class Event:
 class Executable:
     """Own a native executable. Lifecycle mutations must not overlap."""
 
-    def __init__(self, native):
+    def __init__(self, native, outputs=None):
         self._native = native
+        self._outputs = outputs
+        self._arrays = {}
         self._lifecycle = Lock()
         self._started = False
         self._joined = False
@@ -155,14 +210,34 @@ class Executable:
             if self._native is None:
                 return
             native = self._native
-            native.stop()
             try:
-                if self._started and not self._joined:
-                    native.wait()
-                native.check_failure()
+                native.close()
             finally:
                 self._joined = True
                 self._native = None
+        finally:
+            self._lifecycle.release()
+
+    def result(self):
+        """Wait for the entire graph and resolve the traced collector return structure."""
+        self._acquire()
+        try:
+            native = self._get()
+            if not self._started:
+                raise RuntimeError("Executable has not been started")
+            if not self._joined:
+                try:
+                    native.wait()
+                finally:
+                    self._joined = True
+            native.check_failure()
+            if not native.completed():
+                raise CancelledError("Execution stopped before normal EOF")
+            def resolve(handle):
+                if handle._vertex not in self._arrays:
+                    self._arrays[handle._vertex] = native.array_result(handle._vertex)
+                return self._arrays[handle._vertex]
+            return _map_results(self._outputs, resolve)
         finally:
             self._lifecycle.release()
 
@@ -197,8 +272,9 @@ class Executable:
 
 
 class Graph:
-    def __init__(self, native):
+    def __init__(self, native, outputs=None):
         self._native = native
+        self._outputs = outputs
 
     def to_json(self) -> dict:
         return json.loads(self._native.to_json())
@@ -207,7 +283,7 @@ class Graph:
         return self._native.to_dot()
 
     def compile(self) -> Executable:
-        return Executable(self._native.compile())
+        return Executable(self._native.compile(), self._outputs)
 
 
 def trace(fn: Callable, *args, **kwargs) -> Graph:
@@ -217,7 +293,12 @@ def trace(fn: Callable, *args, **kwargs) -> Graph:
     builder = _native.Builder()
     token = _active.set(builder)
     try:
-        fn(*args, **kwargs)
-        return Graph(builder.finalize())
+        outputs = fn(*args, **kwargs)
+        def validate(handle):
+            if handle._builder is not builder:
+                raise ValueError("Returned collector must belong to the active trace")
+            return handle
+        _map_results(outputs, validate)
+        return Graph(builder.finalize(), outputs)
     finally:
         _active.reset(token)

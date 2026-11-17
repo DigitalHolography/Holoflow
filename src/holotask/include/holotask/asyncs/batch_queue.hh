@@ -30,6 +30,8 @@ struct BatchQueueSettings {
   int output_size;     // Size of each output batch
   int output_stride;   // Stride between batches
 
+  std::string tail = "error"; ///< Incomplete final stride group: error or drop.
+
   bool operator==(const BatchQueueSettings &) const = default;
 };
 
