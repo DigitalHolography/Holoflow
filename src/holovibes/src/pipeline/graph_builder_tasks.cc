@@ -48,14 +48,37 @@ namespace holovibes::pipeline {
     make_unary_async_node(node_name_str, kind_str, kind_str, X, s);                                \
   }
 
-DEFINE_SOURCE_SYNC_NODE(holofile_read, "source", "Holofile", holotask::sources::HolofileSettings)
-DEFINE_SOURCE_SYNC_NODE(empty, "empty", "Empty", holonp::EmptySettings)
-DEFINE_SOURCE_SYNC_NODE(zeros, "zeros", "Zeros", holonp::ZerosSettings)
-DEFINE_SOURCE_SYNC_NODE(asarray, "asarray", "AsArray", holonp::AsArraySettings)
-DEFINE_SOURCE_SYNC_NODE(arange, "arange", "Arange", holonp::ArangeSettings)
-DEFINE_UNARY_SYNC_NODE(ascontiguousarray, "ascontiguousarray", "AsContiguousArray",
-                       holonp::AsContiguousArraySettings)
-DEFINE_UNARY_SYNC_NODE(copy, "copy", "Copy", holonp::CopySettings)
+// clang-format off
+DEFINE_SOURCE_SYNC_NODE(holofile_read,                          "source",                              "Holofile",                        holotask::sources::HolofileSettings)
+DEFINE_SOURCE_SYNC_NODE(empty,                                  "empty",                               "Empty",                           holonp::EmptySettings)
+DEFINE_SOURCE_SYNC_NODE(zeros,                                  "zeros",                               "Zeros",                           holonp::ZerosSettings)
+DEFINE_SOURCE_SYNC_NODE(asarray,                                "asarray",                             "AsArray",                         holonp::AsArraySettings)
+DEFINE_SOURCE_SYNC_NODE(arange,                                 "arange",                              "Arange",                          holonp::ArangeSettings)
+DEFINE_UNARY_SYNC_NODE (ascontiguousarray,                      "ascontiguousarray",                   "AsContiguousArray",               holonp::AsContiguousArraySettings)
+DEFINE_UNARY_SYNC_NODE (copy,                                   "copy",                                "Copy",                            holonp::CopySettings)
+DEFINE_SOURCE_SYNC_NODE(camera,                                 "source",                              "Camera",                          holotask::sources::CameraSettings)
+DEFINE_UNARY_SYNC_NODE (fresnel_qin,                            "fresnel_qin",                         "FresnelQin",                      holotask::sources::FresnelQinSettings)
+DEFINE_UNARY_SYNC_NODE (fresnel_qout,                           "fresnel_qout",                        "FresnelQout",                     holotask::sources::FresnelQoutSettings)
+DEFINE_UNARY_SYNC_NODE (short_time_fresnel_diffraction,         "short_time_fresnel_diffraction",      "ShortTimeFresnelDiffraction",      holotask::syncs::ShortTimeFresnelDiffractionSettings)
+DEFINE_UNARY_SYNC_NODE (unfold2d,                               "unfold2d",                            "Unfold2D",                         holotask::syncs::Unfold2DSettings)
+DEFINE_UNARY_SYNC_NODE (memcpy,                                 "memcpy",                              "Memcpy",                          holotask::syncs::MemcpySettings)
+DEFINE_UNARY_SYNC_NODE (convert,                                "conversion",                          "Conversion",                      holotask::syncs::ConversionSettings)
+DEFINE_UNARY_SYNC_NODE (pca,                                    "pca",                                 "Pca",                             holotask::syncs::PcaSettings)
+DEFINE_UNARY_SYNC_NODE (flatfield,                              "flatfield",                           "Flatfield",                       holotask::syncs::FlatfieldSettings)
+DEFINE_UNARY_SYNC_NODE (filter_2d,                              "filter_2d",                           "Filter2D",                        holotask::syncs::Filter2DSettings)
+DEFINE_UNARY_SYNC_NODE (fresnel_diffraction,                    "fresnel_diffraction",                 "FresnelDiffraction",              holotask::syncs::FresnelDiffractionSettings)
+DEFINE_UNARY_SYNC_NODE (angular_spectrum,                       "angular_spectrum",                    "AngularSpectrum",                 holotask::syncs::AngularSpectrumSettings)
+DEFINE_UNARY_SYNC_NODE (cuda_stream_synchronize,                "cuda_stream_synchronize",             "CudaStreamSynchronize",           holotask::syncs::CudaStreamSynchronizeSettings)
+DEFINE_UNARY_SYNC_NODE (causal_slide_avg,                       "causal_slide_avg",                     "CausalSlidingAverage",             holotask::syncs::CausalSlidingAverageSettings)
+DEFINE_UNARY_SYNC_NODE (reshape,                                "reshape",                             "Reshape",                         holonp::ReshapeSettings)
+DEFINE_UNARY_SYNC_NODE (convolution,                            "convolution",                         "Convolution",                     holotask::syncs::ConvolutionSettings)
+DEFINE_UNARY_SYNC_NODE (pct_clip,                               "pct_clip",                            "PctClip",                         holotask::syncs::PctClipSettings)
+DEFINE_UNARY_SYNC_NODE (registration,                           "registration",                        "Registration",                    holotask::syncs::RegistrationSettings)
+DEFINE_UNARY_SYNC_NODE (resize,                                  "resize",                              "Resize",                           holotask::syncs::ResizeSettings)
+DEFINE_UNARY_SYNC_NODE (wrap2pi,                                "wrap2pi",                             "Wrap2Pi",                         holotask::syncs::Wrap2PiSettings)
+DEFINE_UNARY_SYNC_NODE (zernike_from_slopes,                    "zernike_from_slopes",                 "ZernikeFromSlopes",               holotask::syncs::ZernikeFromSlopesSettings)
+DEFINE_UNARY_SYNC_NODE (zernike_phase,                          "zernike_phase",                       "ZernikePhase",                    holotask::syncs::ZernikePhaseSettings)
+DEFINE_SINK_ASYNC_NODE (zernike_defocus_z_prop,                 "zernike_defocus_z_prop",              "ZernikeDefocusZProp",             holotask::syncs::ZernikeDefocusZPropSettings)
 DEFINE_UNARY_SYNC_NODE(square, "square", "Square", holonp::SquareSettings)
 DEFINE_UNARY_SYNC_NODE(sum, "sum", "Sum", holonp::SumSettings)
 DEFINE_UNARY_SYNC_NODE(std, "std", "Std", holonp::StdSettings)
@@ -69,51 +92,6 @@ DEFINE_UNARY_SYNC_NODE(angle, "angle", "Angle", holonp::AngleSettings)
 DEFINE_UNARY_SYNC_NODE(log, "log", "Log", holonp::LogSettings)
 DEFINE_UNARY_SYNC_NODE(isfinite, "isfinite", "Isfinite", holonp::IsfiniteSettings)
 DEFINE_UNARY_SYNC_NODE(clip, "clip", "Clip", holonp::ClipSettings)
-DEFINE_SOURCE_SYNC_NODE(ametek_s710_euresys_coaxlink_octo, "source",
-                        "AmetekS710EuresysCoaxlinkOcto",
-                        holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings)
-DEFINE_SOURCE_SYNC_NODE(ametek_s711_euresys_coaxlink_qsfp_plus, "source",
-                        "AmetekS711EuresysCoaxlinkQSFP+",
-                        holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings)
-DEFINE_SOURCE_SYNC_NODE(ametek_s991_euresys_coaxlink_qsfp_plus, "source",
-                        "AmetekS991EuresysCoaxlinkQSFP+",
-                        holotask::sources::AmetekS991EuresysCoaxlinkQSFPSettings)
-DEFINE_UNARY_SYNC_NODE(fresnel_qin, "fresnel_qin", "FresnelQin",
-                       holotask::sources::FresnelQinSettings)
-DEFINE_UNARY_SYNC_NODE(fresnel_qout, "fresnel_qout", "FresnelQout",
-                       holotask::sources::FresnelQoutSettings)
-DEFINE_UNARY_SYNC_NODE(short_time_fresnel_diffraction, "short_time_fresnel_diffraction",
-                       "ShortTimeFresnelDiffraction",
-                       holotask::syncs::ShortTimeFresnelDiffractionSettings)
-DEFINE_UNARY_SYNC_NODE(unfold2d, "unfold2d", "Unfold2D", holotask::syncs::Unfold2DSettings)
-DEFINE_UNARY_SYNC_NODE(memcpy, "memcpy", "Memcpy", holotask::syncs::MemcpySettings)
-DEFINE_UNARY_SYNC_NODE(convert, "conversion", "Conversion", holotask::syncs::ConversionSettings)
-DEFINE_UNARY_SYNC_NODE(pca, "pca", "Pca", holotask::syncs::PcaSettings)
-DEFINE_UNARY_SYNC_NODE(flatfield, "flatfield", "Flatfield", holotask::syncs::FlatfieldSettings)
-DEFINE_UNARY_SYNC_NODE(filter_2d, "filter_2d", "Filter2D", holotask::syncs::Filter2DSettings)
-DEFINE_UNARY_SYNC_NODE(fresnel_diffraction, "fresnel_diffraction", "FresnelDiffraction",
-                       holotask::syncs::FresnelDiffractionSettings)
-DEFINE_UNARY_SYNC_NODE(angular_spectrum, "angular_spectrum", "AngularSpectrum",
-                       holotask::syncs::AngularSpectrumSettings)
-DEFINE_UNARY_SYNC_NODE(cuda_stream_synchronize, "cuda_stream_synchronize", "CudaStreamSynchronize",
-                       holotask::syncs::CudaStreamSynchronizeSettings)
-DEFINE_UNARY_SYNC_NODE(causal_slide_avg, "causal_slide_avg", "CausalSlidingAverage",
-                       holotask::syncs::CausalSlidingAverageSettings)
-DEFINE_UNARY_SYNC_NODE(reshape, "reshape", "Reshape", holonp::ReshapeSettings)
-DEFINE_UNARY_SYNC_NODE(convolution, "convolution", "Convolution",
-                       holotask::syncs::ConvolutionSettings)
-DEFINE_UNARY_SYNC_NODE(pct_clip, "pct_clip", "PctClip", holotask::syncs::PctClipSettings)
-DEFINE_UNARY_SYNC_NODE(registration, "registration", "Registration",
-                       holotask::syncs::RegistrationSettings)
-DEFINE_UNARY_SYNC_NODE(resize, "resize", "Resize", holotask::syncs::ResizeSettings)
-DEFINE_UNARY_SYNC_NODE(wrap2pi, "wrap2pi", "Wrap2Pi", holotask::syncs::Wrap2PiSettings)
-DEFINE_UNARY_SYNC_NODE(zernike_from_slopes, "zernike_from_slopes", "ZernikeFromSlopes",
-                       holotask::syncs::ZernikeFromSlopesSettings)
-DEFINE_UNARY_SYNC_NODE(zernike_phase, "zernike_phase", "ZernikePhase",
-                       holotask::syncs::ZernikePhaseSettings)
-DEFINE_SINK_ASYNC_NODE(zernike_defocus_z_prop, "zernike_defocus_z_prop", "ZernikeDefocusZProp",
-                       holotask::syncs::ZernikeDefocusZPropSettings)
-
 DEFINE_SINK_SYNC_NODE(xy_raw_display, "xy_raw_display", "DisplayTensorXYRaw",
                       tasks::sinks::DisplayTensorSettings)
 DEFINE_SINK_SYNC_NODE(xy_processed_display, "xy_processed_display", "DisplayTensorXY",
@@ -337,9 +315,8 @@ void GraphBuilderTasks::holofile_write(const TDesc &X, holotask::sinks::Holofile
 
   auto      &factory     = reg_.get_sync(std::string{reg_key});
   const auto core_inputs = to_core_descs(std::span{&X, 1});
-  (void)infer_node(v, std::span{&X, 1}, [&] {
-    return factory.infer(core_inputs, nlohmann::json(s));
-  });
+  (void)infer_node(v, std::span{&X, 1},
+                   [&] { return factory.infer(core_inputs, nlohmann::json(s)); });
 }
 
 void GraphBuilderTasks::npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s) {

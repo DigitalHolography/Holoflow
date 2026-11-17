@@ -68,6 +68,7 @@
 #include <utility>
 
 #include "bug.hh"
+#include "holocam/camera_info.hh"
 #include "holofile/holofile.hh"
 #include "holotask/sinks/ffmpeg_formats.hh"
 #include "logger.hh"
@@ -1015,7 +1016,7 @@ void MainWindow::refresh_visualization_availability() {
       autofocus->is_z5_enabled() || autofocus->is_z6_enabled() || autofocus->is_z7_enabled() ||
       autofocus->is_z8_enabled() || autofocus->is_z9_enabled() || autofocus->is_z10_enabled();
   const bool single_reference_slopes = !autofocus->use_graph_laplacian();
-  const bool registration_enabled = view_widget_->is_registration_enabled();
+  const bool registration_enabled    = view_widget_->is_registration_enabled();
 
   const auto autofocus_message = tr("Enable Auto Focus to generate this visualization.");
   const auto zernike_order_message =
@@ -1037,7 +1038,10 @@ void MainWindow::refresh_visualization_availability() {
       {"shack_hartmann_xcorr",
        {autofocus_enabled && single_reference_slopes,
         autofocus_enabled ? xcorr_message : autofocus_message}},
-      {"registration_xcorr", {registration_enabled, registration_enabled ? QString{} : tr("Enable Registration to generate this visualization.")}},
+      {"registration_xcorr",
+       {registration_enabled, registration_enabled
+                                  ? QString{}
+                                  : tr("Enable Registration to generate this visualization.")}},
       {"xy_raw", {true, {}}},
       {"raw_spectrum", {false, spectrum_message}},
       {"processed_spectrum", {false, spectrum_message}},
@@ -1648,8 +1652,7 @@ void MainWindow::initialize_pipeline_manager() {
       render_widget_->autofocus_widget(), xy_processed_widget_, xz_processed_widget_,
       yz_processed_widget_, xy_raw_widget_, raw_spectrum_widget_, processed_spectrum_widget_,
       shack_hartmann_widget_, shack_hartmann_xcorr_widget_, registration_xcorr_widget_,
-      zernike_phase_widget_,
-      zernike_history_widget_);
+      zernike_phase_widget_, zernike_history_widget_);
   pipeline_manager_->set_dump_runtime_failure_graphs(dump_runtime_failure_graphs_);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);
@@ -1728,7 +1731,6 @@ void MainWindow::connect_manager_signals() {
                                                         tr("Failure Graph"));
             graph_visualizer_widget_->render_dot(dot);
           });
-
 }
 
 void MainWindow::connect_import_controls() {
@@ -2211,7 +2213,7 @@ void MainWindow::on_import_start_clicked() {
     import_widget_->set_start_enabled(false);
     import_widget_->set_stop_enabled(false);
     refresh_command_bar();
-    auto pause = [manager = pipeline_manager_]() { manager->stop_pipeline(); };
+    auto pause = [manager = pipeline_manager_]() { manager->pause_pipeline(); };
     HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, pause, Qt::QueuedConnection));
     return;
   }
@@ -2680,7 +2682,7 @@ QSize MainWindow::guess_source_dims() {
 
     auto type = import_widget_->get_camera_type();
 
-    auto cfg_json   = nlohmann::json::parse(cfg_file);
+    auto cfg_json = nlohmann::json::parse(cfg_file);
 
     auto cfg        = cfg_json.at(camera_type_to_config_key.at(type.toStdString()));
     int  src_width  = cfg.at("Width").get<int>();
@@ -2773,11 +2775,27 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"Fresnel Diffraction", SpacialMethod::FRESNEL_DIFFRACTION},
         {"Angular Spectrum", SpacialMethod::ANGULAR_SPECTRUM},
     };
-    QString method        = render_widget_->get_space_transform();
-    s.spacial_method      = method_from_str.at(method.toStdString());
-    s.spacial_lambda      = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
-    s.spacial_z           = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
-    s.spacial_pixel_size  = 20e-6f; // TODO: get from camera
+    QString method   = render_widget_->get_space_transform();
+    s.spacial_method = method_from_str.at(method.toStdString());
+    s.spacial_lambda = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
+    s.spacial_z      = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
+
+    constexpr float default_spacial_pixel_size = 20e-6f;
+    if (s.import_source == ImportSource::HOLOFILE) {
+      auto reader = holofile::Reader(s.load_path.string());
+      auto footer = reader.footer();
+      s.spacial_pixel_size =
+          footer.has_value()
+              ? footer->pipeline_settings.value("spacial_pixel_size", default_spacial_pixel_size)
+              : default_spacial_pixel_size;
+    } else {
+      auto name            = to_string(s.import_source);
+      auto pixel_pitch     = holocam::name_to_info.at(name).pixel_size;
+      s.spacial_pixel_size = pixel_pitch * 1e-6f;
+    }
+    logger()->info("[MainWindow::get_pipeline_settings] spacial_pixel_size={}",
+                   s.spacial_pixel_size);
+
     s.asp_padding_enabled = render_widget_->is_asp_padding_enabled();
     s.asp_padded_width    = render_widget_->get_asp_padded_width();
     s.asp_padded_height   = render_widget_->get_asp_padded_height();

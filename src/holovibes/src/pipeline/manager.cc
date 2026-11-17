@@ -98,9 +98,7 @@
 #include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
-#include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
-#include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
-#include "holotask/sources/ametek_s991_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sources/camera.hh"
 #include "holotask/sources/fresnel_qin.hh"
 #include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
@@ -240,28 +238,35 @@ void Manager::register_components() {
   reg_async<asyncs::BatchQueueFactory>(registry_, "BatchQueue");
   reg_async<asyncs::DualReaderBatchQueueFactory>(registry_, "DualReaderBatchQueue");
   reg_async<asyncs::SlidingAverageFactory>(registry_, "SlidingAverage");
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY", xy_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ", xz_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ", yz_processed_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw", xy_raw_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum", raw_spectrum_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum", processed_spectrum_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann", shack_hartmann_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorRegistrationXcorr", registration_xcorr_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase", zernike_phase_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(registry_, "DisplayZernikeCoefficients", autofocus_widget_);
-  reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory", history_dispatchers_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXY",
+                                                          xy_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXZ",
+                                                          xz_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorYZ",
+                                                          yz_processed_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorXYRaw",
+                                                          xy_raw_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayRawSpectrum",
+                                                          raw_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayProcessedSpectrum",
+                                                          processed_spectrum_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorShackHartmann",
+                                                          shack_hartmann_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(
+      registry_, "DisplayTensorShackHartmannXcorr", shack_hartmann_xcorr_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(
+      registry_, "DisplayTensorRegistrationXcorr", registration_xcorr_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayTensorFactory>(registry_, "DisplayTensorZernikePhase",
+                                                          zernike_phase_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplayZernikeCoefficientsFactory>(
+      registry_, "DisplayZernikeCoefficients", autofocus_widget_);
+  reg_sync<holovibes::tasks::sinks::DisplaySignalHistoryFactory>(registry_, "DisplaySignalHistory",
+                                                                 history_dispatchers_);
   reg_sync<sinks::HolofileFactory>(registry_, "HolofileWriter");
   reg_sync<sinks::NpyfileFactory>(registry_, "NpyfileWriter");
   reg_sync<sinks::FfmpegFactory>(registry_, "FfmpegWriter");
   reg_sync<sources::HolofileFactory>(registry_, "Holofile");
-  reg_sync<sources::AmetekS710EuresysCoaxlinkOctoFactory>(registry_,
-                                                          "AmetekS710EuresysCoaxlinkOcto");
-  reg_sync<sources::AmetekS711EuresysCoaxlinkQSFPFactory>(registry_,
-                                                          "AmetekS711EuresysCoaxlinkQSFP+");
-  reg_sync<sources::AmetekS991EuresysCoaxlinkQSFPFactory>(
-      registry_, "AmetekS991EuresysCoaxlinkQSFP+");
+  reg_sync<sources::CameraFactory>(registry_, "Camera");
   reg_sync<sources::FresnelQinFactory>(registry_, "FresnelQin");
   reg_sync<sources::FresnelQoutFactory>(registry_, "FresnelQout");
   reg_sync<syncs::AngularSpectrumFactory>(registry_, "AngularSpectrum");
@@ -482,7 +487,7 @@ void Manager::stop_pipeline() {
     // Retain the compiled graph and pending operations so the UI can resume without rebuilding.
     {
       ScopedTrace scope("Request Scheduler Pause");
-      scheduler_->request_pause();
+      scheduler_->request_stop();
     }
     {
       ScopedTrace scope("Wait for Scheduler Pause");
@@ -509,6 +514,59 @@ void Manager::stop_pipeline() {
     stop_zernike_history();
     const QString msg = QString("Failed to stop pipeline: %1").arg(e.what());
     logger()->error("[Manager::stop_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
+    emit stop_pipeline_failure(msg);
+  }
+}
+
+void Manager::pause_pipeline() {
+  OperationTrace operation("pause");
+  logger()->info("[Manager::pause_pipeline] Stopping pipeline...");
+  std::unique_lock lock(mtx_, std::defer_lock);
+  {
+    ScopedTrace scope("Acquire Manager Lock");
+    lock.lock();
+  }
+
+  if (!scheduler_ || !scheduler_->is_running()) {
+    const QString msg = "Pipeline is not running";
+    logger()->error("[Manager::pause_pipeline] {}", msg.toStdString());
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
+    emit stop_pipeline_failure(msg);
+    return;
+  }
+
+  try {
+    // Retain the compiled graph and pending operations so the UI can resume without rebuilding.
+    {
+      ScopedTrace scope("Request Scheduler Pause");
+      scheduler_->request_pause();
+    }
+    {
+      ScopedTrace scope("Wait for Scheduler Pause");
+      scheduler_->wait();
+    }
+#if defined(_WIN32)
+    uninstall_windows_crash_handler();
+#endif
+    stop_zernike_history();
+
+    {
+      ScopedTrace scope("Stop Metrics Updates");
+      stop_metrics_updates();
+    }
+    {
+      ScopedTrace scope("Stop Event Polling");
+      stop_event_polling();
+    }
+
+    logger()->info("[Manager::pause_pipeline] Pipeline stopped successfully");
+    operation.set_outcome(holoflow::runtime::tracing::Outcome::Success);
+    emit stop_pipeline_success();
+  } catch (const std::exception &e) {
+    stop_zernike_history();
+    const QString msg = QString("Failed to pause pipeline: %1").arg(e.what());
+    logger()->error("[Manager::pause_pipeline] {}", msg.toStdString());
     operation.set_outcome(holoflow::runtime::tracing::Outcome::Failure);
     emit stop_pipeline_failure(msg);
   }
@@ -906,15 +964,14 @@ void Manager::build_and_run() {
   Compiler compiler(registry_, config);
   {
     ScopedTrace scope("Compile Pipeline");
-    auto replacement = compiler.compile(spec_);
-    compiler_output_ = std::move(replacement);
+    auto        replacement = compiler.compile(spec_);
+    compiler_output_        = std::move(replacement);
   }
   if (compiler_output_ && !log_root_.empty()) {
     ScopedTrace dump("Dump Compiled Graph");
     holoflow::runtime::dump_compiled_graph_async(log_root_ / "compiled.dot", *compiler_output_,
                                                  graph_compiled_dump_prefs_, "compiled_pipeline");
   }
-
 
   run_compiled_graph();
 }

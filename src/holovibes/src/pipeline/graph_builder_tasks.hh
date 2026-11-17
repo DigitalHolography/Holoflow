@@ -71,12 +71,10 @@
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
+#include "holotask/sinks/ffmpeg.hh"
 #include "holotask/sinks/holofile.hh"
 #include "holotask/sinks/npyfile.hh"
-#include "holotask/sinks/ffmpeg.hh"
-#include "holotask/sources/ametek_s710_euresys_coaxlink_octo.hh"
-#include "holotask/sources/ametek_s711_euresys_coaxlink_qsfp+.hh"
-#include "holotask/sources/ametek_s991_euresys_coaxlink_qsfp+.hh"
+#include "holotask/sources/camera.hh"
 #include "holotask/sources/fresnel_qin.hh"
 #include "holotask/sources/fresnel_qout.hh"
 #include "holotask/sources/holofile.hh"
@@ -150,6 +148,8 @@ protected:
   void  yz_processed_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  shack_hartmann_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  shack_hartmann_xcorr_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
+  std::vector<TDesc> shack_hartmann_slopes(const TDesc                                &X,
+                                           holotask::syncs::ShackHartmannSlopeSettings s);
   void  registration_xcorr_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  zernike_phase_display(const TDesc &X, tasks::sinks::DisplayTensorSettings s);
   void  zernike_coefficients_display(const TDesc                                     &X,
@@ -157,25 +157,17 @@ protected:
   void  zernike_history_display(const TDesc &X, tasks::sinks::DisplaySignalHistorySettings s);
   void  zernike_defocus_z_prop(const TDesc &X, holotask::syncs::ZernikeDefocusZPropSettings s);
   void  holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
-  TDesc
-  ametek_s710_euresys_coaxlink_octo(holotask::sources::AmetekS710EuresysCoaxlinkOctoSettings s);
-  TDesc ametek_s711_euresys_coaxlink_qsfp_plus(
-      holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings s);
-  TDesc ametek_s991_euresys_coaxlink_qsfp_plus(
-      holotask::sources::AmetekS991EuresysCoaxlinkQSFPSettings s);
-  TDesc              convolution(const TDesc &X, holotask::syncs::ConvolutionSettings s);
-  TDesc              correct_phase(const TDesc &X, const TDesc &PhaseMask,
-                                   holotask::syncs::CorrectPhaseSettings s);
-  TDesc              pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);
-  TDesc              registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
-  TDesc              wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
-  std::vector<TDesc> shack_hartmann_slopes(const TDesc                                &X,
-                                           holotask::syncs::ShackHartmannSlopeSettings s);
-  void npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s);
-  void ffmpeg_write(const TDesc &X, holotask::sinks::FfmpegSettings s);
+  void  npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s);
+  void  ffmpeg_write(const TDesc &X, holotask::sinks::FfmpegSettings s);
+  TDesc camera(holotask::sources::CameraSettings s);
+  TDesc convolution(const TDesc &X, holotask::syncs::ConvolutionSettings s);
+  TDesc correct_phase(const TDesc &X, const TDesc &PhaseMask,
+                      holotask::syncs::CorrectPhaseSettings s);
+  TDesc pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);
+  TDesc registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
+  TDesc wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
   TDesc resize(const TDesc &X, holotask::syncs::ResizeSettings s);
-  std::vector<TDesc> registration_outputs(
-      const TDesc &X, holotask::syncs::RegistrationSettings s);
+  std::vector<TDesc> registration_outputs(const TDesc &X, holotask::syncs::RegistrationSettings s);
   TDesc zernike_from_slopes(const TDesc &X, holotask::syncs::ZernikeFromSlopesSettings s);
   TDesc zernike_phase(const TDesc &X, holotask::syncs::ZernikePhaseSettings s);
   TDesc concatenate(std::span<const TDesc> Xs, holonp::ConcatenateSettings s);
