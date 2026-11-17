@@ -714,6 +714,8 @@
       
         
       
+        
+      
     
     
     
@@ -1351,6 +1353,29 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../holocam/index.html" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Holocam
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1508,8 +1533,6 @@
       
         
       
-        
-      
     
     
     
@@ -1551,35 +1574,12 @@
   
   
     <li class="md-nav__item">
-      <a href="tasks/sources/ametek_s710_euresys_coaxlink_octo.html" class="md-nav__link">
+      <a href="tasks/sources/camera.html" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
-    Ametek s710 Euresys Coaxlink Octo
-    
-  </span>
-  
-
-      </a>
-    </li>
-  
-
-              
-            
-              
-                
-  
-  
-  
-  
-    <li class="md-nav__item">
-      <a href="tasks/sources/ametek_s711_euresys_coaxlink_qsfp%2B.html" class="md-nav__link">
-        
-  
-  
-  <span class="md-ellipsis">
-    Ametek s711 Euresys Coaxlink QSFP+
+    Camera
     
   </span>
   
@@ -2412,7 +2412,7 @@
 <p>Holovibes is the reference desktop application built on Holoflow. It combines high-throughput image acquisition, <abbr title="Graphics processing unit">GPU</abbr>-accelerated holographic reconstruction and analysis, and interactive visualization in a Qt interface.</p>
 <p>Its processing pipeline is assembled from registered Holoflow tasks:</p>
 <ul>
-<li><strong>Sources</strong> acquire or load frames, including <a href="tasks/sources/ametek_s710_euresys_coaxlink_octo.html">camera acquisition</a> and <a href="tasks/sources/holofile.html">Holofile playback</a>.</li>
+<li><strong>Sources</strong> acquire or load frames, including <a href="tasks/sources/camera.html">camera acquisition</a> and <a href="tasks/sources/holofile.html">Holofile playback</a>.</li>
 <li><strong>Synchronous tasks</strong> transform tensors inline, such as <a href="tasks/syncs/fresnel_diffraction.html">Fresnel diffraction</a>, <a href="tasks/syncs/pca.html"><abbr title="Principal component analysis">PCA</abbr></a>, and <a href="tasks/syncs/fft_shift.html"><abbr title="Fast Fourier transform">FFT</abbr> shift</a>.</li>
 <li><strong>Asynchronous tasks</strong> connect independently scheduled pipeline sections through facilities such as the <a href="tasks/asyncs/batch_queue.html">batch queue</a> and <a href="tasks/asyncs/sliding_average.html">sliding average</a>.</li>
 <li><strong>Sinks</strong> present or persist results through the <a href="tasks/sinks/display_tensor.html">tensor display</a> and <a href="tasks/sinks/holofile.html">Holofile writer</a>.</li>

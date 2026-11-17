@@ -319,13 +319,13 @@ var assemblies = [
   {
     "name": "holotask",
     "classes": [
-      { "name": "include", "rp": "holotask_include.html", "cl": 20, "ucl": 60, "cal": 80, "tl": 1306, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
-      { "name": "src", "rp": "holotask_src.html", "cl": 2018, "ucl": 2380, "cal": 4398, "tl": 10016, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "include", "rp": "holotask_include.html", "cl": 20, "ucl": 52, "cal": 72, "tl": 1244, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holotask_src.html", "cl": 2018, "ucl": 607, "cal": 2625, "tl": 5747, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
   {
     "name": "holovibes",
     "classes": [
-      { "name": "src", "rp": "holovibes_src.html", "cl": 559, "ucl": 6478, "cal": 7037, "tl": 14420, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
+      { "name": "src", "rp": "holovibes_src.html", "cl": 559, "ucl": 6508, "cal": 7067, "tl": 14496, "cb": 0, "tb": 0, "cm": 0, "fcm": 0, "tm": 0, "lch": [], "bch": [], "mch": [], "mfch": [], "hc": [], "metrics": { } },
     ]},
 ];
 

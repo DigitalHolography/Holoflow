@@ -3,16 +3,16 @@
 
 |||
 |:---|:---|
-| Generated on: | 11/12/2026 - 4:18:19 PM |
+| Generated on: | 11/17/2026 - 12:47:31 PM |
 | Parser: | Cobertura |
 | Assemblies: | 7 |
 | Classes: | 12 |
-| Files: | 142 |
-| **Line coverage:** | 38.8% (6092 of 15664) |
+| Files: | 131 |
+| **Line coverage:** | 43.7% (6092 of 13913) |
 | Covered lines: | 6092 |
-| Uncovered lines: | 9572 |
-| Coverable lines: | 15664 |
-| Total lines: | 35690 |
+| Uncovered lines: | 7821 |
+| Coverable lines: | 13913 |
+| Total lines: | 31435 |
 | Covered branches: | 0 |
 | Total branches: | 0 |
 | **Method coverage:** | [Feature is only available for sponsors](https://reportgenerator.io/pro) |
@@ -64,13 +64,13 @@
 |src|67.1%||
 
 </details>
-<details><summary>holotask - 45.5%</summary>
+<details><summary>holotask - 75.5%</summary>
 
 |**Name**|**Line**|**Branch**|
 |:---|---:|---:|
-|**holotask**|**45.5%**|****|
-|include|25%||
-|src|45.8%||
+|**holotask**|**75.5%**|****|
+|include|27.7%||
+|src|76.8%||
 
 </details>
 <details><summary>holovibes - 7.9%</summary>
