@@ -514,6 +514,28 @@ public:
     }
   }
 
+  bool can_reuse(const holoflow::core::TDesc &input,
+                 const holotask::asyncs::PcaDecompositionQueueSettings &settings,
+                 cudaStream_t stream) const {
+    return settings == settings_ && input.shape == input_desc_.shape &&
+           input.strides == input_desc_.strides && input.dtype == input_desc_.dtype &&
+           input.mem_loc == input_desc_.mem_loc && eigensolver_->is_compatible_stream(stream);
+  }
+
+  void reset(cudaStream_t stream) {
+    // Updates discard queued data, but retain the compiled solver and captured allocations.
+    CUDA_CHECK(cudaStreamSynchronize(producer_stream_));
+    CUDA_CHECK(cudaStreamSynchronize(solver_stream_.get()));
+    CUBLAS_CHECK(cublasSetStream(cublas_.get(), stream));
+    producer_stream_ = stream;
+    writes_ = {};
+    reads_ = {};
+    written_.store(0, std::memory_order_relaxed);
+    read_.store(0, std::memory_order_relaxed);
+    legacy_read_.reset();
+    released_ = {false, false};
+  }
+
   ~PcaDecompositionQueue() override {
     // The runtime drains section streams. This private stream can still own unpopped groups.
     CUDA_CHECK_NT(cudaStreamSynchronize(solver_stream_.get()));
@@ -1529,7 +1551,15 @@ PcaDecompositionQueueFactory::update(std::unique_ptr<holoflow::core::IAsyncTask>
                                      std::span<const holoflow::core::TDesc>      input_descs,
                                      const nlohmann::json                       &jsettings,
                                      const holoflow::core::AsyncCreateCtx       &ctx) const {
+  holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
+  const auto inferred = infer(input_descs, jsettings);
+  const auto settings = jsettings.get<PcaDecompositionQueueSettings>();
   ctx.invalidate_execution();
+  auto *queue = dynamic_cast<syncs::PcaDecompositionQueue *>(old_task.get());
+  if (queue && queue->can_reuse(inferred.input_descs[0], settings, ctx.producer_stream)) {
+    queue->reset(ctx.producer_stream);
+    return old_task;
+  }
   // Destroying the old task drains its private solver before captured allocations disappear.
   old_task.reset();
   return create(input_descs, jsettings, ctx);

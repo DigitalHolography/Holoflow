@@ -209,7 +209,11 @@ TEST(PcaPipeline, ReplacementDrainsUnpoppedGroupsAndDiscardsPartialInput) {
     ASSERT_EQ(task->try_push(push), OpResult::Ok);
   }
   // One submitted decomposition and three incomplete windows are discarded by replacement.
+  auto *original_task = task.get();
+  const auto original_inputs = task->owned_input_pointers(0);
   task = factory.update(std::move(task), inputs, settings, {producer.get(), consumer.get()});
+  EXPECT_EQ(task.get(), original_task);
+  EXPECT_EQ(task->owned_input_pointers(0), original_inputs);
   task->bind_storage_access(&storage);
   AsyncTicket read;
   EXPECT_EQ(task->reserve_pop(pop, read), OpResult::NotReady);
