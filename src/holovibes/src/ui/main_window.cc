@@ -1275,6 +1275,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("batch_size", render_widget_->get_batch_size());
   settings.setValue("time_stride", render_widget_->get_time_stride());
   settings.setValue("filter_2d", render_widget_->is_filter_2d_enabled());
+  settings.setValue("fft_shift", render_widget_->is_fft_shift_enabled());
   settings.setValue("filter_inner", render_widget_->get_filter_inner());
   settings.setValue("filter_outer", render_widget_->get_filter_outer());
   settings.setValue("space_transform", render_widget_->get_space_transform());
@@ -1427,6 +1428,9 @@ void MainWindow::restore_persistent_state() {
   render_widget_->set_filter_outer(
       settings.value("filter_outer", render_widget_->get_filter_outer()).toInt());
   restore_combo_text(settings, "space_transform", render_widget_->space_transform_combo());
+  render_widget_->set_fft_shift_enabled(
+      settings.value("fft_shift", render_widget_->get_space_transform() == "Fresnel Diffraction")
+          .toBool());
   render_widget_->set_time_transform(settings.value("time_transform", "None").toString());
   render_widget_->set_time_window(
       settings.value("time_window", render_widget_->get_time_window()).toInt());
@@ -2995,7 +2999,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
                                           render_widget_->get_convolution().toStdString() + ".json";
 
     s.pp_fps       = 60;
-    s.pp_fft_shift = s.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;
+    s.pp_fft_shift = render_widget_->is_fft_shift_enabled();
     s.pp_flatfield = view_widget_->is_flatfield_enabled();
     s.pp_flatfield_cutoff_period_m =
         static_cast<float>(view_widget_->get_flatfield_cutoff_period_um() * 1e-6);
@@ -3289,6 +3293,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     view_widget_->set_registration_enabled(s.pp_registration);
     view_widget_->set_registration_radius(s.pp_registration_radius);
   }
+  render_widget_->set_fft_shift_enabled(s.pp_fft_shift);
 
   // --- Recording Settings ---
   {

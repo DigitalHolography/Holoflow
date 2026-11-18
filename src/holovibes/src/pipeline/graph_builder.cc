@@ -208,6 +208,7 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
                                          .rank_factor = s_.holovibe_pca_rank_factor});
     frames = slice(frames, {{holonp::SliceRange{s_.time_z_begin, s_.time_z_end}, {}, {}}});
     auto result = mean_abs(frames, {{0}, true});
+    if (s_.pp_fft_shift) result = fftshift(result, {{-2, -1}});
     build_xy_output(result, 0);
     return g_;
   }
@@ -849,6 +850,7 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
     build_xy_view(component_stack);
     return;
   }
+  if (s_.pp_fft_shift) result = fftshift(result, {{-2, -1}});
   if (s_.pp_flatfield) {
     // Spatial contrast and Local PCA use the camera grid for flatfield filtering.
     const auto pitch = s_.spacial_pixel_size;

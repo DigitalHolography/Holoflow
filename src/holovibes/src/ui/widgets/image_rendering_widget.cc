@@ -68,6 +68,7 @@ QString ImageRenderingWidget::get_image_mode() const { return image_combo_->curr
 int     ImageRenderingWidget::get_batch_size() const { return batch_size_spin_->value(); }
 int     ImageRenderingWidget::get_time_stride() const { return time_stride_spin_->value(); }
 bool    ImageRenderingWidget::is_filter_2d_enabled() const { return filter_2d_check_->isChecked(); }
+bool    ImageRenderingWidget::is_fft_shift_enabled() const { return fft_shift_check_->isChecked(); }
 int     ImageRenderingWidget::get_filter_inner() const { return filter_2d_inner_spin_->value(); }
 int     ImageRenderingWidget::get_filter_outer() const { return filter_2d_outer_spin_->value(); }
 QString ImageRenderingWidget::get_space_transform() const {
@@ -147,6 +148,7 @@ void ImageRenderingWidget::set_time_stride(int value) { time_stride_spin_->setVa
 void ImageRenderingWidget::set_filter_2d_enabled(bool enabled) {
   filter_2d_check_->setChecked(enabled);
 }
+void ImageRenderingWidget::set_fft_shift_enabled(bool enabled) { fft_shift_check_->setChecked(enabled); }
 void ImageRenderingWidget::set_filter_inner(int value) { filter_2d_inner_spin_->setValue(value); }
 void ImageRenderingWidget::set_filter_outer(int value) { filter_2d_outer_spin_->setValue(value); }
 void ImageRenderingWidget::set_space_transform(const QString &method) {
@@ -283,11 +285,6 @@ void ImageRenderingWidget::update_spatial_contrast_controls() {
   local_pca_dynamic_auto_scale_->setVisible(is_local_pca_lsci_enabled() &&
                                             get_local_pca_map() == 0);
   const bool holovibe = is_holovibe_local_pca_enabled();
-  time_stride_spin_->setEnabled(!holovibe);
-  if (holovibe) {
-    const QSignalBlocker blocker(time_stride_spin_);
-    time_stride_spin_->setValue(time_window_spin_->value());
-  }
   const bool plain_local_pca = get_time_transform() == kLocalPca || holovibe;
   const bool rectangular = plain_local_pca && is_local_pca_rectangular();
   local_pca_rectangular_->setToolTip(holovibe
@@ -471,6 +468,11 @@ void ImageRenderingWidget::setup_ui() {
   filter_2d_outer_spin_ = create_spin_box(filter_controls, 0, kLargeSpinMax, 1024);
   filter_layout->addWidget(filter_2d_outer_spin_);
   layout->addWidget(filter_controls, row, 1);
+  ++row;
+
+  fft_shift_check_ = new QCheckBox("FFT Shift", this);
+  fft_shift_check_->setToolTip(tr("Center the processed image after spatial and temporal transforms."));
+  layout->addWidget(fft_shift_check_, row, 0, 1, 2);
   ++row;
 
   auto space_transforms =
@@ -686,16 +688,14 @@ void ImageRenderingWidget::connect_signals() {
           &ImageRenderingWidget::settings_changed);
   connect(time_stride_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
-  connect(time_window_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
-          [this](int value) {
-            if (is_holovibe_local_pca_enabled()) time_stride_spin_->setValue(value);
-          });
   connect(filter_2d_check_, &QCheckBox::toggled, this, &ImageRenderingWidget::settings_changed);
+  connect(fft_shift_check_, &QCheckBox::toggled, this, &ImageRenderingWidget::settings_changed);
   connect(filter_2d_inner_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(filter_2d_outer_spin_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(space_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
+    fft_shift_check_->setChecked(space_transform_combo_->currentText() == "Fresnel Diffraction");
     update_pca_type_options();
     if (space_transform_combo_->currentText() == kLscsi2D ||
         time_transform_combo_->currentText() == kLscsi3D ||

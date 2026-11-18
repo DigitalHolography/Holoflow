@@ -125,7 +125,7 @@ struct Settings {
 
   // Post-processing
   int         pp_fps;
-  bool        pp_fft_shift;
+  bool        pp_fft_shift = false;
   bool        pp_flatfield;
   float       pp_flatfield_cutoff_period_m;
   bool        pp_spatial_contrast;
