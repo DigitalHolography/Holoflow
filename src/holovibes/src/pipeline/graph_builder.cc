@@ -235,10 +235,9 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
                                                   static_cast<size_t>(s_.recording_queue_count)};
   }
 
-  holotask::sources::CameraSettings settings{
-      .cfg_path        = cam_path,
-      .name            = to_string(s_.import_source),
-      .record_settings = record_settings};
+  holotask::sources::CameraSettings settings{.cfg_path        = cam_path,
+                                             .name            = to_string(s_.import_source),
+                                             .record_settings = record_settings};
   return camera(settings);
 }
 
@@ -285,7 +284,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
 
   if (H.mem_loc != MemLoc::Device) {
     H = memcpy(H, {Device});
-    H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window});
+    H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_stride});
   }
 
   return convert(H, {Target::F32, Strat::Real});
