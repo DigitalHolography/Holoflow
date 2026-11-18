@@ -15,6 +15,8 @@
 #pragma once
 #include "holotask/syncs/fresnel_diffraction.hh"
 namespace holotask::syncs {
+bool update_fused_f16_fresnel(holoflow::core::ISyncTask &, const holoflow::core::TDesc &,
+                               const FresnelDiffractionSettings &, cudaStream_t);
 bool supports_fused_f16_fresnel(const holoflow::core::TDesc &, const FresnelDiffractionSettings &);
 std::unique_ptr<holoflow::core::ISyncTask>
 create_fused_f16_fresnel(const holoflow::core::TDesc &, const FresnelDiffractionSettings &,

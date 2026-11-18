@@ -101,6 +101,9 @@ class FusedFresnel final : public holoflow::core::ISyncTask {
   std::list<detail::FresnelCudaGraph>     graphs_;
   bool                                    graph_capture_enabled_ = true;
   Module                                  module_;
+  holoflow::core::TDesc input_;
+  FresnelDiffractionSettings settings_;
+  CUcontext context_{};
   cudaStream_t                            stream_;
   int                                     planes_, components_, groups_, output_count_;
   unsigned int                            xs_, ys_;
@@ -132,7 +135,7 @@ class FusedFresnel final : public holoflow::core::ISyncTask {
 public:
   FusedFresnel(const holoflow::core::TDesc &input, const FresnelDiffractionSettings &settings,
                cudaStream_t stream)
-      : stream_(stream), planes_(int(input.num_elements() / (320 * 512))),
+      : input_(input), settings_(settings), stream_(stream), planes_(int(input.num_elements() / (320 * 512))),
         components_(int(input.shape[input.rank() - 3])),
         groups_(settings.reduce_magnitude ? (components_ + 3) / 4 : components_),
         output_count_((settings.reduce_magnitude ? planes_ / components_ : planes_) * 320 * 512),
@@ -147,6 +150,7 @@ public:
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
     auto ptx = compile(prop.major * 100 + prop.minor * 10,
                        input.dtype == holoflow::core::DType::F16, components_, reduce_);
+    driver(cuCtxGetCurrent(&context_));
     driver(cuModuleLoadData(&module_.value, ptx.data()));
     scale_partial_ = function("fused_f16_scale_partial");
     scale_         = function("fused_f16_scale");
@@ -162,6 +166,30 @@ public:
     void *args[] = {&lens, &wavelength, &pitch, &distance};
     launch(function("fused_f16_lens"), (320 * 512 + 255) / 256, 256, 1, 0, args);
     CUDA_CHECK(cudaStreamSynchronize(stream_));
+  }
+  bool update(const holoflow::core::TDesc &input, FresnelDiffractionSettings settings,
+              cudaStream_t stream) {
+    auto comparable = settings;
+    comparable.z = settings_.z;
+    CUcontext context{};
+    if (stream)
+      driver(cuStreamGetCtx(stream, &context));
+    else
+      driver(cuCtxGetCurrent(&context));
+    if (context != context_ || comparable != settings_ || input.shape != input_.shape ||
+        input.strides != input_.strides || input.dtype != input_.dtype ||
+        input.mem_loc != input_.mem_loc || input.offset != input_.offset)
+      return false;
+    stream_ = stream;
+    if (settings.z != settings_.z) {
+      // Captured kernels retain the lens pointer and observe its new contents on replay.
+      auto lens = lens_.get();
+      float wavelength = settings.lambda, pitch = settings.dx, distance = settings.z;
+      void *args[] = {&lens, &wavelength, &pitch, &distance};
+      launch(function("fused_f16_lens"), (320 * 512 + 255) / 256, 256, 1, 0, args);
+    }
+    settings_ = settings;
+    return true;
   }
   ~FusedFresnel() override {
     CUDA_CHECK_NT(cudaStreamSynchronize(stream_));
@@ -230,6 +258,12 @@ public:
   }
 };
 } // namespace
+bool update_fused_f16_fresnel(holoflow::core::ISyncTask &task,
+                               const holoflow::core::TDesc &input,
+                               const FresnelDiffractionSettings &settings, cudaStream_t stream) {
+  auto *fused = dynamic_cast<FusedFresnel *>(&task);
+  return fused && fused->update(input, settings, stream);
+}
 bool supports_fused_f16_fresnel(const holoflow::core::TDesc      &input,
                                 const FresnelDiffractionSettings &settings) {
   using holoflow::core::DType;

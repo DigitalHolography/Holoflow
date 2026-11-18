@@ -1,3 +1,5 @@
+#include <chrono>
+#include <cstdio>
 // Copyright 2026 Digital Holography Foundation
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -256,7 +258,18 @@ void expect_outer_graph_distance_update(const holoflow::core::ISyncTaskFactory &
   std::vector<cuFloatComplex> values(desc.num_elements());
   for (size_t i = 0; i < values.size(); ++i)
     values[i] = make_cuFloatComplex(float(i % 7) + 1.F, float(i % 3) - 1.F);
-  const auto                    bytes = as_bytes(values);
+  auto bytes = as_bytes(values);
+  if (desc.dtype == DType::F32) {
+    std::vector<float> real(values.size());
+    for (size_t i = 0; i < real.size(); ++i)
+      real[i] = values[i].x;
+    bytes = as_bytes(real);
+  } else if (desc.dtype == DType::F16) {
+    std::vector<__half> real(values.size());
+    for (size_t i = 0; i < real.size(); ++i)
+      real[i] = __float2half(values[i].x);
+    bytes = as_bytes(real);
+  }
   holonp_test::TensorTestBuffer input(desc), output(infer.output_descs[0]);
   input.upload(bytes);
   std::array  inputs{input.view()}, outputs{output.view()};
@@ -431,4 +444,37 @@ TEST(FresnelF16Production, UnsupportedSizeFallsBackWithReducedF32Output) {
   EXPECT_TRUE(std::all_of(values.begin(), values.end(),
                           [](float v) { return std::isfinite(v) && v >= 0; }));
   EXPECT_GT(*std::max_element(values.begin(), values.end()), 0.f);
+}
+
+
+TEST(FresnelF16Production, DistanceUpdatesReuseTaskAndOuterGraph) {
+  using namespace holoflow::core;
+  holotask::syncs::FresnelDiffractionFactory factory;
+  for (auto dtype : {DType::F16, DType::F32}) {
+    for (bool reduce : {false, true}) {
+      auto settings = fresnel_settings(.49f);
+      settings["use_fused_f16"] = true;
+      settings["output_magnitude"] = true;
+      settings["reduce_magnitude"] = reduce;
+      const TDesc desc({1, 4, 320, 512}, dtype, MemLoc::Device);
+      curaii::CudaStream stream;
+      auto task = holotask::syncs::create_fused_f16_fresnel(
+          desc, settings.get<holotask::syncs::FresnelDiffractionSettings>(), {stream.get()});
+      auto *original = task.get();
+      for (int i = 0; i < 5; ++i) {
+        settings["z"] = .50f + .01f * i;
+        auto start = std::chrono::steady_clock::now();
+        task = factory.update(std::move(task), std::array{desc}, settings, {stream.get()});
+        CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+        EXPECT_EQ(task.get(), original);
+        std::fprintf(stderr, "Fresnel synchronized distance update: %.3f ms\n",
+                     std::chrono::duration<double, std::milli>(
+                         std::chrono::steady_clock::now() - start).count());
+      }
+      // The shared helper compares a replayed outer graph with a fresh task at the new distance.
+      auto updated = settings;
+      updated["z"] = .65f;
+      expect_outer_graph_distance_update(factory, desc, settings, updated);
+    }
+  }
 }

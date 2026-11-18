@@ -751,6 +751,10 @@ FresnelDiffractionFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old
                                   const nlohmann::json                      &jsettings,
                                   const holoflow::core::SyncCreateCtx       &ctx) const {
   holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
+  (void)infer(input_descs, jsettings);
+  if (old_task && update_fused_f16_fresnel(*old_task, input_descs[0],
+                                           jsettings.get<FresnelDiffractionSettings>(), ctx.stream))
+    return old_task;
   auto *old_fresnel = dynamic_cast<FresnelDiffraction *>(old_task.get());
   if (old_fresnel == nullptr || input_descs.size() != 1) {
     ctx.invalidate_execution();
