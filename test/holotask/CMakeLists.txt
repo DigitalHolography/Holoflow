@@ -32,7 +32,6 @@ set(SOURCES
     shack_hartmann_test.cu
     sliding_average_test.cu
     spatial_contrast_test.cu
-    pca_lsci_test.cu
     local_pca_test.cu
     section_cuda_graph_reference_test.cu
     zernike_defocus_z_prop_test.cc

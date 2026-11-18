@@ -129,10 +129,13 @@ struct Settings {
   bool        pp_flatfield;
   float       pp_flatfield_cutoff_period_m;
   bool        pp_spatial_contrast;
-  bool        pp_pca_lsci = false;
   bool        pp_local_pca = false;
-  bool        pp_advanced_local_pca = false;
-  int         pp_advanced_local_pca_removed_modes = 1;
+  bool        holovibe_local_pca = false;
+  int         holovibe_pca_width_x = 32;
+  int         holovibe_pca_width_y = 32;
+  int         holovibe_pca_stride_x = 16;
+  int         holovibe_pca_stride_y = 16;
+  float       holovibe_pca_rank_factor = 1.f;
   bool        pp_local_pca_lsci = false;
   int         pp_local_pca_map = 0;
   bool        pp_local_pca_dynamic_auto_scale = true;
@@ -143,7 +146,6 @@ struct Settings {
   int         pp_local_pca_step_width = 1;
   int         pp_local_pca_step_height = 1;
   bool        pp_local_pca_automatic = false;
-  int         pp_pca_lsci_map = 2;
   int         pp_spatial_contrast_window_size;
   int         pp_spatial_contrast_dimensions = 2;
   int         pp_spatial_contrast_method = 0;

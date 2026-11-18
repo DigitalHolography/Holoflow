@@ -157,10 +157,13 @@ void write_view(json &j, const Settings &s) {
   view["flatfield"]["cutoff_period_m"] = s.pp_flatfield_cutoff_period_m;
   auto &spatial_contrast                  = view["spatial_contrast"];
   spatial_contrast["enabled"]             = s.pp_spatial_contrast;
-  spatial_contrast["pca_enabled"]         = s.pp_pca_lsci;
   spatial_contrast["local_pca_enabled"] = s.pp_local_pca;
-  spatial_contrast["advanced_local_pca_enabled"] = s.pp_advanced_local_pca;
-  spatial_contrast["advanced_local_pca_removed_modes"] = s.pp_advanced_local_pca_removed_modes;
+  spatial_contrast["holovibe_local_pca_enabled"] = s.holovibe_local_pca;
+  spatial_contrast["holovibe_pca_width_x"] = s.holovibe_pca_width_x;
+  spatial_contrast["holovibe_pca_width_y"] = s.holovibe_pca_width_y;
+  spatial_contrast["holovibe_pca_stride_x"] = s.holovibe_pca_stride_x;
+  spatial_contrast["holovibe_pca_stride_y"] = s.holovibe_pca_stride_y;
+  spatial_contrast["holovibe_pca_rank_factor"] = s.holovibe_pca_rank_factor;
   spatial_contrast["local_pca_lsci_enabled"] = s.pp_local_pca_lsci;
   spatial_contrast["local_pca_map"] = s.pp_local_pca_map;
   spatial_contrast["local_pca_dynamic_auto_scale"] = s.pp_local_pca_dynamic_auto_scale;
@@ -171,7 +174,6 @@ void write_view(json &j, const Settings &s) {
   spatial_contrast["local_pca_step_width"] = s.pp_local_pca_step_width;
   spatial_contrast["local_pca_step_height"] = s.pp_local_pca_step_height;
   spatial_contrast["local_pca_automatic"] = s.pp_local_pca_automatic;
-  spatial_contrast["pca_map"]             = s.pp_pca_lsci_map;
   spatial_contrast["window_size"]         = s.pp_spatial_contrast_window_size;
   spatial_contrast["dimensions"]          = s.pp_spatial_contrast_dimensions;
   spatial_contrast["method"] = s.pp_spatial_contrast_method == 1 ? "fft" : "kernel";
@@ -292,17 +294,14 @@ void read_view(Settings &s, const json &view) {
       val(flatfield, "cutoff_period_m", s.pp_flatfield_cutoff_period_m);
   const auto &spatial_contrast = child_or_empty(view, "spatial_contrast");
   s.pp_spatial_contrast = val(spatial_contrast, "enabled", s.pp_spatial_contrast);
-  s.pp_pca_lsci = val(spatial_contrast, "pca_enabled", s.pp_pca_lsci);
   s.pp_local_pca = val(spatial_contrast, "local_pca_enabled", s.pp_local_pca);
-  s.pp_advanced_local_pca = val(spatial_contrast, "advanced_local_pca_enabled", s.pp_advanced_local_pca);
-  s.pp_advanced_local_pca_removed_modes = val(spatial_contrast, "advanced_local_pca_removed_modes",
-                                               s.pp_advanced_local_pca_removed_modes);
+  s.holovibe_local_pca = val(spatial_contrast, "holovibe_local_pca_enabled", s.holovibe_local_pca);
+  s.holovibe_pca_width_x = val(spatial_contrast, "holovibe_pca_width_x", s.holovibe_pca_width_x);
+  s.holovibe_pca_width_y = val(spatial_contrast, "holovibe_pca_width_y", s.holovibe_pca_width_y);
+  s.holovibe_pca_stride_x = val(spatial_contrast, "holovibe_pca_stride_x", s.holovibe_pca_stride_x);
+  s.holovibe_pca_stride_y = val(spatial_contrast, "holovibe_pca_stride_y", s.holovibe_pca_stride_y);
+  s.holovibe_pca_rank_factor = val(spatial_contrast, "holovibe_pca_rank_factor", s.holovibe_pca_rank_factor);
   s.pp_local_pca_lsci = val(spatial_contrast, "local_pca_lsci_enabled", s.pp_local_pca_lsci);
-  if (s.pp_advanced_local_pca) {
-    s.pp_local_pca = true;
-    s.pp_local_pca_lsci = false;
-    s.pp_pca_lsci = false;
-  }
   s.pp_local_pca_map = val(spatial_contrast, "local_pca_map", s.pp_local_pca_map);
   s.pp_local_pca_dynamic_auto_scale =
       val(spatial_contrast, "local_pca_dynamic_auto_scale", s.pp_local_pca_dynamic_auto_scale);
@@ -315,7 +314,6 @@ void read_view(Settings &s, const json &view) {
   s.pp_local_pca_step_height = val(spatial_contrast, "local_pca_step_height", s.pp_local_pca_step_height);
   s.pp_local_pca_automatic = val(spatial_contrast, "local_pca_automatic",
                                  s.pp_local_pca_automatic);
-  s.pp_pca_lsci_map = val(spatial_contrast, "pca_map", s.pp_pca_lsci_map);
   s.pp_spatial_contrast_window_size =
       val(spatial_contrast, "window_size", s.pp_spatial_contrast_window_size);
   s.pp_spatial_contrast_dimensions =

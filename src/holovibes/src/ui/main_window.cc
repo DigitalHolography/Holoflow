@@ -1302,8 +1302,10 @@ void MainWindow::save_persistent_state() {
   settings.remove("spatial_contrast_dimensions");
   settings.remove("spatial_contrast_temporal_frames");
   settings.setValue("spatial_contrast_method", render_widget_->get_spatial_contrast_method());
-  settings.setValue("pca_lsci_map", render_widget_->get_pca_lsci_map());
   settings.setValue("local_pca_automatic", render_widget_->is_local_pca_automatic());
+  settings.setValue("holovibe_pca_kernel", render_widget_->get_holovibe_kernel());
+  settings.setValue("holovibe_pca_stride", render_widget_->get_holovibe_stride());
+  settings.setValue("holovibe_pca_rank_factor", render_widget_->get_holovibe_rank_factor());
   settings.setValue("local_pca_map", render_widget_->get_local_pca_map());
   settings.setValue("local_pca_dynamic_auto_scale",
                     render_widget_->is_local_pca_dynamic_auto_scale());
@@ -1480,11 +1482,13 @@ void MainWindow::restore_persistent_state() {
       settings.value("spatial_contrast_method", render_widget_->get_spatial_contrast_method())
           .toString());
   render_widget_->set_local_pca_automatic(settings.value("local_pca_automatic", false).toBool());
+  render_widget_->set_holovibe_parameters(
+      settings.value("holovibe_pca_kernel", 32).toInt(),
+      settings.value("holovibe_pca_stride", 16).toInt(),
+      settings.value("holovibe_pca_rank_factor", 1.0).toDouble());
   render_widget_->set_local_pca_map(settings.value("local_pca_map", 0).toInt());
   render_widget_->set_local_pca_dynamic_auto_scale(
       settings.value("local_pca_dynamic_auto_scale", true).toBool());
-  render_widget_->set_pca_lsci_mode(render_widget_->is_pca_lsci_enabled(),
-                                    settings.value("pca_lsci_map", "Dynamic").toString());
   render_widget_->spatial_contrast_display_max()->setValue(
       settings
           .value("spatial_contrast_display_max", render_widget_->get_spatial_contrast_display_max())
@@ -2695,18 +2699,20 @@ void MainWindow::setup_validation_connections() {
 
   connect(render_widget_->time_transform_combo(), qOverload<int>(&QComboBox::activated), this,
           [this](int) {
-            if (render_widget_->is_local_pca_enabled() &&
-                !render_widget_->is_advanced_local_pca_enabled()) {
+            if (render_widget_->is_local_pca_enabled() ||
+                render_widget_->is_holovibe_local_pca_enabled()) {
               view_widget_->set_z_origin(0);
-              view_widget_->set_z_width(std::max(1, render_widget_->get_time_window() - 1));
+              view_widget_->set_z_width(std::max(1, render_widget_->get_time_window() -
+                  (render_widget_->is_holovibe_local_pca_enabled() ? 0 : 1)));
             }
           });
   connect(render_widget_->pca_type_combo(), qOverload<int>(&QComboBox::activated), this,
           [this](int) {
-            if (render_widget_->is_local_pca_enabled() &&
-                !render_widget_->is_advanced_local_pca_enabled()) {
+            if (render_widget_->is_local_pca_enabled() ||
+                render_widget_->is_holovibe_local_pca_enabled()) {
               view_widget_->set_z_origin(0);
-              view_widget_->set_z_width(std::max(1, render_widget_->get_time_window() - 1));
+              view_widget_->set_z_width(std::max(1, render_widget_->get_time_window() -
+                  (render_widget_->is_holovibe_local_pca_enabled() ? 0 : 1)));
             }
           });
 
@@ -2939,13 +2945,13 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"RFFT", TimeMethod::RFFT},
         {"FFT", TimeMethod::FFT},
         {"LSCI (3D)", TimeMethod::NONE},
-        {"PCA-LSCI", TimeMethod::NONE},
         {"Local PCA", TimeMethod::NONE},
-        {"Advanced Local PCA", TimeMethod::NONE},
+        {"Holovibe Local-PCA", TimeMethod::NONE},
         {"Local PCA-LSCI", TimeMethod::NONE},
     };
     s.time_window       = render_widget_->get_time_window();
     s.time_stride       = render_widget_->get_time_stride();
+    if (render_widget_->is_holovibe_local_pca_enabled()) s.time_stride = s.time_window;
     s.time_accumulation = 4; // TODO: expose in UI
     QString method      = render_widget_->get_time_transform();
     s.time_method       = method_from_str.at(method.toStdString());
@@ -2994,11 +3000,17 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_flatfield_cutoff_period_m =
         static_cast<float>(view_widget_->get_flatfield_cutoff_period_um() * 1e-6);
     s.pp_spatial_contrast             = render_widget_->is_spatial_contrast_enabled();
-    s.pp_pca_lsci                     = render_widget_->is_pca_lsci_enabled();
     s.pp_local_pca                    = render_widget_->is_local_pca_enabled();
-    s.pp_advanced_local_pca           = render_widget_->is_advanced_local_pca_enabled();
-    s.pp_advanced_local_pca_removed_modes =
-        render_widget_->get_advanced_local_pca_removed_modes();
+    s.holovibe_local_pca              = render_widget_->is_holovibe_local_pca_enabled();
+    s.holovibe_pca_width_x = render_widget_->is_local_pca_rectangular()
+        ? render_widget_->get_local_pca_kernel_width() : render_widget_->get_holovibe_kernel();
+    s.holovibe_pca_width_y = render_widget_->is_local_pca_rectangular()
+        ? render_widget_->get_local_pca_kernel_height() : render_widget_->get_holovibe_kernel();
+    s.holovibe_pca_stride_x = render_widget_->is_local_pca_rectangular()
+        ? render_widget_->get_local_pca_step_width() : render_widget_->get_holovibe_stride();
+    s.holovibe_pca_stride_y = render_widget_->is_local_pca_rectangular()
+        ? render_widget_->get_local_pca_step_height() : render_widget_->get_holovibe_stride();
+    s.holovibe_pca_rank_factor = static_cast<float>(render_widget_->get_holovibe_rank_factor());
     s.pp_local_pca_lsci               = render_widget_->is_local_pca_lsci_enabled();
     s.pp_local_pca_map                = render_widget_->get_local_pca_map();
     s.pp_local_pca_dynamic_auto_scale = render_widget_->is_local_pca_dynamic_auto_scale();
@@ -3010,10 +3022,6 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_local_pca_step_height        = render_widget_->get_local_pca_step_height();
     s.pp_local_pca_automatic          = render_widget_->is_local_pca_lsci_enabled() &&
                                         render_widget_->is_local_pca_automatic();
-    const auto pca_map                = render_widget_->get_pca_lsci_map();
-    s.pp_pca_lsci_map                 = pca_map == "Static (PCA then LSCI 3D)" ? 1
-                                        : pca_map == "PCA frame (center)"      ? 3
-                                                                               : 2;
     s.pp_spatial_contrast_window_size = render_widget_->get_spatial_contrast_window_size();
     s.pp_spatial_contrast_dimensions  = render_widget_->get_spatial_contrast_dimensions();
     s.pp_spatial_contrast_method = render_widget_->get_spatial_contrast_method() == "FFT" ? 1 : 0;
@@ -3203,9 +3211,13 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
       method = "None";
       break;
     }
+    if (s.holovibe_local_pca) method = "Holovibe Local-PCA";
     render_widget_->set_time_transform(method);
     render_widget_->set_time_window(static_cast<int>(s.time_window));
     render_widget_->set_time_stride(static_cast<int>(s.time_stride));
+    render_widget_->set_holovibe_parameters(s.holovibe_pca_width_x,
+                                             s.holovibe_pca_stride_x,
+                                             s.holovibe_pca_rank_factor);
 
     view_widget_->set_z_origin(static_cast<int>(s.time_z_begin));
     view_widget_->set_z_width(static_cast<int>(s.time_z_end - s.time_z_begin));
@@ -3238,13 +3250,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     view_widget_->set_flatfield_cutoff_period_um(s.pp_flatfield_cutoff_period_m * 1e6);
     render_widget_->set_spatial_contrast_mode(s.pp_spatial_contrast,
                                               s.pp_spatial_contrast_dimensions);
-    render_widget_->set_pca_lsci_mode(s.pp_pca_lsci, s.pp_pca_lsci_map == 1
-                                                         ? "Static (PCA then LSCI 3D)"
-                                                     : s.pp_pca_lsci_map == 3 ? "PCA frame (center)"
-                                                                              : "Dynamic");
-    render_widget_->set_local_pca_mode(s.pp_local_pca, s.pp_local_pca_lsci,
-                                       s.pp_advanced_local_pca);
-    render_widget_->set_advanced_local_pca_removed_modes(s.pp_advanced_local_pca_removed_modes);
+    render_widget_->set_local_pca_mode(s.pp_local_pca, s.pp_local_pca_lsci);
     if (s.pp_local_pca && !s.pp_local_pca_lsci) {
       render_widget_->set_space_transform(
           s.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION ? "Fresnel Diffraction" :
@@ -3254,10 +3260,14 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     render_widget_->set_local_pca_dynamic_auto_scale(s.pp_local_pca_dynamic_auto_scale);
     render_widget_->set_local_pca_automatic(s.pp_local_pca_automatic);
     render_widget_->set_local_pca_rectangular(s.pp_local_pca_rectangular);
-    render_widget_->set_local_pca_kernel_width(s.pp_local_pca_kernel_width);
-    render_widget_->set_local_pca_kernel_height(s.pp_local_pca_kernel_height);
-    render_widget_->set_local_pca_step_width(s.pp_local_pca_step_width);
-    render_widget_->set_local_pca_step_height(s.pp_local_pca_step_height);
+    render_widget_->set_local_pca_kernel_width(
+        s.holovibe_local_pca ? s.holovibe_pca_width_x : s.pp_local_pca_kernel_width);
+    render_widget_->set_local_pca_kernel_height(
+        s.holovibe_local_pca ? s.holovibe_pca_width_y : s.pp_local_pca_kernel_height);
+    render_widget_->set_local_pca_step_width(
+        s.holovibe_local_pca ? s.holovibe_pca_stride_x : s.pp_local_pca_step_width);
+    render_widget_->set_local_pca_step_height(
+        s.holovibe_local_pca ? s.holovibe_pca_stride_y : s.pp_local_pca_step_height);
     render_widget_->set_spatial_contrast_window_size(s.pp_spatial_contrast_window_size);
     render_widget_->set_spatial_contrast_method(s.pp_spatial_contrast_method == 1 ? "FFT"
                                                                                   : "Kernel");

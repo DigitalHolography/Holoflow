@@ -175,20 +175,45 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
     }
   }
 
+  if (s_.holovibe_local_pca) {
+    using Target = holotask::syncs::ConversionSettings::Target;
+    using Strat = holotask::syncs::ConversionSettings::Strategy;
+    auto frames = build_spatial_contrast_input(H);
+    size_t source_cycle_frames = 0;
+    if (s_.import_source == ImportSource::HOLOFILE && s_.load_batch > 0 &&
+        s_.load_end > s_.load_begin) {
+      const int selected_frames = s_.load_end - s_.load_begin;
+      source_cycle_frames = static_cast<size_t>(selected_frames / s_.load_batch * s_.load_batch);
+    }
+    frames = temporal_window(frames, {.window_size = static_cast<size_t>(s_.time_window),
+                                      .stride_size = static_cast<size_t>(s_.time_window),
+                                      .source_cycle_frames = source_cycle_frames});
+    frames = convert(frames, {Target::CF32, Strat::Real});
+    if (s_.spacial_method != SpacialMethod::NONE) {
+      if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION)
+        frames = fresnel_diffraction(frames, {.lambda = s_.spacial_lambda,
+                                              .dx = s_.spacial_pixel_size,
+                                              .dy = s_.spacial_pixel_size,
+                                              .z = s_.spacial_z,
+                                              .axes = {-2, -1},
+                                              .output_magnitude = false});
+      else
+        frames = build_spatial_propagation(frames);
+    }
+    frames = ascontiguousarray(frames, {});
+    frames = holovibe_local_pca(frames, {.width_x = s_.holovibe_pca_width_x,
+                                         .width_y = s_.holovibe_pca_width_y,
+                                         .stride_x = s_.holovibe_pca_stride_x,
+                                         .stride_y = s_.holovibe_pca_stride_y,
+                                         .rank_factor = s_.holovibe_pca_rank_factor});
+    frames = slice(frames, {{holonp::SliceRange{s_.time_z_begin, s_.time_z_end}, {}, {}}});
+    auto result = mean_abs(frames, {{0}, true});
+    build_xy_output(result, 0);
+    return g_;
+  }
+
   if (s_.pp_spatial_contrast) {
     auto frames = build_spatial_contrast_input(H);
-    if (s_.pp_advanced_local_pca &&
-        s_.spacial_method != SpacialMethod::NONE) {
-      using Target = holotask::syncs::ConversionSettings::Target;
-      using Strat = holotask::syncs::ConversionSettings::Strategy;
-      frames = convert(frames, {Target::F32, Strat::Real});
-      frames = build_spatial_propagation(frames);
-      if (frames.dtype == holoflow::core::DType::CF32)
-        frames = abs(frames, {});
-      if (s_.pp_fft_shift)
-        frames = fftshift(frames, {{-2, -1}});
-      frames = ascontiguousarray(frames, {});
-    }
     if (s_.pp_spatial_contrast_dimensions != 2) {
       size_t source_cycle_frames = 0;
       if (s_.import_source == ImportSource::HOLOFILE && s_.load_batch > 0 &&
@@ -750,7 +775,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
 
   if (s_.time_method == TimeMethod::RFFT ||
       s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS ||
-      (s_.pp_local_pca && !s_.pp_local_pca_lsci && !s_.pp_advanced_local_pca)) {
+      (s_.pp_local_pca && !s_.pp_local_pca_lsci)) {
     auto freqs = arange({f0, f1, df, holoflow::core::DType::F32});
     return freqs;
   }
@@ -766,7 +791,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_contrast_input(TDesc
     H = memcpy(H, {Device});
   }
   int queue_capacity = s_.gpu_in_size;
-  if (s_.pp_local_pca) {
+  if (s_.pp_local_pca || s_.holovibe_local_pca) {
     size_t available = 0, total = 0;
     CUDA_CHECK(cudaMemGetInfo(&available, &total));
     const size_t frame_bytes = H.num_bytes() / H.shape[0];
@@ -801,21 +826,10 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
                            .step_height = s_.pp_local_pca_step_height,
                            .begin = s_.time_z_begin, .end = s_.time_z_end,
                            .automatic = s_.pp_local_pca_lsci && s_.pp_local_pca_automatic,
-                           .removed_modes = s_.pp_advanced_local_pca_removed_modes,
-                           .map = s_.pp_advanced_local_pca ? holotask::syncs::LocalPcaMap::ResidualVariance
-                                  : !s_.pp_local_pca_lsci ? holotask::syncs::LocalPcaMap::Components
+                           .map = !s_.pp_local_pca_lsci ? holotask::syncs::LocalPcaMap::Components
                                   : s_.pp_local_pca_map == 1 ? holotask::syncs::LocalPcaMap::Static
                                   : s_.pp_local_pca_map == 2 ? holotask::syncs::LocalPcaMap::Original
                                                               : holotask::syncs::LocalPcaMap::Dynamic})
-      : s_.pp_pca_lsci
-      ? pca_lsci(frames, {.window_size = s_.pp_spatial_contrast_window_size,
-                          .map = s_.pp_pca_lsci_map == 0
-                                     ? holotask::syncs::PcaLsciMap::Original
-                                     : s_.pp_pca_lsci_map == 1
-                                           ? holotask::syncs::PcaLsciMap::Static
-                                           : s_.pp_pca_lsci_map == 3
-                                                 ? holotask::syncs::PcaLsciMap::PcaFrame
-                                                 : holotask::syncs::PcaLsciMap::Dynamic})
       : spatial_contrast(frames,
                                  {.window_size = s_.pp_spatial_contrast_dimensions == 1
                                                      ? 1
@@ -824,7 +838,7 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
                                   .method = s_.pp_spatial_contrast_method == 1
                                                 ? holotask::syncs::SpatialContrastMethod::FFT
                                                 : holotask::syncs::SpatialContrastMethod::Kernel});
-  if (s_.pp_local_pca && !s_.pp_local_pca_lsci && !s_.pp_advanced_local_pca) {
+  if (s_.pp_local_pca && !s_.pp_local_pca_lsci) {
     auto component_stack = reshape(result, {{1, static_cast<int64_t>(result.shape[0]),
                                              static_cast<int64_t>(result.shape[1]),
                                              static_cast<int64_t>(result.shape[2])}, false});
@@ -841,12 +855,9 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
     result = flatfield(result, flatfield_settings_from_cutoff_period(
                                    s_.pp_flatfield_cutoff_period_m, pitch, pitch));
   }
-  // Advanced Local PCA produces a nonnegative variance index with no fixed upper bound.
   const bool auto_dynamic = s_.pp_local_pca_lsci && s_.pp_local_pca_map == 0 &&
                             s_.pp_local_pca_dynamic_auto_scale;
-  build_xy_output(result, 0,
-                  !auto_dynamic && !s_.pp_advanced_local_pca && (s_.pp_local_pca ||
-                                    !(s_.pp_pca_lsci && s_.pp_pca_lsci_map == 3)));
+  build_xy_output(result, 0, !auto_dynamic && s_.pp_local_pca);
 }
 
 void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {

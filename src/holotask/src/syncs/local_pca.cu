@@ -29,13 +29,12 @@ void to_json(nlohmann::json &j, const LocalPcaSettings &s) {
                     s.map == LocalPcaMap::Static ? "static" :
                     s.map == LocalPcaMap::Dynamic ? "dynamic" :
                     s.map == LocalPcaMap::Components ? "components" :
-                    s.map == LocalPcaMap::ResidualVariance ? "residual_variance" : "energy";
+                    "energy";
   j = {{"window_size", s.window_size}, {"stride", s.stride},
        {"rectangular", s.rectangular}, {"kernel_width", s.kernel_width},
        {"kernel_height", s.kernel_height}, {"step_width", s.step_width},
        {"step_height", s.step_height},
-       {"begin", s.begin}, {"end", s.end}, {"automatic", s.automatic},
-       {"removed_modes", s.removed_modes}, {"map", map}};
+       {"begin", s.begin}, {"end", s.end}, {"automatic", s.automatic}, {"map", map}};
 }
 
 void from_json(const nlohmann::json &j, LocalPcaSettings &s) {
@@ -49,11 +48,9 @@ void from_json(const nlohmann::json &j, LocalPcaSettings &s) {
   s.begin = j.value("begin", 0);
   s.end = j.value("end", 15);
   s.automatic = j.value("automatic", false);
-  s.removed_modes = j.value("removed_modes", 1);
   const auto map = j.value("map", std::string{"energy"});
   if (map == "energy") s.map = LocalPcaMap::Energy;
   else if (map == "components") s.map = LocalPcaMap::Components;
-  else if (map == "residual_variance") s.map = LocalPcaMap::ResidualVariance;
   else if (map == "original") s.map = LocalPcaMap::Original;
   else if (map == "static") s.map = LocalPcaMap::Static;
   else if (map == "dynamic") s.map = LocalPcaMap::Dynamic;
@@ -65,8 +62,7 @@ namespace {
 constexpr int kBatch = 1024;
 
 int batch_capacity(const holoflow::core::TDesc &desc, const LocalPcaSettings &settings) {
-  if (!settings.rectangular && settings.map != LocalPcaMap::Components &&
-      settings.map != LocalPcaMap::ResidualVariance) return kBatch;
+  if (!settings.rectangular && settings.map != LocalPcaMap::Components) return kBatch;
   size_t available = 0, total = 0;
   CUDA_CHECK(cudaMemGetInfo(&available, &total));
   const size_t pixels = settings.rectangular
@@ -76,7 +72,12 @@ int batch_capacity(const holoflow::core::TDesc &desc, const LocalPcaSettings &se
   const size_t bytes_per_patch = sizeof(float) * (frames * pixels + frames * frames + 2 * frames);
   if (bytes_per_patch > available / 4)
     throw std::runtime_error("Local PCA kernel does not fit available GPU memory");
-  return static_cast<int>((std::min)(static_cast<size_t>(kBatch), available / 4 / bytes_per_patch));
+  const size_t step_width = settings.rectangular ? settings.step_width : 1;
+  const size_t step_height = settings.rectangular ? settings.step_height : 1;
+  const size_t patches = ((desc.shape[2] + step_width - 1) / step_width) *
+                         ((desc.shape[1] + step_height - 1) / step_height);
+  return static_cast<int>((std::min)({static_cast<size_t>(kBatch), patches,
+                                      available / 4 / bytes_per_patch}));
 }
 
 __device__ int wrap(int x, int extent) {
@@ -290,8 +291,7 @@ __global__ void local_pca_output(const float *patches, const float *vectors,
                                  int width, int height, int out_width,
                                  int kernel_width, int kernel_height,
                                  int step_width, int step_height, int frames,
-                                 int begin, int end, int removed_modes,
-                                 bool residual_variance, int first) {
+                                 int begin, int end, int first) {
   const int p = blockIdx.x;
   if (info[p] != 0) { atomicExch(invalid, 1); return; }
   const int tile = first + p;
@@ -306,39 +306,13 @@ __global__ void local_pca_output(const float *patches, const float *vectors,
     const int patch_y = (kernel_height - step_height) / 2 + q / step_width;
     const int patch_pixel = patch_y * kernel_width + patch_x;
     const int output_pixel = y * width + x;
-    if (!residual_variance) {
-      for (int c = begin; c < end; ++c) {
-        double score = 0.0;
-        for (int t = 0; t < frames; ++t)
-          score += patches[(static_cast<size_t>(p) * frames + t) * kernel_pixels + patch_pixel] *
-                   vectors[(static_cast<size_t>(p) * frames + c) * frames + t];
-        output[static_cast<size_t>(c - begin) * frame_pixels + output_pixel] =
-            static_cast<float>(score);
-      }
-    } else {
-      double scores[2] = {0.0, 0.0};
-      double original_sum = 0.0;
-      for (int t = 0; t < frames; ++t) {
-        const double sample = patches[(static_cast<size_t>(p) * frames + t) * kernel_pixels + patch_pixel];
-        if (!isfinite(sample)) { atomicExch(invalid, 1); return; }
-        original_sum += sample;
-        for (int k = 0; k < removed_modes; ++k)
-          scores[k] += sample * vectors[(static_cast<size_t>(p) * frames + frames - 1 - k) * frames + t];
-      }
-      double residual_sum = 0.0, residual_squared = 0.0;
-      for (int t = 0; t < frames; ++t) {
-        double residual = patches[(static_cast<size_t>(p) * frames + t) * kernel_pixels + patch_pixel];
-        for (int k = 0; k < removed_modes; ++k)
-          residual -= scores[k] * vectors[(static_cast<size_t>(p) * frames + frames - 1 - k) * frames + t];
-        residual_sum += residual;
-        residual_squared += residual * residual;
-      }
-      const double original_mean = original_sum / frames;
-      const double variance = fmax(0.0, residual_squared / frames -
-                                           (residual_sum / frames) * (residual_sum / frames));
-      const double normalized = original_mean != 0.0 ? variance / (original_mean * original_mean) : 0.0;
-      if (!isfinite(normalized)) { atomicExch(invalid, 1); return; }
-      output[output_pixel] = static_cast<float>(normalized);
+    for (int c = begin; c < end; ++c) {
+      double score = 0.0;
+      for (int t = 0; t < frames; ++t)
+        score += patches[(static_cast<size_t>(p) * frames + t) * kernel_pixels + patch_pixel] *
+                 vectors[(static_cast<size_t>(p) * frames + c) * frames + t];
+      output[static_cast<size_t>(c - begin) * frame_pixels + output_pixel] =
+          static_cast<float>(score);
     }
   }
 }
@@ -482,8 +456,7 @@ public:
               eigenvalues_.get(), info_.get(), output, frames_, settings_.begin,
               settings_.end, settings_.automatic, first, count, invalid_.get());
         }
-      } else if (settings_.map == LocalPcaMap::Components ||
-                 settings_.map == LocalPcaMap::ResidualVariance) {
+      } else if (settings_.map == LocalPcaMap::Components) {
         const int step_width = settings_.rectangular ? settings_.step_width : 1;
         const int step_height = settings_.rectangular ? settings_.step_height : 1;
         const int tile_pixels = step_width * step_height;
@@ -493,8 +466,7 @@ public:
             width_, height_, out_width_,
             settings_.rectangular ? settings_.kernel_width : settings_.window_size,
             settings_.rectangular ? settings_.kernel_height : settings_.window_size,
-            step_width, step_height, frames_, settings_.begin, settings_.end,
-            settings_.removed_modes, settings_.map == LocalPcaMap::ResidualVariance, first);
+            step_width, step_height, frames_, settings_.begin, settings_.end, first);
       } else {
         reconstruct(first, count);
       }
@@ -554,7 +526,7 @@ public:
 
 private:
   template <typename T> void enqueue(const T *input, int first, int count) {
-    if (settings_.map == LocalPcaMap::Components || settings_.map == LocalPcaMap::ResidualVariance)
+    if (settings_.map == LocalPcaMap::Components)
       gather_rectangular_patches<T, false><<<dim3(count, frames_), 256, 0, stream_>>>(
           input, patches_.get(), width_, height_, out_width_,
           settings_.rectangular ? settings_.step_width : 1,
@@ -611,7 +583,7 @@ holoflow::core::InferResult LocalPcaFactory::infer(
   const auto s = jsettings.get<LocalPcaSettings>();
   if (inputs.size() != 1) throw std::invalid_argument("LocalPca expects one input");
   const auto &input = inputs.front();
-  const bool new_map = s.map == LocalPcaMap::Components || s.map == LocalPcaMap::ResidualVariance;
+  const bool new_map = s.map == LocalPcaMap::Components;
   if (input.rank() != 3 || input.shape[0] < 2 || input.shape[0] > (new_map ? 64u : 32u) ||
       input.shape[1] == 0 || input.shape[2] == 0 ||
       input.shape[1] > static_cast<size_t>((std::numeric_limits<int>::max)()) / input.shape[2] ||
@@ -634,11 +606,8 @@ holoflow::core::InferResult LocalPcaFactory::infer(
               s.window_size > (new_map ? static_cast<int>((std::min)(input.shape[1], input.shape[2])) : 15) ||
               s.window_size % 2 == 0 ||
               s.stride != 1)) ||
-      (s.map != LocalPcaMap::ResidualVariance && !s.automatic &&
-       (s.begin < 0 || s.begin >= s.end || s.end > static_cast<int>(input.shape[0]))) ||
-      (s.map == LocalPcaMap::ResidualVariance &&
-       (s.removed_modes < 0 || s.removed_modes > 2 ||
-        s.removed_modes > static_cast<int>(input.shape[0]))))
+      (!s.automatic &&
+       (s.begin < 0 || s.begin >= s.end || s.end > static_cast<int>(input.shape[0]))))
     throw std::invalid_argument("LocalPca requires a valid kernel, step and component range");
   return {.input_descs = {input},
           .output_descs = {holoflow::core::TDesc(

@@ -12,8 +12,8 @@
 #include <spdlog/spdlog.h>
 
 #include "holotask/syncs/local_pca.hh"
+#include "holotask/syncs/holovibe_local_pca.hh"
 #include "holotask/syncs/pca.hh"
-#include "holotask/syncs/pca_lsci.hh"
 #include "sync_task_runner.hh"
 #include "tensor_test_buffer.hh"
 
@@ -168,61 +168,6 @@ TEST(LocalPcaTest, FullFrameComponentsMatchGlobalPcaMagnitude) {
   }
 }
 
-TEST(LocalPcaTest, ResidualVarianceWithZeroRemovedModesMatchesTemporalContrastSquared) {
-  constexpr int width = 4, height = 3, frames = 3;
-  std::vector<float> values(width * height * frames);
-  for (int t = 0; t < frames; ++t)
-    for (int p = 0; p < width * height; ++p)
-      values[t * width * height + p] = static_cast<float>(p + 1 + t * (p % 3 + 1));
-  std::vector<std::byte> bytes(values.size() * sizeof(float));
-  std::memcpy(bytes.data(), values.data(), bytes.size());
-  const std::vector<TDesc> descs{TDesc({frames, height, width}, DType::F32, MemLoc::Device)};
-  const std::vector<std::vector<std::byte>> inputs{bytes};
-  holotask::syncs::LocalPcaFactory factory;
-  const auto result = holonp_test::run_sync_factory(
-      factory, descs, inputs,
-      holotask::syncs::LocalPcaSettings{
-          .rectangular = true, .kernel_width = width, .kernel_height = height,
-          .step_width = 2, .step_height = 1, .removed_modes = 0,
-          .map = holotask::syncs::LocalPcaMap::ResidualVariance});
-  for (int p = 0; p < width * height; ++p) {
-    double mean = 0.0, squared = 0.0;
-    for (int t = 0; t < frames; ++t) {
-      const double value = values[t * width * height + p];
-      mean += value;
-      squared += value * value;
-    }
-    mean /= frames;
-    const double expected = (squared / frames - mean * mean) / (mean * mean);
-    float actual = 0.0f;
-    std::memcpy(&actual, result.output_bytes[0].data() + p * sizeof(float), sizeof(float));
-    EXPECT_NEAR(actual, expected, 1e-5f);
-  }
-}
-
-TEST(LocalPcaTest, ResidualVarianceRemovesDominantModeAcross64Frames) {
-  constexpr int side = 3, frames = 64;
-  std::vector<float> values(side * side * frames);
-  for (int t = 0; t < frames; ++t)
-    for (int p = 0; p < side * side; ++p)
-      values[t * side * side + p] = static_cast<float>((p + 1) * (t + 1));
-  std::vector<std::byte> bytes(values.size() * sizeof(float));
-  std::memcpy(bytes.data(), values.data(), bytes.size());
-  const std::vector<TDesc> descs{TDesc({frames, side, side}, DType::F32, MemLoc::Device)};
-  const std::vector<std::vector<std::byte>> inputs{bytes};
-  holotask::syncs::LocalPcaFactory factory;
-  const auto result = holonp_test::run_sync_factory(
-      factory, descs, inputs,
-      holotask::syncs::LocalPcaSettings{
-          .window_size = side, .removed_modes = 1,
-          .map = holotask::syncs::LocalPcaMap::ResidualVariance});
-  for (int p = 0; p < side * side; ++p) {
-    float actual = 0.0f;
-    std::memcpy(&actual, result.output_bytes[0].data() + p * sizeof(float), sizeof(float));
-    EXPECT_NEAR(actual, 0.0f, 1e-5f);
-  }
-}
-
 TEST(LocalPcaTest, DynamicMapSubtractsLocalStaticContrast) {
   using holotask::syncs::LocalPcaMap;
   const auto original = run(1, 2, true, LocalPcaMap::Original);
@@ -237,39 +182,6 @@ TEST(LocalPcaTest, DynamicMapSubtractsLocalStaticContrast) {
     changed |= std::abs(dynamic[i]) > 1e-4f;
   }
   EXPECT_TRUE(changed);
-}
-
-TEST(LocalPcaTest, FullImageKernelMatchesPcaLsciStaticMap) {
-  constexpr int frames = 3, side = 3;
-  std::vector<float> values(frames * side * side);
-  for (int y = 0; y < side; ++y)
-    for (int x = 0; x < side; ++x) {
-      const int pixel = y * side + x;
-      values[pixel] = static_cast<float>(10 + x + y);
-      values[side * side + pixel] = static_cast<float>(10 + x * x + y);
-      values[2 * side * side + pixel] = static_cast<float>(10 + x + y * y);
-    }
-  std::vector<std::byte> bytes(values.size() * sizeof(float));
-  std::memcpy(bytes.data(), values.data(), bytes.size());
-  const std::vector<TDesc> descs{TDesc({frames, side, side}, DType::F32, MemLoc::Device)};
-  const std::vector<std::vector<std::byte>> inputs{bytes};
-  holotask::syncs::LocalPcaFactory local_factory;
-  holotask::syncs::PcaLsciFactory global_factory;
-  const auto local = holonp_test::run_sync_factory(
-      local_factory, descs, inputs,
-      holotask::syncs::LocalPcaSettings{.window_size = side, .stride = 1,
-                                       .begin = 0, .end = 2, .automatic = true,
-                                       .map = holotask::syncs::LocalPcaMap::Static});
-  const auto global = holonp_test::run_sync_factory(
-      global_factory, descs, inputs,
-      holotask::syncs::PcaLsciSettings{.window_size = side,
-                                      .map = holotask::syncs::PcaLsciMap::Static});
-  for (int i = 0; i < side * side; ++i) {
-    float local_value = 0, global_value = 0;
-    std::memcpy(&local_value, local.output_bytes[0].data() + i * sizeof(float), sizeof(float));
-    std::memcpy(&global_value, global.output_bytes[0].data() + i * sizeof(float), sizeof(float));
-    EXPECT_NEAR(local_value, global_value, 1e-3f);
-  }
 }
 
 TEST(LocalPcaTest, HonorsCancellationBeforeSubmittingPatches) {
@@ -287,4 +199,30 @@ TEST(LocalPcaTest, HonorsCancellationBeforeSubmittingPatches) {
   std::atomic<bool> cancelled{true};
   holoflow::core::SyncCtx ctx{inputs, outputs, &cancelled, nullptr, nullptr};
   EXPECT_EQ(task->execute(ctx), holoflow::core::OpResult::Cancelled);
+}
+
+TEST(HolovibeLocalPcaTest, RankFactorZeroCopiesComplexFramesAndOneRemovesRankOneSignal) {
+  std::vector<float2> input(2 * 2 * 2);
+  for (int t = 0; t < 2; ++t)
+    for (int p = 0; p < 4; ++p)
+      input[t * 4 + p] = make_float2(static_cast<float>((t + 1) * (p + 1)),
+                                     static_cast<float>((t + 1) * (p + 1) * 0.5));
+  std::vector<std::byte> bytes(input.size() * sizeof(float2));
+  std::memcpy(bytes.data(), input.data(), bytes.size());
+  holotask::syncs::HolovibeLocalPcaFactory factory;
+  const std::vector<TDesc> desc{TDesc({2, 2, 2}, DType::CF32, MemLoc::Device)};
+  for (float factor : {0.f, 1.f}) {
+    const holotask::syncs::HolovibeLocalPcaSettings settings{
+        .width_x = 2, .width_y = 2, .stride_x = 1, .stride_y = 1,
+        .rank_factor = factor};
+    const auto result = holonp_test::run_sync_factory(
+        factory, desc, std::vector<std::vector<std::byte>>{bytes}, settings);
+    ASSERT_EQ(result.output_bytes[0].size(), bytes.size());
+    std::vector<float2> output(input.size());
+    std::memcpy(output.data(), result.output_bytes[0].data(), bytes.size());
+    for (size_t i = 0; i < input.size(); ++i) {
+      EXPECT_NEAR(output[i].x, factor == 0.f ? input[i].x : 0.f, 1e-3f);
+      EXPECT_NEAR(output[i].y, factor == 0.f ? input[i].y : 0.f, 1e-3f);
+    }
+  }
 }
