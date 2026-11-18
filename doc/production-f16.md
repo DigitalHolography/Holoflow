@@ -1,9 +1,10 @@
 # Production FP16 PCA and Fresnel
 
 The basic PCA/Fresnel/M0 pipeline enables FP16 through
-`src/holovibes/src/pipeline/precision_options.hh`. All three switches default to `true`:
+`src/holovibes/src/pipeline/precision_options.hh`. All four switches default to `true`:
 
 - `enable_f16_pca`: U8 covariance and projection with CUTLASS tensor operations, FP32 accumulation and the existing FP32 eigensolver; F16 projected output.
+- `enable_f16_filter2d`: normalized real spatial filtering with F16 input/output and native FFTs on validated devices.
 - `enable_f16_fresnel`: runtime-compiled cuFFTDx FFTs with F16 complex intermediates.
 - `fuse_fresnel_mean`: combine magnitude and component mean; F32 reduced output.
 
@@ -12,7 +13,7 @@ Fresnel can also be disabled independently. F16 PCA output is widened before leg
 Fresnel when its switch is disabled.
 
 The initial application scope is U8 windows `[32,320,512]`, PCA selection of 1-16
-components, Fresnel propagation and M0, without autofocus, spatial filtering or 3D cuts. Other
+components, Fresnel propagation and M0, without autofocus or 3D cuts. Other
 configurations retain FP32 PCA. Optimized Fresnel supports contiguous real F16/F32
 with trailing 320x512 dimensions on SM86/SM120. Unsupported Fresnel configurations
 or runtime setup failures use legacy FP32 computation, widening F16 input and
@@ -112,3 +113,35 @@ launches (including setup); 336 FP32 `pca_heev_batched` launches. No
 `u8_f32_real_kernel`, legacy cuFFT entrypoints or cuBLAS GEMM kernels occur in
 this combined-path capture. The remaining F32 mean and display kernels are expected.
 Final focused CTest result: 4/4 passed after the scaling and graph-cache changes.
+
+## F16 spatial filtering
+
+Enabling spatial filtering in the supported PCA/Fresnel/M0 configuration retains F16
+storage through Filter2D and into Fresnel. Filter2D uses native cuFFTDx FFTs for
+contiguous real F16/F32 tensors with trailing 320x512 dimensions on SM86/SM120.
+The native path transposes the real input's half spectrum for contiguous column
+access and runs both column FFTs and the mask in one kernel. Per-plane scaling
+bounds the forward FFTs, and fixed power-of-two scaling bounds the inverse FFTs.
+The inverse row FFT restores these scales and writes the normalized result.
+
+The new Filter2D settings default to `use_fused_f16=false` and `normalize=false`.
+The production F16 route enables normalization. Native FFTs are available through
+explicit task settings on SM86 and enabled in the production route on SM120. Normalized filtering divides the legacy
+output by H*W. Fresnel does not compensate this fixed gain: relative image values
+are preserved, but absolute amplitudes differ from the legacy filtered pipeline.
+F16 output requires normalization. Ordinary F16 rounding, underflow and output
+range limits still apply; there is no frame-dependent normalization or clipping.
+
+Unsupported configurations and native setup failures widen F16 input, perform
+FP32 filtering, normalize, and return F16. Existing F32/CF32 settings keep their
+legacy behavior. Normalization currently applies only to real input.
+
+The native path is benchmarked against normalized FP32 on three and 64 planes.
+On RTX 5090 (SM120), native median times were 19.9 and 97.5 microseconds
+for three and 64 planes, versus 30.1 and 158.1 microseconds with normalized
+FP32. Native p95 also passed at both sizes. Production uses native FFTs on
+SM120 and normalized FP32 computation with F16 storage on unvalidated devices.
+Set `enable_f16_filter2d=false` to retain the previous filtered pipeline.
+Accuracy tests compare normalized outputs within 1% relative L2 error, including
+graph replay after changes to the input and mask, odd plane counts, zero/impulse
+inputs and large finite signals. Recording-based validation requires an input recording.

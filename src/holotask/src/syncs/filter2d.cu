@@ -12,9 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "filter2d/fused_f16.hh"
 #include "holotask/syncs/filter2d.hh"
 
 #include <cstdlib>
+#include <cuda_fp16.h>
 #include <ranges>
 #include <stdexcept>
 #include <string>
@@ -44,6 +46,8 @@ void to_json(nlohmann::json &j, const Filter2DSettings &f) {
       {"r_outer", f.r_outer},
       {"s_inner", f.s_inner},
       {"s_outer", f.s_outer},
+      {"use_fused_f16", f.use_fused_f16},
+      {"normalize", f.normalize},
   };
 }
 
@@ -52,6 +56,8 @@ void from_json(const nlohmann::json &j, Filter2DSettings &f) {
   j.at("r_outer").get_to(f.r_outer);
   j.at("s_inner").get_to(f.s_inner);
   j.at("s_outer").get_to(f.s_outer);
+  f.use_fused_f16 = j.value("use_fused_f16", false);
+  f.normalize     = j.value("normalize", false);
 }
 
 namespace {
@@ -358,6 +364,72 @@ private:
   std::vector<char>      filter_lto_;
 };
 
+__global__ void widen_filter_input(const __half *input, float *output, size_t count) {
+  size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < count)
+    output[i] = __half2float(input[i]);
+}
+
+template <typename T>
+__global__ void normalize_filter_output(const float *input, T *output, size_t count, float gain) {
+  size_t i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i < count)
+    output[i] = static_cast<T>(input[i] * gain);
+}
+
+// The fallback preserves the normalized F16 interface on configurations without a native path.
+class NormalizedFilter final : public holoflow::core::ISyncTask {
+  cudaStream_t                               stream_;
+  holoflow::core::TDesc                      input_desc_, float_desc_;
+  DevPtr<float>                              input_, output_;
+  holoflow::core::Storage                    input_storage_, output_storage_;
+  std::unique_ptr<holoflow::core::ISyncTask> task_;
+  bool                                       half_;
+  float                                      gain_;
+
+public:
+  NormalizedFilter(const holoflow::core::TDesc &input, Filter2DSettings settings,
+                   const holoflow::core::SyncCreateCtx &ctx)
+      : stream_(ctx.stream), input_desc_(input),
+        float_desc_(input.shape, holoflow::core::DType::F32, input.mem_loc),
+        input_(curaii::make_unique_device_ptr<float>(input.num_elements())),
+        output_(curaii::make_unique_device_ptr<float>(input.num_elements())),
+        input_storage_{input.mem_loc, float_desc_.num_bytes(),
+                       reinterpret_cast<std::byte *>(input_.get())},
+        output_storage_{input.mem_loc, float_desc_.num_bytes(),
+                        reinterpret_cast<std::byte *>(output_.get())},
+        half_(input.dtype == holoflow::core::DType::F16),
+        gain_(1.f / float(input.shape[input.rank() - 2] * input.shape.back())) {
+    settings.normalize     = false;
+    settings.use_fused_f16 = false;
+    Filter2DFactory factory;
+    task_ = factory.create(std::span<const holoflow::core::TDesc>(&float_desc_, 1), settings, ctx);
+  }
+  bool supports_cuda_graph() const noexcept override { return true; }
+  void record_cuda_graph(holoflow::core::CudaGraphCtx &ctx) override {
+    holoflow::core::SyncCtx call{ctx.inputs, ctx.outputs, nullptr, nullptr, nullptr};
+    (void)execute(call);
+  }
+  holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
+    auto count = input_desc_.num_elements();
+    if (half_)
+      widen_filter_input<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          reinterpret_cast<const __half *>(ctx.inputs[0].data()), input_.get(), count);
+    auto       in = half_ ? holoflow::core::TView{float_desc_, &input_storage_} : ctx.inputs[0];
+    std::array inputs{in};
+    std::array outputs{holoflow::core::TView{float_desc_, &output_storage_}};
+    holoflow::core::SyncCtx call{inputs, outputs, ctx.cancelled, nullptr, nullptr};
+    auto                    result = task_->execute(call);
+    if (half_)
+      normalize_filter_output<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          output_.get(), reinterpret_cast<__half *>(ctx.outputs[0].data()), count, gain_);
+    else
+      normalize_filter_output<<<static_cast<unsigned>((count + 255) / 256), 256, 0, stream_>>>(
+          output_.get(), reinterpret_cast<float *>(ctx.outputs[0].data()), count, gain_);
+    CUDA_CHECK(cudaGetLastError());
+    return result;
+  }
+};
 } // namespace
 
 // -------------------------------------------------------------------------------------------------
@@ -372,8 +444,13 @@ Filter2DFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(input_descs.size() == 1, "expected exactly one input");
   const auto &idesc = input_descs[0];
   check(idesc.rank() >= 2, "input must be a tensor of rank 2 or higher");
-  check(idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::F32,
+  check(idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::F32 ||
+            idesc.dtype == holoflow::core::DType::F16,
         "input must be complex float32 or real float32");
+  check(idesc.dtype != holoflow::core::DType::F16 || settings.normalize,
+        "F16 input requires normalized output");
+  check(!settings.normalize || idesc.dtype != holoflow::core::DType::CF32,
+        "normalized output currently requires real input");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
   check(is_c_contiguous(idesc), "input must be C-contiguous");
   check(settings.r_inner >= 0, "r_inner must be non-negative");
@@ -402,10 +479,20 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                         const nlohmann::json                  &jsettings,
                         const holoflow::core::SyncCreateCtx   &ctx) const {
   (void)this->infer(input_descs, jsettings);
-  const auto  settings    = jsettings.get<Filter2DSettings>();
-  const auto &idesc       = input_descs[0];
-  const auto  tensor_rank = idesc.rank();
-  const bool  is_real     = idesc.dtype == holoflow::core::DType::F32;
+  const auto  settings = jsettings.get<Filter2DSettings>();
+  const auto &idesc    = input_descs[0];
+  if (settings.use_fused_f16 && supports_fused_f16_filter(idesc)) {
+    try {
+      return create_fused_f16_filter(idesc, settings, ctx.stream);
+    } catch (const std::exception &error) {
+      logger()->warn("[Filter2D] F16 setup failed; using FP32: {}", error.what());
+    }
+  }
+  if (settings.normalize && idesc.dtype != holoflow::core::DType::CF32)
+    return std::make_unique<NormalizedFilter>(idesc, settings, ctx);
+
+  const auto tensor_rank = idesc.rank();
+  const bool is_real     = idesc.dtype == holoflow::core::DType::F32;
 
   int batch_size = 1;
   for (size_t i = 0; i + 2 < tensor_rank; ++i) {
@@ -484,6 +571,9 @@ Filter2DFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   holoflow::core::ExecutionUpdateGuard update_guard(ctx.execution_invalidation);
   (void)this->infer(input_descs, jsettings);
 
+  if (old_task && update_fused_f16_filter(*old_task, input_descs[0],
+                                          jsettings.get<Filter2DSettings>(), ctx.stream))
+    return old_task;
   auto *old_filter = dynamic_cast<Filter2D *>(old_task.get());
   if (old_filter == nullptr) {
     ctx.invalidate_execution();

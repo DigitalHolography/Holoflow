@@ -129,3 +129,15 @@ add_custom_command(
 )
 
 target_sources(${TARGET} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/embedded/fresnel_fused_f16_source.hh")
+
+set(FILTER_F16_RUNTIME_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/src/syncs/filter2d/runtime/fused_f16.cu")
+set_source_files_properties("${FILTER_F16_RUNTIME_SOURCE}" PROPERTIES HEADER_FILE_ONLY TRUE)
+add_custom_command(
+    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/embedded/filter_fused_f16_source.hh"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${FILTER_F16_RUNTIME_SOURCE}"
+            "-DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/embedded/filter_fused_f16_source.hh"
+            "-DSYMBOL=filter_fused_f16_source" -P "${PROJECT_SOURCE_DIR}/cmake/EmbedCudaSource.cmake"
+    DEPENDS "${FILTER_F16_RUNTIME_SOURCE}" "${PROJECT_SOURCE_DIR}/cmake/EmbedCudaSource.cmake"
+    VERBATIM
+)
+target_sources(${TARGET} PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/embedded/filter_fused_f16_source.hh")

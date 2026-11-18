@@ -36,3 +36,11 @@ This task does not own any inputs or outputs.
 ---
 ## Settings
 --8<-- "docs/schemas/syncs/filter2d_settings.md"
+
+## Mixed precision
+
+`use_fused_f16` requests native F16 FFT computation for real contiguous 320x512
+tensors on SM86/SM120. `normalize` divides output by the spatial image area.
+Both settings default to false. F16 input/output is supported with normalization;
+unsupported native configurations use FP32 internally and return the same F16
+output contract. Existing F32/CF32 behavior is unchanged by default.

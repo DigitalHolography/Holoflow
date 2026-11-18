@@ -275,7 +275,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
 
   if (enable_f16_pca && s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS &&
       s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION && s_.moment_type == MomentType::M0 &&
-      !s_.autofocus_enabled && !s_.view_3d_cuts && !s_.filter_2d &&
+      !s_.autofocus_enabled && !s_.view_3d_cuts && (!s_.filter_2d || enable_f16_filter2d) &&
       H.dtype == holoflow::core::DType::U8 && H.shape == std::vector<size_t>{32, 320, 512} &&
       s_.time_z_end - s_.time_z_begin <= 16)
     // The input and PCA queues both own their buffers. Keep a device copy between them.
@@ -646,7 +646,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_propagation(const TD
   if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
     const bool use_half = enable_f16_fresnel &&
                           s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS &&
-                          !s_.autofocus_enabled && !s_.view_3d_cuts && !s_.filter_2d &&
+                          !s_.autofocus_enabled && !s_.view_3d_cuts && (!s_.filter_2d || enable_f16_filter2d) &&
                           s_.moment_type == MomentType::M0 && FH.shape[FH.rank() - 2] == 320 &&
                           FH.shape.back() == 512;
     fused_spatial_mean_ = use_half && fuse_fresnel_mean;
@@ -690,12 +690,22 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_propagation(const TD
 }
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_filter(const TDesc &FH_z) {
-  return filter_2d(FH_z, {
-                             s_.filter_r_inner,
-                             s_.filter_r_outer,
-                             s_.filter_smooth_inner,
-                             s_.filter_smooth_outer,
-                         });
+  const bool half_storage = FH_z.dtype == holoflow::core::DType::F16;
+  bool native = false;
+  if (enable_f16_filter2d && half_storage) {
+    int device = 0, major = 0, minor = 0;
+    // The native FFTs met the FP32 performance gate on SM120.
+    native = cudaGetDevice(&device) == cudaSuccess &&
+             cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) == cudaSuccess &&
+             cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device) == cudaSuccess &&
+             major == 12 && minor == 0;
+  }
+  return filter_2d(FH_z, {.r_inner = s_.filter_r_inner,
+                          .r_outer = s_.filter_r_outer,
+                          .s_inner = s_.filter_smooth_inner,
+                          .s_outer = s_.filter_smooth_outer,
+                          .use_fused_f16 = native,
+                          .normalize = half_storage});
 }
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
