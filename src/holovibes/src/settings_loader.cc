@@ -159,10 +159,17 @@ void write_view(json &j, const Settings &s) {
   spatial_contrast["enabled"]             = s.pp_spatial_contrast;
   spatial_contrast["pca_enabled"]         = s.pp_pca_lsci;
   spatial_contrast["local_pca_enabled"] = s.pp_local_pca;
+  spatial_contrast["advanced_local_pca_enabled"] = s.pp_advanced_local_pca;
+  spatial_contrast["advanced_local_pca_removed_modes"] = s.pp_advanced_local_pca_removed_modes;
   spatial_contrast["local_pca_lsci_enabled"] = s.pp_local_pca_lsci;
   spatial_contrast["local_pca_map"] = s.pp_local_pca_map;
   spatial_contrast["local_pca_dynamic_auto_scale"] = s.pp_local_pca_dynamic_auto_scale;
   spatial_contrast["local_pca_stride"] = s.pp_local_pca_stride;
+  spatial_contrast["local_pca_rectangular"] = s.pp_local_pca_rectangular;
+  spatial_contrast["local_pca_kernel_width"] = s.pp_local_pca_kernel_width;
+  spatial_contrast["local_pca_kernel_height"] = s.pp_local_pca_kernel_height;
+  spatial_contrast["local_pca_step_width"] = s.pp_local_pca_step_width;
+  spatial_contrast["local_pca_step_height"] = s.pp_local_pca_step_height;
   spatial_contrast["local_pca_automatic"] = s.pp_local_pca_automatic;
   spatial_contrast["pca_map"]             = s.pp_pca_lsci_map;
   spatial_contrast["window_size"]         = s.pp_spatial_contrast_window_size;
@@ -287,12 +294,25 @@ void read_view(Settings &s, const json &view) {
   s.pp_spatial_contrast = val(spatial_contrast, "enabled", s.pp_spatial_contrast);
   s.pp_pca_lsci = val(spatial_contrast, "pca_enabled", s.pp_pca_lsci);
   s.pp_local_pca = val(spatial_contrast, "local_pca_enabled", s.pp_local_pca);
+  s.pp_advanced_local_pca = val(spatial_contrast, "advanced_local_pca_enabled", s.pp_advanced_local_pca);
+  s.pp_advanced_local_pca_removed_modes = val(spatial_contrast, "advanced_local_pca_removed_modes",
+                                               s.pp_advanced_local_pca_removed_modes);
   s.pp_local_pca_lsci = val(spatial_contrast, "local_pca_lsci_enabled", s.pp_local_pca_lsci);
+  if (s.pp_advanced_local_pca) {
+    s.pp_local_pca = true;
+    s.pp_local_pca_lsci = false;
+    s.pp_pca_lsci = false;
+  }
   s.pp_local_pca_map = val(spatial_contrast, "local_pca_map", s.pp_local_pca_map);
   s.pp_local_pca_dynamic_auto_scale =
       val(spatial_contrast, "local_pca_dynamic_auto_scale", s.pp_local_pca_dynamic_auto_scale);
   s.pp_local_pca_stride = val(spatial_contrast, "local_pca_stride", s.pp_local_pca_stride);
   if (s.pp_local_pca) s.pp_local_pca_stride = 1;
+  s.pp_local_pca_rectangular = val(spatial_contrast, "local_pca_rectangular", s.pp_local_pca_rectangular);
+  s.pp_local_pca_kernel_width = val(spatial_contrast, "local_pca_kernel_width", s.pp_local_pca_kernel_width);
+  s.pp_local_pca_kernel_height = val(spatial_contrast, "local_pca_kernel_height", s.pp_local_pca_kernel_height);
+  s.pp_local_pca_step_width = val(spatial_contrast, "local_pca_step_width", s.pp_local_pca_step_width);
+  s.pp_local_pca_step_height = val(spatial_contrast, "local_pca_step_height", s.pp_local_pca_step_height);
   s.pp_local_pca_automatic = val(spatial_contrast, "local_pca_automatic",
                                  s.pp_local_pca_automatic);
   s.pp_pca_lsci_map = val(spatial_contrast, "pca_map", s.pp_pca_lsci_map);

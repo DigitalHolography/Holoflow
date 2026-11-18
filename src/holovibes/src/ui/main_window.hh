@@ -28,6 +28,7 @@
 #include <QToolButton>
 #include <QUrl>
 #include <QWidget>
+#include <cstddef>
 #include <optional>
 
 #include "pipeline/field_help.hh"
@@ -94,6 +95,8 @@ private:
   void on_raw_record_flushing_finished(size_t id);
 
   bool                        validate_inputs();
+  void                        log_input_frame_size_once(const std::filesystem::path &path,
+                                                        size_t width, size_t height);
   void                        apply_validation_result(const pipeline::ValidationResult &result);
   void                        refresh_validation_tooltips(const pipeline::ValidationResult &result);
   pipeline::ValidationContext build_validation_context(const pipeline::Settings &settings) const;
@@ -143,6 +146,7 @@ private:
   // Current state
   bool               update_in_progress_              = false;
   bool               loading_holofile_                = false;
+  std::filesystem::path logged_input_path_;
   bool               pending_import_update_           = false;
   bool               pipeline_running_                = false;
   bool               pipeline_paused_                 = false;

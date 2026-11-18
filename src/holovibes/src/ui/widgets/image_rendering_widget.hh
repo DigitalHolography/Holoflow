@@ -53,8 +53,15 @@ public:
   bool    is_spatial_contrast_enabled() const;
   bool    is_pca_lsci_enabled() const;
   bool    is_local_pca_enabled() const;
+  bool    is_advanced_local_pca_enabled() const;
+  int     get_advanced_local_pca_removed_modes() const;
   bool    is_local_pca_lsci_enabled() const;
   bool    is_local_pca_automatic() const;
+  bool    is_local_pca_rectangular() const;
+  int     get_local_pca_kernel_width() const;
+  int     get_local_pca_kernel_height() const;
+  int     get_local_pca_step_width() const;
+  int     get_local_pca_step_height() const;
   int     get_local_pca_map() const;
   bool    is_local_pca_dynamic_auto_scale() const;
   QString get_pca_lsci_map() const;
@@ -82,8 +89,15 @@ public:
   void set_convolution_divide(bool enabled);
   void set_spatial_contrast_mode(bool enabled, int dimensions);
   void set_pca_lsci_mode(bool enabled, const QString &map);
-  void set_local_pca_mode(bool enabled, bool lsci = false);
+  void set_local_pca_mode(bool enabled, bool lsci = false, bool advanced = false);
+  void set_advanced_local_pca_removed_modes(int value);
   void set_local_pca_automatic(bool value);
+  void set_local_pca_rectangular(bool value);
+  void set_local_pca_kernel_width(int value);
+  void set_local_pca_kernel_height(int value);
+  void set_local_pca_step_width(int value);
+  void set_local_pca_step_height(int value);
+  void set_local_pca_frame_size(int width, int height);
   void set_local_pca_map(int value);
   void set_local_pca_dynamic_auto_scale(bool value);
   void set_spatial_contrast_window_size(int value);
@@ -175,6 +189,17 @@ private:
   QComboBox       *spatial_contrast_method_;
   QLabel          *local_pca_selection_label_;
   QComboBox       *local_pca_selection_;
+  QLabel          *advanced_local_pca_removed_modes_label_;
+  QSpinBox        *advanced_local_pca_removed_modes_;
+  QCheckBox       *local_pca_rectangular_;
+  QLabel          *local_pca_kernel_width_label_;
+  QSpinBox        *local_pca_kernel_width_;
+  QLabel          *local_pca_kernel_height_label_;
+  QSpinBox        *local_pca_kernel_height_;
+  QLabel          *local_pca_step_width_label_;
+  QSpinBox        *local_pca_step_width_;
+  QLabel          *local_pca_step_height_label_;
+  QSpinBox        *local_pca_step_height_;
   QLabel          *local_pca_map_label_;
   QComboBox       *local_pca_map_;
   QCheckBox       *local_pca_dynamic_auto_scale_;
@@ -186,6 +211,8 @@ private:
   bool             spatial_contrast_appearance_locked_ = false;
   AutoFocusWidget *autofocus_widget_;
   int              max_temporal_lscsi_frames_ = std::numeric_limits<int>::max();
+  int              local_pca_frame_width_ = std::numeric_limits<int>::max();
+  int              local_pca_frame_height_ = std::numeric_limits<int>::max();
 };
 
 } // namespace holovibes::ui

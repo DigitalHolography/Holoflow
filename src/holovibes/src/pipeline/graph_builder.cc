@@ -24,6 +24,7 @@
 #include <utility>
 
 #include "bug.hh"
+#include "curaii/cuda.hh"
 #include "graph_builder_tasks.hh"
 #include "logger.hh"
 #include "pipeline/settings.hh"
@@ -176,6 +177,18 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
 
   if (s_.pp_spatial_contrast) {
     auto frames = build_spatial_contrast_input(H);
+    if (s_.pp_advanced_local_pca &&
+        s_.spacial_method != SpacialMethod::NONE) {
+      using Target = holotask::syncs::ConversionSettings::Target;
+      using Strat = holotask::syncs::ConversionSettings::Strategy;
+      frames = convert(frames, {Target::F32, Strat::Real});
+      frames = build_spatial_propagation(frames);
+      if (frames.dtype == holoflow::core::DType::CF32)
+        frames = abs(frames, {});
+      if (s_.pp_fft_shift)
+        frames = fftshift(frames, {{-2, -1}});
+      frames = ascontiguousarray(frames, {});
+    }
     if (s_.pp_spatial_contrast_dimensions != 2) {
       size_t source_cycle_frames = 0;
       if (s_.import_source == ImportSource::HOLOFILE && s_.load_batch > 0 &&
@@ -736,7 +749,8 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
   }
 
   if (s_.time_method == TimeMethod::RFFT ||
-      s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS) {
+      s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS ||
+      (s_.pp_local_pca && !s_.pp_local_pca_lsci && !s_.pp_advanced_local_pca)) {
     auto freqs = arange({f0, f1, df, holoflow::core::DType::F32});
     return freqs;
   }
@@ -751,7 +765,21 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_contrast_input(TDesc
   if (H.mem_loc != MemLoc::Device) {
     H = memcpy(H, {Device});
   }
-  H = batched_queue(H, {s_.gpu_in_size, 1, 1});
+  int queue_capacity = s_.gpu_in_size;
+  if (s_.pp_local_pca) {
+    size_t available = 0, total = 0;
+    CUDA_CHECK(cudaMemGetInfo(&available, &total));
+    const size_t frame_bytes = H.num_bytes() / H.shape[0];
+    // Leave GPU memory for the temporal window, PCA workspace and propagation. The queue
+    // allocates another input batch of slots beyond its requested capacity.
+    const size_t max_frames = (std::min)(available, total) / 16 / frame_bytes;
+    queue_capacity = static_cast<int>((std::min)(static_cast<size_t>(queue_capacity),
+                                                  (std::max)(size_t{1}, max_frames)));
+    if (queue_capacity < s_.gpu_in_size)
+      logger()->info("[LocalPca] GPU input queue reduced from {} to {} frames ({} MiB available, {} bytes/frame)",
+                     s_.gpu_in_size, queue_capacity, available / (1024 * 1024), frame_bytes);
+  }
+  H = batched_queue(H, {queue_capacity, 1, 1});
   return ascontiguousarray(H, {});
 }
 
@@ -766,9 +794,16 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
   auto result = s_.pp_local_pca
       ? local_pca(frames, {.window_size = s_.pp_spatial_contrast_window_size,
                            .stride = 1,
+                           .rectangular = s_.pp_local_pca_rectangular && !s_.pp_local_pca_lsci,
+                           .kernel_width = s_.pp_local_pca_kernel_width,
+                           .kernel_height = s_.pp_local_pca_kernel_height,
+                           .step_width = s_.pp_local_pca_step_width,
+                           .step_height = s_.pp_local_pca_step_height,
                            .begin = s_.time_z_begin, .end = s_.time_z_end,
-                           .automatic = s_.pp_local_pca_automatic,
-                           .map = !s_.pp_local_pca_lsci ? holotask::syncs::LocalPcaMap::Energy
+                           .automatic = s_.pp_local_pca_lsci && s_.pp_local_pca_automatic,
+                           .removed_modes = s_.pp_advanced_local_pca_removed_modes,
+                           .map = s_.pp_advanced_local_pca ? holotask::syncs::LocalPcaMap::ResidualVariance
+                                  : !s_.pp_local_pca_lsci ? holotask::syncs::LocalPcaMap::Components
                                   : s_.pp_local_pca_map == 1 ? holotask::syncs::LocalPcaMap::Static
                                   : s_.pp_local_pca_map == 2 ? holotask::syncs::LocalPcaMap::Original
                                                               : holotask::syncs::LocalPcaMap::Dynamic})
@@ -789,17 +824,28 @@ void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
                                   .method = s_.pp_spatial_contrast_method == 1
                                                 ? holotask::syncs::SpatialContrastMethod::FFT
                                                 : holotask::syncs::SpatialContrastMethod::Kernel});
+  if (s_.pp_local_pca && !s_.pp_local_pca_lsci && !s_.pp_advanced_local_pca) {
+    auto component_stack = reshape(result, {{1, static_cast<int64_t>(result.shape[0]),
+                                             static_cast<int64_t>(result.shape[1]),
+                                             static_cast<int64_t>(result.shape[2])}, false});
+    if (s_.filter_2d && s_.spacial_method != SpacialMethod::ANGULAR_SPECTRUM)
+      component_stack = build_spatial_filter(component_stack);
+    if (s_.spacial_method != SpacialMethod::NONE)
+      component_stack = build_spatial_propagation(component_stack);
+    build_xy_view(component_stack);
+    return;
+  }
   if (s_.pp_flatfield) {
     // Spatial contrast and Local PCA use the camera grid for flatfield filtering.
     const auto pitch = s_.spacial_pixel_size;
     result = flatfield(result, flatfield_settings_from_cutoff_period(
                                    s_.pp_flatfield_cutoff_period_m, pitch, pitch));
   }
-  // Local PCA is a unit-range energy fraction; the reconstructed PCA frame contains intensities.
+  // Advanced Local PCA produces a nonnegative variance index with no fixed upper bound.
   const bool auto_dynamic = s_.pp_local_pca_lsci && s_.pp_local_pca_map == 0 &&
                             s_.pp_local_pca_dynamic_auto_scale;
   build_xy_output(result, 0,
-                  !auto_dynamic && (s_.pp_local_pca ||
+                  !auto_dynamic && !s_.pp_advanced_local_pca && (s_.pp_local_pca ||
                                     !(s_.pp_pca_lsci && s_.pp_pca_lsci_map == 3)));
 }
 

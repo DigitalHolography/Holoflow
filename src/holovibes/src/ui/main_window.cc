@@ -1790,11 +1790,14 @@ void MainWindow::connect_import_controls() {
     }
     bool file_selected = false;
     try {
-      auto reader      = holofile::Reader(file.toStdString());
-      auto frame_count = reader.header().frame_count;
+      auto reader       = holofile::Reader(file.toStdString());
+      const auto header = reader.header();
+      auto frame_count  = header.frame_count;
       {
         QScopedValueRollback<bool> loading(loading_holofile_, true);
         import_widget_->set_file_path(file);
+        log_input_frame_size_once(std::filesystem::path(file.toStdString()),
+                                  header.frame_width, header.frame_height);
         import_widget_->set_end_index_range(0, static_cast<int>(frame_count));
         import_widget_->set_end_index(static_cast<int>(frame_count));
         import_widget_->set_start_index(0);
@@ -2440,6 +2443,13 @@ void MainWindow::on_raw_record_stopped_failure(const QString &error) {
   show_pipeline_error_popup(tr("An error occurred while stopping raw recording:\n%1").arg(error));
 }
 
+void MainWindow::log_input_frame_size_once(const std::filesystem::path &path,
+                                           size_t width, size_t height) {
+  if (path.empty() || path == logged_input_path_) return;
+  logger()->info("[Input] {}: frame size {} x {} pixels", path.string(), width, height);
+  logged_input_path_ = path;
+}
+
 bool MainWindow::validate_inputs() {
   import_widget_->clear_validation_styles();
   export_widget_->clear_validation_styles();
@@ -2453,6 +2463,9 @@ bool MainWindow::validate_inputs() {
                                            ? settings.load_batch
                                            : settings.cpu_out_size);
   const auto context             = build_validation_context(settings);
+  if (settings.import_source == pipeline::ImportSource::HOLOFILE &&
+      context.source_width.has_value() && context.source_height.has_value())
+    log_input_frame_size_once(settings.load_path, *context.source_width, *context.source_height);
   int        max_temporal_frames = std::numeric_limits<int>::max();
   if (settings.import_source == pipeline::ImportSource::HOLOFILE &&
       context.source_frame_count.has_value()) {
@@ -2467,6 +2480,17 @@ bool MainWindow::validate_inputs() {
       settings.spacial_method == pipeline::SpacialMethod::ANGULAR_SPECTRUM &&
       settings.asp_padding_enabled) {
     display_dims = QSize(settings.asp_padded_width, settings.asp_padded_height);
+  }
+  if (context.source_width.has_value() && context.source_height.has_value()) {
+    render_widget_->set_local_pca_frame_size(display_dims.width(), display_dims.height());
+    settings.pp_local_pca_kernel_width = render_widget_->get_local_pca_kernel_width();
+    settings.pp_local_pca_kernel_height = render_widget_->get_local_pca_kernel_height();
+    settings.pp_local_pca_step_width = render_widget_->get_local_pca_step_width();
+    settings.pp_local_pca_step_height = render_widget_->get_local_pca_step_height();
+    settings.pp_spatial_contrast_window_size = render_widget_->get_spatial_contrast_window_size();
+  } else {
+    render_widget_->set_local_pca_frame_size((std::numeric_limits<int>::max)(),
+                                             (std::numeric_limits<int>::max)());
   }
   view_widget_->set_xy_extent(display_dims.width(), display_dims.height());
   const auto result = pipeline::validate_settings(settings, context);
@@ -2671,14 +2695,16 @@ void MainWindow::setup_validation_connections() {
 
   connect(render_widget_->time_transform_combo(), qOverload<int>(&QComboBox::activated), this,
           [this](int) {
-            if (render_widget_->is_local_pca_enabled()) {
+            if (render_widget_->is_local_pca_enabled() &&
+                !render_widget_->is_advanced_local_pca_enabled()) {
               view_widget_->set_z_origin(0);
               view_widget_->set_z_width(std::max(1, render_widget_->get_time_window() - 1));
             }
           });
   connect(render_widget_->pca_type_combo(), qOverload<int>(&QComboBox::activated), this,
           [this](int) {
-            if (render_widget_->is_local_pca_enabled()) {
+            if (render_widget_->is_local_pca_enabled() &&
+                !render_widget_->is_advanced_local_pca_enabled()) {
               view_widget_->set_z_origin(0);
               view_widget_->set_z_width(std::max(1, render_widget_->get_time_window() - 1));
             }
@@ -2909,12 +2935,13 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
   {
     std::map<std::string, TimeMethod> method_from_str{
         {"None", TimeMethod::NONE},
-        {"Principal Component Analysis", TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS},
+        {"Global PCA", TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS},
         {"RFFT", TimeMethod::RFFT},
         {"FFT", TimeMethod::FFT},
         {"LSCI (3D)", TimeMethod::NONE},
         {"PCA-LSCI", TimeMethod::NONE},
         {"Local PCA", TimeMethod::NONE},
+        {"Advanced Local PCA", TimeMethod::NONE},
         {"Local PCA-LSCI", TimeMethod::NONE},
     };
     s.time_window       = render_widget_->get_time_window();
@@ -2969,11 +2996,20 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.pp_spatial_contrast             = render_widget_->is_spatial_contrast_enabled();
     s.pp_pca_lsci                     = render_widget_->is_pca_lsci_enabled();
     s.pp_local_pca                    = render_widget_->is_local_pca_enabled();
+    s.pp_advanced_local_pca           = render_widget_->is_advanced_local_pca_enabled();
+    s.pp_advanced_local_pca_removed_modes =
+        render_widget_->get_advanced_local_pca_removed_modes();
     s.pp_local_pca_lsci               = render_widget_->is_local_pca_lsci_enabled();
     s.pp_local_pca_map                = render_widget_->get_local_pca_map();
     s.pp_local_pca_dynamic_auto_scale = render_widget_->is_local_pca_dynamic_auto_scale();
     s.pp_local_pca_stride             = 1;
-    s.pp_local_pca_automatic          = render_widget_->is_local_pca_automatic();
+    s.pp_local_pca_rectangular        = render_widget_->is_local_pca_rectangular();
+    s.pp_local_pca_kernel_width       = render_widget_->get_local_pca_kernel_width();
+    s.pp_local_pca_kernel_height      = render_widget_->get_local_pca_kernel_height();
+    s.pp_local_pca_step_width         = render_widget_->get_local_pca_step_width();
+    s.pp_local_pca_step_height        = render_widget_->get_local_pca_step_height();
+    s.pp_local_pca_automatic          = render_widget_->is_local_pca_lsci_enabled() &&
+                                        render_widget_->is_local_pca_automatic();
     const auto pca_map                = render_widget_->get_pca_lsci_map();
     s.pp_pca_lsci_map                 = pca_map == "Static (PCA then LSCI 3D)" ? 1
                                         : pca_map == "PCA frame (center)"      ? 3
@@ -3155,7 +3191,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     QString method;
     switch (s.time_method) {
     case TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS:
-      method = "Principal Component Analysis";
+      method = "Global PCA";
       break;
     case TimeMethod::RFFT:
       method = "RFFT";
@@ -3206,10 +3242,22 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
                                                          ? "Static (PCA then LSCI 3D)"
                                                      : s.pp_pca_lsci_map == 3 ? "PCA frame (center)"
                                                                               : "Dynamic");
-    render_widget_->set_local_pca_mode(s.pp_local_pca, s.pp_local_pca_lsci);
+    render_widget_->set_local_pca_mode(s.pp_local_pca, s.pp_local_pca_lsci,
+                                       s.pp_advanced_local_pca);
+    render_widget_->set_advanced_local_pca_removed_modes(s.pp_advanced_local_pca_removed_modes);
+    if (s.pp_local_pca && !s.pp_local_pca_lsci) {
+      render_widget_->set_space_transform(
+          s.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION ? "Fresnel Diffraction" :
+          s.spacial_method == SpacialMethod::ANGULAR_SPECTRUM ? "Angular Spectrum" : "None");
+    }
     render_widget_->set_local_pca_map(s.pp_local_pca_map);
     render_widget_->set_local_pca_dynamic_auto_scale(s.pp_local_pca_dynamic_auto_scale);
     render_widget_->set_local_pca_automatic(s.pp_local_pca_automatic);
+    render_widget_->set_local_pca_rectangular(s.pp_local_pca_rectangular);
+    render_widget_->set_local_pca_kernel_width(s.pp_local_pca_kernel_width);
+    render_widget_->set_local_pca_kernel_height(s.pp_local_pca_kernel_height);
+    render_widget_->set_local_pca_step_width(s.pp_local_pca_step_width);
+    render_widget_->set_local_pca_step_height(s.pp_local_pca_step_height);
     render_widget_->set_spatial_contrast_window_size(s.pp_spatial_contrast_window_size);
     render_widget_->set_spatial_contrast_method(s.pp_spatial_contrast_method == 1 ? "FFT"
                                                                                   : "Kernel");

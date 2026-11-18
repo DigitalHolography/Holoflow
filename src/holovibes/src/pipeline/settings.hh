@@ -131,10 +131,17 @@ struct Settings {
   bool        pp_spatial_contrast;
   bool        pp_pca_lsci = false;
   bool        pp_local_pca = false;
+  bool        pp_advanced_local_pca = false;
+  int         pp_advanced_local_pca_removed_modes = 1;
   bool        pp_local_pca_lsci = false;
   int         pp_local_pca_map = 0;
   bool        pp_local_pca_dynamic_auto_scale = true;
   int         pp_local_pca_stride = 1;
+  bool        pp_local_pca_rectangular = false;
+  int         pp_local_pca_kernel_width = 5;
+  int         pp_local_pca_kernel_height = 5;
+  int         pp_local_pca_step_width = 1;
+  int         pp_local_pca_step_height = 1;
   bool        pp_local_pca_automatic = false;
   int         pp_pca_lsci_map = 2;
   int         pp_spatial_contrast_window_size;

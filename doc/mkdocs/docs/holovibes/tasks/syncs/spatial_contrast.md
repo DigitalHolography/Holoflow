@@ -27,9 +27,9 @@ For **LSCI (2D)**, choose it under **Space Transform**. Holovibes calculates a c
 
 For **LSCI (3D)**, choose it under **Time Transform**. **LSCI Window (px)** sets the spatial side length, **Time Window** sets the number of consecutive frames pooled into each map, and **Time Stride** sets how many frames to advance. Set stride equal to window length for nonoverlapping blocks; a smaller stride creates overlapping windows. The two LSCI choices are mutually exclusive. **LSCI method** selects Kernel or FFT.
 
-Choose **PCA** under **Time Transform**, then choose **PCA-LSCI**, **Local PCA only**, or
-**Local PCA-LSCI** under **PCA type**. **Principal Component Analysis** also appears there when
-a propagation Space Transform is selected. PCA-LSCI computes a single temporal PCA over the entire
+Choose **PCA** under **Time Transform**, then choose **Local PCA**, **Advanced Local PCA**, or
+**Local PCA-LSCI** under **PCA type**. **Global PCA** also appears there when
+a propagation Space Transform is selected. PCA-LSCI is currently hidden in the UI. It computes a single temporal PCA over the entire
 frame block after subtracting each frame's spatial mean. Eigenvectors whose nonnegative
 eigenvalues are at least the average eigenvalue form a static reconstruction. The **PCA-LSCI map**
 selector displays **Static (PCA then LSCI 3D)**, **Dynamic** (input LSCI 3D minus Static, the
@@ -41,25 +41,32 @@ image edges. The PCA projection is tiled, and no second full reconstructed frame
 The PCA frame preview scales its own intensity range to the display; the contrast maps use the
 configured LSCI contrast range.
 
-**Local PCA only** computes a separate temporal PCA for each odd-sized spatial kernel of intensity
-frames. The kernel wraps around the image at all borders and moves one pixel at a time, producing
-a full-size map. Each kernel's frame-wise spatial means are
-subtracted before forming its temporal Gram matrix. The **Z** and **Width** controls select an
-ascending-energy component interval `[Z, Z + Width)` independently in every kernel. The output
-at each kernel center is the sum of retained nonnegative eigenvalues divided by the sum of all
-nonnegative eigenvalues, or zero when the total is zero. It is a unitless retained-energy fraction,
-not LSCI contrast or calibrated flow speed. The processed preview maps 0–1 to grayscale.
-Local PCA supports 2–32 frames and an odd 3–15 pixel kernel. Selecting it in the UI initially
-sets Z to 0 and Width to `Time Window − 1`, removing the highest-energy mode. The selected
-component range remains editable.
-The **PCA components** selector also offers **Automatic (mean eigenvalue)**. For each kernel,
-it treats eigenvalues at or above that kernel's average eigenvalue as dominant and reports the
-energy fraction of the modes below that threshold. This follows the static-mode selection
-criterion used by PCA-LSCI, but the resulting retained-energy map is still not an LSCI map.
-Automatic mode ignores Z and Width and can return zero when one dominant mode contains all
-the measurable energy. The criterion is a heuristic, not a calibrated flow classifier.
+**Local PCA** computes a temporal PCA of the uncentered intensity stack in each spatial kernel.
+Like Global PCA, it outputs the selected component projections, with **Z** and **Width** selecting
+an ascending-energy component interval `[Z, Z + Width)`. The projections have one image plane per
+selected component. Fresnel Diffraction or Angular Spectrum is applied to the component images
+after PCA, as in Global PCA; with None, it displays the projections directly. Local eigenvector signs can vary
+between neighboring kernels. A full-frame kernel and step use one basis for the entire frame;
+component magnitudes then agree with Global PCA when both receive the same input.
 
-**Local PCA-LSCI** uses the same sliding local PCA basis to reconstruct a static time series at
+**Advanced Local PCA** uses an uncentered local decomposition of the input intensity frames.
+When a Space Transform is selected, it is applied to each frame before this decomposition.
+**Modes to remove** selects
+`r = 0`, `1`, or `2` highest-energy modes (default `1`). It subtracts those modes from each
+pixel's original time series and outputs its temporal residual variance divided by the square
+of that pixel's original temporal mean intensity. For `r = 0`, this is the original temporal
+variance divided by the original mean squared. Pixels with zero original mean output zero.
+This is a relative activity index, not a calibrated flow speed or an LSCI calculation.
+Both Local PCA modes support 2–64 frames.
+
+For either Local PCA mode, the square kernel can be odd-sized up to the smaller frame dimension
+and moves one pixel at a time. Enable **Rectangular kernel** to set width and height separately,
+up to the corresponding frame dimensions, and set a horizontal and vertical step. Each step
+must fit its kernel dimension and match its parity. Kernels wrap at image borders and write
+only their central step-width × step-height output tile; edge tiles are clipped. Neighboring
+kernels can overlap, but output tiles do not.
+
+**Local PCA-LSCI** uses a sliding PCA with each frame's kernel mean subtracted to reconstruct a static time series at
 each kernel center. Automatic selection reconstructs modes at or above the local mean eigenvalue;
 manual selection reconstructs the complement of the Z/Width interval. The **Static (Local PCA then
 LSCI 3D)** map is 3D LSCI on the locally reconstructed intensities. **Dynamic** subtracts Static
@@ -73,7 +80,7 @@ small differences remain visible. A constant map displays black. Turn it off to 
 **Display max K** range; that range clips negative Dynamic values. Auto scaling changes the
 displayed U8 image, not the calculated F32 map, and brightness is not comparable across frames.
 
-Both modes use the acquired intensity frames directly, without hologram propagation or temporal Fourier analysis. **Accumulation** can average successive contrast maps. If enabled, **Flatfield** is applied to the calculated map before accumulation, and percentile clipping is applied after accumulation. These operations change the processed result; disable them when reproducing an uncorrected $K$ map.
+PCA-LSCI and Local PCA-LSCI use the acquired intensity frames directly, without hologram propagation or temporal Fourier analysis. Local PCA can propagate its component images after PCA; Advanced Local PCA can propagate input frames before PCA. **Accumulation** can average successive maps. If enabled, **Flatfield** is applied to the calculated map before accumulation, and percentile clipping is applied after accumulation. These operations change the processed result; disable them when reproducing an uncorrected $K$ map.
 
 The calculated map is F32 before display conversion. With fixed scaling, **Display max K** maps the range from 0 to the selected value onto U8 grayscale and clips larger values for display. **Invert LSCI** reverses that grayscale. Holovibes uses this same U8 image for the processed preview and processed recording; neither control changes the estimator's F32 output. Raw viewing and raw recording use the original intensity stream.
 

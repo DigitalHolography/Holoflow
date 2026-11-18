@@ -9,14 +9,20 @@
 
 namespace holotask::syncs {
 
-enum class LocalPcaMap { Energy, Original, Static, Dynamic };
+enum class LocalPcaMap { Energy, Components, ResidualVariance, Original, Static, Dynamic };
 
 struct LocalPcaSettings {
   int window_size = 5;
   int stride = 1;
+  bool rectangular = false;
+  int kernel_width = 5;
+  int kernel_height = 5;
+  int step_width = 1;
+  int step_height = 1;
   int begin = 0;
   int end = 15;
   bool automatic = false;
+  int removed_modes = 1;
   LocalPcaMap map = LocalPcaMap::Energy;
 
   bool operator==(const LocalPcaSettings &) const = default;

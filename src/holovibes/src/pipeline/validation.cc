@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <format>
+#include <limits>
 #include <system_error>
 
 namespace holovibes::pipeline {
@@ -252,8 +253,11 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 "Accumulation must be strictly positive.", {SettingsField::PpAccumulation});
     }
 
-    if (!settings.pp_spatial_contrast) {
-      if (settings.time_method == TimeMethod::NONE) {
+    const bool propagated_local_pca = settings.pp_local_pca &&
+                                      !settings.pp_local_pca_lsci &&
+                                      settings.spacial_method != SpacialMethod::NONE;
+    if (!settings.pp_spatial_contrast || propagated_local_pca) {
+      if (!settings.pp_spatial_contrast && settings.time_method == TimeMethod::NONE) {
         add_issue(result, ValidationSeverity::Error, "time_method_unsupported",
                   "A time transform must be selected for processed view mode.",
                   {SettingsField::TimeMethod});
@@ -320,6 +324,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     }
 
     if (settings.pp_spatial_contrast &&
+        !(settings.pp_local_pca && !settings.pp_local_pca_lsci) &&
         (settings.pp_spatial_contrast_window_size < (settings.pp_pca_lsci ? 1 : 3) ||
          settings.pp_spatial_contrast_window_size > (settings.pp_pca_lsci ? 63 : 255) ||
          settings.pp_spatial_contrast_window_size % 2 == 0)) {
@@ -336,27 +341,58 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     }
 
     if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions == 3 &&
-        settings.time_window < (settings.pp_pca_lsci ? 2 : 3)) {
+        settings.time_window < (settings.pp_pca_lsci || settings.pp_local_pca ? 2 : 3)) {
       add_issue(result, ValidationSeverity::Error, "spatial_contrast_time_window_invalid",
                 "Temporal contrast needs at least 3 frames, or 2 for PCA-LSCI.",
                 {SettingsField::TimeWindow});
     }
 
     if (settings.pp_local_pca) {
+      const int frame_width = settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM &&
+                                      settings.asp_padding_enabled
+                                  ? settings.asp_padded_width : context.source_width.value_or(0);
+      const int frame_height = settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM &&
+                                       settings.asp_padding_enabled
+                                   ? settings.asp_padded_height : context.source_height.value_or(0);
       if (!settings.pp_spatial_contrast || settings.pp_pca_lsci ||
           settings.pp_spatial_contrast_dimensions != 3 ||
           (settings.pp_local_pca_lsci &&
            (settings.pp_local_pca_map < 0 || settings.pp_local_pca_map > 2)) ||
-          settings.time_window < 2 || settings.time_window > 32 ||
-          settings.pp_spatial_contrast_window_size < 3 ||
-          settings.pp_spatial_contrast_window_size > 15 ||
-          settings.pp_spatial_contrast_window_size % 2 == 0 ||
+          settings.time_window < 2 ||
+          settings.time_window > (settings.pp_local_pca_lsci ? 32 : 64) ||
+          (!(settings.pp_local_pca_rectangular && !settings.pp_local_pca_lsci) &&
+           (settings.pp_spatial_contrast_window_size < (settings.pp_local_pca_lsci ? 3 : 1) ||
+            settings.pp_spatial_contrast_window_size >
+                (settings.pp_local_pca_lsci ? 15 :
+                 std::min(frame_width > 0 ? frame_width : (std::numeric_limits<int>::max)(),
+                          frame_height > 0 ? frame_height : (std::numeric_limits<int>::max)())) ||
+            settings.pp_spatial_contrast_window_size % 2 == 0)) ||
           settings.pp_local_pca_stride != 1) {
         add_issue(result, ValidationSeverity::Error, "local_pca_settings_invalid",
-                  "Local PCA needs 2..32 frames, an odd 3..15 pixel kernel, and spatial stride 1.",
+                  "Local PCA needs a valid time window and spatial kernel.",
                   {SettingsField::TimeWindow, SettingsField::PpSpatialContrastWindowSize});
       }
-      if (!settings.pp_local_pca_automatic &&
+      if (settings.pp_advanced_local_pca &&
+          (settings.pp_local_pca_lsci || settings.pp_advanced_local_pca_removed_modes < 0 ||
+           settings.pp_advanced_local_pca_removed_modes > 2)) {
+        add_issue(result, ValidationSeverity::Error, "advanced_local_pca_modes_invalid",
+                  "Advanced Local PCA removes 0, 1 or 2 modes.", {SettingsField::TimeWindow});
+      }
+      if (settings.pp_local_pca_rectangular && !settings.pp_local_pca_lsci) {
+        if (settings.pp_local_pca_kernel_width < 1 || settings.pp_local_pca_kernel_height < 1 ||
+            (frame_width > 0 && settings.pp_local_pca_kernel_width > frame_width) ||
+            (frame_height > 0 && settings.pp_local_pca_kernel_height > frame_height) ||
+            settings.pp_local_pca_step_width < 1 || settings.pp_local_pca_step_height < 1 ||
+            settings.pp_local_pca_step_width > settings.pp_local_pca_kernel_width ||
+            settings.pp_local_pca_step_height > settings.pp_local_pca_kernel_height ||
+            settings.pp_local_pca_step_width % 2 != settings.pp_local_pca_kernel_width % 2 ||
+            settings.pp_local_pca_step_height % 2 != settings.pp_local_pca_kernel_height % 2) {
+          add_issue(result, ValidationSeverity::Error, "local_pca_rectangular_invalid",
+                    "Local PCA kernel must fit the frame; each step must fit its kernel and match its parity.",
+                    {SettingsField::PpSpatialContrastWindowSize});
+        }
+      }
+      if (!settings.pp_advanced_local_pca && !settings.pp_local_pca_automatic &&
           (settings.time_z_begin < 0 || settings.time_z_begin >= settings.time_z_end ||
            settings.time_z_end > settings.time_window)) {
         add_issue(result, ValidationSeverity::Error, "local_pca_components_invalid",
