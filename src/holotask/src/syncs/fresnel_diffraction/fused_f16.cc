@@ -47,7 +47,7 @@ std::filesystem::path asset_root() {
           HOLOFLOW_NVRTC_ASSET_RELATIVE_DIR)
       .lexically_normal();
 }
-std::vector<char> compile(int sm, bool half, int components, bool reduce) {
+std::vector<char> compile(int sm, bool half, bool complex_half, int components, bool reduce) {
   static std::mutex                               mutex;
   static std::map<std::string, std::vector<char>> cache;
   const auto      key = std::to_string(sm) + "/" + std::to_string(half) + "/" +
@@ -67,6 +67,7 @@ std::vector<char> compile(int sm, bool half, int components, bool reduce) {
                                        "--gpu-architecture=compute_" + std::to_string(sm / 10),
                                        "-DFFT_SM=" + std::to_string(sm),
                                        "-DINPUT_HALF=" + std::to_string(half),
+                                       "-DINPUT_COMPLEX_HALF=" + std::to_string(complex_half),
                                        "-DCOMPONENTS=" + std::to_string(components),
                                        "-DREDUCE_MEAN=" + std::to_string(reduce),
                                        "--include-path=" + cuda.string(),
@@ -149,7 +150,8 @@ public:
     cudaDeviceProp prop{};
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
     auto ptx = compile(prop.major * 100 + prop.minor * 10,
-                       input.dtype == holoflow::core::DType::F16, components_, reduce_);
+                       input.dtype == holoflow::core::DType::F16,
+                       input.dtype == holoflow::core::DType::CF16, components_, reduce_);
     driver(cuCtxGetCurrent(&context_));
     driver(cuModuleLoadData(&module_.value, ptx.data()));
     scale_partial_ = function("fused_f16_scale_partial");
@@ -270,7 +272,7 @@ bool supports_fused_f16_fresnel(const holoflow::core::TDesc      &input,
   if (input.rank() < 3 || std::ranges::find(input.shape, size_t{0}) != input.shape.end() ||
       input.shape[input.rank() - 2] != 320 || input.shape.back() != 512 ||
       !settings.output_magnitude || settings.z == 0 ||
-      (input.dtype != DType::F16 && input.dtype != DType::F32))
+      (input.dtype != DType::F16 && input.dtype != DType::F32 && input.dtype != DType::CF16))
     return false;
   const holoflow::core::TDesc contiguous(input.shape, input.dtype, input.mem_loc, input.offset);
   if (input.strides != contiguous.strides ||

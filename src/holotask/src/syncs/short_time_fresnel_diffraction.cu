@@ -98,6 +98,7 @@ __global__ void set_stft_magnitude_output_kernel(STFTCallerInfo *info, float *ou
 // Shared header for both callback variants.
 constexpr const char *k_stft_callback_header = R"(
 #include <cuComplex.h>
+#include <cuda_fp16.h>
 
 struct STFTCallerInfo {
   cuFloatComplex *precomputed_lens;
@@ -120,7 +121,7 @@ __device__ __forceinline__ void stft_decode_32bit(
 }
 )";
 
-std::string get_stft_load_body(bool is_global, bool is_real) {
+std::string get_stft_load_body(bool is_global, holoflow::core::DType dtype) {
   std::string src = R"(
 __device__ cuFloatComplex )";
   src += is_global ? "stft_load_global" : "stft_load_local";
@@ -138,7 +139,9 @@ __device__ cuFloatComplex )";
 )";
 
   // The Magic Cast: Handle real vs complex loads
-  if (is_real) {
+  if (dtype == holoflow::core::DType::F16) {
+    src += "    cuFloatComplex val = make_cuComplex(__half2float(((const __half *)data)[src]), 0.0f);\n";
+  } else if (dtype == holoflow::core::DType::F32) {
     src += "    cuFloatComplex val = make_cuComplex(((float *)data)[src], 0.0f);\n";
   } else {
     src += "    cuFloatComplex val = ((cuFloatComplex *)data)[src];\n";
@@ -208,7 +211,7 @@ std::vector<char> compile_lto(const std::string &src, const std::string &name) {
   }
 }
 
-std::vector<char> build_stft_lto(bool is_global, bool is_real, unsigned int win_w,
+std::vector<char> build_stft_lto(bool is_global, holoflow::core::DType dtype, unsigned int win_w,
                                  unsigned int win_h, unsigned int nx_win, unsigned int ny_win,
                                  unsigned int stride_x, unsigned int stride_y, unsigned int field_W,
                                  unsigned long long field_idist) {
@@ -228,7 +231,7 @@ std::vector<char> build_stft_lto(bool is_global, bool is_real, unsigned int win_
   // clang-format on
 
   src += k_stft_callback_header;
-  src += get_stft_load_body(is_global, is_real);
+  src += get_stft_load_body(is_global, dtype);
   src += R"(
 __device__ void stft_store_magnitude(
     void *data, unsigned long long offset, cuFloatComplex element,
@@ -667,7 +670,7 @@ ShortTimeFresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc>
   check(input_descs.size() == 1, "expected exactly one input");
   const auto &id = input_descs[0];
   check(id.rank() >= 2, "input must be rank ≥ 2");
-  check(id.dtype == holoflow::core::DType::CF32 || id.dtype == holoflow::core::DType::F32, "input must be CF32 or F32");
+  check(id.dtype == holoflow::core::DType::CF32 || id.dtype == holoflow::core::DType::F32 || id.dtype == holoflow::core::DType::F16, "input must be CF32, F32, or F16");
   check(id.mem_loc == holoflow::core::MemLoc::Device, "input must be on device");
   check(is_c_contiguous(id), "input must be C-contiguous");
   check(s.lambda > 0.f, "lambda must be positive");
@@ -729,8 +732,7 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
   const size_t ny_win = (H - win_h) / s.stride_y + 1;
   const size_t nx_win = (W - win_w) / s.stride_x + 1;
 
-  const bool   is_real = (idesc.dtype == holoflow::core::DType::F32);
-  const size_t in_esz  = is_real ? sizeof(float) : sizeof(cuFloatComplex);
+  const size_t in_esz = holoflow::core::size_of(idesc.dtype);
   const size_t out_esz = s.output_magnitude ? sizeof(float) : sizeof(cuFloatComplex);
 
   auto in_sb  = strides_bytes(idesc);
@@ -785,7 +787,7 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
   bool is_global = (s.phase_ref == STFDPhaseReference::GLOBAL);
   // Pass all layout parameters directly to the JIT builder to bake them as macros
   auto lto =
-      build_stft_lto(is_global, is_real, static_cast<unsigned>(win_w), static_cast<unsigned>(win_h),
+      build_stft_lto(is_global, idesc.dtype, static_cast<unsigned>(win_w), static_cast<unsigned>(win_h),
                      static_cast<unsigned>(nx_win), static_cast<unsigned>(ny_win),
                      static_cast<unsigned>(s.stride_x), static_cast<unsigned>(s.stride_y),
                      static_cast<unsigned>(W), static_cast<unsigned long long>(group.in_idist));

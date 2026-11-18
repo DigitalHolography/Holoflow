@@ -13,7 +13,7 @@ Fresnel can also be disabled independently. F16 PCA output is widened before leg
 Fresnel when its switch is disabled.
 
 The initial application scope is U8 windows `[32,320,512]`, PCA selection of 1-16
-components, Fresnel propagation and M0, without autofocus or 3D cuts. Other
+components, Fresnel propagation and M0, without 3D cuts. Other
 configurations retain FP32 PCA. Optimized Fresnel supports contiguous real F16/F32
 with trailing 320x512 dimensions on SM86/SM120. Unsupported Fresnel configurations
 or runtime setup failures use legacy FP32 computation, widening F16 input and
@@ -23,6 +23,14 @@ PCA still groups four windows with three queue slots. Both neighboring queues ow
 storage, so a U8 device copy separates the input queue and PCA queue; the optimized
 route has no full U8-to-F32 conversion. Covariance remains the same uncentered,
 unnormalized Gram matrix. The eigensolver and component ordering are unchanged.
+Autofocus retains the eligible FP16 PCA queue and its input format across
+toggles. The Shack–Hartmann Fresnel callback and phase correction load F16
+fields and compute in FP32. Corrected fields normally use CF32, including
+multi-pass correction. For a single pass on SM120, the default-off
+`enable_cf16_correction` option in `precision_options.hh` enables CF16 storage
+between phase correction and fused Fresnel. Its fallback widens the field to
+CF32 and preserves the requested magnitude output and reduction.
+
 Mixed precision does not promise bitwise equality with FP32.
 
 Fresnel derives power-of-two scales per input plane to bound both FFT stages and

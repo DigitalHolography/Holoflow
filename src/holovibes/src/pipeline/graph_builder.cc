@@ -275,7 +275,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
 
   if (enable_f16_pca && s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS &&
       s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION && s_.moment_type == MomentType::M0 &&
-      !s_.autofocus_enabled && !s_.view_3d_cuts && (!s_.filter_2d || enable_f16_filter2d) &&
+      !s_.view_3d_cuts && (!s_.filter_2d || enable_f16_filter2d) &&
       H.dtype == holoflow::core::DType::U8 && H.shape == std::vector<size_t>{32, 320, 512} &&
       s_.time_z_end - s_.time_z_begin <= 16)
     // The input and PCA queues both own their buffers. Keep a device copy between them.
@@ -284,7 +284,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
 }
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDesc H) {
-  // H enters as [T, Hy, Hx] (F32).
+  // H enters as [T, Hy, Hx] (F32 or U8 for fused PCA).
   // We first accumulate N_pre such windows into a batch, producing [N_pre, T, Hy, Hx].
   // Time-frequency analysis then operates along axis 1 (the T dimension).
   // The output is [N_pre, Nz, Hy, Hx], which feeds directly into the post-TFA queue.
@@ -533,9 +533,20 @@ GraphBuilder::Impl::build_zernike_correction(const TDesc &FH, const TDesc &slope
   auto F32    = holoflow::core::DType::F32;
   auto Device = holoflow::core::MemLoc::Device;
 
+  bool output_cf16 = false;
+  if (enable_cf16_correction && enable_f16_fresnel && is_last_pass &&
+      s_.autofocus_nb_iter == 1 && FH.dtype == holoflow::core::DType::F16) {
+    int device = 0, major = 0, minor = 0;
+    output_cf16 = cudaGetDevice(&device) == cudaSuccess &&
+                  cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) == cudaSuccess &&
+                  cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device) == cudaSuccess &&
+                  major == 12 && minor == 0;
+  }
+  const holotask::syncs::CorrectPhaseSettings correction{.output_cf16 = output_cf16};
+
   if (s_.autofocus_zernike_orders.empty()) {
     auto phase     = zeros({{1, geometry.frame_height, geometry.frame_width}, F32});
-    auto corrected = correct_phase(FH, phase, {});
+    auto corrected = correct_phase(FH, phase, correction);
 
     if (is_last_pass && s_.view_zernike_phase) {
       zernike_phase_display(phase, {});
@@ -562,7 +573,7 @@ GraphBuilder::Impl::build_zernike_correction(const TDesc &FH, const TDesc &slope
   auto height    = static_cast<int>(geometry.frame_height);
   auto width     = static_cast<int>(geometry.frame_width);
   auto phase     = zernike_phase(coeffs, {s_.autofocus_zernike_orders, height, width, Device});
-  auto corrected = correct_phase(FH, phase, {});
+  auto corrected = correct_phase(FH, phase, correction);
 
   const auto accumulate = [this](auto &cumulative, const auto &value) {
     cumulative = cumulative ? add(*cumulative, value, {}) : value;
@@ -646,7 +657,8 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_propagation(const TD
   if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
     const bool use_half = enable_f16_fresnel &&
                           s_.time_method == TimeMethod::PRINCIPAL_COMPONENT_ANALYSIS &&
-                          !s_.autofocus_enabled && !s_.view_3d_cuts && (!s_.filter_2d || enable_f16_filter2d) &&
+                          (!s_.autofocus_enabled || FH.dtype == holoflow::core::DType::CF16) &&
+                          !s_.view_3d_cuts && (!s_.filter_2d || enable_f16_filter2d) &&
                           s_.moment_type == MomentType::M0 && FH.shape[FH.rank() - 2] == 320 &&
                           FH.shape.back() == 512;
     fused_spatial_mean_ = use_half && fuse_fresnel_mean;

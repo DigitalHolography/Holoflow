@@ -20,12 +20,14 @@
 #include "holonp/fftshift.hh"
 #include "holonp/mean.hh"
 #include "holonp/reshape.hh"
+#include "holonp/zeros.hh"
 #include "holotask/asyncs/batch_queue.hh"
 #include "holotask/asyncs/dual_reader_batch_queue.hh"
 #include "holotask/asyncs/pca_decomposition_queue.hh"
 #include "holotask/asyncs/slide_avg.hh"
 #include "holotask/sources/holofile.hh"
 #include "holotask/syncs/conversion.hh"
+#include "holotask/syncs/correct_phase.hh"
 #include "holotask/syncs/fresnel_diffraction.hh"
 #include "holotask/syncs/memcpy.hh"
 #include "holotask/syncs/pca.hh"
@@ -387,7 +389,8 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
                                             bool miss = false, bool stop_paused = false,
                                             size_t features = 2, bool performance = false,
                                             size_t duration_ms      = 10000,
-                                            size_t benchmark_height = 320, bool mixed = false) {
+                                            size_t benchmark_height = 320, bool mixed = false,
+                                            bool toggle_correction = false) {
   auto state         = std::make_shared<PipelineState>();
   state->mixed       = mixed;
   state->features    = features;
@@ -433,7 +436,39 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
   config.enable_profiling                        = false;
   config.verbose_tracing                         = false;
   config.max_section_cuda_graphs                 = graph_limit;
-  auto                                  compiled = Compiler(registry, config).compile(spec);
+  if (toggle_correction) {
+    registry.register_sync("zeros", std::make_unique<holonp::ZerosFactory>());
+    registry.register_sync("correct_phase", std::make_unique<holotask::syncs::CorrectPhaseFactory>());
+  }
+  auto compiled = Compiler(registry, config).compile(spec);
+  if (toggle_correction) {
+    auto *original = dynamic_cast<IAsyncTask *>(compiled->resources.tasks.at("grouped").get());
+    const auto original_inputs = original->owned_input_pointers(0);
+    for (bool cf16 : {false, true}) {
+      auto corrected_spec = spec;
+      remove_edge(compute, output, corrected_spec);
+      const auto mask = add_vertex(
+          NodeSpec{"mask", "zeros", holonp::ZerosSettings{
+              .shape = {1, state->height, state->width}, .dtype = DType::F32, .device = MemLoc::Device}},
+          corrected_spec);
+      const auto correction = add_vertex(
+          NodeSpec{"correction", "correct_phase",
+                   holotask::syncs::CorrectPhaseSettings{.output_cf16 = cf16}}, corrected_spec);
+      add_edge(compute, correction, EdgeSpec{0, 0}, corrected_spec);
+      add_edge(mask, correction, EdgeSpec{0, 1}, corrected_spec);
+      add_edge(correction, output, EdgeSpec{0, 0}, corrected_spec);
+      compiled = Compiler(registry, config).compile(corrected_spec, std::move(compiled));
+      EXPECT_EQ(compiled->graph[correction].infer.output_descs.at(0).dtype,
+                cf16 ? DType::CF16 : DType::CF32);
+      auto *updated = dynamic_cast<IAsyncTask *>(compiled->resources.tasks.at("grouped").get());
+      EXPECT_EQ(updated, original);
+      EXPECT_EQ(updated->owned_input_pointers(0), original_inputs);
+      compiled = Compiler(registry, config).compile(spec, std::move(compiled));
+      updated = dynamic_cast<IAsyncTask *>(compiled->resources.tasks.at("grouped").get());
+      EXPECT_EQ(updated, original);
+      EXPECT_EQ(updated->owned_input_pointers(0), original_inputs);
+    }
+  }
   static const nvtx3::registered_string pipeline_name{"PCA pipeline run"};
   static const nvtx3::registered_string baseline_name{"PCA baseline run"};
   nvtx3::scoped_range                   measurement_range{pipeline ? pipeline_name : baseline_name};
@@ -554,6 +589,13 @@ TEST(PcaPipeline, F16QueueWraparoundAndGraphReplay) {
   const auto actual = run_pipeline(true, 128, false, false, false, 32, false, 10000, 320, true);
   EXPECT_EQ(actual->consumed, 64u);
   EXPECT_TRUE(std::all_of(actual->values.begin(), actual->values.end(),
+                          [](float v) { return std::isfinite(v); }));
+}
+
+TEST(PcaPipeline, F16QueueSurvivesDownstreamPhaseCorrectionToggle) {
+  const auto result = run_pipeline(true, 128, false, false, false, 32, false, 10000, 320, true, true);
+  EXPECT_EQ(result->consumed, 64u);
+  EXPECT_TRUE(std::all_of(result->values.begin(), result->values.end(),
                           [](float v) { return std::isfinite(v); }));
 }
 

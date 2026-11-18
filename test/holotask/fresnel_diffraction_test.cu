@@ -37,6 +37,8 @@
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 
 #include "tensor_test_buffer.hh"
+#include "sync_task_runner.hh"
+#include "holotask/syncs/correct_phase.hh"
 
 using holoflow::core::DType;
 using holoflow::core::MemLoc;
@@ -476,5 +478,95 @@ TEST(FresnelF16Production, DistanceUpdatesReuseTaskAndOuterGraph) {
       updated["z"] = .65f;
       expect_outer_graph_distance_update(factory, desc, settings, updated);
     }
+  }
+}
+
+TEST(AutofocusF16, SensorMatchesWidenedInput) {
+  holotask::syncs::ShortTimeFresnelDiffractionFactory factory;
+  const auto input = device_desc({2, 3, 32, 32}, DType::F16);
+  const auto widened = device_desc(input.shape, DType::F32);
+  std::vector<float> values(input.num_elements());
+  std::vector<__half> half(values.size());
+  for (size_t i = 0; i < values.size(); ++i) {
+    values[i] = float(int(i % 31) - 15) / 8;
+    half[i] = __float2half(values[i]);
+  }
+  auto settings = short_time_fresnel_settings(0.01f);
+  settings["output_magnitude"] = true;
+  settings["phase_ref"] = holotask::syncs::STFDPhaseReference::GLOBAL;
+  const auto reference = run_task(factory, widened, as_bytes(values), settings);
+  const auto result = run_task(factory, input, as_bytes(half), settings);
+  EXPECT_EQ(result.bytes, reference.bytes);
+}
+
+TEST(AutofocusF16, ComplexHalfCorrectionAndPropagation) {
+  constexpr size_t height = 320, width = 512;
+  const auto input = device_desc({1, 3, height, width}, DType::F16);
+  const auto mask = device_desc({1, height, width}, DType::F32);
+  std::vector<float> phase(height * width);
+  std::vector<__half> values(input.num_elements());
+  for (size_t i = 0; i < phase.size(); ++i) {
+    const float x = float(i % width) / width - 0.5f;
+    const float y = float(i / width) / height - 0.5f;
+    phase[i] = 4 * x * x + 2 * y * y;
+  }
+  for (size_t i = 0; i < values.size(); ++i)
+    values[i] = __float2half(i < height * width ? 0.f : float(30000 + i % 201));
+  holotask::syncs::CorrectPhaseFactory correction;
+  const auto correct = [&](bool cf16) {
+    return holonp_test::run_sync_factory(
+        correction, std::vector<TDesc>{input, mask},
+        std::vector<std::vector<std::byte>>{as_bytes(values), as_bytes(phase)},
+        holotask::syncs::CorrectPhaseSettings{.output_cf16 = cf16});
+  };
+  const auto reference = correct(false);
+  const auto candidate = correct(true);
+  const auto cf32 = device_desc(input.shape, DType::CF32);
+  const auto cf16 = device_desc(input.shape, DType::CF16);
+  std::vector<__half2> field(values.size());
+  ASSERT_EQ(candidate.output_bytes[0].size(), field.size() * sizeof(__half2));
+  std::memcpy(field.data(), candidate.output_bytes[0].data(), candidate.output_bytes[0].size());
+  double phase_error = 0;
+  for (size_t i = phase.size(); i < field.size(); ++i) {
+    const auto v = __half22float2(field[i]);
+    const auto delta = std::atan2(v.y, v.x) + phase[i % phase.size()];
+    phase_error += double(delta) * delta;
+  }
+  EXPECT_LT(std::sqrt(phase_error / (field.size() - phase.size())), 0.02);
+  holotask::syncs::FresnelDiffractionFactory factory;
+  auto settings = fresnel_settings(0.01f);
+  settings["output_magnitude"] = true;
+  settings["reduce_magnitude"] = true;
+  const auto expected = run_task(factory, cf32, reference.output_bytes[0], settings);
+  for (bool native : {false, true}) {
+    settings["use_fused_f16"] = native;
+    if (native && !holotask::syncs::supports_fused_f16_fresnel(
+                      cf16, settings.get<holotask::syncs::FresnelDiffractionSettings>()))
+      continue;
+    // Force the native backend in this branch so a setup failure cannot pass via fallback.
+    class NativeFactory : public holotask::syncs::FresnelDiffractionFactory {
+    public:
+      std::unique_ptr<holoflow::core::ISyncTask>
+      create(std::span<const TDesc> inputs, const nlohmann::json &configuration,
+             const SyncCreateCtx &ctx) const override {
+        return holotask::syncs::create_fused_f16_fresnel(
+            inputs[0], configuration.get<holotask::syncs::FresnelDiffractionSettings>(), ctx);
+      }
+    } native_factory;
+    const auto &backend = native ? native_factory : factory;
+    const auto result = run_task(backend, cf16, candidate.output_bytes[0], settings);
+    ASSERT_EQ(result.desc.shape, expected.desc.shape);
+    ASSERT_EQ(result.bytes.size(), expected.bytes.size());
+    double error = 0, energy = 0;
+    for (size_t i = 0; i < result.bytes.size(); i += sizeof(float)) {
+      float actual, target;
+      std::memcpy(&actual, result.bytes.data() + i, sizeof(float));
+      std::memcpy(&target, expected.bytes.data() + i, sizeof(float));
+      ASSERT_TRUE(std::isfinite(actual));
+      const double delta = double(actual) - target;
+      error += delta * delta;
+      energy += double(target) * target;
+    }
+    EXPECT_LT(std::sqrt(error / energy), 0.01);
   }
 }

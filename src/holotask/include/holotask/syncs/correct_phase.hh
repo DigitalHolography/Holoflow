@@ -25,6 +25,8 @@ namespace holotask::syncs {
 // -------------------------------------------------------------------------------------------------
 
 struct CorrectPhaseSettings {
+  bool output_cf16 = false;
+
   bool operator==(const CorrectPhaseSettings &) const = default;
 };
 

@@ -489,7 +489,7 @@ class LegacyHalfFresnel final : public holoflow::core::ISyncTask {
   cudaStream_t                               stream_;
   int                                        components_;
   size_t                                     spatial_;
-  bool                                       half_, reduce_;
+  bool                                       half_, complex_half_, reduce_;
   std::unique_ptr<holoflow::core::Tensor>    widened_, magnitudes_;
   std::unique_ptr<holoflow::core::ISyncTask> legacy_;
 
@@ -499,10 +499,12 @@ public:
       : stream_(ctx.stream),
         components_(input.rank() >= 3 ? int(input.shape[input.rank() - 3]) : 1),
         spatial_(input.shape[input.rank() - 2] * input.shape.back()),
-        half_(input.dtype == holoflow::core::DType::F16), reduce_(settings.reduce_magnitude) {
+        half_(input.dtype == holoflow::core::DType::F16 || input.dtype == holoflow::core::DType::CF16),
+        complex_half_(input.dtype == holoflow::core::DType::CF16), reduce_(settings.reduce_magnitude) {
     auto desc = input;
     if (half_) {
-      desc     = holoflow::core::TDesc(input.shape, holoflow::core::DType::F32, input.mem_loc);
+      desc = holoflow::core::TDesc(input.shape, complex_half_ ? holoflow::core::DType::CF32
+                                                            : holoflow::core::DType::F32, input.mem_loc);
       widened_ = std::make_unique<holoflow::core::Tensor>(desc);
     }
     settings.use_fused_f16    = false;
@@ -523,10 +525,11 @@ public:
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     auto in = ctx.inputs[0], out = ctx.outputs[0];
     if (half_) {
-      widen_fresnel_half<<<static_cast<unsigned>((in.desc.num_elements() + 255) / 256), 256, 0,
+      const size_t count = in.desc.num_elements() * (complex_half_ ? 2 : 1);
+      widen_fresnel_half<<<static_cast<unsigned>((count + 255) / 256), 256, 0,
                            stream_>>>(reinterpret_cast<const __half *>(in.data()),
                                       static_cast<float *>(widened_->data()),
-                                      in.desc.num_elements());
+                                      count);
       in = widened_->view();
     }
     if (reduce_)
@@ -566,12 +569,12 @@ FresnelDiffractionFactory::infer(std::span<const holoflow::core::TDesc> input_de
   check(input_descs.size() == 1, "expected exactly one input");
   const auto &idesc = input_descs[0];
   check(idesc.rank() >= 2, "input must be a tensor of rank 2 or higher");
-  check(idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::F16, "input must be CF32, F32, or F16");
+  check(idesc.dtype == holoflow::core::DType::CF32 || idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::F16 || idesc.dtype == holoflow::core::DType::CF16, "input must be CF32, CF16, F32, or F16");
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "input must be in device memory");
 
-  if (idesc.dtype == holoflow::core::DType::F16) {
+  if (idesc.dtype == holoflow::core::DType::F16 || idesc.dtype == holoflow::core::DType::CF16) {
     const holoflow::core::TDesc contiguous(idesc.shape, idesc.dtype, idesc.mem_loc, idesc.offset);
-    check(idesc.strides == contiguous.strides, "F16 input must be contiguous");
+    check(idesc.strides == contiguous.strides, "Half-precision input must be contiguous");
   }
   auto [ax0, ax1] = normalize_axes(settings, static_cast<int>(idesc.rank()));
   auto in_strides = get_strides_bytes(idesc);
@@ -624,7 +627,8 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
       logger()->warn("[Fresnel] F16 setup failed; using FP32: {}", error.what());
     }
   }
-  if (input_descs[0].dtype == holoflow::core::DType::F16 || requested.reduce_magnitude)
+  if (input_descs[0].dtype == holoflow::core::DType::F16 ||
+      input_descs[0].dtype == holoflow::core::DType::CF16 || requested.reduce_magnitude)
     return std::make_unique<LegacyHalfFresnel>(input_descs[0], requested, ctx);
   auto        infer    = this->infer(input_descs, jsettings);
   auto        settings = jsettings.get<FresnelDiffractionSettings>();

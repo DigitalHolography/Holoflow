@@ -28,11 +28,18 @@ using YF =
              cufftdx::FFTsPerBlock<4>() + cufftdx::ElementsPerThread<20>() + cufftdx::SM<FFT_SM>());
 constexpr int    W = 512, H = 320, WH = W * H, Chunk = REDUCE_MEAN ? 4 : 1,
                  G = (COMPONENTS + Chunk - 1) / Chunk;
-__device__ float read_input(const void *input, int i) {
-#if INPUT_HALF
-  return __half2float(static_cast<const __half *>(input)[i]);
+__device__ float2 apply_lens(const void *input, int i, float2 lens) {
+#if INPUT_COMPLEX_HALF
+  const auto value = static_cast<const Complex16 *>(input)[i];
+  const float real = __half2float(value.real), imag = __half2float(value.imag);
+  return make_float2(real * lens.x - imag * lens.y, real * lens.y + imag * lens.x);
 #else
-  return static_cast<const float *>(input)[i];
+#if INPUT_HALF
+  const float value = __half2float(static_cast<const __half *>(input)[i]);
+#else
+  const float value = static_cast<const float *>(input)[i];
+#endif
+  return make_float2(value * lens.x, value * lens.y);
 #endif
 }
 extern "C" __global__ void fused_f16_lens(float2 *lens, float wavelength, float pitch,
@@ -52,8 +59,8 @@ extern "C" __global__ void fused_f16_scale_partial(const void *input, const floa
   int              z = blockIdx.x / ScaleParts, part = blockIdx.x % ScaleParts;
   float            peak = 0;
   for (int i = part * 256 + threadIdx.x; i < WH; i += ScaleParts * 256) {
-    float v = read_input(input, z * WH + i);
-    peak    = fmaxf(peak, fabsf(v * lens[i].x) + fabsf(v * lens[i].y));
+    const auto value = apply_lens(input, z * WH + i, lens[i]);
+    peak = fmaxf(peak, fabsf(value.x) + fabsf(value.y));
   }
   maximum[threadIdx.x] = peak;
   __syncthreads();
@@ -95,10 +102,9 @@ extern "C" __global__ void fused_f16_fft_x(const void *input, const float2 *lens
     __half real[2], imag[2];
     for (int b = 0; b < 2; ++b) {
       int    y = group * 8 + 2 * threadIdx.y + b;
-      float  v = read_input(input, z * WH + y * W + x);
-      float2 l = lens[y * W + x];
-      real[b]  = __float2half_rn(ldexpf(v * l.x, -scales[2 * z]));
-      imag[b]  = __float2half_rn(ldexpf(v * l.y, -scales[2 * z]));
+      const auto value = apply_lens(input, z * WH + y * W + x, lens[y * W + x]);
+      real[b] = __float2half_rn(ldexpf(value.x, -scales[2 * z]));
+      imag[b] = __float2half_rn(ldexpf(value.y, -scales[2 * z]));
     }
     data[j] = {__halves2half2(real[0], real[1]), __halves2half2(imag[0], imag[1])};
   }
