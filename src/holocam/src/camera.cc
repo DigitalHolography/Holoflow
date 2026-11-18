@@ -60,7 +60,7 @@ CameraBase::CameraBase(const nlohmann::json &config, std::optional<RecordOptions
     }
   }
 
-  auto             buffer_count = std::max(record_buffer_needed, nb_buffers);
+  auto buffer_count = std::max(record_buffer_needed, nb_buffers);
   impl_ = std::make_unique<Impl>(model_name, short_name, config, record_options, grabber_count,
                                  buffer_size, buffer_count);
   configure(impl_.get(), root);
@@ -99,22 +99,30 @@ const nlohmann::json &CameraBase::configuration() const noexcept { return impl_-
 #else
 
 namespace holocam {
-CameraBase::CameraBase(nlohmann::json config, std::optional<RecordingSettings> record_settings) {
+CameraBase::CameraBase(const nlohmann::json &config, std::optional<RecordOptions> record_options,
+                       const char *short_name, const char *model_name, size_t grabber_count,
+                       ConfigurationCallback configure) {
   (void)config;
-  (void)record_settings;
+  (void)record_options;
+  (void)short_name;
+  (void)model_name;
+  (void)grabber_count;
+  (void)configure;
   throw std::runtime_error("This build does not support EGrabber");
 }
 
-void CameraBase::set_record_options(std::optional<RecordingOptions> s) { (void)s; }
-void CameraBase::update_record_path(const std : string &path) { (void)path; }
+CameraBase::~CameraBase() {}
 
-vod  CameraBase::start_acquisition() {}
+void CameraBase::set_record_options(std::optional<RecordOptions> o) { (void)o; }
+void CameraBase::update_record_path(const std::string &path) { (void)path; }
+
+void CameraBase::start_acquisition() {}
 void CameraBase::stop_acquisition() {}
 bool CameraBase::start_raw_record() { return false; }
 void CameraBase::stop_raw_record() {}
 void CameraBase::cancel_all_records() {}
 
-RecordingSessionId CameraBase::current_record_session_id() { return 0; }
+RecordingSessionId CameraBase::current_recording_session_id() { return 0; }
 bool               CameraBase::recording() { return false; }
 
 std::byte *CameraBase::get_frame(std::atomic<bool> *cancelled) {
@@ -124,7 +132,10 @@ std::byte *CameraBase::get_frame(std::atomic<bool> *cancelled) {
 
 void CameraBase::release_frame() {}
 
-const nlohmann::json &CameraBase::configuration() const noexcept { return {}; }
+const nlohmann::json &CameraBase::configuration() const noexcept {
+  static nlohmann::json j{};
+  return j;
+}
 
 } // namespace holocam
 #endif

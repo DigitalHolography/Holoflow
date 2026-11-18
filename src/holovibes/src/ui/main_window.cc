@@ -2608,7 +2608,8 @@ void MainWindow::setup_update_connections() {
 
 void MainWindow::recording_file_path_changed() {
   auto update = [=]() {
-    pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString());
+    if (pipeline_running_)
+      pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString());
   };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
 }
@@ -2780,21 +2781,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.spacial_lambda = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
     s.spacial_z      = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
 
-    constexpr float default_spacial_pixel_size = 20e-6f;
-    if (s.import_source == ImportSource::HOLOFILE) {
-      auto reader = holofile::Reader(s.load_path.string());
-      auto footer = reader.footer();
-      s.spacial_pixel_size =
-          footer.has_value()
-              ? footer->pipeline_settings.value("spacial_pixel_size", default_spacial_pixel_size)
-              : default_spacial_pixel_size;
-    } else {
-      auto name            = to_string(s.import_source);
-      auto pixel_pitch     = holocam::name_to_info.at(name).pixel_size;
-      s.spacial_pixel_size = pixel_pitch * 1e-6f;
-    }
-    logger()->info("[MainWindow::get_pipeline_settings] spacial_pixel_size={}",
-                   s.spacial_pixel_size);
+    s.spacial_pixel_size = import_widget_->get_pixel_space_size() * 1e-6;
 
     s.asp_padding_enabled = render_widget_->is_asp_padding_enabled();
     s.asp_padded_width    = render_widget_->get_asp_padded_width();
