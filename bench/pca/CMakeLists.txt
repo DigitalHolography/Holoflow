@@ -31,7 +31,11 @@ set_target_properties(pca_bench PROPERTIES CUDA_ARCHITECTURES ${PCA_BENCH_CUDA_A
 target_include_directories(pca_bench SYSTEM PRIVATE "${cusolverdx_cutlass_INCLUDE_DIR}")
 
 configure_file(assets.hh.in assets.hh @ONLY)
-target_include_directories(pca_bench PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_include_directories(pca_bench PRIVATE "${CMAKE_CURRENT_BINARY_DIR}"
+    "${PROJECT_SOURCE_DIR}/src/holotask/src")
+if(PCA_F16_LOWER_TRIANGLE)
+    target_compile_definitions(pca_bench PRIVATE PCA_F16_LOWER_TRIANGLE)
+endif()
 
 if(ENABLE_TESTING)
     add_executable(pca_bench_validation validation.cu)

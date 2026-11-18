@@ -16,6 +16,7 @@
 #include <cstddef>
 #include <cuda_runtime_api.h>
 namespace holotask::syncs::pca_f16 {
+void launch_gram(const void *, float *, cudaStream_t);
 void covariance(const void *, float *, float *, size_t, cudaStream_t);
 void projection(const void *, const float *, void *, size_t, int, int, cudaStream_t);
 } // namespace holotask::syncs::pca_f16

@@ -541,6 +541,15 @@ TEST(PcaPipeline, PerformanceOverlap) {
 
 } // namespace
 
+TEST(PcaPipeline, F16QueueThroughputStudy) {
+  if (!benchmark_option("HOLOFLOW_PCA_F16_STUDY", 0))
+    GTEST_SKIP() << "Set HOLOFLOW_PCA_F16_STUDY to enable the throughput study";
+  const auto duration = benchmark_option("HOLOFLOW_PCA_BENCHMARK_MS", 3000);
+  const auto result = run_pipeline(true, 128, false, false, false, 32, true, duration, 320, true);
+  EXPECT_GT(result->windows_per_second, 0);
+  std::cout << "FP16 PCA windows/s=" << result->windows_per_second << '\n';
+}
+
 TEST(PcaPipeline, F16QueueWraparoundAndGraphReplay) {
   const auto actual = run_pipeline(true, 128, false, false, false, 32, false, 10000, 320, true);
   EXPECT_EQ(actual->consumed, 64u);

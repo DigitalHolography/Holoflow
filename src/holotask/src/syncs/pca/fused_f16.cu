@@ -45,7 +45,12 @@ template <int K, int Threads> __global__ void gram(const unsigned char *input, f
     tile[i] = cutlass::half_t(float(input[(i / K) * samples + blockIdx.x * K + i % K]));
   __syncthreads();
   int warp = threadIdx.x / 32;
+  // Warp 2 owns the upper-right tile in column-major order.
+#ifdef PCA_F16_LOWER_TRIANGLE
+  if (warp < 4 && warp != 2)
+#else
   if (warp < 4)
+#endif
     multiply(tile + (warp % 2) * 16 * K, tile + (warp / 2) * 16 * K,
              partial + blockIdx.x * 1024 + (warp % 2) * 16 + (warp / 2) * 16 * 32, K, K, 32, K);
 }
@@ -53,6 +58,12 @@ __global__ void reduce(const float *partial, float *matrix, int parts) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < 1024) {
     float v = 0;
+#ifdef PCA_F16_LOWER_TRIANGLE
+    if (i % 32 < i / 32) {
+      matrix[i] = 0; // HEEV stages the full dense buffer.
+      return;
+    }
+#endif
     for (int p = 0; p < parts; ++p)
       v += partial[p * 1024 + i];
     matrix[i] = v;
@@ -82,12 +93,15 @@ __global__ void project(const unsigned char *input, const float *vectors, __half
 #include "curaii/cuda.hh"
 #include "fused_f16.hh"
 namespace holotask::syncs::pca_f16 {
+void launch_gram(const void *input, float *partial, cudaStream_t stream) {
+  gram<512, 256><<<samples / 512, 256, 32 * 512 * 2, stream>>>(
+      static_cast<const unsigned char *>(input), partial);
+}
 void covariance(const void *input, float *partial, float *matrices, size_t batches,
                 cudaStream_t stream) {
   for (size_t b = 0; b < batches; ++b) {
-    gram<512, 256><<<samples / 512, 256, 32 * 512 * 2, stream>>>(
-        static_cast<const unsigned char *>(input) + b * 32 * samples,
-        partial + b * (samples / 512) * 1024);
+    launch_gram(static_cast<const unsigned char *>(input) + b * 32 * samples,
+                partial + b * (samples / 512) * 1024, stream);
     reduce<<<4, 256, 0, stream>>>(partial + b * (samples / 512) * 1024, matrices + b * 1024,
                                   samples / 512);
   }

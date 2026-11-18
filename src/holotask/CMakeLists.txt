@@ -42,6 +42,12 @@ target_include_directories(${TARGET}
     ${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
+option(PCA_F16_LOWER_TRIANGLE "Study triangular FP16 PCA covariance" ON)
+if(PCA_F16_LOWER_TRIANGLE)
+    set_property(SOURCE src/syncs/pca/fused_f16.cu APPEND PROPERTY
+        COMPILE_DEFINITIONS PCA_F16_LOWER_TRIANGLE)
+endif()
+
 target_sources(${TARGET}
     PUBLIC
     FILE_SET public_headers
