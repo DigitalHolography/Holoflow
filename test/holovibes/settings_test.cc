@@ -123,6 +123,15 @@ TEST(FresnelImplementationSettingsTest, LegacyJsonRoundTripPreservesImplementati
   EXPECT_TRUE(restored.fresnel_use_numpy);
 }
 
+TEST(FresnelImplementationSettingsTest, MissingLegacyFieldKeepsDefault) {
+  Settings defaults{};
+  defaults.fresnel_use_numpy = false;
+
+  const auto restored = old_json_to_settings(nlohmann::json::object(), defaults);
+
+  EXPECT_FALSE(restored.fresnel_use_numpy);
+}
+
 TEST(AngularSpectrumPaddingSettingsTest, ValidationRejectsInvalidResolution) {
   Settings settings{};
   settings.view_type           = ViewType::PROCESSED;
