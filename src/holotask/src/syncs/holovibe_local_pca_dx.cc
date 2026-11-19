@@ -216,16 +216,19 @@ extern "C" __constant__ unsigned int local_pca_block_x = Solver::block_dim.x;
 extern "C" __constant__ unsigned int local_pca_shared_memory = Solver::shared_memory_size;
 extern "C" __global__ void local_pca_heev(cuFloatComplex *matrix, float *eigenvalues,
                                           int *info) {
+  const unsigned int batch = blockIdx.x;
   extern __shared__ __align__(16) cusolverdx::byte shared[];
   auto [a, values, workspace] =
       cusolverdx::shared_memory::slice<Solver::a_data_type, float, Solver::a_data_type>(
           shared, alignof(Solver::a_data_type), Solver::lda * PCA_FEATURES,
           alignof(float), PCA_FEATURES, alignof(Solver::a_data_type));
-  auto *global = reinterpret_cast<Solver::a_data_type *>(matrix);
+  auto *global = reinterpret_cast<Solver::a_data_type *>(
+      matrix + static_cast<size_t>(batch) * PCA_FEATURES * PCA_FEATURES);
   cusolverdx::copy_2d<Solver, PCA_FEATURES, PCA_FEATURES, arrangement::col_major, 1>(
       global, PCA_FEATURES, a, Solver::lda);
   __syncthreads();
-  Solver().execute(a, Solver::lda, values, workspace, info);
+  Solver().execute(a, Solver::lda, values, workspace, info + batch);
+  eigenvalues += static_cast<size_t>(batch) * PCA_FEATURES;
   cusolverdx::copy_2d<Solver, PCA_FEATURES, 1, arrangement::col_major, 1>(
       values, PCA_FEATURES, eigenvalues, PCA_FEATURES);
   __syncthreads();

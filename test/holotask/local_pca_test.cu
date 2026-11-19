@@ -227,8 +227,8 @@ TEST(HolovibeLocalPcaTest, RankFactorZeroCopiesComplexFramesAndOneRemovesRankOne
   }
 }
 
-TEST(HolovibeLocalPcaTest, RemovesRankOneSignalAtThirtyTwoFrames) {
-  constexpr int frames = 32, width = 2, height = 2;
+TEST(HolovibeLocalPcaTest, RemovesRankOneSignalAcrossTilesAtThirtyTwoFrames) {
+  constexpr int frames = 32, width = 4, height = 4;
   std::vector<float2> input(frames * width * height);
   for (int t = 0; t < frames; ++t)
     for (int p = 0; p < width * height; ++p)
@@ -241,7 +241,7 @@ TEST(HolovibeLocalPcaTest, RemovesRankOneSignalAtThirtyTwoFrames) {
   const auto result = holonp_test::run_sync_factory(
       factory, desc, std::vector<std::vector<std::byte>>{bytes},
       holotask::syncs::HolovibeLocalPcaSettings{
-          .width_x = width, .width_y = height, .stride_x = width, .stride_y = height,
+          .width_x = 2, .width_y = 2, .stride_x = 2, .stride_y = 2,
           .rank_factor = 1.f});
   std::vector<float2> output(input.size());
   ASSERT_EQ(result.output_bytes[0].size(), bytes.size());
@@ -250,4 +250,55 @@ TEST(HolovibeLocalPcaTest, RemovesRankOneSignalAtThirtyTwoFrames) {
     EXPECT_NEAR(value.x, 0.f, 1e-2f);
     EXPECT_NEAR(value.y, 0.f, 1e-2f);
   }
+}
+
+TEST(HolovibeLocalPcaTest, BatchedTilesMatchIndependentTiles) {
+  constexpr int frames = 3, width = 4, height = 4, tile_side = 2;
+  std::vector<float2> input(frames * width * height);
+  for (int t = 0; t < frames; ++t)
+    for (int y = 0; y < height; ++y)
+      for (int x = 0; x < width; ++x) {
+        const int pixel = y * width + x;
+        input[t * width * height + pixel] = make_float2(
+            static_cast<float>(1 + x + t * (y + 1) + t * t * (x + 2)),
+            static_cast<float>(y - x * t + t * t * (y + 1)));
+      }
+  const auto as_bytes = [](const std::vector<float2> &values) {
+    std::vector<std::byte> bytes(values.size() * sizeof(float2));
+    std::memcpy(bytes.data(), values.data(), bytes.size());
+    return bytes;
+  };
+  holotask::syncs::HolovibeLocalPcaFactory factory;
+  const holotask::syncs::HolovibeLocalPcaSettings settings{
+      .width_x = tile_side, .width_y = tile_side,
+      .stride_x = tile_side, .stride_y = tile_side, .rank_factor = 0.7f};
+  const auto batched = holonp_test::run_sync_factory(
+      factory, std::vector<TDesc>{TDesc({frames, height, width}, DType::CF32, MemLoc::Device)},
+      std::vector<std::vector<std::byte>>{as_bytes(input)}, settings);
+  ASSERT_EQ(batched.output_bytes[0].size(), input.size() * sizeof(float2));
+
+  for (int tile_y = 0; tile_y < height; tile_y += tile_side)
+    for (int tile_x = 0; tile_x < width; tile_x += tile_side) {
+      std::vector<float2> tile(frames * tile_side * tile_side);
+      for (int t = 0; t < frames; ++t)
+        for (int y = 0; y < tile_side; ++y)
+          for (int x = 0; x < tile_side; ++x)
+            tile[t * tile_side * tile_side + y * tile_side + x] =
+                input[t * width * height + (tile_y + y) * width + tile_x + x];
+      const auto independent = holonp_test::run_sync_factory(
+          factory,
+          std::vector<TDesc>{TDesc({frames, tile_side, tile_side}, DType::CF32, MemLoc::Device)},
+          std::vector<std::vector<std::byte>>{as_bytes(tile)}, settings);
+      for (int t = 0; t < frames; ++t)
+        for (int y = 0; y < tile_side; ++y)
+          for (int x = 0; x < tile_side; ++x) {
+            const size_t src = t * tile_side * tile_side + y * tile_side + x;
+            const size_t dst = t * width * height + (tile_y + y) * width + tile_x + x;
+            float2 actual{}, expected{};
+            std::memcpy(&actual, batched.output_bytes[0].data() + dst * sizeof(float2), sizeof(float2));
+            std::memcpy(&expected, independent.output_bytes[0].data() + src * sizeof(float2), sizeof(float2));
+            EXPECT_NEAR(actual.x, expected.x, 1e-3f);
+            EXPECT_NEAR(actual.y, expected.y, 1e-3f);
+          }
+    }
 }
