@@ -57,26 +57,31 @@ struct SolverHandle
 
 unsigned grid_size(size_t count) { return static_cast<unsigned>(std::min<size_t>((count + 255) / 256, 65535)); }
 
-// Gather one width_x * width_y * frames tile. Modulo indexing implements periodic
-// spatial borders, including corners and tiles larger than the image itself.
-__global__ void gather_tile(const cuComplex* input,
+// Gather every tile. Modulo indexing implements periodic spatial borders.
+__global__ void gather_tiles(const cuComplex* input,
                             cuComplex* tile,
-                            size_t count,
+                            size_t count_per_tile,
+                            size_t tiles_x,
                             unsigned width,
                             unsigned height,
                             unsigned width_x,
+                            unsigned stride_x,
+                            unsigned stride_y,
                             size_t tile_pixels,
-                            unsigned origin_x,
-                            unsigned origin_y)
+                            size_t count)
 {
     const size_t pixels = static_cast<size_t>(width) * height;
     for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < count;
          i += static_cast<size_t>(blockDim.x) * gridDim.x)
     {
-        const size_t local = i % tile_pixels;
+        const size_t tile_index = i / count_per_tile;
+        const size_t tile_element = i % count_per_tile;
+        const unsigned origin_x = static_cast<unsigned>((tile_index % tiles_x) * stride_x);
+        const unsigned origin_y = static_cast<unsigned>((tile_index / tiles_x) * stride_y);
+        const size_t local = tile_element % tile_pixels;
         const unsigned x = (origin_x + local % width_x) % width;
         const unsigned y = (origin_y + local / width_x) % height;
-        tile[i] = input[(i / tile_pixels) * pixels + static_cast<size_t>(y) * width + x];
+        tile[i] = input[(tile_element / tile_pixels) * pixels + static_cast<size_t>(y) * width + x];
     }
 }
 
@@ -135,29 +140,35 @@ __global__ void remove_effective_rank(cuComplex* vectors,
 // Scatter residuals to their original pixel/time coordinates. Count every spatial
 // contribution once (at t=0). The count can vary at wrapped borders when an image
 // dimension is not divisible by the stride, so a fixed overlap factor is incorrect.
-__global__ void accumulate_tile(const cuComplex* tile,
+__global__ void accumulate_tiles(const cuComplex* tile,
                                 cuComplex* output,
                                 unsigned* coverage,
-                                size_t count,
+                                size_t count_per_tile,
+                                size_t tiles_x,
                                 unsigned width,
                                 unsigned height,
                                 unsigned width_x,
+                                unsigned stride_x,
+                                unsigned stride_y,
                                 size_t tile_pixels,
-                                unsigned origin_x,
-                                unsigned origin_y)
+                                size_t count)
 {
     const size_t pixels = static_cast<size_t>(width) * height;
     for (size_t i = static_cast<size_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < count;
          i += static_cast<size_t>(blockDim.x) * gridDim.x)
     {
-        const size_t local = i % tile_pixels;
+        const size_t tile_index = i / count_per_tile;
+        const size_t tile_element = i % count_per_tile;
+        const unsigned origin_x = static_cast<unsigned>((tile_index % tiles_x) * stride_x);
+        const unsigned origin_y = static_cast<unsigned>((tile_index / tiles_x) * stride_y);
+        const size_t local = tile_element % tile_pixels;
         const unsigned x = (origin_x + local % width_x) % width;
         const unsigned y = (origin_y + local / width_x) % height;
         const size_t pixel = static_cast<size_t>(y) * width + x;
-        const size_t target = (i / tile_pixels) * pixels + pixel;
+        const size_t target = (tile_element / tile_pixels) * pixels + pixel;
         atomicAdd(&output[target].x, tile[i].x);
         atomicAdd(&output[target].y, tile[i].y);
-        if (i < tile_pixels)
+        if (tile_element < tile_pixels)
             atomicAdd(coverage + pixel, 1u);
     }
 }
@@ -241,8 +252,8 @@ struct LocalPca::Impl
         // Allocate separate scratch for every spatial tile so one launch can solve them all.
         const size_t tile_count = ((static_cast<size_t>(w) + sx - 1) / sx) *
                                   ((static_cast<size_t>(h) + sy - 1) / sy);
-        if (tile_count > std::numeric_limits<unsigned>::max())
-            throw std::invalid_argument("Local PCA tile count exceeds CUDA grid capacity");
+        if (tile_count > std::numeric_limits<int>::max())
+            throw std::invalid_argument("Local PCA tile count exceeds cuBLAS batch capacity");
         batch_capacity = static_cast<unsigned>(tile_count);
         tile.allocate(tile_pixels * frames * batch_capacity);
         scores.allocate(tile_pixels * frames * batch_capacity);
@@ -339,51 +350,40 @@ bool LocalPca::process(const cuComplex* input, cuComplex* output, float rank_fac
     const size_t tiles_x = (static_cast<size_t>(a.width) + a.stride_x - 1) / a.stride_x;
     const size_t tiles_y = (static_cast<size_t>(a.height) + a.stride_y - 1) / a.stride_y;
     const size_t total_tiles = tiles_x * tiles_y;
-    for (size_t first = 0; first < total_tiles; first += a.batch_capacity)
+    const size_t all_tile_elements = total_tiles * tile_count;
+    if (cancelled && cancelled->load(std::memory_order_acquire))
     {
-        if (cancelled && cancelled->load(std::memory_order_acquire))
-        {
-            check(cudaStreamSynchronize(a.stream));
-            return false;
-        }
-        const unsigned batches = static_cast<unsigned>(std::min<size_t>(a.batch_capacity, total_tiles - first));
-        for (unsigned batch = 0; batch < batches; ++batch)
-        {
-            const size_t index = first + batch;
-            const unsigned x = static_cast<unsigned>((index % tiles_x) * a.stride_x);
-            const unsigned y = static_cast<unsigned>((index / tiles_x) * a.stride_y);
-            auto* tile = a.tile.ptr + static_cast<size_t>(batch) * tile_count;
-            auto* covariance = a.covariance.ptr + static_cast<size_t>(batch) * n * n;
-            gather_tile<<<grid_size(tile_count), 256, 0, a.stream>>>(input, tile, tile_count,
-                a.width, a.height, a.width_x, a.tile_pixels, x, y);
-            check(cudaGetLastError());
-            // Match classic PCA's uncentered complex covariance: C = H^H H.
-            check(cublasCgemm(a.blas.value, CUBLAS_OP_C, CUBLAS_OP_N, n, n, m,
-                              &one, tile, m, tile, m, &zero, covariance, n));
-        }
-        a.solve(a.covariance.ptr, a.eigenvalues.ptr, a.solver_info.ptr, batches);
-        remove_effective_rank<<<batches, 256, 0, a.stream>>>(a.covariance.ptr,
-            a.eigenvalues.ptr, a.frames, a.solver_info.ptr, a.error.ptr, rank_factor);
-        check(cudaGetLastError());
-
-        // Reconstruct each residual in its own temporal basis, then average overlaps.
-        for (unsigned batch = 0; batch < batches; ++batch)
-        {
-            const size_t index = first + batch;
-            const unsigned x = static_cast<unsigned>((index % tiles_x) * a.stride_x);
-            const unsigned y = static_cast<unsigned>((index / tiles_x) * a.stride_y);
-            auto* tile = a.tile.ptr + static_cast<size_t>(batch) * tile_count;
-            auto* scores = a.scores.ptr + static_cast<size_t>(batch) * tile_count;
-            auto* covariance = a.covariance.ptr + static_cast<size_t>(batch) * n * n;
-            check(cublasCgemm(a.blas.value, CUBLAS_OP_N, CUBLAS_OP_N, m, n, n,
-                              &one, tile, m, covariance, n, &zero, scores, m));
-            check(cublasCgemm(a.blas.value, CUBLAS_OP_N, CUBLAS_OP_C, m, n, n,
-                              &one, scores, m, covariance, n, &zero, tile, m));
-            accumulate_tile<<<grid_size(tile_count), 256, 0, a.stream>>>(tile, output,
-                a.coverage.ptr, tile_count, a.width, a.height, a.width_x, a.tile_pixels, x, y);
-            check(cudaGetLastError());
-        }
+        check(cudaStreamSynchronize(a.stream));
+        return false;
     }
+    gather_tiles<<<grid_size(all_tile_elements), 256, 0, a.stream>>>(
+        input, a.tile.ptr, tile_count, tiles_x, a.width, a.height, a.width_x,
+        a.stride_x, a.stride_y, a.tile_pixels, all_tile_elements);
+    check(cudaGetLastError());
+
+    const auto tile_stride = static_cast<long long>(tile_count);
+    const auto matrix_stride = static_cast<long long>(static_cast<size_t>(n) * n);
+    const int batches = static_cast<int>(total_tiles);
+    // Match classic PCA's uncentered complex covariance: C = H^H H.
+    check(cublasCgemmStridedBatched(a.blas.value, CUBLAS_OP_C, CUBLAS_OP_N,
+        n, n, m, &one, a.tile.ptr, m, tile_stride, a.tile.ptr, m, tile_stride,
+        &zero, a.covariance.ptr, n, matrix_stride, batches));
+    a.solve(a.covariance.ptr, a.eigenvalues.ptr, a.solver_info.ptr, a.batch_capacity);
+    remove_effective_rank<<<a.batch_capacity, 256, 0, a.stream>>>(a.covariance.ptr,
+        a.eigenvalues.ptr, a.frames, a.solver_info.ptr, a.error.ptr, rank_factor);
+    check(cudaGetLastError());
+
+    // Reconstruct each residual in its own temporal basis, then average overlaps.
+    check(cublasCgemmStridedBatched(a.blas.value, CUBLAS_OP_N, CUBLAS_OP_N,
+        m, n, n, &one, a.tile.ptr, m, tile_stride,
+        a.covariance.ptr, n, matrix_stride, &zero, a.scores.ptr, m, tile_stride, batches));
+    check(cublasCgemmStridedBatched(a.blas.value, CUBLAS_OP_N, CUBLAS_OP_C,
+        m, n, n, &one, a.scores.ptr, m, tile_stride,
+        a.covariance.ptr, n, matrix_stride, &zero, a.tile.ptr, m, tile_stride, batches));
+    accumulate_tiles<<<grid_size(all_tile_elements), 256, 0, a.stream>>>(
+        a.tile.ptr, output, a.coverage.ptr, tile_count, tiles_x, a.width,
+        a.height, a.width_x, a.stride_x, a.stride_y, a.tile_pixels, all_tile_elements);
+    check(cudaGetLastError());
 
     average_overlaps<<<grid_size(count), 256, 0, a.stream>>>(output, a.coverage.ptr, a.pixels, count);
     check(cudaGetLastError());
