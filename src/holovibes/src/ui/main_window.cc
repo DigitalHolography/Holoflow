@@ -2930,7 +2930,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.spacial_method      = method_from_str.at(method.toStdString());
     s.spacial_lambda      = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
     s.spacial_z           = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
-    s.spacial_pixel_size  = 6.75e-6f; // TODO: get from camera
+    s.spacial_pixel_size  = 20e-6f; // TODO: get from camera
     s.asp_padding_enabled = render_widget_->is_asp_padding_enabled();
     s.asp_padded_width    = render_widget_->get_asp_padded_width();
     s.asp_padded_height   = render_widget_->get_asp_padded_height();
