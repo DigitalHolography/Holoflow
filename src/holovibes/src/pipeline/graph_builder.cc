@@ -296,7 +296,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
   // Time-frequency analysis then operates along axis 1 (the T dimension).
   // The output is [N_pre, Nz, Hy, Hx], which feeds directly into the post-TFA queue.
 
-  int     N_pre = 4;
+  int     N_pre = 1;
   int64_t T     = static_cast<int64_t>(H.shape.at(0));
   int64_t Hy    = static_cast<int64_t>(H.shape.at(1));
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
@@ -744,7 +744,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_filter(const TDesc &
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
   auto N  = static_cast<double>(s_.time_window);
-  auto fs = 37e3;
+  auto fs = 1e3;
   auto df = fs / N;
   auto f0 = s_.time_z_begin * df;
   auto f1 = s_.time_z_end * df;

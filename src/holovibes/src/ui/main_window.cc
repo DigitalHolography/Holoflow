@@ -2715,11 +2715,11 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Advanced Settings
   {
-    s.cpu_in_size  = 1024;
-    s.gpu_in_size  = 1024;
-    s.cpu_rec_size = 1024;
-    s.cpu_out_size = 32;
-    s.gpu_out_size = 32;
+    s.cpu_in_size  = 1024; // TODO unused ?
+    s.gpu_in_size  = 16;
+    s.cpu_rec_size = 1024; // TODO unused ?
+    s.cpu_out_size = 4;
+    s.gpu_out_size = 2;
   }
 
   // Import Settings
