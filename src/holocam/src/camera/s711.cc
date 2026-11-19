@@ -107,7 +107,6 @@ void CameraS711::configure(Impl *impl, const nlohmann::json &cfg) {
 
 #else
 namespace holocam {
-namespace holocam {
 void CameraS711::configure(Impl *impl, const nlohmann::json &cfg) {
   (void)impl;
   (void)cfg;
