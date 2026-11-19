@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -81,9 +82,6 @@ struct RegistrationEstimate {
   float rotation_score;
   float psr;
   int   accepted;
-  float accumulated_shift_x;
-  float accumulated_shift_y;
-  float accumulated_rotation_degrees;
 };
 
 struct RegistrationTelemetry {
@@ -354,35 +352,6 @@ __global__ void finalize_estimate_kernel(RegistrationEstimate *estimate, const f
   estimate->accepted   = accepted ? 1 : 0;
 }
 
-// Compose each accepted frame-to-reference estimate into the transform from the
-// recording's original frame. Keep this state on the device to preserve stream ordering.
-__global__ void accumulate_transform_kernel(RegistrationEstimate *estimate) {
-  if (blockIdx.x != 0 || threadIdx.x != 0)
-    return;
-
-  if (estimate->accepted) {
-    const float angle = estimate->accumulated_rotation_degrees * (CUDART_PI_F / 180.0f);
-    const float c     = cosf(angle);
-    const float s     = sinf(angle);
-    const float dx    = estimate->shift_x;
-    const float dy    = estimate->shift_y;
-    estimate->accumulated_shift_x += c * dx - s * dy;
-    estimate->accumulated_shift_y += s * dx + c * dy;
-    estimate->accumulated_rotation_degrees += estimate->rotation_degrees;
-  }
-
-  estimate->shift_x         = estimate->accumulated_shift_x;
-  estimate->shift_y         = estimate->accumulated_shift_y;
-  estimate->rotation_degrees = estimate->accumulated_rotation_degrees;
-}
-
-__global__ void update_reference_kernel(float *reference, const float *current,
-                                        const RegistrationEstimate *estimate, int pixel_count) {
-  const int idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx < pixel_count && estimate->accepted)
-    reference[idx] = current[idx];
-}
-
 __global__ void f32_shift_subpixel_kernel(float *odata, uint8_t *valid, const float *idata,
                                           const RegistrationEstimate *estimate, int w, int h) {
   int x = blockIdx.x * blockDim.x + threadIdx.x;
@@ -601,16 +570,7 @@ public:
     rotate_for_correlation(d_rotated_.get(), d_mean_centered_.get(), width, height);
     xcorr(d_xcorr_.get(), d_rotated_.get());
     estimate_shift(width, height);
-    accumulate_transform_kernel<<<1, 1, 0, stream_>>>(d_estimate_.get());
     apply_shifts(output_data, valid_data, input_data, batch, height, width);
-
-    constexpr int block_size = 256;
-    const int pixel_count = static_cast<int>(width * height);
-    const int grid_size = (pixel_count + block_size - 1) / block_size;
-    update_reference_kernel<<<grid_size, block_size, 0, stream_>>>(
-        d_ref_.get(), d_mean_centered_.get(), d_estimate_.get(), pixel_count);
-    CUFFT_CHECK(cufftExecR2C(r2c_handle_.get(), d_ref_.get(), d_freq2_.get()));
-    build_spectrum_magnitude(d_reference_magnitude_.get(), d_freq2_.get(), width, height);
     CUDA_CHECK(cudaGetLastError());
 
     schedule_telemetry();
@@ -629,6 +589,7 @@ public:
 
 private:
   void flush_telemetry() {
+    const auto now = std::chrono::steady_clock::now();
     for (auto &slot : telemetry_) {
       if (!slot.pending)
         continue;
@@ -636,6 +597,8 @@ private:
       if (status == cudaErrorNotReady)
         continue;
       CUDA_CHECK(status);
+      if (now - last_telemetry_time_ < std::chrono::seconds{1})
+        continue;
       const auto &estimate = *slot.estimate;
       logger()->debug(
           "[Registration] Frame {}: shift=({:.3f}, {:.3f}), rotation={:.3f}, score={:.3f}, "
@@ -643,6 +606,8 @@ private:
           slot.frame_index, estimate.shift_x, estimate.shift_y, estimate.rotation_degrees,
           estimate.rotation_score, estimate.psr, estimate.accepted != 0);
       slot.pending = false;
+      last_telemetry_time_ = now;
+      return;
     }
   }
 
@@ -651,7 +616,7 @@ private:
       return;
     for (auto &slot : telemetry_) {
       if (slot.pending)
-        continue;
+        return;
       slot.frame_index = frame_index_;
       slot.pending     = true;
       CUDA_CHECK(cudaMemcpyAsync(slot.estimate.get(), d_estimate_.get(), sizeof(*slot.estimate),
@@ -811,6 +776,7 @@ private:
   DevPtr<float>                         d_current_magnitude_;
   DevPtr<float>                         d_rotation_scores_;
   std::array<RegistrationTelemetry, 16> telemetry_;
+  std::chrono::steady_clock::time_point last_telemetry_time_{};
   size_t                                frame_index_ = 0;
 };
 

@@ -89,18 +89,26 @@ public:
       ++frames_seen_;
     }
 
+    emit_monitor_update(ctx);
+
     if (frames_seen_ == settings_.count) {
       try {
         write_image();
+        emit_monitor_update(ctx, true);
+        emit_flush_finished(ctx);
         emit_event(ctx, "recording_finished", {});
       } catch (const std::exception &error) {
         (void)std::remove(settings_.path.c_str());
+        emit_monitor_update(ctx, true);
+        emit_flush_finished(ctx);
         emit_event(ctx, "recording_failed", {{"message", error.what()}});
       }
       reset();
       recording_ = false;
     } else if (attempts_seen_ == 3 * settings_.count) {
       (void)std::remove(settings_.path.c_str());
+      emit_monitor_update(ctx, true);
+      emit_flush_finished(ctx);
       emit_event(
           ctx, "recording_failed",
           {{"message", "motion compensation accepted only " + std::to_string(frames_seen_) +
@@ -122,8 +130,10 @@ private:
         settings_.path = event->data.value("record_path", settings_.path);
         check(!settings_.path.empty(), "recording path must not be empty");
         reset();
+        monitor_started_ = monitor_last_update_ = std::chrono::steady_clock::now();
         recording_ = true;
       } else if (type == "stop_recording") {
+        emit_flush_finished(ctx);
         recording_ = false;
         reset();
       } else if (type == "update_recording_path") {
@@ -188,6 +198,39 @@ private:
                                       .ts        = std::chrono::steady_clock::now()});
   }
 
+  void emit_monitor_update(holoflow::core::SyncCtx &ctx, bool force = false) {
+    if (!ctx.event_writer)
+      return;
+    const auto now = std::chrono::steady_clock::now();
+    if (!force && now - monitor_last_update_ < std::chrono::milliseconds{200})
+      return;
+    monitor_last_update_ = now;
+    const auto elapsed = std::chrono::duration<double>(now - monitor_started_).count();
+    nlohmann::json acquired{{"type", "acquisition_update"},
+                            {"id", 0},
+                            {"frame_acquired", attempts_seen_}};
+    nlohmann::json recorded{{"type", "recording_update"},
+                            {"id", 0},
+                            {"frame_recorded", frames_seen_},
+                            {"writing_speed", elapsed > 0
+                                                   ? static_cast<std::size_t>(frames_seen_ / elapsed)
+                                                   : 0},
+                            {"elapsed_time", static_cast<std::size_t>(elapsed)}};
+    for (auto *data : {&acquired, &recorded})
+      (void)ctx.event_writer->try_push({.direction = holoflow_event::EventDirection::ToUi,
+                                        .node_id   = "",
+                                        .data      = std::move(*data),
+                                        .ts        = now});
+  }
+
+  void emit_flush_finished(holoflow::core::SyncCtx &ctx) {
+    if (ctx.event_writer)
+      (void)ctx.event_writer->try_push({.direction = holoflow_event::EventDirection::ToUi,
+                                        .node_id   = "",
+                                        .data      = {{"type", "record_flushing_finished"}, {"id", 0}},
+                                        .ts        = std::chrono::steady_clock::now()});
+  }
+
   void reset() {
     std::fill(sum_.begin(), sum_.end(), 0.0);
     frames_seen_   = 0;
@@ -200,6 +243,8 @@ private:
   int                   frames_seen_   = 0;
   int                   attempts_seen_ = 0;
   bool                  recording_     = false;
+  std::chrono::steady_clock::time_point monitor_started_{};
+  std::chrono::steady_clock::time_point monitor_last_update_{};
 };
 
 } // namespace
