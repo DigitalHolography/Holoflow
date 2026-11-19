@@ -150,6 +150,7 @@ struct Settings {
   std::string           recording_format              = "holo";
   std::string           recording_codec               = "mpeg4";
   bool                  recording_motion_compensation = false;
+  float                 recording_motion_compensation_radius = 0.9f;
   std::string           recording_resize_algorithm    = "CpuBilinear";
   int                   recording_queue_count         = 3;
 

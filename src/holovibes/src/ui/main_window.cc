@@ -1633,17 +1633,41 @@ void MainWindow::initialize_display_widgets() {
   });
   connect(view_widget_->registration_ellipse_check(), &QCheckBox::toggled, this,
           [this](bool checked) {
-            xy_processed_widget_->set_registration_ellipse_enabled(checked);
-            if (checked) {
+            const bool export_ellipse = export_widget_->is_motion_compensation_enabled();
+            xy_processed_widget_->set_registration_ellipse_enabled(checked || export_ellipse);
+            if (export_ellipse) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  export_widget_->get_motion_compensation_radius());
+            } else if (checked) {
               xy_processed_widget_->set_registration_ellipse_radius(
                   view_widget_->get_registration_radius());
             }
           });
   connect(view_widget_->registration_radius(), qOverload<double>(&QDoubleSpinBox::valueChanged),
           this, [this](double value) {
+            if (export_widget_->is_motion_compensation_enabled()) {
+              return;
+            }
             if (view_widget_->is_registration_ellipse_enabled()) {
               xy_processed_widget_->set_registration_ellipse_radius(value);
             }
+          });
+  connect(export_widget_->motion_compensation_check(), &QCheckBox::toggled, this,
+          [this](bool checked) {
+            const bool view_ellipse = view_widget_->is_registration_ellipse_enabled();
+            xy_processed_widget_->set_registration_ellipse_enabled(checked || view_ellipse);
+            if (checked) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  export_widget_->get_motion_compensation_radius());
+            } else if (view_ellipse) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  view_widget_->get_registration_radius());
+            }
+          });
+  connect(export_widget_->motion_compensation_radius_spin(),
+          qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double radius) {
+            if (export_widget_->is_motion_compensation_enabled())
+              xy_processed_widget_->set_registration_ellipse_radius(radius);
           });
 }
 
@@ -2881,6 +2905,8 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.recording_format               = export_widget_->get_format().toStdString();
     s.recording_codec                = export_widget_->get_codec().toStdString();
     s.recording_motion_compensation  = export_widget_->is_motion_compensation_enabled();
+    s.recording_motion_compensation_radius =
+        static_cast<float>(export_widget_->get_motion_compensation_radius());
     s.recording_resize_algorithm     = export_widget_->get_resize_algorithm().toStdString();
     s.recording_queue_count          = export_widget_->get_queue_count();
   }
@@ -3106,6 +3132,7 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
       export_widget_->codec_combo()->setCurrentIndex(codec_index);
     }
     export_widget_->set_motion_compensation_enabled(s.recording_motion_compensation);
+    export_widget_->set_motion_compensation_radius(s.recording_motion_compensation_radius);
     export_widget_->set_resize_algorithm(QString::fromStdString(s.recording_resize_algorithm));
     // recording_method not exposed (always RAW in get_pipeline_settings)
   }

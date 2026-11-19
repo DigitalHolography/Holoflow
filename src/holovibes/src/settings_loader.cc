@@ -191,6 +191,7 @@ void write_info(json &j, const Settings &s) {
 void write_export(json &j, const Settings &s) {
   auto &export_settings                  = j["compute_settings"]["export"];
   export_settings["motion_compensation"] = s.recording_motion_compensation;
+  export_settings["motion_compensation_radius"] = s.recording_motion_compensation_radius;
 }
 
 void read_advanced(Settings &s, const json &advanced) {
@@ -307,6 +308,8 @@ void read_info(Settings &s, const json &info) {
 void read_export(Settings &s, const json &export_settings) {
   s.recording_motion_compensation =
       val(export_settings, "motion_compensation", s.recording_motion_compensation);
+  s.recording_motion_compensation_radius =
+      val(export_settings, "motion_compensation_radius", s.recording_motion_compensation_radius);
 }
 
 } // namespace
