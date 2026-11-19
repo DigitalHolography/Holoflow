@@ -13,3 +13,20 @@
 // limitations under the License.
 
 #include "pipeline/settings.hh"
+
+namespace holovibes::pipeline {
+const char *to_string(ImportSource src) {
+  switch (src) {
+  case ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO:
+    return "AmetekS710EuresysCoaxlinkOcto";
+  case ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP:
+    return "AmetekS711EuresysCoaxlinkQSFP+";
+  case ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP:
+    return "AmetekS991EuresysCoaxlinkQSFP+";
+  case ImportSource::HOLOFILE:
+    return "Holofile";
+  default:
+    throw std::runtime_error("unknown import source");
+  }
+}
+} // namespace holovibes::pipeline

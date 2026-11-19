@@ -225,23 +225,20 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
                           .keep_cursor = false});
   }
 
-  if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
-    return ametek_s710_euresys_coaxlink_octo({cam_path});
+  std::optional<holocam::RecordSettings> record_settings = std::nullopt;
+  if (s_.can_use_camera_record()) {
+    record_settings = holocam::RecordSettings{.file_path       = s_.recording_path.string(),
+                                              .recording_count = s_.recording_count,
+                                              .pipeline_config = settings_to_old_json(s_),
+                                              .record_queue_count =
+                                                  static_cast<size_t>(s_.recording_queue_count)};
   }
 
-  if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
-    holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings settings{.cfg_path = cam_path};
-    if (s_.can_use_camera_record()) {
-      settings.record_settings = holotask::sources::RecordSettings{
-          .file_path          = s_.recording_path.string(),
-          .recording_count    = s_.recording_count,
-          .pipeline_config    = settings_to_old_json(s_),
-          .record_queue_count = static_cast<size_t>(s_.recording_queue_count)};
-    }
-    return ametek_s711_euresys_coaxlink_qsfp_plus(settings);
-  }
-
-  HOLOVIBES_UNREACHABLE();
+  holotask::sources::CameraSettings settings{
+      .cfg_path        = cam_path,
+      .name            = to_string(s_.import_source),
+      .record_settings = record_settings};
+  return camera(settings);
 }
 
 std::vector<GraphBuilder::Impl::TDesc>
@@ -260,7 +257,8 @@ GraphBuilder::Impl::motion_compensated_export(const TDesc &X) {
     }
     return convert(single_frames, {Target::F32, Strategy::Real});
   }();
-  return registration(float_frames, {.radius = 0.9f, .max_shift_fraction = 0.45f});
+  return registration_for_export(float_frames,
+                                 {.radius = 0.9f, .max_shift_fraction = 0.45f});
 }
 
 void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
@@ -803,13 +801,22 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     result              = flatfield(result, flatfield_settings_from_cutoff_period(cutoff, dy, dx));
   }
 
-  if (s_.pp_registration) {
-    throw std::logic_error{"Registration is currently not supported"};
-  }
-
   result = mean(result, {{0}, false}); // [1, H, W]
 
   TDesc motion_result;
+
+  if (s_.pp_registration) {
+    const auto outputs  = registration_outputs(result, {.radius = s_.pp_registration_radius});
+    result              = outputs.at(0);
+    auto output_display = fftshift(outputs.at(1), {{-2, -1}});
+    // Match the Shack-Hartmann correlation preview. The registration output is a raw F32
+    // correlation matrix and must be normalized before conversion to U8 for display.
+    output_display              = normalize(output_display, {{-2, -1}, 0.0f, 255.0f});
+    const auto output_converted = convert(output_display, {Target::U8, Strat::Scaled});
+
+    registration_xcorr_display(output_converted, {});
+  }
+
   if (s_.recording_motion_compensation)
     motion_result = result;
 
