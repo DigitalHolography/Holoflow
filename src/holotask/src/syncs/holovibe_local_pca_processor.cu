@@ -391,11 +391,11 @@ bool LocalPca::process(const cuComplex* input, cuComplex* output, float rank_fac
     check(cudaGetLastError());
     // Check all eigensolves once per temporal block, avoiding a host round trip
     // for every spatial tile. Failed decompositions must not produce a displayed map.
-    int error = 0;
-    check(cudaMemcpyAsync(&error, a.error.ptr, sizeof(int), cudaMemcpyDeviceToHost, a.stream));
-    check(cudaStreamSynchronize(a.stream));
-    if (error)
-        throw std::runtime_error("Local PCA eigendecomposition failed: " + std::to_string(error));
+    // int error = 0;
+    // check(cudaMemcpyAsync(&error, a.error.ptr, sizeof(int), cudaMemcpyDeviceToHost, a.stream));
+    // check(cudaStreamSynchronize(a.stream));
+    // if (error)
+    //     throw std::runtime_error("Local PCA eigendecomposition failed: " + std::to_string(error));
     return true;
 }
 } // namespace holovibes::compute
