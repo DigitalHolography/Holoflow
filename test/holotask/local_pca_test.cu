@@ -226,3 +226,28 @@ TEST(HolovibeLocalPcaTest, RankFactorZeroCopiesComplexFramesAndOneRemovesRankOne
     }
   }
 }
+
+TEST(HolovibeLocalPcaTest, RemovesRankOneSignalAtThirtyTwoFrames) {
+  constexpr int frames = 32, width = 2, height = 2;
+  std::vector<float2> input(frames * width * height);
+  for (int t = 0; t < frames; ++t)
+    for (int p = 0; p < width * height; ++p)
+      input[t * width * height + p] = make_float2(static_cast<float>((t + 1) * (p + 1)),
+                                                  static_cast<float>((t + 1) * (p + 1) * 0.5));
+  std::vector<std::byte> bytes(input.size() * sizeof(float2));
+  std::memcpy(bytes.data(), input.data(), bytes.size());
+  holotask::syncs::HolovibeLocalPcaFactory factory;
+  const std::vector<TDesc> desc{TDesc({frames, height, width}, DType::CF32, MemLoc::Device)};
+  const auto result = holonp_test::run_sync_factory(
+      factory, desc, std::vector<std::vector<std::byte>>{bytes},
+      holotask::syncs::HolovibeLocalPcaSettings{
+          .width_x = width, .width_y = height, .stride_x = width, .stride_y = height,
+          .rank_factor = 1.f});
+  std::vector<float2> output(input.size());
+  ASSERT_EQ(result.output_bytes[0].size(), bytes.size());
+  std::memcpy(output.data(), result.output_bytes[0].data(), bytes.size());
+  for (const auto &value : output) {
+    EXPECT_NEAR(value.x, 0.f, 1e-2f);
+    EXPECT_NEAR(value.y, 0.f, 1e-2f);
+  }
+}

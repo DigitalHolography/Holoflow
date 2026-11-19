@@ -189,6 +189,9 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
                                       .stride_size = static_cast<size_t>(s_.time_window),
                                       .source_cycle_frames = source_cycle_frames});
     frames = convert(frames, {Target::CF32, Strat::Real});
+    // Holovibes filters the complex field before Fresnel reconstruction.
+    if (s_.filter_2d && s_.spacial_method != SpacialMethod::ANGULAR_SPECTRUM)
+      frames = build_spatial_filter(frames);
     if (s_.spacial_method != SpacialMethod::NONE) {
       if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION)
         frames = fresnel_diffraction(frames, {.lambda = s_.spacial_lambda,
@@ -942,23 +945,20 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
     result = pct_clip(result, pct_clip_settings);
   }
 
-  TDesc display_result = result;
-  if (!fixed_contrast_range) {
-    display_result = convert(display_result, {Target::U8, Strat::Scaled});
-  } else {
-    // Keep the F32 K map upstream; display and recording share the same fixed-range U8 image.
-    display_result = convert(display_result,
-                             {Target::U8, Strat::FixedRange,
-                              s_.pp_local_pca && !s_.pp_local_pca_lsci
-                                  ? 1.0f : s_.pp_spatial_contrast_display_max,
-                              s_.pp_local_pca && !s_.pp_local_pca_lsci
-                                  ? false : s_.pp_spatial_contrast_invert_display});
-  }
-  display_result = batched_queue(display_result, {s_.gpu_out_size, 1, 1});
-  xy_processed_display(display_result, {});
+  const auto convert_for_output = [&](TDesc input) {
+    if (!fixed_contrast_range)
+      return convert(input, {Target::U8, Strat::Scaled});
+    return convert(input,
+                   {Target::U8, Strat::FixedRange,
+                    s_.pp_local_pca && !s_.pp_local_pca_lsci
+                        ? 1.0f : s_.pp_spatial_contrast_display_max,
+                    s_.pp_local_pca && !s_.pp_local_pca_lsci
+                        ? false : s_.pp_spatial_contrast_invert_display});
+  };
 
+  // Recording needs its own branch so its reader cannot consume preview frames.
   if (s_.recording_method == RecordingMethod::PROCESSED) {
-    auto result_rec = memcpy(display_result, {Host});
+    auto result_rec = memcpy(convert_for_output(result), {Host});
     result_rec      = batched_queue(result_rec, {s_.cpu_out_size, 1, 1});
 
     auto path  = s_.recording_path.string();
@@ -974,6 +974,10 @@ void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
                     s_.recording_codec, resize_to_square, s_.recording_resize_algorithm});
     }
   }
+
+  auto display_result = convert_for_output(result);
+  display_result = batched_queue(display_result, {s_.gpu_out_size, 1, 1});
+  xy_processed_display(display_result, {});
 }
 
 void GraphBuilder::Impl::build_3d_cuts(const TDesc &FH_z) {

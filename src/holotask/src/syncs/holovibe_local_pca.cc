@@ -28,13 +28,21 @@ class HolovibeLocalPca final : public holoflow::core::ISyncTask {
 public:
   HolovibeLocalPca(const holoflow::core::TDesc &d, HolovibeLocalPcaSettings s,
                    cudaStream_t stream)
-      : settings_(s), frames_(d.shape[0]),
+      : settings_(s), desc_(d), stream_(stream), frames_(d.shape[0]),
         kernels_(((d.shape[2] + s.stride_x - 1) / s.stride_x) *
                  ((d.shape[1] + s.stride_y - 1) / s.stride_y)),
         processor_(static_cast<unsigned>(d.shape[2]),
                                  static_cast<unsigned>(d.shape[1]),
                                  static_cast<unsigned>(d.shape[0]), s.width_x, s.width_y,
                                  s.stride_x, s.stride_y, stream) {}
+  bool can_reuse(const holoflow::core::TDesc &d, const HolovibeLocalPcaSettings &s,
+                 cudaStream_t stream) const {
+    return desc_.shape == d.shape && desc_.strides == d.strides &&
+           desc_.dtype == d.dtype && desc_.mem_loc == d.mem_loc && stream_ == stream &&
+           settings_.width_x == s.width_x && settings_.width_y == s.width_y &&
+           settings_.stride_x == s.stride_x && settings_.stride_y == s.stride_y;
+  }
+  void set_rank_factor(float rank_factor) { settings_.rank_factor = rank_factor; }
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
     const auto started = std::chrono::steady_clock::now();
     logger()->info("[HolovibeLocalPca] processing {} frames across {} kernels ({}x{}, steps {}x{}, rank factor {})",
@@ -65,6 +73,8 @@ public:
   }
 private:
   HolovibeLocalPcaSettings settings_;
+  holoflow::core::TDesc desc_;
+  cudaStream_t stream_;
   size_t frames_;
   size_t kernels_;
   holovibes::compute::LocalPca processor_;
@@ -99,6 +109,13 @@ std::unique_ptr<holoflow::core::ISyncTask> HolovibeLocalPcaFactory::update(
     std::unique_ptr<holoflow::core::ISyncTask> old_task,
     std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &settings,
     const holoflow::core::SyncCreateCtx &ctx) const {
+  (void)infer(inputs, settings);
+  const auto config = settings.get<HolovibeLocalPcaSettings>();
+  auto *task = dynamic_cast<HolovibeLocalPca *>(old_task.get());
+  if (task && task->can_reuse(inputs.front(), config, ctx.stream)) {
+    task->set_rank_factor(config.rank_factor);
+    return old_task;
+  }
   old_task.reset();
   return create(inputs, settings, ctx);
 }

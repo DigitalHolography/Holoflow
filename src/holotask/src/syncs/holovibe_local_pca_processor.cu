@@ -3,10 +3,18 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
+#include <cuda.h>
 #include <cublas_v2.h>
 #include <cusolverDn.h>
+#include "logger.hh"
+
+namespace holotask::syncs {
+std::vector<char> compile_local_pca_heev_cubin(int frames, int architecture);
+}
 
 namespace
 {
@@ -169,12 +177,37 @@ struct LocalPca::Impl
     size_t pixels, tile_pixels;
     cudaStream_t stream;
     BlasHandle blas;
-    SolverHandle solver;
+    std::unique_ptr<SolverHandle> solver;
     DeviceBuffer<cuComplex> tile, scores, covariance, workspace;
     DeviceBuffer<float> eigenvalues;
     DeviceBuffer<unsigned> coverage;
     DeviceBuffer<int> solver_info, error;
     int workspace_size = 0;
+    CUmodule dx_module = nullptr;
+    CUfunction dx_kernel = nullptr;
+    unsigned dx_block_x = 0, dx_shared_memory = 0;
+
+    ~Impl() { if (dx_module) cuModuleUnload(dx_module); }
+
+    void solve(cuComplex* matrix, float* values, int* info)
+    {
+        if (dx_kernel)
+        {
+            CUdeviceptr matrix_arg = reinterpret_cast<CUdeviceptr>(matrix);
+            CUdeviceptr values_arg = reinterpret_cast<CUdeviceptr>(values);
+            CUdeviceptr info_arg = reinterpret_cast<CUdeviceptr>(info);
+            void* args[] = {&matrix_arg, &values_arg, &info_arg};
+            const auto result = cuLaunchKernel(dx_kernel, 1, 1, 1, dx_block_x, 1, 1,
+                                               dx_shared_memory, reinterpret_cast<CUstream>(stream),
+                                               args, nullptr);
+            if (result != CUDA_SUCCESS)
+                throw std::runtime_error("Local PCA cuSolverDx launch failed: " + std::to_string(result));
+        }
+        else
+            check(cusolverDnCheevd(solver->value, CUSOLVER_EIG_MODE_VECTOR,
+                                   CUBLAS_FILL_MODE_LOWER, frames, matrix, frames,
+                                   values, workspace.ptr, workspace_size, info));
+    }
 
     Impl(unsigned w, unsigned h, unsigned n, unsigned wx, unsigned wy, unsigned sx, unsigned sy, cudaStream_t s)
         : width(w)
@@ -195,7 +228,6 @@ struct LocalPca::Impl
 
         check(cublasSetStream(blas.value, stream));
         check(cublasSetMathMode(blas.value, CUBLAS_PEDANTIC_MATH));
-        check(cusolverDnSetStream(solver.value, stream));
 
         // Reuse one tile's scratch storage for the whole image. Spatial overlap
         // never requires duplicating the complete input cube for every tile.
@@ -206,15 +238,51 @@ struct LocalPca::Impl
         coverage.allocate(pixels);
         solver_info.allocate(1);
         error.allocate(1);
-        check(cusolverDnCheevd_bufferSize(solver.value,
-                                          CUSOLVER_EIG_MODE_VECTOR,
-                                          CUBLAS_FILL_MODE_LOWER,
-                                          frames,
-                                          covariance.ptr,
-                                          frames,
-                                          eigenvalues.ptr,
-                                          &workspace_size));
-        workspace.allocate(workspace_size);
+        try
+        {
+            int device = 0, major = 0, minor = 0, max_shared = 0;
+            check(cudaGetDevice(&device));
+            check(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device));
+            check(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device));
+            check(cudaDeviceGetAttribute(&max_shared, cudaDevAttrMaxSharedMemoryPerBlockOptin, device));
+            const auto cubin = holotask::syncs::compile_local_pca_heev_cubin(
+                static_cast<int>(frames), major * 10 + minor);
+            if (cuModuleLoadDataEx(&dx_module, cubin.data(), 0, nullptr, nullptr) != CUDA_SUCCESS ||
+                cuModuleGetFunction(&dx_kernel, dx_module, "local_pca_heev") != CUDA_SUCCESS)
+                throw std::runtime_error("could not load cuSolverDx kernel");
+            const auto read_constant = [&](const char* name) {
+                CUdeviceptr address = 0;
+                size_t bytes = 0;
+                unsigned value = 0;
+                if (cuModuleGetGlobal(&address, &bytes, dx_module, name) != CUDA_SUCCESS ||
+                    bytes != sizeof(value) ||
+                    cuMemcpyDtoH(&value, address, sizeof(value)) != CUDA_SUCCESS)
+                    throw std::runtime_error("could not read cuSolverDx kernel configuration");
+                return value;
+            };
+            dx_block_x = read_constant("local_pca_block_x");
+            dx_shared_memory = read_constant("local_pca_shared_memory");
+            if (dx_shared_memory > static_cast<unsigned>(max_shared) ||
+                cuFuncSetAttribute(dx_kernel, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
+                                   static_cast<int>(dx_shared_memory)) != CUDA_SUCCESS)
+                throw std::runtime_error("cuSolverDx shared memory exceeds device limit");
+            holotask::logger()->info("[HolovibeLocalPca] cuSolverDx enabled for {} frames", frames);
+        }
+        catch (const std::exception& e)
+        {
+            holotask::logger()->warn("[HolovibeLocalPca] cuSolverDx unavailable for {} frames: {}; using cuSOLVER", frames, e.what());
+            dx_kernel = nullptr;
+            if (dx_module) { cuModuleUnload(dx_module); dx_module = nullptr; }
+        }
+        if (!dx_kernel)
+        {
+            solver = std::make_unique<SolverHandle>();
+            check(cusolverDnSetStream(solver->value, stream));
+            check(cusolverDnCheevd_bufferSize(solver->value, CUSOLVER_EIG_MODE_VECTOR,
+                                              CUBLAS_FILL_MODE_LOWER, frames, covariance.ptr,
+                                              frames, eigenvalues.ptr, &workspace_size));
+            workspace.allocate(workspace_size);
+        }
     }
 };
 
@@ -290,16 +358,7 @@ bool LocalPca::process(const cuComplex* input, cuComplex* output, float rank_fac
                               &zero,
                               a.covariance.ptr,
                               n));
-            check(cusolverDnCheevd(a.solver.value,
-                                   CUSOLVER_EIG_MODE_VECTOR,
-                                   CUBLAS_FILL_MODE_LOWER,
-                                   n,
-                                   a.covariance.ptr,
-                                   n,
-                                   a.eigenvalues.ptr,
-                                   a.workspace.ptr,
-                                   a.workspace_size,
-                                   a.solver_info.ptr));
+            a.solve(a.covariance.ptr, a.eigenvalues.ptr, a.solver_info.ptr);
             remove_effective_rank<<<1, 256, 0, a.stream>>>(a.covariance.ptr,
                                                            a.eigenvalues.ptr,
                                                            a.frames,
