@@ -238,14 +238,17 @@ struct LocalPca::Impl
         check(cublasSetStream(blas.value, stream));
         check(cublasSetMathMode(blas.value, CUBLAS_PEDANTIC_MATH));
 
-        // Bound scratch memory while giving cuSolverDx multiple independent tiles per launch.
+        // Give cuSolverDx as many independent tiles as fit in a bounded share of free memory.
         const size_t bytes_per_tile = 2 * tile_pixels * frames * sizeof(cuComplex) +
                                       static_cast<size_t>(frames) * frames * sizeof(cuComplex) +
                                       frames * sizeof(float) + sizeof(int);
         const size_t tile_count = ((static_cast<size_t>(w) + sx - 1) / sx) *
                                   ((static_cast<size_t>(h) + sy - 1) / sy);
-        batch_capacity = static_cast<unsigned>(std::min<size_t>({16, tile_count,
-                           std::max<size_t>(1, (64ull * 1024 * 1024) / bytes_per_tile)}));
+        size_t free_bytes = 0, total_bytes = 0;
+        check(cudaMemGetInfo(&free_bytes, &total_bytes));
+        const size_t scratch_budget = std::min<size_t>(256ull * 1024 * 1024, free_bytes / 8);
+        batch_capacity = static_cast<unsigned>(std::min<size_t>(
+            tile_count, std::max<size_t>(1, scratch_budget / bytes_per_tile)));
         tile.allocate(tile_pixels * frames * batch_capacity);
         scores.allocate(tile_pixels * frames * batch_capacity);
         covariance.allocate(static_cast<size_t>(frames) * frames * batch_capacity);

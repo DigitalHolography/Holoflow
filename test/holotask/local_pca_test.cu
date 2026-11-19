@@ -228,7 +228,7 @@ TEST(HolovibeLocalPcaTest, RankFactorZeroCopiesComplexFramesAndOneRemovesRankOne
 }
 
 TEST(HolovibeLocalPcaTest, RemovesRankOneSignalAcrossTilesAtThirtyTwoFrames) {
-  constexpr int frames = 32, width = 4, height = 4;
+  constexpr int frames = 32, width = 10, height = 8;
   std::vector<float2> input(frames * width * height);
   for (int t = 0; t < frames; ++t)
     for (int p = 0; p < width * height; ++p)
