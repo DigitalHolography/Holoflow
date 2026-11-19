@@ -97,6 +97,8 @@ CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlo
   if (record_options.has_value()) {
     init_record_context(short_name, *record_options, buffer_size * buffer_count, config);
   }
+  else
+    recording_context_.reset();
 }
 
 void CameraBase::Impl::init_record_context(const char *short_name, const RecordOptions &options,
@@ -165,9 +167,11 @@ void CameraBase::Impl::stop_acquisition() {
     acquisition_thread_->request_stop();
     acquisition_thread_->join();
     acquisition_thread_.reset();
+    logger()->info("[CameraBase::Impl::stop_acquisition] acquisition thread joined");
     grabber_->stop_if_running();
     acquiring_.store(false, std::memory_order_release);
     buffer_queue_->close();
+    logger()->info("[CameraBase::Impl::stop_acquisition] buffer queue cleared");
     logger()->info("[CameraBase::Impl::stop_acquisition] acquisition stopped");
   }
 }
@@ -302,7 +306,7 @@ void CameraBase::Impl::set_recording_options(std::optional<RecordOptions> o,
     init_record_context(short_name, *o, total_buffer_size_, config_);
   } else {
     recording_context_.reset();
-    buffers_.reset();
+    recording_buffers_.reset();
     old_recording_buffers_size_ = 0;
   }
 }

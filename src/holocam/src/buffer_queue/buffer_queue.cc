@@ -61,12 +61,20 @@ CameraBufferQueue::~CameraBufferQueue() {
 }
 
 void CameraBufferQueue::clear() {
+  auto s = size();
   const std::lock_guard lock(mutex_);
-  for (auto &slot : slots_)
-    if (slot.readers != 0) {
-      release_(slot.frame);
-      slot.readers = 0;
-    }
+  if (s > 0) {
+    size_t count{0};
+    for (auto &slot : slots_)
+      if (slot.readers != 0) {
+        release_(slot.frame);
+        slot.readers = 0;
+        ++count;
+      }
+    logger()->info("[CameraBufferQueue::clear] {} buffer requeued", count);
+  }
+  else
+    logger()->info("[CameraBufferQueue::clear] queue has already been cleared");
 
   ready_queue_a_.clear();
   ready_queue_b_.clear();

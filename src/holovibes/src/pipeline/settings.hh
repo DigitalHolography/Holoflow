@@ -89,7 +89,7 @@ struct Settings {
   SpacialMethod spacial_method;
   float         spacial_lambda;
   float         spacial_z;
-  float         spacial_pixel_size;
+  float         spacial_pixel_size;          // in metters
   bool          fresnel_use_numpy   = false; ///< Use the graph-composed CUDA NumPy Fresnel path.
   bool          asp_padding_enabled = false;
   int           asp_padded_width    = 1024;
@@ -147,10 +147,12 @@ struct Settings {
   RecordingMethod       recording_method;
   std::filesystem::path recording_path;
   int                   recording_count;
-  std::string           recording_format           = "holo";
-  std::string           recording_codec            = "mpeg4";
-  std::string           recording_resize_algorithm = "CpuBilinear";
-  int                   recording_queue_count;
+  std::string           recording_format              = "holo";
+  std::string           recording_codec               = "mpeg4";
+  bool                  recording_motion_compensation = false;
+  float                 recording_motion_compensation_radius = 0.9f;
+  std::string           recording_resize_algorithm    = "CpuBilinear";
+  int                   recording_queue_count         = 3;
 
   // Auto-focus
   bool             autofocus_enabled;

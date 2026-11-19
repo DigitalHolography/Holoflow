@@ -253,11 +253,12 @@ BatchQueueFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(is_factor, "BatchQueue task output stride must be a multiple of output size");
 
   // Success
-  auto odesc       = input_descs[0];
-  odesc.shape[0]   = settings.output_size;
-  const auto slots = static_cast<size_t>(
-      lcm_above(static_cast<int>(input_descs[0].shape[0]), settings.output_stride,
-                settings.target_capacity + static_cast<int>(input_descs[0].shape[0])));
+  auto odesc     = input_descs[0];
+  odesc.shape[0] = settings.output_size;
+  int x          = static_cast<int>(input_descs[0].shape[0]);
+  int y          = settings.output_stride;
+  int k          = std::max(settings.target_capacity, settings.output_stride) + x;
+  int slots      = lcm_above(x, y, k);
   return holoflow::core::InferResult{
       .input_descs                 = {input_descs[0]},
       .output_descs                = {odesc},
@@ -283,7 +284,7 @@ BatchQueueFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   // - nb_slots % input_descs[0].shape[0] == 0
   int x        = static_cast<int>(input_descs[0].shape[0]);
   int y        = settings.output_stride;
-  int k        = settings.target_capacity + x;
+  int k        = std::max(settings.target_capacity, settings.output_stride) + x;
   int nb_slots = lcm_above(x, y, k);
 
   // Setup buffers

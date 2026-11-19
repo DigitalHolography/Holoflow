@@ -1633,17 +1633,41 @@ void MainWindow::initialize_display_widgets() {
   });
   connect(view_widget_->registration_ellipse_check(), &QCheckBox::toggled, this,
           [this](bool checked) {
-            xy_processed_widget_->set_registration_ellipse_enabled(checked);
-            if (checked) {
+            const bool export_ellipse = export_widget_->is_motion_compensation_enabled();
+            xy_processed_widget_->set_registration_ellipse_enabled(checked || export_ellipse);
+            if (export_ellipse) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  export_widget_->get_motion_compensation_radius());
+            } else if (checked) {
               xy_processed_widget_->set_registration_ellipse_radius(
                   view_widget_->get_registration_radius());
             }
           });
   connect(view_widget_->registration_radius(), qOverload<double>(&QDoubleSpinBox::valueChanged),
           this, [this](double value) {
+            if (export_widget_->is_motion_compensation_enabled()) {
+              return;
+            }
             if (view_widget_->is_registration_ellipse_enabled()) {
               xy_processed_widget_->set_registration_ellipse_radius(value);
             }
+          });
+  connect(export_widget_->motion_compensation_check(), &QCheckBox::toggled, this,
+          [this](bool checked) {
+            const bool view_ellipse = view_widget_->is_registration_ellipse_enabled();
+            xy_processed_widget_->set_registration_ellipse_enabled(checked || view_ellipse);
+            if (checked) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  export_widget_->get_motion_compensation_radius());
+            } else if (view_ellipse) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  view_widget_->get_registration_radius());
+            }
+          });
+  connect(export_widget_->motion_compensation_radius_spin(),
+          qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double radius) {
+            if (export_widget_->is_motion_compensation_enabled())
+              xy_processed_widget_->set_registration_ellipse_radius(radius);
           });
 }
 
@@ -2465,6 +2489,8 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::RecordingCount:
         export_widget_->mark_frames_invalid();
         break;
+      case SettingsField::RecordingMotionCompensation:
+        break;
       case SettingsField::AutofocusNbSubaps:
         render_widget_->autofocus_widget()->mark_nb_subaps_invalid();
         break;
@@ -2506,6 +2532,8 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
       FieldBinding{SettingsField::PpRegistration, view_widget_->registration_check()},
       FieldBinding{SettingsField::RecordingPath, export_widget_->file_line_edit()},
       FieldBinding{SettingsField::RecordingCount, export_widget_->frames_spin()},
+      FieldBinding{SettingsField::RecordingMotionCompensation,
+                   export_widget_->motion_compensation_check()},
       FieldBinding{SettingsField::AutofocusNbSubaps,
                    render_widget_->autofocus_widget()->nb_subaps_spin()},
       FieldBinding{SettingsField::AutofocusNbIter,
@@ -2608,7 +2636,8 @@ void MainWindow::setup_update_connections() {
 
 void MainWindow::recording_file_path_changed() {
   auto update = [=]() {
-    pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString());
+    if (pipeline_running_)
+      pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString());
   };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
 }
@@ -2714,11 +2743,11 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
 
   // Advanced Settings
   {
-    s.cpu_in_size  = 4096;
-    s.gpu_in_size  = 1024;
-    s.cpu_rec_size = 4096;
-    s.cpu_out_size = 32;
-    s.gpu_out_size = 32;
+    s.cpu_in_size  = 1024; // TODO unused ?
+    s.gpu_in_size  = 16;
+    s.cpu_rec_size = 1024; // TODO unused ?
+    s.cpu_out_size = 4;
+    s.gpu_out_size = 2;
   }
 
   // Import Settings
@@ -2780,21 +2809,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     s.spacial_lambda = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
     s.spacial_z      = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
 
-    constexpr float default_spacial_pixel_size = 20e-6f;
-    if (s.import_source == ImportSource::HOLOFILE) {
-      auto reader = holofile::Reader(s.load_path.string());
-      auto footer = reader.footer();
-      s.spacial_pixel_size =
-          footer.has_value()
-              ? footer->pipeline_settings.value("spacial_pixel_size", default_spacial_pixel_size)
-              : default_spacial_pixel_size;
-    } else {
-      auto name            = to_string(s.import_source);
-      auto pixel_pitch     = holocam::name_to_info.at(name).pixel_size;
-      s.spacial_pixel_size = pixel_pitch * 1e-6f;
-    }
-    logger()->info("[MainWindow::get_pipeline_settings] spacial_pixel_size={}",
-                   s.spacial_pixel_size);
+    s.spacial_pixel_size = import_widget_->get_pixel_space_size() * 1e-6;
 
     s.asp_padding_enabled = render_widget_->is_asp_padding_enabled();
     s.asp_padded_width    = render_widget_->get_asp_padded_width();
@@ -2885,12 +2900,15 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     } else {
       s.recording_method = RecordingMethod::NONE;
     }
-    s.recording_path             = export_widget_->get_file_path().toStdString();
-    s.recording_count            = export_widget_->get_frame_count();
-    s.recording_format           = export_widget_->get_format().toStdString();
-    s.recording_codec            = export_widget_->get_codec().toStdString();
-    s.recording_resize_algorithm = export_widget_->get_resize_algorithm().toStdString();
-    s.recording_queue_count      = export_widget_->get_queue_count();
+    s.recording_path                 = export_widget_->get_file_path().toStdString();
+    s.recording_count                = export_widget_->get_frame_count();
+    s.recording_format               = export_widget_->get_format().toStdString();
+    s.recording_codec                = export_widget_->get_codec().toStdString();
+    s.recording_motion_compensation  = export_widget_->is_motion_compensation_enabled();
+    s.recording_motion_compensation_radius =
+        static_cast<float>(export_widget_->get_motion_compensation_radius());
+    s.recording_resize_algorithm     = export_widget_->get_resize_algorithm().toStdString();
+    s.recording_queue_count          = export_widget_->get_queue_count();
   }
 
   // Auto-Focus Settings
@@ -3113,6 +3131,8 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     if (codec_index >= 0) {
       export_widget_->codec_combo()->setCurrentIndex(codec_index);
     }
+    export_widget_->set_motion_compensation_enabled(s.recording_motion_compensation);
+    export_widget_->set_motion_compensation_radius(s.recording_motion_compensation_radius);
     export_widget_->set_resize_algorithm(QString::fromStdString(s.recording_resize_algorithm));
     // recording_method not exposed (always RAW in get_pipeline_settings)
   }

@@ -52,6 +52,7 @@ enum class SettingsField {
   PpRegistration,
   RecordingPath,
   RecordingCount,
+  RecordingMotionCompensation,
   AutofocusNbSubaps,
   AutofocusNbIter,
   SignalPlotTimeWindow,
