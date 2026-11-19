@@ -232,7 +232,7 @@ std::byte *Grabber::validate_buffer_data(FrameBufferPair &frame) {
     max_ts_delta_since_log_ = std::max(ts_delta, max_ts_delta_since_log_);
     if (log_due(last_accepted_log_)) {
       ++accepted_since_log_;
-      logger()->info("[Grabber::validate_buffer_data] accepted {} frames, latest: "
+      logger()->info("[Grabber::validate_buffer_data] accepted {} buffer(s), latest: "
                      "base={}, id={}, max ts delta={} us",
                      accepted_since_log_, static_cast<void *>(base_a), frame_id_a,
                      max_ts_delta_since_log_);

@@ -134,7 +134,8 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
   worker_thread_ = std::jthread([this, settings, buffer_part_count,
                                  &recording](std::stop_token cancelled) {
     std::atomic<uint32_t> finished = 0;
-
+    std::atomic<bool> failed = false;
+    std::string err_msg = "";
     logger()->info("[RecordingSession::worker::worker_thread] worker thread started");
     {
 
@@ -146,7 +147,7 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
 
       // start rec and writers on other threads
       auto rec_thread = std::jthread(
-          [this, &settings, &recording, &finished, cancelled, buffer_part_count, &writer] {
+          [this, &settings, &recording, &finished, cancelled, buffer_part_count, &writer, &err_msg] {
             logger()->info("[RecordingSession::worker::rec_thread] recording thread started");
             recording.store(true, std::memory_order_release);
 
@@ -163,7 +164,7 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
               success_callback_(id_, settings.recording_count);
             } else {
               logger()->info("[RecordingSession::worker] record cancelled");
-              failure_callback_(id_, "record cancelled");
+              err_msg = "record cancelled";
             }
 
             recording.store(false, std::memory_order_release);
@@ -172,10 +173,17 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
                 cancelled.stop_requested());
           });
 
-      auto writer_thread = std::jthread([this, &writer, &finished, cancelled, &settings] {
+      auto writer_thread = std::jthread([this, &writer, &finished, cancelled, &settings, &failed, &err_msg] {
         logger()->info("[RecordingSession::worker::writer_thread] writer thread started");
-        writer.execute(cancelled);
-        if (!cancelled.stop_requested()) {
+
+        try {
+          writer.execute(cancelled);
+        } catch (const std::system_error &e) {
+          logger()->error("[RecordingSession::worker::writer_thread] failed to write to disk: {}", e.what());
+          err_msg = std::format("failed to write to disk: {}", e.what());
+          failed.store(true, std::memory_order_relaxed);
+        }
+        if (!cancelled.stop_requested() && !failed.load(std::memory_order_acquire)) {
           finished.fetch_add(1);
           buffer_flushing_finished_callback_(id_);
         }
@@ -185,19 +193,20 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
       });
 
       constexpr size_t thread_count = 2;
-      while (finished.load(std::memory_order_acquire) < thread_count && !cancelled.stop_requested())
+      while (finished.load(std::memory_order_acquire) < thread_count && !cancelled.stop_requested() && !failed.load(std::memory_order_acquire))
         ;
 
       rec_thread.join();
       writer_thread.join();
     }
 
-    if (cancelled.stop_requested()) {
+    if (cancelled.stop_requested() || failed.load(std::memory_order_acquire)) {
       remove_incomplete_camera_recording(settings.file_path);
+      failure_callback_(id_, err_msg);
     }
     logger()->info(
-        "[RecordingSession::worker::worker_thread] worker thread finished (cancelled: {})",
-        cancelled.stop_requested());
+        "[RecordingSession::worker::worker_thread] worker thread finished (cancelled: {}, failed: {})",
+        cancelled.stop_requested(), failed.load(std::memory_order_acquire));
     state_.store(State::Free, std::memory_order_release);
   });
 }
@@ -261,6 +270,7 @@ void RecordWriter::execute(std::stop_token cancelled) {
 
     const auto to_write = std::min(buffer_part_count_, frame_to_write_ - current_frame);
     writer_.write_frames(reinterpret_cast<const uint8_t *>(frame), to_write);
+
     current_frame += to_write;
     written_last_interval += to_write;
 
@@ -318,7 +328,6 @@ Recorder::Recorder(RecordingSessionId id, uint32_t frame_count, size_t buffer_pa
   if (buffer_part_count == 0)
     throw std::invalid_argument("Cannot record with zero buffer parts");
   queue_.subscribe_b();
-
 }
 
 Recorder::~Recorder() {

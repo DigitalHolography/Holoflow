@@ -230,7 +230,10 @@ public:
   const CameraSettings &get_settings() const { return settings_; }
   void                  update_settings(const CameraSettings &settings) {
     settings_ = settings;
-    camera_->set_record_options(make_record_options(*settings.record_settings));
+    if(settings.record_settings.has_value())
+      camera_->set_record_options(make_record_options(*settings.record_settings));
+    else
+      camera_->set_record_options(std::nullopt);
   }
 
   void log_update_lifecycle(bool updated) {
