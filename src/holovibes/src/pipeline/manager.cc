@@ -556,6 +556,9 @@ void Manager::resume_pipeline() {
 }
 
 void Manager::update_recording_path(const std::string &new_path) {
+  if (!scheduler_ || !scheduler_->is_running())
+    return;
+
   logger()->info("[Manager::update_recording_path] updating recording path: {}", new_path);
   auto payload = nlohmann::json{
       {"type", "update_recording_path"},

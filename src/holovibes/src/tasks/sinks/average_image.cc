@@ -126,6 +126,9 @@ private:
       } else if (type == "stop_recording") {
         recording_ = false;
         reset();
+      } else if (type == "update_recording_path") {
+        if (!recording_)
+          settings_.path = event->data.at("record_path").get<std::string>();
       } else {
         throw std::invalid_argument("Unknown recording event: " + type);
       }

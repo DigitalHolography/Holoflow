@@ -42,11 +42,12 @@ namespace holotask::syncs {
 // -------------------------------------------------------------------------------------------------
 
 void to_json(nlohmann::json &j, const RegistrationSettings &s) {
-  j = nlohmann::json{{"radius", s.radius}};
+  j = nlohmann::json{{"radius", s.radius}, {"max_shift_fraction", s.max_shift_fraction}};
 }
 
 void from_json(const nlohmann::json &j, RegistrationSettings &s) {
   j.at("radius").get_to(s.radius);
+  s.max_shift_fraction = j.value("max_shift_fraction", s.max_shift_fraction);
 }
 
 namespace {
@@ -95,7 +96,6 @@ inline constexpr float kRotationStepDegrees    = 0.25f;
 // synthetic registration fixtures. Translation PSR and motion bounds remain
 // the primary rejection criteria; this threshold only rejects unusable angular
 // estimates.
-inline constexpr float kMinimumRotationScore = 0.03f;
 // Rotation is more sensitive to weak spectral structure than translation. Keep
 // accepting frames whose translation is reliable, but only apply a rotation
 // when the angular correlation itself is strong enough to justify interpolation.
@@ -344,7 +344,6 @@ __global__ void finalize_estimate_kernel(RegistrationEstimate *estimate, const f
   const float psr      = stddev > 1e-12f ? (*peak_value - mean) / stddev : 0.0f;
   const bool  accepted = isfinite(shift_x) && isfinite(shift_y) && isfinite(psr) && psr >= 8.0f &&
                          isfinite(estimate->rotation_degrees) &&
-                         estimate->rotation_score >= kMinimumRotationScore &&
                          fabsf(shift_x) <= max_translation && fabsf(shift_y) <= max_translation;
   estimate->shift_x    = shift_x;
   estimate->shift_y    = shift_y;
@@ -694,7 +693,8 @@ private:
     psr_stats_kernel<<<grid_size, block_size, 0, stream_>>>(
         d_xcorr_.get(), d_max_idx_.get(), d_psr_stats_.get(), static_cast<int>(width),
         static_cast<int>(height));
-    const float max_translation = 0.15f * static_cast<float>(std::min(width, height));
+    const float max_translation =
+        settings_.max_shift_fraction * static_cast<float>(std::min(width, height));
     finalize_estimate_kernel<<<1, 1, 0, stream_>>>(
         d_estimate_.get(), d_xcorr_.get(), d_max_.get(), d_max_idx_.get(), d_psr_stats_.get(),
         static_cast<int>(width), static_cast<int>(height), max_translation);
@@ -786,6 +786,8 @@ RegistrationFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(input_desc.dtype == holoflow::core::DType::F32, "Input must be F32 type");
   check(input_desc.mem_loc == holoflow::core::MemLoc::Device, "Input must be in device memory");
   check(settings.radius >= 0.0f && settings.radius <= 1.0f, "radius not in [0, 1]");
+  check(settings.max_shift_fraction >= 0.0f && settings.max_shift_fraction <= 0.5f,
+        "max_shift_fraction not in [0, 0.5]");
   check(is_c_contiguous(input_desc), "Input must be C-contiguous");
   if (input_desc.rank() == 3) {
     check(input_desc.shape[0] == 1, "Only batch size 1 is supported");

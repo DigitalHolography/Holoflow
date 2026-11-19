@@ -12,6 +12,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 #include <QFile>
 #include <QImage>
@@ -33,7 +34,7 @@ using holoflow::core::TView;
 
 class AverageImageHarness {
 public:
-  AverageImageHarness(const std::string &path, int count)
+  AverageImageHarness(const std::string &path, int count, bool start = true)
       : image_desc_({1, 2, 3}, DType::U8, MemLoc::Host), valid_desc_({1}, DType::U8, MemLoc::Host),
         image_storage_{MemLoc::Host, image_.size(), reinterpret_cast<std::byte *>(image_.data())},
         valid_storage_{MemLoc::Host, sizeof(valid_), reinterpret_cast<std::byte *>(&valid_)},
@@ -42,8 +43,13 @@ public:
         .path = path, .count = count, .format = "png", .output_16bit = false};
     const std::array input_descs{image_desc_, valid_desc_};
     task_ = factory_.create(input_descs, settings, {});
-    if (!router_.ui_try_send("record", {{"type", "start_recording"}, {"record_path", path}}))
-      throw std::runtime_error("failed to enqueue start_recording event");
+    if (start)
+      send({{"type", "start_recording"}, {"record_path", path}});
+  }
+
+  void send(nlohmann::json event) {
+    if (!router_.ui_try_send("record", std::move(event)))
+      throw std::runtime_error("failed to enqueue recording event");
     router_.tick();
   }
 
@@ -126,6 +132,22 @@ TEST(AverageImageTest, FailsAfterThreeTimesTheRequestedAttempts) {
   ASSERT_TRUE(event.has_value());
   EXPECT_EQ(event->data.at("type"), "recording_failed");
   EXPECT_TRUE(QImage(path).isNull());
+}
+
+TEST(AverageImageTest, UpdatesPathWhileIdle) {
+  QTemporaryDir directory;
+  ASSERT_TRUE(directory.isValid());
+  const auto original_path = directory.filePath("original.png");
+  const auto updated_path  = directory.filePath("updated.png");
+  AverageImageHarness writer(original_path.toStdString(), 1, false);
+
+  writer.send({{"type", "update_recording_path"}, {"record_path", updated_path.toStdString()}});
+  EXPECT_EQ(writer.execute(10, true), OpResult::Ok);
+  writer.send({{"type", "start_recording"}});
+  EXPECT_EQ(writer.execute(20, true), OpResult::Ok);
+
+  EXPECT_TRUE(QImage(original_path).isNull());
+  EXPECT_FALSE(QImage(updated_path).isNull());
 }
 
 TEST(AverageImageTest, PreservesRawU16PngAndWritesProcessedEightBitFormats) {

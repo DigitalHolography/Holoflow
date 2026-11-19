@@ -260,7 +260,7 @@ GraphBuilder::Impl::motion_compensated_export(const TDesc &X) {
     }
     return convert(single_frames, {Target::F32, Strategy::Real});
   }();
-  return registration(float_frames, {.radius = 0.9f});
+  return registration(float_frames, {.radius = 0.9f, .max_shift_fraction = 0.45f});
 }
 
 void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
