@@ -43,7 +43,7 @@ bool requires_processed_pipeline(const Settings &settings) {
 
 int recording_batch_size(const Settings &settings) {
   return settings.recording_method == RecordingMethod::RAW ? settings.load_batch
-                                                           : settings.cpu_out_size;
+                                                           : 1;
 }
 
 int max_time_z_end(const Settings &settings) {

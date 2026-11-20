@@ -149,6 +149,20 @@ TEST(HolovibeLocalPcaSettingsTest, AllowsOverlappingTimeWindows) {
   EXPECT_TRUE(has_issue(validate_settings(settings, {}), "time_stride_not_multiple"));
 }
 
+TEST(RecordingSettingsTest, ProcessedCountDoesNotNeedToMatchQueueCapacity) {
+  Settings settings{};
+  settings.recording_method = RecordingMethod::PROCESSED;
+  settings.recording_path = "recording.holo";
+  settings.recording_count = 7;
+  settings.cpu_out_size = 32;
+
+  EXPECT_FALSE(has_issue(validate_settings(settings, {}), "recording_count_batch_mismatch"));
+
+  settings.recording_method = RecordingMethod::RAW;
+  settings.load_batch = 8;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "recording_count_batch_mismatch"));
+}
+
 TEST(SlidingAverageSettingsTest, RejectsMultipleAutofocusIterationsForNonUnitWindow) {
   Settings settings{};
   settings.view_type           = ViewType::PROCESSED;

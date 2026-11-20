@@ -86,6 +86,7 @@ constexpr int  kLargeSpinMax             = 1024 * 1024;
 constexpr int  kTopBarHeight             = 30;
 constexpr auto kDefaultSamplingFrequency = 37'000.0;
 constexpr auto kKeepCurrentConfigKey     = "preferences/always_keep_current_config";
+constexpr auto kAutoProcessedRecordCountKey = "preferences/auto_processed_record_count";
 
 QSpinBox *create_spin_box(QWidget *parent, int minimum, int maximum, int value) {
   auto *spin_box = new QSpinBox(parent);
@@ -405,8 +406,9 @@ public:
   using GraphSpecDumpPreferences     = holoflow::core::GraphSpecDumpPreferences;
   using GraphCompiledDumpPreferences = holoflow::runtime::GraphCompiledDumpPreferences;
 
-  PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager)
-      : QDialog(parent), manager_(manager) {
+  PreferencesDialog(QWidget *parent, holovibes::pipeline::Manager &manager,
+                    std::function<void()> on_apply)
+      : QDialog(parent), manager_(manager), on_apply_(std::move(on_apply)) {
     setWindowTitle(tr("Preferences"));
     setMinimumWidth(400);
 
@@ -423,6 +425,19 @@ public:
     import_form->addRow(keep_current_config_checkbox_);
     import_group_box->setLayout(import_form);
     dialog_layout->addWidget(import_group_box);
+
+    auto *recording_group_box = new QGroupBox(tr("Recording"), this);
+    auto *recording_form = new QFormLayout();
+    auto_processed_record_count_checkbox_ = new QCheckBox(
+        tr("Set processed frame count from import range and Time Stride"), this);
+    auto_processed_record_count_checkbox_->setChecked(
+        QSettings().value(kAutoProcessedRecordCountKey, true).toBool());
+    auto_processed_record_count_checkbox_->setToolTip(
+        tr("For processed recording from a .holo file, set Nb. of frames to "
+           "(End index - Start index) / Time Stride."));
+    recording_form->addRow(auto_processed_record_count_checkbox_);
+    recording_group_box->setLayout(recording_form);
+    dialog_layout->addWidget(recording_group_box);
 
     auto *splitter = new QSplitter(Qt::Horizontal, this);
 
@@ -680,8 +695,14 @@ private:
     manager_.update_graph_compiled_dump_preferences(graph_compiled_dump_preferences);
     manager_.set_dump_runtime_failure_graphs(runtime_failure_graph_checkbox_->isChecked());
     QSettings settings;
+    const bool auto_count_changed =
+        settings.value(kAutoProcessedRecordCountKey, true).toBool() !=
+        auto_processed_record_count_checkbox_->isChecked();
     settings.setValue(kKeepCurrentConfigKey, keep_current_config_checkbox_->isChecked());
+    settings.setValue(kAutoProcessedRecordCountKey,
+                      auto_processed_record_count_checkbox_->isChecked());
     settings.sync();
+    if (auto_count_changed) on_apply_();
   }
 
   void connect_signals() {
@@ -734,9 +755,12 @@ private:
             [this](bool) { apply_button_->setEnabled(true); });
     connect(keep_current_config_checkbox_, &QCheckBox::toggled, this,
             [this](bool) { apply_button_->setEnabled(true); });
+    connect(auto_processed_record_count_checkbox_, &QCheckBox::toggled, this,
+            [this](bool) { apply_button_->setEnabled(true); });
   }
 
   holovibes::pipeline::Manager &manager_;
+  std::function<void()> on_apply_;
 
   QPushButton *apply_button_ = nullptr;
 
@@ -778,6 +802,7 @@ private:
   GraphCompiledDumpPreferencesWidgets graph_compiled_dump_preferences_widgets_;
   QCheckBox                          *runtime_failure_graph_checkbox_ = nullptr;
   QCheckBox                          *keep_current_config_checkbox_   = nullptr;
+  QCheckBox                          *auto_processed_record_count_checkbox_ = nullptr;
 };
 
 } // namespace
@@ -797,6 +822,14 @@ MainWindow::MainWindow(QWidget *parent)
   connect_export_controls();
   setup_validation_connections();
   setup_update_connections();
+
+  connect(import_widget_, &ImportWidget::settings_changed, this,
+          &MainWindow::update_processed_recording_frame_count);
+  connect(render_widget_, &ImageRenderingWidget::settings_changed, this,
+          &MainWindow::update_processed_recording_frame_count);
+  connect(export_widget_, &ExportWidget::settings_changed, this,
+          &MainWindow::update_processed_recording_frame_count);
+  update_processed_recording_frame_count();
 
   validate_inputs();
   refresh_command_bar();
@@ -1960,8 +1993,28 @@ void MainWindow::show_fft_frequency_tool() {
 }
 
 void MainWindow::show_preferences() {
-  PreferencesDialog dialog(this, *pipeline_manager_);
+  PreferencesDialog dialog(this, *pipeline_manager_, [this]() {
+    update_processed_recording_frame_count();
+    update_if_running();
+  });
   dialog.exec();
+}
+
+void MainWindow::update_processed_recording_frame_count() {
+  if (!QSettings().value(kAutoProcessedRecordCountKey, true).toBool() ||
+      import_widget_->is_camera_mode() ||
+      export_widget_->get_image_type() != "Processed Image")
+    return;
+
+  const int range = import_widget_->get_end_index() - import_widget_->get_start_index();
+  const int stride = render_widget_->get_time_stride();
+  if (range <= 0 || stride <= 0)
+    return;
+
+  if (export_widget_->get_frame_count() == range / stride)
+    return;
+  const QSignalBlocker blocker(export_widget_->frames_spin());
+  export_widget_->set_frame_count(range / stride);
 }
 
 std::filesystem::path MainWindow::makeRecordingPath(const QString &userText) {
@@ -2469,7 +2522,7 @@ bool MainWindow::validate_inputs() {
   pipeline::Settings settings = get_pipeline_settings();
   export_widget_->set_frame_batch_size(settings.recording_method == pipeline::RecordingMethod::RAW
                                            ? settings.load_batch
-                                           : settings.cpu_out_size);
+                                           : 1);
   const auto context             = build_validation_context(settings);
   if (settings.import_source == pipeline::ImportSource::HOLOFILE &&
       context.source_width.has_value() && context.source_height.has_value())
@@ -2860,6 +2913,7 @@ QSize MainWindow::processed_display_dims(QSize source_dims) const {
 }
 
 pipeline::Settings MainWindow::get_pipeline_settings() {
+  update_processed_recording_frame_count();
   using namespace holovibes::pipeline;
 
   Settings s;

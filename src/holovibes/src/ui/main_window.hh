@@ -136,6 +136,7 @@ private:
   QString acquisition_label(int acquisition_id) const;
   void    update_acquisition_label();
   void    update_recording_path_preview();
+  void    update_processed_recording_frame_count();
   void    refresh_command_bar();
   void    set_status_label(QLabel *label, const QString &text, const char *tone);
 
