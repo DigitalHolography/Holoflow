@@ -744,7 +744,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_filter(const TDesc &
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
   auto N  = static_cast<double>(s_.time_window);
-  auto fs = 1e3;
+  auto fs = s_.input_sampling_frequency_hz;
   auto df = fs / N;
   auto f0 = s_.time_z_begin * df;
   auto f1 = s_.time_z_end * df;
