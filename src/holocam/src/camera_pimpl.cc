@@ -96,8 +96,7 @@ CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlo
 
   if (record_options.has_value()) {
     init_record_context(short_name, *record_options, buffer_size * buffer_count, config);
-  }
-  else
+  } else
     recording_context_.reset();
 }
 
@@ -178,7 +177,7 @@ void CameraBase::Impl::stop_acquisition() {
 
 void CameraBase::Impl::start_acquisition() {
   stop_acquisition();
-  grabber_->start_if_not_running();
+  grabber_->restart();
   buffer_queue_->open();
   acquisition_thread_.emplace([this](std::stop_token cancelled) { acquisition_loop(cancelled); });
   acquiring_.store(true, std::memory_order_release);
@@ -220,6 +219,7 @@ void CameraBase::Impl::acquisition_loop(std::stop_token cancelled) {
       if (!base) {
         grabber_->requeue(frame);
         check_for_record_failure();
+        grabber_->restart();
         continue;
       }
 
