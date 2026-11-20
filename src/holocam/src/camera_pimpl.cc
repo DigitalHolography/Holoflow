@@ -179,6 +179,7 @@ void CameraBase::Impl::start_acquisition() {
   stop_acquisition();
   grabber_->restart();
   buffer_queue_->open();
+  grabber_restart_try_count_ = 0;
   acquisition_thread_.emplace([this](std::stop_token cancelled) { acquisition_loop(cancelled); });
   acquiring_.store(true, std::memory_order_release);
   logger()->info("[CameraBase::Impl::start_acquisition] acquisition started");
@@ -219,8 +220,16 @@ void CameraBase::Impl::acquisition_loop(std::stop_token cancelled) {
       if (!base) {
         grabber_->requeue(frame);
         check_for_record_failure();
-        grabber_->restart();
+        if (grabber_restart_try_count_++ < max_grabber_restart_try_count_)
+          grabber_->restart();
+        else if (log_due(last_grabber_restart_log_)) {
+          logger()->error("[CameraBase::Impl::acquisition_loop] failed to resync grabber frames "
+                          "after {} restarts try to power cycle and retry",
+                          grabber_restart_try_count_);
+        }
         continue;
+      } else {
+        grabber_restart_try_count_ = 0;
       }
 
       if (cancelled.stop_requested()) {
