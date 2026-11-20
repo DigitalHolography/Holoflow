@@ -6,12 +6,9 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <condition_variable>
 #include <cstdint>
 #include <limits>
-#include <mutex>
 #include <stdexcept>
-#include <thread>
 #include <vector>
 
 #include <cuda.h>
@@ -370,29 +367,18 @@ public:
   ~LocalPca() override { if (jacobi_) cusolverDnDestroySyevjInfo(jacobi_); }
 
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    const auto started = std::chrono::steady_clock::now();
+    if (!started_) {
+      logger()->info("[LocalPca] started: {} frames/window, {}x{} kernel, {}x{} step, {} patches/window",
+                     frames_, settings_.rectangular ? settings_.kernel_width : settings_.window_size,
+                     settings_.rectangular ? settings_.kernel_height : settings_.window_size,
+                     settings_.rectangular ? settings_.step_width : settings_.stride,
+                     settings_.rectangular ? settings_.step_height : settings_.stride,
+                     out_width_ * out_height_);
+      started_at_ = std::chrono::steady_clock::now();
+      next_progress_ = started_at_ + std::chrono::seconds(1);
+      started_ = true;
+    }
     const int patches = out_width_ * out_height_;
-    logger()->info("[LocalPca] processing {} patches ({} frames, {}x{} kernel, {}x{} step, selection {})",
-                   patches, frames_, settings_.rectangular ? settings_.kernel_width : settings_.window_size,
-                   settings_.rectangular ? settings_.kernel_height : settings_.window_size,
-                   settings_.rectangular ? settings_.step_width : settings_.stride,
-                   settings_.rectangular ? settings_.step_height : settings_.stride,
-                   settings_.automatic ? "automatic" : "manual");
-    // GPU work can continue after all batches have been enqueued. Keep reporting while the
-    // execution thread waits for the stream, without synchronizing every batch.
-    std::jthread progress([this, started](std::stop_token stop) {
-      std::mutex mutex;
-      std::condition_variable_any wake;
-      std::unique_lock lock(mutex);
-      while (!stop.stop_requested()) {
-        wake.wait_for(lock, stop, std::chrono::seconds(5), [] { return false; });
-        if (!stop.stop_requested()) {
-          const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-              std::chrono::steady_clock::now() - started).count();
-          logger()->info("[LocalPca] still processing ({} s elapsed)", elapsed);
-        }
-      }
-    });
     const auto *input = ctx.inputs[0].data();
     auto *output = reinterpret_cast<float *>(ctx.outputs[0].data());
     if (settings_.map == LocalPcaMap::Original || settings_.map == LocalPcaMap::Static ||
@@ -411,8 +397,7 @@ public:
         enqueue_spatial_contrast_from_moments(original_moments_.get(), spatial_scratch_.get(),
             output, width_, height_, frames_, settings_.window_size, stream_);
         CUDA_CHECK(cudaStreamSynchronize(stream_));
-        progress.request_stop();
-        logger()->info("[LocalPca] completed original LSCI map");
+        log_progress();
         return holoflow::core::OpResult::Ok;
       }
     }
@@ -421,7 +406,6 @@ public:
       if (ctx.cancelled && ctx.cancelled->load(std::memory_order_acquire)) {
         // The task owns the batch workspace, so finish already submitted work before returning.
         CUDA_CHECK(cudaStreamSynchronize(stream_));
-        progress.request_stop();
         logger()->info("[LocalPca] cancelled after {} of {} patches were submitted",
                        first, patches);
         return holoflow::core::OpResult::Cancelled;
@@ -476,7 +460,6 @@ public:
     CUDA_CHECK(cudaMemcpyAsync(&invalid, invalid_.get(), sizeof(int),
                                cudaMemcpyDeviceToHost, stream_));
     CUDA_CHECK(cudaStreamSynchronize(stream_));
-    progress.request_stop();
     if (invalid) throw std::runtime_error("LocalPca eigendecomposition failed");
     if (settings_.map == LocalPcaMap::Original || settings_.map == LocalPcaMap::Static ||
         settings_.map == LocalPcaMap::Dynamic) {
@@ -492,10 +475,19 @@ public:
       CUDA_CHECK(cudaGetLastError());
       CUDA_CHECK(cudaStreamSynchronize(stream_));
     }
-    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now() - started).count();
-    logger()->info("[LocalPca] completed {} patches in {} ms", patches, elapsed);
+    log_progress();
     return holoflow::core::OpResult::Ok;
+  }
+
+  void log_progress() {
+    ++windows_completed_;
+    const auto now = std::chrono::steady_clock::now();
+    if (logger()->should_log(spdlog::level::debug) && now >= next_progress_) {
+      const auto seconds = std::chrono::duration<double>(now - started_at_).count();
+      logger()->debug("[LocalPca] {} temporal windows completed in {:.1f} s ({:.1f} windows/s)",
+                      windows_completed_, seconds, windows_completed_ / seconds);
+      next_progress_ = now + std::chrono::seconds(1);
+    }
   }
 
   bool can_reuse(const holoflow::core::TDesc &desc, const LocalPcaSettings &settings,
@@ -574,6 +566,10 @@ private:
   curaii::unique_device_ptr<double2> original_moments_, static_moments_, spatial_scratch_;
   curaii::unique_device_ptr<int> info_, invalid_;
   int work_size_ = 0;
+  std::chrono::steady_clock::time_point started_at_;
+  std::chrono::steady_clock::time_point next_progress_;
+  bool started_ = false;
+  size_t windows_completed_ = 0;
 };
 
 } // namespace

@@ -1,13 +1,9 @@
 #include "holotask/syncs/holovibe_local_pca.hh"
 #include "holovibe_local_pca_processor.hh"
 #include "logger.hh"
-
 #include <chrono>
 #include <cmath>
-#include <condition_variable>
-#include <mutex>
 #include <stdexcept>
-#include <thread>
 
 namespace holotask::syncs {
 void to_json(nlohmann::json &j, const HolovibeLocalPcaSettings &s) {
@@ -28,9 +24,7 @@ class HolovibeLocalPca final : public holoflow::core::ISyncTask {
 public:
   HolovibeLocalPca(const holoflow::core::TDesc &d, HolovibeLocalPcaSettings s,
                    cudaStream_t stream)
-      : settings_(s), desc_(d), stream_(stream), frames_(d.shape[0]),
-        kernels_(((d.shape[2] + s.stride_x - 1) / s.stride_x) *
-                 ((d.shape[1] + s.stride_y - 1) / s.stride_y)),
+      : settings_(s), desc_(d), stream_(stream),
         processor_(static_cast<unsigned>(d.shape[2]),
                                  static_cast<unsigned>(d.shape[1]),
                                  static_cast<unsigned>(d.shape[0]), s.width_x, s.width_y,
@@ -44,40 +38,39 @@ public:
   }
   void set_rank_factor(float rank_factor) { settings_.rank_factor = rank_factor; }
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override {
-    const auto started = std::chrono::steady_clock::now();
-    logger()->info("[HolovibeLocalPca] processing {} frames across {} kernels ({}x{}, steps {}x{}, rank factor {})",
-                   frames_, kernels_, settings_.width_x, settings_.width_y,
-                   settings_.stride_x, settings_.stride_y, settings_.rank_factor);
-    std::jthread progress([this, started](std::stop_token stop) {
-      std::mutex mutex;
-      std::condition_variable_any wake;
-      std::unique_lock lock(mutex);
-      while (!stop.stop_requested()) {
-        wake.wait_for(lock, stop, std::chrono::seconds(5), [] { return false; });
-        if (!stop.stop_requested())
-          logger()->info("[HolovibeLocalPca] still processing ({} s elapsed)",
-                         std::chrono::duration_cast<std::chrono::seconds>(
-                             std::chrono::steady_clock::now() - started).count());
-      }
-    });
+    if (!started_) {
+      logger()->info("[HolovibeLocalPca] started: {} frames/window, {}x{} kernel, {}x{} step, rank factor {}",
+                     desc_.shape[0], settings_.width_x, settings_.width_y,
+                     settings_.stride_x, settings_.stride_y, settings_.rank_factor);
+      started_at_ = std::chrono::steady_clock::now();
+      next_progress_ = started_at_ + std::chrono::seconds(1);
+      started_ = true;
+    }
     const bool completed = processor_.process(
         reinterpret_cast<const cuComplex *>(ctx.inputs[0].data()),
         reinterpret_cast<cuComplex *>(ctx.outputs[0].data()), settings_.rank_factor,
         ctx.cancelled);
-    progress.request_stop();
-    logger()->info("[HolovibeLocalPca] {} {}-frame block in {} ms",
-                   completed ? "completed" : "cancelled", frames_,
-                   std::chrono::duration_cast<std::chrono::milliseconds>(
-                       std::chrono::steady_clock::now() - started).count());
+    if (completed) {
+      ++windows_submitted_;
+      const auto now = std::chrono::steady_clock::now();
+      if (logger()->should_log(spdlog::level::debug) && now >= next_progress_) {
+        const auto seconds = std::chrono::duration<double>(now - started_at_).count();
+        logger()->debug("[HolovibeLocalPca] {} temporal windows submitted in {:.1f} s ({:.1f} windows/s)",
+                        windows_submitted_, seconds, windows_submitted_ / seconds);
+        next_progress_ = now + std::chrono::seconds(1);
+      }
+    }
     return completed ? holoflow::core::OpResult::Ok : holoflow::core::OpResult::Cancelled;
   }
 private:
   HolovibeLocalPcaSettings settings_;
   holoflow::core::TDesc desc_;
   cudaStream_t stream_;
-  size_t frames_;
-  size_t kernels_;
   holovibes::compute::LocalPca processor_;
+  std::chrono::steady_clock::time_point started_at_;
+  std::chrono::steady_clock::time_point next_progress_;
+  bool started_ = false;
+  size_t windows_submitted_ = 0;
 };
 }
 
