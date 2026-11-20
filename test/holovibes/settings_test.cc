@@ -128,6 +128,27 @@ TEST(SignalPlotSettingsTest, DerivesSampleTimeFromFrequencyStride) {
   EXPECT_DOUBLE_EQ(settings.signal_plot_sample_time_seconds(), 64.0 / 40'000.0);
 }
 
+TEST(HolovibeLocalPcaSettingsTest, AllowsOverlappingTimeWindows) {
+  Settings settings{};
+  settings.view_type = ViewType::PROCESSED;
+  settings.holovibe_local_pca = true;
+  settings.time_window = 32;
+  settings.time_stride = 8;
+  settings.time_z_begin = 0;
+  settings.time_z_end = 32;
+
+  EXPECT_FALSE(has_issue(validate_settings(settings, {}), "time_stride_not_multiple"));
+
+  settings.time_window = 1;
+  settings.time_z_end = 1;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "holovibe_local_pca_invalid"));
+  settings.time_window = 32;
+  settings.time_z_end = 32;
+
+  settings.holovibe_local_pca = false;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "time_stride_not_multiple"));
+}
+
 TEST(SlidingAverageSettingsTest, RejectsMultipleAutofocusIterationsForNonUnitWindow) {
   Settings settings{};
   settings.view_type           = ViewType::PROCESSED;

@@ -2955,7 +2955,6 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     };
     s.time_window       = render_widget_->get_time_window();
     s.time_stride       = render_widget_->get_time_stride();
-    if (render_widget_->is_holovibe_local_pca_enabled()) s.time_stride = s.time_window;
     s.time_accumulation = 4; // TODO: expose in UI
     QString method      = render_widget_->get_time_transform();
     s.time_method       = method_from_str.at(method.toStdString());

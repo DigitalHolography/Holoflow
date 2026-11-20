@@ -212,7 +212,8 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
   const bool temporal_lscsi =
       requires_processed_pipeline(settings) && settings.pp_spatial_contrast &&
       settings.pp_spatial_contrast_dimensions == 3;
-  if (!temporal_lscsi && settings.time_window > 0 && settings.time_stride > 0 &&
+  if (!temporal_lscsi && !settings.holovibe_local_pca &&
+      settings.time_window > 0 && settings.time_stride > 0 &&
       (settings.time_stride % settings.time_window != 0)) {
     add_issue(result, ValidationSeverity::Error, "time_stride_not_multiple",
               "Time stride must be a multiple of the time window.",
@@ -307,7 +308,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     }
 
     if (settings.holovibe_local_pca &&
-        (settings.time_window < 1 || settings.holovibe_pca_width_x < 1 ||
+        (settings.time_window < 2 || settings.holovibe_pca_width_x < 1 ||
          settings.holovibe_pca_width_y < 1 || settings.holovibe_pca_stride_x < 1 ||
          settings.holovibe_pca_stride_y < 1 ||
          settings.holovibe_pca_stride_x > settings.holovibe_pca_width_x ||
@@ -317,7 +318,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
          settings.time_z_begin < 0 || settings.time_z_begin >= settings.time_z_end ||
          settings.time_z_end > settings.time_window)) {
       add_issue(result, ValidationSeverity::Error, "holovibe_local_pca_invalid",
-                "Holovibes Local-PCA needs positive kernel and step dimensions and a nonnegative rank factor.",
+                "Holovibes Local-PCA needs at least two frames, positive kernel and step dimensions, and a nonnegative rank factor.",
                 {SettingsField::TimeWindow});
     }
 

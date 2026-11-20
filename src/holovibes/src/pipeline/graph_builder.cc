@@ -186,7 +186,7 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
       source_cycle_frames = static_cast<size_t>(selected_frames / s_.load_batch * s_.load_batch);
     }
     frames = temporal_window(frames, {.window_size = static_cast<size_t>(s_.time_window),
-                                      .stride_size = static_cast<size_t>(s_.time_window),
+                                      .stride_size = static_cast<size_t>(s_.time_stride),
                                       .source_cycle_frames = source_cycle_frames});
     frames = convert(frames, {Target::CF32, Strat::Real});
     // Holovibes filters the complex field before Fresnel reconstruction.
