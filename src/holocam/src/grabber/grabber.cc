@@ -124,7 +124,7 @@ void Grabber::requeue(const FrameBufferPair &buffers) {
     }
   }
 }
-void Grabber::start_if_not_running() {
+void Grabber::start() {
   if (grabber_b_)
     grabber_b_->start();
   grabber_a_->start();
