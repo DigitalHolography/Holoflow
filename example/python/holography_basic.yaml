@@ -1,5 +1,5 @@
 input:
-  path: input.holo
+  path: D:\\260312_GUJ_1.holo
   mode: looping
   start_frame: 0
   end_frame: null

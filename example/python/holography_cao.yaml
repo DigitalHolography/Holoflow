@@ -1,10 +1,11 @@
 input:
-  path: input.holo
+  # path: D:\\260312_GUJ_1.holo
+  path: "D:\\260717_AUZ.holo"
   mode: finite
   start_frame: 0
   end_frame: null
   batch_size: 32
-  load_kind: cpu_cached
+  load_kind: live
   tail: error
   max_fps: null
   duration_seconds: null
