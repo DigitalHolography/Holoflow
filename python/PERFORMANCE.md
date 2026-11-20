@@ -31,6 +31,7 @@ The setup helper also installs these commands into the uv environment:
 | `uv run hf-fresnel-doppler` | Native Fresnel Doppler |
 | `uv run hf-fresnel-decomposed` | Decomposed Fresnel Doppler |
 | `uv run hf-benchmark input.holo --mode looping` | Throughput and makespan |
+| `uv run hf-demo config.yaml` | YAML processing pipeline, live FPS and latency, optional preview |
 
 Arguments are forwarded to the original scripts. The two Fresnel Doppler scripts
 still use their top-of-file `INPUT_PATH` and processing constants. Viewer and
@@ -40,6 +41,51 @@ Names are configured in `[tool.holoflow.examples]` in `pyproject.toml`. After
 adding a shortcut or recreating the environment, run
 `uv run python tools/setup_python.py` again. These Windows launchers use the
 environment's Python and do not rebuild the native extension.
+
+## YAML processing demo
+
+Copy `example/python/holography_demo.yaml` and set `input.path` to a Holofile.
+Relative paths are resolved next to the config. Install the examples group
+and register the launcher with the setup helper shown above.
+
+```powershell
+uv run hf-demo config.yaml
+```
+
+The processing order is temporal PCA (or one image per raw frame), optional
+Shack–Hartmann aberration correction, then optional Fresnel propagation.
+The upload, PCA input, propagation, and host output handoffs use independent
+queues. PCA processes four windows per call by default (`time.batch_windows`).
+Tune queue capacities in `queues`. The output latency probe runs after the
+device-to-host transfer and host queue, before NumPy collection or Void.
+Set `input.mode` to `finite` for EOF or `looping` for continuous playback.
+Use `input.duration_seconds` to stop a looping run automatically. The `drop`
+tail policy trims incomplete source batches and temporal windows.
+
+Set `output.average_window` to average consecutive processed images. The
+default of one keeps each image. The first averaged image is emitted after
+a full output window is available. Latency uses the complete contributing
+frame range, including both the aberration sensor average and the output
+sliding average. The live display shows input frames/s, output images/s, and
+oldest and newest frame latency. Set `viewer.enabled: true` for a finite
+Matplotlib preview. Use `input.end_frame` to limit the range to
+`viewer.max_frames` output images. The metrics include collecting the preview,
+and the viewer opens after the final summary.
+
+The [Basic config](../example/python/holography_basic.yaml) adds scaled
+8-bit output. The [CAO config](../example/python/holography_cao.yaml) adds
+prefiltering, output flatfield and percentile clipping, and an offline
+dashboard with the Shack–Hartmann mosaic, wrapped phase and coefficient history.
+Set `viewer.cao_diagnostics: true` on a finite, CAO-enabled viewer run to collect
+these diagnostics. The preview limit also applies to the diagnostic updates.
+Device queues hand off CAO diagnostics before copying them to host, so those
+transfers run in separate sections from the correction CUDA graph.
+
+Set `graph.enabled: true` to save the native compiled DOT and a local HTML
+report with a **Copy DOT** button. The demo prints both paths after the run.
+Set `graph.open_browser: false` to save without opening a browser. If Graphviz
+`dot` is on PATH, the report also displays the compiled graph. The report
+uses the compiler's execution plan and does not require Perfetto.
 
 ## Benchmark your pipeline
 
@@ -112,6 +158,36 @@ covers startup through wait and CUDA drain. A completed finite run also reports
 ```powershell
 uv run python example/python/throughput.py input.holo --interval-ms 500
 uv run python example/python/throughput.py input.holo --loop
+```
+
+## Live source-to-output latency
+
+Place `hf.latency_start(frames, node_id="input")` directly after Holofile.
+Pass the result tensor through `hf.latency_end(..., source_node_id="input",
+node_id="output_latency", first_frame=0, window_frames=32, stride_frames=32,
+interval_ms=500)` immediately before `hf.sinks.void()`. A NumPy sink also works
+when a host `BatchQueue` publishes the completed transfer upstream of the
+latency probe. Use one pair per graph.
+Each end-probe execution corresponds to one logical output. Output index `j`
+uses the frame range beginning at `first_frame + j * stride_frames` and
+spanning `window_frames`. Sequences continue across file wraps. Supply the
+actual mapping for your graph, including warmup offsets. Dynamic drops within
+the stream require provenance that this explicit mapping cannot infer.
+
+Read `latency` events from `run.receive_event()` for interval statistics, and
+`latency_summary` after `wait()` or `result()` for whole-run statistics.
+`run.latency("output_latency")` reads the cumulative snapshot. Statistics
+include matched and unmatched counts and the latest, min, mean, and max
+milliseconds since the oldest and newest contributing input frames entered
+the graph. All frames within a source batch share an ingress timestamp.
+With a host queue, the probe measures readiness when it sees the published
+buffer. Device-side probes measure readiness after the section's existing
+CUDA stream barrier. Input timestamps outside the retained `history_batches` (8,192 by
+default) count as unmatched.
+
+```powershell
+uv run python example/python/latency.py input.holo --interval-ms 500
+uv run python example/python/latency.py input.holo --loop
 ```
 
 ## Graphs, compiler logs and Perfetto

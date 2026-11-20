@@ -44,6 +44,7 @@ from ._graph import ArrayResult, CancelledError, Event, Executable, Graph, Tenso
 from ._diagnostics import Artifacts
 from ._benchmark import BenchmarkReport, benchmark
 from ._throughput import throughput
+from ._latency import latency_end, latency_start
 from ._ops import batch_queue, fresnel_diffraction, mean, pca, sliding_average
 from . import sources, sinks
 
@@ -54,7 +55,7 @@ complex64 = DType.complex64
 
 from ._ops import arange, asarray, meshgrid, square, exp, abs, add, multiply, fft2, fftshift, dual_reader_batch_queue
 
-from ._ops import filter2d, flatfield
+from ._ops import filter2d, flatfield, pct_clip
 
 from ._ops import (short_time_fresnel_diffraction, causal_sliding_average,
                    shack_hartmann_slopes, zernike_from_slopes, zernike_phase,

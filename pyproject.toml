@@ -5,7 +5,7 @@ requires-python = ">=3.14,<3.15"
 dependencies = []
 
 [dependency-groups]
-examples = ["numpy", "matplotlib"]
+examples = ["numpy", "matplotlib", "PyYAML"]
 
 [tool.uv]
 package = false
@@ -19,3 +19,5 @@ hf-fresnel-doppler = "fresnel_doppler.py"
 hf-fresnel-decomposed = "fresnel_doppler_decomposed.py"
 hf-benchmark = "benchmark.py"
 hf-throughput = "throughput.py"
+hf-latency = "latency.py"
+hf-demo = "holography_demo.py"

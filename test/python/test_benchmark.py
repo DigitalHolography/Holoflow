@@ -239,6 +239,69 @@ class BenchmarkTest(unittest.TestCase):
             self.assertTrue(any(event.node_id == "fps" and
                                 event.data["type"] == "throughput_summary" for event in events))
 
+    def test_latency_correlates_rebatched_cuda_graph_outputs(self):
+        def pipeline():
+            frames = hf.sources.holofile(self.input, loop=False, end_frame=127, tail="drop")
+            frames = hf.latency_start(frames, node_id="ingress")
+            windows = hf.batch_queue(frames.to("device"), 128, 16, 16)
+            images = hf.mean(windows.astype(hf.float32), axis=0)
+            images = hf.latency_end(images, source_node_id="ingress", node_id="egress",
+                                    window_frames=16, stride_frames=16, interval_ms=60_000)
+            hf.sinks.void(images)
+
+        with hf.trace(pipeline).compile(log_dir=self.root) as run:
+            run.start()
+            run.wait()
+            stats = run.latency("egress")
+            self.assertEqual(stats["matched_outputs"], 6)
+            self.assertEqual(stats["unmatched_outputs"], 0)
+            self.assertEqual(stats["oldest_ms"], stats["newest_ms"])
+            event = run.receive_event()
+            self.assertEqual(event.data["type"], "latency_summary")
+            self.assertTrue(event.data["completed"])
+            self.assertEqual(event.data["matched_outputs"], 6)
+        diagnostics = json.loads((run.artifacts.directory / "section_cuda_graphs.json").read_text())
+        section = next(s for s in diagnostics if any(t["name"] == "egress" for t in s["tasks"]))
+        self.assertGreater(section["launches"], 0)
+
+    def test_latency_live_idle_wrap_and_recording_events(self):
+        from test_execution import wait_recording
+
+        path = self.root / "latency_recording.holo"
+
+        def pipeline():
+            frames = hf.sources.holofile(self.input, loop=True, max_fps=128)
+            frames = hf.latency_start(frames, node_id="ingress")
+            frames = hf.throughput(frames, interval_ms=20, node_id="fps")
+            hf.sinks.holofile(frames, path, count=32, node_id="writer")
+            frames = hf.latency_end(frames, source_node_id="ingress", node_id="egress",
+                                    window_frames=32, stride_frames=32, interval_ms=15)
+            hf.sinks.void(frames)
+
+        with hf.trace(pipeline).compile() as run:
+            run.start()
+            wait_recording(run, "writer", path)
+            deadline = time.monotonic() + 4
+            idle_seen = throughput_seen = False
+            while time.monotonic() < deadline:
+                event = run.receive_event()
+                if event is not None:
+                    throughput_seen |= event.data["type"] == "throughput"
+                    if event.data["type"] == "latency" and not event.data["matched_outputs"]:
+                        self.assertIsNone(event.data["newest_ms"])
+                        idle_seen = True
+                if idle_seen and throughput_seen and run.latency("egress")["matched_outputs"] > 4:
+                    break
+                time.sleep(0.002)
+            run.stop()
+            run.wait()
+            self.assertTrue(idle_seen and throughput_seen)
+            self.assertGreater(run.latency("egress")["matched_outputs"], 4)
+            self.assertEqual(run.latency("egress")["unmatched_outputs"], 0)
+            summaries = {e.node_id: e.data for e in iter(run.receive_event, None)}
+            self.assertFalse(summaries["egress"]["completed"])
+            self.assertEqual(summaries["fps"]["type"], "throughput_summary")
+
     def test_stopped_finite_execution_is_cancelled(self):
         with hf.trace(self.pipeline, collect=True).compile(log_dir=self.root) as run:
             run.start()

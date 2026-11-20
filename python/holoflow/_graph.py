@@ -259,6 +259,10 @@ class Executable:
     def metrics(self) -> dict:
         return json.loads(self._get().metrics())
 
+    def latency(self, node_id: str) -> dict:
+        """Return cumulative latency statistics for the named output probe."""
+        return json.loads(self._get().latency(node_id))
+
     def progress(self) -> dict:
         """Cumulative successful emissions and a native monotonic timestamp."""
         return json.loads(self._get().progress())
@@ -292,10 +296,10 @@ class Graph:
     def to_dot(self) -> str:
         return self._native.to_dot()
 
-    def compile(self, log_dir=None) -> Executable:
-        """Compile, optionally collecting diagnostics in a unique run directory."""
+    def compile(self, log_dir=None, *, capture=True) -> Executable:
+        """Compile with optional diagnostics and Perfetto capture in a unique directory."""
         artifacts = None if log_dir is None else Artifacts.create(log_dir)
-        return self._compile(artifacts)
+        return self._compile(artifacts, capture=capture)
 
     def _compile(self, artifacts=None, *, capture=True):
         if artifacts is not None:

@@ -110,6 +110,15 @@ def filter2d(x: Tensor, r_inner: int, r_outer: int, s_inner: int = 0,
                      s_inner=s_inner, s_outer=s_outer), node_id)
 
 
+def pct_clip(x: Tensor, min_pct: float, max_pct: float, *, roi_radius: float = 0.9,
+             node_id: str | None = None) -> Tensor:
+    """Clip to percentiles measured within a centered elliptical ROI."""
+    return operation("PctClip", (x,), {
+        "min_pct": min_pct, "max_pct": max_pct,
+        "roi": {"cx": 0.5, "cy": 0.5, "rx": roi_radius, "ry": roi_radius, "angle": 0.0},
+    }, node_id)
+
+
 def flatfield(x: Tensor, sigma_y: float, sigma_x: float,
               *, node_id: str | None = None) -> Tensor:
     """Subtract a Gaussian background; sigmas are measured in pixels."""

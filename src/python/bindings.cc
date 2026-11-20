@@ -3,6 +3,7 @@
 
 #include "array_collector.hh"
 #include "finite_graph.hh"
+#include "latency.hh"
 #include "throughput.hh"
 #include <algorithm>
 #include <condition_variable>
@@ -48,6 +49,7 @@
 #include "holotask/syncs/memcpy.hh"
 #include "holotask/syncs/normalize.hh"
 #include "holotask/syncs/pca.hh"
+#include "holotask/syncs/pct_clip.hh"
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 #include "holotask/syncs/wrap2pi.hh"
@@ -63,6 +65,8 @@ namespace {
 class VoidTask final : public hc::ISyncTask {
 public:
   hc::OpResult execute(hc::SyncCtx &) override { return hc::OpResult::Ok; }
+  bool         supports_cuda_graph() const noexcept override { return true; }
+  void         record_cuda_graph(hc::CudaGraphCtx &) override {}
 };
 class VoidFactory final : public hc::ISyncTaskFactory {
 public:
@@ -95,6 +99,7 @@ std::unique_ptr<hc::Registry> make_registry() {
   r->register_sync("Filter2D", std::make_unique<holotask::syncs::Filter2DFactory>());
   r->register_sync("Flatfield", std::make_unique<holotask::syncs::FlatfieldFactory>());
   r->register_sync("Pca", std::make_unique<holotask::syncs::PcaFactory>());
+  r->register_sync("PctClip", std::make_unique<holotask::syncs::PctClipFactory>());
   r->register_sync("FresnelDiffraction",
                    std::make_unique<holotask::syncs::FresnelDiffractionFactory>());
   r->register_async("BatchQueue", std::make_unique<holotask::asyncs::BatchQueueFactory>());
@@ -111,6 +116,8 @@ std::unique_ptr<hc::Registry> make_registry() {
   r->register_sync("FFTShiftNp", std::make_unique<holonp::FFTShiftFactory>());
   r->register_sync("Void", std::make_unique<VoidFactory>());
   r->register_sync("Throughput", std::make_unique<holoflow::python::ThroughputFactory>());
+  r->register_sync("LatencyStart", std::make_unique<holoflow::python::LatencyMarkerFactory>());
+  r->register_sync("LatencyEnd", std::make_unique<holoflow::python::LatencyMarkerFactory>());
   r->register_async("DualReaderBatchQueue",
                     std::make_unique<holotask::asyncs::DualReaderBatchQueueFactory>());
   r->register_sync("ShortTimeFresnelDiffraction",
@@ -194,6 +201,7 @@ public:
     scheduler_ = std::make_unique<hr::Scheduler>(
         output_->graph, output_->sections, output_->resources, std::chrono::milliseconds{1000},
         hr::Scheduler::FailureCallback{}, hr::Scheduler::FailurePolicy::Capture);
+    configure_latency();
   }
   ~Executable() {
     try {
@@ -217,10 +225,12 @@ public:
     check_failure();
     const auto started = Clock::now();
     scheduler_->start();
-    if (!probes_.empty()) {
+    if (!probes_.empty() || latency_) {
       for (const auto &[id, probe] : probes_)
         probe->start(started);
-      reporter_ = std::jthread([this](std::stop_token stop) { report_throughput(stop); });
+      if (latency_)
+        latency_->start(started);
+      reporter_ = std::jthread([this](std::stop_token stop) { report_metrics(stop); });
     }
   }
   void stop() {
@@ -238,6 +248,12 @@ public:
       for (const auto &[id, probe] : probes_)
         pending_events_[id] =
             probe->summary(counts.value(id, uint64_t{0}), ended, scheduler_->completed());
+      if (latency_) {
+        auto summary                  = latency_->snapshot();
+        summary["type"]               = "latency_summary";
+        summary["completed"]          = scheduler_->completed();
+        pending_events_[latency_->id] = std::move(summary);
+      }
     }
     check_failure();
     std::lock_guard lock(events_mutex_);
@@ -330,11 +346,100 @@ public:
     check_failure();
     return scheduler_->progress().dump();
   }
+  std::string latency(const std::string &id) const {
+    check_failure();
+    if (!latency_ || id != latency_->id)
+      throw std::invalid_argument("Unknown latency output node: " + id);
+    return latency_->snapshot().dump();
+  }
 
 private:
   using Clock = holoflow::python::ThroughputTask::Clock;
 
-  void report_throughput(std::stop_token stop) noexcept {
+  static uint64_t latency_setting(const Json &settings, const char *key, uint64_t minimum,
+                                  uint64_t maximum = std::numeric_limits<uint64_t>::max()) {
+    const auto &value = settings.at(key);
+    if (!value.is_number_integer() || (!value.is_number_unsigned() && value.get<int64_t>() < 0))
+      throw std::invalid_argument(std::string("Invalid latency setting: ") + key);
+    const auto result = value.get<uint64_t>();
+    if (result < minimum || result > maximum)
+      throw std::invalid_argument(std::string("Invalid latency setting: ") + key);
+    return result;
+  }
+
+  void configure_latency() {
+    const auto &graph = output_->graph;
+    using Vertex      = hr::GraphPlan::vertex_descriptor;
+    std::optional<Vertex> start, end;
+    for (auto v : boost::make_iterator_range(vertices(graph))) {
+      const auto &kind = graph[v].spec.kind;
+      if (kind != "LatencyStart" && kind != "LatencyEnd")
+        continue;
+      auto &marker = kind == "LatencyStart" ? start : end;
+      if (marker)
+        throw std::invalid_argument("Only one latency probe pair is supported");
+      marker = v;
+    }
+    if (!start && !end)
+      return;
+    if (!start || !end)
+      throw std::invalid_argument("Latency requires both a start and an end probe");
+    const auto &settings = graph[*end].spec.settings;
+    if (settings.at("source_node_id") != graph[*start].spec.name)
+      throw std::invalid_argument("Latency source_node_id must identify the start probe");
+    if (in_degree(*start, graph) != 1 ||
+        graph[source(*in_edges(*start, graph).first, graph)].spec.kind != "Holofile")
+      throw std::invalid_argument("Latency start must directly follow Holofile");
+    if (out_degree(*end, graph) != 1)
+      throw std::invalid_argument("Latency end requires one downstream sink");
+    const auto &sink     = graph[target(*out_edges(*end, graph).first, graph)].spec.kind;
+    auto        producer = *end;
+    do {
+      producer = source(*in_edges(producer, graph).first, graph);
+    } while (graph[producer].spec.kind == "Throughput");
+    // Host queue publication follows the producer's stream barrier.
+    const bool host_ready =
+        graph[producer].spec.kind == "BatchQueue" &&
+        graph[producer].infer.output_descs[0].mem_loc == hc::MemLoc::Host &&
+        std::ranges::any_of(output_->sections, [&](const auto &section) {
+          return !section.has_synchronizing_async_producer &&
+                 std::ranges::find(section.async_prod, producer) != section.async_prod.end();
+        });
+    if (sink != "Void" && !(sink == "ArrayCollector" && host_ready))
+      throw std::invalid_argument(
+          "Latency end requires Void or a NumPy sink after a synchronized host queue");
+    const auto section = std::ranges::find_if(output_->sections, [&](const auto &section) {
+      return std::ranges::find(section.sync_topo, *end) != section.sync_topo.end();
+    });
+    if (section == output_->sections.end() || section->has_synchronizing_async_producer)
+      throw std::invalid_argument(
+          "Latency end requires a section with an unconditional CUDA barrier");
+    std::set<Vertex>    upstream;
+    std::vector<Vertex> pending{*end};
+    while (!pending.empty()) {
+      const auto v = pending.back();
+      pending.pop_back();
+      if (upstream.insert(v).second)
+        for (auto e : boost::make_iterator_range(in_edges(v, graph)))
+          pending.push_back(source(e, graph));
+    }
+    if (!upstream.contains(*start))
+      throw std::invalid_argument("Latency end must depend on the start probe");
+    auto *source_settings = &graph[*start].spec.settings;
+    latency_              = std::make_unique<holoflow::python::LatencyMeasurement>(
+        graph[*end].spec.name, graph[*start].infer.input_descs[0].shape.at(0),
+        latency_setting(*source_settings, "history_batches", 1, std::numeric_limits<size_t>::max()),
+        latency_setting(settings, "first_frame", 0), latency_setting(settings, "window_frames", 1),
+        latency_setting(settings, "stride_frames", 1),
+        static_cast<int>(
+            latency_setting(settings, "interval_ms", 1, std::numeric_limits<int>::max())));
+    scheduler_->observe_sync_node(*start, false,
+                                  [probe = latency_.get()](auto now) { probe->input(now); });
+    scheduler_->observe_sync_node(*end, !host_ready,
+                                  [probe = latency_.get()](auto now) { probe->output(now); });
+  }
+
+  void report_metrics(std::stop_token stop) noexcept {
     try {
       std::condition_variable_any timer;
       std::mutex                  timer_mutex;
@@ -343,15 +448,20 @@ private:
         auto deadline = Clock::time_point::max();
         for (const auto &[id, probe] : probes_)
           deadline = std::min(deadline, probe->deadline());
+        if (latency_)
+          deadline = std::min(deadline, latency_->deadline());
         timer.wait_until(lock, stop, deadline, [] { return false; });
         if (stop.stop_requested() || scheduler_->stop_requested())
           return;
-        const auto      counts = scheduler_->progress().at("successful_emissions");
-        const auto      now    = Clock::now();
+        const auto counts =
+            probes_.empty() ? Json::object() : scheduler_->progress().at("successful_emissions");
+        const auto      now = Clock::now();
         std::lock_guard events_lock(events_mutex_);
         for (const auto &[id, probe] : probes_)
           if (probe->deadline() <= now)
             pending_events_[id] = probe->sample(counts.value(id, uint64_t{0}), now);
+        if (latency_ && latency_->deadline() <= now)
+          pending_events_[latency_->id] = latency_->sample(now);
       }
     } catch (...) {
       std::lock_guard lock(events_mutex_);
@@ -365,6 +475,7 @@ private:
   std::unique_ptr<hc::Registry>                             registry_;
   std::unique_ptr<hr::Compiler>                             compiler_;
   std::unique_ptr<hr::CompilerOutput>                       output_;
+  std::unique_ptr<holoflow::python::LatencyMeasurement>     latency_;
   std::unique_ptr<hr::Scheduler>                            scheduler_;
   std::set<std::string>                                     node_ids_;
   std::vector<std::string>                                  names_;
@@ -492,6 +603,7 @@ PYBIND11_MODULE(_native, m) {
       .def("send_event", &Executable::send_event)
       .def("receive_event", &Executable::receive_event)
       .def("metrics", &Executable::metrics)
+      .def("latency", &Executable::latency)
       .def("progress", &Executable::progress);
   py::class_<ProfileCapture>(m, "ProfileCapture")
       .def(py::init<const std::string &>())

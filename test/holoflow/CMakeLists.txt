@@ -65,6 +65,10 @@ add_executable(holoflow_runtime_test
     unit/runtime/windows_crash_handler_test.cc
 )
 
+if(ENABLE_PYTHON)
+    target_sources(holoflow_runtime_test PRIVATE unit/runtime/latency_measurement_test.cc)
+endif()
+
 target_include_directories(holoflow_runtime_test
     PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}

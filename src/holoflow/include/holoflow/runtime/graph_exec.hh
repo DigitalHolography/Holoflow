@@ -62,6 +62,9 @@ public:
   [[nodiscard]] std::map<std::string, NodeMetrics> metrics() const;
   /// Cumulative successful emissions, independent of interval metrics; timestamps in seconds.
   [[nodiscard]] nlohmann::json progress() const;
+  /// Register before start. Barrier observers run only after the section synchronizes.
+  void observe_sync_node(GraphPlan::vertex_descriptor node, bool after_barrier,
+                         std::function<void(std::chrono::steady_clock::time_point)> observer);
   /// Host submission timing/counts for section graph launches, not GPU execution duration.
   [[nodiscard]] std::map<std::string, NodeMetrics> section_graph_metrics() const;
   [[nodiscard]] nlohmann::json                     section_graph_diagnostics() const;

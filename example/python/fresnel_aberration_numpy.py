@@ -133,7 +133,8 @@ def collect_frames(path, start, end, output_frames=None):
     return results
 
 
-def create_viewer(results):
+def create_viewer(results, *, xy_offset=XY_OFFSET, discard_first=DISCARD_FIRST,
+                  zernike_modes=ZERNIKE_INDEXES):
     import numpy as np
     import matplotlib.pyplot as plt
     from matplotlib.widgets import Slider
@@ -143,26 +144,29 @@ def create_viewer(results):
     diagnostics = results["coefficients"]
     if any(len(results[key]) != len(diagnostics) for key in ("phase", "shack_hartmann")):
         raise ValueError("Diagnostic streams must have matching update counts")
-    if len(diagnostics) < len(frames) + XY_OFFSET:
+    if len(diagnostics) < len(frames) + xy_offset:
         raise ValueError("Diagnostic streams do not cover the XY averaging windows")
     fig, axes = plt.subplots(2, 2, figsize=(12, 8))
     xy_ax, sh_ax, phase_ax, coeff_ax = axes.flat
-    xy_image = xy_ax.imshow(frames[0], cmap="gray", vmin=0, vmax=255)
-    sh_image = sh_ax.imshow(results["shack_hartmann"][XY_OFFSET], cmap="gray", vmin=0, vmax=255)
-    phase_image = phase_ax.imshow(results["phase"][XY_OFFSET], cmap="twilight", vmin=0, vmax=2*np.pi)
+    xy_image = xy_ax.imshow(frames[0], cmap="gray", **(
+        dict(vmin=0, vmax=255) if frames.dtype == np.uint8 else {}))
+    sh_image = sh_ax.imshow(results["shack_hartmann"][xy_offset], cmap="gray", vmin=0, vmax=255)
+    phase_image = phase_ax.imshow(results["phase"][xy_offset], cmap="twilight", vmin=0, vmax=2*np.pi)
     fig.colorbar(phase_image, ax=phase_ax, label="Wrapped phase (rad)")
     # Exclude incomplete causal-average startup from both curves and autoscaling.
     # Keep absolute update indices so the XY slider still selects the correct sample.
-    updates = np.arange(DISCARD_FIRST, len(diagnostics))
-    for column, noll in enumerate(ZERNIKE_INDEXES):
-        coeff_ax.plot(updates, diagnostics[DISCARD_FIRST:, column], label=f"a{noll}")
-    marker = coeff_ax.axvline(XY_OFFSET, color="black")
+    updates = np.arange(discard_first, len(diagnostics))
+    for column, noll in enumerate(zernike_modes):
+        coeff_ax.plot(updates, diagnostics[discard_first:, column], label=f"a{noll}")
+    marker = coeff_ax.axvline(xy_offset, color="black")
     coeff_ax.set(xlabel="Temporal-window update", ylabel="Phase coefficient (rad)")
     coeff_ax.legend()
     def update(value):
         i = int(value)
-        sample = i + XY_OFFSET
+        sample = i + xy_offset
         xy_image.set_data(frames[i])
+        if frames.dtype != np.uint8:
+            xy_image.autoscale()
         sh_image.set_data(results["shack_hartmann"][sample])
         phase_image.set_data(results["phase"][sample])
         marker.set_xdata([sample, sample])

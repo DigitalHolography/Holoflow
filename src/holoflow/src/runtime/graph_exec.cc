@@ -185,6 +185,12 @@ void *MemoryBlock::get() {
 
 class Scheduler::Impl {
 public:
+  struct SyncObserver {
+    bool                                                       after_barrier;
+    std::function<void(std::chrono::steady_clock::time_point)> notify;
+  };
+  std::map<GraphPlan::vertex_descriptor, SyncObserver> sync_observers;
+
   Impl(const GraphPlan &graph, const std::vector<Section> &sections, ExecResouces &res,
        std::chrono::milliseconds metrics_interval, Scheduler::FailureCallback failure_callback,
        Scheduler::FailurePolicy failure_policy);
@@ -1046,6 +1052,14 @@ void Scheduler::Impl::run_section(int section_id) {
               acc.run_count.fetch_add(1, std::memory_order_relaxed);
               for (auto v : sec.sync_topo)
                 metric_accumulators_.at(v).total_successes.fetch_add(1, std::memory_order_relaxed);
+              if (!sync_observers.empty()) {
+                const auto now = std::chrono::steady_clock::now();
+                for (auto v : sec.sync_topo) {
+                  const auto observer = sync_observers.find(v);
+                  if (observer != sync_observers.end() && !observer->second.after_barrier)
+                    observer->second.notify(now);
+                }
+              }
             } else {
               graphs.report_miss(res_.storages);
             }
@@ -1062,8 +1076,12 @@ void Scheduler::Impl::run_section(int section_id) {
         detail::current_node_name() = current_node_name;
         try {
           const auto result = run_sync(v);
-          if (result == core::OpResult::Ok)
+          if (result == core::OpResult::Ok) {
             checkpoint.produced.push_back(v);
+            const auto observer = sync_observers.find(v);
+            if (observer != sync_observers.end() && !observer->second.after_barrier)
+              observer->second.notify(std::chrono::steady_clock::now());
+          }
           if (result == core::OpResult::Ok || (finite_mode_ && result == core::OpResult::Eof))
             ++checkpoint.node;
         } catch (...) {
@@ -1077,6 +1095,15 @@ void Scheduler::Impl::run_section(int section_id) {
         if (finite_mode_ || !sec.has_synchronizing_async_producer) {
           ranges.phase("Wait");
           CUDA_CHECK(cudaStreamSynchronize(sec.stream));
+          if (!sync_observers.empty()) {
+            const auto  now   = std::chrono::steady_clock::now();
+            const auto &nodes = checkpoint.graph_submitted ? sec.sync_topo : checkpoint.produced;
+            for (auto v : nodes) {
+              const auto observer = sync_observers.find(v);
+              if (observer != sync_observers.end() && observer->second.after_barrier)
+                observer->second.notify(now);
+            }
+          }
         }
         advance(Stage::Push);
         break;
@@ -1630,6 +1657,13 @@ nlohmann::json Scheduler::Impl::progress() const {
 }
 
 nlohmann::json Scheduler::progress() const { return impl_->progress(); }
+
+void Scheduler::observe_sync_node(
+    GraphPlan::vertex_descriptor node, bool after_barrier,
+    std::function<void(std::chrono::steady_clock::time_point)> observer) {
+  impl_->sync_observers.insert_or_assign(node,
+                                         Impl::SyncObserver{after_barrier, std::move(observer)});
+}
 
 std::map<std::string, NodeMetrics> Scheduler::section_graph_metrics() const {
   return impl_->section_graph_metrics();
