@@ -41,6 +41,9 @@ if _os.name == "nt":
 
 from ._native import DType, ExecutionError, __version__
 from ._graph import ArrayResult, CancelledError, Event, Executable, Graph, Tensor, trace
+from ._diagnostics import Artifacts
+from ._benchmark import BenchmarkReport, benchmark
+from ._throughput import throughput
 from ._ops import batch_queue, fresnel_diffraction, mean, pca, sliding_average
 from . import sources, sinks
 

@@ -196,6 +196,7 @@ public:
 
   void set_metrics_interval(std::chrono::milliseconds interval);
   [[nodiscard]] std::map<std::string, NodeMetrics> metrics() const;
+  [[nodiscard]] nlohmann::json                     progress() const;
   /// Host submission timing/counts for section graph launches, not GPU execution duration.
   [[nodiscard]] std::map<std::string, NodeMetrics> section_graph_metrics() const;
   [[nodiscard]] nlohmann::json                     section_graph_diagnostics() const;
@@ -340,12 +341,14 @@ private:
   struct NodeMetricAccumulator {
     std::atomic<uint64_t> duration_ns{0};
     std::atomic<uint64_t> run_count{0};
+    std::atomic<uint64_t> total_successes{0};
     std::atomic<uint64_t> host_bytes{0};
     std::atomic<uint64_t> device_bytes{0};
 
     NodeMetricAccumulator() = default;
 
     NodeMetricAccumulator(const NodeMetricAccumulator &other) {
+      total_successes.store(other.total_successes.load(std::memory_order_relaxed));
       duration_ns.store(other.duration_ns.load(std::memory_order_relaxed),
                         std::memory_order_relaxed);
       run_count.store(other.run_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
@@ -358,6 +361,7 @@ private:
       if (this == &other) {
         return *this;
       }
+      total_successes.store(other.total_successes.load(std::memory_order_relaxed));
       duration_ns.store(other.duration_ns.load(std::memory_order_relaxed),
                         std::memory_order_relaxed);
       run_count.store(other.run_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
@@ -1040,6 +1044,8 @@ void Scheduler::Impl::run_section(int section_id) {
                                             .count()),
                   std::memory_order_relaxed);
               acc.run_count.fetch_add(1, std::memory_order_relaxed);
+              for (auto v : sec.sync_topo)
+                metric_accumulators_.at(v).total_successes.fetch_add(1, std::memory_order_relaxed);
             } else {
               graphs.report_miss(res_.storages);
             }
@@ -1569,6 +1575,7 @@ void Scheduler::Impl::record_node_sample(std::size_t idx, uint64_t duration_ns, 
   auto &acc = metric_accumulators_.at(idx);
   acc.duration_ns.fetch_add(duration_ns, std::memory_order_relaxed);
   acc.run_count.fetch_add(1, std::memory_order_relaxed);
+  acc.total_successes.fetch_add(1, std::memory_order_relaxed);
   acc.host_bytes.fetch_add(host_bytes, std::memory_order_relaxed);
   acc.device_bytes.fetch_add(device_bytes, std::memory_order_relaxed);
 }
@@ -1610,6 +1617,19 @@ void Scheduler::set_metrics_interval(std::chrono::milliseconds interval) {
 }
 
 std::map<std::string, NodeMetrics> Scheduler::metrics() const { return impl_->metrics(); }
+
+nlohmann::json Scheduler::Impl::progress() const {
+  nlohmann::json counts = nlohmann::json::object();
+  for (size_t i = 0; i < metric_accumulators_.size(); ++i)
+    counts[node_names_.at(i)] =
+        metric_accumulators_[i].total_successes.load(std::memory_order_relaxed);
+  return {
+      {"timestamp_seconds",
+       std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count()},
+      {"successful_emissions", std::move(counts)}};
+}
+
+nlohmann::json Scheduler::progress() const { return impl_->progress(); }
 
 std::map<std::string, NodeMetrics> Scheduler::section_graph_metrics() const {
   return impl_->section_graph_metrics();

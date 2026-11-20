@@ -1,0 +1,21 @@
+[project]
+name = "holoflow-development"
+version = "0.0.0"
+requires-python = ">=3.14,<3.15"
+dependencies = []
+
+[dependency-groups]
+examples = ["numpy", "matplotlib"]
+
+[tool.uv]
+package = false
+
+[tool.holoflow.examples]
+hf-finite = "finite_numpy.py"
+hf-fresnel = "fresnel_numpy.py"
+hf-aberration = "fresnel_aberration_numpy.py"
+hf-doppler = "simple_doppler.py"
+hf-fresnel-doppler = "fresnel_doppler.py"
+hf-fresnel-decomposed = "fresnel_doppler_decomposed.py"
+hf-benchmark = "benchmark.py"
+hf-throughput = "throughput.py"

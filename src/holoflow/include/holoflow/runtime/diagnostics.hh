@@ -8,6 +8,9 @@
 
 namespace holoflow::runtime {
 
+// Explicit readers call this only after diagnostic producers have stopped.
+void flush_diagnostics();
+
 // Copy graph values before enqueueing; serialization and file I/O run in the background.
 void dump_graph_spec_async(const std::filesystem::path &json_path, const core::GraphSpec &graph);
 void dump_pipeline_graph_async(const std::filesystem::path &log_dir, const core::GraphSpec &graph,
@@ -19,7 +22,6 @@ void dump_compiled_graph_async(const std::filesystem::path &dot_path, const Comp
 void dump_compiled_graph_async(const std::filesystem::path &dot_path, const CompilerOutput &output,
                                const GraphCompiledDumpPreferences &preferences,
                                std::string graph_name, std::string failure_node,
-                               std::string failure_context,
-                               GraphFailureKind failure_kind) noexcept;
+                               std::string failure_context, GraphFailureKind failure_kind) noexcept;
 
 } // namespace holoflow::runtime

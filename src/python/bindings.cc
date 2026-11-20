@@ -3,16 +3,22 @@
 
 #include "array_collector.hh"
 #include "finite_graph.hh"
+#include "throughput.hh"
+#include <algorithm>
+#include <condition_variable>
 #include <limits>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <ranges>
 #include <set>
+#include <thread>
 
 #include "holofile/holofile.hh"
 #include "holoflow/core/registry.hh"
 #include "holoflow/runtime/compiler.hh"
+#include "holoflow/runtime/diagnostics.hh"
 #include "holoflow/runtime/graph_display.hh"
+#include "holoflow/runtime/tracing.hh"
 #include "holonp/abs.hh"
 #include "holonp/add.hh"
 #include "holonp/arange.hh"
@@ -104,6 +110,7 @@ std::unique_ptr<hc::Registry> make_registry() {
   r->register_sync("Abs", std::make_unique<holonp::AbsFactory>());
   r->register_sync("FFTShiftNp", std::make_unique<holonp::FFTShiftFactory>());
   r->register_sync("Void", std::make_unique<VoidFactory>());
+  r->register_sync("Throughput", std::make_unique<holoflow::python::ThroughputFactory>());
   r->register_async("DualReaderBatchQueue",
                     std::make_unique<holotask::asyncs::DualReaderBatchQueueFactory>());
   r->register_sync("ShortTimeFresnelDiffraction",
@@ -129,19 +136,61 @@ public:
   using std::runtime_error::runtime_error;
 };
 
+class ProfileCapture {
+public:
+  explicit ProfileCapture(const std::string &directory) : path_(directory) {
+    std::filesystem::create_directories(path_);
+    if (hr::tracing::Session::available()) {
+      session_ = hr::tracing::Session::start();
+      if (!session_)
+        throw std::runtime_error("Another process-wide Perfetto capture is active");
+    }
+  }
+  ~ProfileCapture() {
+    try {
+      close();
+    } catch (...) { /* Explicit close reports export failures. */
+    }
+  }
+  bool available() const { return hr::tracing::Session::available(); }
+  void begin_trace() {
+    trace_ = std::make_unique<hr::tracing::ScopedTrace>("Python Graph Construction");
+  }
+  void end_trace() { trace_.reset(); }
+  void close() {
+    end_trace();
+    hr::flush_diagnostics();
+    if (session_) {
+      auto session = std::move(session_);
+      session->stop_and_save(path_ / "trace_events.perfetto-trace");
+    }
+  }
+
+private:
+  std::filesystem::path                     path_;
+  std::unique_ptr<hr::tracing::Session>     session_;
+  std::unique_ptr<hr::tracing::ScopedTrace> trace_;
+};
+
 class Executable {
 public:
-  explicit Executable(const hc::GraphSpec &spec)
-      : registry_(make_registry()),
-        compiler_(std::make_unique<hr::Compiler>(*registry_,
-                                                 hr::Compiler::Config{.dump_dot_on_failure = false,
-                                                                      .verbose_tracing     = false,
-                                                                      .enable_profiling = false})) {
+  explicit Executable(const hc::GraphSpec &spec, const std::string &log_dir, bool capture)
+      : capture_(!log_dir.empty() && capture ? std::make_unique<ProfileCapture>(log_dir) : nullptr),
+        log_dir_(log_dir), registry_(make_registry()),
+        compiler_(std::make_unique<hr::Compiler>(
+            *registry_, hr::Compiler::Config{.log_dir             = log_dir,
+                                             .dump_dot_on_failure = !log_dir.empty(),
+                                             .verbose_tracing     = false,
+                                             .enable_profiling    = false})) {
     for (const auto v : boost::make_iterator_range(vertices(spec)))
       node_ids_.insert(spec[v].name);
     for (const auto v : boost::make_iterator_range(vertices(spec)))
       names_.push_back(spec[v].name);
-    output_    = compiler_->compile(holoflow::python::prepare_finite_graph(spec, *registry_));
+    output_ = compiler_->compile(holoflow::python::prepare_finite_graph(spec, *registry_));
+    for (const auto &[id, task] : output_->resources.tasks) {
+      if (auto *probe = dynamic_cast<holoflow::python::ThroughputTask *>(task.get()))
+        probes_.emplace(id, probe);
+    }
     scheduler_ = std::make_unique<hr::Scheduler>(
         output_->graph, output_->sections, output_->resources, std::chrono::milliseconds{1000},
         hr::Scheduler::FailureCallback{}, hr::Scheduler::FailurePolicy::Capture);
@@ -150,7 +199,7 @@ public:
     try {
       if (scheduler_ && scheduler_->is_running()) {
         stop();
-        scheduler_->wait();
+        wait();
       }
     } catch (...) { /* Explicit wait reports failures. */
     }
@@ -166,7 +215,13 @@ public:
   }
   void start() {
     check_failure();
+    const auto started = Clock::now();
     scheduler_->start();
+    if (!probes_.empty()) {
+      for (const auto &[id, probe] : probes_)
+        probe->start(started);
+      reporter_ = std::jthread([this](std::stop_token stop) { report_throughput(stop); });
+    }
   }
   void stop() {
     if (scheduler_->is_running())
@@ -174,23 +229,49 @@ public:
   }
   void wait() {
     scheduler_->wait();
+    const auto ended = Clock::now();
+    if (reporter_.joinable()) {
+      reporter_.request_stop();
+      reporter_.join();
+      const auto      counts = scheduler_->progress().at("successful_emissions");
+      std::lock_guard lock(events_mutex_);
+      for (const auto &[id, probe] : probes_)
+        pending_events_[id] =
+            probe->summary(counts.value(id, uint64_t{0}), ended, scheduler_->completed());
+    }
     check_failure();
+    std::lock_guard lock(events_mutex_);
+    if (reporting_failure_)
+      std::rethrow_exception(reporting_failure_);
   }
-  void close() {
+  void close(bool finalize_diagnostics = true) {
     if (!scheduler_)
       return;
     std::exception_ptr failure;
     try {
       stop();
-      scheduler_->wait();
-      check_failure();
+      wait();
     } catch (...) {
       failure = std::current_exception();
+    }
+    if (reporter_.joinable()) {
+      reporter_.request_stop();
+      reporter_.join();
     }
     scheduler_.reset();
     output_.reset();
     compiler_.reset();
     registry_.reset();
+    if (!log_dir_.empty() && finalize_diagnostics) {
+      try {
+        hr::flush_diagnostics();
+        if (capture_)
+          capture_->close();
+      } catch (...) {
+        if (!failure)
+          failure = std::current_exception();
+      }
+    }
     if (failure)
       std::rethrow_exception(failure);
   }
@@ -219,9 +300,20 @@ public:
   std::optional<std::pair<std::string, std::string>> receive_event() {
     check_failure();
     auto event = scheduler_->ui_try_receive();
-    if (!event)
+    if (event)
+      return std::pair{event->node_id, event->data.dump()};
+    std::lock_guard lock(events_mutex_);
+    if (reporting_failure_)
+      std::rethrow_exception(reporting_failure_);
+    if (pending_events_.empty())
       return std::nullopt;
-    return std::pair{event->node_id, event->data.dump()};
+    // Round-robin among pending nodes, even if one node refreshes much faster.
+    auto next = pending_events_.upper_bound(last_reported_);
+    if (next == pending_events_.end())
+      next = pending_events_.begin();
+    auto entry     = pending_events_.extract(next);
+    last_reported_ = entry.key();
+    return std::pair{entry.key(), entry.mapped().dump()};
   }
   std::string metrics() const {
     Json result = Json::object();
@@ -234,15 +326,54 @@ public:
                     {"individual_timing_available", m.individual_timing_available}};
     return result.dump();
   }
+  std::string progress() const {
+    check_failure();
+    return scheduler_->progress().dump();
+  }
 
 private:
+  using Clock = holoflow::python::ThroughputTask::Clock;
+
+  void report_throughput(std::stop_token stop) noexcept {
+    try {
+      std::condition_variable_any timer;
+      std::mutex                  timer_mutex;
+      std::unique_lock            lock(timer_mutex);
+      while (!stop.stop_requested()) {
+        auto deadline = Clock::time_point::max();
+        for (const auto &[id, probe] : probes_)
+          deadline = std::min(deadline, probe->deadline());
+        timer.wait_until(lock, stop, deadline, [] { return false; });
+        if (stop.stop_requested() || scheduler_->stop_requested())
+          return;
+        const auto      counts = scheduler_->progress().at("successful_emissions");
+        const auto      now    = Clock::now();
+        std::lock_guard events_lock(events_mutex_);
+        for (const auto &[id, probe] : probes_)
+          if (probe->deadline() <= now)
+            pending_events_[id] = probe->sample(counts.value(id, uint64_t{0}), now);
+      }
+    } catch (...) {
+      std::lock_guard lock(events_mutex_);
+      reporting_failure_ = std::current_exception();
+    }
+  }
+
   // Destruction order matters: scheduler borrows output; compiler borrows registry.
-  std::unique_ptr<hc::Registry>       registry_;
-  std::unique_ptr<hr::Compiler>       compiler_;
-  std::unique_ptr<hr::CompilerOutput> output_;
-  std::unique_ptr<hr::Scheduler>      scheduler_;
-  std::set<std::string>               node_ids_;
-  std::vector<std::string>            names_;
+  std::unique_ptr<ProfileCapture>                           capture_;
+  std::string                                               log_dir_;
+  std::unique_ptr<hc::Registry>                             registry_;
+  std::unique_ptr<hr::Compiler>                             compiler_;
+  std::unique_ptr<hr::CompilerOutput>                       output_;
+  std::unique_ptr<hr::Scheduler>                            scheduler_;
+  std::set<std::string>                                     node_ids_;
+  std::vector<std::string>                                  names_;
+  std::map<std::string, holoflow::python::ThroughputTask *> probes_;
+  std::mutex                                                events_mutex_;
+  std::map<std::string, Json>                               pending_events_;
+  std::string                                               last_reported_;
+  std::exception_ptr                                        reporting_failure_;
+  std::jthread                                              reporter_;
 };
 
 class Graph {
@@ -251,7 +382,9 @@ public:
   explicit Graph(const std::string &json) : spec_(hc::from_json(Json::parse(json))) {}
   std::string                 json() const { return hc::to_json(spec_).dump(); }
   std::string                 dot() const { return hc::to_dot(spec_); }
-  std::unique_ptr<Executable> compile() const { return std::make_unique<Executable>(spec_); }
+  std::unique_ptr<Executable> compile(const std::string &log_dir, bool capture) const {
+    return std::make_unique<Executable>(spec_, log_dir, capture);
+  }
 
 private:
   hc::GraphSpec spec_;
@@ -343,12 +476,14 @@ PYBIND11_MODULE(_native, m) {
       .def(py::init<const std::string &>())
       .def("to_json", &Graph::json)
       .def("to_dot", &Graph::dot)
-      .def("compile", &Graph::compile, py::call_guard<py::gil_scoped_release>());
+      .def("compile", &Graph::compile, py::arg("log_dir") = "", py::arg("capture") = true,
+           py::call_guard<py::gil_scoped_release>());
   py::class_<Executable>(m, "Executable", py::release_gil_before_calling_cpp_dtor())
       .def("start", &Executable::start, py::call_guard<py::gil_scoped_release>())
       .def("stop", &Executable::stop)
       .def("wait", &Executable::wait, py::call_guard<py::gil_scoped_release>())
-      .def("close", &Executable::close, py::call_guard<py::gil_scoped_release>())
+      .def("close", &Executable::close, py::arg("finalize_diagnostics") = true,
+           py::call_guard<py::gil_scoped_release>())
       .def("completed", &Executable::completed)
       .def("array_result", &Executable::array_result)
       .def("is_running", &Executable::is_running)
@@ -356,7 +491,16 @@ PYBIND11_MODULE(_native, m) {
       .def("check_failure", &Executable::check_failure)
       .def("send_event", &Executable::send_event)
       .def("receive_event", &Executable::receive_event)
-      .def("metrics", &Executable::metrics);
+      .def("metrics", &Executable::metrics)
+      .def("progress", &Executable::progress);
+  py::class_<ProfileCapture>(m, "ProfileCapture")
+      .def(py::init<const std::string &>())
+      .def_property_readonly("available", &ProfileCapture::available)
+      .def("begin_trace", &ProfileCapture::begin_trace)
+      .def("end_trace", &ProfileCapture::end_trace)
+      .def("close", &ProfileCapture::close, py::call_guard<py::gil_scoped_release>());
+  m.def("flush_diagnostics", &hr::flush_diagnostics, py::call_guard<py::gil_scoped_release>());
+  m.def("perfetto_available", &hr::tracing::Session::available);
   m.def("file_frame_count", [](const std::string &path) {
     const auto count = holofile::Reader(path).header().frame_count;
     if (count > static_cast<uint32_t>(std::numeric_limits<int>::max()))

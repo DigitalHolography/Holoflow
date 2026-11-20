@@ -39,6 +39,7 @@ inline core::GraphSpec prepare_finite_graph(core::GraphSpec spec, core::Registry
                                            "Slice",
                                            "ArrayCollector",
                                            "Void",
+                                           "Throughput",
                                            "Memcpy",
                                            "Conversion",
                                            "Reshape",

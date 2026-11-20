@@ -23,6 +23,7 @@ from threading import Lock
 from typing import Any, Callable
 
 from . import _native
+from ._diagnostics import Artifacts
 
 _active: ContextVar[_native.Builder | None] = ContextVar("holoflow_builder", default=None)
 
@@ -159,8 +160,9 @@ class Event:
 class Executable:
     """Own a native executable. Lifecycle mutations must not overlap."""
 
-    def __init__(self, native, outputs=None):
+    def __init__(self, native, outputs=None, artifacts=None):
         self._native = native
+        self.artifacts = artifacts
         self._outputs = outputs
         self._arrays = {}
         self._lifecycle = Lock()
@@ -204,14 +206,14 @@ class Executable:
         finally:
             self._lifecycle.release()
 
-    def close(self) -> None:
+    def close(self, *, _finalize_diagnostics=True) -> None:
         self._acquire()
         try:
             if self._native is None:
                 return
             native = self._native
             try:
-                native.close()
+                native.close(_finalize_diagnostics)
             finally:
                 self._joined = True
                 self._native = None
@@ -250,8 +252,16 @@ class Executable:
         event = self._get().receive_event()
         return None if event is None else Event(event[0], json.loads(event[1]))
 
+    def completed(self) -> bool:
+        """Return whether the finite graph reached normal EOF."""
+        return self._get().completed()
+
     def metrics(self) -> dict:
         return json.loads(self._get().metrics())
+
+    def progress(self) -> dict:
+        """Cumulative successful emissions and a native monotonic timestamp."""
+        return json.loads(self._get().progress())
 
     def __enter__(self) -> Executable:
         self._get()
@@ -282,8 +292,27 @@ class Graph:
     def to_dot(self) -> str:
         return self._native.to_dot()
 
-    def compile(self) -> Executable:
-        return Executable(self._native.compile(), self._outputs)
+    def compile(self, log_dir=None) -> Executable:
+        """Compile, optionally collecting diagnostics in a unique run directory."""
+        artifacts = None if log_dir is None else Artifacts.create(log_dir)
+        return self._compile(artifacts)
+
+    def _compile(self, artifacts=None, *, capture=True):
+        if artifacts is not None:
+            artifacts.descriptor_json.write_text(json.dumps(self.to_json(), indent=2), encoding="utf-8")
+            artifacts.descriptor_dot.write_text(self.to_dot(), encoding="utf-8")
+        try:
+            native = self._native.compile(
+                "" if artifacts is None else str(artifacts.directory), capture)
+            return Executable(native, self._outputs, artifacts)
+        except BaseException as error:
+            if artifacts is not None:
+                error.add_note(f"Holoflow diagnostics: {artifacts.directory}")
+                try:
+                    _native.flush_diagnostics()
+                except Exception as cleanup_error:
+                    error.add_note(f"Diagnostic finalization failed: {cleanup_error}")
+            raise
 
 
 def trace(fn: Callable, *args, **kwargs) -> Graph:

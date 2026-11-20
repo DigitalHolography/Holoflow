@@ -14,6 +14,13 @@
 
 find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
+add_test(NAME python::benchmark
+    COMMAND ${CMAKE_COMMAND} -E env
+        "PYTHONPATH=${CMAKE_BINARY_DIR}/python/$<CONFIG>"
+        ${Python3_EXECUTABLE} -m unittest discover -s "${CMAKE_CURRENT_SOURCE_DIR}" -p test_benchmark.py
+)
+set_tests_properties(python::benchmark PROPERTIES LABELS gpu TIMEOUT 120 RESOURCE_LOCK holoflow_gpu)
+
 add_test(NAME python::tracing
     COMMAND ${CMAKE_COMMAND} -E env
         "PYTHONPATH=${CMAKE_BINARY_DIR}/python/$<CONFIG>"

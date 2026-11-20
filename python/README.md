@@ -7,6 +7,9 @@ during tracing. Task execution, storage, queues, and CUDA work remain native.
 
 ## Development build
 
+For the uv workflow, benchmark API, and graph/Perfetto outputs, see
+[Python development and performance](PERFORMANCE.md).
+
 Use an x64 Visual Studio developer shell, the repository's Qt/CUDA prerequisites,
 and standard 64-bit CPython 3.14 with development headers. Set `CUDA_PATH` to the
 toolkit used by CMake's CUDA compiler; mixing toolkit headers is unsupported.

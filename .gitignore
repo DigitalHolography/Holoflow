@@ -1,6 +1,7 @@
 build/
 doc/mkdocs/site/
 .venv/
+.venv-python313-backup/
 __pycache__/
 .fc/
 *.dot

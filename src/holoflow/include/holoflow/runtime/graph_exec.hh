@@ -60,6 +60,8 @@ public:
 
   void set_metrics_interval(std::chrono::milliseconds interval);
   [[nodiscard]] std::map<std::string, NodeMetrics> metrics() const;
+  /// Cumulative successful emissions, independent of interval metrics; timestamps in seconds.
+  [[nodiscard]] nlohmann::json progress() const;
   /// Host submission timing/counts for section graph launches, not GPU execution duration.
   [[nodiscard]] std::map<std::string, NodeMetrics> section_graph_metrics() const;
   [[nodiscard]] nlohmann::json                     section_graph_diagnostics() const;
