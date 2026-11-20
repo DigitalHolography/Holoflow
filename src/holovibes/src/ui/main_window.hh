@@ -67,7 +67,7 @@ private slots:
   void on_raw_record_started_success();
   void on_raw_record_started_failure(const QString &error);
   void on_raw_record_stopped_success();
-  void on_raw_record_stopped_failure(const QString &error);
+  void on_raw_record_stopped_failure(std::optional<size_t> id, const QString &error);
 
 
 private:

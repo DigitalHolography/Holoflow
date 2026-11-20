@@ -147,7 +147,7 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
 
       // start rec and writers on other threads
       auto rec_thread = std::jthread(
-          [this, &settings, &recording, &finished, cancelled, buffer_part_count, &writer, &err_msg] {
+          [this, &settings, &recording, &finished, cancelled, buffer_part_count, &writer, &err_msg, &failed] {
             logger()->info("[RecordingSession::worker::rec_thread] recording thread started");
             recording.store(true, std::memory_order_release);
 
@@ -165,12 +165,13 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
             } else {
               logger()->info("[RecordingSession::worker] record cancelled");
               err_msg = "record cancelled";
+              failed.store(true, std::memory_order_acquire);
             }
 
             recording.store(false, std::memory_order_release);
             logger()->info(
-                "[RecordingSession::worker::rec_thread] recording thread finished (cancelled: {})",
-                cancelled.stop_requested());
+                "[RecordingSession::worker::rec_thread] recording thread finished (cancelled: {}, failed: {})",
+            cancelled.stop_requested(), failed.load(std::memory_order_acquire));
           });
 
       auto writer_thread = std::jthread([this, &writer, &finished, cancelled, &settings, &failed, &err_msg] {
@@ -188,8 +189,8 @@ void RecordingSession::worker(const RecordSettings &settings, size_t buffer_part
           buffer_flushing_finished_callback_(id_);
         }
         logger()->info(
-            "[RecordingSession::worker::writer_thread] writer thread finished (cancelled: {})",
-            cancelled.stop_requested());
+            "[RecordingSession::worker::writer_thread] writer thread finished (cancelled: {}, failed: {})",
+            cancelled.stop_requested(), failed.load(std::memory_order_acquire));
       });
 
       constexpr size_t thread_count = 2;

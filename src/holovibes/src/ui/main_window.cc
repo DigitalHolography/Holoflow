@@ -2355,11 +2355,18 @@ void MainWindow::on_raw_record_stopped_success() {
   refresh_command_bar();
 }
 
-void MainWindow::on_raw_record_stopped_failure(const QString &error) {
-  logger()->error("[MainWindow::on_raw_record_stopped_failure]");
+void MainWindow::on_raw_record_stopped_failure(std::optional<size_t> id, const QString &error) {
+  if (id.has_value()) {
+    record_widget_->free(*id, true);
+    logger()->error("[MainWindow::on_raw_record_stopped_failure] id={}, err={}", *id, error.toStdString());
+  }
+  else
+    logger()->error("[MainWindow::on_raw_record_stopped_failure] err={}", error.toStdString());
+
   export_in_progress_ = false;
   export_widget_->set_stop_enabled(pipeline_running_);
   export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
+
   refresh_command_bar();
   show_pipeline_error_popup(tr("An error occurred while stopping raw recording:\n%1").arg(error));
 }
@@ -2843,7 +2850,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     QString     appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
     QString     convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels/";
     std::string kernel_path             = convolutionsKernelsPath.toStdString() +
-                                          render_widget_->get_convolution().toStdString() + ".json";
+                              render_widget_->get_convolution().toStdString() + ".json";
 
     s.pp_fps       = 60;
     s.pp_fft_shift = s.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;
