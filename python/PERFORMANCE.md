@@ -8,39 +8,15 @@ uv sync --group examples
 cmake --preset msvc-multi -DENABLE_PYTHON=ON -DPython3_EXECUTABLE="$PWD/.venv/Scripts/python.exe"
 cmake --build --preset build-Release
 uv run python tools/setup_python.py
-uv run python example/python/finite_numpy.py --help
+uv run hf-demo --help
 ctest --preset test-Release
 ```
 
 The setup helper registers the CMake Release package with a `.pth` file in this
 environment. Subsequent scripts need no `PYTHONPATH`. Repeat setup after moving
 the build or recreating the environment. Rebuild native changes with CMake.
-The examples dependency group supplies NumPy and Matplotlib. Base installation
+The examples dependency group supplies NumPy, Matplotlib, and PyYAML. Base installation
 has no Python runtime dependencies. Python 3.14 and Release are supported.
-
-## Quick example commands
-
-The setup helper also installs these commands into the uv environment:
-
-| Command | Example |
-| --- | --- |
-| `uv run hf-finite input.holo` | Finite NumPy collection |
-| `uv run hf-fresnel input.holo` | Fresnel viewer |
-| `uv run hf-aberration input.holo` | Aberration dashboard |
-| `uv run hf-doppler input.holo output.holo` | Doppler recording |
-| `uv run hf-fresnel-doppler` | Native Fresnel Doppler |
-| `uv run hf-fresnel-decomposed` | Decomposed Fresnel Doppler |
-| `uv run hf-benchmark input.holo --mode looping` | Throughput and makespan |
-| `uv run hf-demo config.yaml` | YAML processing pipeline, live FPS and latency, optional preview |
-
-Arguments are forwarded to the original scripts. The two Fresnel Doppler scripts
-still use their top-of-file `INPUT_PATH` and processing constants. Viewer and
-benchmark commands accept `--help`.
-
-Names are configured in `[tool.holoflow.examples]` in `pyproject.toml`. After
-adding a shortcut or recreating the environment, run
-`uv run python tools/setup_python.py` again. These Windows launchers use the
-environment's Python and do not rebuild the native extension.
 
 ## YAML processing demo
 
@@ -62,7 +38,8 @@ Set `input.mode` to `finite` for EOF or `looping` for continuous playback.
 Use `input.duration_seconds` to stop a looping run automatically. The `drop`
 tail policy trims incomplete source batches and temporal windows.
 
-Set `output.average_window` to average consecutive processed images. The
+Set `postprocessing.average_window` to average consecutive processed images
+and, when CAO is enabled, use the same window for its sensor average. The
 default of one keeps each image. The first averaged image is emitted after
 a full output window is available. Latency uses the complete contributing
 frame range, including both the aberration sensor average and the output
@@ -72,9 +49,17 @@ Matplotlib preview. Use `input.end_frame` to limit the range to
 `viewer.max_frames` output images. The metrics include collecting the preview,
 and the viewer opens after the final summary.
 
-The [Basic config](../example/python/holography_basic.yaml) adds scaled
-8-bit output. The [CAO config](../example/python/holography_cao.yaml) adds
-prefiltering, output flatfield and percentile clipping, and three separate
+All demo configs produce scaled 8-bit XY output. Configure wavelength, input
+pixel pitch, and the shared propagation distance under `space`. The optional
+`spatial_filter` section controls filtering after temporal processing, before
+CAO or Fresnel. Set `spatial_filter.enabled: true` to apply it.
+`postprocessing.flatfield_cutoff_m` supplies the physical cutoff for both the
+CAO sensor and the final XY image. Each stage converts it using its own image
+sampling pitch.
+
+The [Basic config](../example/python/holography_basic.yaml) runs PCA and Fresnel.
+The [CAO config](../example/python/holography_cao.yaml) adds spatial filtering,
+flatfield and percentile clipping, and three separate
 coefficient history plots. With `viewer.cao_coefficients_only: true`, the demo
 collects coefficient vectors and plots a4, a5, and a6 after the sensor window
 fills. XY processing and metrics still run, with the images sent to Void.
@@ -140,14 +125,6 @@ finalization; looping shutdown is a subset of execution. Diagnostics add overhea
 compare runs with the same diagnostic settings. Descriptor serialization and
 diagnostic submissions during compilation remain part of the measured work.
 
-```powershell
-uv run python example/python/benchmark.py input.holo --warmup 0 --log-dir logs/python
-uv run python example/python/benchmark.py input.holo --mode looping --warmup 2 --duration 10
-```
-
-The example measures an input-to-device void-sink pipeline. Use `hf.benchmark`
-with your own pipeline to measure processing performance.
-
 ## Live throughput in a running pipeline
 
 Insert `frames = hf.throughput(frames, axis=0, interval_ms=1000, node_id="input_fps")`
@@ -162,11 +139,6 @@ live FPS. After `run.wait()` or `run.result()`, read the `throughput_summary`
 event for `total_frames`, `elapsed_seconds`, and `completed`. The elapsed time
 covers startup through wait and CUDA drain. A completed finite run also reports
 `average_fps`. CUDA graph counts reflect successfully submitted work.
-
-```powershell
-uv run python example/python/throughput.py input.holo --interval-ms 500
-uv run python example/python/throughput.py input.holo --loop
-```
 
 ## Live source-to-output latency
 
@@ -192,11 +164,6 @@ With a host queue, the probe measures readiness when it sees the published
 buffer. Device-side probes measure readiness after the section's existing
 CUDA stream barrier. Input timestamps outside the retained `history_batches` (8,192 by
 default) count as unmatched.
-
-```powershell
-uv run python example/python/latency.py input.holo --interval-ms 500
-uv run python example/python/latency.py input.holo --loop
-```
 
 ## Graphs, compiler logs and Perfetto
 

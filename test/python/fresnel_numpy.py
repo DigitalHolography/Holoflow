@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Finite Fresnel Doppler collection with a Matplotlib frame browser."""
-import argparse
+"""Holoflow processing regression fixture."""
 import holoflow as hf
-from holoflow import _native
 
 WAVELENGTH = 852e-9
 PROPAGATION_DISTANCE = 0.492
@@ -118,31 +116,3 @@ def create_viewer(frames):
                 slider.set_val(max(0, min(len(frames) - 1, int(slider.val) + step)))
         fig.canvas.mpl_connect("key_press_event", key)
     return fig, slider
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("input")
-    parser.add_argument("--start-frame", type=int, default=0)
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument("--output-frames", type=int)
-    group.add_argument("--end-frame", type=int)
-    args = parser.parse_args()
-    try:
-        start, end, count = input_range(_native.file_frame_count(args.input),
-                                       args.start_frame, args.output_frames, args.end_frame)
-    except (ValueError, RuntimeError) as error:
-        parser.error(str(error))
-    print(f"Input [{start}, {end}): {end - start} holograms; expected {count} output frames", flush=True)
-    frames = collect_frames(args.input, start, end)
-    print(f"Collected {frames.shape}, dtype={frames.dtype}", flush=True)
-    if not len(frames):
-        print("Insufficient input for a complete averaging window; no frames to display.")
-        return
-    import matplotlib.pyplot as plt
-    fig, slider = create_viewer(frames)
-    plt.show()
-
-
-if __name__ == "__main__":
-    main()

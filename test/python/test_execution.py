@@ -88,7 +88,7 @@ class ExecutionTest(unittest.TestCase):
     def test_fresnel_variants_with_void_sink(self):
         import importlib.util
         for filename in ("fresnel_doppler_decomposed.py", "fresnel_doppler.py"):
-            path = Path(__file__).resolve().parents[2] / "example/python" / filename
+            path = Path(__file__).with_name(filename)
             spec = importlib.util.spec_from_file_location(path.stem, path)
             demo = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(demo)

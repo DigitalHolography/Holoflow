@@ -24,7 +24,8 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "example/python"))
 import holoflow as hf
 from fixture import write_holo
-from fresnel_aberration_numpy import input_range, pipeline, collect_frames, create_viewer, XY_OFFSET
+from fresnel_aberration_numpy import input_range, pipeline, collect_frames, XY_OFFSET
+from holography_demo_viewer import create_viewer
 
 
 class AberrationTest(unittest.TestCase):
@@ -84,7 +85,7 @@ class AberrationTest(unittest.TestCase):
                   "coefficients": np.zeros((count, 3), np.float32),
                   "phase": np.zeros((count, 4, 4), np.float32)}
         result["coefficients"][:63] = 1e9
-        fig, slider = create_viewer(result)
+        fig, slider = create_viewer(result, xy_offset=XY_OFFSET, discard_first=63, zernike_modes=[4, 5, 6])
         self.addCleanup(plt.close, fig)
         coefficient_axes = fig.axes[3]
         for line in coefficient_axes.lines[:3]:
@@ -100,6 +101,12 @@ class AberrationTest(unittest.TestCase):
 
 
 class HolographyDemoTest(unittest.TestCase):
+    @staticmethod
+    def scaled_uint8(images):
+        minimum = images.min(axis=(-2, -1), keepdims=True)
+        maximum = images.max(axis=(-2, -1), keepdims=True)
+        return ((images - minimum) * (255.0 / (maximum - minimum)) + 0.5).astype(np.uint8)
+
     def setUp(self):
         try:
             import yaml
@@ -129,9 +136,7 @@ class HolographyDemoTest(unittest.TestCase):
         cases = [
             ({"time": {"method": "none"}, "space": {"method": "none"}}, 32),
             ({}, 8),
-            ({"aberration": {"enabled": True, "average_window": 3}}, 6),
-            ({"aberration": {"enabled": True, "average_window": 3},
-              "output": {"average_window": 2}}, 5),
+            ({"aberration": {"enabled": True}, "postprocessing": {"average_window": 3}}, 4),
         ]
         for sections, expected in cases:
             with self.subTest(sections=sections):
@@ -147,28 +152,39 @@ class HolographyDemoTest(unittest.TestCase):
                     stats = run.latency("latency")
                 self.assertEqual(config.input["end_frame"], 32)
                 self.assertEqual(result.shape, (expected, 20, 20))
+                self.assertEqual(result.dtype, np.uint8)
                 self.assertTrue(np.isfinite(result).all())
                 self.assertEqual(stats["matched_outputs"], expected)
                 self.assertEqual(stats["unmatched_outputs"], 0)
                 self.assertGreaterEqual(stats["oldest_ms"]["mean"], stats["newest_ms"]["mean"])
                 if sections.get("time", {}).get("method") == "none":
                     raw = np.frombuffer((self.root / "input.holo").read_bytes(), np.uint16, offset=64)
-                    np.testing.assert_array_equal(result, raw.reshape(35, 20, 20)[:32])
+                    frames = raw.reshape(35, 20, 20)[:32].astype(np.float32)
+                    np.testing.assert_allclose(result, self.scaled_uint8(frames), atol=1, rtol=0)
 
     def test_cao_reference_processing_and_dashboard_alignment(self):
         from holography_demo_pipeline import pipeline
 
         reference = Path(__file__).resolve().parents[2] / "example/python/holography_cao.yaml"
+        write_holo(self.root / "input.holo", frames=35, width=30, height=20)
         settings = self.yaml.safe_load(reference.read_text(encoding="utf-8"))
         settings["input"].update(path="input.holo", batch_size=8, end_frame=32)
         settings["time"].update(window_frames=4, component_end=2)
-        settings["aberration"]["average_window"] = 3
-        settings["output"]["average_window"] = 2
+        settings["postprocessing"]["average_window"] = 3
         settings["viewer"].update(cao_diagnostics=True, cao_coefficients_only=False,
                                   cao_compare_modes=False)
         config = self.config(**settings)
         graph = hf.trace(pipeline, config)
-        nodes = graph.to_json()["nodes"]
+        spec = graph.to_json()
+        nodes = spec["nodes"]
+        self.assertTrue(any(e["from"] == "spatial_filter" and e["to"] == "correction_input"
+                            for e in spec["edges"]))
+        self.assertEqual(nodes["latency"]["params"]["window_frames"], 20)
+        flatfields = [n["params"] for n in nodes.values() if n["type"] == "Flatfield"]
+        scale = 0.187 * 0.01 * config.space["pixel_pitch_m"] / (
+            config.space["wavelength_m"] * config.space["distance_m"])
+        np.testing.assert_allclose(sorted((n["sigma_y"], n["sigma_x"]) for n in flatfields),
+                                   [(4 * scale, 6 * scale), (20 * scale, 30 * scale)], rtol=1e-6)
         self.assertEqual(nodes["pca_windows"]["params"]["output_size"], 4)
         self.assertEqual(nodes["correction_input"]["type"], "DualReaderBatchQueue")
         self.assertEqual(nodes["corrected_windows"]["type"], "BatchQueue")
@@ -178,7 +194,7 @@ class HolographyDemoTest(unittest.TestCase):
         with graph.compile(log_dir=self.root / "compiled", capture=False) as run:
             run.start()
             images = run.result()
-            self.assertEqual(run.latency("latency")["matched_outputs"], 5)
+            self.assertEqual(run.latency("latency")["matched_outputs"], 4)
         self.assertIn("cluster_section_", run.artifacts.compiled_dot.read_text(encoding="utf-8"))
         sections = json.loads((run.artifacts.directory / "section_cuda_graphs.json").read_text(encoding="utf-8"))
         correction, = [section for section in sections
@@ -186,14 +202,14 @@ class HolographyDemoTest(unittest.TestCase):
         self.assertEqual(correction["launches"], config.temporal_count)
         self.assertNotIn("Memcpy", {task["kind"] for task in correction["tasks"]})
         self.assertEqual(images["xy"].dtype, np.uint8)
-        self.assertEqual(images["xy"].shape, (5, 20, 20))
+        self.assertEqual(images["xy"].shape, (4, 20, 30))
         self.assertEqual(images["coefficients"].shape, (8, 3))
-        self.assertEqual(images["phase"].shape, (8, 20, 20))
-        self.assertEqual(images["shack_hartmann"].shape, (8, 20, 20))
+        self.assertEqual(images["phase"].shape, (8, 20, 30))
+        self.assertEqual(images["shack_hartmann"].shape, (8, 20, 30))
         import matplotlib.pyplot as plt
-        fig, slider = create_viewer(images, xy_offset=3, discard_first=2, zernike_modes=[4, 5, 6])
+        fig, slider = create_viewer(images, xy_offset=4, discard_first=2, zernike_modes=[4, 5, 6])
         self.addCleanup(plt.close, fig)
-        slider.set_val(4)
+        slider.set_val(3)
         np.testing.assert_array_equal(fig.axes[2].images[0].get_array(), images["phase"][7])
 
         from holography_demo import create_coefficient_viewer
@@ -209,8 +225,8 @@ class HolographyDemoTest(unittest.TestCase):
         with graph.compile(log_dir=self.root / "coefficients", capture=False) as run:
             run.start()
             result = run.result()
-            self.assertEqual(run.latency("latency")["matched_outputs"], 5)
-            self.assertEqual(run.progress()["successful_emissions"]["output_fps"], 5)
+            self.assertEqual(run.latency("latency")["matched_outputs"], 4)
+            self.assertEqual(run.progress()["successful_emissions"]["output_fps"], 4)
         sections = json.loads((run.artifacts.directory / "section_cuda_graphs.json").read_text(encoding="utf-8"))
         correction, = [section for section in sections
                        if any(task["kind"] == "ShortTimeFresnelDiffraction" for task in section["tasks"])]
@@ -235,7 +251,7 @@ class HolographyDemoTest(unittest.TestCase):
             histories = run_demo(config)
         self.assertIn("Single reference (fresh compile)", terminal.getvalue())
         self.assertIn("Full-pairwise Laplacian (graph update)", terminal.getvalue())
-        self.assertEqual(terminal.getvalue().count("Latency: 5 matched, 0 unmatched"), 2)
+        self.assertEqual(terminal.getvalue().count("Latency: 4 matched, 0 unmatched"), 2)
         np.testing.assert_allclose(histories["full_pairwise"], result["coefficients"],
                                    rtol=1e-5, atol=1e-6)
         settings["aberration"]["slope_mode"] = "single_reference"
@@ -263,7 +279,7 @@ class HolographyDemoTest(unittest.TestCase):
         from holography_demo_pipeline import pipeline
 
         config = self.config(time={"method": "none"}, space={"method": "none"},
-                             output={"average_window": 3}, viewer={"enabled": True})
+                             postprocessing={"average_window": 3}, viewer={"enabled": True})
         graph = hf.trace(pipeline, config)
         self.assertEqual(graph.to_json()["nodes"]["latency"]["params"]["window_frames"], 3)
         with graph.compile() as run:
@@ -273,7 +289,7 @@ class HolographyDemoTest(unittest.TestCase):
         raw = np.frombuffer((self.root / "input.holo").read_bytes(), np.uint16, offset=64)
         frames = raw.reshape(35, 20, 20)[:32].astype(np.float32)
         expected = (frames[:-2] + frames[1:-1] + frames[2:]) / 3
-        np.testing.assert_allclose(result, expected, rtol=1e-5, atol=1e-4)
+        np.testing.assert_allclose(result, self.scaled_uint8(expected), rtol=0, atol=1)
 
     def test_config_validation(self):
         for sections, key in [
@@ -281,10 +297,34 @@ class HolographyDemoTest(unittest.TestCase):
             ({"input": {"tail": "error"}}, "input.tail"),
             ({"time": {"method": "fft"}}, "time.method"),
             ({"space": {"method": "angular"}}, "space.method"),
-            ({"output": {"average_window": 0}}, "output.average_window"),
+            ({"postprocessing": {"average_window": 0}}, "postprocessing.average_window"),
         ]:
             with self.subTest(sections=sections), self.assertRaisesRegex(ValueError, key):
                 self.config(**sections)
+
+    def test_spatial_filter_and_flatfield_without_cao(self):
+        from holography_demo_pipeline import pipeline
+
+        spatial_filter = {"enabled": True, "r_inner": 0, "r_outer": 16, "s_inner": 0, "s_outer": 1}
+        for method in ("none", "fresnel"):
+            with self.subTest(method=method):
+                config = self.config(space={"method": method}, spatial_filter=spatial_filter,
+                                     postprocessing={"flatfield_cutoff_m": 0.001},
+                                     viewer={"enabled": True})
+                graph = hf.trace(pipeline, config)
+                spec = graph.to_json()
+                self.assertEqual(spec["nodes"]["spatial_filter"]["type"], "Filter2D")
+                self.assertTrue(any(e["from"] == "spatial_filter" and e["to"] == "propagation_windows"
+                                    for e in spec["edges"]))
+                flatfield, = [n["params"] for n in spec["nodes"].values() if n["type"] == "Flatfield"]
+                pitch = config.space["pixel_pitch_m"]
+                if method == "fresnel":
+                    pitch = config.space["wavelength_m"] * config.space["distance_m"] / (20 * pitch)
+                np.testing.assert_allclose([flatfield["sigma_y"], flatfield["sigma_x"]],
+                                           0.187 * 0.001 / pitch, rtol=1e-6)
+                with graph.compile() as run:
+                    run.start()
+                    self.assertEqual(run.result().shape, (8, 20, 20))
 
     def test_looping_cli_reports_summary(self):
         from holography_demo import run_demo

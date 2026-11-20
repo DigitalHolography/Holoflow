@@ -16,11 +16,11 @@ from holoflow import _native
 class DemoConfig:
     input: dict
     time: dict
-    optics: dict
     space: dict
+    spatial_filter: dict
     aberration: dict
     metrics: dict
-    output: dict
+    postprocessing: dict
     viewer: dict
     graph: dict
     queues: dict
@@ -51,15 +51,14 @@ def load_config(filename):
                       load_kind="live", tail="drop", max_fps=None, duration_seconds=None),
         "time": dict(method="pca", window_frames=32, component_begin=0, component_end=16,
                      batch_windows=4),
-        "optics": dict(wavelength_m=8.51e-7, pixel_pitch_m=2.0e-5),
-        "space": dict(method="fresnel", distance_m=0.49),
-        "aberration": dict(enabled=False, distance_m=0.49, subapertures=5,
-                           average_window=64, zernike_modes=[4, 5, 6], prefilter=None,
-                           skip_outside_pupil=True, sensor_flatfield_cutoff_m=0.01,
+        "space": dict(method="fresnel", wavelength_m=8.51e-7, pixel_pitch_m=2.0e-5,
+                      distance_m=0.49),
+        "spatial_filter": dict(enabled=False, r_inner=3, r_outer=1024, s_inner=0, s_outer=1),
+        "aberration": dict(enabled=False, subapertures=5, zernike_modes=[4, 5, 6],
+                           skip_outside_pupil=True,
                            slope_mode="full_pairwise"),
         "metrics": dict(interval_ms=1000, history_batches=8192),
-        "output": dict(average_window=1, dtype="float32", flatfield_cutoff_m=None,
-                       percentile_clip=None),
+        "postprocessing": dict(average_window=1, flatfield_cutoff_m=None, percentile_clip=None),
         "viewer": dict(enabled=False, max_frames=256, cao_diagnostics=False,
                        cao_coefficients_only=False, cao_compare_modes=False),
         "queues": dict(input_frames=1024, preprocessing_windows=8, propagation_windows=8,
@@ -104,6 +103,12 @@ def load_config(filename):
                "time.component_begin and time.component_end must bound a nonempty range within time.window_frames")
     space = defaults["space"]
     _check(space["method"] in ("none", "fresnel"), "space.method must be none or fresnel")
+    spatial_filter = defaults["spatial_filter"]
+    _check(type(spatial_filter["enabled"]) is bool, "spatial_filter.enabled must be a boolean")
+    for key in ("r_inner", "r_outer", "s_inner", "s_outer"):
+        _check(_integer(spatial_filter[key], 0), f"spatial_filter.{key} must be a nonnegative integer")
+    _check(spatial_filter["r_inner"] < spatial_filter["r_outer"],
+           "spatial_filter.r_inner must be less than spatial_filter.r_outer")
     aberration = defaults["aberration"]
     viewer = defaults["viewer"]
     _check(type(viewer["cao_compare_modes"]) is bool, "viewer.cao_compare_modes must be a boolean")
@@ -112,8 +117,9 @@ def load_config(filename):
     _check(aberration["slope_mode"] in ("single_reference", "full_pairwise"),
            "aberration.slope_mode must be single_reference or full_pairwise")
     graph = defaults["graph"]
-    output = defaults["output"]
-    _check(output["dtype"] in ("float32", "uint8"), "output.dtype must be float32 or uint8")
+    post = defaults["postprocessing"]
+    average_window = post["average_window"]
+    _check(_integer(average_window), "postprocessing.average_window must be a positive integer")
     for key, value in defaults["queues"].items():
         _check(_integer(value), f"queues.{key} must be positive")
     for key in ("cao_diagnostics", "cao_coefficients_only"):
@@ -122,50 +128,38 @@ def load_config(filename):
                f"viewer.{key} requires viewer.enabled and aberration.enabled")
     _check(not (viewer["cao_diagnostics"] and viewer["cao_coefficients_only"]),
            "Choose either viewer.cao_diagnostics or viewer.cao_coefficients_only")
-    cutoff = output["flatfield_cutoff_m"]
-    _check(cutoff is None or (_number(cutoff) and cutoff > 0 and space["method"] == "fresnel"),
-           "output.flatfield_cutoff_m must be positive and requires Fresnel")
-    clip = output["percentile_clip"]
+    cutoff = post["flatfield_cutoff_m"]
+    _check(cutoff is None or (_number(cutoff) and cutoff > 0),
+           "postprocessing.flatfield_cutoff_m must be positive or null")
+    clip = post["percentile_clip"]
     if clip is not None:
         keys = {"min_pct", "max_pct", "roi_radius"}
         _check(isinstance(clip, dict) and set(clip) == keys and all(map(_number, clip.values())),
-               "output.percentile_clip requires min_pct, max_pct, and roi_radius")
+               "postprocessing.percentile_clip requires min_pct, max_pct, and roi_radius")
         _check(0 <= clip["min_pct"] < clip["max_pct"] <= 100 and 0 < clip["roi_radius"] <= 1,
-               "Invalid output.percentile_clip bounds or ROI radius")
+               "Invalid postprocessing.percentile_clip bounds or ROI radius")
     for name, section in (("aberration", aberration), ("viewer", viewer), ("graph", graph)):
         _check(type(section["enabled"]) is bool, f"{name}.enabled must be a boolean")
     _check(type(graph["open_browser"]) is bool, "graph.open_browser must be a boolean")
     _check(isinstance(graph["log_dir"], str) and graph["log_dir"].strip(), "graph.log_dir must be a path")
     graph["log_dir"] = (filename.parent / graph["log_dir"]).resolve()
-    correction_window = 1
+    correction_window = average_window if aberration["enabled"] else 1
     if aberration["enabled"]:
-        prefilter = aberration["prefilter"]
-        if prefilter is not None:
-            keys = {"r_inner", "r_outer", "s_inner", "s_outer"}
-            _check(isinstance(prefilter, dict) and set(prefilter) == keys and
-                   all(_integer(value, 0) for value in prefilter.values()) and
-                   prefilter["r_inner"] < prefilter["r_outer"], "Invalid aberration.prefilter")
         _check(type(aberration["skip_outside_pupil"]) is bool,
                "aberration.skip_outside_pupil must be a boolean")
-        cutoff = aberration["sensor_flatfield_cutoff_m"]
-        _check(cutoff is None or (_number(cutoff) and cutoff > 0),
-               "aberration.sensor_flatfield_cutoff_m must be positive or null")
-        correction_window = aberration["average_window"]
-        _check(_integer(correction_window), "Invalid aberration.average_window")
         _check(_integer(aberration["subapertures"], 2), "aberration.subapertures must be at least 2")
         modes = aberration["zernike_modes"]
         _check(isinstance(modes, list) and modes and all(_integer(mode, 2) for mode in modes)
                and len(set(modes)) == len(modes), "aberration.zernike_modes must contain unique Noll indices >= 2")
         _check(not viewer["cao_coefficients_only"] or {4, 5, 6}.issubset(modes),
                "viewer.cao_coefficients_only requires aberration.zernike_modes to include 4, 5, and 6")
-    if aberration["enabled"] or space["method"] == "fresnel":
-        for key, value in defaults["optics"].items():
-            _check(_number(value) and value > 0, f"optics.{key} must be positive")
-    for name, enabled in (("space", space["method"] == "fresnel"),
-                          ("aberration", aberration["enabled"])):
-        distance = defaults[name]["distance_m"]
-        if enabled:
-            _check(_number(distance) and distance != 0, f"{name}.distance_m must be finite and nonzero")
+    for key in ("wavelength_m", "pixel_pitch_m"):
+        _check(_number(space[key]) and space[key] > 0, f"space.{key} must be positive")
+    distance = space["distance_m"]
+    if aberration["enabled"]:
+        _check(_number(distance) and distance > 0, "space.distance_m must be positive for CAO")
+    elif space["method"] == "fresnel":
+        _check(_number(distance) and distance != 0, "space.distance_m must be finite and nonzero")
     for key, value in defaults["metrics"].items():
         _check(_integer(value), f"metrics.{key} must be a positive integer")
     _check(_integer(viewer["max_frames"]), "viewer.max_frames must be a positive integer")
@@ -185,8 +179,6 @@ def load_config(filename):
     source["end_frame"] = end - remainder
     windows = (source["end_frame"] - start) // temporal_frames
     _check(windows > 0, "input range has no complete source batch and temporal window")
-    average_window = defaults["output"]["average_window"]
-    _check(_integer(average_window), "output.average_window must be a positive integer")
     output_count = max(0, windows - correction_window - average_window + 2)
     if viewer["cao_coefficients_only"]:
         _check(windows >= correction_window, "viewer.cao_coefficients_only needs a full sensor averaging window")

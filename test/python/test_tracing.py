@@ -22,7 +22,7 @@ from fixture import write_holo
 
 
 def load_demo():
-    path = Path(__file__).resolve().parents[2] / "example/python/simple_doppler.py"
+    path = Path(__file__).with_name("simple_doppler.py")
     spec = importlib.util.spec_from_file_location("simple_doppler", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

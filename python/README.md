@@ -18,7 +18,8 @@ toolkit used by CMake's CUDA compiler; mixing toolkit headers is unsupported.
 cmake --preset msvc-multi -DENABLE_PYTHON=ON -DPython3_EXECUTABLE=C:/Python314/python.exe
 cmake --build --preset build-Release
 $env:PYTHONPATH = "$PWD/build/msvc-multi/python/Release"
-python example/python/simple_doppler.py input.holo output.holo
+uv run python tools/setup_python.py
+uv run hf-demo --help
 ctest --preset test-Release
 ```
 
@@ -79,25 +80,6 @@ Caught native worker errors surface as `hf.ExecutionError` from event polling or
 `wait`; native assertions and unrecoverable driver/process failures remain fatal.
 Polling and timeout handling belong in ordinary Python, as shown by the demo.
 
-## Logged Fresnel Doppler example
-
-`example/python/fresnel_doppler.py` reproduces the logged PCA/queue processing
-with a device void sink. Both variants use 852 nm, 492 mm, and 20 µm pixels:
-
-```powershell
-python example/python/fresnel_doppler_decomposed.py
-python example/python/fresnel_doppler.py
-```
-
-Set `INPUT_PATH` and `RUN_SECONDS` at the top of either file before running.
-The source loops; the runner stops after that duration or Ctrl+C.
-The void sink discards processed frames without copying or writing them.
-
-Each example keeps processing parameters at the top of the file. The decomposed
-example calls an ordinary Python `fresnel_diffraction` helper inside `pipeline`;
-`hf.trace(pipeline)` records the helper operations into the same graph.
-
-
 ## Finite streams and NumPy results
 
 NumPy is needed only when retrieving arrays or running the collection tests.
@@ -157,31 +139,8 @@ V1 collection requires finite changing sources throughout the graph and fixed
 tensor descriptors. Finite execution supports the Python math/processing
 operators, batch queues, sliding averages, dual-reader queues, void sinks, and
 NumPy collectors. Operators without a finite closure contract (including the
-command-driven HolofileWriter) are rejected before compilation. Existing looping
-recording examples retain their explicit recording-event workflow.
-
-See `example/python/finite_numpy.py` for a runnable entry point.
-
-
-## Finite Fresnel Doppler viewer
-
-With NumPy and Matplotlib available in Python 3.14, run from the repository root:
-
-```powershell
-$env:PYTHONPATH = "$PWD/build/msvc-multi/python/Release"
-& C:\Python314\python.exe example/python/fresnel_numpy.py "D:\260312_GUJ_1.holo"
-```
-
-The default requests 1,024 scaled uint8 output frames, reading the first 34,784
-holograms on demand. Use `--output-frames 2` for a short run, or choose
-`--start-frame 320 --end-frame 35104` for an explicit exclusive-end range.
-`--end-frame` and `--output-frames` are mutually exclusive. Range lengths must
-be divisible by 32. Each output averages 64 complete 32-frame processing windows.
-The viewer opens after processing and executor cleanup. Drag its frame slider or
-use left/right arrow keys. A single frame needs no slider; empty results are
-reported without opening a window. Import `collect_frames` to obtain the array
-without displaying it, or `create_viewer` to construct a figure separately.
-
+command-driven HolofileWriter) are rejected before compilation. Looping
+recording pipelines use the explicit recording-event workflow.
 
 ### Spatial filtering and flatfield
 
@@ -194,50 +153,4 @@ real and imaginary components (an all-pass mask therefore also multiplies by
 from contiguous float32 device tensors; sigmas are in pixels. Both accept
 `node_id=` and preserve finite-stream emission counts.
 
-The standalone Fresnel viewer always applies filter2d after PCA and flatfield
-after fftshift, before temporal averaging. Its constants use UI numeric defaults:
-filter radii 0/1024, smoothing widths 0/1, and a 2000 micrometer flatfield cutoff.
-The physical cutoff is converted explicitly inside `pipeline()` using propagated
-sampling pitches and `sigma_px = 0.187 * cutoff_m / pitch_m`. Edit those constants
-to change processing strength. Neither operation changes the requested frame count.
-
-
-## Aberration-corrected Fresnel dashboard
-
-```powershell
-$env:PYTHONPATH = "$PWD/build/msvc-multi/python/Release"
-& C:\Python314\python.exe example/python/fresnel_aberration_numpy.py "D:\260312_GUJ_1.holo" --output-frames 2
-```
-
-This separate standalone example keeps every processing stage inside `pipeline()`.
-It follows the supplied aberration graph: four-window PCA batches, filter radius 3,
-a current/delayed dual reader, short-time Fresnel reconstruction, causal sensor
-averaging, full-pairwise Shack-Hartmann slopes, Noll modes 4/5/6, phase correction,
-and explicit full-frame Fresnel propagation at 851 nm and 0.49 m. Geometry follows
-a 5-by-5 subaperture grid (64-by-102 patches for 320-by-512 input).
-
-Qt display sinks are replaced with four NumPy collectors. `collect_frames()` returns
-`xy` (uint8), `shack_hartmann` (uint8 mosaic), `coefficients` (float32 radians), and
-`phase` (float32 wrapped phase in radians). The coefficient history panel replaces
-the separate current-coefficient/history displays. The wall-clock-throttled
-ZernikeDefocusZProp logging sink is omitted; it does not feed the correction graph.
-The native analysis operators are also exported through `holoflow`; symbolic tensor
-indexing supports integer indices and slices, and `hf.transpose`, `hf.copy`,
-`hf.normalize`, and `hf.wrap2pi` expose the corresponding native operations.
-
-Unlike the looping CPU-cached target, this example reads on demand and completes
-at EOF. It preserves both the 63-sample initial discard and the 64-sample final
-average: T temporal windows produce `max(0, T-126)` XY frames, while all three
-diagnostic streams retain T updates, including startup samples. Four-window PCA
-batches require input lengths divisible by 128. Count requests round the input
-up to complete batches and explicitly trim only the final XY array after collection.
-The default therefore reads 36,864 holograms, computes 1,026 XY frames, and returns
-the first 1,024. `--end-frame` instead returns all XY frames from the explicit range.
-
-The dashboard's XY frame i selects diagnostic update i+126, the end of that XY
-averaging window. This labels processing updates, not identical physical timestamps;
-the corrected field uses the dual reader's native 31-update delay. The coefficient
-plot excludes the first 63 startup samples from its curves and autoscaling,
-while retaining the original update indices. Arrow keys and the slider navigate all
-panels together. Startup data and diagnostic tail updates remain available in the
-returned arrays; the example neither pads nor synthesizes outputs at EOF.
+See [YAML processing demo](PERFORMANCE.md#yaml-processing-demo) for the runnable Python demo.

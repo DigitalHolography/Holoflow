@@ -6,10 +6,14 @@
 import holoflow as hf
 
 
-def _flatfield(image, cutoff, wavelength, pitch, distance):
+def _flatfield(image, cutoff, space, propagated):
     height, width = image.shape[-2:]
-    scale = 0.187 * cutoff * pitch / (wavelength * abs(distance))
-    return hf.flatfield(image, scale * height, scale * width)
+    pitch = space["pixel_pitch_m"]
+    dy = dx = pitch
+    if propagated:
+        scale = space["wavelength_m"] * abs(space["distance_m"]) / pitch
+        dy, dx = scale / height, scale / width
+    return hf.flatfield(image, 0.187 * cutoff / dy, 0.187 * cutoff / dx)
 
 
 def _host_queue(image, config, node_id):
@@ -17,7 +21,7 @@ def _host_queue(image, config, node_id):
                           node_id=node_id)
 
 
-def _correct_aberration(field, config, wavelength, pitch):
+def _correct_aberration(field, config):
     settings = config.aberration
     window = config.correction_window
     height, width = field.shape[-2:]
@@ -25,16 +29,15 @@ def _correct_aberration(field, config, wavelength, pitch):
     win_w = width // settings["subapertures"]
     if min(win_h, win_w) < 2:
         raise ValueError("aberration.subapertures must leave at least two pixels per subaperture")
-    distance = settings["distance_m"]
-    if settings["prefilter"] is not None:
-        field = hf.filter2d(field, **settings["prefilter"])
+    space = config.space
+    wavelength, pitch, distance = space["wavelength_m"], space["pixel_pitch_m"], space["distance_m"]
     current, delayed, _ = hf.dual_reader_batch_queue(
         field, config.queues["propagation_windows"], window, node_id="correction_input")
     sensor = hf.short_time_fresnel_diffraction(
         current, wavelength, pitch, pitch, distance, win_h, win_w, win_h, win_w)
     sensor = hf.fftshift(hf.causal_sliding_average(hf.mean(sensor, axis=1), window))
-    if (cutoff := settings["sensor_flatfield_cutoff_m"]) is not None:
-        sensor = _flatfield(sensor, cutoff, wavelength, pitch, distance)
+    if (cutoff := config.postprocessing["flatfield_cutoff_m"]) is not None:
+        sensor = _flatfield(sensor, cutoff, space, propagated=True)
     skip = settings["skip_outside_pupil"]
     mode = settings["slope_mode"]
     if mode == "single_reference" and any(size % 2 == 0 for size in sensor.shape[1:3]):
@@ -94,33 +97,39 @@ def pipeline(config):
         field = hf.batch_queue(field, config.queues["preprocessing_windows"], batch, batch,
                                node_id="pca_windows")
         field = hf.pca(field, config.time["component_begin"], config.time["component_end"])
-        if not config.aberration["enabled"]:
-            field = hf.batch_queue(field, config.queues["propagation_windows"], 1, 1,
-                                   node_id="propagation_windows")
+    space = config.space
+    spatial_filter = config.spatial_filter
+    if spatial_filter["enabled"]:
+        field = hf.filter2d(field, spatial_filter["r_inner"], spatial_filter["r_outer"],
+                            spatial_filter["s_inner"], spatial_filter["s_outer"],
+                            node_id="spatial_filter")
+    if config.time["method"] == "pca" and not config.aberration["enabled"]:
+        field = hf.batch_queue(field, config.queues["propagation_windows"], 1, 1,
+                               node_id="propagation_windows")
 
-    wavelength = config.optics["wavelength_m"]
-    pitch = config.optics["pixel_pitch_m"]
     diagnostics = {}
     if config.aberration["enabled"]:
-        field, diagnostics = _correct_aberration(field, config, wavelength, pitch)
-    if config.space["method"] == "fresnel":
+        field, diagnostics = _correct_aberration(field, config)
+    propagated = space["method"] == "fresnel"
+    if propagated:
+        pitch = space["pixel_pitch_m"]
         field = hf.fresnel_diffraction(
-            field, wavelength, pitch, pitch, config.space["distance_m"], output_magnitude=True)
+            field, space["wavelength_m"], pitch, pitch, space["distance_m"], output_magnitude=True)
     elif config.aberration["enabled"] or config.time["method"] == "pca":
         field = hf.abs(field)
     image = hf.mean(field, axis=1)
-    if config.space["method"] == "fresnel":
+    if propagated:
         image = hf.fftshift(image)
-        if (cutoff := config.output["flatfield_cutoff_m"]) is not None:
-            image = _flatfield(image, cutoff, wavelength, pitch, config.space["distance_m"])
-    average_window = config.output["average_window"]
+    post = config.postprocessing
+    if (cutoff := post["flatfield_cutoff_m"]) is not None:
+        image = _flatfield(image, cutoff, space, propagated)
+    average_window = post["average_window"]
     if config.correction_window > 1 or average_window > 1:
         image = hf.sliding_average(image, 8, average_window,
                                    discard_first=config.correction_window - 1)
-    if (clip := config.output["percentile_clip"]) is not None:
+    if (clip := post["percentile_clip"]) is not None:
         image = hf.pct_clip(image, **clip)
-    if config.output["dtype"] == "uint8":
-        image = image.astype(hf.uint8, "scaled")
+    image = image.astype(hf.uint8, "scaled")
     image = _host_queue(image, config, "host_output")
     image = hf.throughput(image, interval_ms=interval, node_id="output_fps")
     measured = hf.latency_end(

@@ -187,10 +187,10 @@ def main():
         plt.show()
     elif isinstance(images, dict):
         import matplotlib.pyplot as plt
-        from fresnel_aberration_numpy import create_viewer
+        from holography_demo_viewer import create_viewer
 
         discard = config.correction_window - 1
-        dashboard = create_viewer(images, xy_offset=discard + config.output["average_window"] - 1,
+        dashboard = create_viewer(images, xy_offset=discard + config.postprocessing["average_window"] - 1,
                                   discard_first=discard, zernike_modes=config.aberration["zernike_modes"])
         plt.show()
     elif images is not None:

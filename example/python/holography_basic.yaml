@@ -14,28 +14,28 @@ time:
   batch_windows: 4
   component_begin: 0
   component_end: 16
-optics:
-  wavelength_m: 8.51e-7
-  pixel_pitch_m: 2.0e-5
 space:
   method: fresnel
+  wavelength_m: 8.51e-7
+  pixel_pitch_m: 2.0e-5
   distance_m: 0.49
+spatial_filter:
+  enabled: false
+  r_inner: 3
+  r_outer: 1024
+  s_inner: 0
+  s_outer: 1
 aberration:
   enabled: false
   slope_mode: full_pairwise
-  distance_m: 0.49
   subapertures: 5
-  average_window: 64
   zernike_modes: [4, 5, 6]
-  prefilter: null # Or {r_inner: 3, r_outer: 1024, s_inner: 0, s_outer: 1}.
-  sensor_flatfield_cutoff_m: 0.01
   skip_outside_pupil: true
 metrics:
   interval_ms: 1000
   history_batches: 8192
-output:
+postprocessing:
   average_window: 64
-  dtype: uint8
   flatfield_cutoff_m: null
   percentile_clip: null # Or {min_pct: 0.02, max_pct: 99.98, roi_radius: 0.9}.
 viewer:

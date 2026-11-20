@@ -11,13 +11,4 @@ examples = ["numpy", "matplotlib", "PyYAML"]
 package = false
 
 [tool.holoflow.examples]
-hf-finite = "finite_numpy.py"
-hf-fresnel = "fresnel_numpy.py"
-hf-aberration = "fresnel_aberration_numpy.py"
-hf-doppler = "simple_doppler.py"
-hf-fresnel-doppler = "fresnel_doppler.py"
-hf-fresnel-decomposed = "fresnel_doppler_decomposed.py"
-hf-benchmark = "benchmark.py"
-hf-throughput = "throughput.py"
-hf-latency = "latency.py"
 hf-demo = "holography_demo.py"
