@@ -211,6 +211,7 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
                                          .rank_factor = s_.holovibe_pca_rank_factor});
     frames = slice(frames, {{holonp::SliceRange{s_.time_z_begin, s_.time_z_end}, {}, {}}});
     auto result = mean_abs(frames, {{0}, true});
+    // Match the main XY path: center Fresnel output after temporal reduction.
     if (s_.pp_fft_shift) result = fftshift(result, {{-2, -1}});
     build_xy_output(result, 0);
     return g_;

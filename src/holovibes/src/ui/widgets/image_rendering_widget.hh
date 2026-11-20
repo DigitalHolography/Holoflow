@@ -38,7 +38,6 @@ public:
   int     get_batch_size() const;
   int     get_time_stride() const;
   bool    is_filter_2d_enabled() const;
-  bool    is_fft_shift_enabled() const;
   int     get_filter_inner() const;
   int     get_filter_outer() const;
   QString get_space_transform() const;
@@ -76,7 +75,6 @@ public:
   void set_batch_size(int value);
   void set_time_stride(int value);
   void set_filter_2d_enabled(bool enabled);
-  void set_fft_shift_enabled(bool enabled);
   void set_filter_inner(int value);
   void set_filter_outer(int value);
   void set_space_transform(const QString &method);
@@ -168,7 +166,6 @@ private:
   QSpinBox        *batch_size_spin_;
   QSpinBox        *time_stride_spin_;
   QCheckBox       *filter_2d_check_;
-  QCheckBox       *fft_shift_check_;
   QSpinBox        *filter_2d_inner_spin_;
   QSpinBox        *filter_2d_outer_spin_;
   QComboBox       *space_transform_combo_;
