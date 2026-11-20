@@ -22,6 +22,7 @@ space:
   distance_m: 0.49
 aberration:
   enabled: false
+  slope_mode: full_pairwise
   distance_m: 0.49
   subapertures: 5
   average_window: 64
@@ -41,6 +42,8 @@ viewer:
   enabled: true
   max_frames: 8192
   cao_diagnostics: false
+  cao_coefficients_only: false
+  cao_compare_modes: false
 graph:
   enabled: true
   log_dir: logs/python

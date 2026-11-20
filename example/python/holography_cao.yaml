@@ -23,6 +23,7 @@ space:
 aberration:
   enabled: true
   distance_m: 0.49
+  slope_mode: full_pairwise
   subapertures: 5
   average_window: 64
   zernike_modes: [4, 5, 6]
@@ -40,7 +41,9 @@ output:
 viewer:
   enabled: true
   max_frames: 16384
-  cao_diagnostics: true
+  cao_diagnostics: false
+  cao_coefficients_only: true
+  cao_compare_modes: true
 graph:
   enabled: true
   log_dir: logs/python

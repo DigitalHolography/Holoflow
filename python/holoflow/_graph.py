@@ -301,13 +301,26 @@ class Graph:
         artifacts = None if log_dir is None else Artifacts.create(log_dir)
         return self._compile(artifacts, capture=capture)
 
-    def _compile(self, artifacts=None, *, capture=True):
+    def _compile(self, artifacts=None, *, capture=True, previous=None):
         if artifacts is not None:
             artifacts.descriptor_json.write_text(json.dumps(self.to_json(), indent=2), encoding="utf-8")
             artifacts.descriptor_dot.write_text(self.to_dot(), encoding="utf-8")
         try:
-            native = self._native.compile(
-                "" if artifacts is None else str(artifacts.directory), capture)
+            log_dir = "" if artifacts is None else str(artifacts.directory)
+            if previous is None:
+                native = self._native.compile(log_dir, capture)
+            else:
+                previous._acquire()
+                try:
+                    old = previous._get()
+                    if not previous._joined or not old.completed():
+                        raise ValueError("Graph update requires a completed and joined finite run")
+                    try:
+                        native = self._native.compile(log_dir, capture, old)
+                    finally:
+                        previous._native = None
+                finally:
+                    previous._lifecycle.release()
             return Executable(native, self._outputs, artifacts)
         except BaseException as error:
             if artifacts is not None:

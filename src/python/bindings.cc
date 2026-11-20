@@ -181,7 +181,8 @@ private:
 
 class Executable {
 public:
-  explicit Executable(const hc::GraphSpec &spec, const std::string &log_dir, bool capture)
+  explicit Executable(const hc::GraphSpec &spec, const std::string &log_dir, bool capture,
+                      std::unique_ptr<hr::CompilerOutput> previous = {})
       : capture_(!log_dir.empty() && capture ? std::make_unique<ProfileCapture>(log_dir) : nullptr),
         log_dir_(log_dir), registry_(make_registry()),
         compiler_(std::make_unique<hr::Compiler>(
@@ -193,7 +194,8 @@ public:
       node_ids_.insert(spec[v].name);
     for (const auto v : boost::make_iterator_range(vertices(spec)))
       names_.push_back(spec[v].name);
-    output_ = compiler_->compile(holoflow::python::prepare_finite_graph(spec, *registry_));
+    output_ = compiler_->compile(holoflow::python::prepare_finite_graph(spec, *registry_),
+                                 std::move(previous));
     for (const auto &[id, task] : output_->resources.tasks) {
       if (auto *probe = dynamic_cast<holoflow::python::ThroughputTask *>(task.get()))
         probes_.emplace(id, probe);
@@ -290,6 +292,16 @@ public:
     }
     if (failure)
       std::rethrow_exception(failure);
+  }
+  std::unique_ptr<hr::CompilerOutput> take_compilation() {
+    check_failure();
+    if (!scheduler_->completed() || scheduler_->is_running() || reporter_.joinable())
+      throw std::invalid_argument("Graph update requires a completed and joined finite run");
+    hr::flush_diagnostics();
+    if (capture_)
+      capture_->close();
+    scheduler_.reset();
+    return std::move(output_);
   }
   bool completed() const {
     check_failure();
@@ -493,8 +505,10 @@ public:
   explicit Graph(const std::string &json) : spec_(hc::from_json(Json::parse(json))) {}
   std::string                 json() const { return hc::to_json(spec_).dump(); }
   std::string                 dot() const { return hc::to_dot(spec_); }
-  std::unique_ptr<Executable> compile(const std::string &log_dir, bool capture) const {
-    return std::make_unique<Executable>(spec_, log_dir, capture);
+  std::unique_ptr<Executable> compile(const std::string &log_dir, bool capture,
+                                      Executable *previous) const {
+    auto output = previous ? previous->take_compilation() : nullptr;
+    return std::make_unique<Executable>(spec_, log_dir, capture, std::move(output));
   }
 
 private:
@@ -588,7 +602,7 @@ PYBIND11_MODULE(_native, m) {
       .def("to_json", &Graph::json)
       .def("to_dot", &Graph::dot)
       .def("compile", &Graph::compile, py::arg("log_dir") = "", py::arg("capture") = true,
-           py::call_guard<py::gil_scoped_release>());
+           py::arg("previous") = nullptr, py::call_guard<py::gil_scoped_release>());
   py::class_<Executable>(m, "Executable", py::release_gil_before_calling_cpp_dtor())
       .def("start", &Executable::start, py::call_guard<py::gil_scoped_release>())
       .def("stop", &Executable::stop)

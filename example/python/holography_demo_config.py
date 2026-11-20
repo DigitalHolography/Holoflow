@@ -55,11 +55,13 @@ def load_config(filename):
         "space": dict(method="fresnel", distance_m=0.49),
         "aberration": dict(enabled=False, distance_m=0.49, subapertures=5,
                            average_window=64, zernike_modes=[4, 5, 6], prefilter=None,
-                           skip_outside_pupil=True, sensor_flatfield_cutoff_m=0.01),
+                           skip_outside_pupil=True, sensor_flatfield_cutoff_m=0.01,
+                           slope_mode="full_pairwise"),
         "metrics": dict(interval_ms=1000, history_batches=8192),
         "output": dict(average_window=1, dtype="float32", flatfield_cutoff_m=None,
                        percentile_clip=None),
-        "viewer": dict(enabled=False, max_frames=256, cao_diagnostics=False),
+        "viewer": dict(enabled=False, max_frames=256, cao_diagnostics=False,
+                       cao_coefficients_only=False, cao_compare_modes=False),
         "queues": dict(input_frames=1024, preprocessing_windows=8, propagation_windows=8,
                        corrected_windows=2, output_images=32),
         "graph": dict(enabled=False, log_dir="logs/python", open_browser=True),
@@ -104,14 +106,22 @@ def load_config(filename):
     _check(space["method"] in ("none", "fresnel"), "space.method must be none or fresnel")
     aberration = defaults["aberration"]
     viewer = defaults["viewer"]
+    _check(type(viewer["cao_compare_modes"]) is bool, "viewer.cao_compare_modes must be a boolean")
+    _check(not viewer["cao_compare_modes"] or viewer["cao_coefficients_only"] is True,
+           "viewer.cao_compare_modes requires viewer.cao_coefficients_only")
+    _check(aberration["slope_mode"] in ("single_reference", "full_pairwise"),
+           "aberration.slope_mode must be single_reference or full_pairwise")
     graph = defaults["graph"]
     output = defaults["output"]
     _check(output["dtype"] in ("float32", "uint8"), "output.dtype must be float32 or uint8")
     for key, value in defaults["queues"].items():
         _check(_integer(value), f"queues.{key} must be positive")
-    _check(type(viewer["cao_diagnostics"]) is bool, "viewer.cao_diagnostics must be a boolean")
-    _check(not viewer["cao_diagnostics"] or (viewer["enabled"] and aberration["enabled"]),
-           "viewer.cao_diagnostics requires viewer.enabled and aberration.enabled")
+    for key in ("cao_diagnostics", "cao_coefficients_only"):
+        _check(type(viewer[key]) is bool, f"viewer.{key} must be a boolean")
+        _check(not viewer[key] or (viewer["enabled"] and aberration["enabled"]),
+               f"viewer.{key} requires viewer.enabled and aberration.enabled")
+    _check(not (viewer["cao_diagnostics"] and viewer["cao_coefficients_only"]),
+           "Choose either viewer.cao_diagnostics or viewer.cao_coefficients_only")
     cutoff = output["flatfield_cutoff_m"]
     _check(cutoff is None or (_number(cutoff) and cutoff > 0 and space["method"] == "fresnel"),
            "output.flatfield_cutoff_m must be positive and requires Fresnel")
@@ -146,6 +156,8 @@ def load_config(filename):
         modes = aberration["zernike_modes"]
         _check(isinstance(modes, list) and modes and all(_integer(mode, 2) for mode in modes)
                and len(set(modes)) == len(modes), "aberration.zernike_modes must contain unique Noll indices >= 2")
+        _check(not viewer["cao_coefficients_only"] or {4, 5, 6}.issubset(modes),
+               "viewer.cao_coefficients_only requires aberration.zernike_modes to include 4, 5, and 6")
     if aberration["enabled"] or space["method"] == "fresnel":
         for key, value in defaults["optics"].items():
             _check(_number(value) and value > 0, f"optics.{key} must be positive")
@@ -176,10 +188,13 @@ def load_config(filename):
     average_window = defaults["output"]["average_window"]
     _check(_integer(average_window), "output.average_window must be a positive integer")
     output_count = max(0, windows - correction_window - average_window + 2)
-    if viewer["enabled"]:
+    if viewer["cao_coefficients_only"]:
+        _check(windows >= correction_window, "viewer.cao_coefficients_only needs a full sensor averaging window")
+    elif viewer["enabled"]:
         _check(0 < output_count <= viewer["max_frames"],
                f"viewer.max_frames: selected range would produce {output_count} images")
-        _check(not viewer["cao_diagnostics"] or windows <= viewer["max_frames"],
+    if viewer["cao_diagnostics"] or viewer["cao_coefficients_only"]:
+        _check(windows <= viewer["max_frames"],
                f"viewer.max_frames: selected range would produce {windows} CAO updates")
     return DemoConfig(**defaults, temporal_frames=temporal_frames,
                       correction_window=correction_window, output_count=output_count,

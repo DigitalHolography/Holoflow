@@ -36,9 +36,12 @@ def _correct_aberration(field, config, wavelength, pitch):
     if (cutoff := settings["sensor_flatfield_cutoff_m"]) is not None:
         sensor = _flatfield(sensor, cutoff, wavelength, pitch, distance)
     skip = settings["skip_outside_pupil"]
+    mode = settings["slope_mode"]
+    if mode == "single_reference" and any(size % 2 == 0 for size in sensor.shape[1:3]):
+        raise ValueError("Single-reference CAO requires an odd reconstructed subaperture grid")
     slopes = hf.shack_hartmann_slopes(
         sensor, wavelength, pitch, pitch, distance, win_h, win_w, win_h, win_w,
-        skip_subapertures_outside_pupil=skip)
+        mode=mode, skip_subapertures_outside_pupil=skip)
     modes = settings["zernike_modes"]
     coefficients = hf.zernike_from_slopes(
         slopes, modes, wavelength, pitch, pitch, win_h, win_w, win_h, win_w,
@@ -47,22 +50,23 @@ def _correct_aberration(field, config, wavelength, pitch):
     corrected = hf.correct_phase(delayed, phase)
     corrected = hf.batch_queue(corrected, config.queues["corrected_windows"], 1, 1,
                                node_id="corrected_windows")
-    diagnostics = {}
+    fields = {}
+    if config.viewer["cao_diagnostics"] or config.viewer["cao_coefficients_only"]:
+        fields["coefficients"] = coefficients.reshape((1, len(modes)))
     if config.viewer["cao_diagnostics"]:
-        count = config.temporal_count
         mosaic = hf.normalize(sensor, axes=(-2, -1), lo=0, hi=255)
         _, rows, columns, _, _ = mosaic.shape
         mosaic = hf.transpose(mosaic, (0, 1, 3, 2, 4))
         mosaic = mosaic.reshape((1, rows * win_h, columns * win_w)).astype(hf.uint8, "scaled")
         wrapped = hf.wrap2pi(hf.copy(phase)).reshape((1, height, width))
-        fields = {"shack_hartmann": mosaic, "phase": wrapped,
-                  "coefficients": coefficients.reshape((1, len(modes)))}
-        for name, value in fields.items():
-            # Keep host transfers out of the CAO CUDA graph section.
-            queued = hf.batch_queue(value, config.queues["output_images"], 1, 1,
-                                    node_id=name + "_queue_device")
-            host = _host_queue(queued, config, name + "_queue")
-            diagnostics[name] = hf.sinks.numpy(host, length=count)
+        fields.update(shack_hartmann=mosaic, phase=wrapped)
+    diagnostics = {}
+    for name, value in fields.items():
+        # Keep host transfers out of the CAO CUDA graph section.
+        queued = hf.batch_queue(value, config.queues["output_images"], 1, 1,
+                                node_id=name + "_queue_device")
+        host = _host_queue(queued, config, name + "_queue")
+        diagnostics[name] = hf.sinks.numpy(host, length=config.temporal_count)
     return corrected, diagnostics
 
 
@@ -124,7 +128,9 @@ def pipeline(config):
         window_frames=(config.correction_window + average_window - 1) * temporal_frames,
         stride_frames=temporal_frames,
     )
-    if config.viewer["enabled"]:
+    if config.viewer["enabled"] and not config.viewer["cao_coefficients_only"]:
         xy = hf.sinks.numpy(measured, length=config.output_count, node_id="xy_output")
         return {"xy": xy, **diagnostics} if diagnostics else xy
     hf.sinks.void(measured, node_id="xy_output")
+    if diagnostics:
+        return diagnostics

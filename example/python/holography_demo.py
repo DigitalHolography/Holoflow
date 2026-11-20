@@ -4,6 +4,8 @@
 """Run a YAML-configured holography pipeline with live performance metrics."""
 
 import argparse
+from contextlib import ExitStack
+from dataclasses import replace
 import sys
 import time
 
@@ -55,31 +57,62 @@ class TerminalMetrics:
         print(f"Trace-to-drain wall time: {elapsed:.3f} s")
 
 
-def run_demo(config):
+def _run_pipeline(config, stack, previous=None):
     metrics = TerminalMetrics()
     started = time.perf_counter()
-    log_dir = config.graph["log_dir"] if config.graph["enabled"] else None
-    with hf.trace(pipeline, config).compile(log_dir=log_dir, capture=False) as run:
-        run.start()
-        duration = config.input["duration_seconds"]
-        deadline = None if duration is None else time.monotonic() + duration
-        try:
-            while not run.completed():
-                metrics.receive(run)
-                if deadline is not None and time.monotonic() >= deadline:
-                    run.stop()
+    graph = hf.trace(pipeline, config)
+    artifacts = hf.Artifacts.create(config.graph["log_dir"]) if config.graph["enabled"] else None
+    run = stack.enter_context(graph._compile(artifacts, capture=False, previous=previous))
+    run.start()
+    duration = config.input["duration_seconds"]
+    deadline = None if duration is None else time.monotonic() + duration
+    try:
+        while not run.completed():
+            metrics.receive(run)
+            if deadline is not None and time.monotonic() >= deadline:
+                run.stop()
+                break
+            time.sleep(0.01)
+    except KeyboardInterrupt:
+        run.stop()
+    run.wait()
+    elapsed = time.perf_counter() - started
+    metrics.receive(run)
+    metrics.summary(elapsed)
+    images = run.result() if config.viewer["enabled"] and run.completed() else None
+    return images, run
+
+
+_SOLVERS = {
+    "single_reference": ("Single reference", "#808080"),
+    "full_pairwise": ("Full-pairwise Laplacian", "black"),
+}
+
+
+def run_demo(config):
+    reports = []
+    with ExitStack() as stack:
+        if config.viewer["cao_compare_modes"]:
+            images = {}
+            previous = None
+            for mode, (label, _) in _SOLVERS.items():
+                setup = "graph update" if previous is not None else "fresh compile"
+                print(f"{label} ({setup})", flush=True)
+                settings = replace(config, aberration={**config.aberration, "slope_mode": mode})
+                result, previous = _run_pipeline(settings, stack, previous)
+                reports.append((label, previous.artifacts))
+                if result is None:
+                    images = None
                     break
-                time.sleep(0.01)
-        except KeyboardInterrupt:
-            run.stop()
-        run.wait()
-        elapsed = time.perf_counter() - started
-        metrics.receive(run)
-        metrics.summary(elapsed)
-        images = run.result() if config.viewer["enabled"] and run.completed() else None
-        artifacts = run.artifacts
-    if artifacts is not None:
-        show_graph_report(artifacts.compiled_dot, config.graph["open_browser"])
+                images[mode] = result["coefficients"]
+        else:
+            images, run = _run_pipeline(config, stack)
+            reports.append((None, run.artifacts))
+    for label, artifacts in reports:
+        if artifacts is not None:
+            if label is not None:
+                print(f"{label} graph", flush=True)
+            show_graph_report(artifacts.compiled_dot, config.graph["open_browser"])
     return images
 
 
@@ -107,6 +140,30 @@ def show_images(images):
     plt.show()
 
 
+def create_coefficient_viewer(coefficients, modes, discard_first, *,
+                              single_reference=None, slope_mode="full_pairwise"):
+    import matplotlib.pyplot as plt
+
+    figure, axes = plt.subplots(3, 1, sharex=True, figsize=(9, 7), layout="constrained")
+    histories = [(slope_mode, coefficients)]
+    if single_reference is not None:
+        if single_reference.shape != coefficients.shape:
+            raise ValueError("CAO comparison requires matching coefficient histories")
+        histories.insert(0, ("single_reference", single_reference))
+    updates = range(discard_first, len(coefficients))
+    for axis, mode in zip(axes, (4, 5, 6)):
+        for solver, history in histories:
+            label, color = _SOLVERS[solver]
+            axis.plot(updates, history[discard_first:, modes.index(mode)],
+                      label=label, color=color, linewidth=0.6)
+        axis.set_ylabel(f"a{mode} (rad)")
+        # if single_reference is not None:
+        #     axis.legend()
+    axes[-1].set_xlabel("CAO update")
+    figure.suptitle("CAO coefficient history")
+    return figure
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("config", help="Path to the YAML configuration")
@@ -116,7 +173,19 @@ def main():
         images = run_demo(config)
     except (OSError, ValueError, RuntimeError, yaml.YAMLError) as error:
         parser.error(str(error))
-    if isinstance(images, dict):
+    if images is not None and config.viewer["cao_coefficients_only"]:
+        import matplotlib.pyplot as plt
+
+        discard = config.correction_window - 1
+        modes = config.aberration["zernike_modes"]
+        if config.viewer["cao_compare_modes"]:
+            create_coefficient_viewer(images["full_pairwise"], modes, discard,
+                                      single_reference=images["single_reference"])
+        else:
+            create_coefficient_viewer(images["coefficients"], modes, discard,
+                                      slope_mode=config.aberration["slope_mode"])
+        plt.show()
+    elif isinstance(images, dict):
         import matplotlib.pyplot as plt
         from fresnel_aberration_numpy import create_viewer
 

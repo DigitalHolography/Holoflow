@@ -74,10 +74,18 @@ and the viewer opens after the final summary.
 
 The [Basic config](../example/python/holography_basic.yaml) adds scaled
 8-bit output. The [CAO config](../example/python/holography_cao.yaml) adds
-prefiltering, output flatfield and percentile clipping, and an offline
-dashboard with the Shack–Hartmann mosaic, wrapped phase and coefficient history.
-Set `viewer.cao_diagnostics: true` on a finite, CAO-enabled viewer run to collect
-these diagnostics. The preview limit also applies to the diagnostic updates.
+prefiltering, output flatfield and percentile clipping, and three separate
+coefficient history plots. With `viewer.cao_coefficients_only: true`, the demo
+collects coefficient vectors and plots a4, a5, and a6 after the sensor window
+fills. XY processing and metrics still run, with the images sent to Void.
+The CAO example enables `viewer.cao_compare_modes` to overlay single-reference
+(grey) and full-pairwise Laplacian (black) histories. The two runs start from
+the same input range. The second updates the first native compilation and
+reuses compatible resources. Set `cao_compare_modes: false` and choose
+`aberration.slope_mode` for a single run.
+To see the full dashboard with XY, the Shack–Hartmann mosaic, and wrapped
+phase, disable comparison and coefficients-only mode and set `cao_diagnostics: true`.
+The preview limit also applies to the diagnostic updates.
 Device queues hand off CAO diagnostics before copying them to host, so those
 transfers run in separate sections from the correction CUDA graph.
 

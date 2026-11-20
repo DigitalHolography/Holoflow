@@ -432,17 +432,18 @@ HolofileFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   }
 
   // Construct task directly
-  auto task              = std::make_unique<Holofile>();
-  task->settings         = settings;
-  task->reader           = std::move(reader);
-  task->header           = header;
-  task->frame_idx        = frame_idx;
-  task->odesc            = infer.output_descs[0];
-  task->buf              = buf;
-  task->h_buf            = std::move(h_buf);
-  task->d_buf            = std::move(d_buf);
-  task->stream           = ctx.stream;
-  task->next_batch_start = pace_same ? old_holofile->next_batch_start : std::nullopt;
+  auto task       = std::make_unique<Holofile>();
+  task->settings  = settings;
+  task->reader    = std::move(reader);
+  task->header    = header;
+  task->frame_idx = frame_idx;
+  task->odesc     = infer.output_descs[0];
+  task->buf       = buf;
+  task->h_buf     = std::move(h_buf);
+  task->d_buf     = std::move(d_buf);
+  task->stream    = ctx.stream;
+  task->next_batch_start =
+      pace_same && settings.keep_cursor ? old_holofile->next_batch_start : std::nullopt;
 
   return task;
 }

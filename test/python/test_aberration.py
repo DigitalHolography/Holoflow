@@ -164,6 +164,8 @@ class HolographyDemoTest(unittest.TestCase):
         settings["time"].update(window_frames=4, component_end=2)
         settings["aberration"]["average_window"] = 3
         settings["output"]["average_window"] = 2
+        settings["viewer"].update(cao_diagnostics=True, cao_coefficients_only=False,
+                                  cao_compare_modes=False)
         config = self.config(**settings)
         graph = hf.trace(pipeline, config)
         nodes = graph.to_json()["nodes"]
@@ -193,6 +195,69 @@ class HolographyDemoTest(unittest.TestCase):
         self.addCleanup(plt.close, fig)
         slider.set_val(4)
         np.testing.assert_array_equal(fig.axes[2].images[0].get_array(), images["phase"][7])
+
+        from holography_demo import create_coefficient_viewer
+
+        settings["viewer"].update(cao_diagnostics=False, cao_coefficients_only=True)
+        config = self.config(**settings)
+        graph = hf.trace(pipeline, config)
+        nodes = graph.to_json()["nodes"]
+        self.assertEqual(nodes["xy_output"]["type"], "Void")
+        self.assertEqual(sum(node["type"] == "ArrayCollector" for node in nodes.values()), 1)
+        self.assertNotIn("phase_queue_device", nodes)
+        self.assertNotIn("shack_hartmann_queue_device", nodes)
+        with graph.compile(log_dir=self.root / "coefficients", capture=False) as run:
+            run.start()
+            result = run.result()
+            self.assertEqual(run.latency("latency")["matched_outputs"], 5)
+            self.assertEqual(run.progress()["successful_emissions"]["output_fps"], 5)
+        sections = json.loads((run.artifacts.directory / "section_cuda_graphs.json").read_text(encoding="utf-8"))
+        correction, = [section for section in sections
+                       if any(task["kind"] == "ShortTimeFresnelDiffraction" for task in section["tasks"])]
+        self.assertEqual(correction["launches"], config.temporal_count)
+        self.assertEqual(set(result), {"coefficients"})
+        np.testing.assert_allclose(result["coefficients"], images["coefficients"], rtol=1e-5, atol=1e-6)
+        reordered = result["coefficients"][:, [2, 0, 1]]
+        figure = create_coefficient_viewer(reordered, [6, 4, 5], discard_first=2)
+        self.addCleanup(plt.close, figure)
+        self.assertEqual(len(figure.axes), 3)
+        for index, axis in enumerate(figure.axes):
+            self.assertEqual(axis.get_ylabel(), f"a{index + 4} (rad)")
+            np.testing.assert_array_equal(axis.lines[0].get_xdata(), np.arange(2, 8))
+            np.testing.assert_array_equal(axis.lines[0].get_ydata(), result["coefficients"][2:, index])
+
+        from holography_demo import run_demo
+
+        settings["viewer"]["cao_compare_modes"] = True
+        settings["graph"].update(enabled=True, open_browser=False, log_dir="comparison")
+        config = self.config(**settings)
+        with redirect_stdout(StringIO()) as terminal:
+            histories = run_demo(config)
+        self.assertIn("Single reference (fresh compile)", terminal.getvalue())
+        self.assertIn("Full-pairwise Laplacian (graph update)", terminal.getvalue())
+        self.assertEqual(terminal.getvalue().count("Latency: 5 matched, 0 unmatched"), 2)
+        np.testing.assert_allclose(histories["full_pairwise"], result["coefficients"],
+                                   rtol=1e-5, atol=1e-6)
+        settings["aberration"]["slope_mode"] = "single_reference"
+        settings["viewer"]["cao_compare_modes"] = False
+        single = self.config(**settings)
+        with hf.trace(pipeline, single).compile() as run:
+            run.start()
+            expected = run.result()["coefficients"]
+        np.testing.assert_allclose(histories["single_reference"], expected, rtol=1e-5, atol=1e-6)
+        reports = list((self.root / "comparison").glob("*/section_cuda_graphs.json"))
+        self.assertEqual(len(reports), 2)
+        sections = [json.loads(report.read_text(encoding="utf-8")) for report in reports]
+        self.assertEqual({section[0]["compilation_generation"] for section in sections}, {1, 2})
+        figure = create_coefficient_viewer(histories["full_pairwise"], [4, 5, 6], 2,
+                                           single_reference=histories["single_reference"])
+        self.addCleanup(plt.close, figure)
+        for col, axis in enumerate(figure.axes):
+            self.assertEqual([line.get_color() for line in axis.lines], ["#808080", "black"])
+            self.assertEqual([line.get_linewidth() for line in axis.lines], [0.6, 0.6])
+            for line, history in zip(axis.lines, histories.values()):
+                np.testing.assert_array_equal(line.get_xdata(), np.arange(2, 8))
+                np.testing.assert_array_equal(line.get_ydata(), history[2:, col])
 
     def test_output_sliding_average_matches_numpy(self):
         from holography_demo_pipeline import pipeline
