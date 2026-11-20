@@ -27,9 +27,50 @@
 #include <cmath>
 
 #include "ui/widgets/validation_style.hh"
+#include "ui/widgets/tensor_display_widget.hh"
 #include "ui/widgets/zernike_history_widget.hh"
 
 namespace holovibes::ui {
+
+class XYProcessedSettingsWidget : public QWidget {
+public:
+  explicit XYProcessedSettingsWidget(QWidget *parent = nullptr) : QWidget(parent) {
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(8, 12, 8, 8);
+    auto *title = new QLabel(tr("XY Processed"), this);
+    title->setObjectName("settingsWidgetTitle");
+    layout->addWidget(title);
+
+    flip_x_button_ = new QPushButton(tr("Flip X (left/right)"), this);
+    flip_y_button_ = new QPushButton(tr("Flip Y (top/bottom)"), this);
+    flip_x_button_->setCheckable(true);
+    flip_y_button_->setCheckable(true);
+    layout->addWidget(flip_x_button_);
+    layout->addWidget(flip_y_button_);
+    layout->addStretch(1);
+
+    const auto apply_flips = [this]() {
+      if (!target_.isNull())
+        target_->set_axis_flips(flip_x_button_->isChecked(), flip_y_button_->isChecked());
+    };
+    connect(flip_x_button_, &QPushButton::toggled, this, apply_flips);
+    connect(flip_y_button_, &QPushButton::toggled, this, apply_flips);
+  }
+
+  void set_target(TensorDisplayWidget *target) {
+    target_ = target;
+    if (target_.isNull()) return;
+    const QSignalBlocker x_blocker(flip_x_button_);
+    const QSignalBlocker y_blocker(flip_y_button_);
+    flip_x_button_->setChecked(target_->flip_x_enabled());
+    flip_y_button_->setChecked(target_->flip_y_enabled());
+  }
+
+private:
+  QPointer<TensorDisplayWidget> target_;
+  QPushButton *flip_x_button_ = nullptr;
+  QPushButton *flip_y_button_ = nullptr;
+};
 
 class ZernikeHistorySettingsWidget : public QWidget {
 public:
@@ -247,6 +288,9 @@ SelectedWidgetSettingsPanel::SelectedWidgetSettingsPanel(QWidget *parent)
   scroll_area->setWidget(zernike_history_page_);
   pages_->addWidget(scroll_area);
 
+  xy_processed_page_ = new XYProcessedSettingsWidget(pages_);
+  pages_->addWidget(xy_processed_page_);
+
   layout->addWidget(pages_);
   pages_->setCurrentWidget(empty_page_);
 }
@@ -268,8 +312,27 @@ void SelectedWidgetSettingsPanel::set_selected_widget(ZernikeHistoryWidget *widg
 
   destroyed_connection_ =
       connect(selected_widget_.data(), &QObject::destroyed, this, [this]() { clear_selection(); });
-  zernike_history_page_->set_target(selected_widget_.data());
+  zernike_history_page_->set_target(widget);
+  xy_processed_page_->set_target(nullptr);
   pages_->setCurrentIndex(1);
+}
+
+void SelectedWidgetSettingsPanel::set_selected_widget(TensorDisplayWidget *widget) {
+  if (selected_widget_ == widget) {
+    xy_processed_page_->set_target(widget);
+    return;
+  }
+  if (destroyed_connection_) disconnect(destroyed_connection_);
+  selected_widget_ = widget;
+  if (selected_widget_.isNull()) {
+    clear_selection();
+    return;
+  }
+  destroyed_connection_ =
+      connect(widget, &QObject::destroyed, this, [this]() { clear_selection(); });
+  zernike_history_page_->set_target(nullptr);
+  xy_processed_page_->set_target(widget);
+  pages_->setCurrentWidget(xy_processed_page_);
 }
 
 void SelectedWidgetSettingsPanel::clear_selection() {
@@ -279,19 +342,14 @@ void SelectedWidgetSettingsPanel::clear_selection() {
   }
   selected_widget_.clear();
   zernike_history_page_->set_target(nullptr);
+  xy_processed_page_->set_target(nullptr);
   empty_placeholder_->setText("Click a visualization to configure it");
   pages_->setCurrentWidget(empty_page_);
 }
 
 void SelectedWidgetSettingsPanel::show_no_configurable_settings() {
-  if (destroyed_connection_) {
-    disconnect(destroyed_connection_);
-    destroyed_connection_ = {};
-  }
-  selected_widget_.clear();
-  zernike_history_page_->set_target(nullptr);
+  clear_selection();
   empty_placeholder_->setText("No configurable settings");
-  pages_->setCurrentWidget(empty_page_);
 }
 
 } // namespace holovibes::ui

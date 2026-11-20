@@ -1104,6 +1104,8 @@ void MainWindow::select_configurable_widget(ZernikeHistoryWidget *widget) {
 void MainWindow::on_selected_visualization_changed(const QString &visualization_id) {
   if (visualization_id == "zernike_a4") {
     selected_widget_settings_panel_->set_selected_widget(zernike_history_widget_);
+  } else if (visualization_id == "xy_processed") {
+    selected_widget_settings_panel_->set_selected_widget(xy_processed_widget_);
   } else if (visualization_id.isEmpty()) {
     selected_widget_settings_panel_->clear_selection();
   } else {
@@ -1353,6 +1355,8 @@ void MainWindow::save_persistent_state() {
   settings.setValue("registration_radius", view_widget_->get_registration_radius());
   settings.setValue("reticle", view_widget_->is_reticle_enabled());
   settings.setValue("reticle_radius", view_widget_->get_reticle_radius());
+  settings.setValue("xy_processed_flip_x", xy_processed_widget_->flip_x_enabled());
+  settings.setValue("xy_processed_flip_y", xy_processed_widget_->flip_y_enabled());
   settings.setValue("pct", view_widget_->is_pct_enabled());
   settings.setValue("pct_radius", view_widget_->get_pct_radius());
   settings.endGroup();
@@ -1544,6 +1548,9 @@ void MainWindow::restore_persistent_state() {
       settings.value("reticle", view_widget_->is_reticle_enabled()).toBool());
   view_widget_->reticle_radius()->setValue(
       settings.value("reticle_radius", view_widget_->get_reticle_radius()).toDouble());
+  xy_processed_widget_->set_axis_flips(
+      settings.value("xy_processed_flip_x", false).toBool(),
+      settings.value("xy_processed_flip_y", true).toBool());
   view_widget_->set_pct_enabled(settings.value("pct", view_widget_->is_pct_enabled()).toBool());
   view_widget_->set_pct_radius(
       settings.value("pct_radius", view_widget_->get_pct_radius()).toDouble());

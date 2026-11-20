@@ -49,9 +49,13 @@ uniform int use_colormap;
 uniform float vmin;
 uniform float vmax;
 uniform int invert_display;
+uniform int flip_x;
+uniform int flip_y;
 
 void main(){
-  float raw_val = texture(tex, uv).r;
+  vec2 display_uv = vec2(flip_x == 1 ? 1.0 - uv.x : uv.x,
+                         flip_y == 1 ? 1.0 - uv.y : uv.y);
+  float raw_val = texture(tex, display_uv).r;
   
   // Normalize the value to 0.0 - 1.0 based on bounds
   float range = vmax - vmin;
@@ -141,6 +145,14 @@ void TensorDisplayWidget::set_display_inverted(bool inverted) {
   update();
 }
 
+void TensorDisplayWidget::set_axis_flips(bool flip_x, bool flip_y) {
+  if (flip_x_ == flip_x && flip_y_ == flip_y)
+    return;
+  flip_x_ = flip_x;
+  flip_y_ = flip_y;
+  update();
+}
+
 void TensorDisplayWidget::initializeGL() {
   initializeOpenGLFunctions();
   const QColor background = palette().color(QPalette::Window);
@@ -177,6 +189,8 @@ void TensorDisplayWidget::initializeGL() {
   vmin_loc_     = glGetUniformLocation(prog_, "vmin");
   vmax_loc_     = glGetUniformLocation(prog_, "vmax");
   invert_display_loc_ = glGetUniformLocation(prog_, "invert_display");
+  flip_x_loc_ = glGetUniformLocation(prog_, "flip_x");
+  flip_y_loc_ = glGetUniformLocation(prog_, "flip_y");
 
   glGenTextures(1, &tex_);
   glBindTexture(GL_TEXTURE_2D, tex_);
@@ -432,6 +446,8 @@ void TensorDisplayWidget::paintGL() {
   glUniform1f(vmin_loc_, vmin_);
   glUniform1f(vmax_loc_, vmax_);
   glUniform1i(invert_display_loc_, display_inverted_ ? 1 : 0);
+  glUniform1i(flip_x_loc_, flip_x_ ? 1 : 0);
+  glUniform1i(flip_y_loc_, flip_y_ ? 1 : 0);
 
   // Bind Main Image Texture
   glActiveTexture(GL_TEXTURE0);
