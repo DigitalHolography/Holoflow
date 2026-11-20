@@ -230,7 +230,10 @@ public:
   const CameraSettings &get_settings() const { return settings_; }
   void                  update_settings(const CameraSettings &settings) {
     settings_ = settings;
-    camera_->set_record_options(make_record_options(*settings.record_settings));
+    if(settings.record_settings.has_value())
+      camera_->set_record_options(make_record_options(*settings.record_settings));
+    else
+      camera_->set_record_options(std::nullopt);
   }
 
   void log_update_lifecycle(bool updated) {
@@ -544,6 +547,7 @@ CameraFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
                       std::span<const holoflow::core::TDesc>     input_descs,
                       const nlohmann::json                      &jsettings,
                       const holoflow::core::SyncCreateCtx       &ctx) const {
+  logger()->debug("[CameraFactory::update]");
   (void)ctx;
 
   auto *old = dynamic_cast<CameraTask *>(old_task.get());

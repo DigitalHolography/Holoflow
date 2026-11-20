@@ -95,6 +95,9 @@ private:
   size_t                           buffer_part_count_; // nb part / buffer
   size_t                           nb_buffers_;
   std::unique_ptr<Grabber>         grabber_{nullptr};
+  size_t                           grabber_restart_try_count_{0};
+  Clock::time_point                last_grabber_restart_log_;
+  static constexpr size_t          max_grabber_restart_try_count_{3};
 
   // Buffer Queue
   std::unique_ptr<CameraBufferQueue> buffer_queue_{nullptr};
