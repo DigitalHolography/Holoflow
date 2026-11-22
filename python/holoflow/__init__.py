@@ -46,7 +46,7 @@ from ._benchmark import BenchmarkReport, benchmark
 from ._throughput import throughput
 from ._latency import latency_end, latency_start
 from ._ops import batch_queue, fresnel_diffraction, mean, pca, sliding_average
-from . import sources, sinks
+from . import fft, sources, sinks
 
 uint8 = DType.uint8
 uint16 = DType.uint16

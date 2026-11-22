@@ -89,11 +89,40 @@ class Tensor:
                 raise TypeError("Symbolic slicing supports integer indices and slices")
         return operation("Slice", (self,), {"slices": items})
 
+    def _binary(self, other, kind, *, reflected=False):
+        if isinstance(other, Tensor):
+            left, right = (other, self) if reflected else (self, other)
+            return operation(kind, (left, right), {})
+        if not isinstance(other, (int, float, complex)):
+            return NotImplemented
+
+        from ._ops import asarray
+
+        tensor, scalar = self, asarray(other)
+        if kind == "Add" and tensor.dtype != scalar.dtype:
+            dtype = (
+                _native.DType.complex64
+                if _native.DType.complex64 in (tensor.dtype, scalar.dtype)
+                else _native.DType.float32
+            )
+            if tensor.dtype != dtype:
+                tensor = tensor.astype(dtype)
+            if scalar.dtype != dtype:
+                scalar = scalar.astype(dtype)
+        left, right = (scalar, tensor) if reflected else (tensor, scalar)
+        return operation(kind, (left, right), {})
+
     def __add__(self, other):
-        return operation("Add", (self, other), {})
+        return self._binary(other, "Add")
+
+    def __radd__(self, other):
+        return self._binary(other, "Add", reflected=True)
 
     def __mul__(self, other):
-        return operation("Multiply", (self, other), {})
+        return self._binary(other, "Multiply")
+
+    def __rmul__(self, other):
+        return self._binary(other, "Multiply", reflected=True)
 
     def __bool__(self) -> bool:
         raise TypeError("Symbolic tensor values are unavailable during tracing")

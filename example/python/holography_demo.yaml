@@ -11,7 +11,6 @@ input:
 time:
   method: pca
   window_frames: 32
-  batch_windows: 4
   component_begin: 0
   component_end: 16
 space:
@@ -50,7 +49,6 @@ graph:
   open_browser: true
 queues:
   input_frames: 1024
-  preprocessing_windows: 8
   propagation_windows: 8
   corrected_windows: 2
   output_images: 32

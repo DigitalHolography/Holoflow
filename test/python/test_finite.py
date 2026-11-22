@@ -139,12 +139,46 @@ class FiniteTest(unittest.TestCase):
         def pipeline():
             x = self.source().to("device").astype(hf.float32)
             x = hf.batch_queue(x, 16, 8, 8)
-            y = hf.abs(hf.fft2((x + hf.asarray(1)).astype(hf.complex64)))
+            y = hf.abs(hf.fft.fft2((x + hf.asarray(1)).astype(hf.complex64)))
             y = hf.batch_queue(y, 16, 8, 8)
             return hf.sinks.numpy(y)
         actual = self.collect(pipeline)
         expected = np.abs(np.fft.fft2(self.expected.astype(np.float32) + 1, axes=(-2, -1)))
         np.testing.assert_allclose(actual, expected, rtol=1e-4, atol=0.02)
+
+    def test_numpy_style_fft_and_scalar_operators(self):
+        def pipeline():
+            x = self.source().to("device")
+            real = x + 2
+            complex_field = 0.5j + real
+            scaled = 2 * complex_field * (1 + 0.5j)
+            return tuple(hf.sinks.numpy(y) for y in (
+                hf.fft.fftshift(scaled),
+                hf.fft.fftshift(scaled, axes=(-2, -1)),
+                hf.fft.fftshift(scaled, -1),
+                hf.fft.fftshift(scaled, ()),
+                hf.fftshift(scaled),
+                hf.fft.fft2(real),
+                hf.fft.fft2(real, norm="forward"),
+                hf.fft.fft2(real, norm="ortho"),
+                hf.fft2(real.astype(hf.complex64)),
+            ))
+
+        nodes = hf.trace(pipeline).to_json()["nodes"]
+        self.assertTrue({"AsArray", "Add", "Multiply"} <= {n["type"] for n in nodes.values()})
+        actual = self.collect(pipeline)
+        real = self.expected.astype(np.float32) + 2
+        scaled = 2 * (0.5j + real) * (1 + 0.5j)
+        # Default shift runs on each source emission, including its batch axis.
+        batches = scaled.reshape(-1, 8, *scaled.shape[1:])
+        shifted = np.fft.fftshift(batches, axes=(1, 2, 3)).reshape(scaled.shape)
+        np.testing.assert_array_equal(actual[0], shifted)
+        for result, axes in zip(actual[1:5], ((-2, -1), -1, (), (-2, -1))):
+            np.testing.assert_array_equal(result, np.fft.fftshift(scaled, axes=axes))
+        for result, norm in zip(actual[5:], (None, "forward", "ortho", None)):
+            np.testing.assert_allclose(result, np.fft.fft2(real, norm=norm), rtol=1e-5, atol=0.02)
+        with self.assertRaisesRegex(ValueError, "last two axes"):
+            hf.trace(lambda: hf.fft.fft2(self.source(), axes=(0, 1)))
 
     def test_captured_conversion_does_not_launch_after_eof(self):
         # Native diagnostics prove that this exercises actual CUDA graph replay,

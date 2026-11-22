@@ -70,7 +70,7 @@ def pipeline(path, start, end):
         True,
     )
     image = hf.mean(magnitude, -3, True)
-    image = hf.fftshift(image)
+    image = hf.fft.fftshift(image, axes=(-2, -1))
     height, width = image.shape[-2:]
     dy = WAVELENGTH * abs(PROPAGATION_DISTANCE) / (height * PIXEL_PITCH)
     dx = WAVELENGTH * abs(PROPAGATION_DISTANCE) / (width * PIXEL_PITCH)

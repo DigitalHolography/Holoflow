@@ -262,7 +262,11 @@ static void write_compiled_graph_header(std::ostringstream                 &ss,
 static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPlan &g,
                                  const std::map<size_t, size_t>     &tid_to_sid,
                                  const GraphCompiledDumpPreferences &prefs,
+                                 const std::vector<runtime::Section> &sections,
                                  std::string_view                    failure_node) {
+  std::unordered_set<runtime::GraphPlan::vertex_descriptor> constant_nodes;
+  for (const auto &section : sections)
+    constant_nodes.insert(section.const_sync_topo.begin(), section.const_sync_topo.end());
 
   auto fmt_id = [&](int tid) -> std::string {
     if (tid_to_sid.contains(tid)) {
@@ -356,7 +360,9 @@ static void write_compiled_nodes(std::ostringstream &ss, const runtime::GraphPla
                             v, v, kAsyncSignalColor);
         }
       } else {
-        const std::string label = label_base.str() + "\n(" + np.spec.kind + ")" + ids_line + "\n";
+        const std::string label = label_base.str() + "\n(" + np.spec.kind + ")" +
+                                  (constant_nodes.contains(v) ? "\nConstant (runs once per scheduler)" : "") +
+                                  ids_line + "\n";
         ss << std::format(
             "  v{} [label=\"{}\", fillcolor=\"{}\", color=\"{}\", "
             "penwidth={}];\n",
@@ -645,7 +651,7 @@ static std::string render_compiled_graph(const GraphPlan                    &gra
   if (prefs.dump_resource_info) {
     write_compiled_resources(ss, metadata);
   }
-  write_compiled_nodes(ss, graph, tid_to_sid, prefs, failure_node);
+  write_compiled_nodes(ss, graph, tid_to_sid, prefs, sections, failure_node);
   ss << "\n";
   write_compiled_edges(ss, graph, tid_to_sid, prefs, sections);
   ss << "\n";

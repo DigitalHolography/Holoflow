@@ -30,8 +30,10 @@ uv run hf-demo config.yaml
 
 The processing order is temporal PCA (or one image per raw frame), optional
 Shack–Hartmann aberration correction, then optional Fresnel propagation.
-The upload, PCA input, propagation, and host output handoffs use independent
-queues. PCA processes four windows per call by default (`time.batch_windows`).
+The upload queue assembles complete temporal windows, and PCA processes each
+window directly. The propagation and host output handoffs use independent queues.
+Older configs can still include `time.batch_windows` and
+`queues.preprocessing_windows`. The demo ignores those settings.
 Tune queue capacities in `queues`. The output latency probe runs after the
 device-to-host transfer and host queue, before NumPy collection or Void.
 Set `input.mode` to `finite` for EOF or `looping` for continuous playback.

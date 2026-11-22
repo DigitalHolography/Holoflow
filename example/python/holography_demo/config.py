@@ -49,8 +49,7 @@ def load_config(filename):
     defaults = {
         "input": dict(path=None, mode="finite", start_frame=0, end_frame=None, batch_size=32,
                       load_kind="live", tail="drop", max_fps=None, duration_seconds=None),
-        "time": dict(method="pca", window_frames=32, component_begin=0, component_end=16,
-                     batch_windows=4),
+        "time": dict(method="pca", window_frames=32, component_begin=0, component_end=16),
         "space": dict(method="fresnel", wavelength_m=8.51e-7, pixel_pitch_m=2.0e-5,
                       distance_m=0.49),
         "spatial_filter": dict(enabled=False, r_inner=3, r_outer=1024, s_inner=0, s_outer=1),
@@ -61,18 +60,21 @@ def load_config(filename):
         "postprocessing": dict(average_window=1, flatfield_cutoff_m=None, percentile_clip=None),
         "viewer": dict(enabled=False, max_frames=256, cao_diagnostics=False,
                        cao_coefficients_only=False, cao_compare_modes=False),
-        "queues": dict(input_frames=1024, preprocessing_windows=8, propagation_windows=8,
+        "queues": dict(input_frames=1024, propagation_windows=8,
                        corrected_windows=2, output_images=32),
         "graph": dict(enabled=False, log_dir="logs/python", open_browser=True),
     }
     raw = yaml.safe_load(filename.read_text(encoding="utf-8"))
     _check(isinstance(raw, dict), "config must be a YAML mapping")
+    legacy_keys = {"time": {"batch_windows"}, "queues": {"preprocessing_windows"}}
     for name, fields in raw.items():
         _check(name in defaults, f"Unknown YAML section: {name}")
         _check(isinstance(fields, dict), f"{name} must be a mapping")
-        for key in fields:
+        for key, value in fields.items():
+            if key in legacy_keys.get(name, ()):
+                continue
             _check(key in defaults[name], f"Unknown YAML key: {name}.{key}")
-        defaults[name].update(fields)
+            defaults[name][key] = value
     _check("input" in raw and "path" in raw["input"], "input.path is required")
     source = defaults["input"]
     _check(isinstance(source["path"], str) and source["path"].strip(), "input.path must be a path")
@@ -92,10 +94,7 @@ def load_config(filename):
     time = defaults["time"]
     _check(time["method"] in ("none", "pca"), "time.method must be none or pca")
     temporal_frames = 1
-    pca_batch = 1
     if time["method"] == "pca":
-        pca_batch = time["batch_windows"]
-        _check(_integer(pca_batch), "time.batch_windows must be positive")
         temporal_frames = time["window_frames"]
         _check(_integer(temporal_frames, 2), "time.window_frames must be at least 2")
         begin, end = time["component_begin"], time["component_end"]
@@ -172,10 +171,10 @@ def load_config(filename):
     start = source["start_frame"]
     end = total if source["end_frame"] is None else source["end_frame"]
     _check(start < end <= total, f"input.start_frame and input.end_frame must select a range within {total} frames")
-    alignment = lcm(source["batch_size"], temporal_frames * pca_batch)
+    alignment = lcm(source["batch_size"], temporal_frames)
     remainder = (end - start) % alignment
     _check(not remainder or source["tail"] == "drop",
-           f"input.tail: selected range must be divisible by {alignment} for complete source and PCA batches")
+           f"input.tail: selected range must be divisible by {alignment} for complete source batches and temporal windows")
     source["end_frame"] = end - remainder
     windows = (source["end_frame"] - start) // temporal_frames
     _check(windows > 0, "input range has no complete source batch and temporal window")

@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "example/python"))
 import holoflow as hf
 from fixture import write_holo
 from fresnel_aberration_numpy import input_range, pipeline, collect_frames, XY_OFFSET
-from holography_demo_viewer import create_viewer
+from holography_demo.viewer import create_viewer
 
 
 class AberrationTest(unittest.TestCase):
@@ -119,7 +119,7 @@ class HolographyDemoTest(unittest.TestCase):
         write_holo(self.root / "input.holo", frames=35, width=20, height=20)
 
     def config(self, **sections):
-        from holography_demo_config import load_config
+        from holography_demo.config import load_config
 
         settings = {"input": {"path": "input.holo", "batch_size": 8},
                     "time": {"method": "pca", "window_frames": 4, "component_end": 2},
@@ -131,7 +131,7 @@ class HolographyDemoTest(unittest.TestCase):
         return load_config(path)
 
     def test_processing_paths_and_exact_latency_counts(self):
-        from holography_demo_pipeline import pipeline
+        from holography_demo.pipeline import pipeline
 
         cases = [
             ({"time": {"method": "none"}, "space": {"method": "none"}}, 32),
@@ -163,7 +163,7 @@ class HolographyDemoTest(unittest.TestCase):
                     np.testing.assert_allclose(result, self.scaled_uint8(frames), atol=1, rtol=0)
 
     def test_cao_reference_processing_and_dashboard_alignment(self):
-        from holography_demo_pipeline import pipeline
+        from holography_demo.pipeline import pipeline
 
         reference = Path(__file__).resolve().parents[2] / "example/python/holography_cao.yaml"
         write_holo(self.root / "input.holo", frames=35, width=30, height=20)
@@ -185,7 +185,9 @@ class HolographyDemoTest(unittest.TestCase):
             config.space["wavelength_m"] * config.space["distance_m"])
         np.testing.assert_allclose(sorted((n["sigma_y"], n["sigma_x"]) for n in flatfields),
                                    [(4 * scale, 6 * scale), (20 * scale, 30 * scale)], rtol=1e-6)
-        self.assertEqual(nodes["pca_windows"]["params"]["output_size"], 4)
+        self.assertNotIn("pca_windows", nodes)
+        self.assertTrue(any(nodes[e["from"]]["type"] == "Reshape" and nodes[e["to"]]["type"] == "Pca"
+                            for e in spec["edges"]))
         self.assertEqual(nodes["correction_input"]["type"], "DualReaderBatchQueue")
         self.assertEqual(nodes["corrected_windows"]["type"], "BatchQueue")
         self.assertIn("PctClip", {node["type"] for node in nodes.values()})
@@ -212,7 +214,7 @@ class HolographyDemoTest(unittest.TestCase):
         slider.set_val(3)
         np.testing.assert_array_equal(fig.axes[2].images[0].get_array(), images["phase"][7])
 
-        from holography_demo import create_coefficient_viewer
+        from holography_demo.cli import create_coefficient_viewer
 
         settings["viewer"].update(cao_diagnostics=False, cao_coefficients_only=True)
         config = self.config(**settings)
@@ -242,7 +244,7 @@ class HolographyDemoTest(unittest.TestCase):
             np.testing.assert_array_equal(axis.lines[0].get_xdata(), np.arange(2, 8))
             np.testing.assert_array_equal(axis.lines[0].get_ydata(), result["coefficients"][2:, index])
 
-        from holography_demo import run_demo
+        from holography_demo.cli import run_demo
 
         settings["viewer"]["cao_compare_modes"] = True
         settings["graph"].update(enabled=True, open_browser=False, log_dir="comparison")
@@ -276,7 +278,7 @@ class HolographyDemoTest(unittest.TestCase):
                 np.testing.assert_array_equal(line.get_ydata(), history[2:, col])
 
     def test_output_sliding_average_matches_numpy(self):
-        from holography_demo_pipeline import pipeline
+        from holography_demo.pipeline import pipeline
 
         config = self.config(time={"method": "none"}, space={"method": "none"},
                              postprocessing={"average_window": 3}, viewer={"enabled": True})
@@ -292,6 +294,14 @@ class HolographyDemoTest(unittest.TestCase):
         np.testing.assert_allclose(result, self.scaled_uint8(expected), rtol=0, atol=1)
 
     def test_config_validation(self):
+        config = self.config(
+            input={"end_frame": 24, "tail": "error"},
+            time={"batch_windows": 4},
+            queues={"preprocessing_windows": 8},
+        )
+        self.assertEqual(config.input["end_frame"], 24)
+        self.assertEqual(config.temporal_count, 6)
+
         for sections, key in [
             ({"viewer": {"enabled": True, "max_frames": 7}}, "viewer.max_frames"),
             ({"input": {"tail": "error"}}, "input.tail"),
@@ -303,7 +313,7 @@ class HolographyDemoTest(unittest.TestCase):
                 self.config(**sections)
 
     def test_spatial_filter_and_flatfield_without_cao(self):
-        from holography_demo_pipeline import pipeline
+        from holography_demo.pipeline import pipeline
 
         spatial_filter = {"enabled": True, "r_inner": 0, "r_outer": 16, "s_inner": 0, "s_outer": 1}
         for method in ("none", "fresnel"):
@@ -326,8 +336,67 @@ class HolographyDemoTest(unittest.TestCase):
                     run.start()
                     self.assertEqual(run.result().shape, (8, 20, 20))
 
+    def test_decomposed_fresnel_matches_fused_magnitude(self):
+        from holography_demo.propagation import fresnel_diffraction_decomposed
+
+        def compare(path, complex_input, distance):
+            field = hf.sources.holofile(path, batch_size=2, loop=False).to("device")
+            field = field.astype(hf.float32)
+            if complex_input:
+                field = hf.multiply(field, hf.asarray(1 + 0.5j))
+            field = field.reshape((1, *field.shape), copy=False)
+            args = (field, 851e-9, 20e-6, 20e-6, distance)
+            return (
+                hf.sinks.numpy(hf.fresnel_diffraction(*args, output_magnitude=True)),
+                hf.sinks.numpy(fresnel_diffraction_decomposed(*args, output_magnitude=True)),
+            )
+
+        for width, height, complex_input, distance in (
+            (20, 20, False, 0.49),
+            (21, 16, True, -0.49),
+            (16, 21, False, -0.49),
+        ):
+            with self.subTest(width=width, height=height, complex_input=complex_input):
+                path = self.root / "fresnel.holo"
+                write_holo(path, frames=4, width=width, height=height)
+                with hf.trace(compare, path, complex_input, distance).compile() as run:
+                    run.start()
+                    fused, decomposed = run.result()
+                self.assertEqual(decomposed.shape, (2, 2, height, width))
+                self.assertEqual(decomposed.dtype, np.float32)
+                np.testing.assert_allclose(decomposed, fused, rtol=2e-4,
+                                           atol=2e-6 * fused.max())
+
+    def test_demo_with_decomposed_fresnel(self):
+        from holography_demo.pipeline import pipeline
+        from holography_demo.propagation import fresnel_diffraction_decomposed
+
+        config = self.config(viewer={"enabled": True})
+        with patch("holography_demo.pipeline.fresnel_diffraction", fresnel_diffraction_decomposed):
+            graph = hf.trace(pipeline, config)
+        spec = graph.to_json()
+        nodes = spec["nodes"]
+        kinds = {node["type"] for node in nodes.values()}
+        self.assertTrue({"Arange", "Meshgrid", "Exp", "FFT2", "Abs"} <= kinds)
+        self.assertNotIn("FresnelDiffraction", kinds)
+        with graph.compile(log_dir=self.root / "decomposed_graph") as run:
+            run.start()
+            self.assertEqual(run.result().shape, (config.output_count, 20, 20))
+            dot = run.artifacts.compiled_dot
+
+        labels = dot.read_text(encoding="utf-8").splitlines()
+        lens, = (name for name, node in nodes.items() if node["type"] == "Exp")
+        field_multiply, = (edge["to"] for edge in spec["edges"] if edge["from"] == lens)
+        marker = "Constant (runs once per scheduler)"
+        for name, node in nodes.items():
+            kind = node["type"]
+            if kind in {"Arange", "Meshgrid", "Exp", "FFT2", "Abs"} or name == field_multiply:
+                label, = (line for line in labels if f'label="{name}\\n' in line)
+                self.assertIn(f"\\n({kind})\\n", label)
+                self.assertEqual(marker in label, kind in {"Arange", "Meshgrid", "Exp"}, name)
+
     def test_looping_cli_reports_summary(self):
-        from holography_demo import run_demo
+        from holography_demo.cli import run_demo
 
         config = self.config(input={"mode": "looping", "load_kind": "gpu_cached",
                                     "max_fps": 320, "duration_seconds": 0.2},
@@ -339,13 +408,13 @@ class HolographyDemoTest(unittest.TestCase):
         self.assertFalse((self.root / "logs").exists())
 
     def test_compiled_graph_report_with_viewer_and_without_graphviz(self):
-        from holography_demo import run_demo
+        from holography_demo.cli import run_demo
 
         config = self.config(time={"method": "none"}, space={"method": "none"},
                              viewer={"enabled": True},
                              graph={"enabled": True, "log_dir": "reports", "open_browser": False})
-        with patch("holography_demo_graph.shutil.which", return_value=None), \
-                patch("holography_demo_graph.webbrowser.open") as browser, \
+        with patch("holography_demo.graph.shutil.which", return_value=None), \
+                patch("holography_demo.graph.webbrowser.open") as browser, \
                 redirect_stdout(StringIO()) as output:
             images = run_demo(config)
         self.assertEqual(images.shape, (32, 20, 20))

@@ -5,6 +5,20 @@ Source operations return symbolic tensors. Collection sinks return symbolic
 result handles; other sinks return `None`. Python runs once
 during tracing. Task execution, storage, queues, and CUDA work remain native.
 
+## NumPy-style math
+
+Symbolic device tensors support `+` and `*` with another tensor or a Python
+scalar on either side. Scalars become graph constants through `hf.asarray`.
+Scalar addition uses float32 or complex64, and multiplication uses the native
+dtype promotion rules.
+
+`hf.fft.fft2(a, axes=(-2, -1), norm=None)` transforms the last two axes of a
+device tensor and returns complex64. It supports `backward`, `forward`, and
+`ortho` normalization. Transform resizing (`s`) and explicit output buffers
+(`out`) are unsupported. `hf.fft.fftshift(x)` shifts all axes. Pass
+`axes=(-2, -1)` to shift only the spatial axes of a batch. The top-level
+`hf.fft2` and `hf.fftshift` retain their original calling conventions.
+
 ## Development build
 
 For the uv workflow, benchmark API, and graph/Perfetto outputs, see
@@ -15,9 +29,9 @@ and standard 64-bit CPython 3.14 with development headers. Set `CUDA_PATH` to th
 toolkit used by CMake's CUDA compiler; mixing toolkit headers is unsupported.
 
 ```powershell
-cmake --preset msvc-multi -DENABLE_PYTHON=ON -DPython3_EXECUTABLE=C:/Python314/python.exe
+uv sync --group examples
+cmake --preset msvc-multi -DENABLE_PYTHON=ON -DPython3_EXECUTABLE="$PWD/.venv/Scripts/python.exe"
 cmake --build --preset build-Release
-$env:PYTHONPATH = "$PWD/build/msvc-multi/python/Release"
 uv run python tools/setup_python.py
 uv run hf-demo --help
 ctest --preset test-Release
@@ -25,7 +39,8 @@ ctest --preset test-Release
 
 Python support defaults to off. Enabling it acquires pinned pybind11 3.1.0 through
 the existing FetchContent mechanism. With fetching disabled, supply that exact
-pybind11 CMake package. No pip installation or NumPy dependency is required.
+pybind11 CMake package. The demo uses PyYAML, NumPy, and Matplotlib from the
+`examples` dependency group. Use `uv sync --group examples` to install it.
 
 ## Local installation
 

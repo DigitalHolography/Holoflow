@@ -43,7 +43,7 @@ TEST(CompiledGraphDisplayTest, RendersSyncAsyncEdgesSectionsAndResources) {
   output.sections.push_back({.id         = 3,
                              .name       = "producer",
                              .stream     = nullptr,
-                             .sync_topo  = {source_v},
+                             .const_sync_topo = {source_v},
                              .async_cons = {},
                              .async_prod = {bridge_v}});
   output.resources.tensor_descs.emplace(
@@ -58,6 +58,9 @@ TEST(CompiledGraphDisplayTest, RendersSyncAsyncEdgesSectionsAndResources) {
   EXPECT_NE(dot.find("Section 3: producer"), std::string::npos);
   EXPECT_NE(dot.find("quoted"), std::string::npos);
   EXPECT_NE(dot.find("value"), std::string::npos);
+  EXPECT_NE(dot.find("(sync)\\nConstant (runs once per scheduler)"), std::string::npos);
+  EXPECT_EQ(dot.find("Constant (runs once per scheduler)"),
+            dot.rfind("Constant (runs once per scheduler)"));
 }
 
 TEST(CompiledGraphDisplayTest, RendersEmptyOutput) {

@@ -50,7 +50,7 @@ def pipeline():
         True,
     )
     image = hf.mean(magnitude, -3, True)
-    image = hf.fftshift(image)
+    image = hf.fft.fftshift(image, axes=(-2, -1))
     image = hf.sliding_average(image, PROCESSING_CAPACITY, AVERAGE_WINDOW)
     image = image.astype(hf.uint8, "scaled")
     image = hf.batch_queue(image, OUTPUT_CAPACITY, 1, 1)

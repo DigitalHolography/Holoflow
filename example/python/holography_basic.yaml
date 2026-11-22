@@ -1,6 +1,7 @@
 input:
-  path: D:\\260312_GUJ_1.holo
-  mode: looping
+  # path: D:\\260312_GUJ_1.holo
+  path: C:\\Users\\guill\\Documents\\holofiles_data\\GUJ_20260424_224317_AQ001.holo
+  mode: finite
   start_frame: 0
   end_frame: null
   batch_size: 32
@@ -11,7 +12,6 @@ input:
 time:
   method: pca
   window_frames: 32
-  batch_windows: 4
   component_begin: 0
   component_end: 16
 space:
@@ -26,7 +26,7 @@ spatial_filter:
   s_inner: 0
   s_outer: 1
 aberration:
-  enabled: false
+  enabled: true
   slope_mode: full_pairwise
   subapertures: 5
   zernike_modes: [4, 5, 6]
@@ -36,10 +36,10 @@ metrics:
   history_batches: 8192
 postprocessing:
   average_window: 64
-  flatfield_cutoff_m: null
+  flatfield_cutoff_m: 0.01
   percentile_clip: null # Or {min_pct: 0.02, max_pct: 99.98, roi_radius: 0.9}.
 viewer:
-  enabled: false
+  enabled: true
   max_frames: 8192
   cao_diagnostics: false
   cao_coefficients_only: false
@@ -50,7 +50,6 @@ graph:
   open_browser: true
 queues:
   input_frames: 1024
-  preprocessing_windows: 8
   propagation_windows: 8
   corrected_windows: 2
   output_images: 32

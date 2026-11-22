@@ -45,7 +45,7 @@ def fresnel_diffraction(field):
         math.pi / (WAVELENGTH * PROPAGATION_DISTANCE)
     )
     lens = hf.exp(phase * hf.asarray(1j))
-    return hf.abs(hf.fft2(field * lens))
+    return hf.abs(hf.fft.fft2(field * lens))
 
 
 def pipeline():
@@ -58,7 +58,7 @@ def pipeline():
     field = hf.batch_queue(x, components * PROCESSING_CAPACITY, components, components)
     magnitude = fresnel_diffraction(field)
     image = hf.mean(magnitude, -3, True)
-    image = hf.fftshift(image)
+    image = hf.fft.fftshift(image, axes=(-2, -1))
     image = hf.sliding_average(image, PROCESSING_CAPACITY, AVERAGE_WINDOW)
     image = image.astype(hf.uint8, "scaled")
     image = hf.batch_queue(image, OUTPUT_CAPACITY, 1, 1)
