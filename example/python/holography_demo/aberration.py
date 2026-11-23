@@ -3,13 +3,16 @@
 
 """Estimate and correct aberrations and collect CAO diagnostics."""
 
+from math import pi
+
 import holoflow as hf
 
+from . import aberration_ops
 from .postprocessing import flatfield
 from .queues import host_queue
 
 
-def correct_aberration(field, config):
+def _correct_aberration(field, config, *, subaperture_fresnel, zernike_phase, apply_phase, normalize):
     settings = config.aberration
     correction_window = config.correction_window
     height, width = field.shape[-2:]
@@ -32,7 +35,7 @@ def correct_aberration(field, config):
         correction_window,
         node_id="correction_input",
     )
-    shack_hartmann_images = hf.short_time_fresnel_diffraction(
+    shack_hartmann_images = subaperture_fresnel(
         current_field,
         wavelength_m,
         pixel_pitch_m,
@@ -88,10 +91,10 @@ def correct_aberration(field, config):
         stride_x=subaperture_width,
         skip_subapertures_outside_pupil=skip_outside_pupil,
     )[0, 0, :]
-    phase = hf.zernike_phase(coefficients, zernike_modes, height, width)
+    phase = zernike_phase(coefficients, zernike_modes, height, width)
     # The delayed reader aligns the field with the middle of the averaging window
     # by delaying it by (correction_window - 1) // 2 samples.
-    corrected = hf.correct_phase(delayed_field, phase)
+    corrected = apply_phase(delayed_field, phase)
     corrected = hf.batch_queue(
         corrected, config.queues["corrected_windows"], 1, 1, node_id="corrected_windows"
     )
@@ -101,13 +104,13 @@ def correct_aberration(field, config):
     if config.viewer["cao_diagnostics"] or config.viewer["cao_coefficients_only"]:
         diagnostic_tensors["coefficients"] = coefficients.reshape((1, len(zernike_modes)))
     if config.viewer["cao_diagnostics"]:
-        mosaic = hf.normalize(shack_hartmann_images, axes=(-2, -1), lo=0, hi=255)
+        mosaic = normalize(shack_hartmann_images, axes=(-2, -1), lo=0, hi=255)
         _, rows, columns, _, _ = mosaic.shape
         mosaic = hf.transpose(mosaic, (0, 1, 3, 2, 4))
         mosaic = mosaic.reshape(
             (1, rows * subaperture_height, columns * subaperture_width)
         ).astype(hf.uint8, "scaled")
-        wrapped = hf.wrap2pi(hf.copy(phase)).reshape((1, height, width))
+        wrapped = (phase % (2 * pi)).reshape((1, height, width))
         diagnostic_tensors.update(shack_hartmann=mosaic, phase=wrapped)
     diagnostics = {}
     for name, value in diagnostic_tensors.items():
@@ -118,3 +121,29 @@ def correct_aberration(field, config):
         host = host_queue(queued, config, name + "_queue")
         diagnostics[name] = hf.sinks.numpy(host, length=config.temporal_count)
     return corrected, diagnostics
+
+
+def correct_aberration_native(field, config):
+    return _correct_aberration(
+        field,
+        config,
+        subaperture_fresnel=hf.short_time_fresnel_diffraction,
+        zernike_phase=hf.zernike_phase,
+        apply_phase=hf.correct_phase,
+        normalize=hf.normalize,
+    )
+
+
+def correct_aberration_decomposed(field, config):
+    return _correct_aberration(
+        field,
+        config,
+        subaperture_fresnel=aberration_ops.subaperture_fresnel,
+        zernike_phase=aberration_ops.zernike_phase,
+        apply_phase=aberration_ops.apply_phase,
+        normalize=aberration_ops.normalize,
+    )
+
+
+# Select correct_aberration_native to use the fused reference stages.
+correct_aberration = correct_aberration_decomposed

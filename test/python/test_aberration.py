@@ -163,7 +163,12 @@ class HolographyDemoTest(unittest.TestCase):
                     np.testing.assert_allclose(result, self.scaled_uint8(frames), atol=1, rtol=0)
 
     def test_cao_reference_processing_and_dashboard_alignment(self):
+        from holography_demo.aberration import correct_aberration_native
         from holography_demo.pipeline import pipeline
+
+        def trace_reference(config):
+            with patch("holography_demo.pipeline.correct_aberration", correct_aberration_native):
+                return hf.trace(pipeline, config)
 
         reference = Path(__file__).resolve().parents[2] / "example/python/holography_cao.yaml"
         write_holo(self.root / "input.holo", frames=35, width=30, height=20)
@@ -174,7 +179,7 @@ class HolographyDemoTest(unittest.TestCase):
         settings["viewer"].update(cao_diagnostics=True, cao_coefficients_only=False,
                                   cao_compare_modes=False)
         config = self.config(**settings)
-        graph = hf.trace(pipeline, config)
+        graph = trace_reference(config)
         spec = graph.to_json()
         nodes = spec["nodes"]
         self.assertTrue(any(e["from"] == "spatial_filter" and e["to"] == "correction_input"
@@ -218,7 +223,7 @@ class HolographyDemoTest(unittest.TestCase):
 
         settings["viewer"].update(cao_diagnostics=False, cao_coefficients_only=True)
         config = self.config(**settings)
-        graph = hf.trace(pipeline, config)
+        graph = trace_reference(config)
         nodes = graph.to_json()["nodes"]
         self.assertEqual(nodes["xy_output"]["type"], "Void")
         self.assertEqual(sum(node["type"] == "ArrayCollector" for node in nodes.values()), 1)
@@ -335,6 +340,97 @@ class HolographyDemoTest(unittest.TestCase):
                 with graph.compile() as run:
                     run.start()
                     self.assertEqual(run.result().shape, (8, 20, 20))
+
+    def test_decomposed_aberration_matches_native_stages(self):
+        from holography_demo import aberration_ops
+
+        path = self.root / "aberration.holo"
+        write_holo(path, frames=18, width=21, height=16)
+        modes = [10, 4, 2, 7, 6, 9, 3, 8, 5]
+
+        def compare():
+            real = hf.sources.holofile(path, batch_size=9, loop=False).to("device").astype(hf.float32)
+            coefficients = hf.mean(real, axis=(-2, -1)) * 1e-4
+            phase = aberration_ops.zernike_phase(coefficients, modes, 16, 21)
+            native_phase = hf.zernike_phase(coefficients, modes, 16, 21)
+            outputs = [
+                native_phase.reshape((1, 16, 21)),
+                phase.reshape((1, 16, 21)),
+            ]
+            for field in (real, real * (1 + 0.5j)):
+                args = (field, 851e-9, 20e-6, 20e-6, 0.49, 5, 6, 5, 6)
+                outputs.extend((
+                    hf.short_time_fresnel_diffraction(*args),
+                    aberration_ops.subaperture_fresnel(*args),
+                    hf.correct_phase(field, phase),
+                    aberration_ops.apply_phase(field, phase),
+                ))
+            return tuple(hf.sinks.numpy(output) for output in outputs)
+
+        with hf.trace(compare).compile() as run:
+            run.start()
+            outputs = run.result()
+        self.assertEqual(outputs[3].shape, (18, 3, 3, 5, 6))
+        for native, decomposed in zip(outputs[::2], outputs[1::2]):
+            np.testing.assert_allclose(decomposed, native, rtol=2e-4,
+                                       atol=2e-6 * np.max(np.abs(native)))
+
+    def test_decomposed_normalization_matches_native(self):
+        from holography_demo.aberration_ops import normalize
+
+        def compare():
+            image = hf.sources.holofile(self.root / "input.holo", batch_size=5, loop=False)
+            image = image.to("device").astype(hf.float32).reshape((5, 2, 4, 5, 10))
+            return tuple(
+                hf.sinks.numpy(result)
+                for scale in (0, 1, 1e-10)
+                for result in (
+                    hf.normalize(image * scale, axes=(-2, -1), lo=-2, hi=3),
+                    normalize(image * scale, axes=(-2, -1), lo=-2, hi=3),
+                )
+            )
+
+        with hf.trace(compare).compile() as run:
+            run.start()
+            results = run.result()
+        np.testing.assert_array_equal(results[1], np.full((35, 2, 4, 5, 10), -2))
+        for reference, result in zip(results[::2], results[1::2], strict=True):
+            np.testing.assert_allclose(result, reference, rtol=1e-6, atol=1e-6)
+
+    def test_decomposed_aberration_in_both_slope_modes(self):
+        from holography_demo.pipeline import pipeline
+
+        for mode in ("single_reference", "full_pairwise"):
+            with self.subTest(mode=mode):
+                config = self.config(
+                    aberration={"enabled": True, "slope_mode": mode, "zernike_modes": [6, 4, 5]},
+                    postprocessing={"average_window": 3},
+                    viewer={"enabled": True, "cao_diagnostics": True},
+                )
+                with patch("holography_demo.pipeline.fresnel_diffraction", hf.fresnel_diffraction):
+                    graph = hf.trace(pipeline, config)
+                nodes = graph.to_json()["nodes"].values()
+                kinds = {node["type"] for node in nodes}
+                self.assertTrue({"FFT2", "Exp", "ShackHartmannSlopes", "ZernikeFromSlopes"} <= kinds)
+                self.assertTrue({"ShortTimeFresnelDiffraction", "ZernikePhase", "CorrectPhase"}.isdisjoint(kinds))
+                self.assertIn("Remainder", kinds)
+                self.assertNotIn("Wrap2Pi", kinds)
+                self.assertTrue({"Min", "Max", "Subtract", "Divide"} <= kinds)
+                self.assertNotIn("Normalize", kinds)
+                fit, = (node for node in nodes if node["type"] == "ZernikeFromSlopes")
+                self.assertEqual(fit["params"]["indexes"], [6, 4, 5])
+                with graph.compile(log_dir=self.root / mode, capture=False) as run:
+                    run.start()
+                    images = run.result()
+                    self.assertEqual(run.latency("latency")["matched_outputs"], config.output_count)
+                    dot = run.artifacts.compiled_dot
+                self.assertEqual(images["xy"].shape, (config.output_count, 20, 20))
+                self.assertEqual(images["coefficients"].shape, (config.temporal_count, 3))
+                for name in ("phase", "shack_hartmann"):
+                    self.assertEqual(images[name].shape, (config.temporal_count, 20, 20))
+                report = dot.read_text(encoding="utf-8")
+                self.assertGreaterEqual(report.count("\\n(Exp)\\nConstant (runs once per scheduler)"), 1)
+                self.assertGreaterEqual(report.count("\\n(Square)\\nConstant (runs once per scheduler)"), 4)
 
     def test_decomposed_fresnel_matches_fused_magnitude(self):
         from holography_demo.propagation import fresnel_diffraction_decomposed

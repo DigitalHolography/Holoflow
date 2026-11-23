@@ -28,7 +28,11 @@
 #include "holonp/exp.hh"
 #include "holonp/fft2.hh"
 #include "holonp/fftshift.hh"
+#include "holonp/divide.hh"
+#include "holonp/max.hh"
 #include "holonp/mean.hh"
+#include "holonp/min.hh"
+#include "holonp/subtract.hh"
 #include "holonp/meshgrid.hh"
 #include "holonp/multiply.hh"
 #include "holonp/reshape.hh"
@@ -53,6 +57,7 @@
 #include "holotask/syncs/shack_hartmann_slopes.hh"
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 #include "holotask/syncs/wrap2pi.hh"
+#include "holonp/remainder.hh"
 #include "holotask/syncs/zernike_from_slopes.hh"
 #include "holotask/syncs/zernike_phase.hh"
 
@@ -96,6 +101,10 @@ std::unique_ptr<hc::Registry> make_registry() {
   r->register_sync("Conversion", std::make_unique<holotask::syncs::ConversionFactory>());
   r->register_sync("Reshape", std::make_unique<holonp::ReshapeFactory>());
   r->register_sync("Mean", std::make_unique<holonp::MeanFactory>());
+  r->register_sync("Min", std::make_unique<holonp::MinFactory>());
+  r->register_sync("Max", std::make_unique<holonp::MaxFactory>());
+  r->register_sync("Subtract", std::make_unique<holonp::SubtractFactory>());
+  r->register_sync("Divide", std::make_unique<holonp::DivideFactory>());
   r->register_sync("Filter2D", std::make_unique<holotask::syncs::Filter2DFactory>());
   r->register_sync("Flatfield", std::make_unique<holotask::syncs::FlatfieldFactory>());
   r->register_sync("Pca", std::make_unique<holotask::syncs::PcaFactory>());
@@ -110,6 +119,7 @@ std::unique_ptr<hc::Registry> make_registry() {
   r->register_sync("Square", std::make_unique<holonp::SquareFactory>());
   r->register_sync("Add", std::make_unique<holonp::AddFactory>());
   r->register_sync("Multiply", std::make_unique<holonp::MultiplyFactory>());
+  r->register_sync("Remainder", std::make_unique<holonp::RemainderFactory>());
   r->register_sync("Exp", std::make_unique<holonp::ExpFactory>());
   r->register_sync("FFT2", std::make_unique<holonp::FFT2Factory>());
   r->register_sync("Abs", std::make_unique<holonp::AbsFactory>());

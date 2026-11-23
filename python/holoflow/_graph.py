@@ -124,6 +124,48 @@ class Tensor:
     def __rmul__(self, other):
         return self._binary(other, "Multiply", reflected=True)
 
+    def __sub__(self, other):
+        if not isinstance(other, (Tensor, int, float)):
+            return NotImplemented
+        from ._ops import subtract
+
+        return subtract(self, other)
+
+    def __rsub__(self, other):
+        if not isinstance(other, (Tensor, int, float)):
+            return NotImplemented
+        from ._ops import subtract
+
+        return subtract(other, self)
+
+    def __truediv__(self, other):
+        if not isinstance(other, (Tensor, int, float)):
+            return NotImplemented
+        from ._ops import divide
+
+        return divide(self, other)
+
+    def __rtruediv__(self, other):
+        if not isinstance(other, (Tensor, int, float)):
+            return NotImplemented
+        from ._ops import divide
+
+        return divide(other, self)
+
+    def __mod__(self, other):
+        if not isinstance(other, (Tensor, int, float)):
+            return NotImplemented
+        from ._ops import remainder
+
+        return remainder(self, other)
+
+    def __rmod__(self, other):
+        if not isinstance(other, (Tensor, int, float)):
+            return NotImplemented
+        from ._ops import remainder
+
+        return remainder(other, self)
+
     def __bool__(self) -> bool:
         raise TypeError("Symbolic tensor values are unavailable during tracing")
 

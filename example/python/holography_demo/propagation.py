@@ -28,6 +28,11 @@ def fresnel_diffraction_decomposed(field, wavelength, dx, dy, z, *, output_magni
         raise ValueError("z must be finite and nonzero")
 
     height, width = field.shape[-2:]
+    lens = quadratic_lens(height, width, wavelength, dx, dy, z)
+    return hf.abs(hf.fft.fft2(field * lens))
+
+
+def quadratic_lens(height, width, wavelength, dx, dy, z):
     # Match the fused kernel's coordinates on a centered square grid.
     size = max(height, width)
     start_x = (size - width) // 2 - size / 2
@@ -39,8 +44,7 @@ def fresnel_diffraction_decomposed(field, wavelength, dx, dy, z, *, output_magni
     y_m = y * dy
     radius_squared = hf.square(x_m) + hf.square(y_m)
     phase = radius_squared * (1j * pi / (wavelength * z))
-    lens = hf.exp(phase)
-    return hf.abs(hf.fft.fft2(field * lens))
+    return hf.exp(phase)
 
 
 # Set this to fresnel_diffraction_decomposed to use the primitive graph.

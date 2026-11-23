@@ -14,6 +14,8 @@
 
 """Typed wrappers mapping Python settings to native factory settings."""
 
+from operator import index
+
 from ._graph import Tensor, operation
 
 
@@ -43,6 +45,27 @@ def mean(x: Tensor, axis=(), keepdims: bool = False,
          *, node_id: str | None = None) -> Tensor:
     axes = [axis] if isinstance(axis, int) else list(axis)
     return operation("Mean", (x,), {"axis": axes, "keepdims": keepdims}, node_id)
+
+
+def _extrema(kind, x, axis, keepdims, node_id):
+    axes = tuple(range(len(x.shape))) if axis is None else (
+        tuple(map(index, axis)) if isinstance(axis, tuple) else (index(axis),)
+    )
+    if not axes:
+        return x
+    if any(-len(x.shape) <= a < len(x.shape) and x.shape[a] == 0 for a in axes):
+        raise ValueError(f"{kind} cannot reduce a zero-length axis")
+    return operation(kind, (x,), {"axis": list(axes), "keepdims": keepdims}, node_id)
+
+
+def min(x, axis=None, keepdims=False, *, node_id=None):
+    """Reduce the minimum along the given axes of a device tensor."""
+    return _extrema("Min", x, axis, keepdims, node_id)
+
+
+def max(x, axis=None, keepdims=False, *, node_id=None):
+    """Reduce the maximum along the given axes of a device tensor."""
+    return _extrema("Max", x, axis, keepdims, node_id)
 
 
 def sliding_average(x: Tensor, target_capacity: int, window_size: int,
@@ -101,6 +124,39 @@ def add(x, y, *, node_id=None):
 
 def multiply(x, y, *, node_id=None):
     return operation("Multiply", (x, y), {}, node_id)
+
+
+def _float_binary(kind, x, y, node_id):
+    from itertools import zip_longest
+    from ._native import DType
+
+    if isinstance(x, (int, float)):
+        x = asarray(x)
+    if isinstance(y, (int, float)):
+        y = asarray(y)
+    if not all(isinstance(t, Tensor) and t.dtype == DType.float32 for t in (x, y)):
+        raise TypeError(f"{kind} requires float32 tensors or real scalars")
+    for a, b in zip_longest(reversed(x.shape), reversed(y.shape), fillvalue=1):
+        if a != b and (a == 0 or b == 0 or (a != 1 and b != 1)):
+            raise ValueError(f"{kind} input shapes are not broadcastable")
+    return operation(kind, (x, y), {}, node_id)
+
+
+def subtract(x, y, *, node_id=None):
+    return _float_binary("Subtract", x, y, node_id)
+
+
+def divide(x, y, *, node_id=None):
+    return _float_binary("Divide", x, y, node_id)
+
+
+def remainder(x, y, *, node_id=None):
+    """Return the elementwise remainder with the divisor's sign."""
+    if isinstance(x, (int, float)):
+        x = asarray(x)
+    if isinstance(y, (int, float)):
+        y = asarray(y)
+    return operation("Remainder", (x, y), {}, node_id)
 
 
 def filter2d(x: Tensor, r_inner: int, r_outer: int, s_inner: int = 0,

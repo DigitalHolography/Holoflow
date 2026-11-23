@@ -54,6 +54,7 @@ float32 = DType.float32
 complex64 = DType.complex64
 
 from ._ops import arange, asarray, meshgrid, square, exp, abs, add, multiply, fft2, fftshift, dual_reader_batch_queue
+from ._ops import divide, max, min, remainder, subtract
 
 from ._ops import filter2d, flatfield, pct_clip
 

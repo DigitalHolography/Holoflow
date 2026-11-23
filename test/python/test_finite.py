@@ -180,6 +180,52 @@ class FiniteTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "last two axes"):
             hf.trace(lambda: hf.fft.fft2(self.source(), axes=(0, 1)))
 
+    def test_remainder_matches_numpy_and_preserves_input(self):
+        from math import pi
+
+        def pipeline():
+            x = self.source().to("device").astype(hf.float32)
+            phase = x * 0 + hf.arange(-2, 2) * (2 * pi)
+            divisors = hf.arange(-2, 2)
+            return tuple(hf.sinks.numpy(y) for y in (
+                phase % (2 * pi), phase % -3, 3 % phase,
+                hf.remainder(phase, divisors), phase,
+            ))
+
+        actual = self.collect(pipeline)
+        phase = np.broadcast_to(np.arange(-2, 2, dtype=np.float32) * np.float32(2 * pi),
+                                self.expected.shape)
+        with np.errstate(invalid="ignore"):
+            expected = (phase % np.float32(2 * pi), phase % -3, 3 % phase,
+                        np.remainder(phase, np.arange(-2, 2, dtype=np.float32)), phase)
+        for result, reference in zip(actual, expected):
+            np.testing.assert_array_equal(result, reference)
+            np.testing.assert_array_equal(np.signbit(result[reference == 0]),
+                                          np.signbit(reference[reference == 0]))
+        with self.assertRaisesRegex(ValueError, "broadcastable"):
+            hf.trace(lambda: hf.arange(0, 2) % hf.arange(0, 3))
+
+    def test_normalization_primitives_match_numpy(self):
+        def pipeline():
+            x = self.source().to("device").astype(hf.float32) + 1
+            minimum = hf.min(x, axis=(-2, -1), keepdims=True)
+            maximum = hf.max(x, axis=-1, keepdims=True)
+            return tuple(hf.sinks.numpy(y) for y in (
+                (x - minimum) / maximum, 3 - x, x - 3, 3 / x, x / 3,
+                hf.min(x, axis=()), hf.max(x, keepdims=True),
+            ))
+
+        x = self.expected.astype(np.float32) + 1
+        expected = (
+            (x - x.min(axis=(-2, -1), keepdims=True)) / x.max(axis=-1, keepdims=True),
+            3 - x, x - 3, 3 / x, x / 3, x,
+            x.reshape(-1, 8, *x.shape[1:]).max(axis=(1, 2, 3)).reshape(-1, 1, 1),
+        )
+        for result, reference in zip(self.collect(pipeline), expected, strict=True):
+            np.testing.assert_allclose(result, reference, rtol=1e-6)
+        with self.assertRaisesRegex(ValueError, "broadcastable"):
+            hf.trace(lambda: hf.subtract(hf.arange(0, 2), hf.arange(0, 3)))
+
     def test_captured_conversion_does_not_launch_after_eof(self):
         # Native diagnostics prove that this exercises actual CUDA graph replay,
         # rather than merely accepting a graph-ineligible pipeline.
