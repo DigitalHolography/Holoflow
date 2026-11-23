@@ -79,6 +79,13 @@ void RecordingSink::on_update_record_path_event(holoflow::core::SyncCtx     &ctx
                                                 const holoflow_event::Event &event) {
   (void)ctx;
   assert(event.data.contains("record_path"));
+  // The asynchronous writer reads the active path while constructing/finalizing its
+  // format writer. Keep active-recording state immutable; path changes apply only
+  // while idle and can be picked up by the next recording.
+  if (recording_) {
+    logger()->warn("[RecordingSink] Ignoring recording-path update while recording is active");
+    return;
+  }
   recording_path_ = event.data.value("record_path", std::string{});
   recording_path_update_callback();
 }
@@ -132,6 +139,25 @@ void RecordingSink::emit_finished_event(holoflow::core::SyncCtx &ctx) {
 void RecordingSink::emit_failed_event(holoflow::core::SyncCtx &ctx, const std::string &message) {
   emit_event(ctx, "recording_failed", {{"message", message}});
 }
+
+void RecordingSink::emit_recording_update_event(holoflow::core::SyncCtx &ctx,
+                                   size_t frames_written, size_t writing_speed,
+                                   size_t elapsed_time) {
+    auto event = holoflow_event::Event{
+        .direction = holoflow_event::EventDirection::ToUi,
+        .node_id   = "",
+        .data =
+            nlohmann::json{
+                {"type", "recording_update"},
+                {"frame_recorded", frames_written},
+                {"writing_speed", writing_speed},
+                {"elapsed_time", elapsed_time},
+            },
+        .ts = std::chrono::steady_clock::now(),
+    };
+    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                    "Failed to emit recording_update event");
+  }
 
 void RecordingSink::reset() {
   recording_reset_callback();

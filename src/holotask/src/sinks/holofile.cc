@@ -121,12 +121,11 @@ void check(bool condition, const std::string &msg) {
 // -------------------------------------------------------------------------------------------------
 //
 // Two-phase recording:
-//   1. Accumulate: each execute() call memcpys incoming frames into the preallocated ring buffer.
-//   2. Flush:      once all frames are collected, write the entire buffer to disk in one shot.
+//   1. Accumulate: each execute() call copies incoming frames into the preallocated ring buffer.
+//   2. Flush:      once all frames are collected, a background writer writes that existing buffer.
 //
-// No background thread. The flush happens synchronously inside execute(), so the pipeline will
-// stall for one cycle while the file is written. For typical recording sizes this is acceptable
-// and avoids all async complexity.
+// There is no queue or second frame buffer. execute() calls arriving while the
+// background writer uses the recording buffer return promptly without acquiring frames.
 
 class HolofileWriter final : public detail::Sink<holofile::Writer> {
 public:
@@ -152,8 +151,7 @@ public:
     }
   }
 
-  ~HolofileWriter() override = default;
-
+  ~HolofileWriter() override { shutdown_async_writer(); }
 
   bool can_reuse(const HolofileSettings &settings, const RecordingGeometry &geometry,
                  size_t frame_byte_size) const {
@@ -162,12 +160,11 @@ public:
   }
 
   void update_settings(const HolofileSettings &settings) {
-    const auto active_path = settings_.path;
-
-    settings_ = settings;
-    if (recording_) {
-      settings_.path = active_path;
-    }
+    // The writer thread consumes these settings to create the file/footer. Defer
+    // reconfiguration until idle rather than mutating them during an active recording.
+    if (recording_)
+      return;
+    settings_        = settings;
     recording_path() = settings_.path;
   }
 
@@ -177,17 +174,19 @@ protected:
 
 private:
   int buffer_input(holoflow::core::SyncCtx &ctx, int max_frames) override {
-    const auto batch_size = static_cast<int>(ctx.inputs[0].desc.shape[0]);
-    const auto count = std::min(max_frames, batch_size);
-    const auto *idata = reinterpret_cast<const uint8_t *>(ctx.inputs[0].data());
-    const auto start = std::chrono::steady_clock::now();
+    const auto  batch_size = static_cast<int>(ctx.inputs[0].desc.shape[0]);
+    const auto  count      = std::min(max_frames, batch_size);
+    const auto *idata      = reinterpret_cast<const uint8_t *>(ctx.inputs[0].data());
+    const auto  start      = std::chrono::steady_clock::now();
     mt_memcpy(ring_.get() + static_cast<size_t>(frames_buffered_) * frame_byte_size_, idata,
               static_cast<size_t>(count) * frame_byte_size_);
     const auto duration = std::chrono::duration_cast<std::chrono::microseconds>(
-        std::chrono::steady_clock::now() - start).count();
+                              std::chrono::steady_clock::now() - start)
+                              .count();
     logger()->trace("[HolofileWriter] Buffered {} frames ({} us)", count, duration);
     return count;
   }
+  std::size_t         buffered_frame_size() const override { return frame_byte_size_; }
   const std::uint8_t *buffered_data(std::size_t index) const override {
     return ring_.get() + index * frame_byte_size_;
   }
@@ -196,17 +195,20 @@ private:
                    holofile::Footer{.pipeline_settings = settings_.pipeline_settings});
   }
   void on_flush_started() override {
-    logger()->info("[HolofileWriter] Frame buffer full ({} frames); flushing to disk...", settings_.count);
+    logger()->info("[HolofileWriter] Frame buffer full ({} frames); flushing to disk...",
+                   settings_.count);
   }
   void on_flush_finished() override {
-    logger()->info("[HolofileWriter] Recording complete: {} frames written to {}",
-                   frames_written(), settings_.path);
+    logger()->info("[HolofileWriter] Recording complete: {} frames written to {}", frames_written(),
+                   settings_.path);
   }
   void on_execute_error(holoflow::core::SyncCtx &ctx, const std::exception &error) override {
     logger()->error("[HolofileWriter] Failed to finalize recording at {}: {}", settings_.path,
                     error.what());
+    reset(); // Join the writer and close any partially written output before cleanup.
+    if (!settings_.path.empty())
+      (void)std::remove(settings_.path.c_str());
     emit_failed_event(ctx, error.what());
-    reset();
   }
 
 private:

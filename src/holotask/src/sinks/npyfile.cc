@@ -90,11 +90,12 @@ public:
     writer_.write_frames(data, count, frame_size_);
   }
   void write_footer() noexcept {}
+  // NPY closes its RAII file on the writer thread after the footer/flush stage.
   void flush() noexcept {}
 
 private:
   npyfile::Writer writer_;
-  std::size_t frame_size_;
+  std::size_t     frame_size_;
 };
 
 class NpyfileWriter final : public detail::Sink<NpySinkWriter> {
@@ -107,6 +108,7 @@ public:
     set_recording_count(settings_.count);
   }
 
+  ~NpyfileWriter() override { shutdown_async_writer(); }
 
   bool can_reuse(const NpyfileSettings &settings, detail::RecordingGeometry geometry,
                  std::size_t frame_size) const {
@@ -114,6 +116,10 @@ public:
            detail::same_geometry(geometry, geometry_) && frame_size == frame_size_;
   }
   void update_settings(NpyfileSettings settings) {
+    // Async writer construction reads settings_.path and settings_.count. Do not
+    // mutate either while recording; the new configuration is picked up when idle.
+    if (recording_)
+      return;
     settings_ = std::move(settings);
     set_recording_count(settings_.count);
     update_recording_path(settings_.path);
@@ -132,6 +138,7 @@ private:
                ctx.inputs[0].data(), static_cast<std::size_t>(count) * frame_size_);
     return count;
   }
+  std::size_t         buffered_frame_size() const override { return frame_size_; }
   const std::uint8_t *buffered_data(std::size_t index) const override {
     return ring_.get() + index * frame_size_;
   }
@@ -142,11 +149,12 @@ private:
     emplace_writer(settings_.path, header, frame_size_);
   }
   void on_flush_started() override {
-    logger()->info("[NpyFileWriter] Frame buffer full ({} frames); flushing to disk...", settings_.count);
+    logger()->info("[NpyFileWriter] Frame buffer full ({} frames); flushing to disk...",
+                   settings_.count);
   }
   void on_flush_finished() override {
-    logger()->info("[NpyFileWriter] Recording complete: {} frames written to {}",
-                   frames_written(), settings_.path);
+    logger()->info("[NpyFileWriter] Recording complete: {} frames written to {}", frames_written(),
+                   settings_.path);
   }
   void on_execute_error(holoflow::core::SyncCtx &ctx, const std::exception &error) override {
     reset(); // Close any partial writer and return the shared recording lifecycle to idle.
@@ -157,10 +165,10 @@ private:
   }
 
 private:
-  NpyfileSettings                settings_;
-  detail::RecordingGeometry      geometry_;
-  std::size_t                    frame_size_;
-  HostPtr<std::uint8_t>          ring_;
+  NpyfileSettings           settings_;
+  detail::RecordingGeometry geometry_;
+  std::size_t               frame_size_;
+  HostPtr<std::uint8_t>     ring_;
 };
 } // namespace
 

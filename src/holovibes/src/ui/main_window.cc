@@ -2608,7 +2608,8 @@ void MainWindow::setup_update_connections() {
 
 void MainWindow::recording_file_path_changed() {
   auto update = [=]() {
-    pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString());
+    if (pipeline_running_)
+      pipeline_manager_->update_recording_path(export_widget_->get_file_path().toStdString());
   };
   HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, update, Qt::QueuedConnection));
 }
