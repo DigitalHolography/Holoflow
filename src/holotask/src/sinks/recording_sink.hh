@@ -8,7 +8,6 @@
 
 #pragma once
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <concepts>
@@ -34,70 +33,16 @@ namespace holotask::sinks::detail {
 
 class RecordingMonitor {
 public:
-  void start() { started_ = last_update_ = Clock::now(); }
-  void update(holoflow::core::SyncCtx &ctx, int acquired, int written, bool force = false) {
-    const auto now = Clock::now();
-    if (!force && now - last_update_ < std::chrono::milliseconds(200))
-      return;
-    last_update_       = now;
-    const auto seconds = std::chrono::duration<double>(now - started_).count();
-    send(ctx, {{"type", "acquisition_update"}, {"id", 0}, {"frame_acquired", acquired}});
-    send(ctx, {{"type", "recording_update"},
-               {"id", 0},
-               {"frame_recorded", written},
-               {"writing_speed", seconds > 0 ? static_cast<size_t>(written / seconds) : 0},
-               {"elapsed_time", static_cast<size_t>(seconds)}});
-  }
-  void finish(holoflow::core::SyncCtx &ctx) {
-    send(ctx, {{"type", "recording_finished"}, {"id", 0}});
-    send(ctx, {{"type", "record_flushing_finished"}, {"id", 0}});
-  }
+  RecordingMonitor();
+  void start();
+  void update(holoflow::core::SyncCtx &ctx, int acquired, int written, bool force = false);
+  void finish(holoflow::core::SyncCtx &ctx);
 
 private:
-  static void send(holoflow::core::SyncCtx &ctx, nlohmann::json data) {
-    if (ctx.event_writer)
-      (void)ctx.event_writer->try_push({.direction = holoflow_event::EventDirection::ToUi,
-                                        .node_id   = "",
-                                        .data      = std::move(data),
-                                        .ts        = Clock::now()});
-  }
+  static void send(holoflow::core::SyncCtx &ctx, nlohmann::json data);
   using Clock                    = std::chrono::steady_clock;
   Clock::time_point started_     = Clock::now();
   Clock::time_point last_update_ = started_;
-};
-
-class RecordingSink : public holoflow::core::ISyncTask {
-protected:
-  using EventHandler = std::function<void(RecordingSink &, holoflow::core::SyncCtx &,
-                                          const holoflow_event::Event &)>;
-  void handle_events(holoflow::core::SyncCtx &ctx);
-  void emit_finished_event(holoflow::core::SyncCtx &ctx);
-  void emit_failed_event(holoflow::core::SyncCtx &ctx, const std::string &message);
-
-  void emit_recording_update_event(holoflow::core::SyncCtx &ctx, size_t frames_written,
-                                   size_t writing_speed, size_t elapsed_time);
-  void reset();
-  void update_recording_path(std::string &settings_path);
-  bool is_recording() const { return recording_; }
-  const std::string &recording_path() const { return recording_path_; }
-  std::string       &recording_path() { return recording_path_; }
-  virtual void       recording_stopped_callback() {}
-  virtual void       recording_reset_callback() {}
-  virtual void       recording_path_update_callback() {}
-  void on_start_recording_event(holoflow::core::SyncCtx &, const holoflow_event::Event &);
-  void on_stop_recording_event(holoflow::core::SyncCtx &, const holoflow_event::Event &);
-  void on_update_record_path_event(holoflow::core::SyncCtx &, const holoflow_event::Event &);
-  void emit_event(holoflow::core::SyncCtx &ctx, const char *type, nlohmann::json data);
-
-  void remove_recording_file();
-  void cancel(holoflow::core::SyncCtx &ctx) override;
-protected:
-  RecordingMonitor monitor_;
-  bool             recording_       = false;
-  int              frames_buffered_ = 0;
-
-private:
-  std::string recording_path_;
 };
 
 template <typename W>
@@ -109,7 +54,11 @@ concept WriterConcept = requires(W &writer, const std::uint8_t *data, std::size_
 
 template <typename W>
   requires WriterConcept<W>
-class Sink : public RecordingSink {
+class Sink : public holoflow::core::ISyncTask {
+protected:
+  using EventHandler =
+      std::function<void(Sink &, holoflow::core::SyncCtx &, const holoflow_event::Event &)>;
+
 public:
   Sink() = default;
   ~Sink() override { shutdown_async_writer(); }
@@ -118,6 +67,7 @@ public:
   Sink(Sink &&)                               = delete;
   Sink                    &operator=(Sink &&) = delete;
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &ctx) override;
+  void                     cancel(holoflow::core::SyncCtx &ctx) override;
 
 protected:
   template <typename... Args> W &emplace_writer(Args &&...args) {
@@ -145,17 +95,43 @@ protected:
   virtual void                on_flush_finished() {}
   virtual void                on_sink_reset() {}
   virtual void                on_execute_error(holoflow::core::SyncCtx &, const std::exception &);
-  void                        flush_to_disk(holoflow::core::SyncCtx &ctx);
-  void                        shutdown_async_writer();
-  void                        recording_reset_callback() override;
+  virtual void                recording_path_update_callback() {}
+  virtual void                recording_stopped_callback();
+  virtual void                recording_reset_callback();
 
-protected:
-  void recording_stopped_callback() override;
+  // Event
+  void handle_events(holoflow::core::SyncCtx &ctx);
+  void emit_finished_event(holoflow::core::SyncCtx &ctx);
+  void emit_failed_event(holoflow::core::SyncCtx &ctx, const std::string &message);
+  void emit_recording_update_event(holoflow::core::SyncCtx &ctx, std::size_t frames_written,
+                                   std::size_t writing_speed, std::size_t elapsed_time);
+  void emit_event(holoflow::core::SyncCtx &ctx, const char *type, nlohmann::json data);
+
+  void on_start_recording_event(holoflow::core::SyncCtx &, const holoflow_event::Event &);
+  void on_stop_recording_event(holoflow::core::SyncCtx &, const holoflow_event::Event &);
+  void on_update_record_path_event(holoflow::core::SyncCtx &, const holoflow_event::Event &);
+
+  void reset();
+
+  bool               is_recording() const { return recording_; }
+  void               update_recording_path(std::string &settings_path);
+  const std::string &recording_path() const { return recording_path_; }
+  std::string       &recording_path() { return recording_path_; }
+
+  void remove_recording_file();
+  void flush_to_disk(holoflow::core::SyncCtx &ctx);
+  void shutdown_async_writer();
 private:
   void start_writer_thread(holoflow::core::SyncCtx &ctx);
   void poll_writer(holoflow::core::SyncCtx &ctx);
 
+protected:
+  RecordingMonitor monitor_;
+  bool             recording_       = false;
+  int              frames_buffered_ = 0;
+
 private:
+  std::string       recording_path_;
   std::optional<W>  writer_;
   int               recording_count_ = 0;
   int               frames_written_  = 0;

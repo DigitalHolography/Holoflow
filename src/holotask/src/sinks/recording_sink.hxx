@@ -4,6 +4,12 @@
 
 #undef min
 #include <algorithm>
+#include <cassert>
+#include <cerrno>
+#include <cstdio>
+#include <system_error>
+
+#include "bug.hh"
 
 namespace holotask::sinks::detail {
 
@@ -40,6 +46,192 @@ holoflow::core::OpResult Sink<W>::execute(holoflow::core::SyncCtx &ctx) {
 
 template <typename W>
   requires WriterConcept<W>
+void Sink<W>::handle_events(holoflow::core::SyncCtx &ctx) {
+  if (!ctx.event_reader)
+    return;
+
+  static std::map<std::string, EventHandler> event_handlers = {
+      {"start_recording",
+       [](Sink &self, holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
+         self.on_start_recording_event(ctx, event);
+       }},
+      {"stop_recording",
+       [](Sink &self, holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
+         self.on_stop_recording_event(ctx, event);
+       }},
+      {"update_recording_path",
+       [](Sink &self, holoflow::core::SyncCtx &ctx, const holoflow_event::Event &event) {
+         self.on_update_record_path_event(ctx, event);
+       }},
+  };
+
+  while (true) {
+    auto event = ctx.event_reader->try_pop();
+    if (!event.has_value())
+      break;
+
+    HOLOVIBES_CHECK(event->direction == holoflow_event::EventDirection::ToNode,
+                    "Unexpected event direction");
+
+    const auto type = event->data.at("type").get<std::string>();
+
+    logger()->debug("[Sink::handle_events] received event: {}", type);
+
+    auto handler_it = event_handlers.find(type);
+    if (handler_it == event_handlers.end()) {
+      HOLOVIBES_BUG("Unknown event type: {}", type);
+    } else {
+      handler_it->second(*this, ctx, *event);
+    }
+  }
+}
+
+template <typename W>
+  requires WriterConcept<W>
+void Sink<W>::on_start_recording_event(holoflow::core::SyncCtx     &ctx,
+                                       const holoflow_event::Event &event) {
+  if (recording_) {
+    logger()->error("[Sink] Ignoring duplicate start_recording event");
+    emit_failed_event(ctx, "Recording already in progress");
+    return;
+  }
+
+  const auto record_path = event.data.value("record_path", std::string{});
+  if (record_path.empty()) {
+    logger()->error("[Sink] Rejecting start_recording event with empty path");
+    emit_failed_event(ctx, "Cannot start recording: empty path");
+    return;
+  }
+
+  recording_path_  = record_path;
+  frames_buffered_ = 0;
+  recording_       = true;
+  monitor_.start();
+  monitor_.update(ctx, 0, 0, true);
+}
+
+template <typename W>
+  requires WriterConcept<W>
+void Sink<W>::on_stop_recording_event(holoflow::core::SyncCtx     &ctx,
+                                      const holoflow_event::Event &event) {
+  (void)event;
+  if (!recording_)
+    return;
+
+  std::string stop_error;
+  try {
+    recording_stopped_callback();
+  } catch (const std::exception &error) {
+    stop_error = error.what();
+  }
+
+  if (!stop_error.empty())
+    emit_failed_event(ctx, stop_error);
+  reset();
+}
+
+template <typename W>
+  requires WriterConcept<W>
+void Sink<W>::remove_recording_file() {
+  if (!recording_path_.empty() && std::remove(recording_path_.c_str()) != 0 && errno != ENOENT) {
+    std::error_code ec(errno, std::generic_category());
+    logger()->error(
+        "Sink::on_stop_recording_event] Failed to remove incomplete recording at {}: {}",
+        recording_path_, ec.message());
+  }
+}
+
+template <typename W>
+  requires WriterConcept<W>
+void Sink<W>::on_update_record_path_event(holoflow::core::SyncCtx     &ctx,
+                                          const holoflow_event::Event &event) {
+  (void)ctx;
+  assert(event.data.contains("record_path"));
+  // The asynchronous writer reads the active path while constructing/finalizing its
+  // format writer. Keep active-recording state immutable; path changes apply only
+  // while idle and can be picked up by the next recording.
+  if (recording_) {
+    logger()->warn("[Sink] Ignoring recording-path update while recording is active");
+    return;
+  }
+  recording_path_ = event.data.value("record_path", std::string{});
+  recording_path_update_callback();
+}
+
+template <typename W>
+  requires WriterConcept<W>
+void Sink<W>::cancel(holoflow::core::SyncCtx &ctx) {
+  (void)ctx;
+  if (recording_)
+    recording_stopped_callback();
+}
+
+template <typename W>
+  requires WriterConcept<W>
+void Sink<W>::emit_finished_event(holoflow::core::SyncCtx &ctx) {
+  monitor_.update(ctx, frames_buffered_, frames_buffered_, true);
+  monitor_.finish(ctx);
+  recording_ = false;
+}
+
+template <typename W>
+  requires WriterConcept<W>
+void Sink<W>::emit_failed_event(holoflow::core::SyncCtx &ctx, const std::string &message) {
+  emit_event(ctx, "recording_failed", {{"message", message}});
+}
+
+template <typename W>
+  requires WriterConcept<W>
+void Sink<W>::emit_recording_update_event(holoflow::core::SyncCtx &ctx, std::size_t frames_written,
+                                          std::size_t writing_speed, std::size_t elapsed_time) {
+  auto event = holoflow_event::Event{
+      .direction = holoflow_event::EventDirection::ToUi,
+      .node_id   = "",
+      .data = nlohmann::json{{"type", "recording_update"},
+                             {"frame_recorded", frames_written},
+                             {"writing_speed", writing_speed},
+                             {"elapsed_time", elapsed_time}},
+      .ts = std::chrono::steady_clock::now(),
+  };
+  HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                  "Failed to emit recording_update event");
+}
+
+template <typename W>
+  requires WriterConcept<W>
+void Sink<W>::reset() {
+  recording_reset_callback();
+  recording_       = false;
+  frames_buffered_ = 0;
+}
+
+template <typename W>
+  requires WriterConcept<W>
+void Sink<W>::update_recording_path(std::string &settings_path) {
+  if (recording_)
+    settings_path = recording_path_;
+  else {
+    recording_path_ = settings_path;
+  }
+}
+
+template <typename W>
+  requires WriterConcept<W>
+void Sink<W>::emit_event(holoflow::core::SyncCtx &ctx, const char *type,
+                         nlohmann::json data) {
+  if (!ctx.event_writer)
+    return;
+
+  data["type"] = type;
+  data["path"] = recording_path_;
+  (void)ctx.event_writer->try_push({.direction = holoflow_event::EventDirection::ToUi,
+                                    .node_id   = "",
+                                    .data      = std::move(data),
+                                    .ts        = std::chrono::steady_clock::now()});
+}
+
+template <typename W>
+  requires WriterConcept<W>
 void Sink<W>::recording_stopped_callback() {
   logger()->info("[Sink::recording_stopped_callback] stop requested");
   shutdown_async_writer();
@@ -63,14 +255,14 @@ void Sink<W>::start_writer_thread(holoflow::core::SyncCtx &ctx) {
       Clock::time_point last_poll     = Clock::now();
       constexpr auto    poll_interval = std::chrono::milliseconds(200);
 
-      size_t written_last_interval = 0;
+      std::size_t written_last_interval = 0;
 
       while (frames_written_ < recording_count_ && !cancelled.stop_requested()) {
         const auto *frame = buffered_data(frames_written_);
 
         constexpr int batch_size = 64;
         const auto    to_write   = std::min(batch_size, recording_count_ - frames_written_);
-        writer().write_frames(reinterpret_cast<const uint8_t *>(frame), to_write);
+        writer().write_frames(reinterpret_cast<const std::uint8_t *>(frame), to_write);
         frames_written_ += to_write;
         written_last_interval += to_write;
 
