@@ -26,6 +26,10 @@ namespace holotask::syncs {
 
 struct RegistrationSettings {
   float radius = 0.9f;
+  // Maximum absolute displacement as a fraction of the image dimensions.
+  // Keep the search below half the image size to avoid ambiguity in the periodic correlation map;
+  // a quarter-image bound still permits substantial motion while leaving a clear peak neighborhood.
+  float max_shift_fraction = 0.25f;
 
   bool operator==(const RegistrationSettings &) const = default;
 };

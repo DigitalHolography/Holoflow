@@ -236,8 +236,9 @@ QWidget *ImportWidget::create_camera_page() {
   int row = 0;
 
   grid->addWidget(new QLabel("Camera", page), row, 0);
-  camera_combo_ = create_combo_box(
-      page, QStringList{"Ametek S710 Euresys Coaxlink Octo", "Ametek S711 Euresys Coaxlink QSFP+"});
+  camera_combo_ = create_combo_box(page, QStringList{"Ametek S710 Euresys Coaxlink Octo",
+                                                     "Ametek S711 Euresys Coaxlink QSFP+",
+                                                     "Ametek S991 Euresys Coaxlink QSFP+"});
   grid->addWidget(camera_combo_, row, 1);
   ++row;
 
@@ -289,6 +290,8 @@ void ImportWidget::update_sampling_frequency_from_camera_config() {
     camera = root.value("s711").toObject();
   } else if (root.value("s710").isObject()) {
     camera = root.value("s710").toObject();
+  } else if (root.value("s991").isObject()) {
+    camera = root.value("s991").toObject();
   } else {
     return;
   }

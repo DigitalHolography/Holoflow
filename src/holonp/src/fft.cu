@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holonp/fft.hh"
+#include "utils/tensor_common.hh"
 
 #include <cmath>
 #include <cstdint>
@@ -34,6 +35,7 @@ void to_json(nlohmann::json &j, const FFTSettings &s) {
   j = nlohmann::json{
       {"axis", s.axis},
       {"norm", s.norm},
+      {"inverse", s.inverse},
   };
 }
 
@@ -49,6 +51,8 @@ void from_json(const nlohmann::json &j, FFTSettings &s) {
   } else {
     s.norm = FftNorm::Backward;
   }
+
+  s.inverse = j.value("inverse", false);
 }
 
 namespace {
@@ -63,41 +67,16 @@ inline void check(bool cond, const std::string &msg) {
   }
 }
 
-bool is_c_contiguous(const holoflow::core::TDesc &desc) {
-  if (desc.shape.size() != desc.strides.size()) {
-    return false;
-  }
-
-  size_t expected = holoflow::core::size_of(desc.dtype);
-  for (size_t i = desc.shape.size(); i-- > 0;) {
-    if (desc.strides[i] != expected) {
-      return false;
+inline float norm_scale(FftNorm norm, size_t n_fft, bool inverse) {
+  if (inverse) {
+    if (norm == FftNorm::Backward) {
+      return static_cast<float>(1.0 / static_cast<double>(n_fft));
     }
-    expected *= desc.shape[i];
+    if (norm == FftNorm::Forward) {
+      return 1.0f;
+    }
+    return static_cast<float>(1.0 / std::sqrt(static_cast<double>(n_fft)));
   }
-  return true;
-}
-
-bool same_desc(const holoflow::core::TDesc &a, const holoflow::core::TDesc &b) {
-  return a.shape == b.shape && a.strides == b.strides && a.dtype == b.dtype &&
-         a.mem_loc == b.mem_loc && a.offset == b.offset;
-}
-
-inline size_t product_shape(std::span<const size_t> shape) {
-  if (shape.empty()) {
-    return 0;
-  }
-  return std::accumulate(shape.begin(), shape.end(), size_t{1}, std::multiplies<>{});
-}
-
-inline int normalize_axis(int axis, int ndim) {
-  if (axis < 0) {
-    axis += ndim;
-  }
-  return axis;
-}
-
-inline float norm_scale(FftNorm norm, size_t n_fft) {
   if (norm == FftNorm::Backward) {
     return 1.0f;
   }
@@ -244,7 +223,8 @@ holoflow::core::OpResult FFT::execute(holoflow::core::SyncCtx &ctx) {
     auto *in_ptr  = input_dtype_ == holoflow::core::DType::F32 ? static_cast<void *>(in_f + offset)
                                                                : static_cast<void *>(in_c + offset);
     auto *out_ptr = out_c + offset;
-    CUFFT_CHECK(cufftXtExec(plan_.get(), in_ptr, out_ptr, CUFFT_FORWARD));
+    CUFFT_CHECK(cufftXtExec(plan_.get(), in_ptr, out_ptr,
+                            settings_.inverse ? CUFFT_INVERSE : CUFFT_FORWARD));
   }
 
   CUDA_CHECK(cudaGetLastError());
@@ -259,18 +239,20 @@ holoflow::core::InferResult FFTFactory::infer(std::span<const holoflow::core::TD
   const auto &idesc = input_descs[0];
 
   check(idesc.mem_loc == holoflow::core::MemLoc::Device, "only Device tensors are supported");
-  check(is_c_contiguous(idesc), "input must be C-contiguous");
+  check(utils::is_c_contiguous(idesc), "input must be C-contiguous");
   check(idesc.dtype == holoflow::core::DType::F32 || idesc.dtype == holoflow::core::DType::CF32,
         "input dtype must be F32 or CF32");
+  check(!settings.inverse || idesc.dtype == holoflow::core::DType::CF32,
+        "inverse FFT input must be CF32");
 
   const int ndim = static_cast<int>(idesc.shape.size());
   check(ndim > 0, "input ndim must be > 0");
   check(ndim <= kMaxNDim, "input ndim too large");
 
-  const int axis = normalize_axis(settings.axis, ndim);
+  const int axis = utils::normalize_axis(settings.axis, ndim);
   check(axis >= 0 && axis < ndim, "axis out of range");
 
-  const auto total = product_shape(idesc.shape);
+  const auto total = utils::product_shape(idesc.shape);
   check(total > 0, "input tensor has zero elements");
 
   // holoflow::core::TDesc odesc = idesc;
@@ -299,7 +281,7 @@ FFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   const auto &idesc = input_descs[0];
   const int   ndim  = static_cast<int>(idesc.shape.size());
 
-  const int axis = normalize_axis(settings.axis, ndim);
+  const int axis = utils::normalize_axis(settings.axis, ndim);
   check(axis >= 0 && axis < ndim, "axis out of range");
 
   const auto n_fft = idesc.shape[static_cast<size_t>(axis)];
@@ -363,7 +345,7 @@ FFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
 
   std::vector<char>            store_lto;
   DevPtr<FFTStoreCallbackInfo> d_store_info;
-  const float                  scale = norm_scale(settings.norm, n_fft);
+  const float                  scale = norm_scale(settings.norm, n_fft, settings.inverse);
   if (scale != 1.0f) {
     store_lto    = store_scaled_complex_lto();
     d_store_info = curaii::make_unique_device_ptr<FFTStoreCallbackInfo>(1, ctx.stream);
@@ -395,13 +377,41 @@ FFTFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
   auto *old_fft = dynamic_cast<FFT *>(old_task.get());
   if (old_fft != nullptr && input_descs.size() == 1) {
     const auto settings = jsettings.get<FFTSettings>();
-    if (settings == old_fft->settings() && same_desc(input_descs[0], old_fft->idesc())) {
+    if (settings == old_fft->settings() && utils::same_desc(input_descs[0], old_fft->idesc())) {
       old_fft->update_stream(ctx.stream);
       return old_task;
     }
   }
 
   return create(input_descs, jsettings, ctx);
+}
+
+namespace {
+nlohmann::json inverse_settings(const nlohmann::json &settings) {
+  auto result       = settings;
+  result["inverse"] = true;
+  return result;
+}
+} // namespace
+
+holoflow::core::InferResult IFFTFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
+                                               const nlohmann::json &jsettings) const {
+  return FFTFactory{}.infer(input_descs, inverse_settings(jsettings));
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+IFFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
+                    const nlohmann::json                  &jsettings,
+                    const holoflow::core::SyncCreateCtx   &ctx) const {
+  return FFTFactory{}.create(input_descs, inverse_settings(jsettings), ctx);
+}
+
+std::unique_ptr<holoflow::core::ISyncTask>
+IFFTFactory::update(std::unique_ptr<holoflow::core::ISyncTask> old_task,
+                    std::span<const holoflow::core::TDesc>     input_descs,
+                    const nlohmann::json                      &jsettings,
+                    const holoflow::core::SyncCreateCtx       &ctx) const {
+  return FFTFactory{}.update(std::move(old_task), input_descs, inverse_settings(jsettings), ctx);
 }
 
 } // namespace holonp

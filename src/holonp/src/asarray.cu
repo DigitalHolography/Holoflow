@@ -14,6 +14,7 @@
 
 #include "holonp/asarray.hh"
 
+#include <cuComplex.h>
 #include <stdexcept>
 
 namespace holonp {
@@ -24,6 +25,12 @@ namespace holonp {
 
 void to_json(nlohmann::json &j, const AsArraySettings &s) {
   j = nlohmann::json{{"value", s.value}};
+  if (s.imag != 0.0) {
+    j["imag"] = s.imag;
+  }
+  if (s.dtype) {
+    j["dtype"] = *s.dtype;
+  }
   if (s.device) {
     j["device"] = *s.device;
   }
@@ -31,6 +38,12 @@ void to_json(nlohmann::json &j, const AsArraySettings &s) {
 
 void from_json(const nlohmann::json &j, AsArraySettings &s) {
   j.at("value").get_to(s.value);
+  s.imag = j.value("imag", 0.0);
+  if (j.contains("dtype")) {
+    s.dtype = j.at("dtype").get<holoflow::core::DType>();
+  } else {
+    s.dtype = std::nullopt;
+  }
   if (j.contains("device")) {
     s.device = j.at("device").get<holoflow::core::MemLoc>();
   } else {
@@ -75,13 +88,23 @@ holoflow::core::OpResult AsArray::execute(holoflow::core::SyncCtx &ctx) {
   auto *odata = ctx.outputs[0].data();
   auto  odesc = ctx.outputs[0].desc;
 
-  if (odesc.dtype != holoflow::core::DType::F32) {
+  const auto dtype = settings_.dtype.value_or(holoflow::core::DType::F32);
+  if (odesc.dtype != dtype) {
     logger()->error("[AsArray::execute] unsupported dtype");
     std::abort();
   }
 
-  const float value = static_cast<float>(settings_.value);
-  CUDA_CHECK(cudaMemcpyAsync(odata, &value, sizeof(float), cudaMemcpyHostToDevice, stream_));
+  if (dtype == holoflow::core::DType::F32) {
+    const float value = static_cast<float>(settings_.value);
+    CUDA_CHECK(cudaMemcpyAsync(odata, &value, sizeof(float), cudaMemcpyHostToDevice, stream_));
+  } else if (dtype == holoflow::core::DType::CF32) {
+    const auto value = make_cuFloatComplex(static_cast<float>(settings_.value),
+                                           static_cast<float>(settings_.imag));
+    CUDA_CHECK(cudaMemcpyAsync(odata, &value, sizeof(value), cudaMemcpyHostToDevice, stream_));
+  } else {
+    logger()->error("[AsArray::execute] unsupported dtype");
+    std::abort();
+  }
   return holoflow::core::OpResult::Ok;
 }
 
@@ -98,7 +121,10 @@ AsArrayFactory::infer(std::span<const holoflow::core::TDesc> input_descs,
   check(input_descs.empty(), "expected zero inputs");
   check(memloc == holoflow::core::MemLoc::Device, "only Device output is supported (for now)");
 
-  holoflow::core::TDesc odesc({1}, holoflow::core::DType::F32, memloc);
+  const auto dtype = settings.dtype.value_or(holoflow::core::DType::F32);
+  check(dtype == holoflow::core::DType::F32 || dtype == holoflow::core::DType::CF32,
+        "only F32 and CF32 dtypes are supported");
+  holoflow::core::TDesc odesc({1}, dtype, memloc);
 
   return holoflow::core::InferResult{
       .input_descs   = {},

@@ -69,6 +69,7 @@
 #include <utility>
 
 #include "bug.hh"
+#include "holocam/camera_info.hh"
 #include "holofile/holofile.hh"
 #include "holotask/sinks/ffmpeg_formats.hh"
 #include "logger.hh"
@@ -81,6 +82,12 @@
 #include "ui/widgets/zernike_history_widget.hh"
 
 namespace {
+
+static const std::map<std::string, std::string> camera_type_to_config_key{
+    {"Ametek S710 Euresys Coaxlink Octo", "s710"},
+    {"Ametek S711 Euresys Coaxlink QSFP+", "s711"},
+    {"Ametek S991 Euresys Coaxlink QSFP+", "s991"},
+};
 
 constexpr int  kLargeSpinMax             = 1024 * 1024;
 constexpr int  kTopBarHeight             = 30;
@@ -1029,6 +1036,7 @@ void MainWindow::refresh_visualization_availability() {
       autofocus->is_z5_enabled() || autofocus->is_z6_enabled() || autofocus->is_z7_enabled() ||
       autofocus->is_z8_enabled() || autofocus->is_z9_enabled() || autofocus->is_z10_enabled();
   const bool single_reference_slopes = !autofocus->use_graph_laplacian();
+  const bool registration_enabled    = view_widget_->is_registration_enabled();
 
   const auto autofocus_message = tr("Enable Auto Focus to generate this visualization.");
   const auto zernike_order_message =
@@ -1050,6 +1058,10 @@ void MainWindow::refresh_visualization_availability() {
       {"shack_hartmann_xcorr",
        {autofocus_enabled && single_reference_slopes,
         autofocus_enabled ? xcorr_message : autofocus_message}},
+      {"registration_xcorr",
+       {registration_enabled, registration_enabled
+                                  ? QString{}
+                                  : tr("Enable Registration to generate this visualization.")}},
       {"xy_raw", {true, {}}},
       {"raw_spectrum", {false, spectrum_message}},
       {"processed_spectrum", {false, spectrum_message}},
@@ -1153,20 +1165,9 @@ void MainWindow::configure_unsupported_features() {
     return;
   }
 
-  const QString registration_tooltip =
-      tr("Visible for planned support. The current pipeline does not support registration yet.");
   const QString convolution_tooltip =
       tr("Visible for planned support. The current pipeline does not support convolution kernels "
          "yet.");
-
-  {
-    QSignalBlocker blocker(view_widget_->registration_check());
-    view_widget_->set_registration_enabled(false);
-  }
-  view_widget_->registration_check()->setEnabled(false);
-  view_widget_->registration_check()->setToolTip(registration_tooltip);
-  view_widget_->registration_radius()->setEnabled(false);
-  view_widget_->registration_radius()->setToolTip(registration_tooltip);
 
   {
     QSignalBlocker blocker(render_widget_->convolution_combo());
@@ -1310,6 +1311,7 @@ void MainWindow::save_persistent_state() {
   settings.setValue("range_end", view_widget_->get_range_end());
   settings.setValue("registration", view_widget_->is_registration_enabled());
   settings.setValue("registration_radius", view_widget_->get_registration_radius());
+  settings.setValue("registration_ellipse", view_widget_->is_registration_ellipse_enabled());
   settings.setValue("reticle", view_widget_->is_reticle_enabled());
   settings.setValue("reticle_radius", view_widget_->get_reticle_radius());
   settings.setValue("pct", view_widget_->is_pct_enabled());
@@ -1488,6 +1490,8 @@ void MainWindow::restore_persistent_state() {
       settings.value("registration", view_widget_->is_registration_enabled()).toBool());
   view_widget_->registration_radius()->setValue(
       settings.value("registration_radius", view_widget_->get_registration_radius()).toDouble());
+  view_widget_->set_registration_ellipse_enabled(
+      settings.value("registration_ellipse", false).toBool());
   view_widget_->reticle_check()->setChecked(
       settings.value("reticle", view_widget_->is_reticle_enabled()).toBool());
   view_widget_->reticle_radius()->setValue(
@@ -1605,6 +1609,7 @@ void MainWindow::initialize_display_widgets() {
   processed_spectrum_widget_   = new TensorDisplayWidget(display_workspace_);
   shack_hartmann_widget_       = new TensorDisplayWidget(display_workspace_);
   shack_hartmann_xcorr_widget_ = new TensorDisplayWidget(display_workspace_);
+  registration_xcorr_widget_   = new TensorDisplayWidget(display_workspace_);
   zernike_phase_widget_        = new TensorDisplayWidget(display_workspace_);
   zernike_history_widget_      = new ZernikeHistoryWidget(display_workspace_);
   graph_visualizer_widget_     = new GraphVisualizerWidget(display_workspace_);
@@ -1626,6 +1631,9 @@ void MainWindow::initialize_display_widgets() {
   display_workspace_->register_visualization({"shack_hartmann_xcorr", "Shack Hartmann XCorr",
                                               shack_hartmann_xcorr_widget_, "shack_hartmann",
                                               DockPlacement::Right, false});
+  display_workspace_->register_visualization({"registration_xcorr", "Registration XCorr",
+                                              registration_xcorr_widget_, "xy_processed",
+                                              DockPlacement::Tab, false});
 
   // Optional current displays use the same registry and visibility model. They default to tabs so
   // enabling one does not disturb the requested five-display hierarchy.
@@ -1681,14 +1689,28 @@ void MainWindow::initialize_display_widgets() {
           });
   xy_processed_widget_->set_value_range(0.0f, 1.0f);
   xy_processed_widget_->set_display_inverted(false);
+  connect(view_widget_->registration_ellipse_check(), &QCheckBox::toggled, this,
+          [this](bool checked) {
+            xy_processed_widget_->set_registration_ellipse_enabled(checked);
+            if (checked) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  view_widget_->get_registration_radius());
+            }
+          });
+  connect(view_widget_->registration_radius(), qOverload<double>(&QDoubleSpinBox::valueChanged),
+          this, [this](double value) {
+            if (view_widget_->is_registration_ellipse_enabled()) {
+              xy_processed_widget_->set_registration_ellipse_radius(value);
+            }
+          });
 }
 
 void MainWindow::initialize_pipeline_manager() {
   pipeline_manager_ = new pipeline::Manager(
       render_widget_->autofocus_widget(), xy_processed_widget_, xz_processed_widget_,
       yz_processed_widget_, xy_raw_widget_, raw_spectrum_widget_, processed_spectrum_widget_,
-      shack_hartmann_widget_, shack_hartmann_xcorr_widget_, zernike_phase_widget_,
-      zernike_history_widget_);
+      shack_hartmann_widget_, shack_hartmann_xcorr_widget_, registration_xcorr_widget_,
+      zernike_phase_widget_, zernike_history_widget_);
   pipeline_manager_->set_dump_runtime_failure_graphs(dump_runtime_failure_graphs_);
   pipeline_manager_thread_ = new QThread(this);
   pipeline_manager_->moveToThread(pipeline_manager_thread_);
@@ -2277,7 +2299,7 @@ void MainWindow::on_import_start_clicked() {
     import_widget_->set_start_enabled(false);
     import_widget_->set_stop_enabled(false);
     refresh_command_bar();
-    auto pause = [manager = pipeline_manager_]() { manager->stop_pipeline(); };
+    auto pause = [manager = pipeline_manager_]() { manager->pause_pipeline(); };
     HOLOVIBES_CHECK(QMetaObject::invokeMethod(pipeline_manager_, pause, Qt::QueuedConnection));
     return;
   }
@@ -2637,7 +2659,10 @@ MainWindow::build_validation_context(const pipeline::Settings &settings) const {
       try {
         std::ifstream cfg_file(settings.camera_config_path);
         auto          cfg_json = nlohmann::json::parse(cfg_file);
-        const auto   &cfg = cfg_json.contains("s711") ? cfg_json.at("s711") : cfg_json.at("s710");
+
+        auto        type = import_widget_->get_camera_type();
+        auto        key  = camera_type_to_config_key.at(type.toStdString());
+        const auto &cfg  = cfg_json.contains(key) ? cfg_json.at(key) : nlohmann::json();
 
         context.source_width        = cfg.at("Width").get<int>();
         context.source_height       = cfg.at("Height").get<int>();
@@ -2771,9 +2796,11 @@ QSize MainWindow::guess_source_dims() {
       throw std::runtime_error(std::format("Could not open camera config file: {}", path));
     }
 
-    // FIXME: This needs to be properly handeled for more camera support
-    auto cfg_json   = nlohmann::json::parse(cfg_file);
-    auto cfg        = cfg_json.contains("s711") ? cfg_json.at("s711") : cfg_json.at("s710");
+    auto type = import_widget_->get_camera_type();
+
+    auto cfg_json = nlohmann::json::parse(cfg_file);
+
+    auto cfg        = cfg_json.at(camera_type_to_config_key.at(type.toStdString()));
     int  src_width  = cfg.at("Width").get<int>();
     int  src_height = cfg.at("Height").get<int>();
     return QSize(src_width, src_height);
@@ -2820,6 +2847,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     std::map<std::string, ImportSource> source_from_str{
         {"Ametek S710 Euresys Coaxlink Octo", ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO},
         {"Ametek S711 Euresys Coaxlink QSFP+", ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP},
+        {"Ametek S991 Euresys Coaxlink QSFP+", ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP},
     };
     s.input_sampling_frequency_hz = import_widget_->get_sampling_frequency_hz();
 
@@ -2843,10 +2871,11 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
       std::ifstream cfg_file(s.camera_config_path);
       if (cfg_file.is_open()) {
         try {
+          auto type     = import_widget_->get_camera_type();
+          auto key      = camera_type_to_config_key.at(type.toStdString());
           auto cfg_json = nlohmann::json::parse(cfg_file);
-          s.load_batch  = cfg_json.contains("s711")
-                              ? cfg_json.at("s711").at("BufferPartCount").get<int>()
-                              : cfg_json.at("s710").at("BufferPartCount").get<int>();
+          s.load_batch =
+              cfg_json.contains(key) ? cfg_json.at(key).at("BufferPartCount").get<int>() : 1;
         } catch (...) {
         }
       }
@@ -2863,11 +2892,27 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
         {"Angular Spectrum", SpacialMethod::ANGULAR_SPECTRUM},
         {"LSCI (2D)", SpacialMethod::NONE},
     };
-    QString method        = render_widget_->get_space_transform();
-    s.spacial_method      = method_from_str.at(method.toStdString());
-    s.spacial_lambda      = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
-    s.spacial_z           = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
-    s.spacial_pixel_size  = 20e-6f; // TODO: get from camera
+    QString method   = render_widget_->get_space_transform();
+    s.spacial_method = method_from_str.at(method.toStdString());
+    s.spacial_lambda = static_cast<float>(render_widget_->get_lambda()) * 1e-9f;
+    s.spacial_z      = static_cast<float>(render_widget_->get_focus()) * 1e-3f;
+
+    constexpr float default_spacial_pixel_size = 20e-6f;
+    if (s.import_source == ImportSource::HOLOFILE) {
+      auto reader = holofile::Reader(s.load_path.string());
+      auto footer = reader.footer();
+      s.spacial_pixel_size =
+          footer.has_value()
+              ? footer->pipeline_settings.value("spacial_pixel_size", default_spacial_pixel_size)
+              : default_spacial_pixel_size;
+    } else {
+      auto name            = to_string(s.import_source);
+      auto pixel_pitch     = holocam::name_to_info.at(name).pixel_size;
+      s.spacial_pixel_size = pixel_pitch * 1e-6f;
+    }
+    logger()->info("[MainWindow::get_pipeline_settings] spacial_pixel_size={}",
+                   s.spacial_pixel_size);
+
     s.asp_padding_enabled = render_widget_->is_asp_padding_enabled();
     s.asp_padded_width    = render_widget_->get_asp_padded_width();
     s.asp_padded_height   = render_widget_->get_asp_padded_height();
@@ -3072,6 +3117,9 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
         break;
       case ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP:
         source = "Ametek S711 Euresys Coaxlink QSFP+";
+        break;
+      case ImportSource::AMETEK_S991_EURESYS_COAXLINK_QSFP:
+        source = "Ametek S991 Euresys Coaxlink QSFP+";
         break;
       default:
         source = "Ametek S710 Euresys Coaxlink Octo";
