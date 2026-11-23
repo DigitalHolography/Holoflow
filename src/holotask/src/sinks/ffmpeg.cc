@@ -202,7 +202,6 @@ public:
   void update_stream(cudaStream_t stream) { cuda_stream_ = stream; }
 
 protected:
-  void recording_stopped_callback() override { reset(); }
   void on_sink_reset() override { release(); }
   void recording_path_update_callback() override { settings_.path = recording_path(); }
 
@@ -275,8 +274,7 @@ private:
   void writer_start() override { initialize(); }
   void on_execute_error(holoflow::core::SyncCtx &ctx, const std::exception &error) override {
     reset(); // Stop/join the writer before releasing FFmpeg state.
-    if (!recording_path().empty())
-      (void)std::remove(recording_path().c_str());
+    remove_recording_file();
     emit_failed_event(ctx, error.what());
   }
 

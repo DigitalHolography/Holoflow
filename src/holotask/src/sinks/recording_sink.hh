@@ -89,6 +89,8 @@ protected:
   void on_update_record_path_event(holoflow::core::SyncCtx &, const holoflow_event::Event &);
   void emit_event(holoflow::core::SyncCtx &ctx, const char *type, nlohmann::json data);
 
+  void remove_recording_file();
+  void cancel(holoflow::core::SyncCtx &ctx) override;
 protected:
   RecordingMonitor monitor_;
   bool             recording_       = false;
@@ -147,6 +149,8 @@ protected:
   void                        shutdown_async_writer();
   void                        recording_reset_callback() override;
 
+protected:
+  void recording_stopped_callback() override;
 private:
   void start_writer_thread(holoflow::core::SyncCtx &ctx);
   void poll_writer(holoflow::core::SyncCtx &ctx);

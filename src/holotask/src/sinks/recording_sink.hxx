@@ -40,6 +40,15 @@ holoflow::core::OpResult Sink<W>::execute(holoflow::core::SyncCtx &ctx) {
 
 template <typename W>
   requires WriterConcept<W>
+void Sink<W>::recording_stopped_callback() {
+  logger()->info("[Sink::recording_stopped_callback] stop requested");
+  shutdown_async_writer();
+  reset();
+  remove_recording_file();
+}
+
+template <typename W>
+  requires WriterConcept<W>
 void Sink<W>::start_writer_thread(holoflow::core::SyncCtx &ctx) {
   writer_done_.store(false, std::memory_order_relaxed);
   writer_thread_ = std::jthread([this, &ctx](std::stop_token cancelled) {
@@ -60,7 +69,7 @@ void Sink<W>::start_writer_thread(holoflow::core::SyncCtx &ctx) {
         const auto *frame = buffered_data(frames_written_);
 
         constexpr int batch_size = 64;
-        const auto       to_write   = std::min(batch_size, recording_count_ - frames_written_);
+        const auto    to_write   = std::min(batch_size, recording_count_ - frames_written_);
         writer().write_frames(reinterpret_cast<const uint8_t *>(frame), to_write);
         frames_written_ += to_write;
         written_last_interval += to_write;

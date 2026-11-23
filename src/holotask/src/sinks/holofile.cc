@@ -169,8 +169,7 @@ public:
   }
 
 protected:
-  virtual void recording_path_update_callback() override { settings_.path = recording_path(); }
-  virtual void recording_stopped_callback() override { reset(); }
+  void recording_path_update_callback() override { settings_.path = recording_path(); }
 
 private:
   int buffer_input(holoflow::core::SyncCtx &ctx, int max_frames) override {
@@ -206,8 +205,7 @@ private:
     logger()->error("[HolofileWriter] Failed to finalize recording at {}: {}", settings_.path,
                     error.what());
     reset(); // Join the writer and close any partially written output before cleanup.
-    if (!settings_.path.empty())
-      (void)std::remove(settings_.path.c_str());
+    remove_recording_file();
     emit_failed_event(ctx, error.what());
   }
 

@@ -62,17 +62,18 @@ void RecordingSink::on_stop_recording_event(holoflow::core::SyncCtx     &ctx,
     stop_error = error.what();
   }
 
+  if (!stop_error.empty())
+    emit_failed_event(ctx, stop_error);
+  reset();
+}
+
+void RecordingSink::remove_recording_file() {
   if (!recording_path_.empty() && std::remove(recording_path_.c_str()) != 0 && errno != ENOENT) {
     std::error_code ec(errno, std::generic_category());
     logger()->error(
         "RecordingSink::on_stop_recording_event] Failed to remove incomplete recording at {}: {}",
         recording_path_, ec.message());
-    stop_error =
-        "Failed to remove incomplete recording at " + recording_path_ + ": " + ec.message();
   }
-  if (!stop_error.empty())
-    emit_failed_event(ctx, stop_error);
-  reset();
 }
 
 void RecordingSink::on_update_record_path_event(holoflow::core::SyncCtx     &ctx,
@@ -130,6 +131,12 @@ void RecordingSink::handle_events(holoflow::core::SyncCtx &ctx) {
   }
 }
 
+void RecordingSink::cancel(holoflow::core::SyncCtx &ctx) {
+  (void)ctx;
+  if (recording_)
+    recording_stopped_callback();
+}
+
 void RecordingSink::emit_finished_event(holoflow::core::SyncCtx &ctx) {
   monitor_.update(ctx, frames_buffered_, frames_buffered_, true);
   monitor_.finish(ctx);
@@ -140,24 +147,23 @@ void RecordingSink::emit_failed_event(holoflow::core::SyncCtx &ctx, const std::s
   emit_event(ctx, "recording_failed", {{"message", message}});
 }
 
-void RecordingSink::emit_recording_update_event(holoflow::core::SyncCtx &ctx,
-                                   size_t frames_written, size_t writing_speed,
-                                   size_t elapsed_time) {
-    auto event = holoflow_event::Event{
-        .direction = holoflow_event::EventDirection::ToUi,
-        .node_id   = "",
-        .data =
-            nlohmann::json{
-                {"type", "recording_update"},
-                {"frame_recorded", frames_written},
-                {"writing_speed", writing_speed},
-                {"elapsed_time", elapsed_time},
-            },
-        .ts = std::chrono::steady_clock::now(),
-    };
-    HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
-                    "Failed to emit recording_update event");
-  }
+void RecordingSink::emit_recording_update_event(holoflow::core::SyncCtx &ctx, size_t frames_written,
+                                                size_t writing_speed, size_t elapsed_time) {
+  auto event = holoflow_event::Event{
+      .direction = holoflow_event::EventDirection::ToUi,
+      .node_id   = "",
+      .data =
+          nlohmann::json{
+              {"type", "recording_update"},
+              {"frame_recorded", frames_written},
+              {"writing_speed", writing_speed},
+              {"elapsed_time", elapsed_time},
+          },
+      .ts = std::chrono::steady_clock::now(),
+  };
+  HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
+                  "Failed to emit recording_update event");
+}
 
 void RecordingSink::reset() {
   recording_reset_callback();

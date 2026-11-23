@@ -128,8 +128,6 @@ public:
 protected:
   void recording_path_update_callback() override { settings_.path = recording_path(); }
 
-  virtual void recording_stopped_callback() override { reset(); }
-
 private:
   int buffer_input(holoflow::core::SyncCtx &ctx, int max_frames) override {
     const auto batch = static_cast<int>(ctx.inputs[0].desc.shape[0]);
@@ -158,7 +156,7 @@ private:
   }
   void on_execute_error(holoflow::core::SyncCtx &ctx, const std::exception &error) override {
     reset(); // Close any partial writer and return the shared recording lifecycle to idle.
-    std::remove(settings_.path.c_str());
+    remove_recording_file();
     emit_failed_event(ctx, error.what());
     logger()->error("[NpyfileWriter] Failed to finalize recording at {}: {}", settings_.path,
                     error.what());
