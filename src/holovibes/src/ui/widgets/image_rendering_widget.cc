@@ -38,9 +38,6 @@ constexpr int kLargeSpinMax = std::numeric_limits<int>::max();
 constexpr auto kLscsi2D = "LSCI (2D)";
 constexpr auto kLscsi3D = "LSCI (3D)";
 constexpr auto kLocalPca = "Local PCA";
-constexpr auto kLocalPcaOnly = "Local PCA";
-constexpr auto kLocalPcaLsci = "Local PCA-LSCI";
-constexpr auto kHolovibeLocalPca = "Holovibe Local-PCA";
 constexpr auto kPca = "PCA";
 constexpr auto kPrincipalPca = "Global PCA";
 
@@ -74,10 +71,8 @@ QString ImageRenderingWidget::get_space_transform() const {
   return space_transform_combo_->currentText();
 }
 QString ImageRenderingWidget::get_time_transform() const {
-  if (time_transform_combo_->currentText() == kPca)
-    return pca_type_combo_->currentText() == kLocalPcaOnly ? kLocalPca
-                                                            : pca_type_combo_->currentText();
-  return time_transform_combo_->currentText();
+  return time_transform_combo_->currentText() == kPca ? pca_type_combo_->currentText()
+                                                    : time_transform_combo_->currentText();
 }
 int  ImageRenderingWidget::get_time_window() const { return time_window_spin_->value(); }
 int  ImageRenderingWidget::get_lambda() const { return lambda_spin_->value(); }
@@ -93,26 +88,16 @@ bool    ImageRenderingWidget::is_convolution_divide() const {
 }
 bool ImageRenderingWidget::is_spatial_contrast_enabled() const {
   return space_transform_combo_->currentText() == kLscsi2D ||
-         time_transform_combo_->currentText() == kLscsi3D ||
-         is_local_pca_enabled();
+         time_transform_combo_->currentText() == kLscsi3D;
 }
-bool ImageRenderingWidget::is_local_pca_enabled() const {
-  return get_time_transform() == kLocalPca || is_local_pca_lsci_enabled();
-}
-bool ImageRenderingWidget::is_local_pca_lsci_enabled() const {
-  return get_time_transform() == kLocalPcaLsci;
-}
-bool ImageRenderingWidget::is_holovibe_local_pca_enabled() const { return get_time_transform() == kHolovibeLocalPca; }
-int ImageRenderingWidget::get_holovibe_kernel() const { return holovibe_kernel_->value(); }
-int ImageRenderingWidget::get_holovibe_stride() const { return holovibe_stride_->value(); }
-double ImageRenderingWidget::get_holovibe_rank_factor() const { return holovibe_rank_->value(); }
-void ImageRenderingWidget::set_holovibe_parameters(int kernel, int stride, double rank_factor) {
-  holovibe_kernel_->setValue(kernel);
-  holovibe_stride_->setValue(stride);
-  holovibe_rank_->setValue(rank_factor);
-}
-bool ImageRenderingWidget::is_local_pca_automatic() const {
-  return local_pca_selection_->currentIndex() == 1;
+bool ImageRenderingWidget::is_local_pca_enabled() const { return get_time_transform() == kLocalPca; }
+int ImageRenderingWidget::get_local_pca_kernel() const { return local_pca_square_kernel_->value(); }
+int ImageRenderingWidget::get_local_pca_stride() const { return local_pca_square_stride_->value(); }
+double ImageRenderingWidget::get_local_pca_rank_factor() const { return local_pca_rank_->value(); }
+void ImageRenderingWidget::set_local_pca_parameters(int kernel, int stride, double rank_factor) {
+  local_pca_square_kernel_->setValue(kernel);
+  local_pca_square_stride_->setValue(stride);
+  local_pca_rank_->setValue(rank_factor);
 }
 bool ImageRenderingWidget::is_local_pca_rectangular() const {
   return local_pca_rectangular_->isChecked();
@@ -121,16 +106,11 @@ int ImageRenderingWidget::get_local_pca_kernel_width() const { return local_pca_
 int ImageRenderingWidget::get_local_pca_kernel_height() const { return local_pca_kernel_height_->value(); }
 int ImageRenderingWidget::get_local_pca_step_width() const { return local_pca_step_width_->value(); }
 int ImageRenderingWidget::get_local_pca_step_height() const { return local_pca_step_height_->value(); }
-int ImageRenderingWidget::get_local_pca_map() const { return local_pca_map_->currentIndex(); }
-bool ImageRenderingWidget::is_local_pca_dynamic_auto_scale() const {
-  return local_pca_dynamic_auto_scale_->isChecked();
-}
 int ImageRenderingWidget::get_spatial_contrast_window_size() const {
   return spatial_contrast_window_size_->value();
 }
 int ImageRenderingWidget::get_spatial_contrast_dimensions() const {
-  return time_transform_combo_->currentText() == kLscsi3D ||
-                 is_local_pca_enabled() ? 3 : 2;
+  return time_transform_combo_->currentText() == kLscsi3D ? 3 : 2;
 }
 QString ImageRenderingWidget::get_spatial_contrast_method() const {
   return spatial_contrast_method_->currentText();
@@ -153,16 +133,14 @@ void ImageRenderingWidget::set_space_transform(const QString &method) {
   space_transform_combo_->setCurrentText(method);
 }
 void ImageRenderingWidget::set_time_transform(const QString &method) {
-  if (method == kLocalPca || method == kLocalPcaLsci || method == kHolovibeLocalPca ||
-      method == kPrincipalPca) {
+  if (method == kLocalPca || method == kPrincipalPca) {
     update_pca_type_options();
-    const QString type = method == kLocalPca ? kLocalPcaOnly : method;
-    if (pca_type_combo_->findText(type) < 0) {
+    if (pca_type_combo_->findText(method) < 0) {
       time_transform_combo_->setCurrentText("None");
       return;
     }
     time_transform_combo_->setCurrentText(kPca);
-    pca_type_combo_->setCurrentText(type);
+    pca_type_combo_->setCurrentText(method);
   } else {
     time_transform_combo_->setCurrentText(method);
   }
@@ -191,7 +169,7 @@ void ImageRenderingWidget::set_spatial_contrast_mode(bool enabled, int dimension
   if (!enabled) {
     if (space_transform_combo_->currentText() == kLscsi2D)
       space_transform_combo_->setCurrentText("None");
-    if (time_transform_combo_->currentText() == kLscsi3D || is_local_pca_enabled())
+    if (time_transform_combo_->currentText() == kLscsi3D)
       time_transform_combo_->setCurrentText("None");
   } else if (dimensions == 3) {
     space_transform_combo_->setCurrentText("None");
@@ -203,16 +181,9 @@ void ImageRenderingWidget::set_spatial_contrast_mode(bool enabled, int dimension
   update_asp_padding_visibility();
   update_spatial_contrast_controls();
 }
-void ImageRenderingWidget::set_local_pca_mode(bool enabled, bool lsci) {
-  if (enabled) {
-    const QSignalBlocker blocker(time_transform_combo_);
-    if (lsci) space_transform_combo_->setCurrentText("None");
-    set_time_transform(lsci ? kLocalPcaLsci : kLocalPca);
-  }
+void ImageRenderingWidget::set_local_pca_mode(bool enabled) {
+  if (enabled) set_time_transform(kLocalPca);
   update_spatial_contrast_controls();
-}
-void ImageRenderingWidget::set_local_pca_automatic(bool value) {
-  local_pca_selection_->setCurrentIndex(value ? 1 : 0);
 }
 void ImageRenderingWidget::set_local_pca_rectangular(bool value) {
   local_pca_rectangular_->setChecked(value);
@@ -222,29 +193,6 @@ void ImageRenderingWidget::set_local_pca_kernel_width(int value) { local_pca_ker
 void ImageRenderingWidget::set_local_pca_kernel_height(int value) { local_pca_kernel_height_->setValue(value); }
 void ImageRenderingWidget::set_local_pca_step_width(int value) { local_pca_step_width_->setValue(value); }
 void ImageRenderingWidget::set_local_pca_step_height(int value) { local_pca_step_height_->setValue(value); }
-void ImageRenderingWidget::set_local_pca_frame_size(int width, int height) {
-  local_pca_frame_width_ = width;
-  local_pca_frame_height_ = height;
-  const QSignalBlocker width_blocker(local_pca_kernel_width_);
-  const QSignalBlocker height_blocker(local_pca_kernel_height_);
-  const QSignalBlocker step_width_blocker(local_pca_step_width_);
-  const QSignalBlocker step_height_blocker(local_pca_step_height_);
-  local_pca_kernel_width_->setMaximum(std::max(1, width));
-  local_pca_kernel_height_->setMaximum(std::max(1, height));
-  local_pca_step_width_->setMaximum(local_pca_kernel_width_->value());
-  local_pca_step_height_->setMaximum(local_pca_kernel_height_->value());
-  if (is_local_pca_enabled() && !is_local_pca_lsci_enabled()) {
-    const QSignalBlocker kernel_blocker(spatial_contrast_window_size_);
-    spatial_contrast_window_size_->setMaximum(std::max(1, std::min(width, height)));
-  }
-}
-void ImageRenderingWidget::set_local_pca_map(int value) {
-  // Older settings could select Original; LSCI (3D) now exposes that map separately.
-  local_pca_map_->setCurrentIndex(value == 1 ? 1 : 0);
-}
-void ImageRenderingWidget::set_local_pca_dynamic_auto_scale(bool value) {
-  local_pca_dynamic_auto_scale_->setChecked(value);
-}
 void ImageRenderingWidget::set_spatial_contrast_window_size(int value) {
   spatial_contrast_window_size_->setValue(value);
 }
@@ -253,14 +201,10 @@ void ImageRenderingWidget::set_time_window_max_for_temporal_lscsi(int value) {
   update_time_window_limits();
 }
 void ImageRenderingWidget::update_time_window_limits() {
-  const bool temporal_lscsi = is_spatial_contrast_enabled() &&
-                              get_spatial_contrast_dimensions() == 3;
+  const bool temporal_lscsi = time_transform_combo_->currentText() == kLscsi3D;
   const QSignalBlocker blocker(time_window_spin_);
-  time_window_spin_->setRange(temporal_lscsi ? (is_local_pca_enabled() ? 2 : 3) : 1,
-                              temporal_lscsi ? (is_local_pca_enabled()
-                                  ? std::max(2, std::min(is_local_pca_lsci_enabled() ? 32 : 64,
-                                                         max_temporal_lscsi_frames_))
-                                  : max_temporal_lscsi_frames_) : kLargeSpinMax);
+  time_window_spin_->setRange(temporal_lscsi ? 3 : is_local_pca_enabled() ? 2 : 1,
+                              temporal_lscsi ? max_temporal_lscsi_frames_ : kLargeSpinMax);
 }
 void ImageRenderingWidget::update_spatial_contrast_controls() {
   const bool pca_selected = time_transform_combo_->currentText() == kPca;
@@ -268,35 +212,14 @@ void ImageRenderingWidget::update_spatial_contrast_controls() {
   pca_type_combo_->setVisible(pca_selected);
   const bool enabled = is_spatial_contrast_enabled();
   const bool local_pca = is_local_pca_enabled();
-  spatial_contrast_window_size_->setRange(
-      local_pca && !is_local_pca_lsci_enabled() ? 1 : 3,
-      local_pca ? (is_local_pca_lsci_enabled() ? 15 :
-                   std::max(1, std::min(local_pca_frame_width_, local_pca_frame_height_)))
-                : 255);
-  spatial_contrast_window_label_->setText(local_pca ? "PCA Kernel (px):" : "LSCI Window (px):");
-  local_pca_selection_label_->setVisible(is_local_pca_lsci_enabled());
-  local_pca_selection_->setVisible(is_local_pca_lsci_enabled());
-  local_pca_map_label_->setVisible(is_local_pca_lsci_enabled());
-  local_pca_map_->setVisible(is_local_pca_lsci_enabled());
-  const bool auto_dynamic = is_local_pca_lsci_enabled() && get_local_pca_map() == 0 &&
-                            is_local_pca_dynamic_auto_scale();
-  local_pca_dynamic_auto_scale_->setVisible(is_local_pca_lsci_enabled() &&
-                                            get_local_pca_map() == 0);
-  const bool holovibe = is_holovibe_local_pca_enabled();
-  const bool plain_local_pca = get_time_transform() == kLocalPca || holovibe;
-  const bool rectangular = plain_local_pca && is_local_pca_rectangular();
-  local_pca_rectangular_->setToolTip(holovibe
-      ? tr("Set kernel width and height independently. Each step must be positive and no larger than its kernel dimension.")
-      : tr("Set kernel width and height independently. Each step must fit its kernel dimension and have the same odd/even parity."));
-  local_pca_kernel_width_->setMaximum(holovibe ? kLargeSpinMax : local_pca_frame_width_);
-  local_pca_kernel_height_->setMaximum(holovibe ? kLargeSpinMax : local_pca_frame_height_);
-  holovibe_kernel_label_->setVisible(holovibe && !rectangular);
-  holovibe_kernel_->setVisible(holovibe && !rectangular);
-  holovibe_stride_label_->setVisible(holovibe && !rectangular);
-  holovibe_stride_->setVisible(holovibe && !rectangular);
-  holovibe_rank_label_->setVisible(holovibe);
-  holovibe_rank_->setVisible(holovibe);
-  local_pca_rectangular_->setVisible(plain_local_pca);
+  const bool rectangular = local_pca && is_local_pca_rectangular();
+  local_pca_square_kernel_label_->setVisible(local_pca && !rectangular);
+  local_pca_square_kernel_->setVisible(local_pca && !rectangular);
+  local_pca_square_stride_label_->setVisible(local_pca && !rectangular);
+  local_pca_square_stride_->setVisible(local_pca && !rectangular);
+  local_pca_rank_label_->setVisible(local_pca);
+  local_pca_rank_->setVisible(local_pca);
+  local_pca_rectangular_->setVisible(local_pca);
   local_pca_kernel_width_label_->setVisible(rectangular);
   local_pca_kernel_width_->setVisible(rectangular);
   local_pca_kernel_height_label_->setVisible(rectangular);
@@ -305,19 +228,17 @@ void ImageRenderingWidget::update_spatial_contrast_controls() {
   local_pca_step_width_->setVisible(rectangular);
   local_pca_step_height_label_->setVisible(rectangular);
   local_pca_step_height_->setVisible(rectangular);
-  spatial_contrast_window_label_->setVisible(enabled && !rectangular && !holovibe);
-  spatial_contrast_window_size_->setVisible(enabled && !rectangular && !holovibe);
+  spatial_contrast_window_label_->setVisible(enabled);
+  spatial_contrast_window_size_->setVisible(enabled);
   spatial_contrast_window_size_->setEnabled(enabled);
-  spatial_contrast_method_label_->setVisible(enabled && !local_pca);
-  spatial_contrast_method_->setVisible(enabled && !local_pca);
-  spatial_contrast_method_->setEnabled(enabled && !local_pca);
-  spatial_contrast_display_max_label_->setVisible(enabled && (!local_pca || is_local_pca_lsci_enabled()));
-  spatial_contrast_display_max_->setVisible(enabled && (!local_pca || is_local_pca_lsci_enabled()));
-  spatial_contrast_display_max_->setEnabled(enabled && !auto_dynamic &&
-                                             !spatial_contrast_appearance_locked_);
-  spatial_contrast_invert_display_->setVisible(enabled && (!local_pca || is_local_pca_lsci_enabled()));
-  spatial_contrast_invert_display_->setEnabled(enabled && !auto_dynamic &&
-      (!local_pca || is_local_pca_lsci_enabled()) && !spatial_contrast_appearance_locked_);
+  spatial_contrast_method_label_->setVisible(enabled);
+  spatial_contrast_method_->setVisible(enabled);
+  spatial_contrast_method_->setEnabled(enabled);
+  spatial_contrast_display_max_label_->setVisible(enabled);
+  spatial_contrast_display_max_->setVisible(enabled);
+  spatial_contrast_display_max_->setEnabled(enabled && !spatial_contrast_appearance_locked_);
+  spatial_contrast_invert_display_->setVisible(enabled);
+  spatial_contrast_invert_display_->setEnabled(enabled && !spatial_contrast_appearance_locked_);
   update_time_window_limits();
   emit spatial_contrast_enabled_changed(enabled);
   update_spatial_contrast_display_range();
@@ -352,16 +273,11 @@ void ImageRenderingWidget::set_spatial_contrast_display_inverted(bool inverted) 
   spatial_contrast_invert_display_->setChecked(inverted);
 }
 void ImageRenderingWidget::set_spatial_contrast_appearance_locked(bool locked) {
-  if (spatial_contrast_appearance_locked_ == locked) {
-    return;
-  }
+  if (spatial_contrast_appearance_locked_ == locked) return;
   spatial_contrast_appearance_locked_ = locked;
   const bool enabled = is_spatial_contrast_enabled() && !locked;
-  const bool auto_dynamic = is_local_pca_lsci_enabled() && get_local_pca_map() == 0 &&
-                            is_local_pca_dynamic_auto_scale();
-  spatial_contrast_display_max_->setEnabled(enabled && !auto_dynamic);
-  spatial_contrast_invert_display_->setEnabled(enabled && !auto_dynamic &&
-      (!is_local_pca_enabled() || is_local_pca_lsci_enabled()));
+  spatial_contrast_display_max_->setEnabled(enabled);
+  spatial_contrast_invert_display_->setEnabled(enabled);
 }
 
 void ImageRenderingWidget::mark_batch_size_invalid() { mark_validation_error(batch_size_spin_); }
@@ -497,9 +413,7 @@ void ImageRenderingWidget::setup_ui() {
 
   pca_type_label_ = new QLabel("PCA type:", this);
   layout->addWidget(pca_type_label_, row, 0);
-  pca_type_combo_ = create_combo_box(this, QStringList{kLocalPcaOnly, kLocalPcaLsci, kHolovibeLocalPca});
-  if (auto *view = qobject_cast<QListView *>(pca_type_combo_->view()))
-    view->setRowHidden(1, true);
+  pca_type_combo_ = create_combo_box(this, QStringList{kLocalPca});
   layout->addWidget(pca_type_combo_, row, 1);
   pca_type_label_->hide();
   pca_type_combo_->hide();
@@ -510,7 +424,7 @@ void ImageRenderingWidget::setup_ui() {
   spatial_contrast_window_size_ = create_spin_box(this, 3, 255, 7);
   spatial_contrast_window_size_->setSingleStep(2);
   spatial_contrast_window_size_->setToolTip(
-      tr("Odd spatial window size. Local PCA wraps across image borders; LSCI clips at borders."));
+      tr("Odd spatial window size; LSCI clips at borders."));
   layout->addWidget(spatial_contrast_window_size_, row, 1);
   spatial_contrast_window_label_->hide();
   spatial_contrast_window_size_->hide();
@@ -518,30 +432,29 @@ void ImageRenderingWidget::setup_ui() {
 
   local_pca_rectangular_ = new QCheckBox("Rectangular kernel", this);
   local_pca_rectangular_->setToolTip(
-      tr("Set kernel width and height independently. Each step must fit its kernel dimension "
-         "and have the same odd/even parity."));
+      tr("Set kernel width and height independently. Each step must be positive and no larger than its kernel dimension."));
   layout->addWidget(local_pca_rectangular_, row, 0, 1, 2);
   local_pca_rectangular_->hide();
   ++row;
-  holovibe_kernel_label_ = new QLabel("Kernel size (px):", this);
-  holovibe_kernel_ = create_spin_box(this, 1, kLargeSpinMax, 32);
-  layout->addWidget(holovibe_kernel_label_, row, 0);
-  layout->addWidget(holovibe_kernel_, row++, 1);
-  holovibe_stride_label_ = new QLabel("Step (px):", this);
-  holovibe_stride_ = create_spin_box(this, 1, kLargeSpinMax, 16);
-  holovibe_stride_->setMaximum(holovibe_kernel_->value());
-  layout->addWidget(holovibe_stride_label_, row, 0);
-  layout->addWidget(holovibe_stride_, row++, 1);
-  holovibe_rank_label_ = new QLabel("Rank factor:", this);
-  holovibe_rank_ = new QDoubleSpinBox(this);
-  holovibe_rank_->setRange(0.0, static_cast<double>(std::numeric_limits<float>::max()));
-  holovibe_rank_->setDecimals(3);
-  holovibe_rank_->setValue(1.0);
-  layout->addWidget(holovibe_rank_label_, row, 0);
-  layout->addWidget(holovibe_rank_, row++, 1);
-  holovibe_kernel_label_->hide(); holovibe_kernel_->hide();
-  holovibe_stride_label_->hide(); holovibe_stride_->hide();
-  holovibe_rank_label_->hide(); holovibe_rank_->hide();
+  local_pca_square_kernel_label_ = new QLabel("Kernel size (px):", this);
+  local_pca_square_kernel_ = create_spin_box(this, 1, kLargeSpinMax, 32);
+  layout->addWidget(local_pca_square_kernel_label_, row, 0);
+  layout->addWidget(local_pca_square_kernel_, row++, 1);
+  local_pca_square_stride_label_ = new QLabel("Step (px):", this);
+  local_pca_square_stride_ = create_spin_box(this, 1, kLargeSpinMax, 16);
+  local_pca_square_stride_->setMaximum(local_pca_square_kernel_->value());
+  layout->addWidget(local_pca_square_stride_label_, row, 0);
+  layout->addWidget(local_pca_square_stride_, row++, 1);
+  local_pca_rank_label_ = new QLabel("Rank factor:", this);
+  local_pca_rank_ = new QDoubleSpinBox(this);
+  local_pca_rank_->setRange(0.0, static_cast<double>(std::numeric_limits<float>::max()));
+  local_pca_rank_->setDecimals(3);
+  local_pca_rank_->setValue(1.0);
+  layout->addWidget(local_pca_rank_label_, row, 0);
+  layout->addWidget(local_pca_rank_, row++, 1);
+  local_pca_square_kernel_label_->hide(); local_pca_square_kernel_->hide();
+  local_pca_square_stride_label_->hide(); local_pca_square_stride_->hide();
+  local_pca_rank_label_->hide(); local_pca_rank_->hide();
   auto add_rectangular_row = [&](const QString &label, QLabel *&caption, QSpinBox *&spin,
                                  int value) {
     caption = new QLabel(label, this);
@@ -556,38 +469,6 @@ void ImageRenderingWidget::setup_ui() {
   add_rectangular_row("Kernel height (px):", local_pca_kernel_height_label_, local_pca_kernel_height_, 5);
   add_rectangular_row("Step width (px):", local_pca_step_width_label_, local_pca_step_width_, 1);
   add_rectangular_row("Step height (px):", local_pca_step_height_label_, local_pca_step_height_, 1);
-
-  local_pca_selection_label_ = new QLabel("PCA components:", this);
-  layout->addWidget(local_pca_selection_label_, row, 0);
-  local_pca_selection_ = create_combo_box(
-      this, QStringList{"Manual (Z / Width)", "Automatic (mean eigenvalue)"});
-  local_pca_selection_->setToolTip(tr("For Local PCA-LSCI, automatic selection reconstructs modes "
-                                    "at or above the local mean eigenvalue. Z and Width are "
-                                    "ignored in this mode."));
-  layout->addWidget(local_pca_selection_, row, 1);
-  local_pca_selection_label_->hide();
-  local_pca_selection_->hide();
-  ++row;
-
-  local_pca_map_label_ = new QLabel("Local PCA-LSCI map:", this);
-  layout->addWidget(local_pca_map_label_, row, 0);
-  local_pca_map_ = create_combo_box(
-      this, QStringList{"Dynamic", "Static (Local PCA then LSCI 3D)"});
-  local_pca_map_->setToolTip(tr("Dynamic: LSCI 3D minus Static. "
-                                 "Static: Local PCA reconstruction followed by LSCI 3D."));
-  layout->addWidget(local_pca_map_, row, 1);
-  local_pca_map_label_->hide();
-  local_pca_map_->hide();
-  ++row;
-
-  local_pca_dynamic_auto_scale_ = new QCheckBox("Auto scale Dynamic display", this);
-  local_pca_dynamic_auto_scale_->setChecked(true);
-  local_pca_dynamic_auto_scale_->setToolTip(tr("Scale each Dynamic map to its own minimum and "
-                                            "maximum for visibility. Disable to use Display max K "
-                                            "for comparable fixed-range previews."));
-  layout->addWidget(local_pca_dynamic_auto_scale_, row, 0, 1, 2);
-  local_pca_dynamic_auto_scale_->hide();
-  ++row;
 
   spatial_contrast_method_label_ = new QLabel("LSCI method:", this);
   layout->addWidget(spatial_contrast_method_label_, row, 0);
@@ -689,8 +570,7 @@ void ImageRenderingWidget::connect_signals() {
   connect(space_transform_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
     update_pca_type_options();
     if (space_transform_combo_->currentText() == kLscsi2D ||
-        time_transform_combo_->currentText() == kLscsi3D ||
-        is_local_pca_lsci_enabled()) {
+        time_transform_combo_->currentText() == kLscsi3D) {
       const QSignalBlocker blocker(time_transform_combo_);
       time_transform_combo_->setCurrentText("None");
     }
@@ -713,10 +593,7 @@ void ImageRenderingWidget::connect_signals() {
               const QSignalBlocker blocker(pca_type_combo_);
               pca_type_combo_->setCurrentText(kPrincipalPca);
             }
-            if (is_local_pca_lsci_enabled())
-              local_pca_selection_->setCurrentIndex(1);
             if (time_transform_combo_->currentText() == kLscsi3D ||
-                is_local_pca_lsci_enabled() ||
                 space_transform_combo_->currentText() == kLscsi2D) {
               const QSignalBlocker blocker(space_transform_combo_);
               space_transform_combo_->setCurrentText("None");
@@ -727,16 +604,6 @@ void ImageRenderingWidget::connect_signals() {
           });
   connect(pca_type_combo_, qOverload<int>(&QComboBox::currentIndexChanged), this, [this]() {
     if (time_transform_combo_->currentText() != kPca) return;
-    if (get_time_transform() != kPrincipalPca && get_time_transform() != kLocalPca &&
-        get_time_transform() != kHolovibeLocalPca &&
-        space_transform_combo_->currentText() != "None") {
-      const QSignalBlocker blocker(space_transform_combo_);
-      space_transform_combo_->setCurrentText("None");
-      update_pca_type_options();
-      update_asp_padding_visibility();
-    }
-    if (is_local_pca_lsci_enabled())
-      local_pca_selection_->setCurrentIndex(1);
     update_spatial_contrast_controls();
     emit settings_changed();
   });
@@ -748,20 +615,14 @@ void ImageRenderingWidget::connect_signals() {
           &ImageRenderingWidget::settings_changed);
   connect(convolution_divide_check_, &QCheckBox::toggled, this,
           &ImageRenderingWidget::settings_changed);
-  connect(local_pca_selection_, qOverload<int>(&QComboBox::currentIndexChanged), this,
+  connect(local_pca_square_kernel_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
-  connect(holovibe_kernel_, qOverload<int>(&QSpinBox::valueChanged), this,
-          &ImageRenderingWidget::settings_changed);
-  connect(holovibe_kernel_, qOverload<int>(&QSpinBox::valueChanged), holovibe_stride_,
+  connect(local_pca_square_kernel_, qOverload<int>(&QSpinBox::valueChanged), local_pca_square_stride_,
           &QSpinBox::setMaximum);
-  connect(holovibe_stride_, qOverload<int>(&QSpinBox::valueChanged), this,
+  connect(local_pca_square_stride_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
-  connect(holovibe_rank_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
+  connect(local_pca_rank_, qOverload<double>(&QDoubleSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
-  connect(local_pca_map_, qOverload<int>(&QComboBox::currentIndexChanged), this,
-          [this]() { update_spatial_contrast_controls(); emit settings_changed(); });
-  connect(local_pca_dynamic_auto_scale_, &QCheckBox::toggled, this,
-          [this]() { update_spatial_contrast_controls(); emit settings_changed(); });
   connect(spatial_contrast_window_size_, qOverload<int>(&QSpinBox::valueChanged), this,
           &ImageRenderingWidget::settings_changed);
   connect(local_pca_rectangular_, &QCheckBox::toggled, this,

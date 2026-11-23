@@ -128,10 +128,10 @@ TEST(SignalPlotSettingsTest, DerivesSampleTimeFromFrequencyStride) {
   EXPECT_DOUBLE_EQ(settings.signal_plot_sample_time_seconds(), 64.0 / 40'000.0);
 }
 
-TEST(HolovibeLocalPcaSettingsTest, AllowsOverlappingTimeWindows) {
+TEST(LocalPcaSettingsTest, AllowsOverlappingTimeWindows) {
   Settings settings{};
   settings.view_type = ViewType::PROCESSED;
-  settings.holovibe_local_pca = true;
+  settings.pp_local_pca = true;
   settings.time_window = 32;
   settings.time_stride = 8;
   settings.time_z_begin = 0;
@@ -141,11 +141,11 @@ TEST(HolovibeLocalPcaSettingsTest, AllowsOverlappingTimeWindows) {
 
   settings.time_window = 1;
   settings.time_z_end = 1;
-  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "holovibe_local_pca_invalid"));
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "local_pca_invalid"));
   settings.time_window = 32;
   settings.time_z_end = 32;
 
-  settings.holovibe_local_pca = false;
+  settings.pp_local_pca = false;
   EXPECT_TRUE(has_issue(validate_settings(settings, {}), "time_stride_not_multiple"));
 }
 
@@ -185,48 +185,50 @@ TEST(SlidingAverageSettingsTest, RejectsMultipleAutofocusIterationsForNonUnitWin
       has_issue(validate_settings(settings, {}), "autofocus_sliding_average_multiple_iterations"));
 }
 
-TEST(LocalPcaSettingsTest, ValidatesComponentRangeAndStride) {
+TEST(LocalPcaSettingsTest, ValidatesKernelAndComponentRange) {
   Settings settings{};
   settings.view_type = ViewType::PROCESSED;
-  settings.pp_spatial_contrast = true;
-  settings.pp_spatial_contrast_dimensions = 3;
   settings.pp_local_pca = true;
   settings.time_window = 16;
   settings.time_z_begin = 0;
   settings.time_z_end = 15;
-  settings.pp_spatial_contrast_window_size = 5;
-  settings.pp_local_pca_stride = 1;
-  ValidationContext context{.source_width = 8, .source_height = 8,
-                            .source_frame_count = 16};
-  EXPECT_FALSE(has_issue(validate_settings(settings, context), "local_pca_settings_invalid"));
-  EXPECT_FALSE(has_issue(validate_settings(settings, context), "local_pca_components_invalid"));
+  EXPECT_FALSE(has_issue(validate_settings(settings, {}), "local_pca_invalid"));
 
   settings.time_z_end = 17;
-  EXPECT_TRUE(has_issue(validate_settings(settings, context), "local_pca_components_invalid"));
-  settings.pp_local_pca_automatic = true;
-  EXPECT_FALSE(has_issue(validate_settings(settings, context), "local_pca_components_invalid"));
-  settings.pp_local_pca_automatic = false;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "local_pca_invalid"));
   settings.time_z_end = 15;
-  settings.pp_local_pca_stride = 9;
-  EXPECT_TRUE(has_issue(validate_settings(settings, context), "local_pca_settings_invalid"));
+  settings.local_pca_stride_x = settings.local_pca_width_x + 1;
+  EXPECT_TRUE(has_issue(validate_settings(settings, {}), "local_pca_invalid"));
 }
 
-TEST(LocalPcaSettingsTest, LegacyJsonPreservesAutomaticSelection) {
+TEST(LocalPcaSettingsTest, JsonRoundTripPreservesComplexMode) {
   Settings settings{};
-  settings.pp_spatial_contrast = true;
   settings.pp_local_pca = true;
-  settings.pp_local_pca_stride = 2;
-  settings.pp_local_pca_automatic = true;
-  settings.pp_local_pca_lsci = true;
-  settings.pp_local_pca_map = 1;
-  settings.pp_local_pca_dynamic_auto_scale = false;
+  settings.local_pca_width_x = 24;
+  settings.local_pca_rank_factor = 0.7f;
   const auto restored = old_json_to_settings(settings_to_old_json(settings), Settings{});
   EXPECT_TRUE(restored.pp_local_pca);
-  EXPECT_EQ(restored.pp_local_pca_stride, 1);
-  EXPECT_TRUE(restored.pp_local_pca_automatic);
-  EXPECT_TRUE(restored.pp_local_pca_lsci);
-  EXPECT_EQ(restored.pp_local_pca_map, 1);
-  EXPECT_FALSE(restored.pp_local_pca_dynamic_auto_scale);
+  EXPECT_EQ(restored.local_pca_width_x, 24);
+  EXPECT_FLOAT_EQ(restored.local_pca_rank_factor, 0.7f);
+}
+
+TEST(LocalPcaSettingsTest, LegacyJsonSelectsFormerHolovibeMode) {
+  auto json = settings_to_old_json(Settings{});
+  auto &contrast = json["compute_settings"]["view"]["spatial_contrast"];
+  contrast["local_pca_enabled"] = true;
+  contrast["holovibe_local_pca_enabled"] = true;
+  contrast["holovibe_pca_width_x"] = 24;
+  contrast["holovibe_pca_rank_factor"] = 0.7f;
+  contrast.erase("local_pca_width_x");
+  contrast.erase("local_pca_rank_factor");
+  auto restored = old_json_to_settings(json, Settings{});
+  EXPECT_TRUE(restored.pp_local_pca);
+  EXPECT_EQ(restored.local_pca_width_x, 24);
+  EXPECT_FLOAT_EQ(restored.local_pca_rank_factor, 0.7f);
+
+  contrast["holovibe_local_pca_enabled"] = false;
+  restored = old_json_to_settings(json, Settings{});
+  EXPECT_FALSE(restored.pp_local_pca);
 }
 
 TEST(SignalPlotSettingsTest, UnknownAutofocusSlopeModeKeepsDefault) {

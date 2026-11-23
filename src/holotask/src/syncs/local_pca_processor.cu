@@ -1,4 +1,4 @@
-#include "holovibe_local_pca_processor.hh"
+#include "local_pca_processor.hh"
 
 #include <algorithm>
 #include <cmath>
@@ -290,11 +290,11 @@ struct LocalPca::Impl
                 cuFuncSetAttribute(dx_kernel, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
                                    static_cast<int>(dx_shared_memory)) != CUDA_SUCCESS)
                 throw std::runtime_error("cuSolverDx shared memory exceeds device limit");
-            holotask::logger()->info("[HolovibeLocalPca] cuSolverDx enabled for {} frames", frames);
+            holotask::logger()->info("[LocalPca] cuSolverDx enabled for {} frames", frames);
         }
         catch (const std::exception& e)
         {
-            holotask::logger()->warn("[HolovibeLocalPca] cuSolverDx unavailable for {} frames: {}; using cuSOLVER", frames, e.what());
+            holotask::logger()->warn("[LocalPca] cuSolverDx unavailable for {} frames: {}; using cuSOLVER", frames, e.what());
             dx_kernel = nullptr;
             if (dx_module) { cuModuleUnload(dx_module); dx_module = nullptr; }
         }

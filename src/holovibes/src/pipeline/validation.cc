@@ -212,7 +212,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
   const bool temporal_lscsi =
       requires_processed_pipeline(settings) && settings.pp_spatial_contrast &&
       settings.pp_spatial_contrast_dimensions == 3;
-  if (!temporal_lscsi && !settings.holovibe_local_pca &&
+  if (!temporal_lscsi && !settings.pp_local_pca &&
       settings.time_window > 0 && settings.time_stride > 0 &&
       (settings.time_stride % settings.time_window != 0)) {
     add_issue(result, ValidationSeverity::Error, "time_stride_not_multiple",
@@ -254,11 +254,8 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
                 "Accumulation must be strictly positive.", {SettingsField::PpAccumulation});
     }
 
-    const bool propagated_local_pca = settings.pp_local_pca &&
-                                      !settings.pp_local_pca_lsci &&
-                                      settings.spacial_method != SpacialMethod::NONE;
-    if (!settings.pp_spatial_contrast || propagated_local_pca) {
-      if (!settings.pp_spatial_contrast && !settings.holovibe_local_pca &&
+    if (!settings.pp_spatial_contrast) {
+      if (!settings.pp_local_pca &&
           settings.time_method == TimeMethod::NONE) {
         add_issue(result, ValidationSeverity::Error, "time_method_unsupported",
                   "A time transform must be selected for processed view mode.",
@@ -268,7 +265,7 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
       const bool supported_spacial_method =
           settings.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION ||
           settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM;
-      if (!supported_spacial_method && !settings.holovibe_local_pca) {
+      if (!supported_spacial_method && !settings.pp_local_pca) {
         add_issue(
             result, ValidationSeverity::Error, "spacial_method_unsupported",
             "Fresnel Diffraction or Angular Spectrum must be selected for processed view mode.",
@@ -307,18 +304,18 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
       }
     }
 
-    if (settings.holovibe_local_pca &&
-        (settings.time_window < 2 || settings.holovibe_pca_width_x < 1 ||
-         settings.holovibe_pca_width_y < 1 || settings.holovibe_pca_stride_x < 1 ||
-         settings.holovibe_pca_stride_y < 1 ||
-         settings.holovibe_pca_stride_x > settings.holovibe_pca_width_x ||
-         settings.holovibe_pca_stride_y > settings.holovibe_pca_width_y ||
-         !std::isfinite(settings.holovibe_pca_rank_factor) ||
-         settings.holovibe_pca_rank_factor < 0.f ||
+    if (settings.pp_local_pca &&
+        (settings.time_window < 2 || settings.local_pca_width_x < 1 ||
+         settings.local_pca_width_y < 1 || settings.local_pca_stride_x < 1 ||
+         settings.local_pca_stride_y < 1 ||
+         settings.local_pca_stride_x > settings.local_pca_width_x ||
+         settings.local_pca_stride_y > settings.local_pca_width_y ||
+         !std::isfinite(settings.local_pca_rank_factor) ||
+         settings.local_pca_rank_factor < 0.f ||
          settings.time_z_begin < 0 || settings.time_z_begin >= settings.time_z_end ||
          settings.time_z_end > settings.time_window)) {
-      add_issue(result, ValidationSeverity::Error, "holovibe_local_pca_invalid",
-                "Holovibes Local-PCA needs at least two frames, positive kernel and step dimensions, and a nonnegative rank factor.",
+      add_issue(result, ValidationSeverity::Error, "local_pca_invalid",
+                "Local PCA needs at least two frames, positive kernel and step dimensions, and a nonnegative rank factor.",
                 {SettingsField::TimeWindow});
     }
 
@@ -341,7 +338,6 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     }
 
     if (settings.pp_spatial_contrast &&
-        !(settings.pp_local_pca && !settings.pp_local_pca_lsci) &&
         (settings.pp_spatial_contrast_window_size < 3 ||
          settings.pp_spatial_contrast_window_size > 255 ||
          settings.pp_spatial_contrast_window_size % 2 == 0)) {
@@ -358,58 +354,10 @@ ValidationResult validate_settings(const Settings &settings, const ValidationCon
     }
 
     if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions == 3 &&
-        settings.time_window < (settings.pp_local_pca ? 2 : 3)) {
+        settings.time_window < 3) {
       add_issue(result, ValidationSeverity::Error, "spatial_contrast_time_window_invalid",
-                "Temporal contrast needs at least 3 frames, or 2 for Local PCA.",
+                "Temporal contrast needs at least 3 frames.",
                 {SettingsField::TimeWindow});
-    }
-
-    if (settings.pp_local_pca) {
-      const int frame_width = settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM &&
-                                      settings.asp_padding_enabled
-                                  ? settings.asp_padded_width : context.source_width.value_or(0);
-      const int frame_height = settings.spacial_method == SpacialMethod::ANGULAR_SPECTRUM &&
-                                       settings.asp_padding_enabled
-                                   ? settings.asp_padded_height : context.source_height.value_or(0);
-      if (!settings.pp_spatial_contrast ||
-          settings.pp_spatial_contrast_dimensions != 3 ||
-          (settings.pp_local_pca_lsci &&
-           (settings.pp_local_pca_map < 0 || settings.pp_local_pca_map > 2)) ||
-          settings.time_window < 2 ||
-          settings.time_window > (settings.pp_local_pca_lsci ? 32 : 64) ||
-          (!(settings.pp_local_pca_rectangular && !settings.pp_local_pca_lsci) &&
-           (settings.pp_spatial_contrast_window_size < (settings.pp_local_pca_lsci ? 3 : 1) ||
-            settings.pp_spatial_contrast_window_size >
-                (settings.pp_local_pca_lsci ? 15 :
-                 std::min(frame_width > 0 ? frame_width : (std::numeric_limits<int>::max)(),
-                          frame_height > 0 ? frame_height : (std::numeric_limits<int>::max)())) ||
-            settings.pp_spatial_contrast_window_size % 2 == 0)) ||
-          settings.pp_local_pca_stride != 1) {
-        add_issue(result, ValidationSeverity::Error, "local_pca_settings_invalid",
-                  "Local PCA needs a valid time window and spatial kernel.",
-                  {SettingsField::TimeWindow, SettingsField::PpSpatialContrastWindowSize});
-      }
-      if (settings.pp_local_pca_rectangular && !settings.pp_local_pca_lsci) {
-        if (settings.pp_local_pca_kernel_width < 1 || settings.pp_local_pca_kernel_height < 1 ||
-            (frame_width > 0 && settings.pp_local_pca_kernel_width > frame_width) ||
-            (frame_height > 0 && settings.pp_local_pca_kernel_height > frame_height) ||
-            settings.pp_local_pca_step_width < 1 || settings.pp_local_pca_step_height < 1 ||
-            settings.pp_local_pca_step_width > settings.pp_local_pca_kernel_width ||
-            settings.pp_local_pca_step_height > settings.pp_local_pca_kernel_height ||
-            settings.pp_local_pca_step_width % 2 != settings.pp_local_pca_kernel_width % 2 ||
-            settings.pp_local_pca_step_height % 2 != settings.pp_local_pca_kernel_height % 2) {
-          add_issue(result, ValidationSeverity::Error, "local_pca_rectangular_invalid",
-                    "Local PCA kernel must fit the frame; each step must fit its kernel and match its parity.",
-                    {SettingsField::PpSpatialContrastWindowSize});
-        }
-      }
-      if (!settings.pp_local_pca_automatic &&
-          (settings.time_z_begin < 0 || settings.time_z_begin >= settings.time_z_end ||
-           settings.time_z_end > settings.time_window)) {
-        add_issue(result, ValidationSeverity::Error, "local_pca_components_invalid",
-                  "Local PCA Z and Width must select components within the time window.",
-                  {SettingsField::TimeZBegin, SettingsField::TimeZEnd});
-      }
     }
 
     if (settings.pp_spatial_contrast && settings.pp_spatial_contrast_dimensions == 3 &&

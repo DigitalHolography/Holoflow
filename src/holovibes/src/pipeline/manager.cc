@@ -102,7 +102,6 @@
 #include "holotask/syncs/short_time_fresnel_diffraction.hh"
 #include "holotask/syncs/spatial_contrast.hh"
 #include "holotask/syncs/local_pca.hh"
-#include "holotask/syncs/holovibe_local_pca.hh"
 #include "holotask/syncs/unfold2d.hh"
 #include "holotask/syncs/wrap2pi.hh"
 #include "holotask/syncs/zernike_defocus_z_prop.hh"
@@ -253,7 +252,6 @@ void Manager::register_components() {
   reg_sync<syncs::Filter2DFactory>(registry_, "Filter2D");
   reg_sync<syncs::SpatialContrastFactory>(registry_, "SpatialContrast");
   reg_sync<syncs::LocalPcaFactory>(registry_, "LocalPca");
-  reg_sync<syncs::HolovibeLocalPcaFactory>(registry_, "HolovibeLocalPca");
   reg_sync<syncs::RegistrationFactory>(registry_, "Registration");
   reg_sync<syncs::ResizeFactory>(registry_, "Resize");
   reg_sync<syncs::ShortTimeFresnelDiffractionFactory>(registry_, "ShortTimeFresnelDiffraction");
