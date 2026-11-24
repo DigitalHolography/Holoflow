@@ -67,6 +67,59 @@ private:
   std::vector<Storage> outputs_;
 };
 
+TEST(BatchQueueTimingTest, AdvancesAnalysisWindowsByStrideAcrossRingWraparound) {
+  for (auto location : {MemLoc::Host, MemLoc::Device}) {
+    for (int stride : {32, 64, 256}) {
+      SCOPED_TRACE(static_cast<int>(location));
+      SCOPED_TRACE(stride);
+      const std::array input_descs{TDesc({16, 1, 1}, DType::F32, location)};
+      const holotask::asyncs::BatchQueueSettings settings{stride, 32, stride};
+      holotask::asyncs::BatchQueueFactory        factory;
+      const auto        inferred = factory.infer(input_descs, nlohmann::json(settings));
+      auto              task     = factory.create(input_descs, nlohmann::json(settings), {});
+      TestStorageAccess storage(input_descs, inferred.output_descs);
+      task->bind_storage_access(&storage);
+      std::atomic<bool> cancelled{false};
+      std::array        outputs{TView{inferred.output_descs[0], &storage.owned_output_storage(0)}};
+      holoflow::core::AsyncPopCtx pop{outputs, &cancelled};
+      int                         emitted = 0;
+      for (int begin = 0; begin < 8 * stride; begin += 16) {
+        auto input = task->acquire_input(0);
+        ASSERT_TRUE(input.has_value()) << "Queue stalled before completing a stride";
+        std::array<float, 16> values;
+        for (int index = 0; index < 16; ++index)
+          values[index] = static_cast<float>(begin + index);
+        if (location == MemLoc::Device)
+          ASSERT_EQ(
+              cudaMemcpy(input->data(), values.data(), sizeof(values), cudaMemcpyHostToDevice),
+              cudaSuccess);
+        else
+          std::memcpy(input->data(), values.data(), sizeof(values));
+        std::array                   inputs{*input};
+        holoflow::core::AsyncPushCtx push{inputs, &cancelled};
+        ASSERT_EQ(task->try_push(push), OpResult::Ok);
+        const auto result = task->try_pop(pop);
+        if (result == OpResult::NotReady)
+          continue;
+        ASSERT_EQ(result, OpResult::Ok);
+        std::array<float, 32> window;
+        if (location == MemLoc::Device)
+          ASSERT_EQ(
+              cudaMemcpy(window.data(), outputs[0].data(), sizeof(window), cudaMemcpyDeviceToHost),
+              cudaSuccess);
+        else
+          std::memcpy(window.data(), outputs[0].data(), sizeof(window));
+        for (int index = 0; index < 32; ++index)
+          EXPECT_FLOAT_EQ(window[index], static_cast<float>(emitted * stride + index));
+        ++emitted;
+        task->release_output(0);
+      }
+      EXPECT_EQ(emitted, 8);
+      EXPECT_EQ(task->try_pop(pop), OpResult::NotReady);
+    }
+  }
+}
+
 TEST(CausalSlidingAverageTest, EmitsPartialThenFullAveragesForArbitraryRank) {
   const TDesc input_desc({1, 1, 1, 1, 1}, DType::F32, MemLoc::Device);
   const holotask::syncs::CausalSlidingAverageSettings settings{3};
