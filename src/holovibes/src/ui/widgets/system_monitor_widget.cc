@@ -84,8 +84,7 @@ void SystemMonitorWidget::setup_ui() {
 
   layout->addLayout(metrics_layout);
 
-  // Queue metrics
-  auto *queue_group  = new QGroupBox("QUEUES", this);
+  auto *queue_group  = new QGroupBox("Pipeline Status", this);
   auto *queue_layout = new QVBoxLayout(queue_group);
   queue_layout->setContentsMargins(0, 0, 0, 0);
   queue_layout->setSpacing(6);
@@ -100,8 +99,6 @@ void SystemMonitorWidget::setup_ui() {
     queue_layout->addWidget(*bar);
   };
 
-  configure_bar(&input_queue_bar_, "Input Queue", 48, 64, "%v / %m");
-  configure_bar(&output_queue_bar_, "Output Queue", 22, 64, "%v / %m");
   configure_bar(&pipeline_start_bar_, "Pipeline Start Progress", 0, 1,
                 "Click start to start the pipeline");
 
@@ -147,8 +144,7 @@ void SystemMonitorWidget::pipeline_progress_bar_finished() {
   pipeline_start_bar_->setFormat("Pipeline started!");
 }
 
-void SystemMonitorWidget::reset_pipeline_progress_bar()
-{
+void SystemMonitorWidget::reset_pipeline_progress_bar() {
   pipeline_start_timer_->stop();
   pipeline_start_bar_->setMaximum(1);
   pipeline_start_bar_->setValue(0);

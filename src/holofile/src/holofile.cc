@@ -242,6 +242,18 @@ Writer::Writer(const std::string &path, const Header &header, const Footer &foot
     : impl_(std::make_unique<Impl>()) {
   impl_->header = header;
   impl_->footer = footer;
+  try {
+    auto &pipeline_settings = impl_->footer.pipeline_settings;
+    auto &pixel_pitch = pipeline_settings.at("info").at("pixel_pitch");
+    auto &x = pixel_pitch.at("x");
+    auto &y = pixel_pitch.at("y");
+
+    x = x.get<float>() * 1e6;
+    y = y.get<float>() * 1e6;
+  }
+  catch(const nlohmann::json::exception& e) {
+    logger()->warn("[Writer::Writer] could not convert pixel pitch in micrometters: {}", e.what());
+  }
   // Open file
   FILE *fp = nullptr;
   if (fopen_s(&fp, path.c_str(), "wb") != 0 || !fp) {
@@ -295,7 +307,8 @@ void Writer::write_frames(const uint8_t *data, std::size_t frame_count) {
   size_t bytes_per_frame  = bits_per_frame / 8;
 
   size_t frames_written = fwrite(data, bytes_per_frame, frame_count, impl_->file.get());
-  //logger()->debug("[Writer::write_frames] frames_written: {}, bytes_per_frame: {}", frames_written, bytes_per_frame);
+  // logger()->debug("[Writer::write_frames] frames_written: {}, bytes_per_frame: {}",
+  // frames_written, bytes_per_frame);
   impl_->frame_index += frames_written;
 
   if (ferror(impl_->file.get())) {

@@ -235,10 +235,9 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
                                                   static_cast<size_t>(s_.recording_queue_count)};
   }
 
-  holotask::sources::CameraSettings settings{
-      .cfg_path        = cam_path,
-      .name            = to_string(s_.import_source),
-      .record_settings = record_settings};
+  holotask::sources::CameraSettings settings{.cfg_path        = cam_path,
+                                             .name            = to_string(s_.import_source),
+                                             .record_settings = record_settings};
   return camera(settings);
 }
 
@@ -285,7 +284,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
 
   if (H.mem_loc != MemLoc::Device) {
     H = memcpy(H, {Device});
-    H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_window});
+    H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_stride});
   }
 
   return convert(H, {Target::F32, Strat::Real});
@@ -297,7 +296,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
   // Time-frequency analysis then operates along axis 1 (the T dimension).
   // The output is [N_pre, Nz, Hy, Hx], which feeds directly into the post-TFA queue.
 
-  int     N_pre = 4;
+  int     N_pre = 1;
   int64_t T     = static_cast<int64_t>(H.shape.at(0));
   int64_t Hy    = static_cast<int64_t>(H.shape.at(1));
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
@@ -745,7 +744,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_filter(const TDesc &
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
   auto N  = static_cast<double>(s_.time_window);
-  auto fs = 37e3;
+  auto fs = s_.input_sampling_frequency_hz;
   auto df = fs / N;
   auto f0 = s_.time_z_begin * df;
   auto f1 = s_.time_z_end * df;
