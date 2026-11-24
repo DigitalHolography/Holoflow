@@ -89,7 +89,7 @@ struct Settings {
   SpacialMethod spacial_method;
   float         spacial_lambda;
   float         spacial_z;
-  float         spacial_pixel_size;
+  float         spacial_pixel_size;          // in metters
   bool          fresnel_use_numpy   = false; ///< Use the graph-composed CUDA NumPy Fresnel path.
   bool          asp_padding_enabled = false;
   int           asp_padded_width    = 1024;

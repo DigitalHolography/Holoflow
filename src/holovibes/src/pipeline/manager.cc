@@ -758,19 +758,19 @@ void Manager::start_raw_record(std::filesystem::path record_path) {
 void Manager::stop_raw_record() {
   std::lock_guard lock(mtx_);
   if (!scheduler_ || !scheduler_->is_running()) {
-    emit raw_record_stopped_failure("Pipeline is not running");
+    emit raw_record_stopped_failure(std::nullopt, "Pipeline is not running");
     return;
   }
 
   if (!raw_recording_active_) {
-    emit raw_record_stopped_failure("No active recording to stop");
+    emit raw_record_stopped_failure(std::nullopt, "No active recording to stop");
     return;
   }
 
   nlohmann::json payload{{"type", "stop_recording"}};
   if (!scheduler_->ui_try_send(get_record_node_name(), std::move(payload))) {
     logger()->error("[Manager::stop_raw_record] Failed to enqueue stop_recording event");
-    emit raw_record_stopped_failure("Failed to enqueue stop_recording event");
+    emit raw_record_stopped_failure(std::nullopt, "Failed to enqueue stop_recording event");
     return;
   }
 
@@ -887,21 +887,17 @@ void Manager::poll_events() {
           event->data.value("message", std::string{"Recording failed for an unknown reason"});
       size_t            id = event->data.value("id", 0); // assume that the id exists and is valid
       const std::string path_str = event->data.value("path", std::string{});
-      bool              should_emit{false};
 
       {
         std::lock_guard lock(mtx_);
         if (raw_recording_active_) {
           raw_recording_active_ = false;
-          should_emit           = true;
         }
       }
 
       logger()->error("[Manager::poll_events] Recording {} failed: {}", id, path_str, message);
 
-      if (should_emit) {
-        emit raw_record_stopped_failure(QString::fromStdString(message));
-      }
+      emit raw_record_stopped_failure(id, QString::fromStdString(message));
     }
   }
 }
@@ -974,10 +970,11 @@ void Manager::build_and_run() {
 
   // The scheduler references the previous compilation; stop it before replacing the graph.
   scheduler_.reset();
+  auto     prev_output = std::move(compiler_output_);
   Compiler compiler(registry_, config);
   {
     ScopedTrace scope("Compile Pipeline");
-    auto        replacement = compiler.compile(spec_);
+    auto        replacement = compiler.compile(spec_, std::move(prev_output));
     compiler_output_        = std::move(replacement);
   }
   if (compiler_output_ && !log_root_.empty()) {
@@ -1026,7 +1023,7 @@ void Manager::run_compiled_graph() {
       return;
     }
 
-    const auto context = std::format("Thread: {}\nNode: {}\nError: {}", thread_name,
+    const auto context           = std::format("Thread: {}\nNode: {}\nError: {}", thread_name,
                                      node_name.empty() ? "<unknown>" : node_name, error_message);
     auto       failure_prefs     = graph_compiled_dump_prefs_;
     failure_prefs.dump_node_name = true;
@@ -1090,7 +1087,7 @@ void Manager::dump_windows_crash_graph(unsigned long exception_code) noexcept {
 
     const auto node_name = scheduler_ ? scheduler_->current_node_name() : std::string_view{};
     const auto context   = std::format("Windows exception: 0x{:08X}\\nNode: {}", exception_code,
-                                       node_name.empty() ? "<unknown>" : node_name);
+                                     node_name.empty() ? "<unknown>" : node_name);
 
     auto failure_prefs           = graph_compiled_dump_prefs_;
     failure_prefs.dump_node_name = true;

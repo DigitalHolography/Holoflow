@@ -159,4 +159,15 @@ void RecordingSink::emit_event(holoflow::core::SyncCtx &ctx, const char *type,
                                     .ts        = std::chrono::steady_clock::now()});
 }
 
+void RecordingSink::remove_recording_file() {
+  if (!recording_path_.empty() && std::remove(recording_path_.c_str()) != 0 && errno != ENOENT) {
+    logger()->warn("[RecordingSink::remove_recording_file] failed to remove "
+                   "incomplete file at: {}",
+                   recording_path_);
+  } else {
+    logger()->warn(
+        "[RecordingSink::remove_recording_file] removed incomplete record at: {}",
+        recording_path_);
+  }
+}
 } // namespace holotask::sinks::detail
