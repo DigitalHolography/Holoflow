@@ -124,31 +124,42 @@ void Grabber::requeue(const FrameBufferPair &buffers) {
     }
   }
 }
+void Grabber::start() {
+  if (grabber_b_)
+    grabber_b_->start();
+  grabber_a_->start();
+
+  logger()->info("[Grabber::start] started");
+  is_running_ = true;
+}
 
 void Grabber::start_if_not_running() {
-  if (!is_running_) {
-    if (grabber_b_)
-      grabber_b_->start();
-    grabber_a_->start();
+  if (!is_running_)
+    start();
+}
 
-    logger()->info("[Grabber::start_if_not_running] started");
-    is_running_ = true;
+void Grabber::stop() {
+  try {
+    grabber_a_->stop();
+    if (grabber_b_)
+      grabber_b_->stop();
+
+    logger()->info("[Grabber::stop] stopped");
+  } catch (const std::exception &e) {
+    logger()->error("[Grabber::stop] failed to stop: {}", e.what());
   }
+  is_running_ = false;
 }
 
 void Grabber::stop_if_running() {
   if (is_running_) {
-    try {
-      grabber_a_->stop();
-      if (grabber_b_)
-        grabber_b_->stop();
-
-      logger()->info("[Grabber::stop_if_running] stopped");
-    } catch (const std::exception &e) {
-      logger()->error("[Grabber::stop_if_running] failed to stop: {}", e.what());
-    }
-    is_running_ = false;
+    stop();
   }
+}
+
+void Grabber::restart() {
+  stop();
+  start();
 }
 
 FrameBufferPair Grabber::pop(uint64_t timeout) {

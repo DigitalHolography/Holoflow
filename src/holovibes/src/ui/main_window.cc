@@ -2371,11 +2371,20 @@ void MainWindow::on_raw_record_stopped_success() {
   refresh_command_bar();
 }
 
-void MainWindow::on_raw_record_stopped_failure(const QString &error) {
-  logger()->error("[MainWindow::on_raw_record_stopped_failure]");
+void MainWindow::on_raw_record_stopped_failure(const QString &error, std::optional<size_t> id) {
+  if (id.has_value()) {
+    record_widget_->free(*id, true);
+    logger()->error("[MainWindow::on_raw_record_stopped_failure] record {} failed to stop: {}", *id,
+                    error.toStdString());
+  } else {
+    logger()->error("[MainWindow::on_raw_record_stopped_failure] record failed to stop: {}",
+                    error.toStdString());
+  }
+
   export_in_progress_ = false;
   export_widget_->set_stop_enabled(pipeline_running_);
   export_widget_->set_record_enabled(pipeline_running_ && export_widget_->isChecked());
+
   refresh_command_bar();
   show_pipeline_error_popup(tr("An error occurred while stopping raw recording:\n%1").arg(error));
 }
@@ -2387,6 +2396,13 @@ bool MainWindow::validate_inputs() {
   view_widget_->clear_validation_styles();
   render_widget_->autofocus_widget()->clear_validation_styles();
   configure_unsupported_features();
+
+  if (!import_widget_->is_source_valid()) {
+    auto fp = import_widget_->get_file_path();
+    logger()->error("[MainWindow::validate_inputs] source path is not valid: {}", fp.toStdString());
+    show_pipeline_error_popup(tr("Invalid source file path:\n%1").arg(fp));
+    return false;
+  }
 
   pipeline::Settings settings = get_pipeline_settings();
   export_widget_->set_frame_batch_size(settings.recording_method == pipeline::RecordingMethod::RAW

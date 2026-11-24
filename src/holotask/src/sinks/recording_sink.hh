@@ -92,6 +92,7 @@ protected:
   void emit_event(holoflow::core::SyncCtx &ctx, const char *type, nlohmann::json data);
 
 protected:
+  void remove_recording_file();
   RecordingMonitor monitor_;
   bool             recording_       = false;
   int              frames_buffered_ = 0;
