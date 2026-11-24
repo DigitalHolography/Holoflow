@@ -10,6 +10,7 @@ nav:
   - Applications:
     - Overview: applications/index.md
     - Doppler Holography: applications/doppler-holography.md
+    - Retinal LSCI: applications/retinal-lsci.md
     - Doppler OCT: applications/doppler-oct.md
     - Wavefront Analysis: applications/wavefront-analysis.md
   - Learn:
@@ -57,6 +58,7 @@ nav:
         - Convolution: holovibes/tasks/syncs/convolution.md
         - FFT Shift: holovibes/tasks/syncs/fft_shift.md
         - Filter 2D: holovibes/tasks/syncs/filter2d.md
+        - Spatial Contrast: holovibes/tasks/syncs/spatial_contrast.md
         - Fresnel Diffraction: holovibes/tasks/syncs/fresnel_diffraction.md
         - Memcpy: holovibes/tasks/syncs/memcpy.md
         - PCA: holovibes/tasks/syncs/pca.md

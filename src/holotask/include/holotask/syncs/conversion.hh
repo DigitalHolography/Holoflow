@@ -32,10 +32,12 @@ struct ConversionSettings {
     CF32,
   };
 
-  enum class Strategy { Real, Scaled, Modulus, Argument };
+  enum class Strategy { Real, Scaled, FixedRange, Modulus, Argument };
 
   Target   target;
   Strategy strategy;
+  float    max_value = 1.0f;
+  bool     invert    = false;
 
   bool operator==(const ConversionSettings &) const = default;
 };
