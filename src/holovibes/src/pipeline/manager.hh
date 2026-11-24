@@ -52,6 +52,7 @@ public:
           ui::TensorDisplayWidget  *processed_spectrum_widget,
           ui::TensorDisplayWidget  *shack_hartmann_widget,
           ui::TensorDisplayWidget  *shack_hartmann_xcorr_widget,
+          ui::TensorDisplayWidget  *registration_xcorr_widget,
           ui::TensorDisplayWidget  *zernike_phase_widget,
           ui::ZernikeHistoryWidget *zernike_history_widget);
 
@@ -62,6 +63,9 @@ public:
 
   /// @brief Requests a stop and waits for the pipeline to halt cleanly.
   void stop_pipeline();
+
+  /// @brief Requests a pause and waits for the pipeline to halt cleanly.
+  void pause_pipeline();
 
   /// @brief Restarts execution from the retained compiled graph and task state.
   void resume_pipeline();
@@ -120,7 +124,7 @@ signals:
   void raw_record_started_success();
   void raw_record_started_failure(const QString &error);
   void raw_record_stopped_success();
-  void raw_record_stopped_failure(const QString &error);
+  void raw_record_stopped_failure(const QString &error, std::optional<size_t> id);
 
   // record monitor signals
   void update_record(size_t id, size_t recorded_frames, size_t writing_speed, size_t elapsed_time);
@@ -170,17 +174,18 @@ private:
   const std::string& get_record_node_name();
 
   // --- UI Elements ---
-  ui::AutoFocusWidget                                 *autofocus_widget_;
-  ui::TensorDisplayWidget                             *xy_processed_widget_;
-  ui::TensorDisplayWidget                             *xz_processed_widget_;
-  ui::TensorDisplayWidget                             *yz_processed_widget_;
-  ui::TensorDisplayWidget                             *xy_raw_widget_;
-  ui::TensorDisplayWidget                             *raw_spectrum_widget_;
-  ui::TensorDisplayWidget                             *processed_spectrum_widget_;
-  ui::TensorDisplayWidget                             *shack_hartmann_widget_;
-  ui::TensorDisplayWidget                             *shack_hartmann_xcorr_widget_;
-  ui::TensorDisplayWidget                             *zernike_phase_widget_;
-  ui::ZernikeHistoryWidget                            *zernike_history_widget_;
+  ui::AutoFocusWidget      *autofocus_widget_;
+  ui::TensorDisplayWidget  *xy_processed_widget_;
+  ui::TensorDisplayWidget  *xz_processed_widget_;
+  ui::TensorDisplayWidget  *yz_processed_widget_;
+  ui::TensorDisplayWidget  *xy_raw_widget_;
+  ui::TensorDisplayWidget  *raw_spectrum_widget_;
+  ui::TensorDisplayWidget  *processed_spectrum_widget_;
+  ui::TensorDisplayWidget  *shack_hartmann_widget_;
+  ui::TensorDisplayWidget  *shack_hartmann_xcorr_widget_;
+  ui::TensorDisplayWidget  *registration_xcorr_widget_;
+  ui::TensorDisplayWidget  *zernike_phase_widget_;
+  ui::ZernikeHistoryWidget *zernike_history_widget_;
   std::shared_ptr<ui::SignalHistoryDispatcherProvider> history_dispatchers_;
 
   // --- State & Configuration ---

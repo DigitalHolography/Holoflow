@@ -240,7 +240,15 @@ private:
 
     if (to_write > 0) {
       const auto *buffer = ring_.get() + frames_written_ * frame_byte_size_;
-      writer_->write_frames(buffer, to_write);
+      try {
+        writer_->write_frames(buffer, to_write);
+      } catch (const std::exception &e) {
+        recording_ = false;
+        logger()->error("[HolofileWriter] Failed to write frames to {}: {}", settings_.path, e.what());
+        emit_failed_event(ctx, e.what());
+        reset();
+        remove_recording_file();
+      }
       frames_written_ += to_write;
       monitor_.update(ctx, frames_buffered_, frames_written_);
     } else {

@@ -87,6 +87,7 @@ struct SyncCtx {
   std::atomic<bool>           *cancelled; ///< Non-null cancellation flag.
   holoflow_event::EventWriter *event_writer; ///< Event writer for emitting events.
   holoflow_event::EventReader *event_reader; ///< Event reader for receiving events.
+  std::atomic<uint64_t>       *stream_epoch = nullptr; ///< Incremented when a source loops.
 };
 
 /// Recording-only context. The stream is already capturing into graph. Bindings are private

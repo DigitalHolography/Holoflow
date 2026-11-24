@@ -18,6 +18,7 @@
 #include <array>
 #include <cmath>
 #include <map>
+#include <numbers>
 #include <optional>
 #include <spdlog/fmt/ranges.h>
 #include <stdexcept>
@@ -43,8 +44,8 @@ public:
 
   holoflow::core::GraphSpec build();
 
-  [[nodiscard]] std::string failure_graph_dot(
-      const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+  [[nodiscard]] std::string
+  failure_graph_dot(const holoflow::core::GraphSpecDumpPreferences &prefs) const {
     return GraphBuilderTracer::failure_graph_dot(prefs);
   }
 
@@ -90,6 +91,7 @@ private:
   TDesc build_zernike_correction(const TDesc &FH, const TDesc &slopes, const ShackHartmannGeometry &geometry, bool is_last_pass, AberrationCorrectionState &state);
   void build_zernike_outputs(const AberrationCorrectionState &state, const ShackHartmannGeometry &geometry);
   TDesc build_spatial_propagation(const TDesc &FH);
+  TDesc fresnel_diffraction_numpy(const TDesc &FH);
   TDesc build_spatial_filter(const TDesc &FH_z);
   void build_xy_view(const TDesc &FH_z);
   void build_3d_cuts(const TDesc &FH_z);
@@ -136,8 +138,8 @@ GraphBuilder &GraphBuilder::operator=(GraphBuilder &&) noexcept = default;
 
 holoflow::core::GraphSpec GraphBuilder::build() { return impl_->build(); }
 
-std::string GraphBuilder::failure_graph_dot(
-    const holoflow::core::GraphSpecDumpPreferences &prefs) const {
+std::string
+GraphBuilder::failure_graph_dot(const holoflow::core::GraphSpecDumpPreferences &prefs) const {
   return impl_->failure_graph_dot(prefs);
 }
 
@@ -224,23 +226,19 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_acquisition() {
                           .keep_cursor = false});
   }
 
-  if (s_.import_source == ImportSource::AMETEK_S710_EURESYS_COAXLINK_OCTO) {
-    return ametek_s710_euresys_coaxlink_octo({cam_path});
+  std::optional<holocam::RecordSettings> record_settings = std::nullopt;
+  if (s_.can_use_camera_record()) {
+    record_settings = holocam::RecordSettings{.file_path       = s_.recording_path.string(),
+                                              .recording_count = s_.recording_count,
+                                              .pipeline_config = settings_to_old_json(s_),
+                                              .record_queue_count =
+                                                  static_cast<size_t>(s_.recording_queue_count)};
   }
 
-  if (s_.import_source == ImportSource::AMETEK_S711_EURESYS_COAXLINK_QSFP) {
-    holotask::sources::AmetekS711EuresysCoaxlinkQSFPSettings settings{.cfg_path = cam_path};
-    if (s_.can_use_camera_record()) {
-      settings.record_settings = holotask::sources::RecordSettings{
-          .file_path          = s_.recording_path.string(),
-          .recording_count    = s_.recording_count,
-          .pipeline_config    = settings_to_old_json(s_),
-          .record_queue_count = static_cast<size_t>(s_.recording_queue_count)};
-    }
-    return ametek_s711_euresys_coaxlink_qsfp_plus(settings);
-  }
-
-  HOLOVIBES_UNREACHABLE();
+  holotask::sources::CameraSettings settings{.cfg_path        = cam_path,
+                                             .name            = to_string(s_.import_source),
+                                             .record_settings = record_settings};
+  return camera(settings);
 }
 
 void GraphBuilder::Impl::build_raw_record(const TDesc &H) {
@@ -286,6 +284,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_preprocessing(TDesc H) {
 
   if (H.mem_loc != MemLoc::Device) {
     H = memcpy(H, {Device});
+    H = batched_queue(H, {s_.gpu_in_size, s_.time_window, s_.time_stride});
   }
   // Window GPU-cached input too, and retain enough frames to advance a full stride
   // without filling the queue's reserved slot before an output becomes available.
@@ -301,7 +300,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_time_frequency_analysis(TDes
   // Time-frequency analysis then operates along axis 1 (the T dimension).
   // The output is [N_pre, Nz, Hy, Hx], which feeds directly into the post-TFA queue.
 
-  int     N_pre = 4;
+  int     N_pre = 1;
   int64_t T     = static_cast<int64_t>(H.shape.at(0));
   int64_t Hy    = static_cast<int64_t>(H.shape.at(1));
   int64_t Hx    = static_cast<int64_t>(H.shape.at(2));
@@ -652,6 +651,9 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_propagation(const TD
   using Filter  = holotask::syncs::AngularSpectrumSettings::Filter;
 
   if (s_.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION) {
+    if (s_.fresnel_use_numpy) {
+      return fresnel_diffraction_numpy(FH);
+    }
     return fresnel_diffraction(FH, {.lambda           = s_.spacial_lambda,
                                     .dx               = s_.spacial_pixel_size,
                                     .dy               = s_.spacial_pixel_size,
@@ -689,6 +691,52 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_propagation(const TD
   HOLOVIBES_UNREACHABLE();
 }
 
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::fresnel_diffraction_numpy(const TDesc &FH) {
+  if (FH.shape.size() < 2) {
+    throw std::invalid_argument("NumPy Fresnel diffraction requires at least two dimensions");
+  }
+  if (s_.spacial_lambda <= 0.0f || s_.spacial_z == 0.0f || s_.spacial_pixel_size <= 0.0f) {
+    throw std::invalid_argument("NumPy Fresnel diffraction requires valid optical parameters");
+  }
+
+  const size_t height   = FH.shape[FH.shape.size() - 2];
+  const size_t width    = FH.shape[FH.shape.size() - 1];
+  const size_t size     = std::max(height, width);
+  const auto   offset_x = static_cast<double>((size - width) / 2);
+  const auto   offset_y = static_cast<double>((size - height) / 2);
+  const auto   half     = static_cast<double>(size) / 2.0;
+  const auto   dx       = static_cast<double>(s_.spacial_pixel_size);
+
+  const auto coordinate = [&](size_t extent, double offset) {
+    const double start = (offset - half) * dx;
+    const double stop  = start + (static_cast<double>(extent) - 0.5) * dx;
+    return arange({.start  = start,
+                   .stop   = stop,
+                   .step   = dx,
+                   .dtype  = holoflow::core::DType::F32,
+                   .device = holoflow::core::MemLoc::Device});
+  };
+
+  const auto                 x = coordinate(width, offset_x);
+  const auto                 y = coordinate(height, offset_y);
+  const std::array<TDesc, 2> axes{x, y};
+  const auto                 grids = meshgrid(axes, {.indexing = holonp::MeshgridIndexing::XY});
+  const auto                 radius_squared = add(square(grids[0], {}), square(grids[1], {}), {});
+
+  const auto phase_scale =
+      asarray({.value  = static_cast<double>(std::numbers::pi_v<float>) /
+                         (static_cast<double>(s_.spacial_lambda) * s_.spacial_z),
+               .dtype  = holoflow::core::DType::F32,
+               .device = holoflow::core::MemLoc::Device});
+  const auto imaginary = asarray({.value  = 0.0,
+                                  .imag   = 1.0,
+                                  .dtype  = holoflow::core::DType::CF32,
+                                  .device = holoflow::core::MemLoc::Device});
+  const auto lens = exp(multiply(multiply(radius_squared, phase_scale, {}), imaginary, {}), {});
+  const auto propagated = fft2(multiply(FH, lens, {}), {});
+  return abs(propagated, {});
+}
+
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_filter(const TDesc &FH_z) {
   return filter_2d(FH_z, {
                              s_.filter_r_inner,
@@ -700,7 +748,7 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_filter(const TDesc &
 
 GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
   auto N  = static_cast<double>(s_.time_window);
-  auto fs = 37e3;
+  auto fs = s_.input_sampling_frequency_hz;
   auto df = fs / N;
   auto f0 = s_.time_z_begin * df;
   auto f1 = s_.time_z_end * df;
@@ -772,11 +820,22 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     result              = flatfield(result, flatfield_settings_from_cutoff_period(cutoff, dy, dx));
   }
 
-  if (s_.pp_registration) {
-    throw std::logic_error{"Registration is currently not supported"};
-  }
-
+  // Average the small temporal batch first to reduce noise before estimating the eye motion.
+  // Registration must happen before the configurable (larger) preview accumulation below;
+  // otherwise the large average would blur frames that are still misaligned.
   result = mean(result, {{0}, false}); // [1, H, W]
+
+  if (s_.pp_registration) {
+    const auto outputs  = registration_outputs(result, {.radius = s_.pp_registration_radius});
+    result              = outputs.at(0);
+    auto output_display = fftshift(outputs.at(1), {{-2, -1}});
+    // Match the Shack-Hartmann correlation preview. The registration output is a raw F32
+    // correlation matrix and must be normalized before conversion to U8 for display.
+    output_display              = normalize(output_display, {{-2, -1}, 0.0f, 255.0f});
+    const auto output_converted = convert(output_display, {Target::U8, Strat::Scaled});
+
+    registration_xcorr_display(output_converted, {});
+  }
 
   // auto target_capacity = static_cast<size_t>(std::max(1, s_.gpu_out_size));
   auto target_capacity = 8ULL;
@@ -795,12 +854,11 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     result = pct_clip(result, pct_clip_settings);
   }
 
-  result = convert(result, {Target::U8, Strat::Scaled});
-  result = batched_queue(result, {s_.gpu_out_size, 1, 1});
-  xy_processed_display(result, {});
-
+  // Keep recording on an independent branch. Sharing the display queue with the writer makes
+  // the two consumers compete for the same temporal batches and can change the live preview.
   if (s_.recording_method == RecordingMethod::PROCESSED) {
-    auto result_rec = memcpy(result, {Host});
+    auto result_rec = convert(result, {Target::U8, Strat::Scaled});
+    result_rec      = memcpy(result_rec, {Host});
     result_rec      = batched_queue(result_rec, {s_.cpu_out_size, 1, 1});
 
     auto path  = s_.recording_path.string();
@@ -817,6 +875,10 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
                     s_.recording_codec, resize_to_square, s_.recording_resize_algorithm});
     }
   }
+
+  result = convert(result, {Target::U8, Strat::Scaled});
+  result = batched_queue(result, {s_.gpu_out_size, 1, 1});
+  xy_processed_display(result, {});
 }
 
 void GraphBuilder::Impl::build_3d_cuts(const TDesc &FH_z) {
