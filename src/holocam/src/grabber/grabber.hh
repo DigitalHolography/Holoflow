@@ -32,15 +32,19 @@ std::string format_genapi_error(const Euresys::genapi_error &err);
 
 class Grabber {
 public:
-  Grabber(size_t buffer_part_count,
-          Euresys::EGrabberInfo info_a, std::optional<Euresys::EGrabberInfo> info_b = std::nullopt);
+  Grabber(size_t buffer_part_count, Euresys::EGrabberInfo info_a,
+          std::optional<Euresys::EGrabberInfo> info_b = std::nullopt);
   ~Grabber() = default;
 
   void requeue(const FrameBufferPair &buffers);
 
+  void start();
   void start_if_not_running();
 
+  void stop();
   void stop_if_running();
+
+  void restart();
 
   bool running() const noexcept { return is_running_; }
 
@@ -61,6 +65,7 @@ public:
   std::byte *validate_buffer_data(FrameBufferPair &frame);
 
   void announce_buffers(uint8_t *buffer, size_t total_size, size_t buffer_size);
+
 private:
   using GrabberType = Euresys::EGrabber<Euresys::CallbackOnDemand>;
   std::unique_ptr<GrabberType> &ctrl() { return grabber_a_; };
