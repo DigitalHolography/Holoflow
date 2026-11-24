@@ -86,6 +86,8 @@ public:
   QComboBox      *camera_combo();
   QComboBox      *camera_config_combo();
 
+  bool is_source_valid();
+
 signals:
   void start_clicked();
   void stop_clicked();

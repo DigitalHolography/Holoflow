@@ -15,6 +15,9 @@
 #include "ui/widgets/import_widget.hh"
 #include "ui/widgets/validation_style.hh"
 
+#include <filesystem>
+#include <fstream>
+
 #include <QCoreApplication>
 #include <QDir>
 #include <QDoubleSpinBox>
@@ -122,6 +125,22 @@ QComboBox      *ImportWidget::load_method_combo() { return load_method_combo_; }
 QCheckBox      *ImportWidget::cam_check() { return cam_check_; }
 QComboBox      *ImportWidget::camera_combo() { return camera_combo_; }
 QComboBox      *ImportWidget::camera_config_combo() { return camera_config_combo_; }
+
+namespace {
+bool is_readable(const std::filesystem::path& p) {
+    std::ifstream file(p);
+    return file.good();
+}
+}
+
+bool ImportWidget::is_source_valid() {
+  if (!is_camera_mode()) {
+    const std::filesystem::path fp = get_file_path().toStdString();
+    return std::filesystem::exists(fp) && is_readable(fp);
+  }
+
+  return true;
+}
 
 void ImportWidget::setup_ui() {
   auto *main_layout = new QVBoxLayout(this);

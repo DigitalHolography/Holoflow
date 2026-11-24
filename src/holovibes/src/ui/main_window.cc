@@ -2381,6 +2381,13 @@ bool MainWindow::validate_inputs() {
   render_widget_->autofocus_widget()->clear_validation_styles();
   configure_unsupported_features();
 
+  if (!import_widget_->is_source_valid()) {
+    auto fp = import_widget_->get_file_path();
+    logger()->error("[MainWindow::validate_inputs] source path is not valid: {}", fp.toStdString());
+    show_pipeline_error_popup(tr("Invalid source file path:\n%1").arg(fp));
+    return false;
+  }
+
   pipeline::Settings settings = get_pipeline_settings();
   export_widget_->set_frame_batch_size(settings.recording_method == pipeline::RecordingMethod::RAW
                                            ? settings.load_batch
