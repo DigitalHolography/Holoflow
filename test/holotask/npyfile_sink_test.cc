@@ -1,12 +1,15 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <array>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <spdlog/spdlog.h>
@@ -191,9 +194,9 @@ TEST(NpyfileSinkTest, RemovesIncompleteFileAfterStopRecording) {
 }
 
 TEST(NpyfileSinkTest, ReportsFailedFileCreation) {
-  const auto path =
-      std::filesystem::temp_directory_path() / "holoflow_missing_npy_dir" / "recording.npy";
-  std::filesystem::remove(path);
+  const auto directory = std::filesystem::temp_directory_path() / "holoflow_missing_npy_dir";
+  const auto path = directory / "recording.npy";
+  std::filesystem::remove_all(directory);
   holotask::sinks::NpyfileFactory factory;
   const std::vector<TDesc>        input_descs{desc()};
   auto task = factory.create(input_descs, settings(path.string(), 2), {});
@@ -207,13 +210,25 @@ TEST(NpyfileSinkTest, ReportsFailedFileCreation) {
   ASSERT_TRUE(
       router.ui_try_send("npy", {{"type", "start_recording"}, {"record_path", path.string()}}));
   router.tick();
-  ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
-  router.tick();
-  auto event = router.ui_try_receive();
-  while (event && event->data.at("type") != "recording_failed")
-    event = router.ui_try_receive();
-  ASSERT_TRUE(event.has_value());
-  EXPECT_EQ(event->data.at("type"), "recording_failed");
-  EXPECT_NE(event->data.at("message").get<std::string>().find("Failed to open NPY file"),
+  using Clock = std::chrono::steady_clock;
+  constexpr auto timeout = std::chrono::seconds(10);
+  const auto start = Clock::now();
+  std::optional<holoflow_event::Event> failure;
+  while (Clock::now() - start < timeout && !failure) {
+    ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+    router.tick();
+    while (auto event = router.ui_try_receive()) {
+      if (event->data.at("type") == "recording_failed") {
+        failure = std::move(event);
+        break;
+      }
+    }
+    if (!failure)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_TRUE(failure.has_value()) << "Writer thread did not report failed file creation";
+  EXPECT_NE(failure->data.at("message").get<std::string>().find("Failed to open NPY file"),
             std::string::npos);
+  EXPECT_FALSE(std::filesystem::exists(directory));
+  EXPECT_FALSE(std::filesystem::exists(path));
 }
