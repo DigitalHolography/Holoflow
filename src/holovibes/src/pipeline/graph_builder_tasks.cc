@@ -66,6 +66,7 @@ DEFINE_UNARY_SYNC_NODE (convert,                                "conversion",   
 DEFINE_UNARY_SYNC_NODE (pca,                                    "pca",                                 "Pca",                             holotask::syncs::PcaSettings)
 DEFINE_UNARY_SYNC_NODE (flatfield,                              "flatfield",                           "Flatfield",                       holotask::syncs::FlatfieldSettings)
 DEFINE_UNARY_SYNC_NODE (filter_2d,                              "filter_2d",                           "Filter2D",                        holotask::syncs::Filter2DSettings)
+DEFINE_UNARY_SYNC_NODE (spatial_contrast,                       "spatial_contrast",                    "SpatialContrast",                 holotask::syncs::SpatialContrastSettings)
 DEFINE_UNARY_SYNC_NODE (fresnel_diffraction,                    "fresnel_diffraction",                 "FresnelDiffraction",              holotask::syncs::FresnelDiffractionSettings)
 DEFINE_UNARY_SYNC_NODE (angular_spectrum,                       "angular_spectrum",                    "AngularSpectrum",                 holotask::syncs::AngularSpectrumSettings)
 DEFINE_UNARY_SYNC_NODE (cuda_stream_synchronize,                "cuda_stream_synchronize",             "CudaStreamSynchronize",           holotask::syncs::CudaStreamSynchronizeSettings)
@@ -114,25 +115,42 @@ DEFINE_SINK_SYNC_NODE(zernike_coefficients_display, "zernike_coefficients_displa
 DEFINE_SINK_SYNC_NODE(zernike_history_display, "zernike_history_display", "DisplaySignalHistory",
                       tasks::sinks::DisplaySignalHistorySettings)
 
-DEFINE_NARY_SYNC_NODE  (concatenate,                  "concatenate",                  "Concatenate",                     holonp::ConcatenateSettings)
-DEFINE_UNARY_SYNC_NODE (transpose,                    "transpose",                    "Transpose",                       holonp::TransposeSettings)
-DEFINE_UNARY_SYNC_NODE (conj,                         "conj",                         "Conj",                            holonp::ConjSettings)
-DEFINE_UNARY_SYNC_NODE (rfft,                         "rfft",                         "RFFT",                            holonp::RFFTSettings)
-DEFINE_UNARY_SYNC_NODE (rfft2,                        "rfft2",                        "RFFT2",                           holonp::RFFT2Settings)
-DEFINE_UNARY_SYNC_NODE (irfft2,                       "irfft2",                       "IRFFT2",                          holonp::IRFFT2Settings)
-DEFINE_UNARY_SYNC_NODE (slice,                        "slice",                        "Slice",                           holonp::SliceSettings)
-DEFINE_UNARY_SYNC_NODE (fft,                          "fft",                          "FFT",                             holonp::FFTSettings)
-DEFINE_UNARY_SYNC_NODE (fft2,                         "fft2",                         "FFT2",                            holonp::FFT2Settings)
-DEFINE_UNARY_SYNC_NODE (fftshift,                     "fftshift",                     "FFTShiftNp",                      holonp::FFTShiftSettings)
-DEFINE_UNARY_SYNC_NODE (abs,                          "abs",                          "Abs",                             holonp::AbsSettings)
-DEFINE_UNARY_SYNC_NODE (mean,                         "mean",                         "Mean",                            holonp::MeanSettings)
-DEFINE_UNARY_SYNC_NODE (mean_abs,                     "mean_abs",                     "MeanAbs",                         holotask::syncs::MeanAbsSettings)
-DEFINE_UNARY_SYNC_NODE (min,                          "min",                          "Min",                             holonp::MinSettings)
-DEFINE_UNARY_SYNC_NODE (max,                          "max",                          "Max",                             holonp::MaxSettings)
-DEFINE_UNARY_SYNC_NODE (normalize,                    "normalize",                    "Normalize",                       holotask::syncs::NormalizeSettings)
-DEFINE_UNARY_ASYNC_NODE(batched_queue,                "batch_queue",                  "BatchQueue",                      holotask::asyncs::BatchQueueSettings)
-DEFINE_UNARY_ASYNC_NODE(slide_avg,                    "slide_avg",                    "SlidingAverage",                  holotask::asyncs::SlidingAverageSettings)
-// clang-format on
+DEFINE_NARY_SYNC_NODE(concatenate, "concatenate", "Concatenate", holonp::ConcatenateSettings)
+DEFINE_NARY_SYNC_NODE(maximum, "maximum", "Maximum", holonp::MaximumSettings)
+DEFINE_NARY_SYNC_NODE(minimum, "minimum", "Minimum", holonp::MinimumSettings)
+DEFINE_UNARY_SYNC_NODE(transpose, "transpose", "Transpose", holonp::TransposeSettings)
+DEFINE_UNARY_SYNC_NODE(conj, "conj", "Conj", holonp::ConjSettings)
+DEFINE_UNARY_SYNC_NODE(rfft, "rfft", "RFFT", holonp::RFFTSettings)
+DEFINE_UNARY_SYNC_NODE(irfft, "irfft", "IRFFT", holonp::IRFFTSettings)
+DEFINE_UNARY_SYNC_NODE(rfft2, "rfft2", "RFFT2", holonp::RFFT2Settings)
+DEFINE_UNARY_SYNC_NODE(irfft2, "irfft2", "IRFFT2", holonp::IRFFT2Settings)
+DEFINE_UNARY_SYNC_NODE(slice, "slice", "Slice", holonp::SliceSettings)
+DEFINE_UNARY_SYNC_NODE(fft, "fft", "FFT", holonp::FFTSettings)
+DEFINE_UNARY_SYNC_NODE(ifft, "ifft", "IFFT", holonp::FFTSettings)
+DEFINE_UNARY_SYNC_NODE(fft2, "fft2", "FFT2", holonp::FFT2Settings)
+DEFINE_UNARY_SYNC_NODE(ifft2, "ifft2", "IFFT2", holonp::FFT2Settings)
+DEFINE_UNARY_SYNC_NODE(fftshift, "fftshift", "FFTShiftNp", holonp::FFTShiftSettings)
+DEFINE_UNARY_SYNC_NODE(ifftshift, "ifftshift", "IFFTShiftNp", holonp::FFTShiftSettings)
+DEFINE_UNARY_SYNC_NODE(abs, "abs", "Abs", holonp::AbsSettings)
+DEFINE_UNARY_SYNC_NODE(exp, "exp", "Exp", holonp::ExpSettings)
+DEFINE_UNARY_SYNC_NODE(mean, "mean", "Mean", holonp::MeanSettings)
+DEFINE_UNARY_SYNC_NODE(mean_abs, "mean_abs", "MeanAbs", holotask::syncs::MeanAbsSettings)
+DEFINE_UNARY_SYNC_NODE(min, "min", "Min", holonp::MinSettings)
+DEFINE_UNARY_SYNC_NODE(max, "max", "Max", holonp::MaxSettings)
+DEFINE_UNARY_SYNC_NODE(median, "median", "Median", holonp::MedianSettings)
+DEFINE_UNARY_SYNC_NODE(quantile, "quantile", "Quantile", holonp::QuantileSettings)
+DEFINE_UNARY_SYNC_NODE(percentile, "percentile", "Percentile", holonp::PercentileSettings)
+DEFINE_UNARY_SYNC_NODE(normalize, "normalize", "Normalize", holotask::syncs::NormalizeSettings)
+DEFINE_UNARY_ASYNC_NODE(batched_queue, "batch_queue", "BatchQueue",
+                        holotask::asyncs::BatchQueueSettings)
+DEFINE_UNARY_ASYNC_NODE(temporal_window, "temporal_window", "TemporalWindow",
+                        holotask::asyncs::TemporalWindowSettings)
+DEFINE_UNARY_ASYNC_NODE(slide_avg, "slide_avg", "SlidingAverage",
+                        holotask::asyncs::SlidingAverageSettings)
+std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::histogram(const TDesc              &X,
+                                                                   holonp::HistogramSettings s) {
+  return make_unary_sync_node("histogram", "Histogram", "Histogram", X, s);
+}
 
 std::vector<GraphBuilderTasks::TDesc>
 GraphBuilderTasks::dual_reader_batch_queue(const TDesc                                   &X,

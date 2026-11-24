@@ -92,7 +92,10 @@ private:
   void build_zernike_outputs(const AberrationCorrectionState &state, const ShackHartmannGeometry &geometry);
   TDesc build_spatial_propagation(const TDesc &FH);
   TDesc build_spatial_filter(const TDesc &FH_z);
+  TDesc build_spatial_contrast_input(TDesc H);
+  void build_spatial_contrast_view(const TDesc &frames);
   void build_xy_view(const TDesc &FH_z);
+  void build_xy_output(TDesc result, size_t discard_first, bool fixed_contrast_range = false);
   void build_3d_cuts(const TDesc &FH_z);
   TDesc build_freq_weights();
   // clang-format on
@@ -170,6 +173,25 @@ holoflow::core::GraphSpec GraphBuilder::Impl::build() {
     if (should_exit) {
       return g_;
     }
+  }
+
+  if (s_.pp_spatial_contrast) {
+    auto frames = build_spatial_contrast_input(H);
+    if (s_.pp_spatial_contrast_dimensions != 2) {
+      size_t source_cycle_frames = 0;
+      if (s_.import_source == ImportSource::HOLOFILE && s_.load_batch > 0 &&
+          s_.load_end > s_.load_begin) {
+        const int selected_frames = s_.load_end - s_.load_begin;
+        source_cycle_frames = static_cast<size_t>(
+            selected_frames / s_.load_batch * s_.load_batch);
+      }
+      frames = temporal_window(frames,
+                               {.window_size = static_cast<size_t>(s_.time_window),
+                                .stride_size = static_cast<size_t>(s_.time_stride),
+                                .source_cycle_frames = source_cycle_frames});
+    }
+    build_spatial_contrast_view(frames);
+    return g_;
   }
 
   H = build_preprocessing(H);
@@ -754,16 +776,44 @@ GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_freq_weights() {
   HOLOVIBES_UNREACHABLE();
 }
 
-void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
-  using Target                 = holotask::syncs::ConversionSettings::Target;
-  using Strat                  = holotask::syncs::ConversionSettings::Strategy;
-  using SlidingAverageSettings = holotask::asyncs::SlidingAverageSettings;
-  using PctClipSettings        = holotask::syncs::PctClipSettings;
-  using Ellipse                = PctClipSettings::Ellipse;
-  using holotask::sinks::HolofileSettings;
-  auto Host = holotask::syncs::MemcpySettings::Target::Host;
+GraphBuilder::Impl::TDesc GraphBuilder::Impl::build_spatial_contrast_input(TDesc H) {
+  using MemLoc = holoflow::core::MemLoc;
+  auto Device  = holotask::syncs::MemcpySettings::Target::Device;
 
-  TDesc      result;
+  if (H.mem_loc != MemLoc::Device) {
+    H = memcpy(H, {Device});
+  }
+  H = batched_queue(H, {s_.gpu_in_size, 1, 1});
+  return ascontiguousarray(H, {});
+}
+
+void GraphBuilder::Impl::build_spatial_contrast_view(const TDesc &frames) {
+  const size_t temporal_window_size = s_.pp_spatial_contrast_dimensions != 2
+                                          ? static_cast<size_t>(s_.time_window)
+                                          : size_t{1};
+  if (frames.rank() != 3 || frames.shape.at(0) != temporal_window_size) {
+    throw std::logic_error{"Spatial LSCI input has an unexpected temporal window shape"};
+  }
+
+  auto result = spatial_contrast(frames,
+                                 {.window_size = s_.pp_spatial_contrast_dimensions == 1
+                                                     ? 1
+                                                     : s_.pp_spatial_contrast_window_size,
+                                  .temporal_window_size = static_cast<int>(temporal_window_size),
+                                  .method = s_.pp_spatial_contrast_method == 1
+                                                ? holotask::syncs::SpatialContrastMethod::FFT
+                                                : holotask::syncs::SpatialContrastMethod::Kernel});
+  if (s_.pp_flatfield) {
+    // Spatial contrast uses the camera grid, so derive the filter from the source pixel pitch.
+    const auto pitch = s_.spacial_pixel_size;
+    result = flatfield(result, flatfield_settings_from_cutoff_period(
+                                   s_.pp_flatfield_cutoff_period_m, pitch, pitch));
+  }
+  build_xy_output(result, 0, true);
+}
+
+void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
+  TDesc result;
   const bool is_magnitude = FH_z.dtype == holoflow::core::DType::F32;
 
   if (s_.moment_type == MomentType::M0) {
@@ -801,22 +851,45 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     result              = flatfield(result, flatfield_settings_from_cutoff_period(cutoff, dy, dx));
   }
 
+  // Average the small temporal batch before registration and preview accumulation.
   result = mean(result, {{0}, false}); // [1, H, W]
 
   TDesc motion_result;
 
   if (s_.pp_registration) {
+    using Target = holotask::syncs::ConversionSettings::Target;
+    using Strat  = holotask::syncs::ConversionSettings::Strategy;
     const auto outputs  = registration_outputs(result, {.radius = s_.pp_registration_radius});
     result              = outputs.at(0);
+    auto output_display = fftshift(outputs.at(1), {{-2, -1}});
+    output_display      = normalize(output_display, {{-2, -1}, 0.0f, 255.0f});
+    const auto output_converted = convert(output_display, {Target::U8, Strat::Scaled});
+    registration_xcorr_display(output_converted, {});
   }
 
-  if (s_.recording_motion_compensation)
-    motion_result = result;
+  auto discard_first = s_.autofocus_enabled ? static_cast<size_t>(s_.pp_accumulation - 1) : 0;
+  build_xy_output(result, discard_first);
+}
+
+void GraphBuilder::Impl::build_xy_output(TDesc result, size_t discard_first,
+                                         bool fixed_contrast_range) {
+  using Target                 = holotask::syncs::ConversionSettings::Target;
+  using Strat                  = holotask::syncs::ConversionSettings::Strategy;
+  using SlidingAverageSettings = holotask::asyncs::SlidingAverageSettings;
+  using PctClipSettings        = holotask::syncs::PctClipSettings;
+  using Ellipse                = PctClipSettings::Ellipse;
+  using holotask::sinks::HolofileSettings;
+  auto Host = holotask::syncs::MemcpySettings::Target::Host;
+
+  if (s_.pp_accumulation <= 0) {
+    throw std::invalid_argument{"pp_accumulation must be positive"};
+  }
+
+  TDesc motion_result = result;
 
   // auto target_capacity = static_cast<size_t>(std::max(1, s_.gpu_out_size));
   auto target_capacity = 8ULL;
   auto window_size     = static_cast<size_t>(s_.pp_accumulation);
-  auto discard_first   = s_.autofocus_enabled ? window_size - 1 : 0;
   auto slide_settings  = SlidingAverageSettings{target_capacity, window_size, discard_first};
   result               = slide_avg(result, slide_settings);
 
@@ -824,15 +897,23 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
     throw std::logic_error{"Convolution is currently not supported"};
   }
 
+  // Clip the shared float result before it branches to display and processed recording.
   if (s_.pp_pctclip) {
     Ellipse         roi{0.5f, 0.5f, s_.pp_pctclip_radius, s_.pp_pctclip_radius, 0.0f};
     PctClipSettings pct_clip_settings{s_.pp_pctclip_lower, s_.pp_pctclip_upper, roi};
     result = pct_clip(result, pct_clip_settings);
   }
 
-  result = convert(result, {Target::U8, Strat::Scaled});
-  result = batched_queue(result, {s_.recording_motion_compensation ? 1 : s_.gpu_out_size, 1, 1});
-  xy_processed_display(result, {});
+  // Display and recording use independent queues so neither consumer drains the other.
+  auto convert_for_output = [&](const TDesc &input) {
+    if (fixed_contrast_range) {
+      return convert(input,
+                     {Target::U8, Strat::FixedRange,
+                      s_.pp_spatial_contrast_display_max,
+                      s_.pp_spatial_contrast_invert_display});
+    }
+    return convert(input, {Target::U8, Strat::Scaled});
+  };
 
   if (s_.recording_method == RecordingMethod::PROCESSED) {
     auto path  = s_.recording_path.string();
@@ -862,6 +943,10 @@ void GraphBuilder::Impl::build_xy_view(const TDesc &FH_z) {
       }
     }
   }
+
+  auto display_result = convert_for_output(result);
+  display_result = batched_queue(display_result, {s_.gpu_out_size, 1, 1});
+  xy_processed_display(display_result, {});
 }
 
 void GraphBuilder::Impl::build_3d_cuts(const TDesc &FH_z) {

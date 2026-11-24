@@ -9,13 +9,16 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <thread>
 #include <vector>
 
 #include <nlohmann/json.hpp>
@@ -258,6 +261,59 @@ TEST(HoloTaskHeadlessTest, HolofileSourceReadsAValidTinyRecording) {
   std::filesystem::remove(path);
 }
 
+TEST(HoloTaskHeadlessTest, HolofileCachedSourceUsesStartFrameAsBufferOrigin) {
+  const auto path = std::filesystem::temp_directory_path() / "holoflow_cached_source_test.holo";
+  const holofile::Header header{
+      .magic_number       = holofile::Header::MAGIC_NUMBER_LE,
+      .version            = holofile::Header::CURRENT_VERSION,
+      .bits_per_pixel     = 8,
+      .frame_width        = 2,
+      .frame_height       = 2,
+      .frame_count        = 3,
+      .data_size_in_bytes = 12,
+      .endianness         = holofile::Header::LITTLE_ENDIAN,
+  };
+  const std::vector<std::uint8_t> pixels{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+  {
+    holofile::Writer writer(path.string(), header, holofile::Footer{.pipeline_settings = {}});
+    writer.write_frames(pixels.data(), 3);
+    writer.write_footer();
+  }
+
+  holotask::sources::HolofileFactory factory;
+  const holotask::sources::HolofileSettings settings{
+      .path = path.string(),
+      .load_kind = holotask::sources::HolofileSettings::LoadKind::CPUCached,
+      .start_frame = 1,
+      .end_frame = 3,
+      .batch_size = 1,
+      .max_fps = std::nullopt,
+      .keep_cursor = true};
+  const auto infer = factory.infer({}, settings);
+  curaii::CudaStream stream;
+  auto task = factory.create({}, settings, {stream.get()});
+  task->bind_logger(spdlog::default_logger());
+
+  class StorageAccess final : public holoflow::core::IOStorageAccess {
+  public:
+    holoflow::core::Storage output{MemLoc::Host, 4, nullptr};
+    holoflow::core::Storage &owned_input_storage(size_t) override { return output; }
+    holoflow::core::Storage &owned_output_storage(size_t) override { return output; }
+  } access;
+  task->bind_storage_access(&access);
+
+  std::array outputs{holoflow::core::TView{infer.output_descs[0], &access.output}};
+  std::atomic<bool> cancelled{false};
+  holoflow::core::SyncCtx ctx{.inputs = {}, .outputs = outputs, .cancelled = &cancelled};
+  ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+
+  std::vector<std::uint8_t> actual(4);
+  std::memcpy(actual.data(), ctx.outputs[0].data(), actual.size());
+  EXPECT_EQ(actual, (std::vector<std::uint8_t>{5, 6, 7, 8}));
+  task.reset();
+  std::filesystem::remove(path);
+}
+
 TEST(HoloTaskHeadlessTest, HolofileWriterWritesAValidTinyRecording) {
   const auto path = std::filesystem::temp_directory_path() / "holoflow_tiny_writer_test.holo";
   const TDesc desc = host_desc({1, 2, 2}, DType::U8);
@@ -286,7 +342,23 @@ TEST(HoloTaskHeadlessTest, HolofileWriterWritesAValidTinyRecording) {
                               .cancelled = &cancelled,
                               .event_writer = &handles.out,
                               .event_reader = &handles.in};
-  ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+  using Clock = std::chrono::steady_clock;
+  constexpr auto timeout = std::chrono::seconds(10);
+  const auto start = Clock::now();
+  bool finished = false;
+  bool failed = false;
+  while (Clock::now() - start < timeout && !finished && !failed) {
+    ASSERT_EQ(task->execute(ctx), holoflow::core::OpResult::Ok);
+    router.tick();
+    while (auto event = router.ui_try_receive()) {
+      const auto &type = event->data.at("type");
+      finished |= type == "recording_finished";
+      failed |= type == "recording_failed";
+    }
+    if (!finished && !failed)
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+  ASSERT_TRUE(finished) << (failed ? "Recording failed" : "Recording did not finish before timeout");
   task.reset();
 
   {
