@@ -121,6 +121,7 @@ protected:
   void remove_recording_file();
   void flush_to_disk(holoflow::core::SyncCtx &ctx);
   void shutdown_async_writer();
+
 private:
   void start_writer_thread(holoflow::core::SyncCtx &ctx);
   void poll_writer(holoflow::core::SyncCtx &ctx);

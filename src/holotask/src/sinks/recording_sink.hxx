@@ -125,8 +125,7 @@ void Sink<W>::on_stop_recording_event(holoflow::core::SyncCtx     &ctx,
     stop_error = error.what();
   }
 
-  if (!stop_error.empty())
-    emit_failed_event(ctx, stop_error);
+  emit_failed_event(ctx, !stop_error.empty() ? stop_error : "recording cancelled");
   reset();
 }
 
@@ -135,9 +134,8 @@ template <typename W>
 void Sink<W>::remove_recording_file() {
   if (!recording_path_.empty() && std::remove(recording_path_.c_str()) != 0 && errno != ENOENT) {
     std::error_code ec(errno, std::generic_category());
-    logger()->error(
-        "Sink::on_stop_recording_event] Failed to remove incomplete recording at {}: {}",
-        recording_path_, ec.message());
+    logger()->error("Sink::remove_recording_file] Failed to remove incomplete recording at {}: {}",
+                    recording_path_, ec.message());
   }
 }
 
@@ -187,11 +185,11 @@ void Sink<W>::emit_recording_update_event(holoflow::core::SyncCtx &ctx, std::siz
   auto event = holoflow_event::Event{
       .direction = holoflow_event::EventDirection::ToUi,
       .node_id   = "",
-      .data = nlohmann::json{{"type", "recording_update"},
-                             {"frame_recorded", frames_written},
-                             {"writing_speed", writing_speed},
-                             {"elapsed_time", elapsed_time}},
-      .ts = std::chrono::steady_clock::now(),
+      .data      = nlohmann::json{{"type", "recording_update"},
+                                  {"frame_recorded", frames_written},
+                                  {"writing_speed", writing_speed},
+                                  {"elapsed_time", elapsed_time}},
+      .ts        = std::chrono::steady_clock::now(),
   };
   HOLOVIBES_CHECK(ctx.event_writer->try_push(std::move(event)),
                   "Failed to emit recording_update event");
@@ -217,8 +215,7 @@ void Sink<W>::update_recording_path(std::string &settings_path) {
 
 template <typename W>
   requires WriterConcept<W>
-void Sink<W>::emit_event(holoflow::core::SyncCtx &ctx, const char *type,
-                         nlohmann::json data) {
+void Sink<W>::emit_event(holoflow::core::SyncCtx &ctx, const char *type, nlohmann::json data) {
   if (!ctx.event_writer)
     return;
 

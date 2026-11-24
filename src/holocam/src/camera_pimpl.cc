@@ -96,7 +96,8 @@ CameraBase::Impl::Impl(const char *model_name, const char *short_name, const nlo
 
   if (record_options.has_value()) {
     init_record_context(short_name, *record_options, buffer_size * buffer_count, config);
-  }
+  } else
+    recording_context_.reset();
 }
 
 void CameraBase::Impl::init_record_context(const char *short_name, const RecordOptions &options,
@@ -165,17 +166,20 @@ void CameraBase::Impl::stop_acquisition() {
     acquisition_thread_->request_stop();
     acquisition_thread_->join();
     acquisition_thread_.reset();
+    logger()->info("[CameraBase::Impl::stop_acquisition] acquisition thread joined");
     grabber_->stop_if_running();
     acquiring_.store(false, std::memory_order_release);
     buffer_queue_->close();
+    logger()->info("[CameraBase::Impl::stop_acquisition] buffer queue cleared");
     logger()->info("[CameraBase::Impl::stop_acquisition] acquisition stopped");
   }
 }
 
 void CameraBase::Impl::start_acquisition() {
   stop_acquisition();
-  grabber_->start_if_not_running();
+  grabber_->restart();
   buffer_queue_->open();
+  grabber_restart_try_count_ = 0;
   acquisition_thread_.emplace([this](std::stop_token cancelled) { acquisition_loop(cancelled); });
   acquiring_.store(true, std::memory_order_release);
   logger()->info("[CameraBase::Impl::start_acquisition] acquisition started");
@@ -216,7 +220,16 @@ void CameraBase::Impl::acquisition_loop(std::stop_token cancelled) {
       if (!base) {
         grabber_->requeue(frame);
         check_for_record_failure();
+        if (grabber_restart_try_count_++ < max_grabber_restart_try_count_)
+          grabber_->restart();
+        else if (log_due(last_grabber_restart_log_)) {
+          logger()->error("[CameraBase::Impl::acquisition_loop] failed to resync grabber frames "
+                          "after {} restarts try to power cycle and retry",
+                          grabber_restart_try_count_);
+        }
         continue;
+      } else {
+        grabber_restart_try_count_ = 0;
       }
 
       if (cancelled.stop_requested()) {
@@ -302,7 +315,7 @@ void CameraBase::Impl::set_recording_options(std::optional<RecordOptions> o,
     init_record_context(short_name, *o, total_buffer_size_, config_);
   } else {
     recording_context_.reset();
-    buffers_.reset();
+    recording_buffers_.reset();
     old_recording_buffers_size_ = 0;
   }
 }
