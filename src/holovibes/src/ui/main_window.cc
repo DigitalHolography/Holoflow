@@ -1016,7 +1016,6 @@ void MainWindow::refresh_visualization_availability() {
       autofocus->is_z5_enabled() || autofocus->is_z6_enabled() || autofocus->is_z7_enabled() ||
       autofocus->is_z8_enabled() || autofocus->is_z9_enabled() || autofocus->is_z10_enabled();
   const bool single_reference_slopes = !autofocus->use_graph_laplacian();
-  const bool registration_enabled    = view_widget_->is_registration_enabled();
 
   const auto autofocus_message = tr("Enable Auto Focus to generate this visualization.");
   const auto zernike_order_message =
@@ -1038,10 +1037,6 @@ void MainWindow::refresh_visualization_availability() {
       {"shack_hartmann_xcorr",
        {autofocus_enabled && single_reference_slopes,
         autofocus_enabled ? xcorr_message : autofocus_message}},
-      {"registration_xcorr",
-       {registration_enabled, registration_enabled
-                                  ? QString{}
-                                  : tr("Enable Registration to generate this visualization.")}},
       {"xy_raw", {true, {}}},
       {"raw_spectrum", {false, spectrum_message}},
       {"processed_spectrum", {false, spectrum_message}},
@@ -1578,9 +1573,6 @@ void MainWindow::initialize_display_widgets() {
   display_workspace_->register_visualization({"shack_hartmann_xcorr", "Shack Hartmann XCorr",
                                               shack_hartmann_xcorr_widget_, "shack_hartmann",
                                               DockPlacement::Right, false});
-  display_workspace_->register_visualization({"registration_xcorr", "Registration XCorr",
-                                              registration_xcorr_widget_, "xy_processed",
-                                              DockPlacement::Tab, false});
 
   // Optional current displays use the same registry and visibility model. They default to tabs so
   // enabling one does not disturb the requested five-display hierarchy.
