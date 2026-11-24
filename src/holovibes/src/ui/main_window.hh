@@ -67,8 +67,7 @@ private slots:
   void on_raw_record_started_success();
   void on_raw_record_started_failure(const QString &error);
   void on_raw_record_stopped_success();
-  void on_raw_record_stopped_failure(std::optional<size_t> id, const QString &error);
-
+  void on_raw_record_stopped_failure(const QString &error, std::optional<size_t> id);
 
 private:
   ImportWidget                *import_widget_;
@@ -89,7 +88,8 @@ private:
   void on_update_pipeline_success();
   void on_update_pipeline_failure(const QString &error);
 
-  void on_update_record(size_t id, size_t frame_recorded, size_t writing_speed, size_t elapsed_time);
+  void on_update_record(size_t id, size_t frame_recorded, size_t writing_speed,
+                        size_t elapsed_time);
   void on_update_acquisition(size_t id, size_t frame_acquired);
   void on_raw_record_flushing_finished(size_t id);
 

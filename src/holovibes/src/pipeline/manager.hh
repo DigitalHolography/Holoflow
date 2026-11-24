@@ -124,7 +124,7 @@ signals:
   void raw_record_started_success();
   void raw_record_started_failure(const QString &error);
   void raw_record_stopped_success();
-  void raw_record_stopped_failure(std::optional<size_t> id, const QString &error);
+  void raw_record_stopped_failure(const QString &error, std::optional<size_t> id);
 
   // record monitor signals
   void update_record(size_t id, size_t recorded_frames, size_t writing_speed, size_t elapsed_time);
