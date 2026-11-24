@@ -29,6 +29,7 @@ set(SOURCES
     normalize_test.cu
     pca_test.cu
     pct_clip_test.cu
+    registration_test.cu
     shack_hartmann_test.cu
     sliding_average_test.cu
     spatial_contrast_test.cu

@@ -107,6 +107,7 @@
 #include "tasks/sinks/display_signal_history.hh"
 #include "tasks/sinks/display_tensor.hh"
 #include "tasks/sinks/display_zernike_coefficients.hh"
+#include "tasks/sinks/average_image.hh"
 
 namespace holovibes::pipeline {
 
@@ -163,11 +164,16 @@ protected:
   void  holofile_write(const TDesc &X, holotask::sinks::HolofileSettings s);
   void  npyfile_write(const TDesc &X, holotask::sinks::NpyfileSettings s);
   void  ffmpeg_write(const TDesc &X, holotask::sinks::FfmpegSettings s);
+  void  average_image_write(const TDesc &X, tasks::sinks::AverageImageSettings s);
+  void  average_image_write(const TDesc &X, const TDesc &Valid,
+                            tasks::sinks::AverageImageSettings s);
   TDesc camera(holotask::sources::CameraSettings s);
   TDesc convolution(const TDesc &X, holotask::syncs::ConvolutionSettings s);
   TDesc correct_phase(const TDesc &X, const TDesc &PhaseMask,
                       holotask::syncs::CorrectPhaseSettings s);
   TDesc pct_clip(const TDesc &X, holotask::syncs::PctClipSettings s);
+  std::vector<TDesc> registration_for_export(const TDesc &X,
+                                             holotask::syncs::RegistrationSettings s);
   TDesc registration(const TDesc &X, holotask::syncs::RegistrationSettings s);
   TDesc wrap2pi(const TDesc &X, holotask::syncs::Wrap2PiSettings s);
   TDesc resize(const TDesc &X, holotask::syncs::ResizeSettings s);

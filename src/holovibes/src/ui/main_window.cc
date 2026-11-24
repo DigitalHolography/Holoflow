@@ -1036,7 +1036,6 @@ void MainWindow::refresh_visualization_availability() {
       autofocus->is_z5_enabled() || autofocus->is_z6_enabled() || autofocus->is_z7_enabled() ||
       autofocus->is_z8_enabled() || autofocus->is_z9_enabled() || autofocus->is_z10_enabled();
   const bool single_reference_slopes = !autofocus->use_graph_laplacian();
-  const bool registration_enabled    = view_widget_->is_registration_enabled();
 
   const auto autofocus_message = tr("Enable Auto Focus to generate this visualization.");
   const auto zernike_order_message =
@@ -1058,10 +1057,6 @@ void MainWindow::refresh_visualization_availability() {
       {"shack_hartmann_xcorr",
        {autofocus_enabled && single_reference_slopes,
         autofocus_enabled ? xcorr_message : autofocus_message}},
-      {"registration_xcorr",
-       {registration_enabled, registration_enabled
-                                  ? QString{}
-                                  : tr("Enable Registration to generate this visualization.")}},
       {"xy_raw", {true, {}}},
       {"raw_spectrum", {false, spectrum_message}},
       {"processed_spectrum", {false, spectrum_message}},
@@ -1631,9 +1626,6 @@ void MainWindow::initialize_display_widgets() {
   display_workspace_->register_visualization({"shack_hartmann_xcorr", "Shack Hartmann XCorr",
                                               shack_hartmann_xcorr_widget_, "shack_hartmann",
                                               DockPlacement::Right, false});
-  display_workspace_->register_visualization({"registration_xcorr", "Registration XCorr",
-                                              registration_xcorr_widget_, "xy_processed",
-                                              DockPlacement::Tab, false});
 
   // Optional current displays use the same registry and visibility model. They default to tabs so
   // enabling one does not disturb the requested five-display hierarchy.
@@ -1691,17 +1683,41 @@ void MainWindow::initialize_display_widgets() {
   xy_processed_widget_->set_display_inverted(false);
   connect(view_widget_->registration_ellipse_check(), &QCheckBox::toggled, this,
           [this](bool checked) {
-            xy_processed_widget_->set_registration_ellipse_enabled(checked);
-            if (checked) {
+            const bool export_ellipse = export_widget_->is_motion_compensation_enabled();
+            xy_processed_widget_->set_registration_ellipse_enabled(checked || export_ellipse);
+            if (export_ellipse) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  export_widget_->get_motion_compensation_radius());
+            } else if (checked) {
               xy_processed_widget_->set_registration_ellipse_radius(
                   view_widget_->get_registration_radius());
             }
           });
   connect(view_widget_->registration_radius(), qOverload<double>(&QDoubleSpinBox::valueChanged),
           this, [this](double value) {
+            if (export_widget_->is_motion_compensation_enabled()) {
+              return;
+            }
             if (view_widget_->is_registration_ellipse_enabled()) {
               xy_processed_widget_->set_registration_ellipse_radius(value);
             }
+          });
+  connect(export_widget_->motion_compensation_check(), &QCheckBox::toggled, this,
+          [this](bool checked) {
+            const bool view_ellipse = view_widget_->is_registration_ellipse_enabled();
+            xy_processed_widget_->set_registration_ellipse_enabled(checked || view_ellipse);
+            if (checked) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  export_widget_->get_motion_compensation_radius());
+            } else if (view_ellipse) {
+              xy_processed_widget_->set_registration_ellipse_radius(
+                  view_widget_->get_registration_radius());
+            }
+          });
+  connect(export_widget_->motion_compensation_radius_spin(),
+          qOverload<double>(&QDoubleSpinBox::valueChanged), this, [this](double radius) {
+            if (export_widget_->is_motion_compensation_enabled())
+              xy_processed_widget_->set_registration_ellipse_radius(radius);
           });
 }
 
@@ -2586,6 +2602,8 @@ void MainWindow::apply_validation_result(const pipeline::ValidationResult &resul
       case SettingsField::RecordingCount:
         export_widget_->mark_frames_invalid();
         break;
+      case SettingsField::RecordingMotionCompensation:
+        break;
       case SettingsField::AutofocusNbSubaps:
         render_widget_->autofocus_widget()->mark_nb_subaps_invalid();
         break;
@@ -2635,6 +2653,8 @@ void MainWindow::refresh_validation_tooltips(const pipeline::ValidationResult &r
       FieldBinding{SettingsField::PpRegistration, view_widget_->registration_check()},
       FieldBinding{SettingsField::RecordingPath, export_widget_->file_line_edit()},
       FieldBinding{SettingsField::RecordingCount, export_widget_->frames_spin()},
+      FieldBinding{SettingsField::RecordingMotionCompensation,
+                   export_widget_->motion_compensation_check()},
       FieldBinding{SettingsField::AutofocusNbSubaps,
                    render_widget_->autofocus_widget()->nb_subaps_spin()},
       FieldBinding{SettingsField::AutofocusNbIter,
@@ -3013,12 +3033,15 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     } else {
       s.recording_method = RecordingMethod::NONE;
     }
-    s.recording_path             = export_widget_->get_file_path().toStdString();
-    s.recording_count            = export_widget_->get_frame_count();
-    s.recording_format           = export_widget_->get_format().toStdString();
-    s.recording_codec            = export_widget_->get_codec().toStdString();
-    s.recording_resize_algorithm = export_widget_->get_resize_algorithm().toStdString();
-    s.recording_queue_count      = export_widget_->get_queue_count();
+    s.recording_path                 = export_widget_->get_file_path().toStdString();
+    s.recording_count                = export_widget_->get_frame_count();
+    s.recording_format               = export_widget_->get_format().toStdString();
+    s.recording_codec                = export_widget_->get_codec().toStdString();
+    s.recording_motion_compensation  = export_widget_->is_motion_compensation_enabled();
+    s.recording_motion_compensation_radius =
+        static_cast<float>(export_widget_->get_motion_compensation_radius());
+    s.recording_resize_algorithm     = export_widget_->get_resize_algorithm().toStdString();
+    s.recording_queue_count          = export_widget_->get_queue_count();
   }
 
   // Auto-Focus Settings
@@ -3248,6 +3271,8 @@ void MainWindow::set_pipeline_settings(const pipeline::Settings &s) {
     if (codec_index >= 0) {
       export_widget_->codec_combo()->setCurrentIndex(codec_index);
     }
+    export_widget_->set_motion_compensation_enabled(s.recording_motion_compensation);
+    export_widget_->set_motion_compensation_radius(s.recording_motion_compensation_radius);
     export_widget_->set_resize_algorithm(QString::fromStdString(s.recording_resize_algorithm));
     // recording_method not exposed (always RAW in get_pipeline_settings)
   }

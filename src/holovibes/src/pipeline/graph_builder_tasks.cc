@@ -168,6 +168,34 @@ GraphBuilderTasks::TDesc GraphBuilderTasks::slide_avg(const TDesc &X, const TDes
 }
 
 std::vector<GraphBuilderTasks::TDesc>
+GraphBuilderTasks::registration_for_export(const TDesc &X,
+                                           holotask::syncs::RegistrationSettings s) {
+  // Registration receives recording lifecycle events from Manager using this stable node id.
+  // The generic tracer appends a unique suffix to node names, which would make those events
+  // address a non-existent node (and leave the registration task permanently inactive).
+  HOLOVIBES_CHECK(X.producer.has_value());
+  HOLOVIBES_CHECK(reg_.is_sync_registered("Registration"));
+
+  constexpr std::string_view node_name = "registration";
+  holoflow::core::NodeSpec node_spec{
+      .name = std::string{node_name}, .kind = "Registration", .settings = nlohmann::json(s),
+      .debug = true};
+  auto v = boost::add_vertex(node_spec, g_);
+  boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, 0}, g_);
+
+  const auto &factory = reg_.get_sync("Registration");
+  const auto core_inputs = to_core_descs(std::span{&X, 1});
+  const auto infer = factory.infer(core_inputs, nlohmann::json(s));
+  return wrap_infer_outputs(node_name, v, infer);
+}
+
+std::vector<GraphBuilderTasks::TDesc>
+GraphBuilderTasks::registration_outputs(const TDesc &X,
+                                       holotask::syncs::RegistrationSettings s) {
+  return make_unary_sync_node("registration", "Registration", "Registration", X, s);
+}
+
+std::vector<GraphBuilderTasks::TDesc>
 GraphBuilderTasks::shack_hartmann_slopes(const TDesc                                &X,
                                          holotask::syncs::ShackHartmannSlopeSettings s) {
   return make_unary_sync_node("shack_hartmann_slopes", "ShackHartmannSlopes", "ShackHartmannSlopes",
@@ -180,68 +208,6 @@ GraphBuilderTasks::TDesc GraphBuilderTasks::multiply(const TDesc &A, const TDesc
   return std::move(
       make_nary_sync_node("multiply", "Multiply", "Multiply", std::span<const TDesc>{inputs}, s)
           .at(0));
-}
-
-GraphBuilderTasks::TDesc GraphBuilderTasks::diff(const TDesc &X, holonp::DiffSettings s) {
-  return std::move(make_unary_sync_node("diff", "Diff", "Diff", X, s).at(0));
-}
-
-std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::gradient(const TDesc             &X,
-                                                                  holonp::GradientSettings s) {
-  return make_unary_sync_node("gradient", "Gradient", "Gradient", X, s);
-}
-
-std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::svd(const TDesc        &X,
-                                                             holonp::SVDSettings s) {
-  return make_unary_sync_node("svd", "SVD", "SVD", X, s);
-}
-
-GraphBuilderTasks::TDesc GraphBuilderTasks::pinv(const TDesc &X, holonp::PinvSettings s) {
-  return std::move(make_unary_sync_node("pinv", "Pinv", "Pinv", X, s).at(0));
-}
-
-std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::lstsq(const TDesc &A, const TDesc &B,
-                                                               holonp::LstsqSettings s) {
-  std::array<TDesc, 2> inputs{A, B};
-  return make_nary_sync_node("lstsq", "Lstsq", "Lstsq", std::span<const TDesc>{inputs}, s);
-}
-
-GraphBuilderTasks::TDesc GraphBuilderTasks::convolve(const TDesc &A, const TDesc &B,
-                                                     holonp::ConvolveSettings s) {
-  std::array<TDesc, 2> inputs{A, B};
-  return std::move(
-      make_nary_sync_node("convolve", "Convolve", "Convolve", std::span<const TDesc>{inputs}, s)
-          .at(0));
-}
-
-GraphBuilderTasks::TDesc GraphBuilderTasks::correlate(const TDesc &A, const TDesc &B,
-                                                      holonp::CorrelateSettings s) {
-  std::array<TDesc, 2> inputs{A, B};
-  return std::move(
-      make_nary_sync_node("correlate", "Correlate", "Correlate", std::span<const TDesc>{inputs}, s)
-          .at(0));
-}
-
-GraphBuilderTasks::TDesc GraphBuilderTasks::matmul(const TDesc &A, const TDesc &B,
-                                                   holonp::MatmulSettings s) {
-  std::array<TDesc, 2> inputs{A, B};
-  return std::move(
-      make_nary_sync_node("matmul", "Matmul", "Matmul", std::span<const TDesc>{inputs}, s).at(0));
-}
-
-GraphBuilderTasks::TDesc GraphBuilderTasks::norm(const TDesc &X, holonp::NormSettings s) {
-  return std::move(make_unary_sync_node("norm", "Norm", "Norm", X, s).at(0));
-}
-
-std::vector<GraphBuilderTasks::TDesc> GraphBuilderTasks::meshgrid(std::span<const TDesc>   Xs,
-                                                                  holonp::MeshgridSettings s) {
-  return make_nary_sync_node("meshgrid", "Meshgrid", "Meshgrid", Xs, s);
-}
-
-std::vector<GraphBuilderTasks::TDesc>
-GraphBuilderTasks::registration_outputs(const TDesc &X,
-                                        holotask::syncs::RegistrationSettings s) {
-  return make_unary_sync_node("registration", "Registration", "Registration", X, s);
 }
 
 GraphBuilderTasks::TDesc
@@ -360,6 +326,38 @@ void GraphBuilderTasks::ffmpeg_write(const TDesc &X, holotask::sinks::FfmpegSett
   const auto &factory = reg_.get_sync(node_kind);
   const auto  inputs  = to_core_descs(std::span{&X, 1});
   (void)factory.infer(inputs, nlohmann::json(s));
+}
+
+void GraphBuilderTasks::average_image_write(const TDesc &X, tasks::sinks::AverageImageSettings s) {
+  constexpr auto node_name = "record";
+  constexpr auto node_kind = "AverageImageWriter";
+  HOLOVIBES_CHECK(X.producer.has_value());
+  HOLOVIBES_CHECK(reg_.is_sync_registered(node_kind));
+  holoflow::core::NodeSpec node_spec{
+      .name = node_name, .kind = node_kind, .settings = nlohmann::json(s), .debug = false};
+  auto v = boost::add_vertex(node_spec, g_);
+  boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, 0}, g_);
+  const auto &factory = reg_.get_sync(node_kind);
+  const auto  inputs  = to_core_descs(std::span{&X, 1});
+  (void)factory.infer(inputs, nlohmann::json(s));
+}
+
+void GraphBuilderTasks::average_image_write(const TDesc &X, const TDesc &Valid,
+                                            tasks::sinks::AverageImageSettings s) {
+  constexpr auto node_name = "record";
+  constexpr auto node_kind = "AverageImageWriter";
+  HOLOVIBES_CHECK(X.producer.has_value());
+  HOLOVIBES_CHECK(Valid.producer.has_value());
+  HOLOVIBES_CHECK(reg_.is_sync_registered(node_kind));
+  holoflow::core::NodeSpec node_spec{
+      .name = node_name, .kind = node_kind, .settings = nlohmann::json(s), .debug = false};
+  auto v = boost::add_vertex(node_spec, g_);
+  boost::add_edge(X.producer->vertex, v, {X.producer->out_idx, 0}, g_);
+  boost::add_edge(Valid.producer->vertex, v, {Valid.producer->out_idx, 1}, g_);
+  const auto                &factory = reg_.get_sync(node_kind);
+  const std::array<TDesc, 2> inputs{X, Valid};
+  const auto                 core_inputs = to_core_descs(inputs);
+  (void)factory.infer(core_inputs, nlohmann::json(s));
 }
 
 } // namespace holovibes::pipeline
