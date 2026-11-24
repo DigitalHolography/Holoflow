@@ -69,8 +69,7 @@ void RecordingSink::on_stop_recording_event(holoflow::core::SyncCtx     &ctx,
     stop_error =
         "Failed to remove incomplete recording at " + recording_path_ + ": " + ec.message();
   }
-  if (!stop_error.empty())
-    emit_failed_event(ctx, stop_error);
+  emit_failed_event(ctx, stop_error.empty() ? stop_error : "Recording cancelled");
   reset();
 }
 
@@ -165,9 +164,8 @@ void RecordingSink::remove_recording_file() {
                    "incomplete file at: {}",
                    recording_path_);
   } else {
-    logger()->warn(
-        "[RecordingSink::remove_recording_file] removed incomplete record at: {}",
-        recording_path_);
+    logger()->warn("[RecordingSink::remove_recording_file] removed incomplete record at: {}",
+                   recording_path_);
   }
 }
 } // namespace holotask::sinks::detail

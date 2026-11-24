@@ -2355,13 +2355,15 @@ void MainWindow::on_raw_record_stopped_success() {
   refresh_command_bar();
 }
 
-void MainWindow::on_raw_record_stopped_failure(std::optional<size_t> id, const QString &error) {
+void MainWindow::on_raw_record_stopped_failure(const QString &error, std::optional<size_t> id) {
   if (id.has_value()) {
-    record_widget_->free(*id, true);
-    logger()->error("[MainWindow::on_raw_record_stopped_failure] id={}, err={}", *id, error.toStdString());
+    record_widget_->free(*id, false);
+    logger()->error("[MainWindow::on_raw_record_stopped_failure] record {} failed to stop: {}", *id,
+                    error.toStdString());
+  } else {
+    logger()->error("[MainWindow::on_raw_record_stopped_failure] record failed to stop: {}",
+                    error.toStdString());
   }
-  else
-    logger()->error("[MainWindow::on_raw_record_stopped_failure] err={}", error.toStdString());
 
   export_in_progress_ = false;
   export_widget_->set_stop_enabled(pipeline_running_);
