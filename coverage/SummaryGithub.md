@@ -3,15 +3,15 @@
 
 |||
 |:---|:---|
-| Generated on: | 11/24/2026 - 2:12:34 PM |
+| Generated on: | 11/24/2026 - 2:46:14 PM |
 | Parser: | Cobertura |
 | Assemblies: | 7 |
 | Classes: | 12 |
 | Files: | 131 |
-| **Line coverage:** | 43.5% (6100 of 13994) |
+| **Line coverage:** | 43.5% (6100 of 13993) |
 | Covered lines: | 6100 |
-| Uncovered lines: | 7894 |
-| Coverable lines: | 13994 |
+| Uncovered lines: | 7893 |
+| Coverable lines: | 13993 |
 | Total lines: | 31557 |
 | Covered branches: | 0 |
 | Total branches: | 0 |
