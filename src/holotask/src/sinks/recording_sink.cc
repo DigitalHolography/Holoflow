@@ -69,7 +69,7 @@ void RecordingSink::on_stop_recording_event(holoflow::core::SyncCtx     &ctx,
     stop_error =
         "Failed to remove incomplete recording at " + recording_path_ + ": " + ec.message();
   }
-  emit_failed_event(ctx, stop_error.empty() ? stop_error : "Recording cancelled");
+  emit_failed_event(ctx, !stop_error.empty() ? stop_error : "Recording cancelled");
   reset();
 }
 

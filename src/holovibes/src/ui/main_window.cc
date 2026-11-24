@@ -2357,7 +2357,7 @@ void MainWindow::on_raw_record_stopped_success() {
 
 void MainWindow::on_raw_record_stopped_failure(const QString &error, std::optional<size_t> id) {
   if (id.has_value()) {
-    record_widget_->free(*id, false);
+    record_widget_->free(*id, true);
     logger()->error("[MainWindow::on_raw_record_stopped_failure] record {} failed to stop: {}", *id,
                     error.toStdString());
   } else {
@@ -2852,7 +2852,7 @@ pipeline::Settings MainWindow::get_pipeline_settings() {
     QString     appDataPath = appDataBase + "/" + QCoreApplication::applicationVersion();
     QString     convolutionsKernelsPath = appDataPath + "/" + "convolution_kernels/";
     std::string kernel_path             = convolutionsKernelsPath.toStdString() +
-                              render_widget_->get_convolution().toStdString() + ".json";
+                                          render_widget_->get_convolution().toStdString() + ".json";
 
     s.pp_fps       = 60;
     s.pp_fft_shift = s.spacial_method == SpacialMethod::FRESNEL_DIFFRACTION;
