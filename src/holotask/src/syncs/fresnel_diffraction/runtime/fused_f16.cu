@@ -26,20 +26,28 @@ using YF =
     decltype(cufftdx::Block() + cufftdx::Size<320>() + cufftdx::Type<cufftdx::fft_type::c2c>() +
              cufftdx::Direction<cufftdx::fft_direction::forward>() + cufftdx::Precision<__half>() +
              cufftdx::FFTsPerBlock<4>() + cufftdx::ElementsPerThread<20>() + cufftdx::SM<FFT_SM>());
-constexpr int    W = 512, H = 320, WH = W * H, Chunk = REDUCE_MEAN ? 4 : 1,
-                 G = (COMPONENTS + Chunk - 1) / Chunk;
+constexpr int     W = 512, H = 320, WH = W * H, Chunk = REDUCE_MEAN ? 4 : 1,
+                  G = (COMPONENTS + Chunk - 1) / Chunk;
 __device__ float2 apply_lens(const void *input, int i, float2 lens) {
 #if INPUT_COMPLEX_HALF
-  const auto value = static_cast<const Complex16 *>(input)[i];
+  const auto  value = static_cast<const Complex16 *>(input)[i];
   const float real = __half2float(value.real), imag = __half2float(value.imag);
+#ifdef COOPERATIVE_FFT
+  return fused_multiply(make_cuComplex(real, imag), lens);
+#else
   return make_float2(real * lens.x - imag * lens.y, real * lens.y + imag * lens.x);
+#endif
 #else
 #if INPUT_HALF
   const float value = __half2float(static_cast<const __half *>(input)[i]);
 #else
   const float value = static_cast<const float *>(input)[i];
 #endif
+#ifdef COOPERATIVE_FFT
+  return fused_multiply(make_cuComplex(value, 0.f), lens);
+#else
   return make_float2(value * lens.x, value * lens.y);
+#endif
 #endif
 }
 extern "C" __global__ void fused_f16_lens(float2 *lens, float wavelength, float pitch,
@@ -60,7 +68,7 @@ extern "C" __global__ void fused_f16_scale_partial(const void *input, const floa
   float            peak = 0;
   for (int i = part * 256 + threadIdx.x; i < WH; i += ScaleParts * 256) {
     const auto value = apply_lens(input, z * WH + i, lens[i]);
-    peak = fmaxf(peak, fabsf(value.x) + fabsf(value.y));
+    peak             = fmaxf(peak, fabsf(value.x) + fabsf(value.y));
   }
   maximum[threadIdx.x] = peak;
   __syncthreads();
@@ -101,10 +109,10 @@ extern "C" __global__ void fused_f16_fft_x(const void *input, const float2 *lens
     int    x = threadIdx.x + j * XF::stride;
     __half real[2], imag[2];
     for (int b = 0; b < 2; ++b) {
-      int    y = group * 8 + 2 * threadIdx.y + b;
+      int        y     = group * 8 + 2 * threadIdx.y + b;
       const auto value = apply_lens(input, z * WH + y * W + x, lens[y * W + x]);
-      real[b] = __float2half_rn(ldexpf(value.x, -scales[2 * z]));
-      imag[b] = __float2half_rn(ldexpf(value.y, -scales[2 * z]));
+      real[b]          = __float2half_rn(ldexpf(value.x, -scales[2 * z]));
+      imag[b]          = __float2half_rn(ldexpf(value.y, -scales[2 * z]));
     }
     data[j] = {__halves2half2(real[0], real[1]), __halves2half2(imag[0], imag[1])};
   }
@@ -120,6 +128,13 @@ extern "C" __global__ void fused_f16_fft_x(const void *input, const float2 *lens
     int x = t / 8, y = t % 8;
     intermediate[z * WH + x * H + group * 8 + y] = tile[y * (W + 1) + x];
   }
+}
+__device__ float fft_magnitude(float real, float imag) {
+#ifdef COOPERATIVE_FFT
+  return fused_magnitude(make_cuComplex(real, imag));
+#else
+  return hypotf(real, imag);
+#endif
 }
 extern "C" __global__ void fused_f16_fft_y_mean(const Complex16 *intermediate, const int *scales,
                                                 float *partial) {
@@ -143,14 +158,14 @@ extern "C" __global__ void fused_f16_fft_y_mean(const Complex16 *intermediate, c
     YF().execute(data, shared);
     __syncthreads();
     for (int j = 0; j < YF::elements_per_thread; ++j) {
-      accum[j][0] +=
-          ldexpf(hypotf(__half2float(__low2half(data[j].x)), __half2float(__low2half(data[j].y))),
-                 scales[2 * z] + scales[2 * z + 1]) /
-          (REDUCE_MEAN ? COMPONENTS : 1);
-      accum[j][1] +=
-          ldexpf(hypotf(__half2float(__high2half(data[j].x)), __half2float(__high2half(data[j].y))),
-                 scales[2 * z] + scales[2 * z + 1]) /
-          (REDUCE_MEAN ? COMPONENTS : 1);
+      accum[j][0] += ldexpf(fft_magnitude(__half2float(__low2half(data[j].x)),
+                                          __half2float(__low2half(data[j].y))),
+                            scales[2 * z] + scales[2 * z + 1]) /
+                     (REDUCE_MEAN ? COMPONENTS : 1);
+      accum[j][1] += ldexpf(fft_magnitude(__half2float(__high2half(data[j].x)),
+                                          __half2float(__high2half(data[j].y))),
+                            scales[2 * z] + scales[2 * z + 1]) /
+                     (REDUCE_MEAN ? COMPONENTS : 1);
     }
     __syncthreads();
   }

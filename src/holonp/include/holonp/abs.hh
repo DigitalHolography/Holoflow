@@ -36,6 +36,11 @@ void from_json(const nlohmann::json &j, AbsSettings &s);
 
 class AbsFactory : public holoflow::core::ISyncTaskFactory {
 public:
+  FftFusion fft_fusion() const noexcept override {
+    return {FftFusionRole::Magnitude, "__device__ float fused_magnitude(cuFloatComplex x) { return "
+                                      "sqrtf(x.x * x.x + x.y * x.y); }"};
+  }
+
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
 

@@ -17,7 +17,7 @@ namespace holotask::syncs::detail {
 
 class FresnelCudaGraph {
 public:
-  using Addresses = std::array<const void *, 2>;
+  using Addresses = std::array<const void *, 3>;
 
   FresnelCudaGraph() = default;
   ~FresnelCudaGraph() noexcept {

@@ -65,6 +65,7 @@ class Tensor:
     def astype(self, dtype: _native.DType, strategy: str = "real",
                *, node_id: str | None = None) -> Tensor:
         targets = {_native.DType.uint8: "U8", _native.DType.uint16: "U16",
+                   _native.DType.float16: "F16", _native.DType.complex32: "CF16",
                    _native.DType.float32: "F32", _native.DType.complex64: "CF32"}
         strategies = {s.lower(): s for s in ("Real", "Scaled", "Modulus", "Argument")}
         if dtype not in targets or strategy not in strategies:
@@ -367,19 +368,19 @@ class Graph:
     def to_dot(self) -> str:
         return self._native.to_dot()
 
-    def compile(self, log_dir=None, *, capture=True) -> Executable:
+    def compile(self, log_dir=None, *, capture=True, fuse_tasks=True) -> Executable:
         """Compile with optional diagnostics and Perfetto capture in a unique directory."""
         artifacts = None if log_dir is None else Artifacts.create(log_dir)
-        return self._compile(artifacts, capture=capture)
+        return self._compile(artifacts, capture=capture, fuse_tasks=fuse_tasks)
 
-    def _compile(self, artifacts=None, *, capture=True, previous=None):
+    def _compile(self, artifacts=None, *, capture=True, previous=None, fuse_tasks=True):
         if artifacts is not None:
             artifacts.descriptor_json.write_text(json.dumps(self.to_json(), indent=2), encoding="utf-8")
             artifacts.descriptor_dot.write_text(self.to_dot(), encoding="utf-8")
         try:
             log_dir = "" if artifacts is None else str(artifacts.directory)
             if previous is None:
-                native = self._native.compile(log_dir, capture)
+                native = self._native.compile(log_dir, capture, fuse_tasks=fuse_tasks)
             else:
                 previous._acquire()
                 try:
@@ -387,7 +388,7 @@ class Graph:
                     if not previous._joined or not old.completed():
                         raise ValueError("Graph update requires a completed and joined finite run")
                     try:
-                        native = self._native.compile(log_dir, capture, old)
+                        native = self._native.compile(log_dir, capture, old, fuse_tasks)
                     finally:
                         previous._native = None
                 finally:

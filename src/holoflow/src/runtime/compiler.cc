@@ -244,6 +244,21 @@ std::unique_ptr<CompilerOutput> Compiler::Impl::run(const core::GraphSpec       
     run_pass("Type Inference", [&] { run_type_inference(); });
     run_pass("Const Deduction", [&] { deduce_const_tasks(); });
 
+    std::optional<core::GraphSpec> lowered;
+    if (config_.lower_tasks) {
+      run_pass("Fuse FFT Tasks", [&] {
+        lowered = config_.lower_tasks(out_->graph, registry_);
+        if (lowered) {
+          gspec_      = &*lowered;
+          out_->graph = {};
+          validate_spec();
+          build_graph_structure();
+          run_type_inference();
+          deduce_const_tasks();
+        }
+      });
+    }
+
     run_pass("Tensor IDs", [&] { assign_tensor_ids(); });
     run_pass("Storage Mapping", [&] { assign_storage_ids(); });
     run_pass("Buffer Consistency", [&] { verify_buffer_consistency(); });

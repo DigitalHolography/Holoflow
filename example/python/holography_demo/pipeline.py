@@ -7,7 +7,7 @@ import holoflow as hf
 
 from .aberration import correct_aberration
 from .postprocessing import postprocess_image
-from .propagation import fresnel_diffraction
+from .propagation import fresnel_diffraction, quadratic_lens
 from .queues import host_queue
 from .temporal import process_temporal_windows
 
@@ -27,10 +27,10 @@ def _fp16_image(frames, config):
     )
     space = config.space
     pitch = space["pixel_pitch_m"]
-    image = hf.fresnel_diffraction(
-        current, space["wavelength_m"], pitch, pitch, space["distance_m"],
-        output_magnitude=True, use_fused_f16=True, reduce_magnitude=True,
-    )
+    lens = quadratic_lens(*current.shape[-2:], space["wavelength_m"], pitch, pitch,
+                          space["distance_m"])
+    spectrum = hf.fft.fft2(current.astype(hf.float32) * lens, prefer_fp16=True)
+    image = hf.mean(hf.abs(spectrum), axis=-3, keepdims=True)
     return hf.mean(hf.fft.fftshift(image, axes=(-2, -1)), axis=0)
 
 

@@ -42,6 +42,8 @@ void from_json(const nlohmann::json &j, MeanSettings &s);
 
 class MeanFactory : public holoflow::core::ISyncTaskFactory {
 public:
+  FftFusion fft_fusion() const noexcept override { return {FftFusionRole::Mean, ""}; }
+
   holoflow::core::ExecutionUpdatePolicy execution_update_policy() const noexcept override {
     return holoflow::core::ExecutionUpdatePolicy::ExplicitInvalidation;
   }

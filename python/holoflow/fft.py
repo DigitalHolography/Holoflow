@@ -23,8 +23,8 @@ from ._ops import fftshift as _fftshift
 __all__ = ["fft2", "fftshift"]
 
 
-def fft2(a, *, axes=(-2, -1), norm=None, node_id=None):
-    """Transform the last two axes, returning a complex64 device tensor."""
+def fft2(a, *, axes=(-2, -1), norm=None, prefer_fp16=False, node_id=None):
+    """Transform the last two axes, optionally allowing FP16 compute in a fused task."""
     rank = len(a.shape)
     axes = range(rank) if axes is None else axes
     axes = tuple(i + rank if i < 0 else i for i in map(index, axes))
@@ -37,7 +37,8 @@ def fft2(a, *, axes=(-2, -1), norm=None, node_id=None):
     if a.dtype != _native.DType.complex64:
         a = a.astype(_native.DType.complex64)
     return operation(
-        "FFT2", (a,), {"axes": [-2, -1], "inverse": False, "norm": norm}, node_id
+        "FFT2", (a,), {"axes": [-2, -1], "inverse": False, "norm": norm,
+                        **({"prefer_fp16": True} if prefer_fp16 else {})}, node_id
     )
 
 

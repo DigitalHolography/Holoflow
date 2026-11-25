@@ -435,13 +435,17 @@ class HolographyDemoTest(unittest.TestCase):
     def test_decomposed_fresnel_matches_fused_magnitude(self):
         from holography_demo.propagation import fresnel_diffraction_decomposed
 
-        def compare(path, complex_input, distance):
+        def compare(path, complex_input, distance, shared):
             field = hf.sources.holofile(path, batch_size=2, loop=False).to("device")
             field = field.astype(hf.float32)
             if complex_input:
                 field = hf.multiply(field, hf.asarray(1 + 0.5j))
             field = field.reshape((1, *field.shape), copy=False)
             args = (field, 851e-9, 20e-6, 20e-6, distance)
+            if shared:
+                from holography_demo.propagation import quadratic_lens
+                spectrum = hf.fft.fft2(field * quadratic_lens(*field.shape[-2:], *args[1:]))
+                return hf.sinks.numpy(hf.abs(spectrum)), hf.sinks.numpy(spectrum)
             return (
                 hf.sinks.numpy(hf.fresnel_diffraction(*args, output_magnitude=True)),
                 hf.sinks.numpy(fresnel_diffraction_decomposed(*args, output_magnitude=True)),
@@ -455,13 +459,25 @@ class HolographyDemoTest(unittest.TestCase):
             with self.subTest(width=width, height=height, complex_input=complex_input):
                 path = self.root / "fresnel.holo"
                 write_holo(path, frames=4, width=width, height=height)
-                with hf.trace(compare, path, complex_input, distance).compile() as run:
-                    run.start()
-                    fused, decomposed = run.result()
-                self.assertEqual(decomposed.shape, (2, 2, height, width))
-                self.assertEqual(decomposed.dtype, np.float32)
-                np.testing.assert_allclose(decomposed, fused, rtol=2e-4,
-                                           atol=2e-6 * fused.max())
+                graph = hf.trace(compare, path, complex_input, distance, False)
+                self.assertIn("FFT2", {node["type"] for node in graph.to_json()["nodes"].values()})
+                for enabled in (True, False):
+                    with graph.compile(self.root / "fft32", fuse_tasks=enabled) as run:
+                        run.start()
+                        fused, decomposed = run.result()
+                        dot = run.artifacts.compiled_dot
+                    self.assertEqual("(FusedFFT2)" in dot.read_text(encoding="utf-8"), enabled)
+                    self.assertEqual(decomposed.shape, (2, 2, height, width))
+                    self.assertEqual(decomposed.dtype, np.float32)
+                    np.testing.assert_allclose(decomposed, fused, rtol=2e-4,
+                                               atol=2e-6 * fused.max())
+
+        with hf.trace(compare, path, False, .49, True).compile(self.root / "shared_fft") as run:
+            run.start()
+            actual, raw_fft = run.result()
+            dot = run.artifacts.compiled_dot
+        self.assertNotIn("(FusedFFT2)", dot.read_text(encoding="utf-8"))
+        np.testing.assert_allclose(actual, np.abs(raw_fft), rtol=2e-4)
 
     def test_demo_with_decomposed_fresnel(self):
         from holography_demo.pipeline import pipeline
@@ -475,7 +491,7 @@ class HolographyDemoTest(unittest.TestCase):
         kinds = {node["type"] for node in nodes.values()}
         self.assertTrue({"Arange", "Meshgrid", "Exp", "FFT2", "Abs"} <= kinds)
         self.assertNotIn("FresnelDiffraction", kinds)
-        with graph.compile(log_dir=self.root / "decomposed_graph") as run:
+        with graph.compile(log_dir=self.root / "decomposed_graph", fuse_tasks=False) as run:
             run.start()
             self.assertEqual(run.result().shape, (config.output_count, 20, 20))
             dot = run.artifacts.compiled_dot
@@ -519,8 +535,7 @@ class HolographyDemoTest(unittest.TestCase):
         self.assertEqual((queue["batch_size"], queue["slot_count"]), (4, 3))
         self.assertTrue(queue["use_fused_f16"])
         self.assertEqual(by_type["PcaProjection"]["output_dtype"], "F16")
-        self.assertTrue(by_type["FresnelDiffraction"]["use_fused_f16"])
-        self.assertTrue(by_type["FresnelDiffraction"]["reduce_magnitude"])
+        self.assertTrue(by_type["FFT2"]["prefer_fp16"])
         self.assertEqual(by_type["DualReaderBatchQueue"]["window_size"], 64)
         self.assertEqual(by_type["Memcpy"]["target"], "Device")
 
@@ -544,6 +559,44 @@ class HolographyDemoTest(unittest.TestCase):
                     run.start()
                     self.assertEqual(run.result().shape, (4, 320, 512))
                     self.assertTrue(run.completed())
+
+    def test_fp16_fresnel_fuses_and_matches_coarse(self):
+        if not hf._native.supports_sm120():
+            self.skipTest("Requires SM120")
+        from holography_demo.propagation import quadratic_lens
+
+        self.write_fp16_fixture(128)
+        args = (8.51e-7, 2e-5, 2e-5, .49)
+
+        def graph(complex_input):
+            frames = hf.sources.holofile(self.root / "fp16.holo", batch_size=4, loop=False,
+                                         end_frame=8).to("device")
+            value = (frames.astype(hf.float32) + 32768).astype(hf.float16)
+            if complex_input:
+                value = (value.astype(hf.float32) * hf.asarray(1 + .25j)).astype(hf.DType.complex32)
+            lens = quadratic_lens(320, 512, *args)
+            spectrum = hf.fft.fft2(value.astype(hf.complex64 if complex_input else hf.float32) * lens,
+                                   prefer_fp16=True)
+            magnitude = hf.mean(hf.abs(spectrum), axis=-3, keepdims=not complex_input)
+            coarse = hf.fresnel_diffraction(
+                value, *args, output_magnitude=True, use_fused_f16=True, reduce_magnitude=True
+            )
+            if complex_input:
+                coarse = coarse.reshape(coarse.shape[1:])
+            return hf.sinks.numpy(magnitude), hf.sinks.numpy(coarse)
+
+        for complex_input in (False, True):
+            traced = hf.trace(graph, complex_input)
+            for enabled in (True, False):
+                with self.subTest(complex=complex_input, fusion=enabled):
+                    with traced.compile(self.root / "fft_fusion", fuse_tasks=enabled) as run:
+                        run.start()
+                        actual, coarse = run.result()
+                        compiled = run.artifacts.compiled_dot
+                    self.assertEqual("(FusedFFT2)" in compiled.read_text(encoding="utf-8"), enabled)
+                    self.assertTrue(np.isfinite(actual).all())
+                    relative_error = np.linalg.norm(actual - coarse) / np.linalg.norm(coarse)
+                    self.assertLess(relative_error, .01)
 
     def test_fp16_finite_playback_requires_one_group(self):
         self.write_fp16_fixture(96)

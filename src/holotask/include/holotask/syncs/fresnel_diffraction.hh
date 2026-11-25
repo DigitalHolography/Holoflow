@@ -50,6 +50,11 @@ void from_json(const nlohmann::json &j, FresnelDiffractionSettings &fds);
 
 class FresnelDiffractionFactory : public holoflow::core::ISyncTaskFactory {
 public:
+  std::unique_ptr<holoflow::core::ISyncTask>
+  create_with_lens(std::span<const holoflow::core::TDesc> inputs, const nlohmann::json &settings,
+                   const holoflow::core::SyncCreateCtx &ctx, std::string_view load,
+                   std::string_view store) const;
+
   holoflow::core::ExecutionUpdatePolicy execution_update_policy() const noexcept override {
     return holoflow::core::ExecutionUpdatePolicy::ExplicitInvalidation;
   }

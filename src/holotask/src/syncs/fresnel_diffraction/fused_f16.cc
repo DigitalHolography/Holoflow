@@ -41,12 +41,17 @@ void driver(CUresult result) {
   }
 }
 CUresult load_kernel_module(CUmodule *module, int sm, bool half, bool complex_half, int components,
-                            bool reduce) {
+                            bool reduce, std::string_view load_source,
+                            std::string_view store_source) {
   static std::mutex                               mutex;
   static std::map<std::string, std::vector<char>> cache;
-  const auto      key = std::to_string(sm) + "/" + std::to_string(half) + "/" +
-                        std::to_string(complex_half) + "/" + std::to_string(components) + "/" +
-                        std::to_string(reduce);
+  const auto fragments = load_source.empty() ? std::string{}
+                                             : "#include <cuComplex.h>\n#define COOPERATIVE_FFT\n" +
+                                                   std::string(load_source) + "\n" +
+                                                   std::string(store_source) + "\n";
+  const auto key       = std::to_string(sm) + "/" + std::to_string(half) + "/" +
+                         std::to_string(complex_half) + "/" + std::to_string(components) + "/" +
+                         std::to_string(reduce) + fragments;
   std::lock_guard lock(mutex);
   const auto      load = [module](const std::vector<char> &ptx) {
     holoflow::runtime::tracing::ScopedTrace timing("Fresnel FP16 Load CUDA Module", "detail");
@@ -79,6 +84,8 @@ CUresult load_kernel_module(CUmodule *module, int sm, bool half, bool complex_ha
   auto                     disk_key = options;
   constexpr char           program_name[] = "fused_f16.cu";
   disk_key.emplace_back(program_name);
+  if (!fragments.empty())
+    disk_key.push_back(fragments);
   const holoflow::runtime::detail::NvrtcCache disk("fresnel-ptx",
                                                    holotask::detail::fresnel_fused_f16_source_id,
                                                    disk_key, HOLOFLOW_NVRTC_ASSET_VERSION);
@@ -86,7 +93,8 @@ CUresult load_kernel_module(CUmodule *module, int sm, bool half, bool complex_ha
     cache.emplace(key, std::move(ptx));
     return CUDA_SUCCESS;
   }
-  curaii::NvrtcProgram      program(holotask::detail::fresnel_fused_f16_source, program_name);
+  const auto                source = fragments + holotask::detail::fresnel_fused_f16_source;
+  curaii::NvrtcProgram      program(source.c_str(), program_name);
   std::vector<const char *> ptrs;
   for (auto &option : options)
     ptrs.push_back(option.c_str());
@@ -156,7 +164,8 @@ class FusedFresnel final : public holoflow::core::ISyncTask {
 
 public:
   FusedFresnel(const holoflow::core::TDesc &input, const FresnelDiffractionSettings &settings,
-               cudaStream_t stream)
+               cudaStream_t stream, bool external_lens, std::string_view load,
+               std::string_view store)
       : input_(input), settings_(settings), stream_(stream),
         planes_(int(input.num_elements() / (320 * 512))),
         components_(int(input.shape[input.rank() - 3])),
@@ -165,7 +174,8 @@ public:
         reduce_(settings.reduce_magnitude) {
     {
       holoflow::runtime::tracing::ScopedTrace timing("Fresnel FP16 Allocate Workspace", "detail");
-      lens_         = curaii::make_unique_device_ptr<float2>(320 * 512);
+      if (!external_lens)
+        lens_ = curaii::make_unique_device_ptr<float2>(320 * 512);
       scales_       = curaii::make_unique_device_ptr<int>(planes_ * 2);
       intermediate_ = curaii::make_unique_device_ptr<unsigned int>(input.num_elements());
       partial_ =
@@ -177,7 +187,8 @@ public:
     driver(cuCtxGetCurrent(&context_));
     driver(load_kernel_module(&module_.value, prop.major * 100 + prop.minor * 10,
                               input.dtype == holoflow::core::DType::F16,
-                              input.dtype == holoflow::core::DType::CF16, components_, reduce_));
+                              input.dtype == holoflow::core::DType::CF16, components_, reduce_,
+                              load, store));
     {
       holoflow::runtime::tracing::ScopedTrace timing("Fresnel FP16 Configure Kernels", "detail");
       scale_partial_ = function("fused_f16_scale_partial");
@@ -190,6 +201,8 @@ public:
       driver(cuFuncSetAttribute(x_, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, int(xs_)));
       driver(cuFuncSetAttribute(y_, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, int(ys_)));
     }
+    if (external_lens)
+      return;
     holoflow::runtime::tracing::ScopedTrace timing("Fresnel FP16 Submit Lens Initialization",
                                                    "detail");
     auto                                    lens = lens_.get();
@@ -236,9 +249,10 @@ public:
     if (stream_ == nullptr)
       return enqueue(ctx);
 
-    const detail::FresnelCudaGraph::Addresses addresses{ctx.inputs[0].data(),
-                                                        ctx.outputs[0].data()};
-    cudaStreamCaptureStatus                   capture_status = cudaStreamCaptureStatusNone;
+    const detail::FresnelCudaGraph::Addresses addresses{
+        ctx.inputs[0].data(), ctx.outputs[0].data(),
+        ctx.inputs.size() == 2 ? ctx.inputs[1].data() : nullptr};
+    cudaStreamCaptureStatus capture_status = cudaStreamCaptureStatusNone;
     CUDA_CHECK(cudaStreamIsCapturing(stream_, &capture_status));
     if (capture_status != cudaStreamCaptureStatusNone)
       return enqueue(ctx);
@@ -268,9 +282,10 @@ public:
   }
 
   holoflow::core::OpResult enqueue(holoflow::core::SyncCtx &ctx) {
-    auto  input        = ctx.inputs[0].data();
-    auto  output       = ctx.outputs[0].data();
-    auto  lens         = lens_.get();
+    auto input  = ctx.inputs[0].data();
+    auto output = ctx.outputs[0].data();
+    auto lens =
+        ctx.inputs.size() == 2 ? reinterpret_cast<float2 *>(ctx.inputs[1].data()) : lens_.get();
     auto  scales       = scales_.get();
     auto  intermediate = intermediate_.get();
     auto  partial      = partial_.get();
@@ -313,7 +328,8 @@ bool supports_fused_f16_fresnel(const holoflow::core::TDesc      &input,
 std::unique_ptr<holoflow::core::ISyncTask>
 create_fused_f16_fresnel(const holoflow::core::TDesc         &input,
                          const FresnelDiffractionSettings    &settings,
-                         const holoflow::core::SyncCreateCtx &ctx) {
-  return std::make_unique<FusedFresnel>(input, settings, ctx.stream);
+                         const holoflow::core::SyncCreateCtx &ctx, bool external_lens,
+                         std::string_view load, std::string_view store) {
+  return std::make_unique<FusedFresnel>(input, settings, ctx.stream, external_lens, load, store);
 }
 } // namespace holotask::syncs

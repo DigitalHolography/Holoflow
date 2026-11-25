@@ -47,8 +47,6 @@ def quadratic_lens(height, width, wavelength, dx, dy, z):
     return hf.exp(phase)
 
 
-# Set this to fresnel_diffraction_decomposed to use the primitive graph.
-fresnel_diffraction = hf.fresnel_diffraction
 fresnel_diffraction = fresnel_diffraction_decomposed
 
 __all__ = ["fresnel_diffraction"]

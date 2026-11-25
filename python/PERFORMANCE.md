@@ -202,6 +202,16 @@ error. Explicit close reports export errors. Failures preserve available
 diagnostics; compilation and benchmark exceptions include the run-directory path.
 Native diagnostic background write failures retain the existing warning behavior.
 
+## FFT task fusion
+
+Python compilation automatically lowers eligible Multiply, FFT2, and Abs
+chains using a constant complex device lens. FP32 uses cuFFT callbacks.
+With `fft2(..., prefer_fp16=True)`, SM120 can also absorb a following
+component mean for 320-by-512 inputs. The traced graph shows the primitive
+operations and the compiled graph reports the fused task. Use
+`fuse_tasks=False` on `Graph.compile()` or `benchmark()` to run the original
+graph. The precision preference uses FP32 when fusion is unavailable.
+
 ## CUDA runtime compilation cache
 
 Holoflow caches linked PCA CUBINs, fused FP16 Fresnel and Filter2D PTX,

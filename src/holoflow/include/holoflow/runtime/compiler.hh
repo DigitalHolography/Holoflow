@@ -15,6 +15,7 @@
 #pragma once
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <memory>
 #include <optional>
@@ -51,7 +52,9 @@ public:
     // Automatic native capture (joins an already active process-wide session).
     bool        enable_profiling = true;
     std::string trace_filename   = "trace_events.perfetto-trace";
-    size_t      max_section_cuda_graphs =
+    std::function<std::optional<core::GraphSpec>(const GraphPlan &, const core::Registry &)>
+           lower_tasks;
+    size_t max_section_cuda_graphs =
         4096; ///< Strict product cap per section; zero disables graphs.
   };
 

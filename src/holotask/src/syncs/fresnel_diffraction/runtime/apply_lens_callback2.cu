@@ -14,6 +14,11 @@
 
 #include <cuComplex.h>
 
+#ifndef FRESNEL_MULTIPLY
+#define FRESNEL_MULTIPLY cuCmulf
+#define FRESNEL_MAGNITUDE cuCabsf
+#endif
+
 struct ApplyLensCallerInfo {
   cuFloatComplex *lens;
   float          *magnitude_output;
@@ -35,12 +40,12 @@ __device__ cuFloatComplex apply_lens_callback2(void *data, size_t offset, void *
   size_t col          = (local_offset % STRIDE_H) / ISTRIDE;
   size_t lens_idx     = row * WIDTH + col;
 #endif
-  return cuCmulf(val, info->lens[lens_idx]);
+  return FRESNEL_MULTIPLY(val, info->lens[lens_idx]);
 }
 
 __device__ void store_magnitude_callback(void *data, unsigned long long offset,
                                          cuFloatComplex element, void *callerInfo,
                                          void *sharedPtr) {
   auto *info                     = static_cast<ApplyLensCallerInfo *>(callerInfo);
-  info->magnitude_output[offset] = cuCabsf(element);
+  info->magnitude_output[offset] = FRESNEL_MAGNITUDE(element);
 }

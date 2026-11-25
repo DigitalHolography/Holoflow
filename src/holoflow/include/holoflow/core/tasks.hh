@@ -473,6 +473,13 @@ class ITaskFactory {
 public:
   virtual ~ITaskFactory() = default;
 
+  enum class FftFusionRole { None, Load, Transform, Magnitude, Mean };
+  struct FftFusion {
+    FftFusionRole    role = FftFusionRole::None;
+    std::string_view device_source;
+  };
+  [[nodiscard]] virtual FftFusion fft_fusion() const noexcept { return {}; }
+
   /// Explicit factories must invalidate before altering captured operations/resources, and guard
   /// exception paths. Device data and ownership transfers may preserve execution compatibility.
   virtual ExecutionUpdatePolicy execution_update_policy() const noexcept {

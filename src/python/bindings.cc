@@ -2,11 +2,13 @@
 // Licensed under the Apache License, Version 2.0.
 
 #include "array_collector.hh"
+#include "fft_fusion.hh"
 #include "finite_graph.hh"
 #include "latency.hh"
 #include "throughput.hh"
 #include <algorithm>
 #include <condition_variable>
+#include <cuda_runtime_api.h>
 #include <limits>
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -93,8 +95,10 @@ public:
   }
 };
 
-std::unique_ptr<hc::Registry> make_registry() {
+std::unique_ptr<hc::Registry> make_registry(bool include_lowered_tasks = false) {
   auto r = std::make_unique<hc::Registry>();
+  if (include_lowered_tasks)
+    r->register_sync("FusedFFT2", std::make_unique<holoflow::python::FusedFft2Factory>(*r));
   r->register_sync("ArrayCollector", std::make_unique<holoflow::python::ArrayCollectorFactory>());
   r->register_sync("Holofile", std::make_unique<holotask::sources::HolofileFactory>());
   r->register_sync("HolofileWriter", std::make_unique<holotask::sinks::HolofileFactory>());
@@ -196,16 +200,22 @@ private:
 class Executable {
 public:
   explicit Executable(const hc::GraphSpec &spec, const std::string &log_dir, bool capture,
-                      std::unique_ptr<hr::CompilerOutput> previous = {})
+                      std::unique_ptr<hr::CompilerOutput> previous = {}, bool fuse_tasks = true)
       : capture_(!log_dir.empty() && capture ? std::make_unique<ProfileCapture>(log_dir) : nullptr),
-        log_dir_(log_dir), registry_(make_registry()),
+        log_dir_(log_dir), registry_(make_registry(true)),
         compiler_(std::make_unique<hr::Compiler>(
-            *registry_, hr::Compiler::Config{.log_dir             = log_dir,
-                                             .dump_dot_on_failure = !log_dir.empty(),
-                                             .verbose_tracing     = false,
-                                             .enable_profiling    = false})) {
-    for (const auto v : boost::make_iterator_range(vertices(spec)))
+            *registry_,
+            hr::Compiler::Config{.log_dir             = log_dir,
+                                 .dump_dot_on_failure = !log_dir.empty(),
+                                 .verbose_tracing     = false,
+                                 .enable_profiling    = false,
+                                 .lower_tasks =
+                                     fuse_tasks ? holoflow::python::lower_fft_tasks : nullptr})) {
+    for (const auto v : boost::make_iterator_range(vertices(spec))) {
+      if (spec[v].kind == "FusedFFT2")
+        throw std::invalid_argument("FusedFFT2 is an internal compiler task");
       node_ids_.insert(spec[v].name);
+    }
     for (const auto v : boost::make_iterator_range(vertices(spec)))
       names_.push_back(spec[v].name);
     output_ = compiler_->compile(holoflow::python::prepare_finite_graph(spec, *registry_),
@@ -520,9 +530,9 @@ public:
   std::string                 json() const { return hc::to_json(spec_).dump(); }
   std::string                 dot() const { return hc::to_dot(spec_); }
   std::unique_ptr<Executable> compile(const std::string &log_dir, bool capture,
-                                      Executable *previous) const {
+                                      Executable *previous, bool fuse_tasks) const {
     auto output = previous ? previous->take_compilation() : nullptr;
-    return std::make_unique<Executable>(spec_, log_dir, capture, std::move(output));
+    return std::make_unique<Executable>(spec_, log_dir, capture, std::move(output), fuse_tasks);
   }
 
 private:
@@ -599,6 +609,7 @@ PYBIND11_MODULE(_native, m) {
       .value("uint16", holoflow::core::DType::U16)
       .value("float16", holoflow::core::DType::F16)
       .value("float32", holoflow::core::DType::F32)
+      .value("complex32", holoflow::core::DType::CF16)
       .value("complex64", holoflow::core::DType::CF32);
   py::class_<hc::TDesc>(m, "Descriptor")
       .def_readonly("shape", &hc::TDesc::shape)
@@ -617,7 +628,8 @@ PYBIND11_MODULE(_native, m) {
       .def("to_json", &Graph::json)
       .def("to_dot", &Graph::dot)
       .def("compile", &Graph::compile, py::arg("log_dir") = "", py::arg("capture") = true,
-           py::arg("previous") = nullptr, py::call_guard<py::gil_scoped_release>());
+           py::arg("previous") = nullptr, py::arg("fuse_tasks") = true,
+           py::call_guard<py::gil_scoped_release>());
   py::class_<Executable>(m, "Executable", py::release_gil_before_calling_cpp_dtor())
       .def("start", &Executable::start, py::call_guard<py::gil_scoped_release>())
       .def("stop", &Executable::stop)
@@ -642,6 +654,15 @@ PYBIND11_MODULE(_native, m) {
       .def("close", &ProfileCapture::close, py::call_guard<py::gil_scoped_release>());
   m.def("flush_diagnostics", &hr::flush_diagnostics, py::call_guard<py::gil_scoped_release>());
   m.def("perfetto_available", &hr::tracing::Session::available);
+  m.def("supports_sm120", [] {
+    int device = 0, major = 0, minor = 0;
+    return cudaGetDevice(&device) == cudaSuccess &&
+           cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device) ==
+               cudaSuccess &&
+           cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device) ==
+               cudaSuccess &&
+           major == 12 && minor == 0;
+  });
   m.def("file_frame_count", [](const std::string &path) {
     const auto count = holofile::Reader(path).header().frame_count;
     if (count > static_cast<uint32_t>(std::numeric_limits<int>::max()))

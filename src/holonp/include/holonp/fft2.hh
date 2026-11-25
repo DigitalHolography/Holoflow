@@ -57,6 +57,8 @@ void from_json(const nlohmann::json &j, FFT2Settings &s);
 
 class FFT2Factory : public holoflow::core::ISyncTaskFactory {
 public:
+  FftFusion fft_fusion() const noexcept override { return {FftFusionRole::Transform, ""}; }
+
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
 

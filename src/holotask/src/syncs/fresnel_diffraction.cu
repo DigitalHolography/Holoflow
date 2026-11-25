@@ -97,7 +97,10 @@ struct ApplyLensCallerInfo {
   float          *magnitude_output;
 };
 
-__global__ void set_magnitude_output_kernel(ApplyLensCallerInfo *info, float *output) {
+__global__ void set_magnitude_output_kernel(ApplyLensCallerInfo *info, float *output,
+                                            cuFloatComplex *lens) {
+  if (lens)
+    info->lens = lens;
   info->magnitude_output = output;
 }
 
@@ -253,7 +256,8 @@ CachedLto compile_source_to_lto(const std::string &source, const std::string &na
 }
 
 CachedLto apply_lens_lto(bool is_fast, bool is_real, unsigned int width, unsigned long long idist,
-                         unsigned long long stride_h, unsigned long long istride) {
+                         unsigned long long stride_h, unsigned long long istride,
+                         std::string_view load, std::string_view store) {
   // Inject compile-time constants for the NVRTC compiler
   std::string src = "#define WIDTH " + std::to_string(width) + "u\n" + "#define IDIST " +
                     std::to_string(idist) + "ull\n" + "#define STRIDE_H " +
@@ -264,6 +268,13 @@ CachedLto apply_lens_lto(bool is_fast, bool is_real, unsigned int width, unsigne
   src += "#define FRESNEL_CONTIGUOUS " + std::to_string(is_fast ? 1 : 0) + "\n";
   src += holotask::detail::fresnel_callback_source;
 
+  if (!load.empty()) {
+    auto source = "#include <cuComplex.h>\n" + std::string(load) + "\n" + std::string(store) +
+                  "\n#define FRESNEL_MULTIPLY fused_multiply\n"
+                  "#define FRESNEL_MAGNITUDE fused_magnitude\n" +
+                  src;
+    return compile_source_to_lto(source, "fused_fft2_callbacks.cu");
+  }
   return compile_source_to_lto(src, "apply_lens_callback2.cu");
 }
 
@@ -370,9 +381,10 @@ public:
     if (stream == nullptr)
       return enqueue(ctx);
 
-    const detail::FresnelCudaGraph::Addresses addresses{ctx.inputs[0].data(),
-                                                        ctx.outputs[0].data()};
-    cudaStreamCaptureStatus                   capture_status = cudaStreamCaptureStatusNone;
+    const detail::FresnelCudaGraph::Addresses addresses{
+        ctx.inputs[0].data(), ctx.outputs[0].data(),
+        ctx.inputs.size() == 2 ? ctx.inputs[1].data() : nullptr};
+    cudaStreamCaptureStatus capture_status = cudaStreamCaptureStatusNone;
     CUDA_CHECK(cudaStreamIsCapturing(stream, &capture_status));
     if (capture_status != cudaStreamCaptureStatusNone)
       return enqueue(ctx);
@@ -412,7 +424,9 @@ public:
       if (settings.output_magnitude) {
         auto *magnitude_output = reinterpret_cast<float *>(out_ptr);
         set_magnitude_output_kernel<<<1, 1, 0, stream>>>(
-            static_cast<ApplyLensCallerInfo *>(d_caller_info.get()), magnitude_output);
+            static_cast<ApplyLensCallerInfo *>(d_caller_info.get()), magnitude_output,
+            ctx.inputs.size() == 2 ? reinterpret_cast<cuFloatComplex *>(ctx.inputs[1].data())
+                                   : nullptr);
         fft_out = d_fft_output.get();
       }
       CUFFT_CHECK(cufftXtExec(fft_handle.get(), in_ptr, fft_out, CUFFT_FORWARD));
@@ -596,8 +610,19 @@ std::unique_ptr<holoflow::core::ISyncTask>
 FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                   const nlohmann::json                  &jsettings,
                                   const holoflow::core::SyncCreateCtx   &ctx) const {
+  return create_with_lens(input_descs, jsettings, ctx, {}, {});
+}
+
+std::unique_ptr<holoflow::core::ISyncTask> FresnelDiffractionFactory::create_with_lens(
+    std::span<const holoflow::core::TDesc> input_descs, const nlohmann::json &jsettings,
+    const holoflow::core::SyncCreateCtx &ctx, std::string_view load, std::string_view store) const {
+  const bool external_lens = !load.empty();
+  if (external_lens)
+    input_descs = input_descs.first(1);
   const auto requested = jsettings.get<FresnelDiffractionSettings>();
   (void)this->infer(input_descs, jsettings);
+  if (external_lens && requested.use_fused_f16)
+    return create_fused_f16_fresnel(input_descs[0], requested, ctx, true, load, store);
   if (requested.use_fused_f16 && supports_fused_f16_fresnel(input_descs[0], requested)) {
     try {
       auto task = create_fused_f16_fresnel(input_descs[0], requested, ctx);
@@ -671,8 +696,9 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
   auto lto     = apply_lens_lto(is_fast, is_real, static_cast<unsigned int>(W),
                                 static_cast<unsigned long long>(best_group.in_idist),
                                 static_cast<unsigned long long>(in_stride_h),
-                                static_cast<unsigned long long>(in_istride));
-  auto d_lens  = make_quadratic_lens(W, H, settings, ctx.stream);
+                                static_cast<unsigned long long>(in_istride), load, store);
+  auto d_lens =
+      external_lens ? DevPtr<cuFloatComplex>{} : make_quadratic_lens(W, H, settings, ctx.stream);
 
   ApplyLensCallerInfo info{
       .lens             = d_lens.get(),

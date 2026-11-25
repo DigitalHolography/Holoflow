@@ -48,7 +48,7 @@ class BenchmarkReport:
 
 
 def benchmark(pipeline, *, args=(), kwargs=None, mode="finite", source_node_id=None,
-              warmup_seconds=2.0, duration_seconds=10.0, log_dir=None):
+              warmup_seconds=2.0, duration_seconds=10.0, log_dir=None, fuse_tasks=True):
     """Measure input frames/s and trace-to-completion wall time.
 
     Finite mode returns the pipeline's collected results. Looping mode stops after
@@ -91,7 +91,7 @@ def benchmark(pipeline, *, args=(), kwargs=None, mode="finite", source_node_id=N
                 raise ValueError("All Holofile sources must match the benchmark mode")
         batch_size = sources[source_node_id]["params"]["batch_size"]
         compile_started = perf_counter()
-        run = graph._compile(artifacts, capture=False)
+        run = graph._compile(artifacts, capture=False, fuse_tasks=fuse_tasks)
         compiled = perf_counter()
         timings["compile_seconds"] = compiled - compile_started
         run.start()

@@ -38,6 +38,11 @@ void from_json(const nlohmann::json &j, MultiplySettings &s);
 
 class MultiplyFactory : public holoflow::core::ISyncTaskFactory {
 public:
+  FftFusion fft_fusion() const noexcept override {
+    return {FftFusionRole::Load, "__device__ cuFloatComplex fused_multiply(cuFloatComplex a, "
+                                 "cuFloatComplex b) { return cuCmulf(a, b); }"};
+  }
+
   holoflow::core::InferResult infer(std::span<const holoflow::core::TDesc> input_descs,
                                     const nlohmann::json &jsettings) const override;
 
