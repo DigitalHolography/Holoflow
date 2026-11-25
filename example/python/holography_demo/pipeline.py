@@ -65,7 +65,10 @@ def pipeline(config):
 
     if config.time.get("precision") == "fp16":
         image, average_window = postprocess_image(_fp16_image(frames, config), config, True)
-        image = hf.batch_queue(image, config.queues["output_images"], 1, 1, node_id="device_output")
+        if config.viewer["enabled"] and not config.viewer["cao_coefficients_only"]:
+            image = host_queue(image, config, "host_output")
+        else:
+            image = hf.batch_queue(image, config.queues["output_images"], 1, 1, node_id="device_output")
         return _output(image, config, interval_ms, average_window)
 
     # ---- Temporal and spatial preprocessing ------------------------------------------------------

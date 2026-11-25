@@ -32,9 +32,11 @@ The processing order is temporal PCA (or one image per raw frame), optional
 Shack–Hartmann aberration correction, then optional Fresnel propagation.
 The upload queue assembles complete temporal windows, and PCA processes each
 window directly. The propagation and host output handoffs use independent queues.
-For the optimized basic pipeline, set `time.precision: fp16`. Use looping,
-CPU-cached U8 input at 320�512, 32-frame input and PCA windows, at most 16
-selected components, and native Fresnel. Disable spatial filtering and aberration
+For the optimized basic pipeline, set `time.precision: fp16`. Use U8 input at
+320×512, 32-frame input and PCA windows, at most 16 selected components, and
+native Fresnel. Finite and looping playback support all three Holofile load
+modes. Finite playback needs at least four PCA windows and warns if it drops
+up to three complete windows at EOF to keep groups of four. Disable spatial filtering and aberration
 correction. This mode uses the pipelined PCA queue, FP16 projection, and fused
 Fresnel magnitude reduction. It keeps the headless output on the GPU, so its
 latency ends at GPU output completion. The default `time.precision: fp32` keeps

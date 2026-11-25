@@ -530,6 +530,7 @@ public:
     reads_           = {};
     written_.store(0, std::memory_order_relaxed);
     read_.store(0, std::memory_order_relaxed);
+    closed_.store(false, std::memory_order_relaxed);
     legacy_read_.reset();
     released_ = {false, false};
   }
@@ -615,6 +616,8 @@ public:
     return holoflow::core::OpResult::Ok;
   }
 
+  void close_input() override { closed_.store(true, std::memory_order_release); }
+
   holoflow::core::OpResult reserve_pop(holoflow::core::AsyncPopCtx &ctx,
                                        holoflow::core::AsyncTicket &ticket) override {
     using holoflow::core::OpResult;
@@ -624,9 +627,10 @@ public:
       return OpResult::Cancelled;
     if (reads_.full())
       return OpResult::NotReady;
-    const auto read = reads_.empty() ? read_.load(std::memory_order_relaxed) : reads_.back();
+    const bool closed = closed_.load(std::memory_order_acquire);
+    const auto read   = reads_.empty() ? read_.load(std::memory_order_relaxed) : reads_.back();
     if (written_.load(std::memory_order_acquire) - read < settings_.batch_size)
-      return OpResult::NotReady;
+      return closed ? OpResult::Eof : OpResult::NotReady;
     auto &slot = slot_for(read);
     // The acquire above also guarantees this generation's event has been recorded. Querying
     // a never-recorded event would otherwise report success and expose an incomplete group.
@@ -746,6 +750,7 @@ private:
   curaii::CublasHandle                            cublas_;
   std::vector<std::unique_ptr<PcaQueueSlot>>      slots_;
   std::unique_ptr<Eigensolver>                    eigensolver_;
+  std::atomic<bool>                               closed_{false};
   alignas(64) std::atomic<size_t> written_{0};
   alignas(64) std::atomic<size_t> read_{0};
   holotask::asyncs::detail::ReservationQueue<PendingWrite> writes_;

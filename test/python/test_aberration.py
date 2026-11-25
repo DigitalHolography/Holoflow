@@ -174,7 +174,7 @@ class HolographyDemoTest(unittest.TestCase):
         write_holo(self.root / "input.holo", frames=35, width=30, height=20)
         settings = self.yaml.safe_load(reference.read_text(encoding="utf-8"))
         settings["input"].update(path="input.holo", batch_size=8, end_frame=32)
-        settings["time"].update(window_frames=4, component_end=2)
+        settings["time"].update(precision="fp32", window_frames=4, component_end=2)
         settings["postprocessing"]["average_window"] = 3
         settings["viewer"].update(cao_diagnostics=True, cao_coefficients_only=False,
                                   cao_compare_modes=False)
@@ -491,18 +491,21 @@ class HolographyDemoTest(unittest.TestCase):
                 self.assertIn(f"\\n({kind})\\n", label)
                 self.assertEqual(marker in label, kind in {"Arange", "Meshgrid", "Exp"}, name)
 
-    def test_fp16_demo_traces_native_pipeline(self):
-        from holography_demo.pipeline import pipeline
-
+    def write_fp16_fixture(self, frames):
         import struct
 
-        frames, width, height = 128, 512, 320
+        width, height = 512, 320
         size = frames * width * height
         header = struct.pack("<IHHIIIQB35s", 0x4F4C4F48, 66, 8, width, height, frames,
                              size, 0, bytes(35))
         with (self.root / "fp16.holo").open("wb") as fixture:
             fixture.write(header)
             fixture.truncate(len(header) + size)
+
+    def test_fp16_demo_traces_native_pipeline(self):
+        from holography_demo.pipeline import pipeline
+
+        self.write_fp16_fixture(128)
         config = self.config(
             input={"path": "fp16.holo", "mode": "looping", "load_kind": "cpu_cached",
                    "batch_size": 32},
@@ -521,9 +524,32 @@ class HolographyDemoTest(unittest.TestCase):
         self.assertEqual(by_type["DualReaderBatchQueue"]["window_size"], 64)
         self.assertEqual(by_type["Memcpy"]["target"], "Device")
 
-    def test_fp16_demo_rejects_finite_input(self):
-        with self.assertRaisesRegex(ValueError, "requires looping CPU-cached input"):
-            self.config(time={"precision": "fp16"})
+    def test_fp16_finite_playback_drains_and_trims_complete_windows(self):
+        from holography_demo.pipeline import pipeline
+
+        self.write_fp16_fixture(224)
+        for remainder, load_kind in enumerate(("live", "cpu_cached", "gpu_cached"), 1):
+            with self.subTest(load_kind=load_kind):
+                with self.assertWarnsRegex(UserWarning, f"dropped {remainder} .*{remainder * 32} frames") as warning:
+                    config = self.config(
+                        input={"path": "fp16.holo", "load_kind": load_kind, "batch_size": 32,
+                               "end_frame": 128 + 32 * remainder, "tail": "error"},
+                        time={"precision": "fp16", "window_frames": 32, "component_end": 4},
+                        viewer={"enabled": True},
+                    )
+                self.assertEqual(len(warning.warnings), 1)
+                self.assertEqual(config.input["end_frame"], 128)
+                self.assertEqual((config.temporal_count, config.output_count), (4, 4))
+                with hf.trace(pipeline, config).compile() as run:
+                    run.start()
+                    self.assertEqual(run.result().shape, (4, 320, 512))
+                    self.assertTrue(run.completed())
+
+    def test_fp16_finite_playback_requires_one_group(self):
+        self.write_fp16_fixture(96)
+        with self.assertRaisesRegex(ValueError, "requires at least four PCA windows"):
+            self.config(input={"path": "fp16.holo", "batch_size": 32},
+                        time={"precision": "fp16", "window_frames": 32, "component_end": 4})
 
     def test_looping_cli_reports_summary(self):
         from holography_demo.cli import run_demo

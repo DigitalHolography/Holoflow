@@ -51,6 +51,8 @@ inline core::GraphSpec prepare_finite_graph(core::GraphSpec spec, core::Registry
                                            "Subtract",
                                            "Divide",
                                            "Pca",
+                                           "PcaDecompositionQueue",
+                                           "PcaProjection",
                                            "PctClip",
                                            "FresnelDiffraction",
                                            "Filter2D",
@@ -145,6 +147,8 @@ inline core::GraphSpec prepare_finite_graph(core::GraphSpec spec, core::Registry
                               ? registry.get_sync(node.kind).infer(inputs, node.settings)
                               : registry.get_async(node.kind).infer(inputs, node.settings);
     m.outputs           = inferred.output_descs;
+    if (node.kind == "PcaDecompositionQueue" && m.emissions)
+      m.emissions = *m.emissions / m.outputs[0].shape[0];
   }
   return spec;
 }

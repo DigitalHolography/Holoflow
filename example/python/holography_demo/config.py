@@ -6,6 +6,7 @@
 from dataclasses import dataclass
 from math import isfinite, lcm
 from pathlib import Path
+from warnings import warn
 
 import yaml
 
@@ -118,8 +119,6 @@ def load_config(filename):
     _check(aberration["slope_mode"] in ("single_reference", "full_pairwise"),
            "aberration.slope_mode must be single_reference or full_pairwise")
     if time["precision"] == "fp16":
-        _check(source["mode"] == "looping" and source["load_kind"] == "cpu_cached",
-               "time.precision: fp16 requires looping CPU-cached input")
         _check(source["batch_size"] == 32 and time["method"] == "pca"
                and temporal_frames == 32 and end - begin <= 16,
                "time.precision: fp16 requires 32-frame input and PCA windows with at most 16 components")
@@ -189,6 +188,17 @@ def load_config(filename):
     source["end_frame"] = end - remainder
     windows = (source["end_frame"] - start) // temporal_frames
     _check(windows > 0, "input range has no complete source batch and temporal window")
+    if time["precision"] == "fp16" and source["mode"] == "finite":
+        group_size = 4
+        _check(windows >= group_size, "time.precision: finite fp16 requires at least four PCA windows")
+        dropped_windows = windows % group_size
+        if dropped_windows:
+            dropped_frames = dropped_windows * temporal_frames
+            source["end_frame"] -= dropped_frames
+            windows -= dropped_windows
+            warn(f"Finite FP16 input dropped {dropped_windows} trailing PCA window(s) "
+                 f"({dropped_frames} frames) to keep complete four-window groups.",
+                 stacklevel=2)
     output_count = max(0, windows - correction_window - average_window + 2)
     if viewer["cao_coefficients_only"]:
         _check(windows >= correction_window, "viewer.cao_coefficients_only needs a full sensor averaging window")

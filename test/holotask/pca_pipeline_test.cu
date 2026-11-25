@@ -203,6 +203,12 @@ TEST(PcaPipeline, ReplacementDrainsUnpoppedGroupsAndDiscardsPartialInput) {
   values.get()[1]          = 0;
   values.get()[2]          = 0;
   values.get()[3]          = 2;
+  AsyncTicket read;
+  task->close_input();
+  EXPECT_EQ(task->reserve_pop(pop, read), OpResult::Eof);
+  task = factory.update(std::move(task), inputs, settings, {producer.get(), consumer.get()});
+  task->bind_storage_access(&storage);
+  EXPECT_EQ(task->reserve_pop(pop, read), OpResult::NotReady);
   for (size_t i = 0; i < 7; ++i) {
     ASSERT_TRUE(task->acquire_input(0));
     CUDA_CHECK(cudaMemcpyAsync(in[0].data(), values.get(), 4 * sizeof(float),
@@ -211,18 +217,18 @@ TEST(PcaPipeline, ReplacementDrainsUnpoppedGroupsAndDiscardsPartialInput) {
     ASSERT_EQ(task->try_push(push), OpResult::Ok);
   }
   // One submitted decomposition and three incomplete windows are discarded by replacement.
-  auto *original_task = task.get();
+  task->close_input();
+  auto      *original_task   = task.get();
   const auto original_inputs = task->owned_input_pointers(0);
   task = factory.update(std::move(task), inputs, settings, {producer.get(), consumer.get()});
   EXPECT_EQ(task.get(), original_task);
   EXPECT_EQ(task->owned_input_pointers(0), original_inputs);
   task->bind_storage_access(&storage);
-  AsyncTicket read;
   EXPECT_EQ(task->reserve_pop(pop, read), OpResult::NotReady);
   EXPECT_EQ(task->owned_input_pointers(0)->size(), 12U);
   EXPECT_EQ(task->owned_output_pointer_sequence(0)->cycle,
             task->owned_output_pointer_sequence(1)->cycle);
-  for (size_t i = 0; i < 8; ++i) {
+  for (size_t i = 0; i < 11; ++i) {
     ASSERT_TRUE(task->acquire_input(0));
     CUDA_CHECK(cudaMemcpyAsync(in[0].data(), values.get(), 4 * sizeof(float),
                                cudaMemcpyHostToDevice, producer.get()));
@@ -231,6 +237,7 @@ TEST(PcaPipeline, ReplacementDrainsUnpoppedGroupsAndDiscardsPartialInput) {
     if (i < 3)
       EXPECT_EQ(task->reserve_pop(pop, read), OpResult::NotReady);
   }
+  task->close_input();
   std::array<AsyncTicket, 2> reads;
   std::array<std::byte *, 2> pointers;
   for (size_t i = 0; i < 2; ++i) {
@@ -245,7 +252,7 @@ TEST(PcaPipeline, ReplacementDrainsUnpoppedGroupsAndDiscardsPartialInput) {
   EXPECT_THROW(task->release_pop(reads[1]), std::logic_error);
   task->release_pop(reads[0]);
   task->release_pop(reads[1]);
-  EXPECT_EQ(task->reserve_pop(pop, read), OpResult::NotReady);
+  EXPECT_EQ(task->reserve_pop(pop, read), OpResult::Eof);
 }
 
 __global__ void generate_inputs(float *output, size_t count, size_t samples, int features,
@@ -433,27 +440,31 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
   add_edge(compute, output, EdgeSpec{0, 0}, spec);
   add_edge(output, sink, EdgeSpec{0, 0}, spec);
   Compiler::Config config;
-  config.enable_profiling                        = false;
-  config.verbose_tracing                         = false;
-  config.max_section_cuda_graphs                 = graph_limit;
+  config.enable_profiling        = false;
+  config.verbose_tracing         = false;
+  config.max_section_cuda_graphs = graph_limit;
   if (toggle_correction) {
     registry.register_sync("zeros", std::make_unique<holonp::ZerosFactory>());
-    registry.register_sync("correct_phase", std::make_unique<holotask::syncs::CorrectPhaseFactory>());
+    registry.register_sync("correct_phase",
+                           std::make_unique<holotask::syncs::CorrectPhaseFactory>());
   }
   auto compiled = Compiler(registry, config).compile(spec);
   if (toggle_correction) {
-    auto *original = dynamic_cast<IAsyncTask *>(compiled->resources.tasks.at("grouped").get());
+    auto      *original = dynamic_cast<IAsyncTask *>(compiled->resources.tasks.at("grouped").get());
     const auto original_inputs = original->owned_input_pointers(0);
     for (bool cf16 : {false, true}) {
       auto corrected_spec = spec;
       remove_edge(compute, output, corrected_spec);
-      const auto mask = add_vertex(
-          NodeSpec{"mask", "zeros", holonp::ZerosSettings{
-              .shape = {1, state->height, state->width}, .dtype = DType::F32, .device = MemLoc::Device}},
-          corrected_spec);
-      const auto correction = add_vertex(
-          NodeSpec{"correction", "correct_phase",
-                   holotask::syncs::CorrectPhaseSettings{.output_cf16 = cf16}}, corrected_spec);
+      const auto mask =
+          add_vertex(NodeSpec{"mask", "zeros",
+                              holonp::ZerosSettings{.shape  = {1, state->height, state->width},
+                                                    .dtype  = DType::F32,
+                                                    .device = MemLoc::Device}},
+                     corrected_spec);
+      const auto correction =
+          add_vertex(NodeSpec{"correction", "correct_phase",
+                              holotask::syncs::CorrectPhaseSettings{.output_cf16 = cf16}},
+                     corrected_spec);
       add_edge(compute, correction, EdgeSpec{0, 0}, corrected_spec);
       add_edge(mask, correction, EdgeSpec{0, 1}, corrected_spec);
       add_edge(correction, output, EdgeSpec{0, 0}, corrected_spec);
@@ -464,7 +475,7 @@ std::shared_ptr<PipelineState> run_pipeline(bool pipeline, size_t graph_limit, b
       EXPECT_EQ(updated, original);
       EXPECT_EQ(updated->owned_input_pointers(0), original_inputs);
       compiled = Compiler(registry, config).compile(spec, std::move(compiled));
-      updated = dynamic_cast<IAsyncTask *>(compiled->resources.tasks.at("grouped").get());
+      updated  = dynamic_cast<IAsyncTask *>(compiled->resources.tasks.at("grouped").get());
       EXPECT_EQ(updated, original);
       EXPECT_EQ(updated->owned_input_pointers(0), original_inputs);
     }
@@ -580,7 +591,7 @@ TEST(PcaPipeline, F16QueueThroughputStudy) {
   if (!benchmark_option("HOLOFLOW_PCA_F16_STUDY", 0))
     GTEST_SKIP() << "Set HOLOFLOW_PCA_F16_STUDY to enable the throughput study";
   const auto duration = benchmark_option("HOLOFLOW_PCA_BENCHMARK_MS", 3000);
-  const auto result = run_pipeline(true, 128, false, false, false, 32, true, duration, 320, true);
+  const auto result   = run_pipeline(true, 128, false, false, false, 32, true, duration, 320, true);
   EXPECT_GT(result->windows_per_second, 0);
   std::cout << "FP16 PCA windows/s=" << result->windows_per_second << '\n';
 }
@@ -593,7 +604,8 @@ TEST(PcaPipeline, F16QueueWraparoundAndGraphReplay) {
 }
 
 TEST(PcaPipeline, F16QueueSurvivesDownstreamPhaseCorrectionToggle) {
-  const auto result = run_pipeline(true, 128, false, false, false, 32, false, 10000, 320, true, true);
+  const auto result =
+      run_pipeline(true, 128, false, false, false, 32, false, 10000, 320, true, true);
   EXPECT_EQ(result->consumed, 64u);
   EXPECT_TRUE(std::all_of(result->values.begin(), result->values.end(),
                           [](float v) { return std::isfinite(v); }));
