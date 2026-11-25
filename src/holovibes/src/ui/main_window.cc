@@ -1517,6 +1517,7 @@ void MainWindow::restore_persistent_state() {
 
   export_widget_->set_camera_recording_enabled(import_widget_->is_camera_mode());
   settings.endGroup();
+  record_widget_->reset(export_widget_->get_queue_count());
 
   auto *autofocus = render_widget_->autofocus_widget();
   settings.beginGroup("autofocus");
