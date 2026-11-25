@@ -1514,6 +1514,8 @@ void MainWindow::restore_persistent_state() {
       settings.value("frame_count_enabled", export_widget_->is_frame_count_enabled()).toBool());
   export_widget_->set_frame_count(
       settings.value("frame_count", export_widget_->get_frame_count()).toInt());
+
+  export_widget_->set_camera_recording_enabled(import_widget_->is_camera_mode());
   settings.endGroup();
 
   auto *autofocus = render_widget_->autofocus_widget();
@@ -2719,6 +2721,7 @@ void MainWindow::setup_update_connections() {
   auto cb = [this]() {
     update_if_running();
     monitor_widget_->reset_pipeline_progress_bar();
+    export_widget_->set_camera_recording_enabled(import_widget_->is_camera_mode());
   };
 
   connect(import_widget_, &ImportWidget::settings_changed, this, cb);
