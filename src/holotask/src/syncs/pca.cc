@@ -45,8 +45,8 @@
 #include "curaii/nvrtc.hh"
 
 #include "../asyncs/reservation_queue.hh"
+#include "holoflow/runtime/detail/nvrtc_cache.hh"
 #include "logger.hh"
-#include "nvrtc_cache.hh"
 #include "pca_capture.hh"
 #include "runtime_assets.hh"
 
@@ -1115,9 +1115,10 @@ CUresult load_cubin(CUmodule *module, int features, int solver_sm, int architect
   auto                             key = options;
   key.emplace_back(program_name);
   key.insert(key.end(), link_options.begin(), link_options.end());
-  const holotask::detail::NvrtcCache cache("pca-cubin", holotask::detail::pca_heev_source_id, key,
-                                           assets.cusolverdx_fatbin);
-  const auto                         load = [module](const std::vector<char> &cubin) {
+  const holoflow::runtime::detail::NvrtcCache cache(
+      "pca-cubin", holotask::detail::pca_heev_source_id, key, HOLOFLOW_NVRTC_ASSET_VERSION,
+      assets.cusolverdx_fatbin);
+  const auto load = [module](const std::vector<char> &cubin) {
     holoflow::runtime::tracing::ScopedTrace timing("PCA Load CUDA Module", "detail");
     return cuModuleLoadDataEx(module, cubin.data(), 0, nullptr, nullptr);
   };

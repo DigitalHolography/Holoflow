@@ -28,8 +28,8 @@
 
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
-#include "curaii/nvrtc.hh"
 #include "fresnel_cuda_graph.cuh"
+#include "holoflow/runtime/detail/cached_lto.hh"
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
@@ -140,7 +140,8 @@ __device__ cuFloatComplex )";
 
   // The Magic Cast: Handle real vs complex loads
   if (dtype == holoflow::core::DType::F16) {
-    src += "    cuFloatComplex val = make_cuComplex(__half2float(((const __half *)data)[src]), 0.0f);\n";
+    src += "    cuFloatComplex val = make_cuComplex(__half2float(((const __half *)data)[src]), "
+           "0.0f);\n";
   } else if (dtype == holoflow::core::DType::F32) {
     src += "    cuFloatComplex val = make_cuComplex(((float *)data)[src], 0.0f);\n";
   } else {
@@ -176,7 +177,10 @@ std::string get_compute_arch() {
   return "compute_" + std::to_string(prop.major) + std::to_string(prop.minor);
 }
 
-std::vector<char> compile_lto(const std::string &src, const std::string &name) {
+using holoflow::runtime::detail::CachedLto;
+using holoflow::runtime::detail::configure_callback_plan;
+
+CachedLto compile_lto(const std::string &src, const std::string &name) {
   auto CUDA_PATH = std::getenv("CUDA_PATH");
   HOLOVIBES_CHECK(CUDA_PATH != nullptr, "CUDA_PATH environment variable not set");
 
@@ -190,31 +194,13 @@ std::vector<char> compile_lto(const std::string &src, const std::string &name) {
       "--generate-line-info",
   };
 
-  curaii::NvrtcProgram prog(src.c_str(), name.c_str(), 0, nullptr, nullptr);
-  std::vector<char *>  args;
-  std::ranges::transform(args_str, std::back_inserter(args),
-                         [](const std::string &s) { return const_cast<char *>(s.c_str()); });
-  try {
-    NVRTC_CHECK(nvrtcCompileProgram(prog.get(), static_cast<int>(args.size()), args.data()));
-    size_t sz = 0;
-    NVRTC_CHECK(nvrtcGetLTOIRSize(prog.get(), &sz));
-    std::vector<char> lto(sz);
-    NVRTC_CHECK(nvrtcGetLTOIR(prog.get(), lto.data()));
-    return lto;
-  } catch (const curaii::NvrtcError &) {
-    size_t log_size = 0;
-    NVRTC_CHECK(nvrtcGetProgramLogSize(prog.get(), &log_size));
-    std::string log(log_size, '\0');
-    NVRTC_CHECK(nvrtcGetProgramLog(prog.get(), log.data()));
-    logger()->error("[ShortTimeFresnelDiffraction] NVRTC log:\n{}", log);
-    throw;
-  }
+  return CachedLto(src, name, std::move(args_str));
 }
 
-std::vector<char> build_stft_lto(bool is_global, holoflow::core::DType dtype, unsigned int win_w,
-                                 unsigned int win_h, unsigned int nx_win, unsigned int ny_win,
-                                 unsigned int stride_x, unsigned int stride_y, unsigned int field_W,
-                                 unsigned long long field_idist) {
+CachedLto build_stft_lto(bool is_global, holoflow::core::DType dtype, unsigned int win_w,
+                         unsigned int win_h, unsigned int nx_win, unsigned int ny_win,
+                         unsigned int stride_x, unsigned int stride_y, unsigned int field_W,
+                         unsigned long long field_idist) {
 
   // clang-format off
   std::string src =
@@ -732,7 +718,7 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
   const size_t ny_win = (H - win_h) / s.stride_y + 1;
   const size_t nx_win = (W - win_w) / s.stride_x + 1;
 
-  const size_t in_esz = holoflow::core::size_of(idesc.dtype);
+  const size_t in_esz  = holoflow::core::size_of(idesc.dtype);
   const size_t out_esz = s.output_magnitude ? sizeof(float) : sizeof(cuFloatComplex);
 
   auto in_sb  = strides_bytes(idesc);
@@ -786,11 +772,11 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
   // -- LTO compilation --------------------------------------------------------------------------
   bool is_global = (s.phase_ref == STFDPhaseReference::GLOBAL);
   // Pass all layout parameters directly to the JIT builder to bake them as macros
-  auto lto =
-      build_stft_lto(is_global, idesc.dtype, static_cast<unsigned>(win_w), static_cast<unsigned>(win_h),
-                     static_cast<unsigned>(nx_win), static_cast<unsigned>(ny_win),
-                     static_cast<unsigned>(s.stride_x), static_cast<unsigned>(s.stride_y),
-                     static_cast<unsigned>(W), static_cast<unsigned long long>(group.in_idist));
+  auto lto = build_stft_lto(is_global, idesc.dtype, static_cast<unsigned>(win_w),
+                            static_cast<unsigned>(win_h), static_cast<unsigned>(nx_win),
+                            static_cast<unsigned>(ny_win), static_cast<unsigned>(s.stride_x),
+                            static_cast<unsigned>(s.stride_y), static_cast<unsigned>(W),
+                            static_cast<unsigned long long>(group.in_idist));
 
   // -- Window-lens for output phase shift -------------------------------------------------------
   DevPtr<cuFloatComplex> d_win_lens;
@@ -799,16 +785,6 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
 
   // -- cuFFT plan -------------------------------------------------------------------------------
   curaii::CufftHandle plan;
-  CUFFT_CHECK(cufftSetStream(plan.get(), ctx.stream));
-
-  void       *d_info_ptr = reinterpret_cast<void *>(d_info.get());
-  const char *cb_name    = is_global ? "stft_load_global" : "stft_load_local";
-  CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), cb_name, lto.data(), lto.size(),
-                                    CUFFT_CB_LD_COMPLEX, &d_info_ptr));
-  if (s.output_magnitude) {
-    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "stft_store_magnitude", lto.data(), lto.size(),
-                                      CUFFT_CB_ST_COMPLEX, &d_info_ptr));
-  }
 
   // Virtual input layout (overridden by callback): [inner_batch*ny_win*nx_win, win_h, win_w].
   long long int n[2]       = {win_h, win_w};
@@ -818,11 +794,21 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
 
   long long batch = static_cast<long long>(group.size) * static_cast<long long>(ny_win * nx_win);
 
-  CUFFT_CHECK(cufftXtMakePlanMany(plan.get(), 2, n, inembed, 1LL,
-                                  static_cast<long long>(win_h * win_w),
-                                  CUDA_C_32F,                              // input (virtual)
-                                  onembed, 1LL, out_win_idist, CUDA_C_32F, // output (real)
-                                  batch, &work_size, CUDA_C_32F));
+  configure_callback_plan(plan, ctx.stream, {&lto}, [&] {
+    void       *d_info_ptr = reinterpret_cast<void *>(d_info.get());
+    const char *cb_name    = is_global ? "stft_load_global" : "stft_load_local";
+    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), cb_name, lto.data(), lto.size(),
+                                      CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+    if (s.output_magnitude) {
+      CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "stft_store_magnitude", lto.data(), lto.size(),
+                                        CUFFT_CB_ST_COMPLEX, &d_info_ptr));
+    }
+    CUFFT_CHECK(cufftXtMakePlanMany(plan.get(), 2, n, inembed, 1LL,
+                                    static_cast<long long>(win_h * win_w),
+                                    CUDA_C_32F,                              // input (virtual)
+                                    onembed, 1LL, out_win_idist, CUDA_C_32F, // output (real)
+                                    batch, &work_size, CUDA_C_32F));
+  });
 
   logger()->debug("[ShortTimeFresnelDiffractionFactory] Settings: \n{}\n", jsettings.dump(2));
 
@@ -847,7 +833,7 @@ ShortTimeFresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc
                                  static_cast<size_t>(batch) * static_cast<size_t>(out_win_idist))
                            : DevPtr<cuFloatComplex>{},
       .d_caller_info = std::move(d_info),
-      .lto           = std::move(lto),
+      .lto           = lto.take(),
   });
 
   return std::make_unique<ShortTimeFresnelDiffraction>(std::move(impl));

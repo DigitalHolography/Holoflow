@@ -31,7 +31,7 @@
 
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
-#include "curaii/nvrtc.hh"
+#include "holoflow/runtime/detail/cached_lto.hh"
 #include "logger.hh"
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
@@ -160,48 +160,16 @@ std::vector<std::string> get_nvrtc_args() {
   };
 }
 
-std::vector<char> compile_source_to_lto(const std::string &source, const std::string &name) {
-  auto                 args_string = get_nvrtc_args();
-  curaii::NvrtcProgram prog(source.c_str(), name.c_str(), 0, nullptr, nullptr);
+using holoflow::runtime::detail::CachedLto;
+using holoflow::runtime::detail::configure_callback_plan;
 
-  std::vector<char *> args;
-  std::ranges::transform(args_string, std::back_inserter(args),
-                         [](const std::string &s) { return const_cast<char *>(s.c_str()); });
-
-  try {
-    NVRTC_CHECK(nvrtcCompileProgram(prog.get(), static_cast<int>(args.size()), args.data()));
-    size_t code_size = 0;
-    NVRTC_CHECK(nvrtcGetLTOIRSize(prog.get(), &code_size));
-    std::vector<char> lto(code_size);
-    NVRTC_CHECK(nvrtcGetLTOIR(prog.get(), lto.data()));
-    return lto;
-  } catch (const curaii::NvrtcError &e) {
-    size_t log_size = 0;
-    NVRTC_CHECK(nvrtcGetProgramLogSize(prog.get(), &log_size));
-    std::string log(log_size, '\0');
-    NVRTC_CHECK(nvrtcGetProgramLog(prog.get(), log.data()));
-    logger()->error("[Flatfield] NVRTC compilation log:\n{}", log);
-    throw e;
-  }
+CachedLto compile_source_to_lto(const std::string &source, const std::string &name) {
+  return CachedLto(source, name, get_nvrtc_args(), true);
 }
 
-std::vector<char> highpass_callback_lto(int width, int height) {
-  const int         filter_width = width / 2 + 1;
-  const float       scale        = 1.0f / static_cast<float>(width * height);
-  const std::string arch         = get_compute_arch();
-
-  using CacheKey = std::tuple<std::string, int, int>;
-  static std::mutex                            cache_mutex;
-  static std::map<CacheKey, std::vector<char>> cache;
-
-  const CacheKey key{arch, width, height};
-  {
-    std::scoped_lock lock(cache_mutex);
-    if (const auto it = cache.find(key); it != cache.end()) {
-      return it->second;
-    }
-  }
-
+CachedLto highpass_callback_lto(int width, int height) {
+  const int   filter_width = width / 2 + 1;
+  const float scale        = 1.0f / static_cast<float>(width * height);
   std::string src = "#define WIDTH " + std::to_string(width) + "ull\n" + "#define HEIGHT " +
                     std::to_string(height) + "ull\n" + "#define FILTER_WIDTH " +
                     std::to_string(filter_width) + "ull\n" + "#define SCALE " +
@@ -241,15 +209,7 @@ __device__ cuFloatComplex flatfield_highpass_callback(
 }
 )";
 
-  auto lto = compile_source_to_lto(src, "flatfield_highpass_callback.cu");
-  {
-    std::scoped_lock lock(cache_mutex);
-    auto [it, inserted] = cache.emplace(key, lto);
-    if (!inserted) {
-      return it->second;
-    }
-  }
-  return lto;
+  return compile_source_to_lto(src, "flatfield_highpass_callback.cu");
 }
 
 bool should_use_fft_flatfield(int height, int width, size_t kernel_y_size, size_t kernel_x_size) {
@@ -795,22 +755,21 @@ FlatfieldFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     curaii::CufftHandle fwd_plan;
     curaii::CufftHandle inv_plan;
     CUFFT_CHECK(cufftSetStream(fwd_plan.get(), ctx.stream));
-    CUFFT_CHECK(cufftSetStream(inv_plan.get(), ctx.stream));
-
-    auto *d_caller_info_ptr = reinterpret_cast<void *>(d_caller_info.get());
-    CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "flatfield_highpass_callback",
-                                      highpass_lto.data(), highpass_lto.size(), CUFFT_CB_LD_COMPLEX,
-                                      &d_caller_info_ptr));
-
     CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank_2d, n, inembed, istride, idist, CUDA_R_32F,
                                     spectrum_embed, ostride, spectrum_dist, CUDA_C_32F, batch_count,
                                     &work_size, CUDA_C_32F));
-    CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank_2d, n, spectrum_embed, istride,
-                                    spectrum_dist, CUDA_C_32F, inembed, ostride, idist, CUDA_R_32F,
-                                    batch_count, &work_size, CUDA_C_32F));
+    configure_callback_plan(inv_plan, ctx.stream, {&highpass_lto}, [&] {
+      auto *d_caller_info_ptr = reinterpret_cast<void *>(d_caller_info.get());
+      CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "flatfield_highpass_callback",
+                                        highpass_lto.data(), highpass_lto.size(),
+                                        CUFFT_CB_LD_COMPLEX, &d_caller_info_ptr));
+      CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank_2d, n, spectrum_embed, istride,
+                                      spectrum_dist, CUDA_C_32F, inembed, ostride, idist,
+                                      CUDA_R_32F, batch_count, &work_size, CUDA_C_32F));
+    });
 
     task->set_fft_data(std::move(fwd_plan), std::move(inv_plan), std::move(d_spectrum),
-                       std::move(d_caller_info), std::move(highpass_lto));
+                       std::move(d_caller_info), highpass_lto.take());
     return task;
   }
 

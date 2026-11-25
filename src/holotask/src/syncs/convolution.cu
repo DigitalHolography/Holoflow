@@ -24,7 +24,7 @@
 
 #include "bug.hh"
 #include "curaii/cufft.hh"
-#include "curaii/nvrtc.hh"
+#include "holoflow/runtime/detail/cached_lto.hh"
 #include "logger.hh"
 
 namespace holotask::syncs {
@@ -156,30 +156,14 @@ std::vector<std::string> get_nvrtc_args() {
   return args;
 }
 
-std::vector<char> compile_source_to_lto(const std::string &source, const std::string &name) {
-  auto                 args_string = get_nvrtc_args();
-  curaii::NvrtcProgram prog(source.c_str(), name.c_str(), 0, nullptr, nullptr);
-  std::vector<char *>  args;
-  std::ranges::transform(args_string, std::back_inserter(args),
-                         [](const std::string &s) { return const_cast<char *>(s.c_str()); });
-  try {
-    NVRTC_CHECK(nvrtcCompileProgram(prog.get(), static_cast<int>(args.size()), args.data()));
-    size_t code_size = 0;
-    NVRTC_CHECK(nvrtcGetLTOIRSize(prog.get(), &code_size));
-    std::vector<char> lto(code_size);
-    NVRTC_CHECK(nvrtcGetLTOIR(prog.get(), lto.data()));
-    return lto;
-  } catch (const curaii::NvrtcError &e) {
-    size_t log_size = 0;
-    NVRTC_CHECK(nvrtcGetProgramLogSize(prog.get(), &log_size));
-    std::string log(log_size, '\0');
-    NVRTC_CHECK(nvrtcGetProgramLog(prog.get(), log.data()));
-    logger()->error("[Convolution] NVRTC compilation log:\n{}", log);
-    throw e;
-  }
+using holoflow::runtime::detail::CachedLto;
+using holoflow::runtime::detail::configure_callback_plan;
+
+CachedLto compile_source_to_lto(const std::string &source, const std::string &name) {
+  return CachedLto(source, name, get_nvrtc_args());
 }
 
-std::vector<char> complex_multiply_callback_lto() {
+CachedLto complex_multiply_callback_lto() {
   std::string callback_source = R"(
   #include <cufft.h>
   
@@ -455,7 +439,7 @@ ConvolutionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
                                             parsed_kernel.height, last_write_time);
 
   task->create_fft_data();
-  task->lto() = complex_multiply_callback_lto();
+  auto lto = complex_multiply_callback_lto();
 
   constexpr int rank       = 2;
   long long int n[2]       = {static_cast<long long>(task->fft_data().padded_height),
@@ -476,19 +460,18 @@ ConvolutionFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto          executiontype = CUDA_C_32F;
 
   CUFFT_CHECK(cufftSetStream(task->fft_data().fft_plan.get(), task->stream()));
-  CUFFT_CHECK(cufftSetStream(task->fft_data().inv_plan.get(), task->stream()));
-
-  auto *d_info_ptr = reinterpret_cast<void *>(task->fft_data().d_callback_info.get());
-  CUFFT_CHECK(cufftXtSetJITCallback(task->fft_data().inv_plan.get(), "complex_multiply_callback",
-                                    task->lto().data(), task->lto().size(), CUFFT_CB_LD_COMPLEX,
-                                    &d_info_ptr));
-
   CUFFT_CHECK(cufftXtMakePlanMany(task->fft_data().fft_plan.get(), rank, n, inembed, istride, idist,
                                   inputtype, onembed, ostride, odist, outputtype, batch, &work_size,
                                   executiontype));
-  CUFFT_CHECK(cufftXtMakePlanMany(task->fft_data().inv_plan.get(), rank, n, inembed, istride, idist,
-                                  inputtype, onembed, ostride, odist, outputtype, batch, &work_size,
-                                  executiontype));
+  configure_callback_plan(task->fft_data().inv_plan, task->stream(), {&lto}, [&] {
+    auto *d_info_ptr = reinterpret_cast<void *>(task->fft_data().d_callback_info.get());
+    CUFFT_CHECK(cufftXtSetJITCallback(task->fft_data().inv_plan.get(), "complex_multiply_callback",
+                                      lto.data(), lto.size(), CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+    CUFFT_CHECK(cufftXtMakePlanMany(task->fft_data().inv_plan.get(), rank, n, inembed, istride,
+                                    idist, inputtype, onembed, ostride, odist, outputtype, batch,
+                                    &work_size, executiontype));
+  });
+  task->lto() = lto.take();
 
   cufftExecC2C(task->fft_data().fft_plan.get(), task->fft_data().d_padded_kernel.get(),
                task->fft_data().d_freq_kernel.get(), CUFFT_FORWARD);

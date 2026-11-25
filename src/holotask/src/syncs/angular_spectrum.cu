@@ -26,7 +26,7 @@
 
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
-#include "curaii/nvrtc.hh"
+#include "holoflow/runtime/detail/cached_lto.hh"
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
@@ -161,33 +161,15 @@ std::vector<std::string> get_nvrtc_args() {
   };
 }
 
-std::vector<char> compile_source_to_lto(const std::string &source, const std::string &name) {
-  auto                 args_string = get_nvrtc_args();
-  curaii::NvrtcProgram prog(source.c_str(), name.c_str(), 0, nullptr, nullptr);
+using holoflow::runtime::detail::CachedLto;
+using holoflow::runtime::detail::configure_callback_plan;
 
-  std::vector<char *> args;
-  std::ranges::transform(args_string, std::back_inserter(args),
-                         [](const std::string &s) { return const_cast<char *>(s.c_str()); });
-
-  try {
-    NVRTC_CHECK(nvrtcCompileProgram(prog.get(), static_cast<int>(args.size()), args.data()));
-    size_t code_size = 0;
-    NVRTC_CHECK(nvrtcGetLTOIRSize(prog.get(), &code_size));
-    std::vector<char> lto(code_size);
-    NVRTC_CHECK(nvrtcGetLTOIR(prog.get(), lto.data()));
-    return lto;
-  } catch (const curaii::NvrtcError &e) {
-    size_t log_size = 0;
-    NVRTC_CHECK(nvrtcGetProgramLogSize(prog.get(), &log_size));
-    std::string log(log_size, '\0');
-    NVRTC_CHECK(nvrtcGetProgramLog(prog.get(), log.data()));
-    logger()->error("[AngularSpectrum] NVRTC compilation log:\n{}", log);
-    throw e;
-  }
+CachedLto compile_source_to_lto(const std::string &source, const std::string &name) {
+  return CachedLto(source, name, get_nvrtc_args());
 }
 
-std::vector<char> load_input_lto(bool is_real, int input_width, int input_height, int output_width,
-                                 int output_height) {
+CachedLto load_input_lto(bool is_real, int input_width, int input_height, int output_width,
+                         int output_height) {
   std::string src = "#define ANGULAR_SPECTRUM_INPUT_IS_REAL " + std::to_string(is_real ? 1 : 0) +
                     "\n" + "#define INPUT_WIDTH " + std::to_string(input_width) + "ull\n" +
                     "#define INPUT_HEIGHT " + std::to_string(input_height) + "ull\n" +
@@ -228,7 +210,7 @@ __device__ cuFloatComplex load_angular_spectrum_input_callback(
   return compile_source_to_lto(src, "load_angular_spectrum_input_callback.cu");
 }
 
-std::vector<char> apply_transfer_function_lto(int width, int height) {
+CachedLto apply_transfer_function_lto(int width, int height) {
   std::string src = "#define WIDTH " + std::to_string(width) + "ull\n" + "#define HEIGHT " +
                     std::to_string(height) + "ull\n" +
                     "#define TRANSFER_FUNCTION_SIZE (WIDTH * HEIGHT)\n";
@@ -515,10 +497,9 @@ AngularSpectrumFactory::create(std::span<const holoflow::core::TDesc> input_desc
 
   // -- JIT callback -------------------------------------------------------------------------------
   const bool needs_input_callback = is_real || settings.padding.has_value();
-  auto       load_lto =
-      needs_input_callback ? load_input_lto(is_real, W, H, OW, OH) : std::vector<char>{};
-  auto transfer_function_lto = apply_transfer_function_lto(OW, OH);
-  auto d_transfer_function   = make_transfer_function(OW, OH, settings);
+  auto       load_lto = needs_input_callback ? load_input_lto(is_real, W, H, OW, OH) : CachedLto{};
+  auto       transfer_function_lto = apply_transfer_function_lto(OW, OH);
+  auto       d_transfer_function   = make_transfer_function(OW, OH, settings);
 
   ApplyTransferFunctionCallerInfo info{
       .transfer_function = d_transfer_function.get(),
@@ -544,26 +525,25 @@ AngularSpectrumFactory::create(std::span<const holoflow::core::TDesc> input_desc
 
   curaii::CufftHandle fwd_plan;
   curaii::CufftHandle inv_plan;
-  CUFFT_CHECK(cufftSetStream(fwd_plan.get(), ctx.stream));
-  CUFFT_CHECK(cufftSetStream(inv_plan.get(), ctx.stream));
-
-  auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
-  if (needs_input_callback) {
-    CUFFT_CHECK(cufftXtSetJITCallback(fwd_plan.get(), "load_angular_spectrum_input_callback",
-                                      load_lto.data(), load_lto.size(), CUFFT_CB_LD_COMPLEX,
-                                      nullptr));
-  }
-  CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_transfer_function_callback",
-                                    transfer_function_lto.data(), transfer_function_lto.size(),
-                                    CUFFT_CB_LD_COMPLEX, &d_info_ptr));
-
-  CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, inputtype,
-                                  onembed, ostride, odist, outputtype, batch, &work_size,
-                                  executiontype));
-
-  CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank, n, inembed, istride, idist, inputtype,
-                                  onembed, ostride, odist, outputtype, batch, &work_size,
-                                  executiontype));
+  configure_callback_plan(fwd_plan, ctx.stream, {&load_lto}, [&] {
+    if (needs_input_callback) {
+      CUFFT_CHECK(cufftXtSetJITCallback(fwd_plan.get(), "load_angular_spectrum_input_callback",
+                                        load_lto.data(), load_lto.size(), CUFFT_CB_LD_COMPLEX,
+                                        nullptr));
+    }
+    CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, inputtype,
+                                    onembed, ostride, odist, outputtype, batch, &work_size,
+                                    executiontype));
+  });
+  configure_callback_plan(inv_plan, ctx.stream, {&transfer_function_lto}, [&] {
+    auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
+    CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_transfer_function_callback",
+                                      transfer_function_lto.data(), transfer_function_lto.size(),
+                                      CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+    CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank, n, inembed, istride, idist, inputtype,
+                                    onembed, ostride, odist, outputtype, batch, &work_size,
+                                    executiontype));
+  });
 
   // Construct task directly
   auto task                   = std::make_unique<AngularSpectrum>();
@@ -573,8 +553,8 @@ AngularSpectrumFactory::create(std::span<const holoflow::core::TDesc> input_desc
   task->inv_plan              = std::move(inv_plan);
   task->d_transfer_function   = std::move(d_transfer_function);
   task->d_caller_info         = std::move(d_info);
-  task->load_lto              = std::move(load_lto);
-  task->transfer_function_lto = std::move(transfer_function_lto);
+  task->load_lto              = load_lto.take();
+  task->transfer_function_lto = transfer_function_lto.take();
 
   return task;
 }

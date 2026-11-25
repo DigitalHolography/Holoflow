@@ -32,8 +32,8 @@
 
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
-#include "curaii/nvrtc.hh"
 #include "fresnel_cuda_graph.cuh"
+#include "holoflow/runtime/detail/cached_lto.hh"
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
@@ -245,34 +245,15 @@ std::vector<std::string> get_nvrtc_args() {
   };
 }
 
-std::vector<char> compile_source_to_lto(const std::string &source, const std::string &name) {
-  auto                 args_string = get_nvrtc_args();
-  curaii::NvrtcProgram prog(source.c_str(), name.c_str(), 0, nullptr, nullptr);
+using holoflow::runtime::detail::CachedLto;
+using holoflow::runtime::detail::configure_callback_plan;
 
-  std::vector<char *> args;
-  std::ranges::transform(args_string, std::back_inserter(args),
-                         [](const std::string &s) { return const_cast<char *>(s.c_str()); });
-
-  try {
-    NVRTC_CHECK(nvrtcCompileProgram(prog.get(), static_cast<int>(args.size()), args.data()));
-    size_t code_size = 0;
-    NVRTC_CHECK(nvrtcGetLTOIRSize(prog.get(), &code_size));
-    std::vector<char> lto(code_size);
-    NVRTC_CHECK(nvrtcGetLTOIR(prog.get(), lto.data()));
-    return lto;
-  } catch (const curaii::NvrtcError &e) {
-    size_t log_size = 0;
-    NVRTC_CHECK(nvrtcGetProgramLogSize(prog.get(), &log_size));
-    std::string log(log_size, '\0');
-    NVRTC_CHECK(nvrtcGetProgramLog(prog.get(), log.data()));
-    logger()->error("[FresnelDiffraction] NVRTC compilation log:\n{}", log);
-    throw e;
-  }
+CachedLto compile_source_to_lto(const std::string &source, const std::string &name) {
+  return CachedLto(source, name, get_nvrtc_args());
 }
 
-std::vector<char> apply_lens_lto(bool is_fast, bool is_real, unsigned int width,
-                                 unsigned long long idist, unsigned long long stride_h,
-                                 unsigned long long istride) {
+CachedLto apply_lens_lto(bool is_fast, bool is_real, unsigned int width, unsigned long long idist,
+                         unsigned long long stride_h, unsigned long long istride) {
   // Inject compile-time constants for the NVRTC compiler
   std::string src = "#define WIDTH " + std::to_string(width) + "u\n" + "#define IDIST " +
                     std::to_string(idist) + "ull\n" + "#define STRIDE_H " +
@@ -703,15 +684,6 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
 
   // -- cuFFT plan ---------------------------------------------------------------------------------
   curaii::CufftHandle plan;
-  CUFFT_CHECK(cufftSetStream(plan.get(), ctx.stream));
-
-  auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
-  CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "apply_lens_callback2", lto.data(), lto.size(),
-                                    CUFFT_CB_LD_COMPLEX, &d_info_ptr));
-  if (settings.output_magnitude) {
-    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "store_magnitude_callback", lto.data(),
-                                      lto.size(), CUFFT_CB_ST_COMPLEX, &d_info_ptr));
-  }
 
   size_t        work_size     = 0;
   long long int n[2]          = {H, W};
@@ -721,10 +693,19 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
   cudaDataType  outputtype    = CUDA_C_32F;
   cudaDataType  executiontype = CUDA_C_32F;
 
-  CUFFT_CHECK(cufftXtMakePlanMany(plan.get(), 2, n, inembed, in_istride, best_group.in_idist,
-                                  inputtype, onembed, out_istride, best_group.out_idist, outputtype,
-                                  static_cast<long long int>(best_group.size), &work_size,
-                                  executiontype));
+  configure_callback_plan(plan, ctx.stream, {&lto}, [&] {
+    auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
+    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "apply_lens_callback2", lto.data(), lto.size(),
+                                      CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+    if (settings.output_magnitude) {
+      CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "store_magnitude_callback", lto.data(),
+                                        lto.size(), CUFFT_CB_ST_COMPLEX, &d_info_ptr));
+    }
+    CUFFT_CHECK(cufftXtMakePlanMany(plan.get(), 2, n, inembed, in_istride, best_group.in_idist,
+                                    inputtype, onembed, out_istride, best_group.out_idist,
+                                    outputtype, static_cast<long long int>(best_group.size),
+                                    &work_size, executiontype));
+  });
 
   auto task          = std::make_unique<FresnelDiffraction>();
   task->settings     = settings;
@@ -744,7 +725,7 @@ FresnelDiffractionFactory::create(std::span<const holoflow::core::TDesc> input_d
         curaii::make_unique_device_ptr<cuFloatComplex>(best_group.size * best_group.out_idist);
   }
   task->d_caller_info = std::move(d_info);
-  task->lto           = std::move(lto);
+  task->lto           = lto.take();
 
   return task;
 }

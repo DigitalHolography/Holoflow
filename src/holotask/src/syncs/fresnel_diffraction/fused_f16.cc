@@ -17,9 +17,9 @@
 #include "curaii/cuda.hh"
 #include "curaii/nvrtc.hh"
 #include "fresnel_fused_f16_source.hh"
+#include "holoflow/runtime/detail/nvrtc_cache.hh"
 #include "holoflow/runtime/tracing.hh"
 #include "logger.hh"
-#include "nvrtc_cache.hh"
 #include "runtime_assets.hh"
 #include <algorithm>
 #include <atomic>
@@ -79,8 +79,9 @@ CUresult load_kernel_module(CUmodule *module, int sm, bool half, bool complex_ha
   auto                     disk_key = options;
   constexpr char           program_name[] = "fused_f16.cu";
   disk_key.emplace_back(program_name);
-  const holotask::detail::NvrtcCache disk("fresnel-ptx",
-                                          holotask::detail::fresnel_fused_f16_source_id, disk_key);
+  const holoflow::runtime::detail::NvrtcCache disk("fresnel-ptx",
+                                                   holotask::detail::fresnel_fused_f16_source_id,
+                                                   disk_key, HOLOFLOW_NVRTC_ASSET_VERSION);
   if (auto ptx = disk.read(); !ptx.empty() && ptx.back() == '\0' && load(ptx) == CUDA_SUCCESS) {
     cache.emplace(key, std::move(ptx));
     return CUDA_SUCCESS;

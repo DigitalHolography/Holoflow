@@ -30,7 +30,7 @@
 
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
-#include "curaii/nvrtc.hh"
+#include "holoflow/runtime/detail/cached_lto.hh"
 
 template <typename T> using DevPtr = curaii::unique_device_ptr<T>;
 
@@ -114,32 +114,14 @@ std::vector<std::string> get_nvrtc_args() {
   };
 }
 
-std::vector<char> compile_source_to_lto(const std::string &source, const std::string &name) {
-  auto                 args_string = get_nvrtc_args();
-  curaii::NvrtcProgram prog(source.c_str(), name.c_str(), 0, nullptr, nullptr);
+using holoflow::runtime::detail::CachedLto;
+using holoflow::runtime::detail::configure_callback_plan;
 
-  std::vector<char *> args;
-  std::ranges::transform(args_string, std::back_inserter(args),
-                         [](const std::string &s) { return const_cast<char *>(s.c_str()); });
-
-  try {
-    NVRTC_CHECK(nvrtcCompileProgram(prog.get(), static_cast<int>(args.size()), args.data()));
-    size_t code_size = 0;
-    NVRTC_CHECK(nvrtcGetLTOIRSize(prog.get(), &code_size));
-    std::vector<char> lto(code_size);
-    NVRTC_CHECK(nvrtcGetLTOIR(prog.get(), lto.data()));
-    return lto;
-  } catch (const curaii::NvrtcError &e) {
-    size_t log_size = 0;
-    NVRTC_CHECK(nvrtcGetProgramLogSize(prog.get(), &log_size));
-    std::string log(log_size, '\0');
-    NVRTC_CHECK(nvrtcGetProgramLog(prog.get(), log.data()));
-    logger()->error("[Filter2D] NVRTC compilation log:\n{}", log);
-    throw e;
-  }
+CachedLto compile_source_to_lto(const std::string &source, const std::string &name) {
+  return CachedLto(source, name, get_nvrtc_args());
 }
 
-std::vector<char> apply_filter_lto(int filter_width, int height) {
+CachedLto apply_filter_lto(int filter_width, int height) {
   std::string src = "#define FILTER_WIDTH " + std::to_string(filter_width) + "ull\n" +
                     "#define HEIGHT " + std::to_string(height) + "ull\n" +
                     "#define FILTER_SIZE (FILTER_WIDTH * HEIGHT)\n";
@@ -534,33 +516,33 @@ Filter2DFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   curaii::CufftHandle fwd_plan;
   curaii::CufftHandle inv_plan;
   CUFFT_CHECK(cufftSetStream(fwd_plan.get(), ctx.stream));
-  CUFFT_CHECK(cufftSetStream(inv_plan.get(), ctx.stream));
-
-  auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
-  CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_filter_callback", filter_lto.data(),
-                                    filter_lto.size(), CUFFT_CB_LD_COMPLEX, &d_info_ptr));
-
   if (is_real) {
     CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, CUDA_R_32F,
                                     spectrum_embed, ostride, spectrum_dist, CUDA_C_32F, batch,
-                                    &work_size, CUDA_C_32F));
-
-    CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank, n, spectrum_embed, istride, spectrum_dist,
-                                    CUDA_C_32F, onembed, ostride, odist, CUDA_R_32F, batch,
                                     &work_size, CUDA_C_32F));
   } else {
     CUFFT_CHECK(cufftXtMakePlanMany(fwd_plan.get(), rank, n, inembed, istride, idist, CUDA_C_32F,
                                     onembed, ostride, odist, CUDA_C_32F, batch, &work_size,
                                     CUDA_C_32F));
-
-    CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank, n, inembed, istride, idist, CUDA_C_32F,
-                                    onembed, ostride, odist, CUDA_C_32F, batch, &work_size,
-                                    CUDA_C_32F));
   }
+  configure_callback_plan(inv_plan, ctx.stream, {&filter_lto}, [&] {
+    auto *d_info_ptr = reinterpret_cast<void *>(d_info.get());
+    CUFFT_CHECK(cufftXtSetJITCallback(inv_plan.get(), "apply_filter_callback", filter_lto.data(),
+                                      filter_lto.size(), CUFFT_CB_LD_COMPLEX, &d_info_ptr));
+    if (is_real) {
+      CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank, n, spectrum_embed, istride,
+                                      spectrum_dist, CUDA_C_32F, onembed, ostride, odist,
+                                      CUDA_R_32F, batch, &work_size, CUDA_C_32F));
+    } else {
+      CUFFT_CHECK(cufftXtMakePlanMany(inv_plan.get(), rank, n, inembed, istride, idist, CUDA_C_32F,
+                                      onembed, ostride, odist, CUDA_C_32F, batch, &work_size,
+                                      CUDA_C_32F));
+    }
+  });
 
   return std::make_unique<Filter2D>(settings, idesc, std::move(fwd_plan), std::move(inv_plan),
                                     std::move(d_filter), std::move(d_spectrum), std::move(d_info),
-                                    std::move(filter_lto));
+                                    filter_lto.take());
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>

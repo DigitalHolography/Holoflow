@@ -27,7 +27,7 @@
 
 #include "curaii/cuda.hh"
 #include "curaii/cufft.hh"
-#include "curaii/nvrtc.hh"
+#include "holoflow/runtime/detail/cached_lto.hh"
 
 namespace holonp {
 
@@ -113,33 +113,14 @@ std::vector<std::string> get_nvrtc_args() {
   };
 }
 
-std::vector<char> compile_source_to_lto(const std::string &source, const std::string &name) {
-  const auto           args_string = get_nvrtc_args();
-  curaii::NvrtcProgram prog(source.c_str(), name.c_str(), 0, nullptr, nullptr);
+using holoflow::runtime::detail::CachedLto;
+using holoflow::runtime::detail::configure_callback_plan;
 
-  std::vector<char *> args;
-  args.reserve(args_string.size());
-  for (const auto &arg : args_string) {
-    args.push_back(const_cast<char *>(arg.c_str()));
-  }
-
-  try {
-    NVRTC_CHECK(nvrtcCompileProgram(prog.get(), static_cast<int>(args.size()), args.data()));
-    size_t code_size = 0;
-    NVRTC_CHECK(nvrtcGetLTOIRSize(prog.get(), &code_size));
-    std::vector<char> lto(code_size);
-    NVRTC_CHECK(nvrtcGetLTOIR(prog.get(), lto.data()));
-    return lto;
-  } catch (const curaii::NvrtcError &e) {
-    size_t log_size = 0;
-    NVRTC_CHECK(nvrtcGetProgramLogSize(prog.get(), &log_size));
-    std::string log(log_size, '\0');
-    NVRTC_CHECK(nvrtcGetProgramLog(prog.get(), log.data()));
-    throw std::runtime_error(std::string(e.what()) + "\n" + log);
-  }
+CachedLto compile_source_to_lto(const std::string &source, const std::string &name) {
+  return CachedLto(source, name, get_nvrtc_args());
 }
 
-std::vector<char> load_real_as_complex_lto() {
+CachedLto load_real_as_complex_lto() {
   std::string src = R"(
 #include <cuComplex.h>
 
@@ -152,7 +133,7 @@ __device__ cuFloatComplex load_real_as_complex_callback(
   return compile_source_to_lto(src, "load_real_as_complex_callback.cu");
 }
 
-std::vector<char> store_scaled_complex_lto() {
+CachedLto store_scaled_complex_lto() {
   std::string src = R"(
 #include <cuComplex.h>
 
@@ -334,16 +315,13 @@ FFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   cudaDataType  executiontype = CUDA_C_32F;
 
   curaii::CufftHandle plan;
-  CUFFT_CHECK(cufftSetStream(plan.get(), ctx.stream));
 
-  std::vector<char> load_lto;
+  CachedLto load_lto;
   if (idesc.dtype == holoflow::core::DType::F32) {
     load_lto = load_real_as_complex_lto();
-    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "load_real_as_complex_callback", load_lto.data(),
-                                      load_lto.size(), CUFFT_CB_LD_COMPLEX, nullptr));
   }
 
-  std::vector<char>            store_lto;
+  CachedLto                    store_lto;
   DevPtr<FFTStoreCallbackInfo> d_store_info;
   const float                  scale = norm_scale(settings.norm, n_fft, settings.inverse);
   if (scale != 1.0f) {
@@ -354,17 +332,28 @@ FFTFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     };
     CUDA_CHECK(cudaMemcpyAsync(d_store_info.get(), &info, sizeof(info), cudaMemcpyHostToDevice,
                                ctx.stream));
-    auto *d_store_info_ptr = reinterpret_cast<void *>(d_store_info.get());
-    CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "store_scaled_complex_callback", store_lto.data(),
-                                      store_lto.size(), CUFFT_CB_ST_COMPLEX, &d_store_info_ptr));
   }
 
-  CUFFT_CHECK(cufftXtMakePlanMany(plan.get(), rank, n, inembed, istride, idist, inputtype, onembed,
-                                  ostride, odist, outputtype, batch_i, &work_size, executiontype));
+  configure_callback_plan(plan, ctx.stream, {&load_lto, &store_lto}, [&] {
+    if (idesc.dtype == holoflow::core::DType::F32) {
+      CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "load_real_as_complex_callback",
+                                        load_lto.data(), load_lto.size(), CUFFT_CB_LD_COMPLEX,
+                                        nullptr));
+    }
+    if (scale != 1.0f) {
+      auto *d_store_info_ptr = reinterpret_cast<void *>(d_store_info.get());
+      CUFFT_CHECK(cufftXtSetJITCallback(plan.get(), "store_scaled_complex_callback",
+                                        store_lto.data(), store_lto.size(), CUFFT_CB_ST_COMPLEX,
+                                        &d_store_info_ptr));
+    }
+    CUFFT_CHECK(cufftXtMakePlanMany(plan.get(), rank, n, inembed, istride, idist, inputtype,
+                                    onembed, ostride, odist, outputtype, batch_i, &work_size,
+                                    executiontype));
+  });
 
   return std::unique_ptr<holoflow::core::ISyncTask>(
       new FFT(settings, idesc, std::move(plan), n_fft, exec_count, exec_stride, idesc.dtype,
-              ctx.stream, std::move(load_lto), std::move(store_lto), std::move(d_store_info)));
+              ctx.stream, load_lto.take(), store_lto.take(), std::move(d_store_info)));
 }
 
 std::unique_ptr<holoflow::core::ISyncTask>

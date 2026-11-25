@@ -3,23 +3,31 @@
 #pragma once
 
 #include "holoflow/runtime/tracing.hh"
-#include "runtime_assets.hh"
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <Windows.h>
 #include <tlhelp32.h>
 
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <memory>
 #include <span>
+#include <vector>
 
 #include <nvrtc.h>
 
-namespace holotask::detail {
+namespace holoflow::runtime::detail {
 
 class NvrtcCache {
 public:
+  NvrtcCache() = default;
+
   NvrtcCache(std::string_view kind, std::string_view source_id,
-             std::span<const std::string> options, const std::filesystem::path &link_input = {}) {
+             std::span<const std::string> options, std::string_view asset_version,
+             const std::filesystem::path &link_input = {}) {
     try {
       if (const auto *disabled = std::getenv("HOLOFLOW_NVRTC_CACHE_DISABLE");
           disabled && std::string_view(disabled) == "1")
@@ -34,7 +42,7 @@ public:
 
       append(kind);
       append(source_id);
-      append(HOLOFLOW_NVRTC_ASSET_VERSION);
+      append(asset_version);
       for (const auto &option : options)
         append(option);
       if (!link_input.empty())
@@ -158,4 +166,4 @@ private:
   }
 };
 
-} // namespace holotask::detail
+} // namespace holoflow::runtime::detail

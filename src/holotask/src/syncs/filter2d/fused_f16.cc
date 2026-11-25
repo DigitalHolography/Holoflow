@@ -16,6 +16,7 @@
 #include "curaii/cuda.hh"
 #include "curaii/nvrtc.hh"
 #include "filter_fused_f16_source.hh"
+#include "holoflow/runtime/detail/nvrtc_cache.hh"
 #include "logger.hh"
 #include "runtime_assets.hh"
 #include <algorithm>
@@ -37,13 +38,15 @@ void driver(CUresult result) {
     throw std::runtime_error(text ? text : "F16 Filter2D driver failure");
   }
 }
-std::vector<char> compile(int sm, bool half) {
+template <typename Load> void load_filter_module(int sm, bool half, Load load) {
   static std::mutex                               mutex;
   static std::map<std::string, std::vector<char>> cache;
   const auto      key = std::to_string(sm) + "/" + std::to_string(half);
   std::lock_guard lock(mutex);
-  if (auto it = cache.find(key); it != cache.end())
-    return it->second;
+  if (auto it = cache.find(key); it != cache.end()) {
+    load(it->second);
+    return;
+  }
   const auto cuda   = holotask::detail::cuda_include_directory();
   const auto module = holotask::detail::containing_module_directory();
   auto       dx     = module / "_assets/nvrtc/mathdx/include";
@@ -51,15 +54,30 @@ std::vector<char> compile(int sm, bool half) {
     dx = module / HOLOFLOW_NVRTC_ASSET_RELATIVE_DIR / "mathdx/include";
   if (!std::filesystem::exists(dx / "cufftdx.hpp"))
     dx = HOLOFLOW_CUSOLVERDX_INCLUDE_DIR;
+  std::vector<std::string> options = {"--std=c++17",
+                                      "--device-as-default-execution-space",
+                                      "--gpu-architecture=compute_" + std::to_string(sm / 10),
+                                      "-DFFT_SM=" + std::to_string(sm),
+                                      "-DINPUT_HALF=" + std::to_string(half),
+                                      "--include-path=" + cuda.string(),
+                                      "--include-path=" + (cuda / "cccl").string(),
+                                      "--include-path=" + dx.string()};
+  const holoflow::runtime::tracing::ScopedTrace scope("Filter2D F16 Module", "detail");
+  const holoflow::runtime::detail::NvrtcCache   disk("filter2d-ptx",
+                                                     holotask::detail::filter_fused_f16_source_id,
+                                                     options, HOLOFLOW_NVRTC_ASSET_VERSION);
+  if (auto ptx = disk.read(); !ptx.empty() && ptx.back() == '\0') {
+    try {
+      load(ptx);
+      cache.emplace(key, std::move(ptx));
+      return;
+    } catch (const std::runtime_error &) {
+      const holoflow::runtime::tracing::ScopedTrace retry("Filter2D F16 Cached PTX Rejected",
+                                                          "detail");
+    }
+  }
+  const holoflow::runtime::tracing::ScopedTrace compile("NVRTC Compile Filter2D F16", "detail");
   curaii::NvrtcProgram      program(holotask::detail::filter_fused_f16_source, "fused_f16.cu");
-  std::vector<std::string>  options = {"--std=c++17",
-                                       "--device-as-default-execution-space",
-                                       "--gpu-architecture=compute_" + std::to_string(sm / 10),
-                                       "-DFFT_SM=" + std::to_string(sm),
-                                       "-DINPUT_HALF=" + std::to_string(half),
-                                       "--include-path=" + cuda.string(),
-                                       "--include-path=" + (cuda / "cccl").string(),
-                                       "--include-path=" + dx.string()};
   std::vector<const char *> ptrs;
   for (auto &option : options)
     ptrs.push_back(option.c_str());
@@ -75,8 +93,9 @@ std::vector<char> compile(int sm, bool half) {
   NVRTC_CHECK(nvrtcGetPTXSize(program.get(), &size));
   std::vector<char> ptx(size);
   NVRTC_CHECK(nvrtcGetPTX(program.get(), ptx.data()));
-  cache.emplace(key, ptx);
-  return ptx;
+  load(ptx);
+  disk.write(ptx);
+  cache.emplace(key, std::move(ptx));
 }
 struct Module {
   CUmodule value{};
@@ -134,18 +153,25 @@ public:
     CUDA_CHECK(cudaGetDevice(&device));
     cudaDeviceProp prop{};
     CUDA_CHECK(cudaGetDeviceProperties(&prop, device));
-    auto ptx =
-        compile(prop.major * 100 + prop.minor * 10, input.dtype == holoflow::core::DType::F16);
     driver(cuCtxGetCurrent(&context_));
-    driver(cuModuleLoadData(&module_.value, ptx.data()));
-    peak_     = function("peak_kernel");
-    scale_    = function("scale_kernel");
-    mask_fn_  = function("mask_kernel");
-    steps_[0] = function("forward_x");
-    steps_[1] = function("filter_y");
-    steps_[2] = function("inverse_x");
-    xs_       = constant("x_shared");
-    ys_       = constant("y_shared");
+    load_filter_module(prop.major * 100 + prop.minor * 10,
+                       input.dtype == holoflow::core::DType::F16, [&](const auto &ptx) {
+                         if (module_.value) {
+                           driver(cuModuleUnload(module_.value));
+                           module_.value = nullptr;
+                         }
+                         CUmodule loaded{};
+                         driver(cuModuleLoadData(&loaded, ptx.data()));
+                         module_.value = loaded;
+                         peak_         = function("peak_kernel");
+                         scale_        = function("scale_kernel");
+                         mask_fn_      = function("mask_kernel");
+                         steps_[0]     = function("forward_x");
+                         steps_[1]     = function("filter_y");
+                         steps_[2]     = function("inverse_x");
+                         xs_           = constant("x_shared");
+                         ys_           = constant("y_shared");
+                       });
     for (int i = 0; i < 3; ++i)
       driver(cuFuncSetAttribute(steps_[i], CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
                                 int(i == 1 ? ys_ : xs_)));
