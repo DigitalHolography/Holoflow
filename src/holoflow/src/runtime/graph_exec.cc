@@ -86,19 +86,6 @@ std::string task_range_name(std::string_view operation, const core::NodeSpec &sp
   return std::format("{}: {} ({})", operation, spec.name, spec.kind);
 }
 
-[[noreturn]] inline void log_and_abort_current_exception(std::string_view thread_name) {
-  try {
-    throw;
-  } catch (const std::exception &e) {
-    logger()->critical("[{}] Fatal runtime exception:\n{}", thread_name, e.what());
-  } catch (...) {
-    logger()->critical("[{}] Fatal runtime exception: <non-std exception>", thread_name);
-  }
-
-  logger()->flush();
-  std::abort();
-}
-
 } // namespace
 
 void *MemoryBlock::get() {
@@ -135,7 +122,11 @@ Scheduler::Scheduler(const GraphPlan &graph, const std::vector<Section> &section
 Scheduler::~Scheduler() {
   if (is_running()) {
     request_stop();
-    wait();
+    try {
+      wait();
+    } catch (...) {
+      // Destructors must not propagate a failure from a worker thread.
+    }
   } else {
     stop_metrics_thread();
   }
@@ -165,6 +156,10 @@ void Scheduler::start() {
   }
 
   stop_.store(false);
+  {
+    std::lock_guard lock(failure_mutex_);
+    failure_ = nullptr;
+  }
   reset_metrics_state();
   start_metrics_thread();
   threads_.reserve(sections_.size());
@@ -200,7 +195,22 @@ void Scheduler::wait() {
   logger()->info("[Scheduler::wait] Scheduler stopped");
   running_.store(false);
   stop_metrics_thread();
-  // TODO: Is this really the best place to reset running_?
+  std::exception_ptr failure;
+  {
+    std::lock_guard lock(failure_mutex_);
+    failure = failure_;
+  }
+  if (failure)
+    std::rethrow_exception(failure);
+}
+
+void Scheduler::capture_failure(std::exception_ptr failure) noexcept {
+  {
+    std::lock_guard lock(failure_mutex_);
+    if (!failure_)
+      failure_ = std::move(failure);
+  }
+  stop_.store(true);
 }
 
 bool Scheduler::is_running() const { return running_.load(); }
@@ -312,8 +322,7 @@ void Scheduler::run_router() {
     }
     logger()->info("[Scheduler::run_router] Event router stopped");
   } catch (...) {
-    stop_.store(true);
-    log_and_abort_current_exception("Scheduler::run_router");
+    capture_failure(std::current_exception());
   }
 }
 
@@ -431,9 +440,7 @@ void Scheduler::run_section(int section_id) {
         break;
     }
   } catch (...) {
-    stop_.store(true);
-    log_and_abort_current_exception(
-        std::format("Scheduler::run_section section={} id={}", sec.name, section_id));
+    capture_failure(std::current_exception());
   }
 }
 

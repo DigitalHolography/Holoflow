@@ -368,7 +368,11 @@ void Compiler::Impl::setup_logging() {
   } else {
     logger_ = spdlog::stdout_color_mt("compiler");
   }
-  logger_->set_level(config_.verbose_tracing ? spdlog::level::trace : spdlog::level::info);
+  // Keep detailed file diagnostics, but respect the application's console level.
+  auto level = config_.log_dir.empty() ? spdlog::default_logger()->level() : spdlog::level::info;
+  if (config_.verbose_tracing)
+    level = spdlog::level::trace;
+  logger_->set_level(level);
 }
 
 ScopedTrace Compiler::Impl::trace_scope(std::string name, std::string category) {

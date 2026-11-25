@@ -387,7 +387,7 @@ void ImageRenderingWidget::set_focus_mode(bool enabled) {
   focus_controls_->setVisible(enabled);
   autofocus_widget_->setEnabled(!enabled);
   autofocus_widget_->setVisible(!enabled);
-  setTitle(enabled ? tr("OCT - HOLO VOLUME") : tr("IMAGE RENDERING"));
+  setTitle(enabled ? tr("TOMOGRAPHIC - HOLO VOLUME") : tr("IMAGE RENDERING"));
 }
 
 } // namespace holovibes::ui

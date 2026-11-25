@@ -121,7 +121,7 @@ void ImportWidget::setup_ui() {
 
   cam_check_ = new QCheckBox("Use Camera", this);
   main_layout->addWidget(cam_check_);
-  mtd_check_ = new QCheckBox(tr("OCT mode"), this);
+  mtd_check_ = new QCheckBox(tr("Tomographic mode"), this);
   mtd_check_->setToolTip(
       tr("Explore a volume: MTD diffraction tomography or .holo numerical refocusing."));
   main_layout->addWidget(mtd_check_);

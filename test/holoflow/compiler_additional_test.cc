@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <memory>
 #include <span>
+#include <spdlog/spdlog.h>
 
 #include "holoflow/runtime/compiler.hh"
 #include "support/math_tasks.hh"
@@ -113,6 +114,30 @@ public:
 };
 
 } // namespace
+
+TEST(CompilerLoggingTest, RespectsApplicationLevelUnlessVerboseTracingIsRequested) {
+  auto       default_logger = spdlog::default_logger();
+  const auto previous       = default_logger->level();
+  default_logger->set_level(spdlog::level::warn);
+  holoflow::core::Registry registry;
+  {
+    holoflow::runtime::Compiler compiler(registry,
+                                         {.verbose_tracing = false, .enable_profiling = false});
+    auto                        logger = spdlog::get("compiler");
+    EXPECT_NE(logger, nullptr);
+    if (logger)
+      EXPECT_EQ(logger->level(), spdlog::level::warn);
+  }
+  {
+    holoflow::runtime::Compiler compiler(registry,
+                                         {.verbose_tracing = true, .enable_profiling = false});
+    auto                        logger = spdlog::get("compiler");
+    EXPECT_NE(logger, nullptr);
+    if (logger)
+      EXPECT_EQ(logger->level(), spdlog::level::trace);
+  }
+  default_logger->set_level(previous);
+}
 
 TEST(CompilerTest, CompilesAnEmptyGraph) {
   holoflow::core::Registry    registry;

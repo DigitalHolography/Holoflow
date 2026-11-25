@@ -1,12 +1,12 @@
-# OCT volume modes: Holovibes STFT and propagation stacks
+# Tomographic volume modes: Holovibes STFT and propagation stacks
 
 ## Open a recording
-1. Enable **OCT mode** in IMPORT. The first and default source is **.holo (Holovibes / focus stack)**; select a raw little-endian U8/U16 recording.
-2. In **OCT - HOLO VOLUME**, choose the reconstruction method. **Holovibes STFT volume** is the default and matches the supplied Holovibes reference settings. **Single-frame propagation stack** retains the original numerical refocusing mode.
+1. Enable **Tomographic mode** in IMPORT. The first and default source is **.holo (Holovibes / focus stack)**; select a raw little-endian U8/U16 recording.
+2. In **TOMOGRAPHIC - HOLO VOLUME**, choose the reconstruction method. **Holovibes STFT volume** is the default and matches the supplied Holovibes reference settings. **Single-frame propagation stack** retains the original numerical refocusing mode.
 3. Press **Start**. STFT continuously processes successive complete windows (512 frames by default), updating XY/XZ/YZ together. **Continuous playback (loop)** and **Playback FPS limit** are in the processing panel; the default limit is 20 output windows per second, subject to processing speed. Pause freezes playback; resume continues from the retained window. Disable continuous playback for a static window. Propagation mode remains a single-frame volume.
-4. MTD remains available under **OCT mode -> MTD dataset (tomography)**. Ordinary playback remains available with OCT mode disabled. Stop before changing source.
+4. MTD remains available under **Tomographic mode -> MTD dataset (tomography)**. Ordinary playback remains available with Tomographic mode disabled. Stop before changing source.
 
-The Auto Focus panel is hidden in OCT mode: its Shack-Hartmann/Zernike processing is not part of either OCT reconstruction graph. It returns when OCT is disabled. Optical parameters remain editable; file-loading errors appear below the controls.
+The Auto Focus panel is hidden in Tomographic mode: its Shack-Hartmann/Zernike processing is not part of either volume reconstruction graph. It returns when Tomographic mode is disabled. Optical parameters remain editable; file-loading errors appear below the controls.
 
 ## Holovibes STFT reference
 The supplied screenshot uses Angular Spectrum, STFT with 512 frames/window/stride, wavelength 852 nm, spatial focus 2 mm, spatial filter radii 20 and 362 pixels, magnitude display, no FFT shift, one output accumulation, XY band start 224 with width 20, X/Y start 0 with widths 20, auto contrast and image-level renormalization.
@@ -21,7 +21,7 @@ The reference's **Boundary = 86.5 mm** is a derived value, not an additional pro
 - X width, Y width and XY band width use Holovibes' inclusive extent: width 0 samples one plane; width 20 samples up to 21 planes. Ranges clip safely at the volume boundary.
 - XZ/XP shows X horizontally and the temporal bin vertically. YZ/YP shows the temporal bin horizontally and Y vertically, matching Holovibes.
 - Auto contrast uses each view's 0.5th/99.5th percentiles; the first two temporal bins are excluded when estimating cut contrast. Disable it to use shared manual limits.
-- **Fit images to panels** fills the available dock area. Disable it to retain pixel aspect.
+- **Fit images to panels** is off by default to retain pixel aspect. Enable it to fill the available dock area.
 
 ### Move slices directly in the views
 Click a view to focus it, then press **Space** to unlock slice movement. Move the mouse over the image; press **Space** again to lock. Changing focus also locks the previous view. A small in-view hint shows the current state.

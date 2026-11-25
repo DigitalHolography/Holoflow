@@ -30,6 +30,9 @@ struct MTDDatasetSettings {
 MTDDatasetSettings load_mtd_dataset(const std::filesystem::path &directory,
                                     std::optional<double>        medium_index = std::nullopt);
 
+/// Reject reconstructions whose minimum known live buffers exceed available GPU memory.
+void validate_mtd_device_budget(int dimension, bool retain_display_volume);
+
 struct MTDOutputSettings {
   std::filesystem::path volume_path; ///< Empty: retain volume in memory without export.
   std::optional<std::filesystem::path> slice_path;

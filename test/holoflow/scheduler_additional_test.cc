@@ -20,6 +20,7 @@ namespace {
 struct ResultState {
   holoflow::core::OpResult result = holoflow::core::OpResult::Eof;
   std::atomic<int>         calls{0};
+  bool                     throw_on_execute = false;
 };
 
 class ResultTask final : public holoflow::core::ISyncTask {
@@ -27,6 +28,8 @@ public:
   explicit ResultTask(std::shared_ptr<ResultState> state) : state_(std::move(state)) {}
   holoflow::core::OpResult execute(holoflow::core::SyncCtx &) override {
     ++state_->calls;
+    if (state_->throw_on_execute)
+      throw std::runtime_error("deliberate task failure");
     return state_->result;
   }
 
@@ -269,6 +272,17 @@ TEST(SchedulerTest, RepeatedLifecycleCallsAreSafe) {
   scheduler.request_stop();
   scheduler.wait();
   EXPECT_FALSE(scheduler.is_running());
+}
+
+TEST(SchedulerTest, PropagatesWorkerFailureFromWait) {
+  auto state              = std::make_shared<ResultState>();
+  state->throw_on_execute = true;
+  auto [output, registry] = compile_result_graph(state);
+  holoflow::runtime::Scheduler scheduler(output->graph, output->sections, output->resources);
+  scheduler.start();
+  EXPECT_THROW(scheduler.wait(), std::runtime_error);
+  EXPECT_FALSE(scheduler.is_running());
+  EXPECT_TRUE(scheduler.stop_requested());
 }
 
 TEST(SchedulerTest, UsesSharedStorageAndReleasesSuccessfulOwnedOutputExactlyOnce) {

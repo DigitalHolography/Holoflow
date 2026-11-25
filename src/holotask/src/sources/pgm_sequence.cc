@@ -25,6 +25,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <utility>
 #include <vector>
@@ -134,17 +135,43 @@ std::vector<std::filesystem::path> find_frames(const PgmSequenceSettings &settin
     throw std::invalid_argument("PGM sequence directory does not exist: " + directory.string());
   }
 
-  std::vector<std::filesystem::path> paths;
+  std::vector<std::pair<std::uint64_t, std::filesystem::path>> indexed_paths;
+  std::vector<std::filesystem::path>                           exact_paths;
   for (const auto &entry : std::filesystem::directory_iterator(directory)) {
     if (!entry.is_regular_file() || entry.path().extension() != ".pgm") {
       continue;
     }
-    const auto filename = entry.path().filename().string();
-    if (filename.compare(0, settings.filename_prefix.size(), settings.filename_prefix) == 0) {
-      paths.push_back(entry.path());
+    const auto stem = entry.path().stem().string();
+    if (stem == settings.filename_prefix) {
+      exact_paths.push_back(entry.path());
+      continue;
     }
+    if (stem.compare(0, settings.filename_prefix.size(), settings.filename_prefix) != 0)
+      continue;
+    const auto    suffix    = std::string_view(stem).substr(settings.filename_prefix.size());
+    std::uint64_t index     = 0;
+    const auto [end, error] = std::from_chars(suffix.data(), suffix.data() + suffix.size(), index);
+    if (error == std::errc{} && end == suffix.data() + suffix.size())
+      indexed_paths.emplace_back(index, entry.path());
   }
-  std::sort(paths.begin(), paths.end());
+  std::sort(indexed_paths.begin(), indexed_paths.end(),
+            [](const auto &left, const auto &right) { return left.first < right.first; });
+  if (!exact_paths.empty() && !indexed_paths.empty())
+    throw std::invalid_argument("PGM sequence contains both indexed and unindexed frames");
+  std::vector<std::filesystem::path> paths;
+  if (!indexed_paths.empty()) {
+    paths.reserve(indexed_paths.size());
+    for (std::size_t i = 0; i < indexed_paths.size(); ++i) {
+      if (i > 0 && indexed_paths[i].first == indexed_paths[i - 1].first)
+        throw std::invalid_argument("PGM sequence has duplicate frame indices");
+      if (settings.expected_count > 0 && i > 0 &&
+          indexed_paths[i].first != indexed_paths[i - 1].first + 1)
+        throw std::invalid_argument("PGM sequence has a missing frame index");
+      paths.push_back(indexed_paths[i].second);
+    }
+  } else {
+    paths = std::move(exact_paths);
+  }
   if (paths.empty()) {
     throw std::invalid_argument("No PGM frames starting with '" + settings.filename_prefix +
                                 "' found in " + directory.string());
@@ -264,10 +291,13 @@ public:
         output_desc_(std::move(output_desc)),
         bytes_per_frame_(sequence_.header.width * sequence_.header.height *
                          holoflow::core::size_of(sequence_.dtype)),
-        frames_(sequence_.paths.size() * bytes_per_frame_) {
-    for (std::size_t frame = 0; frame < sequence_.paths.size(); ++frame) {
-      read_frame(sequence_.paths[frame], sequence_.header, sequence_.dtype,
-                 frames_.data() + frame * bytes_per_frame_);
+        frames_(static_cast<std::size_t>(settings_.repeat ? sequence_.paths.size()
+                                                          : settings_.batch_size) *
+                bytes_per_frame_) {
+    if (settings_.repeat) {
+      for (std::size_t frame = 0; frame < sequence_.paths.size(); ++frame)
+        read_frame(sequence_.paths[frame], sequence_.header, sequence_.dtype,
+                   frames_.data() + frame * bytes_per_frame_);
     }
     storage_ = {holoflow::core::MemLoc::Host, frames_.size(), frames_.data()};
   }
@@ -295,12 +325,20 @@ public:
       }
       next_frame_ = 0;
     }
+    if (!settings_.repeat) {
+      for (std::size_t frame = 0; frame < batch_size; ++frame) {
+        if (ctx.cancelled != nullptr && ctx.cancelled->load(std::memory_order_relaxed))
+          return holoflow::core::OpResult::Cancelled;
+        read_frame(sequence_.paths[next_frame_ + frame], sequence_.header, sequence_.dtype,
+                   frames_.data() + frame * bytes_per_frame_);
+      }
+    }
 
     // Preserve the compiler's shared Storage identity so downstream views see the
     // published pointer. Direct factory users may supply an empty output slot.
     auto *storage  = ctx.outputs[0].storage != nullptr ? ctx.outputs[0].storage : &storage_;
     *storage       = {holoflow::core::MemLoc::Host, batch_size * bytes_per_frame_,
-                      frames_.data() + next_frame_ * bytes_per_frame_};
+                      frames_.data() + (settings_.repeat ? next_frame_ * bytes_per_frame_ : 0)};
     ctx.outputs[0] = {.desc = output_desc_, .storage = storage};
     next_frame_ += batch_size;
     return holoflow::core::OpResult::Ok;

@@ -28,6 +28,8 @@ voxel pitch in metres, and the mounting-index assumption. Existing outputs are
 protected unless `--overwrite` is given. The command accepts `--medium-index n`
 when the actual mounting-medium refractive index is known. The sample lacks NM,
 so the default uses N0, records that assumption, and prints a notice.
+The runner stages the volume, optional slice, metadata, and graph until reconstruction
+completes. A failed run leaves previous outputs in place.
 
 The dataset folder must contain `i*.pgm`, `Image_mask.pgm`,
 `config_manip.txt_SAV`, and `recon.txt_SAV`. Saved configuration files take
@@ -70,7 +72,7 @@ Volume, slice, graph export, and metadata output paths must be distinct.
 
 ## View the reconstructed volume in Holoflow
 
-1. Stop any current acquisition. Under **IMPORT**, enable **OCT mode** and select **MTD dataset (tomography)**.
+1. Stop any current acquisition. Under **IMPORT**, enable **Tomographic mode** and select **MTD dataset (tomography)**.
 2. Browse to the dataset's **ACQUIS** directory. Saved optical settings are read
    automatically. **MTD RECONSTRUCTION** exposes volume dimension, GPS iterations,
    and an optional mounting-medium index override. Missing NM is identified in
@@ -136,6 +138,10 @@ their input tensors so branched graphs can also export intermediate results.
 GPS transforms its output workspace in place, and FFT centering swaps disjoint voxel
 pairs without a second shift buffer. Export uses an 8 MiB pinned transfer buffer.
 Cancellation is checked between frames, GPS iterations, and export chunks.
+Finite PGM sequences keep only one batch in host memory; the full-scan MTD batch
+still requires enough RAM for all input frames. Before reconstruction, the UI and
+runner check free GPU memory against the known volume buffers with additional
+headroom for FFT workspaces. Reduce the output dimension if the check rejects it.
 
 ## Validation
 

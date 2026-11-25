@@ -1007,7 +1007,7 @@ void MainWindow::refresh_visualization_availability() {
       {"shack_hartmann_xcorr",
        {autofocus_enabled && single_reference_slopes,
         autofocus_enabled ? xcorr_message : autofocus_message}},
-      {"xy_raw", {!mtd, tr("Raw playback is not generated in OCT volume mode.")}},
+      {"xy_raw", {!mtd, tr("Raw playback is not generated in tomographic volume mode.")}},
       {"raw_spectrum", {false, spectrum_message}},
       {"processed_spectrum", {false, spectrum_message}},
       {"xz_processed", {mtd, cuts_message}},
@@ -1570,7 +1570,7 @@ void MainWindow::restore_persistent_state() {
                                                     .x_width       = 20,
                                                     .y_width       = 20,
                                                     .auto_contrast = true,
-                                                    .fit_panel     = true});
+                                                    .fit_panel     = false});
     }
     if (settings.value("import/focus_mode", false).toBool())
       import_widget_->set_focus_mode(true);
@@ -3207,9 +3207,12 @@ void MainWindow::refresh_mtd_mode() {
     display_workspace_->set_visualization_enabled("xz_processed", true);
     display_workspace_->set_visualization_enabled("yz_processed", true);
   }
+  if (!enabled) {
+    // The regular processed texture is GL_R8: sampling yields values in [0, 1].
+    // The view controls use byte values (1..255) and must not be passed to its shader.
+    xy_processed_widget_->set_value_range(0.F, 1.F);
+  }
   if (changed && !enabled) {
-    xy_processed_widget_->set_value_range(static_cast<float>(view_widget_->get_range_start()),
-                                          static_cast<float>(view_widget_->get_range_end()));
     display_workspace_->set_visualization_title("xy_processed", tr("XY Processed"));
     display_workspace_->set_visualization_title("xz_processed", tr("XZ Processed"));
     display_workspace_->set_visualization_title("yz_processed", tr("YZ Processed"));
@@ -3237,7 +3240,7 @@ void MainWindow::refresh_mtd_mode() {
              .x_width       = temporal ? 20 : 0,
              .y_width       = temporal ? 20 : 0,
              .auto_contrast = true,
-             .fit_panel     = true});
+             .fit_panel     = false});
       }
       focus_loaded_path_ = folder;
     } catch (const std::exception &) {

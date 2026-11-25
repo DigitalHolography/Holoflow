@@ -118,6 +118,30 @@ TEST(PgmSequenceTest, ReadsCommentedFramesInOrderAndSkipsMaskFile) {
             (std::vector<std::uint8_t>{1, 2, 3, 4, 5, 6, 7, 8}));
 }
 
+TEST(PgmSequenceTest, SortsUnpaddedFrameNumbersNumerically) {
+  TempDirectory directory;
+  write_binary_pgm(directory.path() / "i10.pgm", 1, 1, 255, {10});
+  write_binary_pgm(directory.path() / "i2.pgm", 1, 1, 255, {2});
+  write_binary_pgm(directory.path() / "i1.pgm", 1, 1, 255, {1});
+
+  PgmSequenceFactory factory;
+  EXPECT_EQ(execute_and_read_u8(factory, make_settings(directory.path(), 3),
+                                TDesc({3, 1, 1}, DType::U8, MemLoc::Host)),
+            (std::vector<std::uint8_t>{1, 2, 10}));
+}
+
+TEST(PgmSequenceTest, RejectsMissingIndicesInStrictSequence) {
+  TempDirectory directory;
+  write_binary_pgm(directory.path() / "i1.pgm", 1, 1, 255, {1});
+  write_binary_pgm(directory.path() / "i2.pgm", 1, 1, 255, {2});
+  write_binary_pgm(directory.path() / "i4.pgm", 1, 1, 255, {4});
+
+  PgmSequenceFactory factory;
+  auto               settings = PgmSequenceSettings{
+      .directory = directory.path().string(), .batch_size = 3, .expected_count = 3};
+  EXPECT_THROW(factory.infer({}, nlohmann::json(settings)), std::invalid_argument);
+}
+
 TEST(PgmSequenceTest, ReadsSixteenBitBinaryPixelsAsBigEndian) {
   TempDirectory directory;
   write_binary_pgm(directory.path() / "i000.pgm", 2, 1, 65535, {0x01, 0x02, 0xAB, 0xCD});

@@ -5,13 +5,17 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cwctype>
+#include <format>
 #include <fstream>
 #include <map>
 #include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
+
+#include <cuda_runtime.h>
 
 #include "holotask/sinks/npy_volume.hh"
 #include "holotask/sources/pgm_sequence.hh"
@@ -97,6 +101,26 @@ MTDDatasetSettings load_mtd_dataset(const std::filesystem::path &directory,
   if (result.frame_count < 1)
     throw std::invalid_argument("MTD scan must contain at least one hologram");
   return result;
+}
+
+void validate_mtd_device_budget(int dimension, bool retain_display_volume) {
+  if (dimension < 2 || dimension > 1024)
+    throw std::invalid_argument("Invalid MTD volume dimension");
+  std::size_t free_bytes = 0, total_bytes = 0;
+  const auto  status = cudaMemGetInfo(&free_bytes, &total_bytes);
+  if (status != cudaSuccess)
+    throw std::runtime_error(std::format("Cannot query GPU memory for MTD reconstruction: {}",
+                                         cudaGetErrorString(status)));
+  const auto voxels = static_cast<std::uint64_t>(dimension) * dimension * dimension;
+  // Linear volume, GPS output, measured copy, optional retained UI volume,
+  // and Fourier coverage. FFT plans and intermediate fields need further headroom.
+  const auto known_bytes = voxels * (8ULL * (retain_display_volume ? 4 : 3) + 4ULL);
+  if (known_bytes > static_cast<std::uint64_t>(free_bytes) * 8 / 10)
+    throw std::runtime_error(
+        std::format("MTD dimension {} needs at least {:.1f} GiB of GPU buffers plus FFT workspace; "
+                    "only {:.1f} GiB of {:.1f} GiB is free. Reduce the volume dimension.",
+                    dimension, known_bytes / 1073741824.0, free_bytes / 1073741824.0,
+                    total_bytes / 1073741824.0));
 }
 
 // -------------------------------------------------------------------------------------------------

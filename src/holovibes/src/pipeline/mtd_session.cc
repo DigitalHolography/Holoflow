@@ -26,7 +26,8 @@ void MTDSession::reconstruct(const std::filesystem::path     &directory,
   auto dataset = holotask::pipelines::load_mtd_dataset(directory, settings.medium_index);
   dataset.linear.dimension = settings.dimension;
   dataset.gps.iterations   = settings.iterations;
-  const auto spec          = holotask::pipelines::build_mtd_pipeline(dataset, {});
+  holotask::pipelines::validate_mtd_device_budget(settings.dimension, true);
+  const auto spec = holotask::pipelines::build_mtd_pipeline(dataset, {});
   Registry   registry;
   holotask::pipelines::register_mtd_tasks(registry);
   holoflow::runtime::Compiler  compiler(registry,

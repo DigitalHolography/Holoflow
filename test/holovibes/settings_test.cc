@@ -15,6 +15,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <limits>
 #include <string_view>
 
@@ -38,6 +41,37 @@ TEST(SignalPlotSettingsTest, DefaultsArePositive) {
   EXPECT_DOUBLE_EQ(settings.input_sampling_frequency_hz, 1.0e6 / 27.0);
   EXPECT_TRUE(settings.autofocus_skip_subapertures_outside_pupil);
   EXPECT_FALSE(settings.autofocus_use_graph_laplacian);
+}
+
+TEST(FocusViewSettingsTest, FitToPanelDefaultsOffAndExplicitChoicePersists) {
+  Settings settings{};
+  EXPECT_FALSE(settings.focus_view.fit_panel);
+
+  settings.focus_view.fit_panel = true;
+  const auto restored           = old_json_to_settings(settings_to_old_json(settings), Settings{});
+  EXPECT_TRUE(restored.focus_view.fit_panel);
+
+  auto legacy = settings_to_old_json(settings);
+  legacy["compute_settings"]["focus_explorer"]["view"].erase("fit_panel");
+  EXPECT_FALSE(old_json_to_settings(legacy, Settings{}).focus_view.fit_panel);
+}
+
+TEST(RecordingPathTest, ValidationPreservesExistingRecording) {
+  const auto path =
+      std::filesystem::temp_directory_path() /
+      ("holovibes_recording_probe_" +
+       std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) + ".holo");
+  {
+    std::ofstream output(path, std::ios::binary);
+    output << "existing recording";
+  }
+  EXPECT_FALSE(validate_recording_path(path).has_value());
+  {
+    std::ifstream input(path, std::ios::binary);
+    EXPECT_EQ(std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()),
+              "existing recording");
+  }
+  std::filesystem::remove(path);
 }
 
 TEST(SignalPlotSettingsTest, LegacyJsonRoundTripPreservesValues) {

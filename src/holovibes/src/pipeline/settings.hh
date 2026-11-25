@@ -112,7 +112,7 @@ struct Settings {
                                                     .x_width       = 20,
                                                     .y_width       = 20,
                                                     .auto_contrast = true,
-                                                    .fit_panel     = true};
+                                                    .fit_panel     = false};
 
   // Import
   ImportSource          import_source;

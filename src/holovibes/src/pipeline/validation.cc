@@ -14,12 +14,11 @@
 
 #include "pipeline/validation.hh"
 
-#include <cerrno>
 #include <cmath>
-#include <cstdio>
 #include <filesystem>
 #include <format>
 #include <system_error>
+#include <windows.h>
 
 namespace holovibes::pipeline {
 
@@ -88,7 +87,6 @@ std::optional<std::string> validate_recording_path(const std::filesystem::path &
 
   std::error_code       ec;
   std::filesystem::path directory = record_path.parent_path();
-  const std::string     path_str  = record_path.string();
 
   if (directory.empty()) {
     directory = std::filesystem::current_path(ec);
@@ -119,20 +117,27 @@ std::optional<std::string> validate_recording_path(const std::filesystem::path &
     return std::string{"Recording path must include a file name."};
   }
 
-  FILE *fp = nullptr;
-  if (fopen_s(&fp, path_str.c_str(), "wb") != 0 || !fp) {
-    std::error_code open_ec(errno, std::generic_category());
-    return std::format("Cannot write recording file \"{}\": {}.", record_path.string(),
-                       open_ec.message());
+  // Probe the parent directory with an exclusive sibling file. Opening record_path
+  // itself with "wb" would truncate an existing recording during validation.
+  std::filesystem::path probe;
+  HANDLE                handle = INVALID_HANDLE_VALUE;
+  for (unsigned int attempt = 0; attempt < 16; ++attempt) {
+    probe =
+        directory / std::format(L".holovibes-write-probe-{}-{}", GetCurrentProcessId(), attempt);
+    handle = CreateFileW(probe.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                         FILE_ATTRIBUTE_TEMPORARY, nullptr);
+    if (handle != INVALID_HANDLE_VALUE || GetLastError() != ERROR_FILE_EXISTS)
+      break;
   }
-
-  std::fclose(fp);
-
-  if (std::remove(path_str.c_str()) != 0) {
-    std::error_code remove_ec(errno, std::generic_category());
-    return std::format("Recording file probe succeeded, but cleanup failed for \"{}\": {}.",
-                       record_path.string(), remove_ec.message());
+  if (handle == INVALID_HANDLE_VALUE) {
+    return std::format("Cannot write recording directory \"{}\" (Windows error {}).",
+                       directory.string(), GetLastError());
   }
+  CloseHandle(handle);
+  std::filesystem::remove(probe, ec);
+  if (ec)
+    return std::format("Recording directory probe cleanup failed for \"{}\": {}.", probe.string(),
+                       ec.message());
 
   return std::nullopt;
 }

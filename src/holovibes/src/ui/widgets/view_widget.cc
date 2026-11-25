@@ -153,7 +153,7 @@ void ViewWidget::setup_ui() {
                                  .x_width       = 20,
                                  .y_width       = 20,
                                  .auto_contrast = true,
-                                 .fit_panel     = true});
+                                 .fit_panel     = false});
   outer->addWidget(focus_controls_);
   focus_controls_->hide();
   connect(focus_controls_, &MTDViewWidget::settings_changed, this, &ViewWidget::settings_changed);

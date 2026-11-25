@@ -20,6 +20,7 @@ set(SOURCES
     flatfield_test.cu
     filter2d_test.cu
     fresnel_diffraction_test.cu
+    focus_volume_test.cc
     holofile_sink_test.cc
     pgm_sequence_test.cc
     mtd_test.cc

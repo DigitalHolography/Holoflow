@@ -361,7 +361,7 @@ Settings old_json_to_settings(const nlohmann::json &j, const Settings &default_s
                            .x_width       = 20,
                            .y_width       = 20,
                            .auto_contrast = true,
-                           .fit_panel     = true};
+                           .fit_panel     = false};
 
   return settings;
 }
