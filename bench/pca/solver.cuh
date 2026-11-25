@@ -55,9 +55,19 @@ extern "C" __global__ void solve(float* matrix,float* values,int* info) {
  Solver().execute(a,Solver::lda,l,w,info);
  __syncthreads();
  __shared__ int block_status;
- if(threadIdx.x==0)block_status=*info;
+ __shared__ int invalid_eigenpairs;
+ if(threadIdx.x==0){block_status=*info;invalid_eigenpairs=0;}
  __syncthreads();
  if(block_status!=0)return;
+
+ // Some converged degenerate cases still return non-finite eigenpairs. Keep the
+ // input Gram matrix intact so the fallback kernel can solve it.
+ for(int i=threadIdx.x;i<1024;i+=blockDim.x)
+  if(!isfinite(a[(i/32)*Solver::lda+i%32]))atomicExch(&invalid_eigenpairs,1);
+ for(int i=threadIdx.x;i<32;i+=blockDim.x)
+  if(!isfinite(l[i]))atomicExch(&invalid_eigenpairs,1);
+ __syncthreads();
+ if(invalid_eigenpairs!=0){if(threadIdx.x==0)*info=invalid_eigenpairs;return;}
 
  cusolverdx::copy_2d<Solver,32,32,cusolverdx::arrangement::col_major,1>(a,Solver::lda,matrix,32);
  for(int i=threadIdx.x;i<32;i+=blockDim.x)l[i]*=17179869184.f;
