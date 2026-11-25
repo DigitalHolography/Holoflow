@@ -997,6 +997,14 @@ void Scheduler::Impl::retire_prequeued(int section_id, bool cleanup) {
     else
       CUDA_CHECK(status);
   }
+  if (!sync_observers.empty()) {
+    const auto now = std::chrono::steady_clock::now();
+    for (auto v : sections_.at(section_id).sync_topo) {
+      const auto observer = sync_observers.find(v);
+      if (observer != sync_observers.end() && observer->second.after_barrier)
+        observer->second.notify(now);
+    }
+  }
   ranges.phase(Phase::Commit);
   for (const auto &reservation : slot.pushes) {
     detail::current_node_name() = graph_[reservation.node].spec.name;
@@ -1192,12 +1200,22 @@ bool Scheduler::Impl::run_prequeued_section(int section_id) {
             std::memory_order_relaxed);
         acc.run_count.fetch_add(1, std::memory_order_relaxed);
         graphs.launches.fetch_add(1, std::memory_order_relaxed);
+        const auto now = std::chrono::steady_clock::now();
+        for (auto v : section.sync_topo) {
+          metric_accumulators_.at(v).total_successes.fetch_add(1, std::memory_order_relaxed);
+          const auto observer = sync_observers.find(v);
+          if (observer != sync_observers.end() && !observer->second.after_barrier)
+            observer->second.notify(now);
+        }
       } else {
         // Once host execution advances a source cursor, submit the complete bounded iteration
         // before observing pause/stop. Retrying a partially executed source would skip data.
         for (auto v : section.sync_topo) {
           detail::current_node_name() = graph_[v].spec.name;
           (void)run_sync(v, true);
+          const auto observer = sync_observers.find(v);
+          if (observer != sync_observers.end() && !observer->second.after_barrier)
+            observer->second.notify(std::chrono::steady_clock::now());
           auto &runtime = std::get<SyncRt>(node_rts_.at(v));
           for (size_t port = 0; port < runtime.out_views.size(); ++port)
             if (graph_[v].infer.owned_outputs[port]) {
