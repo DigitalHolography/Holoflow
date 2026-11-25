@@ -792,7 +792,7 @@ private:
 namespace holovibes::ui {
 
 MainWindow::MainWindow(QWidget *parent)
-    : QMainWindow(parent), session_id_(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")) {
+    : QMainWindow(parent), session_date_(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss")) {
   setup_main_layout();
   initialize_display_widgets();
   restore_persistent_state();
@@ -843,7 +843,7 @@ void MainWindow::setup_main_layout() {
       "specified.");
 
   auto *session_label  = new QLabel("Session", session_bar);
-  session_value_label_ = new QLabel(session_id_, session_bar);
+  session_value_label_ = new QLabel(session_date_, session_bar);
   session_value_label_->setObjectName("sessionValue");
 
   auto *next_acquisition_label = new QLabel("Next Acquisition", session_bar);
@@ -1113,7 +1113,7 @@ QString MainWindow::find_patient(QString name) const {
 }
 
 QString MainWindow::find_date(QString name) const {
-  return name.replace("{date}", session_id_, Qt::CaseInsensitive);
+  return name.replace("{date}", session_date_, Qt::CaseInsensitive);
 }
 
 QString MainWindow::find_eye(QString name) const {

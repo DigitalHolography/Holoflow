@@ -158,7 +158,7 @@ private:
   bool               failure_graph_available_         = false;
   double             last_input_fps_                  = 0.0;
   double             signal_plot_time_window_seconds_ = 8.0;
-  QString            session_id_;
+  QString            session_date_;
   int                next_acquisition_id_ = 1;
   std::optional<int> pending_recording_acquisition_id_;
 
