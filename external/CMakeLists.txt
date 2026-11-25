@@ -145,11 +145,12 @@ if(ENABLE_FETCHCONTENT)
 
     set(MATHDX_VERSION "26.10.0")
     set(MATHDX_CUDA_MAJOR "13")
+    set(MATHDX_SHA256 "83fe2e6f8829b3b04c6b30554935442192f7ab22add1740450f2004e45e262d8")
 
     declare_persistent_archive(
         mathdx
         "https://developer.nvidia.com/downloads/compute/cuSOLVERDx/redist/cuSOLVERDx/cuda13/nvidia-mathdx-${MATHDX_VERSION}-cuda13.zip"
-        "SHA256=83fe2e6f8829b3b04c6b30554935442192f7ab22add1740450f2004e45e262d8"
+        "SHA256=${MATHDX_SHA256}"
     )
 
     FetchContent_MakeAvailable(mathdx)
@@ -197,6 +198,7 @@ if(ENABLE_FETCHCONTENT)
     add_library(holoflow_cusolverdx_nvrtc INTERFACE)
     target_compile_definitions(holoflow_cusolverdx_nvrtc
         INTERFACE
+        HOLOFLOW_NVRTC_ASSET_VERSION="${CMAKE_CUDA_COMPILER_VERSION}:${MATHDX_SHA256}"
         HOLOFLOW_CUDA_INCLUDE_DIR="${HOLOFLOW_CUDA_INCLUDE_DIR}"
         HOLOFLOW_CUSOLVERDX_INCLUDE_DIR="${HOLOFLOW_CUSOLVERDX_INCLUDE_DIR}"
         HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR="${HOLOFLOW_CUSOLVERDX_CUTLASS_INCLUDE_DIR}"

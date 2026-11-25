@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holotask/sources/holofile.hh"
+#include "holoflow/runtime/tracing.hh"
 
 #include <algorithm>
 #include <chrono>
@@ -310,9 +311,13 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
   auto settings = jsettings.get<HolofileSettings>();
 
   // Setup reader
-  auto reader = std::make_unique<holofile::Reader>(settings.path);
+  std::unique_ptr<holofile::Reader> reader;
+  {
+    holoflow::runtime::tracing::ScopedTrace timing("Holofile Open and Seek", "detail");
+    reader = std::make_unique<holofile::Reader>(settings.path);
+    reader->seek(settings.start_frame);
+  }
   auto header = reader->header();
-  reader->seek(settings.start_frame);
 
   size_t pixels_per_frame = header.frame_width * header.frame_height;
   size_t bits_per_frame   = pixels_per_frame * header.bits_per_pixel;
@@ -332,15 +337,17 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     // No preloading
     break;
 
-  case HolofileSettings::LoadKind::CPUCached:
+  case HolofileSettings::LoadKind::CPUCached: {
+    holoflow::runtime::tracing::ScopedTrace timing("Holofile Allocate Pinned Cache", "detail");
     h_buf = make_unique_host_ptr<std::byte>(std::max(size_t{1}, bytes_to_load));
     buf   = h_buf.get();
-    break;
+  } break;
 
-  case HolofileSettings::LoadKind::GPUCached:
+  case HolofileSettings::LoadKind::GPUCached: {
+    holoflow::runtime::tracing::ScopedTrace timing("Holofile Allocate Device Cache", "detail");
     d_buf = make_unique_device_ptr<std::byte>(std::max(size_t{1}, bytes_to_load));
     buf   = d_buf.get();
-    break;
+  } break;
   }
 
   // Preload if needed
@@ -349,16 +356,28 @@ HolofileFactory::create(std::span<const holoflow::core::TDesc> input_descs,
     // No preloading
     break;
 
-  case HolofileSettings::LoadKind::CPUCached:
+  case HolofileSettings::LoadKind::CPUCached: {
+    holoflow::runtime::tracing::ScopedTrace timing("Holofile Read Frame Data", "detail");
     reader->read_frames(reinterpret_cast<uint8_t *>(h_buf.get()), frames_to_load);
-    break;
-
+  } break;
   case HolofileSettings::LoadKind::GPUCached: {
-    auto temp_buf = make_unique_host_ptr<std::byte>(std::max(size_t{1}, bytes_to_load));
-    reader->read_frames(reinterpret_cast<uint8_t *>(temp_buf.get()), frames_to_load);
-    CUDA_CHECK(cudaMemcpyAsync(d_buf.get(), temp_buf.get(), bytes_to_load, cudaMemcpyHostToDevice,
-                               ctx.stream));
-    // Stream sync removed here!
+    auto temp_buf = [&] {
+      holoflow::runtime::tracing::ScopedTrace timing("Holofile Allocate Pinned Staging", "detail");
+      return make_unique_host_ptr<std::byte>(std::max(size_t{1}, bytes_to_load));
+    }();
+    {
+      holoflow::runtime::tracing::ScopedTrace timing("Holofile Read Frame Data", "detail");
+      reader->read_frames(reinterpret_cast<uint8_t *>(temp_buf.get()), frames_to_load);
+    }
+    {
+      holoflow::runtime::tracing::ScopedTrace timing("Holofile Submit Cache Upload", "detail");
+      CUDA_CHECK(cudaMemcpyAsync(d_buf.get(), temp_buf.get(), bytes_to_load, cudaMemcpyHostToDevice,
+                                 ctx.stream));
+    }
+    {
+      holoflow::runtime::tracing::ScopedTrace timing("Holofile Release Pinned Staging", "detail");
+      temp_buf.reset();
+    }
   } break;
   }
 

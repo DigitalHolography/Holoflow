@@ -199,3 +199,13 @@ process-wide capture may run at a time; overlapping explicit captures raise an
 error. Explicit close reports export errors. Failures preserve available
 diagnostics; compilation and benchmark exceptions include the run-directory path.
 Native diagnostic background write failures retain the existing warning behavior.
+
+## CUDA runtime compilation cache
+
+Holoflow caches linked PCA CUBINs and fused FP16 Fresnel PTX across launches.
+On Windows the default directory is `%LOCALAPPDATA%/Holoflow/NvrtcCache/v1`.
+Set `HOLOFLOW_NVRTC_CACHE_DIR` to use another directory or
+`HOLOFLOW_NVRTC_CACHE_DISABLE=1` to bypass the disk cache. The key follows the
+embedded kernel source, compile options, and CUDA and MathDx toolchain identity.
+Use the bypass if you edit external toolkit headers in place. Perfetto shows
+disk lookup, hits, and writes alongside compilation and module loading.

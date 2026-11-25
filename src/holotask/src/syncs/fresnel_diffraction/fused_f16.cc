@@ -17,7 +17,9 @@
 #include "curaii/cuda.hh"
 #include "curaii/nvrtc.hh"
 #include "fresnel_fused_f16_source.hh"
+#include "holoflow/runtime/tracing.hh"
 #include "logger.hh"
+#include "nvrtc_cache.hh"
 #include "runtime_assets.hh"
 #include <algorithm>
 #include <atomic>
@@ -38,24 +40,32 @@ void driver(CUresult result) {
     throw std::runtime_error(text ? text : "F16 Fresnel driver failure");
   }
 }
-std::vector<char> compile(int sm, bool half, bool complex_half, int components, bool reduce) {
+CUresult load_kernel_module(CUmodule *module, int sm, bool half, bool complex_half, int components,
+                            bool reduce) {
   static std::mutex                               mutex;
   static std::map<std::string, std::vector<char>> cache;
   const auto      key = std::to_string(sm) + "/" + std::to_string(half) + "/" +
                         std::to_string(complex_half) + "/" + std::to_string(components) + "/" +
                         std::to_string(reduce);
   std::lock_guard lock(mutex);
-  if (auto it = cache.find(key); it != cache.end())
-    return it->second;
-  const auto cuda   = holotask::detail::cuda_include_directory();
-  const auto module = holotask::detail::containing_module_directory();
-  auto       dx     = module / "_assets/nvrtc/mathdx/include";
+  const auto      load = [module](const std::vector<char> &ptx) {
+    holoflow::runtime::tracing::ScopedTrace timing("Fresnel FP16 Load CUDA Module", "detail");
+    return cuModuleLoadData(module, ptx.data());
+  };
+  if (auto it = cache.find(key); it != cache.end()) {
+    holoflow::runtime::tracing::ScopedTrace timing("Fresnel FP16 PTX Cache Hit", "detail");
+    if (load(it->second) == CUDA_SUCCESS)
+      return CUDA_SUCCESS;
+    cache.erase(it);
+  }
+  const auto cuda       = holotask::detail::cuda_include_directory();
+  const auto module_dir = holotask::detail::containing_module_directory();
+  auto       dx         = module_dir / "_assets/nvrtc/mathdx/include";
   if (!std::filesystem::exists(dx / "cufftdx.hpp"))
-    dx = module / HOLOFLOW_NVRTC_ASSET_RELATIVE_DIR / "mathdx/include";
+    dx = module_dir / HOLOFLOW_NVRTC_ASSET_RELATIVE_DIR / "mathdx/include";
   if (!std::filesystem::exists(dx / "cufftdx.hpp"))
     dx = HOLOFLOW_CUSOLVERDX_INCLUDE_DIR;
-  curaii::NvrtcProgram      program(holotask::detail::fresnel_fused_f16_source, "fused_f16.cu");
-  std::vector<std::string>  options = {"--std=c++17",
+  std::vector<std::string> options  = {"--std=c++17",
                                        "--device-as-default-execution-space",
                                        "--gpu-architecture=compute_" + std::to_string(sm / 10),
                                        "-DFFT_SM=" + std::to_string(sm),
@@ -66,10 +76,23 @@ std::vector<char> compile(int sm, bool half, bool complex_half, int components, 
                                        "--include-path=" + cuda.string(),
                                        "--include-path=" + (cuda / "cccl").string(),
                                        "--include-path=" + dx.string()};
+  auto                     disk_key = options;
+  constexpr char           program_name[] = "fused_f16.cu";
+  disk_key.emplace_back(program_name);
+  const holotask::detail::NvrtcCache disk("fresnel-ptx",
+                                          holotask::detail::fresnel_fused_f16_source_id, disk_key);
+  if (auto ptx = disk.read(); !ptx.empty() && ptx.back() == '\0' && load(ptx) == CUDA_SUCCESS) {
+    cache.emplace(key, std::move(ptx));
+    return CUDA_SUCCESS;
+  }
+  curaii::NvrtcProgram      program(holotask::detail::fresnel_fused_f16_source, program_name);
   std::vector<const char *> ptrs;
   for (auto &option : options)
     ptrs.push_back(option.c_str());
-  auto result = nvrtcCompileProgram(program.get(), int(ptrs.size()), ptrs.data());
+  const auto result = [&] {
+    holoflow::runtime::tracing::ScopedTrace timing("Fresnel FP16 NVRTC Compile", "detail");
+    return nvrtcCompileProgram(program.get(), int(ptrs.size()), ptrs.data());
+  }();
   if (result != NVRTC_SUCCESS) {
     size_t size;
     NVRTC_CHECK(nvrtcGetProgramLogSize(program.get(), &size));
@@ -81,8 +104,12 @@ std::vector<char> compile(int sm, bool half, bool complex_half, int components, 
   NVRTC_CHECK(nvrtcGetPTXSize(program.get(), &size));
   std::vector<char> ptx(size);
   NVRTC_CHECK(nvrtcGetPTX(program.get(), ptx.data()));
-  cache.emplace(key, ptx);
-  return ptx;
+  const auto status = load(ptx);
+  if (status == CUDA_SUCCESS) {
+    disk.write(ptx);
+    cache.emplace(key, std::move(ptx));
+  }
+  return status;
 }
 struct Module {
   CUmodule value{};
@@ -134,30 +161,37 @@ public:
         components_(int(input.shape[input.rank() - 3])),
         groups_(settings.reduce_magnitude ? (components_ + 3) / 4 : components_),
         output_count_((settings.reduce_magnitude ? planes_ / components_ : planes_) * 320 * 512),
-        reduce_(settings.reduce_magnitude),
-        lens_(curaii::make_unique_device_ptr<float2>(320 * 512)),
-        scales_(curaii::make_unique_device_ptr<int>(planes_ * 2)),
-        intermediate_(curaii::make_unique_device_ptr<unsigned int>(input.num_elements())),
-        partial_(
-            curaii::make_unique_device_ptr<float>((planes_ / components_) * groups_ * 320 * 512)) {
-    scale_maxima_ = curaii::make_unique_device_ptr<float>(planes_ * 64);
+        reduce_(settings.reduce_magnitude) {
+    {
+      holoflow::runtime::tracing::ScopedTrace timing("Fresnel FP16 Allocate Workspace", "detail");
+      lens_         = curaii::make_unique_device_ptr<float2>(320 * 512);
+      scales_       = curaii::make_unique_device_ptr<int>(planes_ * 2);
+      intermediate_ = curaii::make_unique_device_ptr<unsigned int>(input.num_elements());
+      partial_ =
+          curaii::make_unique_device_ptr<float>((planes_ / components_) * groups_ * 320 * 512);
+      scale_maxima_ = curaii::make_unique_device_ptr<float>(planes_ * 64);
+    }
     cudaDeviceProp prop{};
     CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
-    auto ptx =
-        compile(prop.major * 100 + prop.minor * 10, input.dtype == holoflow::core::DType::F16,
-                input.dtype == holoflow::core::DType::CF16, components_, reduce_);
     driver(cuCtxGetCurrent(&context_));
-    driver(cuModuleLoadData(&module_.value, ptx.data()));
-    scale_partial_ = function("fused_f16_scale_partial");
-    scale_         = function("fused_f16_scale");
-    x_             = function("fused_f16_fft_x");
-    y_             = function("fused_f16_fft_y_mean");
-    finish_        = function("fused_f16_finish");
-    xs_            = constant("fused_x_shared");
-    ys_            = constant("fused_y_shared");
-    driver(cuFuncSetAttribute(x_, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, int(xs_)));
-    driver(cuFuncSetAttribute(y_, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, int(ys_)));
-    auto  lens       = lens_.get();
+    driver(load_kernel_module(&module_.value, prop.major * 100 + prop.minor * 10,
+                              input.dtype == holoflow::core::DType::F16,
+                              input.dtype == holoflow::core::DType::CF16, components_, reduce_));
+    {
+      holoflow::runtime::tracing::ScopedTrace timing("Fresnel FP16 Configure Kernels", "detail");
+      scale_partial_ = function("fused_f16_scale_partial");
+      scale_         = function("fused_f16_scale");
+      x_             = function("fused_f16_fft_x");
+      y_             = function("fused_f16_fft_y_mean");
+      finish_        = function("fused_f16_finish");
+      xs_            = constant("fused_x_shared");
+      ys_            = constant("fused_y_shared");
+      driver(cuFuncSetAttribute(x_, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, int(xs_)));
+      driver(cuFuncSetAttribute(y_, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, int(ys_)));
+    }
+    holoflow::runtime::tracing::ScopedTrace timing("Fresnel FP16 Submit Lens Initialization",
+                                                   "detail");
+    auto                                    lens = lens_.get();
     float wavelength = settings.lambda, pitch = settings.dx, distance = settings.z;
     void *args[] = {&lens, &wavelength, &pitch, &distance};
     launch(function("fused_f16_lens"), (320 * 512 + 255) / 256, 256, 1, 0, args);

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "holotask/syncs/pca.hh"
+#include "holoflow/runtime/tracing.hh"
 #include "holotask/asyncs/pca_decomposition_queue.hh"
 #include "pca/fused_f16.hh"
 #include "pca_heev_source.hh"
@@ -45,6 +46,7 @@
 
 #include "../asyncs/reservation_queue.hh"
 #include "logger.hh"
+#include "nvrtc_cache.hh"
 #include "pca_capture.hh"
 #include "runtime_assets.hh"
 
@@ -471,21 +473,36 @@ public:
         solver_stream_(cudaStreamNonBlocking), window_bytes_(input_desc_.num_bytes()) {
     try {
       CUBLAS_CHECK(cublasSetStream(cublas_.get(), producer_stream_));
-      for (size_t i = 0; i < settings_.slot_count; ++i)
-        slots_.push_back(std::make_unique<PcaQueueSlot>(layout_, output_descs_[0].num_elements()));
-      eigensolver_ = make_eigensolver(layout_, slots_[0]->workspace, solver_stream_.get());
+      {
+        holoflow::runtime::tracing::ScopedTrace timing("PCA Allocate Queue Slots and Events",
+                                                       "detail");
+        for (size_t i = 0; i < settings_.slot_count; ++i)
+          slots_.push_back(
+              std::make_unique<PcaQueueSlot>(layout_, output_descs_[0].num_elements()));
+      }
+      {
+        holoflow::runtime::tracing::ScopedTrace timing("PCA Create Eigensolver", "detail");
+        eigensolver_ = make_eigensolver(layout_, slots_[0]->workspace, solver_stream_.get());
+      }
       for (auto &slot : slots_) {
         // Warm cuBLAS before capture, outside the steady-state producer path.
-        CUDA_CHECK(
-            cudaMemsetAsync(slot->input.get(), 0, output_descs_[0].num_bytes(), producer_stream_));
         const auto enqueue = [&] {
           enqueue_pca_covariance(cublas_.get(), layout_, slot->input.get(),
                                  slot->workspace.matrices.get(), slot->workspace.partial.get());
         };
-        enqueue();
-        slot->covariance_graph.try_capture({slot->input.get(), slot->workspace.matrices.get()},
-                                           producer_stream_, enqueue);
+        {
+          holoflow::runtime::tracing::ScopedTrace timing("PCA Submit Covariance Warm-up", "detail");
+          CUDA_CHECK(cudaMemsetAsync(slot->input.get(), 0, output_descs_[0].num_bytes(),
+                                     producer_stream_));
+          enqueue();
+        }
+        {
+          holoflow::runtime::tracing::ScopedTrace timing("PCA Capture Covariance Graph", "detail");
+          slot->covariance_graph.try_capture({slot->input.get(), slot->workspace.matrices.get()},
+                                             producer_stream_, enqueue);
+        }
       }
+      holoflow::runtime::tracing::ScopedTrace timing("PCA Wait for Covariance Warm-up", "detail");
       CUDA_CHECK(cudaStreamSynchronize(producer_stream_));
     } catch (...) {
       // A throwing constructor still has to drain work before its members are destroyed.
@@ -1003,11 +1020,9 @@ Assets locate_assets() {
       installed_root.string()));
 }
 
-std::vector<char> compile_lto_ir(int features, int solver_sm, int architecture,
-                                 const Assets &assets) {
-  curaii::NvrtcProgram program(cusolverdx_source(), "pca_heev_kernel.cu");
-
-  std::vector<std::string> options = {
+std::vector<std::string> compile_options(int features, int solver_sm, int architecture,
+                                         const Assets &assets) {
+  return {
       "--std=c++17",
       "--device-as-default-execution-space",
       "-dlto",
@@ -1020,6 +1035,13 @@ std::vector<char> compile_lto_ir(int features, int solver_sm, int architecture,
       std::format("--include-path={}", assets.cusolverdx_include.string()),
       std::format("--include-path={}", assets.cutlass_include.string()),
   };
+}
+
+constexpr char program_name[] = "pca_heev_kernel.cu";
+
+std::vector<char> compile_lto_ir(const std::vector<std::string> &options) {
+  holoflow::runtime::tracing::ScopedTrace timing("PCA NVRTC Compile", "detail");
+  curaii::NvrtcProgram                    program(cusolverdx_source(), program_name);
 
   std::vector<const char *> option_ptrs;
   option_ptrs.reserve(options.size());
@@ -1048,13 +1070,12 @@ std::vector<char> compile_lto_ir(int features, int solver_sm, int architecture,
   return lto_ir;
 }
 
-std::vector<char> link_cubin(const std::vector<char> &lto_ir, int architecture,
-                             const Assets &assets) {
-  nvJitLinkHandle linker      = nullptr;
-  const auto      arch_option = std::format("-arch=sm_{}", architecture);
-  const char     *options[]   = {"-lto", arch_option.c_str()};
-
-  PCA_NVJITLINK_CHECK(linker, nvJitLinkCreate(&linker, 2, options));
+std::vector<char> link_cubin(const std::vector<char>          &lto_ir,
+                             const std::array<std::string, 2> &options, const Assets &assets) {
+  holoflow::runtime::tracing::ScopedTrace timing("PCA nvJitLink", "detail");
+  nvJitLinkHandle                         linker = nullptr;
+  const char                             *args[] = {options[0].c_str(), options[1].c_str()};
+  PCA_NVJITLINK_CHECK(linker, nvJitLinkCreate(&linker, 2, args));
 
   try {
     PCA_NVJITLINK_CHECK(linker, nvJitLinkAddFile(linker, NVJITLINK_INPUT_FATBIN,
@@ -1079,10 +1100,29 @@ std::vector<char> link_cubin(const std::vector<char> &lto_ir, int architecture,
   }
 }
 
-std::vector<char> compile_cubin(int features, int solver_sm, int architecture) {
-  const auto assets = locate_assets();
-  const auto lto_ir = compile_lto_ir(features, solver_sm, architecture, assets);
-  return link_cubin(lto_ir, architecture, assets);
+CUresult load_cubin(CUmodule *module, int features, int solver_sm, int architecture) {
+  const auto assets = [] {
+    holoflow::runtime::tracing::ScopedTrace timing("PCA Locate cuSolverDx Assets", "detail");
+    return locate_assets();
+  }();
+  auto options = compile_options(features, solver_sm, architecture, assets);
+  const std::array<std::string, 2> link_options{"-lto", std::format("-arch=sm_{}", architecture)};
+  auto                             key = options;
+  key.emplace_back(program_name);
+  key.insert(key.end(), link_options.begin(), link_options.end());
+  const holotask::detail::NvrtcCache cache("pca-cubin", holotask::detail::pca_heev_source_id, key,
+                                           assets.cusolverdx_fatbin);
+  const auto                         load = [module](const std::vector<char> &cubin) {
+    holoflow::runtime::tracing::ScopedTrace timing("PCA Load CUDA Module", "detail");
+    return cuModuleLoadDataEx(module, cubin.data(), 0, nullptr, nullptr);
+  };
+  if (auto cubin = cache.read(); !cubin.empty() && load(cubin) == CUDA_SUCCESS)
+    return CUDA_SUCCESS;
+  auto cubin  = link_cubin(compile_lto_ir(options), link_options, assets);
+  auto status = load(cubin);
+  if (status == CUDA_SUCCESS)
+    cache.write(cubin);
+  return status;
 }
 
 } // namespace cusolverdx_runtime
@@ -1116,8 +1156,7 @@ public:
 
     ScopedCudaContext context_guard(context_);
 
-    const auto cubin = cusolverdx_runtime::compile_cubin(features_, solver_sm, architecture_);
-    PCA_DRIVER_CHECK(cuModuleLoadDataEx(&module_, cubin.data(), 0, nullptr, nullptr));
+    PCA_DRIVER_CHECK(cusolverdx_runtime::load_cubin(&module_, features_, solver_sm, architecture_));
 
     try {
       load_kernel_configuration();
