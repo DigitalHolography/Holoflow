@@ -209,3 +209,11 @@ Set `HOLOFLOW_NVRTC_CACHE_DIR` to use another directory or
 embedded kernel source, compile options, and CUDA and MathDx toolchain identity.
 Use the bypass if you edit external toolkit headers in place. Perfetto shows
 disk lookup, hits, and writes alongside compilation and module loading.
+
+## Windows CPU-cached Holofile preload
+
+Windows CPU-cached Holofile input overlaps pinned-memory registration with file
+reading. The default chunk target is 64 MiB. Holoflow aligns chunks to output
+batches and system pages so each batch stays inside one CUDA registration.
+Set `HOLOFLOW_HOLOFILE_PRELOAD_CHUNK_MIB` to another target or set it to `0`
+to compare with the sequential preload.

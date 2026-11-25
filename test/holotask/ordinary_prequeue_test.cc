@@ -331,6 +331,95 @@ TEST(OrdinaryPrequeue, CachedSourceUpdatesPreserveCursorAndPacingEligibility) {
   EXPECT_FALSE(host_copy->supports_prequeued_execution());
 }
 
+class SmallPreloadChunks {
+public:
+  SmallPreloadChunks() {
+    if (const char *value = std::getenv("HOLOFLOW_HOLOFILE_PRELOAD_CHUNK_MIB"))
+      previous_ = value;
+    _putenv_s("HOLOFLOW_HOLOFILE_PRELOAD_CHUNK_MIB", "1");
+  }
+  ~SmallPreloadChunks() { _putenv_s("HOLOFLOW_HOLOFILE_PRELOAD_CHUNK_MIB", previous_.c_str()); }
+
+private:
+  std::string previous_;
+};
+
+TEST(OrdinaryPrequeue, ChunkedCachePreservesCudaUploadsAndCompatibleUpdates) {
+  SmallPreloadChunks                  chunks;
+  TemporaryHolofile                   file(512, 512, 11);
+  holotask::sources::HolofileFactory  factory;
+  holotask::sources::HolofileSettings settings{
+      file.path.string(),
+      holotask::sources::HolofileSettings::LoadKind::CPUCached,
+      1,
+      10,
+      2,
+      std::nullopt,
+      false};
+  auto                 desc = factory.infer({}, settings).output_descs[0];
+  SourceStorage        storage(desc);
+  std::array           outputs{TView{desc, &storage.output}};
+  SyncCtx              execution{{}, outputs, nullptr, nullptr, nullptr};
+  curaii::CudaStream   stream;
+  const auto           device = curaii::make_unique_device_ptr<uint8_t>(3 * file.pixels);
+  std::vector<uint8_t> received(3 * file.pixels);
+  auto                 task         = factory.create({}, settings, {stream.get()});
+  auto                 verify_batch = [&](size_t first_frame) {
+    task->bind_storage_access(&storage);
+    ASSERT_EQ(task->execute(execution), OpResult::Ok);
+    const auto bytes = outputs[0].desc.num_bytes();
+    CUDA_CHECK(cudaMemcpyAsync(device.get(), outputs[0].data(), bytes, cudaMemcpyHostToDevice,
+                               stream.get()));
+    CUDA_CHECK(cudaMemcpyAsync(received.data(), device.get(), bytes, cudaMemcpyDeviceToHost,
+                               stream.get()));
+    CUDA_CHECK(cudaStreamSynchronize(stream.get()));
+    EXPECT_TRUE(std::equal(received.begin(), received.begin() + bytes,
+                           file.values.begin() + first_frame * file.pixels));
+    task->release_output(0);
+  };
+
+  verify_batch(1);
+  const auto base = outputs[0].data();
+  verify_batch(3);
+  verify_batch(5);
+  verify_batch(7);
+  verify_batch(1);
+
+  auto update_batch = [&](int batch) {
+    settings.batch_size = batch;
+    task                = factory.update(std::move(task), {}, settings, {stream.get()});
+    outputs[0].desc     = factory.infer({}, settings).output_descs[0];
+  };
+  update_batch(1);
+  verify_batch(1);
+  EXPECT_EQ(outputs[0].data(), base);
+  for (size_t frame = 2; frame <= 9; ++frame)
+    verify_batch(frame);
+  update_batch(3);
+  verify_batch(1);
+  verify_batch(4);
+  verify_batch(7);
+}
+
+TEST(OrdinaryPrequeue, ChunkedCacheReadFailureAllowsRetry) {
+  SmallPreloadChunks chunks;
+  TemporaryHolofile  file(512, 512, 10);
+  std::filesystem::resize_file(file.path, sizeof(holofile::Header) + 5 * file.pixels);
+  holotask::sources::HolofileFactory  factory;
+  holotask::sources::HolofileSettings settings{
+      file.path.string(),
+      holotask::sources::HolofileSettings::LoadKind::CPUCached,
+      0,
+      10,
+      2,
+      std::nullopt,
+      false};
+  curaii::CudaStream stream;
+  EXPECT_THROW(factory.create({}, settings, {stream.get()}), holofile::EndOfFileException);
+  settings.end_frame = 5;
+  EXPECT_NO_THROW(factory.create({}, settings, {stream.get()}));
+}
+
 struct LoanState {
   LoanState() : cache(curaii::make_unique_host_ptr<uint8_t>(3)) {
     cache.get()[0] = 11;
