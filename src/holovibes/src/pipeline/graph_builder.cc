@@ -167,19 +167,20 @@ private:
 
 namespace {
 
-constexpr size_t kVramHeadroomMinimum = 256ULL * 1024 * 1024;
-constexpr size_t kRamHeadroomMinimum  = 256ULL * 1024 * 1024;
-constexpr size_t kHeadroomPercent     = 10;
+constexpr size_t kMaxVramUsagePercent    = 99;
+constexpr size_t kGpuInputFreeVramPercent = 75;
+constexpr size_t kRamHeadroomMinimum     = 256ULL * 1024 * 1024;
+constexpr size_t kHeadroomPercent        = 10;
 
 // AUTO sizes each queue from a byte budget: large input frames receive shallow queues, while
 // smaller frames can use more slots up to a queue-specific ceiling. Floors preserve the
 // manual-mode safety capacities and BatchQueue's batch/stride slot-alignment requirements.
 // SlidingAverage also accounts for its window ring and running-average scratch buffer.
-constexpr size_t kGpuInputTargetBytes     = 64ULL * 1024 * 1024;
-constexpr size_t kIntermediateTargetBytes = 16ULL * 1024 * 1024;
-constexpr size_t kDisplayTargetBytes      = 8ULL * 1024 * 1024;
-constexpr size_t kCpuOutputTargetBytes    = 8ULL * 1024 * 1024;
-constexpr size_t kSlidingTargetBytes      = 16ULL * 1024 * 1024;
+constexpr size_t kQueueMinimumBytes          = 1ULL * 1024 * 1024;
+constexpr size_t kIntermediateTargetBytes   = 16ULL * 1024 * 1024;
+constexpr size_t kDisplayTargetBytes         = 8ULL * 1024 * 1024;
+constexpr size_t kCpuOutputTargetBytes       = 8ULL * 1024 * 1024;
+constexpr size_t kSlidingTargetBytes         = 16ULL * 1024 * 1024;
 
 size_t automatic_queue_depth(size_t bytes_per_frame, size_t target_bytes, size_t floor,
                              size_t ceiling) {
@@ -247,7 +248,11 @@ void GraphBuilder::Impl::start_queue_plan(size_t frame_bytes) {
   }
   free_ram_      = static_cast<size_t>(memory_status.ullAvailPhys);
   total_ram_     = static_cast<size_t>(memory_status.ullTotalPhys);
-  vram_headroom_ = std::max(kVramHeadroomMinimum, free_vram_ * kHeadroomPercent / 100);
+  const size_t maximum_vram_usage = total_vram_ / 100 * kMaxVramUsagePercent;
+  const size_t used_vram = total_vram_ > free_vram_ ? total_vram_ - free_vram_ : 0;
+  const size_t remaining_vram_budget =
+      maximum_vram_usage > used_vram ? maximum_vram_usage - used_vram : 0;
+  vram_headroom_ = free_vram_ - std::min(free_vram_, remaining_vram_budget);
   ram_headroom_  = std::max(kRamHeadroomMinimum, free_ram_ * kHeadroomPercent / 100);
 }
 
@@ -281,17 +286,39 @@ GraphBuilder::Impl::planned_batch_queue(const char *name, const TDesc &desc, siz
                                         size_t minimum_depth, int output_size, int output_stride) {
   const size_t input_batch  = static_cast<size_t>(desc.shape.at(0));
   const size_t element_size = desc.num_bytes() / input_batch;
-  const size_t target_bytes =
-      std::string(name).find("GPU input") != std::string::npos   ? kGpuInputTargetBytes
-      : std::string(name).find("display") != std::string::npos   ? kDisplayTargetBytes
-      : std::string(name).find("recording") != std::string::npos ? kCpuOutputTargetBytes
-                                                                 : kIntermediateTargetBytes;
-  const size_t floor   = s_.queue_sizing_auto ? minimum_depth : requested_depth;
-  const size_t ceiling = s_.queue_sizing_auto ? (target_bytes == kGpuInputTargetBytes    ? 64
-                                                 : target_bytes == kDisplayTargetBytes   ? 4
-                                                 : target_bytes == kCpuOutputTargetBytes ? 8
-                                                                                         : 8)
+  const std::string queue_name(name);
+  const bool gpu_input = queue_name.find("GPU input") != std::string::npos;
+  size_t target_bytes =
+      queue_name.find("display") != std::string::npos   ? kDisplayTargetBytes
+      : queue_name.find("recording") != std::string::npos ? kCpuOutputTargetBytes
+                                                          : kIntermediateTargetBytes;
+  if (gpu_input) {
+    const size_t available_vram = free_vram_ > vram_headroom_ ? free_vram_ - vram_headroom_ : 0;
+    // The queue targets half of free VRAM without exceeding the 99% total-usage limit.
+    target_bytes = std::min(free_vram_ / 100 * kGpuInputFreeVramPercent, available_vram);
+  }
+  const size_t total_vram_depth = element_size == 0
+                                      ? 1
+                                      : (total_vram_ / 100 * kMaxVramUsagePercent) / element_size;
+  const size_t maximum_depth = gpu_input ? std::max<size_t>(1, total_vram_depth)
+                               : queue_name.find("display") != std::string::npos ? 4
+                               : queue_name.find("recording") != std::string::npos ? 8
+                                                                                   : 8;
+  // Keep the time-frequency queue's algorithm-determined floor and ceiling unchanged.
+  const bool fixed_time_frequency = queue_name == "time-frequency input";
+  const size_t floor_bytes = std::min(kQueueMinimumBytes, target_bytes);
+  const size_t byte_floor = element_size == 0
+                                ? 1
+                                : std::max<size_t>(1, (floor_bytes + element_size - 1) / element_size);
+  const size_t byte_ceiling = element_size == 0 ? 1 : std::max<size_t>(1, target_bytes / element_size);
+  const size_t floor = fixed_time_frequency ? minimum_depth
+                       : s_.queue_sizing_auto ? std::min(byte_floor, byte_ceiling)
                                               : requested_depth;
+  const size_t ceiling = fixed_time_frequency
+                             ? std::max(floor, requested_depth)
+                             : s_.queue_sizing_auto
+                                   ? std::max(floor, std::min(maximum_depth, byte_ceiling))
+                                   : std::max(floor, requested_depth);
   const size_t depth   = s_.queue_sizing_auto
                              ? automatic_queue_depth(element_size, target_bytes, floor, ceiling)
                              : requested_depth;
